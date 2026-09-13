@@ -4,16 +4,18 @@ use syn::{Attribute, FnArg, ImplItem, ItemImpl, Pat, ReturnType, Type};
 
 use super::{macros::parse_pyo3_attr, signature::parse_signature_attr, types::type_to_string};
 use crate::model::{
-    ClassAttrDef, GetterResultClassification, MethodDef, ParameterDef, ParameterKind, PropertyDef,
-    PyClassDef, SelfMutability, SourceLocation,
+    ClassAttrDef, ConstructorOrigin, GetterResultClassification, MethodDef, ParameterDef,
+    ParameterKind, PropertyDef, PyClassDef, SelfMutability, SourceLocation,
 };
 
 /// Process an impl block and attach methods to the appropriate class
 pub fn process_impl_block(item_impl: &ItemImpl, classes: &mut [PyClassDef], file_path: &Path) {
-    let is_pymethods = item_impl
-        .attrs
-        .iter()
-        .any(|attr| attr.path().is_ident("pymethods"));
+    let is_pymethods = item_impl.attrs.iter().any(|attr| {
+        attr.path()
+            .segments
+            .last()
+            .is_some_and(|s| s.ident == "pymethods")
+    });
 
     if !is_pymethods {
         return;
@@ -189,6 +191,7 @@ fn process_method(method: &syn::ImplItemFn, class: &mut PyClassDef, file_path: &
         has_kwargs: false,
         result_classification: result_classification(method),
         result_derived_from_self: result_is_derived_from_self(method),
+        origin: ConstructorOrigin::Unresolved,
     };
 
     if is_new {
@@ -260,14 +263,14 @@ fn has_attr(attrs: &[Attribute], name: &str) -> bool {
 /// Get the argument from an attribute like #[getter(name)] or #[setter(name)]
 fn get_attr_arg(attrs: &[Attribute], name: &str) -> Option<String> {
     for attr in attrs {
-        if attr.path().is_ident(name) {
-            if let syn::Meta::List(meta_list) = &attr.meta {
-                let tokens = meta_list.tokens.to_string();
-                let trimmed = tokens.trim();
-                if !trimmed.is_empty() && !trimmed.contains('=') {
-                    // Simple identifier argument like #[getter(global_)]
-                    return Some(trimmed.to_string());
-                }
+        if attr.path().is_ident(name)
+            && let syn::Meta::List(meta_list) = &attr.meta
+        {
+            let tokens = meta_list.tokens.to_string();
+            let trimmed = tokens.trim();
+            if !trimmed.is_empty() && !trimmed.contains('=') {
+                // Simple identifier argument like #[getter(global_)]
+                return Some(trimmed.to_string());
             }
         }
     }
@@ -348,12 +351,20 @@ fn parse_parameters(
                     .as_ref()
                     .and_then(|s| s.defaults.get(&name).cloned());
 
+                // Kind comes from the PyO3 signature declaration when present
+                // (`/`, bare `*`, or splat position); otherwise PyO3 binds the
+                // argument positional-or-keyword.
+                let kind = signature_info
+                    .as_ref()
+                    .and_then(|s| s.kinds.get(&name).copied())
+                    .unwrap_or(ParameterKind::PositionalOrKeyword);
+
                 params.push(ParameterDef {
                     name,
                     param_type: Some(param_type),
                     default_value,
                     is_optional,
-                    kind: ParameterKind::PositionalOrKeyword,
+                    kind,
                 });
             }
         }
@@ -371,7 +382,12 @@ fn parse_return_type(output: &ReturnType) -> Option<String> {
 }
 
 /// Signature info extracted from #[pyo3(signature = (...))]
+#[derive(Default)]
 pub struct SignatureInfo {
     pub raw: String,
     pub defaults: std::collections::HashMap<String, String>,
+    /// Declared Python parameter kinds in signature order. Parameters absent
+    /// from the signature keep their Rust declaration binding (PyO3 defaults
+    /// unspecified signature arguments to positional-or-keyword).
+    pub kinds: std::collections::HashMap<String, ParameterKind>,
 }

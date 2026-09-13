@@ -224,6 +224,25 @@ pub struct BevyConfig {
     #[serde(default)]
     pub type_mappings: HashMap<String, String>,
 
+    /// Reviewed associated-function mappings, keyed by public Python module and Rust
+    /// wrapper name (`pybevy.math.PyVec2`).
+    #[serde(default)]
+    pub constructor_functions: HashMap<String, ConstructorFunctionMapping>,
+
+    /// Reviewed field-derived origins: public Python module plus Rust wrapper name to a
+    /// non-empty reason.
+    #[serde(default)]
+    pub constructor_fields: HashMap<String, ConstructorFieldMapping>,
+
+    /// Reviewed tuple-struct/newtype origins, keyed like `constructor_fields`.
+    #[serde(default)]
+    pub constructor_tuples: HashMap<String, String>,
+
+    /// Reviewed Python-specific constructor adapters with no direct upstream
+    /// parameter mapping.
+    #[serde(default)]
+    pub constructor_adapters: HashMap<String, String>,
+
     /// Dependency crates whose types a Bevy crate re-exports (e.g. `pub use
     /// glam::*` in bevy_math). Re-exported types are absent from the
     /// re-exporting crate's own public API, so the listed crates are parsed
@@ -265,6 +284,52 @@ pub struct BevyConfig {
     /// Format: "bevy_crate::Type" = "pybevy_module" (e.g., "math::Circle" = "mesh")
     #[serde(default)]
     pub module_placement_overrides: HashMap<String, String>,
+}
+
+/// Selects a pinned upstream function without suppressing constructor checks.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConstructorFunctionMapping {
+    pub function: String,
+    #[serde(default)]
+    pub parameter_renames: HashMap<String, String>,
+    /// Trailing native parameters supplied internally by the wrapper rather than
+    /// exposed to Python.
+    #[serde(default)]
+    pub internal_parameters: Vec<String>,
+    /// Additional keyword-only fields of a mixed constructor.
+    #[serde(default)]
+    pub field_inputs: Vec<String>,
+    pub reason: String,
+}
+
+/// Selects a field-derived origin, optionally renaming native fields for Python.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum ConstructorFieldMapping {
+    Reason(String),
+    Detailed {
+        #[serde(default)]
+        parameter_renames: HashMap<String, String>,
+        reason: String,
+    },
+}
+
+impl ConstructorFieldMapping {
+    pub fn reason(&self) -> &str {
+        match self {
+            Self::Reason(reason) | Self::Detailed { reason, .. } => reason,
+        }
+    }
+
+    pub fn parameter_renames(&self) -> Option<&HashMap<String, String>> {
+        match self {
+            Self::Reason(_) => None,
+            Self::Detailed {
+                parameter_renames, ..
+            } => Some(parameter_renames),
+        }
+    }
 }
 
 /// Explicit mapping or exclusion for one Bevy field.

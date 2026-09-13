@@ -1,7 +1,12 @@
-use std::{cmp::Reverse, collections::HashSet, path::PathBuf, process::ExitCode};
+use std::{
+    cmp::Reverse,
+    collections::HashSet,
+    path::{Path, PathBuf},
+    process::ExitCode,
+};
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use colored::Colorize;
 use pybevy_lint::{
     comparison::simplify_type_for_display,
@@ -127,6 +132,17 @@ enum Command {
         /// Ignore diagnostics by code (e.g., "W006", "E003"). Can be specified multiple times.
         #[arg(long, short = 'i', value_delimiter = ',')]
         ignore: Vec<String>,
+
+        /// Path to the pinned Bevy source; enables constructor-policy checks
+        /// against the pinned declarations. Must be the pinned revision.
+        /// Omit to use the managed pinned checkout under --bevy-cache.
+        #[arg(long)]
+        bevy_path: Option<PathBuf>,
+
+        /// Directory for the managed pinned Bevy checkout, shared with the
+        /// bevy-audit step. Only used when --bevy-path is omitted.
+        #[arg(long, default_value = "target/bevy-api-audit")]
+        bevy_cache: PathBuf,
     },
 
     /// Show coverage summary table
@@ -150,6 +166,10 @@ enum Command {
         /// Show only modules below this coverage threshold
         #[arg(long)]
         max_coverage: Option<f64>,
+
+        /// Output format: "table" or "json"
+        #[arg(long, default_value = "table")]
+        format: String,
     },
 
     /// Report static exercise coverage of the public stub API
@@ -323,7 +343,17 @@ fn run() -> Result<bool> {
             ref types,
             ref code,
             ref ignore,
-        }) => run_validate(&args, &config, types, code, ignore),
+            ref bevy_path,
+            ref bevy_cache,
+        }) => run_validate(
+            &args,
+            &config,
+            types,
+            code,
+            ignore,
+            bevy_path.clone(),
+            Some(bevy_cache.clone()),
+        ),
 
         Some(Command::Coverage {
             ref modules,
@@ -331,14 +361,18 @@ fn run() -> Result<bool> {
             ref sort,
             min_coverage,
             max_coverage,
+            ref format,
         }) => run_coverage(
             &args,
             &config,
             bevy_path.clone(),
             modules.clone(),
-            sort,
-            min_coverage,
-            max_coverage,
+            CoverageOutput {
+                sort,
+                min_coverage,
+                max_coverage,
+                format,
+            },
         ),
 
         Some(Command::TestCoverage {
@@ -410,7 +444,6 @@ fn run() -> Result<bool> {
         ),
 
         None => {
-            use clap::CommandFactory;
             Args::command().print_help()?;
             println!();
             Ok(false)
@@ -563,6 +596,8 @@ fn run_validate(
     type_filter: &[String],
     code_filter: &[String],
     ignore_filter: &[String],
+    bevy_path_override: Option<PathBuf>,
+    bevy_cache: Option<PathBuf>,
 ) -> Result<bool> {
     if args.verbose {
         eprintln!(
@@ -644,7 +679,94 @@ fn run_validate(
         );
     }
 
-    let diagnostics = if type_filter.is_empty() {
+    // With a pinned Bevy source, constructor-policy checks run against the
+    // pinned declarations; missing or unresolved input fails closed (E013).
+    let bevy_path = match bevy_path_override.clone() {
+        Some(path) => Some(path),
+        None => config.bevy.bevy_path(),
+    };
+    let managed_checkout;
+    let bevy_path = match bevy_path {
+        Some(path) => Some(path),
+        None => {
+            let cache_root = bevy_cache.unwrap_or_else(|| PathBuf::from("target/bevy-api-audit"));
+            let shared = cache_root.join(format!(
+                "bevy-{}",
+                &pybevy_lint::bevy_audit::BEVY_REVISION[..12]
+            ));
+            if shared.exists() {
+                Some(shared)
+            } else {
+                managed_checkout = pybevy_lint::bevy_audit::prepare_pinned_bevy(&cache_root)?;
+                Some(managed_checkout)
+            }
+        }
+    };
+
+    let resolved_bevy_path: Option<PathBuf> = bevy_path.clone();
+    let bevy_crates = match bevy_path {
+        Some(bevy_path) => {
+            let revision = pybevy_lint::bevy_parser::cache::get_bevy_git_ref(&bevy_path);
+            match revision {
+                Ok(revision) if revision == pybevy_lint::bevy_audit::BEVY_REVISION => {
+                    let crates_to_parse: std::collections::BTreeSet<String> =
+                        config.bevy.crate_mappings.values().cloned().collect();
+                    let crate_refs: Vec<&str> =
+                        crates_to_parse.iter().map(String::as_str).collect();
+                    let mut bevy_crates = pybevy_lint::parse_bevy_crates_with_cache(
+                        &bevy_path,
+                        &crate_refs,
+                        !args.no_cache,
+                    )?;
+                    pybevy_lint::merge_reexported_bevy_types(
+                        &mut bevy_crates,
+                        &bevy_path,
+                        &config.bevy,
+                        &rust_classes,
+                        !args.no_cache,
+                    );
+                    Some(bevy_crates)
+                }
+                Ok(revision) => {
+                    anyhow::bail!(
+                        "--bevy-path must be the pinned revision {}, found {}",
+                        pybevy_lint::bevy_audit::BEVY_REVISION,
+                        revision
+                    );
+                }
+                Err(e) => {
+                    anyhow::bail!(
+                        "cannot resolve the pinned Bevy source at {}: {}",
+                        bevy_path.display(),
+                        e
+                    );
+                }
+            }
+        }
+        None => None,
+    };
+
+    let diagnostics = if let Some(bevy_crates) = &bevy_crates {
+        if type_filter.is_empty() {
+            pybevy_lint::validate_with_bevy(
+                &rust_classes,
+                &python_classes,
+                Some(config),
+                bevy_crates,
+                resolved_bevy_path.as_deref(),
+                true,
+            )
+        } else {
+            pybevy_lint::validate_with_bevy(
+                &rust_classes,
+                &python_classes,
+                Some(config),
+                bevy_crates,
+                resolved_bevy_path.as_deref(),
+                false,
+            )
+        }
+    } else if type_filter.is_empty() {
         pybevy_lint::validate_with_config(&rust_classes, &python_classes, config)
     } else {
         pybevy_lint::validate_scoped_with_config(&rust_classes, &python_classes, config)
@@ -708,6 +830,7 @@ fn run_validate(
     Ok(has_errors)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_compare(
     args: &Args,
     config: &pybevy_lint::Config,
@@ -1127,20 +1250,20 @@ fn count_type_usage_tree_sitter(
             }
         }
         // scoped_identifier: path like `TypeName::method`, check the leftmost PascalCase segment
-        else if kind == "scoped_identifier" && !is_use_subtree {
-            if let Some(path_node) = node.child_by_field_name("path")
-                && let Ok(text) = path_node.utf8_text(source)
+        else if kind == "scoped_identifier"
+            && !is_use_subtree
+            && let Some(path_node) = node.child_by_field_name("path")
+            && let Ok(text) = path_node.utf8_text(source)
+        {
+            // Only count if it's a simple PascalCase identifier (not a nested path)
+            if !text.contains(':')
+                && text.starts_with(|c: char| c.is_uppercase())
+                && type_set.contains(text)
             {
-                // Only count if it's a simple PascalCase identifier (not a nested path)
-                if !text.contains(':')
-                    && text.starts_with(|c: char| c.is_uppercase())
-                    && type_set.contains(text)
-                {
-                    // Skip if parent is field_expression (method call like `obj.Type::method()`)
-                    let parent_kind = node.parent().map(|p| p.kind()).unwrap_or("");
-                    if parent_kind != "field_expression" {
-                        *counts.entry(text.to_string()).or_insert(0) += 1;
-                    }
+                // Skip if parent is field_expression (method call like `obj.Type::method()`)
+                let parent_kind = node.parent().map(|p| p.kind()).unwrap_or("");
+                if parent_kind != "field_expression" {
+                    *counts.entry(text.to_string()).or_insert(0) += 1;
                 }
             }
         }
@@ -1219,14 +1342,20 @@ fn run_usage(
     Ok(false)
 }
 
+/// How the coverage report should be rendered.
+struct CoverageOutput<'a> {
+    sort: &'a str,
+    min_coverage: Option<f64>,
+    max_coverage: Option<f64>,
+    format: &'a str,
+}
+
 fn run_coverage(
     args: &Args,
     config: &pybevy_lint::Config,
     bevy_path: Option<PathBuf>,
     modules: Vec<String>,
-    sort: &str,
-    min_coverage: Option<f64>,
-    max_coverage: Option<f64>,
+    output: CoverageOutput<'_>,
 ) -> Result<bool> {
     let bevy_path = bevy_path
         .or_else(|| config.bevy.bevy_path())
@@ -1293,7 +1422,19 @@ fn run_coverage(
 
     let result = pybevy_lint::compare_with_bevy(&pybevy_classes, &bevy_crates, config);
 
-    print_coverage_table(&result.report, sort, min_coverage, max_coverage);
+    match output.format {
+        "json" => println!(
+            "{}",
+            serde_json::to_string_pretty(&pybevy_lint::coverage_json::render(&result.report))?
+        ),
+        "table" => print_coverage_table(
+            &result.report,
+            output.sort,
+            output.min_coverage,
+            output.max_coverage,
+        ),
+        other => anyhow::bail!("unknown --format {other}; expected \"table\" or \"json\""),
+    }
 
     // A filtered run parses a subset of crates, which would make every entry for
     // an unparsed crate look stale. Only a full run can judge the config.
@@ -1310,25 +1451,37 @@ fn run_coverage(
         return Ok(false);
     }
     let diagnostics = pybevy_lint::config_audit::audit(config, &source, &pybevy_classes);
-    report_config_audit(args, &diagnostics)
+    report_config_audit(args, &diagnostics, output.format == "json")
 }
 
 /// Print configuration findings and report whether the run should fail.
+///
+/// `stdout_is_data` keeps the findings off stdout when the report itself is
+/// being written there: a consumer redirecting stdout to a file wants JSON, and
+/// a diagnostic appended after it makes the document unparseable.
 fn report_config_audit(
     args: &Args,
     diagnostics: &[pybevy_lint::output::Diagnostic],
+    stdout_is_data: bool,
 ) -> Result<bool> {
     let mut errors = 0;
     let mut warnings = 0;
+    let emit = |text: String| {
+        if stdout_is_data {
+            eprintln!("{text}");
+        } else {
+            println!("{text}");
+        }
+    };
     for diagnostic in diagnostics {
         match diagnostic.severity {
             DiagnosticSeverity::Error => {
                 errors += 1;
-                println!("{}", format_diagnostic(diagnostic));
+                emit(format_diagnostic(diagnostic));
             }
             DiagnosticSeverity::Warning if !args.errors_only => {
                 warnings += 1;
-                println!("{}", format_diagnostic(diagnostic));
+                emit(format_diagnostic(diagnostic));
             }
             _ => {}
         }
@@ -1351,19 +1504,20 @@ fn report_config_audit(
     Ok(errors > 0 || (args.deny_warnings && warnings > 0))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_test_coverage(
     args: &Args,
     config: &pybevy_lint::Config,
     type_filter: &[String],
-    test_path: &PathBuf,
+    test_path: &Path,
     output_mode: &str,
     sort: &str,
     max_coverage: Option<f64>,
     show_members: bool,
     check_baseline_mode: bool,
     update_baseline_mode: bool,
-    baseline_path: &PathBuf,
-    exceptions_path: &PathBuf,
+    baseline_path: &Path,
+    exceptions_path: &Path,
     execution_report: Option<&std::path::Path>,
     debt_summary: bool,
 ) -> Result<bool> {
@@ -1406,7 +1560,7 @@ fn run_test_coverage(
     let effective_test_path = if test_path.to_str() == Some("tests") {
         PathBuf::from(&config.test_coverage.test_path)
     } else {
-        test_path.clone()
+        test_path.to_path_buf()
     };
 
     if args.verbose {
@@ -1714,6 +1868,7 @@ fn print_coverage_table(
         })
         .map(|(name, cov)| {
             // Get method coverage for this crate (only implemented types)
+            let totals = cov.implemented_totals();
             let (
                 impl_methods,
                 total_methods,
@@ -1722,26 +1877,14 @@ fn print_coverage_table(
                 missing_variants,
                 extra_variants,
                 extra_methods,
-            ) = cov.types.iter().filter(|t| t.is_implemented).fold(
-                (0, 0, 0, 0, 0, 0, 0),
-                |(m, t, sig, fields, vars, extra_vars, extra_meths), typ| {
-                    let type_sig_mismatches = typ
-                        .methods
-                        .iter()
-                        .filter(|method| method.is_implemented && !method.signature_matches)
-                        .count();
-                    let type_missing_fields = typ.bevy_field_count - typ.matched_field_count;
-                    let type_missing_variants = typ.bevy_variant_count - typ.matched_variant_count;
-                    (
-                        m + typ.matched_method_count,
-                        t + typ.bevy_method_count,
-                        sig + type_sig_mismatches,
-                        fields + type_missing_fields,
-                        vars + type_missing_variants,
-                        extra_vars + typ.extra_variant_count,
-                        extra_meths + typ.extra_method_count,
-                    )
-                },
+            ) = (
+                totals.matched_methods,
+                totals.bevy_methods,
+                totals.signature_mismatches,
+                totals.missing_fields(),
+                totals.missing_variants(),
+                totals.extra_variants,
+                totals.extra_methods,
             );
             let method_pct = if total_methods > 0 {
                 (impl_methods as f64 / total_methods as f64) * 100.0

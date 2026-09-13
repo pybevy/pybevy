@@ -41,6 +41,9 @@ reflection_unavailable_types = [
 # Maps PyBevy source directories to corresponding Bevy crates
 [bevy.crate_type_sources]
 bevy_math = ["glam"]
+bevy_mesh = ["bevy_sprite_render"]
+bevy_sprite = ["bevy_sprite_render"]
+bevy_animation = ["petgraph"]
 
 [bevy.crate_mappings]
 transform = "bevy_transform"
@@ -994,7 +997,27 @@ PyVec3 = "Vec3"
 PyVec2 = "Vec2"
 PyQuat = "Quat"
 PyMat4 = "Mat4"
+PyCubicBezier2d = "CubicBezier"
+PyCubicBezier3d = "CubicBezier"
+PyCubicBSpline2d = "CubicBSpline"
+PyCubicBSpline3d = "CubicBSpline"
+PyCubicCardinalSpline2d = "CubicCardinalSpline"
+PyCubicCardinalSpline3d = "CubicCardinalSpline"
+PyCubicHermite2d = "CubicHermite"
+PyCubicHermite3d = "CubicHermite"
+PyCubicNurbs2d = "CubicNurbs"
+PyCubicNurbs3d = "CubicNurbs"
+PyLinearSpline2d = "LinearSpline"
+PyLinearSpline3d = "LinearSpline"
 PyMat3 = "Mat3"
+# bevy_pbr::ForwardDecalMaterial<B> aliases ExtendedMaterial<B, ForwardDecalMaterialExt>.
+PyForwardDecalMaterial = "ExtendedMaterial"
+# Concrete generic specializations declared by the wrappers' storage macros.
+PyMouseInput = "ButtonInput"
+PyMeshMaterial3dForwardDecal = "MeshMaterial3d"
+PyMeshMaterial3dShader = "MeshMaterial3d"
+# bevy_animation::graph::AnimationNodeIndex aliases petgraph::graph::NodeIndex<u32>.
+PyAnimationNodeIndex = "NodeIndex<Ix>"
 
 # Generic type specializations in Bevy -> PyBevy separate types
 # These specialized types have their own impl blocks in Bevy
@@ -1002,6 +1025,655 @@ PyMat3 = "Mat3"
 PyTimeVirtual = "Time<Virtual>"
 PyTimeReal = "Time<Real>"
 PyTimeFixed = "Time<Fixed>"
+
+[bevy.constructor_functions."pybevy.math.PyAffine2"]
+function = "from_mat2_translation"
+reason = "affine2.rs calls glam::Affine2::from_mat2_translation(matrix2: Mat2, translation: Vec2); the accepted inputs map this factory, not field assignment"
+
+[bevy.constructor_functions."pybevy.math.PyMat2"]
+function = "from_cols"
+reason = "glam 0.32.1 Mat2::from_cols defines the established x_axis and y_axis constructor inputs"
+
+[bevy.constructor_functions."pybevy.ui.PyImageNode"]
+function = "new"
+parameter_renames = { texture = "handle" }
+reason = "Bevy 0.19.1 bevy_ui::ImageNode::new receives the image handle exposed by the Python constructor"
+
+[bevy.constructor_functions."pybevy.ui.PyBorderColor"]
+function = "all"
+field_inputs = ["top", "right", "bottom", "left"]
+reason = "Bevy 0.19.1 BorderColor::all defines the uniform color prefix followed by per-edge field overrides"
+
+[bevy.constructor_functions."pybevy.animation.PyAnimationNodeIndex"]
+function = "new"
+parameter_renames = { x = "index" }
+reason = "animation_node_index.rs calls AnimationNodeIndex::new(index), the Bevy alias of petgraph::NodeIndex<u32>::new(x)"
+
+[bevy.constructor_functions."pybevy.light.PyScatteringMedium"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_light::atmosphere::ScatteringMedium::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.text.PyTextBounds"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_text::TextBounds::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.text.PyTextSpan"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_text::TextSpan::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.text.PyText2d"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_sprite::Text2d::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.text.PyFontFeatureTag"]
+function = "new"
+parameter_renames = { src = "tag" }
+reason = "Bevy 0.19.1 bevy_text::FontFeatureTag::new receives the four-byte tag parsed from the established Python tag input"
+
+[bevy.constructor_functions."pybevy.text.PyTextLayout"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_text::TextLayout::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.mesh.PyMeshVertexAttribute"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_mesh::MeshVertexAttribute::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.mesh.PyMorphWeights"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_mesh::prelude::MorphWeights::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyCone"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::primitives::Cone::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PySphere"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::primitives::Sphere::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyCapsule3d"]
+function = "new"
+field_inputs = ["half_length"]
+reason = "Bevy 0.19.1 bevy_math::primitives::Capsule3d::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyPlane3d"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::primitives::Plane3d::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyCircle"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::primitives::Circle::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyRegularPolygon"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::primitives::RegularPolygon::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.ui.PyUiPosition"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_ui::UiPosition::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.ui.PyLinearGradient"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_ui::LinearGradient::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.ui.PyConicGradient"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_ui::ConicGradient::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.ui.PyVal2"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_ui::Val2::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.ui.PyUiRect"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_ui::UiRect::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.ui.PyRadialGradient"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_ui::RadialGradient::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.ui.PyOutline"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_ui::Outline::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.ui.PyText"]
+function = "new"
+parameter_renames = { text = "content" }
+reason = "Bevy 0.19.1 bevy_ui::Text::new defines the established Python content input"
+
+[bevy.constructor_functions."pybevy.input.PyGamepadButtonChangedEvent"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_input::gamepad::GamepadButtonChangedEvent::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.input.PyGamepadAxisChangedEvent"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_input::gamepad::GamepadAxisChangedEvent::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.input.PyGamepadConnectionEvent"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_input::gamepad::GamepadConnectionEvent::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.input.PyGamepadButtonStateChangedEvent"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_input::gamepad::GamepadButtonStateChangedEvent::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.input.PyButtonSettings"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_input::gamepad::ButtonSettings::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.input.PyAxisSettings"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_input::gamepad::AxisSettings::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.ecs.PyName"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_ecs::name::Name::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.ecs.PyRelatedSpawnerCommands"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_ecs::RelatedSpawnerCommands::new defines the commands and target inputs adapted by the Python wrapper"
+
+[bevy.constructor_functions."pybevy.time.PyTimer"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_time::Timer::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.color.PyOklcha"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_color::Oklcha::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.color.PyHsla"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_color::Hsla::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.color.PyLinearRgba"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_color::LinearRgba::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.color.PyHwba"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_color::Hwba::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.color.PyOklaba"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_color::Oklaba::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.color.PySrgba"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_color::Srgba::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.color.PyHsva"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_color::Hsva::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.color.PyLcha"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_color::Lcha::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.color.PyXyza"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_color::Xyza::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.color.PyLaba"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_color::Laba::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.audio.PyAudioPlayer"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_audio::AudioPlayer::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.audio.PyGlobalVolume"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_audio::GlobalVolume::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.audio.PyPitch"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_audio::Pitch::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.audio.PySpatialScale"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_audio::SpatialScale::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyCubicNurbs3d"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::cubic_splines::CubicNurbs::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyCubicCardinalSpline2d"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::cubic_splines::CubicCardinalSpline::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyCubicHermite3d"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::cubic_splines::CubicHermite::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyCubicCardinalSpline3d"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::cubic_splines::CubicCardinalSpline::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyCubicHermite2d"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::cubic_splines::CubicHermite::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyCubicBSpline3d"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::cubic_splines::CubicBSpline::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyCubicBSpline2d"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::cubic_splines::CubicBSpline::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyCubicBezier2d"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::cubic_splines::CubicBezier::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyLinearSpline3d"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::cubic_splines::LinearSpline::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyCubicNurbs2d"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::cubic_splines::CubicNurbs::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyLinearSpline2d"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::cubic_splines::LinearSpline::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyCubicBezier3d"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::cubic_splines::CubicBezier::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyVec4"]
+function = "new"
+reason = "glam 0.32.1 glam::Vec4::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyVec3"]
+function = "new"
+reason = "glam 0.32.1 glam::Vec3::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyIVec2"]
+function = "new"
+reason = "glam 0.32.1 glam::IVec2::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyIsometry3d"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::Isometry3d::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyAabb3d"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::bounding::Aabb3d::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyBoundingCircle"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::bounding::BoundingCircle::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyAabbCast2d"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::bounding::AabbCast2d::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyBoundingSphere"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::bounding::BoundingSphere::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyRayCast2d"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::bounding::RayCast2d::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyRayCast3d"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::bounding::RayCast3d::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyBoundingCircleCast"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::bounding::BoundingCircleCast::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyAabb2d"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::bounding::Aabb2d::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyIsometry2d"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::Isometry2d::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyURect"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::URect::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyIRect"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::IRect::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyRect"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::Rect::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyVec3A"]
+function = "new"
+reason = "glam 0.32.1 glam::Vec3A::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyRay2d"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::Ray2d::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyRay3d"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::Ray3d::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyInfinitePlane3d"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::primitives::InfinitePlane3d::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyArc2d"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::primitives::Arc2d::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyHalfSpace"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::primitives::HalfSpace::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyPlane2d"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::primitives::Plane2d::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyPolygon"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::primitives::Polygon::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyVec2"]
+function = "new"
+reason = "glam 0.32.1 glam::Vec2::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyInterval"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::curve::Interval::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyUVec3"]
+function = "new"
+reason = "glam 0.32.1 glam::UVec3::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyUVec2"]
+function = "new"
+reason = "glam 0.32.1 glam::UVec2::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.image.PyImage"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_image::Image::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.mesh.PyMesh"]
+function = "new"
+internal_parameters = ["asset_usage"]
+reason = "Bevy 0.19.1 bevy_mesh::Mesh::new maps primitive_topology; PyBevy supplies the trailing asset_usage internally"
+
+
+[bevy.constructor_fields]
+"pybevy.transform.PyTransform" = "Bevy 0.19.1 bevy_transform/src/components/transform.rs:86; established field-derived translation/rotation/scale inputs, independent of future associated constructors"
+"pybevy.ui.PyNode" = "Bevy 0.19.1 bevy_ui/src/ui_node.rs:492; established field-derived layout inputs, independent of future associated constructors"
+"pybevy.math.PyRot2" = "Bevy 0.19.1 bevy_math/src/rotation2d.rs:52; cos/sin fields with a complete-pair normalization check, not an associated angle constructor"
+"pybevy.audio.PyPlaybackSettings" = "Bevy 0.19.1 bevy_audio::PlaybackSettings fields define the established Python constructor"
+"pybevy.camera.PyAabb" = "Bevy 0.19.1 bevy_camera::primitives::Aabb fields define the established Python constructor"
+"pybevy.camera.PyCamera" = "Bevy 0.19.1 bevy_camera::Camera fields define the established Python constructor"
+"pybevy.camera.PyCamera3d" = "Bevy 0.19.1 bevy_camera::Camera3d fields define the established Python constructor"
+"pybevy.camera.PyExposure" = "Bevy 0.19.1 bevy_camera::Exposure fields define the established Python constructor"
+"pybevy.camera.PyImageRenderTarget" = "Bevy 0.19.1 bevy_camera::ImageRenderTarget fields define the established Python constructor"
+"pybevy.camera.PyOrthographicProjection" = "Bevy 0.19.1 bevy_camera::OrthographicProjection fields define the established Python constructor"
+"pybevy.camera.PyPerspectiveProjection" = "Bevy 0.19.1 bevy_camera::PerspectiveProjection fields define the established Python constructor"
+"pybevy.camera.PyPhysicalCameraParameters" = "Bevy 0.19.1 bevy_camera::PhysicalCameraParameters fields define the established Python constructor"
+"pybevy.camera.PySphere" = "Bevy 0.19.1 bevy_camera::primitives::Sphere fields define the established Python constructor"
+"pybevy.camera.PySubCameraView" = "Bevy 0.19.1 bevy_camera::SubCameraView fields define the established Python constructor"
+"pybevy.camera.PyViewport" = "Bevy 0.19.1 bevy_camera::Viewport fields define the established Python constructor"
+"pybevy.camera.PyVisibilityRange" = "Bevy 0.19.1 bevy_camera::visibility::VisibilityRange fields define the established Python constructor"
+"pybevy.assets.PyAssetPath" = "Bevy 0.19.1 bevy_asset::AssetPath fields define the established Python constructor"
+"pybevy.gizmos.PyGizmoConfig" = "Bevy 0.19.1 bevy_gizmos::config::GizmoConfig fields define the established Python constructor"
+"pybevy.gizmos.PyGizmoLineConfig" = "Bevy 0.19.1 bevy_gizmos::config::GizmoLineConfig fields define the established Python constructor"
+"pybevy.gizmos.PyShowAabbGizmo" = "Bevy 0.19.1 bevy_gizmos::aabb::ShowAabbGizmo fields define the established Python constructor"
+"pybevy.gltf.PyGltfConvertCoordinates" = "Bevy 0.19.1 bevy_gltf::convert_coordinates::GltfConvertCoordinates fields define the established Python constructor"
+"pybevy.gltf.PyGltfExtras" = "Bevy 0.19.1 bevy_gltf::GltfExtras fields define the established Python constructor"
+"pybevy.gltf.PyGltfLoaderSettings" = "Bevy 0.19.1 bevy_gltf::GltfLoaderSettings fields define the established Python constructor"
+"pybevy.gltf.PyGltfMaterialExtras" = "Bevy 0.19.1 bevy_gltf::GltfMaterialExtras fields define the established Python constructor"
+"pybevy.gltf.PyGltfMeshExtras" = "Bevy 0.19.1 bevy_gltf::GltfMeshExtras fields define the established Python constructor"
+"pybevy.gltf.PyGltfSceneExtras" = "Bevy 0.19.1 bevy_gltf::GltfSceneExtras fields define the established Python constructor"
+"pybevy.image.PyImageLoaderSettings" = "Bevy 0.19.1 bevy_image::ImageLoaderSettings fields define the established Python constructor"
+"pybevy.image.PyImageSamplerDescriptor" = "Bevy 0.19.1 bevy_image::ImageSamplerDescriptor fields define the established Python constructor"
+"pybevy.image.PyImageSaverSettings" = "Bevy 0.19.1 bevy_image::ImageSaverSettings fields define the established Python constructor"
+"pybevy.image.PyTextureAtlas" = "Bevy 0.19.1 bevy_image::TextureAtlas fields define the established Python constructor"
+"pybevy.image.PyTextureAtlasLayout" = "Bevy 0.19.1 bevy_image::TextureAtlasLayout fields define the established Python constructor"
+"pybevy.input.PyAccumulatedMouseScroll" = "Bevy 0.19.1 bevy_input::mouse::AccumulatedMouseScroll fields define the established Python constructor"
+"pybevy.input.PyButtonAxisSettings" = "Bevy 0.19.1 bevy_input::gamepad::ButtonAxisSettings fields define the established Python constructor"
+"pybevy.input.PyGamepadRumbleIntensity" = "Bevy 0.19.1 bevy_input::gamepad::GamepadRumbleIntensity fields define the established Python constructor"
+"pybevy.input.PyGamepadSettings" = "Bevy 0.19.1 bevy_input::gamepad::GamepadSettings fields define the established Python constructor"
+"pybevy.input.PyKeyboardInput" = "Bevy 0.19.1 bevy_input::keyboard::KeyboardInput fields define the established Python constructor"
+"pybevy.input.PyMouseButtonInput" = "Bevy 0.19.1 bevy_input::mouse::MouseButtonInput fields define the established Python constructor"
+"pybevy.input.PyMouseMotion" = "Bevy 0.19.1 bevy_input::mouse::MouseMotion fields define the established Python constructor"
+"pybevy.input.PyMouseWheel" = "Bevy 0.19.1 bevy_input::mouse::MouseWheel fields define the established Python constructor"
+"pybevy.input.PyTouchInput" = "Bevy 0.19.1 bevy_input::touch::TouchInput fields define the established Python constructor"
+"pybevy.light.PyAmbientLight" = "Bevy 0.19.1 bevy_light::AmbientLight fields define the established Python constructor"
+"pybevy.light.PyAtmosphere" = "Bevy 0.19.1 bevy_light::Atmosphere fields define the established Python constructor"
+"pybevy.light.PyAtmosphereEnvironmentMapLight" = "Bevy 0.19.1 bevy_light::AtmosphereEnvironmentMapLight fields define the established Python constructor"
+"pybevy.light.PyCascadeShadowConfig" = "Bevy 0.19.1 bevy_light::CascadeShadowConfig fields define the established Python constructor"
+"pybevy.light.PyClusteredDecal" = "Bevy 0.19.1 bevy_light::ClusteredDecal fields define the established Python constructor"
+"pybevy.light.PyDirectionalLight" = "Bevy 0.19.1 bevy_light::DirectionalLight fields define the established Python constructor"
+"pybevy.light.PyDirectionalLightShadowMap" = "Bevy 0.19.1 bevy_light::DirectionalLightShadowMap fields define the established Python constructor"
+"pybevy.light.PyDirectionalLightTexture" = "Bevy 0.19.1 bevy_light::DirectionalLightTexture fields define the established Python constructor"
+"pybevy.light.PyEnvironmentMapLight" = "Bevy 0.19.1 bevy_light::EnvironmentMapLight fields define the established Python constructor"
+"pybevy.light.PyFogVolume" = "Bevy 0.19.1 bevy_light::FogVolume fields define the established Python constructor"
+"pybevy.light.PyGeneratedEnvironmentMapLight" = "Bevy 0.19.1 bevy_light::GeneratedEnvironmentMapLight fields define the established Python constructor"
+"pybevy.light.PyGlobalAmbientLight" = "Bevy 0.19.1 bevy_light::GlobalAmbientLight fields define the established Python constructor"
+"pybevy.light.PyIrradianceVolume" = "Bevy 0.19.1 bevy_light::IrradianceVolume fields define the established Python constructor"
+"pybevy.light.PyLightGizmoConfigGroup" = "Bevy 0.19.1 bevy_light::LightGizmoConfigGroup fields define the established Python constructor"
+"pybevy.light.PyLightProbe" = "Bevy 0.19.1 bevy_light::LightProbe fields define the established Python constructor"
+"pybevy.light.PyPointLight" = "Bevy 0.19.1 bevy_light::PointLight fields define the established Python constructor"
+"pybevy.light.PyPointLightShadowMap" = "Bevy 0.19.1 bevy_light::PointLightShadowMap fields define the established Python constructor"
+"pybevy.light.PyPointLightTexture" = "Bevy 0.19.1 bevy_light::PointLightTexture fields define the established Python constructor"
+"pybevy.light.PyRectLight" = "Bevy 0.19.1 bevy_light::RectLight fields define the established Python constructor"
+"pybevy.light.PyScatteringTerm" = "Bevy 0.19.1 bevy_light::atmosphere::ScatteringTerm fields define the established Python constructor"
+"pybevy.light.PyShowLightGizmo" = "Bevy 0.19.1 bevy_light::ShowLightGizmo fields define the established Python constructor"
+"pybevy.light.PySkybox" = "Bevy 0.19.1 bevy_light::Skybox fields define the established Python constructor"
+"pybevy.light.PySpotLight" = "Bevy 0.19.1 bevy_light::SpotLight fields define the established Python constructor"
+"pybevy.light.PySpotLightTexture" = "Bevy 0.19.1 bevy_light::SpotLightTexture fields define the established Python constructor"
+"pybevy.light.PySunDisk" = "Bevy 0.19.1 bevy_light::SunDisk fields define the established Python constructor"
+"pybevy.light.PyVolumetricFog" = "Bevy 0.19.1 bevy_light::VolumetricFog fields define the established Python constructor"
+"pybevy.math.PyAffine3A" = "Bevy 0.19.1 glam::Affine3A fields define the established Python constructor"
+"pybevy.math.PyLine2d" = "Bevy 0.19.1 bevy_math::primitives::Line2d fields define the established Python constructor"
+"pybevy.math.PyLine3d" = "Bevy 0.19.1 bevy_math::primitives::Line3d fields define the established Python constructor"
+"pybevy.math.PyRange" = "Rust core std::ops::Range<f32> fields define the established Python constructor"
+"pybevy.math.PyEllipse" = "Bevy 0.19.1 bevy_math::primitives::Ellipse fields define the established Python constructor"
+"pybevy.mesh.PySkinnedMesh" = "Bevy 0.19.1 bevy_mesh::skinning::SkinnedMesh fields define the established Python constructor"
+"pybevy.pbr.PyAtmosphereSettings" = "Bevy 0.19.1 bevy_pbr::AtmosphereSettings fields define the established Python constructor"
+"pybevy.pbr.PyContactShadows" = "Bevy 0.19.1 bevy_pbr::ContactShadows fields define the established Python constructor"
+"pybevy.pbr.PyDistanceFog" = "Bevy 0.19.1 bevy_pbr::DistanceFog fields define the established Python constructor"
+"pybevy.pbr.PyForwardDecalMaterial" = "Bevy 0.19.1 bevy_pbr::ExtendedMaterial fields define the established Python constructor"
+"pybevy.pbr.PyForwardDecalMaterialExt" = "Bevy 0.19.1 bevy_pbr::decal::ForwardDecalMaterialExt fields define the established Python constructor"
+"pybevy.pbr.PyLightmap" = "Bevy 0.19.1 bevy_pbr::Lightmap fields define the established Python constructor"
+"pybevy.pbr.PyScreenSpaceAmbientOcclusion" = "Bevy 0.19.1 bevy_pbr::ScreenSpaceAmbientOcclusion fields define the established Python constructor"
+"pybevy.pbr.PyScreenSpaceReflections" = "Bevy 0.19.1 bevy_pbr::ScreenSpaceReflections fields define the established Python constructor"
+"pybevy.pbr.PyScreenSpaceTransmission" = "Bevy 0.19.1 bevy_pbr::ScreenSpaceTransmission fields define the established Python constructor"
+"pybevy.pbr.PyStandardMaterial" = "Bevy 0.19.1 bevy_pbr::StandardMaterial fields define the established Python constructor"
+"pybevy.pbr.PyWireframeColor" = "Bevy 0.19.1 bevy_pbr::wireframe::WireframeColor fields define the established Python constructor"
+"pybevy.pbr.PyWireframeLineWidth" = "Bevy 0.19.1 bevy_pbr::wireframe::WireframeLineWidth fields define the established Python constructor"
+"pybevy.pbr.PyWireframeMaterial" = "Bevy 0.19.1 bevy_pbr::wireframe::WireframeMaterial fields define the established Python constructor"
+"pybevy.pbr.PyWireframeConfig" = { parameter_renames = { global = "global_" }, reason = "Bevy 0.19.1 bevy_pbr::wireframe::WireframeConfig fields define the established Python constructor; Python escapes the global spelling" }
+"pybevy.post_process.PyBloom" = "Bevy 0.19.1 bevy_post_process::bloom::Bloom fields define the established Python constructor"
+"pybevy.post_process.PyBloomPrefilter" = "Bevy 0.19.1 bevy_post_process::bloom::BloomPrefilter fields define the established Python constructor"
+"pybevy.post_process.PyLensDistortion" = "Bevy 0.19.1 bevy_post_process::effect_stack::LensDistortion fields define the established Python constructor"
+"pybevy.post_process.PyVignette" = "Bevy 0.19.1 bevy_post_process::effect_stack::Vignette fields define the established Python constructor"
+"pybevy.render.PyColorGradingGlobal" = "Bevy 0.19.1 bevy_render::view::ColorGradingGlobal fields define the established Python constructor"
+"pybevy.render.PyColorGradingSection" = "Bevy 0.19.1 bevy_render::view::ColorGradingSection fields define the established Python constructor"
+"pybevy.render.PyColorGrading" = { parameter_renames = { global = "global_" }, reason = "Bevy 0.19.1 bevy_render::view::ColorGrading fields define the established Python constructor; Python escapes the global spelling" }
+"pybevy.render.PyExtent3d" = "Bevy 0.19.1 re-export of wgpu_types::Extent3d fields defines the established Python constructor"
+"pybevy.render.PyTemporalJitter" = "Bevy 0.19.1 bevy_render::camera::TemporalJitter fields define the established Python constructor"
+"pybevy.sprite.PyBorderRect" = "Bevy 0.19.1 bevy_sprite::BorderRect fields define the established Python constructor"
+"pybevy.sprite.PyColorMaterial" = "Bevy 0.19.1 bevy_sprite_render::ColorMaterial fields define the established Python constructor"
+"pybevy.sprite.PySprite" = "Bevy 0.19.1 bevy_sprite::Sprite fields define the established Python constructor"
+"pybevy.sprite.PyTextureSlicer" = "Bevy 0.19.1 bevy_sprite::TextureSlicer fields define the established Python constructor"
+"pybevy.text.PyText2dShadow" = "Bevy 0.19.1 bevy_sprite::Text2dShadow fields define the established Python constructor"
+"pybevy.text.PyTextCursorStyle" = "Bevy 0.19.1 bevy_text::TextCursorStyle fields define the established Python constructor"
+"pybevy.text.PyTextFont" = "Bevy 0.19.1 bevy_text::TextFont fields define the established Python constructor"
+"pybevy.ui.PyAutoDirectionalNavigation" = "Bevy 0.19.1 bevy_ui::auto_directional_navigation::AutoDirectionalNavigation fields define the established Python constructor"
+"pybevy.ui.PyOverflow" = "Bevy 0.19.1 bevy_ui::Overflow fields define the established Python constructor"
+"pybevy.ui.PyOverflowClipMargin" = "Bevy 0.19.1 bevy_ui::OverflowClipMargin fields define the established Python constructor"
+"pybevy.ui.PyShadowStyle" = "Bevy 0.19.1 bevy_ui::ShadowStyle fields define the established Python constructor"
+"pybevy.ui.PyTextShadow" = "Bevy 0.19.1 bevy_ui::widget::TextShadow fields define the established Python constructor"
+"pybevy.ui.PyUiTransform" = "Bevy 0.19.1 bevy_ui::UiTransform fields define the established Python constructor"
+"pybevy.window.PyCursorEntered" = "Bevy 0.19.1 bevy_window::CursorEntered fields define the established Python constructor"
+"pybevy.window.PyCursorLeft" = "Bevy 0.19.1 bevy_window::CursorLeft fields define the established Python constructor"
+"pybevy.window.PyCursorMoved" = "Bevy 0.19.1 bevy_window::CursorMoved fields define the established Python constructor"
+"pybevy.window.PyCursorOptions" = "Bevy 0.19.1 bevy_window::CursorOptions fields define the established Python constructor"
+"pybevy.window.PyEnabledButtons" = "Bevy 0.19.1 bevy_window::EnabledButtons fields define the established Python constructor"
+"pybevy.window.PyVideoMode" = "Bevy 0.19.1 bevy_window::VideoMode fields define the established Python constructor"
+"pybevy.window.PyWindow" = "Bevy 0.19.1 bevy_window::Window fields define the established Python constructor"
+"pybevy.window.PyWindowCloseRequested" = "Bevy 0.19.1 bevy_window::WindowCloseRequested fields define the established Python constructor"
+"pybevy.window.PyWindowFocused" = "Bevy 0.19.1 bevy_window::WindowFocused fields define the established Python constructor"
+"pybevy.window.PyWindowResizeConstraints" = "Bevy 0.19.1 bevy_window::WindowResizeConstraints fields define the established Python constructor"
+"pybevy.window.PyWindowResized" = "Bevy 0.19.1 bevy_window::WindowResized fields define the established Python constructor"
+"pybevy.winit.PyWinitSettings" = "Bevy 0.19.1 bevy_winit::WinitSettings fields define the established Python constructor"
+
+[bevy.constructor_functions."pybevy.math.PyTorus"]
+function = "new"
+field_inputs = ["minor_radius", "major_radius"]
+reason = "Bevy 0.19.1 bevy_math/src/primitives/dim3.rs:1162; native inner/outer radii with competing minor/major field inputs"
+
+[bevy.constructor_functions."pybevy.math.PyCapsule2d"]
+function = "new"
+field_inputs = ["half_length"]
+reason = "Bevy 0.19.1 bevy_math/src/primitives/dim2.rs:2213; native radius/length with a half_length field alternative; radius remains independent"
+
+[bevy.constructor_functions."pybevy.math.PyAnnulus"]
+function = "new"
+field_inputs = ["inner_circle", "outer_circle"]
+reason = "Bevy 0.19.1 bevy_math/src/primitives/dim2.rs:985; native radii with independently selectable inner/outer circle fields"
+
+[bevy.constructor_functions."pybevy.math.PyCuboid"]
+function = "new"
+field_inputs = ["half_size"]
+reason = "Bevy 0.19.1 bevy_math/src/primitives/dim3.rs:710; native full lengths with a competing half_size field input"
+
+[bevy.constructor_functions."pybevy.math.PyCylinder"]
+function = "new"
+field_inputs = ["half_height"]
+reason = "Bevy 0.19.1 bevy_math/src/primitives/dim3.rs:806; native radius/height with a half_height alternative; radius remains independent"
+
+[bevy.constructor_functions."pybevy.math.PyRectangle"]
+function = "new"
+field_inputs = ["half_size"]
+reason = "Bevy 0.19.1 bevy_math/src/primitives/dim2.rs:1828; native width/height with a competing half_size field input"
+
+[bevy.constructor_functions."pybevy.math.PyRhombus"]
+function = "new"
+field_inputs = ["half_diagonals"]
+reason = "Bevy 0.19.1 bevy_math/src/primitives/dim2.rs:1082; native full diagonals with a competing half_diagonals field input"
+
+[bevy.constructor_functions."pybevy.math.PySegment2d"]
+function = "new"
+field_inputs = ["vertices"]
+reason = "Bevy 0.19.1 bevy_math/src/primitives/dim2.rs:1280; native point1/point2 with a competing vertices field input"
+
+[bevy.constructor_functions."pybevy.math.PyTriangle2d"]
+function = "new"
+field_inputs = ["vertices"]
+reason = "Bevy 0.19.1 bevy_math/src/primitives/dim2.rs:1653; native a/b/c with a competing vertices field input"
+
+[bevy.constructor_functions."pybevy.math.PyTriangle3d"]
+function = "new"
+field_inputs = ["vertices"]
+reason = "Bevy 0.19.1 bevy_math/src/primitives/dim3.rs:1266; native a/b/c with a competing vertices field input"
+
+[bevy.constructor_functions."pybevy.math.PyTetrahedron"]
+function = "new"
+field_inputs = ["vertices"]
+reason = "Bevy 0.19.1 bevy_math/src/primitives/dim3.rs:1465; native a/b/c/d with a competing vertices field input"
+
+[bevy.constructor_functions."pybevy.math.PyCircularSector"]
+function = "new"
+parameter_renames = { angle = "half_angle" }
+field_inputs = ["arc"]
+reason = "Bevy 0.19.1 bevy_math/src/primitives/dim2.rs:326; preserve the established half_angle spelling for native angle, with a competing arc field input"
+
+[bevy.constructor_functions."pybevy.math.PyCircularSegment"]
+function = "new"
+field_inputs = ["arc"]
+reason = "Bevy 0.19.1 bevy_math/src/primitives/dim2.rs:474; native radius/half_angle with a competing arc field input"
+
+[bevy.constructor_functions."pybevy.window.PyWindowResolution"]
+function = "new"
+field_inputs = ["scale_factor_override"]
+reason = "Bevy 0.19.1 bevy_window::WindowResolution::new defines the native dimensions followed by the scale-factor field input"
+
+[bevy.constructor_functions."pybevy.text.PyEditableText"]
+function = "new"
+parameter_renames = { initial_text = "text" }
+field_inputs = ["cursor_width", "cursor_blink_period", "max_characters", "visible_lines", "visible_width", "allow_newlines"]
+reason = "Bevy 0.19.1 bevy_text::EditableText::new defines the renamed text prefix followed by editable-text field inputs"
+
+[bevy.constructor_functions."pybevy.ui.PyColorStop"]
+function = "new"
+field_inputs = ["hint"]
+reason = "Bevy 0.19.1 bevy_ui::ColorStop::new defines color and point followed by the hint field input"
+
+[bevy.constructor_functions."pybevy.ui.PyAngularColorStop"]
+function = "new"
+field_inputs = ["hint"]
+reason = "Bevy 0.19.1 bevy_ui::AngularColorStop::new defines color and angle followed by the hint field input"
+
+[bevy.constructor_functions."pybevy.audio.PySpatialListener"]
+function = "new"
+field_inputs = ["left_ear_offset", "right_ear_offset"]
+reason = "Bevy 0.19.1 bevy_audio::SpatialListener::new defines the gap prefix followed by the ear-offset field inputs"
+
+[bevy.constructor_tuples]
+"pybevy.a11y.PyAccessibilityNode" = "Bevy 0.19.1 bevy_a11y::AccessibilityNode is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.animation.PyAnimatedBy" = "Bevy 0.19.1 bevy_animation::AnimatedBy is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.animation.PyAnimationGraphHandle" = "Bevy 0.19.1 bevy_animation::AnimationGraphHandle is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.animation.PyAnimationTargetId" = "Bevy 0.19.1 bevy_animation::AnimationTargetId is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.audio.PyDefaultSpatialScale" = "Bevy 0.19.1 bevy_audio::DefaultSpatialScale is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.camera.PyCamera3dDepthTextureUsage" = "Bevy 0.19.1 bevy_camera::Camera3dDepthTextureUsage is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.camera.PyCameraMainTextureUsages" = "Bevy 0.19.1 bevy_camera::CameraMainTextureUsages is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.camera.PyClearColor" = "Bevy 0.19.1 bevy_camera::ClearColor is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.camera.PyFrustum" = "Bevy 0.19.1 bevy_camera::Frustum is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.camera.PyMainPassResolutionOverride" = "Bevy 0.19.1 bevy_camera::MainPassResolutionOverride is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.camera.PyManualTextureViewHandle" = "Bevy 0.19.1 bevy_camera::ManualTextureViewHandle is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.ecs.PyChildOf" = "Bevy 0.19.1 bevy_ecs::hierarchy::ChildOf is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.ecs.PyLocal" = "Bevy 0.19.1 bevy_ecs::Local is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.gltf.PyGltfMaterialName" = "Bevy 0.19.1 bevy_gltf::GltfMaterialName is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.gltf.PyGltfMeshName" = "Bevy 0.19.1 bevy_gltf::GltfMeshName is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.input.PyPanGesture" = "Bevy 0.19.1 bevy_input::PanGesture is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.input.PyPinchGesture" = "Bevy 0.19.1 bevy_input::PinchGesture is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.input.PyRotationGesture" = "Bevy 0.19.1 bevy_input::RotationGesture is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.math.PyFloatOrd" = "Bevy 0.19.1 bevy_math::FloatOrd is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.mesh.PyMesh2d" = "Bevy 0.19.1 bevy_mesh::Mesh2d is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.mesh.PyMesh3d" = "Bevy 0.19.1 bevy_mesh::Mesh3d is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.mesh.PyMeshMaterial2d" = "Bevy 0.19.1 bevy_sprite_render::MeshMaterial2d is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.mesh.PyMeshMaterial3d" = "Bevy 0.19.1 bevy_pbr::MeshMaterial3d is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.mesh.PyMeshTag" = "Bevy 0.19.1 bevy_mesh::MeshTag is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.mesh.PySkinnedMeshInverseBindposes" = "Bevy 0.19.1 bevy_mesh::SkinnedMeshInverseBindposes is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.pbr.PyDefaultOpaqueRendererMethod" = "Bevy 0.19.1 bevy_pbr::DefaultOpaqueRendererMethod is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.pbr.PyMesh3dWireframe" = "Bevy 0.19.1 bevy_pbr::wireframe::Mesh3dWireframe is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.pbr.PyMeshMaterial3dForwardDecal" = "Bevy 0.19.1 bevy_pbr::MeshMaterial3d is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.pbr.PyMeshMaterial3dShader" = "Bevy 0.19.1 bevy_pbr::MeshMaterial3d is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.render.PyMipBias" = "Bevy 0.19.1 bevy_render::MipBias is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.sprite.PyAnchor" = "Bevy 0.19.1 bevy_sprite::Anchor is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.text.PyFontWeight" = "Bevy 0.19.1 bevy_text::FontWeight is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.text.PyFontWidth" = "Bevy 0.19.1 bevy_text::FontWidth is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.text.PyStrikethroughColor" = "Bevy 0.19.1 bevy_text::StrikethroughColor is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.text.PyTextBackgroundColor" = "Bevy 0.19.1 bevy_text::TextBackgroundColor is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.text.PyTextColor" = "Bevy 0.19.1 bevy_text::TextColor is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.text.PyUnderlineColor" = "Bevy 0.19.1 bevy_text::UnderlineColor is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.ui.PyBackgroundColor" = "Bevy 0.19.1 bevy_ui::BackgroundColor is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.ui.PyBackgroundGradient" = "Bevy 0.19.1 bevy_ui::BackgroundGradient is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.ui.PyBorderGradient" = "Bevy 0.19.1 bevy_ui::BorderGradient is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.ui.PyGlobalZIndex" = "Bevy 0.19.1 bevy_ui::GlobalZIndex is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.ui.PyIgnoreScroll" = "Bevy 0.19.1 bevy_ui::IgnoreScroll is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.ui.PyScrollPosition" = "Bevy 0.19.1 bevy_ui::ScrollPosition is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.ui.PyUiScale" = "Bevy 0.19.1 bevy_ui::UiScale is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.ui.PyUiTargetCamera" = "Bevy 0.19.1 bevy_ui::UiTargetCamera is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.ui.PyZIndex" = "Bevy 0.19.1 bevy_ui::ZIndex is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.world_serialization.PyDynamicWorldRoot" = "Bevy 0.19.1 bevy_world_serialization::DynamicWorldRoot is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.world_serialization.PyWorldAssetRoot" = "Bevy 0.19.1 bevy_world_serialization::WorldAssetRoot is a tuple struct/newtype; Python construction preserves its positional payload contract"
+
+[bevy.constructor_adapters]
+"pybevy.math.PyDir2" = "PyBevy flattens the Vec2 accepted by Bevy Dir2::new into x and y inputs"
+"pybevy.math.PyDir3" = "PyBevy flattens the Vec3 accepted by Bevy Dir3::new into x, y, and z inputs"
+"pybevy.math.PyMat3" = "PyBevy flattens the array accepted by glam Mat3::from_cols_array into nine matrix entries"
+"pybevy.math.PyMat3A" = "PyBevy flattens the array accepted by glam Mat3A::from_cols_array into nine matrix entries"
+"pybevy.math.PyMat4" = "PyBevy flattens the array accepted by glam Mat4::from_cols_array into sixteen matrix entries"
+"pybevy.ui.PyBorderRadius" = "PyBevy combines a uniform radius convenience input with optional per-corner overrides"
+"pybevy.ui.PyBoxShadow" = "PyBevy constructs the BoxShadow collection from ShadowStyle values rather than mirroring the single-shadow native factory"
 
 # Method exclusions - methods that shouldn't be compared
 [bevy.excluded_methods]
@@ -1592,7 +2264,7 @@ notes = "Normal is normalized Dir2 - use constructor to change"
 
 # Transform: PyBevy-specific numpy integration
 [bevy.type_ignores.Transform]
-intentional_extra_methods = ["from_numpy"]
+intentional_extra_methods = ["batch"]
 notes = "PyBevy-specific numpy batch creation for performance"
 
 
@@ -1682,7 +2354,7 @@ notes = "Takes PyUVec2 instead of MainPassResolutionOverride for simplicity"
 
 # Visibility: Python helper methods
 [bevy.type_ignores.Visibility]
-intentional_extra_methods = ["from_numpy"]
+intentional_extra_methods = ["batch"]
 notes = "Python-friendly accessors and numpy integration"
 
 # VisibilityClass: Python helper methods
@@ -2067,7 +2739,7 @@ reason = "internal render-readback plugin used by decorators, not part of the pu
 [[validation.exceptions]]
 code = "E001"
 path = "ecs.CustomComponentBatch"
-reason = "runtime batch transport created by Component.from_numpy rather than user-facing API"
+reason = "runtime batch transport created by Component.batch rather than user-facing API"
 
 [[validation.exceptions]]
 code = "E001"
@@ -2087,7 +2759,7 @@ reason = "runtime subscription helper represented by the public PEP 695 ResMut t
 [[validation.exceptions]]
 code = "E001"
 path = "camera.VisibilityBatch"
-reason = "generated from_numpy batch transport returned through the public Visibility facade"
+reason = "generated batch batch transport returned through the public Visibility facade"
 
 [[validation.exceptions]]
 code = "E001"
@@ -2102,7 +2774,7 @@ reason = "runtime constructor deliberately raises TypeError; named safe construc
 [[validation.exceptions]]
 code = "E001"
 path = "core.RustComponentBatch"
-reason = "macro-generated native batch transport returned through component from_numpy factories"
+reason = "macro-generated native batch transport returned through component batch factories"
 
 [[validation.exceptions]]
 code = "E001"
@@ -2154,3 +2826,163 @@ code = "E006"
 path = "array.Array"
 reason = "the dtype class is deliberately named lowercase to mirror numpy, so the PyDType wrapper name never matches"
 
+[[validation.exceptions]]
+code = "E013"
+path = "animation.AnimationEvent"
+reason = "pybevy-animation Python-defined type; no upstream Bevy constructor"
+
+[[validation.exceptions]]
+code = "E013"
+path = "animation.AnimationEventData"
+reason = "pybevy-animation Python-defined type; no upstream Bevy constructor"
+
+[[validation.exceptions]]
+code = "E013"
+path = "app.ChainedSystemSets"
+reason = "Python variadic composition of SystemSet objects; there is no native ChainedSystemSets constructor"
+
+
+[[validation.exceptions]]
+code = "E013"
+path = "app.DefaultPlugins"
+reason = "pybevy-app Python composition type over raw Bevy plugin machinery; approved internal classification"
+
+[[validation.exceptions]]
+code = "E013"
+path = "app.MinimalPlugins"
+reason = "pybevy-app Python composition type over raw Bevy plugin machinery; approved internal classification"
+
+[[validation.exceptions]]
+code = "E013"
+path = "array.dtype"
+reason = "numpy dtype adapter accepting a spec object; no native counterpart"
+
+[[validation.exceptions]]
+code = "E013"
+path = "camera.VisibilityBatch"
+reason = "computed batch wrapper over visibility bits; pybevy-defined"
+
+[[validation.exceptions]]
+code = "E013"
+path = "control.ApiIndex"
+reason = "MCP control-plane index built from the repo tree; no native constructor"
+
+
+
+
+
+[[validation.exceptions]]
+code = "E013"
+path = "ecs.ConditionalSystem"
+reason = "pybevy-ecs ConditionalSystem; no upstream Bevy declaration for this constructor"
+
+[[validation.exceptions]]
+code = "E013"
+path = "ecs.CustomComponentBatch"
+reason = "pybevy-ecs CustomComponentBatch; no upstream Bevy declaration for this constructor"
+
+[[validation.exceptions]]
+code = "E013"
+path = "ecs.DespawnOnEnter"
+reason = "Python-state adapter storing a validated Python enum member, not a concrete native DespawnOnEnter<S> payload"
+
+[[validation.exceptions]]
+code = "E013"
+path = "ecs.DespawnOnExit"
+reason = "Python-state adapter storing a validated Python enum member, not a concrete native DespawnOnExit<S> payload"
+
+
+[[validation.exceptions]]
+code = "E013"
+path = "ecs.NextState"
+reason = "Python-state resource adapter; its public initializer deliberately rejects construction, while the registry creates the resource internally"
+
+[[validation.exceptions]]
+code = "E013"
+path = "ecs.State"
+reason = "Python-state resource adapter storing a validated Python enum member behind a mutex, not a concrete native State<S>"
+
+[[validation.exceptions]]
+code = "E013"
+path = "ecs.SystemConfig"
+reason = "pybevy-ecs SystemConfig; no upstream Bevy declaration for this constructor"
+
+[[validation.exceptions]]
+code = "E013"
+path = "pbr.ShaderMaterial"
+reason = "pybevy-pbr material surface; no upstream Bevy declaration for this constructor"
+
+
+[[validation.exceptions]]
+code = "E014"
+path = "math.InfinitePlane3d"
+reason = "approved FIELD record: keyword-only normal target per audit (upstream new shares the single field)"
+
+# W013: legacy value enums written before the pyenum convention. Each is
+# migrated to #[pyenum(T)] in follow-ups tracked by ISSUE-012; remove the
+# entry when its migration lands.
+
+[[validation.exceptions]]
+code = "W013"
+path = "app.Stage"
+reason = "legacy plain value enum predating the pyenum convention; migration tracked by ISSUE-012"
+
+[[validation.exceptions]]
+code = "W013"
+path = "app.RunMode"
+reason = "legacy plain value enum predating the pyenum convention; migration tracked by ISSUE-012"
+
+[[validation.exceptions]]
+code = "W013"
+path = "winit.UpdateMode"
+reason = "legacy plain value enum predating the pyenum convention; migration tracked by ISSUE-012"
+
+[[validation.exceptions]]
+code = "W013"
+path = "text.FontSource"
+reason = "legacy plain value enum predating the pyenum convention; migration tracked by ISSUE-012"
+
+[[validation.exceptions]]
+code = "W013"
+path = "text.FontSize"
+reason = "legacy plain value enum predating the pyenum convention; migration tracked by ISSUE-012"
+
+[[validation.exceptions]]
+code = "W013"
+path = "mesh.SphereKind"
+reason = "legacy plain value enum; migration in progress on refactor/mesh-pyenum-sphere-kind, tracked by ISSUE-012"
+
+[[validation.exceptions]]
+code = "W013"
+path = "input.GamepadInput"
+reason = "legacy plain value enum predating the pyenum convention; migration tracked by ISSUE-012"
+
+[[validation.exceptions]]
+code = "W013"
+path = "a11y.Role"
+reason = "legacy plain value enum predating the pyenum convention; migration tracked by ISSUE-012"
+
+[[validation.exceptions]]
+code = "W013"
+path = "audio.Volume"
+reason = "legacy plain value enum; migration in progress on refactor/audio-pyenum-volume, tracked by ISSUE-012"
+
+[[validation.exceptions]]
+code = "W013"
+path = "math.EulerRot"
+reason = "legacy plain value enum; migration in progress on refactor/math-pyenum-enums, tracked by ISSUE-012"
+
+[[validation.exceptions]]
+code = "W013"
+path = "shader.ShaderImport"
+reason = "legacy plain value enum predating the pyenum convention; migration tracked by ISSUE-012"
+
+[[validation.exceptions]]
+code = "W013"
+path = "shader.ShaderDefVal"
+reason = "legacy plain value enum predating the pyenum convention; migration tracked by ISSUE-012"
+
+[[validation.exceptions]]
+code = "W013"
+path = "render.TextureFormat"
+reason = "legacy plain value enum predating the pyenum convention; migration tracked by ISSUE-012"

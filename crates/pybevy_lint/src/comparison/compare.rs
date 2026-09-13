@@ -1797,17 +1797,15 @@ fn normalize_bevy_type(ty: &str) -> String {
                 format!("list[{}]", normalize_bevy_type(inner))
             }
             // Handle glam types
-            else if ty.contains("Vec3A") || ty == "Vec3A" {
+            else if ty.contains("Vec3") {
                 "Vec3".to_string()
-            } else if ty.contains("Vec3") || ty == "Vec3" {
-                "Vec3".to_string()
-            } else if ty.contains("Vec2") || ty == "Vec2" {
+            } else if ty.contains("Vec2") {
                 "Vec2".to_string()
-            } else if ty.contains("Quat") || ty == "Quat" {
+            } else if ty.contains("Quat") {
                 "Quat".to_string()
-            } else if ty.contains("Mat4") || ty == "Mat4" {
+            } else if ty.contains("Mat4") {
                 "Mat4".to_string()
-            } else if ty.contains("Mat3") || ty == "Mat3" {
+            } else if ty.contains("Mat3") {
                 "Mat3".to_string()
             }
             // Strip generic parameters for basic comparison

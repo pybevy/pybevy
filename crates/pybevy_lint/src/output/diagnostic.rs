@@ -28,12 +28,20 @@ pub enum DiagnosticCode {
     E007,
     /// E008: Constructor signature mismatch
     E008,
-    /// E009: from_numpy stub fields don't match bridge view_fields
+    /// E009: batch stub fields don't match bridge view_fields
     E009,
     /// E010: configured validation exception no longer matches a diagnostic
     E010,
     /// E012: configured entry no longer matches any upstream Bevy or PyBevy item
     E012,
+    /// E013: in-scope constructor has no resolved audited origin/pinned source
+    E013,
+    /// E014: constructor parameter roles violate the origin's calling policy
+    E014,
+    /// E015: convenience default precedes a required native constructor input
+    E015,
+    /// E016: explicitly non-constructible wrapper regained a public initializer
+    E016,
 
     // Warnings (W-codes)
     /// W001: Complex type should return Py<T>
@@ -60,6 +68,8 @@ pub enum DiagnosticCode {
     W012,
     /// W011: bevy -> Python conversion substitutes a value for unmapped variants
     W011,
+    /// W013: value enum declared as plain pyclass instead of #[pyenum]
+    W013,
 
     // Test coverage info (T-codes)
     /// T001: Class has no test coverage
@@ -84,6 +94,10 @@ impl DiagnosticCode {
             DiagnosticCode::E009 => "E009",
             DiagnosticCode::E010 => "E010",
             DiagnosticCode::E012 => "E012",
+            DiagnosticCode::E013 => "E013",
+            DiagnosticCode::E014 => "E014",
+            DiagnosticCode::E015 => "E015",
+            DiagnosticCode::E016 => "E016",
             DiagnosticCode::W001 => "W001",
             DiagnosticCode::W002 => "W002",
             DiagnosticCode::W003 => "W003",
@@ -96,6 +110,7 @@ impl DiagnosticCode {
             DiagnosticCode::W010 => "W010",
             DiagnosticCode::W011 => "W011",
             DiagnosticCode::W012 => "W012",
+            DiagnosticCode::W013 => "W013",
             DiagnosticCode::T001 => "T001",
             DiagnosticCode::T002 => "T002",
             DiagnosticCode::T003 => "T003",
@@ -115,6 +130,10 @@ impl DiagnosticCode {
             | DiagnosticCode::E009
             | DiagnosticCode::E010 => DiagnosticSeverity::Error,
             DiagnosticCode::E012 => DiagnosticSeverity::Error,
+            DiagnosticCode::E013
+            | DiagnosticCode::E014
+            | DiagnosticCode::E015
+            | DiagnosticCode::E016 => DiagnosticSeverity::Error,
 
             DiagnosticCode::W001
             | DiagnosticCode::W002
@@ -127,7 +146,8 @@ impl DiagnosticCode {
             | DiagnosticCode::W009
             | DiagnosticCode::W010
             | DiagnosticCode::W011
-            | DiagnosticCode::W012 => DiagnosticSeverity::Warning,
+            | DiagnosticCode::W012
+            | DiagnosticCode::W013 => DiagnosticSeverity::Warning,
 
             DiagnosticCode::T001 | DiagnosticCode::T002 | DiagnosticCode::T003 => {
                 DiagnosticSeverity::Info
@@ -145,9 +165,17 @@ impl DiagnosticCode {
             DiagnosticCode::E006 => "return type incompatible",
             DiagnosticCode::E007 => "missing property in Python stub",
             DiagnosticCode::E008 => "constructor signature mismatch",
-            DiagnosticCode::E009 => "from_numpy stub fields don't match bridge view_fields",
+            DiagnosticCode::E009 => "batch stub fields don't match bridge view_fields",
             DiagnosticCode::E010 => "stale or invalid validation exception",
             DiagnosticCode::E012 => "stale linter configuration entry",
+            DiagnosticCode::E013 => "constructor has no resolved audited origin",
+            DiagnosticCode::E014 => {
+                "constructor parameter roles violate the origin's calling policy"
+            }
+            DiagnosticCode::E015 => {
+                "convenience default precedes a required native constructor input"
+            }
+            DiagnosticCode::E016 => "non-constructible wrapper regained a public initializer",
             DiagnosticCode::W001 => "complex type should return Py<T>",
             DiagnosticCode::W002 => "getter using &mut self instead of &self",
             DiagnosticCode::W003 => "setter missing set_ prefix",
@@ -165,6 +193,7 @@ impl DiagnosticCode {
                 "builder returning Self takes a mutable receiver (mutates the caller's value)"
             }
             DiagnosticCode::W011 => "conversion substitutes a value for unmapped bevy variants",
+            DiagnosticCode::W013 => "value enum uses plain pyclass instead of pyenum",
             DiagnosticCode::W012 => "excluded Bevy type is implemented in PyBevy",
             DiagnosticCode::T001 => "class has no test coverage",
             DiagnosticCode::T002 => "constructor not tested",

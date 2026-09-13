@@ -1,6 +1,6 @@
 pub mod cache;
 mod parser;
-mod types;
+pub mod types;
 
 pub use parser::{
     merge_reexported_types, merge_source_types, parse_bevy_crate, parse_bevy_crates,

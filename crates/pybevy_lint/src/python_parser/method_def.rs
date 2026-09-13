@@ -59,14 +59,19 @@ pub fn parse_function_def(
         has_kwargs,
         result_classification: Default::default(),
         result_derived_from_self: false,
+        origin: Default::default(),
     })
 }
 
-/// Parse function parameters and detect *args/**kwargs
+/// Parse function parameters and detect *args/**kwargs.
+/// Tracks `/` and bare `*` separators so each parameter's Python calling
+/// convention (positional-only, positional-or-keyword, keyword-only) is
+/// recovered from the stub text, not assumed.
 fn parse_parameters_with_varargs(node: &Node, source: &str) -> (Vec<ParameterDef>, bool, bool) {
     let mut params = Vec::new();
     let mut has_varargs = false;
     let mut has_kwargs = false;
+    let mut after_star = false;
     let mut cursor = node.walk();
 
     for child in node.children(&mut cursor) {
@@ -75,33 +80,48 @@ fn parse_parameters_with_varargs(node: &Node, source: &str) -> (Vec<ParameterDef
             "identifier" => {
                 // Simple parameter without type annotation (e.g., "self")
                 let name = node_text(&child, source).to_string();
+                let param_kind = if after_star {
+                    ParameterKind::KeywordOnly
+                } else {
+                    ParameterKind::PositionalOrKeyword
+                };
                 params.push(ParameterDef {
                     name,
                     param_type: None,
                     default_value: None,
                     is_optional: false,
-                    kind: ParameterKind::PositionalOrKeyword,
+                    kind: param_kind,
                 });
             }
             "typed_parameter" => {
-                if let Some((param, is_var, is_kw)) = parse_typed_parameter(&child, source) {
+                if let Some((mut param, is_var, is_kw)) = parse_typed_parameter(&child, source) {
                     // Typed varargs (*args: T) or kwargs (**kwargs: T) detected
                     if is_var {
                         has_varargs = true;
+                        after_star = true;
                     } else if is_kw {
                         has_kwargs = true;
                     } else {
+                        if after_star {
+                            param.kind = ParameterKind::KeywordOnly;
+                        }
                         params.push(param);
                     }
                 }
             }
             "default_parameter" => {
-                if let Some(param) = parse_default_parameter(&child, source) {
+                if let Some(mut param) = parse_default_parameter(&child, source) {
+                    if after_star {
+                        param.kind = ParameterKind::KeywordOnly;
+                    }
                     params.push(param);
                 }
             }
             "typed_default_parameter" => {
-                if let Some(param) = parse_typed_default_parameter(&child, source) {
+                if let Some(mut param) = parse_typed_default_parameter(&child, source) {
+                    if after_star {
+                        param.kind = ParameterKind::KeywordOnly;
+                    }
                     params.push(param);
                 }
             }
@@ -113,10 +133,20 @@ fn parse_parameters_with_varargs(node: &Node, source: &str) -> (Vec<ParameterDef
                 // **kwargs pattern
                 has_kwargs = true;
             }
-            "(" | ")" | "," | "*" | "**" => {}
-            _ => {
-                // Debug: print unhandled node types
+            "positional_separator" => {
+                // Positional-only marker: every preceding parameter is
+                // positional-only to Python callers.
+                for param in params.iter_mut() {
+                    if !matches!(param.kind, ParameterKind::KeywordOnly) {
+                        param.kind = ParameterKind::PositionalOnly;
+                    }
+                }
             }
+            "keyword_separator" => {
+                // Bare keyword-only marker.
+                after_star = true;
+            }
+            _ => {}
         }
     }
 

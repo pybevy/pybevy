@@ -56,6 +56,66 @@ pub struct CrateCoverage {
     pub missing_count: usize,
 }
 
+/// Counts summed over a crate's implemented types.
+///
+/// Unimplemented types contribute nothing: their members are not a gap in a
+/// wrapper that exists, and folding them in would drown the numbers that
+/// describe the wrappers PyBevy actually ships.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ImplementedTotals {
+    pub matched_methods: usize,
+    pub bevy_methods: usize,
+    pub signature_mismatches: usize,
+    pub extra_methods: usize,
+    pub matched_fields: usize,
+    pub bevy_fields: usize,
+    pub matched_variants: usize,
+    pub bevy_variants: usize,
+    pub extra_variants: usize,
+}
+
+impl ImplementedTotals {
+    pub fn missing_fields(&self) -> usize {
+        self.bevy_fields - self.matched_fields
+    }
+
+    pub fn missing_variants(&self) -> usize {
+        self.bevy_variants - self.matched_variants
+    }
+
+    pub fn method_percent(&self) -> f64 {
+        if self.bevy_methods == 0 {
+            return 100.0;
+        }
+        (self.matched_methods as f64 / self.bevy_methods as f64) * 100.0
+    }
+}
+
+impl CrateCoverage {
+    /// Sum member counts across the types PyBevy implements.
+    pub fn implemented_totals(&self) -> ImplementedTotals {
+        self.types
+            .iter()
+            .filter(|type_coverage| type_coverage.is_implemented)
+            .fold(ImplementedTotals::default(), |mut totals, type_coverage| {
+                totals.matched_methods += type_coverage.matched_method_count;
+                totals.bevy_methods += type_coverage.bevy_method_count;
+                totals.signature_mismatches += type_coverage
+                    .methods
+                    .iter()
+                    .filter(|method| method.is_implemented && !method.signature_matches)
+                    .count();
+                totals.extra_methods += type_coverage.extra_method_count;
+                totals.matched_fields += type_coverage.matched_field_count;
+                totals.bevy_fields += type_coverage.bevy_field_count;
+                totals.matched_variants += type_coverage.matched_variant_count;
+                totals.bevy_variants += type_coverage.bevy_variant_count;
+                totals.extra_variants += type_coverage.extra_variant_count;
+                totals
+            })
+    }
+}
+
 /// Coverage information for a single type
 #[derive(Debug)]
 pub struct TypeCoverage {
