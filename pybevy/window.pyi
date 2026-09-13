@@ -74,8 +74,9 @@ class WindowPlugin(Plugin):
     """
     def __init__(
         self,
+        *,
         primary_window: Window | None = None,
-        exit_condition: ExitCondition | None = None,
+        exit_condition: ExitCondition | None = None
     ) -> None: ...
     def build(self, app: App) -> None: ...
 
@@ -97,7 +98,8 @@ class WindowResolution:
         self,
         physical_width: int = 1280,
         physical_height: int = 720,
-        scale_factor_override: float | None = None,
+        *,
+        scale_factor_override: float | None = None
     ) -> None:
         """Create a new window resolution from a size in physical pixels."""
 
@@ -259,13 +261,14 @@ class Window(Component):
 
     def __init__(
         self,
+        *,
+        mode: WindowMode = WindowMode.Windowed(),
+        resolution: WindowResolution = WindowResolution(1280, 720),
         title: str = "PyBevy App",
-        resolution: WindowResolution | None = None,
-        decorations: bool = True,
         resizable: bool = True,
-        mode: WindowMode | None = None,
+        decorations: bool = True,
         transparent: bool = False,
-        window_level: WindowLevel | None = None,
+        window_level: WindowLevel = WindowLevel.Normal
     ) -> None:
         """Create a new window."""
 
@@ -656,6 +659,9 @@ class PrimaryWindow(Component):
     This component is automatically added to the window entity created by DefaultPlugins.
     Use With[PrimaryWindow] filter to query the main window.
 
+    It is only a marker, so spawn it together with a Window component, as
+    DefaultPlugins does for the primary window.
+
     Example:
         ```python
         from pybevy.window import Window, PrimaryWindow
@@ -731,9 +737,10 @@ class CursorOptions(Component):
 
     def __init__(
         self,
+        *,
         visible: bool = True,
         grab_mode: CursorGrabMode = CursorGrabMode.None_,
-        hit_test: bool = True,
+        hit_test: bool = True
     ) -> None:
         """Create new cursor options with default settings."""
 
@@ -942,10 +949,11 @@ class WindowResizeConstraints:
 
     def __init__(
         self,
+        *,
         min_width: float = 180.0,
         min_height: float = 120.0,
-        max_width: float = ...,  # f32::INFINITY
-        max_height: float = ...,  # f32::INFINITY
+        max_width: float = ...,
+        max_height: float = ...
     ) -> None:
         """Create window resize constraints."""
 
@@ -1122,9 +1130,10 @@ class EnabledButtons:
 
     def __init__(
         self,
+        *,
         minimize: bool = True,
         maximize: bool = True,
-        close: bool = True,
+        close: bool = True
     ) -> None:
         """Create enabled buttons configuration.
 
@@ -1190,9 +1199,10 @@ class VideoMode:
 
     def __init__(
         self,
+        *,
         physical_size: UVec2,
         bit_depth: int,
-        refresh_rate_millihertz: int,
+        refresh_rate_millihertz: int
     ) -> None:
         """Create a new video mode.
 
@@ -1309,27 +1319,24 @@ class Ime(Message):
         value: str
         cursor: tuple[int, int] | None
         def __init__(
-            self,
-            window: Entity,
-            value: str,
-            cursor: tuple[int, int] | None = None,
+            self, *, window: Entity, value: str, cursor: tuple[int, int] | None = None
         ) -> None: ...
 
     class Commit(Ime):
         __match_args__: ClassVar[tuple[Literal["window"], Literal["value"]]]
         window: Entity
         value: str
-        def __init__(self, window: Entity, value: str) -> None: ...
+        def __init__(self, *, window: Entity, value: str) -> None: ...
 
     class Enabled(Ime):
         __match_args__: ClassVar[tuple[Literal["window"]]]
         window: Entity
-        def __init__(self, window: Entity) -> None: ...
+        def __init__(self, *, window: Entity) -> None: ...
 
     class Disabled(Ime):
         __match_args__: ClassVar[tuple[Literal["window"]]]
         window: Entity
-        def __init__(self, window: Entity) -> None: ...
+        def __init__(self, *, window: Entity) -> None: ...
 
 
 class FileDragAndDrop(Message):
@@ -1363,18 +1370,18 @@ class FileDragAndDrop(Message):
         __match_args__: ClassVar[tuple[Literal["window"], Literal["path_buf"]]]
         window: Entity
         path_buf: str
-        def __init__(self, window: Entity, path_buf: str) -> None: ...
+        def __init__(self, *, window: Entity, path_buf: str) -> None: ...
 
     class HoveredFile(FileDragAndDrop):
         __match_args__: ClassVar[tuple[Literal["window"], Literal["path_buf"]]]
         window: Entity
         path_buf: str
-        def __init__(self, window: Entity, path_buf: str) -> None: ...
+        def __init__(self, *, window: Entity, path_buf: str) -> None: ...
 
     class HoveredFileCanceled(FileDragAndDrop):
         __match_args__: ClassVar[tuple[Literal["window"]]]
         window: Entity
-        def __init__(self, window: Entity) -> None: ...
+        def __init__(self, *, window: Entity) -> None: ...
 
     def __eq__(self, other: object) -> bool: ...
 
@@ -1395,7 +1402,7 @@ class CursorEntered(Message):
         ```
     """
 
-    def __init__(self, window: Entity) -> None:
+    def __init__(self, *, window: Entity) -> None:
         """Create a CursorEntered event."""
 
     @property
@@ -1419,7 +1426,7 @@ class CursorLeft(Message):
         ```
     """
 
-    def __init__(self, window: Entity) -> None:
+    def __init__(self, *, window: Entity) -> None:
         """Create a CursorLeft event."""
 
     @property
@@ -1443,7 +1450,11 @@ class CursorMoved(Message):
     """
 
     def __init__(
-        self, position: Vec2, window: Entity, delta: Vec2 | None = None
+        self,
+        *,
+        window: Entity,
+        position: Vec2,
+        delta: Vec2 | None = None
     ) -> None: ...
     @property
     def position(self) -> Vec2:
@@ -1473,7 +1484,7 @@ class WindowResized(Message):
         ```
     """
 
-    def __init__(self, width: float, height: float, window: Entity) -> None: ...
+    def __init__(self, *, window: Entity, width: float, height: float) -> None: ...
     @property
     def width(self) -> float:
         """Window width in pixels."""
@@ -1505,7 +1516,7 @@ class WindowFocused(Message):
         ```
     """
 
-    def __init__(self, focused: bool, window: Entity) -> None: ...
+    def __init__(self, *, window: Entity, focused: bool) -> None: ...
     @property
     def focused(self) -> bool:
         """Whether the window has focus."""
@@ -1531,7 +1542,7 @@ class WindowCloseRequested(Message):
         ```
     """
 
-    def __init__(self, window: Entity) -> None: ...
+    def __init__(self, *, window: Entity) -> None: ...
     @property
     def window(self) -> Entity:
         """Window entity that received the close request."""

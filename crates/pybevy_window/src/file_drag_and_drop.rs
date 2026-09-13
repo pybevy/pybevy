@@ -55,16 +55,19 @@ impl From<FileDragAndDropValue> for FileDragAndDrop {
 #[pyenum(FileDragAndDrop, message, mirror = FileDragAndDropValue)]
 #[pyclass(module = "pybevy.window", name = "FileDragAndDrop")]
 pub enum PyFileDragAndDrop {
+    #[pyo3(constructor = (*, window, path_buf))]
     DroppedFile {
         #[py_type(PyEntity)]
         window: Entity,
         path_buf: String,
     },
+    #[pyo3(constructor = (*, window, path_buf))]
     HoveredFile {
         #[py_type(PyEntity)]
         window: Entity,
         path_buf: String,
     },
+    #[pyo3(constructor = (*, window))]
     HoveredFileCanceled {
         #[py_type(PyEntity)]
         window: Entity,

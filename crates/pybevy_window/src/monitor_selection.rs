@@ -1,7 +1,9 @@
-use bevy::window::MonitorSelection;
+use bevy::{ecs::entity::Entity, window::MonitorSelection};
 use pybevy_core::PyEntity;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
+#[pyenum(MonitorSelection, empty_tuple, no_repr)]
 #[pyclass(
     name = "MonitorSelection",
     module = "pybevy.window",
@@ -13,32 +15,15 @@ use pyo3::prelude::*;
 pub enum PyMonitorSelection {
     Current(),
     Primary(),
-    Index { index: usize },
-    Entity { entity: PyEntity },
-}
-
-impl From<PyMonitorSelection> for MonitorSelection {
-    fn from(value: PyMonitorSelection) -> Self {
-        match value {
-            PyMonitorSelection::Current() => MonitorSelection::Current,
-            PyMonitorSelection::Primary() => MonitorSelection::Primary,
-            PyMonitorSelection::Index { index } => MonitorSelection::Index(index),
-            PyMonitorSelection::Entity { entity } => MonitorSelection::Entity(entity.0),
-        }
-    }
-}
-
-impl From<MonitorSelection> for PyMonitorSelection {
-    fn from(value: MonitorSelection) -> Self {
-        match value {
-            MonitorSelection::Current => PyMonitorSelection::Current(),
-            MonitorSelection::Primary => PyMonitorSelection::Primary(),
-            MonitorSelection::Index(index) => PyMonitorSelection::Index { index },
-            MonitorSelection::Entity(entity) => PyMonitorSelection::Entity {
-                entity: PyEntity(entity),
-            },
-        }
-    }
+    #[py_bevy(tuple)]
+    Index {
+        index: usize,
+    },
+    #[py_bevy(tuple)]
+    Entity {
+        #[py_type(PyEntity)]
+        entity: Entity,
+    },
 }
 
 #[pymethods]

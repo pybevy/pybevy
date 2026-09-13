@@ -26,8 +26,8 @@ impl From<&CursorMoved> for PyCursorMoved {
 #[pymethods]
 impl PyCursorMoved {
     #[new]
-    #[pyo3(signature = (position, window, delta=None))]
-    fn new(position: PyVec2, window: PyEntity, delta: Option<PyVec2>) -> PyClassInitializer<Self> {
+    #[pyo3(signature = (*, window, position, delta=None))]
+    fn new(window: PyEntity, position: PyVec2, delta: Option<PyVec2>) -> PyClassInitializer<Self> {
         (
             PyCursorMoved {
                 position,

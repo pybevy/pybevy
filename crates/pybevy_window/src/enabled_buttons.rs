@@ -44,7 +44,7 @@ impl TryFrom<&PyEnabledButtons> for EnabledButtons {
 #[pymethods]
 impl PyEnabledButtons {
     #[new]
-    #[pyo3(signature = (minimize = true, maximize = true, close = true))]
+    #[pyo3(signature = (*, minimize = true, maximize = true, close = true))]
     pub fn new(minimize: bool, maximize: bool, close: bool) -> Self {
         PyEnabledButtons::from_owned(EnabledButtons {
             minimize,

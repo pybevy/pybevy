@@ -14,7 +14,7 @@ pub struct PyCursorOptions {
 #[pymethods]
 impl PyCursorOptions {
     #[new]
-    #[pyo3(signature = (visible = true, grab_mode = PyCursorGrabMode::None, hit_test = true))]
+    #[pyo3(signature = (*, visible = true, grab_mode = PyCursorGrabMode::None, hit_test = true))]
     pub fn new(
         visible: bool,
         grab_mode: PyCursorGrabMode,

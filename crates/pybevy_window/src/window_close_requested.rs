@@ -21,6 +21,7 @@ impl From<&WindowCloseRequested> for PyWindowCloseRequested {
 #[pymethods]
 impl PyWindowCloseRequested {
     #[new]
+    #[pyo3(signature = (*, window))]
     fn new(window: PyEntity) -> PyClassInitializer<Self> {
         (PyWindowCloseRequested { window }, PyMessage).into()
     }

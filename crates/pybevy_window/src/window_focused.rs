@@ -23,7 +23,8 @@ impl From<&WindowFocused> for PyWindowFocused {
 #[pymethods]
 impl PyWindowFocused {
     #[new]
-    fn new(focused: bool, window: PyEntity) -> PyClassInitializer<Self> {
+    #[pyo3(signature = (*, window, focused))]
+    fn new(window: PyEntity, focused: bool) -> PyClassInitializer<Self> {
         (PyWindowFocused { focused, window }, PyMessage).into()
     }
 

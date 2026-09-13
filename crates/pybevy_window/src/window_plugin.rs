@@ -15,7 +15,7 @@ pub struct PyWindowPlugin {
 #[pymethods]
 impl PyWindowPlugin {
     #[new]
-    #[pyo3(signature = (primary_window = None, exit_condition = None))]
+    #[pyo3(signature = (*, primary_window = None, exit_condition = None))]
     pub fn new(
         primary_window: Option<PyRef<'_, PyWindow>>,
         exit_condition: Option<PyExitCondition>,
