@@ -27,10 +27,6 @@ use pyo3::{
     types::{PyTuple, PyType},
 };
 
-/// Persistent cursor storage shared between DynamicSystem and PyMessages.
-/// The Arc+Mutex allows frozen pyclass fields to hold mutable state.
-pub(crate) type CursorStorage = Arc<Mutex<Option<Box<dyn Any + Send + Sync>>>>;
-
 use super::message::{PyMessage, PyMessageId};
 use crate::{
     assets::asset_load_failed_event::{
@@ -41,6 +37,10 @@ use crate::{
         resource::PyResource,
     },
 };
+
+/// Persistent cursor storage shared between DynamicSystem and PyMessages.
+/// The Arc+Mutex allows frozen pyclass fields to hold mutable state.
+pub(crate) type CursorStorage = Arc<Mutex<Option<Box<dyn Any + Send + Sync>>>>;
 
 /// Narrow world access for message wrappers.
 ///
@@ -160,10 +160,6 @@ impl PyMessages {
                     Ok(Py::new(py, PyKeyboardInput::from_bevy(msg)?)?.into_any())
                 })
             }
-            MessageType::GamepadRumbleRequest => {
-                // Write-only message type, no reading support
-                Ok(Vec::new())
-            }
             MessageType::WindowEvent => {
                 use pybevy_window::window_event::PyWindowEvent;
                 self.iter_messages::<WindowEvent, _>(py, world, cursor_state, |msg, py| {
@@ -236,12 +232,6 @@ impl PyMessages {
                     Some(mut messages) => Ok(f(&mut Wrap(&mut *messages))),
                     None => Ok(f(&mut EmptyMessages)),
                 }
-            }
-            MessageType::GamepadRumbleRequest => {
-                // Write-only message type with no readable buffer.
-                Err(PyTypeError::new_err(
-                    "GamepadRumbleRequest is write-only and not accessible through MessageReader or MessageWriter",
-                ))
             }
             MessageType::WindowEvent => match world.get_resource_mut::<Messages<WindowEvent>>() {
                 Some(mut messages) => Ok(f(&mut Wrap(&mut *messages))),
@@ -431,7 +421,6 @@ impl PyMessages {
 pub enum MessageType {
     // Special handling required (no bridge)
     KeyboardInput,
-    GamepadRumbleRequest,
     WindowEvent,
     WorldInstanceReady,
     AssetEvent(*const pyo3::ffi::PyTypeObject),
@@ -464,7 +453,6 @@ impl PartialEq for MessageType {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (MessageType::KeyboardInput, MessageType::KeyboardInput) => true,
-            (MessageType::GamepadRumbleRequest, MessageType::GamepadRumbleRequest) => true,
             (MessageType::WindowEvent, MessageType::WindowEvent) => true,
             (MessageType::WorldInstanceReady, MessageType::WorldInstanceReady) => true,
             (MessageType::AssetEvent(a), MessageType::AssetEvent(b)) => std::ptr::eq(*a, *b),
@@ -482,7 +470,6 @@ impl Clone for MessageType {
     fn clone(&self) -> Self {
         match self {
             MessageType::KeyboardInput => MessageType::KeyboardInput,
-            MessageType::GamepadRumbleRequest => MessageType::GamepadRumbleRequest,
             MessageType::WindowEvent => MessageType::WindowEvent,
             MessageType::WorldInstanceReady => MessageType::WorldInstanceReady,
             MessageType::AssetEvent(ptr) => MessageType::AssetEvent(*ptr),
@@ -500,10 +487,6 @@ impl MessageType {
             Self::KeyboardInput => (
                 "native:KeyboardInput".to_string(),
                 "Message<KeyboardInput>".to_string(),
-            ),
-            Self::GamepadRumbleRequest => (
-                "native:GamepadRumbleRequest".to_string(),
-                "Message<GamepadRumbleRequest>".to_string(),
             ),
             Self::WindowEvent => (
                 "native:WindowEvent".to_string(),
@@ -562,13 +545,6 @@ impl MessageType {
             MessageType::KeyboardInput => {
                 Some(world.register_component::<Messages<KeyboardInput>>())
             }
-            MessageType::GamepadRumbleRequest => {
-                // PyBevy-only type with no `Messages` resource. Its reader yields
-                // nothing (iter_to_python returns empty) and its writer returns an
-                // error without touching the world (see message.rs / with_messages),
-                // so no world state is ever accessed and leaving it undeclared is sound.
-                None
-            }
             MessageType::WindowEvent => Some(world.register_component::<Messages<WindowEvent>>()),
             MessageType::WorldInstanceReady => {
                 Some(world.register_component::<Messages<WorldInstanceReadyMessage>>())
@@ -620,9 +596,7 @@ impl PyMessageType {
     }
 
     pub(crate) fn from_message_type(message: &Bound<'_, PyType>) -> PyResult<Self> {
-        use pybevy_input::{
-            gamepad_rumble_request::PyGamepadRumbleRequest, keyboard_input::PyKeyboardInput,
-        };
+        use pybevy_input::keyboard_input::PyKeyboardInput;
         use pybevy_window::window_event::PyWindowEvent;
         use pybevy_world_serialization::world_instance_ready::PyWorldInstanceReady;
         use pyo3::{PyTypeInfo, types::PyTypeMethods};
@@ -650,10 +624,6 @@ impl PyMessageType {
         // Special handling types that don't use #[pymessage] (need extra resources/special logic)
         if message.is(<PyKeyboardInput as PyTypeInfo>::type_object(py)) {
             return Ok(PyMessageType(MessageType::KeyboardInput));
-        }
-
-        if message.is(<PyGamepadRumbleRequest as PyTypeInfo>::type_object(py)) {
-            return Ok(PyMessageType(MessageType::GamepadRumbleRequest));
         }
 
         if message.is(<PyWindowEvent as PyTypeInfo>::type_object(py)) {

@@ -1,4 +1,8 @@
+#[cfg(feature = "mcp")]
+use bevy::ecs::{entity::Entity, world::World};
 pub use pybevy_macros::{PyComponent, pybevy_app, pyfield};
+#[cfg(feature = "mcp")]
+use pyo3::ffi::PyTypeObject;
 use pyo3::{prelude::*, types::IntoPyDict};
 
 pub mod prelude {
@@ -23,11 +27,7 @@ pub(crate) mod render;
 pub(crate) mod world_serialization;
 
 #[cfg(feature = "mcp")]
-fn remove_component_for_control(
-    world: &mut bevy::ecs::world::World,
-    entity: bevy::ecs::entity::Entity,
-    type_ptr: *const pyo3::ffi::PyTypeObject,
-) {
+fn remove_component_for_control(world: &mut World, entity: Entity, type_ptr: *const PyTypeObject) {
     let component =
         if pybevy_core::registry::global_registry::get_bridge_by_py_type(type_ptr).is_some() {
             ecs::component_type::PyComponentType::Dynamic(type_ptr)
@@ -38,10 +38,7 @@ fn remove_component_for_control(
 }
 
 #[cfg(feature = "mcp")]
-fn despawn_entity_for_control(
-    world: &mut bevy::ecs::world::World,
-    entity: bevy::ecs::entity::Entity,
-) {
+fn despawn_entity_for_control(world: &mut World, entity: Entity) {
     ecs::lifecycle_mutation::despawn_recursive(world, entity);
 }
 

@@ -1,4 +1,4 @@
-//! Interpreter-neutral row writer for custom `@component` `from_numpy` batches.
+//! Interpreter-neutral row writer for custom `@component` `batch` batches.
 //! The interpreter-free half of `src/ecs/custom_batch.rs`: given typed columns
 //! ([`ColumnData`]) and a [`ComponentLayout`], it materializes zero-initialized
 //! wrapper-sized byte rows with each field written at its `PrimitiveType`-keyed
@@ -107,7 +107,7 @@ pub fn field_column_for(field_type: PrimitiveType, data: &ColumnData) -> Option<
 /// Materialize `count` wrapper-sized, zero-initialized rows and write every
 /// provided `(field index into layout.fields, column)` pair at the field's
 /// `PrimitiveType`-keyed offset. Unspecified fields stay zero bytes (pyo3
-/// semantics: partial `from_numpy` leaves the rest of the wrapper zeroed).
+/// semantics: partial `batch` leaves the rest of the wrapper zeroed).
 pub fn build_wrapper_rows(
     layout: &ComponentLayout,
     columns: &[(usize, FieldColumn<'_>)],
@@ -125,9 +125,13 @@ pub fn build_wrapper_rows(
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
-    use crate::component_layout::{ComponentLayout, FieldInfo, PrimitiveType};
+    use crate::{
+        component_layout::{ComponentLayout, FieldInfo, PrimitiveType},
+        component_wrapper::WrapperSize,
+    };
 
     fn f32_le(bytes: &[u8]) -> f32 {
         f32::from_le_bytes(bytes.try_into().unwrap())
@@ -183,6 +187,76 @@ mod tests {
     }
 
     #[test]
+    fn write_all_remaining_scalar_lanes() {
+        let f32s = [1.5f32, -2.5];
+        let i32s = [-3i32, 4];
+        let u32s = [5u32, 6];
+        let u64s = [7u64, 8];
+
+        let mut buf = vec![0u8; 8];
+        FieldColumn::F32(&f32s).write_to_buffer(1, &mut buf, 0);
+        assert_eq!(f32_le(&buf[0..4]), -2.5);
+        FieldColumn::I32(&i32s).write_to_buffer(1, &mut buf, 4);
+        assert_eq!(i32::from_le_bytes(buf[4..8].try_into().unwrap()), 4);
+
+        let mut buf = vec![0u8; 16];
+        FieldColumn::U32(&u32s).write_to_buffer(1, &mut buf, 0);
+        assert_eq!(u32::from_le_bytes(buf[0..4].try_into().unwrap()), 6);
+        FieldColumn::U64(&u64s).write_to_buffer(1, &mut buf, 8);
+        assert_eq!(u64::from_le_bytes(buf[8..16].try_into().unwrap()), 8);
+    }
+
+    #[test]
+    fn write_vec2_lane() {
+        let vecs = [1.0f32, 2.0, 3.0, 4.0];
+        let mut buf = vec![0u8; 12];
+        FieldColumn::Vec2(&vecs).write_to_buffer(1, &mut buf, 4);
+        assert_eq!(f32_le(&buf[4..8]), 3.0);
+        assert_eq!(f32_le(&buf[8..12]), 4.0);
+    }
+
+    #[test]
+    fn column_dtype_covers_every_scalar_kind() {
+        assert_eq!(column_dtype_for(PrimitiveType::F32), (ColumnDType::F32, 1));
+        assert_eq!(column_dtype_for(PrimitiveType::F64), (ColumnDType::F64, 1));
+        assert_eq!(column_dtype_for(PrimitiveType::I32), (ColumnDType::I32, 1));
+        assert_eq!(column_dtype_for(PrimitiveType::U32), (ColumnDType::U32, 1));
+        assert_eq!(column_dtype_for(PrimitiveType::U64), (ColumnDType::U64, 1));
+    }
+
+    #[test]
+    fn field_column_views_every_matching_payload() {
+        assert!(matches!(
+            field_column_for(PrimitiveType::F32, &ColumnData::F32(vec![1.0])),
+            Some(FieldColumn::F32(_))
+        ));
+        assert!(matches!(
+            field_column_for(PrimitiveType::F64, &ColumnData::F64(vec![1.0])),
+            Some(FieldColumn::F64(_))
+        ));
+        assert!(matches!(
+            field_column_for(PrimitiveType::I32, &ColumnData::I32(vec![1])),
+            Some(FieldColumn::I32(_))
+        ));
+        assert!(matches!(
+            field_column_for(PrimitiveType::U32, &ColumnData::U32(vec![1])),
+            Some(FieldColumn::U32(_))
+        ));
+        assert!(matches!(
+            field_column_for(PrimitiveType::U64, &ColumnData::U64(vec![1])),
+            Some(FieldColumn::U64(_))
+        ));
+        assert!(matches!(
+            field_column_for(PrimitiveType::Bool, &ColumnData::Bool(vec![1])),
+            Some(FieldColumn::Bool(_))
+        ));
+        assert!(matches!(
+            field_column_for(PrimitiveType::Vec2, &ColumnData::F32(vec![1.0, 2.0])),
+            Some(FieldColumn::Vec2(_))
+        ));
+    }
+
+    #[test]
     fn build_rows_writes_offsets_and_zero_fills() {
         // Two fields: `a` (F64 at offset 0), `b` (I64 at offset 8); wrapper 16.
         let layout = ComponentLayout {
@@ -209,5 +283,106 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(f64::from_le_bytes(rows[1][0..8].try_into().unwrap()), 2.0);
         assert_eq!(i64::from_le_bytes(rows[1][8..16].try_into().unwrap()), 0);
+    }
+
+    #[test]
+    fn build_rows_writes_every_provided_field_without_clobbering() {
+        // Fields: `a` (F64 at 0), `b` (I64 at 8), `v` (Vec2 at 16); wrapper 32.
+        let layout = ComponentLayout {
+            py_type_ptr: std::ptr::null(),
+            name: "T".to_string(),
+            fields: vec![
+                FieldInfo {
+                    name: "a".into(),
+                    offset: 0,
+                    field_type: PrimitiveType::F64,
+                },
+                FieldInfo {
+                    name: "b".into(),
+                    offset: 8,
+                    field_type: PrimitiveType::I64,
+                },
+                FieldInfo {
+                    name: "v".into(),
+                    offset: 16,
+                    field_type: PrimitiveType::Vec2,
+                },
+            ],
+            data_size: 24,
+            wrapper_size: WrapperSize::W32,
+        };
+        let a = [1.5f64, -2.5];
+        let b = [7i64, -8];
+        let v = [1.0f32, 2.0, 3.0, 4.0];
+
+        let rows = build_wrapper_rows(
+            &layout,
+            &[
+                (0, FieldColumn::F64(&a)),
+                (1, FieldColumn::I64(&b)),
+                (2, FieldColumn::Vec2(&v)),
+            ],
+            2,
+        );
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            (
+                f64::from_le_bytes(rows[0][0..8].try_into().unwrap()),
+                i64::from_le_bytes(rows[0][8..16].try_into().unwrap()),
+                f32_le(&rows[0][16..20]),
+                f32_le(&rows[0][20..24])
+            ),
+            (1.5f64, 7i64, 1.0f32, 2.0)
+        );
+        assert_eq!(
+            (
+                f64::from_le_bytes(rows[1][0..8].try_into().unwrap()),
+                i64::from_le_bytes(rows[1][8..16].try_into().unwrap()),
+                f32_le(&rows[1][16..20]),
+                f32_le(&rows[1][20..24])
+            ),
+            (-2.5f64, -8i64, 3.0f32, 4.0)
+        );
+        assert_eq!(rows[0].len(), 32);
+        assert_eq!(&rows[0][24..], &[0u8; 8]);
+        assert_ne!(rows[0], rows[1]);
+    }
+
+    #[test]
+    fn build_rows_row_length_follows_the_wrapper_size() {
+        let make_layout = |wrapper_size: WrapperSize| ComponentLayout {
+            py_type_ptr: std::ptr::null(),
+            name: "T".to_string(),
+            fields: vec![FieldInfo {
+                name: "flag".into(),
+                offset: 0,
+                field_type: PrimitiveType::Bool,
+            }],
+            data_size: 1,
+            wrapper_size,
+        };
+        let flags = [1u8];
+
+        let small = build_wrapper_rows(
+            &make_layout(WrapperSize::W8),
+            &[(0, FieldColumn::Bool(&flags))],
+            1,
+        );
+        let large = build_wrapper_rows(
+            &make_layout(WrapperSize::W64),
+            &[(0, FieldColumn::Bool(&flags))],
+            1,
+        );
+
+        assert_eq!(small.len(), 1);
+        assert_eq!(large.len(), 1);
+        assert_eq!(small[0].len(), 8);
+        assert_eq!(large[0].len(), 64);
+        // Bool occupies exactly one byte; every padding byte stays zero.
+        assert_eq!(small[0][0], 1);
+        assert_eq!(&small[0][1..], &[0u8; 7]);
+        assert_eq!(large[0][0], 1);
+        assert_eq!(&large[0][1..], &[0u8; 63]);
     }
 }

@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{any::Any, fmt};
 
 use bevy::{
     app::{
@@ -11,6 +11,23 @@ use bevy::{
         world::World,
     },
 };
+
+/// Bevy panics rather than returning when a schedule's graph cannot be built.
+const SCHEDULE_BUILD_PANIC: &str = "Error when initializing schedule ";
+
+/// Recognize a Bevy schedule-build panic and return its message.
+///
+/// Classifying the payload needs no interpreter, so both backends share it and
+/// each adapter picks its own exception type for the message.
+#[must_use]
+pub fn schedule_build_message(payload: &(dyn Any + Send)) -> Option<String> {
+    let text = payload
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| payload.downcast_ref::<&'static str>().copied())?;
+    text.starts_with(SCHEDULE_BUILD_PANIC)
+        .then(|| text.to_string())
+}
 
 /// Interpreter-neutral boolean expression over backend-owned condition leaves.
 ///
@@ -68,10 +85,20 @@ pub enum DynamicSetKind {
 /// `__module__` and `__qualname__`. The label owns no interpreter object or raw
 /// type pointer, so recreating a class or function during hot reload produces
 /// the same scheduler identity.
-#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(SystemSet, Clone, PartialEq, Eq, Hash)]
 pub struct DynamicSetLabel {
     kind: DynamicSetKind,
     qualified_name: String,
+}
+
+/// Bevy prints set labels with `Debug` in scheduler diagnostics, so print the name.
+impl fmt::Debug for DynamicSetLabel {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.kind {
+            DynamicSetKind::Named => write!(formatter, "SystemSet(\"{}\")", self.qualified_name),
+            DynamicSetKind::Callable => formatter.write_str(&self.qualified_name),
+        }
+    }
 }
 
 impl DynamicSetLabel {
@@ -491,6 +518,40 @@ mod tests {
         assert_ne!(named, callable);
         assert_eq!(named.kind(), DynamicSetKind::Named);
         assert_eq!(named.qualified_name(), "game.Movement");
+    }
+
+    #[test]
+    fn schedule_build_message_matches_only_the_bevy_graph_panic() {
+        let owned: Box<dyn Any + Send> =
+            Box::new("Error when initializing schedule Update: cycle".to_string());
+        assert_eq!(
+            schedule_build_message(owned.as_ref()).as_deref(),
+            Some("Error when initializing schedule Update: cycle")
+        );
+
+        let borrowed: Box<dyn Any + Send> = Box::new("Error when initializing schedule Main");
+        assert_eq!(
+            schedule_build_message(borrowed.as_ref()).as_deref(),
+            Some("Error when initializing schedule Main")
+        );
+
+        let unrelated: Box<dyn Any + Send> = Box::new("Main not found".to_string());
+        assert_eq!(schedule_build_message(unrelated.as_ref()), None);
+
+        let not_a_string: Box<dyn Any + Send> = Box::new(7u32);
+        assert_eq!(schedule_build_message(not_a_string.as_ref()), None);
+    }
+
+    #[test]
+    fn dynamic_set_debug_prints_the_qualified_name() {
+        assert_eq!(
+            format!("{:?}", DynamicSetLabel::callable("game.advance")),
+            "game.advance"
+        );
+        assert_eq!(
+            format!("{:?}", DynamicSetLabel::named("game.Movement")),
+            "SystemSet(\"game.Movement\")"
+        );
     }
 
     #[test]

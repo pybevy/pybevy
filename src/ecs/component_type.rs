@@ -445,33 +445,38 @@ unsafe impl Sync for PyComponentType {}
 /// Drop function for custom Python objects (components and resources).
 ///
 /// This is called by Bevy when a component/resource is removed.
-/// It ensures that the Python reference count is properly decremented.
+///
+/// The decref must not run here: this drop runs inside Bevy's storage
+/// mutation, where `BlobArray::replace_unchecked` has already resolved the
+/// destination pointer it will copy the replacement into. A `__del__` that
+/// reenters the World could reallocate the same table between the drop and
+/// that copy. The value is moved into the deferred-drop queue instead, and a
+/// `MutationFlushGuard` boundary runs the decref once the mutation window
+/// closes.
 ///
 /// # Safety
 /// The pointer must point to a valid `Py<PyAny>` instance that was stored
 /// in the ECS.
 pub(crate) unsafe fn drop_py_object(ptr: OwningPtr<'_>) {
-    // SAFETY: The pointer is guaranteed to point to a valid Py<PyAny>
-    // that was stored in the ECS. drop_as will properly run the
-    // Drop implementation for Py<PyAny>, which decrements the Python
-    // reference count.
-    unsafe {
-        ptr.drop_as::<Py<PyAny>>();
-    }
+    // SAFETY: The pointer points to a valid Py<PyAny> stored in the ECS.
+    // `read` moves the value out, leaving the retired slot free for Bevy to
+    // overwrite with the replacement without a second drop.
+    crate::ecs::deferred_drop::defer_py_drop(unsafe { ptr.read::<Py<PyAny>>() });
 }
 
-/// Create the immutable descriptor used by custom Python components.
+/// Create the descriptor used by custom Python components.
 ///
-/// Custom components are stored as `Py<PyAny>` objects and mark changes through
-/// their Python proxy hooks rather than Bevy's mutable untyped access.
+/// The proxy hooks mark changes through mutable untyped access, so the
+/// descriptor must be mutable for `set_changed` to reach the component.
 pub(crate) fn create_python_object_descriptor(name: String) -> ComponentDescriptor {
+    // SAFETY: the descriptor layout and drop function both describe Py<PyAny>.
     unsafe {
         ComponentDescriptor::new_with_layout(
             name,
             StorageType::Table,
             Layout::new::<Py<PyAny>>(),
             Some(drop_py_object),
-            false,
+            true,
             ComponentCloneBehavior::Default,
             None,
         )

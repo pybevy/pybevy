@@ -6,7 +6,42 @@
 
 use std::fmt::{Debug, Display};
 
-pub use pybevy_storage::storage_error::enum_variant_changed;
+pub use pybevy_storage::{
+    conflict_message::{
+        CONFLICT_ASSETS, CONFLICT_ASSETS_SHARED_VIEW, CONFLICT_MESSAGES, CONFLICT_QUERIES,
+        CONFLICT_RESOURCE_QUERY, CONFLICT_RESOURCES, CONFLICT_WORLD, SystemAccessConflictMessage,
+    },
+    storage_error::{
+        EXPRESSION_MAX_DEPTH, NESTED_EXECUTION, enum_variant_changed, expression_too_deep,
+    },
+};
+
+pub fn mcp_scalar_object(type_name: &str) -> String {
+    format!("expected {type_name} value, got object")
+}
+
+pub const CONSTRUCTOR_ROTATION: &str =
+    "Rot2() requires finite cos and sin with cos*cos + sin*sin within 0.0002 of 1";
+
+pub fn constructor_partial_group(ty: &str, group: &[&str], missing: &[&str]) -> String {
+    format!(
+        "{ty}() requires ({}) together; missing: {}",
+        group.join(", "),
+        missing.join(", ")
+    )
+}
+
+pub fn constructor_argument_type(ty: &str, param: &str, expected: &str, got: &str) -> String {
+    format!("{ty}() argument '{param}' must be {expected}, not {got}")
+}
+
+pub fn constructor_form_conflict(ty: &str, given: &[&str], alternate: &[&str]) -> String {
+    format!(
+        "{ty}() cannot combine ({}) with ({})",
+        given.join(", "),
+        alternate.join(", ")
+    )
+}
 
 pub const ADD_SYSTEMS_SCHEDULE_TYPE: &str =
     "add_systems() schedule parameter must be Stage, OnEnter(), OnExit(), or OnTransition()";
@@ -57,8 +92,75 @@ pub const FREQUENCY_NON_POSITIVE: &str = "Frequency must be greater than zero";
 pub const FREQUENCY_OUT_OF_RANGE: &str =
     "Frequency produces a timestep outside the supported duration range";
 pub const SPEED_NON_FINITE: &str = "Speed must be finite";
+pub const RELATIVE_SPEED_NON_FINITE: &str = "Relative speed must be finite";
+pub const RELATIVE_SPEED_NEGATIVE: &str = "Relative speed cannot be negative";
+pub const RELATIVE_SPEED_OUT_OF_RANGE: &str =
+    "Relative speed produces a frame delta outside the supported duration range";
 pub const COLOR_INTERPOLATION_MISMATCH: &str =
     "cannot interpolate Color values from different color spaces";
+pub const BLOOM_MAX_MIP_DIMENSION_ZERO: &str = "Bloom.max_mip_dimension must be at least 1, got 0";
+
+pub fn viewport_conversion_failed(error: impl Display) -> String {
+    format!("Viewport conversion failed: {error}")
+}
+
+pub fn mesh_operation_failed(operation: impl Display, error: impl Display) -> String {
+    format!("Mesh.{operation}() failed: {error}")
+}
+
+pub fn shader_stage_invalid(stage: impl Display) -> String {
+    format!("Invalid shader stage: {stage}. Must be 'vertex', 'fragment', or 'compute'")
+}
+
+pub fn invalid_hex_color(error: impl Display) -> String {
+    format!("Invalid hex color: {error}")
+}
+
+pub fn gamepad_settings_failed(kind: impl Display, error: impl Display) -> String {
+    format!("failed to create {kind} gamepad settings: {error}")
+}
+
+pub fn plugin_not_a_plugin(plugin_name: &str, mro: &str) -> String {
+    format!(
+        "Expected a Plugin instance or type, but got '{plugin_name}'\n\
+         \n\
+         Inheritance chain: {mro}\n\
+         \n\
+         Possible causes:\n\
+         • The class does not inherit from Plugin (ensure 'class {plugin_name}(Plugin):')\n\
+         • Missing '@plugin' decorator (add @plugin above the class)\n\
+         • The Plugin class was not imported correctly (check 'from pybevy.app import Plugin')\n\
+         \n\
+         Example:\n\
+         from pybevy.app import Plugin\n\
+         from pybevy.decorators import plugin\n\
+         \n\
+         @plugin\n\
+         class MyPlugin(Plugin):\n\
+             def build(self, app):\n\
+                 pass"
+    )
+}
+
+pub fn plugin_build_error(plugin_name: &str, detail: impl Display) -> String {
+    format!("Failed to build plugin '{plugin_name}': {detail}")
+}
+
+pub fn plugin_missing_decorator(plugin_name: &str) -> String {
+    format!(
+        "Plugin class '{plugin_name}' must be decorated with @plugin decorator\n\
+         \n\
+         Add the @plugin decorator above your plugin class:\n\
+         \n\
+         from pybevy.app import Plugin\n\
+         from pybevy.decorators import plugin\n\
+         \n\
+         @plugin  # <- Add this!\n\
+         class {plugin_name}(Plugin):\n\
+             def build(self, app):\n\
+                 pass"
+    )
+}
 pub const EXPECTED_ASSET_ID_OR_HANDLE: &str = "expected an AssetId or Handle";
 pub const ASSET_BRIDGE_NOT_FOUND: &str = "Asset bridge not found for type";
 pub const ASSET_ACCESS_REGISTRY_MISSING: &str = "PyBevy asset access registry is missing from the World; initialize PyBevyPlugin before running Python systems";
@@ -95,6 +197,9 @@ pub const SHADER_DEFS_WITHOUT_NAMES: &str =
 
 pub const TIME_CONTEXT_TYPE_REQUIRED: &str =
     "Time[...] expects one of the Fixed, Real, or Virtual marker types";
+
+pub const TIMER_ELAPSED_PAST_DURATION: &str = "the remaining time is undefined while Timer elapsed is past the duration; \
+     call set_elapsed() with a value within the duration";
 
 pub fn too_many_shader_def_names(actual: usize) -> String {
     format!("shader_def_names accepts at most 32 entries; got {actual}")
@@ -530,7 +635,115 @@ pub fn unexpected_keyword_hint(callable: &str, keyword: &str, valid: &[&str]) ->
     ))
 }
 
+pub fn asset_type_mismatch(actual: impl Display, expected: impl Display) -> String {
+    format!("AssetType `{actual}` does not match expected type `{expected}`")
+}
+
+pub fn unsupported_texture_format(format: impl Display) -> String {
+    format!("Texture format `{format}` has no Python representation")
+}
+
+pub fn cubic_hermite_tangent_count(expected: usize, provided: usize) -> String {
+    format!("Incorrect number of tangents: expected {expected}, provided {provided}")
+}
+
+pub const EMPTY_POINT_CLOUD: &str = "point cloud must contain at least one point";
+pub const INFINITE_PLANE_POINTS: &str =
+    "infinite plane must be defined by three finite, non-collinear points";
+pub const INTEGER_VECTOR_OVERFLOW: &str = "integer vector arithmetic overflow";
+
+pub const COMPONENT_FLOAT_NON_FINITE: &str = "float must be finite";
+
+pub const ASSET_LOADING_TASK_POOL_MISSING: &str =
+    "AssetServer loading requires TaskPoolPlugin (IoTaskPool is not initialized)";
+pub fn bounding_shrink(kind: &str) -> String {
+    format!("{kind} shrink must preserve nonnegative extents")
+}
+
+pub const AABB3D_MIN_MAX: &str = "Aabb3d min must not exceed max on any axis";
+
+pub fn enum_variant_missing_field(variant: &str, field: &str) -> String {
+    format!("variant '{variant}' requires field '{field}'")
+}
+
+pub fn mesh_triangle_list_required(operation: &str, topology: impl Display) -> String {
+    format!("{operation} requires PrimitiveTopology.TriangleList (got {topology})")
+}
+
+pub fn mesh_indexed_required(operation: &str) -> String {
+    format!(
+        "{operation} requires indexed geometry; call insert_indices() first, or use compute_flat_normals() on non-indexed geometry"
+    )
+}
+
+pub fn mesh_index_out_of_range(operation: &str, index: usize, vertices: usize) -> String {
+    format!(
+        "{operation} found vertex index {index} but the mesh has only {vertices} vertices; check the array passed to insert_indices()"
+    )
+}
+
+pub fn mesh_degenerate_scale(operation: &str, scale: impl Display) -> String {
+    format!("{operation} requires a scale with at most one zero axis (got {scale})")
+}
+
+pub fn mesh_attribute_format(name: &str, expected: impl Display, given: impl Display) -> String {
+    format!("attribute {name} expects {expected} but the given data is {given}")
+}
+
+pub const NON_CONTIGUOUS_ATTRIBUTE_ARRAY: &str = "Attribute arrays must be C-contiguous in memory. The dtype and shape are fine; the layout is not. Pass numpy.ascontiguousarray(values).";
+
+pub fn bounding_half_size(kind: &str, axes: &[f32]) -> String {
+    let values = axes
+        .iter()
+        .map(f32::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{kind} half_size must be nonnegative, got ({values})")
+}
+
+pub fn bounding_radius(kind: &str, radius: f32) -> String {
+    format!("{kind} radius must be nonnegative, got {radius}")
+}
+
+pub fn bounding_operation(kind: &str, operation: &str) -> String {
+    format!("{kind} {operation} must preserve nonnegative extents")
+}
+
+pub const INTEGER_RECT_SIZE_NEGATIVE: &str = "IRect size must be non-negative";
+
+pub const INTEGER_RECT_HALF_SIZE_NEGATIVE: &str = "IRect half_size must be non-negative";
+
+pub fn unsigned_rect_origin(origin: [u32; 2], extent: [u32; 2], half_size: bool) -> String {
+    let requirement = if half_size { "half_size" } else { "(size / 2)" };
+    let operand = if half_size { "half_size" } else { "size" };
+    format!(
+        "Origin must always be greater than or equal to {requirement} otherwise the rectangle is undefined! Origin was [{}, {}] and {operand} was [{}, {}]",
+        origin[0], origin[1], extent[0], extent[1]
+    )
+}
+
+pub fn image_encoding_unsupported(format: impl Display, supported: &[String]) -> String {
+    if supported.is_empty() {
+        format!("{format} encoding is not supported; no image encoders are enabled")
+    } else {
+        format!(
+            "{format} encoding is not supported; use {}",
+            supported.join(", ")
+        )
+    }
+}
+
+pub const CASCADE_BOUNDS_EMPTY: &str = "bounds cannot be empty";
+
+pub const CASCADE_OVERLAP_RANGE: &str = "overlap_proportion must be in range [0.0, 1.0)";
+
+pub const CASCADE_MINIMUM_DISTANCE: &str = "minimum_distance must be non-negative";
+
+pub const CONTROL_SERIALIZATION_CYCLE: &str = "cyclic Python value";
+pub const CONTROL_SERIALIZATION_DEPTH: &str = "Python value exceeds the serialization depth limit";
+
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -730,6 +943,28 @@ mod tests {
     }
 
     #[test]
+    fn plugin_not_a_plugin_message_contains_class_name() {
+        let msg = plugin_not_a_plugin("MyClass", "MyClass -> object");
+        assert!(msg.contains("MyClass"));
+        assert!(msg.contains("Inheritance chain: MyClass -> object"));
+        assert!(msg.contains("class MyClass(Plugin):"));
+    }
+
+    #[test]
+    fn plugin_missing_decorator_message_contains_class_name() {
+        let msg = plugin_missing_decorator("AudioPlugin");
+        assert!(msg.contains("AudioPlugin"));
+        assert!(msg.contains("@plugin"));
+        assert!(msg.contains("class AudioPlugin(Plugin):"));
+    }
+
+    #[test]
+    fn plugin_error_messages_with_special_characters() {
+        let msg = plugin_not_a_plugin("My_Plugin_123", "base");
+        assert!(msg.contains("My_Plugin_123"));
+    }
+
+    #[test]
     fn stable_error_wording() {
         assert_eq!(
             invalid_asset_type("<class 'bool'>"),
@@ -737,12 +972,4 @@ mod tests {
         );
         assert_eq!(entity_does_not_exist(7), "Entity 7 does not exist");
     }
-}
-
-pub fn asset_type_mismatch(actual: impl Display, expected: impl Display) -> String {
-    format!("AssetType `{actual}` does not match expected type `{expected}`")
-}
-
-pub fn unsupported_texture_format(format: impl Display) -> String {
-    format!("Texture format `{format}` has no Python representation")
 }

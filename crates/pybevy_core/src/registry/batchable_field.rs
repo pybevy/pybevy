@@ -181,8 +181,18 @@ pub fn set_field_from_numpy<T: BatchableField>(field: &mut T, data: &[f32], inde
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn view_field_types_for_declared_view_field_channels() {
+        // These scalar channels are selected by existing component view fields.
+        assert_eq!(f32::VIEW_FIELD_TYPE, FieldType::F32);
+        assert_eq!(bool::VIEW_FIELD_TYPE, FieldType::Bool);
+        assert_eq!(u32::VIEW_FIELD_TYPE, FieldType::U32);
+        assert_eq!(field_type_of::<u32>(&0), FieldType::U32);
+    }
 
     #[test]
     fn bool_from_numpy_true() {

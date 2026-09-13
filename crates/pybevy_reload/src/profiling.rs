@@ -111,7 +111,7 @@ struct SystemTimingStats {
     recent_times: VecDeque<Duration>,
     /// Cached rolling average (updated each frame)
     average_time: Duration,
-    /// Cached rolling max over the same window — preserves spike visibility
+    /// Cached rolling max over the same window - preserves spike visibility
     /// that the average smooths away.
     max_time: Duration,
 }

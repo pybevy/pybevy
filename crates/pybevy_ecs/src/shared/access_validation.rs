@@ -46,6 +46,9 @@ impl<K: std::hash::Hash + Eq> QueryFilters<K> {
 pub struct ComponentAccess<K> {
     pub key: K,
     pub name: String,
+    /// Python-object reads can require exclusive access.
+    pub exclusive: bool,
+    /// What the caller wrote.
     pub mutable: bool,
 }
 
@@ -64,6 +67,9 @@ pub enum ParamAccess<K> {
         key: K,
         marker: K,
         name: String,
+        /// See [`ComponentAccess::exclusive`].
+        exclusive: bool,
+        /// What the caller wrote.
         mutable: bool,
     },
     /// Assets access (Res\<Assets\<T\>\> / ResMut\<Assets\<T\>\>)
@@ -84,6 +90,25 @@ pub enum ParamAccess<K> {
     None,
 }
 
+/// Selects the remedy, so a conflict with no queries does not get the query one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictKind {
+    Queries,
+    Resources,
+    ResourceQuery,
+    Assets,
+    AssetsSharedView,
+    Messages,
+    WorldExclusive,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictCategory {
+    Component,
+    Asset,
+    Message,
+}
+
 /// Conflict information for component access validation errors.
 pub struct ComponentAccessConflict {
     pub param_idx: usize,
@@ -92,6 +117,10 @@ pub struct ComponentAccessConflict {
     pub existing_idx: usize,
     pub existing_mut: bool,
     pub existing_name: String,
+    pub kind: ConflictKind,
+    pub category: ConflictCategory,
+    /// A read-only parameter that still declares exclusive access.
+    pub exclusive_read: bool,
 }
 
 /// Validate that a set of system parameter accesses don't conflict.
@@ -103,6 +132,8 @@ pub struct ComponentAccessConflict {
 /// - A message writer conflicting with another reader or writer for its channel
 /// - World parameter conflicting with any other parameter
 ///
+type ComponentAccessList<K> = Vec<Recorded<K>>;
+
 /// The `accesses` slice is indexed by parameter position; the index is used
 /// in conflict error messages.
 pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
@@ -111,8 +142,7 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
     // Track component access across all parameters.
     // Uses Vec to support N-way disjoint checking: each new query is checked
     // against ALL previous queries for that component, not just the first.
-    let mut component_access: HashMap<K, Vec<(usize, bool, String, QueryFilters<K>)>> =
-        HashMap::new();
+    let mut component_access: HashMap<K, ComponentAccessList<K>> = HashMap::new();
 
     // Track assets access (for Res<Assets<T>> / ResMut<Assets<T>> conflicts)
     let mut assets_access: HashMap<String, (usize, bool, String)> = HashMap::new();
@@ -132,42 +162,57 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
                 for comp in comp_accesses {
                     // Check against ALL previous accesses to this component
                     if let Some(existing_accesses) = component_access.get(&comp.key) {
-                        for (existing_idx, existing_mut, existing_name, existing_filters) in
-                            existing_accesses
-                        {
-                            if (comp.mutable || *existing_mut)
-                                && !current_filters.is_disjoint_from(existing_filters)
+                        for existing in existing_accesses {
+                            if (comp.exclusive || existing.exclusive)
+                                && !current_filters.is_disjoint_from(&existing.filters)
                             {
                                 return Err(ComponentAccessConflict {
                                     param_idx,
                                     mutable: comp.mutable,
                                     comp_name: comp.name.clone(),
-                                    existing_idx: *existing_idx,
-                                    existing_mut: *existing_mut,
-                                    existing_name: existing_name.clone(),
+                                    existing_idx: existing.idx,
+                                    existing_mut: existing.mutable,
+                                    existing_name: existing.name.clone(),
+                                    kind: if existing.is_query {
+                                        ConflictKind::Queries
+                                    } else {
+                                        ConflictKind::ResourceQuery
+                                    },
+                                    category: ConflictCategory::Component,
+                                    exclusive_read: (comp.exclusive && !comp.mutable)
+                                        || (existing.exclusive && !existing.mutable),
                                 });
                             }
                         }
                     }
 
                     // Always record this access for future checks
-                    component_access.entry(comp.key.clone()).or_default().push((
-                        param_idx,
-                        comp.mutable,
-                        comp.name.clone(),
-                        current_filters.clone(),
-                    ));
+                    component_access
+                        .entry(comp.key.clone())
+                        .or_default()
+                        .push(Recorded {
+                            idx: param_idx,
+                            exclusive: comp.exclusive,
+                            mutable: comp.mutable,
+                            name: comp.name.clone(),
+                            filters: current_filters.clone(),
+                            is_query: true,
+                        });
                 }
 
                 // Check for World conflict
                 if let Some(world_idx) = world_param_idx {
+                    let (name, mutable) = query_description(comp_accesses);
                     return Err(ComponentAccessConflict {
                         param_idx,
-                        mutable: false,
-                        comp_name: "Query".to_string(),
+                        mutable,
+                        comp_name: name,
                         existing_idx: world_idx,
                         existing_mut: true,
                         existing_name: "World".to_string(),
+                        kind: ConflictKind::WorldExclusive,
+                        category: ConflictCategory::Component,
+                        exclusive_read: false,
                     });
                 }
             }
@@ -176,6 +221,7 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
                 key,
                 marker,
                 name,
+                exclusive,
                 mutable,
             } => {
                 let resource_filters = QueryFilters {
@@ -183,39 +229,53 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
                     without: HashSet::new(),
                 };
                 if let Some(existing_accesses) = component_access.get(key) {
-                    for (existing_idx, existing_mut, existing_name, existing_filters) in
-                        existing_accesses
-                    {
-                        if (*mutable || *existing_mut)
-                            && !resource_filters.is_disjoint_from(existing_filters)
+                    for existing in existing_accesses {
+                        if (*exclusive || existing.exclusive)
+                            && !resource_filters.is_disjoint_from(&existing.filters)
                         {
                             return Err(ComponentAccessConflict {
                                 param_idx,
                                 mutable: *mutable,
                                 comp_name: name.clone(),
-                                existing_idx: *existing_idx,
-                                existing_mut: *existing_mut,
-                                existing_name: existing_name.clone(),
+                                existing_idx: existing.idx,
+                                existing_mut: existing.mutable,
+                                existing_name: existing.name.clone(),
+                                kind: if existing.is_query {
+                                    ConflictKind::ResourceQuery
+                                } else {
+                                    ConflictKind::Resources
+                                },
+                                category: ConflictCategory::Component,
+                                exclusive_read: (*exclusive && !*mutable)
+                                    || (existing.exclusive && !existing.mutable),
                             });
                         }
                     }
                 }
-                component_access.entry(key.clone()).or_default().push((
-                    param_idx,
-                    *mutable,
-                    name.clone(),
-                    resource_filters,
-                ));
+                component_access
+                    .entry(key.clone())
+                    .or_default()
+                    .push(Recorded {
+                        idx: param_idx,
+                        exclusive: *exclusive,
+                        mutable: *mutable,
+                        name: name.clone(),
+                        filters: resource_filters,
+                        is_query: false,
+                    });
 
                 // Check for World conflict
                 if let Some(world_idx) = world_param_idx {
                     return Err(ComponentAccessConflict {
                         param_idx,
                         mutable: *mutable,
-                        comp_name: if *mutable { "ResMut" } else { "Res" }.to_string(),
+                        comp_name: name.clone(),
                         existing_idx: world_idx,
                         existing_mut: true,
                         existing_name: "World".to_string(),
+                        kind: ConflictKind::WorldExclusive,
+                        category: ConflictCategory::Component,
+                        exclusive_read: false,
                     });
                 }
             }
@@ -230,6 +290,13 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
                             existing_idx: *existing_idx,
                             existing_mut: *existing_mut,
                             existing_name: format!("Assets<{}>", existing_name),
+                            kind: if name == existing_name {
+                                ConflictKind::Assets
+                            } else {
+                                ConflictKind::AssetsSharedView
+                            },
+                            category: ConflictCategory::Asset,
+                            exclusive_read: false,
                         });
                     }
                 } else {
@@ -245,6 +312,9 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
                         existing_idx: world_idx,
                         existing_mut: true,
                         existing_name: "World".to_string(),
+                        kind: ConflictKind::WorldExclusive,
+                        category: ConflictCategory::Asset,
+                        exclusive_read: false,
                     });
                 }
             }
@@ -259,6 +329,9 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
                             existing_idx: *existing_idx,
                             existing_mut: *existing_mut,
                             existing_name: existing_name.clone(),
+                            kind: ConflictKind::Messages,
+                            category: ConflictCategory::Message,
+                            exclusive_read: false,
                         });
                     }
                 } else {
@@ -273,50 +346,32 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
                         existing_idx: world_idx,
                         existing_mut: true,
                         existing_name: "World".to_string(),
+                        kind: ConflictKind::WorldExclusive,
+                        category: ConflictCategory::Message,
+                        exclusive_read: false,
                     });
                 }
             }
 
             ParamAccess::World => {
-                // World is exclusive - conflicts with everything
-                if let Some(world_idx) = world_param_idx {
-                    return Err(ComponentAccessConflict {
-                        param_idx,
-                        mutable: true,
-                        comp_name: "World".to_string(),
-                        existing_idx: world_idx,
-                        existing_mut: true,
-                        existing_name: "World".to_string(),
-                    });
-                }
-
-                // Check if any other parameters exist
-                if !component_access.is_empty()
-                    || !assets_access.is_empty()
-                    || !message_access.is_empty()
+                if let Some((existing_idx, (category, existing_name, existing_mut))) = accesses
+                    [..param_idx]
+                    .iter()
+                    .enumerate()
+                    .find_map(|(idx, param)| describe_access(param).map(|access| (idx, access)))
                 {
-                    let (existing_idx, existing_name) =
-                        if let Some(entries) = component_access.values().next() {
-                            let (idx, _, name, _) = &entries[0];
-                            (*idx, name.clone())
-                        } else if let Some((idx, _, name)) = assets_access.values().next() {
-                            (*idx, name.clone())
-                        } else if let Some((idx, _, name)) = message_access.values().next() {
-                            (*idx, name.clone())
-                        } else {
-                            unreachable!()
-                        };
-
                     return Err(ComponentAccessConflict {
                         param_idx,
                         mutable: true,
                         comp_name: "World".to_string(),
                         existing_idx,
-                        existing_mut: false,
+                        existing_mut,
                         existing_name,
+                        kind: ConflictKind::WorldExclusive,
+                        category,
+                        exclusive_read: false,
                     });
                 }
-
                 world_param_idx = Some(param_idx);
             }
 
@@ -325,6 +380,59 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
     }
 
     Ok(())
+}
+
+fn query_description<K>(accesses: &[ComponentAccess<K>]) -> (String, bool) {
+    let mutable = accesses.iter().any(|access| access.mutable);
+    let name = match accesses {
+        [one] => one.name.clone(),
+        [] => "Query".to_string(),
+        _ => format!(
+            "tuple[{}]",
+            accesses
+                .iter()
+                .map(|access| {
+                    if access.mutable {
+                        format!("Mut[{}]", access.name)
+                    } else {
+                        access.name.clone()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    };
+    (name, mutable)
+}
+
+fn describe_access<K>(param: &ParamAccess<K>) -> Option<(ConflictCategory, String, bool)> {
+    match param {
+        ParamAccess::Components { accesses, .. } => {
+            let (name, mutable) = query_description(accesses);
+            Some((ConflictCategory::Component, name, mutable))
+        }
+        ParamAccess::Resource { name, mutable, .. } => {
+            Some((ConflictCategory::Component, name.clone(), *mutable))
+        }
+        ParamAccess::Assets { name, mutable, .. } => {
+            Some((ConflictCategory::Asset, format!("Assets<{name}>"), *mutable))
+        }
+        ParamAccess::Message { name, mutable, .. } => {
+            Some((ConflictCategory::Message, name.clone(), *mutable))
+        }
+        ParamAccess::World => Some((ConflictCategory::Component, "World".to_string(), true)),
+        ParamAccess::None => None,
+    }
+}
+
+/// One recorded access, so a later conflict can report what it asked for.
+struct Recorded<K> {
+    idx: usize,
+    exclusive: bool,
+    mutable: bool,
+    name: String,
+    filters: QueryFilters<K>,
+    is_query: bool,
 }
 
 #[cfg(test)]
@@ -342,6 +450,7 @@ mod tests {
         ComponentAccess {
             key: key.to_string(),
             name: key.to_string(),
+            exclusive: mutable,
             mutable,
         }
     }
@@ -361,6 +470,7 @@ mod tests {
             key: key.to_string(),
             marker: "resource marker".to_string(),
             name: name.to_string(),
+            exclusive: mutable,
             mutable,
         }
     }

@@ -446,6 +446,14 @@ class HotReloadControl(Resource):
         """
 
 class App:
+    """A Bevy application: its worlds, plugins, schedules, and runner.
+
+    A schedule whose graph cannot be built raises `RuntimeError` from
+    `update()`, `run()`, or `run_schedule()`. Discard the App afterward:
+    bevy takes a schedule out of the world to run it and puts it back only
+    on success, so that schedule is gone and later calls skip it or panic.
+    """
+
     def __init__(self) -> None: ...
     def add_systems(self, schedule: Stage | OnEnterSchedule | OnExitSchedule | OnTransitionSchedule, *systems: SystemFns) -> App: ...
     def initialize(self) -> None: ...
@@ -589,7 +597,6 @@ class App:
         """Clear the scene by despawning all entities and clearing custom resources.
 
         This is similar to hot reload's Full mode but without reloading systems.
-        Useful for JupyBevy to reset the scene when creating a new instance.
 
         Preserves:
         - Built-in Bevy resources (Time, AssetServer, etc.)
@@ -636,7 +643,7 @@ class RunMode:
         """Run the schedule repeatedly, optionally waiting between frames."""
         __match_args__: ClassVar[tuple[Literal["wait"]]]
         wait: int | None
-        def __init__(self, wait: int | None = None) -> None: ...
+        def __init__(self, *, wait: int | None = None) -> None: ...
 
     class Once(RunMode):
         """Run the schedule exactly once and then exit."""
@@ -654,8 +661,9 @@ class ScheduleRunnerPlugin(Plugin):
     - NOT included in DefaultPlugins (which uses WinitPlugin's event loop instead)
 
     **Testing Usage:**
-    For tests, always use `ScheduleRunnerPlugin(RunMode.Once())` instead of calling
-    `app.update()` directly. This ensures the full schedule lifecycle runs correctly.
+    Use `ScheduleRunnerPlugin.run_once()` when testing the full schedule lifecycle.
+    For simple setup/query tests, use `App()._run_systems_once(...)`; for multiple
+    frames, call `app.update()` repeatedly.
 
     Args:
         run_mode: Controls execution behavior (default: RunMode.Loop())
@@ -664,30 +672,30 @@ class ScheduleRunnerPlugin(Plugin):
         ```python
         # Testing - run once and exit
         app = App()
-        app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+        app.add_plugins(ScheduleRunnerPlugin.run_once())
         app.add_systems(Startup, setup)
         app.add_systems(Update, game_logic)
         app.run()  # Runs full schedule once
 
         # Headless server - run continuously
         app = App()
-        app.add_plugins(ScheduleRunnerPlugin(RunMode.Loop()))
+        app.add_plugins(ScheduleRunnerPlugin(run_mode=RunMode.Loop()))
         app.add_systems(Update, server_tick)
         app.run()  # Runs forever
 
         # Frame-limited loop
         app = App()
-        app.add_plugins(ScheduleRunnerPlugin(RunMode.Loop(wait=16)))
+        app.add_plugins(ScheduleRunnerPlugin(run_mode=RunMode.Loop(wait=16)))
         app.run()  # Runs at ~60 FPS
         ```
 
     Notes:
         - For graphical applications, use DefaultPlugins instead (includes WinitPlugin)
-        - For tests, prefer RunMode.Once() over app.update()
+        - Use run_once() for a single-frame schedule lifecycle
         - Startup systems run before the first Update when using RunMode.Once()
     """
 
-    def __init__(self, run_mode: RunMode = ...) -> None:
+    def __init__(self, *, run_mode: RunMode = ...) -> None:
         """Create a ScheduleRunnerPlugin with the specified run mode.
 
         Args:
@@ -701,7 +709,7 @@ class ScheduleRunnerPlugin(Plugin):
     def run_once() -> ScheduleRunnerPlugin:
         """Create a plugin configured to run the schedule once.
 
-        Convenience method equivalent to `ScheduleRunnerPlugin(RunMode.Once())`.
+        Equivalent to `ScheduleRunnerPlugin(run_mode=RunMode.Once())`.
         This is the preferred method for test setup.
 
         Returns:
@@ -720,7 +728,7 @@ class ScheduleRunnerPlugin(Plugin):
     def run_loop(wait_duration: int | None = None) -> ScheduleRunnerPlugin:
         """Create a plugin configured to run the schedule in a loop.
 
-        Convenience method equivalent to `ScheduleRunnerPlugin(RunMode.Loop(wait=...))`.
+        Equivalent to `ScheduleRunnerPlugin(run_mode=RunMode.Loop(wait=...))`.
 
         Args:
             wait_duration: Optional wait time in milliseconds between executions.

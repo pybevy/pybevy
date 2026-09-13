@@ -301,11 +301,12 @@ mod tests {
         let mut world = World::new();
         world.init_resource::<Assets<Mesh>>();
 
-        let mut assets = world.resource_mut::<Assets<Mesh>>();
-        assets.add(test_mesh());
-        assets.add(test_mesh());
-        assets.add(test_mesh());
-        drop(assets);
+        {
+            let mut assets = world.resource_mut::<Assets<Mesh>>();
+            assets.add(test_mesh());
+            assets.add(test_mesh());
+            assets.add(test_mesh());
+        }
 
         assert_eq!(live_count::<Mesh>(&world), 3);
 
@@ -319,10 +320,11 @@ mod tests {
         let mut world = World::new();
         world.init_resource::<Assets<StandardMaterial>>();
 
-        let mut assets = world.resource_mut::<Assets<StandardMaterial>>();
-        assets.add(StandardMaterial::default());
-        assets.add(StandardMaterial::default());
-        drop(assets);
+        {
+            let mut assets = world.resource_mut::<Assets<StandardMaterial>>();
+            assets.add(StandardMaterial::default());
+            assets.add(StandardMaterial::default());
+        }
 
         assert_eq!(live_count::<StandardMaterial>(&world), 2);
 
@@ -788,9 +790,10 @@ mod tests {
         let mut world = World::new();
 
         world.insert_resource(Time::<Virtual>::default());
-        let mut time_virt = world.resource_mut::<Time<Virtual>>();
-        time_virt.advance_by(Duration::from_secs(5));
-        drop(time_virt);
+        {
+            let mut time_virt = world.resource_mut::<Time<Virtual>>();
+            time_virt.advance_by(Duration::from_secs(5));
+        }
 
         let elapsed_before = world.resource::<Time<Virtual>>().elapsed_secs();
         assert!(elapsed_before >= 5.0, "time should have advanced");
@@ -809,9 +812,10 @@ mod tests {
         let mut world = World::new();
 
         world.insert_resource(Time::<Virtual>::default());
-        let mut time_virt = world.resource_mut::<Time<Virtual>>();
-        time_virt.pause();
-        drop(time_virt);
+        {
+            let mut time_virt = world.resource_mut::<Time<Virtual>>();
+            time_virt.pause();
+        }
         assert!(world.resource::<Time<Virtual>>().is_paused());
 
         clear_world_state(&mut world, &mut NoopRuntime, false);
@@ -827,9 +831,10 @@ mod tests {
         let mut world = World::new();
 
         world.insert_resource(Time::<Virtual>::default());
-        let mut time_virt = world.resource_mut::<Time<Virtual>>();
-        time_virt.set_relative_speed(0.25);
-        drop(time_virt);
+        {
+            let mut time_virt = world.resource_mut::<Time<Virtual>>();
+            time_virt.set_relative_speed(0.25);
+        }
 
         clear_world_state(&mut world, &mut NoopRuntime, false);
 
@@ -938,11 +943,12 @@ mod tests {
         world.insert_resource(NativeResourceSnapshot { initial });
 
         // User code sets pause and speed.
-        let mut time_virt = world.resource_mut::<Time<Virtual>>();
-        time_virt.pause();
-        time_virt.set_relative_speed(0.25);
-        time_virt.advance_by(Duration::from_secs(7));
-        drop(time_virt);
+        {
+            let mut time_virt = world.resource_mut::<Time<Virtual>>();
+            time_virt.pause();
+            time_virt.set_relative_speed(0.25);
+            time_virt.advance_by(Duration::from_secs(7));
+        }
 
         let mut runtime = TimeResetRuntime;
         clear_world_state(&mut world, &mut runtime, false);

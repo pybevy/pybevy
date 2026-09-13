@@ -3,6 +3,7 @@
 use std::{
     collections::{BTreeMap, HashMap},
     env, fmt,
+    fmt::Write as _,
     fs::File,
     io::{BufWriter, Write},
     path::Path,
@@ -38,7 +39,6 @@ impl CanonValue {
         let bytes = hasher.finalize();
         let mut output = String::with_capacity(bytes.len() * 2);
         for byte in bytes {
-            use fmt::Write as _;
             write!(&mut output, "{byte:02x}").expect("writing to String cannot fail");
         }
         output

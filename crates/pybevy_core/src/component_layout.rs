@@ -579,6 +579,7 @@ pub enum ComponentStorageType {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use std::{convert::Infallible, ptr};
 
@@ -868,5 +869,231 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn read_values_reads_every_declared_field() {
+        let fields = vec![
+            ("active".to_string(), PrimitiveType::Bool),
+            ("count".to_string(), PrimitiveType::I64),
+            ("velocity".to_string(), PrimitiveType::Vec2),
+        ];
+        let layout =
+            ComponentLayout::from_fields(ptr::null(), "Mixed".to_string(), &fields).unwrap();
+        let schema = layout.schema();
+        let buffer = layout
+            .serialize_with(|field| {
+                Ok::<_, Infallible>(match field.name.as_str() {
+                    "active" => PrimitiveValue::Bool(true),
+                    "count" => PrimitiveValue::I64(-42),
+                    "velocity" => PrimitiveValue::Vec2(Vec2::new(1.5, -2.5)),
+                    _ => unreachable!(),
+                })
+            })
+            .unwrap();
+
+        // SAFETY: `buffer` is exactly `wrapper_size` bytes.
+        let values = unsafe { schema.read_values(buffer.as_ptr()) }.unwrap();
+        assert_eq!(
+            values,
+            vec![
+                ("active".to_string(), PrimitiveValue::Bool(true)),
+                ("count".to_string(), PrimitiveValue::I64(-42)),
+                (
+                    "velocity".to_string(),
+                    PrimitiveValue::Vec2(Vec2::new(1.5, -2.5))
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn read_values_rejects_out_of_bounds_field() {
+        let schema = WrapperComponentSchema {
+            fields: vec![FieldInfo {
+                name: "value".to_string(),
+                offset: 8,
+                field_type: PrimitiveType::I64,
+            }],
+            data_size: 16,
+            wrapper_size: WrapperSize::W8,
+        };
+        let buffer = [0u8; 8];
+        // SAFETY: the buffer is W8 bytes; the layout is intentionally invalid.
+        let error = unsafe { schema.read_values(buffer.as_ptr()) }.unwrap_err();
+        assert!(matches!(
+            error,
+            ComponentLayoutError::FieldOutOfBounds { field, .. } if field == "value"
+        ));
+    }
+
+    #[test]
+    fn serialize_values_enforces_count_name_and_type() {
+        let fields = vec![("value".to_string(), PrimitiveType::I64)];
+        let schema = ComponentLayout::from_fields(ptr::null(), "Test".to_string(), &fields)
+            .unwrap()
+            .schema();
+
+        let count = schema.serialize_values(&[]).unwrap_err();
+        assert!(matches!(
+            count,
+            ComponentLayoutError::FieldCountMismatch {
+                expected: 1,
+                actual: 0
+            }
+        ));
+
+        let name = schema
+            .serialize_values(&[("other".to_string(), PrimitiveValue::I64(1))])
+            .unwrap_err();
+        assert!(matches!(
+            name,
+            ComponentLayoutError::FieldNameMismatch { expected, actual, .. }
+                if expected == "value" && actual == "other"
+        ));
+
+        let kind = schema
+            .serialize_values(&[("value".to_string(), PrimitiveValue::F64(1.0))])
+            .unwrap_err();
+        assert!(matches!(
+            kind,
+            ComponentLayoutError::FieldTypeMismatch {
+                expected: PrimitiveType::I64,
+                actual: PrimitiveType::F64,
+                ..
+            }
+        ));
+
+        let bytes = schema
+            .serialize_values(&[("value".to_string(), PrimitiveValue::I64(-9))])
+            .unwrap();
+        assert_eq!(i64::from_le_bytes(bytes[0..8].try_into().unwrap()), -9);
+    }
+
+    #[test]
+    fn serialize_values_rejects_overflowing_offset() {
+        let schema = WrapperComponentSchema {
+            fields: vec![FieldInfo {
+                name: "big".to_string(),
+                offset: usize::MAX,
+                field_type: PrimitiveType::I64,
+            }],
+            data_size: 0,
+            wrapper_size: WrapperSize::W8,
+        };
+        let error = schema
+            .serialize_values(&[("big".to_string(), PrimitiveValue::I64(0))])
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            ComponentLayoutError::FieldOutOfBounds { field, .. } if field == "big"
+        ));
+    }
+
+    #[test]
+    fn composite_alignments_and_short_annotation_names() {
+        assert_eq!(PrimitiveType::Vec3.alignment(), 4);
+        assert_eq!(PrimitiveType::Vec2.alignment(), 4);
+        assert_eq!(PrimitiveType::U32.size_bytes(), 4);
+        assert_eq!(PrimitiveType::U64.size_bytes(), 8);
+        assert_eq!(
+            PrimitiveType::from_annotation_name("Vec3"),
+            Some(PrimitiveType::Vec3)
+        );
+        assert_eq!(
+            PrimitiveType::from_annotation_name("pybevy.math.Vec2"),
+            Some(PrimitiveType::Vec2)
+        );
+    }
+
+    #[test]
+    fn empty_field_list_defaults_to_w8() {
+        let layout = ComponentLayout::from_fields(ptr::null(), "Empty".to_string(), &[]).unwrap();
+        assert!(layout.fields.is_empty());
+        assert_eq!(layout.data_size, 0);
+        assert_eq!(layout.wrapper_size, WrapperSize::W8);
+    }
+
+    #[test]
+    fn serialize_with_rejects_a_misaligned_field_offset() {
+        let layout = ComponentLayout::new(
+            ptr::null(),
+            "Misaligned".to_string(),
+            vec![FieldInfo {
+                name: "value".to_string(),
+                offset: 4,
+                field_type: PrimitiveType::F64,
+            }],
+            12,
+            WrapperSize::W16,
+        );
+
+        let error = layout
+            .serialize_with(|_| Ok::<_, Infallible>(PrimitiveValue::F64(1.0)))
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            ComponentSerializationError::Layout(ComponentLayoutError::MisalignedField {
+                offset: 4,
+                alignment: 8,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn read_values_rejects_an_overflowing_offset_before_reading() {
+        let schema = WrapperComponentSchema {
+            fields: vec![FieldInfo {
+                name: "edge".to_string(),
+                offset: usize::MAX - 4,
+                field_type: PrimitiveType::F32,
+            }],
+            data_size: 0,
+            wrapper_size: WrapperSize::W8,
+        };
+        let buffer = [0u8; 8];
+        // SAFETY: the buffer is W8 bytes; the offset overflow must be rejected
+        // by checked arithmetic, not by an out-of-bounds read.
+        let error = unsafe { schema.read_values(buffer.as_ptr()) }.unwrap_err();
+        assert!(matches!(
+            error,
+            ComponentLayoutError::FieldOutOfBounds { field, .. } if field == "edge"
+        ));
+    }
+
+    #[test]
+    fn layout_error_display_messages_name_the_field_and_bounds() {
+        let misaligned = ComponentLayoutError::MisalignedField {
+            field: "value".to_string(),
+            offset: 4,
+            alignment: 8,
+        };
+        assert_eq!(
+            misaligned.to_string(),
+            "field 'value' at offset 4 is not aligned to 8 bytes"
+        );
+
+        let out_of_bounds = ComponentLayoutError::FieldOutOfBounds {
+            field: "value".to_string(),
+            offset: 8,
+            size: 8,
+            buffer_size: 8,
+        };
+        assert_eq!(
+            out_of_bounds.to_string(),
+            "field 'value' at offset 8 with size 8 exceeds wrapper buffer size 8"
+        );
+
+        let mismatch = ComponentLayoutError::FieldTypeMismatch {
+            field: "value".to_string(),
+            expected: PrimitiveType::I64,
+            actual: PrimitiveType::F64,
+        };
+        assert_eq!(
+            mismatch.to_string(),
+            "field 'value' extractor returned F64, expected I64"
+        );
     }
 }

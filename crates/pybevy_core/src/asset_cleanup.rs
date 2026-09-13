@@ -31,6 +31,7 @@ pub fn clear_all_programmatic_assets(world: &mut World, verbose: bool) {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use std::{
         cell::RefCell,

@@ -25,10 +25,17 @@ use bevy::ecs::{
     query::{FilteredAccess, FilteredAccessSet},
     world::World,
 };
+use pybevy_storage::conflict_message::{
+    CONFLICT_ASSETS, CONFLICT_ASSETS_SHARED_VIEW, CONFLICT_MESSAGES, CONFLICT_QUERIES,
+    CONFLICT_RESOURCE_QUERY, CONFLICT_RESOURCES, CONFLICT_WORLD, SystemAccessConflictMessage,
+};
 
 use super::{
     access_sets::{QueryParamAccess, build_resource_accesses},
-    access_validation::{ComponentAccess, ComponentAccessConflict, ParamAccess, QueryFilters},
+    access_validation::{
+        ComponentAccess, ComponentAccessConflict, ConflictCategory, ConflictKind, ParamAccess,
+        QueryFilters,
+    },
 };
 
 /// The key types a backend uses to name components, resources, assets and
@@ -455,7 +462,8 @@ pub fn to_param_accesses<K: BackendKeys, VK: Hash + Eq + Clone>(
                     .map(|c| ComponentAccess {
                         key: component_vkey(&c.key),
                         name: c.name.clone(),
-                        mutable: c.scheduler_access.is_exclusive(),
+                        exclusive: c.scheduler_access.is_exclusive(),
+                        mutable: c.mutable,
                     })
                     .collect();
 
@@ -488,7 +496,8 @@ pub fn to_param_accesses<K: BackendKeys, VK: Hash + Eq + Clone>(
                 key: resource_vkey(key),
                 marker: resource_marker_vkey.clone(),
                 name: name.clone(),
-                mutable: scheduler_access.is_exclusive() || *mutable,
+                exclusive: scheduler_access.is_exclusive() || *mutable,
+                mutable: *mutable,
             },
             ParamSpec::Res { vkey: None, .. } => ParamAccess::None,
             ParamSpec::Assets {
@@ -525,6 +534,7 @@ pub fn to_param_accesses<K: BackendKeys, VK: Hash + Eq + Clone>(
                 key: resource_vkey(key),
                 marker: resource_marker_vkey.clone(),
                 name: name.clone(),
+                exclusive: false,
                 mutable: false,
             },
             ParamSpec::Input | ParamSpec::Commands | ParamSpec::Local | ParamSpec::Observer => {
@@ -536,64 +546,36 @@ pub fn to_param_accesses<K: BackendKeys, VK: Hash + Eq + Clone>(
 
 /// The user-facing conflict message, identical on both backends.
 pub fn conflict_error_message(func_name: &str, conflict: &ComponentAccessConflict) -> String {
-    let category = if conflict.comp_name.starts_with("Message<")
-        || conflict.existing_name.starts_with("Message<")
-    {
-        "message"
-    } else if conflict.comp_name.starts_with("Assets<")
-        || conflict.existing_name.starts_with("Assets<")
-    {
-        "asset"
-    } else {
-        "component"
+    let category = match conflict.category {
+        ConflictCategory::Message => "message",
+        ConflictCategory::Asset => "asset",
+        ConflictCategory::Component => "component",
     };
-    format!(
-        "System '{}' has conflicting {} access:\n\
-         - Parameter {} requests {} access to {}\n\
-         - Parameter {} already has {} access to {}\n\
-         {}",
-        func_name,
+    SystemAccessConflictMessage {
+        system: func_name,
         category,
-        conflict.param_idx,
-        if conflict.mutable {
-            "mutable"
-        } else {
-            "immutable"
-        },
-        conflict.comp_name,
-        conflict.existing_idx,
-        if conflict.existing_mut {
-            "mutable"
-        } else {
-            "immutable"
-        },
-        conflict.existing_name,
-        conflict_remedy(category),
-    )
+        parameter: conflict.param_idx,
+        mutable: conflict.mutable,
+        name: &conflict.comp_name,
+        existing_parameter: conflict.existing_idx,
+        existing_mutable: conflict.existing_mut,
+        existing_name: &conflict.existing_name,
+        exclusive_read: conflict.exclusive_read,
+        remedy: conflict_remedy(conflict.kind),
+    }
+    .to_string()
 }
 
-/// The actionable half of a conflict message: what to change, not why the
-/// rule exists.
-fn conflict_remedy(category: &str) -> &'static str {
-    match category {
-        "asset" => {
-            "Every @material class is a logical view over one underlying \
-             Assets<ShaderMaterial> collection, so two Assets[...] parameters \
-             for different @material types address the same resource. Use one \
-             system per material type."
-        }
-        "message" => {
-            "A MessageWriter cannot share its channel with another reader or \
-             writer in the same system. Split the send and the read into \
-             separate systems."
-        }
-        _ => {
-            "Different With[...] filters do not prove two queries are disjoint, \
-             because one entity could hold both markers. Add Without[...] to \
-             each query to prove exclusion (Query[tuple[Mut[Transform], Bat, \
-             Without[BatWing]]] and Query[tuple[Mut[Transform], BatWing, \
-             Without[Bat]]]), or split the queries across systems."
-        }
+/// Actionable remedy for the conflict category.
+fn conflict_remedy(kind: ConflictKind) -> &'static str {
+    match kind {
+        ConflictKind::Assets => CONFLICT_ASSETS,
+        ConflictKind::AssetsSharedView => CONFLICT_ASSETS_SHARED_VIEW,
+        ConflictKind::Messages => CONFLICT_MESSAGES,
+        ConflictKind::WorldExclusive => CONFLICT_WORLD,
+        ConflictKind::Resources => CONFLICT_RESOURCES,
+        ConflictKind::ResourceQuery => CONFLICT_RESOURCE_QUERY,
+        ConflictKind::Queries => CONFLICT_QUERIES,
     }
 }
 

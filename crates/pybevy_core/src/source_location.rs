@@ -95,6 +95,7 @@ impl AssetSourceLocations {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use bevy::{asset::Assets, prelude::*, reflect::TypePath};
 
@@ -102,6 +103,9 @@ mod tests {
 
     #[derive(Asset, TypePath)]
     struct TestAsset;
+
+    #[derive(Asset, TypePath)]
+    struct OtherTestAsset;
 
     #[test]
     fn config_default_is_disabled() {
@@ -191,5 +195,52 @@ mod tests {
 
         let locations = AssetSourceLocations::default();
         assert!(locations.get(&handle).is_none());
+    }
+
+    #[test]
+    fn asset_locations_replace_and_miss_unknown_handles() {
+        let mut world = World::new();
+        world.init_resource::<Assets<TestAsset>>();
+        world.init_resource::<Assets<OtherTestAsset>>();
+
+        let handle = world.resource_mut::<Assets<TestAsset>>().add(TestAsset);
+        let other_type = world
+            .resource_mut::<Assets<OtherTestAsset>>()
+            .add(OtherTestAsset);
+        let unknown = world.resource_mut::<Assets<TestAsset>>().add(TestAsset);
+
+        let mut locations = AssetSourceLocations::default();
+        locations.insert(
+            &handle,
+            SourceLocation::new("first.py".into(), 1, "created".into()),
+        );
+        // Re-inserting the same handle replaces rather than duplicates.
+        locations.insert(
+            &handle,
+            SourceLocation::new("second.py".into(), 2, "moved".into()),
+        );
+        assert_eq!(locations.locations.len(), 1);
+
+        let replaced = locations.get(&handle).unwrap();
+        assert_eq!(
+            (
+                replaced.file.as_str(),
+                replaced.line,
+                replaced.function.as_str()
+            ),
+            ("second.py", 2, "moved")
+        );
+
+        // A second asset type keeps its own row; neither sees the other's.
+        locations.insert(
+            &other_type,
+            SourceLocation::new("other.py".into(), 3, "made".into()),
+        );
+        assert_eq!(locations.locations.len(), 2);
+        assert_eq!(locations.get(&other_type).unwrap().file, "other.py");
+        assert_eq!(locations.get(&handle).unwrap().file, "second.py");
+
+        assert!(locations.get(&unknown).is_none());
+        assert!(locations.get_by_untyped(unknown.id().untyped()).is_none());
     }
 }

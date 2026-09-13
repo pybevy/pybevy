@@ -182,3 +182,189 @@ pub trait ComponentBridge: Send + Sync + 'static {
         None
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use std::{
+        any::TypeId,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
+
+    use bevy::ecs::{
+        component::ComponentId,
+        entity::Entity,
+        world::{EntityRef, EntityWorldMut, World},
+    };
+    use pyo3::{
+        exceptions::{PyNotImplementedError, PyRuntimeError},
+        ffi::PyTypeObject,
+        prelude::*,
+        types::PyType,
+    };
+
+    use super::ComponentBridge;
+    use crate::{FilteredEntityAccess, ValidityFlagWithMode};
+
+    static BULK_INSERT_CALLS: AtomicUsize = AtomicUsize::new(0);
+    static BULK_INSERTED_ENTITIES: AtomicUsize = AtomicUsize::new(0);
+    static FAIL_ON_THIRD_INSERT: AtomicUsize = AtomicUsize::new(0);
+
+    /// Minimal bridge: only the required methods, so the defaulted
+    /// `prepare_uniform`, `insert_bulk_uniform`, `relationship_field`, and
+    /// `view_bridge` run their real defaults.
+    struct DefaultProbeBridge;
+
+    impl ComponentBridge for DefaultProbeBridge {
+        fn bevy_type_id(&self) -> TypeId {
+            TypeId::of::<DefaultProbeBridge>()
+        }
+
+        fn py_type_ptr(&self) -> *const PyTypeObject {
+            0x8601_usize as *const PyTypeObject
+        }
+
+        fn py_type<'py>(&self, _py: Python<'py>) -> Bound<'py, PyType> {
+            unreachable!("default probes never resolve the Python type")
+        }
+
+        fn name(&self) -> &'static str {
+            "DefaultProbe"
+        }
+
+        fn can_insert(&self) -> bool {
+            true
+        }
+
+        fn register(&self, _world: &mut World) -> ComponentId {
+            ComponentId::new(0)
+        }
+
+        fn extract(
+            &self,
+            _entity: &mut FilteredEntityAccess,
+            _component_id: ComponentId,
+            _validity: ValidityFlagWithMode,
+            _py: Python,
+        ) -> PyResult<Py<PyAny>> {
+            unreachable!("default probes never extract")
+        }
+
+        fn extract_fn(&self) -> super::ExtractFn {
+            unreachable!("default probes never cache the extract fn")
+        }
+
+        fn insert(
+            &self,
+            _world: &mut World,
+            _entity: Entity,
+            _component: &Bound<PyAny>,
+        ) -> PyResult<()> {
+            unreachable!("default probes never insert through World")
+        }
+
+        fn insert_into_entity(
+            &self,
+            entity: &mut EntityWorldMut,
+            _component: &Bound<PyAny>,
+        ) -> PyResult<()> {
+            BULK_INSERT_CALLS.fetch_add(1, Ordering::SeqCst);
+            if FAIL_ON_THIRD_INSERT.load(Ordering::SeqCst) > 0
+                && BULK_INSERT_CALLS.load(Ordering::SeqCst) % 3 == 0
+            {
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                    "faulted third insert",
+                ));
+            }
+            BULK_INSERTED_ENTITIES.fetch_add(1, Ordering::SeqCst);
+            let _ = entity.id();
+            Ok(())
+        }
+
+        fn entity_contains(&self, _entity: &EntityRef) -> bool {
+            false
+        }
+
+        unsafe fn extract_from_entity_ref(
+            &self,
+            _entity_id: Entity,
+            _world_ptr: *mut World,
+            _validity: ValidityFlagWithMode,
+            _py: Python,
+        ) -> PyResult<Option<Py<PyAny>>> {
+            unreachable!("default probes never resolve entity refs")
+        }
+
+        unsafe fn extract_from_entity_mut(
+            &self,
+            _entity_id: Entity,
+            _world_ptr: *mut World,
+            _validity: ValidityFlagWithMode,
+            _py: Python,
+        ) -> PyResult<Option<Py<PyAny>>> {
+            unreachable!("default probes never resolve entity muts")
+        }
+    }
+
+    #[test]
+    fn default_prepare_uniform_reports_the_unsupported_spawn_error() {
+        Python::initialize();
+        Python::attach(|py| {
+            let bridge = DefaultProbeBridge;
+            let payload = py.None();
+            let error = match bridge.prepare_uniform(payload.bind(py)) {
+                Ok(_) => panic!("the default must reject uniform preparation"),
+                Err(e) => e,
+            };
+            assert!(error.is_instance_of::<PyNotImplementedError>(py));
+            assert_eq!(
+                error.value(py).str().unwrap().to_string(),
+                "DefaultProbe cannot be spawned from Python"
+            );
+        });
+    }
+
+    #[test]
+    fn default_insert_bulk_uniform_loops_every_entity_and_aborts_on_error() {
+        BULK_INSERT_CALLS.store(0, Ordering::SeqCst);
+        BULK_INSERTED_ENTITIES.store(0, Ordering::SeqCst);
+        let mut world = World::new();
+        let entities: Vec<Entity> = (0..3).map(|_| world.spawn_empty().id()).collect();
+        let payload: Py<PyAny> = Python::attach(|py| py.None());
+
+        Python::attach(|py| {
+            DefaultProbeBridge
+                .insert_bulk_uniform(payload.bind(py), &entities, &mut world)
+                .unwrap();
+            assert_eq!(BULK_INSERT_CALLS.load(Ordering::SeqCst), 3);
+            assert_eq!(BULK_INSERTED_ENTITIES.load(Ordering::SeqCst), 3);
+        });
+
+        FAIL_ON_THIRD_INSERT.store(1, Ordering::SeqCst);
+        let result = Python::attach(|py| {
+            DefaultProbeBridge.insert_bulk_uniform(payload.bind(py), &entities, &mut world)
+        });
+        FAIL_ON_THIRD_INSERT.store(0, Ordering::SeqCst);
+        let error = result.expect_err("a failing entity insert must abort the batch");
+        Python::attach(|py| {
+            assert!(error.is_instance_of::<PyRuntimeError>(py));
+            assert_eq!(
+                error.value(py).str().unwrap().to_string(),
+                "faulted third insert"
+            );
+        });
+        assert_eq!(
+            BULK_INSERT_CALLS.load(Ordering::SeqCst),
+            6,
+            "the aborted batch visited the third entity before the error propagated"
+        );
+        assert_eq!(BULK_INSERTED_ENTITIES.load(Ordering::SeqCst), 5);
+    }
+
+    #[test]
+    fn default_relationship_field_and_view_bridge_are_none() {
+        let bridge = DefaultProbeBridge;
+        assert!(bridge.relationship_field().is_none());
+        assert!(bridge.view_bridge().is_none());
+    }
+}

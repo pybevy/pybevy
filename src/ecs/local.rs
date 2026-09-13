@@ -13,6 +13,27 @@ pub struct PyLocal {
     pub(crate) ty: Py<PyType>,
 
     pub(crate) value: Py<PyAny>,
+
+    default_constructed: bool,
+}
+
+impl PyLocal {
+    pub(crate) fn fresh_for_registration(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let value = if self.default_constructed {
+            self.ty.bind(py).call0()?.unbind()
+        } else {
+            py.import("copy")?
+                .call_method1("deepcopy", (self.value.bind(py),))?
+                .unbind()
+        };
+
+        Self {
+            ty: self.ty.clone_ref(py),
+            value,
+            default_constructed: self.default_constructed,
+        }
+        .into_py_any(py)
+    }
 }
 
 #[pymethods]
@@ -49,6 +70,7 @@ impl PyLocal {
         Self {
             ty: ty.clone().unbind(),
             value: value.unbind(),
+            default_constructed: true,
         }
         .into_py_any(cls.py())
     }
@@ -58,6 +80,7 @@ impl PyLocal {
         Self {
             ty: value.get_type().into(),
             value: value.unbind(),
+            default_constructed: false,
         }
     }
 

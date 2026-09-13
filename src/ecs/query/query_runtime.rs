@@ -10,7 +10,7 @@ use bevy::{
 };
 use pybevy_core::{
     ComponentWriteContext, ExtractFn, FilteredEntityAccess, LogicalTypeId, LogicalTypeMap,
-    registry::global_registry,
+    extract_entity_from_any, registry::global_registry,
 };
 use pybevy_ecs::shared::{
     cached_query::CachedQueryCore,
@@ -39,6 +39,12 @@ use crate::ecs::{
     query::query_param::{PyQueryParam, QueryData},
     world::PyWorld,
 };
+
+type LayoutCacheEntry = (
+    ComponentStorageType,
+    Option<Arc<crate::ecs::component_layout::ComponentLayout>>,
+);
+type LayoutCache = HashMap<*const PyTypeObject, LayoutCacheEntry>;
 
 fn resolve_or_branch(
     world: &mut World,
@@ -338,15 +344,7 @@ pub struct PyQueryIter {
 
     /// Cached ComponentLayouts and storage types for custom wrapper components, keyed by type pointer.
     /// Avoids re-parsing Python __annotations__ and __pybevy_storage__ on every entity iteration.
-    layout_cache: RefCell<
-        HashMap<
-            *const PyTypeObject,
-            (
-                crate::ecs::component_layout::ComponentStorageType,
-                Option<Arc<crate::ecs::component_layout::ComponentLayout>>,
-            ),
-        >,
-    >,
+    layout_cache: RefCell<LayoutCache>,
 }
 
 // SAFETY: PyQueryIter is only used during system execution on a single thread.
@@ -445,6 +443,8 @@ impl PyQueryIter {
     /// # Safety
     /// `validity` must be invalidated before `world` is destroyed or made
     /// inaccessible to the caller.
+    // The ptr-keyed cache is call-local: the Arc never crosses a thread boundary.
+    #[allow(clippy::arc_with_non_send_sync)]
     pub unsafe fn from_world(
         world: &mut World,
         param: PyQueryParam,
@@ -650,9 +650,9 @@ impl PyQueryIter {
                             )
                         };
                         let value = if item.mutable {
-                            world.get_mut(py, &PyEntity(entity), component_type)?
+                            world.get_component_mut(py, &PyEntity(entity), component_type)?
                         } else {
-                            world.get(py, &PyEntity(entity), component_type)?
+                            world.get_component(py, &PyEntity(entity), component_type)?
                         };
                         values.push(value.unwrap_or_else(|| py.None()));
                     }
@@ -696,9 +696,9 @@ impl PyQueryIter {
                         )
                     };
                     let value = if *mutable {
-                        world.get_mut(py, &PyEntity(entity), component_type)?
+                        world.get_component_mut(py, &PyEntity(entity), component_type)?
                     } else {
-                        world.get(py, &PyEntity(entity), component_type)?
+                        world.get_component(py, &PyEntity(entity), component_type)?
                     };
                     match value {
                         Some(value) => values_buffer.push(value),
@@ -1195,7 +1195,8 @@ impl PyQueryIter {
     /// Get components for a specific entity by ID.
     /// Returns None if the entity doesn't match the query filters.
     /// Returns an error if the entity doesn't have the queried components.
-    fn get(&mut self, entity: PyEntity, py: Python) -> PyResult<Option<Py<PyAny>>> {
+    fn get(&mut self, entity: &Bound<'_, PyAny>, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        let entity = extract_entity_from_any(entity)?;
         if self.is_ad_hoc() {
             let matched = self
                 .runtime
@@ -1234,7 +1235,7 @@ impl PyQueryIter {
         let mut results = Vec::new();
 
         for entity_obj in entities.try_iter()? {
-            let entity_id: PyEntity = entity_obj?.extract()?;
+            let entity_id = extract_entity_from_any(&entity_obj?)?;
             if self.is_ad_hoc() {
                 if let Some(entity) = self
                     .runtime

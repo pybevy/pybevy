@@ -432,8 +432,159 @@ pub fn insert_wrapper_bytes(
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
+    use std::alloc::Layout;
+
+    use bevy::ecs::{change_detection::MutUntyped, component::ComponentDescriptor, world::World};
+
     use super::*;
+    use crate::{
+        component_layout::ComponentStorageType,
+        custom_component::{PythonObjectDescriptor, register_custom_component_guarded},
+    };
+
+    struct WrapperTestDescriptor;
+
+    impl PythonObjectDescriptor for WrapperTestDescriptor {
+        fn create(name: String) -> ComponentDescriptor {
+            // SAFETY: test-only descriptor; never used for wrapper storage paths
+            // (register_custom_component_guarded uses the wrapper layout instead).
+            unsafe {
+                ComponentDescriptor::new_with_layout(
+                    name,
+                    bevy::ecs::component::StorageType::Table,
+                    Layout::new::<u64>(),
+                    None,
+                    false,
+                    bevy::ecs::component::ComponentCloneBehavior::Default,
+                    None,
+                )
+            }
+        }
+    }
+
+    fn register_wrapper(
+        world: &mut World,
+        wrapper_size: WrapperSize,
+    ) -> bevy::ecs::component::ComponentId {
+        let schema = crate::component_layout::WrapperComponentSchema {
+            fields: vec![],
+            data_size: wrapper_size.size_bytes(),
+            wrapper_size,
+        };
+        register_custom_component_guarded::<WrapperTestDescriptor>(
+            world,
+            0x1000,
+            "W",
+            Some("m.W"),
+            ComponentStorageType::Wrapper(wrapper_size),
+            Some(&schema),
+            0,
+        )
+        .id()
+    }
+
+    macro_rules! insert_and_verify {
+        ($size:expr, $wrapper:ty) => {{
+            let mut world = World::new();
+            let component_id = register_wrapper(&mut world, $size);
+            let entity = world.spawn_empty().id();
+            let other = world.spawn_empty().id();
+            let bytes: Vec<u8> = (0..$size.size_bytes())
+                .map(|i| (i as u8).wrapping_mul(7).wrapping_add(1))
+                .collect();
+
+            insert_wrapper_bytes(&mut world.entity_mut(entity), component_id, $size, &bytes)
+                .unwrap();
+
+            let ptr = world.get_by_id(entity, component_id).unwrap();
+            // SAFETY: the descriptor for this id carries the $wrapper layout.
+            let stored = unsafe { ptr.deref::<$wrapper>() };
+            assert_eq!(stored.data, bytes.as_slice());
+            assert!(world.get_by_id(other, component_id).is_none());
+        }};
+    }
+
+    #[test]
+    fn insert_wrapper_bytes_writes_exact_bytes_for_every_size() {
+        insert_and_verify!(WrapperSize::W8, ComponentWrapper8);
+        insert_and_verify!(WrapperSize::W16, ComponentWrapper16);
+        insert_and_verify!(WrapperSize::W32, ComponentWrapper32);
+        insert_and_verify!(WrapperSize::W64, ComponentWrapper64);
+        insert_and_verify!(WrapperSize::W128, ComponentWrapper128);
+        insert_and_verify!(WrapperSize::W256, ComponentWrapper256);
+        insert_and_verify!(WrapperSize::W512, ComponentWrapper512);
+        insert_and_verify!(WrapperSize::W1024, ComponentWrapper1024);
+    }
+
+    #[test]
+    fn insert_wrapper_bytes_rejects_wrong_byte_length() {
+        let mut world = World::new();
+        let component_id = register_wrapper(&mut world, WrapperSize::W8);
+        let entity = world.spawn_empty().id();
+
+        let error = insert_wrapper_bytes(
+            &mut world.entity_mut(entity),
+            component_id,
+            WrapperSize::W8,
+            &[0u8; 12],
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            WrapperInsertionError::ByteLength {
+                expected: 8,
+                actual: 12
+            }
+        );
+        assert!(world.get_by_id(entity, component_id).is_none());
+    }
+
+    #[test]
+    fn insert_wrapper_bytes_rejects_an_id_without_wrapper_storage() {
+        let mut world = World::new();
+        let entity = world.spawn_empty().id();
+
+        // No CustomComponentRegistry at all: nothing authorizes wrapper storage.
+        let component_id = world.register_component::<ComponentWrapper8>();
+        let none = insert_wrapper_bytes(
+            &mut world.entity_mut(entity),
+            component_id,
+            WrapperSize::W8,
+            &[0u8; 8],
+        )
+        .unwrap_err();
+        assert_eq!(none, WrapperInsertionError::UnregisteredWrapper);
+
+        // A PyObject-registered id is not wrapper storage either.
+        let pyobject_id = register_custom_component_guarded::<WrapperTestDescriptor>(
+            &mut world,
+            0x2000,
+            "P",
+            Some("m.P"),
+            ComponentStorageType::PyObject,
+            None,
+            0,
+        )
+        .id();
+        let wrong_storage = insert_wrapper_bytes(
+            &mut world.entity_mut(entity),
+            pyobject_id,
+            WrapperSize::W8,
+            &[0u8; 8],
+        )
+        .unwrap_err();
+        assert_eq!(wrong_storage, WrapperInsertionError::UnregisteredWrapper);
+        assert!(world.get_by_id(entity, pyobject_id).is_none());
+    }
+
+    // The `DescriptorMismatch` and `UnknownComponent` branches guard registry
+    // states that `register_custom_component_guarded` cannot produce (the
+    // registry entry and the descriptor always agree), so they are defensive
+    // only and have no reachable native or Python construction; the report
+    // records that instead of faking a corrupted world.
 
     #[test]
     fn test_wrapper_size_selection() {
@@ -573,5 +724,57 @@ mod tests {
         // SAFETY: the returned pointer addresses the first byte of wrapper.data.
         unsafe { data.write(7) };
         assert_eq!(wrapper.data[0], 7);
+    }
+
+    #[test]
+    fn accessors_cover_every_wrapper_size() {
+        macro_rules! exercise {
+            ($size:expr, $wrapper:ty) => {{
+                // Base-address path (no World required).
+                let mut local = <$wrapper>::default();
+                let base = std::ptr::addr_of_mut!(local).cast::<u8>();
+                // SAFETY: `base` points to a live wrapper of the selected size.
+                let from_base = unsafe { $size.get_data_ptr_from_base(base) };
+                // SAFETY: `from_base` addresses the wrapper's data array.
+                unsafe { from_base.write(0x5A) };
+                assert_eq!(local.data[0], 0x5A);
+
+                // Mutable and shared Bevy pointer paths.
+                let mut world = World::new();
+                let entity = world.spawn(<$wrapper>::default()).id();
+                let observed = {
+                    let value = world.get_mut::<$wrapper>(entity).unwrap();
+                    let mut untyped = MutUntyped::from(value);
+                    // SAFETY: `untyped` points to a wrapper of the selected size.
+                    let mutable = unsafe { $size.get_mut_ptr(&mut untyped) };
+                    // SAFETY: `mutable` addresses the wrapper's data array.
+                    unsafe { mutable.write(0x3C) };
+                    let ptr = untyped.as_ref();
+                    // SAFETY: `ptr` points to a wrapper of the selected size.
+                    unsafe { *$size.get_ref_ptr_as_mut(ptr) }
+                };
+                assert_eq!(observed, 0x3C);
+
+                // Column data path.
+                let component_id = world.component_id::<$wrapper>().unwrap();
+                let table_id = world.entity(entity).archetype().table_id();
+                let table = world.storages().tables.get(table_id).unwrap();
+                let column = table.get_column(component_id).unwrap();
+                let count = table.entity_count() as usize;
+                // SAFETY: `column` stores wrappers of the selected size.
+                let column_ptr = unsafe { $size.get_column_data_ptr(column, count) };
+                // SAFETY: `column_ptr` addresses the first byte of the column data.
+                assert_eq!(unsafe { *column_ptr }, 0x3C);
+            }};
+        }
+
+        exercise!(WrapperSize::W8, ComponentWrapper8);
+        exercise!(WrapperSize::W16, ComponentWrapper16);
+        exercise!(WrapperSize::W32, ComponentWrapper32);
+        exercise!(WrapperSize::W64, ComponentWrapper64);
+        exercise!(WrapperSize::W128, ComponentWrapper128);
+        exercise!(WrapperSize::W256, ComponentWrapper256);
+        exercise!(WrapperSize::W512, ComponentWrapper512);
+        exercise!(WrapperSize::W1024, ComponentWrapper1024);
     }
 }

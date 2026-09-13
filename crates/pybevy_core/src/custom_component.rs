@@ -348,6 +348,7 @@ pub fn register_custom_component_guarded<D: PythonObjectDescriptor>(
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use crate::component_layout::{FieldInfo, PrimitiveType, WrapperComponentSchema};

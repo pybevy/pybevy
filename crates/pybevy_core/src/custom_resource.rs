@@ -304,10 +304,14 @@ pub fn register_custom_resource_guarded<D: PythonObjectDescriptor>(
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use std::alloc::Layout;
 
-    use bevy::ecs::component::{ComponentCloneBehavior, ComponentDescriptor, StorageType};
+    use bevy::ecs::{
+        component::{ComponentCloneBehavior, ComponentDescriptor, StorageType},
+        error::FallbackErrorHandler,
+    };
 
     use super::*;
 
@@ -474,5 +478,167 @@ mod tests {
                 .prune_aliases(generation.saturating_sub(1));
         }
         assert_eq!(world.resource::<CustomResourceRegistry>().alias_count(), 2);
+    }
+
+    fn resource_entity_for_test(world: &mut World) -> Entity {
+        let id = register(world, 0x1000, Some("game.Settings")).id();
+        // SAFETY: TestObjectDescriptor describes u64 exactly.
+        unsafe { insert_dynamic_resource_value(world, id, 1_u64) };
+        world.resource_entities().get(id).unwrap()
+    }
+    #[test]
+    fn is_resource_entity_distinguishes_resource_from_plain_entities() {
+        let mut world = World::new();
+        let resource_entity = resource_entity_for_test(&mut world);
+        let plain = world.spawn_empty().id();
+
+        assert!(is_resource_entity(&world, resource_entity));
+        assert!(!is_resource_entity(&world, plain));
+    }
+
+    #[test]
+    fn validate_hierarchy_link_accepts_a_valid_link() {
+        let mut world = World::new();
+        let parent = world.spawn_empty().id();
+        let child = world.spawn_empty().id();
+
+        assert!(validate_hierarchy_link(&world, child, parent).is_ok());
+    }
+
+    #[test]
+    fn validate_hierarchy_link_rejects_a_self_parent() {
+        let mut world = World::new();
+        let entity = world.spawn_empty().id();
+
+        assert!(matches!(
+            validate_hierarchy_link(&world, entity, entity),
+            Err(HierarchyLinkError::SelfParent)
+        ));
+    }
+
+    #[test]
+    fn validate_hierarchy_link_rejects_a_missing_parent() {
+        let mut world = World::new();
+        let child = world.spawn_empty().id();
+        let gone = world.spawn_empty().id();
+        world.despawn(gone);
+
+        assert!(matches!(
+            validate_hierarchy_link(&world, child, gone),
+            Err(HierarchyLinkError::MissingParent(entity)) if entity == gone
+        ));
+    }
+
+    #[test]
+    fn validate_hierarchy_link_rejects_a_two_node_cycle() {
+        let mut world = World::new();
+        let a = world.spawn_empty().id();
+        let b = world.spawn_empty().id();
+        world.entity_mut(a).add_child(b);
+
+        assert!(matches!(
+            validate_hierarchy_link(&world, a, b),
+            Err(HierarchyLinkError::Cycle)
+        ));
+    }
+
+    #[test]
+    fn validate_hierarchy_link_rejects_a_deeper_cycle() {
+        let mut world = World::new();
+        let root = world.spawn_empty().id();
+        let mid = world.spawn_empty().id();
+        let leaf = world.spawn_empty().id();
+        world.entity_mut(root).add_child(mid);
+        world.entity_mut(mid).add_child(leaf);
+
+        assert!(matches!(
+            validate_hierarchy_link(&world, root, leaf),
+            Err(HierarchyLinkError::Cycle)
+        ));
+    }
+
+    #[test]
+    fn validate_hierarchy_link_rejects_a_resource_entity_parent() {
+        let mut world = World::new();
+        let resource_entity = resource_entity_for_test(&mut world);
+        let child = world.spawn_empty().id();
+
+        assert!(matches!(
+            validate_hierarchy_link(&world, child, resource_entity),
+            Err(HierarchyLinkError::ResourceEntity)
+        ));
+    }
+
+    #[test]
+    fn validate_hierarchy_link_rejects_a_resource_entity_child() {
+        let mut world = World::new();
+        let resource_entity = resource_entity_for_test(&mut world);
+        let parent = world.spawn_empty().id();
+
+        assert!(matches!(
+            validate_hierarchy_link(&world, resource_entity, parent),
+            Err(HierarchyLinkError::ResourceEntity)
+        ));
+    }
+
+    #[test]
+    fn validate_hierarchy_link_rejects_a_child_whose_subtree_contains_a_resource_entity() {
+        let mut world = World::new();
+        let resource_entity = resource_entity_for_test(&mut world);
+        let root = world.spawn_empty().id();
+        let mid = world.spawn_empty().id();
+        // Direct Bevy links bypass the PyBevy guard on purpose: this pins the
+        // defense-in-depth check, not the guarded insert path.
+        world.entity_mut(root).add_child(mid);
+        world.entity_mut(mid).add_child(resource_entity);
+        let fresh = world.spawn_empty().id();
+
+        assert!(matches!(
+            validate_hierarchy_link(&world, root, fresh),
+            Err(HierarchyLinkError::ResourceEntity)
+        ));
+    }
+
+    #[test]
+    fn hierarchy_contains_resource_entity_walks_descendants() {
+        let mut world = World::new();
+        let resource_entity = resource_entity_for_test(&mut world);
+        let root = world.spawn_empty().id();
+        let mid = world.spawn_empty().id();
+        world.entity_mut(root).add_child(mid);
+        world.entity_mut(mid).add_child(resource_entity);
+        let plain_root = world.spawn_empty().id();
+        let plain_child = world.spawn_empty().id();
+        world.entity_mut(plain_root).add_child(plain_child);
+
+        assert!(hierarchy_contains_resource_entity(&world, root));
+        assert!(hierarchy_contains_resource_entity(&world, resource_entity));
+        assert!(!hierarchy_contains_resource_entity(&world, plain_root));
+        assert!(!hierarchy_contains_resource_entity(&world, plain_child));
+    }
+
+    #[test]
+    fn unguarded_resource_entity_child_is_discarded_by_parent_despawn() {
+        let mut world = World::new();
+        let id = register(&mut world, 0x1000, Some("game.Settings")).id();
+        // SAFETY: TestObjectDescriptor describes u64 exactly.
+        unsafe { insert_dynamic_resource_value(&mut world, id, 41_u64) };
+        let resource_entity = world.resource_entities().get(id).unwrap();
+        let root = world.spawn_empty().id();
+        world.entity_mut(root).add_child(resource_entity);
+
+        // SAFETY: same descriptor/value invariant as above.
+        assert_eq!(
+            unsafe { world.get_resource_by_id(id).unwrap().deref::<u64>() },
+            &41
+        );
+
+        // Ignore the cascade's stale-entity command to observe resource disposal.
+        world.insert_resource(FallbackErrorHandler(|_error, _context| {}));
+
+        world.despawn(root);
+
+        assert!(world.get_resource_by_id(id).is_none());
+        assert!(!world.entities().contains(resource_entity));
     }
 }

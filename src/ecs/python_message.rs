@@ -261,7 +261,6 @@ pub(crate) fn prune_python_message_aliases(world: &mut World, minimum_generation
 
 fn maintain_python_messages(store: ResMut<PythonMessageStore>) {
     let retired = store.advance();
-    drop(store);
     Python::attach(|_| drop(retired));
 }
 

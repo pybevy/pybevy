@@ -177,9 +177,7 @@ pub fn update_system_stats(world: &mut World) {
 
     let current_time = time.elapsed_secs_f64();
 
-    // Match Bevy's FrameTimeDiagnosticsPlugin: FPS measures real frame time.
-    // Virtual time clamps long deltas to 250 ms by default, which makes a
-    // stalled frame appear as exactly 4 FPS and can hide the actual frame rate.
+    // Use real frame time like Bevy: virtual time clamps long deltas to 250 ms and hides stalls.
     let delta = world
         .get_resource::<bevy::time::Time<bevy::time::Real>>()
         .map(|real| real.delta_secs())
@@ -228,9 +226,7 @@ pub fn update_system_stats(world: &mut World) {
                 let new_memory = process.memory() as f64 / 1_048_576.0;
                 let per_core_cpu = process.cpu_usage();
 
-                // Divide by number of cores to show fraction of total CPU
-                // process.cpu_usage() returns percentage where 100% = 1 full core
-                // On a 4-core system, 200% usage = 2 cores = 50% of total CPU
+                // cpu_usage() is 100% per core; divide by core count for a total fraction.
                 let num_cores = monitor.system.cpus().len().max(1) as f32;
                 let total_cpu = per_core_cpu / num_cores;
 
@@ -242,10 +238,7 @@ pub fn update_system_stats(world: &mut World) {
             }
         }
 
-        // Count scene entities with the same filter as MCP's get_performance /
-        // list_entities (resource-entities excluded, raw allocator count would
-        // also include observers and other engine internals) so all surfaces
-        // report the same number.
+        // Match MCP's get_performance filter (no resource entities) so all surfaces agree.
         stats.entity_count = world
             .query_filtered::<Entity, Without<IsResource>>()
             .iter(world)
@@ -314,8 +307,7 @@ pub fn update_system_stats(world: &mut World) {
         }
     }
 
-    // Write cross-crate DebugSnapshot for MCP
-    // Extract profiler data first (before mutable world access)
+    // Extract profiler data before the mutable world access that writes the MCP snapshot.
     let (update_profiles, startup_profiles) = world
         .get_resource::<SystemProfiler>()
         .map(|p| {
@@ -455,9 +447,7 @@ pub fn render_hot_reload_overlay(
     >,
     #[cfg(feature = "mcp")] suppression: Option<Res<OverlaySuppression>>,
 ) {
-    // Drive overlay visibility from the capture-suppression refcount every
-    // frame, before the render throttle below, so suppress/release from
-    // screenshots and timelines applies without the 250ms text-update lag.
+    // Drive visibility from the suppression refcount before the throttle, avoiding the 250 ms lag.
     #[cfg(feature = "mcp")]
     let suppressed = suppression.as_ref().is_some_and(|s| s.0 > 0);
     #[cfg(not(feature = "mcp"))]
@@ -638,7 +628,7 @@ pub fn render_hot_reload_overlay(
         // Combine lines (line3/line4 may be empty)
         let mut output = if is_paused {
             format!(
-                "PAUSED — press Space to load | F5=Full reload\n{}\n{}",
+                "PAUSED - press Space to load | F5=Full reload\n{}\n{}",
                 line1, line2
             )
         } else {

@@ -23,7 +23,7 @@ use super::{
 
 /// Batch component for custom Python @component classes.
 ///
-/// Created via `MyComponent.from_numpy(x=xs, y=ys)` where xs, ys are numpy arrays.
+/// Created via `MyComponent.batch(x=xs, y=ys)` where xs, ys are numpy arrays.
 /// Stores the component layout and per-field numpy arrays, then bulk-inserts into
 /// wrapper storage during spawn_batch.
 #[pyclass(name = "CustomComponentBatch")]
@@ -43,6 +43,15 @@ pub struct PyCustomComponentBatch {
 
 #[pymethods]
 impl PyCustomComponentBatch {
+    /// The Batchable protocol's method: the number of entities in this batch.
+    fn count(&self) -> usize {
+        self.count
+    }
+
+    fn __len__(&self) -> usize {
+        self.count
+    }
+
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
         visit.call(&self.component_cls)?;
         for (_, array) in &self.field_arrays {

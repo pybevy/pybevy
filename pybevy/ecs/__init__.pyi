@@ -15,6 +15,7 @@ import numpy as np
 
 from pybevy.app import Stage, SystemFn
 from pybevy.expr import Expr
+from pybevy.expr import FieldExpr as _FieldExpr
 from pybevy.light import PointLight
 from pybevy.transform import Transform
 
@@ -33,7 +34,11 @@ class Batchable(Protocol):
     Users should not implement this protocol directly.
     """
 
-    def count(self) -> int: ...
+    def count(self) -> int:
+        """The number of entities the batch will spawn."""
+
+    def __len__(self) -> int:
+        """The same number as `count()`."""
 
 class Message: ...
 
@@ -728,148 +733,25 @@ class ViewColumn:
     def from_jax(self, arr: Any) -> None:
         """Write JAX array back into ECS storage. Requires `import pybevy.ecs.jax_ext`."""
 
-class FieldExpr(ViewColumn, Expr):
-    """Represents a scalar field in a View expression (e.g., intensity, range).
+_FieldT = TypeVar("_FieldT", default=_FieldExpr)
 
-    Inherits from ViewColumn (batch path: to_jax, from_jax, to_list, etc.)
-    and Expr (expression path: arithmetic, comparisons, where, etc.).
-    """
-    # Binary operators
-    def __add__(self, other: Expr | float | int) -> FieldExpr: ...  # type: ignore[override]
-    def __radd__(self, other: Expr | float | int) -> FieldExpr: ...  # type: ignore[override]
-    def __sub__(self, other: Expr | float | int) -> FieldExpr: ...  # type: ignore[override]
-    def __rsub__(self, other: Expr | float | int) -> FieldExpr: ...
-    def __mul__(self, other: Expr | float | int) -> FieldExpr: ...  # type: ignore[override]
-    def __rmul__(self, other: Expr | float | int) -> FieldExpr: ...  # type: ignore[override]
-    def __truediv__(self, other: Expr | float | int) -> FieldExpr: ...  # type: ignore[override]
-    def __rtruediv__(self, other: Expr | float | int) -> FieldExpr: ...
-    def __pow__(self, other: Expr | float | int) -> FieldExpr: ...  # type: ignore[override]
-    def __rpow__(self, other: Expr | float | int) -> FieldExpr: ...  # type: ignore[override]
-    def __mod__(self, other: Expr | float | int) -> FieldExpr: ...  # type: ignore[override]
-    def __rmod__(self, other: Expr | float | int) -> FieldExpr: ...
-
-    # Unary operators
-    def __neg__(self) -> FieldExpr: ...
-    def __abs__(self) -> FieldExpr: ...
-
-    # In-place operators (trigger immediate assignment)
-    def __iadd__(self, other: Expr | float | int) -> FieldExpr: ...  # type: ignore[override]
-    def __isub__(self, other: Expr | float | int) -> FieldExpr: ...  # type: ignore[override]
-    def __imul__(self, other: Expr | float | int) -> FieldExpr: ...  # type: ignore[override]
-    def __itruediv__(self, other: Expr | float | int) -> FieldExpr: ...  # type: ignore[override]
-    def __ipow__(self, other: Expr | float | int) -> FieldExpr: ...  # type: ignore[override]
-
-    # Comparison operators
-    def __eq__(self, other: Expr | float | int) -> FieldExpr: ...  # type: ignore[override]
-    def __ne__(self, other: Expr | float | int) -> FieldExpr: ...  # type: ignore[override]
-    def __lt__(self, other: Expr | float | int) -> FieldExpr: ...
-    def __le__(self, other: Expr | float | int) -> FieldExpr: ...
-    def __gt__(self, other: Expr | float | int) -> FieldExpr: ...
-    def __ge__(self, other: Expr | float | int) -> FieldExpr: ...
-
-    # Logical operators
-    def __and__(self, other: Expr | float | int) -> FieldExpr: ...
-    def __or__(self, other: Expr | float | int) -> FieldExpr: ...
-    def __invert__(self) -> FieldExpr: ...
-
-    # Basic math functions
-    def sqrt(self) -> FieldExpr: ...
-    def abs(self) -> FieldExpr: ...
-    def min(self, other: Expr | float | int) -> FieldExpr: ...  # type: ignore[override]
-    def max(self, other: Expr | float | int) -> FieldExpr: ...  # type: ignore[override]
-    def clamp(self, min_val: Expr | float | int, max_val: Expr | float | int) -> FieldExpr: ...
-
-    # Trigonometric functions
-    def sin(self) -> FieldExpr: ...
-    def cos(self) -> FieldExpr: ...
-    def tan(self) -> FieldExpr: ...
-    def asin(self) -> FieldExpr: ...
-    def acos(self) -> FieldExpr: ...
-    def atan(self) -> FieldExpr: ...
-
-    # Rounding functions
-    def floor(self) -> FieldExpr: ...
-    def ceil(self) -> FieldExpr: ...
-    def round(self) -> FieldExpr: ...
-
-    # Exponential and logarithmic functions
-    def exp(self) -> FieldExpr: ...
-    def ln(self) -> FieldExpr: ...
-    def log10(self) -> FieldExpr: ...
-    def log2(self) -> FieldExpr: ...
-
-    # Additional math operations
-    def sign(self) -> FieldExpr: ...
-    def fract(self) -> FieldExpr: ...
-    def mod(self, other: Expr | float | int) -> FieldExpr: ...
-    def lerp(self, other: Expr | float | int, t: Expr | float | int) -> FieldExpr: ...  # type: ignore[override]
-
-    # Random functions
-    def random(self) -> FieldExpr: ...
-    def random_range(self, min: Expr | float | int, max: Expr | float | int) -> FieldExpr: ...
-
-    # Conditional selection
-    def where(self, true_value: Expr | float | int, false_value: Expr | float | int) -> FieldExpr: ...
-
-    # Assignment
-    def set(self, value: Expr | float | int) -> None: ...  # type: ignore[override]
-
-    # NumPy conversion (requires batch context)
-    def to_numpy(self) -> np.ndarray:
-        """Convert this field to a NumPy array.
-
-        Only valid in batch iteration context (within `for batch in view.iter_batches()`).
-        Returns a zero-copy view of the underlying archetype storage for this field.
-
-        Returns:
-            NumPy array of shape (N,) for scalar fields
-
-        Raises:
-            RuntimeError: If called outside batch iteration context
-
-        Example:
-            ```python
-            for batch in view.iter_batches():
-                state = batch.column_mut(MoleState)
-                # Convert to NumPy for Numba processing
-                state_np = state.value.to_numpy()  # (N,) int32 array
-
-                @numba.jit(nopython=True, cache=True)
-                def process(s):
-                    for i in range(len(s)):
-                        s[i] += 1
-
-                process(state_np)
-            ```
-
-        Note:
-            For repr(transparent) components, this provides zero-copy access
-            to the underlying contiguous array storage.
-        """
-
-    # Indexing operations (for Numba JIT)
-    def __len__(self) -> int: ...
-    def __getitem__(self, index: int) -> float: ...
-    def __setitem__(self, index: int, value: float) -> None: ...
-    def peek(self, index: int) -> float: ...
-
-class Vec3Expr:
+class Vec3Expr(Generic[_FieldT]):
     """Represents a Vec3 field in a View expression (e.g., translation, scale).
 
     Provides x, y, z component access with assignment support.
     """
     @property
-    def x(self) -> FieldExpr: ...
+    def x(self) -> _FieldT: ...
     @x.setter
-    def x(self, value: Expr | FieldExpr | float | int) -> None: ...
+    def x(self, value: Expr | ViewColumn | float | int) -> None: ...
     @property
-    def y(self) -> FieldExpr: ...
+    def y(self) -> _FieldT: ...
     @y.setter
-    def y(self, value: Expr | FieldExpr | float | int) -> None: ...
+    def y(self, value: Expr | ViewColumn | float | int) -> None: ...
     @property
-    def z(self) -> FieldExpr: ...
+    def z(self) -> _FieldT: ...
     @z.setter
-    def z(self, value: Expr | FieldExpr | float | int) -> None: ...
+    def z(self, value: Expr | ViewColumn | float | int) -> None: ...
 
     # Binary operators (Vec3 operations)
     def __add__(self, other: Vec3Expr) -> Vec3Expr: ...
@@ -926,27 +808,27 @@ class Vec3Expr:
         """Write back from 3 separate JAX arrays. Requires `import pybevy.ecs.jax_ext`."""
     def from_jax(self, x_or_obj: Any, y: Any = ..., z: Any = ...) -> None: ...  # type: ignore[misc]
 
-class QuatExpr:
+class QuatExpr(Generic[_FieldT]):
     """Represents a Quat field in a View expression (e.g., rotation).
 
     Provides x, y, z, w component access with assignment support.
     """
     @property
-    def x(self) -> FieldExpr: ...
+    def x(self) -> _FieldT: ...
     @x.setter
-    def x(self, value: Expr | FieldExpr | float | int) -> None: ...
+    def x(self, value: Expr | ViewColumn | float | int) -> None: ...
     @property
-    def y(self) -> FieldExpr: ...
+    def y(self) -> _FieldT: ...
     @y.setter
-    def y(self, value: Expr | FieldExpr | float | int) -> None: ...
+    def y(self, value: Expr | ViewColumn | float | int) -> None: ...
     @property
-    def z(self) -> FieldExpr: ...
+    def z(self) -> _FieldT: ...
     @z.setter
-    def z(self, value: Expr | FieldExpr | float | int) -> None: ...
+    def z(self, value: Expr | ViewColumn | float | int) -> None: ...
     @property
-    def w(self) -> FieldExpr: ...
+    def w(self) -> _FieldT: ...
     @w.setter
-    def w(self, value: Expr | FieldExpr | float | int) -> None: ...
+    def w(self, value: Expr | ViewColumn | float | int) -> None: ...
 
     # NumPy conversion (requires batch context)
     def to_numpy(self) -> np.ndarray:
@@ -988,7 +870,7 @@ class QuatExpr:
         """Write back from 4 separate JAX arrays. Requires `import pybevy.ecs.jax_ext`."""
     def from_jax(self, x_or_obj: Any, y: Any = ..., z: Any = ..., w: Any = ...) -> None: ...  # type: ignore[misc]
 
-class TransformViewColumn(ViewColumn):
+class TransformViewColumn(ViewColumn, Generic[_FieldT]):
     """Static typing facade for Transform columns returned by View and Batch.
 
     The runtime object remains the native ``ViewColumn``/View column proxy and
@@ -997,22 +879,40 @@ class TransformViewColumn(ViewColumn):
     extra runtime wrapper.
     """
 
-    translation: Vec3Expr
-    rotation: QuatExpr
-    scale: Vec3Expr
+    translation: Vec3Expr[_FieldT]
+    rotation: QuatExpr[_FieldT]
+    scale: Vec3Expr[_FieldT]
 
-class PointLightViewColumn(ViewColumn):
+class PointLightViewColumn(ViewColumn, Generic[_FieldT]):
     """View column accessor for PointLight component.
 
     Provides field-level access for batch operations on light properties.
     """
 
-    intensity: FieldExpr
-    range: FieldExpr
-    radius: FieldExpr
-    shadow_depth_bias: FieldExpr
-    shadow_normal_bias: FieldExpr
-    shadow_map_near_z: FieldExpr
+    @property
+    def intensity(self) -> _FieldT: ...
+    @intensity.setter
+    def intensity(self, value: Expr | ViewColumn | float | int) -> None: ...
+    @property
+    def range(self) -> _FieldT: ...
+    @range.setter
+    def range(self, value: Expr | ViewColumn | float | int) -> None: ...
+    @property
+    def radius(self) -> _FieldT: ...
+    @radius.setter
+    def radius(self, value: Expr | ViewColumn | float | int) -> None: ...
+    @property
+    def shadow_depth_bias(self) -> _FieldT: ...
+    @shadow_depth_bias.setter
+    def shadow_depth_bias(self, value: Expr | ViewColumn | float | int) -> None: ...
+    @property
+    def shadow_normal_bias(self) -> _FieldT: ...
+    @shadow_normal_bias.setter
+    def shadow_normal_bias(self, value: Expr | ViewColumn | float | int) -> None: ...
+    @property
+    def shadow_map_near_z(self) -> _FieldT: ...
+    @shadow_map_near_z.setter
+    def shadow_map_near_z(self, value: Expr | ViewColumn | float | int) -> None: ...
 
 # View-related internal classes
 class ViewParam:
@@ -1252,16 +1152,16 @@ class Batch:
 
     # ViewColumn accessors (unified API with .to_numpy() support)
     @overload
-    def column(self, component_type: type[Transform]) -> TransformViewColumn: ...
+    def column(self, component_type: type[Transform]) -> TransformViewColumn[ViewColumn]: ...
     @overload
-    def column(self, component_type: type[PointLight]) -> PointLightViewColumn: ...
+    def column(self, component_type: type[PointLight]) -> PointLightViewColumn[ViewColumn]: ...
     @overload
     def column(self, component_type: type[ComponentTypeVar]) -> ViewColumn: ...
 
     @overload
-    def column_mut(self, component_type: type[Transform]) -> TransformViewColumn: ...
+    def column_mut(self, component_type: type[Transform]) -> TransformViewColumn[ViewColumn]: ...
     @overload
-    def column_mut(self, component_type: type[PointLight]) -> PointLightViewColumn: ...
+    def column_mut(self, component_type: type[PointLight]) -> PointLightViewColumn[ViewColumn]: ...
     @overload
     def column_mut(self, component_type: type[ComponentTypeVar]) -> ViewColumn: ...
 
@@ -1472,12 +1372,20 @@ class World:
     def despawn(self, entity: Entity) -> None: ...
     def register_component(self, component: type[Component]) -> ComponentId: ...
     def run_system_once(self, func: SystemFn) -> None:
-        """Run a system function once immediately."""
+        """Run a system function once immediately.
+
+        Outer World/Commands handles and borrowed children raise RuntimeError
+        during the call. Use the inner system's injected parameters. Outer access
+        resumes after the inner call returns, including when it raises.
+        """
     def trigger(self, event: Event) -> None:
         """Trigger an event immediately.
 
         Observers watching for this event will execute immediately
         before this function returns.
+
+        Observers must use their injected parameters; captured outer handles
+        raise RuntimeError while an observer is executing on the same World.
 
         Example:
             world.trigger(PlayerDied(player_id=1, cause="explosion"))
@@ -1562,6 +1470,10 @@ class World:
         When called from within an exclusive system (one that takes World),
         the GIL is released so inner Python systems can execute without
         deadlock.
+
+        Captured outer World/Commands handles and borrowed children raise
+        RuntimeError while the nested schedule runs. Use its systems' injected
+        parameters. Outer access resumes when the call returns, including errors.
 
         Note: any references obtained from this World before calling
         run_schedule() may be stale afterward. Re-query after the call.

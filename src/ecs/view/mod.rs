@@ -11,6 +11,7 @@ use crate::ecs::{
 };
 
 pub mod cached_view;
+#[allow(clippy::module_inception)]
 pub mod view;
 pub mod view_column;
 pub mod view_param;

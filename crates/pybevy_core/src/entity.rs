@@ -3,7 +3,10 @@
 //! This module provides the Python binding for Bevy's Entity type.
 
 use bevy::ecs::entity::Entity;
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pyo3::{
+    exceptions::{PyTypeError, PyValueError},
+    prelude::*,
+};
 
 use crate::public_error::invalid_entity_bits;
 
@@ -55,7 +58,29 @@ impl PyEntity {
     }
 }
 
+/// Extract an `Entity` with conversion guidance for integer IDs.
+pub fn extract_entity_from_any(value: &Bound<'_, PyAny>) -> PyResult<PyEntity> {
+    if let Ok(entity) = value.extract::<PyEntity>() {
+        return Ok(entity);
+    }
+    if value.extract::<u64>().is_ok() {
+        return Err(PyTypeError::new_err(
+            "expected an Entity, not an int. An id from an MCP response or a repr \
+             is a to_bits() value: convert it with Entity.from_bits(id).",
+        ));
+    }
+    Err(PyTypeError::new_err(format!(
+        "expected an Entity, got {}",
+        value
+            .get_type()
+            .name()
+            .map(|name| name.to_string())
+            .unwrap_or_else(|_| "an unknown type".to_owned())
+    )))
+}
+
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -120,5 +145,28 @@ mod tests {
         for bits in [0u64, 0xFFFF_FFFF_0000_0000] {
             assert!(PyEntity::from_bits(bits).is_err(), "{bits:#x} was accepted");
         }
+    }
+
+    #[test]
+    fn from_raw_constructs_generation_zero_identity_entities() {
+        // from_raw is deterministic and distinct per index, and is not the
+        // inverse of from_bits: from_bits(5) is a different entity.
+        assert_eq!(PyEntity::from_raw(5), PyEntity::from_raw(5));
+        assert_ne!(PyEntity::from_raw(5), PyEntity::from_raw(6));
+        assert_ne!(
+            PyEntity::from_raw(5).unwrap(),
+            PyEntity::from_bits(5).unwrap()
+        );
+        // Every from_raw entity round-trips through its own bits, including
+        // index 0 (which from_bits itself rejects) and the pen-max index.
+        for raw in [0u32, 1, 5, u32::MAX - 1] {
+            let entity = PyEntity::from_raw(raw).unwrap();
+            assert_eq!(
+                PyEntity::from_bits(entity.to_bits()).unwrap(),
+                entity,
+                "{raw}"
+            );
+        }
+        assert!(PyEntity::from_raw(u32::MAX).is_none());
     }
 }

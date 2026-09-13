@@ -1,5 +1,7 @@
 //! Structural fingerprints deciding whether a reload stays Partial or escalates.
 
+use std::hash::{Hash, Hasher};
+
 use pyo3::prelude::*;
 
 use crate::{
@@ -9,9 +11,7 @@ use crate::{
 
 /// Hash a code object by its fields (recursing into nested code objects).
 /// Not `marshal.dumps`: its intern-dependent bytes falsely flag unrelated edits.
-fn hash_code_object(code: &Bound<'_, PyAny>, hasher: &mut impl std::hash::Hasher) {
-    use std::hash::Hash;
-
+fn hash_code_object(code: &Bound<'_, PyAny>, hasher: &mut impl Hasher) {
     // Signature and flag fields.
     for attr in [
         "co_argcount",
@@ -64,9 +64,7 @@ fn hash_code_object(code: &Bound<'_, PyAny>, hasher: &mut impl std::hash::Hasher
 }
 
 /// Hash a callable's qualname and code object (qualname only if no `__code__`).
-fn hash_callable_code(obj: &Bound<'_, PyAny>, hasher: &mut impl std::hash::Hasher) {
-    use std::hash::Hash;
-
+fn hash_callable_code(obj: &Bound<'_, PyAny>, hasher: &mut impl Hasher) {
     if let Ok(name) = obj
         .getattr("__qualname__")
         .and_then(|n| n.extract::<String>())

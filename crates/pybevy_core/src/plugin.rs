@@ -231,6 +231,7 @@ pub mod plugin_registry {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use std::sync::{
         Arc,
