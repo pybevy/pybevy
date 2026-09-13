@@ -1,12 +1,17 @@
 use std::sync::Arc;
 
 use pybevy_core::LogicalTypeId;
-use pyo3::{PyTraverseError, PyVisit, prelude::*, types::PyType};
+use pyo3::{
+    PyTraverseError, PyTypeInfo, PyVisit,
+    prelude::*,
+    types::{PyTuple, PyType},
+};
 use smallvec::SmallVec;
 
 use crate::ecs::{
     component_type::{PyComponentType, clone_retained_classes, retain_custom_classes},
     filter::QueryFilter,
+    query::single::PySingle,
 };
 
 /// Query parameters for ECS queries.
@@ -24,6 +29,7 @@ pub struct PyQueryParam {
     pub(crate) filters: SmallVec<[QueryFilter; 4]>,
     /// Indicates if the query enforces exactly one entity (Single<T>).
     pub(crate) single_entity_enforced: bool,
+    pub(crate) optional_single: bool,
     /// Strong references backing Python-owned component/resource pointers above.
     ///
     /// `@component` and `@resource` classes are ordinary Python objects. Their
@@ -65,6 +71,7 @@ impl PyQueryParam {
             single: self.single,
             filters: self.filters.clone(),
             single_entity_enforced: self.single_entity_enforced,
+            optional_single: self.optional_single,
             retained_types: SmallVec::new(),
         }
     }
@@ -77,6 +84,7 @@ impl Clone for PyQueryParam {
             single: self.single,
             filters: self.filters.clone(),
             single_entity_enforced: self.single_entity_enforced,
+            optional_single: self.optional_single,
             retained_types: clone_retained_classes(py, &self.retained_types),
         })
     }
@@ -90,11 +98,40 @@ impl PartialEq for PyQueryParam {
             && self.single == other.single
             && self.filters == other.filters
             && self.single_entity_enforced == other.single_entity_enforced
+            && self.optional_single == other.optional_single
     }
 }
 
 #[pymethods]
 impl PyQueryParam {
+    fn __or__(slf: PyRef<'_, Self>, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let py = slf.py();
+        let origin = PySingle::type_object(py);
+        let args = PyTuple::new(py, [slf.into_pyobject(py)?])?;
+        let alias = py
+            .import("types")?
+            .getattr("GenericAlias")?
+            .call1((origin, args))?;
+        py.import("operator")?
+            .getattr("or_")?
+            .call1((alias, other))
+            .map(Bound::unbind)
+    }
+
+    fn __ror__(slf: PyRef<'_, Self>, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let py = slf.py();
+        let origin = PySingle::type_object(py);
+        let args = PyTuple::new(py, [slf.into_pyobject(py)?])?;
+        let alias = py
+            .import("types")?
+            .getattr("GenericAlias")?
+            .call1((origin, args))?;
+        py.import("operator")?
+            .getattr("or_")?
+            .call1((other, alias))
+            .map(Bound::unbind)
+    }
+
     /// Returns a list of component type names in the query parameter.
     #[getter]
     pub fn _data_names(&self, py: Python<'_>) -> Vec<String> {

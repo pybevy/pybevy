@@ -107,6 +107,23 @@ unsafe fn asset_borrow_counter_from_cell(
     )))
 }
 
+/// # Safety
+/// The caller must grant declared Assets<T> access for this cell and type.
+unsafe fn assets_present_in_cell(
+    world: UnsafeWorldCell<'_>,
+    type_ptr: *const PyTypeObject,
+    validity: &ValidityFlag,
+) -> PyResult<bool> {
+    validity.check()?;
+    let bridge = global_registry::get_asset_bridge_by_py_type(type_ptr)
+        .expect("Assets[T] requires a registered asset bridge");
+    let Some(id) = world.components().get_id(bridge.assets_type_id()) else {
+        return Ok(false);
+    };
+    // SAFETY: the caller declares read or write access to this Assets<T> ID.
+    Ok(unsafe { world.get_resource_by_id(id) }.is_some())
+}
+
 /// Handle to a DynamicSystem's Python-holding inner state.
 /// Used by DynamicSystemRegistry to release Python references from old-generation systems.
 pub(crate) type DynamicSystemHandle = pybevy_ecs::shared::system_runtime::SystemHandle<
@@ -413,7 +430,9 @@ pub(crate) fn lower_param_type(ty: &SystemParamType, py: Python<'_>) -> ParamSpe
             }
             ParamSpec::View(spec)
         }
-        SystemParamType::Resource { type_obj, mutable } => {
+        SystemParamType::Resource {
+            type_obj, mutable, ..
+        } => {
             let type_ptr = type_obj.as_ptr() as usize;
             let name = type_obj
                 .bind(py)
@@ -438,6 +457,7 @@ pub(crate) fn lower_param_type(ty: &SystemParamType, py: Python<'_>) -> ParamSpe
             logical_type_id: _,
             logical_type_name,
             mutable,
+            ..
         } => {
             // Access is declared under the real asset type: `type_ptr` (e.g.
             // ShaderMaterial) owns the registered AssetBridge, so `asset_id`
@@ -789,7 +809,11 @@ pub(crate) unsafe fn build_run_args<'w, 'c1, 'c2>(
             SystemParamType::Local(local) => {
                 args_buffer.push(local.clone_ref(py));
             }
-            SystemParamType::Resource { type_obj, mutable } => {
+            SystemParamType::Resource {
+                type_obj,
+                mutable,
+                optional,
+            } => {
                 // Fetch resource from world using PyResourceType
                 let type_bound = type_obj.bind(py);
                 if let Some(state_name) = untyped_state_resource_name(type_bound) {
@@ -809,6 +833,20 @@ pub(crate) unsafe fn build_run_args<'w, 'c1, 'c2>(
                         return Some(e);
                     }
                 };
+
+                if *optional {
+                    // SAFETY: optional resources retain the same declared ID and
+                    // registry access as required resources.
+                    let present = match unsafe { resource_type.is_present_in_cell(world, validity) }
+                    {
+                        Ok(present) => present,
+                        Err(error) => return Some(error),
+                    };
+                    if !present {
+                        args_buffer.push(py.None());
+                        continue;
+                    }
+                }
 
                 // Use appropriate extraction method based on mutability.
                 // Both paths go through narrow cell accessors so no `&World`
@@ -855,6 +893,16 @@ pub(crate) unsafe fn build_run_args<'w, 'c1, 'c2>(
                         PySingleQuery::new(cached, world, validity.clone(), last_run, this_run)
                     };
 
+                    if cached.optional_single {
+                        match single_query.matching_count(py) {
+                            Ok(1) => {}
+                            Ok(_) => {
+                                args_buffer.push(py.None());
+                                continue;
+                            }
+                            Err(error) => return Some(error),
+                        }
+                    }
                     let obj = Py::new(py, single_query).expect("Failed to create PySingleQuery");
                     args_buffer.push(obj.into_any());
                 } else {
@@ -1041,7 +1089,21 @@ pub(crate) unsafe fn build_run_args<'w, 'c1, 'c2>(
                 logical_type_id,
                 logical_type_name,
                 mutable,
+                optional,
             } => {
+                if *optional {
+                    // SAFETY: optional asset parameters retain declared access to
+                    // Assets<T>; only presence is read before materialization.
+                    let present =
+                        match unsafe { assets_present_in_cell(world, type_ptr.0, validity) } {
+                            Ok(present) => present,
+                            Err(error) => return Some(error),
+                        };
+                    if !present {
+                        args_buffer.push(py.None());
+                        continue;
+                    }
+                }
                 let borrow_counter = match unsafe {
                     asset_borrow_counter_from_cell(
                         world,
@@ -1227,6 +1289,10 @@ pub(crate) unsafe fn execute_prepared_observer(
                             this_run,
                         )
                     };
+                    if query_param.optional_single && single_query.matching_count(py)? != 1 {
+                        args_buffer.push(py.None());
+                        continue;
+                    }
                     let obj = Py::new(py, single_query).expect("Failed to create PySingleQuery");
                     args_buffer.push(obj.into_any());
                 } else {
@@ -1238,7 +1304,11 @@ pub(crate) unsafe fn execute_prepared_observer(
                     args_buffer.push(obj.into_any());
                 }
             }
-            SystemParamType::Resource { type_obj, mutable } => {
+            SystemParamType::Resource {
+                type_obj,
+                mutable,
+                optional,
+            } => {
                 let type_bound = type_obj.bind(py);
                 if let Some(state_name) = untyped_state_resource_name(type_bound)
                     && world
@@ -1250,6 +1320,17 @@ pub(crate) unsafe fn execute_prepared_observer(
                     )));
                 }
                 let resource_type = PyResourceType::try_from((type_bound, py))?;
+                if *optional {
+                    // SAFETY: observer dispatch owns the World; only the declared
+                    // resource identity is inspected and validity remains active.
+                    let present = unsafe {
+                        resource_type.is_present_in_cell(world.as_unsafe_world_cell(), validity)
+                    }?;
+                    if !present {
+                        args_buffer.push(py.None());
+                        continue;
+                    }
+                }
                 let resource = if *mutable {
                     resource_type.get_from_world_mut(world, py, validity.clone())?
                 } else {
@@ -1280,7 +1361,17 @@ pub(crate) unsafe fn execute_prepared_observer(
                 logical_type_id,
                 logical_type_name,
                 mutable,
+                optional,
             } => {
+                if *optional {
+                    // SAFETY: observer dispatch owns the World and validity is active.
+                    if !unsafe {
+                        assets_present_in_cell(world.as_unsafe_world_cell(), type_ptr.0, validity)
+                    }? {
+                        args_buffer.push(py.None());
+                        continue;
+                    }
+                }
                 let borrow_counter = unsafe {
                     asset_borrow_counter_from_cell(
                         world.as_unsafe_world_cell(),

@@ -70,6 +70,9 @@ pub trait AssetBridge: Send + Sync + 'static {
     /// Human-readable name for error messages
     fn name(&self) -> &'static str;
 
+    /// Native resource identity for narrow `Assets<T>` presence checks.
+    fn assets_type_id(&self) -> TypeId;
+
     /// Get the ComponentId of the `Assets<T>` resource in the world.
     /// Used by FilteredAccessSet to track cross-system asset access.
     fn resource_id(&self, world: &World) -> Option<ComponentId>;
@@ -269,6 +272,10 @@ mod tests {
             "FakeAsset"
         }
 
+        fn assets_type_id(&self) -> TypeId {
+            unreachable!("asset resource identity is not exercised by this fake bridge")
+        }
+
         fn resource_id(&self, _world: &World) -> Option<ComponentId> {
             unreachable!("not exercised by the trait-default tests")
         }
@@ -424,6 +431,10 @@ mod tests {
 
         fn name(&self) -> &'static str {
             "FakeAsset2"
+        }
+
+        fn assets_type_id(&self) -> TypeId {
+            unreachable!("asset resource identity is not exercised by this fake bridge")
         }
 
         fn resource_id(&self, _world: &World) -> Option<ComponentId> {

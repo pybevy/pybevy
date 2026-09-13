@@ -135,6 +135,38 @@ impl PyResourceType {
         })
     }
 
+    /// Test resource presence without materializing or mutating its value.
+    ///
+    /// # Safety
+    /// The cell must permit the resource and registry access declared for this
+    /// parameter and remain valid for the complete check.
+    pub unsafe fn is_present_in_cell(
+        &self,
+        cell: UnsafeWorldCell<'_>,
+        validity: &ValidityFlag,
+    ) -> PyResult<bool> {
+        validity.check()?;
+        let id = match self {
+            PyResourceType::AssetServer => cell.components().component_id::<AssetServer>(),
+            PyResourceType::Dynamic(type_ptr) => {
+                let bridge = global_registry::get_resource_bridge_by_py_type(*type_ptr)
+                    .ok_or_else(|| PyTypeError::new_err(RESOURCE_BRIDGE_NOT_FOUND))?;
+                cell.components().get_id(bridge.bevy_type_id())
+            }
+            PyResourceType::Custom(type_ptr) => {
+                // SAFETY: initialization declares this registry read.
+                unsafe { cell.get_resource::<ResourceRegistry>() }
+                    .and_then(|registry| registry.get(*type_ptr as usize))
+            }
+        };
+        let Some(id) = id else {
+            return Ok(false);
+        };
+        // SAFETY: the caller grants the resolved resource ID access; this does
+        // not dereference or expose its returned pointer.
+        Ok(unsafe { cell.get_resource_by_id(id) }.is_some())
+    }
+
     /// Read a resource through an `UnsafeWorldCell`, touching only this resource's
     /// declared data instead of borrowing the whole world (as `get_from_world` does).
     ///
@@ -329,6 +361,32 @@ impl PyResourceType {
                 world.remove_resource_by_id(component_id);
 
                 Ok(())
+            }
+        }
+    }
+
+    pub fn take_from_world(&self, world: &mut World, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        match self {
+            Self::AssetServer => Err(PyTypeError::new_err(ASSET_SERVER_MANUAL_REMOVE)),
+            Self::Dynamic(type_ptr) => {
+                let bridge = global_registry::get_resource_bridge_by_py_type(*type_ptr)
+                    .ok_or_else(|| PyTypeError::new_err(RESOURCE_BRIDGE_NOT_FOUND))?;
+                bridge.take(world, py)
+            }
+            Self::Custom(type_ptr) => {
+                let Some(component_id) = world
+                    .get_resource::<ResourceRegistry>()
+                    .and_then(|registry| registry.get(*type_ptr as usize))
+                else {
+                    return Ok(None);
+                };
+                let Some(value) = world.get_resource_by_id(component_id) else {
+                    return Ok(None);
+                };
+                // SAFETY: custom resource IDs use Pyo3ResourceObjectDescriptor.
+                let value = unsafe { value.deref::<Py<PyAny>>().clone_ref(py) };
+                world.remove_resource_by_id(component_id);
+                Ok(Some(value))
             }
         }
     }

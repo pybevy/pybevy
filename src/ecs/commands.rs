@@ -1376,6 +1376,8 @@ impl PyCommands {
             if world.get_entity(entity.0).is_err() {
                 return Ok(None);
             }
+        } else if self.commands_mut()?.get_entity(entity.0).is_err() {
+            return Ok(None);
         }
         Ok(Some(PyEntityCommands::with_commands(entity.0, self, py)))
     }

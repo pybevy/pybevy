@@ -23,7 +23,10 @@ use bevy::{
 use pybevy_core::{
     AssetAccessRegistry, AssetBorrowCounter, ensure_asset_access_registry,
     ensure_no_live_asset_access, extract_entity_from_any,
-    public_error::{RESOURCE_ENTITY_DESPAWN, unregistered_message_write},
+    public_error::{
+        COMPONENT_BRIDGE_NOT_FOUND, RESOURCE_BRIDGE_NOT_FOUND, RESOURCE_ENTITY_DESPAWN,
+        unregistered_message_write,
+    },
     registry::global_registry,
     resource_initializer,
 };
@@ -520,11 +523,25 @@ impl PyWorld {
         };
         if mutable {
             Ok(Some(
-                Py::new(py, PyResMut::new(value.bind(py).clone()))?.into_any(),
+                Py::new(
+                    py,
+                    PyResMut::with_validity(
+                        value.bind(py).clone(),
+                        self.validity.clone().unwrap_or_default(),
+                    ),
+                )?
+                .into_any(),
             ))
         } else {
             Ok(Some(
-                Py::new(py, PyRes::new(value.bind(py).clone()))?.into_any(),
+                Py::new(
+                    py,
+                    PyRes::with_validity(
+                        value.bind(py).clone(),
+                        self.validity.clone().unwrap_or_default(),
+                    ),
+                )?
+                .into_any(),
             ))
         }
     }
@@ -638,7 +655,7 @@ impl PyWorld {
     }
 
     /// Despawn an entity
-    pub fn despawn(&self, entity: &Bound<'_, PyAny>) -> PyResult<()> {
+    pub fn despawn(&self, entity: &Bound<'_, PyAny>) -> PyResult<bool> {
         let entity = &extract_entity_from_any(entity)?;
         self.check_valid()?;
         let mut world = self.world_mut()?;
@@ -647,9 +664,9 @@ impl PyWorld {
         }
         ensure_no_live_asset_access(&world, "world.despawn()")
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-        crate::ecs::lifecycle_mutation::despawn_recursive(&mut world, entity.0);
-
-        Ok(())
+        Ok(crate::ecs::lifecycle_mutation::despawn_recursive(
+            &mut world, entity.0,
+        ))
     }
 
     /// Get resource from the world
@@ -674,7 +691,12 @@ impl PyWorld {
         let validity = self.validity.clone().unwrap_or_default();
 
         // Retrieve the resource from the world
-        py_resource_type.get_from_world(world, py, validity)
+        let value = py_resource_type.get_from_world(world, py, validity.clone())?;
+        if matches!(py_resource_type, PyResourceType::Custom(_)) {
+            Ok(Py::new(py, PyRes::with_validity(value.into_bound(py), validity))?.into_any())
+        } else {
+            Ok(value)
+        }
     }
 
     pub fn insert_resource(&self, py: Python, resource: Bound<'_, PyAny>) -> PyResult<()> {
@@ -692,13 +714,18 @@ impl PyWorld {
         py_resource_type.insert_into_world(&mut world, py, resource_instance)
     }
 
-    pub fn remove_resource(&self, py: Python, resource_type: Bound<'_, PyAny>) -> PyResult<()> {
+    pub fn remove_resource(
+        &self,
+        py: Python,
+        resource_type: Bound<'_, PyAny>,
+    ) -> PyResult<Option<Py<PyAny>>> {
         self.check_valid()?;
-        let validity = self.validity.clone().unwrap_or_default();
-        // SAFETY: The temporary adapter is used only for this call, while the checked
-        // World pointer and its validity token remain alive.
-        let commands = unsafe { PyCommands::from_world_temporary(self.world_ptr(), validity) };
-        commands.remove_resource(py, resource_type)
+        let type_obj = resource_type.cast::<PyType>().map_err(|_| {
+            PyTypeError::new_err("remove_resource expects a resource type (class), not an instance")
+        })?;
+        let resource = PyResourceType::try_from((type_obj, py))?;
+        self.check_native_asset_access("world.remove_resource()")?;
+        resource.take_from_world(&mut *self.world_mut()?, py)
     }
 
     pub fn register_resource(&self, py: Python, resource: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
@@ -912,15 +939,27 @@ impl PyWorld {
         Ok(entities)
     }
 
-    pub fn register_component(&self, py: Python, component: Bound<'_, PyAny>) -> PyResult<()> {
+    pub fn register_component(
+        &self,
+        py: Python,
+        component: Bound<'_, PyAny>,
+    ) -> PyResult<PyComponentId> {
         self.check_valid()?;
-
         let type_obj: Bound<'_, PyType> = component.extract()?;
-        let type_ptr = type_obj.as_type_ptr();
+        let component_type = PyComponentType::try_from((&type_obj, py))?;
         let mut world = self.world_mut()?;
-        register_custom_component(&mut world, type_ptr, py);
-
-        Ok(())
+        let id = match component_type {
+            PyComponentType::Custom(type_ptr) => {
+                register_custom_component(&mut world, type_ptr, py)
+            }
+            PyComponentType::Dynamic(type_ptr) => global_registry::get_bridge_by_py_type(type_ptr)
+                .ok_or_else(|| PyTypeError::new_err(COMPONENT_BRIDGE_NOT_FOUND))?
+                .register(&mut world),
+            PyComponentType::Resource(_) => PyResourceType::try_from((&type_obj, py))?
+                .register_component_id(&mut world, py)
+                .ok_or_else(|| PyTypeError::new_err(RESOURCE_BRIDGE_NOT_FOUND))?,
+        };
+        Ok(PyComponentId(id))
     }
 
     pub fn component_id(
@@ -962,16 +1001,11 @@ impl PyWorld {
                     Ok(None)
                 }
             }
-            PyComponentType::Resource(type_ptr) => {
+            PyComponentType::Resource(_) => {
                 let mut world = self.world_mut()?;
-                let component_id = if let Some(bridge) =
-                    pybevy_core::registry::global_registry::get_resource_bridge_by_py_type(type_ptr)
-                {
-                    bridge.register_resource_id(&mut world)
-                } else {
-                    register_custom_resource(&mut world, type_ptr, py)
-                };
-                Ok(Some(PyComponentId(component_id)))
+                Ok(PyResourceType::try_from((&type_obj, py))?
+                    .register_component_id(&mut world, py)
+                    .map(PyComponentId))
             }
         }
     }

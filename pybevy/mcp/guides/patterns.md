@@ -93,6 +93,15 @@ one graphical App.
 
 Native plugin build failures in `app.add_plugins(...)` raise `RuntimeError` with the plugin name and failure detail. After a failed native build, discard the App and construct a fresh one with dependencies ordered first: Bevy retains partial state and its added-plugin marker, so re-adding skips the build. Rust panic text is still printed to stderr before the RuntimeError is caught. Python plugin exceptions keep their original type and failed Python plugins remain retryable. Asset loading requires an initialized IoTaskPool; add `TaskPoolPlugin` before loading assets.
 
+`PluginGroup.build()` returns a `PluginGroupBuilder`; calling `build()` on a builder
+returns that same builder. Apply groups with `app.add_plugins(group)` or
+`app.add_plugins(builder)`, or call `builder.finish(app)`. Public `finish(app)`
+is also available on `DefaultPlugins` and `MinimalPlugins`. A builder remains reusable
+with other Apps; repeating on the same App raises `RuntimeError` for duplicate native
+plugins. `MinimalPlugins.finish` skips installed members. Python `PluginGroup`
+subclasses need `build(self, app)` and do not need `finish`; they retain their
+plugin-style application through `App.add_plugins`; this adapter differs from Bevy's group trait.
+
 ## ECS Essentials
 
 PyBevy uses Bevy's Entity Component System (ECS). Entities are IDs, components are data attached to entities, and systems are functions that process entities based on their components.
@@ -100,6 +109,17 @@ PyBevy uses Bevy's Entity Component System (ECS). Entities are IDs, components a
 ### Entities
 
 Entities are spawned via `Commands` and identified by an `Entity` handle.
+
+Fluent EntityCommands and RelatedSpawnerCommands handles retain their producer's
+backing allocation, so temporary chains such as
+`world.commands().entity(entity).remove(Transform)` are safe. Handles obtained
+inside a system still expire with that system. Keep an `Entity` ID for later
+systems and obtain a fresh handle from their injected Commands or World.
+
+Owned `World()` instances expose their retained Python component/resource values
+and registered classes to cyclic GC. Discarded namespaces can therefore release
+those Worlds even when their stored Python values refer back to the namespace.
+GC inspection remains safe during native field writes and asset operations.
 
 <!-- pybevy-snippet: smoke -->
 ```python
@@ -119,6 +139,12 @@ def setup(commands: Commands) -> None:
     # Despawn an entity
     commands.despawn(entity)
 ```
+
+`commands.get_entity(entity)` returns `None` for an expired entity generation.
+Following Bevy, valid unspawned IDs are accepted, including fresh IDs and IDs
+reserved by `commands.spawn()` before deferred commands apply.
+A returned handle remains subject to the system's validity window.
+
 
 Use `Name` to give entities stable human-readable identifiers. Names persist across hot reloads and are queryable via MCP tools.
 
@@ -671,6 +697,13 @@ def setup(commands: Commands) -> None:
     commands.insert_resource(GameState())
 ```
 
+`World.remove_resource(T)` returns an owned value or `None`;
+`Commands.remove_resource(T)` queues removal and returns nothing.
+
+Custom resources from `World.resource(T)` are shallow read-only handles that
+expire after the World scope. Use `World.get_mut(resource_entity, T)` for field
+writes, or `copy.copy` / `copy.deepcopy` while valid to keep an owned value.
+
 ### Messages
 
 Messages provide buffered inter-system communication. An ordered reader can see values written earlier in the same schedule pass; retained values expire after two admitted message-update cycles.
@@ -724,6 +757,11 @@ the retained Python objects, so changing their fields is visible to later reader
 `read()` is included in that read; a write afterward is read by the mutator on its next run.
 `MessageMutator` currently rejects native Bevy message wrappers because those reader values are
 snapshots and cannot safely provide in-place mutation.
+Using a message class bare or inside `Res[...]`/`ResMut[...]` raises `TypeError`
+with the reader/writer spellings; only custom Python messages also suggest a mutator.
+
+For mutable asset access, use `ResMut[Assets[T]]`, not `Mut[Assets[T]]`.
+The rejected form reports the public asset annotation and the resource spellings.
 
 Do not put a `MessageWriter[T]` or `MessageMutator[T]` together with another reader, writer, or
 mutator for `T` in one system. Bevy treats both as mutable channel access. Two
@@ -1251,3 +1289,10 @@ foliage_snowy = materials.add(StandardMaterial(base_color=Color.srgb(0.82, 0.84,
 ```
 
 **When extra geometry works:** Flattened spheres for snow piles on flat surfaces (ground, rock tops) look fine because they sit on a flat plane rather than conforming to a curved surface.
+
+Floating vector scalar arithmetic works in either operand order, including
+`scalar - vector` and `scalar / vector`. Vector multiplication and division are
+componentwise. Quaternion addition/subtraction and scalar scaling operate on
+components without normalizing; quaternion multiplication composes rotations.
+Float division follows IEEE semantics: zero produces infinity or NaN. Integer
+vector overflow raises `OverflowError`; division by zero raises `ZeroDivisionError`.

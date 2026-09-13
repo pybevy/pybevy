@@ -21,6 +21,10 @@ pub struct PySingleQuery {
 }
 
 impl PySingleQuery {
+    pub(crate) fn matching_count(&self, py: Python<'_>) -> PyResult<usize> {
+        self.query_iter.borrow(py).matching_count()
+    }
+
     /// Creates a new Single query wrapper
     ///
     /// # Safety
@@ -81,6 +85,15 @@ impl PySingleQuery {
     fn __setattr__(&mut self, py: Python, name: &str, value: Py<PyAny>) -> PyResult<()> {
         let item = self.get_or_fetch_item(py)?;
         item.setattr(py, name, value)
+    }
+
+    /// Index into the single result, which is how `Single[tuple[A, B]]` is read.
+    ///
+    /// `__iter__` yields the row itself rather than its components, so unpacking
+    /// a tuple row would bind one name; indexing reaches the components.
+    fn __getitem__(&mut self, py: Python, index: Py<PyAny>) -> PyResult<Py<PyAny>> {
+        let item = self.get_or_fetch_item(py)?;
+        item.bind(py).get_item(index).map(Bound::unbind)
     }
 }
 

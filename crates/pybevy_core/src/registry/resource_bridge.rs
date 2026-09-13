@@ -139,6 +139,9 @@ pub trait ResourceBridge: Send + Sync + 'static {
     /// Remove resource from world
     fn remove(&self, world: &mut World);
 
+    /// Remove a resource and materialize its owned value, if removal is supported.
+    fn take(&self, world: &mut World, py: Python) -> PyResult<Option<Py<PyAny>>>;
+
     /// Check if resource exists in world
     fn contains_in_world(&self, world: &World) -> bool;
 

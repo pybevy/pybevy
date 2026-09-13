@@ -1,19 +1,22 @@
 use pyo3::{
     Bound,
     prelude::*,
-    types::{PyAny, PyType},
+    types::{PyAny, PyTuple, PyType},
 };
 
-use crate::ecs::query::query_helpers::construct_query_class_item_with_options;
+use crate::ecs::query::{
+    query_helpers::construct_query_class_item_with_options, query_param::PyQueryParam,
+};
 
 /// A query parameter that enforces exactly one entity matches the query.
 ///
-/// Panics if zero or multiple entities match the query filter.
+/// Skips the system if zero or multiple entities match the query filter.
+/// Optional annotations instead inject None and run the system.
 ///
 /// Example:
 /// ```python
 /// def system(player: Single[tuple[Mut[Transform], Player]]) -> None:
-///     transform, player_data = player  # Guaranteed to be single entity
+///     transform, player_data = player[0], player[1]
 ///     transform.translation.x += 10.0
 /// ```
 #[pyclass(name = "Single", module = "pybevy.ecs", frozen)]
@@ -30,6 +33,17 @@ impl PySingle {
         cls: &Bound<'_, PyType>,
         key: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
+        if let Ok(args) = key.cast::<PyTuple>()
+            && args.len() == 1
+            && args.get_item(0)?.is_instance_of::<PyQueryParam>()
+        {
+            return cls
+                .py()
+                .import("types")?
+                .getattr("GenericAlias")?
+                .call1((cls, args))
+                .map(Bound::unbind);
+        }
         // Reuse the Query construction logic but mark it as single-entity enforced
         construct_query_class_item_with_options(cls, key, true)
     }

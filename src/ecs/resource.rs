@@ -5,16 +5,19 @@ pub use pybevy_core::PyResource;
 pub(crate) use pybevy_core::custom_resource::{
     hierarchy_contains_resource_entity, is_resource_entity,
 };
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, PyComponent, ValidityFlag};
 use pybevy_macros::pycomponent;
 use pyo3::{
     PyTraverseError, PyTypeInfo, PyVisit,
     exceptions::PyTypeError,
     prelude::*,
-    types::{PyList, PyTuple, PyType},
+    types::{PyDict, PyList, PyTuple, PyType},
 };
 
-use crate::ecs::component::PyComponentId;
+use crate::ecs::{
+    component::PyComponentId,
+    state::{PyNextState, PyState},
+};
 
 #[pycomponent(IsResource, no_clone, no_insert, bridge)]
 #[pyclass(name = "IsResource", module = "pybevy.ecs", extends = PyComponent, frozen)]
@@ -67,6 +70,28 @@ impl PyResParam {
         PyTuple::new(py, [self.type_obj.bind(py)])
     }
 
+    fn __or__(&self, py: Python<'_>, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let alias = py
+            .import("types")?
+            .getattr("GenericAlias")?
+            .call1((self.__origin__(py), self.__args__(py)?))?;
+        py.import("operator")?
+            .getattr("or_")?
+            .call1((alias, other))
+            .map(Bound::unbind)
+    }
+
+    fn __ror__(&self, py: Python<'_>, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let alias = py
+            .import("types")?
+            .getattr("GenericAlias")?
+            .call1((self.__origin__(py), self.__args__(py)?))?;
+        py.import("operator")?
+            .getattr("or_")?
+            .call1((other, alias))
+            .map(Bound::unbind)
+    }
+
     pub fn __repr__(&self) -> String {
         if self.mutable {
             format!("ResMut[{}]", self.type_name)
@@ -83,6 +108,7 @@ pub struct PyRes {
     ty: Py<PyType>,
 
     value: Py<PyAny>,
+    validity: Option<ValidityFlag>,
 }
 
 impl PyRes {
@@ -90,7 +116,22 @@ impl PyRes {
         Self {
             ty: value.get_type().into(),
             value: value.unbind(),
+            validity: None,
         }
+    }
+
+    pub fn with_validity(value: Bound<'_, PyAny>, validity: ValidityFlag) -> Self {
+        Self {
+            validity: Some(validity),
+            ..Self::new(value)
+        }
+    }
+
+    fn check_valid(&self) -> PyResult<()> {
+        if let Some(validity) = &self.validity {
+            validity.check()?;
+        }
+        Ok(())
     }
 }
 
@@ -126,19 +167,38 @@ impl PyRes {
 
     /// Proxy attribute access to the wrapped resource (read-only)
     pub fn __getattr__(&self, py: Python, name: &str) -> PyResult<Py<PyAny>> {
+        self.check_valid()?;
         self.value.bind(py).getattr(name).map(|v| v.unbind())
     }
 
     /// Prevent attribute setting on read-only resource
     pub fn __setattr__(&self, _py: Python, name: &str, _value: Bound<'_, PyAny>) -> PyResult<()> {
+        self.check_valid()?;
         Err(PyTypeError::new_err(format!(
             "Cannot set attribute '{}' on read-only Res - use ResMut instead",
             name
         )))
     }
 
+    pub fn __copy__(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.check_valid()?;
+        Ok(py
+            .import("copy")?
+            .call_method1("copy", (self.value.bind(py),))?
+            .unbind())
+    }
+
+    pub fn __deepcopy__(&self, py: Python, memo: &Bound<'_, PyDict>) -> PyResult<Py<PyAny>> {
+        self.check_valid()?;
+        Ok(py
+            .import("copy")?
+            .call_method1("deepcopy", (self.value.bind(py), memo))?
+            .unbind())
+    }
+
     /// Expose wrapped resource attrs to dir() so REPL/IDE introspection works.
     pub fn __dir__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
+        self.check_valid()?;
         let inner = self.value.bind(py);
         let mut names = py
             .import("builtins")?
@@ -150,7 +210,30 @@ impl PyRes {
     }
 
     pub fn __repr__(&self, py: Python) -> PyResult<String> {
+        self.check_valid()?;
+        if self.value.bind(py).is_instance_of::<PyState>()
+            || self.value.bind(py).is_instance_of::<PyNextState>()
+        {
+            return self.value.bind(py).repr()?.extract();
+        }
         Ok(format!("Res({})", self.value.bind(py).repr()?))
+    }
+
+    pub fn __eq__(&self, py: Python<'_>, other: &Bound<'_, PyAny>) -> PyResult<bool> {
+        self.check_valid()?;
+        if let Ok(other) = other.extract::<PyRef<'_, PyRes>>() {
+            other.check_valid()?;
+            return self.value.bind(py).eq(other.value.bind(py));
+        }
+        if let Ok(other) = other.extract::<PyRef<'_, PyResMut>>() {
+            other.check_valid()?;
+            return self.value.bind(py).eq(other.value.bind(py));
+        }
+        self.value.bind(py).eq(other)
+    }
+
+    pub fn __ne__(&self, py: Python<'_>, other: &Bound<'_, PyAny>) -> PyResult<bool> {
+        self.__eq__(py, other).map(|equal| !equal)
     }
 }
 
@@ -161,6 +244,7 @@ pub struct PyResMut {
     ty: Py<PyType>,
 
     value: Py<PyAny>,
+    validity: Option<ValidityFlag>,
 }
 
 impl PyResMut {
@@ -168,12 +252,44 @@ impl PyResMut {
         Self {
             ty: value.get_type().into(),
             value: value.unbind(),
+            validity: None,
         }
+    }
+
+    pub fn with_validity(value: Bound<'_, PyAny>, validity: ValidityFlag) -> Self {
+        Self {
+            validity: Some(validity),
+            ..Self::new(value)
+        }
+    }
+
+    fn check_valid(&self) -> PyResult<()> {
+        if let Some(validity) = &self.validity {
+            validity.check()?;
+        }
+        Ok(())
     }
 }
 
 #[pymethods]
 impl PyResMut {
+    pub fn __eq__(&self, py: Python<'_>, other: &Bound<'_, PyAny>) -> PyResult<bool> {
+        self.check_valid()?;
+        if let Ok(other) = other.extract::<PyRef<'_, PyRes>>() {
+            other.check_valid()?;
+            return self.value.bind(py).eq(other.value.bind(py));
+        }
+        if let Ok(other) = other.extract::<PyRef<'_, PyResMut>>() {
+            other.check_valid()?;
+            return self.value.bind(py).eq(other.value.bind(py));
+        }
+        self.value.bind(py).eq(other)
+    }
+
+    pub fn __ne__(&self, py: Python<'_>, other: &Bound<'_, PyAny>) -> PyResult<bool> {
+        self.__eq__(py, other).map(|equal| !equal)
+    }
+
     /// Report held Python objects to the cyclic GC; see docs/safety.md.
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
         visit.call(&self.ty)?;
@@ -204,16 +320,35 @@ impl PyResMut {
 
     /// Proxy attribute access to the wrapped resource
     pub fn __getattr__(&self, py: Python, name: &str) -> PyResult<Py<PyAny>> {
+        self.check_valid()?;
         self.value.bind(py).getattr(name).map(|v| v.unbind())
     }
 
     /// Proxy attribute setting to the wrapped resource
     pub fn __setattr__(&mut self, py: Python, name: &str, value: Bound<'_, PyAny>) -> PyResult<()> {
+        self.check_valid()?;
         self.value.bind(py).setattr(name, value)
+    }
+
+    pub fn __copy__(&self, py: Python) -> PyResult<Py<PyAny>> {
+        self.check_valid()?;
+        Ok(py
+            .import("copy")?
+            .call_method1("copy", (self.value.bind(py),))?
+            .unbind())
+    }
+
+    pub fn __deepcopy__(&self, py: Python, memo: &Bound<'_, PyDict>) -> PyResult<Py<PyAny>> {
+        self.check_valid()?;
+        Ok(py
+            .import("copy")?
+            .call_method1("deepcopy", (self.value.bind(py), memo))?
+            .unbind())
     }
 
     /// Expose wrapped resource attrs to dir() so REPL/IDE introspection works.
     pub fn __dir__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
+        self.check_valid()?;
         let inner = self.value.bind(py);
         let mut names = py
             .import("builtins")?
@@ -225,6 +360,7 @@ impl PyResMut {
     }
 
     pub fn __repr__(&self, py: Python) -> PyResult<String> {
+        self.check_valid()?;
         Ok(format!("ResMut({})", self.value.bind(py).repr()?))
     }
 }

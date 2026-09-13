@@ -101,6 +101,8 @@ type Res[T: Resource] = T
 
 Res[T] provides immutable access to a resource, allowing multiple systems
 to read the same resource in parallel without conflicts.
+World custom-resource proxies preserve value equality and inequality. They are
+unhashable, and comparison through expired World handles raises RuntimeError.
 
 Example:
     ```python
@@ -117,6 +119,8 @@ type ResMut[T: Resource] = T
 
 ResMut[T] provides exclusive mutable access to a resource. Only one system
 can have ResMut access to a resource at a time, preventing data races.
+World custom-resource proxies preserve value equality and inequality. They are
+unhashable, and comparison through expired World handles raises RuntimeError.
 
 Example:
     ```python
@@ -1357,7 +1361,7 @@ class World:
     def register_resource(self, resource: type[ResourceType]) -> ComponentId: ...
     def init_resource(self, resource: type[ResourceType]) -> ComponentId: ...
     def insert_resource(self, resource: Resource) -> None: ...
-    def remove_resource(self, resource_type: type[ResourceType]) -> None: ...
+    def remove_resource(self, resource_type: type[ResourceType]) -> ResourceType | None: ...
     def component_id(self, component: type[Component]) -> ComponentId | None: ...
     def contains_resource(self, resource: type[ResourceType]) -> bool: ...
     def resource_entity(self, resource: type[ResourceType]) -> Entity | None:
@@ -1369,7 +1373,7 @@ class World:
 
         Returns a tuple of (error_message, traceback) or None if no error.
         """
-    def despawn(self, entity: Entity) -> None: ...
+    def despawn(self, entity: Entity) -> bool: ...
     def register_component(self, component: type[Component]) -> ComponentId: ...
     def run_system_once(self, func: SystemFn) -> None:
         """Run a system function once immediately.
@@ -1636,6 +1640,9 @@ class SingleQuery:
     """
     def __iter__(self) -> SingleQuery: ...
     def __next__(self) -> Any: ...
+    def __getitem__(self, index: int) -> Any: ...
+    def __getattr__(self, name: str) -> Any: ...
+    def __setattr__(self, name: str, value: Any) -> None: ...
 
 # https://peps.python.org/pep-0646/#variance-type-constraints-and-type-bounds-not-yet-supported
 
@@ -2095,7 +2102,10 @@ class Single(Generic[QueryParam_T, *Qs]):
     """
     Single entity query that enforces exactly one entity matches.
 
-    Raises RuntimeError if zero or multiple entities match the query filter.
+    Skips the system before its body runs if zero or multiple entities match.
+    Optional[Single[T]] from typing instead injects None for invalid cardinality
+    and runs the system with unchanged scheduler access. Single[T] | None is
+    also supported.
 
     Examples:
         Single[Player] - single Player entity (read-only)
@@ -2103,13 +2113,15 @@ class Single(Generic[QueryParam_T, *Qs]):
         Single[tuple[Mut[Transform], Player]] - single entity with both components
 
     Usage:
-        def system(player: Single[tuple[Mut[Transform], Player]]) -> None:
-            # player is directly the tuple, not an iterator
-            transform, player_data = player
-            transform.translation.x += 10.0
+        def system(player: Single[Mut[Transform]]) -> None:
+            # attribute access forwards to the row, as bevy's Deref does
+            player.translation.x += 10.0
 
-    Note: Unlike Query, Single does not return an iterator. It returns the
-    single result directly or raises RuntimeError.
+        def pair(row: Single[tuple[Mut[Transform], Player]]) -> None:
+            # index a tuple row; iterating yields the row itself, not its
+            # components, so `a, b = row` binds one name and fails
+            transform, player_data = row[0], row[1]
+            transform.translation.x += 10.0
     """
 
     # Single component overloads
@@ -2142,6 +2154,14 @@ class Single(Generic[QueryParam_T, *Qs]):
     @overload
     def __iter__(self) -> Iterator[Any]: ...
     def __next__(self) -> Any: ...
+    def __getitem__(self, index: int) -> Any:
+        """Index into the row. The way to read a `Single[tuple[...]]`."""
+
+    def __getattr__(self, name: str) -> Any:
+        """Forward unknown attribute reads to the row, as bevy's Deref does."""
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Forward unknown attribute writes to the row, as bevy's DerefMut does."""
 
 V = TypeVar("V")
 

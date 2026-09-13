@@ -463,6 +463,34 @@ pub(crate) fn generate_resource_bridge_tokens(
         }
     };
 
+    let take_impl = if no_remove {
+        quote! {
+            fn take(
+                &self,
+                _world: &mut bevy::ecs::world::World,
+                _py: pyo3::Python,
+            ) -> pyo3::PyResult<Option<pyo3::Py<pyo3::PyAny>>> {
+                Ok(None)
+            }
+        }
+    } else {
+        let wrapped = wrap_storage(quote! { storage });
+        quote! {
+            fn take(
+                &self,
+                world: &mut bevy::ecs::world::World,
+                py: pyo3::Python,
+            ) -> pyo3::PyResult<Option<pyo3::Py<pyo3::PyAny>>> {
+                let Some(value) = world.remove_resource::<#bevy_type>() else {
+                    return Ok(None);
+                };
+                let storage = pybevy_core::ResourceStorage::owned(value);
+                let object: pyo3::PyResult<pyo3::Py<pyo3::PyAny>> = #wrapped;
+                object.map(Some)
+            }
+        }
+    };
+
     // Generate reset_to_default method based on no_default flag
     let reset_to_default_impl = if no_default {
         quote! {
@@ -638,6 +666,7 @@ pub(crate) fn generate_resource_bridge_tokens(
             #insert_impl
 
             #remove_impl
+            #take_impl
 
             fn contains_in_world(&self, world: &bevy::ecs::world::World) -> bool {
                 world.contains_resource::<#bevy_type>()
