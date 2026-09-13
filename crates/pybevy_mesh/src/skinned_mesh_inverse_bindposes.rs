@@ -8,7 +8,7 @@ use pyo3::prelude::*;
 #[pyclass(name = "SkinnedMeshInverseBindposes", module = "pybevy.mesh", extends = PyAsset)]
 #[derive(Debug)]
 pub struct PySkinnedMeshInverseBindposes {
-    pub storage: AssetStorage<SkinnedMeshInverseBindposes>,
+    pub(crate) storage: AssetStorage<SkinnedMeshInverseBindposes>,
 }
 
 #[pymethods]

@@ -2,6 +2,7 @@ use bevy::{
     math::primitives::{Measured3d, Torus},
     mesh::Meshable,
 };
+use pybevy_macros::pyconstructor;
 use pybevy_math::torus_kind::PyTorusKind;
 use pyo3::prelude::*;
 
@@ -23,27 +24,29 @@ impl From<Torus> for PyTorus {
     }
 }
 
+#[pyconstructor(
+    "Torus",
+    keyword_only(minor_radius, major_radius),
+    conflicts((inner_radius, outer_radius), (minor_radius, major_radius)),
+    complete(minor_radius, major_radius),
+)]
 #[pymethods]
 impl PyTorus {
     #[new]
-    #[pyo3(signature = (inner_radius = 0.5, outer_radius = 1.0, *, minor_radius = None, major_radius = None))]
     pub fn new(
-        inner_radius: f32,
-        outer_radius: f32,
+        #[default(0.5)] inner_radius: f32,
+        #[default(1.0)] outer_radius: f32,
         minor_radius: Option<f32>,
         major_radius: Option<f32>,
-    ) -> PyClassInitializer<Self> {
-        if let (Some(minor), Some(major)) = (minor_radius, major_radius) {
-            return (
-                Self(Torus {
-                    minor_radius: minor,
-                    major_radius: major,
-                }),
-                PyMeshable,
-            )
-                .into();
-        }
-        (Self(Torus::new(inner_radius, outer_radius)), PyMeshable).into()
+    ) -> PyResult<PyClassInitializer<Self>> {
+        let torus = match (minor_radius, major_radius) {
+            (Some(minor_radius), Some(major_radius)) => Torus {
+                minor_radius,
+                major_radius,
+            },
+            _ => Torus::new(inner_radius, outer_radius),
+        };
+        Ok((Self(torus), PyMeshable).into())
     }
 
     #[getter]

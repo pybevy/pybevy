@@ -10,7 +10,9 @@ use pyo3::prelude::*;
 )]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PySphereKind {
+    #[pyo3(constructor = (*, subdivisions))]
     Ico { subdivisions: u32 },
+    #[pyo3(constructor = (*, sectors, stacks))]
     Uv { sectors: u32, stacks: u32 },
 }
 

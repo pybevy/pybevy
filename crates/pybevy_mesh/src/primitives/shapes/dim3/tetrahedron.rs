@@ -5,6 +5,7 @@ use bevy::{
     },
     mesh::Meshable,
 };
+use pybevy_macros::pyconstructor;
 use pybevy_math::vec3::PyVec3;
 use pyo3::prelude::*;
 
@@ -29,24 +30,21 @@ impl From<Tetrahedron> for PyTetrahedron {
     }
 }
 
+#[pyconstructor("Tetrahedron", keyword_only(vertices), conflicts((a, b, c, d), (vertices)))]
 #[pymethods]
 impl PyTetrahedron {
     #[new]
-    #[pyo3(signature = (
-        a = PyVec3::new(0.5, 0.5, 0.5),
-        b = PyVec3::new(-0.5, 0.5, -0.5),
-        c = PyVec3::new(-0.5, -0.5, 0.5),
-        d = PyVec3::new(0.5, -0.5, -0.5),
-        *,
-        vertices = None
-    ))]
     pub fn new(
-        a: PyVec3,
-        b: PyVec3,
-        c: PyVec3,
-        d: PyVec3,
-        vertices: Option<[PyVec3; 4]>,
+        #[expected("Vec3")] a: Option<PyVec3>,
+        #[expected("Vec3")] b: Option<PyVec3>,
+        #[expected("Vec3")] c: Option<PyVec3>,
+        #[expected("Vec3")] d: Option<PyVec3>,
+        #[expected("sequence of 4 Vec3 values")] vertices: Option<[PyVec3; 4]>,
     ) -> PyResult<PyClassInitializer<Self>> {
+        let a = a.unwrap_or_else(|| PyVec3::new(0.5, 0.5, 0.5));
+        let b = b.unwrap_or_else(|| PyVec3::new(-0.5, 0.5, -0.5));
+        let c = c.unwrap_or_else(|| PyVec3::new(-0.5, -0.5, 0.5));
+        let d = d.unwrap_or_else(|| PyVec3::new(0.5, -0.5, -0.5));
         if let Some(v) = vertices {
             let verts = [
                 (&v[0]).try_into()?,

@@ -53,7 +53,7 @@ impl From<Ellipse> for PyEllipse {
 #[pymethods]
 impl PyEllipse {
     #[new]
-    #[pyo3(signature = (half_size = PyVec2::vec2(Vec2::new(1.0, 0.5))))]
+    #[pyo3(signature = (*, half_size = PyVec2::vec2(Vec2::new(1.0, 0.5))))]
     pub fn new(half_size: PyVec2) -> PyResult<PyClassInitializer<Self>> {
         let half_size: Vec2 = half_size.try_into()?;
         Ok((

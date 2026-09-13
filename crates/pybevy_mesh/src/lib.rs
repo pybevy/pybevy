@@ -1,3 +1,4 @@
+#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 pub mod indices;
 pub mod mesh;
 pub mod mesh2d;
@@ -16,6 +17,7 @@ pub mod skinned_mesh;
 pub mod skinned_mesh_inverse_bindposes;
 pub mod sphere_kind;
 pub mod uv_channel;
+mod validation;
 pub mod vertex_attribute;
 
 use pyo3::prelude::*;
@@ -33,7 +35,7 @@ pub mod prelude {
 ///
 /// These types (Circle, Sphere, CircularSector, etc.) are Bevy math primitives
 /// that also implement `Meshable`. In Bevy, the type lives in `bevy_math` and
-/// the `impl Meshable` is in `bevy_mesh`. PyO3 can't do this — the base class
+/// the `impl Meshable` is in `bevy_mesh`. PyO3 can't do this - the base class
 /// (`extends = PyMeshable`) must be on the struct definition, so the wrapper
 /// structs live here in `pybevy_mesh`. This function injects them into the
 /// `math` module so users can `from pybevy.math import Circle`.
@@ -80,6 +82,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<morph_weights::PyMorphWeights>()?;
     m.add_class::<skinned_mesh::PySkinnedMesh>()?;
     m.add_class::<skinned_mesh_inverse_bindposes::PySkinnedMeshInverseBindposes>()?;
+    m.add_class::<vertex_attribute::PyMeshVertexAttributeId>()?;
     m.add_class::<vertex_attribute::PyMeshVertexAttribute>()?;
     m.add_class::<primitive_topology::PyPrimitiveTopology>()?;
     m.add_class::<sphere_kind::PySphereKind>()?;

@@ -2,6 +2,7 @@ use bevy::{
     math::{InvalidDirectionError, Isometry2d, Ray2d, Rot2, primitives::Segment2d},
     mesh::Meshable,
 };
+use pybevy_macros::pyconstructor;
 use pybevy_math::{bounding::PyIsometry2d, dir2::PyDir2, ray::PyRay2d, rot2::PyRot2, vec2::PyVec2};
 use pyo3::prelude::*;
 
@@ -25,15 +26,17 @@ impl From<PySegment2d> for Segment2d {
     }
 }
 
+#[pyconstructor("Segment2d", keyword_only(vertices), conflicts((point1, point2), (vertices)))]
 #[pymethods]
 impl PySegment2d {
     #[new]
-    #[pyo3(signature = (point1 = PyVec2::vec2(bevy::math::Vec2::new(-0.5, 0.0)), point2 = PyVec2::vec2(bevy::math::Vec2::new(0.5, 0.0)), *, vertices = None))]
     pub fn new(
-        point1: PyVec2,
-        point2: PyVec2,
-        vertices: Option<[PyVec2; 2]>,
+        #[expected("Vec2")] point1: Option<PyVec2>,
+        #[expected("Vec2")] point2: Option<PyVec2>,
+        #[expected("sequence of 2 Vec2 values")] vertices: Option<[PyVec2; 2]>,
     ) -> PyResult<PyClassInitializer<Self>> {
+        let point1 = point1.unwrap_or_else(|| PyVec2::new(-0.5, 0.0));
+        let point2 = point2.unwrap_or_else(|| PyVec2::new(0.5, 0.0));
         if let Some(v) = vertices {
             return Ok((
                 Self(Segment2d {

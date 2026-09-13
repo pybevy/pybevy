@@ -3,16 +3,22 @@ use std::{fmt::Display, sync::Arc};
 use bevy::{
     asset::RenderAssetUsages,
     math::{Quat, Vec3},
-    mesh::{Indices, Mesh, MeshVertexAttributeId, PrimitiveTopology, VertexAttributeValues},
+    mesh::{
+        Indices, Mesh, MeshVertexAttributeId, PrimitiveTopology, VertexAttributeValues,
+        VertexFormat,
+    },
     transform::components::Transform,
 };
-use numpy::{PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods};
-use pybevy_array::{BorrowProbe, PyArray, borrowed_read_only_f32};
+use numpy::{PyReadonlyArray2, PyUntypedArrayMethods};
+use pybevy_array::{
+    BorrowProbe, PyArray, borrowed_read_only_f32, borrowed_read_only_u16, borrowed_read_only_u32,
+};
 use pybevy_core::{
     AssetInputConverter, AssetStorage, PyAsset,
     borrowed_array_anchor::{AssetBorrowAnchor, AssetBorrowAnchorMut},
     content_hash::CanonicalContentHasher,
     numpy_view_guard::{PendingNumpyViewGuard, PyNumpyViewGuard},
+    public_error,
 };
 use pybevy_image::image::PyRenderAssetUsages;
 use pybevy_macros::pyasset;
@@ -20,18 +26,26 @@ use pybevy_math::{quat::PyQuat, vec3::PyVec3};
 use pybevy_transform::transform::PyTransform;
 use pyo3::{
     PyTraverseError, PyVisit,
-    exceptions::{PyRuntimeError, PyTypeError, PyValueError},
+    exceptions::{PyRuntimeError, PyValueError},
     prelude::*,
     types::PyBytes,
 };
 
 use crate::{
-    indices::PyIndices,
+    indices::extract_indices,
     mesh_builder::PyMeshBuilder,
     meshable::{PyMeshable, meshable_to_mesh},
     primitive_topology::PyPrimitiveTopology,
+    validation::{
+        check_index_range, check_index_range_over_all, check_indexed, check_scale,
+        check_triangle_list,
+    },
     vertex_attribute::{PyMeshVertexAttribute, PyVertexAttributeValues, attribute_id},
 };
+fn mesh_operation_error(operation: &str, error: impl Display) -> PyErr {
+    PyRuntimeError::new_err(public_error::mesh_operation_failed(operation, error))
+}
+
 #[pyasset(Mesh, bridge, input_converter)]
 #[pyclass(name = "Mesh", module = "pybevy.mesh", extends = PyAsset, skip_from_py_object)]
 #[derive(Debug)]
@@ -75,11 +89,18 @@ fn extract_attribute_values(
         ));
     }
 
+    let given = VertexFormat::from(&attr_values);
+    if given != attribute.0.format {
+        return Err(PyValueError::new_err(public_error::mesh_attribute_format(
+            attribute.0.name,
+            format!("{:?}", attribute.0.format),
+            format!("{given:?}"),
+        )));
+    }
+
     Ok(attr_values)
 }
 
-// bevy validates these preconditions with assert!, not Err: converting them to
-// ValueError so a bad mesh is a catchable error rather than a frame panic.
 fn check_flat_normal_preconditions(mesh: &Mesh) -> PyResult<()> {
     let indexed = mesh
         .try_indices_option()
@@ -167,10 +188,6 @@ fn asarray_2d_f32<'py>(
     let arr = np.call_method1("asarray", (obj,))?;
     let arr = arr.call_method1("astype", (np.getattr("float32")?,))?;
     Ok(arr.extract::<PyReadonlyArray2<f32>>()?)
-}
-
-fn mesh_operation_error(operation: &str, error: impl Display) -> PyErr {
-    PyRuntimeError::new_err(format!("Mesh.{operation}() failed: {error}"))
 }
 
 fn mesh_payload_hash(mesh: &Mesh) -> PyResult<String> {
@@ -420,21 +437,10 @@ impl PyMesh {
     }
 
     pub fn insert_indices<'py>(&mut self, indices: &Bound<'py, PyAny>) -> PyResult<()> {
-        let bevy_indices = if let Ok(vref) = indices.extract::<PyRef<PyIndices>>() {
-            vref.inner.clone()
-        } else if let Ok(arr_u32) = indices.extract::<PyReadonlyArray1<u32>>() {
-            Indices::U32(arr_u32.as_slice()?.to_vec())
-        } else if let Ok(arr_u16) = indices.extract::<PyReadonlyArray1<u16>>() {
-            Indices::U16(arr_u16.as_slice()?.to_vec())
-        } else if let Ok(vec32) = indices.extract::<Vec<u32>>() {
-            Indices::U32(vec32)
-        } else if let Ok(vec16) = indices.extract::<Vec<u16>>() {
-            Indices::U16(vec16)
-        } else {
-            return Err(PyTypeError::new_err(
-                "insert_indices expects Indices, a NumPy uint32/uint16 array, or a Python sequence of ints",
-            ));
-        };
+        let bevy_indices = extract_indices(
+            indices,
+            "insert_indices expects Indices, a NumPy uint32/uint16 array, or a Python sequence of ints",
+        )?;
 
         mesh_with_mut!(self, |mesh: &mut Mesh| {
             mesh.insert_indices(bevy_indices);
@@ -447,6 +453,19 @@ impl PyMesh {
     }
 
     pub fn generate_tangents(&mut self) -> PyResult<()> {
+        {
+            let mesh = self.as_ref()?;
+            check_index_range(
+                &mesh,
+                "generate_tangents",
+                &[
+                    Mesh::ATTRIBUTE_POSITION,
+                    Mesh::ATTRIBUTE_NORMAL,
+                    Mesh::ATTRIBUTE_UV_0,
+                ],
+            )
+            .map_err(PyValueError::new_err)?;
+        }
         let mut candidate = mesh_with!(self, |mesh: &Mesh| mesh.clone());
         candidate
             .generate_tangents()
@@ -456,6 +475,12 @@ impl PyMesh {
     }
 
     pub fn compute_normals(&mut self) -> PyResult<()> {
+        {
+            let mesh = self.as_ref()?;
+            check_triangle_list(&mesh, "compute_normals").map_err(PyValueError::new_err)?;
+            check_index_range(&mesh, "compute_normals", &[Mesh::ATTRIBUTE_POSITION])
+                .map_err(PyValueError::new_err)?;
+        }
         let mut candidate = mesh_with!(self, |mesh: &Mesh| mesh.clone());
         candidate
             .try_compute_normals()
@@ -467,6 +492,12 @@ impl PyMesh {
     pub fn compute_area_weighted_normals(&mut self) -> PyResult<()> {
         let mesh = self.as_ref()?;
         check_area_weighted_normal_preconditions(&mesh)?;
+        check_index_range(
+            &mesh,
+            "compute_area_weighted_normals",
+            &[Mesh::ATTRIBUTE_POSITION],
+        )
+        .map_err(PyValueError::new_err)?;
         drop(mesh);
         let mut candidate = mesh_with!(self, |mesh: &Mesh| mesh.clone());
         candidate
@@ -489,6 +520,13 @@ impl PyMesh {
     }
 
     pub fn compute_smooth_normals(&mut self) -> PyResult<()> {
+        {
+            let mesh = self.as_ref()?;
+            check_triangle_list(&mesh, "compute_smooth_normals").map_err(PyValueError::new_err)?;
+            check_indexed(&mesh, "compute_smooth_normals").map_err(PyValueError::new_err)?;
+            check_index_range(&mesh, "compute_smooth_normals", &[Mesh::ATTRIBUTE_POSITION])
+                .map_err(PyValueError::new_err)?;
+        }
         let mut candidate = mesh_with!(self, |mesh: &Mesh| mesh.clone());
         candidate
             .try_compute_smooth_normals()
@@ -506,6 +544,12 @@ impl PyMesh {
     ) -> PyResult<()> {
         let mesh = self.as_ref()?;
         check_smooth_normal_preconditions(&mesh)?;
+        check_index_range(
+            &mesh,
+            "compute_custom_smooth_normals",
+            &[Mesh::ATTRIBUTE_POSITION],
+        )
+        .map_err(PyValueError::new_err)?;
         drop(mesh);
         let mut candidate = mesh_with!(self, |mesh: &Mesh| mesh.clone());
         let mut caught: Option<PyErr> = None;
@@ -559,6 +603,11 @@ impl PyMesh {
     }
 
     pub fn duplicate_vertices(&mut self) -> PyResult<()> {
+        {
+            let mesh = self.as_ref()?;
+            check_index_range_over_all(&mesh, "duplicate_vertices")
+                .map_err(PyValueError::new_err)?;
+        }
         let mut candidate = mesh_with!(self, |mesh: &Mesh| mesh.clone());
         candidate
             .try_duplicate_vertices()
@@ -569,6 +618,49 @@ impl PyMesh {
 
     pub fn with_duplicated_vertices(&self, py: Python<'_>) -> PyResult<Py<Self>> {
         self.cloned_with(py, |mesh| mesh.duplicate_vertices())
+    }
+
+    /// The index buffer as a read-only bounded array (`uint16` or `uint32`),
+    /// or None for a non-indexed mesh.
+    ///
+    /// A live zero-copy view, not a copy: the mesh cannot be reallocated while
+    /// it is alive, and access after the owning system ends fails cleanly. It
+    /// is deliberately not an `Indices`, whose `push` mutates in place: handing
+    /// out a copy of one would lose those writes silently. Write an edited
+    /// buffer back with `insert_indices`.
+    pub fn indices(slf: &Bound<'_, Self>, py: Python<'_>) -> PyResult<Option<Py<PyArray>>> {
+        let this = slf.borrow();
+        // Claim a read view before touching the mesh, as the attribute getters
+        // do: the guard's Drop releases it on any later error.
+        let claim = this.storage.prepare_read_view()?;
+        let guard = PyNumpyViewGuard::from_acquired(claim, slf.clone().unbind().into_any());
+        let validity = this.storage.validity_flag();
+        let mesh = this.storage.as_ref()?;
+        let Some(indices) = mesh.indices() else {
+            return Ok(None);
+        };
+        let probe: Arc<dyn BorrowProbe> = Arc::new(AssetBorrowAnchor::new(validity, guard));
+        // SAFETY: the pointer and length come from the live index buffer just
+        // obtained through `as_ref()` (validity checked), a contiguous `Vec` of
+        // the matching integer width. The probe carries the same ValidityFlag
+        // gating the borrow and holds the read-view count acquired above, so
+        // the mesh cannot be reallocated through this wrapper, nor read after
+        // the system ends, while the array is alive.
+        let array = match indices {
+            Indices::U16(values) => {
+                // SAFETY: as the contract above.
+                unsafe {
+                    borrowed_read_only_u16(values.as_ptr(), values.len(), &[values.len()], probe)?
+                }
+            }
+            Indices::U32(values) => {
+                // SAFETY: as the contract above.
+                unsafe {
+                    borrowed_read_only_u32(values.as_ptr(), values.len(), &[values.len()], probe)?
+                }
+            }
+        };
+        Ok(Some(Py::new(py, array)?))
     }
 
     pub fn invert_winding(&mut self) -> PyResult<()> {
@@ -596,6 +688,7 @@ impl PyMesh {
 
     pub fn transform_by(&mut self, transform: &PyTransform) -> PyResult<()> {
         let transform: Transform = *transform.as_ref()?;
+        check_scale("transform_by", transform.scale).map_err(PyValueError::new_err)?;
         mesh_with!(self, |mesh: &Mesh| mesh
             .try_contains_attribute(Mesh::ATTRIBUTE_POSITION.id))
         .map_err(|error| mesh_operation_error("transform_by", error))?;
@@ -641,6 +734,7 @@ impl PyMesh {
 
     pub fn scale_by(&mut self, scale: PyVec3) -> PyResult<()> {
         let scale: Vec3 = scale.try_into()?;
+        check_scale("scale_by", scale).map_err(PyValueError::new_err)?;
         mesh_with!(self, |mesh: &Mesh| mesh
             .try_contains_attribute(Mesh::ATTRIBUTE_POSITION.id))
         .map_err(|error| mesh_operation_error("scale_by", error))?;

@@ -6,7 +6,7 @@ use bevy::{
     mesh::Meshable,
 };
 use pybevy_core::{FromBorrowedStorage, ValueStorage};
-use pybevy_macros::pyvalue;
+use pybevy_macros::{pyconstructor, pyvalue};
 use pybevy_math::vec3::PyVec3;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
@@ -46,15 +46,19 @@ fn validate_dimensions(value: Vec3, parameter: &str) -> PyResult<Vec3> {
     Ok(value)
 }
 
+#[pyconstructor(
+    "Cuboid",
+    keyword_only(half_size),
+    conflicts((x_length, y_length, z_length), (half_size)),
+)]
 #[pymethods]
 impl PyCuboid {
     #[new]
-    #[pyo3(signature = (x_length=1.0, y_length=1.0, z_length=1.0, *, half_size=None))]
     pub fn new(
-        x_length: f32,
-        y_length: f32,
-        z_length: f32,
-        half_size: Option<PyVec3>,
+        #[default(1.0)] x_length: f32,
+        #[default(1.0)] y_length: f32,
+        #[default(1.0)] z_length: f32,
+        #[expected("Vec3")] half_size: Option<PyVec3>,
     ) -> PyResult<PyClassInitializer<Self>> {
         if let Some(hs) = half_size {
             let half_size = validate_dimensions(hs.try_into()?, "half_size")?;
