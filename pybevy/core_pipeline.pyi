@@ -32,6 +32,7 @@ class Tonemapping(Component):
     """Tonemapping algorithm for HDR to LDR conversion."""
 
     def __init__(self) -> None: ...
+    def __hash__(self) -> int: ...
 
     def is_enabled(self) -> bool:
         """True unless this is Tonemapping.NONE."""

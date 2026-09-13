@@ -4,8 +4,8 @@ use pybevy_macros::pywrap;
 use pyo3::prelude::*;
 
 #[pywrap(Tonemapping, bridge)]
-#[pyclass(name = "Tonemapping", module = "pybevy.core_pipeline", extends = PyComponent, frozen, skip_from_py_object)]
-#[derive(Clone, Debug)]
+#[pyclass(name = "Tonemapping", module = "pybevy.core_pipeline", extends = PyComponent, eq, hash, frozen, skip_from_py_object)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct PyTonemapping(pub(crate) Tonemapping);
 
 #[pymethods]
