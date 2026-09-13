@@ -18,7 +18,7 @@ pub struct PyShowAabbGizmo {
 #[pymethods]
 impl PyShowAabbGizmo {
     #[new]
-    #[pyo3(signature = (color = None))]
+    #[pyo3(signature = (*, color = None))]
     pub fn new(color: Option<PyColor>) -> PyResult<PyClassInitializer<Self>> {
         let color = color.map(Color::try_from).transpose()?;
         Ok((

@@ -14,6 +14,7 @@ pybevy_color = { workspace = true }
 pybevy_camera = { workspace = true }
 pybevy_macros = { workspace = true }
 pybevy_math = { workspace = true }
+pybevy_transform = { workspace = true }
 
 [dependencies.bevy]
 workspace = true

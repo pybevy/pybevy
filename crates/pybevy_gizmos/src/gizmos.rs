@@ -1,16 +1,19 @@
 use bevy::{
     color::Color,
     gizmos::{config::GizmoConfig, prelude::gizmo},
-    math::{Isometry2d, Isometry3d, Vec2, Vec3},
+    math::{Affine3A, Isometry2d, Isometry3d, Mat4, Vec2, Vec3},
 };
 use pybevy_color::color::PyColor;
 use pybevy_core::{FieldStorage, ValidityFlag};
 use pybevy_math::{
+    affine3a::PyAffine3A,
     bounding::{PyAabb3d, PyIsometry2d, PyIsometry3d},
+    mat4::PyMat4,
     vec2::PyVec2,
     vec3::PyVec3,
 };
-use pyo3::prelude::*;
+use pybevy_transform::{global_transform::PyGlobalTransform, transform::PyTransform};
+use pyo3::{exceptions::PyTypeError, prelude::*};
 
 use crate::config::PyGizmoConfig;
 
@@ -49,6 +52,27 @@ fn isometry2(value: PyIsometry2d) -> Isometry2d {
 
 fn isometry3(value: PyIsometry3d) -> PyResult<Isometry3d> {
     value.try_into()
+}
+
+fn extract_transform_point_from_any(value: &Bound<'_, PyAny>) -> PyResult<Mat4> {
+    if let Ok(transform) = value.cast::<PyTransform>() {
+        return Mat4::try_from(&transform.borrow().to_matrix()?);
+    }
+    if let Ok(global) = value.cast::<PyGlobalTransform>() {
+        return Mat4::try_from(&global.borrow().to_matrix()?);
+    }
+    if let Ok(isometry) = value.extract::<PyIsometry3d>() {
+        return Ok(Mat4::from(Affine3A::from(Isometry3d::try_from(isometry)?)));
+    }
+    if let Ok(matrix) = value.cast::<PyMat4>() {
+        return Ok(Mat4::try_from(&*matrix.borrow())?);
+    }
+    if let Ok(affine) = value.cast::<PyAffine3A>() {
+        return Ok(Mat4::from(Affine3A::try_from(&*affine.borrow())?));
+    }
+    Err(PyTypeError::new_err(
+        "expected a Transform, GlobalTransform, Isometry3d, Mat4 or Affine3A",
+    ))
 }
 
 fn vec2s(values: Vec<PyVec2>) -> PyResult<Vec<Vec2>> {
@@ -260,30 +284,28 @@ impl PyGizmos {
         Ok(())
     }
 
-    pub fn cube(&self, transform: PyIsometry3d, color: PyColor) -> PyResult<()> {
+    pub fn cube(&self, transform: &Bound<'_, PyAny>, color: PyColor) -> PyResult<()> {
         self.check_valid()?;
+        let transform = extract_transform_point_from_any(transform)?;
         if !self.config.as_ref()?.enabled {
             return Ok(());
         }
-        gizmo().cube(isometry3(transform)?, native_color(color)?);
+        gizmo().cube(transform, native_color(color)?);
         Ok(())
     }
 
     pub fn aabb_3d(
         &self,
         aabb: &PyAabb3d,
-        transform: PyIsometry3d,
+        transform: &Bound<'_, PyAny>,
         color: PyColor,
     ) -> PyResult<()> {
         self.check_valid()?;
+        let transform = extract_transform_point_from_any(transform)?;
         if !self.config.as_ref()?.enabled {
             return Ok(());
         }
-        gizmo().aabb_3d(
-            aabb.try_to_bevy()?,
-            isometry3(transform)?,
-            native_color(color)?,
-        );
+        gizmo().aabb_3d(aabb.try_to_bevy()?, transform, native_color(color)?);
         Ok(())
     }
 

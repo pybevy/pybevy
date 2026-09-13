@@ -5006,6 +5006,7 @@ dependencies = [
  "pybevy_core",
  "pybevy_macros",
  "pybevy_math",
+ "pybevy_transform",
  "pyo3",
 ]
 

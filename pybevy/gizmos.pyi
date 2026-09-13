@@ -4,7 +4,8 @@ from pybevy.app import App, Plugin
 from pybevy.camera import RenderLayers
 from pybevy.color import Color
 from pybevy.ecs import Component, Resource
-from pybevy.math import Aabb3d, Isometry2d, Isometry3d, Vec2, Vec3
+from pybevy.math import Aabb3d, Affine3A, Isometry2d, Isometry3d, Mat4, Vec2, Vec3
+from pybevy.transform import GlobalTransform, Transform
 
 class GizmoLineJoint:
     def __hash__(self) -> int: ...
@@ -41,15 +42,16 @@ class GizmoLineStyle:
         __match_args__: ClassVar[tuple[Literal["gap_scale"], Literal["line_scale"]]]
         gap_scale: float
         line_scale: float
-        def __init__(self, gap_scale: float, line_scale: float) -> None: ...
+        def __init__(self, *, gap_scale: float, line_scale: float) -> None: ...
 
 class GizmoLineConfig:
     def __init__(
         self,
+        *,
         width: float = 2.0,
         perspective: bool = False,
         style: GizmoLineStyle = GizmoLineStyle.Solid(),
-        joints: GizmoLineJoint = GizmoLineJoint.None_(),
+        joints: GizmoLineJoint = GizmoLineJoint.None_()
     ) -> None: ...
     @property
     def width(self) -> float: ...
@@ -71,10 +73,11 @@ class GizmoLineConfig:
 class GizmoConfig:
     def __init__(
         self,
+        *,
         enabled: bool = True,
         line: GizmoLineConfig = GizmoLineConfig(),
         depth_bias: float = 0.0,
-        render_layers: RenderLayers | None = None,
+        render_layers: RenderLayers | None = None
     ) -> None: ...
     @property
     def enabled(self) -> bool: ...
@@ -118,6 +121,8 @@ class GizmoConfigStore(Resource):
         self, group: type[_GizmoConfigGroupT]
     ) -> tuple[GizmoConfig, _GizmoConfigGroupT]: ...
 
+TransformPoint = Transform | GlobalTransform | Isometry3d | Mat4 | Affine3A
+
 class Gizmos:
     """Immediate-mode debug drawing system parameter."""
 
@@ -148,10 +153,12 @@ class Gizmos:
     def linestrip_gradient_2d(self, points: list[tuple[Vec2, Color]]) -> None: ...
     def lineloop_2d(self, positions: list[Vec2], color: Color) -> None: ...
     def rect(self, isometry: Isometry3d, size: Vec2, color: Color) -> None: ...
-    def cube(self, transform: Isometry3d, color: Color) -> None: ...
-    def aabb_3d(
-        self, aabb: Aabb3d, transform: Isometry3d, color: Color
-    ) -> None: ...
+    def cube(self, transform: TransformPoint, color: Color) -> None:
+        """Draw a unit cube placed by *transform*."""
+
+    def aabb_3d(self, aabb: Aabb3d, transform: TransformPoint, color: Color) -> None:
+        """Draw *aabb* placed by *transform*. See `cube` for the accepted types."""
+
     def rect_2d(self, isometry: Isometry2d, size: Vec2, color: Color) -> None: ...
     def cross(
         self, isometry: Isometry3d, half_size: float, color: Color
@@ -216,7 +223,7 @@ class Gizmos:
 class ShowAabbGizmo(Component):
     """Draw the entity's axis-aligned bounding box."""
 
-    def __init__(self, color: Color | None = None) -> None: ...
+    def __init__(self, *, color: Color | None = None) -> None: ...
     color: Color | None
 
 class GizmoPlugin(Plugin):
