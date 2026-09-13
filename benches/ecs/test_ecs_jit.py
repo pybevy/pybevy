@@ -15,7 +15,7 @@ try:
 except ImportError:
     NUMBA_AVAILABLE = False
 
-from pybevy.app import App, Last, RunMode, ScheduleRunnerPlugin, Startup, Update
+from pybevy.app import App, Last, ScheduleRunnerPlugin, Startup, Update
 from pybevy.decorators import component
 from pybevy.ecs import Commands, Component, Mut, Query, View, With
 from pybevy.transform import Transform
@@ -61,7 +61,7 @@ def test_simple_query(benchmark: BenchmarkFixture, entity_count: int) -> None:
             t.translation.x = t.translation.x * 2.0 + 5.0
 
     app = App()
-    app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+    app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, spawn)
     app.add_systems(Update, bench_query)
     app.initialize()
@@ -82,7 +82,7 @@ def test_simple_view(benchmark: BenchmarkFixture, entity_count: int) -> None:
         transform.translation.x = transform.translation.x * 2.0 + 5.0
 
     app = App()
-    app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+    app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, spawn)
     app.add_systems(Update, bench_view)
     app.initialize()
@@ -107,7 +107,7 @@ def test_multi_field_query(benchmark: BenchmarkFixture, entity_count: int) -> No
             t.translation.z = t.translation.z * 0.99
 
     app = App()
-    app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+    app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, spawn)
     app.add_systems(Update, bench_query)
     app.initialize()
@@ -132,7 +132,7 @@ def test_multi_field_view(benchmark: BenchmarkFixture, entity_count: int) -> Non
         transform.translation.z = transform.translation.z * 0.99
 
     app = App()
-    app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+    app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, spawn)
     app.add_systems(Update, bench_view)
     app.initialize()
@@ -179,7 +179,7 @@ def test_jit_api_available() -> None:
             error_caught[0] = str(e)
 
     app = App()
-    app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+    app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, spawn)
     app.add_systems(Update, try_jit)
     app.initialize()
@@ -210,7 +210,7 @@ def test_view_correctness() -> None:
             results.append(t.translation.x)
 
     app = App()
-    app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+    app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, spawn)
     app.add_systems(Update, calc_view)
     app.add_systems(Last, verify)

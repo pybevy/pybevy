@@ -37,7 +37,7 @@ from benches.paper.bench_utils import (
     compute_speedup,
     print_system_info,
 )
-from pybevy.app import App, RunMode, ScheduleRunnerPlugin, Startup, Update
+from pybevy.app import App, ScheduleRunnerPlugin, Startup, Update
 from pybevy.decorators import component
 from pybevy.ecs import Commands, Mut, Query, View
 from pybevy.math import Vec3
@@ -183,7 +183,7 @@ def _make_query_app(entity_count: int) -> App:
                 t.translation.y += 2 * BOUND  # type: ignore[union-attr]
 
     app = App()
-    app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+    app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, flocking)
     app.initialize()
@@ -322,7 +322,7 @@ def _make_numba_app(entity_count: int, parallel: bool = True) -> App:
             )
 
     app = App()
-    app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+    app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, flocking)
     app.initialize()

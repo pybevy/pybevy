@@ -11,7 +11,7 @@ This file tests the bytecode VM expression system including:
 import pytest
 from pytest_benchmark.fixture import BenchmarkFixture
 
-from pybevy.app import RunMode, ScheduleRunnerPlugin
+from pybevy.app import ScheduleRunnerPlugin
 from pybevy.decorators import component
 from pybevy.ecs import Commands, Component, Mut, Query, View
 from pybevy.expr import where
@@ -50,7 +50,7 @@ def _setup_reduce_view(operation: str, entity_count: int) -> App:
             result["value"] = view.reduce_count()
 
     app = App()
-    app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+    app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, reduce_system)
     app.initialize()
@@ -91,7 +91,7 @@ def _setup_reduce_query(operation: str, entity_count: int) -> App:
             result["value"] = count
 
     app = App()
-    app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+    app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, query_system)
     app.initialize()

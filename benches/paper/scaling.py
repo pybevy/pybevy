@@ -28,7 +28,6 @@ from benches.paper.bench_utils import (
 )
 from pybevy.app import (
     App,
-    RunMode,
     ScheduleRunnerPlugin,
     Startup,
     Update,
@@ -53,7 +52,7 @@ def _make_query_app(entity_count: int) -> App:
             transform.translation.x += 1.0
 
     app = App()
-    app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+    app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, increment)
     app.initialize()
@@ -72,7 +71,7 @@ def _make_view_app(entity_count: int) -> App:
         col.translation.x += 1.0
 
     app = App()
-    app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+    app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, increment)
     app.initialize()
@@ -98,7 +97,7 @@ def _make_numba_app(entity_count: int) -> App:
             increment_column(col.translation.x)
 
     app = App()
-    app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+    app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, increment)
     app.initialize()

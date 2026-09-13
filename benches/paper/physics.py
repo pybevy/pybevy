@@ -28,7 +28,7 @@ from benches.paper.bench_utils import (
     compute_speedup,
     print_system_info,
 )
-from pybevy.app import App, RunMode, ScheduleRunnerPlugin, Startup, Update
+from pybevy.app import App, ScheduleRunnerPlugin, Startup, Update
 from pybevy.ecs import Commands, Mut, Query, View
 from pybevy.expr import cos, sin
 from pybevy.transform import Transform
@@ -74,7 +74,7 @@ def _make_query_app(entity_count: int) -> App:
             t.translation.z = z + math.cos(x * 0.1) * dt
 
     app = App()
-    app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+    app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, physics)
     app.initialize()
@@ -99,7 +99,7 @@ def _make_view_app(entity_count: int) -> App:
         col.translation.z = z + cos(x * 0.1) * dt
 
     app = App()
-    app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+    app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, physics)
     app.initialize()
@@ -120,7 +120,7 @@ def _make_numba_app(entity_count: int) -> App:
             jit_physics(col.translation, 0.016)
 
     app = App()
-    app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+    app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, physics)
     app.initialize()

@@ -34,7 +34,7 @@ from benches.paper.bench_utils import (
     add_bench_args,
     print_system_info,
 )
-from pybevy.app import App, RunMode, ScheduleRunnerPlugin, Startup, Update
+from pybevy.app import App, ScheduleRunnerPlugin, Startup, Update
 from pybevy.ecs import Commands, Mut, View
 from pybevy.transform import Transform
 
@@ -55,7 +55,7 @@ def _make_increment_app(entity_count: int) -> App:
         col.translation.x += 1.0
 
     app = App()
-    app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+    app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, workload)
     app.initialize()
@@ -74,7 +74,7 @@ def _make_complex_math_app(entity_count: int) -> App:
         col.translation.x = col.translation.x.sin() * 2.0 + 1.0
 
     app = App()
-    app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+    app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, workload)
     app.initialize()
@@ -95,7 +95,7 @@ def _make_multi_field_app(entity_count: int) -> App:
         col.translation.z += 1.0
 
     app = App()
-    app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+    app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, workload)
     app.initialize()
