@@ -1135,11 +1135,6 @@ reason = "Bevy 0.19.1 bevy_ui::RadialGradient::new defines the established Pytho
 function = "new"
 reason = "Bevy 0.19.1 bevy_ui::Outline::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.ui.PyText"]
-function = "new"
-parameter_renames = { text = "content" }
-reason = "Bevy 0.19.1 bevy_ui::Text::new defines the established Python content input"
-
 [bevy.constructor_functions."pybevy.input.PyGamepadButtonChangedEvent"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_input::gamepad::GamepadButtonChangedEvent::new defines the established Python constructor inputs"

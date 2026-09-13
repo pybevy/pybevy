@@ -13,18 +13,18 @@ pub struct PyText {
 #[pymethods]
 impl PyText {
     #[new]
-    #[pyo3(signature = (content = String::new()))]
-    pub fn new(content: String) -> PyClassInitializer<Self> {
-        Self::from_owned(Text::new(content)).into()
+    #[pyo3(signature = (text = String::new()))]
+    pub fn new(text: String) -> PyClassInitializer<Self> {
+        Self::from_owned(Text::new(text)).into()
     }
 
     #[getter]
-    pub fn content(&self) -> PyResult<String> {
+    pub fn text(&self) -> PyResult<String> {
         Ok(self.as_ref()?.0.clone())
     }
 
     #[setter]
-    pub fn set_content(&mut self, value: String) -> PyResult<()> {
+    pub fn set_text(&mut self, value: String) -> PyResult<()> {
         self.as_mut()?.0 = value;
         Ok(())
     }

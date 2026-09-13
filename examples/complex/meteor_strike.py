@@ -474,10 +474,10 @@ def poll_build(
         return
     if sim.apply_build():
         for text in status_query:
-            text.content = "Press P to launch!"
+            text.text = "Press P to launch!"
     else:
         for text in status_query:
-            text.content = "Build failed!"
+            text.text = "Build failed!"
 
 
 def handle_input(
@@ -495,13 +495,13 @@ def handle_input(
         sim.slowmo_phase = "none"
         sim.rampup_elapsed = 0.0
         for text in status_query:
-            text.content = ""
+            text.text = ""
         print("Meteor launched!")
 
     elif sim.state == STATE_RUNNING:
         sim.start_rebuild()
         for text in status_query:
-            text.content = "Rebuilding..."
+            text.text = "Rebuilding..."
         print("Rebuilding physics...")
 
 

@@ -137,7 +137,10 @@ commands.spawn(
 
 ## Updating Text at Runtime
 
-The `Text` component has a `.content` property you can mutate in systems:
+The `Text` component has a `.text` property you can mutate in systems, just like
+`Text2d` and `TextSpan`. Construct it with `Text("Hello")` or `Text(text="Hello")`.
+
+For example:
 
 ```python
 @component
@@ -159,7 +162,7 @@ def update_score_display(
     score: Res[GameScore],
 ):
     for text in query:
-        text.content = f"Score: {score.value}"
+        text.text = f"Score: {score.value}"
 ```
 
 ## Text Input (EditableText)

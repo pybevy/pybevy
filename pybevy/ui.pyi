@@ -1006,16 +1006,16 @@ class Text(Component):
         ```
 
     Args:
-        content: The text string to display
+        text: The text string to display
     """
-    def __init__(self, content: str = "") -> None: ...
+    def __init__(self, text: str = "") -> None: ...
 
     @property
-    def content(self) -> str:
-        """The text content."""
+    def text(self) -> str:
+        """The displayed text, matching Text2d and TextSpan."""
 
-    @content.setter
-    def content(self, value: str) -> None: ...
+    @text.setter
+    def text(self, value: str) -> None: ...
 
 
 class Node(Component):
