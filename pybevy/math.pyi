@@ -3500,8 +3500,11 @@ class Arc2d:
     radius: float
     half_angle: float
 
-    def __init__(self, radius: float = 1.0, half_angle: float = ...) -> None:
+    def __init__(self, radius: float = 0.5, half_angle: float = ...) -> None:
         """Create a new arc from a radius and half-angle.
+
+        Defaults to Bevy's: radius 0.5 and a half-angle of ``2 * pi / 3``,
+        covering one third of a circle.
 
         Args:
             radius: The radius of the circle

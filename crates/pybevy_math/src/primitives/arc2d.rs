@@ -12,7 +12,7 @@ pub struct PyArc2d {
 #[pymethods]
 impl PyArc2d {
     #[new]
-    #[pyo3(signature = (radius = 1.0, half_angle = std::f32::consts::FRAC_PI_4))]
+    #[pyo3(signature = (radius = 0.5, half_angle = 2.0 * std::f32::consts::FRAC_PI_3))]
     pub fn new(radius: f32, half_angle: f32) -> Self {
         Self {
             arc: Arc2d::new(radius, half_angle),
