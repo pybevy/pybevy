@@ -1,9 +1,15 @@
 use bevy::math::{
-    Dir2, Isometry2d, Vec2,
+    Dir2, Isometry2d, Mat2, Vec2,
     bounding::{Aabb2d, BoundingCircle, BoundingVolume, IntersectsVolume},
 };
-use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
-use pyo3::{exceptions::PyTypeError, prelude::*};
+use pybevy_core::{
+    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
+    public_error::{EMPTY_POINT_CLOUD, bounding_half_size, bounding_operation, bounding_shrink},
+};
+use pyo3::{
+    exceptions::{PyTypeError, PyValueError},
+    prelude::*,
+};
 
 use super::bounding_circle::PyBoundingCircle;
 use crate::{
@@ -75,6 +81,13 @@ impl PyAabb2d {
     pub fn new(center: PyVec2, half_size: PyVec2) -> PyResult<Self> {
         let center_vec: Vec2 = center.try_into()?;
         let half_size_vec: Vec2 = half_size.try_into()?;
+        // Reject inputs that fail Bevy nonnegative half-size preconditions.
+        if !half_size_vec.cmpge(Vec2::ZERO).all() {
+            return Err(PyValueError::new_err(bounding_half_size(
+                "Aabb2d",
+                &[half_size_vec.x, half_size_vec.y],
+            )));
+        }
         Ok(PyAabb2d::from_aabb2d(Aabb2d::new(
             center_vec,
             half_size_vec,
@@ -142,7 +155,15 @@ impl PyAabb2d {
 
     pub fn rotated_by(&self, rotation: &Bound<'_, PyAny>) -> PyResult<PyAabb2d> {
         let rotation = extract_rot2_from_any(rotation)?;
-        Ok((*self.as_ref()?).rotated_by(rotation).into())
+        let bounds = self.as_ref()?;
+        let half_size = Mat2::from(rotation).abs() * bounds.half_size();
+        if !half_size.cmpge(Vec2::ZERO).all() {
+            return Err(PyValueError::new_err(bounding_operation(
+                "Aabb2d",
+                "rotated_by",
+            )));
+        }
+        Ok((*bounds).rotated_by(rotation).into())
     }
 
     pub fn transformed_by(
@@ -152,26 +173,47 @@ impl PyAabb2d {
     ) -> PyResult<PyAabb2d> {
         let translation = extract_vec2_from_any(translation)?;
         let rotation = extract_rot2_from_any(rotation)?;
-        Ok((*self.as_ref()?)
-            .transformed_by(translation, rotation)
-            .into())
+        let bounds = self.as_ref()?;
+        let half_size = Mat2::from(rotation).abs() * bounds.half_size();
+        if !half_size.cmpge(Vec2::ZERO).all() {
+            return Err(PyValueError::new_err(bounding_operation(
+                "Aabb2d",
+                "transformed_by",
+            )));
+        }
+        Ok((*bounds).transformed_by(translation, rotation).into())
     }
 
     pub fn grow(&self, amount: PyVec2) -> PyResult<PyAabb2d> {
-        let amount_vec: Vec2 = amount.try_into()?;
-        Ok(PyAabb2d::from_aabb2d(self.as_ref()?.grow(amount_vec)))
+        let amount: Vec2 = amount.try_into()?;
+        let bounds = self.as_ref()?;
+        if !(bounds.max + amount).cmpge(bounds.min - amount).all() {
+            return Err(PyValueError::new_err(bounding_operation("Aabb2d", "grow")));
+        }
+        Ok(PyAabb2d::from_aabb2d(bounds.grow(amount)))
     }
 
     pub fn shrink(&self, amount: PyVec2) -> PyResult<PyAabb2d> {
-        let amount_vec: Vec2 = amount.try_into()?;
-        Ok(PyAabb2d::from_aabb2d(self.as_ref()?.shrink(amount_vec)))
+        let amount: Vec2 = amount.try_into()?;
+        let bounds = self.as_ref()?;
+        if !(bounds.max - amount).cmpge(bounds.min + amount).all() {
+            return Err(PyValueError::new_err(bounding_shrink("Aabb2d")));
+        }
+        Ok(PyAabb2d::from_aabb2d(bounds.shrink(amount)))
     }
 
     pub fn scale_around_center(&self, scale: PyVec2) -> PyResult<PyAabb2d> {
-        let scale_vec: Vec2 = scale.try_into()?;
-        Ok(PyAabb2d::from_aabb2d(
-            self.as_ref()?.scale_around_center(scale_vec),
-        ))
+        let scale: Vec2 = scale.try_into()?;
+        let bounds = self.as_ref()?;
+        let half_size = bounds.half_size() * scale;
+        let center = bounds.center();
+        if !(center + half_size).cmpge(center - half_size).all() {
+            return Err(PyValueError::new_err(bounding_operation(
+                "Aabb2d",
+                "scale_around_center",
+            )));
+        }
+        Ok(PyAabb2d::from_aabb2d(bounds.scale_around_center(scale)))
     }
 
     pub fn visible_area(&self) -> PyResult<f32> {
@@ -179,8 +221,16 @@ impl PyAabb2d {
     }
 
     pub fn bounding_circle(&self) -> PyResult<PyBoundingCircle> {
+        let bounds = self.as_ref()?;
+        let radius = bounds.min.distance(bounds.max) / 2.0;
+        if radius.is_nan() || radius < 0.0 {
+            return Err(PyValueError::new_err(bounding_operation(
+                "Aabb2d",
+                "bounding_circle",
+            )));
+        }
         Ok(PyBoundingCircle::from_bounding_circle(
-            self.as_ref()?.bounding_circle(),
+            bounds.bounding_circle(),
         ))
     }
 
@@ -196,6 +246,9 @@ impl PyAabb2d {
 
     #[staticmethod]
     pub fn from_point_cloud(isometry: PyIsometry2d, points: Vec<PyVec2>) -> PyResult<PyAabb2d> {
+        if points.is_empty() {
+            return Err(PyValueError::new_err(EMPTY_POINT_CLOUD));
+        }
         let iso: Isometry2d = isometry.into();
         let point_refs: Vec<Vec2> = points
             .into_iter()

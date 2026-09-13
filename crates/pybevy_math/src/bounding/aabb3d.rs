@@ -1,10 +1,18 @@
 use bevy::math::{
-    Dir3, Isometry3d, Vec3, Vec3A,
+    Dir3, Isometry3d, Mat3, Vec3, Vec3A,
     bounding::{Aabb3d, BoundingSphere, BoundingVolume, IntersectsVolume},
 };
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{
+    FromBorrowedStorage, ValueStorage,
+    public_error::{
+        AABB3D_MIN_MAX, EMPTY_POINT_CLOUD, bounding_half_size, bounding_operation, bounding_shrink,
+    },
+};
 use pybevy_macros::pyvalue;
-use pyo3::{exceptions::PyTypeError, prelude::*};
+use pyo3::{
+    exceptions::{PyTypeError, PyValueError},
+    prelude::*,
+};
 
 use super::bounding_sphere::PyBoundingSphere;
 use crate::{
@@ -213,18 +221,28 @@ impl PyAabb3d {
     #[new]
     #[pyo3(signature = (center, half_size))]
     pub fn new(center: &Bound<'_, PyAny>, half_size: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let half_size = extract_vec3a_from_any(half_size)?;
+        // Reject inputs that fail Bevy nonnegative half-size preconditions.
+        if !half_size.cmpge(Vec3A::ZERO).all() {
+            return Err(PyValueError::new_err(bounding_half_size(
+                "Aabb3d",
+                &[half_size.x, half_size.y, half_size.z],
+            )));
+        }
         Ok(PyAabb3d::from_owned(Aabb3d::new(
             extract_vec3a_from_any(center)?,
-            extract_vec3a_from_any(half_size)?,
+            half_size,
         )))
     }
 
     #[staticmethod]
     pub fn from_min_max(min: &Bound<'_, PyAny>, max: &Bound<'_, PyAny>) -> PyResult<Self> {
-        Ok(PyAabb3d::from_owned(Aabb3d::from_min_max(
-            extract_vec3a_from_any(min)?,
-            extract_vec3a_from_any(max)?,
-        )))
+        let min = extract_vec3a_from_any(min)?;
+        let max = extract_vec3a_from_any(max)?;
+        if !max.cmpge(min).all() {
+            return Err(PyValueError::new_err(AABB3D_MIN_MAX));
+        }
+        Ok(PyAabb3d::from_owned(Aabb3d::from_min_max(min, max)))
     }
 
     #[getter]
@@ -290,7 +308,15 @@ impl PyAabb3d {
 
     pub fn rotated_by(&self, rotation: &Bound<'_, PyAny>) -> PyResult<PyAabb3d> {
         let rotation = extract_quat_from_any(rotation)?;
-        Ok(PyAabb3d::from_owned((*self.as_ref()?).rotated_by(rotation)))
+        let bounds = self.as_ref()?;
+        let half_size = Mat3::from_quat(rotation).abs() * bounds.half_size();
+        if !half_size.cmpge(Vec3A::ZERO).all() {
+            return Err(PyValueError::new_err(bounding_operation(
+                "Aabb3d",
+                "rotated_by",
+            )));
+        }
+        Ok(PyAabb3d::from_owned((*bounds).rotated_by(rotation)))
     }
 
     pub fn transformed_by(
@@ -300,26 +326,49 @@ impl PyAabb3d {
     ) -> PyResult<PyAabb3d> {
         let translation = extract_vec3a_from_any(translation)?;
         let rotation = extract_quat_from_any(rotation)?;
+        let bounds = self.as_ref()?;
+        let half_size = Mat3::from_quat(rotation).abs() * bounds.half_size();
+        if !half_size.cmpge(Vec3A::ZERO).all() {
+            return Err(PyValueError::new_err(bounding_operation(
+                "Aabb3d",
+                "transformed_by",
+            )));
+        }
         Ok(PyAabb3d::from_owned(
-            (*self.as_ref()?).transformed_by(translation, rotation),
+            (*bounds).transformed_by(translation, rotation),
         ))
     }
 
     pub fn grow(&self, amount: &Bound<'_, PyAny>) -> PyResult<PyAabb3d> {
         let amount = extract_vec3a_from_any(amount)?;
-        Ok(PyAabb3d::from_owned(self.as_ref()?.grow(amount)))
+        let bounds = self.as_ref()?;
+        if !(bounds.max + amount).cmpge(bounds.min - amount).all() {
+            return Err(PyValueError::new_err(bounding_operation("Aabb3d", "grow")));
+        }
+        Ok(PyAabb3d::from_owned(bounds.grow(amount)))
     }
 
     pub fn shrink(&self, amount: &Bound<'_, PyAny>) -> PyResult<PyAabb3d> {
         let amount = extract_vec3a_from_any(amount)?;
-        Ok(PyAabb3d::from_owned(self.as_ref()?.shrink(amount)))
+        let bounds = self.as_ref()?;
+        if !(bounds.max - amount).cmpge(bounds.min + amount).all() {
+            return Err(PyValueError::new_err(bounding_shrink("Aabb3d")));
+        }
+        Ok(PyAabb3d::from_owned(bounds.shrink(amount)))
     }
 
     pub fn scale_around_center(&self, scale: &Bound<'_, PyAny>) -> PyResult<PyAabb3d> {
         let scale = extract_vec3a_from_any(scale)?;
-        Ok(PyAabb3d::from_owned(
-            self.as_ref()?.scale_around_center(scale),
-        ))
+        let bounds = self.as_ref()?;
+        let half_size = bounds.half_size() * scale;
+        let center = bounds.center();
+        if !(center + half_size).cmpge(center - half_size).all() {
+            return Err(PyValueError::new_err(bounding_operation(
+                "Aabb3d",
+                "scale_around_center",
+            )));
+        }
+        Ok(PyAabb3d::from_owned(bounds.scale_around_center(scale)))
     }
 
     pub fn visible_area(&self) -> PyResult<f32> {
@@ -327,9 +376,15 @@ impl PyAabb3d {
     }
 
     pub fn bounding_sphere(&self) -> PyResult<PyBoundingSphere> {
-        Ok(PyBoundingSphere::from_owned(
-            self.as_ref()?.bounding_sphere(),
-        ))
+        let bounds = self.as_ref()?;
+        let radius = bounds.min.distance(bounds.max) / 2.0;
+        if radius.is_nan() || radius < 0.0 {
+            return Err(PyValueError::new_err(bounding_operation(
+                "Aabb3d",
+                "bounding_sphere",
+            )));
+        }
+        Ok(PyBoundingSphere::from_owned(bounds.bounding_sphere()))
     }
 
     pub fn intersects_aabb(&self, other: &PyAabb3d) -> PyResult<bool> {
@@ -344,6 +399,9 @@ impl PyAabb3d {
 
     #[staticmethod]
     pub fn from_point_cloud(isometry: PyIsometry3d, points: Vec<PyVec3>) -> PyResult<PyAabb3d> {
+        if points.is_empty() {
+            return Err(PyValueError::new_err(EMPTY_POINT_CLOUD));
+        }
         let iso: Isometry3d = isometry.try_into()?;
         let point_refs: Vec<Vec3A> = points
             .into_iter()

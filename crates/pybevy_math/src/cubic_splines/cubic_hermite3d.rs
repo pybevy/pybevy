@@ -2,6 +2,7 @@ use bevy::math::{
     Vec3,
     cubic_splines::{CubicGenerator, CubicHermite},
 };
+use pybevy_core::public_error;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 use super::cubic_curve3d::PyCubicCurve3d;
@@ -31,6 +32,12 @@ impl PyCubicHermite3d {
             .into_iter()
             .map(TryInto::try_into)
             .collect::<PyResult<Vec<_>>>()?;
+
+        if control_points.len() != tangents.len() {
+            return Err(PyValueError::new_err(
+                public_error::cubic_hermite_tangent_count(control_points.len(), tangents.len()),
+            ));
+        }
 
         Ok(PyCubicHermite3d {
             hermite: CubicHermite::new(control_points, tangents),

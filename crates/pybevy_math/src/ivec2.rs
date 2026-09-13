@@ -2,9 +2,11 @@ use bevy::math::IVec2;
 use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
 use pyo3::{
     basic::CompareOp,
-    exceptions::{PyOverflowError, PyTypeError, PyZeroDivisionError},
+    exceptions::{PyTypeError, PyZeroDivisionError},
     prelude::*,
 };
+
+use crate::integer::checked;
 
 #[pyclass(name = "IVec2", module = "pybevy.math", from_py_object)]
 #[derive(Debug, Clone)]
@@ -185,31 +187,53 @@ impl PyIVec2 {
     }
 
     pub fn __add__(&self, other: &PyIVec2) -> PyResult<PyIVec2> {
-        Ok(PyIVec2::from_ivec2(*self.as_ref()? + *other.as_ref()?))
+        let value = self.as_ref()?;
+        let other = other.as_ref()?;
+        Ok(IVec2::new(
+            checked(value.x.checked_add(other.x))?,
+            checked(value.y.checked_add(other.y))?,
+        )
+        .into())
     }
 
     pub fn __sub__(&self, other: &PyIVec2) -> PyResult<PyIVec2> {
-        Ok(PyIVec2::from_ivec2(*self.as_ref()? - *other.as_ref()?))
+        let value = self.as_ref()?;
+        let other = other.as_ref()?;
+        Ok(IVec2::new(
+            checked(value.x.checked_sub(other.x))?,
+            checked(value.y.checked_sub(other.y))?,
+        )
+        .into())
     }
 
     pub fn __mul__(&self, scalar: i32) -> PyResult<PyIVec2> {
-        Ok(PyIVec2::from_ivec2(*self.as_ref()? * scalar))
+        let value = self.as_ref()?;
+        Ok(IVec2::new(
+            checked(value.x.checked_mul(scalar))?,
+            checked(value.y.checked_mul(scalar))?,
+        )
+        .into())
     }
 
     pub fn __truediv__(&self, scalar: i32) -> PyResult<PyIVec2> {
         if scalar == 0 {
             return Err(PyZeroDivisionError::new_err("IVec2 division by zero"));
         }
-        if scalar == -1 && *self.as_ref()? == IVec2::MIN {
-            return Err(PyOverflowError::new_err(
-                "IVec2 division overflows: i32::MIN / -1",
-            ));
-        }
-        Ok(PyIVec2::from_ivec2(*self.as_ref()? / scalar))
+        let value = self.as_ref()?;
+        Ok(IVec2::new(
+            checked(value.x.checked_div(scalar))?,
+            checked(value.y.checked_div(scalar))?,
+        )
+        .into())
     }
 
     pub fn __neg__(&self) -> PyResult<PyIVec2> {
-        Ok(PyIVec2::from_ivec2(-*self.as_ref()?))
+        let value = self.as_ref()?;
+        Ok(IVec2::new(
+            checked(value.x.checked_neg())?,
+            checked(value.y.checked_neg())?,
+        )
+        .into())
     }
 
     #[staticmethod]
@@ -226,7 +250,12 @@ impl PyIVec2 {
     }
 
     pub fn abs(&self) -> PyResult<PyIVec2> {
-        Ok(PyIVec2::from_ivec2(self.as_ref()?.abs()))
+        let value = self.as_ref()?;
+        Ok(IVec2::new(
+            checked(value.x.checked_abs())?,
+            checked(value.y.checked_abs())?,
+        )
+        .into())
     }
 
     pub fn signum(&self) -> PyResult<PyIVec2> {
@@ -234,10 +263,17 @@ impl PyIVec2 {
     }
 
     pub fn dot(&self, other: &PyIVec2) -> PyResult<i32> {
-        Ok(self.as_ref()?.dot(*other.as_ref()?))
+        let value = self.as_ref()?;
+        let other = other.as_ref()?;
+        let x = checked(value.x.checked_mul(other.x))?;
+        let y = checked(value.y.checked_mul(other.y))?;
+        checked(x.checked_add(y))
     }
 
     pub fn length_squared(&self) -> PyResult<i32> {
-        Ok(self.as_ref()?.length_squared())
+        let value = self.as_ref()?;
+        let x = checked(value.x.checked_mul(value.x))?;
+        let y = checked(value.y.checked_mul(value.y))?;
+        checked(x.checked_add(y))
     }
 }

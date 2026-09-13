@@ -2,8 +2,14 @@ use bevy::math::{
     Isometry2d, Vec2,
     bounding::{Aabb2d, BoundingCircle, BoundingVolume, IntersectsVolume},
 };
-use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
-use pyo3::{exceptions::PyTypeError, prelude::*};
+use pybevy_core::{
+    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
+    public_error::{EMPTY_POINT_CLOUD, bounding_operation, bounding_radius, bounding_shrink},
+};
+use pyo3::{
+    exceptions::{PyTypeError, PyValueError},
+    prelude::*,
+};
 
 use super::aabb2d::PyAabb2d;
 use crate::{
@@ -76,6 +82,13 @@ impl PyBoundingCircle {
     #[new]
     pub fn new(center: PyVec2, radius: f32) -> PyResult<Self> {
         let center_vec: Vec2 = center.try_into()?;
+        // Reject inputs that fail Bevy nonnegative radius precondition.
+        if radius.is_nan() || radius < 0.0 {
+            return Err(PyValueError::new_err(bounding_radius(
+                "BoundingCircle",
+                radius,
+            )));
+        }
         Ok(PyBoundingCircle::from_bounding_circle(BoundingCircle::new(
             center_vec, radius,
         )))
@@ -122,8 +135,21 @@ impl PyBoundingCircle {
 
     pub fn merge(&self, other: &PyBoundingCircle) -> PyResult<PyBoundingCircle> {
         let other_circle: BoundingCircle = other.try_into()?;
+        let bounds = self.as_ref()?;
+        let length = (bounds.center - other_circle.center).length();
+        if !(bounds.radius() >= length + other_circle.radius()
+            || other_circle.radius() >= length + bounds.radius())
+        {
+            let radius = (length + bounds.radius() + other_circle.radius()) / 2.0;
+            if radius.is_nan() || radius < 0.0 {
+                return Err(PyValueError::new_err(bounding_operation(
+                    "BoundingCircle",
+                    "merge",
+                )));
+            }
+        }
         Ok(PyBoundingCircle::from_bounding_circle(
-            self.as_ref()?.merge(&other_circle),
+            bounds.merge(&other_circle),
         ))
     }
 
@@ -147,20 +173,42 @@ impl PyBoundingCircle {
     }
 
     pub fn grow(&self, amount: f32) -> PyResult<PyBoundingCircle> {
-        Ok(PyBoundingCircle::from_bounding_circle(
-            self.as_ref()?.grow(amount),
-        ))
+        let bounds = self.as_ref()?;
+        if amount.is_nan() || amount < 0.0 {
+            return Err(PyValueError::new_err(bounding_operation(
+                "BoundingCircle",
+                "grow",
+            )));
+        }
+        Ok(PyBoundingCircle::from_bounding_circle(bounds.grow(amount)))
     }
 
     pub fn shrink(&self, amount: f32) -> PyResult<PyBoundingCircle> {
+        let bounds = self.as_ref()?;
+        if amount.is_nan()
+            || amount < 0.0
+            || bounds
+                .radius()
+                .partial_cmp(&amount)
+                .is_none_or(|order| order.is_lt())
+        {
+            return Err(PyValueError::new_err(bounding_shrink("BoundingCircle")));
+        }
         Ok(PyBoundingCircle::from_bounding_circle(
-            self.as_ref()?.shrink(amount),
+            bounds.shrink(amount),
         ))
     }
 
     pub fn scale_around_center(&self, scale: f32) -> PyResult<PyBoundingCircle> {
+        let bounds = self.as_ref()?;
+        if scale.is_nan() || scale < 0.0 {
+            return Err(PyValueError::new_err(bounding_operation(
+                "BoundingCircle",
+                "scale_around_center",
+            )));
+        }
         Ok(PyBoundingCircle::from_bounding_circle(
-            self.as_ref()?.scale_around_center(scale),
+            bounds.scale_around_center(scale),
         ))
     }
 
@@ -187,6 +235,9 @@ impl PyBoundingCircle {
         isometry: super::aabb2d::PyIsometry2d,
         points: Vec<PyVec2>,
     ) -> PyResult<PyBoundingCircle> {
+        if points.is_empty() {
+            return Err(PyValueError::new_err(EMPTY_POINT_CLOUD));
+        }
         let iso: Isometry2d = isometry.into();
         let point_refs: Vec<Vec2> = points
             .into_iter()

@@ -6,6 +6,8 @@ use pyo3::{
     prelude::*,
 };
 
+use crate::integer::checked;
+
 #[pyclass(name = "UVec3", module = "pybevy.math", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyUVec3 {
@@ -175,22 +177,48 @@ impl PyUVec3 {
     }
 
     pub fn __add__(&self, other: &PyUVec3) -> PyResult<PyUVec3> {
-        Ok(PyUVec3::from_uvec3(*self.as_ref()? + *other.as_ref()?))
+        let value = self.as_ref()?;
+        let other = other.as_ref()?;
+        Ok(UVec3::new(
+            checked(value.x.checked_add(other.x))?,
+            checked(value.y.checked_add(other.y))?,
+            checked(value.z.checked_add(other.z))?,
+        )
+        .into())
     }
 
     pub fn __sub__(&self, other: &PyUVec3) -> PyResult<PyUVec3> {
-        Ok(PyUVec3::from_uvec3(*self.as_ref()? - *other.as_ref()?))
+        let value = self.as_ref()?;
+        let other = other.as_ref()?;
+        Ok(UVec3::new(
+            checked(value.x.checked_sub(other.x))?,
+            checked(value.y.checked_sub(other.y))?,
+            checked(value.z.checked_sub(other.z))?,
+        )
+        .into())
     }
 
     pub fn __mul__(&self, scalar: u32) -> PyResult<PyUVec3> {
-        Ok(PyUVec3::from_uvec3(*self.as_ref()? * scalar))
+        let value = self.as_ref()?;
+        Ok(UVec3::new(
+            checked(value.x.checked_mul(scalar))?,
+            checked(value.y.checked_mul(scalar))?,
+            checked(value.z.checked_mul(scalar))?,
+        )
+        .into())
     }
 
     pub fn __truediv__(&self, scalar: u32) -> PyResult<PyUVec3> {
         if scalar == 0 {
             return Err(PyZeroDivisionError::new_err("UVec3 division by zero"));
         }
-        Ok(PyUVec3::from_uvec3(*self.as_ref()? / scalar))
+        let value = self.as_ref()?;
+        Ok(UVec3::new(
+            checked(value.x.checked_div(scalar))?,
+            checked(value.y.checked_div(scalar))?,
+            checked(value.z.checked_div(scalar))?,
+        )
+        .into())
     }
 
     #[staticmethod]
@@ -207,11 +235,20 @@ impl PyUVec3 {
     }
 
     pub fn dot(&self, other: &PyUVec3) -> PyResult<u32> {
-        Ok(self.as_ref()?.dot(*other.as_ref()?))
+        let value = self.as_ref()?;
+        let other = other.as_ref()?;
+        let x = checked(value.x.checked_mul(other.x))?;
+        let y = checked(value.y.checked_mul(other.y))?;
+        let z = checked(value.z.checked_mul(other.z))?;
+        checked(checked(x.checked_add(y))?.checked_add(z))
     }
 
     pub fn length_squared(&self) -> PyResult<u32> {
-        Ok(self.as_ref()?.length_squared())
+        let value = self.as_ref()?;
+        let x = checked(value.x.checked_mul(value.x))?;
+        let y = checked(value.y.checked_mul(value.y))?;
+        let z = checked(value.z.checked_mul(value.z))?;
+        checked(checked(x.checked_add(y))?.checked_add(z))
     }
 
     pub fn min_element(&self) -> PyResult<u32> {
@@ -223,11 +260,13 @@ impl PyUVec3 {
     }
 
     pub fn element_sum(&self) -> PyResult<u32> {
-        Ok(self.as_ref()?.element_sum())
+        let value = self.as_ref()?;
+        checked(checked(value.x.checked_add(value.y))?.checked_add(value.z))
     }
 
     pub fn element_product(&self) -> PyResult<u32> {
-        Ok(self.as_ref()?.element_product())
+        let value = self.as_ref()?;
+        checked(checked(value.x.checked_mul(value.y))?.checked_mul(value.z))
     }
 
     pub fn with_x(&self, x: u32) -> PyResult<PyUVec3> {

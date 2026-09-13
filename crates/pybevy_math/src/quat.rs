@@ -1,9 +1,9 @@
-use bevy::math::{EulerRot, Quat, Vec3A};
+use bevy::math::{EulerRot, Quat, Vec3, Vec3A};
 use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
 use pyo3::{
     Bound, IntoPyObjectExt,
     basic::CompareOp,
-    exceptions::PyTypeError,
+    exceptions::{PyTypeError, PyValueError},
     prelude::*,
     types::{PyAny, PyDict, PyTuple},
 };
@@ -149,8 +149,10 @@ impl PyQuat {
     ) -> PyResult<Self> {
         Err(PyTypeError::new_err(
             "Quat cannot be constructed directly (raw xyzw components are error-prone); \
-             use Quat.from_xyzw(x, y, z, w), Quat.from_axis_angle(axis, angle), \
-             Quat.from_euler(EulerRot.XYZ, x, y, z), or Quat.IDENTITY",
+             use Quat.from_euler(EulerRot.XYZ, x, y, z), \
+             Quat.from_axis_angle(axis, angle) with a normalized axis, or \
+             Quat.IDENTITY. Quat.from_xyzw(x, y, z, w) takes raw components and \
+             does not normalize them.",
         ))
     }
 
@@ -174,8 +176,27 @@ impl PyQuat {
 
     #[staticmethod]
     pub fn from_axis_angle(axis: PyVec3, angle: f32) -> PyResult<Self> {
+        // glam does not enforce its normalized-axis precondition in release builds.
+        let axis: Vec3 = axis.try_into()?;
+        if !angle.is_finite() {
+            return Err(PyValueError::new_err(format!(
+                "angle must be finite (got {angle})"
+            )));
+        }
+        if !axis.is_finite() {
+            return Err(PyValueError::new_err(
+                "axis must be finite; from_axis_angle requires a normalized axis",
+            ));
+        }
+        if !axis.is_normalized() {
+            return Err(PyValueError::new_err(format!(
+                "from_axis_angle requires a normalized axis (got length {}); \
+                 call axis.normalize() first",
+                axis.length()
+            )));
+        }
         Ok(PyQuat {
-            storage: ValueStorage::owned(Quat::from_axis_angle(axis.try_into()?, angle)),
+            storage: ValueStorage::owned(Quat::from_axis_angle(axis, angle)),
         })
     }
 
