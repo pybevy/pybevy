@@ -23,7 +23,7 @@ class BloomPrefilter:
     threshold: float
     threshold_softness: float
 
-    def __init__(self, threshold: float = 0.0, threshold_softness: float = 0.0) -> None: ...
+    def __init__(self, *, threshold: float = 0.0, threshold_softness: float = 0.0) -> None: ...
 
 class Bloom(Component):
     """Post-processing bloom effect for glowing lights and bright surfaces."""
@@ -35,6 +35,7 @@ class Bloom(Component):
 
     def __init__(
         self,
+        *,
         intensity: float = 0.15,
         low_frequency_boost: float = 0.7,
         low_frequency_boost_curvature: float = 0.95,
@@ -42,7 +43,7 @@ class Bloom(Component):
         prefilter: BloomPrefilter | None = None,
         composite_mode: BloomCompositeMode = ...,
         max_mip_dimension: int = 512,
-        scale: Vec2 | None = None,
+        scale: Vec2 | None = None
     ) -> None: ...
 
     @property
@@ -76,9 +77,12 @@ class Bloom(Component):
     def composite_mode(self, value: BloomCompositeMode) -> None: ...
 
     @property
-    def max_mip_dimension(self) -> int: ...
+    def max_mip_dimension(self) -> int:
+        """Largest bloom mip dimension, in pixels. At least 1."""
+
     @max_mip_dimension.setter
-    def max_mip_dimension(self, value: int) -> None: ...
+    def max_mip_dimension(self, value: int) -> None:
+        """Raise ValueError for 0."""
 
     @property
     def scale(self) -> Vec2: ...
@@ -100,13 +104,14 @@ class Vignette(Component):
 
     def __init__(
         self,
+        *,
         intensity: float = 1.0,
         radius: float = 0.75,
         smoothness: float = 5.0,
         roundness: float = 1.0,
         center: Vec2 | None = None,
         edge_compensation: float = 1.0,
-        color: Color | None = None,
+        color: Color | None = None
     ) -> None: ...
 
     @property
@@ -159,11 +164,12 @@ class LensDistortion(Component):
 
     def __init__(
         self,
+        *,
         intensity: float = 0.5,
         scale: float = 1.0,
         multiplier: Vec2 | None = None,
         center: Vec2 | None = None,
-        edge_curvature: float = 0.0,
+        edge_curvature: float = 0.0
     ) -> None: ...
 
     @property

@@ -2,14 +2,34 @@ use bevy::{
     math::Vec2,
     post_process::bloom::{Bloom, BloomPrefilter},
 };
-use pybevy_core::{ComponentStorage, PyComponent};
+use numpy::PyReadonlyArray2;
+use pybevy_core::{ComponentStorage, PyComponent, PyRustComponentBatch, public_error};
 use pybevy_macros::pycomponent;
-use pybevy_math::vec2::PyVec2;
-use pyo3::prelude::*;
+use pybevy_math::vec2::{PyVec2, extract_vec2_from_any};
+use pyo3::{exceptions::PyValueError, prelude::*};
 
 use crate::{bloom_composite_mode::PyBloomCompositeMode, bloom_prefilter::PyBloomPrefilter};
 
-#[pycomponent(Bloom, bridge, view_fields = [
+fn validate_max_mip_dimension(dimension: u32) -> PyResult<()> {
+    if dimension == 0 {
+        return Err(PyValueError::new_err(
+            public_error::BLOOM_MAX_MIP_DIMENSION_ZERO,
+        ));
+    }
+    Ok(())
+}
+
+fn validate_bloom_batch(py: Python<'_>, batch: &PyRustComponentBatch) -> PyResult<()> {
+    if let Some(array) = batch.get_field_array(py, "max_mip_dimension") {
+        let array: PyReadonlyArray2<f32> = array.extract()?;
+        for &dimension in array.as_slice()? {
+            validate_max_mip_dimension(dimension as u32)?;
+        }
+    }
+    Ok(())
+}
+
+#[pycomponent(Bloom, bridge, batch_validate = validate_bloom_batch, view_fields = [
     intensity,
     low_frequency_boost,
     low_frequency_boost_curvature,
@@ -26,6 +46,7 @@ impl PyBloom {
     #[new]
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
+        *,
         intensity = 0.15,
         low_frequency_boost = 0.7,
         low_frequency_boost_curvature = 0.95,
@@ -45,14 +66,12 @@ impl PyBloom {
         max_mip_dimension: u32,
         scale: Option<Bound<'_, PyAny>>,
     ) -> PyResult<PyClassInitializer<Self>> {
-        let scale_vec = if let Some(s) = scale {
-            Vec2::new(
-                s.getattr("x")?.extract::<f32>()?,
-                s.getattr("y")?.extract::<f32>()?,
-            )
-        } else {
-            Vec2::ONE
+        let scale_vec = match scale {
+            Some(s) => extract_vec2_from_any(&s)?,
+            None => Vec2::ONE,
         };
+
+        validate_max_mip_dimension(max_mip_dimension)?;
 
         let bloom = Bloom {
             intensity,
@@ -168,6 +187,7 @@ impl PyBloom {
 
     #[setter]
     pub fn set_max_mip_dimension(&mut self, dimension: u32) -> PyResult<()> {
+        validate_max_mip_dimension(dimension)?;
         self.as_mut()?.max_mip_dimension = dimension;
         Ok(())
     }

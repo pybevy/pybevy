@@ -18,6 +18,7 @@ pub struct PyLensDistortion {
 impl PyLensDistortion {
     #[new]
     #[pyo3(signature = (
+        *,
         intensity = 0.5,
         scale = 1.0,
         multiplier = None,
