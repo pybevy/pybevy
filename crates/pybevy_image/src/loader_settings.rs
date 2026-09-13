@@ -90,13 +90,22 @@ impl PyImageSampler {
     }
 
     pub fn __repr__(&self) -> PyResult<String> {
-        match self.as_ref()?.reborrow() {
-            ImageSampler::Default => Ok("ImageSampler.Default".to_string()),
-            ImageSampler::Descriptor(desc) => Ok(format!(
+        let sampler = self.storage.as_ref()?;
+        let rendered = match sampler.reborrow() {
+            ImageSampler::Default => "ImageSampler.Default".to_string(),
+            ImageSampler::Descriptor(desc) => format!(
                 "ImageSampler.Descriptor({})",
                 PyImageSamplerDescriptor::from(desc.clone()).__repr__()?
-            )),
+            ),
+        };
+        if ImageSamplerVariant::of(&sampler) != self.expected {
+            // Render variant-stale wrappers without bypassing storage validity.
+            return Ok(format!(
+                "<stale {} wrapper; the value is now {rendered}>",
+                self.expected.qualname()
+            ));
         }
+        Ok(rendered)
     }
 
     pub fn __copy__(&self, py: Python<'_>) -> PyResult<Py<Self>> {
@@ -249,8 +258,9 @@ pub struct PyImageLoaderSettings {
 impl PyImageLoaderSettings {
     #[new]
     #[pyo3(signature = (
+        *,
         is_srgb = true,
-        sampler = None,
+        sampler = None
     ))]
     pub fn new(is_srgb: bool, sampler: Option<PyImageSampler>) -> PyResult<Self> {
         Ok(Self {

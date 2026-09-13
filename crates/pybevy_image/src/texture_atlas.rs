@@ -15,7 +15,7 @@ pub struct PyTextureAtlas {
 #[pymethods]
 impl PyTextureAtlas {
     #[new]
-    #[pyo3(signature = (layout = None, index = 0))]
+    #[pyo3(signature = (*, layout = None, index = 0))]
     pub fn new(layout: Option<&Bound<'_, PyAny>>, index: usize) -> PyResult<Self> {
         let layout = match layout {
             Some(layout) => extract_handle_from_any(layout)?.try_into()?,

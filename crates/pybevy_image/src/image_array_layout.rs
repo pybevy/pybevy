@@ -11,16 +11,13 @@ use pyo3::prelude::*;
 )]
 #[derive(Debug, Clone, Copy)]
 pub enum PyImageArrayLayout {
-    RowCount {
-        rows: u32,
-    },
-    RowHeight {
-        pixels: u32,
-    },
-    GridCount {
-        columns: u32,
-        rows: u32,
-    },
+    #[pyo3(constructor = (*, rows))]
+    RowCount { rows: u32 },
+    #[pyo3(constructor = (*, pixels))]
+    RowHeight { pixels: u32 },
+    #[pyo3(constructor = (*, columns, rows))]
+    GridCount { columns: u32, rows: u32 },
+    #[pyo3(constructor = (*, tile_width_pixels, tile_height_pixels))]
     GridSize {
         tile_width_pixels: u32,
         tile_height_pixels: u32,

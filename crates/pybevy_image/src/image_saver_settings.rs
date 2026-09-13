@@ -12,7 +12,7 @@ pub struct PyImageSaverSettings {
 #[pymethods]
 impl PyImageSaverSettings {
     #[new]
-    #[pyo3(signature = (format = PySaveImageFormatSetting::FromExtension()))]
+    #[pyo3(signature = (*, format = PySaveImageFormatSetting::FromExtension()))]
     pub fn new(format: PySaveImageFormatSetting) -> Self {
         Self {
             inner: ImageSaverSettings {
