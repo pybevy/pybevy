@@ -1,4 +1,4 @@
-use std::{io::Cursor, sync::Arc};
+use std::{io::Cursor, path::Path, sync::Arc};
 
 use bevy::{
     asset::RenderAssetUsages,
@@ -18,6 +18,7 @@ use pybevy_core::{
     computed_owned,
     content_hash::CanonicalContentHasher,
     numpy_view_guard::{PendingNumpyViewGuard, PyNumpyViewGuard},
+    public_error,
 };
 use pybevy_macros::pyasset;
 use pybevy_math::{uvec2::PyUVec2, uvec3::PyUVec3, vec2::PyVec2};
@@ -283,6 +284,43 @@ fn py_format_to_rust(format: PyImageFormat) -> PyResult<RustImageFormat> {
         PyImageFormat::Tiff => RustImageFormat::Tiff,
         PyImageFormat::WebP => RustImageFormat::WebP,
     })
+}
+
+/// Resolve image crate extension spellings; preserve inferred encoder errors.
+fn format_from_path(path: &str) -> PyResult<Option<PyImageFormat>> {
+    let Some(extension) = Path::new(path).extension().and_then(|name| name.to_str()) else {
+        return Ok(None);
+    };
+    // The `image` crate does not know ktx2, but pybevy.image.ImageFormat does.
+    if extension.eq_ignore_ascii_case("ktx2") {
+        return Ok(Some(PyImageFormat::Ktx2));
+    }
+    let Some(format) = RustImageFormat::from_extension(extension) else {
+        return Err(PyValueError::new_err(
+            public_error::image_extension_unknown(extension),
+        ));
+    };
+    Ok(Some(match format {
+        RustImageFormat::Bmp => PyImageFormat::Bmp,
+        RustImageFormat::Dds => PyImageFormat::Dds,
+        RustImageFormat::Farbfeld => PyImageFormat::Farbfeld,
+        RustImageFormat::Gif => PyImageFormat::Gif,
+        RustImageFormat::OpenExr => PyImageFormat::OpenExr,
+        RustImageFormat::Hdr => PyImageFormat::Hdr,
+        RustImageFormat::Ico => PyImageFormat::Ico,
+        RustImageFormat::Jpeg => PyImageFormat::Jpeg,
+        RustImageFormat::Png => PyImageFormat::Png,
+        RustImageFormat::Pnm => PyImageFormat::Pnm,
+        RustImageFormat::Qoi => PyImageFormat::Qoi,
+        RustImageFormat::Tga => PyImageFormat::Tga,
+        RustImageFormat::Tiff => PyImageFormat::Tiff,
+        RustImageFormat::WebP => PyImageFormat::WebP,
+        other => {
+            return Err(PyValueError::new_err(unsupported_format(format!(
+                "{other:?}"
+            ))));
+        }
+    }))
 }
 
 enum ExportPixels {
@@ -1337,13 +1375,17 @@ impl PyImage {
         })
     }
 
-    #[pyo3(signature = (path, format=PyImageFormat::Png, quality=None))]
+    #[pyo3(signature = (path, format=None, quality=None))]
     pub fn save_to_file(
         &self,
         path: String,
-        format: PyImageFormat,
+        format: Option<PyImageFormat>,
         quality: Option<u8>,
     ) -> PyResult<()> {
+        let format = match format {
+            Some(format) => format,
+            None => format_from_path(&path)?.unwrap_or(PyImageFormat::Png),
+        };
         let buffer = self.save_to_buffer(format, quality)?;
         std::fs::write(&path, buffer).map_err(|e| {
             PyRuntimeError::new_err(format!("Failed to write image to {path}: {e}"))

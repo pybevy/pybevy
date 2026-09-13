@@ -942,15 +942,19 @@ class Image(Asset):
     def save_to_file(
         self,
         path: str,
-        format: ImageFormat = ImageFormat.Png,
+        format: ImageFormat | None = None,
         quality: int | None = None,
     ) -> None:
-        """Save the image to a file in the specified format.
+        """Save the image to a file, in the format the extension names.
 
         Args:
             path: File path to save to. Relative paths are resolved from the
                 native process launch directory.
-            format: Output image format (default: PNG)
+            format: Output image format. Defaults to the one the path's
+                extension names, and to PNG when the path has no extension. An
+                extension that names no supported format raises ValueError
+                instead of writing PNG under it. Inferred formats retain the
+                same encoder errors as an explicit format.
             quality: JPEG quality (0-100), only used for JPEG format (default: 95)
 
         Format support:
