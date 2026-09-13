@@ -4,7 +4,7 @@ use bevy::time::{Fixed, Real, Time, Virtual};
 use pybevy_core::{
     PyResource, ResourceStorage, duration_from_hz, positive_duration_from_secs_f64,
     public_error::{DURATION_ZERO, TIME_CONTEXT_TYPE_REQUIRED},
-    resource_initializer,
+    relative_speed, resource_initializer,
 };
 use pybevy_macros::pyresource;
 use pyo3::{PyTypeInfo, exceptions::PyTypeError, prelude::*, types::PyType};
@@ -22,7 +22,7 @@ fn require_positive_duration(duration: Duration) -> PyResult<Duration> {
 #[pyclass(name = "Time", module = "pybevy.time", extends = PyResource, from_py_object)]
 #[derive(Debug)]
 pub struct PyTime {
-    pub storage: ResourceStorage<Time>,
+    pub(crate) storage: ResourceStorage<Time>,
 }
 
 #[pymethods]
@@ -122,7 +122,7 @@ impl PyTime {
 #[pyclass(name = "_TimeFixed", extends = PyResource, from_py_object)]
 #[derive(Debug)]
 pub struct PyTimeFixed {
-    pub storage: ResourceStorage<Time<Fixed>>,
+    pub(crate) storage: ResourceStorage<Time<Fixed>>,
 }
 
 #[pymethods]
@@ -268,7 +268,7 @@ impl PyTimeFixed {
 #[pyclass(name = "_TimeVirtual", extends = PyResource, from_py_object)]
 #[derive(Debug)]
 pub struct PyTimeVirtual {
-    pub storage: ResourceStorage<Time<Virtual>>,
+    pub(crate) storage: ResourceStorage<Time<Virtual>>,
 }
 
 #[pymethods]
@@ -297,12 +297,16 @@ impl PyTimeVirtual {
     }
 
     pub fn set_relative_speed(&mut self, ratio: f32) -> PyResult<()> {
-        self.as_mut()?.set_relative_speed(ratio);
+        let time = self.as_mut()?;
+        let ratio = relative_speed(f64::from(ratio), time.max_delta())?;
+        time.set_relative_speed_f64(ratio);
         Ok(())
     }
 
     pub fn set_relative_speed_f64(&mut self, ratio: f64) -> PyResult<()> {
-        self.as_mut()?.set_relative_speed_f64(ratio);
+        let time = self.as_mut()?;
+        let ratio = relative_speed(ratio, time.max_delta())?;
+        time.set_relative_speed_f64(ratio);
         Ok(())
     }
 
@@ -327,7 +331,10 @@ impl PyTimeVirtual {
     }
 
     pub fn set_max_delta(&mut self, max_delta: Duration) -> PyResult<()> {
-        self.as_mut()?.set_max_delta(max_delta);
+        let time = self.as_mut()?;
+        // Revalidate the stored speed against the new bound.
+        relative_speed(time.relative_speed_f64(), max_delta)?;
+        time.set_max_delta(max_delta);
         Ok(())
     }
 
@@ -403,7 +410,7 @@ impl PyTimeVirtual {
 #[pyclass(name = "_TimeReal", extends = PyResource, from_py_object)]
 #[derive(Debug)]
 pub struct PyTimeReal {
-    pub storage: ResourceStorage<Time<Real>>,
+    pub(crate) storage: ResourceStorage<Time<Real>>,
 }
 
 #[pymethods]

@@ -320,7 +320,19 @@ class Time(Resource, Generic[_TimeContext]):
 
         Args:
             ratio: Speed multiplier, such as 2.0 for twice as fast or 0.5 for
-                half speed.
+                half speed. Must be finite and non-negative, and small enough
+                that `max_delta * ratio` is a representable duration.
+
+        Raises:
+            ValueError: If `ratio` is not finite, is negative, or would produce a
+                frame delta outside the supported duration range.
+
+        Note:
+            `FixedUpdate` catches up one timestep at a time, so a large ratio
+            multiplies how many times it runs per frame: at `1e5` with the default
+            0.25s `max_delta` and 64 Hz timestep that is ~1.6 million iterations
+            per frame, which will appear to hang. Advance `Time` directly, or raise
+            the fixed timestep, when fast-forwarding a simulation.
 
         Example:
             ```python
@@ -330,7 +342,7 @@ class Time(Resource, Generic[_TimeContext]):
         """
 
     def set_relative_speed_f64(self: Time[Virtual], ratio: float) -> None:
-        """Set the speed multiplier using f64 precision."""
+        """Set the speed multiplier with f64 precision and the same validation."""
 
     def relative_speed(self: Time[Virtual]) -> float:
         """Get the current speed multiplier."""
@@ -693,10 +705,11 @@ class Timer:
         """Alias for paused()."""
 
     def fraction(self) -> float:
-        """Get the progress as a fraction between 0.0 and 1.0.
+        """Get the progress as a fraction.
 
         Returns:
-            Elapsed time / duration (0.0 = just started, 1.0 = finished)
+            Elapsed time / duration (0.0 = just started, 1.0 = finished).
+            Not clamped: set_elapsed() past the duration returns more than 1.0.
 
         Example:
             ```python
@@ -706,10 +719,11 @@ class Timer:
         """
 
     def fraction_remaining(self) -> float:
-        """Get the remaining progress as a fraction between 0.0 and 1.0.
+        """Get the remaining progress as a fraction.
 
         Returns:
-            Remaining time / duration (1.0 = just started, 0.0 = finished)
+            Remaining time / duration (1.0 = just started, 0.0 = finished).
+            Not clamped: set_elapsed() past the duration returns a negative value.
 
         Example:
             ```python
@@ -723,13 +737,18 @@ class Timer:
 
         Returns:
             Duration - elapsed time
+
+        Raises:
+            ValueError: If set_elapsed() has pushed elapsed past the duration.
         """
 
     def times_finished_this_tick(self) -> int:
         """Get the number of times the timer finished this tick.
 
         For repeating timers ticked with a large delta, this can be > 1.
-        For non-repeating timers, this is always 0 or 1.
+        For non-repeating timers, this is always 0 or 1. A repeating timer
+        whose duration is zero finished infinitely often, reported as
+        4294967295, so bound the count before using it as a loop length.
 
         Returns:
             Number of times timer finished in this tick
@@ -737,7 +756,7 @@ class Timer:
         Example:
             ```python
             # Handle multiple spawns if frame took long
-            count = spawn_timer.times_finished_this_tick()
+            count = min(spawn_timer.times_finished_this_tick(), MAX_SPAWNS)
             for _ in range(count):
                 spawn_enemy()
             ```
@@ -766,6 +785,9 @@ class Timer:
 
         Returns:
             Duration - elapsed time in seconds
+
+        Raises:
+            ValueError: If set_elapsed() has pushed elapsed past the duration.
         """
 
     def set_elapsed(self, time: Duration) -> None:
