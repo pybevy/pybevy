@@ -156,7 +156,7 @@ def entrypoint(func: Callable[[App], App]) -> EntrypointDecoratorResult:
     For testing:
         ```python
         test_app = App()
-        test_app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+        test_app.add_plugins(ScheduleRunnerPlugin.run_once())
         main(test_app).run()  # Pass explicit app instance
         ```
     """

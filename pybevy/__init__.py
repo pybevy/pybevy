@@ -43,7 +43,7 @@ from .decorators import (
     plugin,
     resource,
 )
-from .ecs import system_set
+from .ecs import state, system_set
 
 _apply_constant_descriptors()
 
@@ -61,6 +61,7 @@ __all__ = [
     "message",
     "resource",
     "plugin",
+    "state",
     "system_set",
     # hot reload utilities
     "clear_component_cache",

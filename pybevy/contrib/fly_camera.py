@@ -11,14 +11,7 @@ from dataclasses import dataclass
 from ..app import App, Plugin, Update
 from ..decorators import component, plugin, resource
 from ..ecs import Component, MessageReader, Mut, Query, Res, ResMut, Resource
-from ..input import (
-    ButtonInput,
-    ButtonState,
-    KeyboardInput,
-    KeyCode,
-    MouseButton,
-    MouseMotion,
-)
+from ..input import ButtonInput, KeyCode, MouseButton, MouseMotion
 from ..math import Quat, Vec3
 from ..time import Time
 from ..transform import Transform
@@ -52,13 +45,11 @@ class FlyCameraState(Resource):
 
     def __init__(self) -> None:
         self.right_mouse_pressed = False
-        self.shift_pressed = False
 
 
 def fly_camera_control_system(
     query: Query[tuple[Mut[Transform], Mut[FlyCamera]]],
     mouse_buttons: Res[ButtonInput[MouseButton]],
-    keyboard_input: MessageReader[KeyboardInput],
     mouse_motion: MessageReader[MouseMotion],
     camera_state: ResMut[FlyCameraState],
 ) -> None:
@@ -70,18 +61,16 @@ def fly_camera_control_system(
         - Shift: Sprint (faster movement)
         - Right mouse + drag: Look around
     """
-    # Track shift key state
-    for event in keyboard_input:
-        if event.key_code == KeyCode.ShiftLeft or event.key_code == KeyCode.ShiftRight:
-            camera_state.shift_pressed = event.state == ButtonState.Pressed()
-
     # Track right mouse button state
     camera_state.right_mouse_pressed = mouse_buttons.pressed(MouseButton.Right())
+
+    # Drain the shared reader before iterating cameras.
+    motions = list(mouse_motion)
 
     for transform, camera in query:
         # Mouse look (right button)
         if camera_state.right_mouse_pressed:
-            for motion in mouse_motion:
+            for motion in motions:
                 # Update yaw (horizontal rotation)
                 camera.yaw -= motion.delta.x * camera.look_sensitivity
 
@@ -100,18 +89,21 @@ def fly_camera_control_system(
 
 def fly_camera_movement_system(
     query: Query[tuple[Mut[Transform], FlyCamera]],
-    keyboard_input: Res[ButtonInput],
-    camera_state: Res[FlyCameraState],
+    keyboard_input: Res[ButtonInput[KeyCode]],
     time: Res[Time],
 ) -> None:
     """System that handles fly camera keyboard movement.
 
     Runs separately from mouse look to allow smooth movement even without mouse input.
     """
+    sprinting = keyboard_input.pressed(KeyCode.ShiftLeft) or keyboard_input.pressed(
+        KeyCode.ShiftRight
+    )
+
     for transform, camera in query:
         # Calculate movement speed with sprint modifier
         speed = camera.move_speed
-        if camera_state.shift_pressed:
+        if sprinting:
             speed *= camera.sprint_multiplier
 
         dt = time.delta_secs()

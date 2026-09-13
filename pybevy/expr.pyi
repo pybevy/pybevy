@@ -127,15 +127,6 @@ class FieldExpr(Expr):
     def set(self, value: Expr | float | int) -> None:
         """Assign a value or expression to this field."""
 
-    # Array-like indexing for Numba kernels
-    def __len__(self) -> int:
-        """Get the number of elements in the field array."""
-
-    def __getitem__(self, index: int) -> float:
-        """Get the value at the given index (for Numba kernels)."""
-
-    def __setitem__(self, index: int, value: float | int) -> None:
-        """Set the value at the given index (for Numba kernels)."""
 
 class Vec3Expression:
     """Represents a Vec3 expression built from component-wise operations."""

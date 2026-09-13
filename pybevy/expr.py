@@ -217,8 +217,9 @@ class Expr:
     def random(self) -> "Expr":
         """Generate a random float in [0.0, 1.0).
 
-        The random value is deterministic based on the entity, so the same entity
-        will always get the same random value. This is useful for procedural generation.
+        The value is seeded from the entity id, so an entity keeps it across
+        frames, across archetype moves, and whichever execution path evaluates
+        the expression. Useful for procedural generation.
 
         Example:
             # Randomize height field
@@ -233,8 +234,9 @@ class Expr:
     ) -> "Expr":
         """Generate a random float in [min, max).
 
-        The random value is deterministic based on the entity, so the same entity
-        will always get the same random value. This is useful for procedural generation.
+        The value is seeded from the entity id, so an entity keeps it across
+        frames, across archetype moves, and whichever execution path evaluates
+        the expression. Useful for procedural generation.
 
         Example:
             # Randomize scale between 0.5 and 2.0

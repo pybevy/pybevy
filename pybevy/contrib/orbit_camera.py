@@ -11,16 +11,8 @@ from dataclasses import dataclass
 
 from ..app import App, Plugin, Update
 from ..decorators import component, plugin, resource
-from ..ecs import Component, MessageReader, Mut, Query, Res, ResMut, Resource
-from ..input import (
-    ButtonInput,
-    ButtonState,
-    KeyboardInput,
-    KeyCode,
-    MouseButton,
-    MouseMotion,
-    MouseWheel,
-)
+from ..ecs import Component, MessageReader, Mut, Query, Res, Resource
+from ..input import ButtonInput, KeyCode, MouseButton, MouseMotion, MouseWheel
 from ..math import Vec3
 from ..transform import Transform
 
@@ -55,19 +47,15 @@ class OrbitCamera(Component):
 
 @resource
 class OrbitCameraState(Resource):
-    """Resource for tracking orbit camera state."""
-
-    def __init__(self) -> None:
-        self.shift_pressed = False
+    """Compatibility resource; modifiers are read directly from ButtonInput."""
 
 
 def orbit_camera_control_system(
     query: Query[tuple[Mut[Transform], Mut[OrbitCamera]]],
     mouse_buttons: Res[ButtonInput[MouseButton]],
-    keyboard_input: MessageReader[KeyboardInput],
+    keyboard_input: Res[ButtonInput[KeyCode]],
     mouse_motion: MessageReader[MouseMotion],
     mouse_wheel: MessageReader[MouseWheel],
-    camera_state: ResMut[OrbitCameraState],
 ) -> None:
     """System that handles orbit camera mouse controls.
 
@@ -76,17 +64,20 @@ def orbit_camera_control_system(
         - Shift + Left mouse drag: Pan camera (move target)
         - Mouse wheel: Zoom in/out
     """
-    # Track shift key state
-    for event in keyboard_input:
-        if event.key_code == KeyCode.ShiftLeft or event.key_code == KeyCode.ShiftRight:
-            camera_state.shift_pressed = event.state == ButtonState.Pressed()
+    shift_pressed = keyboard_input.pressed(KeyCode.ShiftLeft) or keyboard_input.pressed(
+        KeyCode.ShiftRight
+    )
+
+    # Drain shared readers before iterating cameras.
+    motions = list(mouse_motion)
+    wheels = list(mouse_wheel)
 
     for transform, camera in query:
         # Mouse drag (left button)
         if mouse_buttons.pressed(MouseButton.Left()):
-            for motion in mouse_motion:
+            for motion in motions:
                 # Check if Shift is held for panning
-                if camera_state.shift_pressed:
+                if shift_pressed:
                     # Pan camera by moving the target
                     # Calculate right and up vectors in camera space
                     forward = (camera.target - transform.translation).normalize()
@@ -108,7 +99,7 @@ def orbit_camera_control_system(
                     )
 
         # Mouse wheel to zoom
-        for wheel in mouse_wheel:
+        for wheel in wheels:
             camera.distance -= wheel.y * camera.distance * camera.zoom_sensitivity
             # Clamp distance to reasonable values
             camera.distance = max(

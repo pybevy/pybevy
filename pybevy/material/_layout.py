@@ -80,6 +80,7 @@ def _compute_layout(
     bool_fields: list[_BoolFieldInfo] = []
     texture_fields: list[_TextureFieldInfo] = []
     offset = 0
+    digit_field: str | None = None
 
     for name, typ in hints.items():
         if name.startswith("_"):
@@ -118,6 +119,10 @@ def _compute_layout(
                 f"Supported: float, int, bool, Image, Vec2, Vec3, Vec4, LinearRgba"
             )
 
+        # naga escapes a digit-ending member (tint2 -> tint2_) and composition cannot patch the references.
+        if digit_field is None and name[-1].isdigit():
+            digit_field = name
+
         wgsl_type, size, align, num_floats = _TYPE_MAP[typ]
         offset = _align_up(offset, align)
 
@@ -137,6 +142,13 @@ def _compute_layout(
     total = _align_up(offset, 16)  # struct alignment = max member alignment
     if total > 1024:
         raise TypeError(f"Material struct too large: {total} bytes (max 1024)")
+
+    if digit_field is not None:
+        raise TypeError(
+            f"Material field '{digit_field}' ends in a digit; WGSL shader composition "
+            f"cannot round-trip struct member names ending in a digit. "
+            f"Rename it to end in a letter or an underscore (e.g. '{digit_field}_')."
+        )
 
     return fields, bool_fields, texture_fields
 
