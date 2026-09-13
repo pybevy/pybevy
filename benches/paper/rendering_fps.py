@@ -133,7 +133,7 @@ def main() -> None:
                 Vec3.ZERO, Vec3.Y
             ),
         )
-        mesh_handle.append(meshes.add(Cuboid(0.5, 0.5, 0.5).mesh()))
+        mesh_handle.append(meshes.add(Cuboid(x_length=0.5, y_length=0.5, z_length=0.5).mesh()))
         material_handle.append(materials.add(StandardMaterial()))
 
     def _spawn_batch(commands: Commands, count: int) -> None:

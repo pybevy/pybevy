@@ -18,8 +18,8 @@ pixel_count = image_width * image_height * 4
 
 def setup(images: ResMut[Assets[Image]], commands: Commands) -> None:
     data = np.random.randint(0, 255, size=pixel_count, dtype=np.uint8)
-    image = Image(Extent3d(image_width, image_height, 1), data=data)
-    commands.spawn(Sprite(images.add(image)))
+    image = Image(Extent3d(width=image_width, height=image_height, depth_or_array_layers=1), data=data)
+    commands.spawn(Sprite(image=images.add(image)))
 
 
 def create_app() -> App:

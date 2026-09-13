@@ -2,17 +2,17 @@
 //! Memory baseline: pure Rust Bevy entity spawning with RSS measurement.
 //!
 //! Uses a full Bevy App with MinimalPlugins and a Startup system to spawn
-//! entities — matching how PyBevy spawns entities (via App + systems).
+//! entities - matching how PyBevy spawns entities (via App + systems).
 //!
 //! Usage:
 //!     cargo run --example memory_baseline --release --features linux-display -- <scenario> <N>
 //!
 //! Scenarios:
-//!     transform           — Transform only (48 bytes)
-//!     velocity_small      — Custom Velocity { vel: Vec3 } (12 bytes)
-//!     velocity_string     — Custom VelocityStr { vel: Vec3, label: String }
-//!     transform_velocity  — Transform + Velocity (two components)
-//!     transform_marker    — Transform + zero-size Marker
+//!     transform           - Transform only (48 bytes)
+//!     velocity_small      - Custom Velocity { vel: Vec3 } (12 bytes)
+//!     velocity_string     - Custom VelocityStr { vel: Vec3, label: String }
+//!     transform_velocity  - Transform + Velocity (two components)
+//!     transform_marker    - Transform + zero-size Marker
 
 use bevy::{app::ScheduleRunnerPlugin, prelude::*};
 

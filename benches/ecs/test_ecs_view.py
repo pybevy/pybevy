@@ -7,7 +7,7 @@ numba = pytest.importorskip("numba", reason="Numba not installed")
 
 from dataclasses import dataclass
 
-from pybevy.app import App, RunMode, ScheduleRunnerPlugin, Startup, Update
+from pybevy.app import App, ScheduleRunnerPlugin, Startup, Update
 from pybevy.decorators import component
 from pybevy.ecs import Commands, Component, Mut, Query, View
 from pybevy.transform import Transform
@@ -64,7 +64,7 @@ def _warmup_numba() -> None:
         return
 
     app = App()
-    app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+    app.add_plugins(ScheduleRunnerPlugin.run_once())
 
     def setup(commands: Commands) -> None:
         commands.spawn(Transform.from_xyz(1.0, 0.0, 0.0))
@@ -96,7 +96,7 @@ def _setup_view_numba_sum(entity_count: int) -> App:
             total += numba_sum(col)
 
     app = App()
-    app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+    app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, measure_view)
     app.initialize()
@@ -117,7 +117,7 @@ def _setup_query_sum(entity_count: int) -> App:
             total += t.translation.x
 
     app = App()
-    app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+    app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, measure_query)
     app.initialize()
@@ -142,7 +142,7 @@ def _setup_view_batch_ops(entity_count: int) -> App:
         pos.z = pos.z * 0.8 - 0.2
 
     app = App()
-    app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+    app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, batch_ops)
     app.initialize()
@@ -167,7 +167,7 @@ def _setup_query_batch_ops(entity_count: int) -> App:
             pos.z = pos.z * 0.8 - 0.2
 
     app = App()
-    app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+    app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, iter_ops)
     app.initialize()
@@ -190,7 +190,7 @@ def _setup_view_complex_ops(entity_count: int) -> App:
         pos.z = pos.z * 0.8 - pos.x * 0.1 + pos.y * 0.15
 
     app = App()
-    app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+    app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, complex_ops)
     app.initialize()
@@ -216,7 +216,7 @@ def _setup_query_complex_ops(entity_count: int) -> App:
             pos.z = new_z
 
     app = App()
-    app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+    app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, complex_ops)
     app.initialize()
@@ -286,7 +286,7 @@ def test_physics_query_10000(benchmark: BenchmarkFixture) -> None:
             t.translation.x = new_pos
 
     app = App()
-    app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+    app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, physics_query)
     app.initialize()
@@ -311,7 +311,7 @@ def test_physics_view_numba_10000(benchmark: BenchmarkFixture) -> None:
             numba_physics(pos, vel, 0.016)
 
     app = App()
-    app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+    app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, physics_view)
     app.initialize()

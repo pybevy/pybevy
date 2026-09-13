@@ -2,7 +2,7 @@
 
 import pytest
 
-from pybevy.app import App, RunMode, ScheduleRunnerPlugin, Startup, Update
+from pybevy.app import App, ScheduleRunnerPlugin, Startup, Update
 from pybevy.ecs import Add, Commands, Despawn, Insert, On, Remove, World
 from pybevy.transform import Transform
 
@@ -14,7 +14,7 @@ def test_performance_many_observers_same_event(benchmark) -> None:
 
     def create_and_trigger():
         app = App()
-        app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+        app.add_plugins(ScheduleRunnerPlugin.run_once())
 
         for i in range(num_observers):
             exec(
@@ -43,7 +43,7 @@ def test_performance_many_entities_lifecycle_events(benchmark) -> None:
 
     def create_and_trigger():
         app = App()
-        app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+        app.add_plugins(ScheduleRunnerPlugin.run_once())
 
         call_count = []
 
@@ -72,7 +72,7 @@ def test_performance_lifecycle_event_overhead(benchmark) -> None:
 
     def spawn_with_observers():
         app = App()
-        app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+        app.add_plugins(ScheduleRunnerPlugin.run_once())
 
         def on_add(trigger: On[Add, Transform]) -> None:
             pass
@@ -97,7 +97,7 @@ def test_performance_insert_remove_lifecycle(benchmark) -> None:
 
     def insert_remove_cycle():
         app = App()
-        app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+        app.add_plugins(ScheduleRunnerPlugin.run_once())
 
         insert_count = []
         remove_count = []
@@ -150,7 +150,7 @@ def test_performance_filtered_observers(benchmark) -> None:
 
     def spawn_filtered():
         app = App()
-        app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+        app.add_plugins(ScheduleRunnerPlugin.run_once())
 
         filtered_count = []
 
@@ -182,7 +182,7 @@ def test_performance_despawn_lifecycle(benchmark) -> None:
 
     def spawn_and_despawn():
         app = App()
-        app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+        app.add_plugins(ScheduleRunnerPlugin.run_once())
 
         despawn_count = []
 
@@ -219,7 +219,7 @@ def test_performance_no_observers_baseline(benchmark) -> None:
 
     def spawn_no_observers():
         app = App()
-        app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+        app.add_plugins(ScheduleRunnerPlugin.run_once())
 
         def spawn_entities(commands: Commands) -> None:
             for i in range(num_entities):

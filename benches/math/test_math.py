@@ -94,10 +94,10 @@ def test_rotate_quat(benchmark: BenchmarkFixture) -> None:
 
 def test_transform_new(benchmark: BenchmarkFixture) -> None:
     def create_transform() -> Transform:
-        return Transform(Vec3(1.0, 2.0, 3.0), Quat.IDENTITY)
+        return Transform(translation=Vec3(1.0, 2.0, 3.0), rotation=Quat.IDENTITY)
 
     result = benchmark(create_transform)
-    assert result == Transform(Vec3(1.0, 2.0, 3.0), Quat.IDENTITY)
+    assert result == Transform(translation=Vec3(1.0, 2.0, 3.0), rotation=Quat.IDENTITY)
 
 
 def test_transform_get_translation_x(benchmark: BenchmarkFixture) -> None:
