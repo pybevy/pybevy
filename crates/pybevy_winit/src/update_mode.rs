@@ -12,6 +12,7 @@ use pyo3::prelude::*;
 #[derive(Debug, Clone, PartialEq)]
 pub enum PyUpdateMode {
     Continuous(),
+    #[pyo3(constructor = (*, wait, react_to_device_events, react_to_user_events, react_to_window_events))]
     Reactive {
         wait: f64,
         react_to_device_events: bool,
