@@ -52,9 +52,12 @@ impl PyTimer {
         })
     }
 
-    pub fn tick(&mut self, delta: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.timer.tick(duration_from_py(delta)?);
-        Ok(())
+    pub fn tick<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        delta: &Bound<'_, PyAny>,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        slf.timer.tick(duration_from_py(delta)?);
+        Ok(slf)
     }
 
     pub fn finished(&self) -> bool {

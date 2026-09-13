@@ -135,6 +135,9 @@ def animate_sprite(
                     atlas.index += 1
 ```
 
+`Timer.tick()` returns the same timer, so `timer.tick(delta).just_finished()`
+can be chained. `Stopwatch.tick()` likewise returns the same stopwatch.
+
 Register it:
 
 ```python
