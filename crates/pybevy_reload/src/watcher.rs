@@ -750,4 +750,13 @@ mod tests {
             None
         );
     }
+
+    #[test]
+    fn start_requires_at_least_one_root() {
+        let error = match FileWatcher::start(Vec::new(), Vec::new(), Duration::from_millis(50)) {
+            Ok(_) => panic!("an empty root list must be rejected"),
+            Err(error) => error,
+        };
+        assert_eq!(error.to_string(), "at least one watch path is required");
+    }
 }

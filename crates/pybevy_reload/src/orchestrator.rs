@@ -695,15 +695,16 @@ mod tests {
         collections::{HashSet, VecDeque},
         sync::{
             Arc, Mutex,
-            atomic::{AtomicBool, Ordering},
+            atomic::{AtomicBool, AtomicUsize, Ordering},
         },
     };
 
     use bevy::{app::Startup, ecs::schedule::Schedules, prelude::*};
+    use pybevy_core::{ReloadRequestMode, ReloadResult};
 
     use super::*;
     use crate::{
-        profiling::{MemoryProfile, SystemProfiler},
+        profiling::{HotReloadStats, MemoryProfile, SystemProfiler},
         runtime::{DefsFingerprint, ReloadError, ReloadRuntime},
     };
 
@@ -2000,5 +2001,505 @@ mod tests {
                 cycle, live
             );
         }
+    }
+
+    /// Configurable adapter hooks expose the orchestrator's effects.
+    #[derive(Default)]
+    struct TestRuntime {
+        load_error: Option<(String, Option<String>)>,
+        load_error_deferred: bool,
+        plugin_set: Option<HashSet<PluginIdentity>>,
+        system_set: Option<HashSet<String>>,
+        known_systems: Option<HashSet<String>>,
+        commit_calls: Option<Arc<AtomicUsize>>,
+        prune_generations: Option<Arc<Mutex<Vec<u32>>>>,
+        printed: Option<Arc<AtomicUsize>>,
+        inject_startup_error: bool,
+    }
+
+    impl ReloadRuntime for TestRuntime {
+        type Defs = ();
+        type SystemHandle = ();
+        fn load_definitions(&mut self, _gen: u32) -> Result<(), ReloadError> {
+            match self.load_error.clone() {
+                Some((message, traceback)) => Err(ReloadError {
+                    message,
+                    traceback,
+                    is_load_failure: true,
+                }),
+                None => Ok(()),
+            }
+        }
+        fn load_error_is_deferred(&self, _error: &ReloadError) -> bool {
+            self.load_error_deferred
+        }
+        fn defs_fingerprint(&self, _defs: &()) -> DefsFingerprint {
+            DefsFingerprint::default()
+        }
+        fn plugin_names(&self, _defs: &()) -> Vec<PluginIdentity> {
+            self.plugin_set
+                .clone()
+                .map(|set| set.into_iter().collect())
+                .unwrap_or_default()
+        }
+        fn system_names(&self, _defs: &()) -> HashSet<String> {
+            self.system_set.clone().unwrap_or_default()
+        }
+        fn register_systems(
+            &mut self,
+            world: &mut World,
+            _defs: (),
+            _gen: u32,
+        ) -> Result<Vec<()>, ReloadError> {
+            if self.inject_startup_error {
+                let mut schedules = world.resource_mut::<Schedules>();
+                if let Some(startup) = schedules.get_mut(Startup) {
+                    startup.add_systems(crashing_startup_system);
+                }
+            }
+            Ok(vec![])
+        }
+        fn commit_schedule_configs(&mut self, _world: &mut World) {
+            if let Some(counter) = &self.commit_calls {
+                counter.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        fn register_resources(
+            &mut self,
+            _world: &mut World,
+            _defs: &(),
+        ) -> Result<(), ReloadError> {
+            Ok(())
+        }
+        fn register_messages(
+            &mut self,
+            _world: &mut World,
+            _defs: &(),
+            _gen: u32,
+        ) -> Result<(), ReloadError> {
+            Ok(())
+        }
+        fn register_observers(
+            &mut self,
+            _world: &mut World,
+            _defs: &(),
+        ) -> Result<(), ReloadError> {
+            Ok(())
+        }
+        fn register_handles(&mut self, _world: &mut World, _gen: u32, _handles: Vec<()>) {}
+        fn prune_messages(&mut self, _world: &mut World, generation: u32) {
+            if let Some(gens) = &self.prune_generations {
+                gens.lock().unwrap().push(generation);
+            }
+        }
+        fn clear_custom_resources(&mut self, _world: &mut World, _verbose: bool) {}
+        fn snapshot_native_resources(&self, _world: &World) -> HashSet<TypeId> {
+            HashSet::new()
+        }
+        fn clear_native_resources(
+            &self,
+            _world: &mut World,
+            _initial: &HashSet<TypeId>,
+            _verbose: bool,
+        ) {
+        }
+        fn detect_system_delta(&mut self, _world: &mut World, new: HashSet<String>) -> Vec<String> {
+            let removed = self
+                .known_systems
+                .as_ref()
+                .map(|known| known.difference(&new).cloned().collect::<Vec<_>>())
+                .unwrap_or_default();
+            self.known_systems = Some(new);
+            removed
+        }
+        fn clear_param_cache(&mut self) {}
+        fn trigger_gc(&mut self) {}
+        fn print_error(&self, _error: &ReloadError) {
+            if let Some(counter) = &self.printed {
+                counter.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+    }
+
+    /// A non-deferred load failure flags the result and stats without committing.
+    #[test]
+    fn load_failure_flags_result_and_stats_without_committing() {
+        let (mut world, gen_counter) = setup_world();
+        world.insert_resource(HotReloadStats::default());
+        let events = record_progress(&mut world);
+        let state = MockState::new(gen_counter);
+        let printed = Arc::new(AtomicUsize::new(0));
+        let mut runtime = TestRuntime {
+            load_error: Some((
+                "ImportError: cannot import name 'gone'".to_string(),
+                Some("File \"scene.py\", line 3".to_string()),
+            )),
+            printed: Some(printed.clone()),
+            ..Default::default()
+        };
+
+        let result = perform_reload(&mut world, &mut runtime, ReloadMode::Full, &state);
+        let err = result.unwrap_err();
+        assert_eq!(err.message, "ImportError: cannot import name 'gone'");
+
+        assert_eq!(
+            printed.load(Ordering::SeqCst),
+            1,
+            "a non-deferred load failure must print exactly once"
+        );
+        assert_eq!(
+            state.current_generation(),
+            0,
+            "the old generation must stay committed"
+        );
+        assert_eq!(world.resource::<HotReloadGeneration>().current, 0);
+
+        let stats = world.resource::<HotReloadStats>();
+        assert_eq!(stats.reload_count, 1);
+        assert_eq!(stats.last_mode, Some(ReloadMode::Full));
+        assert_eq!(
+            stats.last_reload_time, 0.0,
+            "no Time resource: elapsed is 0.0"
+        );
+        assert_eq!(stats.last_reload_frame, 0);
+
+        let reload_result = world.resource::<ReloadResult>();
+        assert!(reload_result.failed);
+        assert_eq!(
+            reload_result.failure_reason.as_deref(),
+            Some("ImportError: cannot import name 'gone'")
+        );
+        assert_eq!(
+            reload_result.failure_traceback.as_deref(),
+            Some("File \"scene.py\", line 3")
+        );
+        assert!(reload_result.running_previous_generation);
+        assert!(!reload_result.escalated);
+
+        assert!(
+            world
+                .get_resource::<EscalationTracker>()
+                .and_then(|tracker| tracker.last.clone())
+                .is_none(),
+            "a failed load must not record a fingerprint"
+        );
+
+        let phases: Vec<_> = events.lock().unwrap().iter().map(|p| p.phase).collect();
+        assert_eq!(phases, vec![ReloadProgressPhase::DefinitionsLoading]);
+    }
+
+    /// A deferred load error prints nothing and leaves failure state untouched.
+    #[test]
+    fn deferred_load_failure_is_silent() {
+        let (mut world, gen_counter) = setup_world();
+        world.insert_resource(HotReloadStats::default());
+        let state = MockState::new(gen_counter);
+        let printed = Arc::new(AtomicUsize::new(0));
+        let mut runtime = TestRuntime {
+            load_error: Some(("adapter work pending".to_string(), None)),
+            load_error_deferred: true,
+            printed: Some(printed.clone()),
+            ..Default::default()
+        };
+
+        let result = perform_reload(&mut world, &mut runtime, ReloadMode::Full, &state);
+        assert!(result.is_err());
+
+        assert_eq!(
+            printed.load(Ordering::SeqCst),
+            0,
+            "a deferred error must not print"
+        );
+        assert_eq!(state.current_generation(), 0);
+        assert_eq!(
+            world.resource::<HotReloadStats>().reload_count,
+            0,
+            "a deferred error must not update reload statistics"
+        );
+        assert!(
+            !world.contains_resource::<ReloadResult>(),
+            "a deferred error must not flag a failed reload"
+        );
+        assert!(!world.contains_resource::<EscalationTracker>());
+    }
+
+    /// A changed resource fingerprint escalates a Partial reload to Full.
+    #[test]
+    fn partial_reload_changed_resources_escalates() {
+        let (mut world, gen_counter) = setup_world();
+        let state = MockState::new(gen_counter);
+        let mut runtime = FingerprintRuntime(DefsFingerprint::default());
+        assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Full, &state).is_ok());
+
+        runtime.0.resource_types = 7;
+        runtime.0.has_resources = true;
+        assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Partial, &state).is_ok());
+        let result = world.resource::<ReloadResult>();
+        assert!(
+            result.escalated,
+            "changed resource definitions must escalate"
+        );
+        assert_eq!(
+            result.escalation_reason.as_deref(),
+            Some("resource definitions changed")
+        );
+        assert_eq!(result.actual_mode, Some(ReloadRequestMode::Full));
+    }
+
+    /// A changed observer fingerprint escalates a Partial reload to Full.
+    #[test]
+    fn partial_reload_changed_observers_escalates() {
+        let (mut world, gen_counter) = setup_world();
+        let state = MockState::new(gen_counter);
+        let mut runtime = FingerprintRuntime(DefsFingerprint::default());
+        assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Full, &state).is_ok());
+
+        runtime.0.observer_code = 9;
+        runtime.0.has_observers = true;
+        assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Partial, &state).is_ok());
+        let result = world.resource::<ReloadResult>();
+        assert!(result.escalated, "changed observers must escalate");
+        assert_eq!(
+            result.escalation_reason.as_deref(),
+            Some("observers changed")
+        );
+        assert_eq!(result.actual_mode, Some(ReloadRequestMode::Full));
+    }
+
+    /// Without a baseline only present Full-only features escalate, naming themselves.
+    #[test]
+    fn no_baseline_escalation_reports_the_present_feature() {
+        let (mut world, gen_counter) = setup_world();
+        let state = MockState::new(gen_counter);
+        let mut runtime = FingerprintRuntime(DefsFingerprint {
+            resource_types: 3,
+            has_resources: true,
+            ..Default::default()
+        });
+        assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Partial, &state).is_ok());
+        assert_eq!(
+            world
+                .resource::<ReloadResult>()
+                .escalation_reason
+                .as_deref(),
+            Some("no fingerprint baseline, resources present")
+        );
+
+        let (mut observer_world, observer_generation) = setup_world();
+        let observer_state = MockState::new(observer_generation);
+        let mut observer_runtime = FingerprintRuntime(DefsFingerprint {
+            observer_code: 4,
+            has_observers: true,
+            ..Default::default()
+        });
+        assert!(
+            perform_reload(
+                &mut observer_world,
+                &mut observer_runtime,
+                ReloadMode::Partial,
+                &observer_state
+            )
+            .is_ok()
+        );
+        assert_eq!(
+            observer_world
+                .resource::<ReloadResult>()
+                .escalation_reason
+                .as_deref(),
+            Some("no fingerprint baseline, observers present")
+        );
+
+        let (mut plain_world, plain_generation) = setup_world();
+        let plain_state = MockState::new(plain_generation);
+        let mut plain_runtime = FingerprintRuntime(DefsFingerprint::default());
+        assert!(
+            perform_reload(
+                &mut plain_world,
+                &mut plain_runtime,
+                ReloadMode::Partial,
+                &plain_state
+            )
+            .is_ok()
+        );
+        let plain_result = plain_world.resource::<ReloadResult>();
+        assert!(
+            !plain_result.escalated,
+            "no Full-only feature present: stay on the Partial path"
+        );
+        assert_eq!(plain_result.actual_mode, Some(ReloadRequestMode::Partial));
+    }
+
+    /// Plugin deltas measure against the app-start baseline until a restart.
+    #[test]
+    fn plugin_delta_recorded_from_second_reload() {
+        let (mut world, gen_counter) = setup_world();
+        let state = MockState::new(gen_counter);
+
+        let initial: HashSet<PluginIdentity> = [
+            PluginIdentity::new("pybevy.audio.AudioPlugin", Some("a".to_string())),
+            PluginIdentity::new("pybevy.core.DefaultPlugins", None),
+        ]
+        .into_iter()
+        .collect();
+        let mut runtime = TestRuntime {
+            plugin_set: Some(initial.clone()),
+            ..Default::default()
+        };
+        assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Full, &state).is_ok());
+        let first = world.resource::<ReloadResult>();
+        assert_eq!(
+            first.plugins_added, None,
+            "the first reload initializes the baseline without reporting"
+        );
+        assert_eq!(first.plugins_removed, None);
+
+        let changed: HashSet<PluginIdentity> = [
+            PluginIdentity::new("pybevy.core.DefaultPlugins", None),
+            PluginIdentity::new("pybevy.gizmos.GizmoPlugin", None),
+            PluginIdentity::new("pybevy.pbr.MaterialPlugin", Some("m".to_string())),
+        ]
+        .into_iter()
+        .collect();
+        let mut runtime = TestRuntime {
+            plugin_set: Some(changed.clone()),
+            ..Default::default()
+        };
+        assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Partial, &state).is_ok());
+        let second = world.resource::<ReloadResult>();
+        assert_eq!(
+            second.plugins_added,
+            Some(vec![
+                "GizmoPlugin".to_string(),
+                "MaterialPlugin[\"m\"]".to_string()
+            ])
+        );
+        assert_eq!(
+            second.plugins_removed,
+            Some(vec!["AudioPlugin[\"a\"]".to_string()])
+        );
+
+        let mut runtime = TestRuntime {
+            plugin_set: Some(changed),
+            ..Default::default()
+        };
+        assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Partial, &state).is_ok());
+        let third = world.resource::<ReloadResult>();
+        assert_eq!(
+            third.plugins_added,
+            Some(vec![
+                "GizmoPlugin".to_string(),
+                "MaterialPlugin[\"m\"]".to_string()
+            ]),
+            "the delta stays measured against the app-start baseline"
+        );
+        assert_eq!(
+            third.plugins_removed,
+            Some(vec!["AudioPlugin[\"a\"]".to_string()])
+        );
+
+        // A set equal to the app-start baseline reports nothing.
+        let mut runtime = TestRuntime {
+            plugin_set: Some(initial),
+            ..Default::default()
+        };
+        assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Partial, &state).is_ok());
+        let fourth = world.resource::<ReloadResult>();
+        assert_eq!(fourth.plugins_added, None);
+        assert_eq!(fourth.plugins_removed, None);
+    }
+
+    /// The runtime's removed-system delta is recorded on the result, cleared when empty.
+    #[test]
+    fn removed_systems_recorded_on_result() {
+        let (mut world, gen_counter) = setup_world();
+        let state = MockState::new(gen_counter);
+        let mut runtime = TestRuntime {
+            system_set: Some(
+                ["setup".to_string(), "update_score".to_string()]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..Default::default()
+        };
+        assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Full, &state).is_ok());
+        assert_eq!(
+            world.resource::<ReloadResult>().systems_removed,
+            None,
+            "the first reload establishes the system baseline"
+        );
+
+        runtime.system_set = Some(
+            ["setup".to_string(), "update_timer".to_string()]
+                .into_iter()
+                .collect(),
+        );
+        assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Partial, &state).is_ok());
+        assert_eq!(
+            world.resource::<ReloadResult>().systems_removed,
+            Some(vec!["update_score".to_string()])
+        );
+
+        // An unchanged system set clears the removed-systems report.
+        assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Partial, &state).is_ok());
+        let result = world.resource::<ReloadResult>();
+        assert_eq!(result.systems_removed, None);
+        assert_eq!(world.resource::<HotReloadGeneration>().current, 3);
+        assert!(!result.failed);
+        assert!(!result.escalated);
+        assert_eq!(result.actual_mode, Some(ReloadRequestMode::Partial));
+    }
+
+    /// Schedule configs commit once after a successful Startup; failures never commit or prune.
+    #[test]
+    fn commit_and_prune_run_only_for_committed_generations() {
+        let (mut world, gen_counter) = setup_world();
+        let state = MockState::new(gen_counter);
+        let commit_calls = Arc::new(AtomicUsize::new(0));
+        let prune_generations = Arc::new(Mutex::new(Vec::new()));
+        let mut runtime = TestRuntime {
+            commit_calls: Some(commit_calls.clone()),
+            prune_generations: Some(prune_generations.clone()),
+            ..Default::default()
+        };
+        assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Full, &state).is_ok());
+        assert_eq!(
+            commit_calls.load(Ordering::SeqCst),
+            1,
+            "a success commits once"
+        );
+        assert_eq!(
+            *prune_generations.lock().unwrap(),
+            vec![1],
+            "prune_messages must receive exactly the committed generation"
+        );
+
+        let (mut failing_world, failing_generation) = setup_world();
+        let failing_state = MockState::new(failing_generation);
+        let failing_commits = Arc::new(AtomicUsize::new(0));
+        let failing_prune = Arc::new(Mutex::new(Vec::new()));
+        let mut failing_runtime = TestRuntime {
+            commit_calls: Some(failing_commits.clone()),
+            prune_generations: Some(failing_prune.clone()),
+            inject_startup_error: true,
+            ..Default::default()
+        };
+        assert!(
+            perform_reload(
+                &mut failing_world,
+                &mut failing_runtime,
+                ReloadMode::Full,
+                &failing_state
+            )
+            .is_err()
+        );
+        assert_eq!(
+            failing_commits.load(Ordering::SeqCst),
+            0,
+            "a failed Startup must not commit schedule configs"
+        );
+        assert!(
+            failing_prune.lock().unwrap().is_empty(),
+            "a failed generation must not prune messages"
+        );
     }
 }

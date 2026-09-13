@@ -100,4 +100,16 @@ mod tests {
 
         assert!(get_current_rss_mb(&mut world) > 0.0);
     }
+
+    #[test]
+    fn parse_resolution_accepts_both_cases_and_rejects_garbage() {
+        assert_eq!(parse_resolution("1024x768"), Some((1024.0, 768.0)));
+        assert_eq!(parse_resolution("640X480"), Some((640.0, 480.0)));
+        assert_eq!(parse_resolution("1024-768"), None);
+        assert_eq!(parse_resolution("1024x"), None);
+        assert_eq!(parse_resolution("x768"), None);
+        assert_eq!(parse_resolution("1024x768x"), None);
+        assert_eq!(parse_resolution("1024xabc"), None);
+        assert_eq!(parse_resolution(""), None);
+    }
 }
