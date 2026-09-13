@@ -13,13 +13,14 @@ use crate::wireframe_topology::PyWireframeTopology;
 #[pyclass(name = "WireframeMaterial", module = "pybevy.pbr", extends = PyAsset, skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyWireframeMaterial {
-    pub storage: AssetStorage<WireframeMaterial>,
+    pub(crate) storage: AssetStorage<WireframeMaterial>,
 }
 
 #[pymethods]
 impl PyWireframeMaterial {
     #[new]
     #[pyo3(signature = (
+        *,
         color = Color::WHITE.into(),
         line_width = 1.0,
         topology = None

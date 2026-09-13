@@ -24,7 +24,7 @@ class ParallaxMappingMethod:
     class Relief(ParallaxMappingMethod):
         __match_args__: ClassVar[tuple[Literal["max_steps"]]]
         max_steps: int
-        def __init__(self, max_steps: int) -> None: ...
+        def __init__(self, *, max_steps: int) -> None: ...
 
 class Material(Asset):
     """Python surface of Bevy's 3D `Material` trait.
@@ -37,9 +37,10 @@ class Material(Asset):
 class StandardMaterial(Material):
     def __init__(
         self,
+        *,
         base_color: Color = Color.WHITE,
-        base_color_texture: Handle[Image] | None = None,
         base_color_channel: UvChannel = UvChannel.Uv0,
+        base_color_texture: Handle[Image] | None = None,
         emissive: Color | LinearRgba = Color.BLACK,
         emissive_exposure_weight: float = 0.0,
         emissive_channel: UvChannel = UvChannel.Uv0,
@@ -71,6 +72,14 @@ class StandardMaterial(Material):
         specular_texture: Handle[Image] | None = None,
         specular_tint_channel: UvChannel = UvChannel.Uv0,
         specular_tint_texture: Handle[Image] | None = None,
+        clearcoat: float = 0.0,
+        clearcoat_channel: UvChannel = UvChannel.Uv0,
+        clearcoat_texture: Handle[Image] | None = None,
+        clearcoat_perceptual_roughness: float = 0.5,
+        clearcoat_roughness_channel: UvChannel = UvChannel.Uv0,
+        clearcoat_roughness_texture: Handle[Image] | None = None,
+        clearcoat_normal_channel: UvChannel = UvChannel.Uv0,
+        clearcoat_normal_texture: Handle[Image] | None = None,
         anisotropy_strength: float = 0.0,
         anisotropy_rotation: float = 0.0,
         anisotropy_channel: UvChannel = UvChannel.Uv0,
@@ -88,15 +97,7 @@ class StandardMaterial(Material):
         lightmap_exposure: float = 1.0,
         opaque_render_method: OpaqueRendererMethod = OpaqueRendererMethod.Auto,
         deferred_lighting_pass_id: int = 1,
-        uv_transform: Affine2 = Affine2.IDENTITY,
-        clearcoat: float = 0.0,
-        clearcoat_perceptual_roughness: float = 0.5,
-        clearcoat_channel: UvChannel = UvChannel.Uv0,
-        clearcoat_texture: Handle[Image] | None = None,
-        clearcoat_roughness_channel: UvChannel = UvChannel.Uv0,
-        clearcoat_roughness_texture: Handle[Image] | None = None,
-        clearcoat_normal_channel: UvChannel = UvChannel.Uv0,
-        clearcoat_normal_texture: Handle[Image] | None = None,
+        uv_transform: Affine2 = Affine2.IDENTITY
     ) -> None: ...
     @staticmethod
     def from_color(color: Color) -> StandardMaterial: ...
@@ -197,23 +198,23 @@ class FogFalloff:
         __match_args__: ClassVar[tuple[Literal["start"], Literal["end"]]]
         start: float
         end: float
-        def __init__(self, start: float, end: float) -> None: ...
+        def __init__(self, *, start: float, end: float) -> None: ...
 
     class Exponential(FogFalloff):
         __match_args__: ClassVar[tuple[Literal["density"]]]
         density: float
-        def __init__(self, density: float) -> None: ...
+        def __init__(self, *, density: float) -> None: ...
 
     class ExponentialSquared(FogFalloff):
         __match_args__: ClassVar[tuple[Literal["density"]]]
         density: float
-        def __init__(self, density: float) -> None: ...
+        def __init__(self, *, density: float) -> None: ...
 
     class Atmospheric(FogFalloff):
         __match_args__: ClassVar[tuple[Literal["extinction"], Literal["inscattering"]]]
         extinction: Vec3
         inscattering: Vec3
-        def __init__(self, extinction: Vec3, inscattering: Vec3) -> None: ...
+        def __init__(self, *, extinction: Vec3, inscattering: Vec3) -> None: ...
 
     @staticmethod
     def from_visibility(visibility: float) -> FogFalloff:
@@ -268,10 +269,11 @@ class DistanceFog(Component):
 
     def __init__(
         self,
+        *,
         color: Color = ...,
-        falloff: FogFalloff = ...,
         directional_light_color: Color = ...,
         directional_light_exponent: float = 8.0,
+        falloff: FogFalloff = ...
     ) -> None: ...
 
     @property
@@ -335,7 +337,7 @@ class ScreenSpaceAmbientOcclusionQualityLevel:
         __match_args__: ClassVar[tuple[Literal["slice_count"], Literal["samples_per_slice_side"]]]
         slice_count: int
         samples_per_slice_side: int
-        def __init__(self, slice_count: int, samples_per_slice_side: int) -> None: ...
+        def __init__(self, *, slice_count: int, samples_per_slice_side: int) -> None: ...
 
 class ScreenSpaceAmbientOcclusion(Component):
     """Screen Space Ambient Occlusion (SSAO) component.
@@ -347,8 +349,9 @@ class ScreenSpaceAmbientOcclusion(Component):
 
     def __init__(
         self,
+        *,
         quality_level: ScreenSpaceAmbientOcclusionQualityLevel = ...,
-        constant_object_thickness: float = 0.25,
+        constant_object_thickness: float = 0.25
     ) -> None: ...
 
     def __eq__(self, other: object) -> bool: ...
@@ -386,8 +389,9 @@ class ScreenSpaceTransmission(Component):
 
     def __init__(
         self,
+        *,
         steps: int = 1,
-        quality: ScreenSpaceTransmissionQuality = ...,
+        quality: ScreenSpaceTransmissionQuality = ...
     ) -> None: ...
 
     @property
@@ -420,7 +424,7 @@ class WireframeColor(Component):
     this specifies a custom color for the wireframe rendering.
     """
 
-    def __init__(self, color: Color = ...) -> None: ...
+    def __init__(self, *, color: Color = ...) -> None: ...
 
     @property
     def color(self) -> Color:
@@ -456,7 +460,7 @@ class WireframeTopology(Component):
 class WireframeLineWidth(Component):
     """Per-entity wireframe line width in screen-space pixels."""
 
-    def __init__(self, width: float = 1.0) -> None: ...
+    def __init__(self, *, width: float = 1.0) -> None: ...
     @property
     def width(self) -> float: ...
     @width.setter
@@ -478,10 +482,11 @@ class WireframeConfig(Resource):
 
     def __init__(
         self,
+        *,
         global_: bool = False,
         default_color: Color = ...,
         default_line_width: float = 1.0,
-        default_topology: WireframeTopology = ...,
+        default_topology: WireframeTopology = ...
     ) -> None: ...
 
     @property
@@ -516,9 +521,10 @@ class WireframeMaterial(Asset):
 
     def __init__(
         self,
+        *,
         color: Color = ...,
         line_width: float = 1.0,
-        topology: WireframeTopology = ...,
+        topology: WireframeTopology = ...
     ) -> None: ...
     @property
     def color(self) -> Color: ...
@@ -565,6 +571,7 @@ class ScreenSpaceReflections(Component):
 
     def __init__(
         self,
+        *,
         min_perceptual_roughness: tuple[float, float] = (0.08, 0.12),
         max_perceptual_roughness: tuple[float, float] = (0.55, 0.6),
         thickness: float = 0.25,
@@ -572,7 +579,7 @@ class ScreenSpaceReflections(Component):
         linear_march_exponent: float = 1.0,
         edge_fadeout: tuple[float, float] = (0.0, 0.0),
         bisection_steps: int = 5,
-        use_secant: bool = True,
+        use_secant: bool = True
     ) -> None: ...
 
     @property
@@ -634,13 +641,17 @@ class ScreenSpaceReflections(Component):
     ) -> Batchable: ...
 
 class ContactShadows(Component):
-    """Screen-space contact shadows. Add to a camera; requires a depth prepass."""
+    """Screen-space contact shadows requiring a depth prepass and forward rendering.
+
+    Deferred rendering is unsupported and can panic in Bevy prepass queuing.
+    """
 
     def __init__(
         self,
+        *,
         linear_steps: int = 16,
         thickness: float = 0.1,
-        length: float = 0.3,
+        length: float = 0.3
     ) -> None: ...
 
     @property
@@ -678,9 +689,10 @@ class Lightmap(Component):
 
     def __init__(
         self,
+        *,
         image: Handle[Image] | None = None,
         uv_rect: Rect | None = None,
-        bicubic_sampling: bool = False,
+        bicubic_sampling: bool = False
     ) -> None: ...
 
     @property
@@ -751,6 +763,7 @@ class AtmosphereSettings(Component):
 
     def __init__(
         self,
+        *,
         transmittance_lut_size: UVec2 = ...,
         multiscattering_lut_size: UVec2 = ...,
         sky_view_lut_size: UVec2 = ...,
@@ -762,7 +775,7 @@ class AtmosphereSettings(Component):
         aerial_view_lut_samples: int = 10,
         aerial_view_lut_max_distance: float = 32000.0,
         sky_max_samples: int = 16,
-        rendering_method: AtmosphereMode = ...,
+        rendering_method: AtmosphereMode = ...
     ) -> None: ...
 
     @property
@@ -873,7 +886,9 @@ class ShaderMaterial(Material):
     typed field access. Direct use is for advanced cases.
 
     Args:
-        base: The StandardMaterial providing PBR base properties.
+        base: StandardMaterial providing PBR properties; consumed by construction.
+            Converting an @material instance to ShaderMaterial consumes its base;
+            the Python @material constructor alone does not consume it.
         fragment_shader: Asset path to a custom fragment shader.
         vertex_shader: Asset path to a custom vertex shader.
         data: Flat list of up to 256 floats for the uniform buffer at binding 100.
@@ -942,7 +957,7 @@ class ForwardDecal(Component):
 class ForwardDecalMaterialExt:
     """Forward decal material extension."""
 
-    def __init__(self, depth_fade_factor: float = 8.0) -> None: ...
+    def __init__(self, *, depth_fade_factor: float = 8.0) -> None: ...
     depth_fade_factor: float
 
 class ForwardDecalMaterial(Material):
@@ -950,6 +965,7 @@ class ForwardDecalMaterial(Material):
 
     def __init__(
         self,
+        *,
         base: StandardMaterial | None = None,
         extension: ForwardDecalMaterialExt | None = None,
     ) -> None: ...

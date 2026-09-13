@@ -17,6 +17,7 @@ pub struct PyContactShadows {
 impl PyContactShadows {
     #[new]
     #[pyo3(signature = (
+        *,
         linear_steps = 16,
         thickness = 0.1,
         length = 0.3

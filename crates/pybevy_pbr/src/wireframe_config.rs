@@ -13,13 +13,14 @@ use crate::wireframe_topology::PyWireframeTopology;
 #[pyclass(name = "WireframeConfig", module = "pybevy.pbr", extends = PyResource, from_py_object)]
 #[derive(Debug)]
 pub struct PyWireframeConfig {
-    pub storage: ResourceStorage<WireframeConfig>,
+    pub(crate) storage: ResourceStorage<WireframeConfig>,
 }
 
 #[pymethods]
 impl PyWireframeConfig {
     #[new]
     #[pyo3(signature = (
+        *,
         global_ = false,
         default_color = Color::WHITE.into(),
         default_line_width = 1.0,

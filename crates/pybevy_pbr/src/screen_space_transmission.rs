@@ -15,6 +15,7 @@ pub struct PyScreenSpaceTransmission {
 impl PyScreenSpaceTransmission {
     #[new]
     #[pyo3(signature = (
+        *,
         steps = 1,
         quality = PyScreenSpaceTransmissionQuality::Medium
     ))]

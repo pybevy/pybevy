@@ -76,9 +76,10 @@ impl AssetInputConverter for PyStandardMaterial {
 impl PyStandardMaterial {
     #[new]
     #[pyo3(signature = (
+        *,
         base_color = Color::WHITE.into(),
-        base_color_texture = None,
         base_color_channel = PyUvChannel::Uv0,
+        base_color_texture = None,
         emissive = None,
         emissive_exposure_weight = 0.0,
         emissive_channel = PyUvChannel::Uv0,
@@ -110,6 +111,14 @@ impl PyStandardMaterial {
         specular_texture = None,
         specular_tint_channel = PyUvChannel::Uv0,
         specular_tint_texture = None,
+        clearcoat = 0.0,
+        clearcoat_channel = PyUvChannel::Uv0,
+        clearcoat_texture = None,
+        clearcoat_perceptual_roughness = 0.5,
+        clearcoat_roughness_channel = PyUvChannel::Uv0,
+        clearcoat_roughness_texture = None,
+        clearcoat_normal_channel = PyUvChannel::Uv0,
+        clearcoat_normal_texture = None,
         anisotropy_strength = 0.0,
         anisotropy_rotation = 0.0,
         anisotropy_channel = PyUvChannel::Uv0,
@@ -127,21 +136,13 @@ impl PyStandardMaterial {
         lightmap_exposure = 1.0,
         opaque_render_method = PyOpaqueRendererMethod::Auto,
         deferred_lighting_pass_id = 1,
-        uv_transform = PyAffine2::IDENTITY,
-        clearcoat = 0.0,
-        clearcoat_perceptual_roughness = 0.5,
-        clearcoat_channel = PyUvChannel::Uv0,
-        clearcoat_texture = None,
-        clearcoat_roughness_channel = PyUvChannel::Uv0,
-        clearcoat_roughness_texture = None,
-        clearcoat_normal_channel = PyUvChannel::Uv0,
-        clearcoat_normal_texture = None
+        uv_transform = PyAffine2::IDENTITY
     ))]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         base_color: PyColor,
-        base_color_texture: Option<&Bound<'_, PyAny>>,
         base_color_channel: PyUvChannel,
+        base_color_texture: Option<&Bound<'_, PyAny>>,
         emissive: Option<Bound<'_, PyAny>>,
         emissive_exposure_weight: f32,
         emissive_channel: PyUvChannel,
@@ -173,6 +174,14 @@ impl PyStandardMaterial {
         specular_texture: Option<&Bound<'_, PyAny>>,
         specular_tint_channel: PyUvChannel,
         specular_tint_texture: Option<&Bound<'_, PyAny>>,
+        clearcoat: f32,
+        clearcoat_channel: PyUvChannel,
+        clearcoat_texture: Option<&Bound<'_, PyAny>>,
+        clearcoat_perceptual_roughness: f32,
+        clearcoat_roughness_channel: PyUvChannel,
+        clearcoat_roughness_texture: Option<&Bound<'_, PyAny>>,
+        clearcoat_normal_channel: PyUvChannel,
+        clearcoat_normal_texture: Option<&Bound<'_, PyAny>>,
         anisotropy_strength: f32,
         anisotropy_rotation: f32,
         anisotropy_channel: PyUvChannel,
@@ -191,22 +200,13 @@ impl PyStandardMaterial {
         opaque_render_method: PyOpaqueRendererMethod,
         deferred_lighting_pass_id: u8,
         uv_transform: PyAffine2,
-        clearcoat: f32,
-        clearcoat_perceptual_roughness: f32,
-        clearcoat_channel: PyUvChannel,
-        clearcoat_texture: Option<&Bound<'_, PyAny>>,
-        clearcoat_roughness_channel: PyUvChannel,
-        clearcoat_roughness_texture: Option<&Bound<'_, PyAny>>,
-        clearcoat_normal_channel: PyUvChannel,
-        clearcoat_normal_texture: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<PyClassInitializer<Self>> {
         let emissive_linear = match emissive {
             Some(ref emissive_val) => extract_linear_rgba(emissive_val)?,
             None => LinearRgba::from(Color::BLACK),
         };
 
-        // The param stays in the signature on every platform so the stub and
-        // surface contract are platform-independent; only the value is refused.
+        // Keep the param on every platform so the stub contract holds; only the value is refused.
         #[cfg(not(feature = "pbr_anisotropy_texture"))]
         if anisotropy_texture.is_some() || anisotropy_channel != PyUvChannel::Uv0 {
             return Err(PyRuntimeError::new_err(ANISOTROPY_TEXTURE_UNAVAILABLE));

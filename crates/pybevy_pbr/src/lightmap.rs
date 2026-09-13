@@ -13,7 +13,7 @@ pub struct PyLightmap {
 #[pymethods]
 impl PyLightmap {
     #[new]
-    #[pyo3(signature = (image = None, uv_rect = None, bicubic_sampling = false))]
+    #[pyo3(signature = (*, image = None, uv_rect = None, bicubic_sampling = false))]
     pub fn new(
         image: Option<&Bound<'_, PyAny>>,
         uv_rect: Option<PyRect>,

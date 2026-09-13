@@ -17,6 +17,7 @@ pub enum PyScreenSpaceAmbientOcclusionQualityLevel {
     Medium(),
     High(),
     Ultra(),
+    #[pyo3(constructor = (*, slice_count, samples_per_slice_side))]
     Custom {
         slice_count: u32,
         samples_per_slice_side: u32,

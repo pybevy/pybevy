@@ -11,16 +11,13 @@ use pyo3::prelude::*;
 #[pyclass(name = "FogFalloff", module = "pybevy.pbr", frozen, from_py_object)]
 #[derive(Debug, Clone)]
 pub enum PyFogFalloff {
-    Linear {
-        start: f32,
-        end: f32,
-    },
-    Exponential {
-        density: f32,
-    },
-    ExponentialSquared {
-        density: f32,
-    },
+    #[pyo3(constructor = (*, start, end))]
+    Linear { start: f32, end: f32 },
+    #[pyo3(constructor = (*, density))]
+    Exponential { density: f32 },
+    #[pyo3(constructor = (*, density))]
+    ExponentialSquared { density: f32 },
+    #[pyo3(constructor = (*, extinction, inscattering))]
     Atmospheric {
         #[py_type(PyVec3)]
         #[py_try_into]

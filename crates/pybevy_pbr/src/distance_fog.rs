@@ -17,16 +17,17 @@ pub struct PyDistanceFog {
 impl PyDistanceFog {
     #[new]
     #[pyo3(signature = (
+        *,
         color = Color::WHITE.into(),
-        falloff = PyFogFalloff::Linear { start: 0.0, end: 100.0 },
         directional_light_color = Color::NONE.into(),
-        directional_light_exponent = 8.0
+        directional_light_exponent = 8.0,
+        falloff = PyFogFalloff::Linear { start: 0.0, end: 100.0 }
     ))]
     pub fn new(
         color: PyColor,
-        falloff: PyFogFalloff,
         directional_light_color: PyColor,
         directional_light_exponent: f32,
+        falloff: PyFogFalloff,
     ) -> PyResult<PyClassInitializer<Self>> {
         let color = color.try_into()?;
         let directional_light_color = directional_light_color.try_into()?;

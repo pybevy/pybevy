@@ -14,7 +14,7 @@ pub struct PyWireframeColor {
 #[pymethods]
 impl PyWireframeColor {
     #[new]
-    #[pyo3(signature = (color = Color::WHITE.into()))]
+    #[pyo3(signature = (*, color = Color::WHITE.into()))]
     pub fn new(color: PyColor) -> PyResult<PyClassInitializer<Self>> {
         Ok(Self::from_owned(WireframeColor {
             color: color.try_into()?,
