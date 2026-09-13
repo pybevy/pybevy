@@ -13,7 +13,7 @@ use pyo3::prelude::*;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PySliceScaleMode {
     Stretch(),
-    #[pyo3(constructor = (stretch_value = 1.0))]
+    #[pyo3(constructor = (*, stretch_value = 1.0))]
     Tile {
         stretch_value: f32,
     },

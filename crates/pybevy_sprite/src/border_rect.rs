@@ -23,7 +23,7 @@ impl PartialEq for PyBorderRect {
 #[pymethods]
 impl PyBorderRect {
     #[new]
-    #[pyo3(signature = (min_inset = PyVec2::ZERO, max_inset = PyVec2::ZERO))]
+    #[pyo3(signature = (*, min_inset = PyVec2::ZERO, max_inset = PyVec2::ZERO))]
     pub fn new(min_inset: PyVec2, max_inset: PyVec2) -> PyResult<Self> {
         Ok(Self::from_owned(BorderRect {
             min_inset: min_inset.try_into()?,

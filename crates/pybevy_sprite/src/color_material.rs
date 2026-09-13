@@ -18,6 +18,7 @@ pub struct PyColorMaterial {
 impl PyColorMaterial {
     #[new]
     #[pyo3(signature = (
+        *,
         color = Color::WHITE.into(),
         alpha_mode = PyAlphaMode2d::Blend(),
         uv_transform = PyAffine2::IDENTITY,

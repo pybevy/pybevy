@@ -18,10 +18,11 @@ class ColorMaterial(Asset):
     """Simple 2D material with color and optional texture."""
     def __init__(
         self,
+        *,
         color: Color = Color.WHITE,
         alpha_mode: AlphaMode2d = ...,
         uv_transform: Affine2 = Affine2.IDENTITY,
-        texture: Handle[Image] | None = None,
+        texture: Handle[Image] | None = None
     ) -> None: ...
     color: Color
     alpha_mode: AlphaMode2d
@@ -109,10 +110,7 @@ class SpriteImageMode:
         tile_y: bool
         stretch_value: float
         def __init__(
-            self,
-            tile_x: bool = True,
-            tile_y: bool = True,
-            stretch_value: float = 1.0,
+            self, *, tile_x: bool = True, tile_y: bool = True, stretch_value: float = 1.0
         ) -> None: ...
 
     def uses_slices(self) -> bool:
@@ -293,7 +291,7 @@ class BorderRect:
     max_inset: Vec2
     """Inset from the maximum corner (right, top) in pixels."""
 
-    def __init__(self, min_inset: Vec2 = ..., max_inset: Vec2 = ...) -> None:
+    def __init__(self, *, min_inset: Vec2 = ..., max_inset: Vec2 = ...) -> None:
         """Create a BorderRect with min/max inset vectors.
 
         Args:
@@ -403,7 +401,7 @@ class SliceScaleMode:
         """Repeat the slice after the drawing-to-source ratio reaches the threshold."""
         __match_args__: ClassVar[tuple[Literal["stretch_value"]]]
         stretch_value: float
-        def __init__(self, stretch_value: float = 1.0) -> None: ...
+        def __init__(self,*, stretch_value: float = 1.0) -> None: ...
 
     def __eq__(self, other: object) -> bool: ...
 
@@ -425,15 +423,13 @@ class TextureSlicer:
 
     Args:
         border: Defines the pixel widths/heights of non-stretchable borders
-        center_tile: If True, tile the center region instead of stretching
-        center_stretch_value: Tiling multiplier for center (only if center_tile=True)
-        sides_tile: If True, tile the edge regions instead of stretching
-        sides_stretch_value: Tiling multiplier for edges (only if sides_tile=True)
+        center_scale_mode: Scaling mode for the center region
+        sides_scale_mode: Scaling mode for the edge regions
         max_corner_scale: Maximum scale factor for corners (default: 1.0 = no scaling)
 
     Examples:
         ```python
-        from pybevy.sprite import TextureSlicer, BorderRect, SpriteImageMode
+        from pybevy.sprite import TextureSlicer, BorderRect, SpriteImageMode, SliceScaleMode
 
         # Simple button with 10px borders, stretch all regions
         border = BorderRect.all(10.0)
@@ -443,15 +439,13 @@ class TextureSlicer:
         # Panel with tiled center for patterned background
         slicer = TextureSlicer(
             border=BorderRect.all(16.0),
-            center_tile=True,
-            center_stretch_value=1.0
+            center_scale_mode=SliceScaleMode.Tile()
         )
 
-        # Ornate frame with tiled borders
+        # Ornate frame with tiled edges
         slicer = TextureSlicer(
             border=BorderRect(12.0, 12.0, 16.0, 16.0),
-            sides_tile=True,
-            sides_stretch_value=1.0
+            sides_scale_mode=SliceScaleMode.Tile()
         )
 
         # Allow corners to scale up to 2x for very large sprites
@@ -481,26 +475,19 @@ class TextureSlicer:
 
     def __init__(
         self,
+        *,
         border: BorderRect = ...,
-        center_tile: bool = False,
-        center_stretch_value: float = 1.0,
-        sides_tile: bool = False,
-        sides_stretch_value: float = 1.0,
-        max_corner_scale: float = 1.0,
         center_scale_mode: SliceScaleMode | None = None,
         sides_scale_mode: SliceScaleMode | None = None,
+        max_corner_scale: float = 1.0,
     ) -> None:
         """Create a TextureSlicer for nine-patch rendering.
 
         Args:
             border: Border sizes defining the nine regions
-            center_tile: If True, tile center region instead of stretching
-            center_stretch_value: Tiling multiplier for center (when center_tile=True)
-            sides_tile: If True, tile edge regions instead of stretching
-            sides_stretch_value: Tiling multiplier for edges (when sides_tile=True)
             max_corner_scale: Max corner scale factor (1.0 = maintain original size)
-            center_scale_mode: Explicit scale mode for center (overrides center_tile if set)
-            sides_scale_mode: Explicit scale mode for sides (overrides sides_tile if set)
+            center_scale_mode: Scale mode for the center region
+            sides_scale_mode: Scale mode for the side regions
         """
 
     def __eq__(self, other: object) -> bool:
@@ -621,14 +608,15 @@ class Sprite(Component):
 
     def __init__(
         self,
+        *,
         image: Handle[Image],
+        texture_atlas: TextureAtlas | None = None,
         color: Color = Color.WHITE,
         flip_x: bool = False,
         flip_y: bool = False,
         custom_size: Vec2 | None = None,
         rect: Rect | None = None,
-        texture_atlas: TextureAtlas | None = None,
-        image_mode: SpriteImageMode = ...,
+        image_mode: SpriteImageMode = ...
     ) -> None:
         """Create a sprite with the specified configuration.
 

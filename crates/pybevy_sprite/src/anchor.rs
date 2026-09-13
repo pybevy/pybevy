@@ -16,7 +16,7 @@ impl PyAnchor {
     #[new]
     #[pyo3(signature = (value = PyVec2::ZERO))]
     pub fn new(value: PyVec2) -> PyResult<PyClassInitializer<Self>> {
-        Ok(Self::from_owned(Anchor(value.try_into()?)).try_into()?)
+        Ok(Self::from_owned(Anchor(value.try_into()?)).into())
     }
 
     #[staticmethod]

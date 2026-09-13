@@ -29,23 +29,24 @@ impl PySprite {
     #[new]
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
+        *,
         image,
+        texture_atlas = None,
         color = PyColor::default(),
         flip_x = false,
         flip_y = false,
         custom_size = None,
         rect = None,
-        texture_atlas = None,
         image_mode = PySpriteImageMode::default()
     ))]
     pub fn new(
         image: &Bound<'_, PyAny>,
+        texture_atlas: Option<PyTextureAtlas>,
         color: PyColor,
         flip_x: bool,
         flip_y: bool,
         custom_size: Option<PyVec2>,
         rect: Option<PyRect>,
-        texture_atlas: Option<PyTextureAtlas>,
         image_mode: PySpriteImageMode,
     ) -> PyResult<PyClassInitializer<Self>> {
         let py_handle = extract_handle_from_any(image)?;
