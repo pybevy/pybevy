@@ -28,6 +28,7 @@ impl PyGeneratedEnvironmentMapLight {
 impl PyGeneratedEnvironmentMapLight {
     #[new]
     #[pyo3(signature = (
+        *,
         environment_map = None,
         intensity = Self::default_intensity(),
         rotation = Self::default_rotation(),

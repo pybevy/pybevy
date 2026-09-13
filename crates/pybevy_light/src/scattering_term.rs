@@ -16,10 +16,11 @@ pub struct PyScatteringTerm {
 impl PyScatteringTerm {
     #[new]
     #[pyo3(signature = (
+        *,
         absorption = PyVec3::ZERO,
         scattering = PyVec3::ZERO,
         falloff = PyFalloff::linear(),
-        phase = PyPhaseFunction::mie(0.8),
+        phase = PyPhaseFunction::mie(0.8)
     ))]
     pub fn new(
         absorption: PyVec3,

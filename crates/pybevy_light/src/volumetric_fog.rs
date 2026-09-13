@@ -33,16 +33,17 @@ impl PyVolumetricFog {
 impl PyVolumetricFog {
     #[new]
     #[pyo3(signature = (
+        *,
         ambient_color = Self::default_ambient_color(),
         ambient_intensity = Self::default_ambient_intensity(),
-        step_count = Self::default_step_count(),
-        jitter = Self::default_jitter()
+        jitter = Self::default_jitter(),
+        step_count = Self::default_step_count()
     ))]
     pub fn new(
         ambient_color: PyColor,
         ambient_intensity: f32,
-        step_count: u32,
         jitter: f32,
+        step_count: u32,
     ) -> PyResult<PyClassInitializer<Self>> {
         let ambient_color = Color::try_from(ambient_color)?;
         Ok(Self::from_owned(VolumetricFog {

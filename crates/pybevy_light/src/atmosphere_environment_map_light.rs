@@ -28,6 +28,7 @@ impl PyAtmosphereEnvironmentMapLight {
 impl PyAtmosphereEnvironmentMapLight {
     #[new]
     #[pyo3(signature = (
+        *,
         intensity = Self::default_intensity(),
         affects_lightmapped_mesh_diffuse = Self::default_affects_lightmapped_mesh_diffuse(),
         size = Self::default_size()

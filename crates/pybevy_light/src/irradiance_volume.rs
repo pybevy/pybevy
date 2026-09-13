@@ -12,7 +12,7 @@ pub struct PyIrradianceVolume {
 #[pymethods]
 impl PyIrradianceVolume {
     #[new]
-    #[pyo3(signature = (voxels = None, intensity = 0.0, affects_lightmapped_meshes = true))]
+    #[pyo3(signature = (*, voxels = None, intensity = 0.0, affects_lightmapped_meshes = true))]
     pub fn new(
         voxels: Option<&Bound<'_, PyAny>>,
         intensity: f32,

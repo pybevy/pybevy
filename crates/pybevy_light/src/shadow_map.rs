@@ -7,13 +7,13 @@ use pyo3::prelude::*;
 #[pyclass(name = "PointLightShadowMap", module = "pybevy.light", extends = PyResource, from_py_object)]
 #[derive(Debug)]
 pub struct PyPointLightShadowMap {
-    pub storage: ResourceStorage<PointLightShadowMap>,
+    pub(crate) storage: ResourceStorage<PointLightShadowMap>,
 }
 
 #[pymethods]
 impl PyPointLightShadowMap {
     #[new]
-    #[pyo3(signature = (size = 1024))]
+    #[pyo3(signature = (*, size = 1024))]
     pub fn new(size: usize) -> PyClassInitializer<Self> {
         resource_initializer(PyPointLightShadowMap::from(PointLightShadowMap { size }))
     }
@@ -38,13 +38,13 @@ impl PyPointLightShadowMap {
 #[pyclass(name = "DirectionalLightShadowMap", module = "pybevy.light", extends = PyResource, from_py_object)]
 #[derive(Debug)]
 pub struct PyDirectionalLightShadowMap {
-    pub storage: ResourceStorage<DirectionalLightShadowMap>,
+    pub(crate) storage: ResourceStorage<DirectionalLightShadowMap>,
 }
 
 #[pymethods]
 impl PyDirectionalLightShadowMap {
     #[new]
-    #[pyo3(signature = (size = 2048))]
+    #[pyo3(signature = (*, size = 2048))]
     pub fn new(size: usize) -> PyClassInitializer<Self> {
         resource_initializer(PyDirectionalLightShadowMap::from(
             DirectionalLightShadowMap { size },

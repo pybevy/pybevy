@@ -141,6 +141,7 @@ impl PyPhaseFunctionMie {
     }
 
     #[new]
+    #[pyo3(signature = (*, asymmetry))]
     pub fn new(asymmetry: f32) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyPhaseFunction::mie(asymmetry)).add_subclass(Self)
     }

@@ -170,7 +170,7 @@ impl PyLightProbe {
 #[pymethods]
 impl PyLightProbe {
     #[new]
-    #[pyo3(signature = (falloff = PyLightProbe::default_falloff()))]
+    #[pyo3(signature = (*, falloff = PyLightProbe::default_falloff()))]
     pub fn new(falloff: PyVec3) -> PyResult<PyClassInitializer<Self>> {
         Ok(Self::from_owned(LightProbe {
             falloff: falloff.try_into()?,

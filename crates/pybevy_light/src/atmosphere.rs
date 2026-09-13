@@ -13,7 +13,7 @@ pub struct PyAtmosphere {
 #[pymethods]
 impl PyAtmosphere {
     #[new]
-    #[pyo3(signature = (inner_radius, outer_radius, ground_albedo, medium))]
+    #[pyo3(signature = (*, inner_radius, outer_radius, ground_albedo, medium))]
     pub fn new(
         inner_radius: f32,
         outer_radius: f32,

@@ -47,12 +47,13 @@ class LightGizmoConfigGroup(GizmoConfigGroup):
 
     def __init__(
         self,
+        *,
         draw_all: bool = False,
         color: LightGizmoColor = LightGizmoColor.MatchLightColor(),
         point_light_color: Color = ...,
         spot_light_color: Color = ...,
         directional_light_color: Color = ...,
-        rect_light_color: Color = ...,
+        rect_light_color: Color = ...
     ) -> None: ...
     draw_all: bool
     color: LightGizmoColor
@@ -64,7 +65,7 @@ class LightGizmoConfigGroup(GizmoConfigGroup):
 class ShowLightGizmo(Component):
     """Draw a gizmo for light components on this entity."""
 
-    def __init__(self, color: LightGizmoColor | None = None) -> None: ...
+    def __init__(self, *, color: LightGizmoColor | None = None) -> None: ...
     color: LightGizmoColor | None
 
 class NotShadowCaster(Component):
@@ -108,7 +109,7 @@ class PointLightShadowMap(Resource):
     Example:
         app.insert_resource(PointLightShadowMap(size=2048))
     """
-    def __init__(self, size: int = 1024) -> None: ...
+    def __init__(self, *, size: int = 1024) -> None: ...
     size: int
 
 class DirectionalLightShadowMap(Resource):
@@ -117,7 +118,7 @@ class DirectionalLightShadowMap(Resource):
     Example:
         app.insert_resource(DirectionalLightShadowMap(size=4096))
     """
-    def __init__(self, size: int = 2048) -> None: ...
+    def __init__(self, *, size: int = 2048) -> None: ...
     size: int
 
 class FogVolume(Component):
@@ -133,12 +134,15 @@ class FogVolume(Component):
         density_texture_offset: UVW offset for scrolling the density texture.
         absorption: How much light is absorbed per step.
         scattering: How much light is scattered at each step.
-        scattering_asymmetry: Forward vs backward scattering bias.
+        scattering_asymmetry: Henyey-Greenstein anisotropy (-1 to 1): negative
+            favors backscatter, zero is isotropic, positive favors forward
+            scatter; applies to VolumetricLight illumination.
         light_tint: Non-physical color tint applied to light.
         light_intensity: Light intensity multiplier.
     """
     def __init__(
         self,
+        *,
         fog_color: Color = Color.WHITE,
         density_factor: float = 0.1,
         density_texture: Handle[Image] | None = None,
@@ -147,7 +151,7 @@ class FogVolume(Component):
         scattering: float = 0.3,
         scattering_asymmetry: float = 0.5,
         light_tint: Color = Color.WHITE,
-        light_intensity: float = 1.0,
+        light_intensity: float = 1.0
     ) -> None: ...
 
     fog_color: Color
@@ -180,9 +184,10 @@ class GlobalAmbientLight(Resource):
     """
     def __init__(
         self,
+        *,
         color: Color = Color.WHITE,
         brightness: float = 80.0,
-        affects_lightmapped_meshes: bool = True,
+        affects_lightmapped_meshes: bool = True
     ) -> None: ...
 
     color: Color
@@ -197,9 +202,10 @@ class AmbientLight(Component):
     """
     def __init__(
         self,
+        *,
         color: Color = Color.WHITE,
         brightness: float = 80.0,
-        affects_lightmapped_meshes: bool = True,
+        affects_lightmapped_meshes: bool = True
     ) -> None: ...
 
     color: Color
@@ -217,6 +223,7 @@ class AmbientLight(Component):
 class PointLight(Component):
     def __init__(
         self,
+        *,
         color: Color = Color.WHITE,
         intensity: float = 1_000_000.0,
         range: float = 20.0,
@@ -226,7 +233,7 @@ class PointLight(Component):
         affects_lightmapped_mesh_diffuse: bool = True,
         shadow_depth_bias: float = 0.08,
         shadow_normal_bias: float = 0.6,
-        shadow_map_near_z: float = 0.1,
+        shadow_map_near_z: float = 0.1
     ) -> None: ...
 
     color: Color
@@ -258,6 +265,7 @@ class PointLight(Component):
 class SpotLight(Component):
     def __init__(
         self,
+        *,
         color: Color = Color.WHITE,
         intensity: float = 1_000_000.0,
         range: float = 20.0,
@@ -269,7 +277,7 @@ class SpotLight(Component):
         shadow_normal_bias: float = 1.8,
         shadow_map_near_z: float = 0.1,
         outer_angle: float = math.pi / 4,
-        inner_angle: float = 0.0,
+        inner_angle: float = 0.0
     ) -> None: ...
 
     color: Color
@@ -305,13 +313,14 @@ class SpotLight(Component):
 class DirectionalLight(Component):
     def __init__(
         self,
+        *,
         color: Color = Color.WHITE,
         illuminance: float = 10_000.0,
         shadow_maps_enabled: bool = False,
         contact_shadows_enabled: bool = False,
         affects_lightmapped_mesh_diffuse: bool = True,
         shadow_depth_bias: float = 0.02,
-        shadow_normal_bias: float = 1.8,
+        shadow_normal_bias: float = 1.8
     ) -> None: ...
 
     color: Color
@@ -346,11 +355,12 @@ class RectLight(Component):
 
     def __init__(
         self,
+        *,
         color: Color = Color.WHITE,
         intensity: float = 1_000_000.0,
         range: float = 20.0,
         width: float = 1.0,
-        height: float = 1.0,
+        height: float = 1.0
     ) -> None: ...
 
     color: Color
@@ -388,11 +398,12 @@ class ParallaxCorrection(Component):
 class EnvironmentMapLight(Component):
     def __init__(
         self,
+        *,
         diffuse_map: Handle[Image] | None = None,
         specular_map: Handle[Image] | None = None,
         intensity: float = 0.0,
         rotation: Quat = ...,
-        affects_lightmapped_mesh_diffuse: bool = True,
+        affects_lightmapped_mesh_diffuse: bool = True
     ) -> None: ...
 
     diffuse_map: Handle[Image]
@@ -411,10 +422,11 @@ class EnvironmentMapLight(Component):
 class VolumetricFog(Component):
     def __init__(
         self,
+        *,
         ambient_color: Color = Color.WHITE,
         ambient_intensity: float = 0.1,
-        step_count: int = 64,
         jitter: float = 0.0,
+        step_count: int = 64
     ) -> None: ...
 
     ambient_color: Color
@@ -441,24 +453,33 @@ class CascadeShadowConfig(Component):
     """
     def __init__(
         self,
+        *,
         bounds: list[float] = ...,
         overlap_proportion: float = 0.2,
-        minimum_distance: float = 0.1,
-    ) -> None: ...
+        minimum_distance: float = 0.1
+    ) -> None:
+        """Raises ValueError for empty bounds, overlap outside [0, 1),
+        or negative/NaN minimum_distance.
+        """
 
     @property
     def bounds(self) -> LiveList[float]: ...
     @bounds.setter
     def bounds(self, value: list[float]) -> None: ...
     overlap_proportion: float
-    minimum_distance: float
+    @property
+    def minimum_distance(self) -> float:
+        """Non-negative distance; assigning negative or NaN values raises ValueError. Positive infinity is accepted."""
+    @minimum_distance.setter
+    def minimum_distance(self, value: float) -> None: ...
 
     @staticmethod
     def batch(  # type: ignore[override]
         *,
         overlap_proportion: np.typing.ArrayLike | None = None,
         minimum_distance: np.typing.ArrayLike | None = None,
-    ) -> Batchable: ...
+    ) -> Batchable:
+        """Raises ValueError for overlap outside [0, 1) or negative/NaN minimum_distance after float32 normalization; bounds use Bevy defaults."""
 
 class Cascade:
     @property
@@ -484,7 +505,7 @@ class LightProbe(Component):
 
     Has no effect unless paired with EnvironmentMapLight or IrradianceVolume.
     """
-    def __init__(self, falloff: Vec3 = ...) -> None: ...
+    def __init__(self, *, falloff: Vec3 = ...) -> None: ...
 
     @property
     def falloff(self) -> Vec3:
@@ -505,9 +526,10 @@ class IrradianceVolume(Component):
     """
     def __init__(
         self,
+        *,
         voxels: Handle[Image] | None = None,
         intensity: float = 0.0,
-        affects_lightmapped_meshes: bool = True,
+        affects_lightmapped_meshes: bool = True
     ) -> None: ...
 
     voxels: Handle[Image]
@@ -536,8 +558,9 @@ class SunDisk(Component):
     """
     def __init__(
         self,
+        *,
         angular_size: float = 0.00930842,
-        intensity: float = 1.0,
+        intensity: float = 1.0
     ) -> None: ...
 
     EARTH: ClassVar[SunDisk]
@@ -568,8 +591,9 @@ class DirectionalLightTexture(Component):
     """
     def __init__(
         self,
+        *,
         image: Handle[Image],
-        tiled: bool,
+        tiled: bool
     ) -> None: ...
 
     image: Handle[Image]
@@ -584,7 +608,7 @@ class SpotLightTexture(Component):
     Args:
         image: The texture image. Only the R channel is read.
     """
-    def __init__(self, image: Handle[Image]) -> None: ...
+    def __init__(self, *, image: Handle[Image]) -> None: ...
 
     image: Handle[Image]
 
@@ -600,8 +624,9 @@ class PointLightTexture(Component):
     """
     def __init__(
         self,
+        *,
         image: Handle[Image],
-        cubemap_layout: CubemapLayout,
+        cubemap_layout: CubemapLayout
     ) -> None: ...
 
     image: Handle[Image]
@@ -626,10 +651,11 @@ class GeneratedEnvironmentMapLight(Component):
     """
     def __init__(
         self,
+        *,
         environment_map: Handle[Image] | None = None,
         intensity: float = 0.0,
         rotation: Quat = ...,
-        affects_lightmapped_mesh_diffuse: bool = True,
+        affects_lightmapped_mesh_diffuse: bool = True
     ) -> None: ...
 
     environment_map: Handle[Image]
@@ -658,9 +684,10 @@ class AtmosphereEnvironmentMapLight(Component):
     """
     def __init__(
         self,
+        *,
         intensity: float = 1.0,
         affects_lightmapped_mesh_diffuse: bool = True,
-        size: UVec2 = ...,
+        size: UVec2 = ...
     ) -> None: ...
 
     intensity: float
@@ -689,11 +716,12 @@ class ClusteredDecal(Component):
     """
     def __init__(
         self,
+        *,
         base_color_texture: Handle[Image] | None = None,
         normal_map_texture: Handle[Image] | None = None,
         metallic_roughness_texture: Handle[Image] | None = None,
         emissive_texture: Handle[Image] | None = None,
-        tag: int = 0,
+        tag: int = 0
     ) -> None: ...
 
     @property
@@ -816,10 +844,11 @@ class Atmosphere(Component):
 
     def __init__(
         self,
+        *,
         inner_radius: float,
         outer_radius: float,
         ground_albedo: Vec3,
-        medium: Handle[ScatteringMedium],
+        medium: Handle[ScatteringMedium]
     ) -> None: ...
 
     @staticmethod
@@ -869,14 +898,14 @@ class Falloff:
         """Exponential falloff with given scale."""
         __match_args__: ClassVar[tuple[Literal["scale"]]]
         scale: float
-        def __init__(self, scale: float) -> None: ...
+        def __init__(self, *, scale: float) -> None: ...
 
     class Tent(Falloff):
         """Tent-shaped falloff with given center and width."""
         __match_args__: ClassVar[tuple[Literal["center"], Literal["width"]]]
         center: float
         width: float
-        def __init__(self, center: float, width: float) -> None: ...
+        def __init__(self, *, center: float, width: float) -> None: ...
 
 class PhaseFunction:
     """Phase function describing how a ScatteringTerm scatters light in different directions.
@@ -899,7 +928,7 @@ class PhaseFunction:
         """Henyey-Greenstein approximation of Mie scattering."""
         __match_args__: ClassVar[tuple[Literal["asymmetry"]]]
         asymmetry: float
-        def __init__(self, asymmetry: float) -> None: ...
+        def __init__(self, *, asymmetry: float) -> None: ...
 
     class ChromaticTexture(PhaseFunction):
         """Chromatic phase function sampled from an Nx1 Rgba32Float texture."""
@@ -912,10 +941,11 @@ class ScatteringTerm:
 
     def __init__(
         self,
+        *,
         absorption: Vec3 = ...,
         scattering: Vec3 = ...,
         falloff: Falloff = ...,
-        phase: PhaseFunction = ...,
+        phase: PhaseFunction = ...
     ) -> None:
         """Defaults mirror bevy: zero densities, linear falloff, Mie(asymmetry=0.8)."""
 
@@ -955,9 +985,10 @@ class Skybox(Component):
 
     def __init__(
         self,
+        *,
         image: Handle[Image] | None = None,
         brightness: float = 0.0,
-        rotation: Quat = ...,
+        rotation: Quat = ...
     ) -> None: ...
 
     @staticmethod

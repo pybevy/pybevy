@@ -28,6 +28,7 @@ impl PyEnvironmentMapLight {
 impl PyEnvironmentMapLight {
     #[new]
     #[pyo3(signature = (
+        *,
         diffuse_map = None,
         specular_map = None,
         intensity = Self::default_intensity(),

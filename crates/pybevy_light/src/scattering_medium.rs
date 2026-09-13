@@ -26,7 +26,7 @@ impl PyScatteringMedium {
         phase_resolution: u32,
         terms: Option<Vec<PyScatteringTerm>>,
     ) -> PyResult<PyClassInitializer<Self>> {
-        // terms omitted keeps bevy's Default: ScatteringMedium::earth(256, 256)
+        // Omitted terms fall back to the Earth scattering profile at the given resolutions.
         let medium = match terms {
             Some(terms) => {
                 let terms = terms
