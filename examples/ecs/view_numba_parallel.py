@@ -35,7 +35,7 @@ from pybevy.contrib import OrbitCamera, OrbitCameraPlugin
 from pybevy.prelude import *
 
 if TYPE_CHECKING:
-    from pybevy.ecs import FieldExpr  # type: ignore[assignment]
+    from pybevy.ecs import ViewColumn
 
 
 # Configuration
@@ -48,9 +48,9 @@ WAVE_AMPLITUDE = 3.0
 
 @numba.jit(nopython=True, parallel=True)
 def animate_wave_kernel(
-    pos_x: "FieldExpr",  # ViewColumn for Transform.translation.x
-    pos_y: "FieldExpr",  # ViewColumn for Transform.translation.y
-    pos_z: "FieldExpr",  # ViewColumn for Transform.translation.z
+    pos_x: "ViewColumn",  # ViewColumn for Transform.translation.x
+    pos_y: "ViewColumn",  # ViewColumn for Transform.translation.y
+    pos_z: "ViewColumn",  # ViewColumn for Transform.translation.z
     time: float,
     wave_speed: float,
     amplitude: float,
@@ -86,11 +86,11 @@ def animate_wave_kernel(
 
 @numba.jit(nopython=True, parallel=True)
 def animate_spiral_kernel(
-    pos_x: "FieldExpr",
-    pos_y: "FieldExpr",
-    pos_z: "FieldExpr",
-    rot_y: "FieldExpr",  # ViewColumn for Transform.rotation.y (quat component)
-    rot_w: "FieldExpr",  # ViewColumn for Transform.rotation.w (quat component)
+    pos_x: "ViewColumn",
+    pos_y: "ViewColumn",
+    pos_z: "ViewColumn",
+    rot_y: "ViewColumn",  # ViewColumn for Transform.rotation.y (quat component)
+    rot_w: "ViewColumn",  # ViewColumn for Transform.rotation.w (quat component)
     time: float,
 ) -> None:
     """Animate cubes in a spiral pattern with rotation (PARALLEL).
@@ -120,9 +120,9 @@ def animate_spiral_kernel(
 
 @numba.jit(nopython=True, parallel=True)
 def animate_ripple_kernel(
-    pos_x: "FieldExpr",
-    pos_y: "FieldExpr",
-    pos_z: "FieldExpr",
+    pos_x: "ViewColumn",
+    pos_y: "ViewColumn",
+    pos_z: "ViewColumn",
     time: float,
 ) -> None:
     """Multiple overlapping ripples emanating from different points (PARALLEL)."""
@@ -169,7 +169,7 @@ def setup_scene(
 
     # Materials and meshes
     cube_material = materials.add(Color.srgb(0.3, 0.7, 0.9))
-    cube_mesh = meshes.add(Cuboid(1.0, 1.0, 1.0))
+    cube_mesh = meshes.add(Cuboid(x_length=1.0, y_length=1.0, z_length=1.0))
 
     for row in range(GRID_SIZE):
         for col in range(GRID_SIZE):

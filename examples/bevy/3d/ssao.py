@@ -50,8 +50,8 @@ def setup(
     ))
 
     # Create a complex scene to show SSAO effect
-    sphere = meshes.add(Sphere(1.0))
-    cube = meshes.add(Cuboid(2.0, 2.0, 2.0))
+    sphere = meshes.add(Sphere(radius=1.0))
+    cube = meshes.add(Cuboid(x_length=2.0, y_length=2.0, z_length=2.0))
 
     # Spheres in a grid
     for x in range(-2, 3):

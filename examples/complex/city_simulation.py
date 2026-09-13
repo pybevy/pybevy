@@ -105,7 +105,7 @@ def setup_city(
     )
 
     # Create streets (horizontal and vertical)
-    street_mesh = meshes.add(Cuboid(1.0, 0.1, 1.0))
+    street_mesh = meshes.add(Cuboid(x_length=1.0, y_length=0.1, z_length=1.0))
 
     # Vertical streets
     for x_idx in range(layout.num_blocks_x + 1):
@@ -115,9 +115,9 @@ def setup_city(
             Mesh3d(street_mesh),
             MeshMaterial3d(street_material),
             Transform(
-                Vec3(x_pos + layout.street_width / 2.0, 0.0, city_size / 2.0),
-                Quat.IDENTITY,
-                Vec3(layout.street_width, 1.0, street_length),
+                translation=Vec3(x_pos + layout.street_width / 2.0, 0.0, city_size / 2.0),
+                rotation=Quat.IDENTITY,
+                scale=Vec3(layout.street_width, 1.0, street_length),
             ),
         )
 
@@ -129,9 +129,9 @@ def setup_city(
             Mesh3d(street_mesh),
             MeshMaterial3d(street_material),
             Transform(
-                Vec3(city_size / 2.0, 0.0, z_pos + layout.street_width / 2.0),
-                Quat.IDENTITY,
-                Vec3(street_length, 1.0, layout.street_width),
+                translation=Vec3(city_size / 2.0, 0.0, z_pos + layout.street_width / 2.0),
+                rotation=Quat.IDENTITY,
+                scale=Vec3(street_length, 1.0, layout.street_width),
             ),
         )
 
@@ -139,7 +139,7 @@ def setup_city(
     building_mesh = meshes.add(Cuboid.from_length(1.0))
 
     # Red warning light for tall buildings
-    warning_light_mesh = meshes.add(Sphere(0.2))
+    warning_light_mesh = meshes.add(Sphere(radius=0.2))
     warning_light_material = materials.add(Color.srgb(1.0, 0.0, 0.0))
 
     for bx in range(layout.num_blocks_x):
@@ -172,9 +172,9 @@ def setup_city(
                     Mesh3d(building_mesh),
                     MeshMaterial3d(random.choice(building_materials)),
                     Transform(
-                        Vec3(x + width / 2.0, height / 2.0, z + depth / 2.0),
-                        Quat.IDENTITY,
-                        Vec3(width, height, depth),
+                        translation=Vec3(x + width / 2.0, height / 2.0, z + depth / 2.0),
+                        rotation=Quat.IDENTITY,
+                        scale=Vec3(width, height, depth),
                     ),
                 )
 
@@ -227,11 +227,11 @@ def setup_city(
     light_offset = layout.street_width * 0.6  # Offset from street center
 
     # Light pole mesh
-    pole_mesh = meshes.add(Cuboid(0.1, light_height, 0.1))
+    pole_mesh = meshes.add(Cuboid(x_length=0.1, y_length=light_height, z_length=0.1))
     pole_material = materials.add(Color.srgb(0.3, 0.3, 0.3))
 
     # Light bulb mesh (sphere at top of pole)
-    bulb_mesh = meshes.add(Sphere(0.15))
+    bulb_mesh = meshes.add(Sphere(radius=0.15))
     bulb_material = materials.add(Color.srgb(1.0, 0.95, 0.8))
 
     for x in range(layout.num_blocks_x + 1):
@@ -324,7 +324,7 @@ def spawn_people(
         layout.num_blocks_x * (layout.block_size + layout.street_width)
     ) + layout.street_width
 
-    person_mesh = meshes.add(Cuboid(0.15, 0.6, 0.16))
+    person_mesh = meshes.add(Cuboid(x_length=0.15, y_length=0.6, z_length=0.16))
     person_materials = [
         materials.add(Color.srgb(0.8, 0.2, 0.2)),
         materials.add(Color.srgb(0.2, 0.8, 0.2)),

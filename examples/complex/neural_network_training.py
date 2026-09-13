@@ -201,7 +201,7 @@ def setup(
         ModelBundleCNN(cnn_model, cnn_criterion, cnn_optimizer, data_loader_iter)
     )
 
-    cube_mesh_handle = meshes.add(Cuboid(1.0))
+    cube_mesh_handle = meshes.add(Cuboid(x_length=1.0))
     input_mat = materials.add(
         StandardMaterial(base_color=Color.srgb(1.0, 1.0, 1.0), unlit=True)
     )

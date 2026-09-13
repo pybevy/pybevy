@@ -109,7 +109,7 @@ def setup_cave(
     )
 
     # Walls (simple box room)
-    wall_mesh = meshes.add(Cuboid(50.0, 14.0, 1.0))
+    wall_mesh = meshes.add(Cuboid(x_length=50.0, y_length=14.0, z_length=1.0))
 
     # Back wall
     commands.spawn(
@@ -127,14 +127,14 @@ def setup_cave(
 
     # Left wall
     commands.spawn(
-        Mesh3d(meshes.add(Cuboid(1.0, 14.0, 50.0))),
+        Mesh3d(meshes.add(Cuboid(x_length=1.0, y_length=14.0, z_length=50.0))),
         MeshMaterial3d(cave_material),
         Transform.from_xyz(-25.0, 5.0, 0.0),
     )
 
     # Right wall
     commands.spawn(
-        Mesh3d(meshes.add(Cuboid(1.0, 14.0, 50.0))),
+        Mesh3d(meshes.add(Cuboid(x_length=1.0, y_length=14.0, z_length=50.0))),
         MeshMaterial3d(cave_material),
         Transform.from_xyz(25.0, 5.0, 0.0),
     )
@@ -146,7 +146,7 @@ def setup_crystals(
     materials: ResMut[Assets[StandardMaterial]],
 ) -> None:
     # Crystal mesh - elongated hexagonal prism
-    crystal_mesh = meshes.add(Cylinder(0.6, 3.0))
+    crystal_mesh = meshes.add(Cylinder(radius=0.6, height=3.0))
 
     # Crystal colors (emissive HDR values)
     crystal_colors = [
@@ -250,7 +250,7 @@ def spawn_particles(
     materials: ResMut[Assets[StandardMaterial]],
 ) -> None:
     # Tiny sphere for particles
-    particle_mesh = meshes.add(Sphere(0.02))
+    particle_mesh = meshes.add(Sphere(radius=0.02))
 
     # Slightly emissive particle material
     particle_material = materials.add(

@@ -27,7 +27,7 @@ def setup(
 
     # Create a quad mesh
     quad_width = 8.0
-    quad_handle = meshes.add(Rectangle(quad_width, quad_width * aspect).mesh())
+    quad_handle = meshes.add(Rectangle(width=quad_width, height=quad_width * aspect).mesh())
 
     # Normal texture material
     material_handle = materials.add(

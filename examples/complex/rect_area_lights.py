@@ -68,7 +68,7 @@ def spawn_panel(
         light.insert(SpinningPanel())
     light.with_children(
         lambda parent: parent.spawn(
-            Mesh3d(meshes.add(Cuboid(width, height, 0.05))),
+            Mesh3d(meshes.add(Cuboid(x_length=width, y_length=height, z_length=0.05))),
             MeshMaterial3d(panel_material),
         )
     )
@@ -155,7 +155,7 @@ def setup(
         spinning=True,
     )
     commands.spawn(
-        Mesh3d(meshes.add(Sphere(1.0))),
+        Mesh3d(meshes.add(Sphere(radius=1.0))),
         MeshMaterial3d(
             materials.add(
                 StandardMaterial(
@@ -186,7 +186,7 @@ def setup(
     ]
     for radius, position, base_color, roughness, metallic in spheres:
         commands.spawn(
-            Mesh3d(meshes.add(Sphere(radius))),
+            Mesh3d(meshes.add(Sphere(radius=radius))),
             MeshMaterial3d(
                 materials.add(
                     StandardMaterial(
@@ -200,7 +200,7 @@ def setup(
         )
 
     commands.spawn(
-        Mesh3d(meshes.add(Cuboid(1.0, 0.25, 1.0))),
+        Mesh3d(meshes.add(Cuboid(x_length=1.0, y_length=0.25, z_length=1.0))),
         MeshMaterial3d(
             materials.add(
                 StandardMaterial(
@@ -212,7 +212,7 @@ def setup(
         Transform.from_xyz(9.5, 0.125, -3.5),
     )
     commands.spawn(
-        Mesh3d(meshes.add(Cuboid(0.3, 2.6, 0.3))),
+        Mesh3d(meshes.add(Cuboid(x_length=0.3, y_length=2.6, z_length=0.3))),
         MeshMaterial3d(
             materials.add(
                 StandardMaterial(

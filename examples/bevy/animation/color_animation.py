@@ -43,7 +43,7 @@ def setup(
     )
 
     # Create a sphere mesh
-    sphere = meshes.add(Sphere(0.5))
+    sphere = meshes.add(Sphere(radius=0.5))
 
     # Create several spheres with different animation speeds
     for x in range(-2, 3):

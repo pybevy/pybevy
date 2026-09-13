@@ -32,7 +32,7 @@ def setup(
 ) -> None:
     """Set up a simple scene with a parent cube and a child cube."""
 
-    cube_handle = meshes.add(Cuboid(2.0, 2.0, 2.0))
+    cube_handle = meshes.add(Cuboid(x_length=2.0, y_length=2.0, z_length=2.0))
     cube_material_handle = materials.add(StandardMaterial(
         base_color=Color.srgb(0.8, 0.7, 0.6)
     ))

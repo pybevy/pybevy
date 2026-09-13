@@ -22,7 +22,7 @@ def setup(
     # 6 world units per pixel of window height
     # Use default_3d() as base and override scaling_mode
     ortho = OrthographicProjection.default_3d()
-    ortho.scaling_mode = ScalingMode.FixedVertical(6.0)
+    ortho.scaling_mode = ScalingMode.FixedVertical(viewport_height=6.0)
 
     commands.spawn(
         Camera3d(),

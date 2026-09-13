@@ -51,7 +51,7 @@ def setup(commands: Commands, images: ResMut[Assets[Image]]) -> None:
     ]
 
     image = Image.new_fill(
-        Extent3d(IMAGE_WIDTH, IMAGE_HEIGHT, 1),
+        Extent3d(width=IMAGE_WIDTH, height=IMAGE_HEIGHT, depth_or_array_layers=1),
         beige_bytes,
         format=TextureFormat.Rgba8UnormSrgb,
     )

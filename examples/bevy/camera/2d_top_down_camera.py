@@ -45,7 +45,7 @@ def setup_scene(
 ) -> None:
     """Set up the game scene with world and player."""
     # World where we move the player
-    world_mesh = Rectangle(1000.0, 700.0).mesh()
+    world_mesh = Rectangle(width=1000.0, height=700.0).mesh()
     world_material = ColorMaterial(color=Color.srgb(0.2, 0.2, 0.3))
 
     commands.spawn(

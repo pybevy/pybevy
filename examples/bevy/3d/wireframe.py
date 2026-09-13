@@ -42,7 +42,7 @@ def setup(
 
     # 1. Sphere with default wireframe
     commands.spawn(
-        Mesh3d(meshes.add(Sphere(1.0))),
+        Mesh3d(meshes.add(Sphere(radius=1.0))),
         MeshMaterial3d(material),
         Wireframe(),  # Enable wireframe
         Transform.from_xyz(-3.0, 1.0, 0.0),
@@ -50,25 +50,25 @@ def setup(
 
     # 2. Cube with green wireframe
     commands.spawn(
-        Mesh3d(meshes.add(Cuboid(2.0, 2.0, 2.0))),
+        Mesh3d(meshes.add(Cuboid(x_length=2.0, y_length=2.0, z_length=2.0))),
         MeshMaterial3d(material),
         Wireframe(),
-        WireframeColor(Color.srgb(0.0, 1.0, 0.0)),  # Green wireframe
+        WireframeColor(color=Color.srgb(0.0, 1.0, 0.0)),  # Green wireframe
         Transform.from_xyz(0.0, 1.0, 0.0),
     )
 
     # 3. Cylinder with red wireframe
     commands.spawn(
-        Mesh3d(meshes.add(Cylinder(1.0, 2.0))),
+        Mesh3d(meshes.add(Cylinder(radius=1.0, height=2.0))),
         MeshMaterial3d(material),
         Wireframe(),
-        WireframeColor(Color.srgb(1.0, 0.0, 0.0)),  # Red wireframe
+        WireframeColor(color=Color.srgb(1.0, 0.0, 0.0)),  # Red wireframe
         Transform.from_xyz(3.0, 1.0, 0.0),
     )
 
     # 4. Sphere (will show wireframe when global enabled, but excluded)
     commands.spawn(
-        Mesh3d(meshes.add(Sphere(0.5))),
+        Mesh3d(meshes.add(Sphere(radius=0.5))),
         MeshMaterial3d(material),
         NoWireframe(),  # Explicitly no wireframe
         Transform.from_xyz(-3.0, 1.0, -3.0),
@@ -83,10 +83,10 @@ def setup(
 
     # 6. Cylinder with cyan wireframe (Capsule3d not available in PyBevy)
     commands.spawn(
-        Mesh3d(meshes.add(Cylinder(0.5, 2.0))),
+        Mesh3d(meshes.add(Cylinder(radius=0.5, height=2.0))),
         MeshMaterial3d(material),
         Wireframe(),
-        WireframeColor(Color.srgb(0.0, 1.0, 1.0)),  # Cyan
+        WireframeColor(color=Color.srgb(0.0, 1.0, 1.0)),  # Cyan
         Transform.from_xyz(3.0, 1.5, -3.0),
     )
 

@@ -41,7 +41,7 @@ def setup(
 ) -> None:
     # Sphere with quantized PBR
     commands.spawn(
-        Mesh3d(meshes.add(Sphere(1.0))),
+        Mesh3d(meshes.add(Sphere(radius=1.0))),
         MeshMaterial3d[QuantizeMaterial](materials.add(QuantizeMaterial(  # type: ignore[misc,call-arg]
             base=StandardMaterial(base_color=Color.srgb(0.8, 0.1, 0.1)),
             quantize_steps=1.0,

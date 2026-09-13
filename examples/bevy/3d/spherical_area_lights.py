@@ -34,7 +34,7 @@ def setup(
     radius_range_end = 0.4
     pos_len = position_range_end - position_range_start
     radius_len = radius_range_end - radius_range_start
-    mesh = meshes.add(Sphere(1.0).mesh().uv(120, 64))
+    mesh = meshes.add(Sphere(radius=1.0).mesh().uv(120, 64))
 
     for i in range(COUNT):
         percent = i / COUNT
