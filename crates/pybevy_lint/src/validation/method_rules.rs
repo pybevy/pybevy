@@ -1,7 +1,11 @@
 use crate::{
     config::BevyConfig,
-    model::{ConstructorOrigin, EnumVariantKind, ParameterKind, PyClassDef, SelfMutability},
+    model::{
+        ConstructorOrigin, EnumVariantKind, MethodDef, ParameterKind, PyClassDef, SelfMutability,
+    },
     output::{Diagnostic, DiagnosticCode, Suggestion},
+    python_parser::types::{resolve_self, types_compatible},
+    rust_parser::types::normalize_rust_type,
 };
 
 /// Check if two parameter names are equivalent
@@ -592,6 +596,7 @@ pub fn validate_methods_with_config(
 
         match py_method {
             Some(py_method) => {
+                diagnostics.extend(validate_method_return(rust, python, rust_method, py_method));
                 // Skip parameter validation for context manager methods
                 // - __enter__ in Python has no params, Rust needs `py: Python`
                 // - __exit__ has standard Python names that differ from Rust convention
@@ -711,6 +716,10 @@ pub fn validate_methods_with_config(
             .iter()
             .find(|m| m.name == rust_method.name);
 
+        if let Some(py_method) = py_method {
+            diagnostics.extend(validate_method_return(rust, python, rust_method, py_method));
+        }
+
         // Also check if it exists as a ClassVar (PyO3 #[staticmethod] constants
         // are often stubbed as ClassVar[T] since they're accessed without parens)
         let is_class_attr = python
@@ -807,7 +816,95 @@ pub fn validate_methods_with_config(
         }
     }
 
+    for py_method in python.methods.iter().chain(&python.static_methods) {
+        let native = rust
+            .methods
+            .iter()
+            .chain(&rust.static_methods)
+            .find(|method| method.name == py_method.name);
+        if let Some(native) = native {
+            for diagnostic in validate_method_return(rust, python, native, py_method) {
+                if !diagnostics
+                    .iter()
+                    .any(|existing| existing.message == diagnostic.message)
+                {
+                    diagnostics.push(diagnostic);
+                }
+            }
+        }
+    }
     diagnostics
+}
+
+fn is_inplace_operator(name: &str) -> bool {
+    matches!(
+        name,
+        "__iadd__"
+            | "__isub__"
+            | "__imul__"
+            | "__imatmul__"
+            | "__itruediv__"
+            | "__ifloordiv__"
+            | "__imod__"
+            | "__ipow__"
+            | "__ilshift__"
+            | "__irshift__"
+            | "__iand__"
+            | "__ixor__"
+            | "__ior__"
+    )
+}
+
+fn validate_method_return(
+    class: &PyClassDef,
+    stub_class: &PyClassDef,
+    rust: &MethodDef,
+    python: &MethodDef,
+) -> Vec<Diagnostic> {
+    let Some(python_return) = python.return_type.as_deref() else {
+        return Vec::new();
+    };
+    let rust_return = rust.return_type.as_deref().unwrap_or("()");
+    let mut native = normalize_rust_type(&resolve_self(rust_return, &class.python_name));
+    if rust.name == "__next__" || rust.name == "__anext__" {
+        native = native
+            .strip_suffix(" | None")
+            .unwrap_or(&native)
+            .to_string();
+    }
+    if is_inplace_operator(&rust.name) && native == "None" {
+        native = class.python_name.clone();
+    }
+    let variant = python_return
+        .strip_prefix(&format!("{}.", class.python_name))
+        .map(|name| name.split('[').next().unwrap_or(name));
+    if native == class.python_name
+        && variant.is_some_and(|name| {
+            class
+                .enum_variants
+                .iter()
+                .chain(&stub_class.enum_variants)
+                .any(|variant| variant.name == name)
+                || stub_class.nested_types.iter().any(|nested| nested == name)
+        })
+    {
+        return Vec::new();
+    }
+    let stub = resolve_self(python_return, &class.python_name);
+    if types_compatible(&native, &stub) {
+        return Vec::new();
+    }
+    let mut diagnostic = Diagnostic::warning(
+        DiagnosticCode::E006,
+        format!(
+            "method '{}::{}' return type mismatch: Rust='{}' vs Python='{}'",
+            class.python_name, rust.name, rust_return, python_return
+        ),
+    );
+    if let Some(location) = &rust.location {
+        diagnostic = diagnostic.with_location(location.clone());
+    }
+    vec![diagnostic]
 }
 
 /// Generate a constructor stub

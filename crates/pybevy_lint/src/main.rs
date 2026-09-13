@@ -11,6 +11,7 @@ use colored::Colorize;
 use pybevy_lint::{
     comparison::simplify_type_for_display,
     output::{DiagnosticSeverity, format_diagnostic},
+    python_parser::module_symbols::parse_source_only_symbols,
 };
 
 #[derive(Parser, Debug)]
@@ -1535,6 +1536,7 @@ fn run_test_coverage(
     let stub_classes = pybevy_lint::parse_python_stubs(&args.python_path)?;
     let mut catalog = pybevy_lint::test_coverage::ApiCatalog::from_stub_classes(stub_classes);
     catalog.add_stub_symbols(pybevy_lint::parse_python_stub_symbols(&args.python_path)?);
+    catalog.add_source_only_symbols(parse_source_only_symbols(&args.python_path)?);
     let prelude_path = args.python_path.join("prelude.py");
     if prelude_path.exists() {
         catalog.add_wildcard_reexports(pybevy_lint::parse_python_reexports(&prelude_path)?);

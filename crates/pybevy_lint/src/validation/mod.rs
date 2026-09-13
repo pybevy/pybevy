@@ -3,6 +3,7 @@ pub mod class_rules;
 pub mod method_rules;
 pub mod origin;
 pub mod property_rules;
+mod protocol_rules;
 pub mod style_rules;
 
 use std::collections::{HashMap, HashSet};
@@ -363,6 +364,13 @@ fn validate_all_impl_with_consumed(
                     rust_class,
                     py_class,
                     config.map(|config| &config.bevy),
+                ));
+
+                class_diagnostics.extend(protocol_rules::validate_protocols(
+                    rust_class,
+                    py_class,
+                    rust_classes,
+                    python_classes,
                 ));
 
                 // Validate properties

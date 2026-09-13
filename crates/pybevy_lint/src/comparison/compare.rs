@@ -9,6 +9,8 @@ use crate::{
     bevy_parser::{BevyCrate, BevyItem, BevyItemKind, BevyMethod, SelfKind},
     config::{BevyConfig, SignatureDiffSpec},
     model::{MethodDef, PropertyDef, PyClassDef, SelfMutability},
+    python_parser::types::{resolve_self, types_compatible as stub_types_compatible},
+    rust_parser::types::{normalize_rust_type, split_by_comma},
 };
 
 /// Result of comparing PyBevy API against Bevy API
@@ -346,7 +348,14 @@ fn should_skip_trait_method(method_name: &str, pyclass: &PyClassDef, config: &Be
 
         // PartialEq::eq - skip if PyBevy class has #[pyclass(eq)], __eq__ method, or it's an enum
         // Python enums are automatically comparable
-        "eq" => pyclass.eq || pyclass.is_enum || pyclass.methods.iter().any(|m| m.name == "__eq__"),
+        "eq" => {
+            pyclass.eq
+                || pyclass.is_enum
+                || pyclass
+                    .methods
+                    .iter()
+                    .any(|m| matches!(m.name.as_str(), "__eq__" | "__richcmp__"))
+        }
 
         // From/Into trait impls - skip these, Python uses different conversion patterns
         "from" | "into" => true,
@@ -451,25 +460,27 @@ fn compare_type(
 
         let (signature_matches, differences, pybevy_param_count) =
             if let Some(py_method) = pybevy_method {
-                let diffs = compare_method_signature(bevy_method, py_method, config);
-                if !diffs.is_empty() {
-                    if let Some(spec) =
-                        config.get_intentional_signature_diff(&bevy_item.name, &bevy_method.name)
-                    {
-                        let violations = validate_signature_diff_spec(spec, py_method);
-                        if violations.is_empty() {
-                            // Intentional and valid: suppress
-                            (true, Vec::new(), Some(py_method.parameters.len()))
-                        } else {
-                            // Expected types don't match: regression detected
-                            (false, violations, Some(py_method.parameters.len()))
+                let mut diffs =
+                    compare_method_signature(bevy_method, py_method, &pyclass.rust_name);
+                if let Some(spec) =
+                    config.get_intentional_signature_diff(&bevy_item.name, &bevy_method.name)
+                {
+                    let mut violations = validate_signature_diff_spec(spec, py_method);
+                    let has_return_contract = matches!(
+                        spec,
+                        SignatureDiffSpec::WithExpected {
+                            expected_return: Some(_),
+                            ..
                         }
-                    } else {
-                        (false, diffs, Some(py_method.parameters.len()))
+                    );
+                    if !has_return_contract {
+                        violations.extend(diffs.into_iter().filter(|diff| {
+                            matches!(diff, SignatureDiff::ReturnTypeMismatch { .. })
+                        }));
                     }
-                } else {
-                    (true, diffs, Some(py_method.parameters.len()))
+                    diffs = violations;
                 }
+                (diffs.is_empty(), diffs, Some(py_method.parameters.len()))
             } else if pybevy_property.is_some() {
                 // Properties match as getters (no params expected)
                 if bevy_method.parameters.is_empty() {
@@ -1018,11 +1029,17 @@ fn check_extends_consistency(
         .iter()
         .any(|t| t == "PartialEq" || t.ends_with("::PartialEq") || t.contains("PartialEq<"));
 
-    if bevy_has_partial_eq && !pyclass.eq && !pyclass.methods.iter().any(|m| m.name == "__eq__") {
+    if bevy_has_partial_eq
+        && !pyclass.eq
+        && !pyclass
+            .methods
+            .iter()
+            .any(|m| matches!(m.name.as_str(), "__eq__" | "__richcmp__"))
+    {
         warnings.push(ExtendsWarning {
             kind: ExtendsWarningKind::MissingEq,
             message: format!(
-                "Bevy type '{}' derives PartialEq but PyBevy #[pyclass] is missing `eq` attribute",
+                "Bevy type '{}' implements PartialEq but PyBevy has no equality implementation",
                 bevy_item.name
             ),
         });
@@ -1297,7 +1314,7 @@ fn parameter_names_match(left: &str, right: &str) -> bool {
 fn compare_method_signature(
     bevy: &BevyMethod,
     pybevy: &MethodDef,
-    _config: &BevyConfig,
+    owner: &str,
 ) -> Vec<SignatureDiff> {
     let mut differences = Vec::new();
 
@@ -1347,7 +1364,10 @@ fn compare_method_signature(
             }
 
             if let Some(ref pybevy_type) = pybevy_param.param_type
-                && !types_compatible(&bevy_param.param_type, pybevy_type)
+                && !types_compatible(
+                    &resolve_self(&bevy_param.param_type, owner),
+                    &resolve_self(pybevy_type, owner),
+                )
             {
                 differences.push(SignatureDiff::ParamTypeMismatch {
                     param_name: bevy_param.name.clone(),
@@ -1383,12 +1403,12 @@ fn compare_method_signature(
         });
     }
 
-    if let (Some(bevy_ret), Some(pybevy_ret)) = (&bevy.return_type, &pybevy.return_type)
-        && !types_compatible(bevy_ret, pybevy_ret)
-    {
+    let bevy_ret = bevy.return_type.as_deref().unwrap_or("()");
+    let pybevy_ret = pybevy.return_type.as_deref().unwrap_or("()");
+    if !return_types_compatible(bevy_ret, pybevy_ret, owner) {
         differences.push(SignatureDiff::ReturnTypeMismatch {
-            bevy_type: bevy_ret.clone(),
-            pybevy_type: pybevy_ret.clone(),
+            bevy_type: bevy_ret.to_string(),
+            pybevy_type: pybevy_ret.to_string(),
         });
     }
 
@@ -1433,18 +1453,34 @@ fn validate_signature_diff_spec(
         }
     }
 
-    if let Some(expected_ret) = expected_return
-        && let Some(ref actual_ret) = py_method.return_type
-        && !actual_ret.contains(expected_ret.as_str())
-    {
-        violations.push(SignatureDiff::ExpectedTypeMismatch {
-            context: "return".to_string(),
-            expected: expected_ret.clone(),
-            actual: actual_ret.clone(),
-        });
+    if let Some(expected_ret) = expected_return {
+        let actual_ret = py_method.return_type.as_deref().unwrap_or("()");
+        if normalize_rust_type(actual_ret) != normalize_rust_type(expected_ret) {
+            violations.push(SignatureDiff::ExpectedTypeMismatch {
+                context: "return".to_string(),
+                expected: expected_ret.clone(),
+                actual: actual_ret.to_string(),
+            });
+        }
     }
 
     violations
+}
+
+/// Return values do not receive input-only conveniences such as Vec2 tuples.
+fn return_types_compatible(bevy: &str, pybevy: &str, owner: &str) -> bool {
+    let bevy = bevy.split(" where ").next().unwrap_or(bevy);
+    if bevy.starts_with("Self::") {
+        return types_compatible(bevy, pybevy);
+    }
+    let bevy = resolve_self(bevy, owner);
+    let pybevy = resolve_self(pybevy, owner);
+    let bevy = normalize_rust_type(&bevy);
+    let pybevy = normalize_rust_type(&pybevy);
+    if bevy.starts_with("impl ") {
+        return true;
+    }
+    stub_types_compatible(&pybevy, &bevy)
 }
 
 /// Check if a Bevy type is compatible with a PyBevy type
@@ -1459,11 +1495,6 @@ fn types_compatible(bevy_type: &str, pybevy_type: &str) -> bool {
 
     // Any type on either side is compatible (impl Trait, dynamic typing)
     if bevy_normalized == "Any" || pybevy_normalized == "Any" {
-        return true;
-    }
-
-    // Self type is compatible with the type itself (usually handled elsewhere)
-    if bevy_normalized == "Self" || pybevy_normalized == "Self" {
         return true;
     }
 
@@ -1708,6 +1739,14 @@ fn split_generic_args(s: &str) -> Vec<&str> {
 fn normalize_bevy_type(ty: &str) -> String {
     let ty = ty.trim();
 
+    if ty.starts_with('(') && ty.ends_with(')') && ty != "()" {
+        let parts: Vec<_> = split_by_comma(&ty[1..ty.len() - 1])
+            .iter()
+            .map(|part| normalize_bevy_type(part))
+            .collect();
+        return format!("({})", parts.join(", "));
+    }
+
     // Handle Self::AssociatedType patterns
     // These are common in Bevy's bounding volume traits
     if let Some(assoc_type) = ty.strip_prefix("Self::") {
@@ -1733,8 +1772,7 @@ fn normalize_bevy_type(ty: &str) -> String {
     {
         // Result<T, E> -> get T (before the comma)
         let inner = inner.trim();
-        if let Some(comma_pos) = inner.find(',') {
-            let success_type = inner[..comma_pos].trim();
+        if let Some(success_type) = split_by_comma(inner).first() {
             return normalize_bevy_type(success_type);
         }
         return normalize_bevy_type(inner);
@@ -1821,6 +1859,14 @@ fn normalize_bevy_type(ty: &str) -> String {
 /// Normalize a PyBevy/Python type for comparison
 fn normalize_pybevy_type(ty: &str) -> String {
     let ty = ty.trim();
+
+    if ty.starts_with('(') && ty.ends_with(')') && ty != "()" {
+        let parts: Vec<_> = split_by_comma(&ty[1..ty.len() - 1])
+            .iter()
+            .map(|part| normalize_pybevy_type(part))
+            .collect();
+        return format!("({})", parts.join(", "));
+    }
 
     // Normalize spacing: remove extra spaces around :: and ; in arrays
     let ty = ty

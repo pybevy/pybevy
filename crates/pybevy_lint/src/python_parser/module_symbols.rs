@@ -1,4 +1,4 @@
-use std::{collections::HashSet, path::Path};
+use std::{collections::HashSet, fs, path::Path};
 
 use anyhow::{Context, Result};
 use tree_sitter::{Node, Parser};
@@ -52,6 +52,43 @@ pub fn parse_symbol_directory(path: &Path) -> Result<Vec<StubSymbolDef>> {
     symbols.dedup_by(|left, right| {
         left.module_path == right.module_path && left.name == right.name && left.kind == right.kind
     });
+    Ok(symbols)
+}
+
+/// Inventory source-only exports without adding them to the stub contract.
+pub fn parse_source_only_symbols(path: &Path) -> Result<Vec<StubSymbolDef>> {
+    let mut symbols = Vec::new();
+    for entry in WalkDir::new(path) {
+        let entry = entry?;
+        let file_path = entry.path();
+        if !entry.file_type().is_file()
+            || file_path
+                .extension()
+                .is_none_or(|extension| extension != "py")
+            || file_path.with_extension("pyi").exists()
+        {
+            continue;
+        }
+        let Some(module_path) = super::extract_module_path(file_path, path) else {
+            continue;
+        };
+        let source = fs::read_to_string(file_path)
+            .with_context(|| format!("Failed to read {}", file_path.display()))?;
+        if let Some(exports) = super::explicit_exports(&source) {
+            symbols.extend(
+                exports
+                    .into_iter()
+                    .filter(|name| !name.starts_with('_'))
+                    .map(|name| StubSymbolDef {
+                        module_path: module_path.clone(),
+                        name,
+                        kind: StubSymbolKind::Alias,
+                    }),
+            );
+        } else {
+            symbols.extend(parse_file_symbols(&source, &module_path)?);
+        }
+    }
     Ok(symbols)
 }
 

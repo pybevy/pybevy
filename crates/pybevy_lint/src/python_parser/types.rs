@@ -2,6 +2,17 @@
 pub fn normalize_python_type(ty: &str) -> String {
     let ty = ty.trim();
 
+    if ty
+        .chars()
+        .all(|c| c.is_alphanumeric() || matches!(c, '_' | '.'))
+        && let Some((module, name)) = ty.rsplit_once('.')
+        && module
+            .split('.')
+            .all(|part| part.chars().next().is_some_and(char::is_lowercase))
+    {
+        return name.to_string();
+    }
+
     // Handle Optional[T] -> T | None
     if ty.starts_with("Optional[") && ty.ends_with(']') {
         let inner = &ty[9..ty.len() - 1];
@@ -85,6 +96,35 @@ pub fn types_compatible(rust_type: &str, python_type: &str) -> bool {
         return true;
     }
 
+    if matches!(python_normalized.as_str(), "Any" | "object") {
+        return true;
+    }
+
+    // Compare container arguments before any base-name fallback.
+    for container in ["tuple", "list", "dict", "set", "frozenset"] {
+        let prefix = format!("{container}[");
+        if let (Some(rust), Some(python)) = (
+            rust_normalized
+                .strip_prefix(&prefix)
+                .and_then(|s| s.strip_suffix(']')),
+            python_normalized
+                .strip_prefix(&prefix)
+                .and_then(|s| s.strip_suffix(']')),
+        ) {
+            let rust = split_type_union(rust);
+            let python = split_type_union(python);
+            if container == "tuple" && python.len() == 2 && python[1] == "..." {
+                return !rust.iter().any(|t| t == "...")
+                    && rust.iter().all(|t| types_compatible(t, &python[0]));
+            }
+            return rust.len() == python.len()
+                && rust
+                    .iter()
+                    .zip(&python)
+                    .all(|(r, p)| types_compatible(r, p));
+        }
+    }
+
     // Check common equivalences
     match (rust_normalized.as_str(), python_normalized.as_str()) {
         ("float", "float") => true,
@@ -112,6 +152,13 @@ pub fn types_compatible(rust_type: &str, python_type: &str) -> bool {
             true
         }
 
+        (rust, python)
+            if matches!(python, "list" | "dict" | "tuple" | "set")
+                && rust.starts_with(&format!("{python}[")) =>
+        {
+            true
+        }
+
         // A stub may narrow a runtime str to a Literal of string values.
         ("str", python) if python.starts_with("Literal[") => true,
 
@@ -134,11 +181,25 @@ pub fn types_compatible(rust_type: &str, python_type: &str) -> bool {
         (rust, python) if !is_primitive(rust) && !is_primitive(python) => {
             let rust_base = base_type_name(rust);
             let python_base = base_type_name(python);
-            rust_base == python_base
+            rust_base == python_base && !rust.contains('|') && !python.contains('|')
         }
 
         _ => false,
     }
+}
+
+/// Bind the standalone Self token, including inside tuples and wrapper types.
+pub(crate) fn resolve_self(ty: &str, owner: &str) -> String {
+    ty.split_inclusive(|c: char| !c.is_alphanumeric() && c != '_')
+        .map(|part| {
+            let token = part.trim_end_matches(|c: char| !c.is_alphanumeric() && c != '_');
+            if token == "Self" {
+                format!("{owner}{}", &part[token.len()..])
+            } else {
+                part.to_string()
+            }
+        })
+        .collect()
 }
 
 /// Check if a type is a primitive
