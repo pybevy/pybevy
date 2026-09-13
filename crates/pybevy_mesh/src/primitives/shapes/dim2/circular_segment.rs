@@ -1,7 +1,10 @@
+use std::f32::consts::FRAC_PI_3;
+
 use bevy::{
     math::primitives::{CircularSegment, Measured2d},
     mesh::Meshable,
 };
+use pybevy_macros::pyconstructor;
 use pybevy_math::{primitives::PyArc2d, vec2::PyVec2};
 use pyo3::prelude::*;
 
@@ -25,15 +28,19 @@ impl From<CircularSegment> for PyCircularSegment {
     }
 }
 
+#[pyconstructor("CircularSegment", keyword_only(arc), conflicts((radius, half_angle), (arc)))]
 #[pymethods]
 impl PyCircularSegment {
     #[new]
-    #[pyo3(signature = (radius = 0.5, half_angle = 2.0 * std::f32::consts::FRAC_PI_3, *, arc = None))]
-    pub fn new(radius: f32, half_angle: f32, arc: Option<PyArc2d>) -> PyClassInitializer<Self> {
+    pub fn new(
+        #[default(0.5)] radius: f32,
+        #[default(2.0 * FRAC_PI_3, text = "2.0943951023931953")] half_angle: f32,
+        #[expected("Arc2d")] arc: Option<PyArc2d>,
+    ) -> PyResult<PyClassInitializer<Self>> {
         if let Some(a) = arc {
-            return (Self(CircularSegment { arc: a.into() }), PyMeshable).into();
+            return Ok((Self(CircularSegment { arc: a.into() }), PyMeshable).into());
         }
-        (Self(CircularSegment::new(radius, half_angle)), PyMeshable).into()
+        Ok((Self(CircularSegment::new(radius, half_angle)), PyMeshable).into())
     }
 
     #[staticmethod]

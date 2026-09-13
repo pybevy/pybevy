@@ -3,14 +3,16 @@ use std::{
     ptr,
 };
 
-use bevy::mesh::{MeshVertexAttribute, VertexAttributeValues};
+use bevy::mesh::{MeshVertexAttribute, MeshVertexAttributeId, VertexAttributeValues};
 use numpy::{PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods};
 use pybevy_array::{ArrayDType, ArrayError, DenseArrayCore, PyArray, Scalar};
+use pybevy_core::{PyComponent, public_error};
+use pybevy_macros::pywrap;
 use pybevy_render::vertex_format::PyVertexFormat;
 use pyo3::{
     exceptions::{PyRuntimeError, PyTypeError},
     prelude::*,
-    types::PyAny,
+    types::{PyAny, PyBytes, PyList, PyTuple},
 };
 
 const UNSUPPORTED_ATTRIBUTE_ARRAY: &str = "Unsupported array dtype/shape. Supported: float32 (n|n,2|n,3|n,4), float64 (n|n,2|n,3|n,4), uint32 (n), int32 (n)";
@@ -100,6 +102,33 @@ pub(crate) fn attribute_id(attribute: &MeshVertexAttribute) -> u64 {
     hasher.finish()
 }
 
+#[pywrap(MeshVertexAttributeId, copy)]
+#[pyclass(
+    from_py_object,
+    name = "MeshVertexAttributeId",
+    module = "pybevy.mesh",
+    extends = PyComponent,
+    frozen,
+    eq,
+    hash
+)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct PyMeshVertexAttributeId(pub(crate) MeshVertexAttributeId);
+
+#[pymethods]
+impl PyMeshVertexAttributeId {
+    #[getter]
+    pub fn value(&self) -> u64 {
+        let mut hasher = AttributeIdHasher::default();
+        self.0.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("MeshVertexAttributeId({})", self.value())
+    }
+}
+
 #[pyclass(
     name = "MeshVertexAttribute",
     module = "pybevy.mesh",
@@ -118,14 +147,21 @@ impl From<MeshVertexAttribute> for PyMeshVertexAttribute {
 
 #[pymethods]
 impl PyMeshVertexAttribute {
+    #[new]
+    pub fn new(name: &str, id: u64, format: PyVertexFormat) -> Self {
+        let boxed: Box<str> = name.into();
+        let name: &'static str = Box::leak(boxed);
+        PyMeshVertexAttribute(MeshVertexAttribute::new(name, id, format.into()))
+    }
+
     #[getter]
     pub fn name(&self) -> &'static str {
         self.0.name
     }
 
     #[getter]
-    pub fn id(&self) -> u64 {
-        attribute_id(&self.0)
+    pub fn id(&self, py: Python<'_>) -> PyResult<Py<PyMeshVertexAttributeId>> {
+        Py::new(py, (PyMeshVertexAttributeId(self.0.id), PyComponent))
     }
 
     #[getter]
@@ -158,11 +194,20 @@ impl PyVertexAttributeValues {
             return Ok(vref.clone());
         }
 
+        // Convert sequences without requiring the optional NumPy package.
+        if obj.is_instance_of::<PyList>() || obj.is_instance_of::<PyTuple>() {
+            return sequence_attribute_values(obj).map(Self);
+        }
+
         if let Ok(array) = obj.extract::<PyRef<PyArray>>() {
             let values = bounded_vertex_attribute_values(&array.core)
                 .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
                 .ok_or_else(|| PyTypeError::new_err(UNSUPPORTED_ATTRIBUTE_ARRAY))?;
             return Ok(PyVertexAttributeValues(values));
+        }
+
+        if obj.py().import("numpy").is_err() {
+            return sequence_attribute_values(obj).map(Self);
         }
 
         if let Ok(arr) = obj.extract::<PyReadonlyArray1<f32>>() {
@@ -299,8 +344,54 @@ impl PyVertexAttributeValues {
             }
         }
 
-        Err(PyTypeError::new_err(UNSUPPORTED_ATTRIBUTE_ARRAY))
+        if is_non_contiguous_array(obj) {
+            return Err(PyTypeError::new_err(
+                public_error::NON_CONTIGUOUS_ATTRIBUTE_ARRAY,
+            ));
+        }
+        // An array with an unsupported dtype must keep naming the dtype.
+        if obj.hasattr("dtype").unwrap_or(false) || obj.is_instance_of::<PyBytes>() {
+            return Err(PyTypeError::new_err(UNSUPPORTED_ATTRIBUTE_ARRAY));
+        }
+        sequence_attribute_values(obj).map(Self)
     }
+}
+
+fn sequence_attribute_values(obj: &Bound<'_, PyAny>) -> PyResult<VertexAttributeValues> {
+    if let Ok(values) = obj.extract::<Vec<f32>>() {
+        return Ok(VertexAttributeValues::Float32(values));
+    }
+    let rows = obj
+        .extract::<Vec<Vec<f32>>>()
+        .map_err(|_| PyTypeError::new_err(UNSUPPORTED_ATTRIBUTE_ARRAY))?;
+    let columns = rows.first().map_or(0, Vec::len);
+    if !(2..=4).contains(&columns) || rows.iter().any(|row| row.len() != columns) {
+        return Err(PyTypeError::new_err(UNSUPPORTED_ATTRIBUTE_ARRAY));
+    }
+    let flat: Vec<Scalar> = rows
+        .into_iter()
+        .flatten()
+        .map(|value| Scalar::F64(value as f64))
+        .collect();
+    Ok(match columns {
+        2 => VertexAttributeValues::Float32x2(float_rows(&flat)),
+        3 => VertexAttributeValues::Float32x3(float_rows(&flat)),
+        4 => VertexAttributeValues::Float32x4(float_rows(&flat)),
+        _ => unreachable!("validated row width"),
+    })
+}
+
+/// True for a numpy array whose dtype and shape would be fine but whose layout is not.
+fn is_non_contiguous_array(obj: &Bound<'_, PyAny>) -> bool {
+    let Ok(flags) = obj.getattr("flags") else {
+        return false;
+    };
+    matches!(
+        flags
+            .getattr("c_contiguous")
+            .and_then(|v| v.extract::<bool>()),
+        Ok(false)
+    )
 }
 
 impl From<VertexAttributeValues> for PyVertexAttributeValues {

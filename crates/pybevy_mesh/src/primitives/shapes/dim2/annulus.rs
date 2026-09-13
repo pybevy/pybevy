@@ -5,6 +5,7 @@ use bevy::{
     },
     mesh::Meshable,
 };
+use pybevy_macros::pyconstructor;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
@@ -27,27 +28,33 @@ impl From<Annulus> for PyAnnulus {
     }
 }
 
+#[pyconstructor(
+    "Annulus",
+    keyword_only(inner_circle, outer_circle),
+    conflicts((inner_radius), (inner_circle)),
+    conflicts((outer_radius), (outer_circle)),
+)]
 #[pymethods]
 impl PyAnnulus {
     #[new]
-    #[pyo3(signature = (inner_radius = 0.5, outer_radius = 1.0, *, inner_circle = None, outer_circle = None))]
     pub fn new(
-        inner_radius: f32,
-        outer_radius: f32,
-        inner_circle: Option<&PyCircle>,
-        outer_circle: Option<&PyCircle>,
-    ) -> PyClassInitializer<Self> {
-        if let (Some(inner), Some(outer)) = (inner_circle, outer_circle) {
-            return (
-                Self(Annulus {
-                    inner_circle: Circle::new(inner.radius()),
-                    outer_circle: Circle::new(outer.radius()),
-                }),
-                PyMeshable,
-            )
-                .into();
-        }
-        (Self(Annulus::new(inner_radius, outer_radius)), PyMeshable).into()
+        #[default(0.5)] inner_radius: f32,
+        #[default(1.0)] outer_radius: f32,
+        #[expected("Circle")] inner_circle: Option<PyRef<'_, PyCircle>>,
+        #[expected("Circle")] outer_circle: Option<PyRef<'_, PyCircle>>,
+    ) -> PyResult<PyClassInitializer<Self>> {
+        Ok((
+            Self(Annulus {
+                inner_circle: inner_circle
+                    .map(|circle| circle.0)
+                    .unwrap_or_else(|| Circle::new(inner_radius)),
+                outer_circle: outer_circle
+                    .map(|circle| circle.0)
+                    .unwrap_or_else(|| Circle::new(outer_radius)),
+            }),
+            PyMeshable,
+        )
+            .into())
     }
 
     #[getter]

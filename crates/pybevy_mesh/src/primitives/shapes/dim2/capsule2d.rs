@@ -2,6 +2,7 @@ use bevy::{
     math::primitives::{Capsule2d, Measured2d},
     mesh::Meshable,
 };
+use pybevy_macros::pyconstructor;
 use pyo3::prelude::*;
 
 use super::rectangle::PyRectangle;
@@ -25,22 +26,26 @@ impl From<Capsule2d> for PyCapsule2d {
     }
 }
 
+#[pyconstructor("Capsule2d", keyword_only(half_length), conflicts((length), (half_length)))]
 #[pymethods]
 impl PyCapsule2d {
     #[new]
-    #[pyo3(signature = (radius = 0.5, length = 1.0, *, half_length = None))]
-    pub fn new(radius: f32, length: f32, half_length: Option<f32>) -> PyClassInitializer<Self> {
+    pub fn new(
+        #[default(0.5)] radius: f32,
+        #[default(1.0)] length: f32,
+        half_length: Option<f32>,
+    ) -> PyResult<PyClassInitializer<Self>> {
         if let Some(half_length) = half_length {
-            return (
+            return Ok((
                 Self(Capsule2d {
                     radius,
                     half_length,
                 }),
                 PyMeshable,
             )
-                .into();
+                .into());
         }
-        (Self(Capsule2d::new(radius, length)), PyMeshable).into()
+        Ok((Self(Capsule2d::new(radius, length)), PyMeshable).into())
     }
 
     #[getter]

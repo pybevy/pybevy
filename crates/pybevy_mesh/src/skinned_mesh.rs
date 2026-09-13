@@ -17,6 +17,7 @@ pub struct PySkinnedMesh {
 #[pymethods]
 impl PySkinnedMesh {
     #[new]
+    #[pyo3(signature = (*, inverse_bindposes, joints))]
     pub fn new(
         inverse_bindposes: &Bound<'_, PyAny>,
         joints: &Bound<'_, PyAny>,

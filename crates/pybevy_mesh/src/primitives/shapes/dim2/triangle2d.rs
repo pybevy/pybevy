@@ -2,6 +2,7 @@ use bevy::{
     math::primitives::{Measured2d, Triangle2d},
     mesh::Meshable,
 };
+use pybevy_macros::pyconstructor;
 use pybevy_math::{vec2::PyVec2, winding_order::PyWindingOrder};
 use pyo3::prelude::*;
 
@@ -26,22 +27,19 @@ impl From<Triangle2d> for PyTriangle2d {
     }
 }
 
+#[pyconstructor("Triangle2d", keyword_only(vertices), conflicts((a, b, c), (vertices)))]
 #[pymethods]
 impl PyTriangle2d {
     #[new]
-    #[pyo3(signature = (
-        a = PyVec2::from_vec2(bevy::math::Vec2::new(0.0, 0.5)),
-        b = PyVec2::from_vec2(bevy::math::Vec2::new(-0.5, -0.5)),
-        c = PyVec2::from_vec2(bevy::math::Vec2::new(0.5, -0.5)),
-        *,
-        vertices = None
-    ))]
     pub fn new(
-        a: PyVec2,
-        b: PyVec2,
-        c: PyVec2,
-        vertices: Option<[PyVec2; 3]>,
+        #[expected("Vec2")] a: Option<PyVec2>,
+        #[expected("Vec2")] b: Option<PyVec2>,
+        #[expected("Vec2")] c: Option<PyVec2>,
+        #[expected("sequence of 3 Vec2 values")] vertices: Option<[PyVec2; 3]>,
     ) -> PyResult<PyClassInitializer<Self>> {
+        let a = a.unwrap_or_else(|| PyVec2::new(0.0, 0.5));
+        let b = b.unwrap_or_else(|| PyVec2::new(-0.5, -0.5));
+        let c = c.unwrap_or_else(|| PyVec2::new(0.5, -0.5));
         if let Some(v) = vertices {
             let verts = [
                 (&v[0]).try_into()?,

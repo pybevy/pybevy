@@ -1,4 +1,4 @@
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Sequence
 from enum import Enum
 from types import TracebackType
 from typing import ClassVar, Literal
@@ -76,12 +76,20 @@ class Mesh(Asset):
     def with_inserted_attribute(
         self,
         attribute: MeshVertexAttribute,
-        values: VertexAttributeValues | np.ndarray | xp.Array,
+        values: VertexAttributeValues
+        | np.ndarray
+        | xp.Array
+        | Sequence[float]
+        | Sequence[Sequence[float]],
     ) -> Mesh: ...
     def insert_attribute(
         self,
         attribute: MeshVertexAttribute,
-        values: VertexAttributeValues | np.ndarray | xp.Array,
+        values: VertexAttributeValues
+        | np.ndarray
+        | xp.Array
+        | Sequence[float]
+        | Sequence[Sequence[float]],
     ) -> None: ...
     def with_inserted_indices(
         self, indices: Indices | np.ndarray | xp.Array | list[int]
@@ -89,6 +97,16 @@ class Mesh(Asset):
     def insert_indices(
         self, indices: Indices | np.ndarray | xp.Array | list[int]
     ) -> None: ...
+
+    def indices(self) -> xp.Array | None:
+        """The index buffer as a read-only `uint16`/`uint32` bounded array, or
+        None if the mesh is non-indexed.
+
+        A live zero-copy view: the mesh cannot be mutated while it is alive,
+        writes through it are refused, and it expires with its owner. Call
+        `.tolist()` or `.copy()` for an independent snapshot, and write an
+        edited buffer back with `insert_indices`.
+        """
 
     def positions(self) -> xp.Array:
         """Read-only zero-copy bounded array of vertex positions, shape (N, 3).
@@ -184,11 +202,22 @@ class UvChannel:
 
     def __init__(self) -> None: ...
 
+class MeshVertexAttributeId:
+    """Opaque attribute id; obtained from MeshVertexAttribute.id, not constructed."""
+
+    @property
+    def value(self) -> int: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
+
 class MeshVertexAttribute:
+    def __init__(self, name: str, id: int, format: VertexFormat) -> None:
+        """Build a custom attribute; use a large id to avoid built-in collisions."""
+
     @property
     def name(self) -> str: ...
     @property
-    def id(self) -> int: ...
+    def id(self) -> MeshVertexAttributeId: ...
     @property
     def format(self) -> VertexFormat: ...
     def __eq__(self, other: object) -> bool: ...
@@ -200,10 +229,11 @@ class Indices:
     def is_empty(self) -> bool: ...
     def push(self, index: int) -> None:
         """Append an index in place; storage upgrades to U32 past u16::MAX."""
-    def __iter__(self) -> Iterator[IndicesIterator]: ...
+    def __iter__(self) -> IndicesIterator: ...
     def __eq__(self, other: object) -> bool: ...
 
 class IndicesIterator:
+    def __iter__(self) -> IndicesIterator: ...
     def __next__(self) -> int: ...
 
 class VertexAttributeValues:
@@ -214,7 +244,14 @@ class CylinderMeshBuilder(MeshBuilder):
     def build(self) -> Mesh: ...
 
 class ConeMeshBuilder(MeshBuilder):
-    def build(self) -> Mesh: ...
+    def build(self) -> Mesh:
+        """Build the cone mesh.
+
+        The apex vertex carries a zero-length normal, because a cone has no
+        single well-defined normal there and bevy declines to pick one. A shader
+        that normalizes it gets NaN. `mesh.compute_normals()` after building
+        replaces it with the averaged face normal.
+        """
 
 class CuboidMeshBuilder(MeshBuilder):
     def build(self) -> Mesh: ...
@@ -310,7 +347,7 @@ class SphereKind:
         __match_args__: ClassVar[tuple[Literal["subdivisions"]]]
         subdivisions: int
 
-        def __init__(self, subdivisions: int) -> None: ...
+        def __init__(self, *, subdivisions: int) -> None: ...
         """Icosphere mesh kind with the given number of subdivisions."""
 
     class Uv(SphereKind):
@@ -318,7 +355,7 @@ class SphereKind:
         sectors: int
         stacks: int
 
-        def __init__(self, sectors: int, stacks: int) -> None: ...
+        def __init__(self, *, sectors: int, stacks: int) -> None: ...
         """UV sphere mesh kind with the given number of sectors and stacks."""
 
 class Mesh2d(Component):
@@ -393,7 +430,7 @@ class MeshMorphWeights(Component):
     class Value(MeshMorphWeights):
         __match_args__: ClassVar[tuple[Literal["weights"]]]
         weights: list[float]
-        def __init__(self, weights: list[float]) -> None: ...
+        def __init__(self, *, weights: list[float]) -> None: ...
 
     class Reference(MeshMorphWeights):
         __match_args__: ClassVar[tuple[Literal["value"]]]
@@ -427,7 +464,7 @@ class SkinnedMesh(Component):
     animations, but can also be constructed manually for procedural skinned meshes.
     """
 
-    def __init__(self, inverse_bindposes: Handle, joints: list[Entity]) -> None:
+    def __init__(self, *, inverse_bindposes: Handle, joints: list[Entity]) -> None:
         """Create a new SkinnedMesh component.
 
         Args:

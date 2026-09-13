@@ -2,6 +2,7 @@ use bevy::{
     math::primitives::{Capsule3d, Measured3d},
     mesh::Meshable,
 };
+use pybevy_macros::pyconstructor;
 use pyo3::prelude::*;
 
 use super::cylinder::PyCylinder;
@@ -25,12 +26,23 @@ impl From<Capsule3d> for PyCapsule3d {
     }
 }
 
+#[pyconstructor("Capsule3d", keyword_only(half_length), conflicts((length), (half_length)))]
 #[pymethods]
 impl PyCapsule3d {
     #[new]
-    #[pyo3(signature = (radius = 0.5, length = 1.0))]
-    pub fn new(radius: f32, length: f32) -> PyClassInitializer<Self> {
-        (Self(Capsule3d::new(radius, length)), PyMeshable).into()
+    pub fn new(
+        #[default(0.5)] radius: f32,
+        #[default(1.0)] length: f32,
+        half_length: Option<f32>,
+    ) -> PyResult<PyClassInitializer<Self>> {
+        let capsule = match half_length {
+            Some(half_length) => Capsule3d {
+                radius,
+                half_length,
+            },
+            None => Capsule3d::new(radius, length),
+        };
+        Ok((Self(capsule), PyMeshable).into())
     }
 
     #[getter]

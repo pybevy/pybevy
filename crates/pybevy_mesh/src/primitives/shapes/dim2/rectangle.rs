@@ -3,7 +3,7 @@ use bevy::{
     mesh::Meshable,
 };
 use pybevy_core::{FromBorrowedStorage, ValueStorage};
-use pybevy_macros::pyvalue;
+use pybevy_macros::{pyconstructor, pyvalue};
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
@@ -27,14 +27,14 @@ impl PartialEq for PyRectangle {
     }
 }
 
+#[pyconstructor("Rectangle", keyword_only(half_size), conflicts((width, height), (half_size)))]
 #[pymethods]
 impl PyRectangle {
     #[new]
-    #[pyo3(signature = (width=1.0, height=1.0, *, half_size=None))]
     pub fn new(
-        width: f32,
-        height: f32,
-        half_size: Option<PyVec2>,
+        #[default(1.0)] width: f32,
+        #[default(1.0)] height: f32,
+        #[expected("Vec2")] half_size: Option<PyVec2>,
     ) -> PyResult<PyClassInitializer<Self>> {
         if let Some(hs) = half_size {
             return Ok((

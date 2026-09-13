@@ -3,7 +3,7 @@ use bevy::{
     mesh::Meshable,
 };
 use pybevy_core::{FromBorrowedStorage, ValueStorage};
-use pybevy_macros::pyvalue;
+use pybevy_macros::{pyconstructor, pyvalue};
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
@@ -47,14 +47,18 @@ impl From<Rhombus> for PyRhombus {
     }
 }
 
+#[pyconstructor(
+    "Rhombus",
+    keyword_only(half_diagonals),
+    conflicts((horizontal_diagonal, vertical_diagonal), (half_diagonals)),
+)]
 #[pymethods]
 impl PyRhombus {
     #[new]
-    #[pyo3(signature = (horizontal_diagonal = 1.0, vertical_diagonal = 1.0, *, half_diagonals = None))]
     pub fn new(
-        horizontal_diagonal: f32,
-        vertical_diagonal: f32,
-        half_diagonals: Option<PyVec2>,
+        #[default(1.0)] horizontal_diagonal: f32,
+        #[default(1.0)] vertical_diagonal: f32,
+        #[expected("Vec2")] half_diagonals: Option<PyVec2>,
     ) -> PyResult<PyClassInitializer<Self>> {
         if let Some(hd) = half_diagonals {
             return Ok((

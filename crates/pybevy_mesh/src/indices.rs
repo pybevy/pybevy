@@ -1,6 +1,60 @@
 use bevy::mesh::Indices;
 use numpy::PyReadonlyArray1;
-use pyo3::{exceptions::PyTypeError, prelude::*, types::PyAny};
+use pybevy_array::{ArrayDType, PyArray, owned_contiguous_le_bytes};
+use pyo3::{
+    exceptions::PyTypeError,
+    prelude::*,
+    types::{PyAny, PyList, PyTuple},
+};
+
+pub(crate) fn extract_indices(obj: &Bound<'_, PyAny>, error_message: &str) -> PyResult<Indices> {
+    if let Ok(indices) = obj.extract::<PyRef<PyIndices>>() {
+        return Ok(indices.inner.clone());
+    }
+    if let Ok(array) = obj.extract::<PyRef<PyArray>>() {
+        let (dtype, shape, bytes) = owned_contiguous_le_bytes(&array)?;
+        if shape.len() != 1 {
+            return Err(PyTypeError::new_err(error_message.to_owned()));
+        }
+        return match dtype {
+            ArrayDType::Uint16 => Ok(Indices::U16(
+                bytes
+                    .chunks_exact(2)
+                    .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+                    .collect(),
+            )),
+            ArrayDType::Uint32 => Ok(Indices::U32(
+                bytes
+                    .chunks_exact(4)
+                    .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                    .collect(),
+            )),
+            _ => Err(PyTypeError::new_err(error_message.to_owned())),
+        };
+    }
+    if obj.is_instance_of::<PyList>() || obj.is_instance_of::<PyTuple>() {
+        return obj
+            .extract::<Vec<u32>>()
+            .map(Indices::U32)
+            .map_err(|_| PyTypeError::new_err(error_message.to_owned()));
+    }
+    if obj.py().import("numpy").is_err() {
+        return Err(PyTypeError::new_err(error_message.to_owned()));
+    }
+    if let Ok(arr_u32) = obj.extract::<PyReadonlyArray1<u32>>() {
+        return Ok(Indices::U32(arr_u32.as_slice()?.to_vec()));
+    }
+    if let Ok(arr_u16) = obj.extract::<PyReadonlyArray1<u16>>() {
+        return Ok(Indices::U16(arr_u16.as_slice()?.to_vec()));
+    }
+    if let Ok(vec32) = obj.extract::<Vec<u32>>() {
+        return Ok(Indices::U32(vec32));
+    }
+    if let Ok(vec16) = obj.extract::<Vec<u16>>() {
+        return Ok(Indices::U16(vec16));
+    }
+    Err(PyTypeError::new_err(error_message.to_owned()))
+}
 
 /// Wraps bevy's `Indices` enum as a struct pyclass so `push` can mutate in
 /// place (pyo3 freezes enum pyclasses).
@@ -21,19 +75,10 @@ pub struct PyIndices {
 impl PyIndices {
     #[new]
     fn new(obj: &Bound<'_, PyAny>) -> PyResult<Self> {
-        let inner = if let Ok(arr_u32) = obj.extract::<PyReadonlyArray1<u32>>() {
-            Indices::U32(arr_u32.as_slice()?.to_vec())
-        } else if let Ok(arr_u16) = obj.extract::<PyReadonlyArray1<u16>>() {
-            Indices::U16(arr_u16.as_slice()?.to_vec())
-        } else if let Ok(vec32) = obj.extract::<Vec<u32>>() {
-            Indices::U32(vec32)
-        } else if let Ok(vec16) = obj.extract::<Vec<u16>>() {
-            Indices::U16(vec16)
-        } else {
-            return Err(PyTypeError::new_err(
-                "Indices(...) expects a NumPy array of dtype uint32/uint16 or a Python sequence of ints",
-            ));
-        };
+        let inner = extract_indices(
+            obj,
+            "Indices(...) expects a NumPy array of dtype uint32/uint16 or a Python sequence of ints",
+        )?;
         Ok(PyIndices { inner })
     }
 
