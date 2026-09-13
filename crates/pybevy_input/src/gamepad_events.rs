@@ -52,12 +52,12 @@ impl From<&GamepadButtonChangedEvent> for PyGamepadButtonChangedEvent {
 #[pymethods]
 impl PyGamepadButtonChangedEvent {
     #[new]
-    #[pyo3(signature = (button, value, *, state = PyButtonState::Released(), entity = None))]
+    #[pyo3(signature = (entity, button, state, value))]
     fn new(
-        button: PyGamepadButton,
-        value: f32,
-        state: PyButtonState,
         entity: Option<PyEntity>,
+        button: PyGamepadButton,
+        state: PyButtonState,
+        value: f32,
     ) -> PyClassInitializer<Self> {
         (
             PyGamepadButtonChangedEvent {
@@ -134,8 +134,8 @@ impl From<&GamepadAxisChangedEvent> for PyGamepadAxisChangedEvent {
 #[pymethods]
 impl PyGamepadAxisChangedEvent {
     #[new]
-    #[pyo3(signature = (axis, value, *, entity = None))]
-    fn new(axis: PyGamepadAxis, value: f32, entity: Option<PyEntity>) -> PyClassInitializer<Self> {
+    #[pyo3(signature = (entity, axis, value))]
+    fn new(entity: Option<PyEntity>, axis: PyGamepadAxis, value: f32) -> PyClassInitializer<Self> {
         (
             PyGamepadAxisChangedEvent {
                 entity: entity.unwrap_or(Entity::PLACEHOLDER.into()),
@@ -179,6 +179,7 @@ impl PyGamepadAxisChangedEvent {
 )]
 #[derive(Debug, Clone, PartialEq)]
 pub enum PyGamepadConnection {
+    #[pyo3(constructor = (*, name, vendor_id, product_id))]
     Connected {
         name: String,
         vendor_id: Option<u16>,
@@ -309,11 +310,11 @@ impl From<&GamepadButtonStateChangedEvent> for PyGamepadButtonStateChangedEvent 
 #[pymethods]
 impl PyGamepadButtonStateChangedEvent {
     #[new]
-    #[pyo3(signature = (button, state, *, entity = None))]
+    #[pyo3(signature = (entity, button, state))]
     fn new(
+        entity: Option<PyEntity>,
         button: PyGamepadButton,
         state: PyButtonState,
-        entity: Option<PyEntity>,
     ) -> PyClassInitializer<Self> {
         (
             PyGamepadButtonStateChangedEvent {
@@ -348,6 +349,3 @@ impl PyGamepadButtonStateChangedEvent {
         )
     }
 }
-
-// TODO: Review later. PyGamepadEvent remains in main crate (src/input/events.rs) as it uses
-// PyGamepad, which has ComponentStorage that can't easily implement Debug/Clone in feature crate.

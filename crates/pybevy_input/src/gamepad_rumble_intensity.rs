@@ -6,7 +6,7 @@ use pyo3::prelude::*;
     module = "pybevy.input",
     eq,
     frozen,
-    skip_from_py_object
+    from_py_object
 )]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyGamepadRumbleIntensity {
@@ -35,7 +35,7 @@ impl From<PyGamepadRumbleIntensity> for GamepadRumbleIntensity {
 #[pymethods]
 impl PyGamepadRumbleIntensity {
     #[new]
-    #[pyo3(signature = (strong_motor = 1.0, weak_motor = 1.0))]
+    #[pyo3(signature = (*, strong_motor = 1.0, weak_motor = 1.0))]
     fn new(strong_motor: f32, weak_motor: f32) -> Self {
         PyGamepadRumbleIntensity {
             strong_motor,

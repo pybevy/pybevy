@@ -56,6 +56,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<gamepad_input::PyGamepadInput>()?;
     m.add_class::<gamepad_rumble_intensity::PyGamepadRumbleIntensity>()?;
     m.add_class::<gamepad_rumble_request::PyGamepadRumbleRequest>()?;
+    gamepad_rumble_request::register_gamepad_rumble_request_variants(&m)?;
     m.add_class::<gamepad_settings::PyGamepadSettings>()?;
     m.add_class::<gamepad_settings::PyButtonSettings>()?;
     m.add_class::<gamepad_settings::PyAxisSettings>()?;

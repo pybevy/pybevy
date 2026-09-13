@@ -47,7 +47,7 @@ impl From<&MouseButtonInput> for PyMouseButtonInput {
 #[pymethods]
 impl PyMouseButtonInput {
     #[new]
-    #[pyo3(signature = (button, state, window=None))]
+    #[pyo3(signature = (*, button, state, window=None))]
     fn new(
         button: PyMouseButton,
         state: PyButtonState,
@@ -116,6 +116,7 @@ impl From<&MouseMotion> for PyMouseMotion {
 #[pymethods]
 impl PyMouseMotion {
     #[new]
+    #[pyo3(signature = (*, delta))]
     fn new(delta: PyVec2) -> PyClassInitializer<Self> {
         (PyMouseMotion { delta }, PyMessage).into()
     }
@@ -169,11 +170,11 @@ impl From<&MouseWheel> for PyMouseWheel {
 #[pymethods]
 impl PyMouseWheel {
     #[new]
-    #[pyo3(signature = (x, y, unit = PyMouseScrollUnit::Line, window=None))]
+    #[pyo3(signature = (*, unit = PyMouseScrollUnit::Line, x, y, window=None))]
     fn new(
+        unit: PyMouseScrollUnit,
         x: f32,
         y: f32,
-        unit: PyMouseScrollUnit,
         window: Option<PyEntity>,
     ) -> PyClassInitializer<Self> {
         (

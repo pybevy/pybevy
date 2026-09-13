@@ -123,8 +123,7 @@ impl PyTouches {
     }
 }
 
-/// Owned snapshot of touch data. Can't wrap Bevy's `Touch` directly because its fields are private
-/// with no public constructor.
+/// Owned touch snapshot returned by `Touches` accessors.
 #[pyclass(name = "Touch", module = "pybevy.input", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyTouch {
@@ -164,19 +163,6 @@ fn extract_force_value(force: ForceTouch) -> Option<f64> {
 
 #[pymethods]
 impl PyTouch {
-    #[new]
-    fn new(id: u64, position: PyVec2) -> Self {
-        PyTouch {
-            id,
-            start_position: position.clone(),
-            start_force: None,
-            previous_position: position.clone(),
-            previous_force: None,
-            position,
-            force: None,
-        }
-    }
-
     #[getter]
     fn id(&self) -> u64 {
         self.id
