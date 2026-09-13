@@ -133,6 +133,7 @@ pub struct CachedQuery {
 
     /// Whether this query was declared as `Single<T>` (enforces exactly one match).
     pub single_entity_enforced: bool,
+    pub optional_single: bool,
 }
 
 // SAFETY: CachedQuery mirrors the Send/Sync discipline of the old PyQueryIter: the
@@ -294,6 +295,7 @@ impl CachedQuery {
         }
 
         let single_entity_enforced = param.single_entity_enforced;
+        let optional_single = param.optional_single;
 
         Self {
             param,
@@ -303,6 +305,7 @@ impl CachedQuery {
             extract_fns,
             logical_type_map_component_id,
             single_entity_enforced,
+            optional_single,
         }
     }
 
@@ -1063,6 +1066,17 @@ impl PyQueryIter {
         }
     }
 
+    pub(crate) fn matching_count(&self) -> PyResult<usize> {
+        if self.cached().logical_type_map_component_id.is_none() {
+            self.runtime.count().map_err(query_runtime_error_to_py)
+        } else {
+            let materializer = PyQueryRowMaterializer { query: self };
+            self.runtime
+                .count_with::<Python<'_>, _>(&materializer)
+                .map_err(query_runtime_error_to_py)
+        }
+    }
+
     pub(crate) fn materialize_single(
         &self,
         py: Python,
@@ -1162,14 +1176,7 @@ impl PyQueryIter {
                 "Query length is unavailable while an iterator is pending",
             ));
         }
-        if self.cached().logical_type_map_component_id.is_none() {
-            self.runtime.count().map_err(query_runtime_error_to_py)
-        } else {
-            let materializer = PyQueryRowMaterializer { query: self };
-            self.runtime
-                .count_with::<Python<'_>, _>(&materializer)
-                .map_err(query_runtime_error_to_py)
-        }
+        self.matching_count()
     }
 
     /// Get exactly one entity from the query.

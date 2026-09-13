@@ -34,7 +34,7 @@ use crate::{
         component_type::PyComponentType,
         messages::{MessageType, PyMessageType},
         observer::EventType,
-        query::query_param::PyQueryParam,
+        query::{query_param::PyQueryParam, single::PySingle},
         resource_type::reject_state_type_as_resource,
         view::{view::PyView, view_param::PyViewParam},
     },
@@ -80,6 +80,60 @@ fn annotation_class<'py>(annotation: &Bound<'py, PyAny>) -> Option<Bound<'py, Py
         return None;
     }
     annotation.cast::<PyType>().ok().cloned()
+}
+
+fn unwrap_optional_param<'py>(
+    annotation: &Bound<'py, PyAny>,
+) -> PyResult<(bool, Bound<'py, PyAny>)> {
+    let py = annotation.py();
+    let union_type = py.import("types")?.getattr("UnionType")?;
+    let typing_union = py.import("typing")?.getattr("Union")?;
+    let is_union = annotation.get_type().is(&union_type)
+        || annotation
+            .getattr("__origin__")
+            .is_ok_and(|origin| origin.is(&typing_union));
+    if !is_union {
+        return Ok((false, annotation.clone()));
+    }
+    let Ok(args) = annotation.getattr("__args__") else {
+        return Ok((false, annotation.clone()));
+    };
+    let args = args.cast::<PyTuple>()?;
+    if args.len() != 2 {
+        return Ok((false, annotation.clone()));
+    }
+    let none_type = py.None().bind(py).get_type();
+    let first = args.get_item(0)?;
+    let second = args.get_item(1)?;
+    let inner = if first.is(&none_type) {
+        second
+    } else if second.is(&none_type) {
+        first
+    } else {
+        return Ok((false, annotation.clone()));
+    };
+    if let Ok(param) = inner.extract::<PyRef<'_, PyQueryParam>>() {
+        if param.single_entity_enforced {
+            return Ok((true, inner.clone()));
+        }
+    }
+    let Ok(origin) = inner.getattr("__origin__") else {
+        return Ok((false, annotation.clone()));
+    };
+    if origin.is(PySingle::type_object(py)) {
+        let param = unwrap_type_argument(&inner)?;
+        if param
+            .extract::<PyRef<'_, PyQueryParam>>()?
+            .single_entity_enforced
+        {
+            return Ok((true, param));
+        }
+    }
+    if origin.is(PyRes::type_object(py)) || origin.is(PyResMut::type_object(py)) {
+        Ok((true, inner))
+    } else {
+        Ok((false, annotation.clone()))
+    }
 }
 
 /// The public annotation spelling, otherwise the annotation's repr.
@@ -339,6 +393,8 @@ impl SystemFunction {
                 ));
             }
 
+            let (optional_resource, raw_annotation) = unwrap_optional_param(&raw_annotation)?;
+
             // Check if the raw annotation is a generic alias (e.g., Mut[Time], Res[Time], ResMut[Time])
             // by checking if it has __origin__ attribute
             let (wrapper, annotation) = if let Ok(origin) = raw_annotation.getattr("__origin__") {
@@ -398,7 +454,8 @@ impl SystemFunction {
             };
 
             let ty = if annotation.get_type().is(PyQueryParam::type_object(py)) {
-                let obj = annotation.extract::<PyQueryParam>()?;
+                let mut obj = annotation.extract::<PyQueryParam>()?;
+                obj.optional_single = optional_resource;
                 // For Query, mutability is determined by the component parameters (Mut[Component]),
                 // not by wrapping the entire Query parameter
                 SystemParamType::Query {
@@ -454,6 +511,7 @@ impl SystemFunction {
                     logical_type_id: asset_param.logical_type_id(),
                     logical_type_name: asset_param.logical_type_name().map(str::to_owned),
                     mutable: is_mutable,
+                    optional: optional_resource,
                 }
             } else if annotation.is(PyWorld::type_object(py)) {
                 SystemParamType::World
@@ -507,6 +565,7 @@ impl SystemFunction {
                     SystemParamType::Resource {
                         type_obj: type_obj.clone().unbind(),
                         mutable: is_mutable,
+                        optional: optional_resource,
                     }
                 } else {
                     // Bare resources are not allowed - must use Res[T] or ResMut[T]
@@ -572,6 +631,7 @@ pub enum SystemParamType {
     Resource {
         type_obj: Py<PyType>,
         mutable: bool,
+        optional: bool,
     },
     Assets {
         type_ptr: AssetTypePtr,
@@ -580,6 +640,7 @@ pub enum SystemParamType {
         logical_type_id: Option<LogicalTypeId>,
         logical_type_name: Option<String>,
         mutable: bool,
+        optional: bool,
     },
     World,
     Commands,
@@ -612,9 +673,14 @@ impl Clone for SystemParamType {
                 param: Arc::clone(param),
             },
             SystemParamType::Local(l) => SystemParamType::Local(l.clone_ref(py)),
-            SystemParamType::Resource { type_obj, mutable } => SystemParamType::Resource {
+            SystemParamType::Resource {
+                type_obj,
+                mutable,
+                optional,
+            } => SystemParamType::Resource {
                 type_obj: type_obj.clone_ref(py),
                 mutable: *mutable,
+                optional: *optional,
             },
             SystemParamType::Assets {
                 type_ptr: ptr,
@@ -622,12 +688,14 @@ impl Clone for SystemParamType {
                 logical_type_id,
                 logical_type_name,
                 mutable,
+                optional,
             } => SystemParamType::Assets {
                 type_ptr: *ptr,
                 wrapper_class: wrapper_class.as_ref().map(|class| class.clone_ref(py)),
                 logical_type_id: *logical_type_id,
                 logical_type_name: logical_type_name.clone(),
                 mutable: *mutable,
+                optional: *optional,
             },
             SystemParamType::World => SystemParamType::World,
             SystemParamType::Commands => SystemParamType::Commands,

@@ -58,6 +58,7 @@ fn component_key(component: PyComponentType) -> usize {
 struct MainLifecycleAdapter<'a> {
     world: &'a mut World,
     insert: Option<StructuralInsert<'a>>,
+    despawn_result: Option<(Entity, bool)>,
 }
 
 impl MainLifecycleAdapter<'_> {
@@ -182,7 +183,12 @@ impl LifecycleMutationAdapter for MainLifecycleAdapter<'_> {
         // A lifecycle callback can parent a resource entity under this root
         // after the boundary check, so detach any before Bevy's cascade runs.
         detach_resource_descendants(self.world, entity);
-        self.world.despawn(entity);
+        let result = self.world.despawn(entity);
+        if let Some((root, despawned)) = &mut self.despawn_result
+            && *root == entity
+        {
+            *despawned |= result;
+        }
     }
 
     fn cleanup_despawned_entity(&mut self, entity: Entity) {
@@ -235,6 +241,7 @@ pub(crate) fn insert_many_with(
         &mut MainLifecycleAdapter {
             world,
             insert: Some(Box::new(insert)),
+            despawn_result: None,
         },
         entity,
         components,
@@ -250,6 +257,7 @@ pub(crate) fn remove(
         &mut MainLifecycleAdapter {
             world,
             insert: None,
+            despawn_result: None,
         },
         entity,
         component,
@@ -265,6 +273,7 @@ pub(crate) fn finish_new_bundle(
         &mut MainLifecycleAdapter {
             world,
             insert: None,
+            despawn_result: None,
         },
         entity,
         components,
@@ -273,7 +282,7 @@ pub(crate) fn finish_new_bundle(
 
 /// Snapshot the complete relationship cascade before any Python callback, then
 /// dispatch/clean every member before Bevy may structurally cascade the root.
-pub(crate) fn despawn_recursive(world: &mut World, root: Entity) -> LifecycleMutationOutcome {
+pub(crate) fn despawn_recursive(world: &mut World, root: Entity) -> bool {
     let mut pending = vec![root];
     let mut seen = HashSet::new();
     let mut snapshots = Vec::new();
@@ -300,11 +309,13 @@ pub(crate) fn despawn_recursive(world: &mut World, root: Entity) -> LifecycleMut
     if snapshots.is_empty() && !is_resource_entity(world, root) {
         snapshots.push(RecursiveDespawnSnapshot::new(root, Vec::new()));
     }
-    LifecycleMutationCore.despawn_recursive(
-        &mut MainLifecycleAdapter {
-            world,
-            insert: None,
-        },
-        &snapshots,
-    )
+    let mut adapter = MainLifecycleAdapter {
+        world,
+        insert: None,
+        despawn_result: Some((root, false)),
+    };
+    LifecycleMutationCore.despawn_recursive(&mut adapter, &snapshots);
+    adapter
+        .despawn_result
+        .is_some_and(|(_, despawned)| despawned)
 }

@@ -380,6 +380,7 @@ pub(crate) fn construct_query_class_item_with_options(
         filters,
         single,
         single_entity_enforced,
+        optional_single: false,
     }
     .into_py_any(py)
 }

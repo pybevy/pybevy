@@ -9,7 +9,11 @@ use std::{
 };
 
 use bevy::{
-    ecs::{component::ComponentId, system::SystemParamValidationError, world::World},
+    ecs::{
+        component::ComponentId,
+        system::SystemParamValidationError,
+        world::{World, unsafe_world_cell::UnsafeWorldCell},
+    },
     prelude::{Commands, Resource},
 };
 use pybevy_core::public_error::{
@@ -28,6 +32,7 @@ use pybevy_ecs::shared::{
         ConditionRejection, build_declared_access, condition_param_rejection,
         condition_rejection_message, conflict_error_message, to_param_accesses,
     },
+    run_ticks::RunTicks,
     system_runtime::{
         CallMetadata, CallOutcome, CallablePreflight, DynamicConditionCore, DynamicSystemCore,
         ErrorReport, InitializedRunState, InterpreterCallContext, InterpreterFailure,
@@ -52,9 +57,10 @@ use super::{
         print_reported_system_error_once, resource_marker_validation_identity,
         resource_validation_identity, validate_pipe_target_params, validate_system_params,
     },
+    helpers::validity_guard::ValidityFlag,
     messages::{CursorStorage, MessageType},
     observer::PyOn,
-    query::query_runtime::CachedQuery,
+    query::query_runtime::{CachedQuery, PyQueryIter},
     system::{SystemFunction, SystemParam, SystemParamType},
     view::cached_view::CachedPyView,
 };
@@ -717,6 +723,44 @@ unsafe impl SystemInterpreter for MainInterpreter {
         // snapshot while attached, never on an arbitrary scheduler thread.
         Python::attach(|_| drop(params));
         initialized
+    }
+
+    unsafe fn scheduled_params_ready(
+        &self,
+        state: &Self::ScheduledRunState,
+        world: UnsafeWorldCell<'_>,
+        ticks: RunTicks,
+        validity: &ValidityFlag,
+    ) -> Result<bool, SystemParamValidationError> {
+        for cached in &state.query_caches {
+            if !cached.single_entity_enforced || cached.optional_single {
+                continue;
+            }
+            // SAFETY: the runtime owns these caches and supplies their
+            // declared cell access and live validity window.
+            // PERF: first Single access rechecks cardinality with a new runtime; QueryState stays cached.
+            let query = unsafe {
+                PyQueryIter::new(
+                    cached,
+                    world,
+                    validity.clone(),
+                    ticks.last_run,
+                    ticks.this_run,
+                )
+            };
+            let count = query.matching_count().map_err(|error| {
+                SystemParamValidationError::new::<MainDynamicSystem>(
+                    false,
+                    error.to_string(),
+                    "Single",
+                )
+            })?;
+            drop(query);
+            if count != 1 {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     fn validate_condition(&self, plan: &Self::ParamPlan) -> Result<(), String> {

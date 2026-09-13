@@ -108,3 +108,14 @@ Prefer `Res[T]` and `ResMut[T]` for ordinary singleton access. They share the
 same scheduler access as resource queries, so `Res[T]` correctly conflicts
 with `Query[Mut[T]]` unless the query excludes resource entities with
 `Without[IsResource]`.
+
+`Single[T]` skips its system before the body runs unless exactly one entity
+matches. This is checked on each run, including when the body never accesses
+the parameter. `Query.single()` is an explicit lookup inside a running system
+and raises `RuntimeError` for zero or multiple matches.
+
+Use `Optional[Single[T]]` with `from typing import Optional`, matching Bevy's
+`Option<Single<...>>`. The system runs with `None` for zero or multiple matches;
+exactly one match supplies the ordinary validity-bound Single wrapper. Tuple
+data, filters, and `Mut` declare the same scheduler access as a required Single.
+The equivalent `Single[T] | None` spelling is also supported.

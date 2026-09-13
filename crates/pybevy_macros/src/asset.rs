@@ -304,6 +304,10 @@ pub(crate) fn generate_asset_bridge_tokens(
                 #asset_name
             }
 
+            fn assets_type_id(&self) -> std::any::TypeId {
+                std::any::TypeId::of::<bevy::asset::Assets<#bevy_type>>()
+            }
+
             fn resource_id(&self, world: &bevy::ecs::world::World) -> Option<bevy::ecs::component::ComponentId> {
                 world.components().component_id::<bevy::asset::Assets<#bevy_type>>()
             }

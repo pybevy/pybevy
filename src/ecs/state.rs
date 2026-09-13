@@ -1096,9 +1096,9 @@ pub fn in_state(py: Python, state: Py<PyAny>) -> PyResult<Py<PyAny>> {
         r#"
 def _make_in_state_condition(target):
     """Factory that creates a condition checking for a specific state."""
-    def in_state_condition(current: Res[State[StateType]]) -> bool:
+    def in_state_condition(current: Res[State[StateType]] | None) -> bool:
         """Check if current State matches the target state."""
-        return current.get() == target
+        return current is not None and current.get() == target
     # Set a meaningful name for debugging
     in_state_condition.__name__ = f"in_state({target})"
     return in_state_condition

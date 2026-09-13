@@ -194,3 +194,9 @@ landed synchronously.
 
 - Bare `State` / `NextState` resource parameters require exactly one registered state machine
 - State transitions are deferred (apply between frames), not immediate
+
+`in_state(Mode.VALUE)` returns false when `State[Mode]` is absent, including
+after resource removal. Use `Optional[Res[T]]` or `Optional[ResMut[T]]`
+with `from typing import Optional`, mirroring Bevy's `Option<...>`.
+This includes `Optional[Res[Assets[T]]]`: an absent resource supplies `None`,
+while an empty collection still supplies a resource. `T | None` also works.

@@ -387,6 +387,20 @@ pub unsafe trait SystemInterpreter: Send + Sync + 'static {
 
     fn validate_condition(&self, params: &Self::ParamPlan) -> Result<(), String>;
 
+    /// Check dynamic parameter admission before any interpreter code runs.
+    ///
+    /// # Safety
+    /// The cell must have this system's declared access and match its caches.
+    unsafe fn scheduled_params_ready(
+        &self,
+        _state: &Self::ScheduledRunState,
+        _world: UnsafeWorldCell<'_>,
+        _ticks: RunTicks,
+        _validity: &ValidityFlag,
+    ) -> Result<bool, SystemParamValidationError> {
+        Ok(true)
+    }
+
     fn resolve_callable(
         &self,
         retained: &SystemHandle<Self>,
@@ -700,6 +714,28 @@ where
             && expected != current
         {
             return Ok(O::skipped());
+        }
+
+        {
+            let validity = ValidityFlag::new();
+            let _guard = ValidityGuard::for_world(validity.clone(), world.id());
+            let ticks = RunTicks {
+                last_run: self.last_run,
+                this_run: world.change_tick(),
+            };
+            // SAFETY: the scheduler enforces this system's declared access;
+            // initialization tied its caches to this World.
+            let ready = unsafe {
+                self.interpreter.scheduled_params_ready(
+                    self.state.as_ref().expect("System must be initialized"),
+                    world,
+                    ticks,
+                    &validity,
+                )
+            }?;
+            if !ready {
+                return Ok(O::skipped());
+            }
         }
 
         let prepared = match self

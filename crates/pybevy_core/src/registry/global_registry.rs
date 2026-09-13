@@ -961,6 +961,10 @@ mod tests {
             unreachable!()
         }
 
+        fn take(&self, _world: &mut World, _py: Python) -> PyResult<Option<Py<PyAny>>> {
+            unreachable!("identity-only fake bridge")
+        }
+
         fn remove(&self, _world: &mut World) {}
 
         fn contains_in_world(&self, _world: &World) -> bool {
@@ -1177,6 +1181,10 @@ mod tests {
 
         fn name(&self) -> &'static str {
             self.name
+        }
+
+        fn assets_type_id(&self) -> TypeId {
+            unreachable!("asset resource identity is not exercised by this fake bridge")
         }
 
         fn resource_id(&self, _world: &World) -> Option<ComponentId> {
