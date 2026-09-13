@@ -138,9 +138,10 @@ class Transform(Component):
 
     def __init__(
         self,
+        *,
         translation: Vec3 = Vec3.ZERO,
         rotation: Quat = Quat.IDENTITY,
-        scale: Vec3 = Vec3.ONE,
+        scale: Vec3 = Vec3.ONE
     ) -> None: ...
     IDENTITY: ClassVar[Transform]
     """Returns a new identity Transform (no translation, identity rotation, unit scale)."""

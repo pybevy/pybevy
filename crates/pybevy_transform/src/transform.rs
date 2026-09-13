@@ -31,8 +31,7 @@ impl PartialEq for PyTransform {
     }
 }
 
-// Bevy's look_at/look_to/align take `impl TryInto<Dir3>` and fall back to a
-// default axis on failed conversion; mirror that instead of raising.
+// Mirror Bevy: a failed TryInto<Dir3> falls back to the default axis instead of raising.
 fn extract_dir3_with_fallback(
     obj: &Bound<'_, PyAny>,
     fallback: Dir3,
@@ -73,7 +72,7 @@ pub(crate) fn format_transform_repr(
 #[pymethods]
 impl PyTransform {
     #[new]
-    #[pyo3(signature = (translation = PyVec3::ZERO, rotation = PyQuat::IDENTITY, scale = PyVec3::ONE))]
+    #[pyo3(signature = (*, translation = PyVec3::ZERO, rotation = PyQuat::IDENTITY, scale = PyVec3::ONE))]
     pub fn new(
         translation: PyVec3,
         rotation: PyQuat,
@@ -380,10 +379,7 @@ impl PyTransform {
     }
 
     pub fn transform_point(&self, point: &PyVec3) -> PyResult<PyVec3> {
-        Ok(self
-            .as_ref()?
-            .transform_point(point.try_into()?)
-            .try_into()?)
+        Ok(self.as_ref()?.transform_point(point.try_into()?).into())
     }
 
     pub fn is_finite(&self) -> PyResult<bool> {

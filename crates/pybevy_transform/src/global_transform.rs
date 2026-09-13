@@ -75,10 +75,7 @@ impl PyGlobalTransform {
     }
 
     pub fn transform_point(&self, point: PyVec3) -> PyResult<PyVec3> {
-        Ok(self
-            .as_ref()?
-            .transform_point(point.try_into()?)
-            .try_into()?)
+        Ok(self.as_ref()?.transform_point(point.try_into()?).into())
     }
 
     pub fn reparented_to(
