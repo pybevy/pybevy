@@ -25,7 +25,7 @@ pub enum PySpriteImageMode {
         #[py_type(PyTextureSlicer)]
         slicer: TextureSlicer,
     },
-    #[pyo3(constructor = (tile_x = true, tile_y = true, stretch_value = 1.0))]
+    #[pyo3(constructor = (*, tile_x = true, tile_y = true, stretch_value = 1.0))]
     Tiled {
         tile_x: bool,
         tile_y: bool,
@@ -41,7 +41,7 @@ impl PySpriteImageMode {
 
     pub fn scale(&self) -> Option<PySpriteScalingMode> {
         match self {
-            Self::Scale { mode } => Some((*mode)),
+            Self::Scale { mode } => Some(*mode),
             _ => None,
         }
     }
@@ -50,7 +50,7 @@ impl PySpriteImageMode {
         match self {
             Self::Auto() => "SpriteImageMode.Auto()".to_string(),
             Self::Scale { mode } => {
-                let mode: PySpriteScalingMode = (*mode);
+                let mode: PySpriteScalingMode = *mode;
                 format!("SpriteImageMode.Scale(mode={mode:?})")
             }
             Self::Sliced { slicer } => {

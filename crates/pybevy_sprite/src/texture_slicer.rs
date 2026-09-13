@@ -15,51 +15,23 @@ pub struct PyTextureSlicer {
 #[pymethods]
 impl PyTextureSlicer {
     #[new]
-    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
+        *,
         border = PyBorderRect::from_owned(BorderRect::ZERO),
-        center_tile = false,
-        center_stretch_value = 1.0,
-        sides_tile = false,
-        sides_stretch_value = 1.0,
-        max_corner_scale = 1.0,
         center_scale_mode = None,
-        sides_scale_mode = None
+        sides_scale_mode = None,
+        max_corner_scale = 1.0,
     ))]
     pub fn new(
         border: PyBorderRect,
-        center_tile: bool,
-        center_stretch_value: f32,
-        sides_tile: bool,
-        sides_stretch_value: f32,
-        max_corner_scale: f32,
         center_scale_mode: Option<PySliceScaleMode>,
         sides_scale_mode: Option<PySliceScaleMode>,
+        max_corner_scale: f32,
     ) -> PyResult<Self> {
-        let center_scale_mode = if let Some(mode) = center_scale_mode {
-            mode.into()
-        } else if center_tile {
-            SliceScaleMode::Tile {
-                stretch_value: center_stretch_value,
-            }
-        } else {
-            SliceScaleMode::Stretch
-        };
-
-        let sides_scale_mode = if let Some(mode) = sides_scale_mode {
-            mode.into()
-        } else if sides_tile {
-            SliceScaleMode::Tile {
-                stretch_value: sides_stretch_value,
-            }
-        } else {
-            SliceScaleMode::Stretch
-        };
-
         Ok(Self {
             border: border.try_into()?,
-            center_scale_mode,
-            sides_scale_mode,
+            center_scale_mode: center_scale_mode.map_or(SliceScaleMode::Stretch, Into::into),
+            sides_scale_mode: sides_scale_mode.map_or(SliceScaleMode::Stretch, Into::into),
             max_corner_scale,
         })
     }
