@@ -89,8 +89,8 @@ def setup(
 
     node = Node()
     node.position_type = PositionType.Absolute
-    node.top = Val.px(12.0)
-    node.left = Val.px(12.0)
+    node.top = Val.Px(12.0)
+    node.left = Val.Px(12.0)
     commands.spawn(
         Text(CONTROLS_TEXT.format(0.6)),
         TextFont(font_size=18.0),
@@ -122,7 +122,7 @@ def adjust_roughness(
         1.0, max(0.0, material.perceptual_roughness + delta)
     )
     for text in text_query:
-        text.content = CONTROLS_TEXT.format(material.perceptual_roughness)
+        text.text = CONTROLS_TEXT.format(material.perceptual_roughness)
 
 
 def toggle_gizmos(

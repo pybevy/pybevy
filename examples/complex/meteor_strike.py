@@ -431,9 +431,9 @@ def setup(
     # Status text (UI overlay)
     root_node = Node()
     root_node.position_type = PositionType.Absolute
-    root_node.width = Val.px(800.0)
-    root_node.top = Val.px(40.0)
-    root_node.left = Val.px(400.0)
+    root_node.width = Val.Px(800.0)
+    root_node.top = Val.Px(40.0)
+    root_node.left = Val.Px(400.0)
     root_node.justify_content = JustifyContent.Center
     commands.spawn(
         StatusText(),
@@ -474,10 +474,10 @@ def poll_build(
         return
     if sim.apply_build():
         for text in status_query:
-            text.content = "Press P to launch!"
+            text.text = "Press P to launch!"
     else:
         for text in status_query:
-            text.content = "Build failed!"
+            text.text = "Build failed!"
 
 
 def handle_input(
@@ -495,13 +495,13 @@ def handle_input(
         sim.slowmo_phase = "none"
         sim.rampup_elapsed = 0.0
         for text in status_query:
-            text.content = ""
+            text.text = ""
         print("Meteor launched!")
 
     elif sim.state == STATE_RUNNING:
         sim.start_rebuild()
         for text in status_query:
-            text.content = "Rebuilding..."
+            text.text = "Rebuilding..."
         print("Rebuilding physics...")
 
 

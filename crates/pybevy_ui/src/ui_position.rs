@@ -40,55 +40,55 @@ impl PyUiPosition {
     }
 
     #[staticmethod]
-    #[pyo3(signature = (x=PyVal::new(), y=PyVal::new()))]
+    #[pyo3(signature = (x=PyVal::default(), y=PyVal::default()))]
     pub fn center(x: PyVal, y: PyVal) -> Self {
         UiPosition::center(x.into(), y.into()).into()
     }
 
     #[staticmethod]
-    #[pyo3(signature = (x=PyVal::new(), y=PyVal::new()))]
+    #[pyo3(signature = (x=PyVal::default(), y=PyVal::default()))]
     pub fn top(x: PyVal, y: PyVal) -> Self {
         UiPosition::top(x.into(), y.into()).into()
     }
 
     #[staticmethod]
-    #[pyo3(signature = (x=PyVal::new(), y=PyVal::new()))]
+    #[pyo3(signature = (x=PyVal::default(), y=PyVal::default()))]
     pub fn bottom(x: PyVal, y: PyVal) -> Self {
         UiPosition::bottom(x.into(), y.into()).into()
     }
 
     #[staticmethod]
-    #[pyo3(signature = (x=PyVal::new(), y=PyVal::new()))]
+    #[pyo3(signature = (x=PyVal::default(), y=PyVal::default()))]
     pub fn left(x: PyVal, y: PyVal) -> Self {
         UiPosition::left(x.into(), y.into()).into()
     }
 
     #[staticmethod]
-    #[pyo3(signature = (x=PyVal::new(), y=PyVal::new()))]
+    #[pyo3(signature = (x=PyVal::default(), y=PyVal::default()))]
     pub fn right(x: PyVal, y: PyVal) -> Self {
         UiPosition::right(x.into(), y.into()).into()
     }
 
     #[staticmethod]
-    #[pyo3(signature = (x=PyVal::new(), y=PyVal::new()))]
+    #[pyo3(signature = (x=PyVal::default(), y=PyVal::default()))]
     pub fn top_left(x: PyVal, y: PyVal) -> Self {
         UiPosition::top_left(x.into(), y.into()).into()
     }
 
     #[staticmethod]
-    #[pyo3(signature = (x=PyVal::new(), y=PyVal::new()))]
+    #[pyo3(signature = (x=PyVal::default(), y=PyVal::default()))]
     pub fn top_right(x: PyVal, y: PyVal) -> Self {
         UiPosition::top_right(x.into(), y.into()).into()
     }
 
     #[staticmethod]
-    #[pyo3(signature = (x=PyVal::new(), y=PyVal::new()))]
+    #[pyo3(signature = (x=PyVal::default(), y=PyVal::default()))]
     pub fn bottom_left(x: PyVal, y: PyVal) -> Self {
         UiPosition::bottom_left(x.into(), y.into()).into()
     }
 
     #[staticmethod]
-    #[pyo3(signature = (x=PyVal::new(), y=PyVal::new()))]
+    #[pyo3(signature = (x=PyVal::default(), y=PyVal::default()))]
     pub fn bottom_right(x: PyVal, y: PyVal) -> Self {
         UiPosition::bottom_right(x.into(), y.into()).into()
     }

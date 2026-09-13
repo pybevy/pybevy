@@ -194,7 +194,7 @@ def update_hud(
     score: Res[GameScore],
 ) -> None:
     for text in query:
-        text.content = f"GEMS: {score.gems} / {score.total}"
+        text.text = f"GEMS: {score.gems} / {score.total}"
 ```
 
 ## Setup & Registration

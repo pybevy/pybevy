@@ -3,6 +3,23 @@
 Use `Node` for layout, then add visual components to the same entity. UI text
 and gradients have dedicated `ui-text` and `ui-gradients` guides.
 
+## Units
+
+Use `px(value)`, `percent(value)`, `vw(value)`, `vh(value)`, `vmin(value)` and
+`vmax(value)` from `pybevy.ui`, or construct exact variants such as
+`Val.Px(12.0)` and `Val.Auto()`. Payloads are read-only; replace the whole Node
+field to change its value. Read numeric payloads with `.value` after matching
+the variant; use `isinstance(value, Val.Auto)` or `value == Val.Auto()` for Auto.
+Bare numeric Node fields mean pixels.
+
+Scalar multiplication, division and negation preserve the unit. `try_add` and
+`try_sub` return a value for matching numeric units and raise `ValueError` for
+incompatible units, including two `Auto` values. Zero values from different
+units compare equal in Bevy but still have incompatible arithmetic units.
+Unit inputs and arithmetic follow Bevy float behavior, including infinities and
+NaNs; zero division produces float infinity/NaN, and scalar arithmetic preserves
+`Auto`.
+
 ## Borders, Outlines, and Shadows
 
 `Node.border` reserves layout space. `BorderColor` colors that border.
@@ -27,9 +44,9 @@ from pybevy.ui import (
 
 def setup(commands: Commands) -> None:
     panel = Node(
-        width=Val.px(320.0),
-        height=Val.px(180.0),
-        border=UiRect.all(Val.px(2.0)),
+        width=Val.Px(320.0),
+        height=Val.Px(180.0),
+        border=UiRect.all(Val.Px(2.0)),
     )
 
     commands.spawn(
@@ -37,22 +54,24 @@ def setup(commands: Commands) -> None:
         BackgroundColor(Color.srgb(0.08, 0.10, 0.15)),
         BorderColor.all(Color.srgb(0.25, 0.55, 1.0)),
         Outline(
-            Val.px(1.0),
-            Val.px(3.0),
+            Val.Px(1.0),
+            Val.Px(3.0),
             Color.srgba(0.4, 0.7, 1.0, 0.7),
         ),
         BoxShadow.single(
             Color.srgba(0.0, 0.0, 0.0, 0.45),
-            Val.px(6.0),
-            Val.px(8.0),
-            Val.px(0.0),
-            Val.px(12.0),
+            Val.Px(6.0),
+            Val.Px(8.0),
+            Val.Px(0.0),
+            Val.Px(12.0),
         ),
     )
 ```
 
 Use `BorderColor(top=..., right=..., bottom=..., left=...)` when sides need
-different colors. Use `BoxShadow([ShadowStyle(color=color), ...])` for layered shadows.
+different colors. `border.set_all(color)` mutates all sides and returns that same
+border; a queried border still requires `Mut[BorderColor]` and expires with its system.
+Use `BoxShadow([ShadowStyle(color=color), ...])` for layered shadows.
 
 ## Layering
 

@@ -141,6 +141,12 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<angular_color_stop::PyAngularColorStop>()?;
     m.add_class::<grid_track::PyGridTrack>()?;
     m.add_class::<val::PyVal>()?;
+    m.add_function(wrap_pyfunction!(val::py_px, &m)?)?;
+    m.add_function(wrap_pyfunction!(val::py_percent, &m)?)?;
+    m.add_function(wrap_pyfunction!(val::py_vw, &m)?)?;
+    m.add_function(wrap_pyfunction!(val::py_vh, &m)?)?;
+    m.add_function(wrap_pyfunction!(val::py_vmin, &m)?)?;
+    m.add_function(wrap_pyfunction!(val::py_vmax, &m)?)?;
     m.add_class::<ui_rect::PyUiRect>()?;
     m.add_class::<val2::PyVal2>()?;
     m.add_class::<radial_gradient::PyRadialGradient>()?;

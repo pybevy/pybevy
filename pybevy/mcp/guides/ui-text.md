@@ -99,7 +99,7 @@ commands.spawn(
 )
 ```
 
-**Node position properties:** `top`, `bottom`, `left`, `right`. Set as `float` for pixel values (auto-converted to `Val.px`), or use `Val.px(50.0)` / `Val.percent(50.0)` explicitly.
+**Node position properties:** `top`, `bottom`, `left`, `right`. Set as `float` for pixel values (auto-converted to `Val.Px`), or use `Val.Px(50.0)` / `Val.Percent(50.0)` explicitly.
 
 ### Centered Subtitles
 
@@ -137,7 +137,10 @@ commands.spawn(
 
 ## Updating Text at Runtime
 
-The `Text` component has a `.content` property you can mutate in systems:
+The `Text` component has a `.text` property you can mutate in systems, just like
+`Text2d` and `TextSpan`. Construct it with `Text("Hello")` or `Text(text="Hello")`.
+
+For example:
 
 ```python
 @component
@@ -159,7 +162,7 @@ def update_score_display(
     score: Res[GameScore],
 ):
     for text in query:
-        text.content = f"Score: {score.value}"
+        text.text = f"Score: {score.value}"
 ```
 
 ## Text Input (EditableText)
@@ -237,13 +240,13 @@ region.
 | Property | Type | Description |
 |----------|------|-------------|
 | `position_type` | `PositionType` | `.Relative` (flow) or `.Absolute` |
-| `top`, `bottom`, `left`, `right` | `float` or `Val` | Offset (float = pixels, or `Val.px()` / `Val.percent()`) |
-| `width`, `height` | `float` or `Val` | Size (float = pixels, or `Val.px()` / `Val.percent()`) |
+| `top`, `bottom`, `left`, `right` | `float` or `Val` | Offset (float = pixels, or `Val.Px()` / `Val.Percent()`) |
+| `width`, `height` | `float` or `Val` | Size (float = pixels, or `Val.Px()` / `Val.Percent()`) |
 | `flex_direction` | `FlexDirection` | `.Row`, `.Column`, `.RowReverse`, `.ColumnReverse` |
 | `justify_content` | `JustifyContent` | `.Start`, `.Center`, `.End`, `.SpaceBetween` |
 | `align_items` | `AlignItems` | `.Start`, `.Center`, `.End`, `.Stretch` |
 
-For percentage-based values, use `Val.percent(50.0)` on properties that accept `Val`.
+For percentage-based values, use `Val.Percent(50.0)` on properties that accept `Val`.
 
 ## Complete HUD Example
 

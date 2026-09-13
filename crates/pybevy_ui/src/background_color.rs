@@ -1,5 +1,5 @@
 use bevy::{color::Color, ui::BackgroundColor};
-use pybevy_color::color::PyColor;
+use pybevy_color::color::{IntoColorValue, PyColor};
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
@@ -15,11 +15,8 @@ pub struct PyBackgroundColor {
 impl PyBackgroundColor {
     #[new]
     #[pyo3(signature = (color = None))]
-    pub fn new(color: Option<PyColor>) -> PyResult<PyClassInitializer<Self>> {
-        let color = color
-            .map(Color::try_from)
-            .transpose()?
-            .unwrap_or(Color::NONE);
+    pub fn new(color: Option<IntoColorValue>) -> PyResult<PyClassInitializer<Self>> {
+        let color = color.map(|color| color.0).unwrap_or(Color::NONE);
         Ok(Self::from_owned(BackgroundColor(color)).into())
     }
 

@@ -1135,11 +1135,6 @@ reason = "Bevy 0.19.1 bevy_ui::RadialGradient::new defines the established Pytho
 function = "new"
 reason = "Bevy 0.19.1 bevy_ui::Outline::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.ui.PyText"]
-function = "new"
-parameter_renames = { text = "content" }
-reason = "Bevy 0.19.1 bevy_ui::Text::new defines the established Python content input"
-
 [bevy.constructor_functions."pybevy.input.PyGamepadButtonChangedEvent"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_input::gamepad::GamepadButtonChangedEvent::new defines the established Python constructor inputs"
@@ -2043,7 +2038,7 @@ intentional_extra_methods = ["_content_hash"]
 intentional_readonly_properties = ["dimension", "format", "mip_level_count"]
 intentional_signature_diffs = [
     { name = "aspect_ratio", expected_return = "f32" },
-    { name = "convert", expected_return = "Option" },
+    { name = "convert", expected_return = "Option<Py<PyImage>>" },
     { name = "pixel_bytes_mut", expected_return = "ImagePixelContextMut" },
     { name = "reinterpret_size", expected_params = { "size" = "PyUVec2" } },
     { name = "resize_in_place", expected_params = { "size" = "PyUVec2" } },
@@ -2207,8 +2202,8 @@ intentional_signature_diffs = [
     "configure_sets",
     { name = "init_resource", expected_params = { "resource" = "PyAny" } },
     { name = "is_plugin_added", expected_params = { "plugin_type" = "PyType" } },
-    { name = "run", expected_return = "PyResult" },
-    { name = "should_exit", expected_return = "Option" },
+    { name = "run", expected_return = "PyResult<()>" },
+    { name = "should_exit", expected_return = "Option<Py<PyAny>>" },
     { name = "world", expected_params = { "callback" = "PyAny" } },
 ]
 notes = """
@@ -2513,7 +2508,6 @@ intentional_signature_diffs = [
     { name = "add_observer", expected_params = { "observer" = "PyAny" } },
     { name = "component_id", expected_params = { "component" = "PyAny" } },
     { name = "contains_resource", expected_params = { "resource" = "PyAny" } },
-    { name = "despawn", expected_return = "PyResult" },
     { name = "entity", expected_params = { "entity" = "PyEntity" } },
     { name = "get", expected_params = { "component_type" = "PyAny" } },
     { name = "get_mut", expected_params = { "component_type" = "PyAny" } },
@@ -2584,7 +2578,7 @@ notes = "point1/point2 renamed to min/max for clarity"
 [bevy.type_ignores.AnimationClip]
 intentional_signature_diffs = [
     { name = "curves", expected_return = "PyDict" },
-    { name = "curves_for_target", expected_return = "Vec" },
+    { name = "curves_for_target", expected_return = "Option<Vec<Py<PyVariableCurve>>>" },
 ]
 
 # AnimationGraph: Python keyword 'from' → 'from_', wrapper types, tuple returns

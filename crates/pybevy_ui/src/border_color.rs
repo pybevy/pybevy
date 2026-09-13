@@ -1,5 +1,5 @@
 use bevy::{color::Color, ui::BorderColor};
-use pybevy_color::color::PyColor;
+use pybevy_color::color::{IntoColorValue, PyColor};
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
@@ -16,16 +16,13 @@ impl PyBorderColor {
     #[new]
     #[pyo3(signature = (color=None, *, top=None, right=None, bottom=None, left=None))]
     pub fn new(
-        color: Option<PyColor>,
+        color: Option<IntoColorValue>,
         top: Option<PyColor>,
         right: Option<PyColor>,
         bottom: Option<PyColor>,
         left: Option<PyColor>,
     ) -> PyResult<PyClassInitializer<Self>> {
-        let base = color
-            .map(Color::try_from)
-            .transpose()?
-            .unwrap_or(Color::NONE);
+        let base = color.map(|color| color.0).unwrap_or(Color::NONE);
         let bc = BorderColor {
             top: top.map(Color::try_from).transpose()?.unwrap_or(base),
             right: right.map(Color::try_from).transpose()?.unwrap_or(base),
@@ -36,8 +33,8 @@ impl PyBorderColor {
     }
 
     #[staticmethod]
-    pub fn all(py: Python<'_>, color: PyColor) -> PyResult<Py<Self>> {
-        let color = Color::try_from(color)?;
+    pub fn all(py: Python<'_>, color: IntoColorValue) -> PyResult<Py<Self>> {
+        let color = color.0;
         Py::new(py, Self::from_owned(BorderColor::all(color)))
     }
 
@@ -89,10 +86,13 @@ impl PyBorderColor {
         Ok(())
     }
 
-    pub fn set_all(&mut self, color: PyColor) -> PyResult<()> {
-        let color = Color::try_from(color)?;
-        self.as_mut()?.set_all(color);
-        Ok(())
+    pub fn set_all(
+        mut slf: PyRefMut<'_, Self>,
+        color: IntoColorValue,
+    ) -> PyResult<PyRefMut<'_, Self>> {
+        let color = color.0;
+        slf.as_mut()?.set_all(color);
+        Ok(slf)
     }
 
     pub fn is_fully_transparent(&self) -> PyResult<bool> {

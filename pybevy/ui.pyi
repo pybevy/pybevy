@@ -10,151 +10,96 @@ from typing import ClassVar, Literal
 import numpy as np
 
 from pybevy.assets import Handle
-from pybevy.color import Color
+from pybevy.color import (
+    Color,
+    Hsla,
+    Hsva,
+    Hwba,
+    Laba,
+    Lcha,
+    LinearRgba,
+    Oklaba,
+    Oklcha,
+    Srgba,
+    Xyza,
+)
 from pybevy.ecs import Batchable, Component, Entity, Resource
 from pybevy.image import Image
 from pybevy.math import Rect, Rot2, Vec2
 from pybevy.sprite import TextureSlicer
 
 class Val:
-    """UI sizing value.
+    """An immutable UI unit value, with native Bevy float arithmetic.
 
-    Represents different ways to specify sizes in the UI system.
-    Supports pixels, percentages, auto-sizing, and viewport-relative units.
-    Numeric values must be finite. Negative values remain available for offsets
-    and other layout contexts where Bevy permits them.
-
-    Example:
-        ```python
-        from pybevy.ui import Val, Node
-
-        # Different ways to specify sizes
-        node = Node()
-        node.width = 100.0  # Simplified (treated as pixels)
-
-        # Or use Val explicitly for more control
-        width_px = Val.px(100.0)  # 100 pixels
-        width_percent = Val.percent(50.0)  # 50% of parent
-        width_auto = Val.auto()  # Auto-size based on content
-        width_vw = Val.vw(50.0)  # 50% of viewport width
-        ```
+    Construct a nested variant or use module px/percent/vw/vh/vmin/vmax helpers.
+    Nonfinite values follow Bevy behavior. Bare numeric Node fields mean pixels.
     """
 
-    def __init__(self) -> None: ...
+    class Auto(Val):
+        __match_args__: ClassVar[tuple[()]] = ()
+        def __init__(self) -> None: ...
 
-    @staticmethod
-    def px(value: float) -> Val:
-        """Create a pixel value.
+    class Px(Val):
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: float) -> None: ...
+        @property
+        def value(self) -> float: ...
 
-        Args:
-            value: Size in pixels
+    class Percent(Val):
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: float) -> None: ...
+        @property
+        def value(self) -> float: ...
 
-        Returns:
-            Val instance representing pixel size
-        """
+    class Vw(Val):
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: float) -> None: ...
+        @property
+        def value(self) -> float: ...
 
-    @staticmethod
-    def percent(value: float) -> Val:
-        """Create a percentage value.
+    class Vh(Val):
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: float) -> None: ...
+        @property
+        def value(self) -> float: ...
 
-        Args:
-            value: Percentage (0-100)
+    class VMin(Val):
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: float) -> None: ...
+        @property
+        def value(self) -> float: ...
 
-        Returns:
-            Val instance representing percentage of parent size
-        """
-
-    @staticmethod
-    def auto() -> Val:
-        """Create an auto value.
-
-        Auto-sizes based on content.
-
-        Returns:
-            Val instance for auto-sizing
-        """
-
-    @staticmethod
-    def vw(value: float) -> Val:
-        """Create a viewport width percentage value.
-
-        Args:
-            value: Percentage of viewport width (0-100)
-
-        Returns:
-            Val instance for viewport-relative width
-        """
-
-    @staticmethod
-    def vh(value: float) -> Val:
-        """Create a viewport height percentage value.
-
-        Args:
-            value: Percentage of viewport height (0-100)
-
-        Returns:
-            Val instance for viewport-relative height
-        """
-
-    @staticmethod
-    def vmin(value: float) -> Val:
-        """Create a viewport minimum dimension percentage value.
-
-        Args:
-            value: Percentage of smallest viewport dimension
-
-        Returns:
-            Val instance for min(viewport width, viewport height) percentage
-        """
-
-    @staticmethod
-    def vmax(value: float) -> Val:
-        """Create a viewport maximum dimension percentage value.
-
-        Args:
-            value: Percentage of largest viewport dimension
-
-        Returns:
-            Val instance for max(viewport width, viewport height) percentage
-        """
-
-    @property
-    def px_value(self) -> float | None:
-        """Get pixel value if this is a Px variant, None otherwise."""
-
-    @property
-    def percent_value(self) -> float | None:
-        """Get percentage value if this is a Percent variant, None otherwise."""
-
-    @property
-    def is_auto(self) -> bool:
-        """True if this is an Auto value."""
+    class VMax(Val):
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: float) -> None: ...
+        @property
+        def value(self) -> float: ...
 
     ZERO: ClassVar[Val]
-
-    def left(self) -> UiRect:
-        """Returns a UiRect with only left set to this value, others ZERO."""
-
-    def right(self) -> UiRect:
-        """Returns a UiRect with only right set to this value, others ZERO."""
-
-    def top(self) -> UiRect:
-        """Returns a UiRect with only top set to this value, others ZERO."""
-
-    def bottom(self) -> UiRect:
-        """Returns a UiRect with only bottom set to this value, others ZERO."""
-
-    def all(self) -> UiRect:
-        """Returns a UiRect with all sides set to this value."""
-
-    def horizontal(self) -> UiRect:
-        """Returns a UiRect with left and right set to this value, top/bottom ZERO."""
-
-    def vertical(self) -> UiRect:
-        """Returns a UiRect with top and bottom set to this value, left/right ZERO."""
-
+    DEFAULT: ClassVar[Val]
+    def left(self) -> UiRect: ...
+    def right(self) -> UiRect: ...
+    def top(self) -> UiRect: ...
+    def bottom(self) -> UiRect: ...
+    def all(self) -> UiRect: ...
+    def horizontal(self) -> UiRect: ...
+    def vertical(self) -> UiRect: ...
+    def try_add(self, val: Val) -> Val:
+        """Add same-unit values; incompatible units, including Auto, raise ValueError."""
+    def try_sub(self, val: Val) -> Val:
+        """Subtract same-unit values; incompatible units, including Auto, raise ValueError."""
+    def __mul__(self, rhs: float) -> Val: ...
+    def __truediv__(self, rhs: float) -> Val:
+        """Divide with Bevy float behavior, including infinities and NaNs at zero."""
+    def __neg__(self) -> Val: ...
     def __eq__(self, other: object) -> bool: ...
 
+def px(value: float) -> Val: ...
+def percent(value: float) -> Val: ...
+def vw(value: float) -> Val: ...
+def vh(value: float) -> Val: ...
+def vmin(value: float) -> Val: ...
+def vmax(value: float) -> Val: ...
 
 class UiRect:
     """A rectangular UI region defined by left, right, top, and bottom values.
@@ -171,13 +116,13 @@ class UiRect:
         from pybevy.ui import UiRect, Val
 
         # Same value for all sides
-        margin = UiRect.all(Val.px(10))
+        margin = UiRect.all(Val.Px(10))
 
         # Different values per side
-        padding = UiRect(Val.px(5), Val.px(10), Val.px(15), Val.px(20))
+        padding = UiRect(Val.Px(5), Val.Px(10), Val.Px(15), Val.Px(20))
 
         # Horizontal and vertical
-        border = UiRect.axes(Val.px(2), Val.px(4))
+        border = UiRect.axes(Val.Px(2), Val.Px(4))
         ```
     """
 
@@ -833,7 +778,7 @@ class Val2:
         offset = Val2.percent(50.0, 50.0)
 
         # Mixed values
-        pos = Val2(Val.px(10.0), Val.percent(50.0))
+        pos = Val2(Val.Px(10.0), Val.Percent(50.0))
         ```
     """
 
@@ -988,13 +933,13 @@ class Text(Component):
         ```python
         from pybevy.ui import Node, PositionType, Text, Val
         from pybevy.text import TextFont, TextColor, TextLayout, Justify
-        from pybevy.color import Color
+        from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
 
         # Spawn UI text with styling
         node = Node(
             position_type=PositionType.Absolute,
-            top=Val.px(10.0),
-            left=Val.px(10.0),
+            top=Val.Px(10.0),
+            left=Val.Px(10.0),
         )
         commands.spawn((
             Text("Hello, UI!"),
@@ -1006,16 +951,16 @@ class Text(Component):
         ```
 
     Args:
-        content: The text string to display
+        text: The text string to display
     """
-    def __init__(self, content: str = "") -> None: ...
+    def __init__(self, text: str = "") -> None: ...
 
     @property
-    def content(self) -> str:
-        """The text content."""
+    def text(self) -> str:
+        """The displayed text, matching Text2d and TextSpan."""
 
-    @content.setter
-    def content(self, value: str) -> None: ...
+    @text.setter
+    def text(self, value: str) -> None: ...
 
 
 class Node(Component):
@@ -1034,24 +979,24 @@ class Node(Component):
         # Absolutely positioned node
         node = Node()
         node.position_type = PositionType.Absolute
-        node.top = Val.px(10.0)
-        node.left = Val.px(10.0)
+        node.top = Val.Px(10.0)
+        node.left = Val.Px(10.0)
         commands.spawn((node, Text("Top Left")))
 
         # Flexbox layout
         node = Node(
             flex_direction=FlexDirection.Column,
             display=Display.Flex,
-            width=Val.px(300.0),
-            height=Val.px(200.0),
+            width=Val.Px(300.0),
+            height=Val.Px(200.0),
         )
         commands.spawn(node)
 
         # Custom positioning
         node = Node(
             position_type=PositionType.Absolute,
-            top=Val.px(50.0),
-            left=Val.px(100.0),
+            top=Val.Px(50.0),
+            left=Val.Px(100.0),
         )
         commands.spawn((node, Text("Custom Position")))
         ```
@@ -1427,7 +1372,7 @@ class BackgroundColor(Component):
     Example:
         ```python
         from pybevy.ui import Node, BackgroundColor
-        from pybevy.color import Color
+        from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
 
         # Create a red panel
         commands.spawn((
@@ -1444,7 +1389,7 @@ class BackgroundColor(Component):
     Args:
         color: The background color (optional, defaults to transparent)
     """
-    def __init__(self, color: Color | None = None) -> None: ...
+    def __init__(self, color: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza | None = None) -> None: ...
 
     @property
     def color(self) -> Color:
@@ -1465,7 +1410,7 @@ class BorderColor(Component):
     Example:
         ```python
         from pybevy.ui import Node, BorderColor
-        from pybevy.color import Color
+        from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
 
         # Create node with same border color on all sides
         commands.spawn((
@@ -1494,7 +1439,7 @@ class BorderColor(Component):
     """
     def __init__(
         self,
-        color: Color | None = None,
+        color: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza | None = None,
         *,
         top: Color | None = None,
         right: Color | None = None,
@@ -1503,7 +1448,7 @@ class BorderColor(Component):
     ) -> None: ...
 
     @staticmethod
-    def all(color: Color) -> BorderColor:
+    def all(color: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza) -> BorderColor:
         """Create BorderColor with same color for all sides."""
 
     @property
@@ -1534,8 +1479,8 @@ class BorderColor(Component):
     @left.setter
     def left(self, value: Color) -> None: ...
 
-    def set_all(self, color: Color) -> None:
-        """Set all border sides to the same color.
+    def set_all(self, color: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza) -> BorderColor:
+        """Set all border sides to the same color and return this border.
 
         Args:
             color: Color to apply to all sides
@@ -1563,14 +1508,14 @@ class BorderRadius:
         br = BorderRadius.px(10.0, 10.0, 10.0, 10.0)
 
         # Using all() for uniform radius
-        br = BorderRadius.all(Val.percent(50.0))
+        br = BorderRadius.all(Val.Percent(50.0))
 
         # Per-corner via constructor kwargs
-        br = BorderRadius(Val.px(5.0), top_left=Val.px(20.0))
+        br = BorderRadius(Val.Px(5.0), top_left=Val.Px(20.0))
 
         # Access corner values (read-only properties)
-        print(br.top_left)   # Val.px(20.0)
-        print(br.top_right)  # Val.px(5.0)
+        print(br.top_left)   # Val.Px(20.0)
+        print(br.top_right)  # Val.Px(5.0)
         ```
 
     Args:
@@ -1582,7 +1527,7 @@ class BorderRadius:
 
     Note:
         Use the constructor with keyword args for per-corner construction:
-        ``BorderRadius(top_left=Val.px(10.0))``.
+        ``BorderRadius(top_left=Val.Px(10.0))``.
     """
 
     ZERO: BorderRadius
@@ -1666,18 +1611,18 @@ class Outline(Component):
     Example:
         ```python
         from pybevy.ui import Node, Outline, Val
-        from pybevy.color import Color
+        from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
 
         # 2px solid red outline
         commands.spawn((
             Node(),
-            Outline(Val.px(2.0), Val.px(0.0), Color.srgb(1.0, 0.0, 0.0)),
+            Outline(Val.Px(2.0), Val.Px(0.0), Color.srgb(1.0, 0.0, 0.0)),
         ))
 
         # Outline with offset (space between border and outline)
         outline = Outline(
-            Val.px(3.0),           # width
-            Val.px(5.0),           # offset from border
+            Val.Px(3.0),           # width
+            Val.Px(5.0),           # offset from border
             Color.srgb(0.0, 0.0, 1.0)  # color
         )
         commands.spawn((Node(), outline))
@@ -1685,7 +1630,7 @@ class Outline(Component):
         # Modify at runtime
         def update_outline(query: Query[Mut[Outline]]):
             for outline in query:
-                outline.width = Val.px(4.0)
+                outline.width = Val.Px(4.0)
                 outline.color = Color.srgb(0.0, 1.0, 0.0)
         ```
 
@@ -1732,7 +1677,7 @@ class ZIndex(Component):
     Example:
         ```python
         from pybevy.ui import Node, ZIndex, BackgroundColor
-        from pybevy.color import Color
+        from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
 
         # Create UI element with z-index
         commands.spawn((
@@ -1970,7 +1915,7 @@ class Interaction(Component):
         ```python
         from pybevy.ui import Node, Interaction, BackgroundColor
         from pybevy.ecs import Query, Mut
-        from pybevy.color import Color
+        from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
 
         # Create interactive button
         commands.spawn((
@@ -2033,7 +1978,7 @@ class Button(Component):
         ```python
         from pybevy.ui import Node, Button, Interaction, BackgroundColor
         from pybevy.ecs import Query, Mut
-        from pybevy.color import Color
+        from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
 
         # Create a button
         commands.spawn((
@@ -2838,7 +2783,7 @@ class ColorStop:
     Example:
         ```python
         from pybevy.ui import ColorStop, LinearGradient
-        from pybevy.color import Color
+        from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
 
         # Create color stops
         stop1 = ColorStop.auto(Color.srgb(1.0, 0.0, 0.0))
@@ -3032,8 +2977,8 @@ class RadialGradientShape:
         ```python
         from pybevy.ui import RadialGradientShape, Val
 
-        shape = RadialGradientShape.circle(Val.px(50.0))
-        shape = RadialGradientShape.ellipse(Val.px(100.0), Val.px(50.0))
+        shape = RadialGradientShape.circle(Val.Px(50.0))
+        shape = RadialGradientShape.ellipse(Val.Px(100.0), Val.Px(50.0))
         shape = RadialGradientShape.farthest_corner()
         ```
     """
@@ -3071,7 +3016,7 @@ class LinearGradient:
     Example:
         ```python
         from pybevy.ui import LinearGradient, ColorStop, BackgroundGradient, Gradient, Node
-        from pybevy.color import Color
+        from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
 
         # Create a vertical gradient from red to blue
         gradient = LinearGradient.to_bottom([
@@ -3157,7 +3102,7 @@ class RadialGradient:
     Example:
         ```python
         from pybevy.ui import RadialGradient, RadialGradientShape, UiPosition, ColorStop
-        from pybevy.color import Color
+        from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
 
         gradient = RadialGradient(
             UiPosition.center(),
@@ -3212,7 +3157,7 @@ class ConicGradient:
     Example:
         ```python
         from pybevy.ui import ConicGradient, UiPosition, AngularColorStop
-        from pybevy.color import Color
+        from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
 
         gradient = ConicGradient(
             UiPosition.center(),
@@ -3273,7 +3218,7 @@ class Gradient:
     Example:
         ```python
         from pybevy.ui import Gradient, LinearGradient, ColorStop
-        from pybevy.color import Color
+        from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
 
         linear = LinearGradient.to_right([
             ColorStop.auto(Color.srgb(1.0, 0.0, 0.0)),
@@ -3313,15 +3258,15 @@ class ShadowStyle:
     Example:
         ```python
         from pybevy.ui import ShadowStyle, Val
-        from pybevy.color import Color
+        from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
 
         # Create a drop shadow
         shadow = ShadowStyle(
             color=Color.srgba(0.0, 0.0, 0.0, 0.5),
-            x_offset=Val.px(4.0),
-            y_offset=Val.px(4.0),
-            spread_radius=Val.px(0.0),
-            blur_radius=Val.px(8.0),
+            x_offset=Val.Px(4.0),
+            y_offset=Val.Px(4.0),
+            spread_radius=Val.Px(0.0),
+            blur_radius=Val.Px(8.0),
         )
         ```
     """
@@ -3392,16 +3337,16 @@ class BoxShadow(Component):
     Example:
         ```python
         from pybevy.ui import BoxShadow, ShadowStyle, Val, Node
-        from pybevy.color import Color
+        from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
 
         def setup(commands: Commands) -> None:
             # Single shadow using convenience method
             shadow = BoxShadow.single(
                 color=Color.srgba(0.0, 0.0, 0.0, 0.5),
-                x_offset=Val.px(4.0),
-                y_offset=Val.px(4.0),
-                spread_radius=Val.px(0.0),
-                blur_radius=Val.px(8.0),
+                x_offset=Val.Px(4.0),
+                y_offset=Val.Px(4.0),
+                spread_radius=Val.Px(0.0),
+                blur_radius=Val.Px(8.0),
             )
 
             commands.spawn((Node(), shadow))
@@ -3410,13 +3355,13 @@ class BoxShadow(Component):
             multi_shadow = BoxShadow([
                 ShadowStyle(
                     Color.srgba(1.0, 0.0, 0.0, 0.3),
-                    Val.px(-2.0), Val.px(-2.0),
-                    Val.px(0.0), Val.px(4.0),
+                    Val.Px(-2.0), Val.Px(-2.0),
+                    Val.Px(0.0), Val.Px(4.0),
                 ),
                 ShadowStyle(
                     Color.srgba(0.0, 0.0, 1.0, 0.3),
-                    Val.px(2.0), Val.px(2.0),
-                    Val.px(0.0), Val.px(4.0),
+                    Val.Px(2.0), Val.Px(2.0),
+                    Val.Px(0.0), Val.Px(4.0),
                 ),
             ])
         ```
@@ -3485,7 +3430,7 @@ class BackgroundGradient(Component):
     Example:
         ```python
         from pybevy.ui import BackgroundGradient, Gradient, LinearGradient, ColorStop, Node
-        from pybevy.color import Color
+        from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
 
         def setup(commands: Commands) -> None:
             gradient = LinearGradient.to_bottom([
@@ -3528,7 +3473,7 @@ class TextShadow(Component):
         ```python
         from pybevy.ui import Text, TextShadow, Node
         from pybevy.math import Vec2
-        from pybevy.color import Color
+        from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
 
         def setup(commands: Commands) -> None:
             commands.spawn((
@@ -3643,4 +3588,10 @@ __all__ = [
     "Val2",
     "VisualBox",
     "ZIndex",
+    "percent",
+    "px",
+    "vh",
+    "vmax",
+    "vmin",
+    "vw",
 ]
