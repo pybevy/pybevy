@@ -4,6 +4,7 @@ use pybevy_macros::pycomponent;
 use pyo3::{PyRefMut, Python, exceptions::PyValueError, prelude::*};
 
 use super::{animation_node_index::PyAnimationNodeIndex, repeat_animation::PyRepeatAnimation};
+use crate::validate::validate_finite;
 
 #[pyclass(name = "ActiveAnimation", module = "pybevy.animation")]
 pub struct PyActiveAnimation {
@@ -55,6 +56,7 @@ impl PyActiveAnimation {
     }
 
     pub fn set_weight(mut pyself: PyRefMut<'_, Self>, weight: f32) -> PyResult<PyRefMut<'_, Self>> {
+        let weight = validate_finite(weight, "weight")?;
         pyself.with_animation_mut(|anim| {
             anim.set_weight(weight);
             Ok(())
@@ -122,6 +124,7 @@ impl PyActiveAnimation {
     }
 
     pub fn set_speed(mut pyself: PyRefMut<'_, Self>, speed: f32) -> PyResult<PyRefMut<'_, Self>> {
+        let speed = validate_finite(speed, "speed")?;
         pyself.with_animation_mut(|anim| {
             anim.set_speed(speed);
             Ok(())
@@ -153,6 +156,7 @@ impl PyActiveAnimation {
         mut pyself: PyRefMut<'_, Self>,
         seek_time: f32,
     ) -> PyResult<PyRefMut<'_, Self>> {
+        let seek_time = validate_finite(seek_time, "seek_time")?;
         pyself.with_animation_mut(|anim| {
             anim.set_seek_time(seek_time);
             Ok(())
@@ -161,6 +165,7 @@ impl PyActiveAnimation {
     }
 
     pub fn seek_to(mut pyself: PyRefMut<'_, Self>, seek_time: f32) -> PyResult<PyRefMut<'_, Self>> {
+        let seek_time = validate_finite(seek_time, "seek_time")?;
         pyself.with_animation_mut(|anim| {
             anim.seek_to(seek_time);
             Ok(())
@@ -267,6 +272,7 @@ impl PyAnimationPlayer {
         mut pyself: PyRefMut<'_, Self>,
         amount: f32,
     ) -> PyResult<PyRefMut<'_, Self>> {
+        let amount = validate_finite(amount, "amount")?;
         pyself.as_mut()?.seek_all_by(amount);
         Ok(pyself)
     }
@@ -310,6 +316,7 @@ impl PyAnimationPlayer {
         mut pyself: PyRefMut<'_, Self>,
         factor: f32,
     ) -> PyResult<PyRefMut<'_, Self>> {
+        let factor = validate_finite(factor, "factor")?;
         pyself.as_mut()?.adjust_speeds(factor);
         Ok(pyself)
     }

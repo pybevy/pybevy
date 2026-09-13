@@ -64,16 +64,36 @@ class AnimationPlugin(Plugin):
     def build(self, app: App) -> None: ...
 
 class AnimatableCurve:
-    """A curve that can be used to animate a property."""
+    """Type marker for bevy's AnimatableCurve.
+
+    **LIMITATION**: PyBevy does not wrap bevy's curve constructors or evaluation
+    methods yet, so this cannot be constructed and has no members. Curves can be
+    read from a loaded clip with `AnimationClip.curves()` and copied into another
+    clip with `AnimationClip.add_curve_to_target()`; authoring one from Python is
+    not supported.
+    """
 
 class AnimatableKeyframeCurve:
-    """A keyframe-based animation curve."""
+    """Type marker for bevy's AnimatableKeyframeCurve.
+
+    **LIMITATION**: cannot be constructed and has no members. Despite the name,
+    this is not the way to build a keyframe animation from Python: see
+    `AnimatableCurve` for what is available.
+    """
 
 class WeightsCurve:
-    """A curve for animating blend shape weights."""
+    """Type marker for bevy's WeightsCurve.
+
+    **LIMITATION**: cannot be constructed and has no members. See
+    `AnimatableCurve`.
+    """
 
 class AnimatedField:
-    """A field that can be animated."""
+    """Type marker for bevy's AnimatedField.
+
+    **LIMITATION**: cannot be constructed and has no members. See
+    `AnimatableCurve`.
+    """
 
 class AnimationNodeType:
     class Clip(AnimationNodeType):

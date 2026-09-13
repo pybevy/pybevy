@@ -1,9 +1,16 @@
 use bevy::animation::{AnimationClip, VariableCurve};
 use pybevy_core::{AssetStorage, PyAsset, computed_owned};
 use pybevy_macros::pyasset;
-use pyo3::{exceptions::PyTypeError, prelude::*, types::PyDict};
+use pyo3::{
+    exceptions::{PyTypeError, PyValueError},
+    prelude::*,
+    types::PyDict,
+};
 
-use crate::{animation_curve::PyAnimationCurve, animation_target_id::PyAnimationTargetId};
+use crate::{
+    animation_curve::PyAnimationCurve, animation_target_id::PyAnimationTargetId,
+    validate::validate_finite,
+};
 
 #[pyclass(
     name = "VariableCurve", module = "pybevy.animation",
@@ -33,6 +40,12 @@ impl PyAnimationClip {
     }
 
     pub fn set_duration(&mut self, duration_sec: f32) -> PyResult<()> {
+        let duration_sec = validate_finite(duration_sec, "duration_sec")?;
+        if duration_sec < 0.0 {
+            return Err(PyValueError::new_err(format!(
+                "duration_sec must be non-negative (got {duration_sec})"
+            )));
+        }
         self.as_mut()?.set_duration(duration_sec);
         Ok(())
     }

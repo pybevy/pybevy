@@ -10,6 +10,7 @@ pub mod animation_target_id;
 pub mod animation_transitions;
 pub mod plugin;
 pub mod repeat_animation;
+pub mod validate;
 
 use pyo3::prelude::*;
 
