@@ -1,9 +1,11 @@
 use std::time::Duration;
 
 use bevy::time::{Timer, TimerMode};
-use pybevy_core::{duration_from_py, duration_from_secs_f64};
+use pybevy_core::{
+    duration_from_py, duration_from_secs_f64, public_error::TIMER_ELAPSED_PAST_DURATION,
+};
 use pybevy_macros::pyenum;
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyValueError, prelude::*};
 
 #[pyenum(TimerMode)]
 #[pyclass(name = "TimerMode", module = "pybevy.time", eq, from_py_object)]
@@ -108,12 +110,12 @@ impl PyTimer {
         self.timer.fraction_remaining()
     }
 
-    pub fn remaining(&self) -> Duration {
-        self.timer.remaining()
+    pub fn remaining(&self) -> PyResult<Duration> {
+        self.checked_remaining()
     }
 
-    pub fn remaining_secs(&self) -> f32 {
-        self.timer.remaining_secs()
+    pub fn remaining_secs(&self) -> PyResult<f32> {
+        Ok(self.checked_remaining()?.as_secs_f32())
     }
 
     pub fn times_finished_this_tick(&self) -> u32 {
@@ -147,5 +149,15 @@ impl PyTimer {
 
     pub fn almost_finish(&mut self) {
         self.timer.almost_finish();
+    }
+}
+
+impl PyTimer {
+    // set_elapsed() accepts any value, and Bevy's Duration subtraction panics past the duration.
+    fn checked_remaining(&self) -> PyResult<Duration> {
+        self.timer
+            .duration()
+            .checked_sub(self.timer.elapsed())
+            .ok_or_else(|| PyValueError::new_err(TIMER_ELAPSED_PAST_DURATION))
     }
 }
