@@ -32,6 +32,7 @@ impl From<Extent3d> for PyExtent3d {
 #[pymethods]
 impl PyExtent3d {
     #[new]
+    #[pyo3(signature = (*, width, height, depth_or_array_layers))]
     pub fn new(width: u32, height: u32, depth_or_array_layers: u32) -> Self {
         PyExtent3d {
             width,

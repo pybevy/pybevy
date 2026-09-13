@@ -1,10 +1,31 @@
 use std::{
     collections::{HashMap, HashSet},
+    num::NonZero,
     sync::{
         Arc, Mutex, OnceLock,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
+
+use bevy::{
+    camera::RenderTarget,
+    prelude::*,
+    render::{
+        Extract, Render, RenderApp, RenderSystems,
+        render_asset::RenderAssets,
+        render_resource::{
+            Buffer, BufferDescriptor, BufferUsages, CommandEncoderDescriptor, Extent3d, MapMode,
+            PollType, TexelCopyBufferInfo, TexelCopyBufferLayout, TextureUsages,
+        },
+        renderer::{RenderContext, RenderDevice, RenderGraph, RenderQueue},
+        texture::GpuImage,
+    },
+};
+use crossbeam_channel::{Receiver, Sender};
+use tracing::{debug, error, warn};
+
+/// (frame bytes, width, height, arrival sequence) of the latest readback frame.
+type LatestFrame = (Arc<Vec<u8>>, u32, u32, u64);
 
 /// Global frame buffer: entity bits → latest frame bytes.
 /// Written by Rust `collect_readback_frames` system, read by Python `poll_readback_frame`.
@@ -16,10 +37,10 @@ fn frames_map() -> &'static Mutex<HashMap<u64, Arc<Vec<u8>>>> {
 
 /// Latest frame with dimensions, for headless screenshot support.
 /// Written by `collect_readback_frames`, read by `HeadlessFrameProvider`.
-static LATEST_FRAME: OnceLock<Mutex<Option<(Arc<Vec<u8>>, u32, u32, u64)>>> = OnceLock::new();
+static LATEST_FRAME: OnceLock<Mutex<Option<LatestFrame>>> = OnceLock::new();
 static LATEST_FRAME_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-fn latest_frame_slot() -> &'static Mutex<Option<(Arc<Vec<u8>>, u32, u32, u64)>> {
+fn latest_frame_slot() -> &'static Mutex<Option<LatestFrame>> {
     LATEST_FRAME.get_or_init(|| Mutex::new(None))
 }
 
@@ -54,31 +75,13 @@ pub fn list_entities() -> Vec<u64> {
     map.keys().copied().collect()
 }
 
-// GPU Readback System for JupyBevy
-//
-// Adapted from Bevy's headless_renderer example.
-// Architecture:
-// 1. Render to texture (Camera → GPU Image)
-// 2. Copy texture to buffer (ImageCopyDriver node)
-// 3. Map buffer and read pixels (RenderWorld)
-// 4. Send via channel to MainWorld
-// 5. Python extracts pixels via HeadlessRenderer.extract_frame()
-use bevy::{
-    camera::RenderTarget,
-    prelude::*,
-    render::{
-        Extract, Render, RenderApp, RenderSystems,
-        render_asset::RenderAssets,
-        render_resource::{
-            Buffer, BufferDescriptor, BufferUsages, CommandEncoderDescriptor, MapMode, PollType,
-            TexelCopyBufferInfo, TexelCopyBufferLayout, TextureUsages,
-        },
-        renderer::{RenderContext, RenderDevice, RenderGraph, RenderQueue},
-        texture::GpuImage,
-    },
-};
-use crossbeam_channel::{Receiver, Sender};
-use tracing::{debug, error, warn};
+fn readback_copy_extent(source: Extent3d, width: u32, height: u32) -> Extent3d {
+    Extent3d {
+        width: source.width.min(width),
+        height: source.height.min(height),
+        depth_or_array_layers: 1,
+    }
+}
 
 /// Component on camera entities: receives pixel data from render world
 /// Attached to cameras with RenderToBuffer component to enable frame extraction
@@ -135,6 +138,11 @@ pub struct ImageCopier {
     enabled: Arc<AtomicBool>,
     pub src_image: Handle<Image>,
     source_entity: Option<Entity>,
+    /// Extent the destination buffer was sized for; the copy is bounded by it.
+    width: u32,
+    height: u32,
+    bytes_per_pixel: u32,
+    layer_warning_sent: Arc<AtomicBool>,
     /// Sender for this specific camera's frame data
     sender: Sender<Vec<u8>>,
 }
@@ -172,9 +180,18 @@ impl ImageCopier {
             buffer,
             src_image,
             source_entity: None,
+            width,
+            height,
+            bytes_per_pixel,
+            layer_warning_sent: Arc::new(AtomicBool::new(false)),
             enabled: Arc::new(AtomicBool::new(true)),
             sender,
         }
+    }
+
+    /// Row stride of the destination buffer, reproducing how it was sized.
+    fn padded_bytes_per_row(&self) -> usize {
+        RenderDevice::align_copy_bytes_per_row((self.width * self.bytes_per_pixel) as usize)
     }
 
     /// Associate the copier with the camera that owns it for diagnostics.
@@ -189,6 +206,10 @@ impl ImageCopier {
 
     fn disable(&self) -> bool {
         self.enabled.swap(false, Ordering::AcqRel)
+    }
+
+    fn claim_layer_warning(&self) -> bool {
+        !self.layer_warning_sent.swap(true, Ordering::AcqRel)
     }
 }
 
@@ -279,6 +300,8 @@ impl Plugin for ImageCopyPlugin {
 
 /// Auto-attach `ImageCopier` + `FrameReceiver` to any camera entity that has
 /// `RenderTarget::Image` but no `ImageCopier` yet.
+// Bevy's system signature needs the query inline; a lifetime alias does not register.
+#[allow(clippy::type_complexity)]
 fn auto_attach_readback(
     mut commands: Commands,
     cameras: Query<(Entity, &RenderTarget), (With<Camera>, Without<ImageCopier>)>,
@@ -449,21 +472,40 @@ fn image_copy_driver(
             .create_command_encoder(&CommandEncoderDescriptor::default());
 
         let block_dimensions = src_image.texture_descriptor.format.block_dimensions();
-        let Some(block_size) = src_image.texture_descriptor.format.block_copy_size(None) else {
+        let Some(block_size) = src_image
+            .texture_descriptor
+            .format
+            .block_copy_size(None)
+            .and_then(NonZero::<u32>::new)
+        else {
             debug!("[image_copy_driver] Unsupported texture format, skipping");
             continue;
         };
 
-        // Calculate padded bytes per row (wgpu alignment)
-        let padded_bytes_per_row = RenderDevice::align_copy_bytes_per_row(
-            (src_image.texture_descriptor.size.width as usize / block_dimensions.0 as usize)
-                * block_size as usize,
-        );
+        // The destination buffer was sized from the copier's own extent, so the
+        // row stride and every copy axis are bounded by that, not by the source.
+        let padded_bytes_per_row = image_copier.padded_bytes_per_row();
 
-        let Some(bytes_per_row) = std::num::NonZero::<u32>::new(padded_bytes_per_row as u32) else {
+        let Some(bytes_per_row) = NonZero::<u32>::new(padded_bytes_per_row as u32) else {
             debug!("[image_copy_driver] Zero bytes per row, skipping");
             continue;
         };
+
+        let size = src_image.texture_descriptor.size;
+        if size.depth_or_array_layers > 1 && image_copier.claim_layer_warning() {
+            warn!(
+                "[image_copy_driver] Source image has {} array layers; readback returns layer zero",
+                size.depth_or_array_layers
+            );
+        }
+        let blocks_per_row = (padded_bytes_per_row / block_size.get() as usize) as u32;
+        let extent = readback_copy_extent(
+            size,
+            image_copier
+                .width
+                .min(blocks_per_row.saturating_mul(block_dimensions.0)),
+            image_copier.height,
+        );
 
         encoder.copy_texture_to_buffer(
             src_image.texture.as_image_copy(),
@@ -472,10 +514,10 @@ fn image_copy_driver(
                 layout: TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(bytes_per_row.into()),
-                    rows_per_image: None,
+                    rows_per_image: Some(extent.height.div_ceil(block_dimensions.1)),
                 },
             },
-            src_image.texture_descriptor.size,
+            extent,
         );
 
         render_queue.submit(std::iter::once(encoder.finish()));

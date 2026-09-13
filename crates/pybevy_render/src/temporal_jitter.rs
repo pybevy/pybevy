@@ -13,7 +13,7 @@ pub struct PyTemporalJitter {
 #[pymethods]
 impl PyTemporalJitter {
     #[new]
-    #[pyo3(signature = (offset = PyVec2::ZERO))]
+    #[pyo3(signature = (*, offset = PyVec2::ZERO))]
     pub fn new(offset: PyVec2) -> PyResult<PyClassInitializer<Self>> {
         Ok(Self::from_owned(TemporalJitter {
             offset: offset.try_into()?,

@@ -44,7 +44,7 @@ impl FromBorrowedStorage<ValueStorage<ColorGradingSection>> for PyColorGradingSe
 #[pymethods]
 impl PyColorGradingSection {
     #[new]
-    #[pyo3(signature = (saturation = 1.0, contrast = 1.0, gamma = 1.0, gain = 1.0, lift = 0.0))]
+    #[pyo3(signature = (*, saturation = 1.0, contrast = 1.0, gamma = 1.0, gain = 1.0, lift = 0.0))]
     pub fn new(saturation: f32, contrast: f32, gamma: f32, gain: f32, lift: f32) -> Self {
         Self::from_owned(ColorGradingSection {
             saturation,
@@ -156,6 +156,7 @@ impl Default for PyColorGradingGlobal {
 impl PyColorGradingGlobal {
     #[new]
     #[pyo3(signature = (
+        *,
         exposure = 0.0,
         temperature = 0.0,
         tint = 0.0,
