@@ -447,6 +447,7 @@ fn run<T: Send, W>(
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -765,5 +766,43 @@ mod tests {
         let err = execute_dense(&program, &[DenseInput::F64(&a)], DenseOutput::F64(&mut out))
             .unwrap_err();
         assert!(matches!(err, DenseError::InputTooShort { .. }));
+    }
+
+    #[test]
+    fn rejects_random_ops_and_empty_programs() {
+        assert!(matches!(
+            DenseProgram::new(vec![Op::Random], vec![], 0),
+            Err(DenseError::UnsupportedOp { .. })
+        ));
+        assert!(matches!(
+            DenseProgram::new(vec![Op::RandomRange], vec![], 0),
+            Err(DenseError::UnsupportedOp { .. })
+        ));
+        assert!(matches!(
+            DenseProgram::new(vec![Op::StoreField(0)], vec![], 0),
+            Err(DenseError::UnsupportedOp { .. })
+        ));
+        assert!(matches!(
+            DenseProgram::new(vec![], vec![], 0),
+            Err(DenseError::EmptyResult)
+        ));
+    }
+
+    #[test]
+    fn rejects_missing_inputs_at_execution() {
+        let program =
+            DenseProgram::new(vec![Op::PushInput(0), Op::PushInput(1), Op::Add], vec![], 2)
+                .unwrap();
+        let a = [1.0, 2.0];
+        let mut out = vec![0.0f64; 2];
+        let err = execute_dense(&program, &[DenseInput::F64(&a)], DenseOutput::F64(&mut out))
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            DenseError::NotEnoughInputs {
+                supplied: 1,
+                required: 2
+            }
+        ));
     }
 }

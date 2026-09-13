@@ -29,6 +29,7 @@ use pybevy_storage::{StorageError, ValidityFlag};
 use crate::{
     bytecode::{CompiledBytecode, Compiler, FieldId, FieldType, Op},
     expr::RustExpr,
+    tiled::{ReduceOp, lane_reduce_slice},
     view_engine::{self, ViewEngineError, ViewFilter},
 };
 
@@ -286,6 +287,7 @@ impl CachedViewCore {
     }
 
     #[cfg(test)]
+    #[cfg_attr(coverage_nightly, coverage(off))]
     fn new_unchecked(spec: ResolvedViewSpec) -> Self {
         let world_id = spec.world_id();
         Self {
@@ -768,12 +770,13 @@ impl BatchLease {
     ) -> Result<ViewReductionOutput, ViewRuntimeError> {
         let values = self.evaluate(program, parallel)?;
         let count = values.len();
+        // Same accumulator as `pybevy.array`: NaN-propagating, lane-ordered.
         let value = match reduction {
-            ViewReduction::Sum => values.into_iter().sum(),
-            ViewReduction::Min => values.into_iter().fold(f64::INFINITY, f64::min),
-            ViewReduction::Max => values.into_iter().fold(f64::NEG_INFINITY, f64::max),
+            ViewReduction::Sum => lane_reduce_slice(ReduceOp::Sum, &values),
+            ViewReduction::Min => lane_reduce_slice(ReduceOp::Min, &values),
+            ViewReduction::Max => lane_reduce_slice(ReduceOp::Max, &values),
             ViewReduction::CountTruthy => {
-                values.into_iter().filter(|value| *value >= 0.5).count() as f64
+                values.iter().filter(|value| **value >= 0.5).count() as f64
             }
         };
         Ok(ViewReductionOutput { value, count })
@@ -1091,6 +1094,7 @@ impl BatchSlice {
         Ok(view_engine::TableBatch {
             table_id: source.table_id,
             component_bases: source.component_bases.clone(),
+            entities: source.entities,
             start_row: self.start_row,
             entity_count: self.entity_count,
             tick_mask: None,
@@ -2361,6 +2365,7 @@ fn validate_integer_arithmetic_types(bytecode: &CompiledBytecode) -> Result<(), 
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use std::ops::Deref;
 
@@ -3603,14 +3608,13 @@ mod tests {
                             .unwrap()
                             .iter()
                             .enumerate()
-                            .filter_map(|(local_row, &passes)| {
-                                passes.then(|| {
-                                    let table_row = batch.start_row + local_row;
-                                    let base = batch.component_bases[&component_id];
-                                    // SAFETY: the passing row is inside this live
-                                    // batch's exact dense-table range.
-                                    unsafe { (*base.cast::<RuntimeDense>().add(table_row)).0 }
-                                })
+                            .filter(|&(_, passes)| *passes)
+                            .map(|(local_row, _)| {
+                                let table_row = batch.start_row + local_row;
+                                let base = batch.component_bases[&component_id];
+                                // SAFETY: the passing row is inside this live
+                                // batch's exact dense-table range.
+                                unsafe { (*base.cast::<RuntimeDense>().add(table_row)).0 }
                             })
                     })
                     .collect::<Vec<_>>()
@@ -3775,6 +3779,50 @@ mod tests {
                 count: 2,
             }
         );
+    }
+
+    #[test]
+    fn leased_min_and_max_propagate_nan() {
+        let mut world = World::new();
+        world.spawn(RuntimeDense(20));
+        world.spawn(RuntimeDense(30));
+        let dense_id = world.components().component_id::<RuntimeDense>().unwrap();
+        let view_filter = ViewFilter {
+            component_ids: HashSet::from([dense_id]),
+            with_ids: Vec::new(),
+            without_ids: Vec::new(),
+            changed_ids: Vec::new(),
+            added_ids: Vec::new(),
+        };
+        let cache = cache_for(
+            &world,
+            view_filter,
+            HashSet::new(),
+            HashMap::from([(dense_id, HashSet::from([(0, FieldType::U32)]))]),
+        );
+        // SAFETY: the World remains live and structurally unchanged through
+        // every reduction below.
+        let runtime = unsafe { runtime_for_world(&mut world, cache, Tick::new(0), Tick::new(1)) };
+        // 0 / (value - 20) is NaN on the first row and 0.0 on the second.
+        let expression = RustExpr::Div(
+            Box::new(RustExpr::Const(0.0)),
+            Box::new(RustExpr::Sub(
+                Box::new(RustExpr::Field {
+                    component_id: dense_id,
+                    offset: 0,
+                    field_type: FieldType::U32,
+                }),
+                Box::new(RustExpr::Const(20.0)),
+            )),
+        );
+        let program = runtime.prepare_read_program(&expression).unwrap();
+        let lease = runtime.gather_batches().unwrap();
+
+        for reduction in [ViewReduction::Min, ViewReduction::Max, ViewReduction::Sum] {
+            let output = lease.reduce(&program, reduction, false).unwrap();
+            assert_eq!(output.count, 2, "{reduction:?}");
+            assert!(output.value.is_nan(), "{reduction:?} dropped NaN");
+        }
     }
 
     #[test]

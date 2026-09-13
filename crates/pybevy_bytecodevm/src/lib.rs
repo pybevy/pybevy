@@ -1,3 +1,4 @@
+#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 pub mod buffer_lens;
 pub mod bytecode;
 pub mod columns;

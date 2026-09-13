@@ -77,6 +77,14 @@ impl<'a> ColumnRef<'a> {
         }
     }
 
+    /// Whether this column can supply `count` rows. A broadcast always can.
+    pub(crate) fn covers(&self, count: usize) -> bool {
+        match self.kind {
+            ColumnRefKind::Broadcast(_) => true,
+            ColumnRefKind::Strided { len, .. } => len >= count,
+        }
+    }
+
     pub(crate) fn supports_native_f32(&self, count: usize) -> bool {
         match self.kind {
             ColumnRefKind::Broadcast(_) => true,
@@ -137,6 +145,11 @@ impl<'a> ColumnMut<'a> {
             len,
             _marker: PhantomData,
         }
+    }
+
+    /// Whether this destination can receive `count` rows.
+    pub(crate) fn covers(&self, count: usize) -> bool {
+        self.len >= count
     }
 
     pub(crate) fn supports_native_f32(&self, count: usize) -> bool {

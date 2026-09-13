@@ -110,8 +110,7 @@ fn resolve_slice(
         Some(s) => clamp(s),
     };
 
-    // The span is divided by |step| as an unsigned magnitude: negating
-    // `isize::MIN` overflows, and `a[::-2**63]` is an ordinary Python slice.
+    // Divide by |step| as unsigned: negating isize::MIN overflows, and a[::-2**63] is valid Python.
     let magnitude = step.unsigned_abs();
     let length = if step < 0 {
         if stop_i < start_i {
@@ -260,10 +259,7 @@ impl Layout {
                     shape.push(length);
                     strides.push(match stride.checked_mul(*step) {
                         Some(product) => product,
-                        // A step only advances the iterator across an axis that
-                        // keeps more than one element, so a product this extreme
-                        // is never applied to an offset. Keep the parent stride
-                        // instead of rejecting a slice Python accepts.
+                        // Unused for a length<=1 axis; keep the parent stride instead of erroring.
                         None if length <= 1 => stride,
                         None => return Err(ArrayError::Overflow("slice stride")),
                     });
@@ -277,9 +273,7 @@ impl Layout {
         Ok(Layout {
             shape,
             strides,
-            // Bounds-checked indices and slices keep `offset` non-negative; a
-            // negative value would mean the layout escaped the backing buffer,
-            // so surface it instead of silently clamping to 0.
+            // Checked indices keep `offset` non-negative; a negative one means the layout escaped.
             offset: usize::try_from(offset).map_err(|_| ArrayError::Overflow("layout offset"))?,
         })
     }

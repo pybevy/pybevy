@@ -392,8 +392,7 @@ impl DenseArrayCore {
                 ndim: shape.len(),
             });
         }
-        // Min/Max have no identity for an empty axis; NumPy raises rather than
-        // producing a value.
+        // Min/Max have no identity for an empty axis; NumPy raises rather than producing a value.
         if shape[axis] == 0 && matches!(op, AxisReduce::Min | AxisReduce::Max) {
             return Err(ArrayError::ZeroSizeReduction);
         }
@@ -493,9 +492,7 @@ impl DenseArrayCore {
         mask_shape: &[usize],
         values: &[Scalar],
     ) -> ArrayResult<()> {
-        // Gate on the probe (not just the frozen flag) before validating arguments, so a
-        // mutable borrow whose system has ended or whose context has closed reports that
-        // rather than an incidental shape error.
+        // Gate on the probe first so an expired mutable borrow reports that, not a shape error.
         self.ensure_writable()?;
         self.validate_mask(mask, mask_shape)?;
         let selected = mask.iter().filter(|&&item| item).count();

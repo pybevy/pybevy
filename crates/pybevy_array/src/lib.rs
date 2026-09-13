@@ -12,6 +12,7 @@
 //! See the array compatibility and design documentation for the supported
 //! surface and overall design.
 
+#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 mod backing;
 mod broadcast;
 mod codec;

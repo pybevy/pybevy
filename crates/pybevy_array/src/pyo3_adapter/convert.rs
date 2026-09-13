@@ -415,5 +415,17 @@ pub fn to_numpy(py: Python<'_>, core: &DenseArrayCore) -> PyResult<Py<PyAny>> {
                 .expect("u8 borrow has contiguous typed storage");
             export!(values)
         }
+        ArrayStorage::BorrowedU16 { .. } => {
+            let values = storage
+                .u16_contiguous()
+                .expect("u16 borrow has contiguous typed storage");
+            export!(values)
+        }
+        ArrayStorage::BorrowedU32 { .. } => {
+            let values = storage
+                .u32_contiguous()
+                .expect("u32 borrow has contiguous typed storage");
+            export!(values)
+        }
     }
 }

@@ -6,7 +6,11 @@
 use std::fmt;
 
 use bevy_ecs::component::ComponentId;
-use pyo3::{exceptions::PyTypeError, prelude::*};
+use pybevy_storage::storage_error::{EXPRESSION_MAX_DEPTH, expression_too_deep};
+use pyo3::{
+    exceptions::{PyTypeError, PyValueError},
+    prelude::*,
+};
 
 use super::bytecode::{CompiledBytecode, Compiler, FieldId, FieldType, Op};
 
@@ -256,7 +260,6 @@ impl RustExpr {
     /// Parse a Python expression while allowing an adapter to resolve its own
     /// leaf objects into neutral fields before the generic expression protocol
     /// is inspected.
-    #[allow(clippy::only_used_in_recursion)]
     pub fn from_py_object_with<F>(
         py: Python,
         obj: &Bound<'_, PyAny>,
@@ -265,6 +268,25 @@ impl RustExpr {
     where
         F: FnMut(&Bound<'_, PyAny>) -> PyResult<Option<RustExpr>>,
     {
+        Self::from_py_object_at(py, obj, resolver, 0)
+    }
+
+    /// Convert one node at `depth`, rejecting a tree that would drive this walk,
+    /// the compiler and the drop glue past the stack every backend can afford.
+    #[allow(clippy::only_used_in_recursion)]
+    fn from_py_object_at<F>(
+        py: Python,
+        obj: &Bound<'_, PyAny>,
+        resolver: &mut F,
+        depth: usize,
+    ) -> PyResult<Self>
+    where
+        F: FnMut(&Bound<'_, PyAny>) -> PyResult<Option<RustExpr>>,
+    {
+        if depth >= EXPRESSION_MAX_DEPTH {
+            return Err(PyValueError::new_err(expression_too_deep()));
+        }
+
         if let Some(resolved) = resolver(obj)? {
             return Ok(resolved);
         }
@@ -298,8 +320,8 @@ impl RustExpr {
                     )));
                 }
 
-                let left = Self::from_py_object_with(py, &args_list[0], resolver)?;
-                let right = Self::from_py_object_with(py, &args_list[1], resolver)?;
+                let left = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
+                let right = Self::from_py_object_at(py, &args_list[1], resolver, depth + 1)?;
                 Ok(RustExpr::Add(Box::new(left), Box::new(right)))
             }
 
@@ -312,8 +334,8 @@ impl RustExpr {
                     )));
                 }
 
-                let left = Self::from_py_object_with(py, &args_list[0], resolver)?;
-                let right = Self::from_py_object_with(py, &args_list[1], resolver)?;
+                let left = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
+                let right = Self::from_py_object_at(py, &args_list[1], resolver, depth + 1)?;
                 Ok(RustExpr::Sub(Box::new(left), Box::new(right)))
             }
 
@@ -326,8 +348,8 @@ impl RustExpr {
                     )));
                 }
 
-                let left = Self::from_py_object_with(py, &args_list[0], resolver)?;
-                let right = Self::from_py_object_with(py, &args_list[1], resolver)?;
+                let left = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
+                let right = Self::from_py_object_at(py, &args_list[1], resolver, depth + 1)?;
                 Ok(RustExpr::Mul(Box::new(left), Box::new(right)))
             }
 
@@ -340,8 +362,8 @@ impl RustExpr {
                     )));
                 }
 
-                let left = Self::from_py_object_with(py, &args_list[0], resolver)?;
-                let right = Self::from_py_object_with(py, &args_list[1], resolver)?;
+                let left = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
+                let right = Self::from_py_object_at(py, &args_list[1], resolver, depth + 1)?;
                 Ok(RustExpr::Div(Box::new(left), Box::new(right)))
             }
 
@@ -354,8 +376,8 @@ impl RustExpr {
                     )));
                 }
 
-                let left = Self::from_py_object_with(py, &args_list[0], resolver)?;
-                let right = Self::from_py_object_with(py, &args_list[1], resolver)?;
+                let left = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
+                let right = Self::from_py_object_at(py, &args_list[1], resolver, depth + 1)?;
                 Ok(RustExpr::Pow(Box::new(left), Box::new(right)))
             }
 
@@ -368,7 +390,7 @@ impl RustExpr {
                     )));
                 }
 
-                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let expr = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
                 Ok(RustExpr::Neg(Box::new(expr)))
             }
 
@@ -380,7 +402,7 @@ impl RustExpr {
                         args_list.len()
                     )));
                 }
-                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let expr = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
                 Ok(RustExpr::Sin(Box::new(expr)))
             }
 
@@ -392,7 +414,7 @@ impl RustExpr {
                         args_list.len()
                     )));
                 }
-                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let expr = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
                 Ok(RustExpr::Cos(Box::new(expr)))
             }
 
@@ -404,7 +426,7 @@ impl RustExpr {
                         args_list.len()
                     )));
                 }
-                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let expr = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
                 Ok(RustExpr::Tan(Box::new(expr)))
             }
 
@@ -416,7 +438,7 @@ impl RustExpr {
                         args_list.len()
                     )));
                 }
-                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let expr = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
                 Ok(RustExpr::Asin(Box::new(expr)))
             }
 
@@ -428,7 +450,7 @@ impl RustExpr {
                         args_list.len()
                     )));
                 }
-                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let expr = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
                 Ok(RustExpr::Acos(Box::new(expr)))
             }
 
@@ -440,7 +462,7 @@ impl RustExpr {
                         args_list.len()
                     )));
                 }
-                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let expr = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
                 Ok(RustExpr::Atan(Box::new(expr)))
             }
 
@@ -452,7 +474,7 @@ impl RustExpr {
                         args_list.len()
                     )));
                 }
-                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let expr = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
                 Ok(RustExpr::Sqrt(Box::new(expr)))
             }
 
@@ -464,7 +486,7 @@ impl RustExpr {
                         args_list.len()
                     )));
                 }
-                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let expr = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
                 Ok(RustExpr::Abs(Box::new(expr)))
             }
 
@@ -476,7 +498,7 @@ impl RustExpr {
                         args_list.len()
                     )));
                 }
-                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let expr = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
                 Ok(RustExpr::Floor(Box::new(expr)))
             }
 
@@ -488,7 +510,7 @@ impl RustExpr {
                         args_list.len()
                     )));
                 }
-                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let expr = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
                 Ok(RustExpr::Ceil(Box::new(expr)))
             }
 
@@ -500,7 +522,7 @@ impl RustExpr {
                         args_list.len()
                     )));
                 }
-                let expr = Self::from_py_object_with(py, &args_list[0], resolver)?;
+                let expr = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
                 Ok(RustExpr::Round(Box::new(expr)))
             }
 
@@ -512,8 +534,8 @@ impl RustExpr {
                         args_list.len()
                     )));
                 }
-                let left = Self::from_py_object_with(py, &args_list[0], resolver)?;
-                let right = Self::from_py_object_with(py, &args_list[1], resolver)?;
+                let left = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
+                let right = Self::from_py_object_at(py, &args_list[1], resolver, depth + 1)?;
                 Ok(RustExpr::Min(Box::new(left), Box::new(right)))
             }
 
@@ -525,8 +547,8 @@ impl RustExpr {
                         args_list.len()
                     )));
                 }
-                let left = Self::from_py_object_with(py, &args_list[0], resolver)?;
-                let right = Self::from_py_object_with(py, &args_list[1], resolver)?;
+                let left = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
+                let right = Self::from_py_object_at(py, &args_list[1], resolver, depth + 1)?;
                 Ok(RustExpr::Max(Box::new(left), Box::new(right)))
             }
 
@@ -538,9 +560,9 @@ impl RustExpr {
                         args_list.len()
                     )));
                 }
-                let value = Self::from_py_object_with(py, &args_list[0], resolver)?;
-                let min = Self::from_py_object_with(py, &args_list[1], resolver)?;
-                let max = Self::from_py_object_with(py, &args_list[2], resolver)?;
+                let value = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
+                let min = Self::from_py_object_at(py, &args_list[1], resolver, depth + 1)?;
+                let max = Self::from_py_object_at(py, &args_list[2], resolver, depth + 1)?;
                 Ok(RustExpr::Clamp(
                     Box::new(value),
                     Box::new(min),
@@ -550,43 +572,43 @@ impl RustExpr {
 
             "eq" => {
                 let [left, right] = expect_args("Eq", &args)?;
-                let left = Self::from_py_object_with(py, &left, resolver)?;
-                let right = Self::from_py_object_with(py, &right, resolver)?;
+                let left = Self::from_py_object_at(py, &left, resolver, depth + 1)?;
+                let right = Self::from_py_object_at(py, &right, resolver, depth + 1)?;
                 Ok(RustExpr::Eq(Box::new(left), Box::new(right)))
             }
 
             "ne" => {
                 let [left, right] = expect_args("Ne", &args)?;
-                let left = Self::from_py_object_with(py, &left, resolver)?;
-                let right = Self::from_py_object_with(py, &right, resolver)?;
+                let left = Self::from_py_object_at(py, &left, resolver, depth + 1)?;
+                let right = Self::from_py_object_at(py, &right, resolver, depth + 1)?;
                 Ok(RustExpr::Ne(Box::new(left), Box::new(right)))
             }
 
             "lt" => {
                 let [left, right] = expect_args("Lt", &args)?;
-                let left = Self::from_py_object_with(py, &left, resolver)?;
-                let right = Self::from_py_object_with(py, &right, resolver)?;
+                let left = Self::from_py_object_at(py, &left, resolver, depth + 1)?;
+                let right = Self::from_py_object_at(py, &right, resolver, depth + 1)?;
                 Ok(RustExpr::Lt(Box::new(left), Box::new(right)))
             }
 
             "le" => {
                 let [left, right] = expect_args("Le", &args)?;
-                let left = Self::from_py_object_with(py, &left, resolver)?;
-                let right = Self::from_py_object_with(py, &right, resolver)?;
+                let left = Self::from_py_object_at(py, &left, resolver, depth + 1)?;
+                let right = Self::from_py_object_at(py, &right, resolver, depth + 1)?;
                 Ok(RustExpr::Le(Box::new(left), Box::new(right)))
             }
 
             "gt" => {
                 let [left, right] = expect_args("Gt", &args)?;
-                let left = Self::from_py_object_with(py, &left, resolver)?;
-                let right = Self::from_py_object_with(py, &right, resolver)?;
+                let left = Self::from_py_object_at(py, &left, resolver, depth + 1)?;
+                let right = Self::from_py_object_at(py, &right, resolver, depth + 1)?;
                 Ok(RustExpr::Gt(Box::new(left), Box::new(right)))
             }
 
             "ge" => {
                 let [left, right] = expect_args("Ge", &args)?;
-                let left = Self::from_py_object_with(py, &left, resolver)?;
-                let right = Self::from_py_object_with(py, &right, resolver)?;
+                let left = Self::from_py_object_at(py, &left, resolver, depth + 1)?;
+                let right = Self::from_py_object_at(py, &right, resolver, depth + 1)?;
                 Ok(RustExpr::Ge(Box::new(left), Box::new(right)))
             }
 
@@ -598,9 +620,9 @@ impl RustExpr {
                         args_list.len()
                     )));
                 }
-                let condition = Self::from_py_object_with(py, &args_list[0], resolver)?;
-                let true_value = Self::from_py_object_with(py, &args_list[1], resolver)?;
-                let false_value = Self::from_py_object_with(py, &args_list[2], resolver)?;
+                let condition = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
+                let true_value = Self::from_py_object_at(py, &args_list[1], resolver, depth + 1)?;
+                let false_value = Self::from_py_object_at(py, &args_list[2], resolver, depth + 1)?;
                 Ok(RustExpr::Where(
                     Box::new(condition),
                     Box::new(true_value),
@@ -610,64 +632,64 @@ impl RustExpr {
 
             "and" => {
                 let [left, right] = expect_args("And", &args)?;
-                let left = Self::from_py_object_with(py, &left, resolver)?;
-                let right = Self::from_py_object_with(py, &right, resolver)?;
+                let left = Self::from_py_object_at(py, &left, resolver, depth + 1)?;
+                let right = Self::from_py_object_at(py, &right, resolver, depth + 1)?;
                 Ok(RustExpr::And(Box::new(left), Box::new(right)))
             }
 
             "or" => {
                 let [left, right] = expect_args("Or", &args)?;
-                let left = Self::from_py_object_with(py, &left, resolver)?;
-                let right = Self::from_py_object_with(py, &right, resolver)?;
+                let left = Self::from_py_object_at(py, &left, resolver, depth + 1)?;
+                let right = Self::from_py_object_at(py, &right, resolver, depth + 1)?;
                 Ok(RustExpr::Or(Box::new(left), Box::new(right)))
             }
 
             "not" => {
                 let [inner] = expect_args("Not", &args)?;
-                let expr = Self::from_py_object_with(py, &inner, resolver)?;
+                let expr = Self::from_py_object_at(py, &inner, resolver, depth + 1)?;
                 Ok(RustExpr::Not(Box::new(expr)))
             }
 
             "exp" => {
                 let [inner] = expect_args("Exp", &args)?;
-                let expr = Self::from_py_object_with(py, &inner, resolver)?;
+                let expr = Self::from_py_object_at(py, &inner, resolver, depth + 1)?;
                 Ok(RustExpr::Exp(Box::new(expr)))
             }
 
             "ln" => {
                 let [inner] = expect_args("Ln", &args)?;
-                let expr = Self::from_py_object_with(py, &inner, resolver)?;
+                let expr = Self::from_py_object_at(py, &inner, resolver, depth + 1)?;
                 Ok(RustExpr::Ln(Box::new(expr)))
             }
 
             "log10" => {
                 let [inner] = expect_args("Log10", &args)?;
-                let expr = Self::from_py_object_with(py, &inner, resolver)?;
+                let expr = Self::from_py_object_at(py, &inner, resolver, depth + 1)?;
                 Ok(RustExpr::Log10(Box::new(expr)))
             }
 
             "log2" => {
                 let [inner] = expect_args("Log2", &args)?;
-                let expr = Self::from_py_object_with(py, &inner, resolver)?;
+                let expr = Self::from_py_object_at(py, &inner, resolver, depth + 1)?;
                 Ok(RustExpr::Log2(Box::new(expr)))
             }
 
             "sign" => {
                 let [inner] = expect_args("Sign", &args)?;
-                let expr = Self::from_py_object_with(py, &inner, resolver)?;
+                let expr = Self::from_py_object_at(py, &inner, resolver, depth + 1)?;
                 Ok(RustExpr::Sign(Box::new(expr)))
             }
 
             "fract" => {
                 let [inner] = expect_args("Fract", &args)?;
-                let expr = Self::from_py_object_with(py, &inner, resolver)?;
+                let expr = Self::from_py_object_at(py, &inner, resolver, depth + 1)?;
                 Ok(RustExpr::Fract(Box::new(expr)))
             }
 
             "mod" => {
                 let [left, right] = expect_args("Mod", &args)?;
-                let left = Self::from_py_object_with(py, &left, resolver)?;
-                let right = Self::from_py_object_with(py, &right, resolver)?;
+                let left = Self::from_py_object_at(py, &left, resolver, depth + 1)?;
+                let right = Self::from_py_object_at(py, &right, resolver, depth + 1)?;
                 Ok(RustExpr::Mod(Box::new(left), Box::new(right)))
             }
 
@@ -679,9 +701,9 @@ impl RustExpr {
                         args_list.len()
                     )));
                 }
-                let a = Self::from_py_object_with(py, &args_list[0], resolver)?;
-                let b = Self::from_py_object_with(py, &args_list[1], resolver)?;
-                let t = Self::from_py_object_with(py, &args_list[2], resolver)?;
+                let a = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
+                let b = Self::from_py_object_at(py, &args_list[1], resolver, depth + 1)?;
+                let t = Self::from_py_object_at(py, &args_list[2], resolver, depth + 1)?;
                 Ok(RustExpr::Lerp(Box::new(a), Box::new(b), Box::new(t)))
             }
 
@@ -696,8 +718,8 @@ impl RustExpr {
                     )));
                 }
 
-                let min = Self::from_py_object_with(py, &args_list[0], resolver)?;
-                let max = Self::from_py_object_with(py, &args_list[1], resolver)?;
+                let min = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
+                let max = Self::from_py_object_at(py, &args_list[1], resolver, depth + 1)?;
                 Ok(RustExpr::RandomRange(Box::new(min), Box::new(max)))
             }
 
@@ -1092,9 +1114,25 @@ impl fmt::Display for MapCompileError {
 impl std::error::Error for MapCompileError {}
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
+    use pyo3::types::{PyDict, PyFloat, PyInt, PyList, PyString};
+
     use super::*;
     use crate::bytecode::VM;
+
+    /// Build a Python expression object (`types.SimpleNamespace`) with `op`/`args`.
+    fn named_expr<'py>(py: Python<'py>, op: &str, args: &Bound<'py, PyList>) -> Bound<'py, PyAny> {
+        let namespace = py
+            .import("types")
+            .unwrap()
+            .getattr("SimpleNamespace")
+            .unwrap();
+        let kwargs = PyDict::new(py);
+        kwargs.set_item("op", op).unwrap();
+        kwargs.set_item("args", args).unwrap();
+        namespace.call((), Some(&kwargs)).unwrap()
+    }
 
     // Helper: compile an expression and return bytecode
     fn compile_expr(expr: &RustExpr) -> CompiledBytecode {
@@ -1269,33 +1307,117 @@ mod tests {
         assert!(error.to_string().contains("dense input"));
     }
 
+    fn nested_adds<'py>(py: Python<'py>, additions: usize) -> Bound<'py, PyAny> {
+        let mut expression = named_expr(py, "const", &PyList::new(py, [1.0f64]).unwrap());
+        for _ in 0..additions {
+            let args = PyList::new(py, [expression, PyFloat::new(py, 1.0).into_any()]).unwrap();
+            expression = named_expr(py, "add", &args);
+        }
+        expression
+    }
+
+    #[test]
+    fn from_py_object_accepts_the_deepest_allowed_tree() {
+        Python::initialize();
+        Python::attach(|py| {
+            let deepest = nested_adds(py, EXPRESSION_MAX_DEPTH - 1);
+            let expr = RustExpr::from_py_object(py, &deepest).expect("the limit must be inclusive");
+            assert_eq!(eval_const_expr(&expr), EXPRESSION_MAX_DEPTH as f64);
+        });
+    }
+
+    #[test]
+    fn from_py_object_rejects_a_tree_past_the_depth_limit() {
+        Python::initialize();
+        Python::attach(|py| {
+            let too_deep = nested_adds(py, EXPRESSION_MAX_DEPTH);
+            let error = RustExpr::from_py_object(py, &too_deep)
+                .expect_err("a tree past the limit must be rejected");
+            assert!(error.is_instance_of::<PyValueError>(py));
+            assert_eq!(error.value(py).to_string(), expression_too_deep());
+        });
+    }
+
     #[test]
     fn from_py_object_rejects_missing_args_without_panicking() {
         Python::initialize();
         Python::attach(|py| {
-            let namespace = py
-                .import("types")
-                .unwrap()
-                .getattr("SimpleNamespace")
-                .unwrap();
             for op in [
-                "eq", "ne", "lt", "le", "gt", "ge", "and", "or", "not", "exp", "ln", "log10",
-                "log2", "sign", "fract", "mod", "add", "clamp", "where",
+                "add",
+                "sub",
+                "mul",
+                "div",
+                "pow",
+                "neg",
+                "sin",
+                "cos",
+                "tan",
+                "asin",
+                "acos",
+                "atan",
+                "sqrt",
+                "abs",
+                "floor",
+                "ceil",
+                "round",
+                "min",
+                "max",
+                "clamp",
+                "eq",
+                "ne",
+                "lt",
+                "le",
+                "gt",
+                "ge",
+                "where",
+                "and",
+                "or",
+                "not",
+                "exp",
+                "ln",
+                "log10",
+                "log2",
+                "sign",
+                "fract",
+                "mod",
+                "lerp",
+                "random_range",
+                "field",
+                "const",
             ] {
-                let kwargs = pyo3::types::PyDict::new(py);
-                kwargs.set_item("op", op).unwrap();
-                kwargs
-                    .set_item("args", pyo3::types::PyList::empty(py))
-                    .unwrap();
-                let malformed = namespace.call((), Some(&kwargs)).unwrap();
-
-                let error = RustExpr::from_py_object(py, &malformed)
+                let empty = PyList::empty(py);
+                let error = RustExpr::from_py_object(py, &named_expr(py, op, &empty))
                     .expect_err("empty args must be rejected");
                 assert!(
                     error.to_string().contains("requires"),
                     "op {op}: unexpected error {error}"
                 );
             }
+
+            let empty = PyList::empty(py);
+            let error = RustExpr::from_py_object(py, &named_expr(py, "not_an_operation", &empty))
+                .expect_err("unknown operations must be rejected");
+            assert!(
+                error.to_string().contains("Unknown operation"),
+                "unexpected error {error}"
+            );
+
+            let field_args = PyList::new(
+                py,
+                [
+                    PyInt::new(py, 0).into_any(),
+                    PyString::new(py, "value").into_any(),
+                    PyInt::new(py, 0).into_any(),
+                    PyString::new(py, "NotAType").into_any(),
+                ],
+            )
+            .unwrap();
+            let error = RustExpr::from_py_object(py, &named_expr(py, "field", &field_args))
+                .expect_err("unknown field types must be rejected");
+            assert!(
+                error.to_string().contains("Unknown field type"),
+                "unexpected error {error}"
+            );
         });
     }
 

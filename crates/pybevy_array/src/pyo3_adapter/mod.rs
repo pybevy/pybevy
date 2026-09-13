@@ -234,6 +234,40 @@ pub fn owned_u8(data: Vec<u8>, shape: &[usize]) -> PyResult<PyArray> {
     Ok(PyArray::wrap(core))
 }
 
+/// Wrap external `u16` data as a read-only zero-copy bounded array.
+///
+/// # Safety
+/// `ptr` must address `len` initialized contiguous `u16`s which remain valid
+/// whenever `probe.check_read()` succeeds, with no mutable alias during that
+/// operation window.
+pub unsafe fn borrowed_read_only_u16(
+    ptr: *const u16,
+    len: usize,
+    shape: &[usize],
+    probe: Arc<dyn BorrowProbe>,
+) -> PyResult<PyArray> {
+    // SAFETY: forwarded to the caller's contract above.
+    let storage = unsafe { ArrayStorage::borrowed_u16(ptr, len, probe) };
+    let core = DenseArrayCore::from_storage(storage, shape).map_err(kernels::map_array_err)?;
+    Ok(PyArray::wrap(core))
+}
+
+/// Wrap external `u32` data as a read-only zero-copy bounded array.
+///
+/// # Safety
+/// As [`borrowed_read_only_u16`], for `u32`.
+pub unsafe fn borrowed_read_only_u32(
+    ptr: *const u32,
+    len: usize,
+    shape: &[usize],
+    probe: Arc<dyn BorrowProbe>,
+) -> PyResult<PyArray> {
+    // SAFETY: forwarded to the caller's contract above.
+    let storage = unsafe { ArrayStorage::borrowed_u32(ptr, len, probe) };
+    let core = DenseArrayCore::from_storage(storage, shape).map_err(kernels::map_array_err)?;
+    Ok(PyArray::wrap(core))
+}
+
 /// Copy a bounded or real-NumPy array into owned `uint8` data and preserve its
 /// logical shape. Returns `None` when `obj` is neither supported array type.
 ///

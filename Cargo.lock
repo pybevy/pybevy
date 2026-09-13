@@ -4898,6 +4898,7 @@ version = "0.3.0"
 dependencies = [
  "bevy_ecs",
  "criterion",
+ "nonmax",
  "pybevy_storage",
  "pyo3",
  "rayon",

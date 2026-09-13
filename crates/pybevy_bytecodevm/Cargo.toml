@@ -14,6 +14,7 @@ parallel = ["dep:rayon"]
 [dependencies]
 pyo3.workspace = true
 bevy_ecs = { workspace = true }
+nonmax.workspace = true
 smallvec = "1.0"
 rayon = { version = "1.10", optional = true }
 pybevy_storage = { path = "../pybevy_storage", version = "=0.3.0" }

@@ -282,7 +282,8 @@ fn reduce_float(core: &DenseArrayCore, op: ReduceOp) -> Result<f64, KernelError>
             .expect("locked contiguous input exposes its validated column");
         let mut scratch = TiledScratch::new();
         // SAFETY: the locked input exposes a source valid over `0..len`.
-        Ok(unsafe { run_reduce(op, &source, len, &mut scratch) })
+        Ok(unsafe { run_reduce(op, &source, len, &mut scratch) }
+            .expect("locked contiguous input covers every reduced row"))
     } else {
         let values: Vec<f64> = core
             .to_scalars()

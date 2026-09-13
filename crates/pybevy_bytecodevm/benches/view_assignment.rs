@@ -76,7 +76,7 @@ fn benches(c: &mut Criterion) {
         b.iter(|| {
             // SAFETY: the same live, exclusively accessed rows are used above.
             unsafe {
-                vm.execute_batch_multi(&bytecode, &bases, &strides, N);
+                vm.execute_batch_multi(&bytecode, &bases, &strides, N, None);
             }
             black_box(base);
         })
