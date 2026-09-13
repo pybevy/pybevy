@@ -3,6 +3,8 @@ use pybevy_core::{FromBorrowedStorage, ValueStorage};
 use pybevy_macros::pyvalue;
 use pyo3::{basic::CompareOp, exceptions::PyValueError, prelude::*};
 
+use crate::richcmp::comparison_result;
+
 #[pyvalue]
 #[pyclass(name = "Interval", module = "pybevy.math", from_py_object)]
 #[derive(Debug, Clone)]
@@ -137,7 +139,6 @@ impl PyInterval {
             CompareOp::Gt => a > b,
             CompareOp::Ge => a >= b,
         };
-        let bound = pyo3::types::PyBool::new(py, result).to_owned();
-        Ok(bound.into_any().unbind())
+        Ok(comparison_result(py, result))
     }
 }

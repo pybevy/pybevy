@@ -19,6 +19,7 @@ pub mod quat;
 pub mod range;
 pub mod ray;
 pub mod rect;
+mod richcmp;
 pub mod rot2;
 pub mod torus_kind;
 pub mod urect;

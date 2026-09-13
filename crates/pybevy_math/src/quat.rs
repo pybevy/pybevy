@@ -8,7 +8,7 @@ use pyo3::{
     types::{PyAny, PyDict, PyTuple},
 };
 
-use crate::{vec3::PyVec3, vec3a::PyVec3A};
+use crate::{richcmp::comparison_result, vec3::PyVec3, vec3a::PyVec3A};
 
 #[pyclass(name = "EulerRot", module = "pybevy.math", from_py_object)]
 #[derive(Debug, Clone, Copy)]
@@ -386,17 +386,23 @@ impl PyQuat {
         Ok(format!("Quat({}, {}, {}, {})", q.x, q.y, q.z, q.w))
     }
 
-    pub fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<bool> {
-        if let Ok(other_quat) = other.extract::<PyQuat>() {
-            return match op {
-                CompareOp::Eq => Ok(self.try_get()? == other_quat.try_get()?),
-                CompareOp::Ne => Ok(self.try_get()? != other_quat.try_get()?),
-                _ => Err(PyTypeError::new_err("Unsupported comparison operation")),
-            };
-        }
-        Err(PyTypeError::new_err(
-            "Can only compare Quat with another Quat",
-        ))
+    pub fn __richcmp__(
+        &self,
+        other: &Bound<'_, PyAny>,
+        op: CompareOp,
+        py: Python<'_>,
+    ) -> PyResult<Py<PyAny>> {
+        let Ok(other_quat) = other.extract::<PyQuat>() else {
+            return Ok(py.NotImplemented());
+        };
+        let a = self.try_get()?;
+        let b = other_quat.try_get()?;
+        let result = match op {
+            CompareOp::Eq => a == b,
+            CompareOp::Ne => a != b,
+            _ => return Err(PyTypeError::new_err("Unsupported comparison operation")),
+        };
+        Ok(comparison_result(py, result))
     }
 }
 

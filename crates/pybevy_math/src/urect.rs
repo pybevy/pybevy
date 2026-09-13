@@ -8,6 +8,7 @@ use pyo3::{
 };
 
 use super::{integer::checked, uvec2::PyUVec2};
+use crate::richcmp::comparison_result;
 
 #[pyvalue]
 #[pyclass(name = "URect", module = "pybevy.math", from_py_object)]
@@ -195,19 +196,22 @@ impl PyURect {
         ))
     }
 
-    pub fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<bool> {
-        if let Ok(other_rect) = other.extract::<PyURect>() {
-            let a = self.to_bevy()?;
-            let b = other_rect.to_bevy()?;
-            match op {
-                CompareOp::Eq => Ok(a == b),
-                CompareOp::Ne => Ok(a != b),
-                _ => Err(PyTypeError::new_err("Unsupported comparison operation")),
-            }
-        } else {
-            Err(PyTypeError::new_err(
-                "Can only compare URect with another URect",
-            ))
-        }
+    pub fn __richcmp__(
+        &self,
+        other: &Bound<'_, PyAny>,
+        op: CompareOp,
+        py: Python<'_>,
+    ) -> PyResult<Py<PyAny>> {
+        let Ok(other_value) = other.extract::<PyURect>() else {
+            return Ok(py.NotImplemented());
+        };
+        let a = self.to_bevy()?;
+        let b = other_value.to_bevy()?;
+        let result = match op {
+            CompareOp::Eq => a == b,
+            CompareOp::Ne => a != b,
+            _ => return Err(PyTypeError::new_err("Unsupported comparison operation")),
+        };
+        Ok(comparison_result(py, result))
     }
 }

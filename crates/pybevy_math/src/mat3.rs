@@ -7,6 +7,7 @@ use pyo3::{
 };
 
 use super::{quat::PyQuat, vec2::PyVec2, vec3::PyVec3};
+use crate::richcmp::comparison_result;
 
 #[pyclass(name = "Mat3", module = "pybevy.math", from_py_object)]
 #[derive(Debug, Clone)]
@@ -321,19 +322,22 @@ impl PyMat3 {
         ))
     }
 
-    fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<bool> {
-        if let Ok(other_mat) = other.extract::<PyMat3>() {
-            let self_mat = *self.as_ref()?;
-            let other_mat = *other_mat.as_ref()?;
-            match op {
-                CompareOp::Eq => Ok(self_mat == other_mat),
-                CompareOp::Ne => Ok(self_mat != other_mat),
-                _ => Err(PyTypeError::new_err("Unsupported comparison operation")),
-            }
-        } else {
-            Err(PyTypeError::new_err(
-                "Can only compare Mat3 with another Mat3",
-            ))
-        }
+    fn __richcmp__(
+        &self,
+        other: &Bound<'_, PyAny>,
+        op: CompareOp,
+        py: Python<'_>,
+    ) -> PyResult<Py<PyAny>> {
+        let Ok(other_value) = other.extract::<PyMat3>() else {
+            return Ok(py.NotImplemented());
+        };
+        let self_mat = *self.as_ref()?;
+        let other_mat = *other_value.as_ref()?;
+        let result = match op {
+            CompareOp::Eq => self_mat == other_mat,
+            CompareOp::Ne => self_mat != other_mat,
+            _ => return Err(PyTypeError::new_err("Unsupported comparison operation")),
+        };
+        Ok(comparison_result(py, result))
     }
 }

@@ -6,7 +6,7 @@ use pyo3::{
     prelude::*,
 };
 
-use crate::vec3::PyVec3;
+use crate::{richcmp::comparison_result, vec3::PyVec3};
 
 #[pyclass(name = "Vec2", module = "pybevy.math", from_py_object)]
 #[derive(Debug, Clone)]
@@ -282,24 +282,25 @@ impl PyVec2 {
         Ok(format!("Vec2({}, {})", v.x, v.y))
     }
 
-    fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<bool> {
-        if let Ok(other_vec) = other.extract::<PyVec2>() {
-            match op {
-                CompareOp::Eq => Ok(self.try_get()? == other_vec.try_get()?),
-                CompareOp::Ne => Ok(self.try_get()? != other_vec.try_get()?),
-                _ => Err(PyTypeError::new_err("Unsupported comparison operation")),
-            }
+    fn __richcmp__(
+        &self,
+        other: &Bound<'_, PyAny>,
+        op: CompareOp,
+        py: Python<'_>,
+    ) -> PyResult<Py<PyAny>> {
+        let equal = if let Ok(other_vec) = other.extract::<PyVec2>() {
+            self.try_get()? == other_vec.try_get()?
         } else if let Ok(tuple) = other.extract::<(f32, f32)>() {
-            match op {
-                CompareOp::Eq => Ok(self.as_tuple()? == tuple),
-                CompareOp::Ne => Ok(self.as_tuple()? != tuple),
-                _ => Err(PyTypeError::new_err("Unsupported comparison operation")),
-            }
+            self.as_tuple()? == tuple
         } else {
-            Err(PyTypeError::new_err(
-                "Can only compare Vec2 with another Vec2 or a tuple of two floats",
-            ))
-        }
+            return Ok(py.NotImplemented());
+        };
+        let result = match op {
+            CompareOp::Eq => equal,
+            CompareOp::Ne => !equal,
+            _ => return Err(PyTypeError::new_err("Unsupported comparison operation")),
+        };
+        Ok(comparison_result(py, result))
     }
 
     fn as_tuple(&self) -> PyResult<(f32, f32)> {
