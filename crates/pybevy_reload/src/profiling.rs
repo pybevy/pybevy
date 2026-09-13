@@ -637,4 +637,33 @@ mod tests {
         // First snapshot should be generation 5 (0-4 were evicted)
         assert_eq!(profile.snapshots[0].generation, 5);
     }
+
+    #[test]
+    fn test_memory_profile_is_warning_threshold() {
+        let mut profile = MemoryProfile::default();
+        assert!(
+            !profile.is_warning(300.0),
+            "without a captured baseline there is never a warning"
+        );
+
+        profile.capture_baseline(100.0);
+        assert!(
+            !profile.is_warning(299.999),
+            "growth below the threshold: no warning"
+        );
+        assert!(
+            !profile.is_warning(300.0),
+            "growth at exactly the 200MB threshold is not a warning"
+        );
+        assert!(
+            profile.is_warning(300.001),
+            "growth above the threshold warns"
+        );
+
+        profile.warning_threshold_mb = 1.0;
+        assert!(
+            profile.is_warning(101.5),
+            "a custom threshold applies to the same baseline"
+        );
+    }
 }

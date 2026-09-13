@@ -155,4 +155,32 @@ mod tests {
             progress(ReloadProgressPhase::DefinitionsLoading),
         );
     }
+
+    #[test]
+    fn from_shared_reporters_share_one_sink() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let captured = events.clone();
+        let sink: Arc<dyn ReloadProgressSink> = Arc::new(move |event: ReloadProgress| {
+            captured.lock().unwrap().push(event);
+        });
+        let mut first_world = World::new();
+        let mut second_world = World::new();
+        first_world.insert_resource(ReloadProgressReporter::from_shared(sink.clone()));
+        second_world.insert_resource(ReloadProgressReporter::from_shared(sink));
+
+        emit_reload_progress(
+            &first_world,
+            progress(ReloadProgressPhase::DefinitionsLoading),
+        );
+        emit_reload_progress(&second_world, progress(ReloadProgressPhase::Complete));
+
+        assert_eq!(
+            *events.lock().unwrap(),
+            vec![
+                progress(ReloadProgressPhase::DefinitionsLoading),
+                progress(ReloadProgressPhase::Complete),
+            ],
+            "reporters built from one shared sink must observe the same events"
+        );
+    }
 }

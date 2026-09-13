@@ -701,6 +701,31 @@ pub fn format_uptime(secs: f64) -> String {
 }
 
 #[cfg(test)]
+mod format_uptime_tests {
+    use super::format_uptime;
+
+    #[test]
+    fn sub_minute_uses_seconds_only() {
+        assert_eq!(format_uptime(0.0), "0s");
+        assert_eq!(format_uptime(5.9), "5s");
+        assert_eq!(format_uptime(59.0), "59s");
+    }
+
+    #[test]
+    fn minutes_truncate_the_seconds_field() {
+        assert_eq!(format_uptime(60.0), "1m0s");
+        assert_eq!(format_uptime(65.0), "1m5s");
+        assert_eq!(format_uptime(60.9), "1m0s");
+    }
+
+    #[test]
+    fn fractional_uptime_is_truncated_not_rounded() {
+        assert_eq!(format_uptime(65.99), "1m5s");
+        assert_eq!(format_uptime(125.99), "2m5s");
+    }
+}
+
+#[cfg(test)]
 mod error_line_tests {
     use super::truncated_error_line;
 
