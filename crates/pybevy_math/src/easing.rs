@@ -13,7 +13,7 @@ pub enum PyJumpAt {
     Both,
 }
 
-#[pyclass(name = "EaseFunction", module = "pybevy.math", skip_from_py_object)]
+#[pyclass(name = "EaseFunction", module = "pybevy.math", eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyEaseFunction {
     ease_fn: EaseFunction,

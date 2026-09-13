@@ -213,24 +213,84 @@ impl PyVec3A {
         ))
     }
 
-    pub fn __add__(&self, other: &PyVec3A) -> PyResult<Self> {
-        Ok(PyVec3A::from_vec3a(*self.as_ref()? + *other.as_ref()?))
+    pub fn __add__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let value = self.as_ref()?;
+        if let Ok(scalar) = other.extract::<f32>() {
+            Ok(Py::new(py, Self::from_vec3a(*value + scalar))?.into_any())
+        } else if let Ok(other) = other.extract::<PyVec3A>() {
+            Ok(Py::new(py, Self::from_vec3a(*value + *other.as_ref()?))?.into_any())
+        } else {
+            Ok(py.NotImplemented().into_any())
+        }
     }
 
-    pub fn __sub__(&self, other: &PyVec3A) -> PyResult<Self> {
-        Ok(PyVec3A::from_vec3a(*self.as_ref()? - *other.as_ref()?))
+    pub fn __sub__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let value = self.as_ref()?;
+        if let Ok(scalar) = other.extract::<f32>() {
+            Ok(Py::new(py, Self::from_vec3a(*value - scalar))?.into_any())
+        } else if let Ok(other) = other.extract::<PyVec3A>() {
+            Ok(Py::new(py, Self::from_vec3a(*value - *other.as_ref()?))?.into_any())
+        } else {
+            Ok(py.NotImplemented().into_any())
+        }
     }
 
-    pub fn __mul__(&self, scalar: f32) -> PyResult<Self> {
-        Ok(PyVec3A::from_vec3a(*self.as_ref()? * scalar))
+    pub fn __mul__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let value = self.as_ref()?;
+        if let Ok(scalar) = other.extract::<f32>() {
+            Ok(Py::new(py, Self::from_vec3a(*value * scalar))?.into_any())
+        } else if let Ok(other) = other.extract::<PyVec3A>() {
+            Ok(Py::new(py, Self::from_vec3a(*value * *other.as_ref()?))?.into_any())
+        } else {
+            Ok(py.NotImplemented().into_any())
+        }
     }
 
-    pub fn __rmul__(&self, scalar: f32) -> PyResult<Self> {
-        self.__mul__(scalar)
+    pub fn __truediv__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let value = self.as_ref()?;
+        if let Ok(scalar) = other.extract::<f32>() {
+            Ok(Py::new(py, Self::from_vec3a(*value / scalar))?.into_any())
+        } else if let Ok(other) = other.extract::<PyVec3A>() {
+            Ok(Py::new(py, Self::from_vec3a(*value / *other.as_ref()?))?.into_any())
+        } else {
+            Ok(py.NotImplemented().into_any())
+        }
     }
 
-    pub fn __truediv__(&self, scalar: f32) -> PyResult<Self> {
-        Ok(PyVec3A::from_vec3a(*self.as_ref()? / scalar))
+    pub fn __radd__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let value = self.as_ref()?;
+        if let Ok(scalar) = other.extract::<f32>() {
+            Ok(Py::new(py, Self::from_vec3a(scalar + *value))?.into_any())
+        } else {
+            Ok(py.NotImplemented().into_any())
+        }
+    }
+
+    pub fn __rsub__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let value = self.as_ref()?;
+        if let Ok(scalar) = other.extract::<f32>() {
+            Ok(Py::new(py, Self::from_vec3a(scalar - *value))?.into_any())
+        } else {
+            Ok(py.NotImplemented().into_any())
+        }
+    }
+
+    pub fn __rmul__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let value = self.as_ref()?;
+        if let Ok(scalar) = other.extract::<f32>() {
+            Ok(Py::new(py, Self::from_vec3a(scalar * *value))?.into_any())
+        } else {
+            Ok(py.NotImplemented().into_any())
+        }
+    }
+
+    pub fn __rtruediv__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let value = self.as_ref()?;
+        if let Ok(scalar) = other.extract::<f32>() {
+            Ok(Py::new(py, Self::from_vec3a(scalar / *value))?.into_any())
+        } else {
+            Ok(py.NotImplemented().into_any())
+        }
     }
 
     pub fn __neg__(&self) -> PyResult<Self> {

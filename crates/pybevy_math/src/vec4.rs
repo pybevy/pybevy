@@ -6,7 +6,7 @@ use pyo3::{
     prelude::*,
 };
 
-use crate::{richcmp::comparison_result, vec3::PyVec3};
+use crate::{richcmp::comparison_result, vec2::PyVec2, vec3::PyVec3};
 
 fn bool_tuple(value: BVec4A) -> (bool, bool, bool, bool) {
     let mask = value.bitmask();
@@ -500,69 +500,53 @@ impl PyVec4 {
         Ok(bool_tuple(self.as_ref()?.cmpge(*rhs.as_ref()?)))
     }
 
-    pub fn xx(&self) -> PyResult<(f32, f32)> {
-        let v = self.as_ref()?;
-        Ok((v.x, v.x))
+    pub fn xx(&self) -> PyResult<PyVec2> {
+        Ok(self.as_ref()?.xx().into())
     }
-    pub fn xy(&self) -> PyResult<(f32, f32)> {
-        let v = self.as_ref()?;
-        Ok((v.x, v.y))
+    pub fn xy(&self) -> PyResult<PyVec2> {
+        Ok(self.as_ref()?.xy().into())
     }
-    pub fn xz(&self) -> PyResult<(f32, f32)> {
-        let v = self.as_ref()?;
-        Ok((v.x, v.z))
+    pub fn xz(&self) -> PyResult<PyVec2> {
+        Ok(self.as_ref()?.xz().into())
     }
-    pub fn xw(&self) -> PyResult<(f32, f32)> {
-        let v = self.as_ref()?;
-        Ok((v.x, v.w))
+    pub fn xw(&self) -> PyResult<PyVec2> {
+        Ok(self.as_ref()?.xw().into())
     }
-    pub fn yx(&self) -> PyResult<(f32, f32)> {
-        let v = self.as_ref()?;
-        Ok((v.y, v.x))
+    pub fn yx(&self) -> PyResult<PyVec2> {
+        Ok(self.as_ref()?.yx().into())
     }
-    pub fn yy(&self) -> PyResult<(f32, f32)> {
-        let v = self.as_ref()?;
-        Ok((v.y, v.y))
+    pub fn yy(&self) -> PyResult<PyVec2> {
+        Ok(self.as_ref()?.yy().into())
     }
-    pub fn yz(&self) -> PyResult<(f32, f32)> {
-        let v = self.as_ref()?;
-        Ok((v.y, v.z))
+    pub fn yz(&self) -> PyResult<PyVec2> {
+        Ok(self.as_ref()?.yz().into())
     }
-    pub fn yw(&self) -> PyResult<(f32, f32)> {
-        let v = self.as_ref()?;
-        Ok((v.y, v.w))
+    pub fn yw(&self) -> PyResult<PyVec2> {
+        Ok(self.as_ref()?.yw().into())
     }
-    pub fn zx(&self) -> PyResult<(f32, f32)> {
-        let v = self.as_ref()?;
-        Ok((v.z, v.x))
+    pub fn zx(&self) -> PyResult<PyVec2> {
+        Ok(self.as_ref()?.zx().into())
     }
-    pub fn zy(&self) -> PyResult<(f32, f32)> {
-        let v = self.as_ref()?;
-        Ok((v.z, v.y))
+    pub fn zy(&self) -> PyResult<PyVec2> {
+        Ok(self.as_ref()?.zy().into())
     }
-    pub fn zz(&self) -> PyResult<(f32, f32)> {
-        let v = self.as_ref()?;
-        Ok((v.z, v.z))
+    pub fn zz(&self) -> PyResult<PyVec2> {
+        Ok(self.as_ref()?.zz().into())
     }
-    pub fn zw(&self) -> PyResult<(f32, f32)> {
-        let v = self.as_ref()?;
-        Ok((v.z, v.w))
+    pub fn zw(&self) -> PyResult<PyVec2> {
+        Ok(self.as_ref()?.zw().into())
     }
-    pub fn wx(&self) -> PyResult<(f32, f32)> {
-        let v = self.as_ref()?;
-        Ok((v.w, v.x))
+    pub fn wx(&self) -> PyResult<PyVec2> {
+        Ok(self.as_ref()?.wx().into())
     }
-    pub fn wy(&self) -> PyResult<(f32, f32)> {
-        let v = self.as_ref()?;
-        Ok((v.w, v.y))
+    pub fn wy(&self) -> PyResult<PyVec2> {
+        Ok(self.as_ref()?.wy().into())
     }
-    pub fn wz(&self) -> PyResult<(f32, f32)> {
-        let v = self.as_ref()?;
-        Ok((v.w, v.z))
+    pub fn wz(&self) -> PyResult<PyVec2> {
+        Ok(self.as_ref()?.wz().into())
     }
-    pub fn ww(&self) -> PyResult<(f32, f32)> {
-        let v = self.as_ref()?;
-        Ok((v.w, v.w))
+    pub fn ww(&self) -> PyResult<PyVec2> {
+        Ok(self.as_ref()?.ww().into())
     }
 
     fn __add__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
@@ -623,6 +607,33 @@ impl PyVec4 {
             Ok(Py::new(py, PyVec4::from_vec4(scalar * self_vec))?.into_any())
         } else if let Ok(other_vec) = other.extract::<PyVec4>() {
             Ok(Py::new(py, PyVec4::from_vec4(*other_vec.as_ref()? * self_vec))?.into_any())
+        } else {
+            Ok(py.NotImplemented().into_any())
+        }
+    }
+
+    fn __radd__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let value = self.as_ref()?;
+        if let Ok(scalar) = other.extract::<f32>() {
+            Ok(Py::new(py, PyVec4::from_vec4(scalar + *value))?.into_any())
+        } else {
+            Ok(py.NotImplemented().into_any())
+        }
+    }
+
+    fn __rsub__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let value = self.as_ref()?;
+        if let Ok(scalar) = other.extract::<f32>() {
+            Ok(Py::new(py, PyVec4::from_vec4(scalar - *value))?.into_any())
+        } else {
+            Ok(py.NotImplemented().into_any())
+        }
+    }
+
+    fn __rtruediv__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let value = self.as_ref()?;
+        if let Ok(scalar) = other.extract::<f32>() {
+            Ok(Py::new(py, PyVec4::from_vec4(scalar / *value))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }

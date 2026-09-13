@@ -1,7 +1,7 @@
 use bevy::math::{EulerRot, Quat, Vec3, Vec3A};
 use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
 use pyo3::{
-    Bound, IntoPyObjectExt,
+    Bound,
     basic::CompareOp,
     exceptions::{PyTypeError, PyValueError},
     prelude::*,
@@ -351,7 +351,9 @@ impl PyQuat {
 
     pub fn __mul__(&self, other: &Bound<'_, PyAny>, py: Python) -> PyResult<Py<PyAny>> {
         let self_quat = self.as_ref()?;
-        if let Ok(other_quat) = other.extract::<PyQuat>() {
+        if let Ok(scalar) = other.extract::<f32>() {
+            Ok(Py::new(py, Self::from_quat(*self_quat * scalar))?.into_any())
+        } else if let Ok(other_quat) = other.extract::<PyQuat>() {
             Ok(Py::new(
                 py,
                 PyQuat {
@@ -370,15 +372,44 @@ impl PyQuat {
         }
     }
 
-    pub fn __rmul__(&self, other: &PyQuat, py: Python) -> PyResult<Py<PyAny>> {
-        let self_quat = self.as_ref()?;
-        Py::new(
-            py,
-            PyQuat {
-                storage: ValueStorage::owned(other.try_get()? * *self_quat),
-            },
-        )?
-        .into_py_any(py)
+    pub fn __add__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let value = self.as_ref()?;
+        if let Ok(other) = other.extract::<PyQuat>() {
+            Ok(Py::new(py, Self::from_quat(*value + other.try_get()?))?.into_any())
+        } else {
+            Ok(py.NotImplemented().into_any())
+        }
+    }
+
+    pub fn __sub__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let value = self.as_ref()?;
+        if let Ok(other) = other.extract::<PyQuat>() {
+            Ok(Py::new(py, Self::from_quat(*value - other.try_get()?))?.into_any())
+        } else {
+            Ok(py.NotImplemented().into_any())
+        }
+    }
+
+    pub fn __rmul__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let value = self.as_ref()?;
+        if let Ok(other) = other.extract::<PyQuat>() {
+            Ok(Py::new(py, Self::from_quat(other.try_get()? * *value))?.into_any())
+        } else {
+            Ok(py.NotImplemented().into_any())
+        }
+    }
+
+    pub fn __truediv__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let value = self.as_ref()?;
+        if let Ok(scalar) = other.extract::<f32>() {
+            Ok(Py::new(py, Self::from_quat(*value / scalar))?.into_any())
+        } else {
+            Ok(py.NotImplemented().into_any())
+        }
+    }
+
+    pub fn __neg__(&self) -> PyResult<Self> {
+        Ok(Self::from_quat(-*self.as_ref()?))
     }
 
     pub fn __repr__(&self) -> PyResult<String> {

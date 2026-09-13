@@ -222,6 +222,46 @@ impl PyMat3A {
         Ok(PyMat3A::mat3a(scalar * *self.as_ref()?))
     }
 
+    fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let value = self.as_ref()?;
+        let py = other.py();
+        if let Ok(other) = other.extract::<PyMat3A>() {
+            Ok(Py::new(py, Self::mat3a(*value + *other.as_ref()?))?.into_any())
+        } else {
+            Ok(py.NotImplemented().into_any())
+        }
+    }
+
+    fn __sub__(&self, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let value = self.as_ref()?;
+        let py = other.py();
+        if let Ok(other) = other.extract::<PyMat3A>() {
+            Ok(Py::new(py, Self::mat3a(*value - *other.as_ref()?))?.into_any())
+        } else {
+            Ok(py.NotImplemented().into_any())
+        }
+    }
+
+    fn __truediv__(&self, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let value = self.as_ref()?;
+        let py = other.py();
+        if let Ok(scalar) = other.extract::<f32>() {
+            Ok(Py::new(py, Self::mat3a(*value / scalar))?.into_any())
+        } else {
+            Ok(py.NotImplemented().into_any())
+        }
+    }
+
+    fn __rtruediv__(&self, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let value = self.as_ref()?;
+        let py = other.py();
+        if let Ok(scalar) = other.extract::<f32>() {
+            Ok(Py::new(py, Self::mat3a(scalar / *value))?.into_any())
+        } else {
+            Ok(py.NotImplemented().into_any())
+        }
+    }
+
     fn __neg__(&self) -> PyResult<PyMat3A> {
         Ok(PyMat3A::mat3a(-*self.as_ref()?))
     }
