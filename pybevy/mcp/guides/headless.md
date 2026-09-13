@@ -110,6 +110,11 @@ Launch headless scenes with the `headless=True` parameter:
 run_scene(path="my_scene.py", headless=True)
 ```
 
+`run_scene` returns after the control server responds and first-frame system
+errors can be checked, with a 60-second startup deadline. Asset loads and GPU
+readback frames may complete later. A startup timeout stops the subprocess and
+includes its captured output in the error.
+
 All MCP tools work in headless mode:
 - `capture_screenshot`, `capture_stats`, `capture_turnaround`, `capture_depth` use GPU readback
 - `set_component`, `spawn_entity`, `query_entities` work normally
