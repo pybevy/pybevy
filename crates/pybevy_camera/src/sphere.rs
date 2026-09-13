@@ -36,7 +36,7 @@ impl TryFrom<PySphere> for Sphere {
 #[pymethods]
 impl PySphere {
     #[new]
-    #[pyo3(signature = (center=PyVec3A::vec3a(Vec3A::ZERO), radius=0.0))]
+    #[pyo3(signature = (*, center=PyVec3A::vec3a(Vec3A::ZERO), radius=0.0))]
     pub fn new(center: PyVec3A, radius: f32) -> PyResult<Self> {
         Ok(Self::from_owned(Sphere {
             center: center.try_into()?,

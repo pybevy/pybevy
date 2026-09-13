@@ -19,7 +19,7 @@ pub struct PyAabb {
 #[pymethods]
 impl PyAabb {
     #[new]
-    #[pyo3(signature = (center=PyVec3A::vec3a(Vec3A::ZERO), half_extents=PyVec3A::vec3a(Vec3A::ZERO)))]
+    #[pyo3(signature = (*, center=PyVec3A::vec3a(Vec3A::ZERO), half_extents=PyVec3A::vec3a(Vec3A::ZERO)))]
     pub fn new(center: PyVec3A, half_extents: PyVec3A) -> PyResult<PyClassInitializer<Self>> {
         Ok((
             PyAabb {

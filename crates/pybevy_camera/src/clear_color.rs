@@ -8,7 +8,7 @@ use pyo3::prelude::*;
 #[pyclass(name = "ClearColor", module = "pybevy.camera", extends = PyResource, from_py_object)]
 #[derive(Debug)]
 pub struct PyClearColor {
-    pub storage: ResourceStorage<ClearColor>,
+    pub(crate) storage: ResourceStorage<ClearColor>,
 }
 
 #[pymethods]

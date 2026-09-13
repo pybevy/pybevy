@@ -39,6 +39,10 @@ impl PyVisibilityBatch {
         let count: usize = shape.get_item(0)?.extract()?;
         Ok(count)
     }
+
+    fn __len__(&self, py: Python) -> PyResult<usize> {
+        self.count(py)
+    }
 }
 
 pub struct VisibilityBatchBridge;

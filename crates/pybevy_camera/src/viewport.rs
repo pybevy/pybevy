@@ -14,7 +14,7 @@ pub struct PyViewport {
 #[pymethods]
 impl PyViewport {
     #[new]
-    #[pyo3(signature = (physical_position = PyUVec2::ZERO, physical_size = PyUVec2::ONE, depth=(0.0, 1.0)))]
+    #[pyo3(signature = (*, physical_position = PyUVec2::ZERO, physical_size = PyUVec2::ONE, depth=(0.0, 1.0)))]
     pub fn new(
         physical_position: PyUVec2,
         physical_size: PyUVec2,

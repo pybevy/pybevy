@@ -15,7 +15,7 @@ pub struct PyVisibilityRange {
 #[pymethods]
 impl PyVisibilityRange {
     #[new]
-    #[pyo3(signature = (start_margin=None, end_margin=None, use_aabb=false))]
+    #[pyo3(signature = (*, start_margin=None, end_margin=None, use_aabb=false))]
     pub fn new(
         start_margin: Option<&PyRange>,
         end_margin: Option<&PyRange>,

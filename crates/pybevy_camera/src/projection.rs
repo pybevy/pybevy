@@ -25,7 +25,7 @@ pub struct PyPerspectiveProjection {
 #[pymethods]
 impl PyPerspectiveProjection {
     #[new]
-    #[pyo3(signature = (fov = FRAC_PI_4, aspect_ratio = 1.0, near = 0.1, far = 1000.0))]
+    #[pyo3(signature = (*, fov = FRAC_PI_4, aspect_ratio = 1.0, near = 0.1, far = 1000.0))]
     pub fn new(fov: f32, aspect_ratio: f32, near: f32, far: f32) -> Self {
         Self::from_owned(PerspectiveProjection {
             fov,
@@ -150,7 +150,7 @@ pub struct PyOrthographicProjection {
 #[pymethods]
 impl PyOrthographicProjection {
     #[new]
-    #[pyo3(signature = (near=None, far=None, viewport_origin=None, scaling_mode=None, scale=None, area=None))]
+    #[pyo3(signature = (*, near=None, far=None, viewport_origin=None, scaling_mode=None, scale=None, area=None))]
     pub fn new(
         near: Option<f32>,
         far: Option<f32>,
