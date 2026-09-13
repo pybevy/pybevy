@@ -21,6 +21,7 @@ pub struct PyVignette {
 impl PyVignette {
     #[new]
     #[pyo3(signature = (
+        *,
         intensity = 1.0,
         radius = 0.75,
         smoothness = 5.0,

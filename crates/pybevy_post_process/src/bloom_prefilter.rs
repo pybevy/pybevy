@@ -16,7 +16,7 @@ pub struct PyBloomPrefilter {
 #[pymethods]
 impl PyBloomPrefilter {
     #[new]
-    #[pyo3(signature = (threshold = 0.0, threshold_softness = 0.0))]
+    #[pyo3(signature = (*, threshold = 0.0, threshold_softness = 0.0))]
     pub fn new(threshold: f32, threshold_softness: f32) -> Self {
         BloomPrefilter {
             threshold,
