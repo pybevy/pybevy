@@ -65,14 +65,14 @@ def setup(
 
     scales = np.full((BALL_COUNT, 3), BALL_R, dtype=np.float32)
 
-    ball_mesh = meshes.add(Sphere(1.0))  # unit sphere, scaled by transform
+    ball_mesh = meshes.add(Sphere(radius=1.0))  # unit sphere, scaled by transform
     ball_mat = materials.add(StandardMaterial(
         base_color=Color.srgb(0.9, 0.3, 0.15),
         emissive=LinearRgba.rgb(2.0, 0.5, 0.1),
     ))
 
     commands.spawn_batch(
-        Transform.from_numpy(translation=positions, scale=scales),
+        Transform.batch(translation=positions, scale=scales),
         Mesh3d(ball_mesh),
         MeshMaterial3d(ball_mat),
         Ball(),

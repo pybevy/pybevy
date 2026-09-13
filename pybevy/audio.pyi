@@ -216,7 +216,7 @@ class PlaybackSettings(Component):
         """Helper to use a custom spatial scale."""
 
     @staticmethod
-    def from_numpy(  # type: ignore[override]
+    def batch(  # type: ignore[override]
         *,
         speed: np.typing.ArrayLike | None = None,
         paused: np.typing.ArrayLike | None = None,

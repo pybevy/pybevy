@@ -1,9 +1,10 @@
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
-    Ident, ItemStruct, Token, Type,
+    Ident, ItemStruct, Meta, Token, Type,
     parse::{Parse, ParseStream},
     parse_macro_input,
+    punctuated::Punctuated,
 };
 
 use crate::util::reflect_registration_tokens;
@@ -20,8 +21,8 @@ use crate::util::reflect_registration_tokens;
 ///
 /// ```rust,ignore
 /// #[pywrap(Tonemapping)]
-/// #[pyclass(name = "Tonemapping", extends = PyComponent, frozen)]
-/// #[derive(Clone, Debug)]
+/// #[pyclass(name = "Tonemapping", extends = PyComponent, frozen, eq, hash)]
+/// #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 /// pub struct PyTonemapping(pub(crate) Tonemapping);
 /// ```
 ///
@@ -87,6 +88,9 @@ pub fn pywrap(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as NewtypeStorageArgs);
     let bevy_type = &args.bevy_type;
     let input = parse_macro_input!(item as ItemStruct);
+    if let Err(error) = require_frozen_pywrap(&input) {
+        return error.into_compile_error().into();
+    }
     let py_type = &input.ident;
 
     let bridge_tokens = if args.bridge {
@@ -97,6 +101,19 @@ pub fn pywrap(attr: TokenStream, item: TokenStream) -> TokenStream {
             args.is_copy,
             args.no_reflect,
         )
+    } else {
+        quote! {}
+    };
+
+    let copy_tokens = if args.bridge {
+        quote! {
+            #[pyo3::pymethods]
+            impl #py_type {
+                pub fn __copy__(&self, py: Python) -> PyResult<Py<Self>> {
+                    Py::new(py, Self::from_owned(self.0.clone()))
+                }
+            }
+        }
     } else {
         quote! {}
     };
@@ -133,6 +150,7 @@ pub fn pywrap(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
 
+        #copy_tokens
         #bridge_tokens
     };
 
@@ -332,4 +350,27 @@ pub(crate) fn generate_newtype_bridge_tokens(
         #expanded
         #inventory_submit
     }
+}
+
+fn require_frozen_pywrap(input: &ItemStruct) -> syn::Result<()> {
+    for attr in &input.attrs {
+        if attr
+            .path()
+            .segments
+            .last()
+            .is_some_and(|segment| segment.ident == "pyclass")
+        {
+            let options = attr.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)?;
+            if options
+                .iter()
+                .any(|option| option.path().is_ident("frozen"))
+            {
+                return Ok(());
+            }
+        }
+    }
+    Err(syn::Error::new_spanned(
+        input,
+        "pywrap requires #[pyclass(frozen)]; writable components must use pycomponent with ComponentStorage",
+    ))
 }

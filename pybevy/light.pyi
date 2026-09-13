@@ -161,7 +161,7 @@ class FogVolume(Component):
     light_intensity: float
 
     @staticmethod
-    def from_numpy(  # type: ignore[override]
+    def batch(  # type: ignore[override]
         *,
         density_factor: np.typing.ArrayLike | None = None,
         absorption: np.typing.ArrayLike | None = None,
@@ -207,7 +207,7 @@ class AmbientLight(Component):
     affects_lightmapped_meshes: bool
 
     @staticmethod
-    def from_numpy(  # type: ignore[override]
+    def batch(  # type: ignore[override]
         *,
         brightness: np.typing.ArrayLike | None = None,
         affects_lightmapped_meshes: np.typing.ArrayLike | None = None,
@@ -241,7 +241,7 @@ class PointLight(Component):
     shadow_map_near_z: float
 
     @staticmethod
-    def from_numpy(  # type: ignore[override]
+    def batch(  # type: ignore[override]
         *,
         intensity: np.typing.ArrayLike | None = None,
         range: np.typing.ArrayLike | None = None,
@@ -286,7 +286,7 @@ class SpotLight(Component):
     inner_angle: float
 
     @staticmethod
-    def from_numpy(  # type: ignore[override]
+    def batch(  # type: ignore[override]
         *,
         intensity: np.typing.ArrayLike | None = None,
         range: np.typing.ArrayLike | None = None,
@@ -323,7 +323,7 @@ class DirectionalLight(Component):
     shadow_normal_bias: float
 
     @staticmethod
-    def from_numpy(  # type: ignore[override]
+    def batch(  # type: ignore[override]
         *,
         illuminance: np.typing.ArrayLike | None = None,
         shadow_depth_bias: np.typing.ArrayLike | None = None,
@@ -360,7 +360,7 @@ class RectLight(Component):
     height: float
 
     @staticmethod
-    def from_numpy(  # type: ignore[override]
+    def batch(  # type: ignore[override]
         *,
         intensity: np.typing.ArrayLike | None = None,
         range: np.typing.ArrayLike | None = None,
@@ -402,7 +402,7 @@ class EnvironmentMapLight(Component):
     affects_lightmapped_mesh_diffuse: bool
 
     @staticmethod
-    def from_numpy(  # type: ignore[override]
+    def batch(  # type: ignore[override]
         *,
         intensity: np.typing.ArrayLike | None = None,
         affects_lightmapped_mesh_diffuse: np.typing.ArrayLike | None = None,
@@ -423,7 +423,7 @@ class VolumetricFog(Component):
     jitter: float
 
     @staticmethod
-    def from_numpy(  # type: ignore[override]
+    def batch(  # type: ignore[override]
         *,
         ambient_intensity: np.typing.ArrayLike | None = None,
         step_count: np.typing.ArrayLike | None = None,
@@ -454,7 +454,7 @@ class CascadeShadowConfig(Component):
     minimum_distance: float
 
     @staticmethod
-    def from_numpy(  # type: ignore[override]
+    def batch(  # type: ignore[override]
         *,
         overlap_proportion: np.typing.ArrayLike | None = None,
         minimum_distance: np.typing.ArrayLike | None = None,
@@ -515,7 +515,7 @@ class IrradianceVolume(Component):
     affects_lightmapped_meshes: bool
 
     @staticmethod
-    def from_numpy(  # type: ignore[override]
+    def batch(  # type: ignore[override]
         *,
         intensity: np.typing.ArrayLike | None = None,
         affects_lightmapped_meshes: np.typing.ArrayLike | None = None,
@@ -550,7 +550,7 @@ class SunDisk(Component):
     intensity: float
 
     @staticmethod
-    def from_numpy(  # type: ignore[override]
+    def batch(  # type: ignore[override]
         *,
         angular_size: np.typing.ArrayLike | None = None,
         intensity: np.typing.ArrayLike | None = None,
@@ -638,7 +638,7 @@ class GeneratedEnvironmentMapLight(Component):
     affects_lightmapped_mesh_diffuse: bool
 
     @staticmethod
-    def from_numpy(  # type: ignore[override]
+    def batch(  # type: ignore[override]
         *,
         intensity: np.typing.ArrayLike | None = None,
         affects_lightmapped_mesh_diffuse: np.typing.ArrayLike | None = None,
@@ -668,7 +668,7 @@ class AtmosphereEnvironmentMapLight(Component):
     size: UVec2
 
     @staticmethod
-    def from_numpy(  # type: ignore[override]
+    def batch(  # type: ignore[override]
         *,
         intensity: np.typing.ArrayLike | None = None,
         affects_lightmapped_mesh_diffuse: np.typing.ArrayLike | None = None,
@@ -724,7 +724,7 @@ class ClusteredDecal(Component):
     def tag(self, value: int) -> None: ...
 
     @staticmethod
-    def from_numpy(  # type: ignore[override]
+    def batch(  # type: ignore[override]
         *,
         tag: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
@@ -961,7 +961,7 @@ class Skybox(Component):
     ) -> None: ...
 
     @staticmethod
-    def from_numpy(  # type: ignore[override]
+    def batch(  # type: ignore[override]
         *,
         brightness: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...

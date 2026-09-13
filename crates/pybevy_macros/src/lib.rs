@@ -5,6 +5,8 @@ use proc_macro::TokenStream;
 mod app;
 mod asset;
 mod component;
+mod constructor;
+mod constructor_spec;
 mod derive;
 mod enum_component;
 mod enum_message;
@@ -18,6 +20,16 @@ mod resource;
 mod unit;
 mod util;
 mod value;
+
+#[proc_macro_attribute]
+pub fn pyconstructor(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let item = syn::parse_macro_input!(item as syn::ItemImpl);
+    let (core, _) = util::pybevy_crate_paths();
+    match constructor::expand(attr.into(), item, &core) {
+        Ok(item) => quote::quote!(#item).into(),
+        Err(error) => error.to_compile_error().into(),
+    }
+}
 
 #[proc_macro_attribute]
 pub fn pybevy_app(attr: TokenStream, item: TokenStream) -> TokenStream {

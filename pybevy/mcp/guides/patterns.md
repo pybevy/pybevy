@@ -922,7 +922,7 @@ class Inventory(Component):      # OK: opted into PyObject storage
     items: list[str] = field(default_factory=list)
 ```
 
-Vec3/Vec2 fields support borrowed writeback - `comp.position.x = 5.0` writes directly to ECS memory. They work with Query, View API batch expressions, Numba JIT, and `from_numpy()` batch spawning (with `(N, 3)` or `(N, 2)` shaped arrays).
+Vec3/Vec2 fields support borrowed writeback - `comp.position.x = 5.0` writes directly to ECS memory. They work with Query, View API batch expressions, Numba JIT, and `batch()` batch spawning (with `(N, 3)` or `(N, 2)` shaped arrays).
 
 **Note:** Vec3/Vec2 are mutable, so use `field(default_factory=lambda: Vec3.ZERO)` for defaults.
 

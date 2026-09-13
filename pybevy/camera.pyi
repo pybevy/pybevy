@@ -521,7 +521,7 @@ class Camera(Component):
         """
 
     @staticmethod
-    def from_numpy(  # type: ignore[override]
+    def batch(  # type: ignore[override]
         *,
         is_active: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
@@ -720,7 +720,7 @@ class Visibility(Component):
     Hidden: ClassVar[Visibility]
     def __init__(self) -> None: ...
     @staticmethod
-    def from_numpy(visibility: np.typing.ArrayLike) -> Batchable: ...  # type: ignore[override]
+    def batch(visibility: np.typing.ArrayLike) -> Batchable: ...  # type: ignore[override]
     def toggle_inherited_visible(self) -> None:
         """Toggle between Inherited and Visible states."""
     def toggle_inherited_hidden(self) -> None:
@@ -787,7 +787,7 @@ class VisibilityRange(Component):
         """Check equality with another VisibilityRange."""
 
     @staticmethod
-    def from_numpy(  # type: ignore[override]
+    def batch(  # type: ignore[override]
         *,
         use_aabb: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
@@ -1281,7 +1281,7 @@ class Exposure(Component):
         """
 
     @staticmethod
-    def from_numpy(  # type: ignore[override]
+    def batch(  # type: ignore[override]
         *,
         ev100: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...

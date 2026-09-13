@@ -148,7 +148,7 @@ def setup(
     mat = materials.add(StandardMaterial(base_color=Color.srgb(0.9, 0.3, 0.15)))
 
     commands.spawn_batch(
-        Transform.from_numpy(translation=positions),
+        Transform.batch(translation=positions),
         Mesh3d(mesh),
         MeshMaterial3d(mat),
         PointLight(intensity=500.0),  # Uniform: cloned to all entities
@@ -156,7 +156,7 @@ def setup(
 ```
 
 **Key points:**
-- `from_numpy()` returns a `Batchable` - an opaque batch object consumed by `spawn_batch`
+- `batch()` returns a `Batchable` - an opaque batch object consumed by `spawn_batch`
 - Uniform components (plain instances like `PointLight(...)`) are cloned to every entity
 - Works with regular system `Commands` (deferred) or `World.commands()` (immediate)
 - The NumPy/component form returns `list[Entity]` via `World.commands()` and `None` via system `Commands`
@@ -164,17 +164,17 @@ def setup(
   prepared batch. Release wrappers returned by `Assets.get()` or
   `Assets.get_mut()`, and close zero-copy views, before immediate world
   structural operations.
-- Arrays are auto-cast to float32 and validated for shape at `from_numpy()` time.
+- Arrays are auto-cast to float32 and validated for shape at `batch()` time.
   Transform translation, rotation, and scale arrays also reject NaN and infinity.
-- `Transform.from_numpy()` accepts `translation` (Nx3), `rotation` (Nx4), `scale` (Nx3) - all optional
-- Any Rust component with `view_fields` supports `from_numpy()` (e.g., `PointLight.from_numpy(intensity=arr)`)
-- Custom `@component` classes with wrapper storage also support `from_numpy()`
+- `Transform.batch()` accepts `translation` (Nx3), `rotation` (Nx4), `scale` (Nx3) - all optional
+- Any Rust component with `view_fields` supports `batch()` (e.g., `PointLight.batch(intensity=arr)`)
+- Custom `@component` classes with wrapper storage also support `batch()`
 - Use View API afterwards for bulk per-entity updates (see below)
 - To keep one shared material while varying a small shader-side integer, batch
-  `MeshTag.from_numpy(value=...)`; see `guide://shaders`.
+  `MeshTag.batch(value=...)`; see `guide://shaders`.
 
 **Limitations:**
-- `from_numpy()` requires wrapper storage - custom `@component` classes with `storage="python"` do not support it
+- `batch()` requires wrapper storage - custom `@component` classes with `storage="python"` do not support it
 - Python-storage query rows are O(1) shallow proxies rather than copies of the
   nested object graph. They declare exclusive scheduler access, so prefer
   wrapper storage when read parallelism or View execution matters.

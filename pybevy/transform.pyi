@@ -162,7 +162,7 @@ class Transform(Component):
         with a scale of 1.
         """
     @staticmethod
-    def from_numpy(  # type: ignore[override]
+    def batch(  # type: ignore[override]
         *,
         translation: np.typing.ArrayLike | None = None,
         rotation: np.typing.ArrayLike | None = None,

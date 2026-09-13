@@ -750,7 +750,7 @@ class Sprite(Component):
         """
 
     @staticmethod
-    def from_numpy(  # type: ignore[override]
+    def batch(  # type: ignore[override]
         *,
         flip_x: np.typing.ArrayLike | None = None,
         flip_y: np.typing.ArrayLike | None = None,

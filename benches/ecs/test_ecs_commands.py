@@ -3,7 +3,7 @@
 import numpy as np
 from pytest_benchmark.fixture import BenchmarkFixture
 
-from pybevy.app import App, RunMode, ScheduleRunnerPlugin, Startup
+from pybevy.app import App, ScheduleRunnerPlugin, Startup
 from pybevy.decorators import component
 from pybevy.ecs import Commands, Component, World
 from pybevy.transform import Transform
@@ -19,11 +19,11 @@ def _bench_batch_spawn(entity_count: int) -> None:
     positions = np.random.rand(entity_count, 3).astype(np.float32) * 100
 
     def setup_batch(world: World) -> None:
-        batch = Transform.from_numpy(translation=positions)
+        batch = Transform.batch(translation=positions)
         world.commands().spawn_batch(batch, Marker())
 
     app = App()
-    app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+    app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup_batch)
     app.initialize()
     app.update()
@@ -39,7 +39,7 @@ def _bench_normal_spawn(entity_count: int) -> None:
             commands.spawn(Transform.from_xyz(x, y, z), Marker())
 
     app = App()
-    app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+    app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup_normal)
     app.initialize()
     app.update()
@@ -52,11 +52,11 @@ def _bench_batch_scaling(entity_count: int) -> None:
     rotations[:, 3] = 1.0
 
     def setup(world: World) -> None:
-        batch = Transform.from_numpy(translation=positions, rotation=rotations)
+        batch = Transform.batch(translation=positions, rotation=rotations)
         world.commands().spawn_batch(batch, Marker())
 
     app = App()
-    app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+    app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.initialize()
     app.update()
@@ -128,7 +128,7 @@ def test_batch_spawn_with_full_transform_data(benchmark: BenchmarkFixture) -> No
     scales = np.ones((count, 3), dtype=np.float32)
 
     def setup(world: World) -> None:
-        batch = Transform.from_numpy(
+        batch = Transform.batch(
             translation=positions, rotation=rotations, scale=scales
         )
         entities = world.commands().spawn_batch(batch, Marker())
@@ -136,7 +136,7 @@ def test_batch_spawn_with_full_transform_data(benchmark: BenchmarkFixture) -> No
 
     def bench():
         app = App()
-        app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+        app.add_plugins(ScheduleRunnerPlugin.run_once())
         app.add_systems(Startup, setup)
         app.initialize()
         app.update()
@@ -150,12 +150,12 @@ def test_batch_spawn_positions_only(benchmark: BenchmarkFixture) -> None:
     positions = np.random.rand(count, 3).astype(np.float32) * 100
 
     def setup(world: World) -> None:
-        batch = Transform.from_numpy(translation=positions)
+        batch = Transform.batch(translation=positions)
         world.commands().spawn_batch(batch, Marker())
 
     def bench():
         app = App()
-        app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+        app.add_plugins(ScheduleRunnerPlugin.run_once())
         app.add_systems(Startup, setup)
         app.initialize()
         app.update()

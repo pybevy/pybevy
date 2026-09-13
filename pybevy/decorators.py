@@ -359,26 +359,26 @@ def _register_component(cls: type[CT], *, storage: str | None = None) -> type[CT
     # Mark the component as properly decorated
     cls.__pybevy_component_decorated__ = True  # type: ignore[attr-defined]
 
-    # Add from_numpy() classmethod for wrapper-storage components
+    # Add batch() classmethod for wrapper-storage components
     if storage == "python":
 
         @classmethod  # type: ignore[misc]  # dynamic classmethod on decorated class
-        def from_numpy(klass: type, **_kwargs: object) -> object:
+        def batch(klass: type, **_kwargs: object) -> object:
             raise TypeError(
-                f'{klass.__name__}.from_numpy() is not supported for storage="python" components; '
+                f'{klass.__name__}.batch() is not supported for storage="python" components; '
                 "spawn component instances instead"
             )
 
-        cls.from_numpy = from_numpy
+        cls.batch = batch
     else:
 
         @classmethod  # type: ignore[misc]  # dynamic classmethod on decorated class
-        def from_numpy(klass: type, **kwargs: object) -> object:
+        def batch(klass: type, **kwargs: object) -> object:
             from .ecs import CustomComponentBatch
 
             return CustomComponentBatch(klass, **kwargs)
 
-        cls.from_numpy = from_numpy
+        cls.batch = batch
 
     # Auto-generate ViewColumn proxy class for batched View API
     _create_view_column_proxy(cls)

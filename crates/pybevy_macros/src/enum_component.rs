@@ -211,23 +211,18 @@ fn try_expand(
             })
         });
         let signature = constructor_signature(fields);
-        let match_args_types = fields
-            .iter()
-            .filter(|field| !field.keyword_only)
-            .map(|_| quote! { &'static str });
-        let match_args_values = fields
-            .iter()
-            .filter(|field| !field.keyword_only)
-            .map(|field| field.python_name.as_str());
-        let match_args_item = if fields.iter().all(|field| field.keyword_only) {
+        let match_args_values = variant.match_args();
+        let match_args_item = if match_args_values.is_empty() {
             quote! {
                 #[classattr]
                 const __match_args__: () = ();
             }
         } else {
+            let match_args_types = match_args_values.iter().map(|_| quote! { &'static str });
+            let values = match_args_values.iter().copied();
             quote! {
                 #[classattr]
-                fn __match_args__() -> (#(#match_args_types,)*) { (#(#match_args_values,)*) }
+                fn __match_args__() -> (#(#match_args_types,)*) { (#(#values,)*) }
             }
         };
         let construct = construct_variant(
