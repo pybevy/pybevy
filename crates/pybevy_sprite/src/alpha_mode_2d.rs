@@ -15,7 +15,7 @@ pub enum PyAlphaMode2d {
     Opaque(),
     #[py_bevy(tuple)]
     Mask {
-        threshold: f32,
+        value: f32,
     },
     Blend(),
 }

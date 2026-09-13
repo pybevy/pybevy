@@ -54,10 +54,11 @@ class AlphaMode2d:
         def __init__(self) -> None: ...
 
     class Mask(AlphaMode2d):
-        """Use binary transparency at ``threshold``."""
-        __match_args__: ClassVar[tuple[Literal["threshold"]]]
-        threshold: float
-        def __init__(self, threshold: float) -> None: ...
+        """Use binary transparency at the cutoff ``value``."""
+        __match_args__ = ("value",)
+        @property
+        def value(self) -> float: ...
+        def __init__(self, value: float) -> None: ...
 
     class Blend(AlphaMode2d):
         """Use standard alpha blending."""
