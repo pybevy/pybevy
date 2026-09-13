@@ -40,10 +40,7 @@ glass = materials.add(StandardMaterial(
 commands.spawn(Mesh3d(sphere_mesh), MeshMaterial3d(glass))
 ```
 
-Specular transmission uses Bevy's transmissive render phase. Keep the material
-non-blended; `AlphaMode.Opaque()` is the usual choice and is the default.
-`Blend`, `Premultiplied`, `Add`, and `Multiply` instead select the transparent
-phase, where screen-space specular transmission is not evaluated.
+Screen-space specular transmission requires a non-blended material; use `AlphaMode.Opaque()`.
 
 ### Frosted Glass
 

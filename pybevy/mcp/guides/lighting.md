@@ -144,7 +144,7 @@ commands.spawn(
 Flat light applied everywhere - prevents pure-black shadows.
 
 ```python
-# GlobalAmbientLight (resource, recommended)
+# Global ambient light is a resource (recommended)
 commands.insert_resource(GlobalAmbientLight(
     brightness=300.0,
     color=Color.srgb(0.6, 0.65, 0.85),  # Cool blue-ish fill
@@ -195,7 +195,7 @@ commands.spawn(
     Transform.from_xyz(5, 5, 5).looking_at(Vec3.ZERO, Vec3.Y),
     DistanceFog(
         color=Color.srgb(0.6, 0.65, 0.75),
-        falloff=FogFalloff.Exponential(0.002),
+        falloff=FogFalloff.Exponential(density=0.002),
         directional_light_color=Color.srgb(1.0, 0.85, 0.6),
         directional_light_exponent=40.0,
     ),
@@ -249,7 +249,7 @@ if medium is not None:
 ```
 
 Atmospheric falloff mirrors Bevy's enum variants: use `Falloff.Linear()`,
-`Falloff.Exponential(scale)`, or `Falloff.Tent(center, width)`. Bevy's custom
+`Falloff.Exponential(scale=scale)`, or `Falloff.Tent(center=center, width=width)`. Bevy's custom
 `Curve` variant stores a Rust callback and cannot be constructed from Python.
 
 An element kept across an insertion continues to address its numeric index.
@@ -367,7 +367,7 @@ energy = materials.add(StandardMaterial(
 ))
 ```
 
-Key modes: `Blend()` (glass/water), `Mask(threshold)` (foliage), `Add()` (fire/lasers), `Opaque()` (default).
+Key modes: `AlphaMode.Blend()` (glass/water), `AlphaMode.Mask(value)` (foliage, `value` is the alpha cutoff), `AlphaMode.Add()` (fire/lasers), `AlphaMode.Opaque()` (default).
 
 **Important:** `base_color` alpha < 1.0 has no effect without setting `alpha_mode`.
 
@@ -467,7 +467,7 @@ commands.spawn(
     Transform.from_xyz(0.0, 7.0, 0.0).looking_at(Vec3(0.0, 0.0, 0.0), Vec3.Z),
 )
 # On camera: interior fog (keep density low for enclosed spaces)
-# DistanceFog(color=Color.srgb(0.15, 0.13, 0.14), falloff=FogFalloff.Exponential(0.004))
+# DistanceFog(color=Color.srgb(0.15, 0.13, 0.14), falloff=FogFalloff.Exponential(density=0.004))
 ```
 
 ### Moody Fog Scene
@@ -475,7 +475,7 @@ commands.spawn(
 # On camera:
 DistanceFog(
     color=Color.srgb(0.4, 0.45, 0.5),
-    falloff=FogFalloff.Exponential(0.004),
+    falloff=FogFalloff.Exponential(density=0.004),
     directional_light_color=Color.srgb(1.0, 0.85, 0.6),
     directional_light_exponent=40.0,
 )
@@ -545,19 +545,24 @@ that contains the camera applies to the entire frame at once.
 | Parameter | What it does | Low value | High value |
 |-----------|-------------|-----------|------------|
 | `density_factor` | Overall thickness | Faint haze (0.05) | Thick soup (0.5) |
-| `absorption` | Light absorbed passing through | Bright mist (0.01) | **Dark/black fog** (0.3+) |
-| `scattering` | Light bounced toward camera | Invisible volume (0.1) | Bright white mist (0.7) |
-| `scattering_asymmetry` | Forward vs back scatter (0–1) | Even glow (0.2) | Sun-facing glow (0.6) |
+| `absorption` | Light absorbed passing through | Thin, see-through (0.01) | **Opaque, dark** (0.3+) |
+| `scattering` | Light bounced out of, and into, the view ray | Thin, see-through (0.1) | **Opaque** (0.7) |
+| `scattering_asymmetry` | Asymmetry (-1 to 1) | Backscatter (-0.5) | Forward scatter (0.5) |
 
-**Critical:** `absorption` and `scattering` have opposite visual effects. High absorption makes fog **dark** (it eats light). High scattering makes fog **bright** (it bounces light toward the camera). Getting this backwards is the #1 FogVolume mistake.
+**Both parameters darken the background; they are not opposites.** Bevy
+attenuates each step by `exp(-step * density * (absorption + scattering))`, so
+their sum is the extinction coefficient. `scattering` additionally adds
+illumination from every `VolumetricLight` in the volume. Lower the sum for
+clearer fog, and raise `VolumetricFog.ambient_color`/`ambient_intensity`, which
+is where brightness for unlit fog comes from.
 
 **Recipes by look:**
 
 ```python
-# Bright white mist (waterfall spray, steam, morning fog)
-FogVolume(density_factor=0.3, absorption=0.02, scattering=0.7, scattering_asymmetry=0.5)
+# Thin bright haze: keep extinction low and let ambient carry the brightness
+FogVolume(density_factor=0.15, absorption=0.02, scattering=0.2, scattering_asymmetry=0.5)
 
-# Dark smoke / smog
+# Dark smoke / smog: high extinction, mostly absorbing
 FogVolume(density_factor=0.3, absorption=0.3, scattering=0.15, scattering_asymmetry=0.3)
 
 # Subtle atmospheric haze

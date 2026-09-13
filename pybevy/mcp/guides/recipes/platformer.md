@@ -1,6 +1,6 @@
 # Platformer Recipe - Gravity, Jumping & Collectibles
 
-Side-scrolling platformer with keyboard movement, gravity/jump physics, camera follow, collectible pickups, and a HUD score counter. Good for action games, endless runners, or any scene with continuous physics-style movement.
+Keyboard movement, gravity, jumping, camera follow, collectibles, and a HUD score counter.
 
 ## Core Pattern
 
@@ -201,6 +201,7 @@ def update_hud(
 
 ```python
 PLAYER_Z = 6.5  # Z position for side-scrolling plane
+GEM_POSITIONS = [-8.0, -4.0, 0.0, 4.0, 8.0]
 
 def setup(
     commands: Commands,
@@ -237,8 +238,7 @@ def setup(
         base_color=Color.srgb(1.0, 0.8, 0.1),
         emissive=LinearRgba.rgb(8.0, 6.0, 0.5),
     ))
-    gem_positions = [-8.0, -4.0, 0.0, 4.0, 8.0]
-    for i, gx in enumerate(gem_positions):
+    for i, gx in enumerate(GEM_POSITIONS):
         commands.spawn(
             Mesh3d(gem_mesh), MeshMaterial3d(gem_mat),
             Transform.from_xyz(gx, 1.5, PLAYER_Z),
@@ -246,13 +246,13 @@ def setup(
             Name(f"gem_{i}"),
         )
 
-    commands.insert_resource(GameScore(gems=0, total=len(gem_positions)))
-
 
 @entrypoint
 def main(app: App) -> App:
     return (
         app.add_plugins(DefaultPlugins)
+        # Initialize GameScore before Startup systems access it.
+        .insert_resource(GameScore(gems=0, total=len(GEM_POSITIONS)))
         .add_systems(Startup, (setup, setup_hud))
         .add_systems(Update, (
             move_player,

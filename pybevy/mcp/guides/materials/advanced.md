@@ -275,14 +275,9 @@ mat = materials.add(StandardMaterial(
 | `Forward` | Transparency, MSAA, simple scenes |
 | `Deferred` | Many lights, complex post-processing |
 
-Do not force a material to `Deferred` unless every camera that can render it
-has `DeferredPrepass()`. Bevy 0.19 expects the deferred render phase to exist
-when it queues that material; omitting the camera component can panic the
-renderer. `DepthPrepass()` and `Msaa.Off` complete the normal deferred-camera
-setup. For an app-wide choice, prefer
-`DefaultOpaqueRendererMethod.deferred()`, which selects deferred rendering for
-`Auto` materials. Camera prepass markers are still required; the SSR component
-adds them automatically, but an ordinary deferred camera does not. See
-`guide://camera`.
+Forcing a material to `OpaqueRendererMethod.Deferred` requires cameras with
+`Msaa.Off`, `DepthPrepass()`, and `DeferredPrepass()`;
+incomplete setup can panic upstream. For an app-wide default, use
+`DefaultOpaqueRendererMethod.deferred()`; see `guide://camera`.
 
 **For all parameters:** `get_type_definition('StandardMaterial')`

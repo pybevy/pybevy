@@ -21,7 +21,7 @@ For paste-ready lighting recipes by scene type (outdoor, interior, cave, industr
 
 **Fog density is scale-dependent:** the DistanceFog maxima above assume long outdoor
 sightlines (100m+). For enclosed spaces ~50m across, choose a density in the
-0.01-0.03 range (for example, `FogFalloff.Exponential(0.02)`); judge by
+0.01-0.03 range (for example, `FogFalloff.Exponential(density=0.02)`); judge by
 whether the far wall still reads, not by the number.
 
 **Dark/moody exceptions:** For intentionally dark scenes (galleries, space, underwater), ambient can go as low as 100 if emissive sources provide sufficient readability. The key test: can you distinguish midground subjects from background?
@@ -206,7 +206,8 @@ mesh.insert_attribute(Mesh.ATTRIBUTE_POSITION, positions)
 mesh.insert_attribute(Mesh.ATTRIBUTE_NORMAL, normals)
 mesh.insert_indices(indices)
 ```
-See `examples/unsorted/procedural_terrain_visual.py` for a complete example.
+Full example: `examples/unsorted/procedural_terrain_visual.py` in the pybevy
+source repo (examples are not shipped in the wheel).
 
 ### Procedural Textures (No More Flat Colors)
 Build the pixel buffer, then hand it to `Image(...)`:
@@ -216,16 +217,35 @@ from pybevy.render import Extent3d
 
 pixels = np.zeros((256, 256, 4), dtype=np.uint8)
 # Fill with noise/pattern...
-texture = Image(Extent3d(256, 256, 1), data=pixels)
+texture = Image(Extent3d(width=256, height=256, depth_or_array_layers=1), data=pixels)
 mat = StandardMaterial(base_color_texture=images.add(texture))
 ```
 `data` takes the natural `(height, width, bytes_per_pixel)` uint8 shape;
 `format` defaults to `Rgba8UnormSrgb`.
 
-`Image.new_fill(Extent3d(64, 64, 1), [255, 0, 0, 255])` repeats a *single* pixel
+`Image.new_fill(Extent3d(width=64, height=64, depth_or_array_layers=1), [255, 0, 0, 255])` repeats a *single* pixel
 across the whole texture: solid colours only.
 
-Single-channel formats are 1 byte per pixel: shape `(h, w, 1)` for `R8Unorm`.
+A single-channel texture needs the format as well as the shape, and the shape
+alone does not select it:
+
+```python
+from pybevy.render import Extent3d, TextureFormat
+
+height = Image(
+    Extent3d(width=32, height=32, depth_or_array_layers=1),
+    data=np.zeros((32, 32), dtype=np.uint8),
+    format=TextureFormat.R8Unorm,
+)
+```
+
+`TextureFormat` is in `pybevy.render`; `ImageFormat` in `pybevy.image` holds
+file formats and has no `R8Unorm`. Without `format=`, the default
+`Rgba8UnormSrgb` rejects the buffer as the wrong length.
+
+Unsupported image-encoding errors list the encoders enabled in this build.
+Use one of those formats; membership in `ImageFormat` alone does not guarantee
+that the build can encode it.
 
 ### Vertex Colors (Gradient a Single Mesh)
 ```python

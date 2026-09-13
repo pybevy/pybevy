@@ -4,17 +4,17 @@ Batch operations, View API, material caching, and strategy comparison for large 
 
 ## Asset Handle Caching
 
-**NEVER** call `meshes.add()` or `materials.add()` inside Update systems. Each call creates a new GPU asset that persists after the entity is despawned - a memory leak that grows every cycle.
+Reuse mesh/material handles to avoid rebuilding and uploading duplicates.
 
 ```python
-# ❌ BAD - leaks assets every spawn cycle
+# ❌ BAD - rebuilds and re-uploads the same asset every frame
 def spawn_effect(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
     materials: ResMut[Assets[StandardMaterial]],
 ) -> None:
-    mesh = meshes.add(Sphere(0.5))          # New GPU asset every time
-    mat = materials.add(StandardMaterial(    # Another leak
+    mesh = meshes.add(Sphere(0.5))          # Re-tessellated and re-uploaded
+    mat = materials.add(StandardMaterial(    # Same again
         emissive=LinearRgba.rgb(10.0, 5.0, 20.0),
     ))
     commands.spawn(Mesh3d(mesh), MeshMaterial3d(mat), ...)
@@ -70,7 +70,8 @@ def main(app: App) -> App:
 
 **Applies to:** projectiles, VFX, particles, pooled enemies - anything spawned more than once.
 
-**Verify:** `get_performance` → Assets line. Mesh/Material counts should stay flat after Startup.
+**Verify:** `get_performance` Assets counts distinct stored assets; inspect
+retained strong handles if counts keep rising.
 
 ## Material Mutation Caching
 
@@ -157,7 +158,7 @@ def setup(
 
 **Key points:**
 - `batch()` returns a `Batchable` - an opaque batch object consumed by `spawn_batch`
-- Uniform components (plain instances like `PointLight(...)`) are cloned to every entity
+- Uniform components (plain instances like `PointLight(intensity=500.0)`) are cloned to every entity
 - Works with regular system `Commands` (deferred) or `World.commands()` (immediate)
 - The NumPy/component form returns `list[Entity]` via `World.commands()` and `None` via system `Commands`
 - Immediate `spawn_batch` performs one asset-safety check for the complete
@@ -165,6 +166,7 @@ def setup(
   `Assets.get_mut()`, and close zero-copy views, before immediate world
   structural operations.
 - Arrays are auto-cast to float32 and validated for shape at `batch()` time.
+- Arrays are auto-cast to float32 and validated for shape and declared field constraints at `from_numpy()` time; CascadeShadowConfig checks overlap in [0, 1) and non-negative minimum distance.
   Transform translation, rotation, and scale arrays also reject NaN and infinity.
 - `Transform.batch()` accepts `translation` (Nx3), `rotation` (Nx4), `scale` (Nx3) - all optional
 - Any Rust component with `view_fields` supports `batch()` (e.g., `PointLight.batch(intensity=arr)`)
@@ -191,12 +193,15 @@ creates no partial prefix of the batch.
 
 ## Choosing a Batch Strategy
 
-| Approach | Entity Count | Use Case | Typical Speed |
-|----------|-------------|----------|---------------|
-| Query iteration | < 1k | Method calls, simple logic | 1x baseline |
-| View expressions | 1k–100k | Column-wide math, conditional logic | 5–25x |
-| **Numba batch** | 100k+ | Complex per-entity logic, CPU parallelism | 50–100x |
-| **JAX batch** | 10k+ | O(n²) interactions, ML inference, GPU | GPU-dependent |
+Query iteration is slowest, View expressions far faster, a compiled Numba kernel
+faster still; the multiplier depends on workload and hardware, so measure.
+
+| Approach | Entity Count | Use Case |
+|----------|-------------|----------|
+| Query iteration | < 1k | Method calls, simple logic |
+| View expressions | 1k-100k | Column-wide math, conditional logic |
+| **Numba batch** | 100k+ | Complex per-entity logic, CPU parallelism |
+| **JAX batch** | 10k+ | Pairwise interactions, ML inference, GPU |
 
 For the Numba path, see `guide://numba`. For the JAX path, see `guide://jax`.
 
@@ -231,12 +236,14 @@ Key View rules:
   sign, `round()` uses ties-to-even, and `min()`/`max()` propagate NaN.
 - `clamp(min, max)` propagates NaN and returns `max` when the bounds are
   reversed. `fract()` is the signed fractional part (`x - trunc(x)`).
+- Expressions nest at most 32 levels deep; a deeper tree raises `ValueError`.
+  Assign an intermediate result to a column and build on that column instead.
 
 ### View API - Conditional Logic
 
 The View API supports **per-entity conditionals** via `.where()`, making it suitable for collision response and other logic that branches per entity. For large homogeneous workloads, benchmark View against Query and prefer it when the work can stay in column expressions.
 
-Available conditional operators on `FieldExpr`:
+`FieldExpr` (pybevy.expr or prelude) supports:
 - `.where(true_val, false_val)` - vectorized ternary (like `np.where`)
 - `.min(val)` / `.max(val)` / `.clamp(min, max)` - per-element clamping
 - `|` and `&` - combine boolean conditions

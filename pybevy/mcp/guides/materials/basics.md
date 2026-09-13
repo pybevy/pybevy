@@ -139,7 +139,7 @@ leaves = materials.add(StandardMaterial(
 |------|---------|
 | `AlphaMode.Opaque()` | Default - fully solid |
 | `AlphaMode.Blend()` | Smooth transparency (glass, water, ghosts) |
-| `AlphaMode.Mask(threshold)` | Binary cutoff (foliage, fences, decals) |
+| `AlphaMode.Mask(value)` | Binary cutoff at the `value` alpha (foliage, fences, decals) |
 | `AlphaMode.Add()` | Additive blending (particles, laser beams) |
 | `AlphaMode.Multiply()` | Darkening blend (shadows, tinted glass) |
 

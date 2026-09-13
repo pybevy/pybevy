@@ -1,7 +1,6 @@
 # Custom Shaders with `@material`
 
-PyBevy's `@material` decorator lets you define custom shader materials from Python.
-It generates WGSL bindings, handles GPU data packing, and integrates with Bevy's PBR pipeline.
+`@material` generates WGSL bindings, packs GPU data, and integrates Python materials with Bevy PBR.
 
 ## Quick Start
 
@@ -67,11 +66,11 @@ class GlassMaterial(Material):
 mat = GlassMaterial(opacity=0.5)
 ```
 
-When you need full control over the base material (e.g., setting `base_color`, textures), pass `base=` explicitly:
+Converting an `@material` instance to `ShaderMaterial` consumes its base; use a fresh `StandardMaterial` for each conversion:
 
 ```python
 mat = GlowMaterial(
-    base=StandardMaterial(base_color=Color.BLACK, emissive_exposure_weight=1.0),
+    base=StandardMaterial(base_color=Color.BLACK),
     color=LinearRgba(0.0, 1.0, 0.5, 1.0),
 )
 ```
@@ -108,6 +107,14 @@ Partial reload preserves a material's identity when its qualified name and field
 are unchanged. Changing field names, types, or ordering allocates a fresh identity, as
 does a full reload, so old handles cannot be interpreted through a different layout.
 
+`Assets[T]` retains a decorated material class while its parameter or runtime
+collection is alive. Released holders allow cyclic GC to reclaim discarded
+scenes.
+
+`Assets[T]` for a decorated material yields the decorated class from `get()`,
+`get_mut()`, iteration, and `remove()`. Iterated materials are read-only and
+expire with the system; removed materials are independent owned values.
+
 All custom material collections share Bevy's underlying `Assets[ShaderMaterial]`
 resource. A system therefore cannot request two mutable custom-material collections at
 once, such as both `ResMut[Assets[A]]` and `ResMut[Assets[B]]`; split those mutations
@@ -143,7 +150,9 @@ the material class name:
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     var pbr_input = pbr_input_from_standard_material(in, is_front);
-    pbr_input.material.emissive = params::material.color * params::material.intensity;
+    // alpha is the exposure weight, not opacity: keep it 0.0
+    pbr_input.material.emissive = vec4<f32>(
+        params::material.color.rgb * params::material.intensity, 0.0);
     pbr_input.material.base_color = alpha_discard(pbr_input.material, pbr_input.material.base_color);
 #ifdef PREPASS_PIPELINE
     let out = deferred_output(in, pbr_input);
@@ -278,12 +287,34 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 | Modify PBR properties (add emissive glow on top of normal lighting, posterize output, tint result) | PBR extension | You want Bevy's lighting, just tweaked |
 | Fully self-lit material (emissive-only, no PBR lighting needed) | Non-PBR | You compute all color yourself |
 | Procedural planets, LED screens, toon shaders with custom lighting | Non-PBR | PBR lighting would fight your output |
-| `base_color` is BLACK and all visual output comes from emissive/procedural color | Non-PBR | PBR path attenuates emissive unexpectedly |
+| `base_color` is BLACK and all visual output comes from emissive/procedural color | Non-PBR | You compute all color yourself, so PBR buys you nothing |
 
-**Why PBR emissive appears dim:** Bevy's PBR pipeline computes `emissive * mix(1.0, exposure, emissive_exposure_weight)`. The default `emissive_exposure_weight=0.0` means emissive is NOT scaled by camera exposure - so values like `vec4(10.0, 0.0, 0.0, 1.0)` get compressed to near-invisible by tone mapping. Fixes:
-- Set `base=StandardMaterial(emissive_exposure_weight=1.0)` so emissive scales with exposure
-- Or use much larger emissive values (500+)
-- Or use the non-PBR pattern which bypasses `apply_pbr_lighting` entirely
+**`emissive.a` is the exposure weight, not opacity.** Bevy packs
+`StandardMaterial.emissive_exposure_weight` into the alpha channel of the
+material's `emissive` value, and `apply_pbr_lighting` computes:
+
+```wgsl
+emissive_light = emissive.rgb * mix(1.0, view.exposure, emissive.a);
+```
+
+So the weight decides **how much camera exposure attenuates the emissive**:
+
+| `emissive.a` | factor at the default camera exposure | result |
+|---|---|---|
+| `0.0` (Bevy's default) | `1.0` | full strength, exposure-independent |
+| `1.0` | `view.exposure` ≈ `1/1000` | ~1000x dimmer, reads as unlit |
+| `> 1.0` | **negative** (`mix` is not clamped) | clamps to black |
+
+Two consequences for a PBR extension shader:
+
+- **Write the alpha yourself, and use `0.0`.** A `vec4 * scalar` multiplies the
+  alpha too, so `emissive = color * intensity` sets the weight to `intensity`,
+  and any `intensity` above 1.0 renders **black**. Write
+  `vec4<f32>(color.rgb * intensity, 0.0)` instead.
+- **`base=StandardMaterial(emissive_exposure_weight=...)` has no effect here.**
+  `pbr_input_from_standard_material()` consumes the base material's weight, and
+  the next line of the snippet overwrites `pbr_input.material.emissive`
+  wholesale.
 
 ## Shader Defs (bool fields)
 
@@ -472,9 +503,9 @@ Reference values for common colors:
 
 Output goes through `apply_pbr_lighting` (PBR calculations) then `main_pass_post_lighting_processing` (fog, etc.), and finally tone mapping in a separate pass.
 
-- Emissive brightness depends on `emissive_exposure_weight` (default `0.0` = emissive is NOT scaled by camera exposure)
-- With `emissive_exposure_weight=0.0`: values like 10.0 appear nearly invisible after tone mapping. Use 500+ for visible emission, or set `emissive_exposure_weight=1.0` on the base `StandardMaterial`
-- With `emissive_exposure_weight=1.0`: emissive scales with camera exposure, values in [1, 10] produce clearly visible emission
+- Emissive brightness depends on `emissive_exposure_weight`, which Bevy packs into the **alpha** of `emissive` and applies as `mix(1.0, view.exposure, emissive.a)`: `0.0` (the default) is full strength, `1.0` divides by the camera exposure (about 1000x at the default)
+- `emissive_exposure_weight=1.0` is for making emissive track exposure like real light, not for making it brighter
+- In a PBR extension shader, set the alpha yourself: `vec4<f32>(rgb * intensity, 0.0)`. Values above 1.0 in that channel make `mix` extrapolate negative and the surface renders black
 - If all your color comes from emissive/procedural computation, prefer the non-PBR path
 
 ## Required Plugin

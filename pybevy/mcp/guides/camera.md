@@ -43,7 +43,7 @@ camera, then choose how much world height should remain visible:
 from pybevy.camera import OrthographicProjection, Projection, ScalingMode
 
 orthographic = OrthographicProjection.default_3d()
-orthographic.scaling_mode = ScalingMode.FixedVertical(10.0)
+orthographic.scaling_mode = ScalingMode.FixedVertical(viewport_height=10.0)
 commands.spawn(
     Camera3d(),
     Projection.Orthographic(orthographic),
@@ -76,9 +76,9 @@ commands.spawn(Camera3d(), Bloom.NATURAL)
 - `low_frequency_boost` - Enhances large soft glow (0.0–1.0). `0.0–0.2` = sharp point-source glow (neon). `0.4–0.6` = soft atmospheric haze (fog, dreamy).
 - `low_frequency_boost_curvature` - Controls how broadly the low-frequency boost affects neighboring frequencies (0.0–1.0, default 0.95)
 - `high_pass_frequency` - Controls the maximum scattering angle (0.0–1.0, default 1.0)
-- `prefilter` - `BloomPrefilter(threshold, threshold_softness)` limits bloom to bright regions
+- `prefilter` - `BloomPrefilter(threshold=threshold, threshold_softness=threshold_softness)` limits bloom to bright regions
 - `composite_mode` - `BloomCompositeMode.EnergyConserving` by default; use `Additive` with a non-default prefilter
-- `max_mip_dimension` - Largest bloom mip dimension (default 512); raise only to reduce sampling artifacts at large scales
+- `max_mip_dimension` - Largest bloom mip dimension (default 512, at least 1); the constructor, setter, and `Bloom.batch()` reject zero with `ValueError`. Raise only to reduce sampling artifacts at large scales
 - `scale` - `Vec2` stretch per axis; values greater than 1 widen bloom on that axis
 
 **Bloom presets by scene style:**
@@ -111,11 +111,14 @@ Bloom(intensity=0.3, prefilter=BloomPrefilter(threshold=1.5, threshold_softness=
 ### Fog & Atmosphere
 
 See `guide://lighting` for full details:
-- `DistanceFog(color=..., falloff=FogFalloff.Exponential(0.002))`: camera component, distance-based fog
+- `DistanceFog(color=..., falloff=FogFalloff.Exponential(density=0.002))`: camera component, distance-based fog
 - `Atmosphere.earth(medium_handle)`: physically-based sky. Spawn on its own entity (it is the planet); the camera opts in with `AtmosphereSettings()`, without which the sky silently does not render
 - `Atmosphere.mars(medium_handle)` - Mars variant (use with `ScatteringMedium.mars(...)` for dusty red sky)
 
 ### Tonemapping
+
+`Tonemapping` values compare and hash by variant, so queried copies can be used
+as dictionary keys alongside the class constants.
 
 Controls how HDR colors map to screen colors.
 
@@ -129,7 +132,7 @@ Common options: `Tonemapping.TONY_MC_MAPFACE` (cinematic), `Tonemapping.ACES_FIT
 
 ```python
 commands.spawn(Mesh3d(mesh), MeshMaterial3d(mat), Wireframe())
-commands.spawn(Mesh3d(mesh), MeshMaterial3d(mat), Wireframe(), WireframeColor(Color.srgb(0, 1, 0)))
+commands.spawn(Mesh3d(mesh), MeshMaterial3d(mat), Wireframe(), WireframeColor(color=Color.srgb(0, 1, 0)))
 # Global: commands.insert_resource(WireframeConfig(global_=True))
 ```
 
@@ -208,9 +211,9 @@ prepared leaves their pipelines untouched and SSR renders nothing.
 camera automatically.
 
 Other cameras in an app using deferred rendering must add
-`DepthPrepass()` and `DeferredPrepass()` themselves. Without
-`DeferredPrepass()`, an otherwise valid deferred camera can render only its
-clear colour without reporting a configuration error.
+`DepthPrepass()`, `DeferredPrepass()`, and `Msaa.Off` themselves. A camera with
+`DepthPrepass` but no `DeferredPrepass` can panic when drawing a deferred opaque
+mesh.
 
 ```python
 from pybevy.pbr import DefaultOpaqueRendererMethod
@@ -400,7 +403,7 @@ commands.spawn(
     Camera3d(),
     Transform.from_xyz(10, 8, 10).looking_at(Vec3(0, 2, 0), Vec3.Y),
     Bloom(intensity=0.2, low_frequency_boost=0.6),
-    DistanceFog(color=Color.srgb(0.6, 0.65, 0.75), falloff=FogFalloff.Exponential(0.002)),
+    DistanceFog(color=Color.srgb(0.6, 0.65, 0.75), falloff=FogFalloff.Exponential(density=0.002)),
     AtmosphereSettings(),  # opts this camera into the atmosphere sky
 )
 ```
@@ -408,6 +411,9 @@ commands.spawn(
 ## Camera Movement Patterns
 
 > **Ready-made plugins:** For interactive orbit and fly cameras, use `from pybevy.contrib import OrbitCameraPlugin, FlyCameraPlugin`. See `guide://contrib`.
+
+Contrib camera controls apply each frame's mouse input to every matching camera.
+Sprint and pan stay active while either Shift key is held.
 
 ### Orbit Camera
 

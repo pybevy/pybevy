@@ -2,6 +2,9 @@
 
 Ready-made camera controllers and utilities in `pybevy.contrib`. Import and add to your app - no custom systems needed.
 
+Every matching camera receives each frame's mouse input. Either Shift key keeps
+sprint or pan active until both keys are released.
+
 ## OrbitCameraPlugin
 
 Mouse-controlled camera that orbits around a target point.
@@ -128,19 +131,22 @@ if __name__ == "__main__":
 
 For hot-reload compatibility, you can import individual components and systems from contrib modules instead of using the plugin:
 
+<!-- pybevy-snippet: typecheck -->
 ```python
+from pybevy.app import App, DefaultPlugins, Update
+from pybevy.decorators import entrypoint
 from pybevy.contrib.orbit_camera import OrbitCamera, orbit_camera_control_system, OrbitCameraState
 
 @entrypoint
 def main(app: App) -> App:
     return (
         app.add_plugins(DefaultPlugins)
-        .init_resource(OrbitCameraState)
+        .insert_resource(OrbitCameraState())
         .add_systems(Update, orbit_camera_control_system)
     )
 ```
 
-This gives you finer control over which systems are registered and allows mixing contrib systems with your own camera logic.
+This gives you finer control over which systems are registered and allows mixing contrib systems with your own camera logic. Reinsert the resource in the entrypoint so full reload initializes it again. `OrbitCameraState` is empty; `FlyCameraState` stores only `right_mouse_pressed`. Shift state comes from `ButtonInput[KeyCode]`.
 
 ## See Also
 

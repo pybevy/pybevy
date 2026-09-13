@@ -36,7 +36,7 @@ def setup(
         Bloom(intensity=0.15),
         DistanceFog(  # mandatory for 3D scenes
             color=Color.srgb(0.7, 0.8, 0.95),
-            falloff=FogFalloff.Exponential(0.005),  # or FogFalloff.Linear(start, end)
+            falloff=FogFalloff.Exponential(density=0.005),  # or FogFalloff.Linear(start=1.0, end=100.0)
         ),
     )
     # WARNING: Ambient 300+ for outdoor, 500+ for indoor/cave.
@@ -90,6 +90,8 @@ if __name__ == "__main__":
 headless or manually updated Apps may coexist, but do not call `run()` to start a second browser
 event loop. For multiple canvases or views, prefer windows, cameras, and render targets inside the
 one graphical App.
+
+Native plugin build failures in `app.add_plugins(...)` raise `RuntimeError` with the plugin name and failure detail. After a failed native build, discard the App and construct a fresh one with dependencies ordered first: Bevy retains partial state and its added-plugin marker, so re-adding skips the build. Rust panic text is still printed to stderr before the RuntimeError is caught. Python plugin exceptions keep their original type and failed Python plugins remain retryable. Asset loading requires an initialized IoTaskPool; add `TaskPoolPlugin` before loading assets.
 
 ## ECS Essentials
 
@@ -345,19 +347,50 @@ def count_frames(counter: Local[int]) -> None:
 
 #### Conditional Systems
 
+<!-- pybevy-snippet: smoke
+-->
 ```python
-from pybevy.ecs import run_if
+from dataclasses import dataclass
 
-def is_game_active(state: Res[GameState]) -> bool:
-    return state.active
+from pybevy.app import App, Update
+from pybevy.decorators import component
+from pybevy.ecs import Component, Mut, Query, World, run_if
 
-app.add_systems(Update, run_if(game_logic, is_game_active))
+@component
+@dataclass
+class GameFlags(Component):
+    active: bool = True
 
-# Combinators
-app.add_systems(Update, run_if(game_logic, cond_a).and_(cond_b))
-app.add_systems(Update, run_if(game_logic, cond_a).or_(cond_b))
-app.add_systems(Update, run_if(game_logic, cond_a).not_())
+ticks: list[str] = []
+
+def game_logic() -> None:
+    ticks.append("tick")
+
+def is_game_active(flags: Query[GameFlags]) -> bool:
+    return any(flag.active for flag in flags)
+
+def setup(world: World) -> None:
+    world.spawn(GameFlags())
+
+def pause(flags: Query[Mut[GameFlags]]) -> None:
+    flags.single().active = False
+
+app = App().add_systems(Update, run_if(game_logic, is_game_active))
+app.world(setup)
+app.update()
+app.run_system_once(pause)
+app.update()
+assert ticks == ["tick"]
 ```
+
+A condition may only read the world: registration rejects mutable queries,
+`ResMut`, `Commands`, `World`, `Gizmos` and message writers. Custom resources and
+Python-storage components declare exclusive access, so `Res[GameState]` cannot be
+a condition parameter; use a wrapper-storage component flag as above,
+`in_state(...)` (see `guide://state-machines`), or an early return in the system
+itself. Native read-only resources such as `Res[Time]`, `Res[ButtonInput[KeyCode]]`
+and `Res[State[GamePhase]]` are supported. Combine conditions with `.and_(other)`,
+`.or_(other)` and `.not_()` on the value `run_if(...)` returns.
 
 #### System Sets and Fine-Grained Ordering
 
@@ -391,9 +424,7 @@ app.add_systems(
 Use `SystemSet("my_game.Standalone")` when a set does not belong to an enum
 family or its name is selected dynamically.
 
-Public Bevy unit system sets are exported as `SystemSet` values from their
-owning modules. Order against these values when Python logic must run around an
-engine phase:
+Order Python systems around engine phases using native sets:
 
 ```python
 from pybevy.app import First
@@ -403,10 +434,16 @@ from pybevy.time import TimeSystems
 app.add_systems(First, system(record_frame_time).after(TimeSystems))
 ```
 
-The reviewed native set exports are `AnimationSystems`,
-`AssetTrackingSystems`, `AssetEventSystems`, `InputSystems`,
-`EditableTextSystems`, `Text2dUpdateSystems`, `TimeSystems`, and `ExitSystems`.
-Import each from its corresponding `pybevy` submodule.
+Import native sets from these modules:
+
+| module | sets |
+|---|---|
+| `pybevy.app` | `AnimationSystems` |
+| `pybevy.assets` | `AssetTrackingSystems`, `AssetEventSystems` |
+| `pybevy.input` | `InputSystems` |
+| `pybevy.text` | `EditableTextSystems`, `Text2dUpdateSystems` |
+| `pybevy.time` | `TimeSystems` |
+| `pybevy.window` | `ExitSystems` |
 
 Set-level conditions are evaluated once for the whole set:
 
@@ -523,13 +560,15 @@ Query[Entity, Or[tuple[With[Sprite], With[Mesh3d]]]]
 
 #### Borrow Rules (IMPORTANT)
 
-A system cannot have `Mut[T]` access to a component in one query and **any** access (mutable or read-only) to the same component in another query, unless disjointness is **proven by `Without` filters**. Different `With` filters alone (e.g., `With[A]` vs `With[B]`) are **not enough** - Bevy cannot prove those sets don't overlap.
+Conflicting access raises `RuntimeError` during `add_systems()`; use `Without`
+filters to prove disjointness. Different `With` filters alone cannot prove
+that queries accessing the same component are disjoint.
 
 ```python
-# WRONG - panics even though A and B are logically disjoint:
+# WRONG: With filters may overlap:
 def bad(q1: Query[Mut[Transform], With[A]], q2: Query[Mut[Transform], With[B]]) -> None: ...
 
-# ALSO WRONG - Mut + read-only is still a conflict:
+# WRONG: Mutable and read-only queries may overlap:
 def bad2(q1: Query[Mut[Transform], With[A]], q2: Query[Transform, With[B]]) -> None: ...
 
 # OK - Without proves disjointness:
@@ -540,7 +579,7 @@ def move_a(q: Query[Mut[Transform], With[A]]) -> None: ...
 def read_b(q: Query[Transform, With[B]]) -> None: ...
 ```
 
-Querying a component (e.g., `Query[tuple[Transform, TagA]]`) automatically implies `With[TagA]` - so `Without[TagA]` on another query proves disjointness. When in doubt, split into separate systems or use the Resource Flag Pattern (see below).
+Query data implies `With` for required components. Reciprocal `Without` filters prove exclusion. For Query/Res resource-entity collisions, use `Without[IsResource]` as the query filter where representable, or split systems.
 
 **Change detection note:** Direct field assignments trigger `Changed[T]` for both
 wrapper and Python-object storage. Wrapper-backed `Vec2` and `Vec3` setters also
@@ -636,6 +675,16 @@ def setup(commands: Commands) -> None:
 
 Messages provide buffered inter-system communication. An ordered reader can see values written earlier in the same schedule pass; retained values expire after two admitted message-update cycles.
 
+TimePlugin admits message updates after fixed steps; use ManualDuration for deterministic headless timing.
+
+```python
+from datetime import timedelta
+
+from pybevy.time import TimeUpdateStrategy
+
+app.insert_resource(TimeUpdateStrategy.ManualDuration(timedelta(seconds=1 / 60)))
+```
+
 #### Defining and Registering
 
 ```python
@@ -651,7 +700,7 @@ class DamageEvent(Message):
 app.add_message(DamageEvent)
 ```
 
-> **Note:** `@message` validates the `Message` base and marks the declaration; it does not create a channel. Messages must still be registered via `app.add_message(...)` inside the scene's `@entrypoint`. Unlike components and resources, there is no runtime `world.register_message()` or MCP `run_code` workaround: registration creates the App-local channel identity and scheduler access metadata used by reader and writer parameters. Adding a new message type requires editing the scene file and reloading.
+> **Note:** `@message` validates the `Message` base; register the channel with `app.add_message(...)` in `@entrypoint`. Adding a message type requires editing and reloading the scene; world/MCP calls cannot register channels.
 
 #### Sending and Receiving
 
@@ -751,7 +800,7 @@ exist on other variants, so use `isinstance` or `match` instead of probing flatt
 attributes.
 
 The same rule applies to enum-backed components. For example, construct an
-offscreen target as `RenderTarget.Image(ImageRenderTarget(handle))`; queried
+offscreen target as `RenderTarget.Image(ImageRenderTarget(handle=handle))`; queried
 values remain `RenderTarget.Image` instances and can be matched the same way.
 
 ## Patterns
@@ -966,6 +1015,20 @@ directly in `@resource` fields when the asset must stay alive. `handle.id()`
 returns a copyable, non-owning `AssetId[T]` suitable for lookup, comparison, and
 dictionary keys; an `AssetId` does not keep its asset alive. See
 `guide://performance` for the cached asset pattern.
+
+#### Nested field types over the control API
+
+`get_component`, `get_resource` and `set_component` encode `dict` and
+`@dataclass` fields as JSON objects, and `list`, `tuple`, `set` and array-like
+fields as JSON arrays. Keys that cannot be unique object keys become an array of
+key/value pairs instead; this pair form is read-only. Writes accept dictionary
+objects, keep omitted dataclass fields, and preserve array dtypes. Cycles and
+nesting beyond 64 levels return `{"serialization_error": ...}` markers.
+
+A field holding `None` carries no type to rebuild from: initialize it with
+`run_code`. Native reflected optional fields use their component schema. An
+object with neither dataclass fields nor properties reads as `{"repr": ...}` and
+rejects writes.
 
 ### Resource Flag Pattern (Cross-System Communication)
 

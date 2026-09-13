@@ -36,7 +36,7 @@ def setup(
         Bloom(intensity=0.35, low_frequency_boost=0.8),
         DistanceFog(
             color=Color.srgb(0.04, 0.04, 0.06),
-            falloff=FogFalloff.Exponential(0.07),
+            falloff=FogFalloff.Exponential(density=0.07),
             directional_light_color=Color.srgb(0.5, 0.55, 0.7),
             directional_light_exponent=80.0,
         ),

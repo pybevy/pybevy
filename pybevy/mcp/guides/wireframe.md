@@ -25,7 +25,7 @@ commands.spawn(
 commands.spawn(
     Mesh3d(mesh), MeshMaterial3d(mat), Transform.from_xyz(3, 0, 0),
     Wireframe(),
-    WireframeColor(Color.srgb(1.0, 0.0, 0.0)),
+    WireframeColor(color=Color.srgb(1.0, 0.0, 0.0)),
 )
 ```
 
@@ -76,7 +76,7 @@ commands.insert_resource(WireframeConfig(
 # Per-entity overrides
 commands.spawn(
     Mesh3d(mesh), MeshMaterial3d(mat), Wireframe(),
-    WireframeLineWidth(3.0),
+    WireframeLineWidth(width=3.0),
     WireframeTopology.Quads,
 )
 ```

@@ -17,7 +17,8 @@ def setup(commands: Commands, asset_server: Res[AssetServer]) -> None:
     )
 ```
 
-**Supported formats:** wav, ogg, flac
+**Supported formats:** wav and ogg. This build has no mp3 or flac decoder, so
+such a file loads and then panics playback with `UnrecognizedFormat`.
 
 ## Playback Modes
 
@@ -47,6 +48,10 @@ PlaybackSettings.LOOP.with_volume(Volume.Linear(0.3)).with_speed(0.8)
 ```
 
 ## Volume Control
+
+`Volume` equality follows Bevy: linear values compare absolute amplitudes,
+decibel values compare directly, and mixed variants compare through
+`to_decibels()`.
 
 ### Per-Source Volume
 

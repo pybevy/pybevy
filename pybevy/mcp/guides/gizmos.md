@@ -138,8 +138,10 @@ a connected path.
 
 ## 3D Shapes
 
-Shapes use `Isometry3d` for translation and rotation. The isometry has no scale;
-size is passed separately:
+Most shapes use `Isometry3d` for translation and rotation. The isometry has no
+scale; size is passed separately. `cube` and `aabb_3d` take bevy's wider
+`TransformPoint` union instead: `Transform`, `GlobalTransform`, `Mat4`,
+`Affine3A` or `Isometry3d`.
 
 ```python
 from pybevy.prelude import Color, Gizmos, Isometry3d, Quat, Vec2, Vec3
@@ -220,7 +222,7 @@ def show_mesh_bounds(
 ) -> None:
     for entity, _mesh in meshes:
         commands.entity(entity).insert(
-            ShowAabbGizmo(Color.srgb(0.1, 1.0, 0.3)),
+            ShowAabbGizmo(color=Color.srgb(0.1, 1.0, 0.3)),
         )
 ```
 
@@ -249,14 +251,14 @@ def spawn_debug_light(commands: Commands) -> None:
     commands.spawn(
         PointLight(intensity=80_000.0, range=8.0),
         Transform.from_xyz(0.0, 3.0, 0.0),
-        ShowLightGizmo(LightGizmoColor.ByLightType()),
+        ShowLightGizmo(color=LightGizmoColor.ByLightType()),
     )
 
     commands.spawn(
         PointLight(intensity=40_000.0, range=5.0),
         Transform.from_xyz(3.0, 2.0, 0.0),
         ShowLightGizmo(
-            LightGizmoColor.Manual(Color.srgb(1.0, 0.2, 0.8)),
+            color=LightGizmoColor.Manual(Color.srgb(1.0, 0.2, 0.8)),
         ),
     )
 ```
@@ -281,6 +283,10 @@ capture_screenshot {"gizmos": true}
 capture_stats {"gizmos": true, "grid": 4}
 capture_timeline {"gizmos": true, "capture_count": 6}
 ```
+
+The flag governs every registered gizmo config group, so it also covers the
+component-driven `ShowAabbGizmo` and `ShowLightGizmo` markers, not just
+immediate-mode `Gizmos` draws.
 
 The option includes existing gizmos; it does not generate labels or debug
 geometry by itself. Your drawing system must run during the frames leading up

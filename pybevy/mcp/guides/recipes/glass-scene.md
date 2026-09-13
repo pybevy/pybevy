@@ -1,9 +1,8 @@
 # Glass Scene Recipe
 
-Scene with glass sphere, frosted panel, and backlit leaf demonstrating transmission materials.
+Glass sphere, frosted panel, and backlit leaf.
 
 ```python
-import math
 from pybevy.prelude import *
 from pybevy.light import TransmittedShadowReceiver
 
@@ -43,7 +42,7 @@ def setup(
     ))
     commands.spawn(Mesh3d(ground_mesh), MeshMaterial3d(ground_mat), Name("ground"))
 
-    # --- Glass Sphere ---
+    # Glass sphere
     glass_mat = materials.add(StandardMaterial(
         base_color=Color.srgb(0.9, 0.95, 1.0),
         specular_transmission=1.0,
@@ -61,7 +60,7 @@ def setup(
         Name("glass_sphere"),
     )
 
-    # --- Frosted Panel ---
+    # Frosted panel
     frosted_mat = materials.add(StandardMaterial(
         base_color=Color.srgb(0.85, 0.9, 0.95),
         specular_transmission=0.8,
@@ -77,7 +76,7 @@ def setup(
         Name("frosted_panel"),
     )
 
-    # --- Backlit Leaf ---
+    # Backlit leaf
     leaf_mat = materials.add(StandardMaterial(
         base_color=Color.srgb(0.15, 0.45, 0.08),
         diffuse_transmission=0.5,
@@ -95,16 +94,17 @@ def setup(
         Name("leaf"),
     )
 
-    # Reference object behind glass (something to see through)
+    # Place a lit reference cube behind the sphere along the camera ray.
     ref_mat = materials.add(StandardMaterial(
         base_color=Color.srgb(0.8, 0.2, 0.2),
+        emissive=LinearRgba.rgb(3.0, 0.4, 0.4),
         metallic=0.0,
         perceptual_roughness=0.5,
     ))
     ref_mesh = meshes.add(Cuboid(0.5, 0.5, 0.5))
     commands.spawn(
         Mesh3d(ref_mesh), MeshMaterial3d(ref_mat),
-        Transform.from_xyz(0.0, 0.8, -2.0),
+        Transform.from_xyz(-1.0, 0.8 - 3.2 / 6.0, -1.0),
         Name("red_cube_behind"),
     )
 
@@ -118,6 +118,6 @@ if __name__ == "__main__":
 - **Frosted:** Same but with `perceptual_roughness=0.4` to scatter transmission
 - **Leaf:** `diffuse_transmission=0.5` + `double_sided=True` + `cull_mode=None`
 - **TransmittedShadowReceiver** shows shadows on the back side of leaves
-- Place objects behind glass so refraction is visible
-- Bright lighting is essential - transmission needs plenty of light to look good
+- Place a lit reference behind glass on `sphere_pos + distance * normalize(sphere_pos - camera_pos)`.
+- Use bright lighting for transmission.
 - Refraction quality is per-camera: `ScreenSpaceTransmission(steps=2, quality=ScreenSpaceTransmissionQuality.High)` (pybevy.pbr) on the camera; `steps=0` disables refraction
