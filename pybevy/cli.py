@@ -601,62 +601,33 @@ def _run_script(
 
             # Look for functions decorated with @entrypoint
             # Common names for @entrypoint decorated functions
-            import inspect
-
             app_function_names = ["main", "create_app", "app", "run"]
 
-            def is_entrypoint_decorated(obj: object) -> bool:
-                """Check if a callable is decorated with @entrypoint.
-
-                The @entrypoint decorator uses @wraps which sets __wrapped__, and the
-                wrapped function accepts a single 'app' parameter.
-                """
-                if not callable(obj):
-                    return False
-                # Check if it has __wrapped__ (decorated with @wraps)
-                if not hasattr(obj, "__wrapped__"):
-                    return False
-                try:
-                    # Check the wrapped function's signature
-                    wrapped_sig = inspect.signature(obj.__wrapped__)  # type: ignore[attr-defined]
-                    params = list(wrapped_sig.parameters.values())
-                    # Should have single parameter named 'app'
-                    if len(params) == 1 and params[0].name == "app":
-                        # Try calling with no args - if it works, it's @entrypoint decorated
-                        try:
-                            # Don't actually call it, just verify it can be called
-                            wrapper_sig = inspect.signature(obj, follow_wrapped=False)
-                            wrapper_params = list(wrapper_sig.parameters.values())
-                            # Wrapper should have optional parameter
-                            if (
-                                len(wrapper_params) == 1
-                                and wrapper_params[0].default
-                                is not inspect.Parameter.empty
-                            ):
-                                return True
-                        except Exception:
-                            pass
-                    return False
-                except (ValueError, TypeError):
-                    return False
+            from ._internal.entrypoint import is_entrypoint
 
             for name in app_function_names:
                 if name in module_globals:
                     obj = module_globals[name]
-                    if is_entrypoint_decorated(obj):
+                    if is_entrypoint(obj):
                         return obj  # type: ignore
 
             # Fallback: scan all callables for @entrypoint pattern
             for name, obj in module_globals.items():
                 if name.startswith("_"):
                     continue  # Skip private functions
-                if is_entrypoint_decorated(obj):
+                if is_entrypoint(obj):
                     _echo(f"   → Found @entrypoint decorated function: {name}")
                     return obj  # type: ignore
 
             raise RuntimeError(
-                "Script must define either a create_app() function or use the @entrypoint decorator.\n"
-                "Example: @entrypoint\\ndef main(app: App) -> App: ..."
+                "No create_app() function and no @entrypoint function found. PyBevy "
+                "looks for a function decorated with @entrypoint, first under the names "
+                "main, create_app, app or run, then among every other public callable "
+                "in the module.\n"
+                "Example:\n"
+                "    @entrypoint\n"
+                "    def main(app: App) -> App:\n"
+                "        return app.add_plugins(DefaultPlugins)"
             )
         except Exception as e:
             _echo(f"Failed to load create_app function: {e}")

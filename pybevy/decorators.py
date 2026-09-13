@@ -1,7 +1,9 @@
 import dataclasses
+import inspect
 import os
 import sys
 import types
+import weakref
 from collections.abc import Callable
 from functools import wraps
 from typing import Any, TypeVar, Union, get_args, get_origin, get_type_hints
@@ -146,7 +148,9 @@ def resource(cls: type[RT]) -> type[RT]:
                 and resource_type.__init__ is object.__init__
             ):
                 fields = getattr(resource_type, "__annotations__", {})
-                field_hint = f" for its data fields ({', '.join(fields)})" if fields else ""
+                field_hint = (
+                    f" for its data fields ({', '.join(fields)})" if fields else ""
+                )
                 raise TypeError(
                     f"{resource_type.__name__} does not define a constructor{field_hint}. "
                     "Add @dataclass below @resource, or define __init__ before passing "
@@ -168,6 +172,7 @@ def resource(cls: type[RT]) -> type[RT]:
 
 
 CT = TypeVar("CT", bound=Component)
+
 
 def clear_component_cache(verbose: bool = False) -> None:
     """Clear cached custom ECS types before a full reload."""
@@ -325,7 +330,7 @@ def _register_component(cls: type[CT], *, storage: str | None = None) -> type[CT
             raise TypeError(
                 f"Component '{cls.__name__}' has non-primitive fields: {field_list}. "
                 f"Non-primitive fields require PyObject storage, which disables View batch "
-                f"execution and Numba JIT. Use @component(storage=\"python\") to opt in."
+                f'execution and Numba JIT. Use @component(storage="python") to opt in.'
             )
 
     # Generate cache key from fully qualified name
@@ -520,11 +525,33 @@ def plugin(cls: type[PL]) -> type[PL]:
     return cls
 
 
+def _require_entrypoint_signature(func: Callable) -> None:
+    """The entrypoint callable must accept one positional App."""
+    name = getattr(func, "__name__", None)
+    if name is None:
+        name = type(func).__name__
+    try:
+        signature = inspect.signature(func)
+    except (TypeError, ValueError) as error:
+        raise TypeError(
+            f"@entrypoint cannot inspect callable '{name}'; use a Python function accepting an App."
+        ) from error
+    try:
+        signature.bind(object())
+    except TypeError as error:
+        raise TypeError(
+            f"@entrypoint requires a callable accepting one positional App: "
+            f"'def {name}(app: App) -> App'. Got 'def {name}{signature}'."
+        ) from error
+
+
 def entrypoint(func: Callable) -> Callable:
     """Decorator for app entry point functions.
 
     Automatically injects an App instance when called with no arguments,
-    while still allowing explicit App instances for testing.
+    while still allowing explicit App instances for testing. The callable must
+    have an inspectable signature that accepts one positional App; optional
+    parameters and positional variadics are supported.
 
     Example:
         @entrypoint
@@ -539,10 +566,12 @@ def entrypoint(func: Callable) -> Callable:
 
     For testing:
         test_app = App()
-        test_app.add_plugins(ScheduleRunnerPlugin(RunMode.Once()))
+        test_app.add_plugins(ScheduleRunnerPlugin.run_once())
         main(test_app).run()  # Explicit app instance
     """
     from .app import App as AppClass
+
+    _require_entrypoint_signature(func)
 
     @wraps(func)
     def wrapper(app: AppClass | None = None) -> AppClass:
@@ -571,7 +600,9 @@ def entrypoint(func: Callable) -> Callable:
             from . import _pybevy  # type: ignore
 
             _pybevy._enrich_exception(e)
-            print(f"\n❌ Error configuring app in '{func.__name__}()':", file=sys.stderr)
+            print(
+                f"\n❌ Error configuring app in '{func.__name__}()':", file=sys.stderr
+            )
             print(f"   {type(e).__name__}: {e}", file=sys.stderr)
             print(file=sys.stderr)
 
@@ -592,5 +623,7 @@ def entrypoint(func: Callable) -> Callable:
             result = result.add_plugins(ImageCopyPlugin())
 
         return result
+
+    wrapper.__pybevy_entrypoint_decorated__ = weakref.ref(wrapper)  # type: ignore[attr-defined]
 
     return wrapper

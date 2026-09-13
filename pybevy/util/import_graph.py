@@ -65,6 +65,12 @@ class ImportGraph:
         for imp in old_imports:
             self._reverse.get(imp, set()).discard(filepath)
 
+        if not os.path.exists(filepath):
+            # Stop resolving imports to a file that is gone. Its reverse edges
+            # stay: whoever imported it still has a stale module to flush.
+            self._all_files.discard(filepath)
+            return
+
         # Re-parse
         self._parse_file(filepath)
 
@@ -131,6 +137,14 @@ class ImportGraph:
                     )
                     if resolved:
                         imports.add(resolved)
+                    # "from pkg import helper" may name a submodule, not an
+                    # attribute of pkg/__init__.py. Both edges are real.
+                    for alias in node.names:
+                        resolved = self._resolve_import_from(
+                            f"{node.module}.{alias.name}", level, file_dir, filepath
+                        )
+                        if resolved:
+                            imports.add(resolved)
                 elif node.level and node.level > 0:
                     # Relative import like "from . import foo"
                     for alias in node.names:

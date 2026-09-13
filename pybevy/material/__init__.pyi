@@ -54,4 +54,10 @@ def material(
     unlit: bool | None = None,
     depth_bias: float | None = None,
 ) -> Callable[[type[MaterialT]], type[MaterialT]]:
-    """Decorator to define a custom shader material."""
+    """Decorator to define a custom shader material.
+
+    A uniform field name must not end in a digit: upstream WGSL composition
+    escapes such a struct member (``tint2`` becomes ``tint2_``) without
+    patching the references, so the decorator rejects it. End the name in a
+    letter or an underscore instead.
+    """

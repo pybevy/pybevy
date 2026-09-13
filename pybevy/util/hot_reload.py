@@ -15,7 +15,6 @@ Key features:
 """
 
 import importlib.machinery
-import inspect
 import os
 import runpy
 import sys
@@ -78,13 +77,16 @@ def flush_user_modules(
     affected_files: set[str] | None = None
     if graph is not None and changed_files is not None and changed_files:
         from .import_graph import ImportGraph
+
         if isinstance(graph, ImportGraph):
             # Update the graph for changed files first
             for f in changed_files:
                 graph.update_file(f)
             affected_files = graph.expand_changed_files(changed_files)
             if verbose:
-                print(f"   → Import graph: {len(changed_files)} changed → {len(affected_files)} affected")
+                print(
+                    f"   → Import graph: {len(changed_files)} changed → {len(affected_files)} affected"
+                )
 
     to_remove: list[str] = []
 
@@ -138,9 +140,7 @@ class _SourceOnlyLoader(importlib.machinery.SourceFileLoader):
     def get_code(self, fullname: str) -> CodeType:
         source = self.get_source(fullname)
         if source is None:
-            raise ImportError(
-                f"no source for scene module {fullname!r}", name=fullname
-            )
+            raise ImportError(f"no source for scene module {fullname!r}", name=fullname)
         return self.source_to_code(source, self.path)
 
 
@@ -194,7 +194,9 @@ def exec_scene_module(
     module_file = getattr(module, "__file__", None)
 
     existing = sys.modules.get(module_name)
-    existing_file = getattr(existing, "__file__", None) if existing is not None else None
+    existing_file = (
+        getattr(existing, "__file__", None) if existing is not None else None
+    )
     foreign = existing is not None and (
         existing_file is None
         or module_file is None
@@ -232,7 +234,12 @@ def exec_scene_module(
     return vars(module)
 
 
-def reload_module_from_source(module_path: str, module_name: str | None = None, project_dir: str | None = None, verbose: bool = False) -> dict:
+def reload_module_from_source(
+    module_path: str,
+    module_name: str | None = None,
+    project_dir: str | None = None,
+    verbose: bool = False,
+) -> dict:
     """
     Reload a Python module from source, bypassing .pyc bytecode cache.
 
@@ -361,47 +368,31 @@ def find_entrypoint(module_globals: dict) -> Callable:
         app = entrypoint_func()  # Call with no args to create App
     """
 
-    def is_entrypoint_decorated(obj: object) -> bool:
-        """Check if a callable is decorated with @entrypoint."""
-        if not callable(obj):
-            return False
-        # Check if it has __wrapped__ (decorated with @wraps)
-        if not hasattr(obj, '__wrapped__'):
-            return False
-        try:
-            # Check the wrapped function's signature
-            wrapped_sig = inspect.signature(obj.__wrapped__)  # type: ignore[attr-defined]
-            params = list(wrapped_sig.parameters.values())
-            # Should have single parameter named 'app'
-            if len(params) == 1 and params[0].name == 'app':
-                # Verify wrapper has optional parameter
-                wrapper_sig = inspect.signature(obj, follow_wrapped=False)
-                wrapper_params = list(wrapper_sig.parameters.values())
-                # Wrapper should have optional parameter
-                if len(wrapper_params) == 1 and wrapper_params[0].default is not inspect.Parameter.empty:
-                    return True
-            return False
-        except (ValueError, TypeError):
-            return False
+    from .._internal.entrypoint import is_entrypoint
 
     # Try common names first
     app_function_names = ["main", "create_app", "app", "run"]
     for name in app_function_names:
         if name in module_globals:
             obj = module_globals[name]
-            if is_entrypoint_decorated(obj):
+            if is_entrypoint(obj):
                 return obj  # type: ignore
 
     # Fallback: scan all callables for @entrypoint pattern
     for name, obj in module_globals.items():
-        if name.startswith('_'):
+        if name.startswith("_"):
             continue  # Skip private functions
-        if is_entrypoint_decorated(obj):
+        if is_entrypoint(obj):
             return obj  # type: ignore
 
     raise RuntimeError(
-        "Script must use the @entrypoint decorator.\n"
-        "Example: @entrypoint\\ndef main(app: App) -> App: ..."
+        "No @entrypoint function found. PyBevy looks for a function decorated with "
+        "@entrypoint, first under the names main, create_app, app or run, then among "
+        "every other public callable in the module.\n"
+        "Example:\n"
+        "    @entrypoint\n"
+        "    def main(app: App) -> App:\n"
+        "        return app.add_plugins(DefaultPlugins)"
     )
 
 
@@ -467,7 +458,9 @@ def load_entrypoint_function(
     # Reload module from source (shared with native plugin hot reload)
     # Pass project_dir to flush all user modules for transitive dependency reload
     module_globals = reload_module_from_source(
-        script_path, project_dir=parent_dir, verbose=verbose,
+        script_path,
+        project_dir=parent_dir,
+        verbose=verbose,
     )
 
     # Find and return entrypoint
@@ -559,7 +552,9 @@ def create_hot_reload_loader(
                 is_partial = reload_state.is_partial_reload()  # type: ignore
 
             if verbose:
-                print(f"🔍 Reload mode: partial={is_partial}, changed_files={len(files) if isinstance(files, set) else 0}")
+                print(
+                    f"🔍 Reload mode: partial={is_partial}, changed_files={len(files) if isinstance(files, set) else 0}"
+                )
 
             # In partial mode, use selective reload with changed files
             # In full mode, pass None to force full module reload
@@ -585,10 +580,12 @@ def create_hot_reload_loader(
             # Python's stderr is block-buffered when piped, so explicit flush is needed
             import sys
             import traceback
+
             print(f"\n❌ Hot reload failed: {type(e).__name__}: {e}", file=sys.stderr)
             traceback.print_exc(file=sys.stderr)
             sys.stderr.flush()  # Force flush to pipe!
             raise  # Re-raise for pybevy Rust to handle
+
     return loader
 
 
