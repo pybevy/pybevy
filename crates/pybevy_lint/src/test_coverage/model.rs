@@ -63,6 +63,7 @@ pub struct ApiCatalog {
     symbols: BTreeMap<ApiPath, StubSymbolKind>,
     symbol_paths_by_name: HashMap<String, Vec<ApiPath>>,
     wildcard_symbols: BTreeMap<String, (ApiPath, StubSymbolKind)>,
+    source_only_symbols: HashSet<ApiPath>,
 }
 
 impl ApiCatalog {
@@ -113,6 +114,36 @@ impl ApiCatalog {
             self.symbols.insert(path, symbol.kind);
         }
         self.rebuild_symbol_name_index();
+    }
+
+    pub fn add_source_only_symbols(&mut self, symbols: Vec<StubSymbolDef>) {
+        for symbol in symbols {
+            if !self.has_module(&symbol.module_path) {
+                self.source_only_symbols
+                    .insert(ApiPath::new(&symbol.module_path, &symbol.name));
+            }
+        }
+    }
+
+    pub fn has_reference_module(&self, module: &str) -> bool {
+        let module = canonical_module(module);
+        self.has_module(&module)
+            || self
+                .source_only_symbols
+                .iter()
+                .any(|path| path.module() == module)
+    }
+
+    pub fn is_source_only_expression(&self, expression: &str) -> bool {
+        self.source_only_symbols.iter().any(|path| {
+            let name = path.as_str().rsplit('.').next().unwrap_or_default();
+            !self.symbol_paths_by_name.contains_key(name)
+                && !self.has_reference_module(path.as_str())
+                && (expression == path.as_str()
+                    || expression
+                        .strip_prefix(path.as_str())
+                        .is_some_and(|suffix| suffix.starts_with('.')))
+        })
     }
 
     pub fn add_wildcard_reexports(&mut self, reexports: Vec<StubReexport>) {

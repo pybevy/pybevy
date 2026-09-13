@@ -75,7 +75,9 @@ impl<'a> ImportBindings<'a> {
             {
                 return (kind == StubSymbolKind::Class).then_some(path);
             }
-            if let Some(path) = self.catalog.resolve_import(&resolved_module, symbol) {
+            if self.catalog.has_reference_module(&resolved_module)
+                && let Some(path) = self.catalog.resolve_import(&resolved_module, symbol)
+            {
                 return Some(path);
             }
         }
@@ -91,6 +93,21 @@ impl<'a> ImportBindings<'a> {
                 || expression
                     .strip_prefix(alias)
                     .is_some_and(|suffix| suffix.starts_with('.'))
+        })
+    }
+
+    fn is_source_only_expression(&self, node: Node<'_>, source: &[u8]) -> bool {
+        let Ok(expression) = node.utf8_text(source) else {
+            return false;
+        };
+        self.modules.iter().any(|(alias, module)| {
+            expression
+                .strip_prefix(alias)
+                .and_then(|suffix| suffix.strip_prefix('.'))
+                .is_some_and(|suffix| {
+                    self.catalog
+                        .is_source_only_expression(&format!("{module}.{suffix}"))
+                })
         })
     }
 
@@ -971,6 +988,7 @@ fn process_attribute_access(
     }
 
     if imports.is_pybevy_qualified(attr_node, source)
+        && !imports.is_source_only_expression(attr_node, source)
         && attr_node
             .utf8_text(source)
             .ok()
@@ -1158,6 +1176,7 @@ fn process_call_expression(
                         node,
                     );
                 } else if imports.is_pybevy_qualified(object, source)
+                    && !imports.is_source_only_expression(object, source)
                     && object
                         .utf8_text(source)
                         .ok()
@@ -1171,6 +1190,7 @@ fn process_call_expression(
                         "qualified name is not a unique public stub class",
                     );
                 } else if imports.is_pybevy_qualified(func, source)
+                    && !imports.is_source_only_expression(func, source)
                     && looks_like_class_name(&method_name)
                 {
                     record_unresolved_node(

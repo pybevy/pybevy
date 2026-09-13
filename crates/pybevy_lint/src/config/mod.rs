@@ -380,14 +380,14 @@ impl IntentionalOmission {
 
 /// Intentional signature difference specification.
 /// Supports two forms:
-/// - A simple string: "method_name" (suppresses sig diff without validation)
+/// - A simple string: "method_name" (permits parameter and receiver differences)
 /// - An object with expected PyBevy types: { name = "method_name", expected_params = { "param" = "type" }, expected_return = "type" }
 ///   When expected types are specified, the lint validates the PyBevy side matches them,
 ///   catching regressions if someone accidentally changes the Python API.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 pub enum SignatureDiffSpec {
-    /// Simple name: just suppress the diff
+    /// Simple name: permit parameter and receiver differences only
     Simple(String),
     /// Name with expected PyBevy types: suppress diff but validate PyBevy side
     WithExpected {
@@ -395,7 +395,7 @@ pub enum SignatureDiffSpec {
         /// Expected PyBevy parameter types (param_name -> expected_type substring)
         #[serde(default)]
         expected_params: HashMap<String, String>,
-        /// Expected PyBevy return type (substring match)
+        /// Complete expected Rust return type, compared after Python conversion normalization.
         #[serde(default)]
         expected_return: Option<String>,
     },

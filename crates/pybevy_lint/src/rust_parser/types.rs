@@ -38,10 +38,17 @@ pub fn normalize_rust_type(ty: &str) -> String {
 
     // Handle Bound<'_, T> -> T. remove_lifetimes may have already consumed
     // the lifetime and its trailing comma, leaving a single parameter.
-    if let Some(inner) = extract_generic(ty.trim(), "Bound") {
-        let parts: Vec<&str> = inner.splitn(2, ',').collect();
-        let target = if parts.len() == 2 { parts[1] } else { parts[0] };
-        return normalize_rust_type(target.trim());
+    for wrapper in ["Bound", "PyRef", "PyRefMut", "Borrowed"] {
+        if let Some(inner) = extract_generic(ty.trim(), wrapper) {
+            return normalize_rust_type(&inner);
+        }
+    }
+
+    if let Some(inner) = extract_generic(ty.trim(), "Result") {
+        let parts = split_by_comma(&inner);
+        if let Some(success) = parts.first() {
+            return normalize_rust_type(success);
+        }
     }
 
     // Handle Option<T> -> T | None
@@ -52,23 +59,28 @@ pub fn normalize_rust_type(ty: &str) -> String {
 
     // Handle Vec<T> -> list[T]
     if let Some(inner) = extract_generic(ty.trim(), "Vec") {
+        if inner.trim() == "u8" {
+            return "bytes".to_string();
+        }
         let inner_normalized = normalize_rust_type(&inner);
         return format!("list[{}]", inner_normalized);
     }
 
     // Handle HashMap<K, V> -> dict[K, V]
     if let Some(inner) = extract_generic(ty.trim(), "HashMap") {
-        return format!("dict[{}]", inner);
+        let parts: Vec<_> = split_by_comma(&inner)
+            .iter()
+            .map(|part| normalize_rust_type(part))
+            .collect();
+        return format!("dict[{}]", parts.join(", "));
     }
 
-    // Handle [T; N] arrays -> tuple[T, T, ...] (N times)
-    if let Some((element_type, count)) = parse_rust_array(ty.trim()) {
-        let element_normalized = normalize_rust_type(&element_type);
-        if count > 0 && count <= 16 {
-            // Reasonable limit for tuple expansion
-            let elements = vec![element_normalized; count];
-            return format!("tuple[{}]", elements.join(", "));
+    // PyO3 converts arrays to lists, specializing u8 sequences to bytes.
+    if let Some((element_type, _count)) = parse_rust_array(ty.trim()) {
+        if element_type == "u8" {
+            return "bytes".to_string();
         }
+        return format!("list[{}]", normalize_rust_type(&element_type));
     }
 
     // Handle Rust unit type () -> None (before tuple handling)
@@ -86,6 +98,14 @@ pub fn normalize_rust_type(ty: &str) -> String {
         return format!("tuple[{}]", parts.join(", "));
     }
 
+    if ty.starts_with('[') && ty.ends_with(']') && !ty.contains(';') {
+        let inner = ty[1..ty.len() - 1].trim();
+        if inner == "u8" {
+            return "bytes".to_string();
+        }
+        return format!("list[{}]", normalize_rust_type(inner));
+    }
+
     // Map PyO3 collection types BEFORE stripping Py prefix
     match ty.trim() {
         "PyList" => return "list".to_string(),
@@ -97,6 +117,10 @@ pub fn normalize_rust_type(ty: &str) -> String {
         "PyByteArray" => return "bytearray".to_string(),
         "PyAny" => return "Any  # FIXME: check actual return type".to_string(),
         _ => {}
+    }
+
+    if ty.ends_with("<>") {
+        return normalize_rust_type(ty.trim_end_matches("<>"));
     }
 
     // Strip Py prefix from type names
@@ -118,20 +142,18 @@ pub fn normalize_rust_type(ty: &str) -> String {
     }
 }
 
-/// Reduce a plain qualified path to its final segment. Types with generics,
-/// tuples, or references are left for the structural handlers.
+/// Reduce the outer path without discarding qualified nested type arguments.
 fn strip_path_qualification(ty: &str) -> String {
     let trimmed = ty.trim();
-    if trimmed
-        .chars()
-        .any(|c| matches!(c, '<' | '(' | '[' | ',' | '&'))
-    {
-        return trimmed.to_string();
-    }
-    match trimmed.rsplit("::").next() {
-        Some(last) => last.trim().to_string(),
-        None => trimmed.to_string(),
-    }
+    let head_end = trimmed
+        .find(['<', '(', '[', ',', '&'])
+        .unwrap_or(trimmed.len());
+    let (head, tail) = trimmed.split_at(head_end);
+    format!(
+        "{}{}",
+        head.rsplit("::").next().unwrap_or(head).trim(),
+        tail
+    )
 }
 
 /// Extract the inner type from a generic type like Foo<Bar>
@@ -219,7 +241,7 @@ fn parse_rust_array(ty: &str) -> Option<(String, usize)> {
 }
 
 /// Split a string by comma, respecting bracket nesting
-fn split_by_comma(s: &str) -> Vec<String> {
+pub(crate) fn split_by_comma(s: &str) -> Vec<String> {
     let mut parts = Vec::new();
     let mut current = String::new();
     let mut depth = 0;

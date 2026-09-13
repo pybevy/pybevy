@@ -259,15 +259,10 @@ fn parse_decorated_definition(node: &Node, source: &str, path: &Path, class: &mu
             let is_overload = decorators.iter().any(|d| d.contains("@overload"));
 
             if is_overload {
-                // Add as a regular method (first overload wins)
-                if !class.methods.iter().any(|m| m.name == method.name)
-                    && !class.static_methods.iter().any(|m| m.name == method.name)
-                {
-                    if is_staticmethod {
-                        class.static_methods.push(method);
-                    } else {
-                        class.methods.push(method);
-                    }
+                if is_staticmethod || is_classmethod {
+                    class.static_methods.push(method);
+                } else {
+                    class.methods.push(method);
                 }
             } else if is_property {
                 // It's a property getter

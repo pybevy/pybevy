@@ -93,3 +93,58 @@ fn check_mode_exits_nonzero_when_evidence_is_removed() {
         String::from_utf8_lossy(&regression.stderr)
     );
 }
+
+#[test]
+fn source_only_facades_allow_baseline_updates_without_masking_bad_names() {
+    let root = TempDirectory::new();
+    fs::create_dir_all(root.join("pybevy/contrib")).unwrap();
+    fs::create_dir(root.join("tests")).unwrap();
+    fs::write(root.join("pybevy/math.pyi"), "class Vec3: ...\n").unwrap();
+    fs::write(
+        root.join("pybevy/contrib/__init__.py"),
+        "from .camera import FlyCamera\n__all__ = ['FlyCamera']\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("pybevy/contrib/camera.py"),
+        "class FlyCamera: pass\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("exceptions.json"),
+        r#"{"schema_version": 2, "exceptions": []}"#,
+    )
+    .unwrap();
+    fs::write(root.join("tests/test_facade.py"), "import pybevy.contrib as contrib\n\ndef test_export():\n    assert contrib.FlyCamera is not None\n    contrib.FlyCamera()\n").unwrap();
+    let update = run_linter(&root.0, "--update-baseline");
+    assert!(
+        update.status.success(),
+        "{}",
+        String::from_utf8_lossy(&update.stderr)
+    );
+    assert!(
+        !fs::read_to_string(root.join("baseline.json"))
+            .unwrap()
+            .contains("contrib.FlyCamera")
+    );
+    for (module, name) in [
+        ("math", "MissingVec3"),
+        ("nonexistent", "Vec3"),
+        ("contrib", "NotAnExport"),
+    ] {
+        fs::write(
+            root.join("tests/test_facade.py"),
+            format!(
+                "import pybevy.{module} as module\n\ndef test_reference():\n    module.{name}()\n"
+            ),
+        )
+        .unwrap();
+        let update = run_linter(&root.0, "--update-baseline");
+        assert!(!update.status.success());
+        assert!(
+            String::from_utf8_lossy(&update.stderr).contains(&format!("module.{name}")),
+            "{}",
+            String::from_utf8_lossy(&update.stderr)
+        );
+    }
+}
