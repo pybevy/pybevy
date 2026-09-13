@@ -24,7 +24,7 @@ impl PySunDisk {
     }
 
     #[new]
-    #[pyo3(signature = (angular_size = SunDisk::EARTH.angular_size, intensity = SunDisk::EARTH.intensity))]
+    #[pyo3(signature = (*, angular_size = SunDisk::EARTH.angular_size, intensity = SunDisk::EARTH.intensity))]
     pub fn new(angular_size: f32, intensity: f32) -> PyClassInitializer<Self> {
         Self::from_owned(SunDisk {
             angular_size,

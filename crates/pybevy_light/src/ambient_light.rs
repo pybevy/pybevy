@@ -14,14 +14,14 @@ use pyo3::prelude::*;
 #[pyclass(name = "GlobalAmbientLight", module = "pybevy.light", extends = PyResource, from_py_object)]
 #[derive(Debug, Resource)]
 pub struct PyGlobalAmbientLight {
-    // TODO: make to crate-pub only. sweep for similar pub's
-    pub storage: ResourceStorage<GlobalAmbientLight>,
+    pub(crate) storage: ResourceStorage<GlobalAmbientLight>,
 }
 
 #[pymethods]
 impl PyGlobalAmbientLight {
     #[new]
     #[pyo3(signature = (
+        *,
         color = bevy::color::Color::WHITE.into(),
         brightness = 80.0,
         affects_lightmapped_meshes = true
@@ -88,6 +88,7 @@ pub struct PyAmbientLight {
 impl PyAmbientLight {
     #[new]
     #[pyo3(signature = (
+        *,
         color = bevy::color::Color::WHITE.into(),
         brightness = 80.0,
         affects_lightmapped_meshes = true

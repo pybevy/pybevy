@@ -22,11 +22,12 @@ pub struct PyClusteredDecal {
 impl PyClusteredDecal {
     #[new]
     #[pyo3(signature = (
+        *,
         base_color_texture = None,
         normal_map_texture = None,
         metallic_roughness_texture = None,
         emissive_texture = None,
-        tag = 0,
+        tag = 0
     ))]
     pub fn new(
         base_color_texture: Option<&Bound<'_, PyAny>>,

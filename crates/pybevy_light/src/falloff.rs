@@ -112,6 +112,7 @@ impl PyFalloffExponential {
     }
 
     #[new]
+    #[pyo3(signature = (*, scale))]
     pub fn new(scale: f32) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyFalloff(Falloff::Exponential { scale })).add_subclass(Self)
     }
@@ -146,6 +147,7 @@ impl PyFalloffTent {
     }
 
     #[new]
+    #[pyo3(signature = (*, center, width))]
     pub fn new(center: f32, width: f32) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyFalloff(Falloff::Tent { center, width })).add_subclass(Self)
     }

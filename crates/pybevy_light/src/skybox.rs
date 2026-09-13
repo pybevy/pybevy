@@ -14,6 +14,7 @@ pub struct PySkybox {
 impl PySkybox {
     #[new]
     #[pyo3(signature = (
+        *,
         image = None,
         brightness = Skybox::default().brightness,
         rotation = Skybox::default().rotation.into()

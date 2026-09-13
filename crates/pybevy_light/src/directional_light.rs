@@ -52,6 +52,7 @@ impl PyDirectionalLight {
 impl PyDirectionalLight {
     #[new]
     #[pyo3(signature = (
+        *,
         color = Self::default_color(),
         illuminance = Self::default_illuminance(),
         shadow_maps_enabled = Self::default_shadow_maps_enabled(),

@@ -59,12 +59,13 @@ pub struct PyLightGizmoConfigGroup {
 impl PyLightGizmoConfigGroup {
     #[new]
     #[pyo3(signature = (
+        *,
         draw_all = false,
         color = PyLightGizmoColor::MatchLightColor(),
         point_light_color = Self::default_point_light_color(),
         spot_light_color = Self::default_spot_light_color(),
         directional_light_color = Self::default_directional_light_color(),
-        rect_light_color = Self::default_rect_light_color(),
+        rect_light_color = Self::default_rect_light_color()
     ))]
     pub fn new(
         draw_all: bool,
@@ -254,7 +255,7 @@ pub struct PyShowLightGizmo {
 #[pymethods]
 impl PyShowLightGizmo {
     #[new]
-    #[pyo3(signature = (color = None))]
+    #[pyo3(signature = (*, color = None))]
     pub fn new(color: Option<PyLightGizmoColor>) -> PyClassInitializer<Self> {
         (
             Self {

@@ -13,6 +13,7 @@ pub struct PyDirectionalLightTexture {
 #[pymethods]
 impl PyDirectionalLightTexture {
     #[new]
+    #[pyo3(signature = (*, image, tiled))]
     pub fn new(image: &Bound<'_, PyAny>, tiled: bool) -> PyResult<PyClassInitializer<Self>> {
         let handle = extract_handle_from_any(image)?;
         Ok(Self::from_owned(DirectionalLightTexture {
@@ -54,6 +55,7 @@ pub struct PySpotLightTexture {
 #[pymethods]
 impl PySpotLightTexture {
     #[new]
+    #[pyo3(signature = (*, image))]
     pub fn new(image: &Bound<'_, PyAny>) -> PyResult<PyClassInitializer<Self>> {
         let handle = extract_handle_from_any(image)?;
         Ok(Self::from_owned(SpotLightTexture {
@@ -83,6 +85,7 @@ pub struct PyPointLightTexture {
 #[pymethods]
 impl PyPointLightTexture {
     #[new]
+    #[pyo3(signature = (*, image, cubemap_layout))]
     pub fn new(
         image: &Bound<'_, PyAny>,
         cubemap_layout: PyCubemapLayout,

@@ -68,6 +68,7 @@ impl PyPointLight {
     #[new]
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
+        *,
         color = Self::default_color(),
         intensity = Self::default_intensity(),
         range = Self::default_range(),
