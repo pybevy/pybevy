@@ -984,3 +984,197 @@ mod tests {
         assert!(!AssetResourceState::epoch_is_cacheable(state.epoch()));
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod view_claim_tests {
+    use std::any::TypeId;
+
+    use bevy::{
+        asset::{Asset, Handle, UntypedAssetId},
+        reflect::TypePath,
+    };
+
+    use super::{
+        AssetAccessRegistry, AssetAccessScope, MIN_VIEW_SWEEP_SIZE, ReadViewClaim, ViewCounters,
+    };
+    use crate::{StorageError, ValidityFlag};
+
+    #[derive(Asset, TypePath)]
+    struct SweepAsset;
+
+    fn sweep_asset_id() -> UntypedAssetId {
+        Handle::<SweepAsset>::default().id().untyped()
+    }
+
+    fn filled_registry() -> (
+        AssetAccessRegistry,
+        UntypedAssetId,
+        AssetAccessScope,
+        ReadViewClaim,
+        Vec<AssetAccessScope>,
+        Vec<ReadViewClaim>,
+    ) {
+        let registry = AssetAccessRegistry::default();
+        let type_id = TypeId::of::<SweepAsset>();
+        let asset_id = sweep_asset_id();
+
+        // The kept scope holds a live read claim so its entry survives sweeps.
+        let kept = registry.new_scope(type_id, "Mesh", ValidityFlag::new_write(), "kept");
+        let kept_counters = kept.resource_state().views_for(asset_id, &kept);
+        let kept_claim: ReadViewClaim = kept_counters.try_prepare_read().expect("kept reader");
+
+        // Fill the registry to the sweep threshold; the scopes and claims are
+        // retained so no sweep runs during filling.
+        let mut dead_scopes = Vec::new();
+        let mut dead_claims = Vec::new();
+        for _ in 0..MIN_VIEW_SWEEP_SIZE {
+            let scope = registry.new_scope(type_id, "Mesh", ValidityFlag::new_write(), "dead");
+            let counters = scope.resource_state().views_for(asset_id, &scope);
+            let claim: ReadViewClaim = counters.try_prepare_read().expect("reader");
+            dead_scopes.push(scope);
+            dead_claims.push(claim);
+        }
+
+        (
+            registry,
+            asset_id,
+            kept,
+            kept_claim,
+            dead_scopes,
+            dead_claims,
+        )
+    }
+
+    #[test]
+    fn read_claims_count_and_write_exclusion() {
+        let counters = ViewCounters::default();
+        let first: ReadViewClaim = counters.try_prepare_read().expect("first reader");
+        let second: ReadViewClaim = counters.try_prepare_read().expect("second reader");
+        assert_eq!(counters.read_count(), 2);
+        assert_eq!(counters.write_count(), 0);
+        assert!(counters.try_prepare_write().is_none());
+        // The immediate write path is gated by readers exactly like the
+        // pending path.
+        assert!(!counters.try_acquire_write());
+        assert!(matches!(
+            counters.check_no_views(),
+            Err(StorageError::AssetViewsLive)
+        ));
+
+        first.release();
+        assert_eq!(counters.read_count(), 1);
+        second.release();
+        second.release();
+        assert_eq!(counters.read_count(), 0);
+        assert!(counters.check_no_views().is_ok());
+
+        // Once idle, the immediate write takes the gate and excludes
+        // readers and second writers until an owner releases it.
+        assert!(counters.try_acquire_write());
+        assert_eq!(counters.write_count(), 1);
+        assert!(counters.try_prepare_read().is_none());
+        assert!(!counters.try_acquire_write());
+        assert!(matches!(
+            counters.check_no_write_views(),
+            Err(StorageError::AssetViewsLive)
+        ));
+    }
+
+    #[test]
+    fn pending_write_claim_lifecycle_resets_the_gate() {
+        let counters = ViewCounters::default();
+        let other = ViewCounters::default();
+        let claim = counters
+            .try_prepare_write()
+            .expect("write claim while idle");
+
+        // The claim authorizes only the exact counters it claimed, while
+        // still pending.
+        assert!(claim.authorizes(&counters));
+        assert!(!claim.authorizes(&other));
+
+        assert_eq!(counters.write_count(), 1);
+        assert!(counters.try_prepare_read().is_none());
+        assert!(matches!(
+            counters.check_no_write_views(),
+            Err(StorageError::AssetViewsLive)
+        ));
+
+        claim.commit();
+        // A committed claim no longer authorizes new zero-copy views.
+        assert!(!claim.authorizes(&counters));
+        claim.release();
+        assert_eq!(counters.write_count(), 0);
+        claim.release();
+        assert!(counters.check_no_write_views().is_ok());
+    }
+
+    #[test]
+    #[should_panic(expected = "only a pending view claim can be committed")]
+    fn committing_a_released_claim_panics() {
+        let counters = ViewCounters::default();
+        let claim = counters.try_prepare_write().expect("write claim");
+        claim.release();
+        claim.commit();
+    }
+
+    #[test]
+    fn sweep_drops_dead_entries_and_keeps_live_views() {
+        let (registry, asset_id, kept, kept_claim, dead_scopes, dead_claims) = filled_registry();
+        let type_id = TypeId::of::<SweepAsset>();
+        let state = registry.state_for(type_id, "Mesh");
+
+        let (entries_before, sweeps_before) = state.view_registry_metrics();
+        assert_eq!(entries_before, MIN_VIEW_SWEEP_SIZE + 1);
+        // The 64th insertion already swept once, keeping every entry that
+        // still held a valid scope and a live claim.
+        assert_eq!(sweeps_before, 1);
+
+        // Make the dead entries prunable, then push a new key across the
+        // (doubled) sweep threshold so the next sweep can drop them.
+        drop(dead_scopes);
+        drop(dead_claims);
+        for _ in 0..(4 * MIN_VIEW_SWEEP_SIZE - (MIN_VIEW_SWEEP_SIZE + 1)) {
+            let scope = registry.new_scope(type_id, "Mesh", ValidityFlag::new_write(), "late");
+            let counters = state.views_for(asset_id, &scope);
+            let _claim: ReadViewClaim = counters.try_prepare_read().expect("reader");
+        }
+
+        // A new key at the threshold triggers the sweep: only the kept
+        // scope's entry survives, plus the newly inserted one.
+        let late = registry.new_scope(type_id, "Mesh", ValidityFlag::new_write(), "final");
+        let late_counters = state.views_for(asset_id, &late);
+        let late_claim: ReadViewClaim = late_counters.try_prepare_read().expect("late reader");
+
+        let (entries_after, sweeps_after) = state.view_registry_metrics();
+        assert_eq!(sweeps_after, sweeps_before + 1);
+        assert_eq!(entries_after, 2);
+
+        assert!(state.has_views(asset_id));
+        assert!(!state.has_write_views(asset_id));
+        drop(late_claim);
+        drop(kept_claim);
+        drop(kept);
+        drop(late);
+        assert!(!state.has_views(asset_id));
+    }
+
+    #[test]
+    fn has_views_is_false_once_the_last_claim_drops() {
+        let registry = AssetAccessRegistry::default();
+        let type_id = TypeId::of::<SweepAsset>();
+        let asset_id = sweep_asset_id();
+        let state = registry.state_for(type_id, "Mesh");
+        let scope = registry.new_scope(type_id, "Mesh", ValidityFlag::new_write(), "probe");
+        let counters = state.views_for(asset_id, &scope);
+        let claim: ReadViewClaim = counters.try_prepare_read().expect("reader");
+
+        assert!(state.has_views(asset_id));
+        assert!(!state.has_write_views(asset_id));
+
+        drop(claim);
+        drop(counters);
+        assert!(!state.has_views(asset_id));
+    }
+}

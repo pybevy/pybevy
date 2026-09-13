@@ -658,4 +658,88 @@ mod tests {
             Err(AppStoreError::DuplicateId(id))
         );
     }
+
+    #[test]
+    fn allocator_seeded_at_zero_is_permanently_exhausted() {
+        let allocator = AppIdAllocator::new(0);
+        assert!(matches!(
+            allocator.allocate(),
+            Err(AppStoreError::IdExhausted)
+        ));
+        assert!(matches!(
+            allocator.allocate(),
+            Err(AppStoreError::IdExhausted)
+        ));
+    }
+
+    #[test]
+    fn finish_operation_consumed_only_accepts_borrowed_slots() {
+        let mut store = AppStoreCore::new();
+        let active = store.insert(app_with(1)).unwrap();
+        assert_eq!(
+            store.finish_operation_consumed(active),
+            Err(AppStoreError::NotBorrowed(AppLifecycle::Active))
+        );
+
+        drop(store.remove(active).unwrap());
+        assert_eq!(
+            store.finish_operation_consumed(active),
+            Err(AppStoreError::NotBorrowed(AppLifecycle::Removed))
+        );
+
+        // The rejected transitions leave the slot untouched.
+        assert_eq!(store.state(active), Ok(AppLifecycle::Removed));
+        assert!(store.contains(active));
+    }
+
+    #[test]
+    fn restore_into_a_missing_id_retains_app_ownership() {
+        let mut store = AppStoreCore::new();
+        let absent = consume_unstored_id(allocate_id().unwrap());
+        let error = store.restore_operation(absent, app_with(7)).unwrap_err();
+        assert_eq!(error.error(), AppStoreError::Missing(absent));
+
+        let (_, retained) = error.into_parts();
+        assert_eq!(retained.world().resource::<Marker>().0, 7);
+    }
+
+    #[test]
+    fn drain_reports_consumed_and_borrowed_slots_without_removing_them() {
+        let mut store = AppStoreCore::new();
+        let active = store.insert(app_with(1)).unwrap();
+        let consumed = store.insert(app_with(2)).unwrap();
+        let borrowed = store.insert(app_with(3)).unwrap();
+        drop(store.take_for_run(consumed).unwrap());
+        let borrowed_app = store
+            .begin_operation(borrowed, AppOperation::Cleanup)
+            .unwrap();
+
+        let outcome = store.drain_active();
+        assert_eq!(outcome.drained().len(), 1);
+        assert_eq!(outcome.drained()[0].0, active);
+        assert_eq!(outcome.borrowed(), &[(borrowed, AppOperation::Cleanup)]);
+        assert_eq!(store.state(consumed), Ok(AppLifecycle::Consumed));
+        assert_eq!(
+            store.state(borrowed),
+            Ok(AppLifecycle::Borrowed(AppOperation::Cleanup))
+        );
+        assert_eq!(store.active_count(), 0);
+
+        // Restoring the borrowed slot puts it back into the drained set.
+        store.restore_operation(borrowed, borrowed_app).unwrap();
+        let (drained, borrowed_list) = store.drain_active().into_parts();
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].0, borrowed);
+        assert_eq!(drained[0].1.world().resource::<Marker>().0, 3);
+        assert!(borrowed_list.is_empty());
+    }
+
+    #[test]
+    fn empty_store_drains_to_an_empty_outcome() {
+        let mut store = AppStoreCore::new();
+        let (drained, borrowed_list) = store.drain_active().into_parts();
+        assert!(drained.is_empty());
+        assert!(borrowed_list.is_empty());
+        assert_eq!(store.active_count(), 0);
+    }
 }

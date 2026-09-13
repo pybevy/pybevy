@@ -110,7 +110,7 @@ mod tests {
 
     use super::*;
 
-    #[derive(Component)]
+    #[derive(Component, Debug, PartialEq)]
     #[allow(dead_code)] // field accessed only by component id in tests, never by name
     struct Health(f32);
 
@@ -217,5 +217,62 @@ mod tests {
         let access = FilteredEntityAccess::Ref(entity_ref);
 
         assert!(access.get_change_ticks_by_id(missing_id).is_none());
+    }
+
+    #[test]
+    fn mut_ptr_access_leaves_change_ticks_untouched() {
+        let mut world = World::new();
+        world.spawn(Health(100.0));
+        let comp_id = world.components().component_id::<Health>().unwrap();
+
+        // A distinct tick window makes an accidental change mark observable.
+        world.increment_change_tick();
+        let this_run = world.read_change_tick();
+
+        let mut builder = QueryBuilder::<FilteredEntityMut>::new(&mut world);
+        builder.mut_id(comp_id);
+        let mut qs = builder.build();
+        let entity_mut = qs.iter_mut(&mut world).next().unwrap();
+        let mut access = FilteredEntityAccess::Mut(entity_mut);
+
+        let ticks_before = access
+            .get_change_ticks_by_id(comp_id)
+            .expect("component exists")
+            .changed;
+        assert_ne!(ticks_before, this_run);
+
+        let ptr = access
+            .get_mut_ptr_by_id_unchanged(comp_id)
+            .expect("mutable access");
+        // SAFETY: ptr names this entity's Health payload; the query guard keeps storage valid.
+        unsafe { *ptr.cast::<Health>() = Health(42.0) };
+
+        let ticks_after = access
+            .get_change_ticks_by_id(comp_id)
+            .expect("component exists")
+            .changed;
+        assert_eq!(ticks_before, ticks_after);
+
+        // The marked path proves this window can distinguish a write tick.
+        access
+            .get_mut_by_id(comp_id)
+            .expect("mutable access")
+            .set_changed();
+        let ticks_marked = access
+            .get_change_ticks_by_id(comp_id)
+            .expect("component exists")
+            .changed;
+        assert_eq!(ticks_marked, this_run);
+        assert_ne!(ticks_marked, ticks_before);
+        drop(access);
+
+        let mut builder = QueryBuilder::<FilteredEntityRef>::new(&mut world);
+        builder.ref_id(comp_id);
+        let mut qs = builder.build();
+        let entity_ref = qs.iter(&world).next().unwrap();
+        let access = FilteredEntityAccess::Ref(entity_ref);
+        let value = access.get_by_id(comp_id).expect("component exists");
+        // SAFETY: the pointer names this entity's live Health component.
+        assert_eq!(unsafe { &*value.as_ptr().cast::<Health>() }, &Health(42.0));
     }
 }

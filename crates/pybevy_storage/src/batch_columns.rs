@@ -829,4 +829,115 @@ mod tests {
             "Array length mismatch: 'x' has 3 elements but 'y' has 5"
         );
     }
+
+    #[test]
+    fn native_error_display_matches_macro_wording() {
+        assert_eq!(
+            BatchColumnError::ExpectsScalar1D {
+                field: "intensity".into(),
+                ndim: 2
+            }
+            .to_string(),
+            "Field 'intensity' expects a 1D array, got 2D"
+        );
+        assert_eq!(
+            BatchColumnError::Not1DOr2D {
+                field: "translation".into(),
+                ndim: 3
+            }
+            .to_string(),
+            "Field 'translation' must be a 1D or 2D array, got 3D"
+        );
+        assert_eq!(
+            BatchColumnError::WrongColumns {
+                field: "translation".into(),
+                cols: 3,
+                got: 4
+            }
+            .to_string(),
+            "Field 'translation' expects 3 columns, got 4"
+        );
+        assert_eq!(
+            BatchColumnError::NotDivisible {
+                field: "translation".into(),
+                cols: 3,
+                len: 4
+            }
+            .to_string(),
+            "Field 'translation' requires 3 columns, but 1D array length 4 is not divisible"
+        );
+        assert_eq!(
+            BatchColumnError::NoFields.to_string(),
+            "batch() requires at least one field array"
+        );
+    }
+
+    #[test]
+    fn column_shape_field_accessor_covers_every_variant() {
+        assert_eq!(
+            ColumnShape::Native {
+                field: "translation",
+                cols: 3
+            }
+            .field(),
+            "translation"
+        );
+        assert_eq!(ColumnShape::CustomScalar { field: "hits" }.field(), "hits");
+        assert_eq!(
+            ColumnShape::CustomComposite {
+                field: "pos",
+                type_name: "Vec3",
+                cols: 3
+            }
+            .field(),
+            "pos"
+        );
+    }
+
+    #[test]
+    fn column_data_dtype_maps_every_variant() {
+        assert_eq!(ColumnData::F32(vec![0.0]).dtype(), ColumnDType::F32);
+        assert_eq!(ColumnData::F64(vec![0.0]).dtype(), ColumnDType::F64);
+        assert_eq!(ColumnData::I32(vec![0]).dtype(), ColumnDType::I32);
+        assert_eq!(ColumnData::I64(vec![0]).dtype(), ColumnDType::I64);
+        assert_eq!(ColumnData::U32(vec![0]).dtype(), ColumnDType::U32);
+        assert_eq!(ColumnData::U64(vec![0]).dtype(), ColumnDType::U64);
+        assert_eq!(ColumnData::Bool(vec![1]).dtype(), ColumnDType::Bool);
+    }
+
+    #[test]
+    fn empty_shapes_plan_zero_rows_and_non_divisible_columns_plan_zero() {
+        assert_eq!(plan_column("intensity", 1, 1, &[]).unwrap(), 0);
+        assert_eq!(plan_column("translation", 3, 1, &[]).unwrap(), 0);
+        // An empty 2-D shape reports its zero column count, like any
+        // non-matching 2-D shape.
+        assert_eq!(
+            plan_column("translation", 3, 2, &[])
+                .unwrap_err()
+                .to_string(),
+            "Field 'translation' expects 3 columns, got 0"
+        );
+
+        let column = BatchColumn {
+            cols: 3,
+            data: ColumnData::F32(vec![0.0, 0.0]),
+        };
+        assert_eq!(column.rows(), 0);
+        assert_eq!(
+            BatchColumn {
+                cols: 2,
+                data: ColumnData::F32(vec![1.0, 2.0, 3.0, 4.0])
+            }
+            .rows(),
+            2
+        );
+        assert!(
+            BatchColumn {
+                cols: 1,
+                data: ColumnData::I32(vec![7])
+            }
+            .as_f32()
+            .is_none()
+        );
+    }
 }
