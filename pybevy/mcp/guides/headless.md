@@ -43,7 +43,7 @@ def setup(
         Camera(),
         ShadowLodOrigin(),
         IsDefaultUiCamera(),
-        RenderTarget.Image(ImageRenderTarget(handle)),
+        RenderTarget.Image(ImageRenderTarget(handle=handle)),
         Transform.from_xyz(-2.5, 4.5, 9.0).looking_at(Vec3.ZERO, Vec3.Y),
     )
 
@@ -71,7 +71,7 @@ if __name__ == "__main__":
 |---------|-------------------|----------|
 | Window | `WindowPlugin` default | `WindowPlugin(primary_window=None, exit_condition=ExitCondition.DontExit)` |
 | Event loop | WinitPlugin (display-driven) | `ScheduleRunnerPlugin.run_loop(16)` (timer-driven, ~60fps) |
-| Camera target | Screen (automatic) | `RenderTarget.Image(ImageRenderTarget(handle))` (explicit offscreen) |
+| Camera target | Screen (automatic) | `RenderTarget.Image(ImageRenderTarget(handle=handle))` (explicit offscreen) |
 | UI camera | Primary camera (automatic) | Add `IsDefaultUiCamera()` to the offscreen camera |
 | WinitPlugin | Enabled | `.disable(WinitPlugin)` |
 
@@ -95,7 +95,7 @@ if __name__ == "__main__":
    ```python
    render_target = Image.new_render_target(width=256, height=256)
    handle = images.add(render_target)
-   commands.spawn(Camera3d(), Camera(), RenderTarget.Image(ImageRenderTarget(handle)), transform)
+   commands.spawn(Camera3d(), Camera(), RenderTarget.Image(ImageRenderTarget(handle=handle)), transform)
    ```
 
    If the scene has UI `Node` or `Text` entities, also add
@@ -107,7 +107,7 @@ if __name__ == "__main__":
 Launch headless scenes with the `headless=True` parameter:
 
 ```
-run_scene(path="scenes/my_scene.py", headless=True)
+run_scene(path="my_scene.py", headless=True)
 ```
 
 All MCP tools work in headless mode:
@@ -118,8 +118,10 @@ All MCP tools work in headless mode:
 ## Troubleshooting
 
 - **"No display server" error**: Make sure `WinitPlugin` is disabled and `headless=True` is passed to `run_scene`
-- **Black screenshots**: Ensure the camera has `RenderTarget.Image(ImageRenderTarget(handle))` - without it, the camera targets a non-existent window
+- **Black screenshots**: Ensure the camera has `RenderTarget.Image(ImageRenderTarget(handle=handle))` - without it, the camera targets a non-existent window
 - **No frames captured**: Increase `delay_frames` in `capture_screenshot` - headless rendering may need more warmup frames
 - **UI is missing**: Add `IsDefaultUiCamera()` to the offscreen camera
 - **Shadow LOD warning**: Add `ShadowLodOrigin()` to an offscreen camera when using point or spot light shadows
 - **Low resolution**: The render target size (`width`, `height` in `Image.new_render_target`) determines output resolution, not window size
+
+Image readback returns one `width * height` frame at the size the readback was requested with. For an array-texture source it copies layer zero only and logs a warning once; additional layers are not concatenated into the frame. If the render target is later resized, the copy stays inside the frame that was requested instead of overrunning it.

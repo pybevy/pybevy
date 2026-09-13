@@ -48,7 +48,7 @@ def setup(
         220, 35, 25, 255, 255, 210, 80, 255, 220, 35, 25, 255,
         0, 0, 0, 0,       220, 35, 25, 255,  0, 0, 0, 0,
     ]
-    decal_texture = images.add(Image(Extent3d(3, 3, 1), data=decal_pixels))
+    decal_texture = images.add(Image(Extent3d(width=3, height=3, depth_or_array_layers=1), data=decal_pixels))
 
     # Decal volume
     commands.spawn(
@@ -69,10 +69,11 @@ if __name__ == "__main__":
   approach below when portability matters.
 - **ClusteredDecal** applies its texture inside a box centred on the entity, extending
   `Transform.scale / 2` along each local axis. It is not a projector throwing forward.
-- **`Transform.scale` decides whether the decal appears at all.** The surface must fall
-  inside that box, so `scale.z` must exceed twice the standoff distance: a decal 2.0 above
+- **A clustered decal's `Transform.scale` decides whether it appears at all.** The surface must
+  fall inside that box, so `scale.z` must exceed twice the standoff distance: a decal 2.0 above
   a floor needs `scale.z > 4.0`. Falling short renders nothing, with no error. The example
   above works because its 0.1 surface gap fits the default `scale.z` of 1.0 (half-depth 0.5).
+  Forward decals are flat quads and ignore this rule.
 - Rotation aims the box; position centres it
 - Use `tag` field to group decals (e.g., `tag=1` for blood, `tag=2` for bullet holes)
 - The texture should have an alpha channel for the decal shape
@@ -80,8 +81,10 @@ if __name__ == "__main__":
 ## Forward decals
 
 Forward decals are mesh-based and use a material rather than a volume texture.
-`PbrPlugin` registers their renderer. Add `DepthPrepass` to every camera that
-renders them.
+`PbrPlugin` registers their renderer. `ForwardDecal` fills `Mesh3d` with Bevy's
+own 1x1 quad, lying in the local XZ plane and facing +Y: `scale.x` and `scale.z`
+size the footprint, `scale.y` does nothing, and the quad fades out over
+`depth_fade_factor` metres of gap, so keep it just above the surface it marks.
 
 ```python
 from pybevy.assets import Assets
@@ -104,7 +107,7 @@ def setup_forward_decal(
     decal_materials: ResMut[Assets[ForwardDecalMaterial]],
     images: ResMut[Assets[Image]],
 ) -> None:
-    texture = images.add(Image(Extent3d(1, 1, 1), data=[220, 35, 25, 255]))
+    texture = images.add(Image(Extent3d(width=1, height=1, depth_or_array_layers=1), data=[220, 35, 25, 255]))
     material = decal_materials.add(ForwardDecalMaterial(
         base=StandardMaterial(
             base_color_texture=texture,
@@ -114,8 +117,13 @@ def setup_forward_decal(
     commands.spawn(
         ForwardDecal(),
         MeshMaterial3d[ForwardDecalMaterial](material),
-        Transform.from_scale(Vec3.splat(4.0)),
+        Transform.from_xyz(0.0, 0.05, 0.0).with_scale(Vec3(4.0, 1.0, 4.0)),
     )
 
 # Include DepthPrepass() when spawning the Camera3d entity.
 ```
+
+Two mistakes render nothing and log only a shader error: a camera without
+`DepthPrepass` leaves `prepass_depth` undefined, and an explicit `Mesh3d` without
+tangents leaves `world_tangent` invalid; build that mesh with
+`with_generated_tangents()`.

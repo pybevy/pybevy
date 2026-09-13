@@ -219,7 +219,8 @@ The working pattern is always: extract scalar ViewColumns -> pass to Numba kerne
 
 ## Performance Comparison
 
-Benchmark: 100k entities, sunset murmuration scene
+Ordering is stable; the magnitudes are one run (100k entities, sunset murmuration
+scene) and differ on other hardware.
 
 | Method | Time | Notes |
 |--------|------|-------|

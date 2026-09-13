@@ -42,7 +42,17 @@ commands.insert_resource(GlobalAmbientLight(brightness=15.0, color=Color.srgb(0.
 | `base_color` brightness | Purer silhouette | More visible fill |
 | Backlight `illuminance` | Subtle edge | Blazing rim |
 
+The rim is a few pixels wide, so it can vanish to sampling rather than to
+lighting, silently. On the scene above, a 400x200 target with `Msaa.Off` left
+no pixel above 0.01 luma; 800x400, or MSAA, brought it back. That threshold
+scales with the silhouette, so if a rim does not appear, raise the target or
+enable MSAA before re-tuning the material. `Msaa.Off` is easy to hit by
+accident: GPU tensor captures and deferred rendering both require it.
+
 **Combine with:** Bloom on camera amplifies the rim into a halo. DistanceFog fades distant rims for depth.
+
+`Bloom.max_mip_dimension` must be at least 1. The constructor, setter, and
+`Bloom.batch()` reject zero with `ValueError` before inserting components.
 
 ## Emissive Path Markers
 
@@ -77,7 +87,7 @@ Intentionally near-black fog for horror/mystery/silhouette scenes. Different fro
 ```python
 DistanceFog(
     color=Color.srgb(0.04, 0.04, 0.06),        # Near-black, not gray
-    falloff=FogFalloff.Exponential(0.065),       # Very dense; tune within 0.05-0.08
+    falloff=FogFalloff.Exponential(density=0.065),       # Very dense; tune within 0.05-0.08
     directional_light_color=Color.srgb(0.5, 0.55, 0.7),  # Cool backscatter
     directional_light_exponent=80.0,             # Tight light cone through fog
 )

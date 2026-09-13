@@ -111,11 +111,22 @@ anim.set_weight(0.5)            # Blend weight
 # Other methods
 anim.pause()                     # Pause playback
 anim.resume()                    # Resume paused animation
-anim.seek_to(1.5)               # Jump to 1.5 seconds
-anim.rewind()                   # Back to start
+anim.seek_to(1.5)               # Jump to 1.5 seconds into the clip
+anim.rewind()                   # Back to the start of the clip
 anim.is_finished                # Check if done (property)
-anim.elapsed                    # Current time (property)
+anim.seek_time                  # Position within the clip (property)
+anim.elapsed                    # Real time this animation has played (property)
 ```
+
+`seek_time` is the position in the clip; `elapsed` is total real play time.
+Seeking and `set_speed()` move only `seek_time`, so reading `elapsed` to check
+them makes both look broken. `seek_time` is not clamped: `seek_to(99)` on a
+two-second clip reads back as 99, and playback wraps only while the animation
+continues, so an overshoot on a non-looping clip persists.
+
+Also on `ActiveAnimation`: `completions`, `just_completed`, `last_seek_time`,
+`set_seek_time`, `repeat`, `repeat_mode`, `replay`, `weight`,
+`is_playback_reversed`.
 
 ## Repeat Modes
 
@@ -154,10 +165,13 @@ clips = [
     asset_server.load(GltfAssetLabel.Animation(i).from_asset("model.glb"), AnimationClip)
     for i in range(3)  # 3 animations
 ]
-graph, _root_index = AnimationGraph.from_clips(clips)
+graph, clip_indices = AnimationGraph.from_clips(clips)
 ```
 
-`from_clips` returns `(graph, root_index)`. Individual clip indices can be retrieved from the graph's nodes.
+`from_clips` returns `(graph, clip_indices)` - a **list**, one
+`AnimationNodeIndex` per clip in order, not the root. The root is `graph.root`.
+Treating the second element as one index later fails as
+`TypeError: index expected at least 1 argument, got 0`, from `list.index`.
 
 ## AnimationPlayer Methods
 

@@ -2,20 +2,37 @@
 
 Rendering text overlays, HUDs, and UI elements using Bevy's flexbox-based UI system.
 
-## IMPORTANT: Do NOT use Text2d in 3D scenes
+## Text2d camera setup
 
-`Text2d` is for **2D-only scenes** that use `Camera2d`. It will **not render** in a 3D scene with `Camera3d`. If you need text in a 3D scene (HUDs, labels, scores, board annotations), always use UI `Text` with a `Node`.
+`Text2d` renders through `Camera2d`. For an overlay above a base camera with
+order 0, copy its `RenderTarget` component and match its viewport:
+
+```python
+from copy import copy
+
+from pybevy.camera import Camera, Camera2d, ClearColorConfig
+
+commands.spawn(
+    Camera2d(),
+    copy(base_render_target),
+    Camera(order=1, clear_color=ClearColorConfig.None_(),
+           viewport=base_camera.viewport),
+)
+```
+
+For HUDs use UI `Text` + `Node`; world-anchored labels require projecting
+world positions into the viewport.
 
 ## UI Text vs World Text
 
 PyBevy has two text systems:
 
-| | UI Text (use this in 3D scenes) | World Text (2D scenes only) |
+| | UI Text | World Text |
 |---|---------|------------|
 | Component | `Text` (from `pybevy.ui`) | `Text2d` (from `pybevy.text`) |
 | Positioning | Screen-space via `Node` | World-space via `Transform` |
-| Use case | HUDs, subtitles, menus, labels | 2D game labels (requires `Camera2d`) |
-| Requires | `Node` component | **`Camera2d` (will NOT work with `Camera3d`)** |
+| Use case | HUDs, subtitles, menus | 2D game labels |
+| Layout | `Node` | `Transform` |
 
 ## UI Text (Screen Overlay)
 
@@ -70,14 +87,13 @@ commands.spawn(
 Use `PositionType.Absolute` to place text anywhere on screen:
 
 ```python
-node = Node()
-node.position_type = PositionType.Absolute
-node.bottom = 50.0       # 50px from bottom
-node.left = 0.0          # Flush left
-
 commands.spawn(
     Text("Bottom text"),
-    node,
+    Node(
+        position_type=PositionType.Absolute,
+        bottom=50.0,     # 50px from bottom
+        left=0.0,        # Flush left
+    ),
     TextFont.from_font_size(28.0),
     TextColor(Color.WHITE),
 )
@@ -90,15 +106,14 @@ commands.spawn(
 For centered text like movie subtitles, set a wide width and use `Justify.Center`:
 
 ```python
-node = Node()
-node.position_type = PositionType.Absolute
-node.bottom = 50.0
-node.left = 0.0
-node.width = 1920.0  # Wide enough for any screen
-
 commands.spawn(
     Text("A long time ago, in a galaxy far, far away..."),
-    node,
+    Node(
+        position_type=PositionType.Absolute,
+        bottom=50.0,
+        left=0.0,
+        width=1920.0,  # Wide enough for any screen
+    ),
     TextFont.from_font_size(28.0),
     TextColor(Color.srgba(1.0, 0.95, 0.8, 1.0)),  # Warm white
     TextLayout(justify=Justify.Center),
@@ -158,12 +173,9 @@ There is no built-in submit event: read `.value` from a system, then call
 from pybevy.text import EditableText
 
 # In setup:
-node = Node()          # Node() takes no keyword arguments; set fields after
-node.width = 320.0     # bare floats are pixels
-node.height = 40.0
 commands.spawn(
     EditableText("type here", max_characters=64),
-    node,
+    Node(width=320.0, height=40.0),  # bare floats are pixels
     TextFont.from_font_size(24.0),
     BackgroundColor(Color.srgb(0.15, 0.15, 0.2)),
 )
@@ -201,14 +213,11 @@ def fade_text(
         bg_color.color = Color.srgba(0.0, 0.0, 0.0, alpha * 0.5)
 ```
 
-## World-Space Text (Text2d) - 2D scenes only
-
-**Only use `Text2d` in scenes with `Camera2d`.** It will not render with `Camera3d`. For 3D scenes, use UI `Text` + `Node` (see above).
+## World-Space Text (Text2d)
 
 ```python
 from pybevy.text import Text2d, TextBounds, TextFont, TextColor
 
-# ONLY works with Camera2d - do NOT use in 3D scenes
 commands.spawn(
     Text2d("Player Name"),
     TextFont.from_font_size(50.0),

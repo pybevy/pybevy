@@ -74,6 +74,12 @@ See `guide://hot-reload` for reload modes (Full vs Partial), type re-aliasing, m
 
 ## Critical Rules
 
+Integer rectangle arithmetic raises `OverflowError` for out-of-range results; `IRect` center constructors require non-negative sizes. `URect.inflate` saturates coordinates and rejects an unrepresentable negation.
+
+- Primitive dimensions and their corresponding field alternative are mutually exclusive: use `Cuboid(x_length=..., y_length=..., z_length=...)` or `Cuboid(half_size=...)`, not both, even when dimensions equal their defaults.
+- For these dual-form constructors, omit defaulted arguments instead of passing `None`.
+- Supply both `minor_radius` and `major_radius` for Torus's field form, or both `cos` and `sin` for Rot2. Omit both Rot2 inputs for identity; explicit `None` is invalid.
+
 - **Canonical entrypoint structure** - every scene file must follow this exact pattern:
   ```python
   from pybevy.prelude import *
@@ -101,6 +107,10 @@ See `guide://hot-reload` for reload modes (Full vs Partial), type re-aliasing, m
 - **Do NOT use `Text2d` in 3D scenes.** `Text2d` requires `Camera2d` and will not render with `Camera3d`. For text overlays, HUDs, or labels in 3D scenes, use UI `Text` (from `pybevy.ui`) with a `Node` component. See `guide://ui-text`.
 
 ## JSON Mutation Formats
+
+Python field reads use `{"serialization_error": ...}` markers for cycles and nesting beyond 64 levels. Dictionary key/value pair arrays are read-only.
+
+Explicit named enum variant payloads must include every required field. Incomplete payloads return an error naming the missing field and leave the component unchanged. Null payloads for named variants are rejected, including the current variant.
 
 When using `set_component`, `spawn_entity`, or `set_resource`, field values are automatically converted:
 
@@ -140,7 +150,7 @@ Before presenting to the user, verify: all geometry visible (no pure-black areas
 
 For environments without a display server (CI, remote servers, containers), PyBevy supports headless GPU rendering:
 
-1. **Scene setup** - disable WinitPlugin, use `ScheduleRunnerPlugin`, and render to `RenderTarget.Image(ImageRenderTarget(...))`:
+1. **Scene setup** - disable WinitPlugin, use `ScheduleRunnerPlugin`, and render to `RenderTarget.Image(ImageRenderTarget(handle=handle))`:
    ```python
    app.add_plugins(
        DefaultPlugins()
@@ -153,7 +163,7 @@ For environments without a display server (CI, remote servers, containers), PyBe
    ```python
    render_target = Image.new_render_target(width=256, height=256)
    handle = images.add(render_target)
-   commands.spawn(Camera3d(), Camera(), RenderTarget.Image(ImageRenderTarget(handle)), transform)
+   commands.spawn(Camera3d(), Camera(), RenderTarget.Image(ImageRenderTarget(handle=handle)), transform)
    ```
 
 2. **Launch with MCP** - use `run_scene(path=..., headless=True)` to start the scene without a window backend.

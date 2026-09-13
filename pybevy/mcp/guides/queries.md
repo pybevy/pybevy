@@ -2,6 +2,12 @@
 
 For Python query syntax (`Query[T]`, `Mut[T]`, filters, `Optional`, borrow rules), see `guide://patterns` (Queries section).
 
+When calling `world.run_system_once()` or `world.run_schedule()`, use the inner
+system's injected parameters. Captured outer World/Commands handles and borrowed
+children raise `RuntimeError` until the nested call returns. Observer callbacks
+apply the same rule on their World. This prevents a captured World from moving
+component storage while an inner Query iterator still references it.
+
 ## MCP Query Tools
 
 ### query_entities - Filter by component presence

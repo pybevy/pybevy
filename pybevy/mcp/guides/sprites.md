@@ -91,6 +91,12 @@ if layout is not None:
     layout.textures.append(URect(96, 0, 120, 24))
 ```
 
+A corner assigned this way is not normalised the way the `URect` constructor
+normalises, so pushing `min.x` past `max.x` inverts the rectangle instead of
+swapping the corners. `width()` then reads 0 and the atlas frame wraps into its
+neighbour on the sheet, with no error. Check `is_empty()` after nudging an edge,
+or rebuild the rectangle with `URect(x0, y0, x1, y1)`, which swaps.
+
 ### 2. Animation Components
 
 ```python
@@ -193,7 +199,7 @@ from pybevy.render import Extent3d
 def make_sprite_sheet(images: ResMut[Assets[Image]]) -> int:
     frames = 4
     size = 16
-    img = Image(Extent3d(size * frames, size, 1))
+    img = Image(Extent3d(width=size * frames, height=size, depth_or_array_layers=1))
 
     # Clear to transparent
     for y in range(size):
@@ -238,7 +244,7 @@ def setup(
     sheet = make_sprite_sheet(images)
     layout = TextureAtlasLayout.from_grid(UVec2(16, 16), columns=4, rows=1)
     layout_handle = layouts.add(layout)
-    atlas = TextureAtlas(layout_handle, 0)
+    atlas = TextureAtlas(layout=layout_handle, index=0)
 
     commands.spawn(
         Sprite.from_atlas_image(sheet, atlas),

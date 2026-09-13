@@ -27,7 +27,7 @@ def setup(
         Transform.from_xyz(0.0, 4.0, 12.0).looking_at(Vec3(0.0, 1.0, 0.0), Vec3.Y),
         DistanceFog(
             color=Color.srgb(0.5, 0.55, 0.6),
-            falloff=FogFalloff.Exponential(0.04),
+            falloff=FogFalloff.Exponential(density=0.04),
             directional_light_color=Color.srgb(1.0, 0.85, 0.6),
             directional_light_exponent=40.0,
         ),
@@ -79,7 +79,7 @@ if __name__ == "__main__":
 
 - **DistanceFog** is a camera component - spawn it on the same entity as `Camera3d`
 - Match `ClearColor` to the fog color so distant geometry blends into the background
-- **FogFalloff.Exponential(density)** - 0.002 subtle haze, 0.005 moderate, 0.04 thick
+- **FogFalloff.Exponential(density=density)** - 0.002 subtle haze, 0.005 moderate, 0.04 thick
 - **directional_light_color/exponent** creates god-ray effect through fog
 - Lower sun **illuminance** (3000–5000) works better with fog than full 10000
 - Fog density that looks fine in daylight may be invisible at night - test both

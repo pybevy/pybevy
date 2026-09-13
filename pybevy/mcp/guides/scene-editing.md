@@ -66,6 +66,8 @@ get_component_schema {"name": "PointLight"}
 
 ## Modifying Components
 
+`get_component` returns readable component properties. `GlobalTransform` reports translation, rotation, and scale in world space, including parent transforms.
+
 Partial updates - only specify fields to change:
 ```
 set_component {
@@ -75,11 +77,20 @@ set_component {
 }
 ```
 
-If the component is absent and supports insertion, `set_component` inserts it.
+`set_component` inserts absent components that support insertion. Writable
+newtypes (`ZIndex`, `GlobalZIndex`) use `{"value": ...}`; failed patches
+preserve them. Enum payload fields accept component vector shorthand.
 
-Non-finite float fields use the JSON strings `"NaN"`, `"Infinity"`, and
-`"-Infinity"`. Values returned by `get_component` can be passed back to
-`set_component` unchanged.
+Non-finite float fields are reported as the JSON strings `"NaN"`,
+`"Infinity"`, and `"-Infinity"` for diagnostics. Numeric mutation inputs must
+be finite; a rejected value names its field and leaves the component unchanged.
+Finite fields returned by `get_component` can be replayed with `set_component`
+for editable components. `set_component` echoes each written field under that
+same Python spelling, so a response replays unchanged; a Bevy field named after
+a Python keyword carries a trailing underscore, such as `global_`.
+`GlobalTransform` reports only computed world-space `translation`, `rotation`,
+and `scale`; these fields are read-only. Derived enum predicates such as `is_*`
+are omitted.
 
 A request that applies nothing fails with 400 rather than reporting success:
 a rejected field value, or a spawn whose components could not be built, is an
@@ -87,6 +98,10 @@ error status, not a 200 with an `errors` array to notice. Field values are
 converted before any are written, so a bad value leaves the component
 untouched. A 200 carrying `errors` therefore means a later write failed after
 earlier ones landed; `new_values` reports exactly what was applied.
+
+Struct patches validate a detached concrete component before applying it. An
+incomplete optional payload returns a field error, preserves the component,
+and leaves the control engine available for subsequent requests.
 
 Enum-backed components expose a synthetic `variant` field. Read the current
 value with `get_component`, then replace it by name:
@@ -98,6 +113,11 @@ set_component {
     "fields": {"variant": "Hidden"}
 }
 ```
+
+Scalar fields require scalar values: an object such as `{}` is rejected for a
+float, integer, boolean, or string. An empty object applied to a structured
+value, such as `Transform.translation`, leaves that value unchanged. The same
+conversion rules apply to component, resource, and asset writes.
 
 ## Parent-Child Hierarchies
 
@@ -124,6 +144,10 @@ set_component {
 Bevy's relationship hooks maintain `Children` on both the old and the new
 parent, so one call moves both ends. `Children` itself is read-only: it reports
 `editable: false` and is maintained from the `ChildOf` side.
+
+Control mutations update world transforms before the next action in the same
+schedule, so a read after removing `ChildOf` sees the detached position.
+Standalone component removals also propagate transforms before their response.
 
 An empty `Children` is removed rather than left empty, so `get_component` on a
 parent with no children returns 404 instead of an empty list.
@@ -165,6 +189,11 @@ Use `get_type_definition(type_name="StandardMaterial")` to see all available fie
 set_asset {"entity": "table", "component": "MeshMaterial3d",
     "asset_type": "StandardMaterial", "fields": {"base_color": [1,0,0,1]}}
 ```
+
+**Note on shared assets:** the entity only selects the asset through its handle,
+so every entity spawned with that same handle changes too, while the response
+reports just the entity you named. Give an entity its own `materials.add(...)`
+handle to tweak it alone.
 
 ## Camera Control
 
@@ -222,7 +251,10 @@ segmentation mask over only the entity's covered pixels.
 
 `capture_stats` downsamples in linear light, then reports display-sRGB channel
 means and linear-light luma statistics, a 16-bucket luma histogram, row-major
-grid cells, and requested pixel samples. `region` and `sample_points` use pixels
+grid cells, and requested pixel samples. One cell object is emitted per grid
+square, so the payload grows with `grid` squared: 4 is about 4 KB, 8 about
+15 KB, and the maximum of 16 about 57 KB. Narrow with `region` rather than
+raising `grid` over the whole frame. `region` and `sample_points` use pixels
 in the resized capture; `max_width` therefore affects their coordinate space.
 `health_hints` are heuristics, not render errors.
 
@@ -268,6 +300,14 @@ capture_depth {"position": [5, 5, 5], "look_at": [0, 0, 0], "grid_density": 8}
 Auto-grid samples report `grid: [column, row]` with
 `coordinate_space: "grid_indices"`. When `sample_points` is provided, samples
 instead report `pixel: [x, y]` with `coordinate_space: "pixels_800x800"`.
+
+Despite that name they are not pixels. `capture_depth` casts rays on a fixed
+800x800 grid over a hardcoded ~60 degree frustum, ignoring both the capture size
+and the camera's own projection, so `[400, 400]` is always straight ahead but an
+off-centre point does not land where the rendered frame shows it.
+`capture_stats`' `sample_points` are pixels of the resized capture and move with
+`max_width`. The two are different spaces with no exact conversion: read depth
+by name and label rather than by matching coordinates between the two tools.
 
 ## Batched Schedules
 
@@ -507,3 +547,8 @@ mutations are flushed before `run_code`, so the query sees the current world.
 - **Entity counts differ between calls**: `get_scene_summary` and
   `get_performance` use the same live scene-entity count and exclude resource
   entities. A difference means the scene changed between the two calls.
+
+Reflected component updates validate a concrete clone before committing. A
+component with an ignored field that cannot be cloned rejects an atomic update
+with `component cannot be cloned for an atomic update`; use its Python wrapper
+when one is available.

@@ -11,7 +11,7 @@ Full vs partial reload, what persists across reloads, error recovery, and diagno
 - Re-runs ALL systems including Startup (re-creates the scene)
 - Entity IDs will change - use `Name` component for stable references
 - Custom `@component` and `@resource` types are re-aliased by name (no new ComponentId if structure unchanged)
-- Observers are re-registered automatically
+- Observers are cleared and re-registered automatically (see Observers Across Reloads)
 - Old DynamicSystems are cleaned up to prevent memory leaks
 
 ### Partial Reload
@@ -25,16 +25,23 @@ Full vs partial reload, what persists across reloads, error recovery, and diagno
   escalates when the scene declares Startup systems, resources, or observers;
   later unchanged Partial reloads preserve scene state as described above
 
-Partial mode does not reconstruct retained Startup-owned state. Two consequences
-matter during iteration:
+Partial mode does not reconstruct retained Startup-owned state. Three
+consequences matter during iteration:
 
 - An existing `@resource` remains the same Python value object. Adding a field
   to its class does not backfill that field onto the live instance, so updated
-  systems can raise `AttributeError` when they read it. Use a Full reload to
+  systems can raise `AttributeError` when they read it. Read it as
+  `getattr(res, "new_field", default)` while iterating, or use a Full reload to
   clear and reconstruct custom resources from `@entrypoint` and Startup.
 - Mesh assets and handles created by Startup survive a Partial reload. Editing
   mesh-building code has no visible effect until Startup runs again; use a Full
   reload when changing generated geometry.
+- Module-level state does not survive a reload. Re-executing the scene module
+  rebinds `history = []`, caches and accumulators to their initial value; a Full
+  reload reruns the Startup system that filled them, a Partial reload does not.
+  The app keeps running at full speed with `get_last_error` null and no log
+  line, so the emptied value shows up only by reading the global. Own that state
+  in a `@resource`, which a Partial reload preserves.
 
 ## MCP Reload Commands
 
@@ -86,13 +93,26 @@ shortcut changes the mode used by later file saves.
 | First Partial reload in a scene with Startup, resources, or observers | Full | No definition baseline exists yet, so Partial is conservatively escalated |
 | Added/changed observers | Full | Auto-escalated from Partial |
 | Renamed/removed a system function | `run_scene` | Stale schedule entries persist across `reload` |
-| Edited a `.wgsl` shader or other asset | none | Assets are watched under hot reload and update on their own |
+| Edited a `.wgsl` shader or other asset | none | Bevy re-loads the asset itself; the Python watcher ignores non-`.py` files |
 | Scene looks broken | Full | Clean slate |
 
 Asset files are watched while hot reload is active, so editing a shader or texture
 updates the running scene with no `reload` call. Asset paths resolve against the
 directory the scene process was launched from, not the scene file's own directory,
 so editing a same-named file next to the scene changes nothing.
+
+**Any non-ignored `.py` file under the watched directory reloads the running
+scene**, including one no scene imports: the watcher is recursive over the
+launch directory and filters on the `.py` extension minus the ignore patterns.
+Asset files such as `.wgsl` do not.
+
+Partial or Full follows the table above. A scene with Startup systems,
+resources or observers has no fingerprint baseline on the first reload after
+`run_scene` and escalates to Full, discarding live `set_component`,
+`set_asset` and `spawn_entity` edits and changing every entity ID. Without
+those definitions it can stay Partial, provided no component layout changed
+and no failed Full reload needs recovery. Escalation is reported in reload
+status and logs, so address entities by `Name`, not a captured ID.
 
 ## Entity ID Stability
 
@@ -131,6 +151,34 @@ Custom Python types defined with `@component` or `@resource` survive hot reloads
 - If the structure changes (e.g., added a field, switched storage mode), a fresh `ComponentId` is allocated
 
 This means `reload` with Full mode handles most `@component`/`@resource` changes. Use `run_scene` only when you need a guaranteed clean-slate restart.
+
+## Observers Across Reloads
+
+Where an observer is registered decides how a reload treats it:
+
+| Registration | In the reload fingerprint? | Full reload | Partial reload |
+|--------------|---------------------------|-------------|----------------|
+| `app.add_observer(fn)` in `@entrypoint` | Yes (escalates Partial to Full when added or changed) | Cleared, then re-registered from the new definitions | Kept as-is |
+| `world.add_observer(fn)` in a system | No | Cleared, then re-created when Startup re-runs | Kept as-is |
+| `entity.observe(fn)` | No | Removed with its target entity, re-created when Startup re-spawns it | Kept as-is |
+
+Runtime registrations exist only after a system has run, so definition loading
+cannot see them and they never influence the reload mode. `get_reload_status`
+therefore reports no observer escalation for them. Their real change signal is
+the code of the Startup system that registers them: adding or removing a
+`world.add_observer(...)` call edits that system and escalates to Full on its
+own. Editing only the observer body is picked up without escalation, because
+observer callables are re-resolved by module and function name each generation.
+
+Full reload clears the whole Python observer registry before Startup re-runs, so
+a `world.add_observer` registration is replaced rather than duplicated. Entity
+observers are removed with their targets and must be registered again when
+Startup creates the replacement entities.
+
+Partial reload preserves observers exactly as it preserves entities and
+resources. A user-event observer registered before the reload keeps matching the
+event class it captured at registration time; re-run `run_scene` if a Partial
+reload leaves an observer bound to a redefined event class.
 
 ## Plugin Delta Detection
 
@@ -186,6 +234,12 @@ Memory data is also available via MCP:
 ```
 get_performance  - includes memory_growth_mb, memory_peak_mb, memory_warning, reload_memory_snapshots
 ```
+
+`reload_memory_snapshots`, `total_schedule_systems`, `current_generation_systems`,
+`python_gc_objects` and `last_reload_mode` are always present: before the first
+reload they read `[]`, the live counts, and `null`. `memory_growth_mb`,
+`memory_peak_mb` and `memory_warning` still appear only once there is something
+to report.
 
 The same response distinguishes process lifetime from reload lifetime:
 `uptime_secs` remains monotonic across reloads, while

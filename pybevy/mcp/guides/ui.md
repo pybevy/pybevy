@@ -52,7 +52,7 @@ def setup(commands: Commands) -> None:
 ```
 
 Use `BorderColor(top=..., right=..., bottom=..., left=...)` when sides need
-different colors. Use `BoxShadow([ShadowStyle(...), ...])` for layered shadows.
+different colors. Use `BoxShadow([ShadowStyle(color=color), ...])` for layered shadows.
 
 ## Layering
 

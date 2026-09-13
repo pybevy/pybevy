@@ -34,12 +34,12 @@ meshes.add(Plane3d(Vec3.Y, Vec2(5.0, 5.0)).mesh().subdivisions(4).build())
 | `Cylinder` | `Cylinder(radius, height)` | Y-axis aligned |
 | `Cone` | `Cone(radius, height)` | Centered on the origin along Y; tip points +Y |
 | `Torus` | `Torus(inner_radius, outer_radius)` | For ring radius `R` and tube radius `t`, use `Torus(R - t, R + t)`. Lies flat in XZ plane (hole faces +Y). To align hole along Z (tunnels/portals): `transform.rotation = Quat.from_euler(EulerRot.XYZ, math.pi / 2.0, 0.0, 0.0)` |
-| `Capsule3d` | `Capsule3d(radius, length)` | Y-axis aligned, rounded ends |
+| `Capsule3d` | `Capsule3d(radius, length)` or `Capsule3d(radius=..., half_length=...)` | Y-axis aligned, rounded ends; `length` excludes caps. Do not supply both length forms. |
 | `Plane3d` | `Plane3d(normal)` | Infinite plane (mesh is finite) |
 | `Circle` | `Circle(radius)` | 2D disc |
 | `Rectangle` | `Rectangle(width, height)` | 2D quad |
 | `Annulus` | `Annulus(inner, outer)` | 2D ring |
-| `Ellipse` | `Ellipse(Vec2(half_x, half_y))` | 2D ellipse |
+| `Ellipse` | `Ellipse(half_size=Vec2(half_x, half_y))` | 2D ellipse |
 | `RegularPolygon` | `RegularPolygon(circumradius, sides)` | |
 | `Triangle2d` | `Triangle2d(a, b, c)` | From Vec2 points |
 | `Triangle3d` | `Triangle3d(a, b, c)` | From Vec3 points |
@@ -169,9 +169,11 @@ memory without copying.
 
 ### Read-Only Access
 
-`mesh.positions()` returns a read-only bounded `pybevy.array` array directly (no
-`with` block). It borrows the mesh data zero-copy: mutating the mesh is blocked
-while the array is alive, and access after the owning system ends raises.
+`mesh.positions()` and `mesh.indices()` return read-only bounded
+`pybevy.array` arrays directly (no `with` block). `indices()` returns `None` for
+a non-indexed mesh and otherwise preserves the buffer's `uint16` or `uint32`
+dtype. These arrays borrow mesh data zero-copy: mutating the mesh is blocked
+while an array is alive, and access after the owning system ends raises.
 
 ```python
 def analyze_mesh(
@@ -313,3 +315,5 @@ asset_server.load_image("textures/ground.png")      # assets/textures/ground.png
 ```
 
 Paths are always relative to `assets/` - do not include `assets/` in the path string.
+
+Mesh attribute input accepts any Python sequence, bounded arrays, and supported NumPy arrays. NumPy arrays must be C-contiguous; use `numpy.ascontiguousarray(values)` when needed. A vertex format mismatch raises `ValueError`. Normal computation requires triangle-list topology, and operations that traverse indices reject indices outside the buffers they read with `ValueError` before changing the mesh; `duplicate_vertices()` rewrites every attribute, so it is bounded by the shortest one. `scale_by()`, `scaled_by()`, `transform_by()` and `transformed_by()` raise `ValueError` for a scale with two or three zero axes. `with_inserted_attribute()` applies the same validation and returns an independent mesh.

@@ -78,10 +78,7 @@ commands.spawn(
 
 `PointLight`, `SpotLight`, and `DirectionalLight` all have the `contact_shadows_enabled` flag (default `False`). Keep `length` short: this is a small-scale grounding effect layered on top of shadow maps, not a replacement for them.
 
-Do not combine `ContactShadows` with
-`DefaultOpaqueRendererMethod.deferred()`. The deferred lighting pipeline does
-not support the contact-shadow view binding and the resulting validation error
-prevents the scene from rendering. Use forward rendering for contact shadows.
+Use forward rendering with ContactShadows; deferred rendering is unsupported.
 
 ## Bias Tuning
 
@@ -104,7 +101,7 @@ PointLight(shadow_maps_enabled=True, shadow_normal_bias=0.3)
 
 ## Cascade Shadow Config (Directional Lights)
 
-Directional lights use cascaded shadow maps - multiple shadow maps at different distances. Closer cascades have higher resolution.
+Directional lights use higher-resolution cascades at closer distances.
 
 ```python
 from pybevy.light import CascadeShadowConfig
@@ -141,7 +138,7 @@ CascadeShadowConfig(bounds=[20.0, 60.0, 200.0, 500.0])
 CascadeShadowConfig(bounds=[15.0, 50.0])
 ```
 
-**Tip:** Fewer cascades = less GPU cost. Two cascades work well for small to medium scenes.
+Bevy renders at most four cascades (one on WebGL2); extra bounds warn and are truncated.
 
 ## Shadow Markers
 

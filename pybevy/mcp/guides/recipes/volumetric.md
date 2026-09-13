@@ -40,8 +40,9 @@ def setup(
         AtmosphereSettings(),  # sky won't render for this camera without it
         AtmosphereEnvironmentMapLight(intensity=0.8),
         VolumetricFog(
-            ambient_color=Color.srgb(0.05, 0.05, 0.08),
-            ambient_intensity=0.1,
+            # Ambient light keeps shadowed fog visible.
+            ambient_color=Color.srgb(0.75, 0.80, 0.90),
+            ambient_intensity=1.0,
             step_count=64,
             jitter=1.0,
         ),
@@ -68,14 +69,13 @@ def setup(
     commands.spawn(Mesh3d(ground_mesh), MeshMaterial3d(ground_mat), Name("ground"))
 
     # Localized fog volume (swamp mist near the ground)
-    # NOTE: Keep absorption low for bright mist. High absorption = dark fog.
-    # See guide://lighting (FogVolume parameter reference) for details.
+    # Keep absorption + scattering low for transparent mist.
     commands.spawn(
         FogVolume(
-            density_factor=1.0,
+            density_factor=0.3,
             fog_color=Color.srgb(0.5, 0.55, 0.5),
-            absorption=0.05,
-            scattering=1.0,
+            absorption=0.02,
+            scattering=0.2,
             scattering_asymmetry=0.3,
         ),
         Transform.from_xyz(0, 0.5, 0).with_scale(Vec3(10.0, 1.0, 10.0)),
@@ -108,5 +108,5 @@ if __name__ == "__main__":
 - **FogVolume** creates localized fog - `Transform` scale controls its size
 - **jitter=1.0** reduces banding artifacts, but can shimmer because PyBevy does not yet expose TAA
 - Columns/geometry break up the light for visible shafts
-- **absorption** should be low (0.02–0.05) for bright white mist. Higher values (0.2+) create dark/smoky fog - see `guide://lighting` for the full parameter reference
+- See `guide://lighting` for the FogVolume parameter reference
 - **Performance:** cost scales with `step_count`, resolution, and the number of shadowed `VolumetricLight`s. Large fog volumes with several shadowed lights run below 30 FPS on mid-range GPUs; prefer `step_count=16-32` and one volumetric light, and check `get_performance` after enabling

@@ -30,7 +30,7 @@ def setup(
         # Light fog - keep density LOW indoors (0.003–0.005)
         DistanceFog(
             color=Color.srgb(0.04, 0.03, 0.08),
-            falloff=FogFalloff.Exponential(0.004),
+            falloff=FogFalloff.Exponential(density=0.004),
             directional_light_color=Color.srgb(0.4, 0.2, 0.7),
             directional_light_exponent=30.0,
         ),

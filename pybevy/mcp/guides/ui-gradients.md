@@ -128,16 +128,15 @@ ColorStop.auto(Color.srgb(1.0, 0.0, 0.0)).with_hint(0.3)  # Color shifts earlier
 
 ## Color Space
 
-Gradients default to sRGB interpolation. For perceptually smoother transitions:
+Gradients default to Oklab. Use `.in_srgb()` or `.in_linear_rgb()` to select another space.
 
 ```python
-smooth = LinearGradient.to_right([
+# Select sRGB interpolation explicitly.
+linear = LinearGradient.to_right([
     ColorStop.auto(Color.srgb(1.0, 0.0, 0.0)),
     ColorStop.auto(Color.srgb(0.0, 0.0, 1.0)),
-]).in_oklaba()  # Perceptually uniform - no muddy middle
+]).in_srgb()
 ```
-
-Options: `.in_oklaba()`, `.in_srgb()`, `.in_linear_rgb()`
 
 ## TextShadow
 
