@@ -2,12 +2,14 @@ use bevy::{
     color::{Alpha, Gray, Hue, Lcha, LinearRgba, Luminance, Mix, Srgba},
     math::{Vec3, Vec4},
 };
-use pybevy_core::{StorageMut, StorageRef, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_macros::pyvalue;
 use pybevy_math::{vec3::PyVec3, vec4::PyVec4};
 use pyo3::prelude::*;
 
 use super::{common::fmt_f32, linear_rgba::PyLinearRgba, srgba::PySrgba};
 
+#[pyvalue]
 #[pyclass(name = "Lcha", module = "pybevy.color", eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyLcha {
@@ -35,33 +37,7 @@ impl TryFrom<&PyLcha> for Lcha {
 impl From<Lcha> for PyLcha {
     #[inline(always)]
     fn from(color: Lcha) -> Self {
-        PyLcha::from_lcha(color)
-    }
-}
-
-impl PyLcha {
-    #[inline(always)]
-    pub fn from_lcha(color: Lcha) -> Self {
-        PyLcha {
-            storage: ValueStorage::owned(color),
-        }
-    }
-
-    #[inline(always)]
-    pub const fn lcha(color: Lcha) -> Self {
-        PyLcha {
-            storage: ValueStorage::owned(color),
-        }
-    }
-
-    #[inline(always)]
-    fn as_ref(&self) -> PyResult<StorageRef<'_, Lcha>> {
-        Ok(self.storage.as_ref()?)
-    }
-
-    #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Lcha>> {
-        Ok(self.storage.as_mut()?)
+        PyLcha::from_owned(color)
     }
 }
 
@@ -70,17 +46,17 @@ impl PyLcha {
     #[new]
     #[pyo3(signature = (lightness = 1.0, chroma = 0.0, hue = 0.0, alpha = 1.0))]
     pub fn new(lightness: f32, chroma: f32, hue: f32, alpha: f32) -> Self {
-        PyLcha::lcha(Lcha::new(lightness, chroma, hue, alpha))
+        PyLcha::from_owned(Lcha::new(lightness, chroma, hue, alpha))
     }
 
     #[staticmethod]
     pub fn lch(lightness: f32, chroma: f32, hue: f32) -> Self {
-        PyLcha::lcha(Lcha::lch(lightness, chroma, hue))
+        PyLcha::from_owned(Lcha::lch(lightness, chroma, hue))
     }
 
     #[staticmethod]
     pub fn gray(lightness: f32) -> Self {
-        PyLcha::lcha(Lcha::gray(lightness))
+        PyLcha::from_owned(Lcha::gray(lightness))
     }
 
     #[getter]
@@ -128,19 +104,19 @@ impl PyLcha {
     }
 
     pub fn with_hue(&self, hue: f32) -> PyResult<Self> {
-        Ok(PyLcha::lcha(self.as_ref()?.with_hue(hue)))
+        Ok(PyLcha::from_owned(self.as_ref()?.with_hue(hue)))
     }
 
     pub fn rotate_hue(&self, degrees: f32) -> PyResult<Self> {
-        Ok(PyLcha::lcha(self.as_ref()?.rotate_hue(degrees)))
+        Ok(PyLcha::from_owned(self.as_ref()?.rotate_hue(degrees)))
     }
 
     pub fn with_lightness(&self, lightness: f32) -> PyResult<Self> {
-        Ok(PyLcha::lcha(self.as_ref()?.with_lightness(lightness)))
+        Ok(PyLcha::from_owned(self.as_ref()?.with_lightness(lightness)))
     }
 
     pub fn with_chroma(&self, chroma: f32) -> PyResult<Self> {
-        Ok(PyLcha::lcha(self.as_ref()?.with_chroma(chroma)))
+        Ok(PyLcha::from_owned(self.as_ref()?.with_chroma(chroma)))
     }
 
     pub fn luminance(&self) -> PyResult<f32> {
@@ -148,19 +124,19 @@ impl PyLcha {
     }
 
     pub fn with_luminance(&self, lightness: f32) -> PyResult<Self> {
-        Ok(PyLcha::lcha(self.as_ref()?.with_luminance(lightness)))
+        Ok(PyLcha::from_owned(self.as_ref()?.with_luminance(lightness)))
     }
 
     pub fn darker(&self, amount: f32) -> PyResult<Self> {
-        Ok(PyLcha::lcha(self.as_ref()?.darker(amount)))
+        Ok(PyLcha::from_owned(self.as_ref()?.darker(amount)))
     }
 
     pub fn lighter(&self, amount: f32) -> PyResult<Self> {
-        Ok(PyLcha::lcha(self.as_ref()?.lighter(amount)))
+        Ok(PyLcha::from_owned(self.as_ref()?.lighter(amount)))
     }
 
     pub fn with_alpha(&self, alpha: f32) -> PyResult<Self> {
-        Ok(PyLcha::lcha(self.as_ref()?.with_alpha(alpha)))
+        Ok(PyLcha::from_owned(self.as_ref()?.with_alpha(alpha)))
     }
 
     pub fn is_fully_transparent(&self) -> PyResult<bool> {
@@ -172,7 +148,7 @@ impl PyLcha {
     }
 
     pub fn mix(&self, other: &PyLcha, factor: f32) -> PyResult<Self> {
-        Ok(PyLcha::lcha(
+        Ok(PyLcha::from_owned(
             self.as_ref()?.mix(other.as_ref()?.reborrow(), factor),
         ))
     }
@@ -185,12 +161,12 @@ impl PyLcha {
 
     pub fn to_linear(&self) -> PyResult<PyLinearRgba> {
         let linear: LinearRgba = (*self.as_ref()?).into();
-        Ok(PyLinearRgba::linear_rgba(linear))
+        Ok(PyLinearRgba::from_owned(linear))
     }
 
     pub fn to_srgba(&self) -> PyResult<PySrgba> {
         let srgba: Srgba = (*self.as_ref()?).into();
-        Ok(PySrgba::from_srgba(srgba))
+        Ok(PySrgba::from_owned(srgba))
     }
 
     pub fn to_f32_array(&self) -> PyResult<[f32; 4]> {
@@ -205,7 +181,7 @@ impl PyLcha {
 
     #[staticmethod]
     pub fn from_f32_array(color: [f32; 4]) -> Self {
-        PyLcha::lcha(Lcha::new(color[0], color[1], color[2], color[3]))
+        PyLcha::from_owned(Lcha::new(color[0], color[1], color[2], color[3]))
     }
 
     pub fn to_vec4(&self) -> PyResult<PyVec4> {
@@ -217,7 +193,7 @@ impl PyLcha {
     #[staticmethod]
     pub fn from_vec4(color: &PyVec4) -> PyResult<Self> {
         let v: Vec4 = color.try_into()?;
-        Ok(PyLcha::lcha(Lcha::new(v.x, v.y, v.z, v.w)))
+        Ok(PyLcha::from_owned(Lcha::new(v.x, v.y, v.z, v.w)))
     }
 
     pub fn to_vec3(&self) -> PyResult<PyVec3> {
@@ -229,17 +205,17 @@ impl PyLcha {
     #[staticmethod]
     pub fn from_vec3(color: &PyVec3) -> PyResult<Self> {
         let v: Vec3 = color.try_into()?;
-        Ok(PyLcha::lcha(Lcha::new(v.x, v.y, v.z, 1.0)))
+        Ok(PyLcha::from_owned(Lcha::new(v.x, v.y, v.z, 1.0)))
     }
 
     #[staticmethod]
     pub fn from_f32_array_no_alpha(color: [f32; 3]) -> Self {
-        PyLcha::lcha(Lcha::new(color[0], color[1], color[2], 1.0))
+        PyLcha::from_owned(Lcha::new(color[0], color[1], color[2], 1.0))
     }
 
     #[staticmethod]
     pub fn sequential_dispersed(index: u32) -> Self {
-        PyLcha::lcha(Lcha::sequential_dispersed(index))
+        PyLcha::from_owned(Lcha::sequential_dispersed(index))
     }
 
     #[pyo3(name = "set_alpha")]

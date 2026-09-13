@@ -2,12 +2,14 @@ use bevy::{
     color::{Alpha, Gray, Hsva, Hue, LinearRgba, Mix, Saturation, Srgba},
     math::{Vec3, Vec4},
 };
-use pybevy_core::{StorageMut, StorageRef, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_macros::pyvalue;
 use pybevy_math::{vec3::PyVec3, vec4::PyVec4};
 use pyo3::prelude::*;
 
 use super::{common::fmt_f32, linear_rgba::PyLinearRgba, srgba::PySrgba};
 
+#[pyvalue]
 #[pyclass(name = "Hsva", module = "pybevy.color", eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyHsva {
@@ -35,33 +37,7 @@ impl TryFrom<&PyHsva> for Hsva {
 impl From<Hsva> for PyHsva {
     #[inline(always)]
     fn from(color: Hsva) -> Self {
-        PyHsva::from_hsva(color)
-    }
-}
-
-impl PyHsva {
-    #[inline(always)]
-    pub fn from_hsva(color: Hsva) -> Self {
-        PyHsva {
-            storage: ValueStorage::owned(color),
-        }
-    }
-
-    #[inline(always)]
-    pub const fn hsva(color: Hsva) -> Self {
-        PyHsva {
-            storage: ValueStorage::owned(color),
-        }
-    }
-
-    #[inline(always)]
-    fn as_ref(&self) -> PyResult<StorageRef<'_, Hsva>> {
-        Ok(self.storage.as_ref()?)
-    }
-
-    #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Hsva>> {
-        Ok(self.storage.as_mut()?)
+        PyHsva::from_owned(color)
     }
 }
 
@@ -70,17 +46,17 @@ impl PyHsva {
     #[new]
     #[pyo3(signature = (hue = 0.0, saturation = 0.0, value = 1.0, alpha = 1.0))]
     pub fn new(hue: f32, saturation: f32, value: f32, alpha: f32) -> Self {
-        PyHsva::hsva(Hsva::new(hue, saturation, value, alpha))
+        PyHsva::from_owned(Hsva::new(hue, saturation, value, alpha))
     }
 
     #[staticmethod]
     pub fn hsv(hue: f32, saturation: f32, value: f32) -> Self {
-        PyHsva::hsva(Hsva::hsv(hue, saturation, value))
+        PyHsva::from_owned(Hsva::hsv(hue, saturation, value))
     }
 
     #[staticmethod]
     pub fn gray(lightness: f32) -> Self {
-        PyHsva::hsva(Hsva::gray(lightness))
+        PyHsva::from_owned(Hsva::gray(lightness))
     }
 
     #[getter]
@@ -128,23 +104,25 @@ impl PyHsva {
     }
 
     pub fn with_hue(&self, hue: f32) -> PyResult<Self> {
-        Ok(PyHsva::hsva(self.as_ref()?.with_hue(hue)))
+        Ok(PyHsva::from_owned(self.as_ref()?.with_hue(hue)))
     }
 
     pub fn rotate_hue(&self, degrees: f32) -> PyResult<Self> {
-        Ok(PyHsva::hsva(self.as_ref()?.rotate_hue(degrees)))
+        Ok(PyHsva::from_owned(self.as_ref()?.rotate_hue(degrees)))
     }
 
     pub fn with_saturation(&self, saturation: f32) -> PyResult<Self> {
-        Ok(PyHsva::hsva(self.as_ref()?.with_saturation(saturation)))
+        Ok(PyHsva::from_owned(
+            self.as_ref()?.with_saturation(saturation),
+        ))
     }
 
     pub fn with_value(&self, value: f32) -> PyResult<Self> {
-        Ok(PyHsva::hsva(self.as_ref()?.with_value(value)))
+        Ok(PyHsva::from_owned(self.as_ref()?.with_value(value)))
     }
 
     pub fn with_alpha(&self, alpha: f32) -> PyResult<Self> {
-        Ok(PyHsva::hsva(self.as_ref()?.with_alpha(alpha)))
+        Ok(PyHsva::from_owned(self.as_ref()?.with_alpha(alpha)))
     }
 
     pub fn is_fully_transparent(&self) -> PyResult<bool> {
@@ -156,7 +134,7 @@ impl PyHsva {
     }
 
     pub fn mix(&self, other: &PyHsva, factor: f32) -> PyResult<Self> {
-        Ok(PyHsva::hsva(
+        Ok(PyHsva::from_owned(
             self.as_ref()?.mix(other.as_ref()?.reborrow(), factor),
         ))
     }
@@ -169,12 +147,12 @@ impl PyHsva {
 
     pub fn to_linear(&self) -> PyResult<PyLinearRgba> {
         let linear: LinearRgba = (*self.as_ref()?).into();
-        Ok(PyLinearRgba::linear_rgba(linear))
+        Ok(PyLinearRgba::from_owned(linear))
     }
 
     pub fn to_srgba(&self) -> PyResult<PySrgba> {
         let srgba: Srgba = (*self.as_ref()?).into();
-        Ok(PySrgba::from_srgba(srgba))
+        Ok(PySrgba::from_owned(srgba))
     }
 
     pub fn to_f32_array(&self) -> PyResult<[f32; 4]> {
@@ -189,7 +167,7 @@ impl PyHsva {
 
     #[staticmethod]
     pub fn from_f32_array(color: [f32; 4]) -> Self {
-        PyHsva::hsva(Hsva::new(color[0], color[1], color[2], color[3]))
+        PyHsva::from_owned(Hsva::new(color[0], color[1], color[2], color[3]))
     }
 
     pub fn to_vec4(&self) -> PyResult<PyVec4> {
@@ -201,7 +179,7 @@ impl PyHsva {
     #[staticmethod]
     pub fn from_vec4(color: &PyVec4) -> PyResult<Self> {
         let v: Vec4 = color.try_into()?;
-        Ok(PyHsva::hsva(Hsva::new(v.x, v.y, v.z, v.w)))
+        Ok(PyHsva::from_owned(Hsva::new(v.x, v.y, v.z, v.w)))
     }
 
     pub fn to_vec3(&self) -> PyResult<PyVec3> {
@@ -213,12 +191,12 @@ impl PyHsva {
     #[staticmethod]
     pub fn from_vec3(color: &PyVec3) -> PyResult<Self> {
         let v: Vec3 = color.try_into()?;
-        Ok(PyHsva::hsva(Hsva::new(v.x, v.y, v.z, 1.0)))
+        Ok(PyHsva::from_owned(Hsva::new(v.x, v.y, v.z, 1.0)))
     }
 
     #[staticmethod]
     pub fn from_f32_array_no_alpha(color: [f32; 3]) -> Self {
-        PyHsva::hsva(Hsva::new(color[0], color[1], color[2], 1.0))
+        PyHsva::from_owned(Hsva::new(color[0], color[1], color[2], 1.0))
     }
 
     #[pyo3(name = "set_alpha")]

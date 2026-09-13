@@ -2,12 +2,14 @@ use bevy::{
     color::{Alpha, Gray, Hsla, Hue, LinearRgba, Luminance, Mix, Saturation, Srgba},
     math::{Vec3, Vec4},
 };
-use pybevy_core::{StorageMut, StorageRef, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_macros::pyvalue;
 use pybevy_math::{vec3::PyVec3, vec4::PyVec4};
 use pyo3::prelude::*;
 
 use super::{common::fmt_f32, linear_rgba::PyLinearRgba, srgba::PySrgba};
 
+#[pyvalue]
 #[pyclass(name = "Hsla", module = "pybevy.color", eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyHsla {
@@ -35,33 +37,7 @@ impl TryFrom<&PyHsla> for Hsla {
 impl From<Hsla> for PyHsla {
     #[inline(always)]
     fn from(color: Hsla) -> Self {
-        PyHsla::from_hsla(color)
-    }
-}
-
-impl PyHsla {
-    #[inline(always)]
-    pub fn from_hsla(color: Hsla) -> Self {
-        PyHsla {
-            storage: ValueStorage::owned(color),
-        }
-    }
-
-    #[inline(always)]
-    pub const fn hsla(color: Hsla) -> Self {
-        PyHsla {
-            storage: ValueStorage::owned(color),
-        }
-    }
-
-    #[inline(always)]
-    fn as_ref(&self) -> PyResult<StorageRef<'_, Hsla>> {
-        Ok(self.storage.as_ref()?)
-    }
-
-    #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Hsla>> {
-        Ok(self.storage.as_mut()?)
+        PyHsla::from_owned(color)
     }
 }
 
@@ -70,17 +46,17 @@ impl PyHsla {
     #[new]
     #[pyo3(signature = (hue = 0.0, saturation = 0.0, lightness = 1.0, alpha = 1.0))]
     pub fn new(hue: f32, saturation: f32, lightness: f32, alpha: f32) -> Self {
-        PyHsla::hsla(Hsla::new(hue, saturation, lightness, alpha))
+        PyHsla::from_owned(Hsla::new(hue, saturation, lightness, alpha))
     }
 
     #[staticmethod]
     pub fn hsl(hue: f32, saturation: f32, lightness: f32) -> Self {
-        PyHsla::hsla(Hsla::hsl(hue, saturation, lightness))
+        PyHsla::from_owned(Hsla::hsl(hue, saturation, lightness))
     }
 
     #[staticmethod]
     pub fn gray(lightness: f32) -> Self {
-        PyHsla::hsla(Hsla::gray(lightness))
+        PyHsla::from_owned(Hsla::gray(lightness))
     }
 
     #[getter]
@@ -128,19 +104,21 @@ impl PyHsla {
     }
 
     pub fn with_hue(&self, hue: f32) -> PyResult<Self> {
-        Ok(PyHsla::hsla(self.as_ref()?.with_hue(hue)))
+        Ok(PyHsla::from_owned(self.as_ref()?.with_hue(hue)))
     }
 
     pub fn rotate_hue(&self, degrees: f32) -> PyResult<Self> {
-        Ok(PyHsla::hsla(self.as_ref()?.rotate_hue(degrees)))
+        Ok(PyHsla::from_owned(self.as_ref()?.rotate_hue(degrees)))
     }
 
     pub fn with_saturation(&self, saturation: f32) -> PyResult<Self> {
-        Ok(PyHsla::hsla(self.as_ref()?.with_saturation(saturation)))
+        Ok(PyHsla::from_owned(
+            self.as_ref()?.with_saturation(saturation),
+        ))
     }
 
     pub fn with_lightness(&self, lightness: f32) -> PyResult<Self> {
-        Ok(PyHsla::hsla(self.as_ref()?.with_lightness(lightness)))
+        Ok(PyHsla::from_owned(self.as_ref()?.with_lightness(lightness)))
     }
 
     pub fn luminance(&self) -> PyResult<f32> {
@@ -148,19 +126,19 @@ impl PyHsla {
     }
 
     pub fn with_luminance(&self, lightness: f32) -> PyResult<Self> {
-        Ok(PyHsla::hsla(self.as_ref()?.with_luminance(lightness)))
+        Ok(PyHsla::from_owned(self.as_ref()?.with_luminance(lightness)))
     }
 
     pub fn darker(&self, amount: f32) -> PyResult<Self> {
-        Ok(PyHsla::hsla(self.as_ref()?.darker(amount)))
+        Ok(PyHsla::from_owned(self.as_ref()?.darker(amount)))
     }
 
     pub fn lighter(&self, amount: f32) -> PyResult<Self> {
-        Ok(PyHsla::hsla(self.as_ref()?.lighter(amount)))
+        Ok(PyHsla::from_owned(self.as_ref()?.lighter(amount)))
     }
 
     pub fn with_alpha(&self, alpha: f32) -> PyResult<Self> {
-        Ok(PyHsla::hsla(self.as_ref()?.with_alpha(alpha)))
+        Ok(PyHsla::from_owned(self.as_ref()?.with_alpha(alpha)))
     }
 
     pub fn is_fully_transparent(&self) -> PyResult<bool> {
@@ -172,7 +150,7 @@ impl PyHsla {
     }
 
     pub fn mix(&self, other: &Self, factor: f32) -> PyResult<Self> {
-        Ok(PyHsla::hsla(
+        Ok(PyHsla::from_owned(
             self.as_ref()?.mix(other.as_ref()?.reborrow(), factor),
         ))
     }
@@ -185,12 +163,12 @@ impl PyHsla {
 
     pub fn to_linear(&self) -> PyResult<PyLinearRgba> {
         let linear: LinearRgba = (*self.as_ref()?).into();
-        Ok(PyLinearRgba::from_linear_rgba(linear))
+        Ok(PyLinearRgba::from_owned(linear))
     }
 
     pub fn to_srgba(&self) -> PyResult<PySrgba> {
         let srgba: Srgba = (*self.as_ref()?).into();
-        Ok(PySrgba::from_srgba(srgba))
+        Ok(PySrgba::from_owned(srgba))
     }
 
     pub fn to_f32_array(&self) -> PyResult<[f32; 4]> {
@@ -205,7 +183,7 @@ impl PyHsla {
 
     #[staticmethod]
     pub fn from_f32_array(color: [f32; 4]) -> Self {
-        PyHsla::hsla(Hsla::new(color[0], color[1], color[2], color[3]))
+        PyHsla::from_owned(Hsla::new(color[0], color[1], color[2], color[3]))
     }
 
     pub fn to_vec4(&self) -> PyResult<PyVec4> {
@@ -217,7 +195,7 @@ impl PyHsla {
     #[staticmethod]
     pub fn from_vec4(color: &PyVec4) -> PyResult<Self> {
         let v: Vec4 = color.try_into()?;
-        Ok(PyHsla::hsla(Hsla::new(v.x, v.y, v.z, v.w)))
+        Ok(PyHsla::from_owned(Hsla::new(v.x, v.y, v.z, v.w)))
     }
 
     pub fn to_vec3(&self) -> PyResult<PyVec3> {
@@ -229,17 +207,17 @@ impl PyHsla {
     #[staticmethod]
     pub fn from_vec3(color: &PyVec3) -> PyResult<Self> {
         let v: Vec3 = color.try_into()?;
-        Ok(PyHsla::hsla(Hsla::new(v.x, v.y, v.z, 1.0)))
+        Ok(PyHsla::from_owned(Hsla::new(v.x, v.y, v.z, 1.0)))
     }
 
     #[staticmethod]
     pub fn from_f32_array_no_alpha(color: [f32; 3]) -> Self {
-        PyHsla::hsla(Hsla::new(color[0], color[1], color[2], 1.0))
+        PyHsla::from_owned(Hsla::new(color[0], color[1], color[2], 1.0))
     }
 
     #[staticmethod]
     pub fn sequential_dispersed(index: u32) -> Self {
-        PyHsla::hsla(Hsla::sequential_dispersed(index))
+        PyHsla::from_owned(Hsla::sequential_dispersed(index))
     }
 
     #[pyo3(name = "set_alpha")]

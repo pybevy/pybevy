@@ -4,12 +4,14 @@ use bevy::{
     },
     math::{StableInterpolate, Vec3, Vec4},
 };
-use pybevy_core::{StorageMut, StorageRef, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_macros::pyvalue;
 use pybevy_math::{vec3::PyVec3, vec4::PyVec4};
 use pyo3::prelude::*;
 
 use super::common::fmt_f32;
 
+#[pyvalue]
 #[pyclass(name = "LinearRgba", module = "pybevy.color", eq, from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyLinearRgba {
@@ -37,33 +39,7 @@ impl TryFrom<&PyLinearRgba> for LinearRgba {
 impl From<LinearRgba> for PyLinearRgba {
     #[inline(always)]
     fn from(color: LinearRgba) -> Self {
-        PyLinearRgba::from_linear_rgba(color)
-    }
-}
-
-impl PyLinearRgba {
-    #[inline(always)]
-    pub fn from_linear_rgba(color: LinearRgba) -> Self {
-        PyLinearRgba {
-            storage: ValueStorage::owned(color),
-        }
-    }
-
-    #[inline(always)]
-    pub const fn linear_rgba(color: LinearRgba) -> Self {
-        PyLinearRgba {
-            storage: ValueStorage::owned(color),
-        }
-    }
-
-    #[inline(always)]
-    fn as_ref(&self) -> PyResult<StorageRef<'_, LinearRgba>> {
-        Ok(self.storage.as_ref()?)
-    }
-
-    #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<StorageMut<'_, LinearRgba>> {
-        Ok(self.storage.as_mut()?)
+        PyLinearRgba::from_owned(color)
     }
 }
 
@@ -72,7 +48,7 @@ impl PyLinearRgba {
     #[new]
     #[pyo3(signature = (red = 1.0, green = 1.0, blue = 1.0, alpha = 1.0))]
     pub fn new(red: f32, green: f32, blue: f32, alpha: f32) -> Self {
-        PyLinearRgba::linear_rgba(LinearRgba::new(red, green, blue, alpha))
+        PyLinearRgba::from_owned(LinearRgba::new(red, green, blue, alpha))
     }
 
     pub fn __repr__(&self) -> PyResult<String> {
@@ -89,44 +65,44 @@ impl PyLinearRgba {
     #[staticmethod]
     #[pyo3(name = "BLACK")]
     pub fn black() -> Self {
-        Self::linear_rgba(LinearRgba::BLACK)
+        Self::from_owned(LinearRgba::BLACK)
     }
     #[staticmethod]
     #[pyo3(name = "WHITE")]
     pub fn white() -> Self {
-        Self::linear_rgba(LinearRgba::WHITE)
+        Self::from_owned(LinearRgba::WHITE)
     }
     #[staticmethod]
     #[pyo3(name = "NONE")]
     pub fn none_() -> Self {
-        Self::linear_rgba(LinearRgba::NONE)
+        Self::from_owned(LinearRgba::NONE)
     }
     #[staticmethod]
     #[pyo3(name = "NAN")]
     pub fn nan() -> Self {
-        Self::linear_rgba(LinearRgba::NAN)
+        Self::from_owned(LinearRgba::NAN)
     }
 
     #[staticmethod]
     pub fn rgb(red: f32, green: f32, blue: f32) -> Self {
-        PyLinearRgba::linear_rgba(LinearRgba::rgb(red, green, blue))
+        PyLinearRgba::from_owned(LinearRgba::rgb(red, green, blue))
     }
 
     #[staticmethod]
     pub fn gray(lightness: f32) -> Self {
-        PyLinearRgba::linear_rgba(LinearRgba::gray(lightness))
+        PyLinearRgba::from_owned(LinearRgba::gray(lightness))
     }
 
     pub fn with_red(&self, red: f32) -> PyResult<Self> {
-        Ok(PyLinearRgba::linear_rgba(self.as_ref()?.with_red(red)))
+        Ok(PyLinearRgba::from_owned(self.as_ref()?.with_red(red)))
     }
 
     pub fn with_green(&self, green: f32) -> PyResult<Self> {
-        Ok(PyLinearRgba::linear_rgba(self.as_ref()?.with_green(green)))
+        Ok(PyLinearRgba::from_owned(self.as_ref()?.with_green(green)))
     }
 
     pub fn with_blue(&self, blue: f32) -> PyResult<Self> {
-        Ok(PyLinearRgba::linear_rgba(self.as_ref()?.with_blue(blue)))
+        Ok(PyLinearRgba::from_owned(self.as_ref()?.with_blue(blue)))
     }
 
     pub fn luminance(&self) -> PyResult<f32> {
@@ -134,7 +110,7 @@ impl PyLinearRgba {
     }
 
     pub fn with_luminance(&self, value: f32) -> PyResult<Self> {
-        Ok(PyLinearRgba::linear_rgba(
+        Ok(PyLinearRgba::from_owned(
             self.as_ref()?.with_luminance(value),
         ))
     }
@@ -143,7 +119,7 @@ impl PyLinearRgba {
         let result = self
             .as_ref()?
             .interpolate_stable(other.as_ref()?.reborrow(), t);
-        Ok(PyLinearRgba::linear_rgba(result))
+        Ok(PyLinearRgba::from_owned(result))
     }
 
     pub fn interpolate_stable_assign(&mut self, other: &Self, t: f32) -> PyResult<()> {
@@ -155,15 +131,15 @@ impl PyLinearRgba {
     }
 
     pub fn darker(&self, amount: f32) -> PyResult<Self> {
-        Ok(PyLinearRgba::linear_rgba(self.as_ref()?.darker(amount)))
+        Ok(PyLinearRgba::from_owned(self.as_ref()?.darker(amount)))
     }
 
     pub fn lighter(&self, amount: f32) -> PyResult<Self> {
-        Ok(PyLinearRgba::linear_rgba(self.as_ref()?.lighter(amount)))
+        Ok(PyLinearRgba::from_owned(self.as_ref()?.lighter(amount)))
     }
 
     pub fn mix(&self, other: &Self, factor: f32) -> PyResult<Self> {
-        Ok(PyLinearRgba::linear_rgba(
+        Ok(PyLinearRgba::from_owned(
             self.as_ref()?.mix(other.as_ref()?.reborrow(), factor),
         ))
     }
@@ -189,7 +165,7 @@ impl PyLinearRgba {
 
     #[staticmethod]
     pub fn from_tuple(t: (f32, f32, f32, f32)) -> Self {
-        PyLinearRgba::linear_rgba(LinearRgba::new(t.0, t.1, t.2, t.3))
+        PyLinearRgba::from_owned(LinearRgba::new(t.0, t.1, t.2, t.3))
     }
 
     #[getter]
@@ -237,7 +213,7 @@ impl PyLinearRgba {
     }
 
     pub fn with_alpha(&self, alpha: f32) -> PyResult<Self> {
-        Ok(PyLinearRgba::linear_rgba(self.as_ref()?.with_alpha(alpha)))
+        Ok(PyLinearRgba::from_owned(self.as_ref()?.with_alpha(alpha)))
     }
 
     pub fn is_fully_transparent(&self) -> PyResult<bool> {
@@ -249,31 +225,27 @@ impl PyLinearRgba {
     }
 
     pub fn __add__(&self, other: &Self) -> PyResult<Self> {
-        Ok(PyLinearRgba::linear_rgba(
-            *self.as_ref()? + *other.as_ref()?,
-        ))
+        Ok(PyLinearRgba::from_owned(*self.as_ref()? + *other.as_ref()?))
     }
 
     pub fn __sub__(&self, other: &Self) -> PyResult<Self> {
-        Ok(PyLinearRgba::linear_rgba(
-            *self.as_ref()? - *other.as_ref()?,
-        ))
+        Ok(PyLinearRgba::from_owned(*self.as_ref()? - *other.as_ref()?))
     }
 
     pub fn __mul__(&self, scalar: f32) -> PyResult<Self> {
-        Ok(PyLinearRgba::linear_rgba(*self.as_ref()? * scalar))
+        Ok(PyLinearRgba::from_owned(*self.as_ref()? * scalar))
     }
 
     pub fn __rmul__(&self, scalar: f32) -> PyResult<Self> {
-        Ok(PyLinearRgba::linear_rgba(scalar * *self.as_ref()?))
+        Ok(PyLinearRgba::from_owned(scalar * *self.as_ref()?))
     }
 
     pub fn __truediv__(&self, scalar: f32) -> PyResult<Self> {
-        Ok(PyLinearRgba::linear_rgba(*self.as_ref()? / scalar))
+        Ok(PyLinearRgba::from_owned(*self.as_ref()? / scalar))
     }
 
     pub fn __neg__(&self) -> PyResult<Self> {
-        Ok(PyLinearRgba::linear_rgba(-*self.as_ref()?))
+        Ok(PyLinearRgba::from_owned(-*self.as_ref()?))
     }
 
     pub fn to_f32_array(&self) -> PyResult<[f32; 4]> {
@@ -300,18 +272,18 @@ impl PyLinearRgba {
 
     #[staticmethod]
     pub fn from_f32_array(color: [f32; 4]) -> Self {
-        PyLinearRgba::linear_rgba(LinearRgba::new(color[0], color[1], color[2], color[3]))
+        PyLinearRgba::from_owned(LinearRgba::new(color[0], color[1], color[2], color[3]))
     }
 
     #[staticmethod]
     pub fn from_f32_array_no_alpha(color: [f32; 3]) -> Self {
-        PyLinearRgba::linear_rgba(LinearRgba::rgb(color[0], color[1], color[2]))
+        PyLinearRgba::from_owned(LinearRgba::rgb(color[0], color[1], color[2]))
     }
 
     #[staticmethod]
     pub fn from_vec4(color: &PyVec4) -> PyResult<Self> {
         let v: Vec4 = color.try_into()?;
-        Ok(PyLinearRgba::linear_rgba(LinearRgba::new(
+        Ok(PyLinearRgba::from_owned(LinearRgba::new(
             v.x, v.y, v.z, v.w,
         )))
     }
@@ -319,7 +291,7 @@ impl PyLinearRgba {
     #[staticmethod]
     pub fn from_vec3(color: &PyVec3) -> PyResult<Self> {
         let v: Vec3 = color.try_into()?;
-        Ok(PyLinearRgba::linear_rgba(LinearRgba::rgb(v.x, v.y, v.z)))
+        Ok(PyLinearRgba::from_owned(LinearRgba::rgb(v.x, v.y, v.z)))
     }
 
     pub fn to_u8_array(&self) -> PyResult<[u8; 4]> {
@@ -336,7 +308,7 @@ impl PyLinearRgba {
 
     #[staticmethod]
     pub fn from_u8_array(color: [u8; 4]) -> Self {
-        PyLinearRgba::linear_rgba(LinearRgba::new(
+        PyLinearRgba::from_owned(LinearRgba::new(
             color[0] as f32 / 255.0,
             color[1] as f32 / 255.0,
             color[2] as f32 / 255.0,
@@ -346,7 +318,7 @@ impl PyLinearRgba {
 
     #[staticmethod]
     pub fn from_u8_array_no_alpha(color: [u8; 3]) -> Self {
-        PyLinearRgba::linear_rgba(LinearRgba::rgb(
+        PyLinearRgba::from_owned(LinearRgba::rgb(
             color[0] as f32 / 255.0,
             color[1] as f32 / 255.0,
             color[2] as f32 / 255.0,

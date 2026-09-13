@@ -4,12 +4,14 @@ use bevy::{
     },
     math::{StableInterpolate, Vec3, Vec4},
 };
-use pybevy_core::{StorageMut, StorageRef, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_macros::pyvalue;
 use pybevy_math::{vec3::PyVec3, vec4::PyVec4};
 use pyo3::prelude::*;
 
 use super::{common::fmt_f32, linear_rgba::PyLinearRgba, srgba::PySrgba};
 
+#[pyvalue]
 #[pyclass(name = "Oklaba", module = "pybevy.color", eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyOklaba {
@@ -28,23 +30,7 @@ impl TryFrom<&PyOklaba> for Oklaba {
 impl From<Oklaba> for PyOklaba {
     #[inline(always)]
     fn from(color: Oklaba) -> Self {
-        Self::oklaba(color)
-    }
-}
-
-impl PyOklaba {
-    pub fn oklaba(oklaba: Oklaba) -> Self {
-        Self {
-            storage: ValueStorage::owned(oklaba),
-        }
-    }
-
-    fn as_ref(&self) -> PyResult<StorageRef<'_, Oklaba>> {
-        Ok(self.storage.as_ref()?)
-    }
-
-    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Oklaba>> {
-        Ok(self.storage.as_mut()?)
+        Self::from_owned(color)
     }
 }
 
@@ -53,29 +39,29 @@ impl PyOklaba {
     #[new]
     #[pyo3(signature = (lightness = 1.0, a = 0.0, b = 0.0, alpha = 1.0))]
     pub fn new(lightness: f32, a: f32, b: f32, alpha: f32) -> Self {
-        PyOklaba::oklaba(Oklaba::new(lightness, a, b, alpha))
+        PyOklaba::from_owned(Oklaba::new(lightness, a, b, alpha))
     }
 
     #[staticmethod]
     pub fn lab(lightness: f32, a: f32, b: f32) -> Self {
-        PyOklaba::oklaba(Oklaba::lab(lightness, a, b))
+        PyOklaba::from_owned(Oklaba::lab(lightness, a, b))
     }
 
     #[staticmethod]
     pub fn gray(lightness: f32) -> Self {
-        PyOklaba::oklaba(Oklaba::gray(lightness))
+        PyOklaba::from_owned(Oklaba::gray(lightness))
     }
 
     #[staticmethod]
     #[pyo3(name = "BLACK")]
     pub fn black() -> Self {
-        PyOklaba::oklaba(Oklaba::BLACK)
+        PyOklaba::from_owned(Oklaba::BLACK)
     }
 
     #[staticmethod]
     #[pyo3(name = "WHITE")]
     pub fn white() -> Self {
-        PyOklaba::oklaba(Oklaba::WHITE)
+        PyOklaba::from_owned(Oklaba::WHITE)
     }
 
     #[getter]
@@ -129,23 +115,25 @@ impl PyOklaba {
     }
 
     pub fn with_lightness(&self, lightness: f32) -> PyResult<Self> {
-        Ok(PyOklaba::oklaba(self.as_ref()?.with_lightness(lightness)))
+        Ok(PyOklaba::from_owned(
+            self.as_ref()?.with_lightness(lightness),
+        ))
     }
 
     pub fn with_a(&self, a: f32) -> PyResult<Self> {
         let mut copy = *self.as_ref()?;
         copy.a = a;
-        Ok(PyOklaba::oklaba(copy))
+        Ok(PyOklaba::from_owned(copy))
     }
 
     pub fn with_b(&self, b: f32) -> PyResult<Self> {
         let mut copy = *self.as_ref()?;
         copy.b = b;
-        Ok(PyOklaba::oklaba(copy))
+        Ok(PyOklaba::from_owned(copy))
     }
 
     pub fn with_alpha(&self, alpha: f32) -> PyResult<Self> {
-        Ok(PyOklaba::oklaba(self.as_ref()?.with_alpha(alpha)))
+        Ok(PyOklaba::from_owned(self.as_ref()?.with_alpha(alpha)))
     }
 
     pub fn luminance(&self) -> PyResult<f32> {
@@ -153,15 +141,17 @@ impl PyOklaba {
     }
 
     pub fn with_luminance(&self, lightness: f32) -> PyResult<Self> {
-        Ok(PyOklaba::oklaba(self.as_ref()?.with_luminance(lightness)))
+        Ok(PyOklaba::from_owned(
+            self.as_ref()?.with_luminance(lightness),
+        ))
     }
 
     pub fn darker(&self, amount: f32) -> PyResult<Self> {
-        Ok(PyOklaba::oklaba(self.as_ref()?.darker(amount)))
+        Ok(PyOklaba::from_owned(self.as_ref()?.darker(amount)))
     }
 
     pub fn lighter(&self, amount: f32) -> PyResult<Self> {
-        Ok(PyOklaba::oklaba(self.as_ref()?.lighter(amount)))
+        Ok(PyOklaba::from_owned(self.as_ref()?.lighter(amount)))
     }
 
     pub fn is_fully_transparent(&self) -> PyResult<bool> {
@@ -173,7 +163,7 @@ impl PyOklaba {
     }
 
     pub fn mix(&self, other: &PyOklaba, factor: f32) -> PyResult<Self> {
-        Ok(PyOklaba::oklaba(
+        Ok(PyOklaba::from_owned(
             self.as_ref()?.mix(other.as_ref()?.reborrow(), factor),
         ))
     }
@@ -194,12 +184,12 @@ impl PyOklaba {
 
     pub fn to_linear(&self) -> PyResult<PyLinearRgba> {
         let linear: LinearRgba = (*self.as_ref()?).into();
-        Ok(PyLinearRgba::linear_rgba(linear))
+        Ok(PyLinearRgba::from_owned(linear))
     }
 
     pub fn to_srgba(&self) -> PyResult<PySrgba> {
         let srgba: Srgba = (*self.as_ref()?).into();
-        Ok(PySrgba::from_srgba(srgba))
+        Ok(PySrgba::from_owned(srgba))
     }
 
     pub fn to_f32_array(&self) -> PyResult<[f32; 4]> {
@@ -214,12 +204,12 @@ impl PyOklaba {
 
     #[staticmethod]
     pub fn from_f32_array(color: [f32; 4]) -> Self {
-        PyOklaba::oklaba(Oklaba::new(color[0], color[1], color[2], color[3]))
+        PyOklaba::from_owned(Oklaba::new(color[0], color[1], color[2], color[3]))
     }
 
     #[staticmethod]
     pub fn from_f32_array_no_alpha(color: [f32; 3]) -> Self {
-        PyOklaba::oklaba(Oklaba::lab(color[0], color[1], color[2]))
+        PyOklaba::from_owned(Oklaba::lab(color[0], color[1], color[2]))
     }
 
     pub fn to_vec4(&self) -> PyResult<PyVec4> {
@@ -237,17 +227,17 @@ impl PyOklaba {
     #[staticmethod]
     pub fn from_vec4(color: &PyVec4) -> PyResult<Self> {
         let v: Vec4 = color.try_into()?;
-        Ok(PyOklaba::oklaba(Oklaba::new(v.x, v.y, v.z, v.w)))
+        Ok(PyOklaba::from_owned(Oklaba::new(v.x, v.y, v.z, v.w)))
     }
 
     #[staticmethod]
     pub fn from_vec3(color: &PyVec3) -> PyResult<Self> {
         let v: Vec3 = color.try_into()?;
-        Ok(PyOklaba::oklaba(Oklaba::lab(v.x, v.y, v.z)))
+        Ok(PyOklaba::from_owned(Oklaba::lab(v.x, v.y, v.z)))
     }
 
     pub fn interpolate_stable(&self, other: &PyOklaba, t: f32) -> PyResult<Self> {
-        Ok(PyOklaba::oklaba(
+        Ok(PyOklaba::from_owned(
             self.as_ref()?
                 .interpolate_stable(other.as_ref()?.reborrow(), t),
         ))

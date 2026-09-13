@@ -743,7 +743,11 @@ class Hsva:
 
 
 class Hwba:
-    """HWB (hue, whiteness, blackness) color space with alpha."""
+    """HWB (hue, whiteness, blackness) color space with alpha.
+
+    Bevy omits the HWB grey normalisation, so whiteness + blackness > 1
+    yields a hue-dependent colour instead of the achromatic grey w / (w + b).
+    """
 
     hue: float
     whiteness: float

@@ -5,12 +5,14 @@ use bevy::{
     },
     math::{StableInterpolate, Vec3, Vec4},
 };
-use pybevy_core::{StorageMut, StorageRef, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, ValueStorage, public_error};
+use pybevy_macros::pyvalue;
 use pybevy_math::{vec3::PyVec3, vec4::PyVec4};
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 use super::{common::fmt_f32, linear_rgba::PyLinearRgba};
 
+#[pyvalue]
 #[pyclass(name = "Srgba", module = "pybevy.color", eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PySrgba {
@@ -38,33 +40,7 @@ impl TryFrom<&PySrgba> for Srgba {
 impl From<Srgba> for PySrgba {
     #[inline(always)]
     fn from(color: Srgba) -> Self {
-        PySrgba::from_srgba(color)
-    }
-}
-
-impl PySrgba {
-    #[inline(always)]
-    pub fn from_srgba(color: Srgba) -> Self {
-        PySrgba {
-            storage: ValueStorage::owned(color),
-        }
-    }
-
-    #[inline(always)]
-    pub const fn srgba(color: Srgba) -> Self {
-        PySrgba {
-            storage: ValueStorage::owned(color),
-        }
-    }
-
-    #[inline(always)]
-    fn as_ref(&self) -> PyResult<StorageRef<'_, Srgba>> {
-        Ok(self.storage.as_ref()?)
-    }
-
-    #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Srgba>> {
-        Ok(self.storage.as_mut()?)
+        PySrgba::from_owned(color)
     }
 }
 
@@ -73,7 +49,7 @@ impl PySrgba {
     #[new]
     #[pyo3(signature = (red = 1.0, green = 1.0, blue = 1.0, alpha = 1.0))]
     pub fn new(red: f32, green: f32, blue: f32, alpha: f32) -> Self {
-        PySrgba::srgba(Srgba::new(red, green, blue, alpha))
+        PySrgba::from_owned(Srgba::new(red, green, blue, alpha))
     }
 
     pub fn __repr__(&self) -> PyResult<String> {
@@ -90,44 +66,44 @@ impl PySrgba {
     #[staticmethod]
     #[pyo3(name = "BLACK")]
     pub fn black() -> Self {
-        Self::srgba(Srgba::BLACK)
+        Self::from_owned(Srgba::BLACK)
     }
     #[staticmethod]
     #[pyo3(name = "WHITE")]
     pub fn white() -> Self {
-        Self::srgba(Srgba::WHITE)
+        Self::from_owned(Srgba::WHITE)
     }
     #[staticmethod]
     #[pyo3(name = "NONE")]
     pub fn none_() -> Self {
-        Self::srgba(Srgba::NONE)
+        Self::from_owned(Srgba::NONE)
     }
 
     #[staticmethod]
     pub fn rgb(red: f32, green: f32, blue: f32) -> Self {
-        PySrgba::srgba(Srgba::rgb(red, green, blue))
+        PySrgba::from_owned(Srgba::rgb(red, green, blue))
     }
 
     #[staticmethod]
     pub fn gray(lightness: f32) -> Self {
-        PySrgba::srgba(Srgba::gray(lightness))
+        PySrgba::from_owned(Srgba::gray(lightness))
     }
 
     #[staticmethod]
     pub fn rgb_u8(r: u8, g: u8, b: u8) -> Self {
-        PySrgba::srgba(Srgba::rgb_u8(r, g, b))
+        PySrgba::from_owned(Srgba::rgb_u8(r, g, b))
     }
 
     #[staticmethod]
     pub fn rgba_u8(r: u8, g: u8, b: u8, a: u8) -> Self {
-        PySrgba::srgba(Srgba::rgba_u8(r, g, b, a))
+        PySrgba::from_owned(Srgba::rgba_u8(r, g, b, a))
     }
 
     #[staticmethod]
     pub fn hex(hex: &str) -> PyResult<Self> {
         Srgba::hex(hex)
-            .map(PySrgba::srgba)
-            .map_err(|e| PyValueError::new_err(format!("Invalid hex color: {:?}", e)))
+            .map(PySrgba::from_owned)
+            .map_err(|e| PyValueError::new_err(public_error::invalid_hex_color(e)))
     }
 
     pub fn to_hex(&self) -> PyResult<String> {
@@ -135,15 +111,15 @@ impl PySrgba {
     }
 
     pub fn with_red(&self, red: f32) -> PyResult<Self> {
-        Ok(PySrgba::srgba(self.as_ref()?.with_red(red)))
+        Ok(PySrgba::from_owned(self.as_ref()?.with_red(red)))
     }
 
     pub fn with_green(&self, green: f32) -> PyResult<Self> {
-        Ok(PySrgba::srgba(self.as_ref()?.with_green(green)))
+        Ok(PySrgba::from_owned(self.as_ref()?.with_green(green)))
     }
 
     pub fn with_blue(&self, blue: f32) -> PyResult<Self> {
-        Ok(PySrgba::srgba(self.as_ref()?.with_blue(blue)))
+        Ok(PySrgba::from_owned(self.as_ref()?.with_blue(blue)))
     }
 
     #[getter]
@@ -191,7 +167,7 @@ impl PySrgba {
     }
 
     pub fn with_alpha(&self, alpha: f32) -> PyResult<Self> {
-        Ok(PySrgba::srgba(self.as_ref()?.with_alpha(alpha)))
+        Ok(PySrgba::from_owned(self.as_ref()?.with_alpha(alpha)))
     }
 
     pub fn is_fully_transparent(&self) -> PyResult<bool> {
@@ -207,19 +183,19 @@ impl PySrgba {
     }
 
     pub fn with_luminance(&self, value: f32) -> PyResult<Self> {
-        Ok(PySrgba::srgba(self.as_ref()?.with_luminance(value)))
+        Ok(PySrgba::from_owned(self.as_ref()?.with_luminance(value)))
     }
 
     pub fn darker(&self, amount: f32) -> PyResult<Self> {
-        Ok(PySrgba::srgba(self.as_ref()?.darker(amount)))
+        Ok(PySrgba::from_owned(self.as_ref()?.darker(amount)))
     }
 
     pub fn lighter(&self, amount: f32) -> PyResult<Self> {
-        Ok(PySrgba::srgba(self.as_ref()?.lighter(amount)))
+        Ok(PySrgba::from_owned(self.as_ref()?.lighter(amount)))
     }
 
     pub fn mix(&self, other: &Self, factor: f32) -> PyResult<Self> {
-        Ok(PySrgba::srgba(
+        Ok(PySrgba::from_owned(
             self.as_ref()?.mix(other.as_ref()?.reborrow(), factor),
         ))
     }
@@ -266,24 +242,24 @@ impl PySrgba {
 
     #[staticmethod]
     pub fn from_f32_array(color: [f32; 4]) -> Self {
-        PySrgba::from_srgba(Srgba::new(color[0], color[1], color[2], color[3]))
+        PySrgba::from_owned(Srgba::new(color[0], color[1], color[2], color[3]))
     }
 
     #[staticmethod]
     pub fn from_f32_array_no_alpha(color: [f32; 3]) -> Self {
-        PySrgba::from_srgba(Srgba::rgb(color[0], color[1], color[2]))
+        PySrgba::from_owned(Srgba::rgb(color[0], color[1], color[2]))
     }
 
     #[staticmethod]
     pub fn from_vec4(color: &PyVec4) -> PyResult<Self> {
         let v: Vec4 = color.try_into()?;
-        Ok(PySrgba::from_srgba(Srgba::new(v.x, v.y, v.z, v.w)))
+        Ok(PySrgba::from_owned(Srgba::new(v.x, v.y, v.z, v.w)))
     }
 
     #[staticmethod]
     pub fn from_vec3(color: &PyVec3) -> PyResult<Self> {
         let v: Vec3 = color.try_into()?;
-        Ok(PySrgba::from_srgba(Srgba::rgb(v.x, v.y, v.z)))
+        Ok(PySrgba::from_owned(Srgba::rgb(v.x, v.y, v.z)))
     }
 
     pub fn to_u8_array(&self) -> PyResult<[u8; 4]> {
@@ -296,7 +272,7 @@ impl PySrgba {
 
     #[staticmethod]
     pub fn from_u8_array(color: [u8; 4]) -> Self {
-        PySrgba::from_srgba(Srgba::new(
+        PySrgba::from_owned(Srgba::new(
             color[0] as f32 / 255.0,
             color[1] as f32 / 255.0,
             color[2] as f32 / 255.0,
@@ -306,7 +282,7 @@ impl PySrgba {
 
     #[staticmethod]
     pub fn from_u8_array_no_alpha(color: [u8; 3]) -> Self {
-        PySrgba::from_srgba(Srgba::rgb(
+        PySrgba::from_owned(Srgba::rgb(
             color[0] as f32 / 255.0,
             color[1] as f32 / 255.0,
             color[2] as f32 / 255.0,
@@ -314,7 +290,7 @@ impl PySrgba {
     }
 
     pub fn interpolate_stable(&self, other: &Self, t: f32) -> PyResult<Self> {
-        Ok(PySrgba::from_srgba(
+        Ok(PySrgba::from_owned(
             self.as_ref()?
                 .interpolate_stable(other.as_ref()?.reborrow(), t),
         ))

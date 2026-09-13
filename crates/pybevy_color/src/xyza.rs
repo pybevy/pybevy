@@ -2,12 +2,14 @@ use bevy::{
     color::{Alpha, Gray, LinearRgba, Luminance, Mix, Srgba, Xyza},
     math::{StableInterpolate, Vec3, Vec4},
 };
-use pybevy_core::{StorageMut, StorageRef, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_macros::pyvalue;
 use pybevy_math::{vec3::PyVec3, vec4::PyVec4};
 use pyo3::prelude::*;
 
 use super::{common::fmt_f32, linear_rgba::PyLinearRgba, srgba::PySrgba};
 
+#[pyvalue]
 #[pyclass(name = "Xyza", module = "pybevy.color", eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyXyza {
@@ -26,23 +28,7 @@ impl TryFrom<&PyXyza> for Xyza {
 impl From<Xyza> for PyXyza {
     #[inline(always)]
     fn from(color: Xyza) -> Self {
-        Self::xyza(color)
-    }
-}
-
-impl PyXyza {
-    pub fn xyza(xyza: Xyza) -> Self {
-        Self {
-            storage: ValueStorage::owned(xyza),
-        }
-    }
-
-    fn as_ref(&self) -> PyResult<StorageRef<'_, Xyza>> {
-        Ok(self.storage.as_ref()?)
-    }
-
-    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Xyza>> {
-        Ok(self.storage.as_mut()?)
+        Self::from_owned(color)
     }
 }
 
@@ -51,29 +37,29 @@ impl PyXyza {
     #[new]
     #[pyo3(signature = (x = 0.0, y = 0.0, z = 0.0, alpha = 1.0))]
     pub fn new(x: f32, y: f32, z: f32, alpha: f32) -> Self {
-        PyXyza::xyza(Xyza::new(x, y, z, alpha))
+        PyXyza::from_owned(Xyza::new(x, y, z, alpha))
     }
 
     #[staticmethod]
     pub fn xyz(x: f32, y: f32, z: f32) -> Self {
-        PyXyza::xyza(Xyza::xyz(x, y, z))
+        PyXyza::from_owned(Xyza::xyz(x, y, z))
     }
 
     #[staticmethod]
     pub fn gray(lightness: f32) -> Self {
-        PyXyza::xyza(Xyza::gray(lightness))
+        PyXyza::from_owned(Xyza::gray(lightness))
     }
 
     #[staticmethod]
     #[pyo3(name = "BLACK")]
     pub fn black() -> Self {
-        PyXyza::xyza(Xyza::BLACK)
+        PyXyza::from_owned(Xyza::BLACK)
     }
 
     #[staticmethod]
     #[pyo3(name = "WHITE")]
     pub fn white() -> Self {
-        PyXyza::xyza(Xyza::WHITE)
+        PyXyza::from_owned(Xyza::WHITE)
     }
 
     #[getter]
@@ -129,23 +115,23 @@ impl PyXyza {
     pub fn with_x(&self, x: f32) -> PyResult<Self> {
         let mut copy = *self.as_ref()?;
         copy.x = x;
-        Ok(PyXyza::xyza(copy))
+        Ok(PyXyza::from_owned(copy))
     }
 
     pub fn with_y(&self, y: f32) -> PyResult<Self> {
         let mut copy = *self.as_ref()?;
         copy.y = y;
-        Ok(PyXyza::xyza(copy))
+        Ok(PyXyza::from_owned(copy))
     }
 
     pub fn with_z(&self, z: f32) -> PyResult<Self> {
         let mut copy = *self.as_ref()?;
         copy.z = z;
-        Ok(PyXyza::xyza(copy))
+        Ok(PyXyza::from_owned(copy))
     }
 
     pub fn with_alpha(&self, alpha: f32) -> PyResult<Self> {
-        Ok(PyXyza::xyza(self.as_ref()?.with_alpha(alpha)))
+        Ok(PyXyza::from_owned(self.as_ref()?.with_alpha(alpha)))
     }
 
     pub fn luminance(&self) -> PyResult<f32> {
@@ -153,15 +139,15 @@ impl PyXyza {
     }
 
     pub fn with_luminance(&self, lightness: f32) -> PyResult<Self> {
-        Ok(PyXyza::xyza(self.as_ref()?.with_luminance(lightness)))
+        Ok(PyXyza::from_owned(self.as_ref()?.with_luminance(lightness)))
     }
 
     pub fn darker(&self, amount: f32) -> PyResult<Self> {
-        Ok(PyXyza::xyza(self.as_ref()?.darker(amount)))
+        Ok(PyXyza::from_owned(self.as_ref()?.darker(amount)))
     }
 
     pub fn lighter(&self, amount: f32) -> PyResult<Self> {
-        Ok(PyXyza::xyza(self.as_ref()?.lighter(amount)))
+        Ok(PyXyza::from_owned(self.as_ref()?.lighter(amount)))
     }
 
     pub fn is_fully_transparent(&self) -> PyResult<bool> {
@@ -173,7 +159,7 @@ impl PyXyza {
     }
 
     pub fn mix(&self, other: &PyXyza, factor: f32) -> PyResult<Self> {
-        Ok(PyXyza::xyza(
+        Ok(PyXyza::from_owned(
             self.as_ref()?.mix(other.as_ref()?.reborrow(), factor),
         ))
     }
@@ -186,12 +172,12 @@ impl PyXyza {
 
     pub fn to_linear(&self) -> PyResult<PyLinearRgba> {
         let linear: LinearRgba = (*self.as_ref()?).into();
-        Ok(PyLinearRgba::linear_rgba(linear))
+        Ok(PyLinearRgba::from_owned(linear))
     }
 
     pub fn to_srgba(&self) -> PyResult<PySrgba> {
         let srgba: Srgba = (*self.as_ref()?).into();
-        Ok(PySrgba::from_srgba(srgba))
+        Ok(PySrgba::from_owned(srgba))
     }
 
     pub fn to_f32_array(&self) -> PyResult<[f32; 4]> {
@@ -206,12 +192,12 @@ impl PyXyza {
 
     #[staticmethod]
     pub fn from_f32_array(color: [f32; 4]) -> Self {
-        PyXyza::xyza(Xyza::new(color[0], color[1], color[2], color[3]))
+        PyXyza::from_owned(Xyza::new(color[0], color[1], color[2], color[3]))
     }
 
     #[staticmethod]
     pub fn from_f32_array_no_alpha(color: [f32; 3]) -> Self {
-        PyXyza::xyza(Xyza::xyz(color[0], color[1], color[2]))
+        PyXyza::from_owned(Xyza::xyz(color[0], color[1], color[2]))
     }
 
     pub fn to_vec4(&self) -> PyResult<PyVec4> {
@@ -229,17 +215,17 @@ impl PyXyza {
     #[staticmethod]
     pub fn from_vec4(color: &PyVec4) -> PyResult<Self> {
         let v: Vec4 = color.try_into()?;
-        Ok(PyXyza::xyza(Xyza::new(v.x, v.y, v.z, v.w)))
+        Ok(PyXyza::from_owned(Xyza::new(v.x, v.y, v.z, v.w)))
     }
 
     #[staticmethod]
     pub fn from_vec3(color: &PyVec3) -> PyResult<Self> {
         let v: Vec3 = color.try_into()?;
-        Ok(PyXyza::xyza(Xyza::xyz(v.x, v.y, v.z)))
+        Ok(PyXyza::from_owned(Xyza::xyz(v.x, v.y, v.z)))
     }
 
     pub fn interpolate_stable(&self, other: &PyXyza, t: f32) -> PyResult<Self> {
-        Ok(PyXyza::xyza(
+        Ok(PyXyza::from_owned(
             self.as_ref()?
                 .interpolate_stable(other.as_ref()?.reborrow(), t),
         ))
