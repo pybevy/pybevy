@@ -17,8 +17,8 @@ use bevy::{
 };
 
 use pybevy_core::{
-    component_layout::PrimitiveValue, component_wrapper::insert_wrapper_bytes,
-    custom_component::CustomComponentRegistry,
+    ReflectTypeRegistration, component_layout::PrimitiveValue,
+    component_wrapper::insert_wrapper_bytes, custom_component::CustomComponentRegistry, inventory,
 };
 
 /// One reflected value variant for every primitive supported by wrapper storage.
@@ -97,6 +97,10 @@ struct ReflectedPythonComponent {
 pub(crate) struct ReflectedPythonComponents {
     components: Vec<ReflectedPythonComponent>,
 }
+
+inventory::submit!(ReflectTypeRegistration {
+    register: register_custom_component_reflection,
+});
 
 /// Register the envelope and its custom materialization behavior.
 pub(crate) fn register_custom_component_reflection(registry: &mut TypeRegistry) {
