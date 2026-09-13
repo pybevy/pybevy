@@ -3,7 +3,9 @@
 //! These traits define the interface for storage types that support borrowed references
 //! with validity tracking.
 
-use bevy::ecs::{component::ComponentId, entity::Entity, world::World};
+use bevy::ecs::{
+    component::ComponentId, entity::Entity, world::unsafe_world_cell::UnsafeWorldCell,
+};
 
 use crate::{
     RevalidatingSource,
@@ -65,16 +67,17 @@ pub trait BorrowableStorage<T>: Sized {
     /// pointer.
     ///
     /// Each access re-derives the field's address from
-    /// `(world_ptr, entity, component_id, offset)`, so the handle survives structural
+    /// `(world, entity, component_id, offset)`, so the handle survives structural
     /// mutations that relocate the component and errors after the entity is despawned.
     /// Used for fields that escape a long-lived `world.get`/`world.get_mut` handle,
     /// where a cached borrow would dangle. `validity` still carries the read/write mode.
     ///
     /// # Safety
-    /// - `world_ptr` must be valid while `validity` is non-Invalid
+    /// - `world` must remain live while `validity` is non-Invalid.
+    /// - The cell must permit component access matching the validity mode.
     /// - `(entity, component_id, offset)` must identify a live field of type `T`
     unsafe fn revalidating_field(
-        world_ptr: *mut World,
+        world: UnsafeWorldCell<'_>,
         entity: Entity,
         component_id: ComponentId,
         offset: usize,

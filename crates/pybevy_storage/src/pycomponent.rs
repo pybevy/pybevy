@@ -6,7 +6,7 @@
 use bevy::ecs::{
     component::{Component, ComponentId},
     entity::Entity,
-    world::World,
+    world::unsafe_world_cell::UnsafeWorldCell,
 };
 
 use crate::{
@@ -195,16 +195,17 @@ impl<T: Component> ComponentStorage<T> {
     /// cached pointer.
     ///
     /// Unlike `borrowed`, this caches no pointer: each access re-derives the
-    /// component's current base address from `(world_ptr, entity, component_id)`, so it
+    /// component's current base address from `(world, entity, component_id)`, so it
     /// stays valid across structural mutations that relocate the component and errors
     /// once the entity is despawned. Used for a component escaped from a long-lived
     /// `world.get`/`world.get_mut` handle, where a cached borrow would dangle.
     ///
     /// # Safety
-    /// - `world_ptr` must be valid while `validity` is active.
+    /// - `world` must remain live while `validity` is active.
+    /// - The cell must permit component access matching the validity mode.
     /// - `(entity, component_id)` must identify a live component of type `T`.
     pub unsafe fn revalidating(
-        world_ptr: *mut World,
+        world: UnsafeWorldCell<'_>,
         entity: Entity,
         component_id: ComponentId,
         validity: ValidityFlagWithMode,
@@ -212,7 +213,7 @@ impl<T: Component> ComponentStorage<T> {
         Self {
             // SAFETY: whole-component handle, so offset is 0; forwards the contract
             inner: ComponentStorageInner::Revalidating(Box::new(unsafe {
-                RevalidatingField::new(world_ptr, entity, component_id, 0, validity)
+                RevalidatingField::new(world, entity, component_id, 0, validity)
             })),
         }
     }
@@ -475,7 +476,7 @@ impl<T: Component> BorrowableStorage<T> for ComponentStorage<T> {
     }
 
     unsafe fn revalidating_field(
-        world_ptr: *mut World,
+        world: UnsafeWorldCell<'_>,
         entity: Entity,
         component_id: ComponentId,
         offset: usize,
@@ -484,7 +485,7 @@ impl<T: Component> BorrowableStorage<T> for ComponentStorage<T> {
         assert_eq!(offset, 0, "whole component paths require offset zero");
         // SAFETY: forwards this constructor's world and component identity
         // contract unchanged.
-        unsafe { Self::revalidating(world_ptr, entity, component_id, validity) }
+        unsafe { Self::revalidating(world, entity, component_id, validity) }
     }
 
     fn revalidating_source(source: RevalidatingSource<T>) -> Self
@@ -767,7 +768,7 @@ mod tests {
         // SAFETY: `world` outlives the revalidating storage for this test.
         let revalidating = unsafe {
             <ComponentStorage<TestComponent> as BorrowableStorage<TestComponent>>::revalidating_field(
-                &mut world as *mut World,
+                world.as_unsafe_world_cell(),
                 entity,
                 component_id,
                 0,
@@ -932,11 +933,11 @@ mod tests {
         let mut world = World::new();
         let cid = world.register_component::<TestComponent>();
         let e = world.spawn(TestComponent { value: 5 }).id();
-        let world_ptr: *mut World = &mut world;
+        let cell = world.as_unsafe_world_cell();
 
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
         let mut storage =
-            unsafe { ComponentStorage::<TestComponent>::revalidating(world_ptr, e, cid, validity) };
+            unsafe { ComponentStorage::<TestComponent>::revalidating(cell, e, cid, validity) };
 
         assert!(storage.is_borrowed());
         assert_eq!(storage.as_ref().unwrap().value, 5);
@@ -949,11 +950,11 @@ mod tests {
         let mut world = World::new();
         let cid = world.register_component::<TestComponent>();
         let e = world.spawn(TestComponent { value: 1 }).id();
-        let world_ptr: *mut World = &mut world;
+        let cell = world.as_unsafe_world_cell();
 
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
         let mut storage =
-            unsafe { ComponentStorage::<TestComponent>::revalidating(world_ptr, e, cid, validity) };
+            unsafe { ComponentStorage::<TestComponent>::revalidating(cell, e, cid, validity) };
 
         // Insert a second component: relocates the entity, dangling a cached pointer.
         world
@@ -970,11 +971,11 @@ mod tests {
         let mut world = World::new();
         let cid = world.register_component::<TestComponent>();
         let e = world.spawn(TestComponent { value: 5 }).id();
-        let world_ptr: *mut World = &mut world;
+        let cell = world.as_unsafe_world_cell();
 
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
         let mut storage =
-            unsafe { ComponentStorage::<TestComponent>::revalidating(world_ptr, e, cid, validity) };
+            unsafe { ComponentStorage::<TestComponent>::revalidating(cell, e, cid, validity) };
 
         assert!(storage.as_ref().is_ok());
         world.despawn(e);
@@ -987,11 +988,11 @@ mod tests {
         let mut world = World::new();
         let cid = world.register_component::<TestComponent>();
         let e = world.spawn(TestComponent { value: 5 }).id();
-        let world_ptr: *mut World = &mut world;
+        let cell = world.as_unsafe_world_cell();
 
         let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
         let mut storage =
-            unsafe { ComponentStorage::<TestComponent>::revalidating(world_ptr, e, cid, validity) };
+            unsafe { ComponentStorage::<TestComponent>::revalidating(cell, e, cid, validity) };
 
         assert!(storage.as_ref().is_ok());
         assert!(matches!(storage.as_mut(), Err(StorageError::ReadOnly)));
@@ -1002,12 +1003,11 @@ mod tests {
         let mut world = World::new();
         let cid = world.register_component::<NestedComponent>();
         let e = world.spawn(NestedComponent { x: 1.0, y: 2.0 }).id();
-        let world_ptr: *mut World = &mut world;
+        let cell = world.as_unsafe_world_cell();
 
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
-        let storage = unsafe {
-            ComponentStorage::<NestedComponent>::revalidating(world_ptr, e, cid, validity)
-        };
+        let storage =
+            unsafe { ComponentStorage::<NestedComponent>::revalidating(cell, e, cid, validity) };
 
         // A sub-field of a re-resolving component re-resolves too (composed offset).
         let mut field: ValueStorage<f32> = storage.borrow_field(|c| &c.y).unwrap();
@@ -1026,11 +1026,11 @@ mod tests {
         let mut world = World::new();
         let cid = world.register_component::<TestComponent>();
         let e = world.spawn(TestComponent { value: 1 }).id();
-        let world_ptr: *mut World = &mut world;
+        let cell = world.as_unsafe_world_cell();
 
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
         let storage =
-            unsafe { ComponentStorage::<TestComponent>::revalidating(world_ptr, e, cid, validity) };
+            unsafe { ComponentStorage::<TestComponent>::revalidating(cell, e, cid, validity) };
         let mut shared = storage.share_borrow();
         assert!(shared.is_borrowed());
 

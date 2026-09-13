@@ -68,7 +68,9 @@ pub trait ResourceBridge: Send + Sync + 'static {
     fn entity_contains(&self, entity: &EntityRef) -> bool;
 
     /// # Safety
-    /// `world_ptr` and `validity` must satisfy the returned wrapper's shared-access lifetime.
+    /// `world_ptr` must permit exclusive World access during handle construction
+    /// and remain live while `validity` is non-Invalid. Owned Python Worlds must
+    /// suspend GC traversal during this call; subsequent access is component-scoped.
     unsafe fn extract_from_entity_ref(
         &self,
         entity_id: Entity,
@@ -78,7 +80,8 @@ pub trait ResourceBridge: Send + Sync + 'static {
     ) -> PyResult<Option<Py<PyAny>>>;
 
     /// # Safety
-    /// `world_ptr` and `validity` must satisfy the returned wrapper's mutable-access lifetime.
+    /// The construction requirements of `extract_from_entity_ref` apply, and
+    /// `validity` must authorize writing the identified resource component.
     unsafe fn extract_from_entity_mut(
         &self,
         entity_id: Entity,

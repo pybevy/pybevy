@@ -310,7 +310,7 @@ impl PyLazyWrapperProxy {
                     // survives structural moves (a cached borrow would dangle).
                     let storage = unsafe {
                         ValueStorage::revalidating(
-                            self.world_ptr,
+                            self.world_cell,
                             self.entity,
                             self.component_id,
                             field.offset,
@@ -333,7 +333,7 @@ impl PyLazyWrapperProxy {
                 ProxyKind::WorldGet => {
                     let storage = unsafe {
                         ValueStorage::revalidating(
-                            self.world_ptr,
+                            self.world_cell,
                             self.entity,
                             self.component_id,
                             field.offset,

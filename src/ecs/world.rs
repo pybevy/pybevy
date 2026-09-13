@@ -2,20 +2,22 @@
 //!
 //! PyWorld uses a custom `WorldStorage` enum instead of `ComponentStorage`
 //! because its `&self` methods need interior mutability over `&mut World`,
-//! owned worlds live until GC (so their validity flag is optional), and
+//! owned worlds keep their validity flag until teardown, and
 //! spawn/despawn/trigger/resource operations don't fit the component storage
 //! abstraction. Use `PyWorld::with_temporary()` for temporary access with
 //! automatic validity management.
 
 use std::{
+    alloc::Layout,
     any::TypeId,
     cell::UnsafeCell,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
+    ptr::fn_addr_eq,
     sync::{Arc, Mutex},
 };
 
 use bevy::{
-    ecs::{system::System, world::World},
+    ecs::{ptr::OwningPtr, system::System, world::World},
     prelude::*,
 };
 use pybevy_core::{
@@ -31,7 +33,7 @@ use pybevy_ecs::shared::{
 };
 use pybevy_reload::{HotReloadGeneration, SystemStage};
 use pyo3::{
-    PyTypeInfo,
+    PyTraverseError, PyTypeInfo, PyVisit,
     exceptions::{PyRuntimeError, PyTypeError},
     ffi::PyTypeObject,
     prelude::*,
@@ -46,7 +48,9 @@ use crate::{
         commands::PyCommands,
         component::PyComponentId,
         component_layout::{ComponentLayoutExt, ComponentStorageType, ComponentStorageTypeExt},
-        component_type::{ComponentRegistry, PyComponentType, register_custom_component},
+        component_type::{
+            ComponentRegistry, PyComponentType, drop_py_object, register_custom_component,
+        },
         custom_component::PyCustomComponent,
         deferred_drop,
         dynamic_system::lock_or_recover,
@@ -66,6 +70,7 @@ use crate::{
             canonicalize_state_schedule_label, canonicalize_transition_schedule_label,
         },
         system_interpreter::new_main_one_shot_system,
+        world_gc::WorldGcState,
     },
 };
 
@@ -96,6 +101,7 @@ pub struct PyWorld {
     // cache a raw world_ptr, not a Py<PyWorld>) cannot outlive `del world`.
     validity: Option<ValidityFlag>,
     asset_borrow_counters: Arc<Mutex<HashMap<TypeId, AssetBorrowCounter>>>,
+    gc_state: Option<WorldGcState>,
     /// Flushes queued Python finalizers after the storage fields drop, so an
     /// owned World's teardown decrefs never leak past destruction.
     _deferred_flush: deferred_drop::MutationFlushGuard,
@@ -116,6 +122,11 @@ unsafe impl Sync for PyWorld {}
 
 impl Drop for PyWorld {
     fn drop(&mut self) {
+        if matches!(self.storage, WorldStorage::Owned(_))
+            && let Some(state) = &self.gc_state
+        {
+            state.close();
+        }
         // An owned world frees its `World` storage after this body returns
         // (fields drop in declaration order). Invalidate its validity flag
         // first so any proxy/handle that outlived `del world` - it caches a
@@ -136,6 +147,10 @@ impl Drop for PyWorld {
 }
 
 impl PyWorld {
+    pub(crate) fn gc_state(&self) -> Option<WorldGcState> {
+        self.gc_state.clone()
+    }
+
     pub(crate) fn default_resource_instance(
         py: Python<'_>,
         type_obj: &Bound<'_, PyType>,
@@ -167,6 +182,7 @@ impl PyWorld {
     pub(crate) unsafe fn new(world: &mut World, validity: ValidityFlag) -> Self {
         ensure_asset_access_registry(world);
         Self {
+            gc_state: WorldGcState::for_world(world.id()),
             storage: WorldStorage::Borrowed(world as *mut World),
             validity: Some(validity),
             asset_borrow_counters: Arc::new(Mutex::new(HashMap::new())),
@@ -178,12 +194,14 @@ impl PyWorld {
     pub(crate) fn new_owned(mut world: World) -> Self {
         ensure_asset_access_registry(&mut world);
         let validity = ValidityFlag::new_owned_world(world.id());
+        let gc_state = WorldGcState::new(world.id());
         Self {
             storage: WorldStorage::Owned(Box::new(UnsafeCell::new(world))),
             // Starts valid (Write mode); Drop invalidates it so any proxy/handle that
             // outlives `del world` errors instead of dereferencing the freed World.
             validity: Some(validity),
             asset_borrow_counters: Arc::new(Mutex::new(HashMap::new())),
+            gc_state: Some(gc_state),
             _deferred_flush: deferred_drop::MutationFlushGuard,
         }
     }
@@ -219,11 +237,12 @@ impl PyWorld {
     // this window drain when the borrow ends, before returning to Python.
     pub(crate) fn world_mut(&self) -> PyResult<deferred_drop::WorldMutGuard<'_>> {
         self.check_valid()?;
+        let gc = self.gc_state.as_ref().map(WorldGcState::suspend);
         let world = match &self.storage {
             WorldStorage::Owned(boxed) => unsafe { &mut *boxed.get() },
             WorldStorage::Borrowed(ptr) => unsafe { &mut **ptr },
         };
-        Ok(deferred_drop::WorldMutGuard::new(world))
+        Ok(deferred_drop::WorldMutGuard::with_gc(world, gc))
     }
 
     /// Create a duplicate PyWorld that shares the same underlying world pointer
@@ -238,6 +257,7 @@ impl PyWorld {
             },
             validity: self.validity.clone(),
             asset_borrow_counters: self.asset_borrow_counters.clone(),
+            gc_state: self.gc_state.clone(),
             _deferred_flush: deferred_drop::MutationFlushGuard,
         }
     }
@@ -328,6 +348,7 @@ impl PyWorld {
 
         // Create PyAssets wrapper for the specified asset type
         // When called from World.resource(), assume mutable access (for backwards compatibility)
+        let _gc = self.gc_state.as_ref().map(WorldGcState::suspend);
         // SAFETY: `world_ptr` is valid while this PyWorld is valid; the derived cell is
         // fenced by the same `validity` flag. PyAssets only reaches the `Assets<T>` resource.
         let cell = unsafe { (*world_ptr).as_unsafe_world_cell() };
@@ -511,32 +532,94 @@ impl PyWorld {
 
 #[pymethods]
 impl PyWorld {
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        let WorldStorage::Owned(storage) = &self.storage else {
+            return Ok(());
+        };
+        if self
+            .validity
+            .as_ref()
+            .is_none_or(|flag| matches!(flag.get_mode(), AccessMode::Invalid))
+        {
+            return Ok(());
+        }
+        let Some(_gc) = self.gc_state.as_ref().and_then(WorldGcState::try_traverse) else {
+            return Ok(());
+        };
+        // SAFETY: the gate preserves the allocation; this reference only constructs a cell.
+        let world = unsafe { (&*storage.get()).as_unsafe_world_cell_readonly() };
+        // SAFETY: the gate excludes registration writes to this resource.
+        if let Some(info) = unsafe { world.get_resource::<pybevy_core::CustomComponentInfo>() } {
+            let mut owners = HashSet::new();
+            for (_, entry) in info.iter() {
+                if let Some(class) = &entry.retained_type
+                    && owners.insert(Arc::as_ptr(class))
+                {
+                    visit.call(class.as_ref())?;
+                }
+            }
+        }
+        // SAFETY: the gate excludes registration writes to this resource.
+        if let Some(info) = unsafe { world.get_resource::<pybevy_core::CustomResourceInfo>() } {
+            for (_, entry) in info.iter() {
+                visit.call(&entry.type_object)?;
+            }
+        }
+        for component in world.components().iter_registered() {
+            if component.layout() != Layout::new::<Py<PyAny>>()
+                || !component.drop().is_some_and(|drop| {
+                    fn_addr_eq(drop, drop_py_object as unsafe fn(OwningPtr<'_>))
+                })
+            {
+                continue;
+            }
+            for archetype in world.archetypes().iter() {
+                for entity in archetype.entities() {
+                    let Ok(entity) = world.get_entity(entity.id()) else {
+                        continue;
+                    };
+                    // SAFETY: the gate excludes writes to Python object storage slots.
+                    if let Some(value) = unsafe { entity.get_by_id(component.id()) } {
+                        // SAFETY: layout and drop identify the exact Python storage type.
+                        visit.call(unsafe { value.deref::<Py<PyAny>>() })?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Create a new owned World from Python
     #[new]
     pub fn py_new() -> Self {
         Self::new_owned(World::new())
     }
 
-    pub fn spawn_empty(&self, _py: Python<'_>) -> PyResult<PyEntityCommands> {
-        self.check_native_asset_access("world.spawn_empty()")?;
-        let mut world = self.world_mut()?;
+    pub fn spawn_empty(pyself: PyRef<'_, Self>, _py: Python<'_>) -> PyResult<PyEntityCommands> {
+        pyself.check_native_asset_access("world.spawn_empty()")?;
+        let mut world = pyself.world_mut()?;
         let entity = world.spawn_empty().id();
-        Ok(PyEntityCommands::with_world(entity, self))
+        drop(world);
+        Ok(PyEntityCommands::with_world(entity, pyself))
     }
 
     #[pyo3(signature = (*components))]
-    pub fn spawn(&self, py: Python, components: &Bound<'_, PyTuple>) -> PyResult<PyEntityCommands> {
-        self.check_valid()?;
+    pub fn spawn(
+        pyself: PyRef<'_, Self>,
+        py: Python,
+        components: &Bound<'_, PyTuple>,
+    ) -> PyResult<PyEntityCommands> {
+        pyself.check_valid()?;
         let components = crate::ecs::commands::normalize_spawn_components(components)?;
         crate::ecs::commands::reject_resource_spawn_components(py, &components)?;
         crate::ecs::commands::validate_component_bundle(py, &components)?;
-        self.check_native_asset_access("world.spawn()")?;
+        pyself.check_native_asset_access("world.spawn()")?;
 
-        let entity_id = self.world_mut()?.spawn_empty().id();
+        let entity_id = pyself.world_mut()?.spawn_empty().id();
 
         // Create a temporary PyCommands wrapper around this world to reuse component insertion logic
-        let world_ptr = self.world_ptr();
-        let validity = self.validity.clone().unwrap_or_default();
+        let world_ptr = pyself.world_ptr();
+        let validity = pyself.validity.clone().unwrap_or_default();
 
         // SAFETY: We're creating a temporary PyCommands that will be used immediately
         // and dropped before returning, so the world pointer remains valid
@@ -551,7 +634,7 @@ impl PyWorld {
             &components,
         )?;
 
-        Ok(PyEntityCommands::with_world(entity_id, self))
+        Ok(PyEntityCommands::with_world(entity_id, pyself))
     }
 
     /// Despawn an entity
@@ -783,14 +866,18 @@ impl PyWorld {
             .collect())
     }
 
-    pub fn entity(&self, entity: &Bound<'_, PyAny>) -> PyResult<PyEntityCommands> {
+    pub fn entity(
+        pyself: PyRef<'_, Self>,
+        entity: &Bound<'_, PyAny>,
+    ) -> PyResult<PyEntityCommands> {
         let entity = &extract_entity_from_any(entity)?;
-        self.check_valid()?;
-        let world = self.world_mut()?;
+        pyself.check_valid()?;
+        let world = pyself.world_mut()?;
         world.get_entity(entity.0).map_err(|_| {
             PyRuntimeError::new_err(pybevy_core::public_error::entity_does_not_exist(entity.0))
         })?;
-        Ok(PyEntityCommands::with_world(entity.0, self))
+        drop(world);
+        Ok(PyEntityCommands::with_world(entity.0, pyself))
     }
 
     pub fn query(&self, py: Python, param: PyQueryParam) -> PyResult<PyQueryIter> {
@@ -868,21 +955,21 @@ impl PyWorld {
                 if let Some(bridge) =
                     pybevy_core::registry::global_registry::get_bridge_by_py_type(type_ptr)
                 {
-                    let world = unsafe { &mut *self.world_ptr() };
-                    let component_id = bridge.register(world);
+                    let mut world = self.world_mut()?;
+                    let component_id = bridge.register(&mut world);
                     Ok(Some(PyComponentId(component_id)))
                 } else {
                     Ok(None)
                 }
             }
             PyComponentType::Resource(type_ptr) => {
-                let world = unsafe { &mut *self.world_ptr() };
+                let mut world = self.world_mut()?;
                 let component_id = if let Some(bridge) =
                     pybevy_core::registry::global_registry::get_resource_bridge_by_py_type(type_ptr)
                 {
-                    bridge.register_resource_id(world)
+                    bridge.register_resource_id(&mut world)
                 } else {
-                    register_custom_resource(world, type_ptr, py)
+                    register_custom_resource(&mut world, type_ptr, py)
                 };
                 Ok(Some(PyComponentId(component_id)))
             }
@@ -1032,7 +1119,8 @@ impl PyWorld {
             // Cast to usize to cross the GIL boundary (raw pointers aren't Ungil).
             // SAFETY: we have exclusive World access (SystemStateFlags::EXCLUSIVE)
             // and the pointer is valid for the system's lifetime (ValidityFlag).
-            let world_addr = &mut *self.world_mut()? as *mut World as usize;
+            let mut world = self.world_mut()?;
+            let world_addr = &mut *world as *mut World as usize;
             let _suspension = self
                 .validity
                 .as_ref()
@@ -1043,6 +1131,7 @@ impl PyWorld {
             // this exclusive system holds the GIL, but inner Python systems
             // spawned by run_schedule() need to acquire it.
             py.detach(move || {
+                // SAFETY: the retained mutation guard excludes traversal until execution ends.
                 let world = unsafe { &mut *(world_addr as *mut World) };
                 stage.run_on_world(world);
                 Ok::<(), PyErr>(())

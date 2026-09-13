@@ -41,8 +41,10 @@ use pyo3::{
 
 use super::asset_type::PyAssetTypeParam;
 use crate::ecs::{
+    deferred_drop::WorldMutGuard,
     helpers::validity_guard::{AccessMode, ValidityFlag},
     resource::PyResource,
+    world_gc::WorldGcState,
 };
 
 /// Wrapper for Bevy's Assets<T> resource providing Python access to asset collections.
@@ -57,6 +59,7 @@ pub struct PyAssets {
     /// World cell (lifetime-erased), valid only while the validity flag is active.
     /// Used only to reach the declared `Assets<T>` resource through the AssetBridge.
     cell: UnsafeWorldCell<'static>,
+    gc_state: Option<WorldGcState>,
 }
 
 fn asset_runtime_py_error(error: AssetRuntimeError) -> PyErr {
@@ -123,6 +126,7 @@ impl PyAssets {
             logical_type_id,
             logical_type_name,
             cell,
+            gc_state: WorldGcState::for_world(cell.id()),
         }
     }
 
@@ -219,14 +223,15 @@ impl PyAssets {
     }
 
     /// Get a mutable reference to the world
-    fn world_mut(&mut self) -> PyResult<&mut World> {
+    fn world_mut(&mut self) -> PyResult<WorldMutGuard<'_>> {
         self.runtime.check_write().map_err(asset_runtime_py_error)?;
 
-        // SAFETY: momentary derivation of a mutable world reference, used only to reach
+        let gc = self.gc_state.as_ref().map(WorldGcState::suspend);
+        // SAFETY: traversal is suspended; momentary mutable access only reaches
         // the declared `Assets<T>` resource through the AssetBridge. `initialize`
         // declares `Assets<T>` write access; the executor prevents a concurrent access.
         // This is the same residual-pointer class as query_runtime::world_ptr.
-        Ok(unsafe { self.cell.world_mut() })
+        Ok(WorldMutGuard::with_gc(unsafe { self.cell.world_mut() }, gc))
     }
 }
 
@@ -288,8 +293,8 @@ impl PyAssets {
             )));
         }
 
-        let world = self.world_mut()?;
-        let untyped_handle = bridge.add(world, &asset, py)?;
+        let mut world = self.world_mut()?;
+        let untyped_handle = bridge.add(&mut world, &asset, py)?;
         Ok(PyHandle::from_untyped_with_logical_type(
             untyped_handle,
             bridge.py_type_ptr(),
@@ -381,8 +386,10 @@ impl PyAssets {
             drop(raw);
             self.check_no_live_asset_borrows()?;
         }
-        let world = self.world_mut()?;
-        let raw = bridge.remove_and_return(world, id.untyped(), py)?;
+        let raw = {
+            let mut world = self.world_mut()?;
+            bridge.remove_and_return(&mut world, id.untyped(), py)?
+        };
         self.wrap_result(py, raw, "from_mut")
     }
 

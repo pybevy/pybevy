@@ -27,7 +27,7 @@ use std::fmt::Debug;
 
 use bevy::{
     asset::Asset,
-    ecs::{component::ComponentId, entity::Entity, world::World},
+    ecs::{component::ComponentId, entity::Entity, world::unsafe_world_cell::UnsafeWorldCell},
 };
 
 use crate::{
@@ -196,7 +196,7 @@ impl<T: Clone> BorrowableStorage<T> for FieldStorage<T> {
     }
 
     unsafe fn revalidating_field(
-        world_ptr: *mut World,
+        world: UnsafeWorldCell<'_>,
         entity: Entity,
         component_id: ComponentId,
         offset: usize,
@@ -205,7 +205,7 @@ impl<T: Clone> BorrowableStorage<T> for FieldStorage<T> {
         Self {
             // SAFETY: forwards this constructor's contract unchanged
             inner: FieldStorageInner::Revalidating(Box::new(unsafe {
-                RevalidatingField::new(world_ptr, entity, component_id, offset, validity)
+                RevalidatingField::new(world, entity, component_id, offset, validity)
             })),
         }
     }
@@ -532,7 +532,7 @@ impl<T: Clone> FieldStorage<T> {
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
-    use bevy::ecs::change_detection::DetectChangesMut;
+    use bevy::ecs::{change_detection::DetectChangesMut, world::World};
 
     use super::*;
     use crate::validity_guard::{AccessMode, ValidityFlag, ValidityGuard};
@@ -785,11 +785,11 @@ mod tests {
         let mut world = World::new();
         let cid = world.register_component::<StringHolder>();
         let e = world.spawn(StringHolder { text: "hi".into() }).id();
-        let world_ptr: *mut World = &mut world;
+        let cell = world.as_unsafe_world_cell();
 
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
         let comp =
-            unsafe { ComponentStorage::<StringHolder>::revalidating(world_ptr, e, cid, validity) };
+            unsafe { ComponentStorage::<StringHolder>::revalidating(cell, e, cid, validity) };
         // Non-Copy field reached from a re-resolving component: itself re-resolves.
         let mut field: FieldStorage<String> = comp.borrow_field(|c| &c.text).unwrap();
         assert!(field.is_borrowed());
@@ -875,13 +875,13 @@ mod tests {
 
         let cid = world.register_component::<StringHolder>();
         let e = world.spawn(StringHolder { text: "hi".into() }).id();
-        let world_ptr: *mut World = &mut world;
+        let cell = world.as_unsafe_world_cell();
 
         let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
         // text is the first field of a #[repr(C)] struct, so offset 0.
         let mut storage: FieldStorage<String> = unsafe {
             <FieldStorage<String> as BorrowableStorage<String>>::revalidating_field(
-                world_ptr, e, cid, 0, validity,
+                cell, e, cid, 0, validity,
             )
         };
         assert!(storage.as_ref().is_ok());
