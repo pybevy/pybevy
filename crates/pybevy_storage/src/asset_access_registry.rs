@@ -580,6 +580,7 @@ impl AssetResourceState {
     }
 
     #[cfg(test)]
+    #[cfg_attr(coverage_nightly, coverage(off))]
     pub(crate) fn view_registry_metrics(&self) -> (usize, usize) {
         let registry = self
             .views
@@ -589,12 +590,14 @@ impl AssetResourceState {
     }
 
     #[cfg(test)]
+    #[cfg_attr(coverage_nightly, coverage(off))]
     pub(crate) fn poison_view_registry(&self) {
         let _guard = self.views.lock().expect("first lock succeeds");
         panic!("poison the registry");
     }
 
     #[cfg(test)]
+    #[cfg_attr(coverage_nightly, coverage(off))]
     fn set_epoch(&self, epoch: u64) {
         self.epoch.store(epoch, Ordering::Release);
     }
@@ -730,6 +733,7 @@ impl AssetAccessRegistry {
     }
 
     #[cfg(test)]
+    #[cfg_attr(coverage_nightly, coverage(off))]
     fn scope_count(&self, type_id: TypeId) -> usize {
         let states = self
             .states
@@ -752,6 +756,7 @@ pub fn ensure_asset_access_registry(world: &mut World) {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use std::{sync::Barrier, thread};
 

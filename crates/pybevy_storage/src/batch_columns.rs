@@ -1,13 +1,13 @@
-//! Interpreter-neutral `from_numpy` batch-column validation. Shared by the pyo3
+//! Interpreter-neutral `batch` batch-column validation. Shared by the pyo3
 //! component macro and the RustPython adapter so shape rules and error strings
 //! cannot drift (the "validation, IR, registries, and error definitions" the
 //! Backend Unification rules keep neutral). The data work (numpy
 //! `reshape`/`astype` on pyo3; `astype`/`to_scalars` on RP2) stays in the
-//! adapters; this module owns only shape/count validation and the error text.
+//! adapters; this module owns shape/count validation and declared value constraints.
 
 use std::fmt;
 
-/// Target dtype of one `from_numpy` column. Covers every
+/// Target dtype of one `batch` column. Covers every
 /// `pybevy_core::component_layout::PrimitiveType` payload (Vec3/Vec2 lower to
 /// `F32` with `cols = 3/2`) plus the native f32 contract and the Visibility bool
 /// column.
@@ -66,7 +66,7 @@ impl ColumnData {
     }
 }
 
-/// One normalized `from_numpy` column: contiguous row-major data with
+/// One normalized `batch` column: contiguous row-major data with
 /// `rows = data.len() / cols`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BatchColumn {
@@ -81,7 +81,7 @@ impl BatchColumn {
     }
 
     /// The payload as an `f32` slice, `Some` only for `ColumnData::F32`. Native
-    /// macro `from_numpy` columns are always f32; this is their fast accessor.
+    /// macro `batch` columns are always f32; this is their fast accessor.
     pub fn as_f32(&self) -> Option<&[f32]> {
         match &self.data {
             ColumnData::F32(v) => Some(v),
@@ -90,10 +90,13 @@ impl BatchColumn {
     }
 }
 
-/// Native macro `from_numpy` column validation errors. `Display` reproduces the
+/// Native macro `batch` column validation errors. `Display` reproduces the
 /// pyo3 macro's strings verbatim so no observable CPython message changes.
 #[derive(Debug, Clone, PartialEq)]
 pub enum BatchColumnError {
+    Constraint {
+        message: &'static str,
+    },
     UnknownField {
         field: String,
         valid: String,
@@ -131,6 +134,7 @@ pub enum BatchColumnError {
 impl fmt::Display for BatchColumnError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Constraint { message } => f.write_str(message),
             BatchColumnError::UnknownField { field, valid } => {
                 write!(f, "Unknown field '{field}'. Valid fields: {valid}")
             }
@@ -160,7 +164,7 @@ impl fmt::Display for BatchColumnError {
                 "Array length mismatch: '{first_field}' has {first_rows} rows but '{field}' has {rows}"
             ),
             BatchColumnError::NoFields => {
-                write!(f, "from_numpy() requires at least one field array")
+                write!(f, "batch() requires at least one field array")
             }
         }
     }
@@ -169,12 +173,20 @@ impl fmt::Display for BatchColumnError {
 impl std::error::Error for BatchColumnError {}
 
 /// Value-domain constraints attached to a native component batch field.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BatchValueConstraint {
     Finite,
+    Range {
+        start: f32,
+        end: f32,
+        message: &'static str,
+    },
+    NonNegative {
+        message: &'static str,
+    },
 }
 
-/// Custom `@component` `from_numpy` validation errors. `Display` reproduces the
+/// Custom `@component` `batch` validation errors. `Display` reproduces the
 /// pyo3 `src/ecs/custom_batch.rs` strings verbatim. Kept SEPARATE from
 /// `BatchColumnError` (note "elements" vs "rows" in the mismatch, and the
 /// composite messages) so neither backend can drift.
@@ -236,11 +248,11 @@ impl fmt::Display for CustomColumnError {
             // The `\` continuation in the pyo3 source renders as a single space.
             CustomColumnError::PyObjectStorage { class_name } => write!(
                 f,
-                "from_numpy() is not supported for components with storage=\"python\". \
+                "batch() is not supported for components with storage=\"python\". \
                  '{class_name}' uses PyObject storage which cannot be batch-spawned from numpy arrays."
             ),
             CustomColumnError::NoKwargs => {
-                write!(f, "from_numpy() requires at least one keyword argument")
+                write!(f, "batch() requires at least one keyword argument")
             }
             CustomColumnError::UnknownField {
                 field,
@@ -312,6 +324,20 @@ pub fn validate_f32_values(
                     field: field.to_string(),
                 });
             }
+            BatchValueConstraint::Range {
+                start,
+                end,
+                message,
+            } => {
+                if values.iter().any(|value| !(*start..*end).contains(value)) {
+                    return Err(BatchColumnError::Constraint { message });
+                }
+            }
+            BatchValueConstraint::NonNegative { message } => {
+                if values.iter().any(|value| value.is_nan() || *value < 0.0) {
+                    return Err(BatchColumnError::Constraint { message });
+                }
+            }
             BatchValueConstraint::Finite => {}
         }
     }
@@ -365,10 +391,10 @@ pub fn plan_column(
 }
 
 /// Which validation rule set (and error strings) a column obeys. The native
-/// macro `from_numpy` and the custom `@component` `from_numpy` have different
+/// macro `batch` and the custom `@component` `batch` have different
 /// shape rules and messages, so the shared planner is an enum over both.
 pub enum ColumnShape<'a> {
-    /// Native macro `from_numpy` rules (`plan_column` + `BatchColumnError`).
+    /// Native macro `batch` rules (`plan_column` + `BatchColumnError`).
     Native { field: &'a str, cols: usize },
     /// Custom `@component` scalar field: 1-D only, custom-batch message.
     CustomScalar { field: &'a str },
@@ -532,6 +558,7 @@ impl CustomCountAgreement {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -582,6 +609,39 @@ mod tests {
     }
 
     #[test]
+    fn range_and_nonnegative_columns_follow_scalar_domains() {
+        let range = [BatchValueConstraint::Range {
+            start: 0.0,
+            end: 1.0,
+            message: "overlap must be in [0, 1)",
+        }];
+        assert_eq!(validate_f32_values("overlap", &[0.0, 0.5], &range), Ok(()));
+        for value in [-1.0, 1.0, f32::NAN, f32::INFINITY] {
+            assert_eq!(
+                validate_f32_values("overlap", &[value], &range),
+                Err(BatchColumnError::Constraint {
+                    message: "overlap must be in [0, 1)"
+                }),
+            );
+        }
+        let nonnegative = [BatchValueConstraint::NonNegative {
+            message: "distance must be non-negative",
+        }];
+        assert_eq!(
+            validate_f32_values("distance", &[0.0, f32::INFINITY], &nonnegative),
+            Ok(())
+        );
+        for value in [-1.0, f32::NAN] {
+            assert_eq!(
+                validate_f32_values("distance", &[value], &nonnegative),
+                Err(BatchColumnError::Constraint {
+                    message: "distance must be non-negative"
+                }),
+            );
+        }
+    }
+
+    #[test]
     fn finite_column_validation() {
         let constraints = [BatchValueConstraint::Finite];
         assert!(validate_f32_values("translation", &[0.0, -1.0, 1.0e20], &constraints).is_ok());
@@ -612,7 +672,7 @@ mod tests {
     fn no_fields_message() {
         assert_eq!(
             BatchColumnError::NoFields.to_string(),
-            "from_numpy() requires at least one field array"
+            "batch() requires at least one field array"
         );
     }
 
@@ -734,7 +794,7 @@ mod tests {
                 class_name: "Foo".into()
             }
             .to_string(),
-            "from_numpy() is not supported for components with storage=\"python\". \
+            "batch() is not supported for components with storage=\"python\". \
              'Foo' uses PyObject storage which cannot be batch-spawned from numpy arrays."
         );
         assert!(
@@ -745,7 +805,7 @@ mod tests {
         );
         assert_eq!(
             CustomColumnError::NoKwargs.to_string(),
-            "from_numpy() requires at least one keyword argument"
+            "batch() requires at least one keyword argument"
         );
         assert!(!CustomColumnError::NoKwargs.is_type_error());
         assert_eq!(

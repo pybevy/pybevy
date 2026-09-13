@@ -134,6 +134,7 @@ impl std::fmt::Debug for ViewBridge {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

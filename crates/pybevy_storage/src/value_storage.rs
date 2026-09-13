@@ -266,7 +266,10 @@ impl<T: Copy> ValueStorage<T> {
         match &mut self.inner {
             ValueStorageInner::Owned(value) => Ok(StorageMut::Direct(value)),
             ValueStorageInner::OwnedReadOnly(_) => Err(StorageError::OwnedFieldReadOnly),
-            ValueStorageInner::BorrowedRef(_) => Err(StorageError::ReadOnly),
+            ValueStorageInner::BorrowedRef(borrow) => {
+                borrow.validity().check_read()?;
+                Err(StorageError::ReadOnly)
+            }
             ValueStorageInner::BorrowedMut(b) => b.get_mut().map(StorageMut::Direct),
             ValueStorageInner::Revalidating(f) => f.get_mut::<T>().map(StorageMut::Direct),
             ValueStorageInner::Source(source) => source.resolve_mut().map(StorageMut::Source),
@@ -275,6 +278,7 @@ impl<T: Copy> ValueStorage<T> {
 
     /// Check if this storage contains an owned value (including read-only snapshots)
     #[cfg(test)]
+    #[cfg_attr(coverage_nightly, coverage(off))]
     pub fn is_owned(&self) -> bool {
         matches!(
             self.inner,
@@ -284,6 +288,7 @@ impl<T: Copy> ValueStorage<T> {
 
     /// Check if this storage contains a borrowed value
     #[cfg(test)]
+    #[cfg_attr(coverage_nightly, coverage(off))]
     pub fn is_borrowed(&self) -> bool {
         matches!(
             self.inner,
@@ -296,6 +301,7 @@ impl<T: Copy> ValueStorage<T> {
 
     /// Check if this storage is a read-only snapshot
     #[cfg(test)]
+    #[cfg_attr(coverage_nightly, coverage(off))]
     pub fn is_owned_read_only(&self) -> bool {
         matches!(self.inner, ValueStorageInner::OwnedReadOnly(_))
     }
@@ -422,6 +428,7 @@ impl<T: Copy> ValueStorage<T> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use crate::validity_guard::{AccessMode, ValidityFlag, ValidityGuard};

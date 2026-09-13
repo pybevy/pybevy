@@ -10,8 +10,10 @@
 //! - `ResourceStorage<T>` - Generic storage for ECS resources
 //! - `AssetStorage<T>` - Generic storage for Bevy assets
 //! - `BorrowableStorage` / `FromBorrowedStorage` - Traits for borrowed field access
+//! - `OwnedCell<T>` - Heap cell for owned values that lend out their address
 //! - `AppStoreCore` - Backend-neutral App identity and ownership transitions
 
+#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 pub mod app_store;
 pub mod asset_access_registry;
 pub mod asset_path;
@@ -19,9 +21,11 @@ pub mod asset_runtime;
 pub mod batch_columns;
 pub mod borrowed;
 pub mod component_change;
+pub mod conflict_message;
 pub mod field_storage;
 pub mod filtered_entity_access;
 pub mod logical_type;
+pub mod owned_cell;
 pub mod plugin_group;
 pub mod pyasset;
 pub mod pycomponent;
@@ -55,6 +59,7 @@ pub use component_change::ComponentWriteContext;
 pub use field_storage::{FieldStorage, FieldStorageInner};
 pub use filtered_entity_access::FilteredEntityAccess;
 pub use logical_type::{LogicalTypeId, LogicalTypeMap};
+pub use owned_cell::OwnedCell;
 pub use plugin_group::{DefaultPluginKind, PluginGroupAddition, PluginGroupPlacement};
 pub use pyasset::{AssetBorrowCounter, AssetStorage};
 pub use pycomponent::{ComponentStorage, ComponentStorageInner};
@@ -62,7 +67,9 @@ pub use pyresource::{ResourceStorage, ResourceStorageInner};
 pub use storage_access::{StorageMut, StorageRef};
 pub use storage_error::StorageError;
 pub use storage_traits::{BorrowableStorage, FromBorrowedStorage, computed_owned};
-pub use validity_guard::{AccessMode, ValidityFlag, ValidityFlagWithMode, ValidityGuard};
+pub use validity_guard::{
+    AccessMode, ValidityFlag, ValidityFlagWithMode, ValidityGuard, ValiditySuspension,
+};
 pub use value_storage::{ValueStorage, ValueStorageInner};
 pub use view_bridge::{FieldOffset, FieldType, ViewBridge};
 

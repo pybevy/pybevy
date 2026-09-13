@@ -104,6 +104,7 @@ impl<'w, 's> From<FilteredEntityMut<'w, 's>> for FilteredEntityAccess<'w, 's> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use bevy::ecs::{component::Component, query::QueryBuilder, world::World};
 

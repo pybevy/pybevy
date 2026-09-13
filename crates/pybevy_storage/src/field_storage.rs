@@ -279,7 +279,10 @@ impl<T: Clone> FieldStorage<T> {
         match &mut self.inner {
             FieldStorageInner::Owned { data, .. } => Ok(StorageMut::Direct(&mut **data)),
             FieldStorageInner::OwnedReadOnly { .. } => Err(StorageError::OwnedFieldReadOnly),
-            FieldStorageInner::BorrowedRef(_) => Err(StorageError::ReadOnly),
+            FieldStorageInner::BorrowedRef(borrow) => {
+                borrow.validity().check_read()?;
+                Err(StorageError::ReadOnly)
+            }
             FieldStorageInner::BorrowedMut(b) => b.get_mut().map(StorageMut::Direct),
             FieldStorageInner::Revalidating(f) => f.get_mut::<T>().map(StorageMut::Direct),
             FieldStorageInner::Source(source) => source.resolve_mut().map(StorageMut::Source),
@@ -498,6 +501,7 @@ impl<T: Clone> FieldStorage<T> {
 
     /// Check if this storage contains an owned value (including read-only snapshots)
     #[cfg(test)]
+    #[cfg_attr(coverage_nightly, coverage(off))]
     pub fn is_owned(&self) -> bool {
         matches!(
             self.inner,
@@ -506,6 +510,7 @@ impl<T: Clone> FieldStorage<T> {
     }
 
     #[cfg(test)]
+    #[cfg_attr(coverage_nightly, coverage(off))]
     pub fn is_borrowed(&self) -> bool {
         matches!(
             self.inner,
@@ -518,12 +523,14 @@ impl<T: Clone> FieldStorage<T> {
 
     /// Check if this storage is a read-only snapshot
     #[cfg(test)]
+    #[cfg_attr(coverage_nightly, coverage(off))]
     pub fn is_owned_read_only(&self) -> bool {
         matches!(self.inner, FieldStorageInner::OwnedReadOnly { .. })
     }
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use bevy::ecs::change_detection::DetectChangesMut;
 
@@ -789,7 +796,7 @@ mod tests {
         assert_eq!(field.as_ref().unwrap(), "hi");
 
         world.entity_mut(e).insert(Tag); // archetype move
-        field.as_mut().unwrap().push_str("!");
+        field.as_mut().unwrap().push('!');
         assert_eq!(world.entity(e).get::<StringHolder>().unwrap().text, "hi!");
 
         world.despawn(e);

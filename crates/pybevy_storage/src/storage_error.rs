@@ -26,6 +26,10 @@ const ERR_CROSS_THREAD: &str = "PyBevy system parameter used from a different th
      them in a global read by another system running in parallel, or hand them \
      to a thread you spawned.";
 
+pub const NESTED_EXECUTION: &str = "PyBevy outer system parameter accessed during nested execution. \
+    Use the parameters injected into the inner system or observer; outer parameters \
+    become available again after the nested call returns.";
+
 /// Errors returned by storage operations.
 ///
 /// Each variant maps to a specific Python exception via `From<StorageError> for PyErr`.
@@ -44,10 +48,13 @@ pub enum StorageError {
     /// system on a worker thread cannot cause a use-after-free / data race.
     CrossThreadAccess,
 
+    /// An ancestor callback's parameter was used during nested execution.
+    NestedExecution,
+
     /// Write on read-only component (`RuntimeError`)
     ReadOnly,
 
-    /// Asset already consumed by `Assets<T>.add()` (`RuntimeError`)
+    /// Owned asset already consumed (RuntimeError).
     AssetConsumed,
 
     /// Can't take ownership of borrowed asset (`RuntimeError`)
@@ -84,6 +91,19 @@ pub enum StorageError {
     VariantChanged(&'static str),
 }
 
+/// Deepest expression tree the Python-to-Rust conversion accepts.
+///
+/// The conversion, the bytecode compiler and the tree's own drop glue each
+/// recurse once per level, and a Python system can run on a task-pool worker
+/// whose stack is far smaller than the main thread's.
+pub const EXPRESSION_MAX_DEPTH: usize = 32;
+
+pub fn expression_too_deep() -> String {
+    format!(
+        "expression nesting is limited to {EXPRESSION_MAX_DEPTH} levels; assign an intermediate result to a column and build on that instead"
+    )
+}
+
 pub fn enum_variant_changed(variant: impl fmt::Display) -> String {
     format!(
         "{variant} wrapper no longer matches the value's current variant; fetch it again to observe the new variant"
@@ -91,20 +111,21 @@ pub fn enum_variant_changed(variant: impl fmt::Display) -> String {
 }
 
 impl fmt::Display for StorageError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             StorageError::InvalidAccess => f.write_str(ERR_OUTSIDE_SYSTEM),
             StorageError::EntityUnavailable => f.write_str(
                 "Component no longer available (entity despawned or component removed).",
             ),
             StorageError::CrossThreadAccess => f.write_str(ERR_CROSS_THREAD),
+            StorageError::NestedExecution => f.write_str(NESTED_EXECUTION),
             StorageError::ReadOnly => f.write_str(
                 "Cannot modify read-only component. \
                  Use Query[Mut[ComponentType]] instead of Query[ComponentType] for mutable access.",
             ),
             StorageError::AssetConsumed => f.write_str(
-                "Asset was already consumed (added to Assets<T>). \
-                 Create a new asset instance instead.",
+                "Asset was already consumed: it was added to Assets<T>, or passed as \
+                 a base= material. Create a new asset instance instead.",
             ),
             StorageError::AssetBorrowed => f.write_str(
                 "Cannot take ownership of borrowed asset. \
@@ -143,7 +164,33 @@ impl fmt::Display for StorageError {
 
 impl std::error::Error for StorageError {}
 
+#[cfg(feature = "pyo3")]
+impl From<StorageError> for PyErr {
+    fn from(err: StorageError) -> Self {
+        match err {
+            StorageError::InvalidAccess
+            | StorageError::EntityUnavailable
+            | StorageError::CrossThreadAccess
+            | StorageError::NestedExecution
+            | StorageError::ReadOnly
+            | StorageError::OwnedFieldReadOnly
+            | StorageError::AssetConsumed
+            | StorageError::AssetBorrowed
+            | StorageError::AssetReadOnly
+            | StorageError::AssetUnavailable
+            | StorageError::AssetViewsLive
+            | StorageError::AssetAccessConflict
+            | StorageError::VariantChanged(_) => PyRuntimeError::new_err(err.to_string()),
+            StorageError::IndexOutOfRange | StorageError::EmptyList => {
+                PyIndexError::new_err(err.to_string())
+            }
+            StorageError::KeyNotFound(_) => PyKeyError::new_err(err.to_string()),
+        }
+    }
+}
+
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -200,28 +247,46 @@ mod tests {
         let err = StorageError::EmptyList;
         assert_eq!(err.to_string(), "pop from empty list");
     }
-}
 
-#[cfg(feature = "pyo3")]
-impl From<StorageError> for PyErr {
-    fn from(err: StorageError) -> Self {
-        match err {
-            StorageError::InvalidAccess
-            | StorageError::EntityUnavailable
-            | StorageError::CrossThreadAccess
-            | StorageError::ReadOnly
-            | StorageError::OwnedFieldReadOnly
-            | StorageError::AssetConsumed
-            | StorageError::AssetBorrowed
-            | StorageError::AssetReadOnly
-            | StorageError::AssetUnavailable
-            | StorageError::AssetViewsLive
-            | StorageError::AssetAccessConflict
-            | StorageError::VariantChanged(_) => PyRuntimeError::new_err(err.to_string()),
-            StorageError::IndexOutOfRange | StorageError::EmptyList => {
-                PyIndexError::new_err(err.to_string())
-            }
-            StorageError::KeyNotFound(_) => PyKeyError::new_err(err.to_string()),
-        }
+    #[test]
+    fn test_cross_thread_access_names_the_pinning() {
+        let err = StorageError::CrossThreadAccess;
+        assert!(err.to_string().contains("different thread"));
+    }
+
+    #[test]
+    fn test_asset_variant_messages() {
+        assert!(
+            StorageError::AssetBorrowed
+                .to_string()
+                .contains("borrowed asset")
+        );
+        assert!(
+            StorageError::AssetViewsLive
+                .to_string()
+                .contains("NumPy view")
+        );
+        assert!(
+            StorageError::AssetAccessConflict
+                .to_string()
+                .contains("Conflicting access")
+        );
+    }
+
+    #[test]
+    fn test_key_not_found_includes_the_key() {
+        let err = StorageError::KeyNotFound("speed".to_string());
+        assert!(err.to_string().contains("speed"));
+    }
+
+    #[test]
+    fn test_variant_changed_reports_the_variant() {
+        let err = StorageError::VariantChanged("Circle");
+        assert!(err.to_string().contains("Circle"));
+        assert!(err.to_string().contains("current variant"));
+        assert_eq!(
+            enum_variant_changed("Circle"),
+            "Circle wrapper no longer matches the value's current variant; fetch it again to observe the new variant"
+        );
     }
 }
