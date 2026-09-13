@@ -1,61 +1,40 @@
-use bevy::ecs::entity::Entity;
-use pybevy_core::{PyEntity, PyMessage};
+use std::time::Duration;
+
+use bevy::{
+    ecs::entity::Entity,
+    input::gamepad::{GamepadRumbleIntensity, GamepadRumbleRequest},
+};
+use pybevy_core::PyEntity;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
-#[pyclass(name = "GamepadRumbleRequest", module = "pybevy.input", extends = PyMessage, skip_from_py_object)]
-#[derive(Debug, Clone)]
-pub struct PyGamepadRumbleRequest {
-    pub duration_secs: f32,
-    pub strong_motor: f32,
-    pub weak_motor: f32,
-    pub gamepad_entity: PyEntity,
+use crate::gamepad_rumble_intensity::PyGamepadRumbleIntensity;
+
+/// Mirrors Bevy's `GamepadRumbleRequest` message enum. The base is
+/// non-constructible; both variants travel through the native
+/// `Messages<GamepadRumbleRequest>` channel.
+#[pyenum(GamepadRumbleRequest, message, writable, no_eq, no_debug)]
+#[pyclass(module = "pybevy.input", name = "GamepadRumbleRequest")]
+pub enum PyGamepadRumbleRequest {
+    #[pyo3(constructor = (*, duration, intensity, gamepad))]
+    Add {
+        duration: Duration,
+        #[py_type(PyGamepadRumbleIntensity)]
+        intensity: GamepadRumbleIntensity,
+        #[py_type(PyEntity)]
+        gamepad: Entity,
+    },
+    #[pyo3(constructor = (*, gamepad))]
+    Stop {
+        #[py_type(PyEntity)]
+        gamepad: Entity,
+    },
 }
 
-#[pymethods]
-impl PyGamepadRumbleRequest {
-    #[new]
-    #[pyo3(signature = (duration_secs, strong_motor=1.0, weak_motor=1.0, gamepad=PyEntity::from(Entity::PLACEHOLDER)))]
-    fn new(
-        duration_secs: f32,
-        strong_motor: f32,
-        weak_motor: f32,
-        gamepad: PyEntity,
-    ) -> PyClassInitializer<Self> {
-        (
-            PyGamepadRumbleRequest {
-                duration_secs,
-                strong_motor,
-                weak_motor,
-                gamepad_entity: gamepad,
-            },
-            PyMessage,
-        )
-            .into()
-    }
+impl TryFrom<&PyGamepadRumbleRequest> for GamepadRumbleRequest {
+    type Error = pyo3::PyErr;
 
-    #[getter]
-    fn duration_secs(&self) -> f32 {
-        self.duration_secs
-    }
-
-    #[getter]
-    fn strong_motor(&self) -> f32 {
-        self.strong_motor
-    }
-
-    #[getter]
-    fn weak_motor(&self) -> f32 {
-        self.weak_motor
-    }
-
-    fn gamepad(&self) -> PyEntity {
-        self.gamepad_entity
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "GamepadRumbleRequest(duration_secs={}, strong_motor={}, weak_motor={})",
-            self.duration_secs, self.strong_motor, self.weak_motor
-        )
+    fn try_from(value: &PyGamepadRumbleRequest) -> pyo3::PyResult<Self> {
+        Ok(value.inner.clone())
     }
 }

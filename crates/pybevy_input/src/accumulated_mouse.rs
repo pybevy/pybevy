@@ -62,7 +62,7 @@ impl PyAccumulatedMouseScroll {
 #[pymethods]
 impl PyAccumulatedMouseScroll {
     #[new]
-    #[pyo3(signature = (unit = PyMouseScrollUnit::Line))]
+    #[pyo3(signature = (*, unit = PyMouseScrollUnit::Line))]
     fn new(unit: PyMouseScrollUnit) -> PyClassInitializer<Self> {
         resource_initializer(
             AccumulatedMouseScroll {

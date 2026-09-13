@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use bevy::input::gamepad::{AxisSettings, ButtonAxisSettings, ButtonSettings, GamepadSettings};
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, PyComponent, public_error};
 use pybevy_macros::pycomponent;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
@@ -33,7 +33,7 @@ impl PyButtonSettings {
     pub fn new(press_threshold: f32, release_threshold: f32) -> PyResult<Self> {
         ButtonSettings::new(press_threshold, release_threshold)
             .map(|inner| PyButtonSettings { inner })
-            .map_err(|e| PyValueError::new_err(format!("{:?}", e)))
+            .map_err(|e| PyValueError::new_err(public_error::gamepad_settings_failed("button", e)))
     }
 
     #[getter]
@@ -107,7 +107,7 @@ impl PyAxisSettings {
             threshold,
         )
         .map(|inner| PyAxisSettings { inner })
-        .map_err(|e| PyValueError::new_err(format!("{:?}", e)))
+        .map_err(|e| PyValueError::new_err(public_error::gamepad_settings_failed("axis", e)))
     }
 
     #[getter]
@@ -173,7 +173,7 @@ impl From<&ButtonAxisSettings> for PyButtonAxisSettings {
 #[pymethods]
 impl PyButtonAxisSettings {
     #[new]
-    #[pyo3(signature = (high=0.95, low=0.05, threshold=0.01))]
+    #[pyo3(signature = (*, high=0.95, low=0.05, threshold=0.01))]
     pub fn new(high: f32, low: f32, threshold: f32) -> Self {
         PyButtonAxisSettings {
             inner: ButtonAxisSettings {
@@ -217,12 +217,13 @@ pub struct PyGamepadSettings {
 impl PyGamepadSettings {
     #[new]
     #[pyo3(signature = (
+        *,
         default_button_settings = None,
         default_axis_settings = None,
         default_button_axis_settings = None,
         button_settings = None,
         axis_settings = None,
-        button_axis_settings = None,
+        button_axis_settings = None
     ))]
     pub fn new(
         default_button_settings: Option<&PyButtonSettings>,

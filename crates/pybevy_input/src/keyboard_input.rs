@@ -35,7 +35,7 @@ impl PyKeyboardInput {
 #[pymethods]
 impl PyKeyboardInput {
     #[new]
-    #[pyo3(signature = (key_code, logical_key, state, text=None, repeat=false, window=None))]
+    #[pyo3(signature = (*, key_code, logical_key, state, text=None, repeat=false, window=None))]
     fn new(
         key_code: &PyKeyCode,
         logical_key: PyKey,

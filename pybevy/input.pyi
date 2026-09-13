@@ -1,5 +1,6 @@
 """Input handling for PyBevy - keyboard, mouse, and gamepad input."""
 
+from datetime import timedelta
 from typing import ClassVar, Final, Generic, Literal, TypeVar
 
 from pybevy.app import App, Plugin
@@ -1917,12 +1918,13 @@ class KeyboardInput(Message):
 
     def __init__(
         self,
+        *,
         key_code: KeyCode,
         logical_key: Key,
         state: ButtonState,
         text: str | None = None,
         repeat: bool = False,
-        window: Entity = ...,
+        window: Entity = ...
     ) -> None: ...
     @property
     def key_code(self) -> KeyCode:
@@ -1969,7 +1971,11 @@ class MouseButtonInput(Message):
     """
 
     def __init__(
-        self, button: MouseButton, state: ButtonState, window: Entity = ...
+        self,
+        *,
+        button: MouseButton,
+        state: ButtonState,
+        window: Entity = ...
     ) -> None: ...
     @property
     def button(self) -> MouseButton:
@@ -1998,7 +2004,7 @@ class MouseMotion(Message):
         ```
     """
 
-    def __init__(self, delta: Vec2) -> None: ...
+    def __init__(self, *, delta: Vec2) -> None: ...
     @property
     def delta(self) -> Vec2:
         """Mouse movement delta as a Vec2."""
@@ -2034,7 +2040,12 @@ class MouseWheel(Message):
     """
 
     def __init__(
-        self, x: float, y: float, unit: MouseScrollUnit = ..., window: Entity = ...
+        self,
+        *,
+        unit: MouseScrollUnit = ...,
+        x: float,
+        y: float,
+        window: Entity = ...
     ) -> None: ...
     @property
     def x(self) -> float:
@@ -2312,12 +2323,7 @@ class GamepadButtonChangedEvent(Message):
     """
 
     def __init__(
-        self,
-        button: GamepadButton,
-        value: float,
-        *,
-        state: ButtonState = ...,
-        entity: Entity | None = None,
+        self, entity: Entity | None, button: GamepadButton, state: ButtonState, value: float
     ) -> None: ...
     @property
     def entity(self) -> Entity:
@@ -2351,7 +2357,7 @@ class GamepadAxisChangedEvent(Message):
     """
 
     def __init__(
-        self, axis: GamepadAxis, value: float, *, entity: Entity | None = None
+        self, entity: Entity | None, axis: GamepadAxis, value: float
     ) -> None: ...
     @property
     def entity(self) -> Entity:
@@ -2393,7 +2399,7 @@ class GamepadConnection:
         product_id: int | None
 
         def __init__(
-            self, name: str, vendor_id: int | None, product_id: int | None
+            self, *, name: str, vendor_id: int | None, product_id: int | None
         ) -> None: ...
 
     class Disconnected(GamepadConnection):
@@ -2471,11 +2477,12 @@ class TouchInput(Message):
 
     def __init__(
         self,
+        *,
         phase: TouchPhase,
         position: Vec2,
-        id: int,
-        force: float | None = None,
         window: Entity = ...,
+        force: float | None = None,
+        id: int
     ) -> None: ...
     @property
     def phase(self) -> TouchPhase:
@@ -2523,7 +2530,7 @@ class AccumulatedMouseMotion(Resource):
 class AccumulatedMouseScroll(Resource):
     """Resource that accumulates mouse scroll delta per frame."""
 
-    def __init__(self, unit: MouseScrollUnit = ...) -> None: ...
+    def __init__(self, *, unit: MouseScrollUnit = ...) -> None: ...
     @property
     def delta(self) -> Vec2:
         """Accumulated scroll this frame as a Vec2."""
@@ -2541,8 +2548,9 @@ class GamepadRumbleIntensity:
 
     def __init__(
         self,
+        *,
         strong_motor: float = 1.0,
-        weak_motor: float = 1.0,
+        weak_motor: float = 1.0
     ) -> None: ...
     @property
     def strong_motor(self) -> float:
@@ -2576,7 +2584,11 @@ class DoubleTapGesture(Message):
 class PanGesture(Message):
     """Pan gesture event."""
 
-    def __init__(self, x: float, y: float) -> None: ...
+    def __init__(self, value: Vec2) -> None: ...
+    @property
+    def value(self) -> Vec2:
+        """Pan delta as a Vec2."""
+
     @property
     def x(self) -> float:
         """Horizontal pan delta."""
@@ -2593,7 +2605,7 @@ class GamepadButtonStateChangedEvent(Message):
     """Gamepad button state change event."""
 
     def __init__(
-        self, button: GamepadButton, state: ButtonState, *, entity: Entity | None = None
+        self, entity: Entity | None, button: GamepadButton, state: ButtonState
     ) -> None: ...
     @property
     def entity(self) -> Entity:
@@ -2667,48 +2679,31 @@ class KeyboardFocusLost(Message):
     def __init__(self) -> None: ...
 
 class GamepadRumbleRequest(Message):
-    """
-    Gamepad rumble/haptic feedback request message.
+    """Request rumble/haptic feedback on a connected gamepad.
 
-    Send this message to request haptic feedback on connected gamepads.
-    Gamepads have two motors: strong (low-frequency) and weak (high-frequency).
-
-    Example:
-        ```python
-        def trigger_rumble(writer: MessageWriter[GamepadRumbleRequest]) -> None:
-            # Strong rumble on both motors for 0.5 seconds
-            writer.write(GamepadRumbleRequest(duration_secs=0.5))
-
-            # Custom motor intensities
-            writer.write(GamepadRumbleRequest(
-                duration_secs=0.3,
-                strong_motor=1.0,
-                weak_motor=0.5
-            ))
-        ```
+    The base is non-constructible; construct `Add` or `Stop` variants. Send
+    through `MessageWriter[GamepadRumbleRequest]`.
     """
 
-    def __init__(
-        self,
-        duration_secs: float,
-        strong_motor: float = 1.0,
-        weak_motor: float = 1.0,
-        gamepad: Entity = ...,
-    ) -> None: ...
-    @property
-    def duration_secs(self) -> float:
-        """Duration of the rumble effect in seconds."""
+    class Add(GamepadRumbleRequest):
+        __match_args__: ClassVar[tuple[Literal["duration"], Literal["intensity"], Literal["gamepad"]]]
 
-    @property
-    def strong_motor(self) -> float:
-        """Intensity of the strong (low-frequency) motor (0.0-1.0)."""
+        def __init__(
+            self,
+            *,
+            duration: timedelta,
+            intensity: GamepadRumbleIntensity,
+            gamepad: Entity,
+        ) -> None: ...
+        duration: timedelta
+        intensity: GamepadRumbleIntensity
+        gamepad: Entity
 
-    @property
-    def weak_motor(self) -> float:
-        """Intensity of the weak (high-frequency) motor (0.0-1.0)."""
+    class Stop(GamepadRumbleRequest):
+        __match_args__: ClassVar[tuple[Literal["gamepad"]]]
 
-    def gamepad(self) -> Entity:
-        """Get the Entity associated with this request."""
+        def __init__(self, *, gamepad: Entity) -> None: ...
+        gamepad: Entity
 
 class Touch:
     """
@@ -2718,7 +2713,6 @@ class Touch:
     starting position, previous position, and optional pressure data.
     """
 
-    def __init__(self, id: int, position: Vec2) -> None: ...
     @property
     def id(self) -> int:
         """Unique identifier for this touch/finger."""
@@ -2932,10 +2926,17 @@ class ButtonAxisSettings:
     """Button axis settings for analog button values.
 
     Controls how analog button values are rounded.
+
+    Bevy does not validate these fields; a high below low, or a non-finite
+    value, is accepted.
     """
 
     def __init__(
-        self, high: float = 0.95, low: float = 0.05, threshold: float = 0.01
+        self,
+        *,
+        high: float = 0.95,
+        low: float = 0.05,
+        threshold: float = 0.01
     ) -> None:
         """Create button axis settings.
 
@@ -2966,12 +2967,13 @@ class GamepadSettings(Component):
 
     def __init__(
         self,
+        *,
         default_button_settings: ButtonSettings | None = None,
         default_axis_settings: AxisSettings | None = None,
         default_button_axis_settings: ButtonAxisSettings | None = None,
         button_settings: dict[GamepadButton, ButtonSettings] | None = None,
         axis_settings: dict[GamepadAxis, AxisSettings] | None = None,
-        button_axis_settings: dict[GamepadButton, ButtonAxisSettings] | None = None,
+        button_axis_settings: dict[GamepadButton, ButtonAxisSettings] | None = None
     ) -> None: ...
     @property
     def default_button_settings(self) -> ButtonSettings:

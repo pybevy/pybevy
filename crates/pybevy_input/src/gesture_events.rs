@@ -5,7 +5,7 @@ use bevy::{
 pub use pybevy_core::PyMessage;
 use pybevy_macros::pymessage;
 use pybevy_math::vec2::PyVec2;
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyValueError, prelude::*};
 
 #[pymessage(PinchGesture)]
 #[pyclass(name = "PinchGesture", module = "pybevy.input", extends = PyMessage, eq, skip_from_py_object)]
@@ -107,43 +107,49 @@ impl PyDoubleTapGesture {
 #[pymessage(PanGesture)]
 #[pyclass(name = "PanGesture", module = "pybevy.input", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct PyPanGesture(pub f32, pub f32);
+pub struct PyPanGesture(pub Vec2);
 
 impl PyPanGesture {
     pub fn from_bevy(event: &PanGesture) -> (Self, PyMessage) {
-        (PyPanGesture(event.0.x, event.0.y), PyMessage)
+        (PyPanGesture(event.0), PyMessage)
     }
 }
 
 impl From<&PanGesture> for PyPanGesture {
     fn from(event: &PanGesture) -> Self {
-        PyPanGesture(event.0.x, event.0.y)
+        PyPanGesture(event.0)
     }
 }
 
 #[pymethods]
 impl PyPanGesture {
     #[new]
-    fn new(x: f32, y: f32) -> PyClassInitializer<Self> {
-        (PyPanGesture(x, y), PyMessage).into()
+    fn new(value: PyVec2) -> PyResult<PyClassInitializer<Self>> {
+        let value = Vec2::try_from(value).map_err(PyValueError::new_err)?;
+        Ok((PyPanGesture(value), PyMessage).into())
+    }
+
+    #[getter]
+    fn value(&self) -> PyVec2 {
+        self.0.into()
     }
 
     #[getter]
     fn x(&self) -> f32 {
-        self.0
+        self.0.x
     }
 
     #[getter]
     fn y(&self) -> f32 {
-        self.1
+        self.0.y
     }
 
     #[getter]
     fn delta(&self) -> PyVec2 {
-        Vec2::new(self.0, self.1).into()
+        self.0.into()
     }
 
     fn __repr__(&self) -> String {
-        format!("PanGesture(x={}, y={})", self.0, self.1)
+        format!("PanGesture(value={:?})", self.0)
     }
 }

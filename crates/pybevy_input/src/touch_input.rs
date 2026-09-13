@@ -57,13 +57,13 @@ impl From<&TouchInput> for PyTouchInput {
 #[pymethods]
 impl PyTouchInput {
     #[new]
-    #[pyo3(signature = (phase, position, id, force = None, window = PyEntity::from(Entity::PLACEHOLDER)))]
+    #[pyo3(signature = (*, phase, position, window = PyEntity::from(Entity::PLACEHOLDER), force = None, id))]
     pub fn new(
         phase: PyTouchPhase,
         position: PyVec2,
-        id: u64,
-        force: Option<f64>,
         window: PyEntity,
+        force: Option<f64>,
+        id: u64,
     ) -> PyClassInitializer<Self> {
         (
             PyTouchInput {
