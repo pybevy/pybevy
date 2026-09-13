@@ -157,4 +157,21 @@ mod tests {
         assert_eq!(FieldType::Vec3.size_bytes(), 12);
         assert_eq!(FieldType::Vec4.size_bytes(), 16);
     }
+
+    #[test]
+    fn test_numpy_dtype_strings_match_numpy_code() {
+        // numpy dtype codes for the same widths; the mapping must match
+        // exactly or zero-copy views expose wrong dtypes.
+        assert_eq!(FieldType::F32.to_numpy_dtype_str(), "f4");
+        assert_eq!(FieldType::F64.to_numpy_dtype_str(), "f8");
+        assert_eq!(FieldType::I32.to_numpy_dtype_str(), "i4");
+        assert_eq!(FieldType::I64.to_numpy_dtype_str(), "i8");
+        assert_eq!(FieldType::U8.to_numpy_dtype_str(), "u1");
+        assert_eq!(FieldType::U32.to_numpy_dtype_str(), "u4");
+        assert_eq!(FieldType::U64.to_numpy_dtype_str(), "u8");
+        assert_eq!(FieldType::Bool.to_numpy_dtype_str(), "u1");
+        assert_eq!(FieldType::Vec2.to_numpy_dtype_str(), "f4");
+        assert_eq!(FieldType::Vec3.to_numpy_dtype_str(), "f4");
+        assert_eq!(FieldType::Vec4.to_numpy_dtype_str(), "f4");
+    }
 }

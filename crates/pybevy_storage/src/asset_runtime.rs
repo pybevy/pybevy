@@ -130,8 +130,18 @@ impl<K: Eq> AssetRuntimeCore<K> {
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
+    use std::any::TypeId;
+
+    use bevy::{
+        asset::{Asset, Handle},
+        reflect::TypePath,
+    };
+
     use super::*;
-    use crate::{AccessMode, ValidityFlag};
+    use crate::{AccessMode, AssetAccessRegistry, AssetBorrowCounter, ValidityFlag};
+
+    #[derive(Asset, TypePath)]
+    struct ProbeAsset;
 
     fn core(mode: AccessMode) -> AssetRuntimeCore<u64> {
         let validity = match mode {
@@ -181,5 +191,50 @@ mod tests {
             error.to_string(),
             "Asset identity of type `Mesh` does not match expected type `Image`"
         );
+    }
+
+    #[test]
+    fn structural_mutation_blocked_only_while_a_lease_is_live() {
+        let asset_id = Handle::<ProbeAsset>::default().id().untyped();
+
+        let registry = AssetAccessRegistry::default();
+        let scope = registry.new_scope(
+            TypeId::of::<()>(),
+            "Image",
+            ValidityFlag::new_write(),
+            "system:probe",
+        );
+        let counter = AssetBorrowCounter::from_scope(scope.clone());
+        let core = AssetRuntimeCore::new(
+            7,
+            "Image",
+            ValidityFlag::new_write().with_access_mode(AccessMode::Write),
+            counter,
+        );
+
+        assert!(core.check_no_live_asset_borrows().is_ok());
+
+        let key = scope.acquire(asset_id).expect("live scope");
+        let error = core.check_no_live_asset_borrows().unwrap_err();
+        assert!(matches!(
+            error,
+            AssetRuntimeError::BorrowedAssetsLive { .. }
+        ));
+        assert_eq!(
+            error.to_string(),
+            "Cannot structurally mutate Assets[Image] while borrowed asset wrappers are live"
+        );
+
+        scope.release(key);
+        assert!(core.check_no_live_asset_borrows().is_ok());
+    }
+
+    #[test]
+    fn live_borrow_check_stays_an_access_error_when_invalid() {
+        let core = core(AccessMode::Invalid);
+        assert!(matches!(
+            core.check_no_live_asset_borrows().unwrap_err(),
+            AssetRuntimeError::Access(StorageError::InvalidAccess)
+        ));
     }
 }

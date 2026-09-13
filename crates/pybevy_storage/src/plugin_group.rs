@@ -77,6 +77,8 @@ impl<K, V> PluginGroupAddition<K, V> {
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
+    use std::collections::HashSet;
+
     use super::*;
 
     #[test]
@@ -96,5 +98,60 @@ mod tests {
             Some(DefaultPluginKind::Render)
         );
         assert_eq!(DefaultPluginKind::from_key("Unknown"), None);
+    }
+
+    #[test]
+    fn default_plugin_kinds_keep_their_literal_keys_and_public_names() {
+        // The literal table is the independent oracle: deriving the expected
+        // name from the actual key would let a coordinated rename pass.
+        const KINDS: [(DefaultPluginKind, &str, &str); 6] = [
+            (DefaultPluginKind::Audio, "Audio", "AudioPlugin"),
+            (DefaultPluginKind::Image, "Image", "ImagePlugin"),
+            (DefaultPluginKind::Render, "Render", "RenderPlugin"),
+            (DefaultPluginKind::TaskPool, "TaskPool", "TaskPoolPlugin"),
+            (DefaultPluginKind::Window, "Window", "WindowPlugin"),
+            (DefaultPluginKind::Winit, "Winit", "WinitPlugin"),
+        ];
+
+        let all: HashSet<DefaultPluginKind> = DefaultPluginKind::ALL.iter().copied().collect();
+        assert_eq!(DefaultPluginKind::ALL.len(), KINDS.len());
+        assert_eq!(all.len(), KINDS.len());
+
+        for (kind, key, name) in KINDS {
+            assert!(all.contains(&kind));
+            assert_eq!(kind.key(), key);
+            assert_eq!(kind.public_name(), name);
+            assert_eq!(DefaultPluginKind::from_key(key), Some(kind));
+            // Public names are diagnostic-only and never lookup keys.
+            assert_eq!(DefaultPluginKind::from_key(name), None);
+        }
+        assert_eq!(DefaultPluginKind::from_key("Unknown"), None);
+    }
+
+    #[test]
+    fn placement_variants_retain_target_and_payload() {
+        let end: PluginGroupAddition<DefaultPluginKind, u8> =
+            PluginGroupAddition::new(PluginGroupPlacement::End, 1_u8);
+        let after: PluginGroupAddition<DefaultPluginKind, u8> =
+            PluginGroupAddition::new(PluginGroupPlacement::After(DefaultPluginKind::Window), 2_u8);
+        let before: PluginGroupAddition<DefaultPluginKind, u8> =
+            PluginGroupAddition::new(PluginGroupPlacement::Before(DefaultPluginKind::Audio), 3_u8);
+
+        assert_eq!(end.placement, PluginGroupPlacement::End);
+        assert_eq!(
+            after.placement,
+            PluginGroupPlacement::After(DefaultPluginKind::Window)
+        );
+        assert_eq!(
+            before.placement,
+            PluginGroupPlacement::Before(DefaultPluginKind::Audio)
+        );
+        assert_eq!(end.plugin, 1);
+        assert_eq!(after.plugin, 2);
+        assert_eq!(before.plugin, 3);
+        assert_ne!(
+            PluginGroupPlacement::End,
+            PluginGroupPlacement::Before(DefaultPluginKind::Audio)
+        );
     }
 }

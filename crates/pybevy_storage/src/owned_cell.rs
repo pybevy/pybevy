@@ -111,4 +111,18 @@ mod tests {
         // SAFETY: the owner's reference is dead and the cell is still alive.
         assert_eq!(unsafe { *ptr }, 9);
     }
+
+    #[test]
+    fn distinct_cells_do_not_alias_each_other() {
+        let first = OwnedCell::new(1_i32);
+        let second = OwnedCell::new(2_i32);
+
+        assert_ne!(first.as_ptr(), second.as_ptr());
+
+        // SAFETY: separate allocations; nothing aliases the second cell here.
+        unsafe { *second.as_mut_ptr() = 9 };
+
+        assert_eq!(*first.get(), 1);
+        assert_eq!(*second.get(), 9);
+    }
 }
