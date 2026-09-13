@@ -1,6 +1,6 @@
 use crate::{
     config::BevyConfig,
-    model::{EnumVariantKind, PyClassDef, SelfMutability},
+    model::{ConstructorOrigin, EnumVariantKind, ParameterKind, PyClassDef, SelfMutability},
     output::{Diagnostic, DiagnosticCode, Suggestion},
 };
 
@@ -52,6 +52,402 @@ fn is_rust_tuple_param(param: &crate::model::ParameterDef) -> bool {
         .param_type
         .as_ref()
         .is_some_and(|t| t.contains("PyTuple") || t.contains("Tuple"))
+}
+
+/// Check one constructor's parameter roles against its resolved audited
+/// origin. The policy per origin:
+/// - BevyNew/Mixed: all mapped-function inputs positional-or-keyword in the
+///   mapped function's order; convenience defaults form a trailing suffix.
+/// - FieldDerived/EnumVariant: every supplied field keyword-only in upstream
+///   field declaration order.
+/// - TuplePayload: positional-or-keyword preserved (no order policy).
+/// - ZeroArg: no parameters beyond self.
+/// - NonConstructible: must not have a public initializer (E016).
+/// - Factory/PythonAdapter: reviewed exceptions, no positional policy.
+pub fn check_constructor_policy(origin: &ConstructorOrigin, class: &PyClassDef) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+    let Some(constructor) = class.constructor.as_ref() else {
+        return diagnostics;
+    };
+
+    match origin {
+        ConstructorOrigin::Unresolved => {
+            // Fail closed: the caller (validate_all_impl) reports E013 with
+            // the pinned-source context when the origin stays unresolved.
+            diagnostics.push(
+                Diagnostic::error(
+                    DiagnosticCode::E013,
+                    format!(
+                        "constructor '{}' has no resolved audited origin; the pinned upstream declaration must be available before policy checks can pass",
+                        class.python_name
+                    ),
+                )
+                .with_note(
+                    "unresolved origins never silently pass; resolve the pinned source or record a reviewed PythonAdapter exception",
+                ),
+            );
+        }
+        ConstructorOrigin::BevyNew {
+            upstream_type,
+            function,
+            function_params,
+        } => {
+            for (index, param) in constructor.parameters.iter().enumerate() {
+                if param.kind == ParameterKind::KeywordOnly {
+                    let mut diag = Diagnostic::error(
+                        DiagnosticCode::E014,
+                        format!(
+                            "constructor '{}' parameter {} ('{}') is keyword-only but the mapped upstream constructor {}::{} takes it positional-or-keyword",
+                            class.python_name,
+                            index + 1,
+                            param.name,
+                            upstream_type,
+                            function
+                        ),
+                    );
+                    if let Some(loc) = &constructor.location {
+                        diag = diag.with_location(loc.clone());
+                    }
+                    diagnostics.push(diag);
+                }
+            }
+            check_function_order(class, constructor, function_params, &mut diagnostics);
+            check_default_suffix(
+                class,
+                constructor,
+                constructor.parameters.len(),
+                &mut diagnostics,
+            );
+        }
+        ConstructorOrigin::FieldDerived {
+            upstream_type,
+            field_order,
+        } => {
+            for (index, param) in constructor.parameters.iter().enumerate() {
+                if param.kind != ParameterKind::KeywordOnly {
+                    let mut diag = Diagnostic::error(
+                        DiagnosticCode::E014,
+                        format!(
+                            "field-derived constructor '{}' parameter {} ('{}') is positional but the upstream fields of {} are keyword-only in declaration order",
+                            class.python_name,
+                            index + 1,
+                            param.name,
+                            upstream_type
+                        ),
+                    );
+                    if let Some(loc) = &constructor.location {
+                        diag = diag.with_location(loc.clone());
+                    }
+                    diagnostics.push(diag);
+                }
+            }
+            check_field_order(class, constructor, field_order, &mut diagnostics);
+        }
+        ConstructorOrigin::EnumVariant {
+            upstream_type,
+            variant,
+            field_order,
+        } => {
+            for (index, param) in constructor.parameters.iter().enumerate() {
+                if param.kind != ParameterKind::KeywordOnly {
+                    let mut diag = Diagnostic::error(
+                        DiagnosticCode::E014,
+                        format!(
+                            "named enum variant constructor '{}::{}' parameter {} ('{}') is positional but the variant's fields are keyword-only in declaration order",
+                            class.python_name,
+                            variant,
+                            index + 1,
+                            param.name
+                        ),
+                    )
+                    .with_note(format!("upstream enum: {}", upstream_type));
+                    if let Some(loc) = &constructor.location {
+                        diag = diag.with_location(loc.clone());
+                    }
+                    diagnostics.push(diag);
+                }
+            }
+            check_field_order(class, constructor, field_order, &mut diagnostics);
+        }
+        ConstructorOrigin::Mixed {
+            upstream_type,
+            function,
+            function_params,
+            tail_fields,
+        } => {
+            let tail_start = constructor
+                .parameters
+                .len()
+                .saturating_sub(tail_fields.len());
+            // Conditionally check the native prefix order only against the
+            // constructor's own prefix, not the full parameter list.
+            for (index, param) in constructor.parameters.iter().enumerate() {
+                if index < tail_start {
+                    if param.kind == ParameterKind::KeywordOnly {
+                        let mut diag = Diagnostic::error(
+                            DiagnosticCode::E014,
+                            format!(
+                                "mixed constructor '{}' native input {} ('{}') is keyword-only but the mapped upstream constructor {}::{} takes it positional-or-keyword",
+                                class.python_name,
+                                index + 1,
+                                param.name,
+                                upstream_type,
+                                function
+                            ),
+                        );
+                        if let Some(loc) = &constructor.location {
+                            diag = diag.with_location(loc.clone());
+                        }
+                        diagnostics.push(diag);
+                    }
+                } else if param.kind != ParameterKind::KeywordOnly {
+                    let mut diag = Diagnostic::error(
+                        DiagnosticCode::E014,
+                        format!(
+                            "mixed constructor '{}' additional field input {} ('{}') is positional but additional inputs are keyword-only in field declaration order",
+                            class.python_name,
+                            index + 1,
+                            param.name
+                        ),
+                    );
+                    if let Some(loc) = &constructor.location {
+                        diag = diag.with_location(loc.clone());
+                    }
+                    diagnostics.push(diag);
+                }
+            }
+            if tail_start > 0 {
+                check_prefix_order(
+                    class,
+                    constructor,
+                    tail_start,
+                    function_params,
+                    &mut diagnostics,
+                );
+            }
+            check_field_order(class, constructor, tail_fields, &mut diagnostics);
+            check_default_suffix(class, constructor, tail_start, &mut diagnostics);
+        }
+        ConstructorOrigin::TuplePayload { .. }
+        | ConstructorOrigin::Factory { .. }
+        | ConstructorOrigin::PythonAdapter { .. } => {
+            // Genuine tuple payloads keep positional-or-keyword construction;
+            // factories and reviewed adapters carry their own exceptions.
+        }
+        ConstructorOrigin::ZeroArg { .. } => {
+            if !constructor.parameters.is_empty() {
+                diagnostics.push(Diagnostic::error(
+                    DiagnosticCode::E014,
+                    format!(
+                        "zero-argument constructor '{}' declares {} parameter(s)",
+                        class.python_name,
+                        constructor.parameters.len()
+                    ),
+                ));
+            }
+        }
+        ConstructorOrigin::NonConstructible { upstream_type } => {
+            let mut diag = Diagnostic::error(
+                DiagnosticCode::E016,
+                format!(
+                    "non-constructible wrapper '{}' declares a public initializer; the upstream type {} is an explicitly non-constructible snapshot or enum base",
+                    class.python_name, upstream_type
+                ),
+            );
+            if let Some(loc) = &constructor.location {
+                diag = diag.with_location(loc.clone());
+            }
+            diagnostics.push(diag);
+        }
+    }
+
+    diagnostics
+}
+
+/// Convenience defaults on native constructor inputs must form a trailing
+/// suffix: a default preceding a required native input is E015.
+fn check_default_suffix(
+    class: &PyClassDef,
+    constructor: &crate::model::MethodDef,
+    native_input_count: usize,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let mut seen_default = false;
+    for (index, param) in constructor
+        .parameters
+        .iter()
+        .take(native_input_count)
+        .enumerate()
+    {
+        if param.default_value.is_some() {
+            seen_default = true;
+        } else if seen_default {
+            let mut diag = Diagnostic::error(
+                DiagnosticCode::E015,
+                format!(
+                    "constructor '{}' convenience default precedes required native input {} ('{}'); remove the default instead of making the input keyword-only or reordering",
+                    class.python_name,
+                    index + 1,
+                    param.name
+                ),
+            );
+            if let Some(loc) = &constructor.location {
+                diag = diag.with_location(loc.clone());
+            }
+            diagnostics.push(diag);
+            return;
+        }
+    }
+}
+
+/// Supplied params must follow the mapped function's parameter order.
+fn check_function_order(
+    class: &PyClassDef,
+    constructor: &crate::model::MethodDef,
+    function_params: &[String],
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let names: Vec<&str> = constructor
+        .parameters
+        .iter()
+        .map(|p| p.name.as_str())
+        .collect();
+    let positions: Vec<Option<usize>> = names
+        .iter()
+        .map(|name| function_params.iter().position(|param| param == name))
+        .collect();
+
+    let mut last_seen: Option<usize> = None;
+    for (index, position) in positions.iter().enumerate() {
+        let Some(pos) = position else {
+            continue;
+        };
+        if let Some(seen) = last_seen
+            && pos < &seen
+        {
+            let mut diag = Diagnostic::error(
+                DiagnosticCode::E005,
+                format!(
+                    "constructor '{}' parameter {} ('{}') follows upstream parameter '{}' but precedes it in the mapped constructor order",
+                    class.python_name,
+                    index + 1,
+                    names[index],
+                    function_params[seen]
+                ),
+            )
+            .with_note(format!(
+                "upstream constructor order: {}",
+                function_params.join(", ")
+            ));
+            if let Some(loc) = &constructor.location {
+                diag = diag.with_location(loc.clone());
+            }
+            diagnostics.push(diag);
+            return;
+        }
+        last_seen = Some(*pos);
+    }
+}
+
+/// Check only the positional-prefix segment of a mixed constructor against
+/// the mapped function's parameter order.
+fn check_prefix_order(
+    class: &PyClassDef,
+    constructor: &crate::model::MethodDef,
+    prefix_len: usize,
+    function_params: &[String],
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let names: Vec<&str> = constructor
+        .parameters
+        .iter()
+        .take(prefix_len)
+        .map(|p| p.name.as_str())
+        .collect();
+    let positions: Vec<Option<usize>> = names
+        .iter()
+        .map(|name| function_params.iter().position(|param| param == name))
+        .collect();
+
+    let mut last_seen: Option<usize> = None;
+    for (index, position) in positions.iter().enumerate() {
+        let Some(pos) = position else {
+            continue;
+        };
+        if let Some(seen) = last_seen
+            && pos < &seen
+        {
+            let mut diag = Diagnostic::error(
+                DiagnosticCode::E005,
+                format!(
+                    "mixed constructor '{}' native input {} ('{}') follows upstream parameter '{}' but precedes it in the mapped constructor order",
+                    class.python_name,
+                    index + 1,
+                    names[index],
+                    function_params[seen]
+                ),
+            )
+            .with_note(format!(
+                "upstream constructor order: {}",
+                function_params.join(", ")
+            ));
+            if let Some(loc) = &constructor.location {
+                diag = diag.with_location(loc.clone());
+            }
+            diagnostics.push(diag);
+            return;
+        }
+        last_seen = Some(*pos);
+    }
+}
+
+/// Supplied field inputs must follow the upstream field declaration order.
+fn check_field_order(
+    class: &PyClassDef,
+    constructor: &crate::model::MethodDef,
+    field_order: &[String],
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let names: Vec<&str> = constructor
+        .parameters
+        .iter()
+        .map(|p| p.name.as_str())
+        .collect();
+    let positions: Vec<Option<usize>> = names
+        .iter()
+        .map(|name| field_order.iter().position(|field| field == name))
+        .collect();
+
+    let mut last_seen: Option<usize> = None;
+    for (index, position) in positions.iter().enumerate() {
+        let Some(pos) = position else {
+            continue;
+        };
+        if let Some(seen) = last_seen
+            && pos < &seen
+        {
+            let mut diag = Diagnostic::error(
+                DiagnosticCode::E005,
+                format!(
+                    "constructor '{}' parameter {} ('{}') follows upstream field '{}' but precedes it in the upstream declaration order",
+                    class.python_name,
+                    index + 1,
+                    names[index],
+                    field_order[seen]
+                ),
+            )
+            .with_note(format!(
+                "upstream field order: {}",
+                field_order.join(", ")
+            ));
+            if let Some(loc) = &constructor.location {
+                diag = diag.with_location(loc.clone());
+            }
+            diagnostics.push(diag);
+            return;
+        }
+        last_seen = Some(*pos);
+    }
 }
 
 /// Validate constructor matches between Rust and Python

@@ -1398,20 +1398,20 @@ fn process_comparison_operator(
             || child.kind() == "in"
         {
             let op_text = child.utf8_text(source).unwrap_or("");
-            if let Some(dunder) = comparison_op_to_dunder(op_text) {
-                if expr_idx > 0 {
-                    let left = &children[expr_idx - 1];
-                    if let Some(class_name) =
-                        resolve_object_type(*left, source, imports, has_wildcard, var_types)
-                    {
-                        record_member_node(
-                            usage,
-                            &class_name,
-                            MemberRef::Method(dunder.to_string()),
-                            file_path,
-                            node,
-                        );
-                    }
+            if let Some(dunder) = comparison_op_to_dunder(op_text)
+                && expr_idx > 0
+            {
+                let left = &children[expr_idx - 1];
+                if let Some(class_name) =
+                    resolve_object_type(*left, source, imports, has_wildcard, var_types)
+                {
+                    record_member_node(
+                        usage,
+                        &class_name,
+                        MemberRef::Method(dunder.to_string()),
+                        file_path,
+                        node,
+                    );
                 }
             }
         } else {

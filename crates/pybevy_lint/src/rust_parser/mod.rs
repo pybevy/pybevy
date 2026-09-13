@@ -5,6 +5,12 @@ mod pymethods;
 mod signature;
 pub mod types;
 
+// Inspect the same expansion that PyO3 receives, without a second signature parser.
+#[path = "../../../pybevy_macros/src/constructor.rs"]
+mod constructor;
+#[path = "../../../pybevy_macros/src/constructor_spec.rs"]
+mod constructor_spec;
+
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -134,7 +140,26 @@ pub fn parse_file(path: &Path) -> Result<Vec<PyClassDef>> {
     // Second pass: collect pymethods for each class
     for item in &syntax.items {
         if let syn::Item::Impl(item_impl) = item {
-            pymethods::process_impl_block(item_impl, &mut classes, path);
+            if let Some(index) = item_impl
+                .attrs
+                .iter()
+                .position(|a| constructor_spec::has_name(a, "pyconstructor"))
+            {
+                if item_impl.attrs[..index]
+                    .iter()
+                    .any(|a| constructor_spec::has_name(a, "pymethods"))
+                {
+                    anyhow::bail!("pyconstructor must precede pymethods in {}", path.display());
+                }
+                let mut expanded = item_impl.clone();
+                let attr = expanded.attrs.remove(index);
+                let expanded =
+                    constructor::expand(attr.parse_args()?, expanded, &quote::quote!(pybevy_core))
+                        .with_context(|| format!("Invalid pyconstructor in {}", path.display()))?;
+                pymethods::process_impl_block(&expanded, &mut classes, path);
+            } else {
+                pymethods::process_impl_block(item_impl, &mut classes, path);
+            }
             conversions::process_conversion_impl(item_impl, &mut classes, path);
         }
     }

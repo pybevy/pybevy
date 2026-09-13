@@ -165,6 +165,40 @@ pub fn validate_enum_classattr_redundancy(rust: &PyClassDef) -> Vec<Diagnostic> 
     diagnostics
 }
 
+/// Flags value enums declared as a plain `#[pyclass]` instead of `#[pyenum]`.
+///
+/// Value enums are extracted by value from Python (`from_py_object`). The
+/// Decision Guide maps them to `#[pyenum(T)]`, which generates conversions,
+/// `__copy__`, and repr, and registers variant-topology metadata. Plain
+/// `#[pyclass]` enums that skip extraction (messages, manual adapters) are
+/// out of scope here.
+pub fn validate_value_enum_without_pyenum(rust: &PyClassDef) -> Vec<Diagnostic> {
+    if !rust.is_enum || !rust.from_py_object || rust.macro_info.is_some() {
+        return Vec::new();
+    }
+
+    let mut diag = Diagnostic::warning(
+        DiagnosticCode::W013,
+        format!(
+            "value enum '{}' uses plain #[pyclass] instead of #[pyenum]",
+            rust.python_name
+        ),
+    );
+
+    if let Some(ref loc) = rust.location {
+        diag = diag.with_location(loc.clone());
+    }
+
+    diag = diag
+        .with_note("Ordinary value enums map to #[pyenum(T)] in the decision guide")
+        .with_note("pyenum generates conversions, __copy__, and repr, and records variant topology for Bevy audits")
+        .with_suggestion(Suggestion::new(
+            "declare the Bevy enum relationship with #[pyenum(T, ...)]",
+        ));
+
+    vec![diag]
+}
+
 /// A catch-all arm that yields a concrete value reports the wrong variant to
 /// Python instead of the one bevy actually held.
 pub fn validate_conversion_fallbacks(rust: &PyClassDef) -> Vec<Diagnostic> {

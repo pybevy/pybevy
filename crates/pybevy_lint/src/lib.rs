@@ -85,6 +85,26 @@ pub fn validate_with_config(
 }
 
 /// Validate a caller-filtered subset without auditing unrelated exceptions.
+/// Validate with pinned Bevy declarations: constructor-policy checks run
+/// against resolved audited origins; unresolved in-scope origins fail closed.
+pub fn validate_with_bevy(
+    rust_classes: &[PyClassDef],
+    python_classes: &[PyClassDef],
+    config: Option<&Config>,
+    bevy_crates: &HashMap<String, BevyCrate>,
+    bevy_path: Option<&Path>,
+    check_stale_exceptions: bool,
+) -> Vec<Diagnostic> {
+    validation::validate_with_bevy(
+        rust_classes,
+        python_classes,
+        config,
+        bevy_crates,
+        bevy_path,
+        check_stale_exceptions,
+    )
+}
+
 pub fn validate_scoped_with_config(
     rust_classes: &[PyClassDef],
     python_classes: &[PyClassDef],

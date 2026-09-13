@@ -3,12 +3,9 @@ use crate::{
     output::{Diagnostic, DiagnosticCode},
 };
 
-/// Validate that a component's `from_numpy()` stub parameters match the
+/// Validate that a component's `batch()` stub parameters match the
 /// bridge's `view_fields` + `batch_only_fields` (from `#[pycomponent(..., bridge)]`).
-pub fn validate_bridge_from_numpy(
-    rust_class: &PyClassDef,
-    py_class: &PyClassDef,
-) -> Vec<Diagnostic> {
+pub fn validate_bridge_batch(rust_class: &PyClassDef, py_class: &PyClassDef) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
     let bridge_info = match &rust_class.bridge_info {
@@ -20,7 +17,7 @@ pub fn validate_bridge_from_numpy(
         return diagnostics;
     }
 
-    // Collect expected from_numpy fields: view_fields ∪ batch_only_fields
+    // Collect expected batch fields: view_fields ∪ batch_only_fields
     let mut expected_fields: Vec<&str> = bridge_info
         .view_fields
         .iter()
@@ -33,29 +30,23 @@ pub fn validate_bridge_from_numpy(
         return diagnostics;
     }
 
-    // Only validate stub if the Rust class actually exposes from_numpy as a static method.
-    // Components may have view_fields (for View API) without exposing from_numpy to Python.
-    let rust_has_from_numpy = rust_class
-        .static_methods
-        .iter()
-        .any(|m| m.name == "from_numpy");
-    if !rust_has_from_numpy {
+    // Only validate stub if the Rust class actually exposes batch as a static method.
+    // Components may have view_fields (for View API) without exposing batch to Python.
+    let rust_has_batch = rust_class.static_methods.iter().any(|m| m.name == "batch");
+    if !rust_has_batch {
         return diagnostics;
     }
 
-    // Find from_numpy in the Python stub's static methods
-    let from_numpy = py_class
-        .static_methods
-        .iter()
-        .find(|m| m.name == "from_numpy");
+    // Find batch in the Python stub's static methods
+    let batch = py_class.static_methods.iter().find(|m| m.name == "batch");
 
-    let from_numpy = match from_numpy {
+    let batch = match batch {
         Some(m) => m,
         None => {
             let mut diag = Diagnostic::error(
                 DiagnosticCode::E009,
                 format!(
-                    "'{}' has bridge with {} batch fields but no from_numpy() in stub",
+                    "'{}' has bridge with {} batch fields but no batch() in stub",
                     rust_class.python_name,
                     expected_fields.len()
                 ),
@@ -64,7 +55,7 @@ pub fn validate_bridge_from_numpy(
                 diag = diag.with_location(loc.clone());
             }
             diag = diag.with_note(format!(
-                "Expected from_numpy() with fields: {}",
+                "Expected batch() with fields: {}",
                 expected_fields.join(", ")
             ));
             diagnostics.push(diag);
@@ -73,11 +64,7 @@ pub fn validate_bridge_from_numpy(
     };
 
     // Collect actual stub parameter names (excluding **kwargs-style)
-    let mut stub_fields: Vec<&str> = from_numpy
-        .parameters
-        .iter()
-        .map(|p| p.name.as_str())
-        .collect();
+    let mut stub_fields: Vec<&str> = batch.parameters.iter().map(|p| p.name.as_str()).collect();
     stub_fields.sort();
 
     // Check for missing fields (in bridge but not in stub)
@@ -106,7 +93,7 @@ pub fn validate_bridge_from_numpy(
         let mut diag = Diagnostic::error(
             DiagnosticCode::E009,
             format!(
-                "'{}' from_numpy() stub fields don't match bridge view_fields: {}",
+                "'{}' batch() stub fields don't match bridge view_fields: {}",
                 rust_class.python_name,
                 parts.join("; ")
             ),
@@ -115,10 +102,7 @@ pub fn validate_bridge_from_numpy(
             diag = diag.with_location(loc.clone());
         }
         diag = diag.with_note(format!("bridge fields: [{}]", expected_fields.join(", ")));
-        diag = diag.with_note(format!(
-            "stub from_numpy fields: [{}]",
-            stub_fields.join(", ")
-        ));
+        diag = diag.with_note(format!("stub batch fields: [{}]", stub_fields.join(", ")));
         diagnostics.push(diag);
     }
 
@@ -128,7 +112,7 @@ pub fn validate_bridge_from_numpy(
 /// Eligible constructor parameter types for view_fields (zero-copy View API access)
 const VIEW_ELIGIBLE_TYPES: &[&str] = &["f32", "f64", "bool", "i32", "u32", "i64", "u64"];
 
-/// Eligible constructor parameter types for batch_only_fields (from_numpy only, not View)
+/// Eligible constructor parameter types for batch_only_fields (batch only, not View)
 const BATCH_ONLY_ELIGIBLE_TYPES: &[&str] = &["PyColor", "Color"];
 
 /// Check whether a constructor parameter type is eligible for view_fields or batch_only_fields.
@@ -161,7 +145,7 @@ pub fn detect_unexposed_eligible_fields(
         return diagnostics;
     }
 
-    // Skip no_insert components: no from_numpy benefit (view_fields still
+    // Skip no_insert components: no batch benefit (view_fields still
     // possible but rarer; skip to reduce noise)
     if bridge_info.no_insert {
         return diagnostics;

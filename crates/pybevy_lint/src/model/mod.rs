@@ -17,6 +17,8 @@ pub struct PyClassDef {
     pub rust_name: String,
     /// Module path (e.g., "camera", "sprite", "input.keyboard")
     pub module_path: Option<String>,
+    /// Declared public Python module from `#[pyclass(module = "...")]`.
+    pub python_module_path: Option<String>,
     /// Parent class if extends = ...
     pub extends: Option<String>,
     /// Is frozen (immutable)
@@ -25,6 +27,8 @@ pub struct PyClassDef {
     pub eq: bool,
     /// Is subclass (can be inherited)
     pub subclass: bool,
+    /// pyclass carries `from_py_object` (extracted by value from Python args)
+    pub from_py_object: bool,
     /// Source location
     pub location: Option<SourceLocation>,
     /// Constructor (#[new])
@@ -84,6 +88,8 @@ pub struct MethodDef {
     pub result_classification: GetterResultClassification,
     /// Whether the implementation reads from its receiver's stored value.
     pub result_derived_from_self: bool,
+    /// Audited upstream origin and parameter-role contract (constructors).
+    pub origin: ConstructorOrigin,
 }
 
 /// Parameter definition
@@ -116,6 +122,122 @@ impl ParameterKind {
             Self::PositionalOnly => "positional_only",
             Self::PositionalOrKeyword => "positional_or_keyword",
             Self::KeywordOnly => "keyword_only",
+        }
+    }
+}
+
+/// Audited constructor origin: what the Python constructor maps to upstream.
+/// Derived from the wrapper's source and the pinned upstream declaration, not
+/// from defaults, arity, or the spelling of the adapter's construction
+/// expression.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum ConstructorOrigin {
+    /// Maps an upstream associated constructor (`Type::new(...)`): inputs
+    /// stay positional-or-keyword in the mapped function's order.
+    #[default]
+    Unresolved,
+    BevyNew {
+        /// Full upstream path of the mapped constructor's type.
+        upstream_type: String,
+        /// Name of the mapped constructor function (usually "new").
+        function: String,
+        /// Upstream constructor parameter names in declaration order.
+        function_params: Vec<String>,
+    },
+    /// Initializes upstream public fields: every supplied field is
+    /// keyword-only in upstream field declaration order.
+    FieldDerived {
+        /// Full upstream path of the struct.
+        upstream_type: String,
+        /// Upstream field declaration order for supplied fields.
+        field_order: Vec<String>,
+    },
+    /// Upstream `new()` prefix plus keyword-only additional/alternate inputs.
+    Mixed {
+        /// Full upstream path of the mapped constructor's type.
+        upstream_type: String,
+        /// Mapped constructor function name.
+        function: String,
+        /// Upstream constructor parameter names in declaration order (the
+        /// positional-or-keyword native prefix mirrors these).
+        function_params: Vec<String>,
+        /// Fields supplied by the keyword-only tail, in declaration order.
+        tail_fields: Vec<String>,
+    },
+    /// Genuine tuple struct/newtype payload: positional-or-keyword preserved.
+    TuplePayload {
+        /// Full upstream path of the tuple struct/enum variant.
+        upstream_type: String,
+    },
+    /// Named-field enum variant constructor: keyword-only payload fields.
+    EnumVariant {
+        /// Full upstream path of the enum.
+        upstream_type: String,
+        /// Variant name.
+        variant: String,
+        /// Payload field declaration order (matching contract stays
+        /// separately declared).
+        field_order: Vec<String>,
+    },
+    /// Upstream associated factory other than `new()` (flattened-array
+    /// mappings and similar): positional preserved, needs a reviewed
+    /// parameter-list exception.
+    Factory {
+        /// Full upstream path of the factory's type.
+        upstream_type: String,
+        /// Factory function name (e.g. "from_cols_array").
+        function: String,
+    },
+    /// Explicitly non-constructible snapshot/enum base: raises on
+    /// construction and must not regain a public initializer.
+    NonConstructible {
+        /// Full upstream path of the type.
+        upstream_type: String,
+    },
+    /// Zero-argument/default-only constructor: unchanged.
+    ZeroArg {
+        /// Full upstream path of the type.
+        upstream_type: String,
+    },
+    /// Reviewed Python-specific adapter with an individual exception.
+    PythonAdapter {
+        /// Individual justification recorded beside the adapter.
+        justification: String,
+    },
+}
+
+impl ConstructorOrigin {
+    /// Whether this origin requires all declared inputs positional-or-keyword
+    /// (with convenience defaults forming a trailing suffix).
+    pub fn requires_native_order(self) -> bool {
+        matches!(
+            self,
+            ConstructorOrigin::BevyNew { .. } | ConstructorOrigin::Mixed { .. }
+        )
+    }
+
+    /// Whether this origin requires keyword-only field inputs in declaration
+    /// order.
+    pub fn requires_field_order(self) -> bool {
+        matches!(
+            self,
+            ConstructorOrigin::FieldDerived { .. } | ConstructorOrigin::EnumVariant { .. }
+        )
+    }
+
+    /// The upstream type named by this origin, if resolved.
+    pub fn upstream_type(&self) -> Option<&str> {
+        match self {
+            ConstructorOrigin::Unresolved => None,
+            ConstructorOrigin::BevyNew { upstream_type, .. }
+            | ConstructorOrigin::FieldDerived { upstream_type, .. }
+            | ConstructorOrigin::Mixed { upstream_type, .. }
+            | ConstructorOrigin::TuplePayload { upstream_type }
+            | ConstructorOrigin::EnumVariant { upstream_type, .. }
+            | ConstructorOrigin::Factory { upstream_type, .. }
+            | ConstructorOrigin::NonConstructible { upstream_type }
+            | ConstructorOrigin::ZeroArg { upstream_type } => Some(upstream_type),
+            ConstructorOrigin::PythonAdapter { .. } => None,
         }
     }
 }
@@ -232,11 +354,11 @@ pub struct ComponentBridgeInfo {
     pub bevy_type: String,
     /// Storage macro that declared this bridge.
     pub storage_kind: BridgeStorageKind,
-    /// Fields accessible via both View API and from_numpy batch spawning
+    /// Fields accessible via both View API and batch batch spawning
     pub view_fields: Vec<String>,
-    /// Fields accessible only via from_numpy batch spawning (not View API)
+    /// Fields accessible only via batch batch spawning (not View API)
     pub batch_only_fields: Vec<String>,
-    /// Fields accessible only via View API (not batch/from_numpy)
+    /// Fields accessible only via View API (not batch/batch)
     pub view_only_fields: Vec<String>,
     /// Whether this component is read-only (no_insert)
     pub no_insert: bool,
