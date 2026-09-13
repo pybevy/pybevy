@@ -98,8 +98,8 @@ def setup_swarm(
     region_rows = math.ceil(REGION_COUNT / regions_per_row)
 
     # Meshes
-    firefly_mesh = meshes.add(Sphere(0.2))
-    ground_mesh = meshes.add(Cuboid(region_width, 0.5, region_width))
+    firefly_mesh = meshes.add(Sphere(radius=0.2))
+    ground_mesh = meshes.add(Cuboid(x_length=region_width, y_length=0.5, z_length=region_width))
 
     total_fireflies = 0
     total_alphas = 0

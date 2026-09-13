@@ -76,7 +76,7 @@ def setup(
 
     # Sphere (movable)
     commands.spawn(
-        Mesh3d(meshes.add(Sphere(0.5))),
+        Mesh3d(meshes.add(Sphere(radius=0.5))),
         MeshMaterial3d(
             materials.add(
                 StandardMaterial(
@@ -106,7 +106,7 @@ def setup(
         Transform.from_xyz(1.0, 2.0, 0.0),
     )
     commands.spawn(
-        Mesh3d(meshes.add(Sphere(0.1))),
+        Mesh3d(meshes.add(Sphere(radius=0.1))),
         MeshMaterial3d(
             materials.add(
                 StandardMaterial(
@@ -130,7 +130,7 @@ def setup(
         Transform.from_xyz(-1.0, 2.0, 0.0).looking_at(Vec3(-1.0, 0.0, 0.0), Vec3.Z),
     )
     commands.spawn(
-        Mesh3d(meshes.add(Sphere(0.1))),
+        Mesh3d(meshes.add(Sphere(radius=0.1))),
         MeshMaterial3d(
             materials.add(
                 StandardMaterial(
@@ -152,7 +152,7 @@ def setup(
         Transform.from_xyz(0.0, 4.0, 0.0),
     )
     commands.spawn(
-        Mesh3d(meshes.add(Sphere(0.1))),
+        Mesh3d(meshes.add(Sphere(radius=0.1))),
         MeshMaterial3d(
             materials.add(
                 StandardMaterial(

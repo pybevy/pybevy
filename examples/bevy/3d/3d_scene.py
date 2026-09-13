@@ -28,7 +28,7 @@ def setup(
     )
 
     # Cube
-    cube_mesh = Cuboid(1.0, 1.0, 1.0).mesh()
+    cube_mesh = Cuboid(x_length=1.0, y_length=1.0, z_length=1.0).mesh()
     cube_material = StandardMaterial.from_color(Color.srgb_u8(124, 144, 255))
     commands.spawn(
         Mesh3d(meshes.add(cube_mesh)),

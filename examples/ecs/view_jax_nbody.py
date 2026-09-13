@@ -110,7 +110,7 @@ def setup(
     meshes: ResMut[Assets[Mesh]],
     materials: ResMut[Assets[StandardMaterial]],
 ) -> None:
-    sphere_mesh = meshes.add(Sphere(0.3))
+    sphere_mesh = meshes.add(Sphere(radius=0.3))
     material = materials.add(StandardMaterial(
         base_color=Color.srgb(0.9, 0.6, 0.2),
         emissive=LinearRgba(0.8, 0.4, 0.1, 1.0),

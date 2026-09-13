@@ -28,7 +28,7 @@ def setup(
     )
 
     # Create cube mesh
-    cube = meshes.add(Cuboid(0.5, 0.5, 0.5).mesh())
+    cube = meshes.add(Cuboid(x_length=0.5, y_length=0.5, z_length=0.5).mesh())
 
     # Golden angle for pleasing color distribution
     GOLDEN_ANGLE = 137.50777

@@ -32,8 +32,8 @@ def setup(
     # Create different 3D shapes
     shapes = [
         ("Cuboid", meshes.add(Cuboid.from_size(Vec3.splat(1.0)))),
-        ("Sphere", meshes.add(Sphere(0.5))),
-        ("Cylinder", meshes.add(Cylinder(0.5, 1.0))),
+        ("Sphere", meshes.add(Sphere(radius=0.5))),
+        ("Cylinder", meshes.add(Cylinder(radius=0.5, height=1.0))),
         ("Plane (small)", meshes.add(Plane3d().mesh().size(1.0, 1.0).build())),
     ]
 

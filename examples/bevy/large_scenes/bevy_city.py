@@ -250,8 +250,8 @@ def spawn_atmosphere(commands: Commands, mediums: Assets) -> None:
         ScatteringTerm(
             absorption=Vec3.splat(beta_ext * (1.0 - albedo)),
             scattering=Vec3.splat(beta_ext * albedo),
-            falloff=Falloff.Exponential(haze_scale_height_km / atmosphere_ref_height_km),
-            phase=PhaseFunction.Mie(0.76),
+            falloff=Falloff.Exponential(scale=haze_scale_height_km / atmosphere_ref_height_km),
+            phase=PhaseFunction.Mie(asymmetry=0.76),
         ),
     ]
     atmosphere = Atmosphere.earth(mediums.add(medium))

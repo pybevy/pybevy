@@ -242,7 +242,7 @@ def setup(
 
     # Ground
     commands.spawn(
-        Mesh3d(meshes.add(Cuboid(200.0, 0.3, 200.0))),
+        Mesh3d(meshes.add(Cuboid(x_length=200.0, y_length=0.3, z_length=200.0))),
         MeshMaterial3d(materials.add(StandardMaterial(
             base_color=Color.srgb(0.08, 0.08, 0.12), metallic=0.7, perceptual_roughness=0.25,
         ))),
@@ -312,7 +312,7 @@ def setup(
     commands.spawn(
         MeteorTag(),
         PhysicsId(body_idx=float(body_idx)),
-        Mesh3d(meshes.add(Sphere(METEOR_RADIUS))),
+        Mesh3d(meshes.add(Sphere(radius=METEOR_RADIUS))),
         MeshMaterial3d(meteor_mat),
         Transform.from_xyz(-20.0, impact_y, 0.0),
     )
@@ -327,9 +327,9 @@ def setup(
 
     # Ember trail (small additive-blend spheres orbiting the meteor)
     ember_meshes = [
-        meshes.add(Sphere(0.12)),
-        meshes.add(Sphere(0.20)),
-        meshes.add(Sphere(0.30)),
+        meshes.add(Sphere(radius=0.12)),
+        meshes.add(Sphere(radius=0.20)),
+        meshes.add(Sphere(radius=0.30)),
     ]
     ember_materials = [
         materials.add(StandardMaterial(
@@ -399,7 +399,7 @@ def setup(
         ),
         DistanceFog(
             color=Color.srgb(0.02, 0.02, 0.04),
-            falloff=FogFalloff.Exponential(0.008),
+            falloff=FogFalloff.Exponential(density=0.008),
             directional_light_color=Color.srgb(1.0, 0.7, 0.3),
             directional_light_exponent=40.0,
         ),

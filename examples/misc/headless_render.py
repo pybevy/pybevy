@@ -24,7 +24,7 @@ def setup(
 ) -> None:
     """Spawn a cube, light, and camera rendering to an offscreen image."""
     # Cube
-    cube_mesh = Cuboid(1.0, 1.0, 1.0).mesh()
+    cube_mesh = Cuboid(x_length=1.0, y_length=1.0, z_length=1.0).mesh()
     cube_material = StandardMaterial.from_color(Color.srgb_u8(124, 144, 255))
     commands.spawn(
         Mesh3d(meshes.add(cube_mesh)),
@@ -44,7 +44,7 @@ def setup(
     commands.spawn(
         Camera3d(),
         Camera(),
-        RenderTarget.Image(ImageRenderTarget(handle)),
+        RenderTarget.Image(ImageRenderTarget(handle=handle)),
         Transform.from_xyz(-2.5, 4.5, 9.0).looking_at(Vec3.ZERO, Vec3.Y),
     )
 

@@ -53,7 +53,7 @@ def setup_scene(
     ))
 
     # Create sphere mesh
-    sphere = meshes.add(Sphere(0.4))
+    sphere = meshes.add(Sphere(radius=0.4))
 
     # Create grid of spheres with different materials
     mat_list = [mat_blue, mat_white, mat_red, mat_non_emissive, mat_non_emissive, mat_non_emissive]

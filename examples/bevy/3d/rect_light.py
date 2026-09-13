@@ -51,7 +51,7 @@ def setup(
     )
 
     commands.spawn(
-        Mesh3d(meshes.add(Sphere(1.0))),
+        Mesh3d(meshes.add(Sphere(radius=1.0))),
         MeshMaterial3d(materials.add(StandardMaterial(base_color=Color.WHITE))),
         Transform.from_xyz(0.0, 1.0, 0.0),
     )

@@ -29,7 +29,7 @@ def setup(
         Camera3d(),
         DistanceFog(
             color=Color.srgb(0.5, 0.5, 0.6),  # Grayish fog
-            falloff=FogFalloff.Linear(10.0, 50.0),  # Start at 10, full at 50
+            falloff=FogFalloff.Linear(start=10.0, end=50.0),  # Start at 10, full at 50
         ),
         Transform.from_xyz(0.0, 2.0, 10.0).looking_at(Vec3.ZERO, Vec3.Y),
     )
@@ -48,7 +48,7 @@ def setup(
     ))
 
     # Create sphere mesh
-    sphere = meshes.add(Sphere(1.0))
+    sphere = meshes.add(Sphere(radius=1.0))
 
     # Spawn spheres at different distances
     for i in range(15):
@@ -93,19 +93,19 @@ def toggle_fog_mode(
     for fog in fog_query:
         if keyboard.just_pressed(KeyCode.Digit1):
             # Linear fog
-            fog.falloff = FogFalloff.Linear(10.0, 50.0)
+            fog.falloff = FogFalloff.Linear(start=10.0, end=50.0)
             settings.mode = 0
 
         elif keyboard.just_pressed(KeyCode.Digit2):
             # Exponential fog
-            fog.falloff = FogFalloff.Exponential(0.05)
+            fog.falloff = FogFalloff.Exponential(density=0.05)
             settings.mode = 1
 
         elif keyboard.just_pressed(KeyCode.Digit3):
             # Atmospheric fog with scattering
             fog.falloff = FogFalloff.Atmospheric(
-                Vec3(0.35, 0.35, 0.4),  # Extinction (blueish)
-                Vec3(0.25, 0.25, 0.3),  # Inscattering
+                extinction=Vec3(0.35, 0.35, 0.4),
+                inscattering=Vec3(0.25, 0.25, 0.3),
             )
             settings.mode = 2
 
@@ -114,11 +114,11 @@ def toggle_fog_mode(
             if keyboard.pressed(KeyCode.ArrowUp):
                 # Increase density (more fog)
                 settings.density = min(0.2, settings.density * 1.05)
-                fog.falloff = FogFalloff.Exponential(settings.density)
+                fog.falloff = FogFalloff.Exponential(density=settings.density)
             elif keyboard.pressed(KeyCode.ArrowDown):
                 # Decrease density (less fog)
                 settings.density = max(0.001, settings.density * 0.95)
-                fog.falloff = FogFalloff.Exponential(settings.density)
+                fog.falloff = FogFalloff.Exponential(density=settings.density)
 
 
 @entrypoint

@@ -25,7 +25,7 @@ from pybevy.contrib import OrbitCamera, OrbitCameraPlugin
 from pybevy.prelude import *
 
 if TYPE_CHECKING:
-    from pybevy.ecs import FieldExpr  # type: ignore[assignment]
+    from pybevy.ecs import ViewColumn
 
 
 # Configuration
@@ -38,12 +38,12 @@ COLOR_CYCLE_SPEED = 1.0
 
 @numba.jit(nopython=True, parallel=True)
 def klein_bottle_morph(
-    pos_x: "FieldExpr",
-    pos_y: "FieldExpr",
-    pos_z: "FieldExpr",
-    scale_x: "FieldExpr",
-    scale_y: "FieldExpr",
-    scale_z: "FieldExpr",
+    pos_x: "ViewColumn",
+    pos_y: "ViewColumn",
+    pos_z: "ViewColumn",
+    scale_x: "ViewColumn",
+    scale_y: "ViewColumn",
+    scale_z: "ViewColumn",
     time: float,
     morph_factor: float,
 ) -> None:
@@ -91,13 +91,13 @@ def klein_bottle_morph(
 
 @numba.jit(nopython=True, parallel=True)
 def quantum_interference_field(
-    pos_x: "FieldExpr",
-    pos_y: "FieldExpr",
-    pos_z: "FieldExpr",
-    rot_x: "FieldExpr",
-    rot_y: "FieldExpr",
-    rot_z: "FieldExpr",
-    rot_w: "FieldExpr",
+    pos_x: "ViewColumn",
+    pos_y: "ViewColumn",
+    pos_z: "ViewColumn",
+    rot_x: "ViewColumn",
+    rot_y: "ViewColumn",
+    rot_z: "ViewColumn",
+    rot_w: "ViewColumn",
     time: float,
 ) -> None:
     """Simulate quantum wave function interference patterns."""
@@ -152,12 +152,12 @@ def quantum_interference_field(
 
 @numba.jit(nopython=True, parallel=True)
 def fractal_attractor_field(
-    pos_x: "FieldExpr",
-    pos_y: "FieldExpr",
-    pos_z: "FieldExpr",
-    scale_x: "FieldExpr",
-    scale_y: "FieldExpr",
-    scale_z: "FieldExpr",
+    pos_x: "ViewColumn",
+    pos_y: "ViewColumn",
+    pos_z: "ViewColumn",
+    scale_x: "ViewColumn",
+    scale_y: "ViewColumn",
+    scale_z: "ViewColumn",
     time: float,
 ) -> None:
     """Generate a 3D fractal attractor field (Rössler-Lorenz hybrid)."""
@@ -219,13 +219,13 @@ def fractal_attractor_field(
 
 @numba.jit(nopython=True, parallel=True)
 def ferrofluid_magnetic_field(
-    pos_x: "FieldExpr",
-    pos_y: "FieldExpr",
-    pos_z: "FieldExpr",
-    rot_x: "FieldExpr",
-    rot_y: "FieldExpr",
-    rot_z: "FieldExpr",
-    rot_w: "FieldExpr",
+    pos_x: "ViewColumn",
+    pos_y: "ViewColumn",
+    pos_z: "ViewColumn",
+    rot_x: "ViewColumn",
+    rot_y: "ViewColumn",
+    rot_z: "ViewColumn",
+    rot_w: "ViewColumn",
     time: float,
 ) -> None:
     """Simulate ferrofluid behavior in a dynamic magnetic field."""
@@ -313,12 +313,12 @@ def ferrofluid_magnetic_field(
 
 @numba.jit(nopython=True, parallel=True)
 def hyperbolic_tessellation(
-    pos_x: "FieldExpr",
-    pos_y: "FieldExpr",
-    pos_z: "FieldExpr",
-    scale_x: "FieldExpr",
-    scale_y: "FieldExpr",
-    scale_z: "FieldExpr",
+    pos_x: "ViewColumn",
+    pos_y: "ViewColumn",
+    pos_z: "ViewColumn",
+    scale_x: "ViewColumn",
+    scale_y: "ViewColumn",
+    scale_z: "ViewColumn",
     time: float,
 ) -> None:
     """Create a hyperbolic tessellation in 3D space (Poincaré disk model)."""
@@ -367,13 +367,13 @@ def hyperbolic_tessellation(
 
 @numba.jit(nopython=True, parallel=True)
 def compute_color_field(
-    pos_x: "FieldExpr",
-    pos_y: "FieldExpr",
-    pos_z: "FieldExpr",
+    pos_x: "ViewColumn",
+    pos_y: "ViewColumn",
+    pos_z: "ViewColumn",
     time: float,
-    r_out: "FieldExpr",
-    g_out: "FieldExpr",
-    b_out: "FieldExpr",
+    r_out: "ViewColumn",
+    g_out: "ViewColumn",
+    b_out: "ViewColumn",
 ) -> None:
     """Compute dynamic colors based on mathematical functions."""
     n = len(pos_x)
@@ -464,7 +464,7 @@ def setup_scene(
         material_handles.append(materials.add(material))
 
     # Use spheres for particles (more visually interesting than cubes)
-    particle_mesh = meshes.add(Sphere(0.3))
+    particle_mesh = meshes.add(Sphere(radius=0.3))
 
     spawn_count = 0
 

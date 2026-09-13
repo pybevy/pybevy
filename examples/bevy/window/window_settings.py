@@ -29,7 +29,7 @@ def main(app: App) -> App:
     # Create a custom window configuration
     window = Window(
         title="PyBevy - Window Configuration Example",  # Custom window title
-        resolution=WindowResolution(1024, 768),  # Window size (width, height)
+        resolution=WindowResolution(physical_width=1024, physical_height=768),  # Window size (width, height)
         decorations=True,  # Show window title bar and borders
         resizable=True,  # Allow window to be resized by user
         transparent=False,  # Opaque window (default)
