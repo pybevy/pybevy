@@ -64,7 +64,7 @@ pub struct PyForwardDecalMaterialExt {
 #[pymethods]
 impl PyForwardDecalMaterialExt {
     #[new]
-    #[pyo3(signature = (depth_fade_factor = 8.0))]
+    #[pyo3(signature = (*, depth_fade_factor = 8.0))]
     pub fn new(depth_fade_factor: f32) -> Self {
         Self::from_owned(ForwardDecalMaterialExt { depth_fade_factor })
     }
@@ -100,7 +100,7 @@ pub struct PyForwardDecalMaterial {
 #[pymethods]
 impl PyForwardDecalMaterial {
     #[new]
-    #[pyo3(signature = (base = None, extension = None))]
+    #[pyo3(signature = (*, base = None, extension = None))]
     pub fn new(
         base: Option<PyRef<'_, PyStandardMaterial>>,
         extension: Option<PyRef<'_, PyForwardDecalMaterialExt>>,

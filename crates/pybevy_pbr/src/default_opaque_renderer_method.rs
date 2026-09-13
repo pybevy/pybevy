@@ -8,7 +8,7 @@ use pyo3::prelude::*;
 #[pyclass(name = "DefaultOpaqueRendererMethod", module = "pybevy.pbr", extends = PyResource, from_py_object)]
 #[derive(Debug)]
 pub struct PyDefaultOpaqueRendererMethod {
-    pub storage: ResourceStorage<DefaultOpaqueRendererMethod>,
+    pub(crate) storage: ResourceStorage<DefaultOpaqueRendererMethod>,
 }
 
 #[pymethods]

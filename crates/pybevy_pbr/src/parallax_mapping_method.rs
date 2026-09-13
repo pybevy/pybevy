@@ -13,5 +13,8 @@ use pyo3::prelude::*;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PyParallaxMappingMethod {
     Occlusion(),
-    Relief { max_steps: u32 },
+    #[pyo3(constructor = (*, max_steps))]
+    Relief {
+        max_steps: u32,
+    },
 }

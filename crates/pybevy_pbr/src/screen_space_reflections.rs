@@ -19,6 +19,7 @@ pub struct PyScreenSpaceReflections {
 impl PyScreenSpaceReflections {
     #[new]
     #[pyo3(signature = (
+        *,
         min_perceptual_roughness = (0.08_f32, 0.12_f32),
         max_perceptual_roughness = (0.55_f32, 0.6_f32),
         thickness = 0.25,

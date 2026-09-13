@@ -25,6 +25,7 @@ impl PyAtmosphereSettings {
     #[new]
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
+        *,
         transmittance_lut_size = PyUVec2::new(256, 128),
         multiscattering_lut_size = PyUVec2::new(32, 32),
         sky_view_lut_size = PyUVec2::new(400, 200),
@@ -36,7 +37,7 @@ impl PyAtmosphereSettings {
         aerial_view_lut_samples = 10,
         aerial_view_lut_max_distance = 3.2e4,
         sky_max_samples = 16,
-        rendering_method = PyAtmosphereMode::LookupTexture,
+        rendering_method = PyAtmosphereMode::LookupTexture
     ))]
     pub fn new(
         transmittance_lut_size: PyUVec2,
@@ -201,7 +202,7 @@ impl PyAtmosphereSettings {
 
     #[setter]
     pub fn set_rendering_method(&mut self, value: PyAtmosphereMode) -> PyResult<()> {
-        self.as_mut()?.rendering_method = value.try_into()?;
+        self.as_mut()?.rendering_method = value.into();
         Ok(())
     }
 }

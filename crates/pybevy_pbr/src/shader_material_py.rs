@@ -28,7 +28,7 @@ use crate::{
 #[pyclass(name = "ShaderMaterial", module = "pybevy.pbr", extends = PyMaterial, skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyShaderMaterial {
-    pub storage: AssetStorage<ShaderMaterial>,
+    pub(crate) storage: AssetStorage<ShaderMaterial>,
 }
 
 impl AssetInputConverter for PyShaderMaterial {

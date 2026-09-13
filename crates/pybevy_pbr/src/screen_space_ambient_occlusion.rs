@@ -16,6 +16,7 @@ pub struct PyScreenSpaceAmbientOcclusion {
 impl PyScreenSpaceAmbientOcclusion {
     #[new]
     #[pyo3(signature = (
+        *,
         quality_level = PyScreenSpaceAmbientOcclusionQualityLevel::Medium(),
         constant_object_thickness = 0.25
     ))]

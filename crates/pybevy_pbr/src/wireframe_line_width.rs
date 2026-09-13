@@ -13,7 +13,7 @@ pub struct PyWireframeLineWidth {
 #[pymethods]
 impl PyWireframeLineWidth {
     #[new]
-    #[pyo3(signature = (width = 1.0))]
+    #[pyo3(signature = (*, width = 1.0))]
     pub fn new(width: f32) -> PyClassInitializer<Self> {
         Self::from_owned(WireframeLineWidth { width }).into()
     }
