@@ -3,6 +3,8 @@ use std::ops::Range;
 use pybevy_core::{FieldStorage, FromBorrowedStorage, StorageMut, StorageRef};
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
+use crate::richcmp::comparison_result;
+
 #[pyclass(name = "Range", module = "pybevy.math", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyRange {
@@ -92,21 +94,24 @@ impl PyRange {
         Ok(format!("{}..{}", r.start, r.end))
     }
 
-    pub fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<bool> {
-        if let Ok(other_range) = other.cast::<PyRange>() {
-            let other_range = other_range.borrow();
-            let a = self.as_ref()?.clone();
-            let b = other_range.as_ref()?.clone();
-            match op {
-                CompareOp::Eq => Ok(a == b),
-                CompareOp::Ne => Ok(a != b),
-                _ => Err(PyTypeError::new_err("Unsupported comparison operation")),
-            }
-        } else {
-            Err(PyTypeError::new_err(
-                "Can only compare Range with another Range",
-            ))
-        }
+    pub fn __richcmp__(
+        &self,
+        other: &Bound<'_, PyAny>,
+        op: CompareOp,
+        py: Python<'_>,
+    ) -> PyResult<Py<PyAny>> {
+        let Ok(other_range) = other.cast::<PyRange>() else {
+            return Ok(py.NotImplemented());
+        };
+        let other_range = other_range.borrow();
+        let a = self.as_ref()?.clone();
+        let b = other_range.as_ref()?.clone();
+        let result = match op {
+            CompareOp::Eq => a == b,
+            CompareOp::Ne => a != b,
+            _ => return Err(PyTypeError::new_err("Unsupported comparison operation")),
+        };
+        Ok(comparison_result(py, result))
     }
 }
 

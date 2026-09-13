@@ -6,7 +6,7 @@ use pyo3::{
     prelude::*,
 };
 
-use crate::integer::checked;
+use crate::{integer::checked, richcmp::comparison_result};
 
 #[pyclass(name = "IVec2", module = "pybevy.math", from_py_object)]
 #[derive(Debug, Clone)]
@@ -170,20 +170,23 @@ impl PyIVec2 {
         Ok(format!("IVec2(x={}, y={})", vec.x, vec.y))
     }
 
-    pub fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<bool> {
-        if let Ok(other_vec) = other.extract::<PyIVec2>() {
-            let a = self.as_ref()?;
-            let b = other_vec.as_ref()?;
-            match op {
-                CompareOp::Eq => Ok(a == b),
-                CompareOp::Ne => Ok(a != b),
-                _ => Err(PyTypeError::new_err("Unsupported comparison operation")),
-            }
-        } else {
-            Err(PyTypeError::new_err(
-                "Can only compare IVec2 with another IVec2",
-            ))
-        }
+    pub fn __richcmp__(
+        &self,
+        other: &Bound<'_, PyAny>,
+        op: CompareOp,
+        py: Python<'_>,
+    ) -> PyResult<Py<PyAny>> {
+        let Ok(other_value) = other.extract::<PyIVec2>() else {
+            return Ok(py.NotImplemented());
+        };
+        let a = self.as_ref()?;
+        let b = other_value.as_ref()?;
+        let result = match op {
+            CompareOp::Eq => a == b,
+            CompareOp::Ne => a != b,
+            _ => return Err(PyTypeError::new_err("Unsupported comparison operation")),
+        };
+        Ok(comparison_result(py, result))
     }
 
     pub fn __add__(&self, other: &PyIVec2) -> PyResult<PyIVec2> {

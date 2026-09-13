@@ -2,7 +2,7 @@ use bevy::math::{Vec3, Vec3A};
 use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
-use crate::vec3::PyVec3;
+use crate::{richcmp::comparison_result, vec3::PyVec3};
 
 #[pyclass(name = "Vec3A", module = "pybevy.math", from_py_object)]
 #[derive(Debug, Clone)]
@@ -237,22 +237,27 @@ impl PyVec3A {
         Ok(PyVec3A::from_vec3a(-*self.as_ref()?))
     }
 
-    pub fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<bool> {
+    pub fn __richcmp__(
+        &self,
+        other: &Bound<'_, PyAny>,
+        op: CompareOp,
+        py: Python<'_>,
+    ) -> PyResult<Py<PyAny>> {
         let other = if let Ok(other_vec) = other.extract::<PyVec3A>() {
             *other_vec.as_ref()?
         } else if let Ok((x, y, z)) = other.extract::<(f32, f32, f32)>() {
             Vec3A::new(x, y, z)
         } else {
-            return Err(PyTypeError::new_err(
-                "Can only compare Vec3A with another Vec3A or a tuple of three floats",
-            ));
+            return Ok(py.NotImplemented());
         };
 
-        match op {
-            CompareOp::Eq => Ok(*self.as_ref()? == other),
-            CompareOp::Ne => Ok(*self.as_ref()? != other),
-            _ => Err(PyTypeError::new_err("Unsupported comparison operation")),
-        }
+        let equal = *self.as_ref()? == other;
+        let result = match op {
+            CompareOp::Eq => equal,
+            CompareOp::Ne => !equal,
+            _ => return Err(PyTypeError::new_err("Unsupported comparison operation")),
+        };
+        Ok(comparison_result(py, result))
     }
 
     pub fn __repr__(&self) -> PyResult<String> {

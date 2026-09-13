@@ -3,7 +3,7 @@ use pybevy_core::{FromBorrowedStorage, ValueStorage};
 use pybevy_macros::pyvalue;
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
-use crate::vec2::PyVec2;
+use crate::{richcmp::comparison_result, vec2::PyVec2};
 
 #[pyvalue]
 #[pyclass(name = "Rect", module = "pybevy.math", from_py_object)]
@@ -121,20 +121,23 @@ impl PyRect {
         ))
     }
 
-    pub fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<bool> {
-        if let Ok(other_rect) = other.extract::<PyRect>() {
-            let a = self.to_bevy()?;
-            let b = other_rect.to_bevy()?;
-            match op {
-                CompareOp::Eq => Ok(a == b),
-                CompareOp::Ne => Ok(a != b),
-                _ => Err(PyTypeError::new_err("Unsupported comparison operation")),
-            }
-        } else {
-            Err(PyTypeError::new_err(
-                "Can only compare Rect with another Rect",
-            ))
-        }
+    pub fn __richcmp__(
+        &self,
+        other: &Bound<'_, PyAny>,
+        op: CompareOp,
+        py: Python<'_>,
+    ) -> PyResult<Py<PyAny>> {
+        let Ok(other_value) = other.extract::<PyRect>() else {
+            return Ok(py.NotImplemented());
+        };
+        let a = self.to_bevy()?;
+        let b = other_value.to_bevy()?;
+        let result = match op {
+            CompareOp::Eq => a == b,
+            CompareOp::Ne => a != b,
+            _ => return Err(PyTypeError::new_err("Unsupported comparison operation")),
+        };
+        Ok(comparison_result(py, result))
     }
 }
 

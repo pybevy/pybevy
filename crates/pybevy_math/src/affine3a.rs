@@ -3,6 +3,7 @@ use pybevy_core::{FromBorrowedStorage, StorageRef, ValueStorage};
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 use super::{mat3a::PyMat3A, mat4::PyMat4, quat::PyQuat, vec3::PyVec3, vec3a::PyVec3A};
+use crate::richcmp::comparison_result;
 
 #[pyclass(name = "Affine3A", module = "pybevy.math", skip_from_py_object)]
 #[derive(Debug, Clone)]
@@ -236,19 +237,22 @@ impl PyAffine3A {
         ))
     }
 
-    fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<bool> {
-        if let Ok(other_aff) = other.extract::<PyRef<'_, PyAffine3A>>() {
-            let self_aff = *self.as_ref()?;
-            let other_aff = *other_aff.as_ref()?;
-            match op {
-                CompareOp::Eq => Ok(self_aff == other_aff),
-                CompareOp::Ne => Ok(self_aff != other_aff),
-                _ => Err(PyTypeError::new_err("Affine3A only supports == and !=")),
-            }
-        } else {
-            Err(PyTypeError::new_err(
-                "Can only compare Affine3A with another Affine3A",
-            ))
-        }
+    fn __richcmp__(
+        &self,
+        other: &Bound<'_, PyAny>,
+        op: CompareOp,
+        py: Python<'_>,
+    ) -> PyResult<Py<PyAny>> {
+        let Ok(other_value) = other.extract::<PyRef<'_, PyAffine3A>>() else {
+            return Ok(py.NotImplemented());
+        };
+        let self_aff = *self.as_ref()?;
+        let other_aff = *other_value.as_ref()?;
+        let result = match op {
+            CompareOp::Eq => self_aff == other_aff,
+            CompareOp::Ne => self_aff != other_aff,
+            _ => return Err(PyTypeError::new_err("Affine3A only supports == and !=")),
+        };
+        Ok(comparison_result(py, result))
     }
 }

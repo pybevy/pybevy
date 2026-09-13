@@ -3,6 +3,7 @@ use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 use super::{mat3::PyMat3, vec2::PyVec2};
+use crate::richcmp::comparison_result;
 
 #[pyclass(name = "Affine2", module = "pybevy.math", from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
@@ -241,18 +242,23 @@ impl PyAffine2 {
         ))
     }
 
-    fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<bool> {
-        if let Ok(other_affine) = other.extract::<PyAffine2>() {
-            match op {
-                CompareOp::Eq => Ok(self.try_get()? == other_affine.try_get()?),
-                CompareOp::Ne => Ok(self.try_get()? != other_affine.try_get()?),
-                _ => Err(PyTypeError::new_err("Unsupported comparison operation")),
-            }
-        } else {
-            Err(PyTypeError::new_err(
-                "Can only compare Affine2 with another Affine2",
-            ))
-        }
+    fn __richcmp__(
+        &self,
+        other: &Bound<'_, PyAny>,
+        op: CompareOp,
+        py: Python<'_>,
+    ) -> PyResult<Py<PyAny>> {
+        let Ok(other_value) = other.extract::<PyAffine2>() else {
+            return Ok(py.NotImplemented());
+        };
+        let a = self.try_get()?;
+        let b = other_value.try_get()?;
+        let result = match op {
+            CompareOp::Eq => a == b,
+            CompareOp::Ne => a != b,
+            _ => return Err(PyTypeError::new_err("Unsupported comparison operation")),
+        };
+        Ok(comparison_result(py, result))
     }
 }
 
@@ -462,17 +468,22 @@ impl PyMat2 {
         ))
     }
 
-    fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<bool> {
-        if let Ok(other_mat) = other.extract::<PyMat2>() {
-            match op {
-                CompareOp::Eq => Ok(self.try_get()? == other_mat.try_get()?),
-                CompareOp::Ne => Ok(self.try_get()? != other_mat.try_get()?),
-                _ => Err(PyTypeError::new_err("Unsupported comparison operation")),
-            }
-        } else {
-            Err(PyTypeError::new_err(
-                "Can only compare Mat2 with another Mat2",
-            ))
-        }
+    fn __richcmp__(
+        &self,
+        other: &Bound<'_, PyAny>,
+        op: CompareOp,
+        py: Python<'_>,
+    ) -> PyResult<Py<PyAny>> {
+        let Ok(other_value) = other.extract::<PyMat2>() else {
+            return Ok(py.NotImplemented());
+        };
+        let a = self.try_get()?;
+        let b = other_value.try_get()?;
+        let result = match op {
+            CompareOp::Eq => a == b,
+            CompareOp::Ne => a != b,
+            _ => return Err(PyTypeError::new_err("Unsupported comparison operation")),
+        };
+        Ok(comparison_result(py, result))
     }
 }
