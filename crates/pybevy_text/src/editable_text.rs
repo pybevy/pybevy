@@ -18,6 +18,7 @@ impl PyEditableText {
     #[new]
     #[pyo3(signature = (
         text = "",
+        *,
         cursor_width = 0.2,
         cursor_blink_period = None,
         max_characters = None,

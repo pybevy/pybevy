@@ -245,7 +245,10 @@ class FontWeight:
 class FontWidth:
     """The width (stretch) of a font face as a float ratio (0.5-2.0).
 
-    Offers named presets matching bevy's `FontWidth` constants.
+    Offers named presets matching bevy's `FontWidth` constants. Only supports
+    variable width fonts: a static face has one width, so `CONDENSED` renders
+    identically to the default with the built-in font. Same caveat as
+    `FontWeight`.
 
     Example:
         >>> from pybevy.text import TextFont, FontWidth
@@ -275,6 +278,11 @@ class FontWidth:
 
 class FontStyle:
     """The slant style of a font face: normal, italic, or oblique.
+
+    Only supports fonts that carry the slant: a static face has one style, so
+    `Italic()` renders identically to the default with the built-in font. Same
+    caveat as `FontWeight`. `FontSmoothing`, next to these three, is not
+    face-dependent and always takes effect.
 
     Example:
         >>> from pybevy.text import TextFont, FontStyle
@@ -684,13 +692,14 @@ class TextFont(Component):
 
     def __init__(
         self,
+        *,
         font: FontSource | Handle | str | None = None,
         font_size: FontSize | float | None = None,
-        font_smoothing: FontSmoothing = FontSmoothing.AntiAliased,
         weight: FontWeight = FontWeight.NORMAL,
         width: FontWidth = FontWidth.NORMAL,
         style: FontStyle = FontStyle.Normal(),
-        font_features: FontFeatures = ...,
+        font_smoothing: FontSmoothing = FontSmoothing.AntiAliased,
+        font_features: FontFeatures = ...
     ) -> None:
         """Create a text font component. Defaults to FontSize.Px(20.0); supplied sizes must be finite and non-negative."""
 
@@ -826,7 +835,10 @@ class Text2dShadow(Component):
     """Color of the shadow (default: black)"""
 
     def __init__(
-        self, offset: Vec2 | None = None, color: Color | None = None
+        self,
+        *,
+        offset: Vec2 | None = None,
+        color: Color | None = None
     ) -> None:
         """Create a text shadow component.
 
@@ -1110,12 +1122,12 @@ class TextEdit:
         __match_args__: ClassVar[tuple[Literal["value"], Literal["cursor"]]]
         value: str
         cursor: tuple[int, int] | None
-        def __init__(self, value: str, cursor: tuple[int, int] | None) -> None: ...
+        def __init__(self, *, value: str, cursor: tuple[int, int] | None) -> None: ...
 
     class ImeCommit(TextEdit):
         __match_args__: ClassVar[tuple[Literal["value"]]]
         value: str
-        def __init__(self, value: str) -> None: ...
+        def __init__(self, *, value: str) -> None: ...
 
     def __eq__(self, other: object) -> bool: ...
 
@@ -1130,12 +1142,13 @@ class EditableText(Component):
     def __init__(
         self,
         text: str = "",
+        *,
         cursor_width: float = 0.2,
         cursor_blink_period: timedelta | float | int | None = None,
         max_characters: int | None = None,
         visible_lines: float | None = 1.0,
         visible_width: float | None = None,
-        allow_newlines: bool = False,
+        allow_newlines: bool = False
     ) -> None: ...
 
     @property
@@ -1187,10 +1200,11 @@ class TextCursorStyle(Component):
 
     def __init__(
         self,
+        *,
         color: Color = ...,
         selection_color: Color = ...,
         unfocused_selection_color: Color = ...,
-        selected_text_color: Color | None = None,
+        selected_text_color: Color | None = None
     ) -> None: ...
     @property
     def color(self) -> Color: ...

@@ -29,10 +29,11 @@ impl PyTextCursorStyle {
 impl PyTextCursorStyle {
     #[new]
     #[pyo3(signature = (
+        *,
         color = Self::default_color(),
         selection_color = Self::default_selection_color(),
         unfocused_selection_color = Self::default_unfocused_selection_color(),
-        selected_text_color = None,
+        selected_text_color = None
     ))]
     pub fn new(
         color: PyColor,
