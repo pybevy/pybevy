@@ -12,6 +12,7 @@ pub struct PyLine3d {
 #[pymethods]
 impl PyLine3d {
     #[new]
+    #[pyo3(signature = (*, direction))]
     pub fn new(direction: PyDir3) -> PyResult<Self> {
         Ok(Self {
             inner: Line3d {

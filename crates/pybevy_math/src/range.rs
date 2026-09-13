@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use pybevy_core::{FieldStorage, FromBorrowedStorage, StorageMut, StorageRef};
-use pyo3::prelude::*;
+use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 #[pyclass(name = "Range", module = "pybevy.math", skip_from_py_object)]
 #[derive(Debug, Clone)]
@@ -45,6 +45,7 @@ impl PyRange {
 #[pymethods]
 impl PyRange {
     #[new]
+    #[pyo3(signature = (*, start, end))]
     pub fn new(start: f32, end: f32) -> Self {
         PyRange::from_range(start, end)
     }
@@ -89,6 +90,23 @@ impl PyRange {
     pub fn __str__(&self) -> PyResult<String> {
         let r = self.as_ref()?;
         Ok(format!("{}..{}", r.start, r.end))
+    }
+
+    pub fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<bool> {
+        if let Ok(other_range) = other.cast::<PyRange>() {
+            let other_range = other_range.borrow();
+            let a = self.as_ref()?.clone();
+            let b = other_range.as_ref()?.clone();
+            match op {
+                CompareOp::Eq => Ok(a == b),
+                CompareOp::Ne => Ok(a != b),
+                _ => Err(PyTypeError::new_err("Unsupported comparison operation")),
+            }
+        } else {
+            Err(PyTypeError::new_err(
+                "Can only compare Range with another Range",
+            ))
+        }
     }
 }
 

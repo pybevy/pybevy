@@ -444,7 +444,7 @@ class Range:
     start: float
     end: float
 
-    def __init__(self, start: float, end: float) -> None:
+    def __init__(self, *, start: float, end: float) -> None:
         """Create a Range from start (inclusive) to end (exclusive).
 
         Args:
@@ -457,6 +457,9 @@ class Range:
 
     def contains(self, value: float) -> bool:
         """Returns True if value is within the range [start, end)."""
+
+    def __eq__(self, other: object) -> bool: ...
+    def __ne__(self, other: object) -> bool: ...
 
 class Rect:
     """A rectangle defined by minimum and maximum corner points."""
@@ -518,6 +521,9 @@ class Rect:
 
     def inflate(self, expansion: float) -> Rect:
         """Expand the rectangle by a given amount in all directions."""
+
+    def __eq__(self, other: object) -> bool: ...
+    def __ne__(self, other: object) -> bool: ...
 
 class UVec2:
     """A 2-dimensional unsigned integer vector."""
@@ -684,7 +690,17 @@ class UVec3:
     def __ne__(self, other: object) -> bool: ...
 
 class URect:
-    """A rectangle defined by minimum and maximum corner points (unsigned integers)."""
+    """A rectangle defined by minimum and maximum corner points (unsigned integers).
+
+    The constructors normalise, so `URect(7, 0, 4, 4)` is the same rectangle as
+    `URect(4, 0, 7, 4)`. Assigning a corner afterwards does not, matching bevy,
+    whose `min` and `max` are plain public fields: pushing `min.x` past `max.x`
+    leaves the rectangle inverted, and `width()`, `height()` and `size()` then
+    saturate to 0 rather than wrapping to near 2**32.
+
+    `is_empty()` is the check that notices; `contains()` and `center()` do not
+    agree with each other on an inverted rectangle.
+    """
 
     min: UVec2
     max: UVec2
@@ -707,11 +723,21 @@ class URect:
 
     @staticmethod
     def from_center_size(origin: UVec2, size: UVec2) -> URect:
-        """Create a URect from center point and size."""
+        """Create a URect from center point and size.
+
+        Raises:
+            ValueError: If origin is smaller than size / 2 on either axis.
+            OverflowError: If the upper corner exceeds u32.
+        """
 
     @staticmethod
     def from_center_half_size(origin: UVec2, half_size: UVec2) -> URect:
-        """Create a URect from center point and half size."""
+        """Create a URect from center point and half size.
+
+        Raises:
+            ValueError: If origin is smaller than half_size on either axis.
+            OverflowError: If the upper corner exceeds u32.
+        """
 
     def center(self) -> UVec2:
         """Get the center point of the rectangle."""
@@ -1126,6 +1152,69 @@ class Affine2:
     def __eq__(self, other: object) -> bool: ...
     def __ne__(self, other: object) -> bool: ...
 
+class Mat3A:
+    """A 3x3 column-major matrix using SIMD-aligned Vec3A columns.
+
+    Provides optimized 3x3 matrix operations with SIMD alignment.
+    """
+
+    IDENTITY: ClassVar[Mat3A]
+    ZERO: ClassVar[Mat3A]
+    NAN: ClassVar[Mat3A]
+
+    def __init__(
+        self,
+        m00: float, m01: float, m02: float,
+        m10: float, m11: float, m12: float,
+        m20: float, m21: float, m22: float,
+    ) -> None: ...
+
+    @staticmethod
+    def from_cols(x_axis: Vec3A, y_axis: Vec3A, z_axis: Vec3A) -> Mat3A: ...
+    @staticmethod
+    def from_cols_array(m: list[float]) -> Mat3A: ...
+    @staticmethod
+    def from_diagonal(diagonal: Vec3) -> Mat3A: ...
+    @staticmethod
+    def from_rotation_x(angle: float) -> Mat3A: ...
+    @staticmethod
+    def from_rotation_y(angle: float) -> Mat3A: ...
+    @staticmethod
+    def from_rotation_z(angle: float) -> Mat3A: ...
+
+    @property
+    def x_axis(self) -> Vec3A: ...
+    @property
+    def y_axis(self) -> Vec3A: ...
+    @property
+    def z_axis(self) -> Vec3A: ...
+
+    def col(self, index: int) -> Vec3A: ...
+    def transpose(self) -> Mat3A: ...
+    def determinant(self) -> float: ...
+    def inverse(self) -> Mat3A: ...
+    def mul_vec3a(self, rhs: Vec3A) -> Vec3A: ...
+    def mul_mat3a(self, rhs: Mat3A) -> Mat3A: ...
+    def mul_scalar(self, rhs: float) -> Mat3A: ...
+    def to_cols_array(self) -> list[float]: ...
+    def abs(self) -> Mat3A: ...
+    def is_finite(self) -> bool: ...
+    def is_nan(self) -> bool: ...
+
+    @overload
+    def __mul__(self, other: float) -> Mat3A: ...
+    @overload
+    def __mul__(self, other: Mat3A) -> Mat3A: ...
+    @overload
+    def __mul__(self, other: Vec3A) -> Vec3A: ...
+    @overload
+    def __mul__(self, other: Vec3) -> Vec3: ...
+    def __rmul__(self, scalar: float) -> Mat3A: ...
+    def __neg__(self) -> Mat3A: ...
+    def __repr__(self) -> str: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __ne__(self, other: object) -> bool: ...
+
 class Affine3A:
     """A 3D affine transform using SIMD-aligned types.
 
@@ -1137,7 +1226,7 @@ class Affine3A:
     NAN: ClassVar[Affine3A]
 
     def __init__(
-        self, matrix3: Mat3A | None = None, translation: Vec3A | None = None
+        self, *, matrix3: Mat3A = Mat3A.IDENTITY, translation: Vec3A = Vec3A.ZERO
     ) -> None: ...
 
     @staticmethod
@@ -1207,7 +1296,7 @@ class Rectangle(Meshable):
         width: float = 1.0,
         height: float = 1.0,
         *,
-        half_size: Vec2 | None = None,
+        half_size: Vec2 = ...
     ) -> None: ...
     @staticmethod
     def from_size(size: Vec2) -> Rectangle: ...
@@ -1276,7 +1365,7 @@ class Plane3d(Meshable):
 class InfinitePlane3d:
     """An infinite 3D plane defined by its normal direction."""
 
-    def __init__(self, normal: Vec3 = Dir3.Y.as_vec3()) -> None: ...
+    def __init__(self, *, normal: Vec3 = Dir3.Y.as_vec3()) -> None: ...
     @staticmethod
     def from_dir(normal: Dir3) -> InfinitePlane3d:
         """Create an infinite plane from a direction."""
@@ -1286,7 +1375,11 @@ class InfinitePlane3d:
     def signed_distance(self, isometry: Isometry3d | Vec3 | Vec3A | Quat, point: Vec3) -> float:
         """Signed distance from the plane to a point."""
     def project_point(self, isometry: Isometry3d | Vec3 | Vec3A | Quat, point: Vec3) -> Vec3:
-        """Project a point onto the plane."""
+        """Project a point onto the plane.
+
+        Bevy subtracts the plane's local normal rather than the rotated one, so
+        under a rotating isometry the result stays off the plane.
+        """
     def isometry_into_xy(self, origin: Vec3) -> Isometry3d:
         """Isometry mapping this plane onto the XY plane."""
     def isometry_from_xy(self, origin: Vec3) -> Isometry3d:
@@ -1350,7 +1443,11 @@ class ViewFrustum:
 
 class Cylinder(Meshable):
     def __init__(
-        self, radius: float = 0.5, height: float = 1.0, *, half_height: float | None = None
+        self,
+        radius: float = 0.5,
+        height: float = 1.0,
+        *,
+        half_height: float = ...
     ) -> None: ...
     @property
     def radius(self) -> float: ...
@@ -1374,7 +1471,7 @@ class Cuboid(Meshable):
         y_length: float = 1.0,
         z_length: float = 1.0,
         *,
-        half_size: Vec3 | None = None,
+        half_size: Vec3 = ...
     ) -> None: ...
     @staticmethod
     def from_size(size: Vec3) -> Cuboid: ...
@@ -1579,70 +1676,6 @@ class Mat3:
     def __rmul__(self, other: float) -> Mat3: ...
     def __truediv__(self, scalar: float) -> Mat3: ...
     def __neg__(self) -> Mat3: ...
-
-class Mat3A:
-    """A 3x3 column-major matrix using SIMD-aligned Vec3A columns.
-
-    Provides optimized 3x3 matrix operations with SIMD alignment.
-    """
-
-    IDENTITY: ClassVar[Mat3A]
-    ZERO: ClassVar[Mat3A]
-    NAN: ClassVar[Mat3A]
-
-    def __init__(
-        self,
-        m00: float, m01: float, m02: float,
-        m10: float, m11: float, m12: float,
-        m20: float, m21: float, m22: float,
-    ) -> None: ...
-
-    @staticmethod
-    def from_cols(x_axis: Vec3A, y_axis: Vec3A, z_axis: Vec3A) -> Mat3A: ...
-    @staticmethod
-    def from_cols_array(m: list[float]) -> Mat3A: ...
-    @staticmethod
-    def from_diagonal(diagonal: Vec3) -> Mat3A: ...
-    @staticmethod
-    def from_rotation_x(angle: float) -> Mat3A: ...
-    @staticmethod
-    def from_rotation_y(angle: float) -> Mat3A: ...
-    @staticmethod
-    def from_rotation_z(angle: float) -> Mat3A: ...
-
-    @property
-    def x_axis(self) -> Vec3A: ...
-    @property
-    def y_axis(self) -> Vec3A: ...
-    @property
-    def z_axis(self) -> Vec3A: ...
-
-    def col(self, index: int) -> Vec3A: ...
-    def transpose(self) -> Mat3A: ...
-    def determinant(self) -> float: ...
-    def inverse(self) -> Mat3A: ...
-    def mul_vec3a(self, rhs: Vec3A) -> Vec3A: ...
-    def mul_mat3a(self, rhs: Mat3A) -> Mat3A: ...
-    def mul_scalar(self, rhs: float) -> Mat3A: ...
-    def to_cols_array(self) -> list[float]: ...
-    def abs(self) -> Mat3A: ...
-    def is_finite(self) -> bool: ...
-    def is_nan(self) -> bool: ...
-
-    @overload
-    def __mul__(self, other: float) -> Mat3A: ...
-    @overload
-    def __mul__(self, other: Mat3A) -> Mat3A: ...
-    @overload
-    def __mul__(self, other: Vec3A) -> Vec3A: ...
-    @overload
-    def __mul__(self, other: Vec3) -> Vec3: ...
-    def __rmul__(self, scalar: float) -> Mat3A: ...
-    def __neg__(self) -> Mat3A: ...
-    def __repr__(self) -> str: ...
-    def __eq__(self, other: object) -> bool: ...
-    def __ne__(self, other: object) -> bool: ...
-
 class Mat4:
     """A 4x4 matrix class for 3D transformations."""
 
@@ -1799,6 +1832,8 @@ class Aabb2d:
     def __init__(self, center: Vec2, half_size: Vec2) -> None:
         """Create a new Aabb2d from center and half-extents.
 
+        Raises ValueError if half_size has a negative or NaN axis.
+
         Args:
             center: The center point of the bounding box
             half_size: Half the size of the bounding box in each dimension
@@ -1841,25 +1876,49 @@ class Aabb2d:
         """Merge with another bounding box, returning the smallest box containing both."""
 
     def grow(self, amount: Vec2) -> Aabb2d:
-        """Grow the bounding box by the given amount in all directions."""
+        """Grow the bounding box by the given amount in all directions.
+
+        Raises:
+            ValueError: If the operation violates Bevy nonnegative extent preconditions.
+        """
 
     def shrink(self, amount: Vec2) -> Aabb2d:
-        """Shrink the bounding box by the given amount in all directions."""
+        """Shrink the bounding box by the given amount in all directions.
+
+        Raises:
+            ValueError: If the operation violates Bevy nonnegative extent preconditions.
+        """
 
     def scale_around_center(self, scale: Vec2) -> Aabb2d:
-        """Scale the bounding box around its center."""
+        """Scale the bounding box around its center.
+
+        Raises:
+            ValueError: If the operation violates Bevy nonnegative extent preconditions.
+        """
 
     def visible_area(self) -> float:
-        """Calculate the perimeter of the bounding box."""
+        """Calculate the area of the bounding box (width * height)."""
 
     def bounding_circle(self) -> BoundingCircle:
-        """Get the bounding circle that contains this bounding box."""
+        """Get the bounding circle that contains this bounding box.
+
+        Raises:
+            ValueError: If the computed extents violate Bevy nonnegative preconditions.
+        """
 
     def rotated_by(self, rotation: Rot2 | float) -> Aabb2d:
-        """New box rotated around the origin by radians (or Rot2)."""
+        """New box rotated around the origin by radians (or Rot2).
+
+        Raises:
+            ValueError: If the computed extents violate Bevy nonnegative preconditions.
+        """
 
     def transformed_by(self, translation: Vec2, rotation: Rot2 | float) -> Aabb2d:
-        """New box rotated then translated."""
+        """New box rotated then translated.
+
+        Raises:
+            ValueError: If the computed extents violate Bevy nonnegative preconditions.
+        """
 
     def intersects_aabb(self, other: Aabb2d) -> bool:
         """Check if this bounding box intersects with another Aabb2d."""
@@ -1878,6 +1937,8 @@ class BoundingCircle:
 
     def __init__(self, center: Vec2, radius: float) -> None:
         """Create a new BoundingCircle.
+
+        Raises ValueError if radius is negative or NaN.
 
         Args:
             center: The center point of the circle
@@ -1901,7 +1962,9 @@ class BoundingCircle:
             points: List of Vec2 points to bound
 
         Returns:
-            The smallest BoundingCircle containing all transformed points
+            A BoundingCircle containing all transformed points, centered on
+            their centroid with the farthest point on its boundary. Bevy does
+            not promise the smallest such circle.
         """
 
     def radius(self) -> float:
@@ -1914,19 +1977,35 @@ class BoundingCircle:
         """Check if this circle completely contains another circle."""
 
     def merge(self, other: BoundingCircle) -> BoundingCircle:
-        """Merge with another circle, returning the smallest circle containing both."""
+        """Merge with another circle, returning the smallest circle containing both.
+
+        Raises:
+            ValueError: If the computed extents violate Bevy nonnegative preconditions.
+        """
 
     def grow(self, amount: float) -> BoundingCircle:
-        """Grow the circle radius by the given amount."""
+        """Grow the circle radius by the given amount.
+
+        Raises:
+            ValueError: If the operation violates Bevy nonnegative extent preconditions.
+        """
 
     def shrink(self, amount: float) -> BoundingCircle:
-        """Shrink the circle radius by the given amount."""
+        """Shrink the circle radius by the given amount.
+
+        Raises:
+            ValueError: If the operation violates Bevy nonnegative extent preconditions.
+        """
 
     def scale_around_center(self, scale: float) -> BoundingCircle:
-        """Scale the circle around its center."""
+        """Scale the circle around its center.
+
+        Raises:
+            ValueError: If the operation violates Bevy nonnegative extent preconditions.
+        """
 
     def visible_area(self) -> float:
-        """Calculate the circumference of the circle."""
+        """Calculate the area of the circle (pi * r^2)."""
 
     def aabb_2d(self) -> Aabb2d:
         """Get the axis-aligned bounding box that contains this circle."""
@@ -2007,6 +2086,8 @@ class Aabb3d:
     def __init__(self, center: Vec3A | Vec3, half_size: Vec3A | Vec3) -> None:
         """Create a new Aabb3d from a center point and half-extents.
 
+        Raises ValueError if half_size has a negative or NaN axis.
+
         Args:
             center: The center point of the box
             half_size: The half-extents (half the width, height, depth)
@@ -2019,6 +2100,9 @@ class Aabb3d:
     @staticmethod
     def from_min_max(min: Vec3A | Vec3, max: Vec3A | Vec3) -> Aabb3d:
         """Create an Aabb3d directly from minimum and maximum corners.
+
+        Raises:
+            ValueError: If the operation violates Bevy nonnegative extent preconditions.
 
         Args:
             min: The minimum corner of the bounding box
@@ -2045,25 +2129,49 @@ class Aabb3d:
         """Merge this AABB with another, returning the smallest AABB containing both."""
 
     def grow(self, amount: Vec3A | Vec3) -> Aabb3d:
-        """Grow the AABB by the given amount in each direction."""
+        """Grow the AABB by the given amount in each direction.
+
+        Raises:
+            ValueError: If the operation violates Bevy nonnegative extent preconditions.
+        """
 
     def shrink(self, amount: Vec3A | Vec3) -> Aabb3d:
-        """Shrink the AABB by the given amount in each direction."""
+        """Shrink the AABB by the given amount in each direction.
+
+        Raises:
+            ValueError: If the operation violates Bevy nonnegative extent preconditions.
+        """
 
     def scale_around_center(self, scale: Vec3A | Vec3) -> Aabb3d:
-        """Scale the AABB around its center."""
+        """Scale the AABB around its center.
+
+        Raises:
+            ValueError: If the operation violates Bevy nonnegative extent preconditions.
+        """
 
     def visible_area(self) -> float:
-        """Calculate the surface area of the AABB."""
+        """Return half the surface area (Bevy's visible-area heuristic)."""
 
     def bounding_sphere(self) -> BoundingSphere:
-        """Get the bounding sphere that contains this AABB."""
+        """Get the bounding sphere that contains this AABB.
+
+        Raises:
+            ValueError: If the computed extents violate Bevy nonnegative preconditions.
+        """
 
     def rotated_by(self, rotation: Quat) -> Aabb3d:
-        """New box rotated around the origin."""
+        """New box rotated around the origin.
+
+        Raises:
+            ValueError: If the computed extents violate Bevy nonnegative preconditions.
+        """
 
     def transformed_by(self, translation: Vec3A | Vec3, rotation: Quat) -> Aabb3d:
-        """New box rotated then translated."""
+        """New box rotated then translated.
+
+        Raises:
+            ValueError: If the computed extents violate Bevy nonnegative preconditions.
+        """
 
     def intersects_aabb(self, other: Aabb3d) -> bool:
         """Check if this AABB intersects with another Aabb3d."""
@@ -2095,6 +2203,8 @@ class BoundingSphere:
     def __init__(self, center: Vec3A | Vec3, radius: float) -> None:
         """Create a new BoundingSphere from a center point and radius.
 
+        Raises ValueError if radius is negative or NaN.
+
         Args:
             center: The center point of the sphere
             radius: The radius of the sphere
@@ -2108,25 +2218,46 @@ class BoundingSphere:
         """Radius of the bounding sphere."""
 
     def closest_point(self, point: Vec3A | Vec3) -> Vec3:
-        """Find the closest point on the sphere to the given point."""
+        """Find the closest point on the sphere to the given point.
+
+        For an exterior point Bevy normalises the point itself instead of its
+        offset from the center, so a sphere away from the origin returns a
+        point that is not on its surface.
+        """
 
     def contains(self, other: BoundingSphere) -> bool:
         """Check if this sphere contains another sphere."""
 
     def merge(self, other: BoundingSphere) -> BoundingSphere:
-        """Merge this sphere with another, returning the smallest sphere containing both."""
+        """Merge this sphere with another, returning the smallest sphere containing both.
+
+        Raises:
+            ValueError: If the computed extents violate Bevy nonnegative preconditions.
+        """
 
     def grow(self, amount: float) -> BoundingSphere:
-        """Grow the sphere by the given amount."""
+        """Grow the sphere by the given amount.
+
+        Raises:
+            ValueError: If the operation violates Bevy nonnegative extent preconditions.
+        """
 
     def shrink(self, amount: float) -> BoundingSphere:
-        """Shrink the sphere by the given amount."""
+        """Shrink the sphere by the given amount.
+
+        Raises:
+            ValueError: If the operation violates Bevy nonnegative extent preconditions.
+        """
 
     def scale_around_center(self, scale: float) -> BoundingSphere:
-        """Scale the sphere around its center."""
+        """Scale the sphere around its center.
+
+        Raises:
+            ValueError: If the operation violates Bevy nonnegative extent preconditions.
+        """
 
     def visible_area(self) -> float:
-        """Calculate the surface area of the sphere."""
+        """Return half the surface area (Bevy's visible-area heuristic)."""
 
     def aabb_3d(self) -> Aabb3d:
         """Get the axis-aligned bounding box that contains this sphere."""
@@ -2630,7 +2761,11 @@ class Capsule2d(Meshable):
     def half_length(self, value: float) -> None: ...
 
     def __init__(
-        self, radius: float = 0.5, length: float = 1.0, *, half_length: float | None = None
+        self,
+        radius: float = 0.5,
+        length: float = 1.0,
+        *,
+        half_length: float = ...
     ) -> None:
         """Create a new 2D capsule.
 
@@ -2671,7 +2806,7 @@ class Ellipse(Meshable):
     @half_size.setter
     def half_size(self, value: Vec2) -> None: ...
 
-    def __init__(self, half_size: Vec2 = ...) -> None:
+    def __init__(self, *, half_size: Vec2 = ...) -> None:
         """Create a new ellipse from its size.
 
         Args:
@@ -2744,11 +2879,11 @@ class Triangle2d(Meshable):
 
     def __init__(
         self,
-        a: Vec2 | None = None,
-        b: Vec2 | None = None,
-        c: Vec2 | None = None,
+        a: Vec2 = Vec2(0.0, 0.5),
+        b: Vec2 = Vec2(-0.5, -0.5),
+        c: Vec2 = Vec2(0.5, -0.5),
         *,
-        vertices: list[Vec2] | None = None,
+        vertices: list[Vec2] = ...
     ) -> None:
         """Create a new 2D triangle from three vertices.
 
@@ -2815,12 +2950,15 @@ class Capsule3d(Meshable):
     @half_length.setter
     def half_length(self, value: float) -> None: ...
 
-    def __init__(self, radius: float = 0.5, length: float = 1.0) -> None:
+    def __init__(
+        self, radius: float = 0.5, length: float = 1.0, *, half_length: float = ...
+    ) -> None:
         """Create a new 3D capsule.
 
         Args:
             radius: The radius of the hemispherical ends and cylindrical body
             length: The distance between the centers of the hemispheres
+            half_length: Half that distance; mutually exclusive with length
         """
 
     def to_cylinder(self) -> Cylinder:
@@ -2857,11 +2995,11 @@ class Triangle3d(Meshable):
 
     def __init__(
         self,
-        a: Vec3 | None = None,
-        b: Vec3 | None = None,
-        c: Vec3 | None = None,
+        a: Vec3 = Vec3(0.0, 0.5, 0.0),
+        b: Vec3 = Vec3(-0.5, -0.5, 0.0),
+        c: Vec3 = Vec3(0.5, -0.5, 0.0),
         *,
-        vertices: list[Vec3] | None = None,
+        vertices: list[Vec3] = ...
     ) -> None:
         """Create a new 3D triangle from three vertices.
 
@@ -2899,8 +3037,8 @@ class Triangle3d(Meshable):
     def is_obtuse(self) -> bool:
         """Check if the triangle is obtuse (has an angle greater than 90 degrees)."""
 
-    def largest_side(self) -> float:
-        """Get the length of the largest side of the triangle."""
+    def largest_side(self) -> tuple[Vec3, Vec3]:
+        """Get the endpoints of the largest side of the triangle."""
 
     def reverse(self) -> None:
         """Reverse the triangle's vertex order in place (flip winding)."""
@@ -2999,7 +3137,7 @@ class Rhombus(Meshable):
         horizontal_diagonal: float = 1.0,
         vertical_diagonal: float = 1.0,
         *,
-        half_diagonals: Vec2 | None = None,
+        half_diagonals: Vec2 = ...
     ) -> None:
         """Create a new Rhombus from horizontal and vertical diagonal sizes.
 
@@ -3073,8 +3211,8 @@ class Annulus(Meshable):
         inner_radius: float = 0.5,
         outer_radius: float = 1.0,
         *,
-        inner_circle: Circle | None = None,
-        outer_circle: Circle | None = None,
+        inner_circle: Circle = ...,
+        outer_circle: Circle = ...
     ) -> None:
         """Create a new annulus.
 
@@ -3158,7 +3296,7 @@ class Line2d:
 
     direction: Dir2
 
-    def __init__(self, direction: Dir2) -> None:
+    def __init__(self, *, direction: Dir2) -> None:
         """Create a new infinite line.
 
         Args:
@@ -3181,7 +3319,7 @@ class Line3d:
 
     direction: Dir3
 
-    def __init__(self, direction: Dir3) -> None:
+    def __init__(self, *, direction: Dir3) -> None:
         """Create a new infinite line.
 
         Args:
@@ -3203,10 +3341,10 @@ class Segment2d:
 
     def __init__(
         self,
-        point1: Vec2 | None = None,
-        point2: Vec2 | None = None,
+        point1: Vec2 = Vec2(-0.5, 0.0),
+        point2: Vec2 = Vec2(0.5, 0.0),
         *,
-        vertices: list[Vec2] | None = None,
+        vertices: list[Vec2] = ...
     ) -> None:
         """Create a new line segment from two endpoints.
 
@@ -3543,7 +3681,7 @@ class CircularSector:
         radius: float = 0.5,
         half_angle: float = 2.0943951023931953,
         *,
-        arc: Arc2d | None = None,
+        arc: Arc2d = ...
     ) -> None:
         """Create a new circular sector from a radius and half-angle.
 
@@ -3635,9 +3773,8 @@ class CircularSector:
     def perimeter(self) -> float:
         """Calculate the perimeter of the sector.
 
-        The perimeter includes two radii and the arc length.
-        For sectors with angle >= π (half circle or more), returns the
-        full circle perimeter (2πr).
+        The perimeter includes two radii and the arc length. Only a full
+        circle (angle >= 2*pi) returns the circle perimeter (2*pi*r) instead.
 
         Returns:
             The perimeter of the circular sector
@@ -3718,7 +3855,7 @@ class CircularSegment:
         radius: float = 0.5,
         half_angle: float = 2.0943951023931953,
         *,
-        arc: Arc2d | None = None,
+        arc: Arc2d = ...
     ) -> None:
         """Create a new circular segment from a radius and half-angle.
 
@@ -3927,8 +4064,8 @@ class Torus(Meshable):
         inner_radius: float = 0.5,
         outer_radius: float = 1.0,
         *,
-        minor_radius: float | None = None,
-        major_radius: float | None = None,
+        minor_radius: float = ...,
+        major_radius: float = ...
     ) -> None:
         """Create a new torus.
 
@@ -3987,12 +4124,12 @@ class Tetrahedron(Meshable):
 
     def __init__(
         self,
-        a: Vec3 | None = None,
-        b: Vec3 | None = None,
-        c: Vec3 | None = None,
-        d: Vec3 | None = None,
+        a: Vec3 = Vec3(0.5, 0.5, 0.5),
+        b: Vec3 = Vec3(-0.5, 0.5, -0.5),
+        c: Vec3 = Vec3(-0.5, -0.5, 0.5),
+        d: Vec3 = Vec3(0.5, -0.5, -0.5),
         *,
-        vertices: list[Vec3] | None = None,
+        vertices: list[Vec3] = ...
     ) -> None:
         """Create a new tetrahedron from four vertices.
 
@@ -4203,7 +4340,11 @@ class CubicHermite2d:
 
         Args:
             control_points: List of points the curve should pass through
-            tangents: List of tangent vectors at each control point
+            tangents: List of tangent vectors at each control point, one per
+                control point
+
+        Raises:
+            ValueError: If the two lists are not the same length
         """
 
     def to_curve(self) -> CubicCurve2d:
@@ -4348,14 +4489,15 @@ class Rot2:
     def sin(self) -> float:
         """Get the sine of the rotation angle."""
 
-    def __init__(self, *, cos: float | None = None, sin: float | None = None) -> None:
+    def __init__(self, *, cos: float = ..., sin: float = ...) -> None:
         """Create a rotation from cos/sin values.
 
         Args:
             cos: Cosine of the angle
             sin: Sine of the angle
 
-        If neither provided, returns identity rotation (cos=1, sin=0).
+        Omitting both returns identity (cos=1, sin=0); otherwise both are required.
+        Non-finite or non-unit pairs raise ValueError. Explicit None is invalid.
         """
 
     @staticmethod
@@ -4534,7 +4676,17 @@ class CubicHermite3d:
         >>> spline = CubicHermite3d([Vec3(0, 0, 0), Vec3(1, 0, 0)], [Vec3(1, 0, 0), Vec3(0, 1, 0)])
     """
 
-    def __init__(self, control_points: list[Vec3], tangents: list[Vec3]) -> None: ...
+    def __init__(self, control_points: list[Vec3], tangents: list[Vec3]) -> None:
+        """Create a new Hermite curve.
+
+        Args:
+            control_points: List of points the curve should pass through
+            tangents: List of tangent vectors at each control point, one per
+                control point
+
+        Raises:
+            ValueError: If the two lists are not the same length
+        """
 
     def to_curve(self) -> CubicCurve3d:
         """Convert to a `CubicCurve3d` for evaluation."""
@@ -4594,7 +4746,12 @@ class CubicNurbs2d:
         >>> nurbs = CubicNurbs2d([Vec2(0, 0), Vec2(1, 0), Vec2(2, 1), Vec2(3, 0)])
     """
 
-    def __init__(self, control_points: list[Vec2], weights: list[float] | None = None, knots: list[float] | None = None) -> None:
+    def __init__(
+        self,
+        control_points: list[Vec2],
+        weights: list[float] | None = None,
+        knots: list[float] | None = None,
+    ) -> None:
         """Create a NURBS curve.
 
         Raises:
@@ -4624,7 +4781,12 @@ class CubicNurbs3d:
         >>> nurbs = CubicNurbs3d([Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(2, 1, 0), Vec3(3, 0, 0)])
     """
 
-    def __init__(self, control_points: list[Vec3], weights: list[float] | None = None, knots: list[float] | None = None) -> None:
+    def __init__(
+        self,
+        control_points: list[Vec3],
+        weights: list[float] | None = None,
+        knots: list[float] | None = None,
+    ) -> None:
         """Create a NURBS curve.
 
         Raises:

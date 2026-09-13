@@ -1,4 +1,5 @@
-use bevy::math::{Isometry3d, Vec3, Vec3A, primitives::InfinitePlane3d};
+use bevy::math::{Dir3, Isometry3d, Vec3, Vec3A, primitives::InfinitePlane3d};
+use pybevy_core::public_error::INFINITE_PLANE_POINTS;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 use crate::{
@@ -42,9 +43,8 @@ pub struct PyInfinitePlane3d {
 #[pymethods]
 impl PyInfinitePlane3d {
     #[new]
-    #[pyo3(signature = (normal = PyVec3::Y))]
+    #[pyo3(signature = (*, normal = PyVec3::Y))]
     pub fn new(normal: PyVec3) -> PyResult<Self> {
-        use bevy::math::Dir3;
         let dir =
             Dir3::new(normal.try_into()?).map_err(|e| PyValueError::new_err(format!("{}", e)))?;
         Ok(Self {
@@ -63,9 +63,18 @@ impl PyInfinitePlane3d {
 
     #[staticmethod]
     pub fn from_points(a: PyVec3, b: PyVec3, c: PyVec3) -> PyResult<(Self, PyVec3)> {
-        let (plane, origin) =
-            InfinitePlane3d::from_points(a.try_into()?, b.try_into()?, c.try_into()?);
-        Ok((Self { inner: plane }, origin.into()))
+        let a: Vec3 = a.try_into()?;
+        let b: Vec3 = b.try_into()?;
+        let c: Vec3 = c.try_into()?;
+        let normal = Dir3::new((b - a).cross(c - a))
+            .map_err(|_| PyValueError::new_err(INFINITE_PLANE_POINTS))?;
+        let origin = (a + b + c) / 3.0;
+        Ok((
+            Self {
+                inner: InfinitePlane3d { normal },
+            },
+            origin.into(),
+        ))
     }
 
     pub fn signed_distance(&self, isometry: &Bound<'_, PyAny>, point: PyVec3) -> PyResult<f32> {

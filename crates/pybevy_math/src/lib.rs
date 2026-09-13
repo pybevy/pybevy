@@ -7,6 +7,7 @@ pub mod dir2;
 pub mod dir3;
 pub mod easing;
 pub mod float_ord;
+mod integer;
 pub mod interval;
 pub mod irect;
 pub mod ivec2;

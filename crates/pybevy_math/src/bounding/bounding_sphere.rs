@@ -2,9 +2,15 @@ use bevy::math::{
     Isometry3d, Vec3, Vec3A,
     bounding::{Aabb3d, BoundingSphere, BoundingVolume, IntersectsVolume},
 };
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{
+    FromBorrowedStorage, ValueStorage,
+    public_error::{EMPTY_POINT_CLOUD, bounding_operation, bounding_radius, bounding_shrink},
+};
 use pybevy_macros::pyvalue;
-use pyo3::{exceptions::PyTypeError, prelude::*};
+use pyo3::{
+    exceptions::{PyTypeError, PyValueError},
+    prelude::*,
+};
 
 use super::aabb3d::PyAabb3d;
 use crate::{
@@ -49,6 +55,13 @@ impl From<BoundingSphere> for PyBoundingSphere {
 impl PyBoundingSphere {
     #[new]
     pub fn new(center: &Bound<'_, PyAny>, radius: f32) -> PyResult<Self> {
+        // Reject inputs that fail Bevy nonnegative radius precondition.
+        if radius.is_nan() || radius < 0.0 {
+            return Err(PyValueError::new_err(bounding_radius(
+                "BoundingSphere",
+                radius,
+            )));
+        }
         Ok(PyBoundingSphere::from_owned(BoundingSphere::new(
             extract_vec3a_from_any(center)?,
             radius,
@@ -98,9 +111,20 @@ impl PyBoundingSphere {
 
     pub fn merge(&self, other: &PyBoundingSphere) -> PyResult<PyBoundingSphere> {
         let other_sphere: BoundingSphere = other.try_into()?;
-        Ok(PyBoundingSphere::from_owned(
-            self.as_ref()?.merge(&other_sphere),
-        ))
+        let bounds = self.as_ref()?;
+        let length = (bounds.center - other_sphere.center).length();
+        if !(bounds.radius() >= length + other_sphere.radius()
+            || other_sphere.radius() >= length + bounds.radius())
+        {
+            let radius = (length + bounds.radius() + other_sphere.radius()) / 2.0;
+            if radius.is_nan() || radius < 0.0 {
+                return Err(PyValueError::new_err(bounding_operation(
+                    "BoundingSphere",
+                    "merge",
+                )));
+            }
+        }
+        Ok(PyBoundingSphere::from_owned(bounds.merge(&other_sphere)))
     }
 
     pub fn rotated_by(&self, rotation: &Bound<'_, PyAny>) -> PyResult<PyBoundingSphere> {
@@ -123,16 +147,40 @@ impl PyBoundingSphere {
     }
 
     pub fn grow(&self, amount: f32) -> PyResult<PyBoundingSphere> {
-        Ok(PyBoundingSphere::from_owned(self.as_ref()?.grow(amount)))
+        let bounds = self.as_ref()?;
+        if amount.is_nan() || amount < 0.0 {
+            return Err(PyValueError::new_err(bounding_operation(
+                "BoundingSphere",
+                "grow",
+            )));
+        }
+        Ok(PyBoundingSphere::from_owned(bounds.grow(amount)))
     }
 
     pub fn shrink(&self, amount: f32) -> PyResult<PyBoundingSphere> {
-        Ok(PyBoundingSphere::from_owned(self.as_ref()?.shrink(amount)))
+        let bounds = self.as_ref()?;
+        if amount.is_nan()
+            || amount < 0.0
+            || bounds
+                .radius()
+                .partial_cmp(&amount)
+                .is_none_or(|order| order.is_lt())
+        {
+            return Err(PyValueError::new_err(bounding_shrink("BoundingSphere")));
+        }
+        Ok(PyBoundingSphere::from_owned(bounds.shrink(amount)))
     }
 
     pub fn scale_around_center(&self, scale: f32) -> PyResult<PyBoundingSphere> {
+        let bounds = self.as_ref()?;
+        if scale.is_nan() || scale < 0.0 {
+            return Err(PyValueError::new_err(bounding_operation(
+                "BoundingSphere",
+                "scale_around_center",
+            )));
+        }
         Ok(PyBoundingSphere::from_owned(
-            self.as_ref()?.scale_around_center(scale),
+            bounds.scale_around_center(scale),
         ))
     }
 
@@ -159,6 +207,9 @@ impl PyBoundingSphere {
         isometry: super::aabb3d::PyIsometry3d,
         points: Vec<PyVec3>,
     ) -> PyResult<PyBoundingSphere> {
+        if points.is_empty() {
+            return Err(PyValueError::new_err(EMPTY_POINT_CLOUD));
+        }
         let iso: Isometry3d = isometry.try_into()?;
         let point_refs: Vec<Vec3A> = points
             .into_iter()

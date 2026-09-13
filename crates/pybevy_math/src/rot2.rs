@@ -1,8 +1,12 @@
 use std::f32::consts::PI;
 
 use bevy::math::{Rot2, StableInterpolate, Vec2};
-use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
-use pyo3::{exceptions::PyTypeError, prelude::*};
+use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage, public_error};
+use pybevy_macros::pyconstructor;
+use pyo3::{
+    exceptions::{PyTypeError, PyValueError},
+    prelude::*,
+};
 
 use crate::vec2::PyVec2;
 
@@ -66,15 +70,19 @@ impl PyRot2 {
     }
 }
 
+#[pyconstructor("Rot2", keyword_only(cos, sin), complete(cos, sin))]
 #[pymethods]
 impl PyRot2 {
     #[new]
-    #[pyo3(signature = (*, cos = None, sin = None))]
-    pub fn new(cos: Option<f32>, sin: Option<f32>) -> Self {
+    pub fn new(cos: Option<f32>, sin: Option<f32>) -> PyResult<Self> {
         if let (Some(c), Some(s)) = (cos, sin) {
-            return Self::rot2(Rot2::from_sin_cos(s, c));
+            let rotation = Rot2 { cos: c, sin: s };
+            if !c.is_finite() || !s.is_finite() || !rotation.is_normalized() {
+                return Err(PyValueError::new_err(public_error::CONSTRUCTOR_ROTATION));
+            }
+            return Ok(Self::rot2(rotation));
         }
-        Self::rot2(Rot2::IDENTITY)
+        Ok(Self::rot2(Rot2::IDENTITY))
     }
 
     #[staticmethod]

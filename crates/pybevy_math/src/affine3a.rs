@@ -79,7 +79,11 @@ impl PyAffine3A {
     pub const NAN: PyAffine3A = PyAffine3A::affine3a(Affine3A::NAN);
 
     #[new]
-    #[pyo3(signature = (matrix3=PyMat3A::mat3a(Mat3A::IDENTITY), translation=PyVec3A::vec3a(Vec3A::ZERO)))]
+    #[pyo3(signature = (
+        *,
+        matrix3=PyMat3A::mat3a(Mat3A::IDENTITY),
+        translation=PyVec3A::vec3a(Vec3A::ZERO)
+    ))]
     pub fn new(matrix3: PyMat3A, translation: PyVec3A) -> PyResult<Self> {
         Ok(PyAffine3A::from_affine3a(Affine3A {
             matrix3: matrix3.try_into()?,

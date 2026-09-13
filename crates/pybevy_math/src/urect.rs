@@ -1,9 +1,13 @@
-use bevy::math::URect;
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use bevy::math::{URect, UVec2};
+use pybevy_core::{FromBorrowedStorage, ValueStorage, public_error::unsigned_rect_origin};
 use pybevy_macros::pyvalue;
-use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
+use pyo3::{
+    basic::CompareOp,
+    exceptions::{PyTypeError, PyValueError},
+    prelude::*,
+};
 
-use super::uvec2::PyUVec2;
+use super::{integer::checked, uvec2::PyUVec2};
 
 #[pyvalue]
 #[pyclass(name = "URect", module = "pybevy.math", from_py_object)]
@@ -50,17 +54,45 @@ impl PyURect {
 
     #[staticmethod]
     pub fn from_corners(p0: PyUVec2, p1: PyUVec2) -> PyResult<PyURect> {
-        Ok(URect::from_corners(p0.try_into()?, p1.try_into()?).try_into()?)
+        Ok(URect::from_corners(p0.try_into()?, p1.try_into()?).into())
     }
 
     #[staticmethod]
     pub fn from_center_size(origin: PyUVec2, size: PyUVec2) -> PyResult<PyURect> {
-        Ok(URect::from_center_size(origin.try_into()?, size.try_into()?).try_into()?)
+        let origin: UVec2 = origin.try_into()?;
+        let size: UVec2 = size.try_into()?;
+        if !origin.cmpge(size / 2).all() {
+            return Err(PyValueError::new_err(unsigned_rect_origin(
+                origin.to_array(),
+                size.to_array(),
+                false,
+            )));
+        }
+        Self::from_center_half_size(origin.into(), (size / 2).into())
     }
 
     #[staticmethod]
     pub fn from_center_half_size(origin: PyUVec2, half_size: PyUVec2) -> PyResult<PyURect> {
-        Ok(URect::from_center_half_size(origin.try_into()?, half_size.try_into()?).try_into()?)
+        let origin: UVec2 = origin.try_into()?;
+        let half_size: UVec2 = half_size.try_into()?;
+        if !origin.cmpge(half_size).all() {
+            return Err(PyValueError::new_err(unsigned_rect_origin(
+                origin.to_array(),
+                half_size.to_array(),
+                true,
+            )));
+        }
+        Ok(URect {
+            min: UVec2::new(
+                checked(origin.x.checked_sub(half_size.x))?,
+                checked(origin.y.checked_sub(half_size.y))?,
+            ),
+            max: UVec2::new(
+                checked(origin.x.checked_add(half_size.x))?,
+                checked(origin.y.checked_add(half_size.y))?,
+            ),
+        }
+        .into())
     }
 
     #[getter]
@@ -93,28 +125,50 @@ impl PyURect {
         Ok(self.to_bevy()?.is_empty())
     }
 
+    /// Returns zero when the rectangle is inverted.
     pub fn width(&self) -> PyResult<u32> {
-        Ok(self.to_bevy()?.width())
+        let rect = self.to_bevy()?;
+        Ok(rect.max.x.saturating_sub(rect.min.x))
     }
 
     pub fn height(&self) -> PyResult<u32> {
-        Ok(self.to_bevy()?.height())
+        let rect = self.to_bevy()?;
+        Ok(rect.max.y.saturating_sub(rect.min.y))
     }
 
     pub fn inflate(&self, expansion: i32) -> PyResult<PyURect> {
-        Ok(self.to_bevy()?.inflate(expansion).into())
+        let rect = self.to_bevy()?;
+        let inverse = checked(expansion.checked_neg())?;
+        let min = UVec2::new(
+            rect.min.x.saturating_add_signed(inverse),
+            rect.min.y.saturating_add_signed(inverse),
+        );
+        let max = UVec2::new(
+            rect.max.x.saturating_add_signed(expansion),
+            rect.max.y.saturating_add_signed(expansion),
+        );
+        Ok(URect {
+            min: min.min(max),
+            max,
+        }
+        .into())
     }
 
     pub fn size(&self) -> PyResult<PyUVec2> {
-        Ok(self.to_bevy()?.size().into())
+        Ok(UVec2::new(self.width()?, self.height()?).into())
     }
 
     pub fn half_size(&self) -> PyResult<PyUVec2> {
-        Ok(self.to_bevy()?.half_size().into())
+        Ok((UVec2::new(self.width()?, self.height()?) / 2).into())
     }
 
     pub fn center(&self) -> PyResult<PyUVec2> {
-        Ok(self.to_bevy()?.center().into())
+        let rect = self.to_bevy()?;
+        Ok(UVec2::new(
+            checked(rect.min.x.checked_add(rect.max.x))? / 2,
+            checked(rect.min.y.checked_add(rect.max.y))? / 2,
+        )
+        .into())
     }
 
     pub fn contains(&self, point: PyUVec2) -> PyResult<bool> {
@@ -126,7 +180,7 @@ impl PyURect {
     }
 
     pub fn union_point(&self, point: PyUVec2) -> PyResult<PyURect> {
-        Ok(self.to_bevy()?.union_point(point.try_into()?).try_into()?)
+        Ok(self.to_bevy()?.union_point(point.try_into()?).into())
     }
 
     pub fn intersect(&self, other: &PyURect) -> PyResult<PyURect> {

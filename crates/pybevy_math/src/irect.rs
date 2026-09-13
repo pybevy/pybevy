@@ -1,9 +1,16 @@
-use bevy::math::IRect;
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use bevy::math::{IRect, IVec2};
+use pybevy_core::{
+    FromBorrowedStorage, ValueStorage,
+    public_error::{INTEGER_RECT_HALF_SIZE_NEGATIVE, INTEGER_RECT_SIZE_NEGATIVE},
+};
 use pybevy_macros::pyvalue;
-use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
+use pyo3::{
+    basic::CompareOp,
+    exceptions::{PyTypeError, PyValueError},
+    prelude::*,
+};
 
-use super::ivec2::PyIVec2;
+use super::{integer::checked, ivec2::PyIVec2};
 
 #[pyvalue]
 #[pyclass(name = "IRect", module = "pybevy.math", from_py_object)]
@@ -50,17 +57,36 @@ impl PyIRect {
 
     #[staticmethod]
     pub fn from_corners(p0: PyIVec2, p1: PyIVec2) -> PyResult<PyIRect> {
-        Ok(IRect::from_corners(p0.try_into()?, p1.try_into()?).try_into()?)
+        Ok(IRect::from_corners(p0.try_into()?, p1.try_into()?).into())
     }
 
     #[staticmethod]
     pub fn from_center_size(origin: PyIVec2, size: PyIVec2) -> PyResult<PyIRect> {
-        Ok(IRect::from_center_size(origin.try_into()?, size.try_into()?).try_into()?)
+        let size: IVec2 = size.try_into()?;
+        if size.x < 0 || size.y < 0 {
+            return Err(PyValueError::new_err(INTEGER_RECT_SIZE_NEGATIVE));
+        }
+        Self::from_center_half_size(origin, (size / 2).into())
     }
 
     #[staticmethod]
     pub fn from_center_half_size(origin: PyIVec2, half_size: PyIVec2) -> PyResult<PyIRect> {
-        Ok(IRect::from_center_half_size(origin.try_into()?, half_size.try_into()?).try_into()?)
+        let origin: IVec2 = origin.try_into()?;
+        let half_size: IVec2 = half_size.try_into()?;
+        if half_size.x < 0 || half_size.y < 0 {
+            return Err(PyValueError::new_err(INTEGER_RECT_HALF_SIZE_NEGATIVE));
+        }
+        Ok(IRect {
+            min: IVec2::new(
+                checked(origin.x.checked_sub(half_size.x))?,
+                checked(origin.y.checked_sub(half_size.y))?,
+            ),
+            max: IVec2::new(
+                checked(origin.x.checked_add(half_size.x))?,
+                checked(origin.y.checked_add(half_size.y))?,
+            ),
+        }
+        .into())
     }
 
     #[getter]
@@ -94,27 +120,47 @@ impl PyIRect {
     }
 
     pub fn width(&self) -> PyResult<i32> {
-        Ok(self.to_bevy()?.width())
+        let rect = self.to_bevy()?;
+        checked(rect.max.x.checked_sub(rect.min.x))
     }
 
     pub fn height(&self) -> PyResult<i32> {
-        Ok(self.to_bevy()?.height())
+        let rect = self.to_bevy()?;
+        checked(rect.max.y.checked_sub(rect.min.y))
     }
 
     pub fn inflate(&self, expansion: i32) -> PyResult<PyIRect> {
-        Ok(self.to_bevy()?.inflate(expansion).into())
+        let rect = self.to_bevy()?;
+        let min = IVec2::new(
+            checked(rect.min.x.checked_sub(expansion))?,
+            checked(rect.min.y.checked_sub(expansion))?,
+        );
+        let max = IVec2::new(
+            checked(rect.max.x.checked_add(expansion))?,
+            checked(rect.max.y.checked_add(expansion))?,
+        );
+        Ok(IRect {
+            min: min.min(max),
+            max,
+        }
+        .into())
     }
 
     pub fn size(&self) -> PyResult<PyIVec2> {
-        Ok(self.to_bevy()?.size().into())
+        Ok(IVec2::new(self.width()?, self.height()?).into())
     }
 
     pub fn half_size(&self) -> PyResult<PyIVec2> {
-        Ok(self.to_bevy()?.half_size().into())
+        Ok((IVec2::new(self.width()?, self.height()?) / 2).into())
     }
 
     pub fn center(&self) -> PyResult<PyIVec2> {
-        Ok(self.to_bevy()?.center().into())
+        let rect = self.to_bevy()?;
+        Ok(IVec2::new(
+            checked(rect.min.x.checked_add(rect.max.x))? / 2,
+            checked(rect.min.y.checked_add(rect.max.y))? / 2,
+        )
+        .into())
     }
 
     pub fn contains(&self, point: PyIVec2) -> PyResult<bool> {
@@ -126,7 +172,7 @@ impl PyIRect {
     }
 
     pub fn union_point(&self, point: PyIVec2) -> PyResult<PyIRect> {
-        Ok(self.to_bevy()?.union_point(point.try_into()?).try_into()?)
+        Ok(self.to_bevy()?.union_point(point.try_into()?).into())
     }
 
     pub fn intersect(&self, other: &PyIRect) -> PyResult<PyIRect> {
