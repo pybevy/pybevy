@@ -7,8 +7,8 @@ use bevy::{
     math::TryStableInterpolate,
 };
 use pybevy_core::{
-    BorrowableStorage, ComponentStorage, FromBorrowedStorage, PyMaterializable, ResourceStorage,
-    StorageMut, StorageRef, ValueStorage,
+    BorrowableStorage, ComponentStorage, PyMaterializable, ResourceStorage, StorageMut, StorageRef,
+    ValueStorage,
     public_error::{COLOR_INTERPOLATION_MISMATCH, enum_variant_changed},
 };
 use pybevy_macros::pyenum;
@@ -264,7 +264,7 @@ impl PyColor {
             }};
         }
 
-        let color = self.as_ref()?;
+        let color = self.storage.as_ref()?;
         let result = match *color {
             Color::Srgba(value) => variant_repr!("Srgba", value, red, green, blue),
             Color::LinearRgba(value) => {
@@ -279,6 +279,13 @@ impl PyColor {
             Color::Oklcha(value) => variant_repr!("Oklcha", value, lightness, chroma, hue),
             Color::Xyza(value) => variant_repr!("Xyza", value, x, y, z),
         };
+        if ColorVariant::of(&color) != self.expected {
+            // Render variant-stale wrappers without bypassing storage validity.
+            return Ok(format!(
+                "<stale {} wrapper; the value is now {result}>",
+                self.expected.qualname()
+            ));
+        }
         Ok(result)
     }
 
@@ -479,12 +486,12 @@ impl PyColor {
 
     pub fn to_linear(&self) -> PyResult<PyLinearRgba> {
         let linear: LinearRgba = self.resolved_copy()?.into();
-        Ok(PyLinearRgba::from_linear_rgba(linear))
+        Ok(PyLinearRgba::from_owned(linear))
     }
 
     pub fn to_srgba(&self) -> PyResult<PySrgba> {
         let srgba: Srgba = self.resolved_copy()?.into();
-        Ok(PySrgba::from_srgba(srgba))
+        Ok(PySrgba::from_owned(srgba))
     }
 
     // Note: materialize() method is in the main pybevy crate (depends on StandardMaterial)
@@ -651,26 +658,6 @@ macro_rules! define_color_variant {
         }
     };
 }
-
-macro_rules! impl_color_value_storage {
-    ($wrapper:ty, $native:ty) => {
-        impl FromBorrowedStorage<ValueStorage<$native>> for $wrapper {
-            fn from_borrowed(storage: ValueStorage<$native>) -> Self {
-                Self { storage }
-            }
-        }
-    };
-}
-
-impl_color_value_storage!(PySrgba, Srgba);
-impl_color_value_storage!(PyLinearRgba, LinearRgba);
-impl_color_value_storage!(PyHsla, Hsla);
-impl_color_value_storage!(PyHsva, Hsva);
-impl_color_value_storage!(PyLaba, Laba);
-impl_color_value_storage!(PyLcha, Lcha);
-impl_color_value_storage!(PyOklaba, Oklaba);
-impl_color_value_storage!(PyOklcha, Oklcha);
-impl_color_value_storage!(PyXyza, Xyza);
 
 define_color_variant!(PyColorSrgba, "Srgba", Srgba, Srgba, PySrgba);
 define_color_variant!(

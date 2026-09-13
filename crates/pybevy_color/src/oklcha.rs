@@ -5,12 +5,14 @@ use bevy::{
     },
     math::{Vec3, Vec4},
 };
-use pybevy_core::{StorageMut, StorageRef, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_macros::pyvalue;
 use pybevy_math::{vec3::PyVec3, vec4::PyVec4};
 use pyo3::prelude::*;
 
 use super::{common::fmt_f32, linear_rgba::PyLinearRgba, srgba::PySrgba};
 
+#[pyvalue]
 #[pyclass(name = "Oklcha", module = "pybevy.color", eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyOklcha {
@@ -38,33 +40,7 @@ impl TryFrom<&PyOklcha> for Oklcha {
 impl From<Oklcha> for PyOklcha {
     #[inline(always)]
     fn from(color: Oklcha) -> Self {
-        PyOklcha::from_oklcha(color)
-    }
-}
-
-impl PyOklcha {
-    #[inline(always)]
-    pub fn from_oklcha(color: Oklcha) -> Self {
-        PyOklcha {
-            storage: ValueStorage::owned(color),
-        }
-    }
-
-    #[inline(always)]
-    pub const fn oklcha(color: Oklcha) -> Self {
-        PyOklcha {
-            storage: ValueStorage::owned(color),
-        }
-    }
-
-    #[inline(always)]
-    fn as_ref(&self) -> PyResult<StorageRef<'_, Oklcha>> {
-        Ok(self.storage.as_ref()?)
-    }
-
-    #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Oklcha>> {
-        Ok(self.storage.as_mut()?)
+        PyOklcha::from_owned(color)
     }
 }
 
@@ -73,17 +49,17 @@ impl PyOklcha {
     #[new]
     #[pyo3(signature = (lightness = 1.0, chroma = 0.0, hue = 0.0, alpha = 1.0))]
     pub fn new(lightness: f32, chroma: f32, hue: f32, alpha: f32) -> Self {
-        PyOklcha::oklcha(Oklcha::new(lightness, chroma, hue, alpha))
+        PyOklcha::from_owned(Oklcha::new(lightness, chroma, hue, alpha))
     }
 
     #[staticmethod]
     pub fn lch(lightness: f32, chroma: f32, hue: f32) -> Self {
-        PyOklcha::oklcha(Oklcha::lch(lightness, chroma, hue))
+        PyOklcha::from_owned(Oklcha::lch(lightness, chroma, hue))
     }
 
     #[staticmethod]
     pub fn gray(lightness: f32) -> Self {
-        PyOklcha::oklcha(Oklcha::gray(lightness))
+        PyOklcha::from_owned(Oklcha::gray(lightness))
     }
 
     #[getter]
@@ -131,19 +107,21 @@ impl PyOklcha {
     }
 
     pub fn with_hue(&self, hue: f32) -> PyResult<Self> {
-        Ok(PyOklcha::oklcha(self.as_ref()?.with_hue(hue)))
+        Ok(PyOklcha::from_owned(self.as_ref()?.with_hue(hue)))
     }
 
     pub fn rotate_hue(&self, degrees: f32) -> PyResult<Self> {
-        Ok(PyOklcha::oklcha(self.as_ref()?.rotate_hue(degrees)))
+        Ok(PyOklcha::from_owned(self.as_ref()?.rotate_hue(degrees)))
     }
 
     pub fn with_lightness(&self, lightness: f32) -> PyResult<Self> {
-        Ok(PyOklcha::oklcha(self.as_ref()?.with_lightness(lightness)))
+        Ok(PyOklcha::from_owned(
+            self.as_ref()?.with_lightness(lightness),
+        ))
     }
 
     pub fn with_chroma(&self, chroma: f32) -> PyResult<Self> {
-        Ok(PyOklcha::oklcha(self.as_ref()?.with_chroma(chroma)))
+        Ok(PyOklcha::from_owned(self.as_ref()?.with_chroma(chroma)))
     }
 
     pub fn luminance(&self) -> PyResult<f32> {
@@ -151,19 +129,21 @@ impl PyOklcha {
     }
 
     pub fn with_luminance(&self, lightness: f32) -> PyResult<Self> {
-        Ok(PyOklcha::oklcha(self.as_ref()?.with_luminance(lightness)))
+        Ok(PyOklcha::from_owned(
+            self.as_ref()?.with_luminance(lightness),
+        ))
     }
 
     pub fn darker(&self, amount: f32) -> PyResult<Self> {
-        Ok(PyOklcha::oklcha(self.as_ref()?.darker(amount)))
+        Ok(PyOklcha::from_owned(self.as_ref()?.darker(amount)))
     }
 
     pub fn lighter(&self, amount: f32) -> PyResult<Self> {
-        Ok(PyOklcha::oklcha(self.as_ref()?.lighter(amount)))
+        Ok(PyOklcha::from_owned(self.as_ref()?.lighter(amount)))
     }
 
     pub fn with_alpha(&self, alpha: f32) -> PyResult<Self> {
-        Ok(PyOklcha::oklcha(self.as_ref()?.with_alpha(alpha)))
+        Ok(PyOklcha::from_owned(self.as_ref()?.with_alpha(alpha)))
     }
 
     pub fn is_fully_transparent(&self) -> PyResult<bool> {
@@ -175,7 +155,7 @@ impl PyOklcha {
     }
 
     pub fn mix(&self, other: &PyOklcha, factor: f32) -> PyResult<Self> {
-        Ok(PyOklcha::oklcha(
+        Ok(PyOklcha::from_owned(
             self.as_ref()?.mix(other.as_ref()?.reborrow(), factor),
         ))
     }
@@ -196,12 +176,12 @@ impl PyOklcha {
 
     pub fn to_linear(&self) -> PyResult<PyLinearRgba> {
         let linear: LinearRgba = (*self.as_ref()?).into();
-        Ok(PyLinearRgba::linear_rgba(linear))
+        Ok(PyLinearRgba::from_owned(linear))
     }
 
     pub fn to_srgba(&self) -> PyResult<PySrgba> {
         let srgba: Srgba = (*self.as_ref()?).into();
-        Ok(PySrgba::from_srgba(srgba))
+        Ok(PySrgba::from_owned(srgba))
     }
 
     pub fn to_f32_array(&self) -> PyResult<[f32; 4]> {
@@ -216,7 +196,7 @@ impl PyOklcha {
 
     #[staticmethod]
     pub fn from_f32_array(color: [f32; 4]) -> Self {
-        PyOklcha::oklcha(Oklcha::new(color[0], color[1], color[2], color[3]))
+        PyOklcha::from_owned(Oklcha::new(color[0], color[1], color[2], color[3]))
     }
 
     pub fn to_vec4(&self) -> PyResult<PyVec4> {
@@ -228,7 +208,7 @@ impl PyOklcha {
     #[staticmethod]
     pub fn from_vec4(color: &PyVec4) -> PyResult<Self> {
         let v: Vec4 = color.try_into()?;
-        Ok(PyOklcha::oklcha(Oklcha::new(v.x, v.y, v.z, v.w)))
+        Ok(PyOklcha::from_owned(Oklcha::new(v.x, v.y, v.z, v.w)))
     }
 
     pub fn to_vec3(&self) -> PyResult<PyVec3> {
@@ -240,17 +220,17 @@ impl PyOklcha {
     #[staticmethod]
     pub fn from_vec3(color: &PyVec3) -> PyResult<Self> {
         let v: Vec3 = color.try_into()?;
-        Ok(PyOklcha::oklcha(Oklcha::new(v.x, v.y, v.z, 1.0)))
+        Ok(PyOklcha::from_owned(Oklcha::new(v.x, v.y, v.z, 1.0)))
     }
 
     #[staticmethod]
     pub fn from_f32_array_no_alpha(color: [f32; 3]) -> Self {
-        PyOklcha::oklcha(Oklcha::new(color[0], color[1], color[2], 1.0))
+        PyOklcha::from_owned(Oklcha::new(color[0], color[1], color[2], 1.0))
     }
 
     #[staticmethod]
     pub fn sequential_dispersed(index: u32) -> Self {
-        PyOklcha::oklcha(Oklcha::sequential_dispersed(index))
+        PyOklcha::from_owned(Oklcha::sequential_dispersed(index))
     }
 
     #[pyo3(name = "set_alpha")]

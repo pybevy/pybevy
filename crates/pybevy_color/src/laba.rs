@@ -2,12 +2,14 @@ use bevy::{
     color::{Alpha, Gray, Laba, LinearRgba, Luminance, Mix, Srgba},
     math::{StableInterpolate, Vec3, Vec4},
 };
-use pybevy_core::{StorageMut, StorageRef, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_macros::pyvalue;
 use pybevy_math::{vec3::PyVec3, vec4::PyVec4};
 use pyo3::prelude::*;
 
 use super::{common::fmt_f32, linear_rgba::PyLinearRgba, srgba::PySrgba};
 
+#[pyvalue]
 #[pyclass(name = "Laba", module = "pybevy.color", eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyLaba {
@@ -26,23 +28,7 @@ impl TryFrom<&PyLaba> for Laba {
 impl From<Laba> for PyLaba {
     #[inline(always)]
     fn from(color: Laba) -> Self {
-        Self::laba(color)
-    }
-}
-
-impl PyLaba {
-    pub fn laba(laba: Laba) -> Self {
-        Self {
-            storage: ValueStorage::owned(laba),
-        }
-    }
-
-    fn as_ref(&self) -> PyResult<StorageRef<'_, Laba>> {
-        Ok(self.storage.as_ref()?)
-    }
-
-    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Laba>> {
-        Ok(self.storage.as_mut()?)
+        Self::from_owned(color)
     }
 }
 
@@ -51,29 +37,29 @@ impl PyLaba {
     #[new]
     #[pyo3(signature = (lightness = 1.0, a = 0.0, b = 0.0, alpha = 1.0))]
     pub fn new(lightness: f32, a: f32, b: f32, alpha: f32) -> Self {
-        PyLaba::laba(Laba::new(lightness, a, b, alpha))
+        PyLaba::from_owned(Laba::new(lightness, a, b, alpha))
     }
 
     #[staticmethod]
     pub fn lab(lightness: f32, a: f32, b: f32) -> Self {
-        PyLaba::laba(Laba::lab(lightness, a, b))
+        PyLaba::from_owned(Laba::lab(lightness, a, b))
     }
 
     #[staticmethod]
     pub fn gray(lightness: f32) -> Self {
-        PyLaba::laba(Laba::gray(lightness))
+        PyLaba::from_owned(Laba::gray(lightness))
     }
 
     #[staticmethod]
     #[pyo3(name = "BLACK")]
     pub fn black() -> Self {
-        PyLaba::laba(Laba::BLACK)
+        PyLaba::from_owned(Laba::BLACK)
     }
 
     #[staticmethod]
     #[pyo3(name = "WHITE")]
     pub fn white() -> Self {
-        PyLaba::laba(Laba::WHITE)
+        PyLaba::from_owned(Laba::WHITE)
     }
 
     #[getter]
@@ -127,11 +113,11 @@ impl PyLaba {
     }
 
     pub fn with_lightness(&self, lightness: f32) -> PyResult<Self> {
-        Ok(PyLaba::laba(self.as_ref()?.with_lightness(lightness)))
+        Ok(PyLaba::from_owned(self.as_ref()?.with_lightness(lightness)))
     }
 
     pub fn with_alpha(&self, alpha: f32) -> PyResult<Self> {
-        Ok(PyLaba::laba(self.as_ref()?.with_alpha(alpha)))
+        Ok(PyLaba::from_owned(self.as_ref()?.with_alpha(alpha)))
     }
 
     pub fn luminance(&self) -> PyResult<f32> {
@@ -139,15 +125,15 @@ impl PyLaba {
     }
 
     pub fn with_luminance(&self, lightness: f32) -> PyResult<Self> {
-        Ok(PyLaba::laba(self.as_ref()?.with_luminance(lightness)))
+        Ok(PyLaba::from_owned(self.as_ref()?.with_luminance(lightness)))
     }
 
     pub fn darker(&self, amount: f32) -> PyResult<Self> {
-        Ok(PyLaba::laba(self.as_ref()?.darker(amount)))
+        Ok(PyLaba::from_owned(self.as_ref()?.darker(amount)))
     }
 
     pub fn lighter(&self, amount: f32) -> PyResult<Self> {
-        Ok(PyLaba::laba(self.as_ref()?.lighter(amount)))
+        Ok(PyLaba::from_owned(self.as_ref()?.lighter(amount)))
     }
 
     pub fn is_fully_transparent(&self) -> PyResult<bool> {
@@ -159,7 +145,7 @@ impl PyLaba {
     }
 
     pub fn mix(&self, other: &PyLaba, factor: f32) -> PyResult<Self> {
-        Ok(PyLaba::laba(
+        Ok(PyLaba::from_owned(
             self.as_ref()?.mix(other.as_ref()?.reborrow(), factor),
         ))
     }
@@ -172,12 +158,12 @@ impl PyLaba {
 
     pub fn to_linear(&self) -> PyResult<PyLinearRgba> {
         let linear: LinearRgba = (*self.as_ref()?).into();
-        Ok(PyLinearRgba::linear_rgba(linear))
+        Ok(PyLinearRgba::from_owned(linear))
     }
 
     pub fn to_srgba(&self) -> PyResult<PySrgba> {
         let srgba: Srgba = (*self.as_ref()?).into();
-        Ok(PySrgba::from_srgba(srgba))
+        Ok(PySrgba::from_owned(srgba))
     }
 
     pub fn to_f32_array(&self) -> PyResult<[f32; 4]> {
@@ -192,12 +178,12 @@ impl PyLaba {
 
     #[staticmethod]
     pub fn from_f32_array(color: [f32; 4]) -> Self {
-        PyLaba::laba(Laba::new(color[0], color[1], color[2], color[3]))
+        PyLaba::from_owned(Laba::new(color[0], color[1], color[2], color[3]))
     }
 
     #[staticmethod]
     pub fn from_f32_array_no_alpha(color: [f32; 3]) -> Self {
-        PyLaba::laba(Laba::lab(color[0], color[1], color[2]))
+        PyLaba::from_owned(Laba::lab(color[0], color[1], color[2]))
     }
 
     pub fn to_vec4(&self) -> PyResult<PyVec4> {
@@ -215,17 +201,17 @@ impl PyLaba {
     #[staticmethod]
     pub fn from_vec4(color: &PyVec4) -> PyResult<Self> {
         let v: Vec4 = color.try_into()?;
-        Ok(PyLaba::laba(Laba::new(v.x, v.y, v.z, v.w)))
+        Ok(PyLaba::from_owned(Laba::new(v.x, v.y, v.z, v.w)))
     }
 
     #[staticmethod]
     pub fn from_vec3(color: &PyVec3) -> PyResult<Self> {
         let v: Vec3 = color.try_into()?;
-        Ok(PyLaba::laba(Laba::lab(v.x, v.y, v.z)))
+        Ok(PyLaba::from_owned(Laba::lab(v.x, v.y, v.z)))
     }
 
     pub fn interpolate_stable(&self, other: &PyLaba, t: f32) -> PyResult<Self> {
-        Ok(PyLaba::laba(
+        Ok(PyLaba::from_owned(
             self.as_ref()?
                 .interpolate_stable(other.as_ref()?.reborrow(), t),
         ))
