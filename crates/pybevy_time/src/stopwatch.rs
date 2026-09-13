@@ -19,9 +19,12 @@ impl PyStopwatch {
         }
     }
 
-    pub fn tick(&mut self, delta: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.stopwatch.tick(duration_from_py(delta)?);
-        Ok(())
+    pub fn tick<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        delta: &Bound<'_, PyAny>,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        slf.stopwatch.tick(duration_from_py(delta)?);
+        Ok(slf)
     }
 
     pub fn elapsed(&self) -> Duration {

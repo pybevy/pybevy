@@ -562,8 +562,8 @@ class Timer:
             ```
         """
 
-    def tick(self, delta: Duration) -> None:
-        """Advance the timer by delta time.
+    def tick(self, delta: Duration) -> Timer:
+        """Advance the timer by delta time and return this timer.
 
         For non-repeating timers, elapsed time is clamped at duration.
         For repeating timers, elapsed time wraps around when duration is reached.
@@ -861,8 +861,8 @@ class Stopwatch:
 
     def __init__(self) -> None: ...
 
-    def tick(self, delta: Duration) -> None:
-        """Advance the stopwatch by delta time.
+    def tick(self, delta: Duration) -> Stopwatch:
+        """Advance the stopwatch by delta time and return this stopwatch.
 
         Paused stopwatches are not affected by ticking.
 
