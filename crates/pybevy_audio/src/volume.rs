@@ -2,10 +2,16 @@ use bevy::audio::Volume;
 use pyo3::prelude::*;
 
 #[pyclass(name = "Volume", module = "pybevy.audio", eq, frozen, from_py_object)]
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy)]
 pub enum PyVolume {
     Linear { value: f32 },
     Decibels { value: f32 },
+}
+
+impl PartialEq for PyVolume {
+    fn eq(&self, other: &Self) -> bool {
+        self.inner() == other.inner()
+    }
 }
 
 impl From<Volume> for PyVolume {

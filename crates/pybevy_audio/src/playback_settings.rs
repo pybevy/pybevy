@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use bevy::audio::{PlaybackMode, PlaybackSettings};
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, PyComponent, public_error::SPEED_NON_FINITE};
 use pybevy_macros::pycomponent;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
@@ -25,9 +25,9 @@ impl PyPlaybackSettings {
         paused = false,
         muted = false,
         spatial = false,
-        start_position = None,
-        duration = None,
         spatial_scale = None,
+        start_position = None,
+        duration = None
     ))]
     pub fn new(
         mode: Option<PyPlaybackMode>,
@@ -36,9 +36,9 @@ impl PyPlaybackSettings {
         paused: bool,
         muted: bool,
         spatial: bool,
+        spatial_scale: Option<PySpatialScale>,
         start_position: Option<Duration>,
         duration: Option<Duration>,
-        spatial_scale: Option<PySpatialScale>,
     ) -> PyResult<PyClassInitializer<Self>> {
         let settings = PlaybackSettings {
             mode: mode.map(Into::into).unwrap_or(PlaybackMode::Once),
@@ -233,12 +233,11 @@ impl PyPlaybackSettings {
     }
 }
 
+/// Playback speed must be finite; negative (reverse) speed is allowed.
 fn validate_speed(speed: f32) -> PyResult<f32> {
     if speed.is_finite() {
         Ok(speed)
     } else {
-        Err(PyValueError::new_err(format!(
-            "speed must be finite (got {speed})"
-        )))
+        Err(PyValueError::new_err(SPEED_NON_FINITE))
     }
 }
