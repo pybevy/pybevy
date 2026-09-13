@@ -119,7 +119,7 @@ class GltfSkin(Asset):
 class GltfExtras(Component):
     """Additional untyped data that can be present on GLTF types at the primitive level."""
 
-    def __init__(self, value: str = "") -> None: ...
+    def __init__(self, *, value: str = "") -> None: ...
     @property
     def value(self) -> str: ...
     @value.setter
@@ -144,7 +144,7 @@ class GltfMaterialName(Component):
 class GltfSceneExtras(Component):
     """Additional untyped data that can be present on GLTF types at the scene level."""
 
-    def __init__(self, value: str = "") -> None: ...
+    def __init__(self, *, value: str = "") -> None: ...
     @property
     def value(self) -> str: ...
     @value.setter
@@ -153,7 +153,7 @@ class GltfSceneExtras(Component):
 class GltfMeshExtras(Component):
     """Additional untyped data that can be present on GLTF types at the mesh level."""
 
-    def __init__(self, value: str = "") -> None: ...
+    def __init__(self, *, value: str = "") -> None: ...
     @property
     def value(self) -> str: ...
     @value.setter
@@ -162,24 +162,48 @@ class GltfMeshExtras(Component):
 class GltfMaterialExtras(Component):
     """Additional untyped data that can be present on GLTF types at the material level."""
 
-    def __init__(self, value: str = "") -> None: ...
+    def __init__(self, *, value: str = "") -> None: ...
     @property
     def value(self) -> str: ...
     @value.setter
     def value(self, value: str) -> None: ...
 
 class GltfConvertCoordinates:
+    """How to convert glTF's +Z-forward coordinates to Bevy's -Z-forward.
+
+    Both are Y-up; they disagree about forward and right, so the conversion is
+    a half turn about Y (glTF forward +Z, right -X; Bevy forward -Z, right +X).
+    The two switches choose where that rotation is applied. Cameras and lights
+    already use Bevy local coordinates; rotating the scene root also rotates
+    their world transforms.
+    """
+
     def __init__(
         self,
+        *,
         rotate_scene_entity: bool = False,
         rotate_meshes: bool = False,
-    ) -> None: ...
+    ) -> None:
+        """Create a coordinate conversion setting.
+
+        Args:
+            rotate_scene_entity: Rotate the scene's root entity, leaving mesh
+                vertex data untouched (default: False).
+            rotate_meshes: Convert mesh vertices, skinned-mesh bind poses, and bounds,
+                compensating instancing entity transforms (default: False).
+        """
+
     @property
-    def rotate_scene_entity(self) -> bool: ...
+    def rotate_scene_entity(self) -> bool:
+        """Whether the scene's root entity carries the conversion rotation."""
+
     @rotate_scene_entity.setter
     def rotate_scene_entity(self, value: bool) -> None: ...
+
     @property
-    def rotate_meshes(self) -> bool: ...
+    def rotate_meshes(self) -> bool:
+        """Whether mesh assets and bind poses are converted with compensating mesh entity transforms."""
+
     @rotate_meshes.setter
     def rotate_meshes(self, value: bool) -> None: ...
 
@@ -189,10 +213,16 @@ class GltfSkinnedMeshBoundsPolicy:
     NoFrustumCulling: GltfSkinnedMeshBoundsPolicy
 
 class GltfLoaderSettings:
-    """Settings for loading glTF files."""
+    """Settings for loading glTF files.
+
+    Pass these to `AssetServer.load_with_settings` to skip parts of a document,
+    override the image sampler, or change how glTF's coordinate system is
+    converted. Plain `load` takes no settings and uses the defaults.
+    """
 
     def __init__(
         self,
+        *,
         load_meshes: RenderAssetUsages | None = None,
         load_materials: RenderAssetUsages | None = None,
         load_cameras: bool = True,
@@ -204,51 +234,112 @@ class GltfLoaderSettings:
         validate: bool = True,
         convert_coordinates: GltfConvertCoordinates | None = None,
         skinned_mesh_bounds_policy: GltfSkinnedMeshBoundsPolicy | None = None,
-    ) -> None: ...
+    ) -> None:
+        """Create glTF loader settings.
+
+        Args:
+            load_meshes: Where loaded mesh data is retained. `None` uses
+                `MAIN_WORLD | RENDER_WORLD`. Python cannot construct the empty
+                usage flags that Bevy uses to skip mesh nodes.
+            load_materials: Where loaded material data is retained. `None` uses
+                `MAIN_WORLD | RENDER_WORLD`. Python cannot construct the empty
+                usage flags that Bevy uses to skip materials.
+            load_cameras: Spawn a camera for each glTF camera node.
+            load_lights: Spawn a light for each glTF light node.
+            load_animations: Load `AnimationClip` assets and add
+                `AnimationTarget` and `AnimationPlayer` to animated hierarchies.
+            include_source: Keep the parsed glTF document on the loaded asset.
+            default_sampler: Sampler to start from, before the document's own
+                sampler data is applied on top. `None` uses the global default.
+            override_sampler: Ignore the document's sampler data and use the
+                default sampler as-is.
+            validate: Run the glTF crate's validation pass while parsing.
+            convert_coordinates: Set coordinate conversion for this load. `None` uses
+                Bevy's plugin default, which PyBevy does not expose for configuration.
+            skinned_mesh_bounds_policy: Set the skinned-mesh bounds policy for this load.
+                `None` uses Bevy's plugin default, which PyBevy does not expose
+                for configuration.
+        """
+
     @property
-    def load_meshes(self) -> RenderAssetUsages: ...
+    def load_meshes(self) -> RenderAssetUsages:
+        """Where loaded mesh data is retained. Empty flags are not constructible from Python."""
+
     @load_meshes.setter
     def load_meshes(self, value: RenderAssetUsages) -> None: ...
+
     @property
-    def load_materials(self) -> RenderAssetUsages: ...
+    def load_materials(self) -> RenderAssetUsages:
+        """Where loaded material data is retained. Empty flags are not constructible from Python."""
+
     @load_materials.setter
     def load_materials(self, value: RenderAssetUsages) -> None: ...
+
     @property
-    def load_cameras(self) -> bool: ...
+    def load_cameras(self) -> bool:
+        """Whether a camera is spawned for each glTF camera node."""
+
     @load_cameras.setter
     def load_cameras(self, value: bool) -> None: ...
+
     @property
-    def load_lights(self) -> bool: ...
+    def load_lights(self) -> bool:
+        """Whether a light is spawned for each glTF light node."""
+
     @load_lights.setter
     def load_lights(self, value: bool) -> None: ...
+
     @property
-    def load_animations(self) -> bool: ...
+    def load_animations(self) -> bool:
+        """Whether animation clips, targets and players are loaded."""
+
     @load_animations.setter
     def load_animations(self, value: bool) -> None: ...
+
     @property
-    def include_source(self) -> bool: ...
+    def include_source(self) -> bool:
+        """Whether the parsed glTF document is kept on the loaded asset."""
+
     @include_source.setter
     def include_source(self, value: bool) -> None: ...
+
     @property
-    def default_sampler(self) -> ImageSamplerDescriptor | None: ...
+    def default_sampler(self) -> ImageSamplerDescriptor | None:
+        """Sampler applied before the document's own sampler data."""
+
     @default_sampler.setter
     def default_sampler(self, value: ImageSamplerDescriptor | None) -> None: ...
+
     @property
-    def override_sampler(self) -> bool: ...
+    def override_sampler(self) -> bool:
+        """Whether the document's sampler data is ignored entirely."""
+
     @override_sampler.setter
     def override_sampler(self, value: bool) -> None: ...
+
     @property
-    def validate(self) -> bool: ...
+    def validate(self) -> bool:
+        """Run glTF JSON validation while parsing; later loader errors still
+        fail the load.
+        """
+
     @validate.setter
     def validate(self, value: bool) -> None: ...
+
     @property
-    def convert_coordinates(self) -> GltfConvertCoordinates | None: ...
+    def convert_coordinates(self) -> GltfConvertCoordinates | None:
+        """Coordinate conversion for this load; None uses the unexposed Bevy plugin default."""
+
     @convert_coordinates.setter
     def convert_coordinates(self, value: GltfConvertCoordinates | None) -> None: ...
+
     @property
-    def skinned_mesh_bounds_policy(self) -> GltfSkinnedMeshBoundsPolicy | None: ...
+    def skinned_mesh_bounds_policy(self) -> GltfSkinnedMeshBoundsPolicy | None:
+        """Bounds policy for this load; None uses the unexposed Bevy plugin default."""
+
     @skinned_mesh_bounds_policy.setter
     def skinned_mesh_bounds_policy(self, value: GltfSkinnedMeshBoundsPolicy | None) -> None: ...
+
 class GltfAssetLabel:
     class Scene(GltfAssetLabel):
         __match_args__: ClassVar[tuple[Literal["index"]]]
@@ -269,7 +360,7 @@ class GltfAssetLabel:
         __match_args__: ClassVar[tuple[Literal["mesh"], Literal["primitive"]]]
         mesh: int
         primitive: int
-        def __init__(self, mesh: int, primitive: int) -> None: ...
+        def __init__(self, *, mesh: int, primitive: int) -> None: ...
 
     class Texture(GltfAssetLabel):
         __match_args__: ClassVar[tuple[Literal["index"]]]
@@ -280,7 +371,7 @@ class GltfAssetLabel:
         __match_args__: ClassVar[tuple[Literal["index"], Literal["is_scale_inverted"]]]
         index: int
         is_scale_inverted: bool
-        def __init__(self, index: int, is_scale_inverted: bool) -> None:
+        def __init__(self, *, index: int, is_scale_inverted: bool) -> None:
             """Label for the GltfMaterial sub-asset of a glTF file.
 
             The processed StandardMaterial lives under the "/std" suffix; load it

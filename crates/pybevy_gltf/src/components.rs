@@ -15,7 +15,7 @@ pub struct PyGltfExtras {
 #[pymethods]
 impl PyGltfExtras {
     #[new]
-    #[pyo3(signature = (value = String::new()))]
+    #[pyo3(signature = (*, value = String::new()))]
     pub fn new(value: String) -> PyClassInitializer<Self> {
         (GltfExtras { value }.into(), PyComponent).into()
     }
@@ -113,7 +113,7 @@ pub struct PyGltfSceneExtras {
 #[pymethods]
 impl PyGltfSceneExtras {
     #[new]
-    #[pyo3(signature = (value = String::new()))]
+    #[pyo3(signature = (*, value = String::new()))]
     pub fn new(value: String) -> PyClassInitializer<Self> {
         (GltfSceneExtras { value }.into(), PyComponent).into()
     }
@@ -147,7 +147,7 @@ pub struct PyGltfMeshExtras {
 #[pymethods]
 impl PyGltfMeshExtras {
     #[new]
-    #[pyo3(signature = (value = String::new()))]
+    #[pyo3(signature = (*, value = String::new()))]
     pub fn new(value: String) -> PyClassInitializer<Self> {
         (GltfMeshExtras { value }.into(), PyComponent).into()
     }
@@ -181,7 +181,7 @@ pub struct PyGltfMaterialExtras {
 #[pymethods]
 impl PyGltfMaterialExtras {
     #[new]
-    #[pyo3(signature = (value = String::new()))]
+    #[pyo3(signature = (*, value = String::new()))]
     pub fn new(value: String) -> PyClassInitializer<Self> {
         (GltfMaterialExtras { value }.into(), PyComponent).into()
     }
