@@ -247,6 +247,8 @@ Unsupported image-encoding errors list the encoders enabled in this build.
 Use one of those formats; membership in `ImageFormat` alone does not guarantee
 that the build can encode it.
 
+`image.save_to_file("shot.jpg")` infers JPEG from the extension when `format` is omitted or `None`. An explicit `ImageFormat` overrides the extension. A path with no extension writes PNG; an extension naming no supported encoder, such as `.avif` or `.txt`, raises `ValueError` without writing a file. Inferred formats retain normal encoder errors. `quality` controls JPEG encoding.
+
 ### Vertex Colors (Gradient a Single Mesh)
 ```python
 wall = Cuboid(4.0, 3.0, 0.3).mesh().build()
