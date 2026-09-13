@@ -448,6 +448,15 @@ impl PyMat2 {
         }
     }
 
+    fn __rmul__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let value = self.try_get()?;
+        if let Ok(scalar) = other.extract::<f32>() {
+            Ok(Py::new(py, Self::from_mat2(scalar * value))?.into_any())
+        } else {
+            Ok(py.NotImplemented().into_any())
+        }
+    }
+
     fn __add__(&self, other: &PyMat2) -> PyResult<PyMat2> {
         Ok(PyMat2::from_mat2(self.try_get()? + other.try_get()?))
     }

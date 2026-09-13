@@ -277,6 +277,33 @@ impl PyVec2 {
         }
     }
 
+    fn __radd__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let value = self.as_ref()?;
+        if let Ok(scalar) = other.extract::<f32>() {
+            Ok(Py::new(py, PyVec2::from_vec2(scalar + *value))?.into_any())
+        } else {
+            Ok(py.NotImplemented().into_any())
+        }
+    }
+
+    fn __rsub__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let value = self.as_ref()?;
+        if let Ok(scalar) = other.extract::<f32>() {
+            Ok(Py::new(py, PyVec2::from_vec2(scalar - *value))?.into_any())
+        } else {
+            Ok(py.NotImplemented().into_any())
+        }
+    }
+
+    fn __rtruediv__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let value = self.as_ref()?;
+        if let Ok(scalar) = other.extract::<f32>() {
+            Ok(Py::new(py, PyVec2::from_vec2(scalar / *value))?.into_any())
+        } else {
+            Ok(py.NotImplemented().into_any())
+        }
+    }
+
     fn __repr__(&self) -> PyResult<String> {
         let v = self.as_ref()?;
         Ok(format!("Vec2({}, {})", v.x, v.y))

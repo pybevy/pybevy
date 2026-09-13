@@ -145,10 +145,8 @@ impl PyDir3 {
         Ok(self.get()?.dot(other.get()?.into()))
     }
 
-    pub fn cross(&self, other: &PyDir3) -> PyResult<PyDir3> {
-        Ok(PyDir3::dir3(Dir3::new_unchecked(
-            self.get()?.cross(other.get()?.into()).normalize(),
-        )))
+    pub fn cross(&self, other: &PyVec3) -> PyResult<PyVec3> {
+        Ok(self.get()?.cross(Vec3::try_from(other)?).into())
     }
 
     pub fn slerp(&self, rhs: &PyDir3, s: f32) -> PyResult<PyDir3> {
