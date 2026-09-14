@@ -96,18 +96,18 @@ def move_camera(
     time: Res[Time], camera_query: Single[Mut[Transform], With[Camera2d]]
 ) -> None:
     """Rotate and translate the camera to test frustum culling."""
-    for camera_transform in camera_query:
-        # Rotate around Z axis
-        camera_transform.rotate_z(time.delta_secs() * 0.5)
+    camera = camera_query.into_inner()
+    # Rotate around Z axis
+    camera.rotate_z(time.delta_secs() * 0.5)
 
-        # Move forward in camera's current facing direction
-        # Rotate the X axis vector by camera's rotation to get forward direction
-        move_delta = Vec3(CAMERA_SPEED * time.delta_secs(), 0.0, 0.0)
-        rotated_delta = camera_transform.rotation * move_delta  # type: ignore
+    # Move forward in camera's current facing direction
+    # Rotate the X axis vector by camera's rotation to get forward direction
+    move_delta = Vec3(CAMERA_SPEED * time.delta_secs(), 0.0, 0.0)
+    rotated_delta = camera.rotation * move_delta
 
-        camera_transform.translation.x += rotated_delta.x  # type: ignore
-        camera_transform.translation.y += rotated_delta.y  # type: ignore
-        camera_transform.translation.z += rotated_delta.z  # type: ignore
+    camera.translation.x += rotated_delta.x
+    camera.translation.y += rotated_delta.y
+    camera.translation.z += rotated_delta.z
 
 
 def print_sprite_count(

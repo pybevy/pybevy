@@ -768,12 +768,13 @@ pub fn validate_methods_with_config(
                 .iter()
                 .any(|v| matches!(v.kind, EnumVariantKind::Tuple(_)) && v.name == py_method.name);
 
-        // Check if this is a known runtime delegate pattern
-        // Query stub documents PyQueryIter methods - PyQuery is just a type annotation marker,
-        // but PyQueryIter (the runtime object injected into systems) has the actual methods
-        let is_runtime_delegate = rust.python_name == "Query"
-            && ["get", "get_mut", "single", "is_empty", "iter_many"]
-                .contains(&py_method.name.as_str());
+        // Annotation markers document methods implemented by injected runtime wrappers.
+        let is_runtime_delegate = match rust.python_name.as_str() {
+            "Query" => ["get", "get_mut", "single", "is_empty", "iter_many"]
+                .contains(&py_method.name.as_str()),
+            "Single" => py_method.name == "into_inner",
+            _ => false,
+        };
 
         // Native plugin wrappers receive build() from the pyplugin bridge,
         // which the parser cannot see; the stub documents the Plugin

@@ -1,5 +1,6 @@
 use bevy::ecs::{change_detection::Tick, world::unsafe_world_cell::UnsafeWorldCell};
-use pyo3::{PyTraverseError, PyVisit, exceptions::PyStopIteration, prelude::*};
+use pybevy_core::public_error::{SINGLE_NOT_ITERABLE, SINGLE_NOT_SUBSCRIPTABLE};
+use pyo3::{PyTraverseError, PyVisit, exceptions::PyTypeError, prelude::*};
 
 use crate::ecs::{
     helpers::validity_guard::ValidityFlag,
@@ -14,9 +15,7 @@ use crate::ecs::{
 pub struct PySingleQuery {
     /// The underlying query iterator
     query_iter: Py<PyQueryIter>,
-    /// Whether we've already returned the single result
-    returned: bool,
-    /// Cached single item for __getattr__/__setattr__ delegation (Deref emulation)
+    /// Cached single item for repeatable extraction
     cached_item: Option<Py<PyAny>>,
 }
 
@@ -47,7 +46,6 @@ impl PySingleQuery {
 
             PySingleQuery {
                 query_iter: query_iter_py,
-                returned: false,
                 cached_item: None,
             }
         })
@@ -61,45 +59,28 @@ impl PySingleQuery {
         visit.call(&self.cached_item)
     }
 
-    /// Makes this object iterable (but will only yield one item)
-    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
-        slf
+    /// Return the underlying row with its existing borrowed access.
+    #[allow(
+        clippy::wrong_self_convention,
+        reason = "Python extraction keeps the holder reusable"
+    )]
+    fn into_inner(&mut self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.get_or_fetch_item(py)
     }
 
-    /// Returns the single query result, panicking if zero or multiple entities match
-    fn __next__(&mut self, py: Python) -> PyResult<Py<PyAny>> {
-        if self.returned {
-            return Err(PyStopIteration::new_err(""));
-        }
-        self.fetch_single(py)
+    fn __iter__(&self) -> PyResult<()> {
+        Err(PyTypeError::new_err(SINGLE_NOT_ITERABLE))
     }
 
-    /// Delegate attribute access to the single result, matching Bevy's Deref behavior.
-    /// In Bevy Rust, Single<T> implements Deref<Target=T>, so `single.field` works directly.
-    fn __getattr__(&mut self, py: Python, name: &str) -> PyResult<Py<PyAny>> {
-        let item = self.get_or_fetch_item(py)?;
-        item.getattr(py, name)
-    }
-
-    /// Delegate attribute setting to the single result (Bevy's DerefMut).
-    fn __setattr__(&mut self, py: Python, name: &str, value: Py<PyAny>) -> PyResult<()> {
-        let item = self.get_or_fetch_item(py)?;
-        item.setattr(py, name, value)
-    }
-
-    /// Index into the single result, which is how `Single[tuple[A, B]]` is read.
-    ///
-    /// `__iter__` yields the row itself rather than its components, so unpacking
-    /// a tuple row would bind one name; indexing reaches the components.
-    fn __getitem__(&mut self, py: Python, index: Py<PyAny>) -> PyResult<Py<PyAny>> {
-        let item = self.get_or_fetch_item(py)?;
-        item.bind(py).get_item(index).map(Bound::unbind)
+    fn __getitem__(&self, _index: Py<PyAny>) -> PyResult<()> {
+        Err(PyTypeError::new_err(SINGLE_NOT_SUBSCRIPTABLE))
     }
 }
 
 impl PySingleQuery {
     /// Get the single item, fetching it on first access and caching it.
     fn get_or_fetch_item(&mut self, py: Python) -> PyResult<Py<PyAny>> {
+        self.query_iter.borrow(py).check_valid()?;
         if let Some(ref item) = self.cached_item {
             return Ok(item.clone_ref(py));
         }
@@ -110,13 +91,9 @@ impl PySingleQuery {
     }
 
     fn fetch_single(&mut self, py: Python) -> PyResult<Py<PyAny>> {
-        let result = self.query_iter.borrow(py).materialize_single(py);
-        match result {
-            Ok(item) => {
-                self.returned = true;
-                Ok(item)
-            }
-            Err(error) => Err(query_execution_error_to_py(error)),
-        }
+        self.query_iter
+            .borrow(py)
+            .materialize_single(py)
+            .map_err(query_execution_error_to_py)
     }
 }

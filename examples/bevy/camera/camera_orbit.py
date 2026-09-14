@@ -84,39 +84,39 @@ def orbit(
     time: Res[Time],
 ) -> None:
     """Orbit camera based on mouse input."""
-    for camera in camera_query:
-        delta = Vec2(mouse_motion.delta.x, mouse_motion.delta.y)
-        delta_roll = 0.0
+    camera = camera_query.into_inner()
+    delta = Vec2(mouse_motion.delta.x, mouse_motion.delta.y)
+    delta_roll = 0.0
 
-        if mouse_buttons.pressed(MouseButton.Left()):
-            delta_roll -= 1.0
+    if mouse_buttons.pressed(MouseButton.Left()):
+        delta_roll -= 1.0
 
-        if mouse_buttons.pressed(MouseButton.Right()):
-            delta_roll += 1.0
+    if mouse_buttons.pressed(MouseButton.Right()):
+        delta_roll += 1.0
 
-        # Mouse motion should not be multiplied by delta time as we already
-        # receive the full movement since the last frame was rendered
-        delta_pitch = delta.y * camera_settings.pitch_speed
-        delta_yaw = delta.x * camera_settings.yaw_speed
+    # Mouse motion should not be multiplied by delta time as we already
+    # receive the full movement since the last frame was rendered
+    delta_pitch = delta.y * camera_settings.pitch_speed
+    delta_yaw = delta.x * camera_settings.yaw_speed
 
-        # DO factor in delta time for mouse button inputs
-        delta_roll *= camera_settings.roll_speed * time.delta_secs()
+    # DO factor in delta time for mouse button inputs
+    delta_roll *= camera_settings.roll_speed * time.delta_secs()
 
-        # Obtain existing pitch, yaw, roll from the transform rotation
-        yaw, pitch, roll = camera.rotation.to_euler(EulerRot.YXZ)
+    # Obtain existing pitch, yaw, roll from the transform rotation
+    yaw, pitch, roll = camera.rotation.to_euler(EulerRot.YXZ)
 
-        # Establish new yaw and pitch, clamping pitch to limits
-        pitch = max(camera_settings.pitch_range_start,
-                   min(pitch + delta_pitch, camera_settings.pitch_range_end))
-        roll = roll + delta_roll
-        yaw = yaw + delta_yaw
+    # Establish new yaw and pitch, clamping pitch to limits
+    pitch = max(camera_settings.pitch_range_start,
+               min(pitch + delta_pitch, camera_settings.pitch_range_end))
+    roll = roll + delta_roll
+    yaw = yaw + delta_yaw
 
-        camera.rotation = Quat.from_euler(EulerRot.YXZ, yaw, pitch, roll)
+    camera.rotation = Quat.from_euler(EulerRot.YXZ, yaw, pitch, roll)
 
-        # Adjust translation to maintain correct orientation toward orbit target
-        # In this example it's a static target, but could be customized
-        target = Vec3.ZERO
-        camera.translation = target - camera.forward() * camera_settings.orbit_distance
+    # Adjust translation to maintain correct orientation toward orbit target
+    # In this example it's a static target, but could be customized
+    target = Vec3.ZERO
+    camera.translation = target - camera.forward() * camera_settings.orbit_distance
 
 
 @entrypoint

@@ -1638,11 +1638,8 @@ class SingleQuery:
     Internal implementation class. Users typically don't need to reference
     this type directly - use Single[T] type hints instead.
     """
-    def __iter__(self) -> SingleQuery: ...
-    def __next__(self) -> Any: ...
-    def __getitem__(self, index: int) -> Any: ...
-    def __getattr__(self, name: str) -> Any: ...
-    def __setattr__(self, name: str, value: Any) -> None: ...
+    def into_inner(self) -> object: ...
+
 
 # https://peps.python.org/pep-0646/#variance-type-constraints-and-type-bounds-not-yet-supported
 
@@ -2113,55 +2110,164 @@ class Single(Generic[QueryParam_T, *Qs]):
         Single[tuple[Mut[Transform], Player]] - single entity with both components
 
     Usage:
-        def system(player: Single[Mut[Transform]]) -> None:
-            # attribute access forwards to the row, as bevy's Deref does
-            player.translation.x += 10.0
+        def system(row: Single[Mut[Transform]]) -> None:
+            transform = row.into_inner()
+            transform.translation.x += 10.0
 
         def pair(row: Single[tuple[Mut[Transform], Player]]) -> None:
-            # index a tuple row; iterating yields the row itself, not its
-            # components, so `a, b = row` binds one name and fails
-            transform, player_data = row[0], row[1]
+            transform, player_data = row.into_inner()
             transform.translation.x += 10.0
+    Use into_inner() for precisely typed component access and tuple unpacking.
+    Component attribute reads and writes require extraction.
+    The Single holder does not support iteration or indexed access.
     """
 
-    # Single component overloads
     @overload
-    def __iter__(self: Single[Mut[T]]) -> Iterator[T]: ...
+    def into_inner(
+        self: Single[AnyOf[tuple[T1, T2]], *Qs],
+    ) -> tuple[T1 | None, T2 | None]: ...
     @overload
-    def __iter__(self: Single[T]) -> Iterator[T]: ...
+    def into_inner(
+        self: Single[AnyOf[tuple[Mut[T1], T2]], *Qs],
+    ) -> tuple[T1 | None, T2 | None]: ...
     @overload
-    def __iter__(self: Single[Mut[T], *Qs]) -> Iterator[T]: ...
+    def into_inner(
+        self: Single[AnyOf[tuple[T1, Mut[T2]]], *Qs],
+    ) -> tuple[T1 | None, T2 | None]: ...
     @overload
-    def __iter__(self: Single[T, *Qs]) -> Iterator[T]: ...
+    def into_inner(
+        self: Single[AnyOf[tuple[Mut[T1], Mut[T2]]], *Qs],
+    ) -> tuple[T1 | None, T2 | None]: ...
+    @overload
+    def into_inner(
+        self: Single[AnyOf[tuple[T1, T2, T3]], *Qs],
+    ) -> tuple[T1 | None, T2 | None, T3 | None]: ...
+    @overload
+    def into_inner(
+        self: Single[tuple[Entity, AnyOf[tuple[T1, T2]]], *Qs],
+    ) -> tuple[Entity, tuple[T1 | None, T2 | None]]: ...
+    @overload
+    def into_inner(
+        self: Single[tuple[T1, T2, AnyOf[tuple[T3, T4]]], *Qs],
+    ) -> tuple[T1, T2, tuple[T3 | None, T4 | None]]: ...
+    @overload
+    def into_inner(self: Single[Has[T], *Qs]) -> bool: ...
+    @overload
+    def into_inner(self: Single[tuple[Has[T], T1], *Qs]) -> tuple[bool, T1]: ...
+    @overload
+    def into_inner(self: Single[tuple[T1, Has[T]], *Qs]) -> tuple[T1, bool]: ...
+    @overload
+    def into_inner(self: Single[Mut[T], *Qs]) -> T: ...
+    @overload
+    def into_inner(self: Single[T, *Qs]) -> T:
+        """Return the borrowed row without copying or consuming the holder."""
 
-    # Single-element tuple overloads
     @overload
-    def __iter__(self: Single[tuple[T1]]) -> Iterator[tuple[T1]]: ...
+    def into_inner(self: Single[Mut[T] | None, *Qs]) -> T | None: ...
     @overload
-    def __iter__(self: Single[tuple[Mut[T1]]]) -> Iterator[tuple[T1]]: ...
-
-    # Two-element tuple component overloads
+    def into_inner(self: Single[T | None, *Qs]) -> T | None: ...
     @overload
-    def __iter__(self: Single[tuple[T1, T2]]) -> Iterator[tuple[T1, T2]]: ...
+    def into_inner(self: Single[tuple[T1, T2], *Qs]) -> tuple[T1, T2]: ...
     @overload
-    def __iter__(self: Single[tuple[Mut[T1], T2]]) -> Iterator[tuple[T1, T2]]: ...
+    def into_inner(self: Single[tuple[Mut[T1], T2], *Qs]) -> tuple[T1, T2]: ...
     @overload
-    def __iter__(self: Single[tuple[T1, Mut[T2]]]) -> Iterator[tuple[T1, T2]]: ...
+    def into_inner(self: Single[tuple[T1, Mut[T2]], *Qs]) -> tuple[T1, T2]: ...
     @overload
-    def __iter__(self: Single[tuple[Mut[T1], Mut[T2]]]) -> Iterator[tuple[T1, T2]]: ...
-
-    # Fallback
+    def into_inner(self: Single[tuple[Mut[T1], Mut[T2]], *Qs]) -> tuple[T1, T2]: ...
     @overload
-    def __iter__(self) -> Iterator[Any]: ...
-    def __next__(self) -> Any: ...
-    def __getitem__(self, index: int) -> Any:
-        """Index into the row. The way to read a `Single[tuple[...]]`."""
-
-    def __getattr__(self, name: str) -> Any:
-        """Forward unknown attribute reads to the row, as bevy's Deref does."""
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        """Forward unknown attribute writes to the row, as bevy's DerefMut does."""
+    def into_inner(self: Single[tuple[T1, T2, T3], *Qs]) -> tuple[T1, T2, T3]: ...
+    @overload
+    def into_inner(self: Single[tuple[Mut[T1], T2, T3], *Qs]) -> tuple[T1, T2, T3]: ...
+    @overload
+    def into_inner(self: Single[tuple[T1, Mut[T2], T3], *Qs]) -> tuple[T1, T2, T3]: ...
+    @overload
+    def into_inner(self: Single[tuple[T1, T2, Mut[T3]], *Qs]) -> tuple[T1, T2, T3]: ...
+    @overload
+    def into_inner(
+        self: Single[tuple[Mut[T1], Mut[T2], T3], *Qs],
+    ) -> tuple[T1, T2, T3]: ...
+    @overload
+    def into_inner(
+        self: Single[tuple[Mut[T1], T2, Mut[T3]], *Qs],
+    ) -> tuple[T1, T2, T3]: ...
+    @overload
+    def into_inner(
+        self: Single[tuple[T1, Mut[T2], Mut[T3]], *Qs],
+    ) -> tuple[T1, T2, T3]: ...
+    @overload
+    def into_inner(
+        self: Single[tuple[Mut[T1], Mut[T2], Mut[T3]], *Qs],
+    ) -> tuple[T1, T2, T3]: ...
+    @overload
+    def into_inner(
+        self: Single[tuple[T1, T2, T3, T4], *Qs],
+    ) -> tuple[T1, T2, T3, T4]: ...
+    @overload
+    def into_inner(
+        self: Single[tuple[Mut[T1], T2, T3, T4], *Qs],
+    ) -> tuple[T1, T2, T3, T4]: ...
+    @overload
+    def into_inner(
+        self: Single[tuple[T1, Mut[T2], T3, T4], *Qs],
+    ) -> tuple[T1, T2, T3, T4]: ...
+    @overload
+    def into_inner(
+        self: Single[tuple[T1, T2, Mut[T3], T4], *Qs],
+    ) -> tuple[T1, T2, T3, T4]: ...
+    @overload
+    def into_inner(
+        self: Single[tuple[T1, T2, T3, Mut[T4]], *Qs],
+    ) -> tuple[T1, T2, T3, T4]: ...
+    @overload
+    def into_inner(
+        self: Single[tuple[Mut[T1], Mut[T2], T3, T4], *Qs],
+    ) -> tuple[T1, T2, T3, T4]: ...
+    @overload
+    def into_inner(
+        self: Single[tuple[Mut[T1], T2, Mut[T3], T4], *Qs],
+    ) -> tuple[T1, T2, T3, T4]: ...
+    @overload
+    def into_inner(
+        self: Single[tuple[Mut[T1], T2, T3, Mut[T4]], *Qs],
+    ) -> tuple[T1, T2, T3, T4]: ...
+    @overload
+    def into_inner(
+        self: Single[tuple[T1, Mut[T2], Mut[T3], T4], *Qs],
+    ) -> tuple[T1, T2, T3, T4]: ...
+    @overload
+    def into_inner(
+        self: Single[tuple[T1, Mut[T2], T3, Mut[T4]], *Qs],
+    ) -> tuple[T1, T2, T3, T4]: ...
+    @overload
+    def into_inner(
+        self: Single[tuple[T1, T2, Mut[T3], Mut[T4]], *Qs],
+    ) -> tuple[T1, T2, T3, T4]: ...
+    @overload
+    def into_inner(
+        self: Single[tuple[Mut[T1], Mut[T2], Mut[T3], T4], *Qs],
+    ) -> tuple[T1, T2, T3, T4]: ...
+    @overload
+    def into_inner(
+        self: Single[tuple[Mut[T1], Mut[T2], T3, Mut[T4]], *Qs],
+    ) -> tuple[T1, T2, T3, T4]: ...
+    @overload
+    def into_inner(
+        self: Single[tuple[Mut[T1], T2, Mut[T3], Mut[T4]], *Qs],
+    ) -> tuple[T1, T2, T3, T4]: ...
+    @overload
+    def into_inner(
+        self: Single[tuple[T1, Mut[T2], Mut[T3], Mut[T4]], *Qs],
+    ) -> tuple[T1, T2, T3, T4]: ...
+    @overload
+    def into_inner(
+        self: Single[tuple[Mut[T1], Mut[T2], Mut[T3], Mut[T4]], *Qs],
+    ) -> tuple[T1, T2, T3, T4]: ...
+    @overload
+    def into_inner(self: Single[tuple[()], *Qs]) -> tuple[()]: ...
+    @overload
+    def into_inner(self: Single[tuple[T], *Qs]) -> tuple[T]: ...
+    @overload
+    def into_inner(self: Single[tuple[Mut[T]], *Qs]) -> tuple[T]: ...
 
 V = TypeVar("V")
 

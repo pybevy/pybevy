@@ -374,6 +374,7 @@ pub(crate) fn construct_query_class_item_with_options(
         })
         .collect();
 
+    let single = single && (!single_entity_enforced || !data.is_empty());
     PyQueryParam {
         retained_types: PyQueryParam::retain_custom_types(py, &data, &filters),
         data,
