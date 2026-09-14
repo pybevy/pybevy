@@ -119,3 +119,24 @@ Use `Optional[Single[T]]` with `from typing import Optional`, matching Bevy's
 exactly one match supplies the ordinary validity-bound Single wrapper. Tuple
 data, filters, and `Mut` declare the same scheduler access as a required Single.
 The equivalent `Single[T] | None` spelling is also supported.
+
+Use `into_inner()` for typed component access and tuple unpacking, matching
+Bevy's extraction API. Extraction keeps the existing access mode and system
+lifetime. Component fields and methods belong to the extracted value; direct
+attribute access or assignment on the holder raises `AttributeError`.
+
+<!-- pybevy-snippet: typecheck -->
+```python
+from pybevy.ecs import Entity, Mut, Single
+from pybevy.transform import Transform
+
+
+def move(row: Single[tuple[Entity, Mut[Transform]]]) -> None:
+    _entity, transform = row.into_inner()
+    transform.translation.x += 1.0
+
+
+def move_one(row: Single[Mut[Transform]]) -> None:
+    transform = row.into_inner()
+    transform.translation.x += 1.0
+```

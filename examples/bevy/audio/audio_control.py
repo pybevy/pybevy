@@ -57,10 +57,10 @@ def update_progress_text(
     progress_text: Query[Mut[Text2d], With[ProgressText]],
 ) -> None:
     """Update the progress text with current playback position."""
-    for sink in music_controller:
-        position = sink.position().total_seconds()
-        for text in progress_text:
-            text.text = f"Progress: {position:.1f}s"
+    sink = music_controller.into_inner()
+    position = sink.position().total_seconds()
+    for text in progress_text:
+        text.text = f"Progress: {position:.1f}s"
 
 
 def update_speed(

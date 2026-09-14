@@ -164,16 +164,14 @@ def execute_animations(
 
 def trigger_animation_left(animation: Single[Mut[AnimationConfig], With[LeftSprite]]) -> None:
     """Trigger animation for the left sprite (called when left arrow is pressed)."""
-    # Single is iterable - unpack to access the component
-    for config in animation:
-        config.frame_timer = AnimationConfig.timer_from_fps(config.fps)
+    config = animation.into_inner()
+    config.frame_timer = AnimationConfig.timer_from_fps(config.fps)
 
 
 def trigger_animation_right(animation: Single[Mut[AnimationConfig], With[RightSprite]]) -> None:
     """Trigger animation for the right sprite (called when right arrow is pressed)."""
-    # Single is iterable - unpack to access the component
-    for config in animation:
-        config.frame_timer = AnimationConfig.timer_from_fps(config.fps)
+    config = animation.into_inner()
+    config.frame_timer = AnimationConfig.timer_from_fps(config.fps)
 
 
 # Condition helper functions (module-level for proper type annotations)

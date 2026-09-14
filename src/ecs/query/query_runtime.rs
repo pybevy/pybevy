@@ -1066,6 +1066,12 @@ impl PyQueryIter {
         }
     }
 
+    pub(crate) fn check_valid(&self) -> PyResult<()> {
+        self.runtime
+            .check_valid()
+            .map_err(query_runtime_error_to_py)
+    }
+
     pub(crate) fn matching_count(&self) -> PyResult<usize> {
         if self.cached().logical_type_map_component_id.is_none() {
             self.runtime.count().map_err(query_runtime_error_to_py)

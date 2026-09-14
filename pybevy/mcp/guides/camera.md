@@ -542,20 +542,26 @@ See `guide://recipes/demoscene` for a complete example with camera transitioning
 
 ### Mouse Orbit (Interactive)
 
+<!-- pybevy-snippet: typecheck -->
 ```python
+from pybevy.camera import Camera3d
+from pybevy.ecs import Mut, Res, Single, With
 from pybevy.input import AccumulatedMouseMotion, ButtonInput, MouseButton
+from pybevy.math import EulerRot, Quat, Vec2, Vec3
+from pybevy.transform import Transform
 
 def orbit(
     camera: Single[Mut[Transform], With[Camera3d]],
     mouse_buttons: Res[ButtonInput[MouseButton]],
     mouse_motion: Res[AccumulatedMouseMotion],
 ) -> None:
+    transform = camera.into_inner()
     delta = Vec2(mouse_motion.delta.x, mouse_motion.delta.y)
-    yaw, pitch, roll = camera.rotation.to_euler(EulerRot.YXZ)
+    yaw, pitch, roll = transform.rotation.to_euler(EulerRot.YXZ)
     pitch = max(-1.5, min(pitch + delta.y * 0.003, 1.5))
     yaw = yaw + delta.x * 0.004
-    camera.rotation = Quat.from_euler(EulerRot.YXZ, yaw, pitch, roll)
-    camera.translation = Vec3.ZERO - camera.forward() * 20.0
+    transform.rotation = Quat.from_euler(EulerRot.YXZ, yaw, pitch, roll)
+    transform.translation = Vec3.ZERO - transform.forward() * 20.0
 ```
 
 ### Debug Camera Limitations (MCP Tools)

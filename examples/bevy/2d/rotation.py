@@ -105,98 +105,98 @@ def player_movement_system(
     Runs in FixedUpdate for consistent physics regardless of frame rate.
     Uses Single<T> to access exactly one player entity.
     """
-    for ship, transform in player_query:
-        rotation_factor = 0.0
-        movement_factor = 0.0
+    ship, transform = player_query.into_inner()
+    rotation_factor = 0.0
+    movement_factor = 0.0
 
-        if keyboard_input.pressed(KeyCode.ArrowLeft):
-            rotation_factor += 1.0
+    if keyboard_input.pressed(KeyCode.ArrowLeft):
+        rotation_factor += 1.0
 
-        if keyboard_input.pressed(KeyCode.ArrowRight):
-            rotation_factor -= 1.0
+    if keyboard_input.pressed(KeyCode.ArrowRight):
+        rotation_factor -= 1.0
 
-        if keyboard_input.pressed(KeyCode.ArrowUp):
-            movement_factor += 1.0
+    if keyboard_input.pressed(KeyCode.ArrowUp):
+        movement_factor += 1.0
 
-        # Update rotation around Z axis (perpendicular to 2D plane)
-        transform.rotate_z(rotation_factor * ship.rotation_speed * time.delta_secs())
+    # Update rotation around Z axis (perpendicular to 2D plane)
+    transform.rotate_z(rotation_factor * ship.rotation_speed * time.delta_secs())
 
-        # Get forward vector by applying current rotation to initial facing direction
-        movement_direction = transform.rotation * Vec3.Y
-        movement_distance = movement_factor * ship.movement_speed * time.delta_secs()
-        translation_delta = movement_direction * movement_distance
-        transform.translation += translation_delta
+    # Get forward vector by applying current rotation to initial facing direction
+    movement_direction = transform.rotation * Vec3.Y
+    movement_distance = movement_factor * ship.movement_speed * time.delta_secs()
+    translation_delta = movement_direction * movement_distance
+    transform.translation += translation_delta
 
-        # Bound the ship within invisible level bounds
-        half_bounds = BOUNDS / 2.0
-        extents = Vec3(half_bounds.x, half_bounds.y, 0.0)
-        transform.translation = transform.translation.min(extents).max(-extents)
+    # Bound the ship within invisible level bounds
+    half_bounds = BOUNDS / 2.0
+    extents = Vec3(half_bounds.x, half_bounds.y, 0.0)
+    transform.translation = transform.translation.min(extents).max(-extents)
 
 
 def snap_to_player_system(
-    player_transform: Single[Transform, With[Player]],
+    player_query: Single[Transform, With[Player]],
     query: Query[Mut[Transform], tuple[With[SnapToPlayer], Without[Player]]],
 ) -> None:
     """Snap enemies to immediately face the player.
 
     Demonstrates using With/Without filters to create disjoint queries.
     """
-    for player_t in player_transform:
-        player_translation = player_t.translation.xy()
+    player_transform = player_query.into_inner()
+    player_translation = player_transform.translation.xy()
 
-        for enemy_transform in query:
-            enemy_pos = enemy_transform.translation.xy()
-            to_player_vec = player_translation - enemy_pos
-            to_player = to_player_vec.normalize()
+    for enemy_transform in query:
+        enemy_pos = enemy_transform.translation.xy()
+        to_player_vec = player_translation - enemy_pos
+        to_player = to_player_vec.normalize()
 
-            to_player_3d = Vec3(to_player.x, to_player.y, 0.0)
-            rotate_to_player = Quat.from_rotation_arc(Vec3.Y, to_player_3d)
+        to_player_3d = Vec3(to_player.x, to_player.y, 0.0)
+        rotate_to_player = Quat.from_rotation_arc(Vec3.Y, to_player_3d)
 
-            enemy_transform.rotation = rotate_to_player
+        enemy_transform.rotation = rotate_to_player
 
 
 def rotate_to_player_system(
     time: Res[Time],
     query: Query[tuple[RotateToPlayer, Mut[Transform]], Without[Player]],
-    player_transform: Single[Transform, With[Player]],
+    player_query: Single[Transform, With[Player]],
 ) -> None:
     """Smoothly rotate enemies to face the player.
 
     Uses dot product to determine rotation direction and limit rotation speed.
     """
-    for player_t in player_transform:
-        player_translation = player_t.translation.xy()
+    player_transform = player_query.into_inner()
+    player_translation = player_transform.translation.xy()
 
-        for config, enemy_transform in query:
-            enemy_forward_3d = enemy_transform.rotation * Vec3.Y
-            enemy_forward = Vec2(enemy_forward_3d.x, enemy_forward_3d.y)
+    for config, enemy_transform in query:
+        enemy_forward_3d = enemy_transform.rotation * Vec3.Y
+        enemy_forward = Vec2(enemy_forward_3d.x, enemy_forward_3d.y)
 
-            enemy_pos = enemy_transform.translation.xy()
-            to_player_vec = player_translation - enemy_pos
-            to_player = to_player_vec.normalize()
+        enemy_pos = enemy_transform.translation.xy()
+        to_player_vec = player_translation - enemy_pos
+        to_player = to_player_vec.normalize()
 
-            forward_dot_player = enemy_forward.dot(to_player)
+        forward_dot_player = enemy_forward.dot(to_player)
 
-            # If dot product is ~1.0, enemy already faces player
-            if abs(forward_dot_player - 1.0) < 0.0001:
-                continue
+        # If dot product is ~1.0, enemy already faces player
+        if abs(forward_dot_player - 1.0) < 0.0001:
+            continue
 
-            enemy_right_3d = enemy_transform.rotation * Vec3.X
-            enemy_right = Vec2(enemy_right_3d.x, enemy_right_3d.y)
+        enemy_right_3d = enemy_transform.rotation * Vec3.X
+        enemy_right = Vec2(enemy_right_3d.x, enemy_right_3d.y)
 
-            right_dot_player = enemy_right.dot(to_player)
+        right_dot_player = enemy_right.dot(to_player)
 
-            # Determine rotation direction
-            rotation_sign = -1.0 if right_dot_player >= 0.0 else 1.0
+        # Determine rotation direction
+        rotation_sign = -1.0 if right_dot_player >= 0.0 else 1.0
 
-            # Limit rotation to avoid overshooting
-            max_angle = math.acos(max(-1.0, min(1.0, forward_dot_player)))
+        # Limit rotation to avoid overshooting
+        max_angle = math.acos(max(-1.0, min(1.0, forward_dot_player)))
 
-            rotation_angle = rotation_sign * min(
-                config.rotation_speed * time.delta_secs(), max_angle
-            )
+        rotation_angle = rotation_sign * min(
+            config.rotation_speed * time.delta_secs(), max_angle
+        )
 
-            enemy_transform.rotate_z(rotation_angle)
+        enemy_transform.rotate_z(rotation_angle)
 
 
 @entrypoint
