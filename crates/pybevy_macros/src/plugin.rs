@@ -116,6 +116,8 @@ pub fn pyplugin(attr: TokenStream, item: TokenStream) -> TokenStream {
                 <#py_type as pybevy_core::PluginBuild>::build(py_plugin, app)
             }
 
+            fn native_type_id(&self) -> std::any::TypeId { std::any::TypeId::of::<#bevy_type>() }
+
             fn is_added(&self, app: &bevy::app::App) -> bool {
                 app.is_plugin_added::<#bevy_type>()
             }

@@ -6,7 +6,7 @@
 
 1. **Read guides iteratively, not all upfront.** Start with `get_guide("index")` to see all available guides, then call `get_guide("patterns")` + ONE relevant recipe (e.g. `recipes/game-logic`, `recipes/outdoor`). That's enough to write the initial scene. Then read additional topic guides (lighting, materials, shadows, etc.) as you add those features in later iterations. Max 2-3 guides before first `run_scene`.
 2. **When suggesting scenes** - propose ideas that showcase PyBevy's documented features: emissive bloom, glass/transmission materials, volumetric fog, parent-child hierarchy, day/night cycles. Call `get_guide("index")` to see what's available, then suggest scenes that use those features.
-3. **Run scene before scene tools** - `run_scene` must be called before any scene tool (get_component_schema, capture_screenshot, query_entities, etc.). Scene tools require a running Bevy subprocess.
+3. **Run scene before scene tools** - `run_scene` must be called before any scene tool (get_component_schema, capture_screenshot, query_entities, etc.). It waits for the scene's control server and first-frame system-error reporting, up to 60 seconds. Startup readiness does not imply asynchronous assets have loaded or a GPU readback frame is available; observe those separately.
 4. **Read topic guides before API lookups** - Before using `search_api` or `get_type_definition`, call `get_guide("index")` and check for a relevant curated guide. Guides are faster and more reliable than raw API exploration. Only fall back to API lookups for specifics not covered in guides.
 5. **Use API lookup tools for specifics** - If you know the class name, use `get_type_definition('ClassName')` directly for the full definition. Ambiguous short names return qualified candidates; retry with one such as `get_type_definition('image.Image')`. If you don't know the name, use `search_api('keyword')` first, then `get_type_definition` on the results.
 6. **Reuse the running scene for ordinary edits** - after the first `run_scene`, edit the .py file and call `reload`. Call `run_scene` again when switching scene files, adding or removing bridge-backed plugins, changing core plugin composition, or requiring a clean restart.
@@ -32,6 +32,7 @@
 - **Entities** have numeric IDs that may change across hot reloads. Prefer Name-based addressing when possible.
 - **Components** are data attached to entities (Transform, PointLight, etc.)
 - **Resources** are global singletons (Time, AssetServer, etc.)
+- **Single** uses `into_inner()` for typed component access and tuple unpacking. Use `Mut[T]` for writes.
 - **Systems** are functions that run each frame, organized by Stage (Startup, Update, Last, etc.)
 - **Messages** are App-local buffered channels registered with `app.add_message(T)`. Ordered readers can observe same-pass writes. A system may have multiple readers for one channel, but cannot combine a writer with another reader or writer for that same channel.
 - **Coordinate system** - Bevy is right-handed, Y-up. Camera default forward is −Z. When a camera on the −Z side looks toward +Z, the X-axis appears mirrored on screen (world +X = screen left). Plan grid layouts accordingly.
@@ -150,14 +151,21 @@ Before presenting to the user, verify: all geometry visible (no pure-black areas
 
 For environments without a display server (CI, remote servers, containers), PyBevy supports headless GPU rendering:
 
+Configure groups through their builders and apply them with `app.add_plugins(builder)`.
+`PluginGroupBuilder.build()` takes no App argument and returns the same builder.
+Custom groups implement `build(self) -> PluginGroupBuilder`; start their empty
+builder with `PluginGroupBuilder.start(MyGroup)`. Public `finish(app)` applies
+native groups or builders. Builders remain reusable
+with other Apps; duplicate native plugins in the same App raise `RuntimeError`.
+
 1. **Scene setup** - disable WinitPlugin, use `ScheduleRunnerPlugin`, and render to `RenderTarget.Image(ImageRenderTarget(handle=handle))`:
    ```python
-   app.add_plugins(
+   (app.add_plugins(
        DefaultPlugins()
        .set(WindowPlugin(primary_window=None, exit_condition=ExitCondition.DontExit))
        .disable(WinitPlugin)
    )
-   .add_plugins(ScheduleRunnerPlugin.run_loop(16))
+   .add_plugins(ScheduleRunnerPlugin.run_loop(16)))
    ```
    Camera must use an offscreen render target:
    ```python

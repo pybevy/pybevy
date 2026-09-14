@@ -97,10 +97,35 @@ Native plugin build failures in `app.add_plugins(...)` raise `RuntimeError` with
 returns that same builder. Apply groups with `app.add_plugins(group)` or
 `app.add_plugins(builder)`, or call `builder.finish(app)`. Public `finish(app)`
 is also available on `DefaultPlugins` and `MinimalPlugins`. A builder remains reusable
-with other Apps; repeating on the same App raises `RuntimeError` for duplicate native
-plugins. `MinimalPlugins.finish` skips installed members. Python `PluginGroup`
-subclasses need `build(self, app)` and do not need `finish`; they retain their
-plugin-style application through `App.add_plugins`; this adapter differs from Bevy's group trait.
+with other Apps. Custom and minimal builders skip already installed members;
+repeating a native DefaultPlugins seed on the same App can raise `RuntimeError`.
+Python `PluginGroup` subclasses implement `build(self) -> PluginGroupBuilder`.
+Start an empty custom group with `PluginGroupBuilder.start(MyGroup)` and add its
+members with `.add(...)`. Groups have no installation identity. Existing members
+are skipped by native type or Python qualified name, preserving the hot-reload
+dedup policy; MinimalPlugins installs only missing members. `App.is_plugin_added()`
+accepts plugin classes.
+
+<!-- pybevy-snippet: typecheck -->
+```python
+from pybevy.app import App, Plugin, PluginGroup, PluginGroupBuilder
+from pybevy.decorators import plugin
+
+
+@plugin
+class GamePlugin(Plugin):
+    def build(self, app: App) -> None:
+        pass
+
+
+class GamePlugins(PluginGroup):
+    def build(self) -> PluginGroupBuilder:
+        return PluginGroupBuilder.start(GamePlugins).add(GamePlugin())
+
+
+app = App().add_plugins(GamePlugins())
+```
+
 
 ## ECS Essentials
 

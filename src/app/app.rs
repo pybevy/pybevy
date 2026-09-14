@@ -29,6 +29,7 @@ use pybevy_core::{
     allocate_id, consume_unstored_id,
     plugin::plugin_registry,
     public_error::{
+        PLUGIN_ADDED_QUERY_TYPE, PLUGIN_GROUP_BUILD_RESULT, PLUGIN_GROUP_LIFECYCLE,
         duplicate_plugin_identity, plugin_build_error, plugin_key_type, plugin_missing_decorator,
         plugin_not_a_plugin,
     },
@@ -60,8 +61,8 @@ use crate::{
             runtime_pyo3::{annotate_registration_error, collect_system_names},
             state::HotReloadState,
         },
-        plugin::{PyPlugin, PyPluginGroup},
-        plugins::{PyDefaultPlugins, PyPluginGroupBuilder},
+        plugin::{PyPlugin, PyPluginGroup, build_plugin_group},
+        plugins::PyPluginGroupBuilder,
     },
     ecs::{
         dynamic_system::{
@@ -373,6 +374,7 @@ pub struct PyApp {
     /// Registry of plugin types that have been added (by pointer for fast lookup,
     /// by name for hot-reload resilience when Python classes get new type pointers)
     plugin_registry: RefCell<AddedPythonPlugins>,
+    group_callback_depth: Cell<u32>,
 
     /// Shared error state for collecting system errors (parameter + execution)
     /// Arc allows sharing with DynamicSystem instances, Mutex for thread-safe access
@@ -518,6 +520,72 @@ impl PyApp {
         self.with_bevy_app_operation(AppOperation::BridgeBuild, f)
     }
 
+    pub(crate) fn with_group_callback<R>(
+        &self,
+        native: &mut App,
+        callback: impl FnOnce() -> PyResult<R>,
+    ) -> PyResult<R> {
+        let owned = mem::replace(native, App::empty());
+        let restored =
+            BEVY_APPS.with(|apps| apps.borrow_mut().restore_operation(self.app_id, owned));
+        if let Err(error) = restored {
+            let (_, owned) = error.into_parts();
+            *native = owned;
+            return Err(PyRuntimeError::new_err(
+                "cannot hand off App ownership to a group member",
+            ));
+        }
+        self.group_callback_depth
+            .set(self.group_callback_depth.get() + 1);
+        struct RestoreDepth<'a>(&'a Cell<u32>);
+        impl Drop for RestoreDepth<'_> {
+            fn drop(&mut self) {
+                self.0.set(self.0.get() - 1);
+            }
+        }
+        let _restore_depth = RestoreDepth(&self.group_callback_depth);
+        let result = catch_unwind(AssertUnwindSafe(callback));
+        let owned = BEVY_APPS.with(|apps| {
+            apps.borrow_mut()
+                .begin_operation(self.app_id, AppOperation::BridgeBuild)
+        });
+        match owned {
+            Ok(owned) => *native = owned,
+            Err(error) => {
+                return Err(PyRuntimeError::new_err(format!(
+                    "cannot restore App ownership after a group member: {error}"
+                )));
+            }
+        }
+        match result {
+            Ok(result) => result,
+            Err(payload) => resume_unwind(payload),
+        }
+    }
+
+    pub(crate) fn with_group_configuration<R>(
+        &self,
+        configure: impl FnOnce() -> PyResult<R>,
+    ) -> PyResult<R> {
+        self.group_callback_depth
+            .set(self.group_callback_depth.get() + 1);
+        struct RestoreDepth<'a>(&'a Cell<u32>);
+        impl Drop for RestoreDepth<'_> {
+            fn drop(&mut self) {
+                self.0.set(self.0.get() - 1);
+            }
+        }
+        let _restore = RestoreDepth(&self.group_callback_depth);
+        configure()
+    }
+
+    fn ensure_group_configuration(&self) -> PyResult<()> {
+        if self.group_callback_depth.get() != 0 {
+            return Err(PyRuntimeError::new_err(PLUGIN_GROUP_LIFECYCLE));
+        }
+        Ok(())
+    }
+
     /// Internal method to create a temporary app instance for hot reload
     /// This app will skip plugin additions and only collect system definitions
     ///
@@ -534,6 +602,7 @@ impl PyApp {
             app_id,
             creation_thread: std::thread::current().id(),
             plugin_registry: RefCell::new(AddedPythonPlugins::default()),
+            group_callback_depth: Cell::new(0),
             system_error: Arc::new(Mutex::new(Vec::new())),
             system_error_buffer: Arc::new(Mutex::new(None)),
             last_exit: Arc::new(Mutex::new(None)),
@@ -586,6 +655,10 @@ impl PyApp {
     /// These need to be re-registered on the real World after reload
     pub(crate) fn take_pending_observers(&self) -> Vec<Py<PyAny>> {
         self.pending_observers.borrow_mut().drain(..).collect()
+    }
+
+    pub(crate) fn is_reload_collection(&self) -> bool {
+        self.is_reload_temp.get()
     }
 
     /// Extract plugin identities for hot-reload baseline or delta detection.
@@ -738,6 +811,7 @@ impl PyApp {
             app_id,
             creation_thread: std::thread::current().id(),
             plugin_registry: RefCell::new(AddedPythonPlugins::default()),
+            group_callback_depth: Cell::new(0),
             system_error,
             system_error_buffer,
             last_exit: Arc::new(Mutex::new(None)),
@@ -1105,6 +1179,15 @@ impl PyApp {
                 }
             }
 
+            if is_plugin_group {
+                let builder = build_plugin_group(&plugin_instance)?;
+                if !builder.is_instance_of::<PyPluginGroupBuilder>() {
+                    return Err(PyTypeError::new_err(PLUGIN_GROUP_BUILD_RESULT));
+                }
+                builder.call_method1("finish", (app_bound,))?;
+                continue;
+            }
+
             let short_name = plugin_type
                 .name()
                 .and_then(|n| n.extract::<String>())
@@ -1166,26 +1249,11 @@ impl PyApp {
                 continue;
             }
 
-            // Call the appropriate method based on plugin type:
-            // - Plugin: use PluginBridge if registered, otherwise call build(app)
-            // - PluginGroupBuilder: build(app)
-            // - PluginGroup (like DefaultPlugins): _apply_to_app(app)
-            //
             // During reload (is_reload_temp), skip built-in/bridge plugins that need
             // BEVY_APPS access (which temp apps lack), but let custom Python plugins
             // run build() so their systems/resources are captured in pending collections.
             let build_result = catch_unwind(AssertUnwindSafe(|| -> PyResult<()> {
-                if plugin_instance.is_instance_of::<PyPluginGroupBuilder>() {
-                    if !is_reload {
-                        // PluginGroupBuilder has build(app) that applies configuration
-                        plugin_instance.call_method1("build", (app_bound,))?;
-                    }
-                } else if plugin_instance.is_instance_of::<PyDefaultPlugins>() {
-                    if !is_reload {
-                        // DefaultPlugins (and other direct PluginGroups) use _apply_to_app
-                        plugin_instance.call_method1("_apply_to_app", (app_bound,))?;
-                    }
-                } else {
+                {
                     // Regular Plugin
                     if !is_reload {
                         // Normal path: try bridge first, then Python build()
@@ -1259,18 +1327,6 @@ impl PyApp {
                 let app_borrow = pyself.borrow(py);
                 let mut registry = app_borrow.plugin_registry.borrow_mut();
                 registry.insert(type_key, identity.clone());
-                if plugin_instance.is_instance_of::<PyPluginGroupBuilder>() {
-                    let builder = plugin_instance.cast_exact::<PyPluginGroupBuilder>()?;
-                    if let Some(source_type_id) = builder.borrow().source_type {
-                        let source_ptr = source_type_id.as_ptr();
-                        if let Some(source_name) = plugin_qualified_name(source_ptr, py) {
-                            registry.insert(
-                                source_ptr as usize,
-                                PluginIdentity::new(source_name, None),
-                            );
-                        }
-                    }
-                }
                 app_borrow.pending_plugins.borrow_mut().push(identity);
             }
         }
@@ -1520,6 +1576,7 @@ impl PyApp {
     /// Usage:
     ///   app.run_system_once(setup)
     pub fn run_system_once<'py>(&self, py: Python<'py>, func: Bound<'py, PyAny>) -> PyResult<()> {
+        self.ensure_group_configuration()?;
         self.ensure_active()?;
 
         let mut guard = self.begin_operation(AppOperation::WorldCallback)?;
@@ -1542,6 +1599,7 @@ impl PyApp {
         py: Python<'py>,
         funcs: &Bound<'py, PyTuple>,
     ) -> PyResult<()> {
+        self.ensure_group_configuration()?;
         self.ensure_active()?;
 
         let mut guard = self.begin_operation(AppOperation::WorldCallback)?;
@@ -1556,6 +1614,7 @@ impl PyApp {
 
     /// Initialize the app by running startup systems (PyBevy-specific convenience method)
     pub fn initialize(&self, py: Python) -> PyResult<()> {
+        self.ensure_group_configuration()?;
         self.ensure_active()?;
 
         let app_id = self.app_id;
@@ -1573,6 +1632,7 @@ impl PyApp {
 
     /// Run the app update loop once
     pub fn update(&self, py: Python) -> PyResult<()> {
+        self.ensure_group_configuration()?;
         self.ensure_active()?;
 
         // Clear any previous errors before running
@@ -1611,6 +1671,7 @@ impl PyApp {
     }
 
     pub fn finish(&self, py: Python) -> PyResult<()> {
+        self.ensure_group_configuration()?;
         self.ensure_active()?;
 
         let app_id = self.app_id;
@@ -1625,6 +1686,7 @@ impl PyApp {
     }
 
     pub fn cleanup(&self, py: Python) -> PyResult<()> {
+        self.ensure_group_configuration()?;
         self.ensure_active()?;
 
         let app_id = self.app_id;
@@ -1665,6 +1727,7 @@ impl PyApp {
     }
 
     fn run(&self, py: Python) -> PyResult<()> {
+        self.ensure_group_configuration()?;
         // Require @entrypoint decorator unless running in test mode
         if !self.entrypoint_set.get() {
             let is_testing = std::env::var("PYBEVY_TESTING").is_ok();
@@ -1779,6 +1842,9 @@ impl PyApp {
     /// Check if a plugin of a given type has been added to the app
     pub fn is_plugin_added(&self, py: Python, plugin_type: Bound<'_, PyType>) -> PyResult<bool> {
         self.ensure_active()?;
+        if !plugin_type.is_subclass_of::<PyPlugin>()? {
+            return Err(PyTypeError::new_err(PLUGIN_ADDED_QUERY_TYPE));
+        }
 
         let type_ptr = plugin_type.as_ptr() as *const PyTypeObject;
         let qualified_name = plugin_qualified_name(type_ptr, py).unwrap_or_else(|| {
@@ -1914,6 +1980,7 @@ impl PyApp {
     /// Usage:
     ///   app.run_schedule(SimTick)
     pub fn run_schedule(&self, py: Python, stage: PyStage) -> PyResult<()> {
+        self.ensure_group_configuration()?;
         self.ensure_active()?;
 
         // Clear any previous errors before running

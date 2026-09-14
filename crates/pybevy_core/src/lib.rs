@@ -78,9 +78,10 @@ use bevy::ecs::{
 pub use float_live_list::PyFloatLiveList;
 pub use logical_type::PyLogicalComponentParam;
 pub use pybevy_storage::{
-    DefaultPluginKind, LogicalTypeId, LogicalTypeMap, PluginGroupAddition, PluginGroupPlacement,
-    batch_columns, field_storage, pyasset, pycomponent, pyresource, storage_error, storage_traits,
-    validity_guard, value_storage, view_bridge,
+    DefaultPluginKind, LogicalTypeId, LogicalTypeMap, NativeGroupCallback, NativePluginSlot,
+    PluginGroupAddition, PluginGroupCallback, PluginGroupMembers, PluginGroupPlacement,
+    batch_columns, default_plugin_slots, field_storage, pyasset, pycomponent, pyresource,
+    storage_error, storage_traits, validity_guard, value_storage, view_bridge,
 };
 use pyo3::{PyTypeInfo, exceptions::PyRuntimeError, ffi::PyTypeObject, prelude::*, types::PyType};
 pub use scene_module::ActiveSceneModule;

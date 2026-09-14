@@ -1,11 +1,13 @@
 use std::time::Duration;
 
-use bevy::app::{RunMode, ScheduleRunnerPlugin};
-use pybevy_core::PyPlugin;
+use bevy::app::{App, RunMode, ScheduleRunnerPlugin};
+use pybevy_core::{PluginBuild, PyPlugin};
+use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 use crate::prelude::PyApp;
 
+#[pyplugin(ScheduleRunnerPlugin)]
 #[pyclass(name = "ScheduleRunnerPlugin", module = "pybevy.app", extends = PyPlugin, skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyScheduleRunnerPlugin {
@@ -73,5 +75,15 @@ impl PyScheduleRunnerPlugin {
             bevy_app.add_plugins(ScheduleRunnerPlugin { run_mode });
             Ok(())
         })
+    }
+}
+
+impl PluginBuild for PyScheduleRunnerPlugin {
+    fn build(plugin: &Bound<'_, PyAny>, app: &mut App) -> PyResult<()> {
+        let config: PyRef<'_, Self> = plugin.extract()?;
+        app.add_plugins(ScheduleRunnerPlugin {
+            run_mode: config.run_mode.into(),
+        });
+        Ok(())
     }
 }

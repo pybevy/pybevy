@@ -134,6 +134,10 @@ pub trait PluginBridge: Send + Sync + 'static {
     /// Return whether the wrapped Bevy plugin is already installed in this app.
     fn is_added(&self, app: &App) -> bool;
 
+    fn native_type_id(&self) -> TypeId {
+        self.py_type_id()
+    }
+
     /// Plugin name for error messages and debugging.
     fn name(&self) -> &'static str;
 

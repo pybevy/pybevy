@@ -16,6 +16,11 @@ pub use pybevy_storage::{
     },
 };
 
+pub const SINGLE_NOT_ITERABLE: &str =
+    "Single is not iterable; use single.into_inner() before unpacking or iterating the row";
+pub const SINGLE_NOT_SUBSCRIPTABLE: &str =
+    "Single is not subscriptable; use single.into_inner() before indexing the row";
+
 pub const COLOR_INPUT_TYPES: &str =
     "expected Color, Srgba, LinearRgba, Hsla, Hsva, Hwba, Laba, Lcha, Oklaba, Oklcha, or Xyza";
 
@@ -51,6 +56,23 @@ pub const ADD_SYSTEMS_SCHEDULE_TYPE: &str =
 
 pub fn plugin_key_type(qualified_name: impl Display, received_type: impl Display) -> String {
     format!("{qualified_name}.__pybevy_plugin_key__ must be str, got {received_type}")
+}
+
+pub const PLUGIN_CLASS_REQUIRED: &str = "Expected a Plugin class";
+pub const PLUGIN_INSTANCE_REQUIRED: &str = "Argument must be a Plugin instance";
+pub const PLUGIN_GROUP_REQUIRED: &str = "Argument must be a PluginGroup";
+pub const PLUGIN_GROUP_TARGET_MISSING: &str = "Target plugin does not exist in this PluginGroup";
+pub const PLUGIN_GROUP_LIFECYCLE: &str =
+    "App lifecycle operations are unavailable while building a plugin group";
+
+pub const PLUGIN_GROUP_BUILD_MIGRATION: &str = "PluginGroup.build(self, app) is no longer supported; implement build(self) -> PluginGroupBuilder and return PluginGroupBuilder.start(MyGroup).add(...), or use a decorated Plugin to configure App directly";
+
+pub const PLUGIN_GROUP_BUILD_RESULT: &str = "PluginGroup.build() must return a PluginGroupBuilder";
+pub const PLUGIN_GROUP_START_TYPE: &str = "PluginGroupBuilder.start() requires a PluginGroup class";
+pub const PLUGIN_ADDED_QUERY_TYPE: &str = "App.is_plugin_added() requires a Plugin class";
+
+pub fn missing_group_plugin(name: impl Display) -> String {
+    format!("Plugin '{name}' does not exist in this PluginGroup")
 }
 
 pub fn duplicate_plugin_identity(qualified_name: impl Display, key: impl Display) -> String {

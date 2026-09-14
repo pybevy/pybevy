@@ -180,7 +180,8 @@ class PluginGroup:
     Plugin groups implement `build() -> PluginGroupBuilder` which returns a builder
     for configuring which plugins to include/exclude.
 
-    This matches Bevy's `PluginGroup` trait (separate from `Plugin` trait).
+    `App.add_plugins()` calls `build()` and applies the returned builder.
+    Python subclasses use the same contract as native groups.
 
     Example:
         ```python
@@ -191,104 +192,48 @@ class PluginGroup:
         app.add_plugins(DefaultPlugins().build().disable(AudioPlugin))
         ```
     """
+    @classmethod
+    def name(cls) -> str:
+        """Return the group name used by start()."""
     def build(self) -> PluginGroupBuilder:
         """Build the plugin group, returning a builder for configuration."""
+    def set(self, plugin: Plugin) -> PluginGroupBuilder:
+        """Build the group and replace an existing member's configuration."""
 
 class PluginGroupBuilder(PluginGroup):
-    """Builder for configuring plugin groups.
+    """An ordered plugin collection with reusable immutable configuration.
 
-    Provides methods for configuring, disabling, and adding plugins.
-    All methods return a new builder instance (immutable pattern).
-
-    This is returned by `PluginGroup.build()` and allows fine-grained
-    control over which plugins are included.
+    Configuration methods return new builders. Native members use Bevy type
+    identity; Python members use their class identity. Adding an existing type
+    replaces its value, enables it, and moves it to the requested position.
     """
 
+    @staticmethod
+    def start(group_type: type[PluginGroup]) -> PluginGroupBuilder:
+        """Start an empty collection named for the given group class."""
+    def contains(self, plugin_type: type[Plugin]) -> bool:
+        """Check membership, including disabled members."""
+    def enabled(self, plugin_type: type[Plugin]) -> bool:
+        """Check whether a member exists and is enabled."""
     def set(self, plugin: Plugin) -> PluginGroupBuilder:
-        """Replace a plugin in the group.
-
-        Args:
-            plugin: Configured plugin instance to replace the default
-
-        Returns:
-            New builder with the plugin configured
-
-        Example:
-            >>> from pybevy.window import WindowPlugin, Window
-            >>> builder.set(WindowPlugin(primary_window=Window(title="Game")))
-        """
-
+        """Replace an existing value, preserving its position and enabled state."""
     def disable(self, plugin_type: type[Plugin]) -> PluginGroupBuilder:
-        """Disable a specific plugin from the group.
-
-        Args:
-            plugin_type: Plugin class to disable
-
-        Returns:
-            New builder with the plugin disabled
-
-        Example:
-            >>> builder.disable(AudioPlugin)
-        """
-
-    def add(self, plugin: Plugin) -> PluginGroupBuilder:
-        """Add a plugin to the end of the group.
-
-        Python-defined plugins are supported here because the end position can
-        be applied after the native group without re-entering a borrowed App.
-
-        Args:
-            plugin: Plugin instance to add
-
-        Returns:
-            New builder with the plugin added
-        """
-
-    def add_before(self, target: type[Plugin], plugin: Plugin) -> PluginGroupBuilder:
-        """Add a plugin before the target plugin.
-
-        Relative placement currently requires a native PyBevy plugin wrapper;
-        Python-defined plugins raise ``TypeError``. Their ``build(app)`` method
-        cannot safely run from inside Bevy's borrowed native group builder.
-
-        Args:
-            target: Plugin class to insert before
-            plugin: Plugin instance to add
-
-        Returns:
-            New builder with the plugin added
-        """
-
-    def add_after(self, target: type[Plugin], plugin: Plugin) -> PluginGroupBuilder:
-        """Add a plugin after the target plugin.
-
-        Relative placement currently requires a native PyBevy plugin wrapper;
-        Python-defined plugins raise ``TypeError``. Use :meth:`add` when an
-        end-of-group Python plugin is sufficient.
-
-        Args:
-            target: Plugin class to insert after
-            plugin: Plugin instance to add
-
-        Returns:
-            New builder with the plugin added
-        """
-
+        """Disable an existing member, preserving its position."""
     def enable(self, plugin_type: type[Plugin]) -> PluginGroupBuilder:
-        """Re-enable a previously disabled plugin.
-
-        Args:
-            plugin_type: Plugin class to enable
-
-        Returns:
-            New builder with the plugin enabled
-        """
-
-    def build(self, app: App) -> None:  # type: ignore[override]
-        """Build and apply all plugins in the group to the app.
-
-        This is called by `add_plugins()` to apply the configured plugins.
-        """
+        """Enable an existing member."""
+    def add(self, plugin: Plugin) -> PluginGroupBuilder:
+        """Replace or append a member, enabling it."""
+    def add_before(self, target: type[Plugin], plugin: Plugin) -> PluginGroupBuilder:
+        """Replace or insert a member immediately before an existing target."""
+    def add_after(self, target: type[Plugin], plugin: Plugin) -> PluginGroupBuilder:
+        """Replace or insert a member immediately after an existing target."""
+    def add_group(self, group: PluginGroup) -> PluginGroupBuilder:
+        """Merge members at the end, preserving their enabled states."""
+    def build(self) -> PluginGroupBuilder:
+        """Return this same builder."""
+    def finish(self, app: App) -> None:
+        """Apply enabled members in order. Installed custom/minimal members are skipped.
+        Repeated native DefaultPlugins seed members can raise RuntimeError."""
 
 class DefaultPlugins(PluginGroup):
     """Default plugin group for typical PyBevy applications.
@@ -337,15 +282,28 @@ class DefaultPlugins(PluginGroup):
             >>> DefaultPlugins().build().disable(AudioPlugin)
         """
 
-    def _apply_to_app(self, app: App) -> None:
-        """Internal method to apply the default plugins to the app.
+    def finish(self, app: App) -> None:
+        """Apply defaults without consuming this group.
 
-        This is called by add_plugins() and should not be called directly.
+        Repeating on the same App raises RuntimeError for duplicate native plugins.
         """
 
-class MinimalPlugins(Plugin):
+class MinimalPlugins(PluginGroup):
+    """Minimal plugin group for headless applications and tests.
+
+    Installs the task pool, frame count, time, and schedule runner plugins.
+
+    Example:
+        ```python
+        app.add_plugins(MinimalPlugins)
+        ```
+    """
+
     def __init__(self) -> None: ...
-    def build(self, app: App) -> None: ...
+    def build(self) -> PluginGroupBuilder:
+        """Return a configurable builder containing the minimal group members."""
+    def finish(self, app: App) -> None:
+        """Apply minimal plugins, skipping members already installed on the App."""
 
 class TaskPoolPlugin(Plugin):
     def __init__(self) -> None: ...
@@ -517,7 +475,7 @@ class App:
 
             app.add_observer(on_player_died).add_systems(...)
         """
-    def is_plugin_added(self, plugin_type: type[Plugin] | type[PluginGroup]) -> bool: ...
+    def is_plugin_added(self, plugin_type: type[Plugin]) -> bool: ...
     def should_exit(self) -> AppExit | None:
         """Check if the app should exit.
 
