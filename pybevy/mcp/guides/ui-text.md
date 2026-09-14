@@ -240,8 +240,8 @@ region.
 | Property | Type | Description |
 |----------|------|-------------|
 | `position_type` | `PositionType` | `.Relative` (flow) or `.Absolute` |
-| `top`, `bottom`, `left`, `right` | `float` or `Val` | Offset (float = pixels, or `Val.Px()` / `Val.Percent()`) |
-| `width`, `height` | `float` or `Val` | Size (float = pixels, or `Val.Px()` / `Val.Percent()`) |
+| `top`, `bottom`, `left`, `right` | `float` or `Val` | Offset (float = pixels, or `Val.Px(10.0)` / `Val.Percent(50.0)`) |
+| `width`, `height` | `float` or `Val` | Size (float = pixels, or `Val.Px(10.0)` / `Val.Percent(50.0)`) |
 | `flex_direction` | `FlexDirection` | `.Row`, `.Column`, `.RowReverse`, `.ColumnReverse` |
 | `justify_content` | `JustifyContent` | `.Start`, `.Center`, `.End`, `.SpaceBetween` |
 | `align_items` | `AlignItems` | `.Start`, `.Center`, `.End`, `.Stretch` |
