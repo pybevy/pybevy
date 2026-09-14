@@ -1,9 +1,29 @@
-use bevy::app::App;
+use bevy::{app::App, render::texture::TexturePlugin};
 use pybevy_core::{PluginBuild, PyPlugin};
 use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 use crate::power_preference::PyPowerPreference;
+
+#[pyplugin(TexturePlugin)]
+#[pyclass(name = "TexturePlugin", module = "pybevy.render", extends = PyPlugin, frozen, skip_from_py_object)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PyTexturePlugin;
+
+#[pymethods]
+impl PyTexturePlugin {
+    #[new]
+    pub fn new() -> PyClassInitializer<Self> {
+        (Self, PyPlugin).into()
+    }
+}
+
+impl PluginBuild for PyTexturePlugin {
+    fn build(_py_plugin: &Bound<'_, PyAny>, app: &mut App) -> PyResult<()> {
+        app.add_plugins(TexturePlugin);
+        Ok(())
+    }
+}
 
 #[pyplugin(bevy::render::RenderPlugin, default_plugin = Render)]
 #[pyclass(name = "RenderPlugin", module = "pybevy.render", extends = PyPlugin, frozen, skip_from_py_object)]

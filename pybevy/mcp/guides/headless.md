@@ -2,6 +2,11 @@
 
 GPU rendering without a window or display server - for CI, remote servers, containers, and automated testing.
 
+For CPU image loading, add `AssetPlugin`, `ImagePlugin`, and
+`pybevy.render.TexturePlugin` to `MinimalPlugins`. `TexturePlugin` registers the
+image codecs during `finish()` without creating a renderer. `RenderPlugin`
+already includes it when rendering is required.
+
 ## When to Use Headless
 
 - No display server available (SSH, CI runners, Docker containers)

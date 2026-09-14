@@ -192,6 +192,14 @@ class TextureViewDimension:
     CubeArray: ClassVar[TextureViewDimension]
     D3: ClassVar[TextureViewDimension]
 
+class TexturePlugin(Plugin):
+    """Registers image codecs and texture resources.
+
+    CPU image loading needs AssetPlugin and ImagePlugin before finish().
+    RenderPlugin already includes this plugin.
+    """
+    def __init__(self) -> None: ...
+
 class RenderPlugin(Plugin):
     """Configures the rendering pipeline.
 

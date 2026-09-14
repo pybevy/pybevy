@@ -36,6 +36,7 @@ pub mod prelude {
 pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "render")?;
     m.add_class::<plugin::PyRenderPlugin>()?;
+    m.add_class::<plugin::PyTexturePlugin>()?;
     m.add_class::<power_preference::PyPowerPreference>()?;
     m.add_class::<face::PyFace>()?;
     m.add_class::<unit_markers::PyHdr>()?;
