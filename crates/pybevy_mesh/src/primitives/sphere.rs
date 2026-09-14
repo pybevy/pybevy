@@ -16,8 +16,25 @@ impl From<SphereMeshBuilder> for PySphereMeshBuilder {
 
 #[pymethods]
 impl PySphereMeshBuilder {
-    pub fn kind(&self) -> PySphereKind {
-        self.0.kind.into()
+    /// Bevy parity (#97): with a `kind` argument this behaves like Bevy's
+    /// chaining builder — it returns a NEW `SphereMeshBuilder` with the kind
+    /// replaced (this object is frozen). With no argument it keeps the
+    /// existing getter behavior and returns the current kind.
+    #[pyo3(signature = (kind=None))]
+    pub fn kind(&self, py: Python, kind: Option<PySphereKind>) -> PyResult<Py<PyAny>> {
+        match kind {
+            Some(kind) => {
+                let builder = SphereMeshBuilder {
+                    sphere: self.0.sphere,
+                    kind: kind.into(),
+                };
+                Ok(Py::new(py, (PySphereMeshBuilder(builder), PyMeshBuilder))?.into_any())
+            }
+            None => {
+                let current: PySphereKind = self.0.kind.into();
+                Ok(current.into_pyobject(py)?.into_any().unbind())
+            }
+        }
     }
 
     pub fn ico(&self, py: Python, subdivisions: u32) -> PyResult<Py<PyMesh>> {
