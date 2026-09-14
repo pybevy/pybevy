@@ -2736,6 +2736,16 @@ path = "ecs.CustomComponentBatch"
 reason = "runtime batch transport created by Component.batch rather than user-facing API"
 
 [[validation.exceptions]]
+code = "E002"
+path = "ecs.SingleQuery"
+reason = "__iter__ only raises TypeError with an into_inner hint; omitting the rejection hook from stubs prevents checkers from treating Single as iterable"
+
+[[validation.exceptions]]
+code = "E002"
+path = "ecs.SingleQuery"
+reason = "__getitem__ only raises TypeError with an into_inner hint; omitting the rejection hook from stubs prevents checkers from treating Single as indexable"
+
+[[validation.exceptions]]
 code = "E001"
 path = "ecs.ResParam"
 reason = "runtime implementation object behind the public Res and ResMut typing aliases"
@@ -2980,3 +2990,9 @@ reason = "legacy plain value enum predating the pyenum convention; migration tra
 code = "W013"
 path = "render.TextureFormat"
 reason = "legacy plain value enum predating the pyenum convention; migration tracked by ISSUE-012"
+
+
+[[validation.exceptions]]
+code = "E002"
+path = "app.PluginGroup"
+reason = "PluginGroup.name is a live classmethod declared in app.pyi and pinned by surface tests; the Rust parser stores #[classmethod] in methods while the Python parser stores @classmethod in static_methods"

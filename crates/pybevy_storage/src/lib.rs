@@ -60,7 +60,10 @@ pub use field_storage::{FieldStorage, FieldStorageInner};
 pub use filtered_entity_access::FilteredEntityAccess;
 pub use logical_type::{LogicalTypeId, LogicalTypeMap};
 pub use owned_cell::OwnedCell;
-pub use plugin_group::{DefaultPluginKind, PluginGroupAddition, PluginGroupPlacement};
+pub use plugin_group::{
+    DefaultPluginKind, NativeGroupCallback, NativePluginSlot, PluginGroupAddition,
+    PluginGroupCallback, PluginGroupMembers, PluginGroupPlacement,
+};
 pub use pyasset::{AssetBorrowCounter, AssetStorage};
 pub use pycomponent::{ComponentStorage, ComponentStorageInner};
 pub use pyresource::{ResourceStorage, ResourceStorageInner};
