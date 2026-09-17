@@ -293,7 +293,7 @@ def setup_post_processing(commands: Commands) -> None:
         # Exposure control
         Exposure.INDOOR,
         # Tonemapping for cinematic look
-        Tonemapping.TONY_MC_MAPFACE,
+        Tonemapping.TonyMcMapface,
         # Bloom for glowing crystals
         Bloom(
             intensity=0.3,

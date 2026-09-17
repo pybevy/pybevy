@@ -93,7 +93,7 @@ def setup(
 
 
 def toggle_ssao(
-    keyboard: Res[ButtonInput],
+    keyboard: Res[ButtonInput[KeyCode]],
     camera_query: Query[tuple[Entity, Mut[ScreenSpaceAmbientOcclusion]], With[SsaoCamera]],
     commands: Commands,
 ) -> None:
@@ -108,7 +108,7 @@ def toggle_ssao(
 
 
 def change_quality(
-    keyboard: Res[ButtonInput],
+    keyboard: Res[ButtonInput[KeyCode]],
     ssao_query: Query[Mut[ScreenSpaceAmbientOcclusion]],
 ) -> None:
     """Change SSAO quality with number keys 1-4."""

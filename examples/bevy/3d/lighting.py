@@ -190,7 +190,7 @@ def animate_light_direction(
         transform.rotate_y(time.delta_secs() * 0.5)
 
 
-def movement(input: Res[ButtonInput], time: Res[Time], query: Query[Mut[Transform], With[Movable]]):
+def movement(input: Res[ButtonInput[KeyCode]], time: Res[Time], query: Query[Mut[Transform], With[Movable]]):
     """Move objects with arrow keys"""
     for transform in query:
         direction = Vec3.ZERO

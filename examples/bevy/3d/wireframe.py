@@ -118,7 +118,7 @@ def setup(
 
 
 def toggle_wireframe(
-    keyboard: Res[ButtonInput],
+    keyboard: Res[ButtonInput[KeyCode]],
     config: ResMut[WireframeConfig],
 ) -> None:
     """Toggle global wireframe with W key."""

@@ -9,7 +9,7 @@ Demonstrates:
 from pybevy.prelude import *
 
 
-def keyboard_system(keyboard: Res[ButtonInput]) -> None:
+def keyboard_system(keyboard: Res[ButtonInput[KeyCode]]) -> None:
     """Check keyboard input state."""
     # Check if key is currently held down
     if keyboard.pressed(KeyCode.KeyW):

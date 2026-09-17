@@ -478,7 +478,7 @@ def simulate_cars(query: Query[tuple[Mut[Transform], Mut[CarState]]], time: Res[
 
 def fly_camera(
     query: Query[tuple[Mut[Transform], Mut[FlyCam]], With[Camera3d]],
-    keys: Res[ButtonInput],
+    keys: Res[ButtonInput[KeyCode]],
     time: Res[Time],
 ) -> None:
     move_speed = 8.0 * time.delta_secs()
@@ -517,7 +517,7 @@ def fly_camera(
         transform.translation = transform.translation + motion * move_speed
 
 
-def toggle_wireframe(keys: Res[ButtonInput], config: ResMut[WireframeConfig]) -> None:
+def toggle_wireframe(keys: Res[ButtonInput[KeyCode]], config: ResMut[WireframeConfig]) -> None:
     if keys.just_pressed(KeyCode.KeyK):
         config.global_ = not config.global_
 

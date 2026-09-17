@@ -481,7 +481,7 @@ def poll_build(
 
 
 def handle_input(
-    keys: Res[ButtonInput],
+    keys: Res[ButtonInput[KeyCode]],
     sim: ResMut[NewtonSim],
     status_query: Query[Mut[Text], With[StatusText]],
 ):

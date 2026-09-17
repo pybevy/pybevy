@@ -101,7 +101,7 @@ def setup(
 
 
 def adjust_roughness(
-    keyboard: Res[ButtonInput],
+    keyboard: Res[ButtonInput[KeyCode]],
     floor: Res[FloorMaterial],
     materials: ResMut[Assets[StandardMaterial]],
     text_query: Query[Mut[Text], With[RoughnessDisplay]],
@@ -126,7 +126,7 @@ def adjust_roughness(
 
 
 def toggle_gizmos(
-    keyboard: Res[ButtonInput],
+    keyboard: Res[ButtonInput[KeyCode]],
     config_store: ResMut[GizmoConfigStore],
 ) -> None:
     """Toggle Bevy's light gizmo config group."""

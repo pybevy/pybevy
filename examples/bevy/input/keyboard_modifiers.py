@@ -12,7 +12,7 @@ This system prints when Ctrl + Shift + A is pressed.
 from pybevy.prelude import *
 
 
-def keyboard_input_system(input: Res[ButtonInput]) -> None:
+def keyboard_input_system(input: Res[ButtonInput[KeyCode]]) -> None:
     """Detect Ctrl + Shift + A key combination."""
     shift = input.any_pressed([KeyCode.ShiftLeft, KeyCode.ShiftRight])
     ctrl = input.any_pressed([KeyCode.ControlLeft, KeyCode.ControlRight])
