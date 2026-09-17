@@ -3,7 +3,14 @@ use bevy::ecs::{entity::Entity, world::World};
 pub use pybevy_macros::{PyComponent, pybevy_app, pyfield};
 #[cfg(feature = "mcp")]
 use pyo3::ffi::PyTypeObject;
-use pyo3::{prelude::*, types::IntoPyDict};
+use pyo3::{
+    exceptions::PyImportError,
+    prelude::*,
+    types::{IntoPyDict, PyFrozenSet},
+};
+
+#[cfg(feature = "mcp")]
+pybevy_core::register_optional_feature!("mcp");
 
 pub mod prelude {
     pub use pybevy_macros::{PyComponent, pybevy_app, pyfield};
@@ -72,11 +79,36 @@ fn _keyword_hint(callable: &str, keyword: &str, valid: Vec<String>) -> Option<St
     pybevy_core::public_error::unexpected_keyword_hint(callable, keyword, &borrowed)
 }
 
+/// Optional public capabilities compiled into this exact extension binary.
+#[pyfunction]
+fn features(py: Python<'_>) -> PyResult<Bound<'_, PyFrozenSet>> {
+    PyFrozenSet::new(
+        py,
+        pybevy_core::optional_features::compiled_optional_features(),
+    )
+}
+
+/// Refuse an import shim when its optional Cargo feature is not compiled.
+#[pyfunction]
+fn _require_optional_feature(feature: &str, module: &str) -> PyResult<()> {
+    if pybevy_core::optional_features::is_optional_feature_compiled(feature) {
+        return Ok(());
+    }
+
+    Err(PyImportError::new_err(
+        pybevy_core::public_error::optional_module_requires_feature(module, feature),
+    ))
+}
+
 /// Populates a PyModule with all pybevy submodules and classes.
 /// Called by both the cdylib (pybevy_python) and native plugin (append_to_inittab).
 pub fn init_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add("__version__", pybevy_core::PYBEVY_VERSION)?;
+
     // Collect all inventory-registered bridges from feature crates
     pybevy_core::bridge_inventory::collect_all();
+    m.add_function(wrap_pyfunction!(features, m)?)?;
+    m.add_function(wrap_pyfunction!(_require_optional_feature, m)?)?;
 
     // Register base classes from pybevy_core FIRST before any modules that use them
     // This ensures classes like GlobalVolume (extends PyResource) use the same base class

@@ -18,14 +18,14 @@ use pybevy_core::{
     public_error::{RESOURCE_COMPONENT_INSERT, RESOURCE_COMPONENT_REMOVE},
     registry::global_registry,
 };
-use pyo3::{PyTypeInfo, exceptions::PyTypeError, ffi::PyTypeObject, prelude::*, types::PyType};
+use pyo3::{
+    PyTypeInfo, exceptions::PyTypeError, ffi::PyTypeObject, intern, prelude::*, types::PyType,
+};
 use smallvec::SmallVec;
 
 use crate::ecs::{
     component::PyComponent,
-    component_layout::{
-        ComponentLayout, ComponentLayoutExt, ComponentStorageType, ComponentStorageTypeExt,
-    },
+    component_layout::{ComponentLayout, ComponentStorageType, ComponentStorageTypeExt},
     helpers::type_utils::get_python_type_name,
     resource::{PyRes, PyResMut, PyResource},
     resource_type::register_custom_resource,
@@ -250,6 +250,15 @@ impl PyComponentType {
     /// Try to convert from Python type object to PyComponentType.
     /// Returns Custom variant for decorated Python-defined components.
     pub fn try_from_py_type(ty: &Bound<'_, PyType>, py: Python<'_>) -> PyResult<Self> {
+        Self::resolve_with_identity(ty, py).map(|(component_type, _)| component_type)
+    }
+
+    /// Classify a Python class and derive its duplicate-detection identity
+    /// from the same bridge lookup.
+    pub(crate) fn resolve_with_identity(
+        ty: &Bound<'_, PyType>,
+        py: Python<'_>,
+    ) -> PyResult<(Self, ValidationIdentity)> {
         if !ty.is_subclass_of::<PyComponent>()? {
             let name = ty
                 .qualname()
@@ -281,21 +290,30 @@ impl PyComponentType {
         let type_ptr = ty.as_type_ptr();
         if let Some(bridge) = global_registry::get_bridge_by_py_type(type_ptr) {
             // Native subclasses share the canonical Bevy component identity.
-            return Ok(PyComponentType::Dynamic(bridge.py_type_ptr()));
+            return Ok((
+                PyComponentType::Dynamic(bridge.py_type_ptr()),
+                ValidationIdentity::Native(bridge.bevy_type_id()),
+            ));
         }
 
         if let Some(bridge) = global_registry::get_resource_bridge_by_py_type(type_ptr) {
-            return Ok(PyComponentType::Resource(bridge.py_type_ptr()));
+            return Ok((
+                PyComponentType::Resource(bridge.py_type_ptr()),
+                ValidationIdentity::Native(bridge.bevy_type_id()),
+            ));
         }
 
         if ty.is_subclass_of::<PyResource>()? {
             let decorated = ty
-                .getattr("__pybevy_resource_decorated__")
+                .getattr(intern!(py, "__pybevy_resource_decorated__"))
                 .ok()
                 .and_then(|marker| marker.is_truthy().ok())
                 .unwrap_or(false);
             if decorated {
-                return Ok(PyComponentType::Resource(type_ptr));
+                return Ok((
+                    PyComponentType::Resource(type_ptr),
+                    ValidationIdentity::Python(type_ptr as usize),
+                ));
             }
             return Err(PyTypeError::new_err(format!(
                 "resource type '{}' has no component-query bridge",
@@ -303,17 +321,22 @@ impl PyComponentType {
             )));
         }
 
+        let custom = (
+            PyComponentType::Custom(type_ptr),
+            ValidationIdentity::Python(type_ptr as usize),
+        );
+
         // Check for special Python-only built-in components (DespawnOnExit, DespawnOnEnter)
         if ty.is(crate::ecs::state::PyDespawnOnExit::type_object(py)) {
-            return Ok(PyComponentType::Custom(type_ptr));
+            return Ok(custom);
         }
         if ty.is(crate::ecs::state::PyDespawnOnEnter::type_object(py)) {
-            return Ok(PyComponentType::Custom(type_ptr));
+            return Ok(custom);
         }
 
         // Not a built-in or dynamic component - check for custom component decorator
         let has_decorator = ty
-            .getattr("__pybevy_component_decorated__")
+            .getattr(intern!(py, "__pybevy_component_decorated__"))
             .ok()
             .and_then(|marker| marker.is_truthy().ok())
             .unwrap_or(false);
@@ -325,7 +348,7 @@ impl PyComponentType {
             )));
         }
 
-        Ok(PyComponentType::Custom(type_ptr))
+        Ok(custom)
     }
 
     /// Extract component from entity and convert to Python object.
@@ -532,8 +555,16 @@ fn get_python_qualified_name(py: Python, type_ptr: *const PyTypeObject) -> Optio
     let type_obj =
         unsafe { pyo3::Bound::from_borrowed_ptr(py, type_ptr as *mut pyo3::ffi::PyObject) };
     let cls = type_obj.cast::<pyo3::types::PyType>().ok()?;
-    let module = cls.getattr("__module__").ok()?.extract::<String>().ok()?;
-    let qualname = cls.getattr("__qualname__").ok()?.extract::<String>().ok()?;
+    let module = cls
+        .getattr(intern!(py, "__module__"))
+        .ok()?
+        .extract::<String>()
+        .ok()?;
+    let qualname = cls
+        .getattr(intern!(py, "__qualname__"))
+        .ok()?
+        .extract::<String>()
+        .ok()?;
     Some(format!("{}.{}", module, qualname))
 }
 
@@ -552,16 +583,28 @@ pub(crate) struct PreparedCustomComponentRegistration {
     retained_type: Option<Arc<Py<PyType>>>,
 }
 
+/// Derive a custom component's storage kind and shareable wrapper layout.
+pub(crate) fn storage_and_shared_layout(
+    cls: &Bound<'_, PyType>,
+) -> PyResult<(ComponentStorageType, Option<Arc<ComponentLayout>>)> {
+    let (storage, layout) = ComponentStorageType::storage_with_layout(cls)?;
+    Ok((storage, layout.map(Arc::new)))
+}
+
 impl PreparedCustomComponentRegistration {
-    pub(crate) fn from_python_class(cls: &Bound<'_, PyType>) -> PyResult<Self> {
+    /// Reuse the layout already validated for this component class.
+    pub(crate) fn from_python_class_with_layout(
+        cls: &Bound<'_, PyType>,
+        storage_type: ComponentStorageType,
+        wrapper_layout: Option<Arc<ComponentLayout>>,
+    ) -> PyResult<Self> {
         let type_ptr = cls.as_type_ptr();
-        let storage_type = ComponentStorageType::from_python_class(cls)?;
         Ok(Self {
             type_id: type_ptr as usize,
             name: cls.name()?.to_string(),
             qualified_name: get_python_qualified_name(cls.py(), type_ptr),
             storage_type,
-            wrapper_layout: wrapper_layout_for(cls, storage_type),
+            wrapper_layout,
             retained_type: Some(Arc::new(cls.clone().unbind())),
         })
     }
@@ -569,17 +612,11 @@ impl PreparedCustomComponentRegistration {
     pub(crate) fn storage_type(&self) -> ComponentStorageType {
         self.storage_type
     }
-}
 
-/// Field layout for the MCP-facing metadata; only wrapper storage has one.
-fn wrapper_layout_for(
-    cls: &Bound<'_, PyType>,
-    storage: ComponentStorageType,
-) -> Option<Arc<ComponentLayout>> {
-    matches!(storage, ComponentStorageType::Wrapper(_))
-        .then(|| ComponentLayout::from_annotations(cls).ok())
-        .flatten()
-        .map(Arc::new)
+    /// The layout that selected wrapper storage; `None` for PyObject storage.
+    pub(crate) fn wrapper_layout(&self) -> Option<&ComponentLayout> {
+        self.wrapper_layout.as_deref()
+    }
 }
 
 pub(crate) fn register_prepared_custom_component(
@@ -688,11 +725,11 @@ pub(crate) fn register_custom_component(
         unsafe { pyo3::Bound::from_borrowed_ptr(py, type_ptr as *mut pyo3::ffi::PyObject) };
     let (storage_type, wrapper_layout, retained_type) = match py_type.cast::<PyType>() {
         Ok(cls) => {
-            let storage = ComponentStorageType::from_python_class(cls)
-                .unwrap_or(ComponentStorageType::PyObject);
+            let (storage, layout) = ComponentStorageType::storage_with_layout(cls)
+                .unwrap_or((ComponentStorageType::PyObject, None));
             (
                 storage,
-                wrapper_layout_for(cls, storage),
+                layout.map(Arc::new),
                 Some(Arc::new(cls.clone().unbind())),
             )
         }

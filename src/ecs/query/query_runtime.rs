@@ -1,4 +1,9 @@
-use std::{cell::RefCell, collections::HashMap, ptr::NonNull, sync::Arc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    ptr::NonNull,
+    sync::Arc,
+};
 
 #[cfg(debug_assertions)]
 use bevy::ecs::query::FilteredAccess;
@@ -36,7 +41,10 @@ use crate::ecs::{
     filter::QueryFilter,
     helpers::validity_guard::{AccessMode, ValidityFlag},
     lazy_wrapper_proxy::{ProxyKind, PyLazyWrapperProxy},
-    query::query_param::{PyQueryParam, QueryData},
+    query::{
+        query_helpers::filter_only_error_message,
+        query_param::{PyQueryParam, QueryData},
+    },
     world::PyWorld,
 };
 
@@ -348,7 +356,30 @@ pub struct PyQueryIter {
     /// Cached ComponentLayouts and storage types for custom wrapper components, keyed by type pointer.
     /// Avoids re-parsing Python __annotations__ and __pybevy_storage__ on every entity iteration.
     layout_cache: RefCell<LayoutCache>,
+
+    /// Last resolved component id, keyed by the requesting type. Queries ask for
+    /// the same handful of types on every row, so this turns the per-row map
+    /// probe into a comparison. Scoped to this validity window like `layout_cache`.
+    last_component_id: Cell<Option<(ComponentTypeKey, ComponentId)>>,
+
+    /// Last resolved extraction function, keyed the same way and for the same
+    /// reason: the row loop asks for one type over and over.
+    last_extract_fn: Cell<Option<(ComponentTypeKey, Option<ExtractFn>)>>,
+
+    /// Last resolved storage type and layout for a custom component, same
+    /// reasoning and same validity-window scope as the lookups above.
+    #[allow(clippy::type_complexity)]
+    last_layout: RefCell<
+        Option<(
+            *const PyTypeObject,
+            ComponentStorageType,
+            Option<Arc<crate::ecs::component_layout::ComponentLayout>>,
+        )>,
+    >,
 }
+
+/// Discriminant plus type pointer, enough to distinguish any `PyComponentType`.
+type ComponentTypeKey = (u8, *const pyo3::ffi::PyTypeObject);
 
 // SAFETY: PyQueryIter is only used during system execution on a single thread.
 // QueryRuntimeCore fences the world cell and cached query state with the run's
@@ -539,6 +570,9 @@ impl PyQueryIter {
             cached: QueryCache::Borrowed(NonNull::from(cached)),
             runtime,
             values_buffer: RefCell::new(SmallVec::new()),
+            last_component_id: Cell::new(None),
+            last_extract_fn: Cell::new(None),
+            last_layout: RefCell::new(None),
             layout_cache: RefCell::new(HashMap::new()),
         }
     }
@@ -565,6 +599,9 @@ impl PyQueryIter {
             cached: QueryCache::Owned(cached),
             runtime,
             values_buffer: RefCell::new(SmallVec::new()),
+            last_component_id: Cell::new(None),
+            last_extract_fn: Cell::new(None),
+            last_layout: RefCell::new(None),
             layout_cache: RefCell::new(HashMap::new()),
         }
     }
@@ -726,7 +763,15 @@ impl PyQueryIter {
     /// Get the cached extraction function for a dynamic component type.
     #[inline(always)]
     pub(crate) fn get_extract_fn(&self, ty: &PyComponentType) -> Option<ExtractFn> {
-        self.cached().extract_fns.get(ty).copied()
+        let key = Self::component_type_key(ty);
+        if let Some((cached_key, extract_fn)) = self.last_extract_fn.get() {
+            if cached_key == key {
+                return extract_fn;
+            }
+        }
+        let extract_fn = self.cached().extract_fns.get(ty).copied();
+        self.last_extract_fn.set(Some((key, extract_fn)));
+        extract_fn
     }
 
     fn matches_logical_types(&self, entity: &FilteredEntityAccess<'_, '_>) -> bool {
@@ -765,6 +810,26 @@ impl PyQueryIter {
 
     #[inline(always)]
     fn component_id(&self, ty: &PyComponentType) -> ComponentId {
+        let key = Self::component_type_key(ty);
+        if let Some((cached_key, id)) = self.last_component_id.get() {
+            if cached_key == key {
+                return id;
+            }
+        }
+        let id = self.lookup_component_id(ty);
+        self.last_component_id.set(Some((key, id)));
+        id
+    }
+
+    fn component_type_key(ty: &PyComponentType) -> ComponentTypeKey {
+        match ty {
+            PyComponentType::Custom(ptr) => (0, *ptr),
+            PyComponentType::Dynamic(ptr) => (1, *ptr),
+            PyComponentType::Resource(ptr) => (2, *ptr),
+        }
+    }
+
+    fn lookup_component_id(&self, ty: &PyComponentType) -> ComponentId {
         match ty {
             PyComponentType::Custom(type_ptr) => *self
                 .cached()
@@ -806,21 +871,26 @@ impl PyQueryIter {
     /// (in extract_components_from_entity, single, and get methods).
     ///
     /// Called by PyComponentType::extract_from_entity() macro dispatch method.
-    pub(crate) fn extract_custom_component(
+    fn layout_for(
         &self,
         type_ptr: *const PyTypeObject,
-        entity: &mut FilteredEntityAccess,
-        component_id: ComponentId,
-        access_mode: AccessMode,
         py: Python,
-    ) -> PyResult<Py<PyAny>> {
-        // Get cached storage type + layout, or compute and cache on first access
-        let (storage_type, cached_layout) = {
+    ) -> (
+        ComponentStorageType,
+        Option<Arc<crate::ecs::component_layout::ComponentLayout>>,
+    ) {
+        if let Some((last_ptr, st, layout)) = &*self.last_layout.borrow() {
+            if *last_ptr == type_ptr {
+                return (*st, layout.clone());
+            }
+        }
+        let resolved = {
             let cache = self.layout_cache.borrow();
             if let Some(cached) = cache.get(&type_ptr) {
                 (cached.0, cached.1.clone())
             } else {
                 drop(cache);
+
                 // SAFETY: type_ptr is valid for the lifetime of the Python interpreter
                 let py_type = unsafe {
                     pyo3::Bound::from_borrowed_ptr(py, type_ptr as *mut pyo3::ffi::PyObject)
@@ -848,6 +918,20 @@ impl PyQueryIter {
                 (st, layout)
             }
         };
+        *self.last_layout.borrow_mut() = Some((type_ptr, resolved.0, resolved.1.clone()));
+        resolved
+    }
+
+    pub(crate) fn extract_custom_component(
+        &self,
+        type_ptr: *const PyTypeObject,
+        entity: &mut FilteredEntityAccess,
+        component_id: ComponentId,
+        access_mode: AccessMode,
+        py: Python,
+    ) -> PyResult<Py<PyAny>> {
+        // Get cached storage type + layout, or compute and cache on first access
+        let (storage_type, cached_layout) = self.layout_for(type_ptr, py);
 
         match storage_type {
             ComponentStorageType::Wrapper(wrapper_size) => {
@@ -950,14 +1034,17 @@ impl PyQueryIter {
         ty: PyComponentType,
         mutable: bool,
         logical_type_id: Option<LogicalTypeId>,
+        needs_presence_check: bool,
         py: Python<'_>,
     ) -> PyResult<Option<Py<PyAny>>> {
         let component_id = self.component_id(&ty);
-        let native_missing = entity.get_by_id(component_id).is_none();
-        let logical_mismatch = logical_type_id
-            .is_some_and(|logical_id| !self.matches_logical_component(entity, &ty, logical_id));
-        if native_missing || logical_mismatch {
-            return Ok(None);
+        if needs_presence_check {
+            let native_missing = entity.get_by_id(component_id).is_none();
+            let logical_mismatch = logical_type_id
+                .is_some_and(|logical_id| !self.matches_logical_component(entity, &ty, logical_id));
+            if native_missing || logical_mismatch {
+                return Ok(None);
+            }
         }
 
         let access_mode = if mutable {
@@ -1025,6 +1112,7 @@ impl PyQueryIter {
                                 item.ty,
                                 item.mutable,
                                 item.logical_type_id,
+                                true,
                                 py,
                             )?
                             .unwrap_or_else(|| py.None()),
@@ -1038,8 +1126,14 @@ impl PyQueryIter {
                     optional,
                     logical_type_id,
                 } => {
-                    let value =
-                        self.extract_query_component(entity, *ty, *mutable, *logical_type_id, py)?;
+                    let value = self.extract_query_component(
+                        entity,
+                        *ty,
+                        *mutable,
+                        *logical_type_id,
+                        *optional || logical_type_id.is_some(),
+                        py,
+                    )?;
                     match value {
                         Some(value) => values_buffer.push(value),
                         None if *optional => values_buffer.push(py.None()),
@@ -1059,7 +1153,19 @@ impl PyQueryIter {
     fn materialized_result(&self, py: Python) -> PyResult<Py<PyAny>> {
         let values_buffer = self.values_buffer.borrow();
         if self.param.single {
-            Ok(values_buffer[0].clone_ref(py))
+            let Some(value) = values_buffer.first() else {
+                let kind = if self.param.single_entity_enforced {
+                    "Single"
+                } else {
+                    "Query"
+                };
+                return Err(PyRuntimeError::new_err(filter_only_error_message(
+                    py,
+                    kind,
+                    &self.param.filters,
+                )));
+            };
+            Ok(value.clone_ref(py))
         } else {
             let tuple = PyTuple::new(py, values_buffer.iter())?;
             Ok(tuple.into_any().unbind())

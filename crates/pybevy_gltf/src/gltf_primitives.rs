@@ -4,7 +4,7 @@ use pyo3::{prelude::*, types::PyList};
 
 use crate::assets::PyGltfPrimitive;
 
-#[pyclass(name = "_GltfPrimitives", skip_from_py_object)]
+#[pyclass(name = "_GltfPrimitives", module = "pybevy.gltf", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyGltfPrimitives {
     storage: FieldStorage<Vec<GltfPrimitive>>,

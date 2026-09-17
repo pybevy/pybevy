@@ -1,6 +1,7 @@
 use std::{
     any::TypeId,
-    sync::{Arc, Mutex},
+    hash::Hash,
+    sync::{Arc, Mutex, OnceLock},
 };
 
 use bevy::ecs::{
@@ -14,6 +15,7 @@ use bevy::ecs::{
 };
 use pybevy_core::{
     ComponentBridge, LogicalTypeId, LogicalTypeMap, PyLogicalComponentParam,
+    component_layout::ComponentLayout,
     custom_resource::validate_hierarchy_link,
     ensure_no_live_asset_access, extract_entity_from_any,
     public_error::{
@@ -30,14 +32,17 @@ use pybevy_ecs::shared::{
 use pyo3::{
     PyTraverseError, PyVisit,
     exceptions::{PyRuntimeError, PyTypeError, PyValueError},
+    intern,
     prelude::*,
     types::{PyTuple, PyType},
 };
+use smallvec::SmallVec;
 
 use super::{
     PyEntity,
     component_type::{
-        PreparedCustomComponentRegistration, PyComponentType, register_prepared_custom_component,
+        PreparedCustomComponentRegistration, PyComponentType, ValidationIdentity,
+        register_prepared_custom_component,
     },
     entity_commands::PyEntityCommands,
     helpers::validity_guard::ValidityFlag,
@@ -48,9 +53,7 @@ use super::{
 };
 use crate::ecs::{
     batch_spawn::{SpawnBatchCommand, prepare_iter_batch},
-    component_layout::{
-        ComponentLayout, ComponentLayoutExt, ComponentStorageType, serialize_to_wrapper,
-    },
+    component_layout::{ComponentStorageType, serialize_to_wrapper},
     component_wrapper::*,
     dynamic_system::{
         BufferedSystemError, SystemErrorBuffer, SystemErrorReport, lock_or_recover,
@@ -145,21 +148,6 @@ pub(crate) fn trigger_event_helper(
     Ok(())
 }
 
-pub(crate) fn reject_resource_spawn_components(
-    py: Python,
-    components: &Bound<'_, PyTuple>,
-) -> PyResult<()> {
-    for component in components.iter() {
-        if matches!(
-            PyComponentType::try_from((&component.get_type(), py))?,
-            PyComponentType::Resource(_)
-        ) {
-            return Err(PyTypeError::new_err(RESOURCE_COMPONENT_SPAWN));
-        }
-    }
-    Ok(())
-}
-
 pub(crate) fn normalize_spawn_components<'py>(
     components: &Bound<'py, PyTuple>,
 ) -> PyResult<Bound<'py, PyTuple>> {
@@ -172,26 +160,59 @@ pub(crate) fn normalize_spawn_components<'py>(
     Ok(components.clone())
 }
 
-pub(crate) fn validate_component_bundle(
+/// Resolved component types for one bundle. Bundles are small in practice, so
+/// this stays on the stack rather than allocating per spawn.
+pub(crate) type ResolvedComponentTypes = SmallVec<[PyComponentType; 8]>;
+
+pub(crate) fn resolve_spawn_bundle(
     py: Python,
     components: &Bound<'_, PyTuple>,
-) -> PyResult<()> {
-    let mut keys = Vec::with_capacity(components.len());
-    let mut names = Vec::with_capacity(components.len());
+) -> PyResult<ResolvedComponentTypes> {
+    resolve_component_bundle(py, components, true)
+}
 
+pub(crate) fn resolve_insert_bundle(
+    py: Python,
+    components: &Bound<'_, PyTuple>,
+) -> PyResult<ResolvedComponentTypes> {
+    resolve_component_bundle(py, components, false)
+}
+
+fn resolve_component_bundle(
+    py: Python,
+    components: &Bound<'_, PyTuple>,
+    reject_resources: bool,
+) -> PyResult<ResolvedComponentTypes> {
+    let mut component_types = ResolvedComponentTypes::with_capacity(components.len());
+    let mut identities = SmallVec::<[ValidationIdentity; 8]>::with_capacity(components.len());
     for component in components.iter() {
-        let component_type = PyComponentType::try_from((&component.get_type(), py))?;
-        keys.push(component_type.validation_identity());
-        names.push(component.get_type().name()?.to_string());
+        let (component_type, identity) =
+            PyComponentType::resolve_with_identity(&component.get_type(), py)?;
+        if reject_resources && matches!(component_type, PyComponentType::Resource(_)) {
+            return Err(PyTypeError::new_err(RESOURCE_COMPONENT_SPAWN));
+        }
+        component_types.push(component_type);
+        identities.push(identity);
     }
+    reject_duplicate_components(components, identities)?;
+    Ok(component_types)
+}
 
-    if let Some((first, duplicate)) = first_duplicate_indices(keys) {
-        return Err(PyValueError::new_err(format!(
-            "component bundle contains duplicate '{}'; it was already supplied as '{}'",
-            names[duplicate], names[first]
-        )));
-    }
-    Ok(())
+fn reject_duplicate_components<K: Eq + Hash>(
+    components: &Bound<'_, PyTuple>,
+    keys: impl IntoIterator<Item = K>,
+) -> PyResult<()> {
+    let Some((first, duplicate)) = first_duplicate_indices(keys) else {
+        return Ok(());
+    };
+    let name_at = |index: usize| -> PyResult<String> {
+        Ok(components.get_item(index)?.get_type().name()?.to_string())
+    };
+    Err(PyValueError::new_err(format!(
+        "component bundle contains duplicate '{}'; it was already supplied as '{}'",
+        name_at(duplicate)?,
+        name_at(first)?
+    )))
 }
 
 #[derive(Clone)]
@@ -254,6 +275,15 @@ impl CommandErrorSink {
 /// 2. ValidityFlag is Arc<AtomicBool> which is Send + Sync
 /// 3. Runtime validity checking prevents use after the system completes
 /// 4. The optional PyWorld reference is also Send (Py<T> is Send if T is Send)
+///
+/// Invariant: no method here may take `&mut self` or call `borrow_mut()` on
+/// this type. PyO3 holds a PyRef on the receiver for the whole body of a
+/// `&self` method, and these bodies call back into Python (component
+/// conversion, and the `with_children` callback further down the handle
+/// chain), so that Python can re-enter this object and borrow it again. A
+/// mutable receiver would raise BorrowMutError instead. Mutation goes through
+/// the validity-checked raw pointer behind `&self`.
+/// See docs/safety.md, "Shared-Borrow Proxies"; `pybevy_lint` W014 guards it.
 #[pyclass(name = "Commands", module = "pybevy.ecs")]
 pub struct PyCommands {
     commands_ptr: *mut (),
@@ -266,6 +296,16 @@ pub struct PyCommands {
     error_sink: Option<CommandErrorSink>,
     parity_trace: Option<ParityRunHandle>,
     gc_state: Option<WorldGcState>,
+
+    /// Cache one retained class because repeated spawns otherwise rebuild its layout.
+    wrapper_layout_cache: OnceLock<CachedCustomComponentLayout>,
+}
+
+struct CachedCustomComponentLayout {
+    type_id: usize,
+    retained_type: Py<PyType>,
+    storage: ComponentStorageType,
+    layout: Option<Arc<ComponentLayout>>,
 }
 
 // SAFETY: PyCommands is Send because:
@@ -292,11 +332,16 @@ impl PyCommands {
             error_sink: self.error_sink.clone(),
             parity_trace: self.parity_trace.clone(),
             gc_state: self.gc_state.clone(),
+            wrapper_layout_cache: OnceLock::new(),
         }
     }
 
     pub(crate) fn traverse_owner(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
-        visit.call(&self._world_ref)
+        visit.call(&self._world_ref)?;
+        if let Some(cached) = self.wrapper_layout_cache.get() {
+            visit.call(&cached.retained_type)?;
+        }
+        Ok(())
     }
 
     /// Create a new PyCommands wrapper around a mutable Commands reference.
@@ -314,6 +359,7 @@ impl PyCommands {
             commands_ptr: commands as *mut Commands as *mut (),
             is_world: false,
             is_queue: false,
+            wrapper_layout_cache: OnceLock::new(),
             _world_ref: None,
             validity,
             error_sink: Some(error_sink),
@@ -336,6 +382,7 @@ impl PyCommands {
             commands_ptr: world_ptr as *mut (),
             is_world: true,
             is_queue: false,
+            wrapper_layout_cache: OnceLock::new(),
             _world_ref: Some(world_ref),
             validity,
             error_sink: None,
@@ -359,6 +406,7 @@ impl PyCommands {
             commands_ptr: world_ptr as *mut (),
             is_world: true,
             is_queue: false,
+            wrapper_layout_cache: OnceLock::new(),
             _world_ref: None,
             validity,
             error_sink: None,
@@ -385,6 +433,7 @@ impl PyCommands {
             error_sink,
             parity_trace: None,
             gc_state: None,
+            wrapper_layout_cache: OnceLock::new(),
         }
     }
 
@@ -614,7 +663,7 @@ fn ensure_entities_exist(world: &World, entity_ids: &[Entity]) -> PyResult<()> {
 pub(crate) fn component_logical_type(
     component: &Bound<'_, PyAny>,
 ) -> PyResult<Option<Option<LogicalTypeId>>> {
-    let Ok(value) = component.getattr("_logical_type_id") else {
+    let Ok(Some(value)) = component.getattr_opt(intern!(component.py(), "_logical_type_id")) else {
         return Ok(None);
     };
     Ok(Some(
@@ -686,19 +735,65 @@ enum PreparedCustomComponentValue {
     PyObject(Py<PyAny>),
 }
 
+impl PyCommands {
+    /// Reuse an unchanged class layout without weakening live-schema validation.
+    fn storage_and_layout(
+        &self,
+        cls: &Bound<'_, PyType>,
+    ) -> PyResult<(ComponentStorageType, Option<Arc<ComponentLayout>>)> {
+        let key = cls.as_type_ptr() as usize;
+        // Re-read live metadata so class mutations cannot reuse a stale layout.
+        if let Some(cached) = self.wrapper_layout_cache.get()
+            && cached.type_id == key
+            && crate::ecs::component_layout::cached_storage_and_layout_match(
+                cls,
+                cached.storage,
+                cached.layout.as_deref(),
+            )?
+        {
+            return Ok((cached.storage, cached.layout.clone()));
+        }
+
+        let (storage, layout) = crate::ecs::component_type::storage_and_shared_layout(cls)?;
+        if self.wrapper_layout_cache.get().is_none() {
+            let cached = CachedCustomComponentLayout {
+                type_id: key,
+                retained_type: cls.clone().unbind(),
+                storage,
+                layout: layout.clone(),
+            };
+            if self.wrapper_layout_cache.set(cached).is_ok() {
+                let cached = self
+                    .wrapper_layout_cache
+                    .get()
+                    .expect("a successful OnceLock set stores the layout");
+                return Ok((cached.storage, cached.layout.clone()));
+            }
+        }
+        Ok((storage, layout))
+    }
+}
+
 fn prepare_custom_component(
+    commands: &PyCommands,
     component: &Bound<'_, PyAny>,
 ) -> PyResult<(
     PreparedCustomComponentRegistration,
     PreparedCustomComponentValue,
 )> {
     let component_type = component.get_type();
-    let registration = PreparedCustomComponentRegistration::from_python_class(&component_type)?;
+    let (storage, layout) = commands.storage_and_layout(&component_type)?;
+    let registration = PreparedCustomComponentRegistration::from_python_class_with_layout(
+        &component_type,
+        storage,
+        layout,
+    )?;
     let value = match registration.storage_type() {
         ComponentStorageType::Wrapper(wrapper_size) => {
-            let layout = ComponentLayout::from_annotations(&component_type)?;
-            debug_assert_eq!(layout.wrapper_size, wrapper_size);
-            let bytes = serialize_to_wrapper(component, &layout)?;
+            let layout = registration
+                .wrapper_layout()
+                .expect("wrapper storage carries the layout that selected it");
+            let bytes = serialize_to_wrapper(component, layout)?;
             debug_assert_eq!(bytes.len(), wrapper_size.size_bytes());
             PreparedCustomComponentValue::Wrapper {
                 bytes,
@@ -720,8 +815,16 @@ pub(crate) fn insert_components_to_entity_helper(
     entity_id: Entity,
     components: &Bound<'_, PyTuple>,
 ) -> PyResult<()> {
-    validate_component_bundle(py, components)?;
+    let component_types = resolve_insert_bundle(py, components)?;
+    insert_resolved_components_to_entity(commands, entity_id, components, component_types)
+}
 
+pub(crate) fn insert_resolved_components_to_entity(
+    commands: &PyCommands,
+    entity_id: Entity,
+    components: &Bound<'_, PyTuple>,
+    component_types: ResolvedComponentTypes,
+) -> PyResult<()> {
     let trace_operations = if commands.parity_trace.is_some() {
         components
             .iter()
@@ -733,17 +836,8 @@ pub(crate) fn insert_components_to_entity_helper(
         Vec::new()
     };
 
-    // Collect component types for lifecycle events
-    let mut component_types = Vec::new();
-    for component in components.iter() {
-        let component_type = component.get_type();
-        if let Ok(comp_type) = PyComponentType::try_from((&component_type, py)) {
-            component_types.push(comp_type);
-        }
-    }
-
     if component_types.is_empty() {
-        insert_components_to_entity(commands, py, entity_id, components)?;
+        insert_components_to_entity(commands, commands, entity_id, components, &component_types)?;
         for operation in trace_operations {
             commands.record_prepared_trace_op(operation);
         }
@@ -767,7 +861,13 @@ pub(crate) fn insert_components_to_entity_helper(
                 // the adapter's `&mut World`.
                 let temporary =
                     unsafe { PyCommands::from_world_temporary(world as *mut World, validity) };
-                match insert_components_to_entity(&temporary, py, entity_id, components) {
+                match insert_components_to_entity(
+                    &temporary,
+                    commands,
+                    entity_id,
+                    components,
+                    &component_types,
+                ) {
                     Ok(()) => true,
                     Err(error) => {
                         insertion_error = Some(error);
@@ -791,7 +891,13 @@ pub(crate) fn insert_components_to_entity_helper(
                 commands.error_sink.clone(),
             )
         };
-        insert_components_to_entity(&temporary, py, entity_id, components)?;
+        insert_components_to_entity(
+            &temporary,
+            commands,
+            entity_id,
+            components,
+            &component_types,
+        )?;
         commands.execute_or_queue(move |world| {
             crate::ecs::lifecycle_mutation::insert_many_with(
                 world,
@@ -815,21 +921,20 @@ pub(crate) fn insert_components_to_entity_helper(
 /// Internal helper function to insert components to an entity
 fn insert_components_to_entity(
     commands: &PyCommands,
-    py: Python,
+    layout_cache_owner: &PyCommands,
     entity_id: Entity,
     components: &Bound<'_, PyTuple>,
+    component_types: &[PyComponentType],
 ) -> PyResult<()> {
+    debug_assert_eq!(components.len(), component_types.len());
     if commands.is_world {
         let world = commands.world_mut()?;
         ensure_entity_exists(&world, entity_id)?;
     }
 
-    for component in components.iter() {
-        // Determine component type
-        let component_type = PyComponentType::try_from((&component.get_type(), py))?;
-
+    for (component, component_type) in components.iter().zip(component_types) {
         // Insert the component based on its type
-        match component_type {
+        match *component_type {
             // Children, GlobalTransform use dynamic dispatch from pybevy_core - bridges return appropriate errors
             // Gamepad, AudioSink, SpatialAudioSink now handled via bridge (no_insert returns error)
             PyComponentType::Dynamic(type_ptr) => {
@@ -922,7 +1027,8 @@ fn insert_components_to_entity(
                 return Err(PyTypeError::new_err(RESOURCE_COMPONENT_INSERT));
             }
             PyComponentType::Custom(_) => {
-                let (registration, prepared_value) = prepare_custom_component(&component)?;
+                let (registration, prepared_value) =
+                    prepare_custom_component(layout_cache_owner, &component)?;
 
                 if commands.is_world {
                     let mut world = commands.world_mut()?;
@@ -1242,9 +1348,7 @@ impl PyCommands {
     pub fn spawn(&self, py: Python, components: &Bound<'_, PyTuple>) -> PyResult<PyEntityCommands> {
         self.check_valid()?;
         let components_to_insert = normalize_spawn_components(components)?;
-
-        reject_resource_spawn_components(py, &components_to_insert)?;
-        validate_component_bundle(py, &components_to_insert)?;
+        let component_types = resolve_spawn_bundle(py, &components_to_insert)?;
         self.check_native_asset_access("commands.spawn()")?;
 
         let entity_id = self.execute_returning(
@@ -1253,7 +1357,12 @@ impl PyCommands {
         )?;
         self.trace_spawn(entity_id);
 
-        insert_components_to_entity_helper(self, py, entity_id, &components_to_insert)?;
+        insert_resolved_components_to_entity(
+            self,
+            entity_id,
+            &components_to_insert,
+            component_types,
+        )?;
 
         Ok(PyEntityCommands::with_commands(entity_id, self, py))
     }

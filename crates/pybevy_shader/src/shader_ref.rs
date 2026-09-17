@@ -17,12 +17,6 @@ pub enum PyShaderRef {
 
 #[pymethods]
 impl PyShaderRef {
-    #[staticmethod]
-    #[pyo3(name = "default")]
-    pub fn default_() -> Self {
-        Self::Default()
-    }
-
     fn __repr__(&self) -> String {
         match self {
             PyShaderRef::Default() => "ShaderRef.Default".to_string(),

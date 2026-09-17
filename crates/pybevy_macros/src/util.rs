@@ -46,6 +46,7 @@ pub(crate) fn reflect_registration_tokens(
                 register: |registry| {
                     registry.register::<#bevy_type>();
                 },
+                registers_only: Some(|| ::std::any::TypeId::of::<#bevy_type>()),
             });
         }
     }

@@ -167,7 +167,7 @@ impl Parse for BevyEnumArgs {
 /// This macro generates:
 /// - `impl From<BevyType> for PyType` (by matching variant names)
 /// - `impl From<PyType> for BevyType` (by matching variant names)
-/// - `#[pymethods]` with `__repr__`
+/// - `#[pymethods]` with `__repr__`, `__copy__`, and `__deepcopy__`
 ///
 /// Generated expansion supports unit variants, empty tuple variants, and named
 /// struct variants with any number of fields. Use `#[py_bevy(tuple)]` on a
@@ -179,7 +179,7 @@ impl Parse for BevyEnumArgs {
 ///
 /// ```rust,ignore
 /// #[pyenum(BevyCursorGrabMode)]
-/// #[pyclass(name = "CursorGrabMode", eq)]
+/// #[pyclass(name = "CursorGrabMode", eq, hash, frozen, from_py_object)]
 /// #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 /// pub enum PyCursorGrabMode {
 ///     None,
@@ -501,6 +501,10 @@ pub fn pyenum(attr: TokenStream, item: TokenStream) -> TokenStream {
             #repr_method
 
             pub fn __copy__(&self) -> Self {
+                self.clone()
+            }
+
+            pub fn __deepcopy__(&self, _memo: &pyo3::Bound<'_, pyo3::PyAny>) -> Self {
                 self.clone()
             }
         }

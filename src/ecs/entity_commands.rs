@@ -18,6 +18,10 @@ use crate::ecs::observer_registry::ObserverRegistry;
 
 /// Represents a handle to perform deferred operations on an entity.
 /// Operations are queued and applied later when the Commands are flushed.
+///
+/// Invariant: no method here may take `&mut self`. `with_children` holds the
+/// receiver borrow across the user callback, which can reach this same handle.
+/// See docs/safety.md, "Shared-Borrow Proxies"; `pybevy_lint` W014 guards it.
 #[pyclass(name = "EntityCommands", module = "pybevy.ecs", skip_from_py_object)]
 pub struct PyEntityCommands {
     pub(crate) id: Entity,
@@ -320,6 +324,10 @@ impl PyEntityCommands {
 }
 
 /// Helper for spawning entities related to a target entity.
+///
+/// Invariant: no method here may take `&mut self`. The spawn methods hold the
+/// receiver borrow across component conversion, arbitrary Python that holds
+/// this spawner. See docs/safety.md, "Shared-Borrow Proxies"; W014 guards it.
 #[pyclass(name = "RelatedSpawnerCommands", module = "pybevy.ecs")]
 pub struct PyRelatedSpawnerCommands {
     target: Entity,

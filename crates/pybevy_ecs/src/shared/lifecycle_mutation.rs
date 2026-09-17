@@ -8,6 +8,8 @@
 //! membership at every callback boundary. Matching observer handles are
 //! snapshotted into an owned vector before the core invokes them.
 
+use smallvec::SmallVec;
+
 /// Lifecycle callback selected by the mutation planner.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum LifecycleEvent {
@@ -202,7 +204,7 @@ impl LifecycleMutationCore {
             .iter()
             .copied()
             .filter(|component| !adapter.component_exists(entity, *component))
-            .collect::<Vec<_>>();
+            .collect::<SmallVec<[A::Component; 8]>>();
         if !adapter.insert_components(entity, components) {
             return LifecycleMutationOutcome::ComponentGone;
         }

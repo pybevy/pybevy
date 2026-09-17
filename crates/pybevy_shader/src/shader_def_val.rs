@@ -1,6 +1,8 @@
 use bevy::shader::ShaderDefVal;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
+#[pyenum(ShaderDefVal, no_repr)]
 #[pyclass(
     name = "ShaderDefVal",
     module = "pybevy.shader",
@@ -10,8 +12,11 @@ use pyo3::prelude::*;
 )]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PyShaderDefVal {
+    #[py_bevy(tuple)]
     Bool { name: String, value: bool },
+    #[py_bevy(tuple)]
     Int { name: String, value: i32 },
+    #[py_bevy(tuple)]
     UInt { name: String, value: u32 },
 }
 
@@ -46,34 +51,5 @@ impl PyShaderDefVal {
             | PyShaderDefVal::UInt { name, .. } => name,
         };
         format!("{}={}", name, self.value_as_string())
-    }
-}
-
-impl From<PyShaderDefVal> for ShaderDefVal {
-    fn from(py_def: PyShaderDefVal) -> Self {
-        match py_def {
-            PyShaderDefVal::Bool { name, value } => ShaderDefVal::Bool(name, value),
-            PyShaderDefVal::Int { name, value } => ShaderDefVal::Int(name, value),
-            PyShaderDefVal::UInt { name, value } => ShaderDefVal::UInt(name, value),
-        }
-    }
-}
-
-impl From<&ShaderDefVal> for PyShaderDefVal {
-    fn from(def: &ShaderDefVal) -> Self {
-        match def {
-            ShaderDefVal::Bool(name, value) => PyShaderDefVal::Bool {
-                name: name.clone(),
-                value: *value,
-            },
-            ShaderDefVal::Int(name, value) => PyShaderDefVal::Int {
-                name: name.clone(),
-                value: *value,
-            },
-            ShaderDefVal::UInt(name, value) => PyShaderDefVal::UInt {
-                name: name.clone(),
-                value: *value,
-            },
-        }
     }
 }

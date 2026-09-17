@@ -5,7 +5,10 @@
 //! bevy's `reflect_auto_register` feature is disabled. Types without a
 //! `Reflect` derive opt out via the macros' `no_reflect` option.
 
+use std::{any::TypeId, sync::OnceLock};
+
 use bevy::{
+    app::App,
     ecs::{reflect::AppTypeRegistry, world::World},
     reflect::TypeRegistry,
 };
@@ -14,6 +17,10 @@ use bevy::{
 pub struct ReflectTypeRegistration {
     /// Registers the bevy type (and its field type dependencies).
     pub register: fn(&mut TypeRegistry),
+    /// The one type `register` adds when it only calls
+    /// `TypeRegistry::register` on it, which is a no-op once that type is
+    /// present. `None` when `register` does anything else, so it always runs.
+    pub registers_only: Option<fn() -> TypeId>,
 }
 
 inventory::collect!(ReflectTypeRegistration);
@@ -30,6 +37,50 @@ pub fn register_wrapped_reflect_types(world: &World) {
     let mut registry = registry.write();
     for reg in inventory::iter::<ReflectTypeRegistration> {
         (reg.register)(&mut registry);
+    }
+}
+
+/// Whether `registration` can still change a registry that already holds
+/// `present`. Hand-written entries always can; a single-type entry cannot
+/// once its type is present, because `TypeRegistry::register` returns early.
+fn still_applies(registration: &ReflectTypeRegistration, present: Option<&TypeRegistry>) -> bool {
+    match (registration.registers_only, present) {
+        (Some(type_id), Some(present)) => !present.contains(type_id()),
+        _ => true,
+    }
+}
+
+/// Registrations that can still change the registry a fresh `App::new()`
+/// carries. The inventory and `App::new()` are deterministic per process,
+/// so this is computed once.
+fn registrations_beyond_new_app() -> &'static [fn(&mut TypeRegistry)] {
+    static EFFECTIVE: OnceLock<Vec<fn(&mut TypeRegistry)>> = OnceLock::new();
+    EFFECTIVE.get_or_init(|| {
+        let app = App::new();
+        let present = app
+            .world()
+            .get_resource::<AppTypeRegistry>()
+            .map(|registry| registry.read());
+        inventory::iter::<ReflectTypeRegistration>
+            .into_iter()
+            .filter(|registration| still_applies(registration, present.as_deref()))
+            .map(|registration| registration.register)
+            .collect()
+    })
+}
+
+/// [`register_wrapped_reflect_types`] for a World whose `AppTypeRegistry`
+/// still holds exactly what `App::new()` installed.
+///
+/// Registrations that only repeat types `App::new()` already registered are
+/// skipped, which leaves the registry identical to the full registration.
+pub fn register_wrapped_reflect_types_for_new_app(world: &World) {
+    let Some(registry) = world.get_resource::<AppTypeRegistry>() else {
+        return;
+    };
+    let mut registry = registry.write();
+    for register in registrations_beyond_new_app() {
+        register(&mut registry);
     }
 }
 
@@ -50,6 +101,101 @@ mod tests {
             register: |registry: &mut TypeRegistry| {
                 registry.register::<RoutingReflectProbe>();
             },
+            registers_only: Some(|| TypeId::of::<RoutingReflectProbe>()),
+        }
+    }
+
+    #[derive(Reflect, Default)]
+    #[reflect(no_auto_register)]
+    struct ManualReflectProbe;
+
+    inventory::submit! {
+        ReflectTypeRegistration {
+            register: |registry: &mut TypeRegistry| {
+                registry.register::<ManualReflectProbe>();
+            },
+            registers_only: Some(|| TypeId::of::<ManualReflectProbe>()),
+        }
+    }
+
+    /// Type data a hand-written registration installs on a type that may
+    /// already be registered, the shape of the world-serialization materializer.
+    #[derive(Clone)]
+    struct ProbeMarker;
+
+    fn install_probe_marker(registry: &mut TypeRegistry) {
+        registry.register::<RoutingReflectProbe>();
+        registry
+            .get_mut(TypeId::of::<RoutingReflectProbe>())
+            .expect("the routing probe was just registered")
+            .insert(ProbeMarker);
+    }
+
+    inventory::submit! {
+        ReflectTypeRegistration {
+            register: install_probe_marker,
+            registers_only: None,
+        }
+    }
+
+    #[test]
+    fn single_type_entries_are_skipped_only_once_their_type_is_present() {
+        let routing = ReflectTypeRegistration {
+            register: |registry| registry.register::<RoutingReflectProbe>(),
+            registers_only: Some(|| TypeId::of::<RoutingReflectProbe>()),
+        };
+        let manual = ReflectTypeRegistration {
+            register: |registry| registry.register::<ManualReflectProbe>(),
+            registers_only: Some(|| TypeId::of::<ManualReflectProbe>()),
+        };
+        let hand_written = ReflectTypeRegistration {
+            register: install_probe_marker,
+            registers_only: None,
+        };
+
+        let mut present = TypeRegistry::new();
+        present.register::<RoutingReflectProbe>();
+
+        assert!(!still_applies(&routing, Some(&present)));
+        assert!(still_applies(&manual, Some(&present)));
+        assert!(still_applies(&hand_written, Some(&present)));
+        assert!(still_applies(&routing, None));
+        assert!(still_applies(&manual, None));
+        assert!(still_applies(&hand_written, None));
+    }
+
+    fn registered_type_ids(world: &World) -> Vec<TypeId> {
+        let registry = world.resource::<AppTypeRegistry>().read();
+        let mut ids: Vec<TypeId> = registry.iter().map(|reg| reg.type_id()).collect();
+        ids.sort();
+        ids
+    }
+
+    #[test]
+    fn new_app_fast_path_matches_full_registration() {
+        let full = App::new();
+        register_wrapped_reflect_types(full.world());
+
+        let fast = App::new();
+        register_wrapped_reflect_types_for_new_app(fast.world());
+
+        let untouched = App::new();
+        let full_ids = registered_type_ids(full.world());
+        assert_eq!(registered_type_ids(fast.world()), full_ids);
+        assert!(full_ids.contains(&TypeId::of::<RoutingReflectProbe>()));
+        assert!(full_ids.contains(&TypeId::of::<ManualReflectProbe>()));
+        assert!(
+            !registered_type_ids(untouched.world()).contains(&TypeId::of::<ManualReflectProbe>()),
+            "the manual probe must be absent from App::new() for this test to prove parity"
+        );
+        for (label, app) in [("full", &full), ("fast", &fast)] {
+            let registry = app.world().resource::<AppTypeRegistry>().read();
+            assert!(
+                registry
+                    .get(TypeId::of::<RoutingReflectProbe>())
+                    .is_some_and(|registration| registration.contains::<ProbeMarker>()),
+                "{label} registration must run hand-written entries on auto-registered types"
+            );
         }
     }
 
@@ -102,8 +248,8 @@ mod tests {
             );
             assert_eq!(
                 registry.iter().count(),
-                before + 1,
-                "the probe adds exactly one registration"
+                before + 2,
+                "the two probe types add exactly two registrations"
             );
         }
 
@@ -111,7 +257,7 @@ mod tests {
         let registry = world.resource::<AppTypeRegistry>().read();
         assert_eq!(
             registry.iter().count(),
-            before + 1,
+            before + 2,
             "a second call must not duplicate registrations"
         );
         assert!(registry.contains(TypeId::of::<RoutingReflectProbe>()));

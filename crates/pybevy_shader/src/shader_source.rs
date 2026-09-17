@@ -4,8 +4,15 @@ use bevy::shader::Source;
 use naga::ShaderStage;
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
 
-#[pyclass(name = "Source", module = "pybevy.shader", frozen, skip_from_py_object)]
-#[derive(Debug, Clone)]
+#[pyclass(
+    name = "Source",
+    module = "pybevy.shader",
+    frozen,
+    skip_from_py_object,
+    eq,
+    hash
+)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PySource {
     Wgsl { value: String },
     Wesl { value: String },

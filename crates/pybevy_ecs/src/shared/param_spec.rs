@@ -26,8 +26,9 @@ use bevy::ecs::{
     world::World,
 };
 use pybevy_storage::conflict_message::{
-    CONFLICT_ASSETS, CONFLICT_ASSETS_SHARED_VIEW, CONFLICT_MESSAGES, CONFLICT_QUERIES,
-    CONFLICT_RESOURCE_QUERY, CONFLICT_RESOURCES, CONFLICT_WORLD, SystemAccessConflictMessage,
+    CONDITION_READ_ONLY_GUIDANCE, CONFLICT_ASSETS, CONFLICT_ASSETS_SHARED_VIEW, CONFLICT_MESSAGES,
+    CONFLICT_QUERIES, CONFLICT_RESOURCE_QUERY, CONFLICT_RESOURCES, CONFLICT_WORLD,
+    SystemAccessConflictMessage,
 };
 
 use super::{
@@ -659,10 +660,7 @@ pub fn condition_rejection_message(
 ) -> String {
     format!(
         "Run condition '{condition_name}' parameter {param_idx} ('{param_name}') is {kind}. \
-         Run conditions require read-only world access: they are evaluated under \
-         Bevy's read-only system contract and any deferred operations are never \
-         applied. Use read-only parameters such as Res, read-only Query/View, \
-         Local, or read-only Assets."
+         {CONDITION_READ_ONLY_GUIDANCE}"
     )
 }
 

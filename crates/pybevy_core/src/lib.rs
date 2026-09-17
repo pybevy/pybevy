@@ -25,6 +25,9 @@
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 extern crate self as pybevy_core;
 
+/// Version published by every PyBevy interpreter adapter.
+pub const PYBEVY_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 pub mod added_plugins;
 pub mod asset;
 pub mod asset_access;
@@ -55,6 +58,7 @@ pub mod materializable;
 pub mod message;
 pub mod native_system_set;
 pub mod numpy_view_guard;
+pub mod optional_features;
 pub mod plugin;
 pub mod public_error;
 pub mod reflect_registration;
@@ -480,7 +484,10 @@ pub use pybevy_storage::{
     ValueStorageInner, ViewBridge, ViewCounters, allocate_id, computed_owned, consume_unstored_id,
     ensure_asset_access_registry,
 };
-pub use reflect_registration::{ReflectTypeRegistration, register_wrapped_reflect_types};
+pub use reflect_registration::{
+    ReflectTypeRegistration, register_wrapped_reflect_types,
+    register_wrapped_reflect_types_for_new_app,
+};
 pub use registry::{
     AssetBridge, AssetEventRecord, AssetInputConverter, AssetLoadFailedRecord, BatchComponent,
     BatchFieldMeta, BatchableField, ComponentBatchInsertFn, ComponentBatchMeta,

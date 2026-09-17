@@ -48,6 +48,7 @@ pub const CONFLICT_WORLD: &str = "World is exclusive: a system taking World cann
 pub const CONFLICT_RESOURCES: &str = "Two parameters cannot address the same resource when either declares write access. Take it once, as ResMut[...] if you need to write, or split the parameters across systems.";
 pub const CONFLICT_RESOURCE_QUERY: &str = "Query and Res parameters address the same resource entity. Add Without[IsResource] as the query filter to exclude resource entities where representable, or split the parameters across systems.";
 pub const CONFLICT_QUERIES: &str = "Different With[...] filters do not prove two queries are disjoint, because one entity could hold both markers. Add Without[...] to each query to prove exclusion (Query[tuple[Mut[Transform], Bat], Without[BatWing]] and Query[tuple[Mut[Transform], BatWing], Without[Bat]]), or split the queries across systems.";
+pub const CONDITION_READ_ONLY_GUIDANCE: &str = "Run conditions use Bevy's read-only world contract and never apply deferred operations. Accepted parameters are Local, read-only Assets, Res for a native engine resource, and read-only Query/View over wrapper-storage components. For exclusive Python values, use in_state(), a wrapper-storage component, or test the value inside the system.";
 
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]

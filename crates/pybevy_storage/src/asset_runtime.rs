@@ -41,7 +41,7 @@ impl fmt::Display for AssetRuntimeError {
             ),
             Self::BorrowedAssetsLive { asset_name } => write!(
                 f,
-                "Cannot structurally mutate Assets[{asset_name}] while borrowed asset wrappers are live"
+                "Cannot add or remove assets in Assets[{asset_name}] while fetched values are still referenced. Delete values returned by get(), get_mut(), or iteration, then retry."
             ),
         }
     }
@@ -222,7 +222,7 @@ mod tests {
         ));
         assert_eq!(
             error.to_string(),
-            "Cannot structurally mutate Assets[Image] while borrowed asset wrappers are live"
+            "Cannot add or remove assets in Assets[Image] while fetched values are still referenced. Delete values returned by get(), get_mut(), or iteration, then retry."
         );
 
         scope.release(key);

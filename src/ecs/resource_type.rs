@@ -11,13 +11,14 @@ use pybevy_core::{
         ResourceRegisterOutcome, insert_dynamic_resource_value, register_custom_resource_guarded,
     },
     public_error::{
-        ASSET_SERVER_MANUAL_INSERT, ASSET_SERVER_MANUAL_REMOVE, RESOURCE_BRIDGE_NOT_FOUND,
-        expected_resource_subclass, resource_decorator_required, resource_not_present,
-        resource_type_not_found, state_resource_descriptor_required,
+        ASSET_SERVER_MANUAL_INSERT, ASSET_SERVER_MANUAL_REMOVE, BUTTON_INPUT_REQUIRES_BUTTON_TYPE,
+        RESOURCE_BRIDGE_NOT_FOUND, expected_resource_subclass, resource_decorator_required,
+        resource_not_present, resource_type_not_found, state_resource_descriptor_required,
     },
     registry::global_registry,
     resource_initializer,
 };
+use pybevy_input::button_input::PyButtonInput;
 use pyo3::{PyTypeInfo, exceptions::PyTypeError, ffi::PyTypeObject, prelude::*, types::PyType};
 
 use crate::{
@@ -46,6 +47,14 @@ pub enum PyResourceType {
 // SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
 unsafe impl Send for PyResourceType {}
 unsafe impl Sync for PyResourceType {}
+
+/// Require a concrete `ButtonInput` specialization at resource lookup sites.
+pub(crate) fn reject_unparameterized_button_input(ty: &Bound<'_, PyType>) -> PyResult<()> {
+    if ty.is(PyButtonInput::type_object(ty.py())) {
+        return Err(PyTypeError::new_err(BUTTON_INPUT_REQUIRES_BUTTON_TYPE));
+    }
+    Ok(())
+}
 
 pub(crate) fn reject_state_type_as_resource(ty: &Bound<'_, PyType>) -> PyResult<()> {
     if ty.hasattr("__pybevy_state__")? {

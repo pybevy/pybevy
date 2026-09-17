@@ -1,7 +1,11 @@
-use std::path::Path;
+use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+    path::Path,
+};
 
 use bevy::asset::AssetPath;
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pyo3::{exceptions::PyValueError, prelude::*, types::PyString};
 
 #[pyclass(
     name = "AssetPath",
@@ -10,7 +14,7 @@ use pyo3::{exceptions::PyValueError, prelude::*};
     frozen,
     from_py_object
 )]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct PyAssetPath {
     path: String,
     label: Option<String>,
@@ -24,6 +28,11 @@ impl PyAssetPath {
             label,
             source: None,
         }
+    }
+
+    /// Bevy's canonical `source://path#label` form of this path.
+    fn display(&self) -> String {
+        AssetPath::from(self).to_string()
     }
 }
 
@@ -60,6 +69,31 @@ impl PyAssetPath {
             label,
             source,
         }
+    }
+
+    pub fn __hash__(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        self.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    pub fn __str__(&self) -> String {
+        self.display()
+    }
+
+    pub fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let quoted = |value: Option<&str>| -> PyResult<String> {
+            match value {
+                None => Ok("None".to_string()),
+                Some(value) => Ok(PyString::new(py, value).repr()?.to_str()?.to_owned()),
+            }
+        };
+        Ok(format!(
+            "AssetPath(source={}, path={}, label={})",
+            quoted(self.source.as_deref())?,
+            quoted(Some(self.path.as_str()))?,
+            quoted(self.label.as_deref())?
+        ))
     }
 }
 
@@ -220,5 +254,84 @@ mod tests {
         let a = PyAssetPath::new("a.glb".into(), Some("Scene0".into()));
         let b = PyAssetPath::new("a.glb".into(), Some("Scene1".into()));
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn equal_values_produce_equal_hashes() {
+        use std::hash::{Hash, Hasher};
+
+        let pairs = [
+            (
+                PyAssetPath::new("a.png".into(), None),
+                PyAssetPath::new("a.png".into(), None),
+            ),
+            (
+                PyAssetPath::new("scene.glb".into(), Some("Mesh0".into())),
+                PyAssetPath::new("scene.glb".into(), Some("Mesh0".into())),
+            ),
+            (
+                PyAssetPath::py_new(Some("remote".into()), "models/cube.glb".into(), None),
+                PyAssetPath::py_new(Some("remote".into()), "models/cube.glb".into(), None),
+            ),
+            (
+                PyAssetPath::py_new(
+                    Some("remote".into()),
+                    "models/cube.glb".into(),
+                    Some("Cube".into()),
+                ),
+                PyAssetPath::py_new(
+                    Some("remote".into()),
+                    "models/cube.glb".into(),
+                    Some("Cube".into()),
+                ),
+            ),
+        ];
+        for (left, right) in pairs {
+            assert_eq!(left, right);
+            let mut left_hasher = DefaultHasher::new();
+            let mut right_hasher = DefaultHasher::new();
+            left.hash(&mut left_hasher);
+            right.hash(&mut right_hasher);
+            assert_eq!(left_hasher.finish(), right_hasher.finish());
+        }
+    }
+
+    #[test]
+    fn display_uses_the_bevy_asset_path_form() {
+        assert_eq!(PyAssetPath::new("a.png".into(), None).display(), "a.png");
+        assert_eq!(
+            PyAssetPath::new("scene.glb".into(), Some("Mesh0".into())).display(),
+            "scene.glb#Mesh0"
+        );
+        assert_eq!(
+            PyAssetPath::py_new(Some("embedded".into()), "shaders/x.wgsl".into(), None).display(),
+            "embedded://shaders/x.wgsl"
+        );
+        assert_eq!(
+            PyAssetPath::py_new(
+                Some("remote".into()),
+                "models/cube.glb".into(),
+                Some("Cube".into())
+            )
+            .display(),
+            "remote://models/cube.glb#Cube"
+        );
+    }
+
+    #[test]
+    fn display_keeps_non_ascii_paths_and_labels() {
+        let ap = PyAssetPath::py_new(
+            Some("remote".into()),
+            "textures/ü-ñ.png".into(),
+            Some("héllo".into()),
+        );
+        assert_eq!(ap.display(), "remote://textures/ü-ñ.png#héllo");
+    }
+
+    #[test]
+    fn display_round_trips_through_parse() {
+        let parsed = PyAssetPath::parse("remote://models/cube.glb#Cube").unwrap();
+        assert_eq!(parsed.display(), "remote://models/cube.glb#Cube");
+        assert_eq!(PyAssetPath::parse(&parsed.display()).unwrap(), parsed);
     }
 }

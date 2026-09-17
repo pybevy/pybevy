@@ -129,6 +129,7 @@ fn try_expand(
     let mut materialize_arms = Vec::new();
     let mut unsupported_type_checks = Vec::new();
     let mut clone_arms = Vec::new();
+    let mut control_payload_variants = Vec::new();
 
     for (variant_index, variant) in spec.variants.iter().enumerate() {
         let rust_name = variant.rust_name;
@@ -224,6 +225,22 @@ fn try_expand(
                 #[classattr]
                 fn __match_args__() -> (#(#match_args_types,)*) { (#(#values,)*) }
             }
+        };
+        let control_payload_prototype = if variant.bevy_shape == BevyVariantShape::Tuple
+            && fields.len() == 1
+            && let Some(python_type) = &fields[0].python_type
+        {
+            control_payload_variants.push(variant_name.clone());
+            quote! {
+                #[classattr]
+                fn __pybevy_control_payload_prototype__(
+                    py: pyo3::Python<'_>,
+                ) -> pyo3::Bound<'_, pyo3::types::PyType> {
+                    py.get_type::<#python_type>()
+                }
+            }
+        } else {
+            TokenStream::new()
         };
         let construct = construct_variant(
             inner_type,
@@ -362,6 +379,8 @@ fn try_expand(
 
                 #match_args_item
 
+                #control_payload_prototype
+
                 #[new]
                 #signature
                 pub fn new(#(#parameters),*) -> #ctor_return {
@@ -408,6 +427,11 @@ fn try_expand(
                     #python_name,
                     " is an enum base; construct a nested variant"
                 )))
+            }
+
+            #[classattr]
+            fn __pybevy_control_payload_variants__() -> Vec<&'static str> {
+                vec![#(#control_payload_variants),*]
             }
         }
 

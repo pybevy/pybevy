@@ -11,8 +11,6 @@ from typing import (
     runtime_checkable,
 )
 
-import numpy as np
-
 from pybevy.app import Stage, SystemFn
 from pybevy.expr import Expr
 from pybevy.expr import FieldExpr as _FieldExpr
@@ -182,6 +180,8 @@ class MessageReader(Generic[M]):
     def __iter__(self) -> Iterator[M]:
         """Iterate over messages."""
 
+    def __len__(self) -> int: ...
+
 class MessageMutator(Generic[M]):
     """Combined reader/writer for a custom Python message channel.
 
@@ -211,6 +211,8 @@ class MessageMutator(Generic[M]):
     def __iter__(self) -> Iterator[M]:
         """Iterate over unread retained messages mutably."""
 
+    def __len__(self) -> int: ...
+
 class MessageReaderIter(Iterator[Any]):
     """Iterator over messages from MessageReader.
 
@@ -230,6 +232,8 @@ class Messages(Resource, Generic[M]):
     def clear(self) -> None: ...
     def is_empty(self) -> bool: ...
     def len(self) -> int: ...
+
+    def __len__(self) -> int: ...
 
 class MessageType:
     """Internal type identifier for messages.
@@ -367,7 +371,7 @@ class ConditionalSystem:
         """Combine with another condition using AND logic.
 
         Args:
-            condition: Another condition function that returns bool
+            condition: Another function whose result is evaluated for truthiness
 
         Returns:
             New ConditionalSystem that runs only if both conditions are true
@@ -377,7 +381,7 @@ class ConditionalSystem:
         """Combine with another condition using OR logic.
 
         Args:
-            condition: Another condition function that returns bool
+            condition: Another function whose result is evaluated for truthiness
 
         Returns:
             New ConditionalSystem that runs if either condition is true
@@ -453,7 +457,7 @@ def run_if(system: SystemFn, condition: Callable[..., object]) -> ConditionalSys
 
     Args:
         system: The system function to run conditionally
-        condition: A function that returns bool (can have system parameters)
+        condition: A function whose result is evaluated for truthiness (can have system parameters)
 
     Returns:
         ConditionalSystem that can be added to schedules or chained with combinators
@@ -579,16 +583,15 @@ class LazyWrapperProxy:
     @property  # type: ignore[misc]
     def __class__(self) -> type: ...
 
-# View column proxy types for IDE autocomplete
-# These represent column accessors returned by view.column_mut(ComponentType)
-# They provide field-level access for batch operations (no methods)
-
 class ViewColumn:
-    """Opaque column view for zero-copy access via Numba JIT and JAX interop.
+    """Opaque concrete column buffer for zero-copy access via Numba JIT and JAX interop.
 
     ViewColumn is an opaque handle that provides zero-copy access to Bevy ECS
     component data. It CANNOT be converted to numpy arrays. Access data through
     @numba.jit functions (zero-copy) or JAX (copy-based, supports GPU).
+
+    Obtain a ViewColumn with Batch.column()/column_mut() inside
+    View.iter_batches(). View.column()/column_mut() yield lazy expressions.
 
     Safety: The validity token is checked at the Numba call boundary. If the
     system that created this view has finished execution, accessing it will
@@ -603,8 +606,8 @@ class ViewColumn:
                 view[i] = view[i] + 1.0
 
         def system(view: View[Mut[Transform]]):
-            for batch in view.batch_iter():
-                y = batch.col(Transform).translation.y
+            for batch in view.iter_batches():
+                y = batch.column_mut(Transform).translation.y
                 kernel(y)  # Safety check at call boundary
 
     Do NOT:
@@ -628,19 +631,19 @@ class ViewColumn:
 
     @property
     def len(self) -> int:
-        """Get number of elements."""
+        """Get number of elements. Checks validity."""
 
     @property
     def stride(self) -> int:
-        """Get stride in bytes."""
+        """Get stride in bytes. Checks validity."""
 
     @property
     def writable(self) -> bool:
-        """Whether writes are allowed by the originating View declaration."""
+        """Whether writes are allowed by the originating View declaration. Checks validity."""
 
     @property
     def dtype(self) -> str:
-        """Get NumPy dtype string (e.g., 'f4' for float32)."""
+        """Get NumPy dtype string (e.g., 'f4' for float32). Checks validity."""
 
     def at_offset(self, offset: int, dtype: str) -> ViewColumn:
         """Create a sub-column view at a byte offset (for field peeling)."""
@@ -775,35 +778,6 @@ class Vec3Expr(Generic[_FieldT]):
     # Assignment method
     def set(self, value: Vec3Expr) -> None: ...
 
-    # NumPy conversion (requires batch context)
-    def to_numpy(self) -> np.ndarray:
-        """Convert this Vec3 field to NumPy array.
-
-        Only valid in batch iteration context. Returns a zero-copy view
-        of the underlying archetype storage for this Vec3 field.
-
-        Returns:
-            NumPy array of shape (N, 3) for Vec3 fields
-
-        Raises:
-            RuntimeError: If called outside batch iteration context
-
-        Example:
-            ```python
-            for batch in view.iter_batches():
-                transform = batch.column_mut(Transform)
-                # Convert translation to NumPy
-                trans_np = transform.translation.to_numpy()  # (N, 3) array
-
-                @numba.jit(nopython=True, cache=True)
-                def wave(trans, t):
-                    for i in range(len(trans)):
-                        trans[i, 1] = np.sin(trans[i, 0] * 0.5 + t * 3.0)
-
-                wave(trans_np, time.elapsed_secs())
-            ```
-        """
-
     @overload
     def from_jax(self, obj: Any) -> None:
         """Write back from object with .x, .y, .z attributes. Requires `import pybevy.ecs.jax_ext`."""
@@ -834,38 +808,6 @@ class QuatExpr(Generic[_FieldT]):
     @w.setter
     def w(self, value: Expr | ViewColumn | float | int) -> None: ...
 
-    # NumPy conversion (requires batch context)
-    def to_numpy(self) -> np.ndarray:
-        """Convert this Quat field to NumPy array.
-
-        Only valid in batch iteration context. Returns a zero-copy view
-        of the underlying archetype storage for this Quat field.
-
-        Returns:
-            NumPy array of shape (N, 4) for Quat fields (x, y, z, w)
-
-        Raises:
-            RuntimeError: If called outside batch iteration context
-
-        Example:
-            ```python
-            for batch in view.iter_batches():
-                transform = batch.column_mut(Transform)
-                # Convert rotation to NumPy
-                rot_np = transform.rotation.to_numpy()  # (N, 4) array
-
-                @numba.jit(nopython=True, cache=True)
-                def wiggle(rot, t):
-                    for i in range(len(rot)):
-                        angle = np.sin(t * 8.0 + float(i)) * 0.15
-                        half = angle * 0.5
-                        rot[i, 1] = np.sin(half)  # y
-                        rot[i, 3] = np.cos(half)  # w
-
-                wiggle(rot_np, time.elapsed_secs())
-            ```
-        """
-
     @overload
     def from_jax(self, obj: Any) -> None:
         """Write back from object with .x, .y, .z, .w attributes. Requires `import pybevy.ecs.jax_ext`."""
@@ -877,10 +819,10 @@ class QuatExpr(Generic[_FieldT]):
 class TransformViewColumn(ViewColumn, Generic[_FieldT]):
     """Static typing facade for Transform columns returned by View and Batch.
 
-    The runtime object remains the native ``ViewColumn``/View column proxy and
-    resolves these structured fields dynamically. This facade exists so type
-    checkers and IDEs retain the concrete field types without requiring an
-    extra runtime wrapper.
+    The runtime object resolves these structured fields dynamically. As
+    returned by Batch.column()/column_mut() it is a concrete ViewColumn buffer
+    (len/dtype/stride, Numba zero-copy indexing, optional JAX copy conversion).
+    View.column()/column_mut() return a lazy expression column.
     """
 
     translation: Vec3Expr[_FieldT]
@@ -891,6 +833,8 @@ class PointLightViewColumn(ViewColumn, Generic[_FieldT]):
     """View column accessor for PointLight component.
 
     Provides field-level access for batch operations on light properties.
+    Concrete ViewColumn buffer when returned by Batch.column()/column_mut();
+    lazy expression column when returned by View.column()/column_mut().
     """
 
     @property
@@ -932,20 +876,26 @@ class ViewParam:
     def _filter_names(self) -> list[str]: ...
 
 class ViewCol:
-    """Read-only column proxy for View component fields.
+    """Read-only lazy expression column returned by View.column().
 
-    Internal implementation class returned by View.column(). Users typically
-    access fields directly through the column, not this class itself.
+    Field access returns expressions over one component of an injected View.
+    Assignments raise a RuntimeError that names column_mut().
+    For a concrete ViewColumn buffer, use View.iter_batches() and Batch.column().
     """
-    component_id: int
+
+    @property
+    def component_id(self) -> int: ...
 
 class ViewColMut:
-    """Mutable column proxy for View component fields.
+    """Mutable lazy expression column returned by View.column_mut().
 
-    Internal implementation class returned by View.column_mut(). Users typically
-    access fields directly through the column, not this class itself.
+    A proxy over one mutable component of an injected View. Assigning to a
+    field compiles and runs the expression across all matching entities.
+    For a concrete ViewColumn buffer, use View.iter_batches() and Batch.column_mut().
     """
-    component_id: int
+
+    @property
+    def component_id(self) -> int: ...
 
     def _trigger_assignment(self, field_name: str, value: Any) -> None:
         """Internal: Trigger field assignment with expression compilation."""
@@ -971,6 +921,17 @@ class View(Generic[QueryParam_T, *Qs]):
     IMPORTANT:
     - Use Mut[T] for mutable access, plain T for read-only (just like Query)
     - Filters must be explicit (With[T], Without[T], etc.), not bare component types
+
+    Column access has two models:
+    - column(T) and column_mut(T) return a lazy expression column. Field
+      access yields expressions; field assignment compiles and runs the
+      expression across all matching entities in one step.
+    - For a concrete ViewColumn buffer, iterate with iter_batches() and call
+      batch.column(T) or batch.column_mut(T). It has len/dtype/stride, Numba
+      zero-copy indexing, and optional JAX copy conversion (to_jax()/
+      from_jax()), with a batch-scoped lifetime that expires when the batch
+      ends. It refuses direct NumPy conversion (__array__ raises); a NumPy
+      array is a copy built with to_contiguous_bytes() and numpy.frombuffer().
 
     Examples:
         # Modify all entities with Transform (requires Mut[])
@@ -1098,6 +1059,14 @@ class View(Generic[QueryParam_T, *Qs]):
         """
         Iterate over contiguous filtered batches (PyArrow-style chunked iteration).
 
+        This is the route to concrete ViewColumn buffers: batch.column(T) and
+        batch.column_mut(T) return real ViewColumn objects with len/dtype/stride,
+        Numba zero-copy indexing, and optional JAX copy conversion (to_jax()/
+        from_jax()). A ViewColumn refuses direct NumPy conversion (__array__
+        raises); a NumPy array is a copy built with to_contiguous_bytes() and
+        numpy.frombuffer(). These buffers are scoped to the batch and expire
+        when the batch ends, so use them within the loop.
+
         This provides a PyArrow-style chunked API where data is processed in
         maximal contiguous row runs from one ECS table. Changed/Added filters
         may split a table so filtered-out rows are never exposed.
@@ -1108,27 +1077,18 @@ class View(Generic[QueryParam_T, *Qs]):
         Example:
             ```python
             import numba
-            import numpy as np
+
+            @numba.jit(nopython=True, cache=True)
+            def process(x, y, t):
+                for i in range(len(x)):
+                    if y[i] > 0.5:  # Only visible entities
+                        x[i] = x[i] * 0.9
 
             def wiggle_system(view: View[Mut[Transform], With[Marker]], time: Time) -> None:
-                # Process each archetype batch separately
+                # Concrete ViewColumn buffers, scoped to this batch.
                 for batch in view.iter_batches():
-                    # Get numpy arrays (zero-copy views)
-                    translations = batch.column_numpy(Transform, "translation")  # (N, 3)
-                    rotations = batch.column_numpy_mut(Transform, "rotation")   # (N, 4)
-
-                    # Define inline JIT kernel
-                    @numba.jit(nopython=True, cache=True)
-                    def process(trans, rot, t):
-                        for i in range(len(trans)):
-                            if trans[i, 1] > 0.5:  # Only visible entities
-                                angle = np.sin(t * 8.0 + float(i)) * 0.15
-                                half = angle * 0.5
-                                rot[i, 1] = np.sin(half)
-                                rot[i, 3] = np.cos(half)
-
-                    # Execute on this batch
-                    process(translations, rotations, time.elapsed_secs())
+                    pos = batch.column_mut(Transform)
+                    process(pos.translation.x, pos.translation.y, time.elapsed_secs())
             ```
 
         Performance:
@@ -1148,13 +1108,15 @@ class Batch:
     A contiguous batch of selected entities from one ECS table.
 
     Represents a contiguous slice of selected component data from one table.
-    Provides numpy array views for zero-copy access to ECS data.
+    Its columns are concrete ViewColumn buffers with len/dtype/stride: Numba
+    zero-copy indexing, optional JAX copy conversion (to_jax()/from_jax()), and
+    a copied NumPy array via to_contiguous_bytes() and numpy.frombuffer(). A
+    ViewColumn refuses direct NumPy conversion (__array__ raises).
 
     This is the ECS equivalent of PyArrow's RecordBatch - a chunk of
     columnar data that can be processed efficiently.
     """
 
-    # ViewColumn accessors (unified API with .to_numpy() support)
     @overload
     def column(self, component_type: type[Transform]) -> TransformViewColumn[ViewColumn]: ...
     @overload
@@ -1644,60 +1606,25 @@ class SingleQuery:
 # https://peps.python.org/pep-0646/#variance-type-constraints-and-type-bounds-not-yet-supported
 
 class Query(Generic[QueryParam_T, *Qs]):
-    """
-    ECS Query for iterating over entities with specific components.
+    """Iterate over matching entities as components or tuples.
+
+    Use Query[data, filters], with optional filters in the second position.
+    Group multiple data items or filters with tuple[...], not parentheses.
+    Mut[T] enables writes and yields T; Optional[T] yields None when absent.
 
     Examples:
-        Query[Transform] - read-only Transform access
-        Query[Mut[Transform]] - mutable Transform access
-        Query[Mut[Transform], With[Rotate]] - mutable with single filter
-        Query[Mut[Transform], tuple[With[Rotate], Without[Player]]] - multiple filters
-        Query[tuple[Visibility, Mut[Transform]]] - tuple components
-        Query[tuple[Visibility, Mut[Transform]], tuple[With[Rotate]]] - tuple components + filters
-        Query[Optional[Transform]] - optional component (None if absent)
-        Query[tuple[Transform, Optional[Visibility]]] - mixed required + optional
+        Query[Transform] - read-only components
+        Query[Mut[Transform], With[Player]] - writable components, filtered
+        Query[tuple[Transform, Optional[Visibility]]] - tuples of components
+        Query[Transform, tuple[With[Player], Without[Enemy]]] - multiple filters
+        Query[Entity, With[Player]] - entity IDs
 
-    The iterator unwraps Mut[T] to T automatically.
+    Filter-only forms such as Query[With[Player]] raise TypeError. Use Entity
+    as data when only entity IDs are needed.
 
-    ⚠️ MULTIPLE COMPONENTS SYNTAX
-    ═══════════════════════════════════════════════════════════════════════════════
-    For multiple components, you MUST use tuple[...] NOT parentheses:
-
-        ✅ Query[tuple[Transform, Velocity]]      - CORRECT
-        ❌ Query[(Transform, Velocity)]           - WRONG (raises TypeError)
-
-    ⚠️ CONFLICTING ACCESS
-    ═══════════════════════════════════════════════════════════════════════════════
-    Within a single system, no two queries may conflict on the same component type.
-    This follows Rust's borrowing rules enforced by Bevy.
-
-    What causes conflicts:
-        ❌ Query[Transform] + Query[Mut[Transform]]       → read/write conflict
-        ❌ Query[Mut[Transform]] + Query[Mut[Transform]]  → write/write conflict
-        ✅ Query[Transform] + Query[Transform]            → OK (both read-only)
-
-    IMPORTANT: Having different With[] filters does NOT automatically make queries
-    disjoint! PyBevy can only prove disjointness when one query has With[X] and the
-    other has Without[X] (or vice versa).
-
-        ❌ WRONG - These still conflict despite different marker components:
-            def system(
-                robot: Query[Transform, With[Robot]],
-                spotlight: Query[Mut[Transform], With[Spotlight]]
-            ): ...
-            # RuntimeError: conflicting component access to Transform
-
-        ✅ CORRECT - Use Without[] to prove disjointness:
-            def system(
-                robot: Query[Transform, tuple[With[Robot], Without[Spotlight]]],
-                spotlight: Query[Mut[Transform], tuple[With[Spotlight], Without[Robot]]]
-            ): ...
-            # OK! PyBevy proves these never overlap
-
-    This matches Bevy Rust behavior - see FilteredAccess::is_compatible() in Bevy.
-
-    Filter style: Use tuple[With[...], Without[...]] for multiple filters.
-    Matches Bevy Rust: Query<&mut T, (With<A>, Without<B>)>
+    Within a system, overlapping queries cannot access the same component
+    if either query writes it. Different With[...] filters alone do not
+    prove disjointness; opposing With[T] and Without[T] filters can.
     """
 
     @overload
@@ -1764,6 +1691,8 @@ class Query(Generic[QueryParam_T, *Qs]):
     def __iter__(self: Query[tuple[T]]) -> Iterator[tuple[T]]: ...
     @overload
     def __iter__(self: Query[tuple[Mut[T]]]) -> Iterator[tuple[T]]: ...
+    @overload
+    def __iter__(self: Query[tuple[()], *Qs]) -> Iterator[tuple[()]]: ...  # type: ignore[overload-overlap]
 
     @overload
     def __iter__(self: Query[tuple[T1, T2]]) -> Iterator[tuple[T1, T2]]: ...
@@ -2282,6 +2211,9 @@ class Local(Generic[V]):
     Use :attr:`current` when reading or replacing the complete value, especially
     for immutable values.
 
+    Every hot reload, partial included, rebuilds the system and constructs the
+    local again. Use a ``@resource`` for state that must survive one.
+
     Example:
         ```python
         def update_stats(stats: Local[Stats]) -> None:
@@ -2368,6 +2300,12 @@ class State(Generic[StateType], Resource):
         def check_state(current: Res[State[GameState]]) -> None:
             if current.get() == GameState.MENU:
                 print("In menu")
+
+    Note:
+        Install the machine with ``app.init_state(T)`` or
+        ``app.insert_state(T.MEMBER)`` and read the
+        current state with ``world.resource(State[T])`` or a
+        ``Res[State[T]]`` system parameter. Calling ``State[T](...)`` raises TypeError.
     """
     def __init__(self, initial_state: StateType) -> None:
         """Create a State resource with an initial state value.
@@ -2394,6 +2332,12 @@ class NextState(Generic[StateType], Resource):
     Example:
         def start_game(next_state: ResMut[NextState[GameState]]) -> None:
             next_state.set(GameState.IN_GAME)
+
+    Note:
+        Queue a transition with
+        ``world.resource(NextState[T]).set(T.MEMBER)`` or declare
+        ``next_state: ResMut[NextState[T]]`` in a system.
+        Calling ``NextState[T](...)`` raises TypeError.
     """
     def set(self, state: StateType) -> None:
         """Queue a state transition."""
@@ -2431,10 +2375,10 @@ def in_state(state: StateType) -> Callable[[Res[State[StateType]]], bool]:
         state: The target state to check for
 
     Returns:
-        A run condition function
+        A run condition function for `SystemConfig.run_if`
 
     Example:
-        app.add_systems(Update, menu_system, run_if=in_state(GameState.MENU))
+        app.add_systems(Update, system(menu_system).run_if(in_state(GameState.MENU)))
     """
 
 # Schedule label types (internal - returned by OnEnter/OnExit/OnTransition functions)

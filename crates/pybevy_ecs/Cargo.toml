@@ -12,6 +12,7 @@ default = ["pyo3"]
 pyo3 = ["dep:pyo3", "dep:pybevy_core", "dep:pybevy_macros"]
 
 [dependencies]
+smallvec = { workspace = true }
 pyo3 = { workspace = true, features = ["macros"], optional = true }
 pybevy_core = { workspace = true, optional = true }
 pybevy_macros = { workspace = true, optional = true }

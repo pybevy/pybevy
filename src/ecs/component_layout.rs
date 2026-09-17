@@ -6,18 +6,16 @@ pub use pybevy_core::component_layout::{
 };
 use pybevy_math::{vec2::PyVec2, vec3::PyVec3};
 use pyo3::{
+    PyTypeInfo,
     exceptions::{PyRuntimeError, PyTypeError},
+    intern,
     prelude::*,
-    types::{PyDict, PyType},
+    types::{PyBool, PyDict, PyFloat, PyInt, PyType},
 };
 
 /// PyO3-specific extension methods for PrimitiveType
 pub trait PrimitiveTypeExt {
     /// Try to parse a Python type annotation into a PrimitiveType
-    ///
-    /// TODO: replace string-based dispatch with PyO3 type-identity comparisons
-    /// (e.g. `ty.is(<PyVec3 as PyTypeInfo>::type_object(py))`) for O(1) pointer
-    /// equality instead of string allocation + matching on every field registration.
     fn from_python_type(ty: &Bound<'_, PyAny>) -> PyResult<Option<PrimitiveType>>;
 
     /// Convert to numpy dtype string
@@ -29,6 +27,23 @@ pub trait PrimitiveTypeExt {
 
 impl PrimitiveTypeExt for PrimitiveType {
     fn from_python_type(ty: &Bound<'_, PyAny>) -> PyResult<Option<PrimitiveType>> {
+        let py = ty.py();
+        if ty.is(PyFloat::type_object(py)) {
+            return Ok(Some(PrimitiveType::F64));
+        }
+        if ty.is(PyInt::type_object(py)) {
+            return Ok(Some(PrimitiveType::I64));
+        }
+        if ty.is(PyBool::type_object(py)) {
+            return Ok(Some(PrimitiveType::Bool));
+        }
+        if ty.is(PyVec3::type_object(py)) {
+            return Ok(Some(PrimitiveType::Vec3));
+        }
+        if ty.is(PyVec2::type_object(py)) {
+            return Ok(Some(PrimitiveType::Vec2));
+        }
+
         let ty_str_bound = ty.str()?;
         let ty_str = ty_str_bound.to_str()?;
 
@@ -106,9 +121,14 @@ impl ComponentLayoutExt for ComponentLayout {
         let name = cls.name()?.to_string();
 
         // Get __annotations__ dict
-        let annotations_bound = cls.getattr("__annotations__").map_err(|_| {
-            PyTypeError::new_err(format!("Component class '{}' has no __annotations__", name))
-        })?;
+        let annotations_bound =
+            cls.getattr(intern!(cls.py(), "__annotations__"))
+                .map_err(|_| {
+                    PyTypeError::new_err(format!(
+                        "Component class '{}' has no __annotations__",
+                        name
+                    ))
+                })?;
         let annotations = annotations_bound.cast::<PyDict>()?;
 
         if annotations.is_empty() {
@@ -161,16 +181,28 @@ impl ComponentLayoutExt for ComponentLayout {
 pub trait ComponentStorageTypeExt {
     /// Determine storage type from a Python class
     fn from_python_class(cls: &Bound<'_, PyType>) -> PyResult<ComponentStorageType>;
+
+    /// Determine storage type from a Python class, keeping the layout that
+    /// selected wrapper storage.
+    fn storage_with_layout(
+        cls: &Bound<'_, PyType>,
+    ) -> PyResult<(ComponentStorageType, Option<ComponentLayout>)>;
 }
 
 impl ComponentStorageTypeExt for ComponentStorageType {
     fn from_python_class(cls: &Bound<'_, PyType>) -> PyResult<ComponentStorageType> {
+        Self::storage_with_layout(cls).map(|(storage, _)| storage)
+    }
+
+    fn storage_with_layout(
+        cls: &Bound<'_, PyType>,
+    ) -> PyResult<(ComponentStorageType, Option<ComponentLayout>)> {
         // Check for explicit storage mode in class attributes
-        if let Ok(storage_attr) = cls.getattr("__pybevy_storage__") {
+        if let Ok(Some(storage_attr)) = cls.getattr_opt(intern!(cls.py(), "__pybevy_storage__")) {
             let storage_str_bound = storage_attr.str()?;
             let storage_str = storage_str_bound.to_str()?;
             match storage_str {
-                "pyobject" => return Ok(ComponentStorageType::PyObject),
+                "pyobject" => return Ok((ComponentStorageType::PyObject, None)),
                 "wrapper" => {
                     // Continue to layout analysis
                 }
@@ -185,13 +217,70 @@ impl ComponentStorageTypeExt for ComponentStorageType {
 
         // Try to compute layout - if successful, use wrapper storage
         match ComponentLayout::from_annotations(cls) {
-            Ok(layout) => Ok(ComponentStorageType::Wrapper(layout.wrapper_size)),
+            Ok(layout) => Ok((
+                ComponentStorageType::Wrapper(layout.wrapper_size),
+                Some(layout),
+            )),
             Err(_) => {
                 // Layout computation failed (non-primitive types) - use PyObject storage
-                Ok(ComponentStorageType::PyObject)
+                Ok((ComponentStorageType::PyObject, None))
             }
         }
     }
+}
+
+/// Check a cached storage decision without rebuilding an unchanged wrapper layout.
+pub(crate) fn cached_storage_and_layout_match(
+    cls: &Bound<'_, PyType>,
+    storage: ComponentStorageType,
+    layout: Option<&ComponentLayout>,
+) -> PyResult<bool> {
+    if let Ok(Some(storage_attr)) = cls.getattr_opt(intern!(cls.py(), "__pybevy_storage__")) {
+        let storage_str_bound = storage_attr.str()?;
+        match storage_str_bound.to_str()? {
+            "pyobject" => return Ok(storage == ComponentStorageType::PyObject),
+            "wrapper" => {}
+            other => {
+                return Err(PyTypeError::new_err(format!(
+                    "Invalid storage type '{}'. Use 'wrapper' or 'pyobject'.",
+                    other
+                )));
+            }
+        }
+    }
+
+    let Some(layout) = layout else {
+        return Ok(ComponentLayout::from_annotations(cls).is_err());
+    };
+    if !matches!(storage, ComponentStorageType::Wrapper(_)) {
+        return Ok(false);
+    }
+
+    let Ok(annotations_bound) = cls.getattr(intern!(cls.py(), "__annotations__")) else {
+        return Ok(false);
+    };
+    let Ok(annotations) = annotations_bound.cast::<PyDict>() else {
+        return Ok(false);
+    };
+    if annotations.len() != layout.fields.len() {
+        return Ok(false);
+    }
+
+    for ((field_name, annotation), cached_field) in annotations.iter().zip(&layout.fields) {
+        let Ok(field_name) = field_name.str() else {
+            return Ok(false);
+        };
+        let Ok(field_name) = field_name.to_str() else {
+            return Ok(false);
+        };
+        let Ok(Some(field_type)) = PrimitiveType::from_python_type(&annotation) else {
+            return Ok(false);
+        };
+        if field_name != cached_field.name || field_type != cached_field.field_type {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Serialize a Python object to wrapper bytes according to the layout

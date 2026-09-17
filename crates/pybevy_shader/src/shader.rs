@@ -1,12 +1,11 @@
 use bevy::shader::{Shader, ShaderDefVal};
-use naga::ShaderStage;
-use pybevy_core::{AssetStorage, public_error};
+use pybevy_core::AssetStorage;
 use pybevy_macros::pyasset;
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pyo3::prelude::*;
 
 use crate::{
     shader_def_val::PyShaderDefVal, shader_import::PyShaderImport, shader_source::PySource,
-    validate_shader::PyValidateShader,
+    shader_stage::PyShaderStage, validate_shader::PyValidateShader,
 };
 
 #[pyasset(Shader, bridge)]
@@ -40,21 +39,10 @@ impl PyShader {
     pub fn from_glsl(
         py: Python<'_>,
         source: String,
-        stage: String,
+        stage: PyShaderStage,
         path: String,
     ) -> PyResult<Py<PyShader>> {
-        let shader_stage = match stage.as_str() {
-            "vertex" => ShaderStage::Vertex,
-            "fragment" => ShaderStage::Fragment,
-            "compute" => ShaderStage::Compute,
-            _ => {
-                return Err(PyValueError::new_err(public_error::shader_stage_invalid(
-                    stage,
-                )));
-            }
-        };
-
-        let shader = Shader::from_glsl(source, shader_stage, path);
+        let shader = Shader::from_glsl(source, stage.into(), path);
         Py::new(py, Self::from_owned(shader))
     }
 
@@ -76,7 +64,7 @@ impl PyShader {
 
     #[getter]
     pub fn import_path(&self) -> PyResult<PyShaderImport> {
-        Ok((&self.as_ref()?.import_path).into())
+        Ok(self.as_ref()?.import_path.clone().into())
     }
 
     #[setter]
@@ -87,7 +75,12 @@ impl PyShader {
 
     #[getter]
     pub fn imports(&self) -> PyResult<Vec<PyShaderImport>> {
-        Ok(self.as_ref()?.imports.iter().map(|i| i.into()).collect())
+        Ok(self
+            .as_ref()?
+            .imports
+            .iter()
+            .map(|i| i.clone().into())
+            .collect())
     }
 
     #[getter]
@@ -96,7 +89,7 @@ impl PyShader {
             .as_ref()?
             .shader_defs
             .iter()
-            .map(|d| d.into())
+            .map(|d| d.clone().into())
             .collect())
     }
 

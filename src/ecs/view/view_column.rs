@@ -140,6 +140,14 @@ impl PyViewColumn {
         }
     }
 
+    /// NumPy dtype string without validity checks, for error text and `__repr__`.
+    fn dtype_str(&self) -> &'static str {
+        match self.field_type {
+            Some(ft) => ft.to_numpy_dtype_str(),
+            None => "struct",
+        }
+    }
+
     /// Acquire the core operation fence for one Rust-side pointer operation.
     /// Numba is the deliberate exception: its unbox path checks validity at the
     /// call boundary, then native code uses the retained capability directly.
@@ -268,7 +276,7 @@ impl PyViewColumn {
             Some(FieldType::Vec2) | Some(FieldType::Vec3) | Some(FieldType::Vec4) | None => {
                 Err(PyRuntimeError::new_err(format!(
                     "Arithmetic not supported for dtype '{}'",
-                    self.dtype()
+                    self.dtype_str()
                 )))
             }
         }
@@ -408,7 +416,7 @@ impl PyViewColumn {
         if offset >= parent_extent {
             return Err(PyRuntimeError::new_err(format!(
                 "Offset {offset} out of bounds for '{}' ({} bytes)",
-                self.dtype(),
+                self.dtype_str(),
                 parent_extent,
             )));
         }
@@ -419,7 +427,7 @@ impl PyViewColumn {
                     PyRuntimeError::new_err(format!(
                         "Offset {offset} with dtype '{}' overflows bounds for '{}' ({} bytes)",
                         ft.to_numpy_dtype_str(),
-                        self.dtype(),
+                        self.dtype_str(),
                         parent_extent,
                     ))
                 })?;
@@ -427,7 +435,7 @@ impl PyViewColumn {
                     return Err(PyRuntimeError::new_err(format!(
                         "Offset {offset} with dtype '{}' out of bounds for '{}' ({} bytes)",
                         ft.to_numpy_dtype_str(),
-                        self.dtype(),
+                        self.dtype_str(),
                         parent_extent,
                     )));
                 }
@@ -515,34 +523,36 @@ impl PyViewColumn {
 
     /// Get the number of elements.
     #[getter]
-    fn len(&self) -> usize {
-        self.len
+    fn len(&self) -> PyResult<usize> {
+        self.check_live()?;
+        Ok(self.len)
     }
 
     /// Support Python's len() function.
-    fn __len__(&self) -> usize {
-        self.len
+    fn __len__(&self) -> PyResult<usize> {
+        self.check_live()?;
+        Ok(self.len)
     }
 
     /// Get the stride in bytes.
     #[getter]
-    fn stride(&self) -> usize {
-        self.stride
+    fn stride(&self) -> PyResult<usize> {
+        self.check_live()?;
+        Ok(self.stride)
     }
 
     /// Whether this column permits writes.
     #[getter]
-    fn writable(&self) -> bool {
-        self.writable
+    fn writable(&self) -> PyResult<bool> {
+        self.check_live()?;
+        Ok(self.writable)
     }
 
     /// Get the NumPy dtype string (e.g., "f4", "i8", "u1", "struct").
     #[getter]
-    fn dtype(&self) -> &'static str {
-        match self.field_type {
-            Some(ft) => ft.to_numpy_dtype_str(),
-            None => "struct",
-        }
+    fn dtype(&self) -> PyResult<&'static str> {
+        self.check_live()?;
+        Ok(self.dtype_str())
     }
 
     /// Create a sub-column view at a byte offset (for field peeling).
@@ -728,14 +738,14 @@ impl PyViewColumn {
                 "ViewColumn(len={}, stride={}, dtype='{}', valid=True)",
                 self.len,
                 self.stride,
-                self.dtype()
+                self.dtype_str()
             )
         } else {
             format!(
                 "ViewColumn(len={}, stride={}, dtype='{}', valid=False [STALE])",
                 self.len,
                 self.stride,
-                self.dtype()
+                self.dtype_str()
             )
         }
     }

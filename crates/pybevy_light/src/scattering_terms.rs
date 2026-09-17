@@ -7,7 +7,11 @@ use crate::scattering_term::PyScatteringTerm;
 
 type NativeScatteringTerms = SmallVec<[ScatteringTerm; 1]>;
 
-#[pyclass(name = "_ScatteringTerms", skip_from_py_object)]
+#[pyclass(
+    name = "_ScatteringTerms",
+    module = "pybevy.light",
+    skip_from_py_object
+)]
 #[derive(Clone)]
 pub struct PyScatteringTerms {
     storage: FieldStorage<NativeScatteringTerms>,

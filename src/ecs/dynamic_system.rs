@@ -749,19 +749,25 @@ fn wrap_resource_in_res<'py>(
     py: Python<'py>,
     resource: Py<PyAny>,
     mutable: bool,
+    validity: &ValidityFlag,
     args_buffer: &mut SmallVec<[Py<PyAny>; 8]>,
 ) {
+    let resource_bound = resource.into_bound(py);
     if mutable {
         // Wrap in ResMut[ResourceType]
-        let resource_bound = resource.into_bound(py);
-        let resmut_wrapper = Py::new(py, crate::ecs::resource::PyResMut::new(resource_bound))
-            .expect("Failed to create PyResMut");
+        let resmut_wrapper = Py::new(
+            py,
+            crate::ecs::resource::PyResMut::with_validity(resource_bound, validity.clone()),
+        )
+        .expect("Failed to create PyResMut");
         args_buffer.push(resmut_wrapper.into_any());
     } else {
         // Wrap in Res[ResourceType]
-        let resource_bound = resource.into_bound(py);
-        let res_wrapper = Py::new(py, crate::ecs::resource::PyRes::new(resource_bound))
-            .expect("Failed to create PyRes");
+        let res_wrapper = Py::new(
+            py,
+            crate::ecs::resource::PyRes::with_validity(resource_bound, validity.clone()),
+        )
+        .expect("Failed to create PyRes");
         args_buffer.push(res_wrapper.into_any());
     }
 }
@@ -875,7 +881,7 @@ pub(crate) unsafe fn build_run_args<'w, 'c1, 'c2>(
                     }
                 };
 
-                wrap_resource_in_res(py, resource, *mutable, args_buffer);
+                wrap_resource_in_res(py, resource, *mutable, validity, args_buffer);
             }
             SystemParamType::Query { .. } => {
                 // Static per-parameter state was built once in `initialize`;
@@ -1339,14 +1345,25 @@ pub(crate) unsafe fn execute_prepared_observer(
                 // Wrap in Res/ResMut
                 if *mutable {
                     let resource_bound = resource.into_bound(py);
-                    let resmut_wrapper =
-                        Py::new(py, crate::ecs::resource::PyResMut::new(resource_bound))
-                            .expect("Failed to create PyResMut");
+                    let resmut_wrapper = Py::new(
+                        py,
+                        crate::ecs::resource::PyResMut::with_validity(
+                            resource_bound,
+                            validity.clone(),
+                        ),
+                    )
+                    .expect("Failed to create PyResMut");
                     args_buffer.push(resmut_wrapper.into_any());
                 } else {
                     let resource_bound = resource.into_bound(py);
-                    let res_wrapper = Py::new(py, crate::ecs::resource::PyRes::new(resource_bound))
-                        .expect("Failed to create PyRes");
+                    let res_wrapper = Py::new(
+                        py,
+                        crate::ecs::resource::PyRes::with_validity(
+                            resource_bound,
+                            validity.clone(),
+                        ),
+                    )
+                    .expect("Failed to create PyRes");
                     args_buffer.push(res_wrapper.into_any());
                 }
             }

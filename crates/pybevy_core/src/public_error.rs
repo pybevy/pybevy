@@ -8,8 +8,9 @@ use std::fmt::{Debug, Display};
 
 pub use pybevy_storage::{
     conflict_message::{
-        CONFLICT_ASSETS, CONFLICT_ASSETS_SHARED_VIEW, CONFLICT_MESSAGES, CONFLICT_QUERIES,
-        CONFLICT_RESOURCE_QUERY, CONFLICT_RESOURCES, CONFLICT_WORLD, SystemAccessConflictMessage,
+        CONDITION_READ_ONLY_GUIDANCE, CONFLICT_ASSETS, CONFLICT_ASSETS_SHARED_VIEW,
+        CONFLICT_MESSAGES, CONFLICT_QUERIES, CONFLICT_RESOURCE_QUERY, CONFLICT_RESOURCES,
+        CONFLICT_WORLD, SystemAccessConflictMessage,
     },
     storage_error::{
         EXPRESSION_MAX_DEPTH, NESTED_EXECUTION, enum_variant_changed, expression_too_deep,
@@ -27,6 +28,11 @@ pub const COLOR_INPUT_TYPES: &str =
 pub fn mcp_scalar_object(type_name: &str) -> String {
     format!("expected {type_name} value, got object")
 }
+
+pub const MCP_ENUM_SCALAR_OBJECT_PAYLOAD: &str = "expected a single payload value, not an object";
+pub const MCP_ENUM_SCALAR_ARRAY_PAYLOAD: &str = "expected a single payload value, not an array";
+pub const MCP_ENUM_WRAPPED_ARRAY_PAYLOAD: &str =
+    "expected an object with the payload's fields, not an array";
 
 pub const CONSTRUCTOR_ROTATION: &str =
     "Rot2() requires finite cos and sin with cos*cos + sin*sin within 0.0002 of 1";
@@ -89,6 +95,12 @@ pub const TRANSMISSION_TEXTURES_UNAVAILABLE: &str = "transmission textures are u
 pub const ANIMATION_GRAPH_NODE_READ_ONLY: &str =
     "Cannot modify a node obtained from AnimationGraph.get(); use get_mut() instead";
 pub const ANIMATION_GRAPH_NODE_MISSING: &str = "the node is no longer in the animation graph";
+pub const ANIMATION_PLAYER_ANIMATION_MISSING: &str = "Animation not found for node index";
+
+pub fn animation_parameter_must_be_finite(parameter: &str, value: f32) -> String {
+    format!("{parameter} must be finite (got {value})")
+}
+
 pub const RESOURCE_COMPONENT_INSERT: &str =
     "resources cannot be inserted as ordinary entity components";
 pub const RESOURCE_COMPONENT_REMOVE: &str =
@@ -107,6 +119,8 @@ pub const IS_RESOURCE_COMPONENT_REMOVE: &str =
     "IsResource cannot be removed; use remove_resource() to remove the resource";
 pub const RESOURCE_VIEW_DATA: &str = "resources are supported by Query, not View";
 pub const RESOURCE_VIEW_FILTER: &str = "resource filters are supported by Query, not View";
+pub const VIEW_COLUMN_READ_ONLY_ASSIGNMENT: &str =
+    "Cannot assign through a read-only View column; use column_mut() with View[Mut[T]]";
 pub const NEXT_STATE_CONSTRUCTION: &str = "NextState cannot be constructed directly; access `world.resource(NextState[MyState])` or declare `next_state: ResMut[NextState[MyState]]` in a system";
 pub const DURATION_NEGATIVE: &str = "Duration cannot be negative";
 pub const DURATION_NON_FINITE: &str = "Duration must be finite";
@@ -129,12 +143,26 @@ pub fn viewport_conversion_failed(error: impl Display) -> String {
     format!("Viewport conversion failed: {error}")
 }
 
+pub const CUBEMAP_FACE_INDEX: &str = "Cubemap face index must be 0-5";
+
+pub fn unregistered_component_type(name: &str) -> String {
+    format!("Type '{name}' is not a registered component type")
+}
+
 pub fn mesh_operation_failed(operation: impl Display, error: impl Display) -> String {
     format!("Mesh.{operation}() failed: {error}")
 }
 
-pub fn shader_stage_invalid(stage: impl Display) -> String {
-    format!("Invalid shader stage: {stage}. Must be 'vertex', 'fragment', or 'compute'")
+pub fn polyline_mesh_too_short(type_name: &str) -> String {
+    format!("{type_name} requires at least 2 vertices to build a mesh")
+}
+
+pub fn mesh_attribute_missing(name: &str) -> String {
+    // `{:?}` quotes and escapes the user-controlled name so the message stays one line.
+    format!(
+        "Mesh does not have attribute {:?}. Insert it with insert_attribute() first, or check availability with contains_attribute().",
+        name
+    )
 }
 
 pub fn invalid_hex_color(error: impl Display) -> String {
@@ -143,6 +171,10 @@ pub fn invalid_hex_color(error: impl Display) -> String {
 
 pub fn gamepad_settings_failed(kind: impl Display, error: impl Display) -> String {
     format!("failed to create {kind} gamepad settings: {error}")
+}
+
+pub fn audio_seek_failed(error: impl Debug) -> String {
+    format!("Seek error: {error:?}")
 }
 
 pub fn plugin_not_a_plugin(plugin_name: &str, mro: &str) -> String {
@@ -219,11 +251,33 @@ pub const OR_IS_FILTER: &str = "Or[...] is a query filter, not query data; place
 pub const ANY_OF_VIEW_UNSUPPORTED: &str = "AnyOf[...] query data is not supported in View. Use Query for optional per-entity component values.";
 pub const OR_VIEW_UNSUPPORTED: &str =
     "Or[...] is not supported in View. Use Query for disjunctive filters.";
+pub fn query_data_required(kind: &str, shape: &str, filters: &[String]) -> String {
+    let note = if filters.is_empty() {
+        String::new()
+    } else {
+        let joined = filters.join(", ");
+        if filters.len() == 1 {
+            format!(" {joined} is a query filter, not data.")
+        } else {
+            format!(" {joined} are query filters, not data.")
+        }
+    };
+    format!(
+        "{shape} has no query data.{note} Data is the first position (a component type, Entity, or an explicit tuple); query filters are the second position. Put the data first, for example {kind}[Component, Added[Component]], or use the empty-tuple form {kind}[tuple[()], Added[Component]] for rows of an empty tuple"
+    )
+}
+
+pub fn optional_module_requires_feature(module: &str, feature: &str) -> String {
+    format!("optional module '{module}' requires the '{feature}' Cargo feature")
+}
+
 pub const SHADER_DEFS_WITHOUT_NAMES: &str =
     "shader_defs contains enabled bits without matching shader_def_names entries";
 
 pub const TIME_CONTEXT_TYPE_REQUIRED: &str =
     "Time[...] expects one of the Fixed, Real, or Virtual marker types";
+pub const MAT4_PERSPECTIVE_INFINITE_REVERSE_RH_NEAR: &str =
+    "perspective_infinite_reverse_rh requires z_near > 0";
 
 pub const TIMER_ELAPSED_PAST_DURATION: &str = "the remaining time is undefined while Timer elapsed is past the duration; \
      call set_elapsed() with a value within the duration";
@@ -231,6 +285,9 @@ pub const TIMER_ELAPSED_PAST_DURATION: &str = "the remaining time is undefined w
 pub fn too_many_shader_def_names(actual: usize) -> String {
     format!("shader_def_names accepts at most 32 entries; got {actual}")
 }
+
+pub const DESIRED_MAXIMUM_FRAME_LATENCY_AT_LEAST_ONE: &str =
+    "desired_maximum_frame_latency must be at least 1";
 
 pub const UNSUPPORTED_GIZMO_LINE_STYLE: &str =
     "the native GizmoLineStyle variant is not supported by this PyBevy build";
@@ -263,9 +320,10 @@ pub const CONDITION_OPAQUE_RESOURCE: &str =
 pub const CONDITION_MUTABLE_ASSETS: &str = "mutable Assets (mutable asset access)";
 pub const CONDITION_MUTABLE_QUERY: &str = "Query with a Mut component (mutable component access)";
 pub const CONDITION_OPAQUE_QUERY: &str =
-    "Query with a Python-storage component (opaque Python access is exclusive)";
+    "Query with a component stored as a Python object (opaque Python access is exclusive)";
 pub const CONDITION_MUTABLE_VIEW: &str = "View with a Mut component (mutable component access)";
 pub const CONDITION_OPAQUE_VIEW: &str = "View with opaque Python component access";
+pub const CONDITION_RETURNED_CALLABLE: &str = "A run condition returned a callable instead of a truth value. `always` and `never` are condition factories; pass `always()` or `never()`.";
 
 /// The spelling a rejected system parameter annotation was written with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -426,6 +484,15 @@ pub fn invalid_asset_type(actual: impl Display) -> String {
     format!("Invalid asset type. Expected a subclass of `Asset`, but got `{actual}`")
 }
 
+/// The `Assets<T>` resource was never inserted, optionally followed by the
+/// setup step that creates the collection.
+pub fn assets_resource_missing(asset_name: &str, setup_hint: Option<&str>) -> String {
+    match setup_hint {
+        Some(hint) => format!("Assets<{asset_name}> resource not found. {hint}"),
+        None => format!("Assets<{asset_name}> resource not found"),
+    }
+}
+
 pub fn non_negative_argument(name: &str, value: isize) -> String {
     format!("{name} must be >= 0, got {value}")
 }
@@ -504,10 +571,29 @@ pub fn expected_state_member_got_state_type(state_type: impl Display) -> String 
     format!("expected an @state enum member, got state type {state_type}; use {state_type}.MEMBER")
 }
 
+pub const BUTTON_INPUT_REQUIRES_BUTTON_TYPE: &str =
+    "ButtonInput requires a button type: use ButtonInput[KeyCode] or ButtonInput[MouseButton]";
+
 pub fn state_resource_descriptor_required(state_type: impl Display) -> String {
     format!(
         "State enum `{state_type}` is not itself a Resource; use `State[{state_type}]` for the current state or `NextState[{state_type}]` for pending transitions"
     )
+}
+
+pub fn typed_state_descriptor_construction(
+    descriptor: impl Display,
+    state_type: impl Display,
+    is_next_state: bool,
+) -> String {
+    if is_next_state {
+        format!(
+            "{descriptor} is a resource type and cannot be constructed; queue a transition with world.resource({descriptor}).set({state_type}.MEMBER)"
+        )
+    } else {
+        format!(
+            "{descriptor} is a resource type and cannot be constructed; use app.init_state({state_type}) or app.insert_state({state_type}.MEMBER), then read it with world.resource({descriptor})"
+        )
+    }
 }
 
 /// Longest common substring of `a` and `b`, as (a_start, b_start, len).
@@ -750,6 +836,19 @@ pub fn unsupported_texture_format(format: impl Display) -> String {
     format!("Texture format `{format}` has no Python representation")
 }
 
+pub fn value_out_of_range(
+    name: impl Display,
+    low: impl Debug,
+    high: impl Debug,
+    value: impl Debug,
+) -> String {
+    format!("{name} must be between {low:?} and {high:?}, got {value:?}")
+}
+
+pub fn inverted_range(name: impl Display, start: impl Debug, end: impl Debug) -> String {
+    format!("{name} must be a (start, end) range with start <= end, got ({start:?}, {end:?})")
+}
+
 pub fn cubic_hermite_tangent_count(expected: usize, provided: usize) -> String {
     format!("Incorrect number of tangents: expected {expected}, provided {provided}")
 }
@@ -759,7 +858,39 @@ pub const INFINITE_PLANE_POINTS: &str =
     "infinite plane must be defined by three finite, non-collinear points";
 pub const INTEGER_VECTOR_OVERFLOW: &str = "integer vector arithmetic overflow";
 
+/// Ordering comparison between two values of a type that defines only equality.
+pub const UNSUPPORTED_COMPARISON: &str = "Unsupported comparison operation";
+
+pub fn matrix_index_out_of_range(
+    axis: &str,
+    index: impl Display,
+    type_name: impl Display,
+    count: usize,
+) -> String {
+    format!(
+        "{axis} index {index} out of range for {type_name}, which has {count} {}s",
+        axis.to_lowercase()
+    )
+}
+
+pub fn integer_vector_coordinate(type_name: &str, received: impl Display) -> String {
+    format!("{type_name} expects integer coordinates, got {received}")
+}
+
+pub fn integer_vector_coordinate_out_of_range(
+    type_name: &str,
+    received: impl Display,
+    minimum: impl Display,
+    maximum: impl Display,
+) -> String {
+    format!("{type_name} coordinate must be between {minimum} and {maximum}, got {received}")
+}
+
 pub const COMPONENT_FLOAT_NON_FINITE: &str = "float must be finite";
+
+pub fn direction_argument_type(param: &str) -> String {
+    format!("{param} must be a Vec3 or Dir3")
+}
 
 pub const ASSET_LOADING_TASK_POOL_MISSING: &str =
     "AssetServer loading requires TaskPoolPlugin (IoTaskPool is not initialized)";
@@ -828,6 +959,10 @@ pub fn unsigned_rect_origin(origin: [u32; 2], extent: [u32; 2], half_size: bool)
         origin[0], origin[1], extent[0], extent[1]
     )
 }
+
+pub const IMAGE_NO_DATA: &str = "Image has no data";
+
+pub const IMAGE_INVALID_PIXEL_COORDINATES: &str = "Invalid pixel coordinates or no image data";
 
 pub fn image_encoding_unsupported(format: impl Display, supported: &[String]) -> String {
     if supported.is_empty() {
@@ -1084,6 +1219,25 @@ mod tests {
             "Invalid asset type. Expected a subclass of `Asset`, but got `<class 'bool'>`"
         );
         assert_eq!(entity_does_not_exist(7), "Entity 7 does not exist");
+        assert_eq!(
+            mesh_attribute_missing("Vertex_Normal"),
+            "Mesh does not have attribute \"Vertex_Normal\". Insert it with insert_attribute() first, or check availability with contains_attribute()."
+        );
+        assert_eq!(
+            mesh_attribute_missing("Bad \"Q\"\nline"),
+            "Mesh does not have attribute \"Bad \\\"Q\\\"\\nline\". Insert it with insert_attribute() first, or check availability with contains_attribute()."
+        );
+        assert_eq!(
+            assets_resource_missing("Mesh", None),
+            "Assets<Mesh> resource not found"
+        );
+        assert_eq!(
+            assets_resource_missing(
+                "ShaderMaterial",
+                Some("Add ShaderMaterialPlugin() to your app to create this collection."),
+            ),
+            "Assets<ShaderMaterial> resource not found. Add ShaderMaterialPlugin() to your app to create this collection."
+        );
     }
 
     const REJECTION_KINDS: [SystemParamRejection; 9] = [

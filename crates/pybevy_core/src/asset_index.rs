@@ -41,6 +41,10 @@ impl PyAssetIndex {
         Ok(Self::from_owned(self.to_bevy()?))
     }
 
+    fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
+
     fn __hash__(&self) -> PyResult<u64> {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         self.as_ref()?.hash(&mut hasher);

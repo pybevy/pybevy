@@ -21,7 +21,7 @@ use pybevy_core::public_error::{
     CONDITION_MESSAGE_READER, CONDITION_MESSAGE_WRITER, CONDITION_MUTABLE_ASSETS,
     CONDITION_MUTABLE_QUERY, CONDITION_MUTABLE_VIEW, CONDITION_OPAQUE_MESSAGE_READER,
     CONDITION_OPAQUE_QUERY, CONDITION_OPAQUE_RESOURCE, CONDITION_OPAQUE_VIEW, CONDITION_RES_MUT,
-    CONDITION_WORLD, pipe_input_type_mismatch,
+    CONDITION_RETURNED_CALLABLE, CONDITION_WORLD, pipe_input_type_mismatch,
 };
 #[cfg(debug_assertions)]
 use pybevy_ecs::shared::access_audit::assert_query_access_declared;
@@ -581,10 +581,20 @@ impl MainInterpreter {
         let outcome = match result {
             Ok(value) => match output {
                 OutputMode::Unit => CallOutcome::Unit,
-                OutputMode::Bool => match value.is_truthy() {
-                    Ok(value) => CallOutcome::Bool(value),
-                    Err(error) => return Err(Self::failure(py, error)),
-                },
+                OutputMode::Bool => {
+                    // A function object is truthy, so a condition passed without
+                    // its parentheses would satisfy every run_if silently.
+                    if value.is_callable() {
+                        return Err(Self::failure(
+                            py,
+                            PyTypeError::new_err(CONDITION_RETURNED_CALLABLE),
+                        ));
+                    }
+                    match value.is_truthy() {
+                        Ok(value) => CallOutcome::Bool(value),
+                        Err(error) => return Err(Self::failure(py, error)),
+                    }
+                }
                 OutputMode::Value => CallOutcome::Value(value.unbind()),
             },
             Err(error) => return Err(Self::failure(py, error)),

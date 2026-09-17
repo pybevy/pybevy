@@ -52,6 +52,7 @@ pub fn pyasset(attr: TokenStream, item: TokenStream) -> TokenStream {
         not_loadable: bool,
         material: bool,
         input_converter: bool,
+        missing_resource_hint: Option<String>,
     }
 
     impl Parse for AssetStorageArgs {
@@ -63,6 +64,7 @@ pub fn pyasset(attr: TokenStream, item: TokenStream) -> TokenStream {
             let mut not_loadable = false;
             let mut input_converter = false;
             let mut material = false;
+            let mut missing_resource_hint = None;
 
             while input.peek(Token![,]) {
                 input.parse::<Token![,]>()?;
@@ -71,23 +73,44 @@ pub fn pyasset(attr: TokenStream, item: TokenStream) -> TokenStream {
                 }
                 if input.peek(syn::LitStr) {
                     bridge_name = Some(input.parse::<syn::LitStr>()?.value());
-                } else {
-                    let ident: Ident = input.parse()?;
-                    match ident.to_string().as_str() {
-                        "no_clone" => no_clone = true,
-                        "bridge" => bridge = true,
-                        "not_loadable" => not_loadable = true,
-                        "material" => material = true,
-                        "input_converter" => input_converter = true,
-                        other => {
-                            return Err(syn::Error::new_spanned(
-                                ident,
-                                format!(
-                                    "unknown option '{}', expected one of: no_clone, bridge, not_loadable, input_converter, material",
-                                    other
-                                ),
-                            ));
-                        }
+                    continue;
+                }
+                let ident: Ident = input.parse()?;
+                if input.peek(Token![=]) {
+                    input.parse::<Token![=]>()?;
+                    let value: syn::LitStr = input.parse()?;
+                    if ident != "missing_resource_hint" {
+                        let name = ident.to_string();
+                        return Err(syn::Error::new_spanned(
+                            ident,
+                            format!(
+                                "unknown option '{name}', expected 'missing_resource_hint = \"...\"'"
+                            ),
+                        ));
+                    }
+                    if missing_resource_hint.is_some() {
+                        return Err(syn::Error::new_spanned(
+                            ident,
+                            "`missing_resource_hint` is given more than once",
+                        ));
+                    }
+                    missing_resource_hint = Some(value.value());
+                    continue;
+                }
+                match ident.to_string().as_str() {
+                    "no_clone" => no_clone = true,
+                    "bridge" => bridge = true,
+                    "not_loadable" => not_loadable = true,
+                    "material" => material = true,
+                    "input_converter" => input_converter = true,
+                    other => {
+                        return Err(syn::Error::new_spanned(
+                            ident,
+                            format!(
+                                "unknown option '{}', expected one of: no_clone, bridge, not_loadable, input_converter, material, missing_resource_hint = \"...\"",
+                                other
+                            ),
+                        ));
                     }
                 }
             }
@@ -107,6 +130,7 @@ pub fn pyasset(attr: TokenStream, item: TokenStream) -> TokenStream {
                 not_loadable,
                 input_converter,
                 material,
+                missing_resource_hint,
             })
         }
     }
@@ -166,6 +190,7 @@ pub fn pyasset(attr: TokenStream, item: TokenStream) -> TokenStream {
             args.not_loadable,
             args.input_converter,
             args.material,
+            args.missing_resource_hint.as_deref(),
         )
     } else {
         quote! {}
@@ -238,6 +263,7 @@ pub(crate) fn generate_asset_bridge_tokens(
     not_loadable: bool,
     input_converter: bool,
     material: bool,
+    missing_resource_hint: Option<&str>,
 ) -> proc_macro2::TokenStream {
     let bridge_initializer = if material {
         quote! {
@@ -256,6 +282,9 @@ pub(crate) fn generate_asset_bridge_tokens(
     });
     let bridge_name = quote::format_ident!("{}Bridge", bridge_name_str);
     let asset_name = &bridge_name_str;
+
+    let missing_hint =
+        missing_resource_hint.map_or_else(|| quote! { None }, |hint| quote! { Some(#hint) });
 
     let is_loadable_impl = if not_loadable {
         quote! {
@@ -431,7 +460,7 @@ pub(crate) fn generate_asset_bridge_tokens(
                 let world_cell = world.as_unsafe_world_cell_readonly();
                 let assets = world.get_resource::<Assets<#bevy_type>>().ok_or_else(|| {
                     pyo3::exceptions::PyRuntimeError::new_err(
-                        concat!("Assets<", #asset_name, "> resource not found")
+                        pybevy_core::public_error::assets_resource_missing(#asset_name, #missing_hint)
                     )
                 })?;
 
@@ -474,7 +503,7 @@ pub(crate) fn generate_asset_bridge_tokens(
                 let assets = unsafe { world_cell.get_resource::<Assets<#bevy_type>>() }
                     .ok_or_else(|| {
                         pyo3::exceptions::PyRuntimeError::new_err(
-                            concat!("Assets<", #asset_name, "> resource not found")
+                            pybevy_core::public_error::assets_resource_missing(#asset_name, #missing_hint)
                         )
                     })?;
 
@@ -527,7 +556,7 @@ pub(crate) fn generate_asset_bridge_tokens(
                 // Python wrapper still owning its asset.
                 let mut assets = world.get_resource_mut::<Assets<#bevy_type>>().ok_or_else(|| {
                     pyo3::exceptions::PyRuntimeError::new_err(
-                        concat!("Assets<", #asset_name, "> resource not found")
+                        pybevy_core::public_error::assets_resource_missing(#asset_name, #missing_hint)
                     )
                 })?;
                 resource_state.advance_epoch();
@@ -559,7 +588,7 @@ pub(crate) fn generate_asset_bridge_tokens(
                 }
                 let mut assets = world.get_resource_mut::<Assets<#bevy_type>>().ok_or_else(|| {
                     pyo3::exceptions::PyRuntimeError::new_err(
-                        concat!("Assets<", #asset_name, "> resource not found")
+                        pybevy_core::public_error::assets_resource_missing(#asset_name, #missing_hint)
                     )
                 })?;
                 resource_state.advance_epoch();
@@ -572,7 +601,7 @@ pub(crate) fn generate_asset_bridge_tokens(
 
                 let assets = world.get_resource::<Assets<#bevy_type>>().ok_or_else(|| {
                     pyo3::exceptions::PyRuntimeError::new_err(
-                        concat!("Assets<", #asset_name, "> resource not found")
+                        pybevy_core::public_error::assets_resource_missing(#asset_name, #missing_hint)
                     )
                 })?;
 
@@ -588,7 +617,7 @@ pub(crate) fn generate_asset_bridge_tokens(
 
                 let assets = world.get_resource::<Assets<#bevy_type>>().ok_or_else(|| {
                     pyo3::exceptions::PyRuntimeError::new_err(
-                        concat!("Assets<", #asset_name, "> resource not found")
+                        pybevy_core::public_error::assets_resource_missing(#asset_name, #missing_hint)
                     )
                 })?;
 
@@ -609,7 +638,7 @@ pub(crate) fn generate_asset_bridge_tokens(
                 let world_cell = world.as_unsafe_world_cell_readonly();
                 let assets = world.get_resource::<Assets<#bevy_type>>().ok_or_else(|| {
                     pyo3::exceptions::PyRuntimeError::new_err(
-                        concat!("Assets<", #asset_name, "> resource not found")
+                        pybevy_core::public_error::assets_resource_missing(#asset_name, #missing_hint)
                     )
                 })?;
 
@@ -656,7 +685,7 @@ pub(crate) fn generate_asset_bridge_tokens(
                 }
                 let mut assets = world.get_resource_mut::<Assets<#bevy_type>>().ok_or_else(|| {
                     pyo3::exceptions::PyRuntimeError::new_err(
-                        concat!("Assets<", #asset_name, "> resource not found")
+                        pybevy_core::public_error::assets_resource_missing(#asset_name, #missing_hint)
                     )
                 })?;
                 resource_state.advance_epoch();

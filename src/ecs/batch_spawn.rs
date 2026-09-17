@@ -16,10 +16,7 @@ use pyo3::{
 };
 
 use super::{
-    component_layout::{
-        ComponentLayout, ComponentLayoutExt, ComponentStorageType, ComponentStorageTypeExt,
-        serialize_to_wrapper,
-    },
+    component_layout::{ComponentStorageType, ComponentStorageTypeExt, serialize_to_wrapper},
     component_type::PyComponentType,
     component_wrapper::*,
     helpers::type_utils::get_python_type_name,
@@ -393,10 +390,12 @@ fn prepare_uniform(
             let py_type =
                 unsafe { Bound::from_borrowed_ptr(py, raw_type_ptr as *mut pyo3::ffi::PyObject) };
             let class = py_type.cast::<PyType>()?;
-            let storage_type = ComponentStorageType::from_python_class(class)?;
+            // A uniform component is prepared once and reused for every entity in the batch.
+            let (storage_type, wrapper_layout) = ComponentStorageType::storage_with_layout(class)?;
             let prepared: Box<dyn PreparedUniformComponent> = match storage_type {
                 ComponentStorageType::Wrapper(_) => {
-                    let layout = ComponentLayout::from_annotations(class)?;
+                    let layout = wrapper_layout
+                        .expect("wrapper storage carries the layout that selected it");
                     let bytes = serialize_to_wrapper(component, &layout)?;
                     let wrapper_size = WrapperSize::for_size(bytes.len()).ok_or_else(|| {
                         PyValueError::new_err(format!(

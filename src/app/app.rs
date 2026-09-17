@@ -33,7 +33,7 @@ use pybevy_core::{
         duplicate_plugin_identity, plugin_build_error, plugin_key_type, plugin_missing_decorator,
         plugin_not_a_plugin,
     },
-    register_wrapped_reflect_types,
+    register_wrapped_reflect_types_for_new_app,
 };
 use pybevy_ecs::shared::schedule::{
     StateScheduleLabel, TransitionScheduleLabel, configure_standard_schedules,
@@ -783,7 +783,7 @@ impl PyApp {
 
         // Reflect-register all bridged bevy types so MCP/editor tooling can
         // resolve them by name even without bevy's reflect_auto_register
-        register_wrapped_reflect_types(app.world());
+        register_wrapped_reflect_types_for_new_app(app.world());
 
         // Pre-insert the MCP error resource and its off-world buffer, then register
         // the drain that moves buffered errors into it each frame. Pre-inserting
