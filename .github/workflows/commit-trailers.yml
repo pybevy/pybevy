@@ -1,0 +1,42 @@
+name: Commit trailers
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{github.workflow}}-${{github.ref}}
+  cancel-in-progress: ${{github.event_name == 'pull_request'}}
+
+permissions:
+  contents: read
+
+jobs:
+  trailers:
+    name: No AI attribution trailers
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan commit messages
+        env:
+          BASE_SHA: ${{github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before}}
+          HEAD_SHA: ${{github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha}}
+        run: .github/scripts/check-commit-trailers.sh "$BASE_SHA" "$HEAD_SHA"
+
+      # A squash merge can take its body from the pull request description.
+      - name: Scan pull request title and body
+        if: github.event_name == 'pull_request'
+        env:
+          PR_TITLE: ${{github.event.pull_request.title}}
+          PR_BODY: ${{github.event.pull_request.body}}
+        run: |
+          printf '%s\n\n%s\n' "$PR_TITLE" "$PR_BODY" >"$RUNNER_TEMP/pr-description.txt"
+          .github/scripts/check-commit-trailers.sh --message-file "$RUNNER_TEMP/pr-description.txt"
