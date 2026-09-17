@@ -1,6 +1,6 @@
 use pybevy_core::{
     LogicalTypeId, PyLogicalComponentParam,
-    public_error::{ANY_OF_EMPTY, ANY_OF_TUPLE_REQUIRED, OR_IS_FILTER},
+    public_error::{ANY_OF_EMPTY, ANY_OF_TUPLE_REQUIRED, OR_IS_FILTER, query_data_required},
 };
 use pyo3::{
     IntoPyObjectExt, PyTypeInfo,
@@ -293,13 +293,16 @@ pub(crate) fn construct_query_class_item_with_options(
                             // It's a tuple - check if all elements are filters
                             if let Ok(args) = item.getattr("__args__") {
                                 if let Ok(tuple_args) = args.cast::<PyTuple>() {
-                                    tuple_args.iter().all(|arg| {
-                                        arg.is_instance_of::<PyWith>()
-                                            || arg.is_instance_of::<PyWithout>()
-                                            || arg.is_instance_of::<PyChanged>()
-                                            || arg.is_instance_of::<PyAdded>()
-                                            || arg.is_instance_of::<PyOr>()
-                                    })
+                                    // An empty tuple alias is an explicit empty
+                                    // data tuple, not a filter tuple.
+                                    !tuple_args.is_empty()
+                                        && tuple_args.iter().all(|arg| {
+                                            arg.is_instance_of::<PyWith>()
+                                                || arg.is_instance_of::<PyWithout>()
+                                                || arg.is_instance_of::<PyChanged>()
+                                                || arg.is_instance_of::<PyAdded>()
+                                                || arg.is_instance_of::<PyOr>()
+                                        })
                                 } else {
                                     false
                                 }
@@ -375,6 +378,18 @@ pub(crate) fn construct_query_class_item_with_options(
         .collect();
 
     let single = single && (!single_entity_enforced || !data.is_empty());
+
+    if data.is_empty() && single {
+        let kind = if single_entity_enforced {
+            "Single"
+        } else {
+            "Query"
+        };
+        return Err(PyTypeError::new_err(filter_only_error_message(
+            py, kind, &filters,
+        )));
+    }
+
     PyQueryParam {
         retained_types: PyQueryParam::retain_custom_types(py, &data, &filters),
         data,
@@ -384,4 +399,55 @@ pub(crate) fn construct_query_class_item_with_options(
         optional_single: false,
     }
     .into_py_any(py)
+}
+
+/// Names a query filter in the spelling users write, for error text.
+fn filter_label(py: Python, filter: &QueryFilter) -> String {
+    match filter {
+        QueryFilter::With(with) => {
+            let names = with
+                .values
+                .iter()
+                .map(|ty| ty.display_name(py))
+                .collect::<Vec<_>>();
+            format!("With[{}]", names.join(", "))
+        }
+        QueryFilter::Without(without) => {
+            let names = without
+                .values
+                .iter()
+                .map(|ty| ty.display_name(py))
+                .collect::<Vec<_>>();
+            format!("Without[{}]", names.join(", "))
+        }
+        QueryFilter::Changed(changed) => {
+            format!("Changed[{}]", changed.component_type.display_name(py))
+        }
+        QueryFilter::Added(added) => {
+            format!("Added[{}]", added.component_type.display_name(py))
+        }
+        QueryFilter::Or(ort) => {
+            let inner = ort
+                .values
+                .iter()
+                .map(|filter| filter_label(py, filter))
+                .collect::<Vec<_>>();
+            format!("Or[tuple[{}]]", inner.join(", "))
+        }
+    }
+}
+
+/// Builds the stable error text for a descriptor whose filters occupy the
+/// data position, leaving no data slots.
+pub(crate) fn filter_only_error_message(py: Python, kind: &str, filters: &[QueryFilter]) -> String {
+    let labels: Vec<String> = filters
+        .iter()
+        .map(|filter| filter_label(py, filter))
+        .collect();
+    let shape = if labels.is_empty() {
+        format!("{kind}[()]")
+    } else {
+        format!("{kind}[{}]", labels.join(", "))
+    };
+    query_data_required(kind, &shape, &labels)
 }

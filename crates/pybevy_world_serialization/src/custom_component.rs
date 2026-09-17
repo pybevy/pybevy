@@ -15,7 +15,6 @@ use bevy::{
     prelude::World,
     reflect::{FromReflect, PartialReflect, Reflect, TypeRegistry},
 };
-
 use pybevy_core::{
     ReflectTypeRegistration, component_layout::PrimitiveValue,
     component_wrapper::insert_wrapper_bytes, custom_component::CustomComponentRegistry, inventory,
@@ -100,6 +99,7 @@ pub(crate) struct ReflectedPythonComponents {
 
 inventory::submit!(ReflectTypeRegistration {
     register: register_custom_component_reflection,
+    registers_only: None,
 });
 
 /// Register the envelope and its custom materialization behavior.

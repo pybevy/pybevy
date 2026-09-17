@@ -1,6 +1,8 @@
 use bevy::shader::ShaderImport;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
+#[pyenum(ShaderImport, no_repr)]
 #[pyclass(
     name = "ShaderImport",
     module = "pybevy.shader",
@@ -10,7 +12,9 @@ use pyo3::prelude::*;
 )]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PyShaderImport {
+    #[py_bevy(tuple)]
     AssetPath { value: String },
+    #[py_bevy(tuple)]
     Custom { value: String },
 }
 
@@ -34,36 +38,5 @@ impl PyShaderImport {
 
     fn __str__(&self) -> String {
         self.module_name()
-    }
-}
-
-impl From<PyShaderImport> for ShaderImport {
-    fn from(py_import: PyShaderImport) -> Self {
-        match py_import {
-            PyShaderImport::AssetPath { value } => ShaderImport::AssetPath(value),
-            PyShaderImport::Custom { value } => ShaderImport::Custom(value),
-        }
-    }
-}
-
-impl From<&ShaderImport> for PyShaderImport {
-    fn from(import: &ShaderImport) -> Self {
-        match import {
-            ShaderImport::AssetPath(value) => PyShaderImport::AssetPath {
-                value: value.clone(),
-            },
-            ShaderImport::Custom(value) => PyShaderImport::Custom {
-                value: value.clone(),
-            },
-        }
-    }
-}
-
-impl From<ShaderImport> for PyShaderImport {
-    fn from(import: ShaderImport) -> Self {
-        match import {
-            ShaderImport::AssetPath(value) => PyShaderImport::AssetPath { value },
-            ShaderImport::Custom(value) => PyShaderImport::Custom { value },
-        }
     }
 }

@@ -35,7 +35,7 @@ use crate::{
         messages::{MessageType, PyMessageType},
         observer::EventType,
         query::{query_param::PyQueryParam, single::PySingle},
-        resource_type::reject_state_type_as_resource,
+        resource_type::{reject_state_type_as_resource, reject_unparameterized_button_input},
         view::{view::PyView, view_param::PyViewParam},
     },
 };
@@ -559,6 +559,8 @@ impl SystemFunction {
                     .cast::<PyType>()?
                     .is_subclass_of::<PyResource>()?
             {
+                // Validate the specialization before generating a resource remedy.
+                reject_unparameterized_button_input(annotation.cast::<PyType>()?)?;
                 if is_wrapped_resource {
                     // Resource wrapped in Res[T] or ResMut[T] - allowed
                     let type_obj = annotation.cast::<PyType>()?;

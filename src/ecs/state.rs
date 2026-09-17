@@ -27,6 +27,7 @@ use pybevy_core::{
     custom_resource::insert_dynamic_resource_value,
     public_error::{
         NEXT_STATE_CONSTRUCTION, expected_state_member, expected_state_member_got_state_type,
+        typed_state_descriptor_construction,
     },
     resource_initializer,
 };
@@ -43,7 +44,7 @@ use pyo3::{
     PyTraverseError, PyTypeInfo, PyVisit,
     exceptions::{PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
-    types::{PyDict, PyTuple, PyType},
+    types::{PyCFunction, PyDict, PyTuple, PyType},
 };
 
 use crate::ecs::{
@@ -408,7 +409,7 @@ impl PyNextState {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 enum StateResourceKind {
     Current,
     Next,
@@ -486,6 +487,10 @@ fn typed_state_resource_type(
     namespace.set_item("__pybevy_resource_decorated__", true)?;
     namespace.set_item("__pybevy_state_type__", state_type)?;
     namespace.set_item("__pybevy_state_kind__", kind.name())?;
+    namespace.set_item(
+        "__new__",
+        typed_state_descriptor_new(py, &descriptor_name, &state_name, kind)?,
+    )?;
     let bases = PyTuple::new(py, [PyResource::type_object(py)])?;
     let descriptor = py
         .get_type::<PyType>()
@@ -496,6 +501,28 @@ fn typed_state_resource_type(
     // single descriptor stored for this exact state class.
     let (_, canonical) = cache.set_default_with_result(state_type, &descriptor)?;
     Ok(canonical.cast_into::<PyType>()?.unbind())
+}
+
+/// Reject construction: the inherited `Resource.__new__` would build an inert object from any arguments.
+fn typed_state_descriptor_new<'py>(
+    py: Python<'py>,
+    descriptor_name: &str,
+    state_name: &str,
+    kind: StateResourceKind,
+) -> PyResult<Bound<'py, PyCFunction>> {
+    let message = typed_state_descriptor_construction(
+        descriptor_name,
+        state_name,
+        kind == StateResourceKind::Next,
+    );
+    PyCFunction::new_closure(
+        py,
+        Some(c"__new__"),
+        None,
+        move |_args: &Bound<'_, PyTuple>, _kwargs: Option<&Bound<'_, PyDict>>| -> PyResult<()> {
+            Err(PyTypeError::new_err(message.clone()))
+        },
+    )
 }
 
 struct PyStateMachineEntry {

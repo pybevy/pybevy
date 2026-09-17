@@ -37,7 +37,8 @@ use pybevy_bytecodevm::{
     },
 };
 use pybevy_core::{
-    FieldType as StorageFieldType, PyEntity, public_error::RESOURCE_VIEW_DATA,
+    FieldType as StorageFieldType, PyEntity,
+    public_error::{RESOURCE_VIEW_DATA, VIEW_COLUMN_READ_ONLY_ASSIGNMENT},
     registry::global_registry,
 };
 use pyo3::{
@@ -664,6 +665,16 @@ impl PyViewCol {
     fn __getattr__<'py>(&self, py: Python<'py>, name: &str) -> PyResult<Py<PyAny>> {
         self.validity.check()?;
         create_field_proxy(py, &self.component_type, self.component_id, name)
+    }
+
+    /// Reject writes on the read-only lazy facade.
+    ///
+    /// `col.a = value` must report the read-only contract instead of falling
+    /// through to a missing-attribute error. Validity is checked first so
+    /// expired and cross-thread access keeps its precedence.
+    fn __setattr__(&self, _name: &str, _value: &Bound<'_, PyAny>) -> PyResult<()> {
+        self.validity.check()?;
+        Err(PyRuntimeError::new_err(VIEW_COLUMN_READ_ONLY_ASSIGNMENT))
     }
 }
 

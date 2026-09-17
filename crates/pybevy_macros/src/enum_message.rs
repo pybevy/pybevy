@@ -279,6 +279,14 @@ fn try_expand(
             pub fn __copy__(&self, py: pyo3::Python<'_>) -> pyo3::PyResult<pyo3::Py<pyo3::PyAny>> {
                 #materialize_inner(py, self.inner.clone())
             }
+
+            pub fn __deepcopy__(
+                &self,
+                py: pyo3::Python<'_>,
+                _memo: &pyo3::Bound<'_, pyo3::PyAny>,
+            ) -> pyo3::PyResult<pyo3::Py<pyo3::PyAny>> {
+                #materialize_inner(py, self.inner.clone())
+            }
         }
 
         impl From<#py_type> for #inner_type {

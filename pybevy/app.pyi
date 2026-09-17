@@ -1,5 +1,4 @@
 from collections.abc import Callable
-from enum import Enum, auto
 from typing import Any, ClassVar, Final, Literal, TypeVar, overload
 
 from pybevy.ecs import (
@@ -85,7 +84,7 @@ def _test_force_cleanup() -> None:
     Used to test that cleanup works correctly with Python resources.
     """
 
-class Stage(Enum):
+class Stage:
     """Schedule labels for system execution ordering.
 
     PyBevy provides 14 schedules that run in a specific order each frame:
@@ -112,21 +111,21 @@ class Stage(Enum):
     - FixedLast: After fixed update
     """
 
-    Startup = auto()
-    Update = auto()
-    Last = auto()
-    FixedUpdate = auto()
-    Main = auto()
-    First = auto()
-    PreUpdate = auto()
-    PostUpdate = auto()
-    PreStartup = auto()
-    PostStartup = auto()
-    FixedFirst = auto()
-    FixedPreUpdate = auto()
-    FixedPostUpdate = auto()
-    FixedLast = auto()
-    SimTick = auto()
+    Startup: Stage
+    Update: Stage
+    Last: Stage
+    FixedUpdate: Stage
+    Main: Stage
+    First: Stage
+    PreUpdate: Stage
+    PostUpdate: Stage
+    PreStartup: Stage
+    PostStartup: Stage
+    FixedFirst: Stage
+    FixedPreUpdate: Stage
+    FixedPostUpdate: Stage
+    FixedLast: Stage
+    SimTick: Stage
 
 # Convenience aliases for schedule labels
 Startup = Stage.Startup
@@ -358,7 +357,7 @@ class HotReloadControl(Resource):
 
     Example:
         ```python
-        def handle_f5(input: ButtonInput, world: World) -> None:
+        def handle_f5(input: Res[ButtonInput[KeyCode]], world: World) -> None:
             if input.just_pressed(KeyCode.F5):
                 control = world.resource(HotReloadControl)
                 control.request_full_reload()

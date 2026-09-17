@@ -67,7 +67,10 @@ use crate::{
         python_message::{python_message_is_registered, resolve_from_world},
         query::{query_param::PyQueryParam, query_runtime::PyQueryIter},
         resource::{PyRes, PyResMut, hierarchy_contains_resource_entity},
-        resource_type::{PyResourceType, ResourceRegistry, register_custom_resource},
+        resource_type::{
+            PyResourceType, ResourceRegistry, register_custom_resource,
+            reject_unparameterized_button_input,
+        },
         state::{
             PyOnEnterSchedule, PyOnExitSchedule, PyOnTransitionSchedule,
             canonicalize_state_schedule_label, canonicalize_transition_schedule_label,
@@ -628,8 +631,7 @@ impl PyWorld {
     ) -> PyResult<PyEntityCommands> {
         pyself.check_valid()?;
         let components = crate::ecs::commands::normalize_spawn_components(components)?;
-        crate::ecs::commands::reject_resource_spawn_components(py, &components)?;
-        crate::ecs::commands::validate_component_bundle(py, &components)?;
+        let component_types = crate::ecs::commands::resolve_spawn_bundle(py, &components)?;
         pyself.check_native_asset_access("world.spawn()")?;
 
         let entity_id = pyself.world_mut()?.spawn_empty().id();
@@ -644,11 +646,11 @@ impl PyWorld {
 
         // The shared insertion helper owns Discard -> mutation -> Add ->
         // Insert ordering for both spawn and later insert paths.
-        crate::ecs::commands::insert_components_to_entity_helper(
+        crate::ecs::commands::insert_resolved_components_to_entity(
             &temp_commands,
-            py,
             entity_id,
             &components,
+            component_types,
         )?;
 
         Ok(PyEntityCommands::with_world(entity_id, pyself))
@@ -682,6 +684,7 @@ impl PyWorld {
 
         // Extract the resource type
         let type_obj: Bound<'_, PyType> = resource.extract()?;
+        reject_unparameterized_button_input(&type_obj)?;
         let py_resource_type = PyResourceType::try_from((&type_obj, py))?;
 
         // Get the world reference

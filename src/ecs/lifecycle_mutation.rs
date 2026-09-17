@@ -17,6 +17,7 @@ use pybevy_ecs::shared::{
     system_runtime::ErrorPolicy,
 };
 use pyo3::prelude::*;
+use smallvec::SmallVec;
 
 use super::{
     component_type::PyComponentType,
@@ -25,8 +26,9 @@ use super::{
     resource::is_resource_entity,
 };
 
-type StructuralInsert<'a> = Box<dyn FnOnce(&mut World) -> bool + 'a>;
+type NoStructuralInsert = fn(&mut World) -> bool;
 type ActiveLifecycleKey = (WorldId, LifecycleEvent, Entity, usize);
+type ResolvedComponentIds = SmallVec<[(PyComponentType, ComponentId); 8]>;
 
 thread_local! {
     /// Prevent one callback from recursively re-emitting the exact lifecycle
@@ -55,15 +57,47 @@ fn component_key(component: PyComponentType) -> usize {
     }
 }
 
-struct MainLifecycleAdapter<'a> {
+struct MainLifecycleAdapter<'a, F = NoStructuralInsert> {
     world: &'a mut World,
-    insert: Option<StructuralInsert<'a>>,
+    insert: Option<F>,
     despawn_result: Option<(Entity, bool)>,
+    component_ids: RefCell<ResolvedComponentIds>,
 }
 
-impl MainLifecycleAdapter<'_> {
+impl<'a> MainLifecycleAdapter<'a, NoStructuralInsert> {
+    fn without_insert(world: &'a mut World, despawn_result: Option<(Entity, bool)>) -> Self {
+        Self {
+            world,
+            insert: None,
+            despawn_result,
+            component_ids: RefCell::new(ResolvedComponentIds::new()),
+        }
+    }
+}
+
+impl<'a, F: FnOnce(&mut World) -> bool> MainLifecycleAdapter<'a, F> {
+    fn with_insert(world: &'a mut World, insert: F) -> Self {
+        Self {
+            world,
+            insert: Some(insert),
+            despawn_result: None,
+            component_ids: RefCell::new(ResolvedComponentIds::new()),
+        }
+    }
+
     fn component_id(&self, component: PyComponentType) -> Option<ComponentId> {
-        ObserverRegistry::component_id(self.world, &component)
+        let known = self
+            .component_ids
+            .borrow()
+            .iter()
+            .find(|(resolved, _)| *resolved == component)
+            .map(|(_, id)| *id);
+        if known.is_some() {
+            return known;
+        }
+        let id = ObserverRegistry::component_id(self.world, &component)?;
+        self.component_ids.borrow_mut().push((component, id));
+        Some(id)
     }
 
     fn active_key(
@@ -76,7 +110,7 @@ impl MainLifecycleAdapter<'_> {
     }
 }
 
-impl LifecycleMutationAdapter for MainLifecycleAdapter<'_> {
+impl<F: FnOnce(&mut World) -> bool> LifecycleMutationAdapter for MainLifecycleAdapter<'_, F> {
     type Entity = Entity;
     type Component = PyComponentType;
     type Observer = ObserverEntry;
@@ -238,11 +272,7 @@ pub(crate) fn insert_many_with(
     insert: impl FnOnce(&mut World) -> bool,
 ) -> LifecycleMutationOutcome {
     LifecycleMutationCore.insert_many(
-        &mut MainLifecycleAdapter {
-            world,
-            insert: Some(Box::new(insert)),
-            despawn_result: None,
-        },
+        &mut MainLifecycleAdapter::with_insert(world, insert),
         entity,
         components,
     )
@@ -254,11 +284,7 @@ pub(crate) fn remove(
     component: PyComponentType,
 ) -> LifecycleMutationOutcome {
     LifecycleMutationCore.remove(
-        &mut MainLifecycleAdapter {
-            world,
-            insert: None,
-            despawn_result: None,
-        },
+        &mut MainLifecycleAdapter::without_insert(world, None),
         entity,
         component,
     )
@@ -270,11 +296,7 @@ pub(crate) fn finish_new_bundle(
     components: &[PyComponentType],
 ) -> LifecycleMutationOutcome {
     LifecycleMutationCore.finish_new_bundle(
-        &mut MainLifecycleAdapter {
-            world,
-            insert: None,
-            despawn_result: None,
-        },
+        &mut MainLifecycleAdapter::without_insert(world, None),
         entity,
         components,
     )
@@ -309,11 +331,7 @@ pub(crate) fn despawn_recursive(world: &mut World, root: Entity) -> bool {
     if snapshots.is_empty() && !is_resource_entity(world, root) {
         snapshots.push(RecursiveDespawnSnapshot::new(root, Vec::new()));
     }
-    let mut adapter = MainLifecycleAdapter {
-        world,
-        insert: None,
-        despawn_result: Some((root, false)),
-    };
+    let mut adapter = MainLifecycleAdapter::without_insert(world, Some((root, false)));
     LifecycleMutationCore.despawn_recursive(&mut adapter, &snapshots);
     adapter
         .despawn_result

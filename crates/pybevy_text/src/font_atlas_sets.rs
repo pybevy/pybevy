@@ -50,7 +50,7 @@ impl PyFontAtlasSet {
     }
 }
 
-#[pyclass(name = "FontAtlasSetKeyIter")]
+#[pyclass(name = "FontAtlasSetKeyIter", module = "pybevy.text")]
 pub struct PyFontAtlasSetKeyIter {
     keys: Vec<PyFontAtlasKey>,
     index: usize,

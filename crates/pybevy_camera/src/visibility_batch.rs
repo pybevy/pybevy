@@ -11,7 +11,7 @@ use pyo3::{PyTypeInfo, prelude::*};
 
 use crate::visibility::PyVisibility;
 
-#[pyclass(name = "VisibilityBatch", from_py_object)]
+#[pyclass(name = "VisibilityBatch", module = "pybevy.camera", from_py_object)]
 #[derive(Debug)]
 pub struct PyVisibilityBatch {
     /// Boolean or integer array indicating visibility state.

@@ -145,10 +145,6 @@ impl PyMessages {
     }
 
     pub(crate) fn iter_to_python(&self, py: Python) -> PyResult<Vec<Py<PyAny>>> {
-        use pybevy_input::{
-            keyboard_input::PyKeyboardInput, keyboard_input_ext::PyKeyboardInputExt,
-        };
-
         let mut world = self.world.world_mut()?;
         let mut guard = self.lock_cursor();
         let cursor_state = match guard.as_mut() {
@@ -160,11 +156,6 @@ impl PyMessages {
         };
 
         match &self.message_type {
-            MessageType::KeyboardInput => {
-                self.iter_messages::<KeyboardInput, _>(py, &mut world, cursor_state, |msg, py| {
-                    Ok(Py::new(py, PyKeyboardInput::from_bevy(msg)?)?.into_any())
-                })
-            }
             MessageType::WindowEvent => {
                 use pybevy_window::window_event::PyWindowEvent;
                 self.iter_messages::<WindowEvent, _>(py, &mut world, cursor_state, |msg, py| {
@@ -232,12 +223,6 @@ impl PyMessages {
         // (EmptyMessages) rather than inserting a resource, which would be a
         // structural world mutation from a possibly-parallel system.
         match &self.message_type {
-            MessageType::KeyboardInput => {
-                match world.get_resource_mut::<Messages<KeyboardInput>>() {
-                    Some(mut messages) => Ok(f(&mut Wrap(&mut *messages))),
-                    None => Ok(f(&mut EmptyMessages)),
-                }
-            }
             MessageType::WindowEvent => match world.get_resource_mut::<Messages<WindowEvent>>() {
                 Some(mut messages) => Ok(f(&mut Wrap(&mut *messages))),
                 None => Ok(f(&mut EmptyMessages)),
@@ -399,6 +384,10 @@ impl PyMessages {
         self.with_messages(|messages| messages.is_empty())
     }
 
+    fn __len__(&self) -> PyResult<usize> {
+        self.len()
+    }
+
     pub fn len(&self) -> PyResult<usize> {
         if let MessageType::AssetEvent(type_ptr) = &self.message_type {
             let bridge = global_registry::get_asset_bridge_by_py_type(*type_ptr)
@@ -425,7 +414,6 @@ impl PyMessages {
 #[derive(Debug)]
 pub enum MessageType {
     // Special handling required (no bridge)
-    KeyboardInput,
     WindowEvent,
     WorldInstanceReady,
     AssetEvent(*const pyo3::ffi::PyTypeObject),
@@ -457,7 +445,6 @@ unsafe impl Sync for MessageType {}
 impl PartialEq for MessageType {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (MessageType::KeyboardInput, MessageType::KeyboardInput) => true,
             (MessageType::WindowEvent, MessageType::WindowEvent) => true,
             (MessageType::WorldInstanceReady, MessageType::WorldInstanceReady) => true,
             (MessageType::AssetEvent(a), MessageType::AssetEvent(b)) => std::ptr::eq(*a, *b),
@@ -474,7 +461,6 @@ impl PartialEq for MessageType {
 impl Clone for MessageType {
     fn clone(&self) -> Self {
         match self {
-            MessageType::KeyboardInput => MessageType::KeyboardInput,
             MessageType::WindowEvent => MessageType::WindowEvent,
             MessageType::WorldInstanceReady => MessageType::WorldInstanceReady,
             MessageType::AssetEvent(ptr) => MessageType::AssetEvent(*ptr),
@@ -489,10 +475,6 @@ impl MessageType {
     /// Stable exact channel identity and a user-facing validation label.
     pub(crate) fn validation_identity(&self) -> (String, String) {
         match self {
-            Self::KeyboardInput => (
-                "native:KeyboardInput".to_string(),
-                "Message<KeyboardInput>".to_string(),
-            ),
             Self::WindowEvent => (
                 "native:WindowEvent".to_string(),
                 "Message<WindowEvent>".to_string(),
@@ -547,9 +529,6 @@ impl MessageType {
     /// their shared-store and synthetic channel access in `MainResolver` instead.
     pub(crate) fn register_resource_id(&self, world: &mut World) -> Option<ComponentId> {
         match self {
-            MessageType::KeyboardInput => {
-                Some(world.register_component::<Messages<KeyboardInput>>())
-            }
             MessageType::WindowEvent => Some(world.register_component::<Messages<WindowEvent>>()),
             MessageType::WorldInstanceReady => {
                 Some(world.register_component::<Messages<WorldInstanceReadyMessage>>())
@@ -601,7 +580,6 @@ impl PyMessageType {
     }
 
     pub(crate) fn from_message_type(message: &Bound<'_, PyType>) -> PyResult<Self> {
-        use pybevy_input::keyboard_input::PyKeyboardInput;
         use pybevy_window::window_event::PyWindowEvent;
         use pybevy_world_serialization::world_instance_ready::PyWorldInstanceReady;
         use pyo3::{PyTypeInfo, types::PyTypeMethods};
@@ -627,10 +605,6 @@ impl PyMessageType {
         }
 
         // Special handling types that don't use #[pymessage] (need extra resources/special logic)
-        if message.is(<PyKeyboardInput as PyTypeInfo>::type_object(py)) {
-            return Ok(PyMessageType(MessageType::KeyboardInput));
-        }
-
         if message.is(<PyWindowEvent as PyTypeInfo>::type_object(py)) {
             return Ok(PyMessageType(MessageType::WindowEvent));
         }

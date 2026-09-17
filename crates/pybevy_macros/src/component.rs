@@ -1192,6 +1192,9 @@ fn generate_bridge_tokens(
             impl #py_type {
                 /// Create a batch of components from array columns for efficient bulk spawning.
                 #[staticmethod]
+                // One parameter per batchable field mirrors the component surface;
+                // wide components such as SpotLight legitimately exceed clippy's default.
+                #[allow(clippy::too_many_arguments)]
                 #[pyo3(signature = (*, #(#signature_defaults),*))]
                 pub fn batch(
                     py: pyo3::Python,

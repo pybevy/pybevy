@@ -3,7 +3,11 @@ use pybevy_core::{FieldStorage, ValueStorage};
 use pybevy_math::urect::PyURect;
 use pyo3::{prelude::*, types::PyList};
 
-#[pyclass(name = "_TextureAtlasRects", skip_from_py_object)]
+#[pyclass(
+    name = "_TextureAtlasRects",
+    module = "pybevy.image",
+    skip_from_py_object
+)]
 #[derive(Clone)]
 pub struct PyTextureAtlasRects {
     storage: FieldStorage<Vec<URect>>,

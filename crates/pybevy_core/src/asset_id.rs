@@ -159,6 +159,10 @@ impl PyAssetId {
         materialize_asset_id(py, *self)
     }
 
+    fn __deepcopy__(&self, py: Python<'_>, _memo: &Bound<'_, PyAny>) -> PyResult<Py<PyAssetId>> {
+        self.__copy__(py)
+    }
+
     fn __hash__(&self) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         self.id.hash(&mut hasher);
