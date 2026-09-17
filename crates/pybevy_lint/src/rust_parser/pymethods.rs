@@ -248,7 +248,7 @@ fn process_method(method: &syn::ImplItemFn, class: &mut PyClassDef, file_path: &
             attr_type: method_def.return_type,
             location: Some(location),
         });
-    } else if is_staticmethod {
+    } else if is_staticmethod || is_classmethod {
         class.static_methods.push(method_def);
     } else {
         class.methods.push(method_def);

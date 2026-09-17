@@ -6,8 +6,13 @@ Full vs partial reload, what persists across reloads, error recovery, and diagno
 
 ### Full Reload
 - Clears all entities and custom Python resources
-- Preserves built-in resources (Time, AssetServer, WireframeConfig, GlobalVolume),
-  but resets the virtual Time clock
+- Built-in (engine-plugin) resources survive as resources but are reset to their
+  engine defaults, including Time, GlobalVolume and WireframeConfig. The virtual
+  Time clock therefore resets to 0
+- `GizmoConfigStore` is the one resource preserved by value, because its contents
+  are plugin-populated and cannot be rebuilt from defaults
+- `AssetServer` is never reset. Assets whose last strong handle was dropped by the
+  despawn are reclaimed by Bevy's asset GC, so their ids and generations change
 - Re-runs ALL systems including Startup (re-creates the scene)
 - Entity IDs will change - use `Name` component for stable references
 - Custom `@component` and `@resource` types are re-aliased by name (no new ComponentId if structure unchanged)
@@ -16,6 +21,8 @@ Full vs partial reload, what persists across reloads, error recovery, and diagno
 
 ### Partial Reload
 - Preserves all entities and resources (including custom ones)
+- Does NOT preserve `Local[T]`: reloading a system constructs its locals
+  again, so keep surviving state in a `@resource`
 - Only reloads Update/Last system functions
 - Startup systems are NOT re-run
 - Use for iterating on game logic without resetting scene state
@@ -220,6 +227,13 @@ Hot reload uses an AST-based import graph to minimize the modules flushed from `
 - This makes reloads faster for large projects (unchanged modules stay cached)
 - F5 with Full mode always does a complete entity reset regardless of module flushing scope
 
+The flush and the import graph share one root: the **launch directory** (the
+directory the scene process was started from) when the scene file is inside
+it, otherwise the **scene's own directory**. A nested scene (for example
+`scenes/foo.py` started from the project root) therefore picks up edits to
+project-root helper modules, while a scene launched by absolute path from
+outside the launch directory uses its own directory to reload sibling helpers.
+
 ## Memory Profiling
 
 Press **F7** to toggle the memory overlay, which shows:
@@ -239,7 +253,9 @@ get_performance  - includes memory_growth_mb, memory_peak_mb, memory_warning, re
 `python_gc_objects` and `last_reload_mode` are always present: before the first
 reload they read `[]`, the live counts, and `null`. `memory_growth_mb`,
 `memory_peak_mb` and `memory_warning` still appear only once there is something
-to report.
+to report. All megabyte figures in this response (`memory_mb`,
+`total_memory_mb`, `memory_growth_mb`, `memory_peak_mb`, and the per-snapshot
+`rss_mb`/`delta_mb`) are JSON numbers that can be compared or plotted directly.
 
 The same response distinguishes process lifetime from reload lifetime:
 `uptime_secs` remains monotonic across reloads, while
@@ -272,6 +288,10 @@ and custom resources. A custom resource can therefore hold an accumulated clock
 across partial reloads. Full reload clears that resource along with the entities;
 state that must survive a full reload needs an external store and must be restored
 by Startup.
+
+`Local[T]` is the exception. Resource values live in the world, but a local
+lives in the reloaded system itself, so both modes construct it again.
+Accumulate in a `@resource`, not a `Local`.
 
 ## Troubleshooting
 

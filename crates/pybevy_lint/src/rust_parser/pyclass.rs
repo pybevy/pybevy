@@ -37,6 +37,8 @@ pub fn parse_struct(item: &ItemStruct, file_path: &Path) -> Option<PyClassDef> {
         extends: pyclass_args.extends,
         frozen: pyclass_args.frozen,
         eq: pyclass_args.eq,
+        hash: pyclass_args.hash,
+        eq_int: pyclass_args.eq_int,
         subclass: pyclass_args.subclass,
         from_py_object: pyclass_args.from_py_object,
         location: Some(location),
@@ -155,6 +157,8 @@ pub fn parse_enum(item: &ItemEnum, file_path: &Path) -> Option<PyClassDef> {
             .or_else(|| generated_resource_base.then(|| "PyResource".to_string())),
         frozen: pyclass_args.frozen,
         eq: pyclass_args.eq,
+        hash: pyclass_args.hash,
+        eq_int: pyclass_args.eq_int,
         subclass: pyclass_args.subclass,
         from_py_object: pyclass_args.from_py_object,
         location: Some(location),
@@ -179,6 +183,8 @@ struct PyClassArgs {
     extends: Option<String>,
     frozen: bool,
     eq: bool,
+    hash: bool,
+    eq_int: bool,
     subclass: bool,
     from_py_object: bool,
 }
@@ -217,6 +223,10 @@ fn parse_pyclass_args(attr: &Attribute) -> PyClassArgs {
                     args.frozen = true;
                 } else if path.is_ident("eq") {
                     args.eq = true;
+                } else if path.is_ident("hash") {
+                    args.hash = true;
+                } else if path.is_ident("eq_int") {
+                    args.eq_int = true;
                 } else if path.is_ident("subclass") {
                     args.subclass = true;
                 } else if path.is_ident("from_py_object") {

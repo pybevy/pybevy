@@ -35,6 +35,26 @@ pub fn merge_source_types(
     merged
 }
 
+/// Merge only enum definitions from a re-export source crate.
+pub fn merge_source_enums(
+    target: &mut BevyCrate,
+    source: &BevyCrate,
+    wanted_names: &HashSet<String>,
+) -> usize {
+    let mut merged = 0;
+    for (name, item) in &source.items {
+        if item.kind != BevyItemKind::Enum
+            || !wanted_names.contains(name)
+            || target.items.contains_key(name)
+        {
+            continue;
+        }
+        target.items.insert(name.clone(), item.clone());
+        merged += 1;
+    }
+    merged
+}
+
 /// Parse re-export source crates and merge their wrapped types into the parsed
 /// Bevy crates. See [`merge_source_types`] for the merge rules.
 pub fn merge_reexported_types(
@@ -44,13 +64,49 @@ pub fn merge_reexported_types(
     wanted_names: &HashSet<String>,
     use_cache: bool,
 ) {
+    merge_reexported_items(
+        bevy_crates,
+        bevy_path,
+        type_sources,
+        wanted_names,
+        use_cache,
+        merge_source_types,
+    );
+}
+
+/// Parse re-export source crates and merge only their enum definitions.
+pub fn merge_reexported_enums(
+    bevy_crates: &mut HashMap<String, BevyCrate>,
+    bevy_path: &Path,
+    enum_sources: &HashMap<String, Vec<String>>,
+    wanted_names: &HashSet<String>,
+    use_cache: bool,
+) {
+    merge_reexported_items(
+        bevy_crates,
+        bevy_path,
+        enum_sources,
+        wanted_names,
+        use_cache,
+        merge_source_enums,
+    );
+}
+
+fn merge_reexported_items(
+    bevy_crates: &mut HashMap<String, BevyCrate>,
+    bevy_path: &Path,
+    sources_by_crate: &HashMap<String, Vec<String>>,
+    wanted_names: &HashSet<String>,
+    use_cache: bool,
+    merge: fn(&mut BevyCrate, &BevyCrate, &HashSet<String>) -> usize,
+) {
     let git_ref = if use_cache {
         cache::get_bevy_git_ref(bevy_path).ok()
     } else {
         None
     };
 
-    for (crate_name, sources) in type_sources {
+    for (crate_name, sources) in sources_by_crate {
         if !bevy_crates.contains_key(crate_name) {
             continue;
         }
@@ -66,7 +122,7 @@ pub fn merge_reexported_types(
                 }
             };
             let target = bevy_crates.get_mut(crate_name).expect("checked above");
-            let merged = merge_source_types(target, &parsed, wanted_names);
+            let merged = merge(target, &parsed, wanted_names);
             if merged > 0 {
                 eprintln!(
                     "  Merged {} re-exported type(s) from {} into {}",

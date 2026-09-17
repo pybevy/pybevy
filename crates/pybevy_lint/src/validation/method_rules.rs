@@ -2,6 +2,7 @@ use crate::{
     config::BevyConfig,
     model::{
         ConstructorOrigin, EnumVariantKind, MethodDef, ParameterKind, PyClassDef, SelfMutability,
+        SourceLocation,
     },
     output::{Diagnostic, DiagnosticCode, Suggestion},
     python_parser::types::{resolve_self, types_compatible},
@@ -1043,6 +1044,158 @@ fn is_value_builder_name(name: &str) -> bool {
         || name == "without"
         || name.starts_with("without_")
         || name.ends_with("ed_by")
+}
+
+/// A type declared as a shared-borrow proxy is borrowed as a `PyRef` while
+/// Python runs: PyO3 holds the receiver borrow for the whole body of a `&self`
+/// method, and that body calls back into Python, which can re-enter the same
+/// object and borrow it again. Shared borrows nest, but `&mut self` and
+/// `PyRefMut<Self>` lower to `borrow_mut()`, which fails while any `PyRef` is
+/// live: one mutable method turns every re-entrant path into a runtime
+/// `BorrowMutError`.
+///
+/// Receivers the parser recognizes, from signatures only. Not detected: a
+/// `borrow_mut()` call or a `PyRefMut` taken from a `Py<T>` inside a method
+/// body, and anything outside a `#[pymethods]` block, since free functions are
+/// never parsed. A mutable receiver named outside the parser's whitelist is
+/// read as an ordinary parameter and reported by
+/// [`validate_shared_borrow_parameters`] instead.
+pub fn validate_shared_borrow_receivers(rust: &PyClassDef, reason: &str) -> Vec<Diagnostic> {
+    const MECHANISM: &str =
+        "PyO3 lowers a mutable receiver to borrow_mut(), which fails while a PyRef is live";
+    let mut diagnostics = Vec::new();
+
+    for method in &rust.methods {
+        if method.self_mutability != SelfMutability::RefMut {
+            continue;
+        }
+
+        diagnostics.push(shared_borrow_diagnostic(
+            format!(
+                "method '{}::{}' takes `&mut self` on a shared-borrow type",
+                rust.python_name, method.name
+            ),
+            method.location.clone(),
+            reason,
+            MECHANISM,
+        ));
+    }
+
+    for property in &rust.properties {
+        if property.has_setter {
+            diagnostics.push(shared_borrow_diagnostic(
+                format!(
+                    "setter '{}::{}' takes a mutable receiver on a shared-borrow type",
+                    rust.python_name, property.name
+                ),
+                property.setter_location.clone(),
+                reason,
+                MECHANISM,
+            ));
+        }
+
+        if property.getter_mutability == SelfMutability::RefMut {
+            diagnostics.push(shared_borrow_diagnostic(
+                format!(
+                    "getter '{}::{}' takes `&mut self` on a shared-borrow type",
+                    rust.python_name, property.name
+                ),
+                property.getter_location.clone(),
+                reason,
+                MECHANISM,
+            ));
+        }
+    }
+
+    diagnostics
+}
+
+/// A type under the shared-borrow rule, named as Rust source spells it.
+/// `Self` names the type inside its own `#[pymethods]` block.
+#[derive(Debug, Clone, Copy)]
+pub struct SharedBorrowTarget<'a> {
+    pub type_name: &'a str,
+    pub reason: &'a str,
+}
+
+/// PyO3 calls `borrow_mut()` when it extracts a `PyRefMut<'_, T>` parameter,
+/// so such a parameter is the same hazard as a mutable receiver on `T` and can
+/// sit on any class, not just `T`'s own. This also covers a typed self
+/// receiver whose name is outside the parser's receiver whitelist, which is
+/// recorded as an ordinary parameter.
+pub fn validate_shared_borrow_parameters(
+    rust: &PyClassDef,
+    targets: &[SharedBorrowTarget<'_>],
+) -> Vec<Diagnostic> {
+    const MECHANISM: &str =
+        "PyO3 borrow_mut()s a PyRefMut parameter at extraction, which fails while a PyRef is live";
+    let mut diagnostics = Vec::new();
+    if targets.is_empty() {
+        return diagnostics;
+    }
+
+    let methods = rust
+        .constructor
+        .iter()
+        .chain(&rust.methods)
+        .chain(&rust.static_methods);
+
+    for method in methods {
+        for parameter in &method.parameters {
+            let Some(param_type) = parameter.param_type.as_deref() else {
+                continue;
+            };
+            if !type_mentions(param_type, "PyRefMut") {
+                continue;
+            }
+            let Some(target) = targets
+                .iter()
+                .find(|target| type_mentions(param_type, target.type_name))
+            else {
+                continue;
+            };
+
+            diagnostics.push(shared_borrow_diagnostic(
+                format!(
+                    "parameter '{}' of '{}::{}' takes `PyRefMut` of a shared-borrow type",
+                    parameter.name, rust.python_name, method.name
+                ),
+                method.location.clone(),
+                target.reason,
+                MECHANISM,
+            ));
+        }
+    }
+
+    diagnostics
+}
+
+/// Whether a rendered type names `name` as a whole path segment.
+fn type_mentions(type_str: &str, name: &str) -> bool {
+    type_str
+        .split(|c: char| !c.is_alphanumeric() && c != '_')
+        .any(|token| token == name)
+}
+
+fn shared_borrow_diagnostic(
+    message: String,
+    location: Option<SourceLocation>,
+    reason: &str,
+    mechanism: &str,
+) -> Diagnostic {
+    let mut diag = Diagnostic::warning(DiagnosticCode::W014, message);
+
+    if let Some(loc) = location {
+        diag = diag.with_location(loc);
+    }
+
+    diag.with_note(format!(
+        "shared borrow held across a call into Python: {reason}"
+    ))
+    .with_note(mechanism)
+    .with_suggestion(Suggestion::new(
+        "take `&self` and mutate through interior mutability or a validity-checked pointer",
+    ))
 }
 
 /// Whether the return type names `Self`, covering `PyResult<Py<Self>>`,

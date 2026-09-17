@@ -293,7 +293,7 @@ rock.set_positions(positions)
 
 ### Soft Shadows
 ```python
-commands.spawn(Camera3d(), ShadowFilteringMethod.TEMPORAL)  # or .GAUSSIAN
+commands.spawn(Camera3d(), ShadowFilteringMethod.Temporal)  # or .Gaussian
 ```
 
 ### Water / Glass Materials

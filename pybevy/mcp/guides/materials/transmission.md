@@ -24,6 +24,10 @@ Three parameters work together:
 
 **IOR differences** are subtle between 1.3–1.5 but dramatic above 2.0. **Thickness** controls background distortion: below 0.2 looks like flat transparency, above 0.5 produces noticeable distortion.
 
+`thickness` defaults to `0.0`, and the shader scales both refraction and
+attenuation by it, so `ior`, `attenuation_color`, and `attenuation_distance`
+have no effect until you set a non-zero `thickness`.
+
 ### Glass Sphere Example
 
 ```python
@@ -120,5 +124,14 @@ commands.spawn(
     TransmittedShadowReceiver(),
 )
 ```
+
+### Camera-side settings
+
+PBR's transmission plugin registers `pybevy.pbr.ScreenSpaceTransmission` as a
+required `Camera3d` component, defaulting to `steps=1` and Medium quality. Each
+step roughly supports another overlapping transmissive layer at the cost of a
+texture copy; `0` disables screen-space refraction. Quality controls blur on
+rough transmissive materials, so changing it has no visible effect at
+`perceptual_roughness=0`.
 
 **For all parameters:** `get_type_definition('StandardMaterial')`

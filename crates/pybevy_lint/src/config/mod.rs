@@ -97,6 +97,8 @@ pub struct ValidationConfig {
     pub exceptions: Vec<ValidationException>,
     #[serde(default)]
     pub disabled: Vec<DisabledDiagnostic>,
+    #[serde(default)]
+    pub shared_borrow_types: Vec<SharedBorrowType>,
 }
 
 /// A diagnostic code turned off wholesale, with a durable reason.
@@ -106,6 +108,17 @@ pub struct DisabledDiagnostic {
     /// Diagnostic code, such as `W007`.
     pub code: String,
     /// Durable explanation for why the whole code is advisory-only here.
+    pub reason: String,
+}
+
+/// A type that is held as a shared `PyRef` borrow across calls back into
+/// Python, so it must expose no mutable receiver. See docs/safety.md,
+/// "Shared-Borrow Proxies".
+#[derive(Debug, Clone, Deserialize)]
+pub struct SharedBorrowType {
+    /// Parser-origin path in `<module>.<Class>` form.
+    pub path: String,
+    /// Which borrow outlives which call into Python.
     pub reason: String,
 }
 
@@ -249,6 +262,11 @@ pub struct BevyConfig {
     /// separately and wrapped types are merged in before comparison.
     #[serde(default)]
     pub crate_type_sources: HashMap<String, Vec<String>>,
+
+    /// Dependency crates whose re-exported enum definitions should be merged
+    /// without importing their struct definitions and sorted field metadata.
+    #[serde(default)]
+    pub crate_enum_sources: HashMap<String, Vec<String>>,
 
     /// Excluded methods configuration
     #[serde(default)]

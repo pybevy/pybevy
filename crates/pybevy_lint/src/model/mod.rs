@@ -25,6 +25,10 @@ pub struct PyClassDef {
     pub frozen: bool,
     /// Implements eq
     pub eq: bool,
+    /// Implements PyO3 value hashing
+    pub hash: bool,
+    /// Equality accepts the integer discriminant
+    pub eq_int: bool,
     /// Is subclass (can be inherited)
     pub subclass: bool,
     /// pyclass carries `from_py_object` (extracted by value from Python args)

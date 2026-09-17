@@ -30,7 +30,8 @@ pub enum DiagnosticCode {
     E008,
     /// E009: batch stub fields don't match bridge view_fields
     E009,
-    /// E010: configured validation exception no longer matches a diagnostic
+    /// E010: a configured validation entry no longer matches anything, either
+    /// an exception matching no diagnostic or a declaration matching no class
     E010,
     /// E012: configured entry no longer matches any upstream Bevy or PyBevy item
     E012,
@@ -42,6 +43,8 @@ pub enum DiagnosticCode {
     E015,
     /// E016: explicitly non-constructible wrapper regained a public initializer
     E016,
+    /// E017: pyenum stub declares a Python enum-family base
+    E017,
 
     // Warnings (W-codes)
     /// W001: Complex type should return Py<T>
@@ -70,6 +73,13 @@ pub enum DiagnosticCode {
     W011,
     /// W013: value enum declared as plain pyclass instead of #[pyenum]
     W013,
+    /// W014: shared-borrow proxy type takes a mutable borrow of itself
+    W014,
+    /// W015: payload-free immutable value enum omits upstream-supported hashing
+    W015,
+    /// W016: pyclass declares no `module = "pybevy...."`, so `__module__` is
+    /// `builtins`
+    W016,
 
     // Test coverage info (T-codes)
     /// T001: Class has no test coverage
@@ -98,6 +108,7 @@ impl DiagnosticCode {
             DiagnosticCode::E014 => "E014",
             DiagnosticCode::E015 => "E015",
             DiagnosticCode::E016 => "E016",
+            DiagnosticCode::E017 => "E017",
             DiagnosticCode::W001 => "W001",
             DiagnosticCode::W002 => "W002",
             DiagnosticCode::W003 => "W003",
@@ -111,6 +122,9 @@ impl DiagnosticCode {
             DiagnosticCode::W011 => "W011",
             DiagnosticCode::W012 => "W012",
             DiagnosticCode::W013 => "W013",
+            DiagnosticCode::W014 => "W014",
+            DiagnosticCode::W015 => "W015",
+            DiagnosticCode::W016 => "W016",
             DiagnosticCode::T001 => "T001",
             DiagnosticCode::T002 => "T002",
             DiagnosticCode::T003 => "T003",
@@ -133,7 +147,8 @@ impl DiagnosticCode {
             DiagnosticCode::E013
             | DiagnosticCode::E014
             | DiagnosticCode::E015
-            | DiagnosticCode::E016 => DiagnosticSeverity::Error,
+            | DiagnosticCode::E016
+            | DiagnosticCode::E017 => DiagnosticSeverity::Error,
 
             DiagnosticCode::W001
             | DiagnosticCode::W002
@@ -147,7 +162,10 @@ impl DiagnosticCode {
             | DiagnosticCode::W010
             | DiagnosticCode::W011
             | DiagnosticCode::W012
-            | DiagnosticCode::W013 => DiagnosticSeverity::Warning,
+            | DiagnosticCode::W013
+            | DiagnosticCode::W014
+            | DiagnosticCode::W015
+            | DiagnosticCode::W016 => DiagnosticSeverity::Warning,
 
             DiagnosticCode::T001 | DiagnosticCode::T002 | DiagnosticCode::T003 => {
                 DiagnosticSeverity::Info
@@ -176,6 +194,7 @@ impl DiagnosticCode {
                 "convenience default precedes a required native constructor input"
             }
             DiagnosticCode::E016 => "non-constructible wrapper regained a public initializer",
+            DiagnosticCode::E017 => "pyenum stub declares a Python enum-family base",
             DiagnosticCode::W001 => "complex type should return Py<T>",
             DiagnosticCode::W002 => "getter using &mut self instead of &self",
             DiagnosticCode::W003 => "setter missing set_ prefix",
@@ -195,6 +214,13 @@ impl DiagnosticCode {
             DiagnosticCode::W011 => "conversion substitutes a value for unmapped bevy variants",
             DiagnosticCode::W013 => "value enum uses plain pyclass instead of pyenum",
             DiagnosticCode::W012 => "excluded Bevy type is implemented in PyBevy",
+            DiagnosticCode::W014 => {
+                "shared-borrow proxy takes a mutable borrow of itself (re-entrant borrow panics)"
+            }
+            DiagnosticCode::W015 => {
+                "payload-free immutable value enum omits upstream-supported hashing"
+            }
+            DiagnosticCode::W016 => "pyclass declares no module, so __module__ is builtins",
             DiagnosticCode::T001 => "class has no test coverage",
             DiagnosticCode::T002 => "constructor not tested",
             DiagnosticCode::T003 => "member not tested",

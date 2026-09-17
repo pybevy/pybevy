@@ -42,15 +42,15 @@ from pybevy.light import ShadowFilteringMethod
 
 commands.spawn(
     Camera3d(),
-    ShadowFilteringMethod.GAUSSIAN,  # Default, stable without temporal AA
+    ShadowFilteringMethod.Gaussian,  # Default, stable without temporal AA
 )
 ```
 
 | Method | When to use |
 |--------|------------|
-| `HARDWARE_2X2` | Fast, hard shadow edges. Budget/mobile. |
-| `GAUSSIAN` | Soft edges, good general-purpose (default) |
-| `TEMPORAL` | Softest, randomized; can shimmer because PyBevy does not yet expose TAA. |
+| `Hardware2x2` | Fast, hard shadow edges. Budget/mobile. |
+| `Gaussian` | Soft edges, good general-purpose (default) |
+| `Temporal` | Softest, randomized; can shimmer because PyBevy does not yet expose TAA. |
 
 ## Contact Shadows (Screen-Space)
 

@@ -147,7 +147,9 @@ commands.spawn(
 ```
 
 `lightmap_exposure` is asset-dependent; tune it for the radiance range stored
-by the baker. Do not attach `Lightmap` to a mesh without `ATTRIBUTE_UV_1`:
+by the baker. The lightmap contribution is multiplied by the material's
+`base_color`, so a black or very dark base colour renders black at any
+`lightmap_exposure`. Do not attach `Lightmap` to a mesh without `ATTRIBUTE_UV_1`:
 Bevy 0.19 selects its lightmap shader from the component and that pipeline is
 invalid without the corresponding vertex attribute.
 
@@ -177,6 +179,11 @@ if material is not None:
 
 Do this inside the system call that supplied `materials`; retained asset
 wrappers expire when that call ends.
+
+`base_color` is a `Color` enum. Space-agnostic accessors (`alpha`, `set_alpha`,
+`hue`, `saturation`, `luminance`) work on any variant, but RGB channels live on
+the narrowed variant behind `value`: check `isinstance(color, Color.Srgba)`
+first, then read `color.value.red`. See `get_type_definition('Color.Srgba')`.
 
 ## Texture Loading with Repeat Sampler
 
@@ -213,6 +220,9 @@ wall_mat = materials.add(StandardMaterial(
 **Key points:**
 - `asset_server.load_image_with_settings(path, settings)` - convenience for images
 - `asset_server.load_with_settings(path, Image, settings)` - generic version (same result)
+- Bevy caches by `(path, asset type)`, not settings. Use distinct paths for
+  simultaneous variants. After every handle is dropped, wait for Bevy's asset
+  tracking to process the drops before reusing the path with different settings.
 - `ImageAddressMode.Repeat` makes the texture repeat when UVs exceed `[0, 1]`
 - `ImageAddressMode.MirrorRepeat` - repeats but mirrors every other tile (avoids visible seams)
 - `mipmap_filter`, LOD clamps, and camera `MipBias` only affect images with a

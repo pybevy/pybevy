@@ -122,11 +122,11 @@ anim.seek_time                  # Position within the clip (property)
 anim.elapsed                    # Real time this animation has played (property)
 ```
 
-`seek_time` is the position in the clip; `elapsed` is total real play time.
-Seeking and `set_speed()` move only `seek_time`, so reading `elapsed` to check
-them makes both look broken. `seek_time` is not clamped: `seek_to(99)` on a
-two-second clip reads back as 99, and playback wraps only while the animation
-continues, so an overshoot on a non-looping clip persists.
+`elapsed` accumulates unscaled frame time only while playback is unpaused and
+unfinished; `replay()` resets it. Seeking changes `seek_time` without changing
+`elapsed`, while speed scales future `seek_time` advancement. Manual seeks are
+not clamped until a later continuing-playback update, so out-of-range values can
+be observed and a non-looping overshoot can persist.
 
 Also on `ActiveAnimation`: `completions`, `just_completed`, `last_seek_time`,
 `set_seek_time`, `repeat`, `repeat_mode`, `replay`, `weight`,
@@ -187,6 +187,7 @@ Treating the second element as one index later fails as
 | `stop_all()` | Stop all animations |
 | `pause_all()` / `resume_all()` | Pause/resume all |
 | `adjust_speeds(factor)` | Multiply all active animation speeds |
+| `seek_all_by(amount)` | Offset every active animation's `seek_time` |
 | `all_finished` | True when all animations complete (property) |
 | `is_playing_animation(index)` | Check if specific animation is active |
 | `animation(index)` | Get a read-only `ActiveAnimation` reference (None if not playing) |

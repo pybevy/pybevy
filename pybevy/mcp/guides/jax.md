@@ -81,6 +81,9 @@ JAX is immutable - it returns new arrays, never mutates inputs.
 
 ### ViewColumn Methods (added by jax_ext)
 
+These methods are on concrete `ViewColumn` buffers, which you obtain from
+`batch.column(T)` / `batch.column_mut(T)` inside `view.iter_batches()`.
+
 ```python
 col.to_jax()          # → jax.Array (explicit conversion)
 col.from_jax(arr)     # Write jax.Array back into ECS storage

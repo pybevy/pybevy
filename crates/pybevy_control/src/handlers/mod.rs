@@ -27,6 +27,23 @@ fn guard_structural_request(world: &World, operation: &str) -> Result<(), Contro
         .map_err(|error| ControlError::invalid_params(error.to_string()))
 }
 
+fn batch_response(results: Vec<serde_json::Value>) -> serde_json::Value {
+    let count = |status| {
+        results
+            .iter()
+            .filter(|result| result.get("status").and_then(|value| value.as_str()) == Some(status))
+            .count()
+    };
+
+    serde_json::json!({
+        "succeeded": count("ok"),
+        "partial": count("partial"),
+        "failed": count("error"),
+        "total": results.len(),
+        "results": results,
+    })
+}
+
 /// Dispatch an MCP operation to the appropriate handler.
 ///
 /// Runtime-dependent operations are routed through the `ControlRuntime` trait.
@@ -186,6 +203,21 @@ mod tests {
 
     fn runtime() -> Pyo3ControlRuntime {
         Pyo3ControlRuntime
+    }
+
+    #[test]
+    fn batch_response_counts_each_terminal_status() {
+        let response = batch_response(vec![
+            serde_json::json!({"status": "ok"}),
+            serde_json::json!({"status": "partial"}),
+            serde_json::json!({"status": "error"}),
+            serde_json::json!({"status": "error"}),
+        ]);
+
+        assert_eq!(response["total"], 4);
+        assert_eq!(response["succeeded"], 1);
+        assert_eq!(response["partial"], 1);
+        assert_eq!(response["failed"], 2);
     }
 
     #[test]

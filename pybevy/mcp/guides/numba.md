@@ -110,6 +110,8 @@ def kernel(col):
 - `mutable_col[0] = value` - write one value
 - `col.to_list()` - convert to Python list (copies data, for debugging only)
 - `col.is_valid` - check if handle is still alive
+- `len(col)`, `col.stride`, `col.dtype`, `col.writable` - metadata reads also
+  validate the column lifetime and raise once the owning system has returned
 
 ## Numba JIT Options
 
@@ -202,20 +204,6 @@ def murmuration(
             t, dt, cx, cy, cz, max_r,
         )
 ```
-
-## Stub Caveats
-
-The `.pyi` stubs have some inaccuracies for the batch path:
-
-- `FieldExpr.to_numpy()` and `Vec3Expr.to_numpy()` are documented
-  in the stubs but **do not work** in batch context. `batch.column()` returns
-  `ViewColumn` types at runtime, not `FieldExpr`/`Vec3Expr`.
-- The `iter_batches()` docstring references `batch.column_numpy()` which
-  **does not exist** on the `Batch` class.
-- The `ViewColumn` docstring references `batch.col()` - the correct method
-  name is `batch.column()` / `batch.column_mut()`.
-
-The working pattern is always: extract scalar ViewColumns -> pass to Numba kernel -> use `[]` indexing.
 
 ## Performance Comparison
 
