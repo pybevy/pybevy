@@ -1,4 +1,4 @@
-use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
+use bevy::{math::Mat4, mesh::skinning::SkinnedMeshInverseBindposes};
 use pybevy_core::{AssetStorage, PyAsset, computed_owned};
 use pybevy_macros::pyasset;
 use pybevy_math::mat4::PyMat4;
@@ -15,7 +15,7 @@ pub struct PySkinnedMeshInverseBindposes {
 impl PySkinnedMeshInverseBindposes {
     #[new]
     pub fn new(matrices: Vec<PyMat4>) -> PyResult<PyClassInitializer<Self>> {
-        let mat4s: Vec<bevy::math::Mat4> = matrices
+        let mat4s: Vec<Mat4> = matrices
             .into_iter()
             .map(TryInto::try_into)
             .collect::<PyResult<Vec<_>>>()?;

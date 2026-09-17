@@ -28,7 +28,7 @@ def setup(
     # Spawn camera with bloom
     commands.spawn(
         Camera3d(),
-        Tonemapping.TONY_MC_MAPFACE,
+        Tonemapping.TonyMcMapface,
         Bloom.NATURAL,
         Transform.from_xyz(0.0, 12.0, 25.0).looking_at(Vec3.ZERO, Vec3.Y),
     )

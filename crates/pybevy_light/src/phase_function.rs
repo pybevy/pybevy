@@ -1,7 +1,7 @@
 use bevy::{asset::Handle, image::Image, light::atmosphere::PhaseFunction};
 use pybevy_core::{PyHandle, extract_handle_from_any};
 use pybevy_macros::pyenum;
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyTypeError, prelude::*};
 
 #[pyenum(PhaseFunction, manual)]
 #[pyclass(
@@ -24,7 +24,7 @@ impl From<PyPhaseFunction> for PhaseFunction {
 impl PyPhaseFunction {
     #[new]
     pub fn new() -> PyResult<Self> {
-        Err(pyo3::exceptions::PyTypeError::new_err(
+        Err(PyTypeError::new_err(
             "PhaseFunction is an enum base; construct a nested variant",
         ))
     }

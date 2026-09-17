@@ -9,11 +9,14 @@ from pybevy.mesh import (
     CircularSectorMeshBuilder,
     CircularSegmentMeshBuilder,
     ConeMeshBuilder,
+    ConicalFrustumMeshBuilder,
     CuboidMeshBuilder,
     CylinderMeshBuilder,
     EllipseMeshBuilder,
     Meshable,
     PlaneMeshBuilder,
+    Polyline2dMeshBuilder,
+    Polyline3dMeshBuilder,
     RectangleMeshBuilder,
     RegularPolygonMeshBuilder,
     RhombusMeshBuilder,
@@ -1456,6 +1459,30 @@ class Cone(Meshable):
     def area(self) -> float: ...
     def volume(self) -> float: ...
     def mesh(self) -> ConeMeshBuilder: ...
+
+class ConicalFrustum(Meshable):
+    def __init__(self, *, radius_top: float = 0.25, radius_bottom: float = 0.5, height: float = 0.5) -> None: ...
+    @property
+    def radius_top(self) -> float: ...
+    @radius_top.setter
+    def radius_top(self, value: float) -> None: ...
+    @property
+    def radius_bottom(self) -> float: ...
+    @radius_bottom.setter
+    def radius_bottom(self, value: float) -> None: ...
+    @property
+    def height(self) -> float: ...
+    @height.setter
+    def height(self, value: float) -> None: ...
+    def bottom_base(self) -> Circle: ...
+    def top_base(self) -> Circle: ...
+    def slant_height(self) -> float: ...
+    def lateral_area(self) -> float: ...
+    def bottom_base_area(self) -> float: ...
+    def top_base_area(self) -> float: ...
+    def area(self) -> float: ...
+    def volume(self) -> float: ...
+    def mesh(self) -> ConicalFrustumMeshBuilder: ...
 
 class Rectangle(Meshable):
     def __init__(
@@ -3079,6 +3106,42 @@ class WindingOrder:
     Clockwise: WindingOrder
     CounterClockwise: WindingOrder
     Invalid: WindingOrder
+
+class Polyline2d(Meshable):
+    """A 2D polyline: an open chain of connected line segments."""
+
+    def __init__(self, vertices: list[Vec2] | None = None) -> None:
+        """Create a polyline through the vertices, or use Bevy's default endpoints."""
+
+    @staticmethod
+    def with_subdivisions(start: Vec2, end: Vec2, subdivisions: int) -> Polyline2d:
+        """Create a polyline from `start` to `end` with subdivision points."""
+
+    @property
+    def vertices(self) -> list[Vec2]: ...
+    @vertices.setter
+    def vertices(self, value: list[Vec2]) -> None: ...
+
+    def mesh(self) -> Polyline2dMeshBuilder:
+        """Create a mesh builder for this polyline."""
+
+class Polyline3d(Meshable):
+    """A 3D polyline: an open chain of connected line segments."""
+
+    def __init__(self, vertices: list[Vec3] | None = None) -> None:
+        """Create a polyline through the vertices, or use Bevy's default endpoints."""
+
+    @staticmethod
+    def with_subdivisions(start: Vec3, end: Vec3, subdivisions: int) -> Polyline3d:
+        """Create a polyline from `start` to `end` with subdivision points."""
+
+    @property
+    def vertices(self) -> list[Vec3]: ...
+    @vertices.setter
+    def vertices(self, value: list[Vec3]) -> None: ...
+
+    def mesh(self) -> Polyline3dMeshBuilder:
+        """Create a mesh builder for this polyline."""
 
 class Triangle2d(Meshable):
     """A 2D triangle primitive.

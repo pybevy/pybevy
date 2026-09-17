@@ -24,7 +24,14 @@ use crate::{
     standard_material::PyStandardMaterial,
 };
 
-#[pyasset(ShaderMaterial, bridge, not_loadable, input_converter, material)]
+#[pyasset(
+    ShaderMaterial,
+    bridge,
+    not_loadable,
+    input_converter,
+    material,
+    missing_resource_hint = "Add ShaderMaterialPlugin() to your app to create this collection."
+)]
 #[pyclass(name = "ShaderMaterial", module = "pybevy.pbr", extends = PyMaterial, skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyShaderMaterial {

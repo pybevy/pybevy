@@ -30,7 +30,10 @@ impl PyPointLightShadowMap {
     }
 
     pub fn __repr__(&self) -> String {
-        format!("{:?}", self)
+        match self.as_ref() {
+            Ok(map) => format!("PointLightShadowMap(size={})", map.size),
+            Err(_) => "PointLightShadowMap(<invalid>)".to_string(),
+        }
     }
 }
 
@@ -63,6 +66,9 @@ impl PyDirectionalLightShadowMap {
     }
 
     pub fn __repr__(&self) -> String {
-        format!("{:?}", self)
+        match self.as_ref() {
+            Ok(map) => format!("DirectionalLightShadowMap(size={})", map.size),
+            Err(_) => "DirectionalLightShadowMap(<invalid>)".to_string(),
+        }
     }
 }

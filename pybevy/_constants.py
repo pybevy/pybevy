@@ -30,8 +30,9 @@ def _apply() -> None:
     from .audio import PlaybackSettings, Volume
     from .camera import Exposure, Visibility
     from .color import Color, Hwba, Laba, LinearRgba, Oklaba, Srgba, Xyza
+    from .core_pipeline import Tonemapping
     from .image import RenderAssetUsages
-    from .light import SunDisk
+    from .light import ShadowFilteringMethod, SunDisk
     from .math import (
         Affine2,
         Interval,
@@ -65,6 +66,14 @@ def _apply() -> None:
         (Visibility, ["Inherited", "Visible", "Hidden"]),
         (Bloom, ["NATURAL", "ANAMORPHIC", "OLD_SCHOOL", "SCREEN_BLUR"]),
         (Exposure, ["SUNLIGHT", "OVERCAST", "INDOOR", "BLENDER"]),
+        # core_pipeline
+        (Tonemapping, [
+            "None_", "Reinhard", "ReinhardLuminance", "AcesFitted", "AgX",
+            "SomewhatBoringDisplayTransform", "TonyMcMapface", "BlenderFilmic",
+            "PbrNeutral",
+        ]),
+        # light
+        (ShadowFilteringMethod, ["Hardware2x2", "Gaussian", "Temporal"]),
         # image
         (RenderAssetUsages, ["MAIN_WORLD", "RENDER_WORLD"]),
         # light

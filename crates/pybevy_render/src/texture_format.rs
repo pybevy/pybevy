@@ -6,10 +6,11 @@ use pyo3::{exceptions::PyValueError, prelude::*};
     name = "TextureFormat",
     module = "pybevy.render",
     eq,
+    hash,
     frozen,
     from_py_object
 )]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyTextureFormat {
     R8Unorm,
     R8Snorm,

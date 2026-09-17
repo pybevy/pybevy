@@ -1,6 +1,6 @@
 use bevy::light::atmosphere::Falloff;
 use pybevy_macros::pyenum;
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyTypeError, prelude::*};
 
 #[pyenum(Falloff, manual)]
 #[pyclass(
@@ -23,7 +23,7 @@ impl From<PyFalloff> for Falloff {
 impl PyFalloff {
     #[new]
     pub fn new() -> PyResult<Self> {
-        Err(pyo3::exceptions::PyTypeError::new_err(
+        Err(PyTypeError::new_err(
             "Falloff is an enum base; construct a nested variant",
         ))
     }

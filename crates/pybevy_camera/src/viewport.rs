@@ -1,8 +1,33 @@
 use bevy::camera::Viewport;
-use pybevy_core::{FromBorrowedStorage, field_storage::FieldStorage};
+use pybevy_core::{
+    FromBorrowedStorage,
+    field_storage::FieldStorage,
+    public_error::{UNSUPPORTED_COMPARISON, inverted_range, value_out_of_range},
+};
 use pybevy_macros::pyfield;
 use pybevy_math::uvec2::PyUVec2;
-use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
+use pyo3::{
+    basic::CompareOp,
+    exceptions::{PyTypeError, PyValueError},
+    prelude::*,
+};
+
+/// wgpu rejects a depth range outside 0.0..=1.0, one validation error per frame.
+fn check_depth(depth: (f32, f32)) -> PyResult<(f32, f32)> {
+    for (name, value) in [("depth near", depth.0), ("depth far", depth.1)] {
+        if !(0.0..=1.0).contains(&value) {
+            return Err(PyValueError::new_err(value_out_of_range(
+                name, 0.0, 1.0, value,
+            )));
+        }
+    }
+    if depth.0 > depth.1 {
+        return Err(PyValueError::new_err(inverted_range(
+            "depth", depth.0, depth.1,
+        )));
+    }
+    Ok(depth)
+}
 
 #[pyfield]
 #[pyclass(name = "Viewport", module = "pybevy.camera", skip_from_py_object)]
@@ -20,6 +45,7 @@ impl PyViewport {
         physical_size: PyUVec2,
         depth: (f32, f32),
     ) -> PyResult<Self> {
+        let depth = check_depth(depth)?;
         Ok(Self::from_owned(Viewport {
             physical_position: physical_position.try_into()?,
             physical_size: physical_size.try_into()?,
@@ -57,7 +83,11 @@ impl PyViewport {
 
     #[setter]
     pub fn set_depth(&mut self, value: (f32, f32)) -> PyResult<()> {
-        self.as_mut()?.depth = value.0..value.1;
+        // Authority first: an expired viewport must report that, not a
+        // complaint about the value it was never allowed to store.
+        let mut viewport = self.as_mut()?;
+        let depth = check_depth(value)?;
+        viewport.depth = depth.0..depth.1;
         Ok(())
     }
 
@@ -86,12 +116,16 @@ impl PyViewport {
                 != other_viewport.physical_position
                 || self_viewport.physical_size != other_viewport.physical_size
                 || self_viewport.depth != other_viewport.depth),
-            _ => Err(PyTypeError::new_err("Unsupported comparison operation")),
+            _ => Err(PyTypeError::new_err(UNSUPPORTED_COMPARISON)),
         }
     }
 
     pub fn __copy__(&self) -> PyResult<Self> {
         Ok(Self::from_owned(self.storage.get()?))
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
     }
 
     pub fn clamp_to_size(&mut self, size: PyUVec2) -> PyResult<()> {

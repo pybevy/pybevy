@@ -964,7 +964,7 @@ impl PyImage {
         let image_data = image
             .data
             .as_ref()
-            .ok_or_else(|| PyRuntimeError::new_err("Image has no data"))?;
+            .ok_or_else(|| PyRuntimeError::new_err(public_error::IMAGE_NO_DATA))?;
         let ptr = image_data.as_ptr();
         let len = image_data.len();
         let anchor = Arc::new(AssetBorrowAnchor::new(validity, guard));
@@ -984,7 +984,7 @@ impl PyImage {
             image
                 .data
                 .as_ref()
-                .ok_or_else(|| PyRuntimeError::new_err("Image has no data"))?
+                .ok_or_else(|| PyRuntimeError::new_err(public_error::IMAGE_NO_DATA))?
                 .len()
         };
         let validity = this.storage.validity_flag();
@@ -1006,7 +1006,7 @@ impl PyImage {
             .preflight()
             .data
             .as_ref()
-            .ok_or_else(|| PyRuntimeError::new_err("Image has no data"))?
+            .ok_or_else(|| PyRuntimeError::new_err(public_error::IMAGE_NO_DATA))?
             .len();
         if current_len != len {
             return Err(PyRuntimeError::new_err(
@@ -1035,7 +1035,7 @@ impl PyImage {
             let image_data = image
                 .data
                 .as_ref()
-                .ok_or_else(|| PyRuntimeError::new_err("Image has no data"))?;
+                .ok_or_else(|| PyRuntimeError::new_err(public_error::IMAGE_NO_DATA))?;
             let len = image_data.len();
             Py::new(py, owned_u8(image_data.to_vec(), &[len])?)
         })
@@ -1048,7 +1048,7 @@ impl PyImage {
             let image_data = image
                 .data
                 .as_ref()
-                .ok_or_else(|| PyRuntimeError::new_err("Image has no data"))?;
+                .ok_or_else(|| PyRuntimeError::new_err(public_error::IMAGE_NO_DATA))?;
             (
                 image.texture_descriptor.size,
                 image.texture_descriptor.dimension,
@@ -1061,7 +1061,7 @@ impl PyImage {
             let image_data = image
                 .data
                 .as_mut()
-                .ok_or_else(|| PyRuntimeError::new_err("Image has no data"))?;
+                .ok_or_else(|| PyRuntimeError::new_err(public_error::IMAGE_NO_DATA))?;
             image_data.copy_from_slice(&extracted.bytes);
             Ok(())
         })
@@ -1093,7 +1093,9 @@ impl PyImage {
             let image = this.storage.as_ref()?;
             image
                 .pixel_bytes(bevy_coords)
-                .map_err(|_| PyRuntimeError::new_err("Invalid pixel coordinates or no image data"))?
+                .map_err(|_| {
+                    PyRuntimeError::new_err(public_error::IMAGE_INVALID_PIXEL_COORDINATES)
+                })?
                 .len()
         };
         let validity = this.storage.validity_flag();
@@ -1114,7 +1116,7 @@ impl PyImage {
         let current_len = transaction
             .preflight()
             .pixel_bytes(bevy_coords)
-            .map_err(|_| PyRuntimeError::new_err("Invalid pixel coordinates or no image data"))?;
+            .map_err(|_| PyRuntimeError::new_err(public_error::IMAGE_INVALID_PIXEL_COORDINATES))?;
         if current_len.len() != len {
             return Err(PyRuntimeError::new_err(
                 "Image pixel layout changed during view acquisition",

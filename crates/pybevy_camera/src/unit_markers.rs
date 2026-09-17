@@ -119,6 +119,10 @@ impl PyCamera2d {
         Py::new(py, (PyCamera2d, PyComponent))
     }
 
+    pub fn __deepcopy__(&self, py: Python, _memo: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {
+        self.__copy__(py)
+    }
+
     pub fn __repr__(&self) -> &'static str {
         "Camera2d"
     }

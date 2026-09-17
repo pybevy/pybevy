@@ -30,7 +30,7 @@ def setup_scene(
     # Camera with bloom
     commands.spawn(
         Camera3d(),
-        Tonemapping.TONY_MC_MAPFACE,  # Tonemapper that desaturates to white
+        Tonemapping.TonyMcMapface,  # Tonemapper that desaturates to white
         Transform.from_xyz(-2.0, 2.5, 5.0).looking_at(Vec3.ZERO, Vec3.Y),
         Bloom.NATURAL,  # Natural bloom preset
     )

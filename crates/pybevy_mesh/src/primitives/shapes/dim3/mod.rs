@@ -1,8 +1,10 @@
 pub mod capsule3d;
 pub mod cone;
+pub mod conical_frustum;
 pub mod cuboid;
 pub mod cylinder;
 pub mod plane3d;
+pub mod polyline3d;
 pub mod sphere;
 pub mod tetrahedron;
 pub mod torus;
@@ -10,9 +12,11 @@ pub mod triangle3d;
 
 pub use capsule3d::PyCapsule3d;
 pub use cone::PyCone;
+pub use conical_frustum::PyConicalFrustum;
 pub use cuboid::PyCuboid;
 pub use cylinder::PyCylinder;
 pub use plane3d::PyPlane3d;
+pub use polyline3d::PyPolyline3d;
 pub use sphere::PySphere;
 pub use tetrahedron::PyTetrahedron;
 pub use torus::PyTorus;

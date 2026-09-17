@@ -1,15 +1,25 @@
 use std::f32::consts::FRAC_PI_4;
 
-use bevy::camera::{
-    CameraProjection, CustomProjection, OrthographicProjection, PerspectiveProjection, Projection,
+use bevy::{
+    camera::{
+        CameraProjection, CustomProjection, OrthographicProjection, PerspectiveProjection,
+        Projection, SubCameraView,
+    },
+    math::{Rect, Vec2},
 };
 use pybevy_core::{ComponentStorage, FieldStorage, FromBorrowedStorage};
 use pybevy_macros::{pyenum, pyfield};
-use pybevy_math::{mat4::PyMat4, rect::PyRect, vec2::PyVec2, vec3a::PyVec3A};
+use pybevy_math::{mat4::PyMat4, rect::PyRect, vec2::PyVec2, vec3a::PyVec3A, vec4::PyVec4};
 use pybevy_transform::global_transform::PyGlobalTransform;
 use pyo3::prelude::*;
 
 use crate::{frustum::PyFrustum, scaling_mode::PyScalingMode, sub_camera_view::PySubCameraView};
+
+const DEFAULT_ORTHOGRAPHIC_NEAR: f32 = 0.0;
+const DEFAULT_ORTHOGRAPHIC_FAR: f32 = 1000.0;
+const DEFAULT_ORTHOGRAPHIC_SCALE: f32 = 1.0;
+const DEFAULT_ORTHOGRAPHIC_VIEWPORT_ORIGIN: Vec2 = Vec2::new(0.5, 0.5);
+const DEFAULT_ORTHOGRAPHIC_AREA: Rect = Rect::new(-1.0, -1.0, 1.0, 1.0);
 
 #[pyfield]
 #[pyclass(
@@ -81,14 +91,14 @@ impl PyPerspectiveProjection {
     }
 
     #[getter]
-    pub fn near_clip_plane(&self) -> PyResult<pybevy_math::vec4::PyVec4> {
+    pub fn near_clip_plane(&self) -> PyResult<PyVec4> {
         Ok(self
             .storage
             .borrow_field_as(|projection| &projection.near_clip_plane)?)
     }
 
     #[setter]
-    pub fn set_near_clip_plane(&mut self, value: pybevy_math::vec4::PyVec4) -> PyResult<()> {
+    pub fn set_near_clip_plane(&mut self, value: PyVec4) -> PyResult<()> {
         self.as_mut()?.near_clip_plane = value.try_into()?;
         Ok(())
     }
@@ -128,7 +138,7 @@ impl PyPerspectiveProjection {
     }
 
     pub fn get_clip_from_view_for_sub(&self, sub_view: &PySubCameraView) -> PyResult<PyMat4> {
-        let bevy_sub_view: bevy::camera::SubCameraView = sub_view.try_into()?;
+        let bevy_sub_view: SubCameraView = sub_view.try_into()?;
         Ok(self
             .as_ref()?
             .get_clip_from_view_for_sub(&bevy_sub_view)
@@ -150,35 +160,31 @@ pub struct PyOrthographicProjection {
 #[pymethods]
 impl PyOrthographicProjection {
     #[new]
-    #[pyo3(signature = (*, near=None, far=None, viewport_origin=None, scaling_mode=None, scale=None, area=None))]
+    #[pyo3(signature = (
+        *,
+        near = DEFAULT_ORTHOGRAPHIC_NEAR,
+        far = DEFAULT_ORTHOGRAPHIC_FAR,
+        viewport_origin = PyVec2::from(DEFAULT_ORTHOGRAPHIC_VIEWPORT_ORIGIN),
+        scaling_mode = PyScalingMode::WindowSize(),
+        scale = DEFAULT_ORTHOGRAPHIC_SCALE,
+        area = PyRect::from(DEFAULT_ORTHOGRAPHIC_AREA)
+    ))]
     pub fn new(
-        near: Option<f32>,
-        far: Option<f32>,
-        viewport_origin: Option<PyVec2>,
-        scaling_mode: Option<PyScalingMode>,
-        scale: Option<f32>,
-        area: Option<PyRect>,
+        near: f32,
+        far: f32,
+        viewport_origin: PyVec2,
+        scaling_mode: PyScalingMode,
+        scale: f32,
+        area: PyRect,
     ) -> PyResult<Self> {
-        let mut proj = OrthographicProjection::default_3d();
-        if let Some(near) = near {
-            proj.near = near;
-        }
-        if let Some(far) = far {
-            proj.far = far;
-        }
-        if let Some(viewport_origin) = viewport_origin {
-            proj.viewport_origin = viewport_origin.try_into()?;
-        }
-        if let Some(scaling_mode) = scaling_mode {
-            proj.scaling_mode = scaling_mode.into();
-        }
-        if let Some(scale) = scale {
-            proj.scale = scale;
-        }
-        if let Some(area) = area {
-            proj.area = area.try_into()?;
-        }
-        Ok(Self::from_owned(proj))
+        Ok(Self::from_owned(OrthographicProjection {
+            near,
+            far,
+            viewport_origin: viewport_origin.try_into()?,
+            scaling_mode: scaling_mode.into(),
+            scale,
+            area: area.try_into()?,
+        }))
     }
 
     #[staticmethod]
@@ -292,7 +298,7 @@ impl PyOrthographicProjection {
     }
 
     pub fn get_clip_from_view_for_sub(&self, sub_view: &PySubCameraView) -> PyResult<PyMat4> {
-        let bevy_sub_view: bevy::camera::SubCameraView = sub_view.try_into()?;
+        let bevy_sub_view: SubCameraView = sub_view.try_into()?;
         Ok(self
             .as_ref()?
             .get_clip_from_view_for_sub(&bevy_sub_view)

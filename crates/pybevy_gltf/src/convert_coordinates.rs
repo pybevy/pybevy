@@ -71,9 +71,11 @@ impl PyGltfConvertCoordinates {
 
     pub fn __repr__(&self) -> PyResult<String> {
         let value = self.as_ref()?;
+        let flag = |value: bool| if value { "True" } else { "False" };
         Ok(format!(
             "GltfConvertCoordinates(rotate_scene_entity={}, rotate_meshes={})",
-            value.rotate_scene_entity, value.rotate_meshes
+            flag(value.rotate_scene_entity),
+            flag(value.rotate_meshes)
         ))
     }
 }

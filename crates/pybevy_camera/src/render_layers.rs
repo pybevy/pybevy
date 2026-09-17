@@ -75,14 +75,13 @@ impl PyRenderLayers {
         Ok(self.as_ref()?.bits().to_vec())
     }
 
-    #[getter]
-    pub fn active_layers(&self) -> PyResult<Vec<usize>> {
+    pub fn iter(&self) -> PyResult<Vec<usize>> {
         Ok(self.as_ref()?.iter().collect())
     }
 
-    #[pyo3(name = "iter")]
-    pub fn iter_compat(&self) -> PyResult<Vec<usize>> {
-        self.active_layers()
+    #[getter]
+    pub fn active_layers(&self) -> PyResult<Vec<usize>> {
+        self.iter()
     }
 
     pub fn intersection(&self, py: Python<'_>, other: &PyRenderLayers) -> PyResult<Py<Self>> {

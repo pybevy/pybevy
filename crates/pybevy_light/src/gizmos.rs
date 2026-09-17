@@ -16,9 +16,10 @@ use pyo3::{PyTypeInfo, prelude::*};
     name = "LightGizmoColor",
     module = "pybevy.light",
     frozen,
-    from_py_object
+    from_py_object,
+    eq
 )]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PyLightGizmoColor {
     #[py_bevy(tuple)]
     Manual {

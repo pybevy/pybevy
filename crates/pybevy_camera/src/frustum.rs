@@ -7,7 +7,7 @@ use pybevy_math::{
 };
 use pyo3::{exceptions::PyValueError, prelude::*};
 
-use crate::sphere::PySphere;
+use crate::{aabb::PyAabb, sphere::PySphere};
 
 #[pycomponent(Frustum, bridge)]
 #[pyclass(name = "Frustum", module = "pybevy.camera", extends = PyComponent)]
@@ -76,7 +76,7 @@ impl PyFrustum {
 
     pub fn intersects_obb(
         &self,
-        aabb: &crate::aabb::PyAabb,
+        aabb: &PyAabb,
         world_from_local: &PyAffine3A,
         intersect_near: bool,
         intersect_far: bool,
@@ -89,11 +89,7 @@ impl PyFrustum {
         ))
     }
 
-    pub fn contains_aabb(
-        &self,
-        aabb: &crate::aabb::PyAabb,
-        world_from_local: &PyAffine3A,
-    ) -> PyResult<bool> {
+    pub fn contains_aabb(&self, aabb: &PyAabb, world_from_local: &PyAffine3A) -> PyResult<bool> {
         Ok(self
             .as_ref()?
             .contains_aabb(aabb.as_ref()?.reborrow(), &world_from_local.try_get()?))

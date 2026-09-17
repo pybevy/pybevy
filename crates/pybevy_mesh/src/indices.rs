@@ -82,6 +82,10 @@ impl PyIndices {
         Ok(PyIndices { inner })
     }
 
+    fn __len__(&self) -> usize {
+        self.len()
+    }
+
     #[getter]
     pub fn len(&self) -> usize {
         self.inner.len()
@@ -111,6 +115,10 @@ pub struct PyIndicesIterator {
 
 #[pymethods]
 impl PyIndicesIterator {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
     pub fn __next__(&mut self) -> PyResult<Option<u32>> {
         Ok(match &self.indices.inner {
             Indices::U16(vec) => {

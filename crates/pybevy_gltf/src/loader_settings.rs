@@ -63,8 +63,8 @@ impl PyGltfLoaderSettings {
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         *,
-        load_meshes = None,
-        load_materials = None,
+        load_meshes = PyRenderAssetUsages::default(),
+        load_materials = PyRenderAssetUsages::default(),
         load_cameras = true,
         load_lights = true,
         load_animations = true,
@@ -76,8 +76,8 @@ impl PyGltfLoaderSettings {
         skinned_mesh_bounds_policy = None
     ))]
     pub fn new(
-        load_meshes: Option<PyRenderAssetUsages>,
-        load_materials: Option<PyRenderAssetUsages>,
+        load_meshes: PyRenderAssetUsages,
+        load_materials: PyRenderAssetUsages,
         load_cameras: bool,
         load_lights: bool,
         load_animations: bool,
@@ -90,8 +90,8 @@ impl PyGltfLoaderSettings {
     ) -> PyResult<Self> {
         Ok(Self {
             inner: GltfLoaderSettings {
-                load_meshes: load_meshes.map(Into::into).unwrap_or_default(),
-                load_materials: load_materials.map(Into::into).unwrap_or_default(),
+                load_meshes: load_meshes.into(),
+                load_materials: load_materials.into(),
                 load_cameras,
                 load_lights,
                 load_animations,
@@ -226,9 +226,16 @@ impl PyGltfLoaderSettings {
     }
 
     pub fn __repr__(&self) -> String {
+        let flag = |value: bool| if value { "True" } else { "False" };
         format!(
-            "GltfLoaderSettings(load_cameras={}, load_lights={}, load_animations={})",
-            self.inner.load_cameras, self.inner.load_lights, self.inner.load_animations
+            "GltfLoaderSettings(load_cameras={}, load_lights={}, load_animations={}, \
+             include_source={}, override_sampler={}, validate={})",
+            flag(self.inner.load_cameras),
+            flag(self.inner.load_lights),
+            flag(self.inner.load_animations),
+            flag(self.inner.include_source),
+            flag(self.inner.override_sampler),
+            flag(self.inner.validate),
         )
     }
 }

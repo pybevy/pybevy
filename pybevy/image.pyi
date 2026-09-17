@@ -1,5 +1,4 @@
 from collections.abc import Buffer
-from enum import Enum
 from typing import ClassVar, Literal
 
 import numpy as np
@@ -17,76 +16,88 @@ from pybevy.render import (
     TextureViewDimension,
 )
 
-class ImageFormat(Enum):
+class ImageFormat:
     """Image encoding format for saving/exporting images.
 
     Supported formats for encoding Bevy images to byte buffers or files.
     """
-    Png = "Png"
+
+    def __copy__(self) -> ImageFormat: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> ImageFormat: ...
+
+    Png: ImageFormat
     """PNG format - lossless compression, supports transparency"""
 
-    Jpeg = "Jpeg"
+    Jpeg: ImageFormat
     """JPEG format - lossy compression, good for photos (no transparency)"""
 
-    Bmp = "Bmp"
+    Bmp: ImageFormat
     """BMP format - uncompressed, large file sizes"""
 
-    Tiff = "Tiff"
+    Tiff: ImageFormat
     """TIFF format - flexible format supporting various compression methods"""
 
-    Tga = "Tga"
+    Tga: ImageFormat
     """TGA (Targa) format - simple format with optional compression"""
 
-    WebP = "WebP"
+    WebP: ImageFormat
     """WebP format - modern format with good compression and quality"""
 
-    Gif = "Gif"
+    Gif: ImageFormat
     """GIF format - supports animation and transparency, limited to 256 colors"""
 
-    Ico = "Ico"
+    Ico: ImageFormat
     """ICO format - Windows icon format, supports multiple sizes"""
 
-    Pnm = "Pnm"
+    Pnm: ImageFormat
     """PNM format - Portable Anymap format family (PBM, PGM, PPM)"""
 
-    Qoi = "Qoi"
+    Qoi: ImageFormat
     """QOI (Quite OK Image) format - fast lossless compression"""
 
-    Hdr = "Hdr"
+    Hdr: ImageFormat
     """HDR (Radiance) format - high dynamic range images"""
 
-    Dds = "Dds"
+    Dds: ImageFormat
     """DDS (DirectDraw Surface) format - GPU-compressed textures"""
 
-    OpenExr = "OpenExr"
+    OpenExr: ImageFormat
     """OpenEXR format - high dynamic range images for VFX"""
 
-    Ktx2 = "Ktx2"
+    Ktx2: ImageFormat
     """KTX2 (Khronos Texture) format - GPU-optimized texture container"""
 
-    Farbfeld = "Farbfeld"
+    Farbfeld: ImageFormat
     """Farbfeld format - simple lossless format with 16-bit RGBA"""
 
     def __eq__(self, other: object) -> bool: ...
     def __hash__(self) -> int: ...
 
-class ImageCompareFunction(Enum):
-    Never = "Never"
-    Less = "Less"
-    Equal = "Equal"
-    LessEqual = "LessEqual"
-    Greater = "Greater"
-    NotEqual = "NotEqual"
-    GreaterEqual = "GreaterEqual"
-    Always = "Always"
+class ImageCompareFunction:
+
+    def __copy__(self) -> ImageCompareFunction: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> ImageCompareFunction: ...
+
+    Never: ImageCompareFunction
+    Less: ImageCompareFunction
+    Equal: ImageCompareFunction
+    LessEqual: ImageCompareFunction
+    Greater: ImageCompareFunction
+    NotEqual: ImageCompareFunction
+    GreaterEqual: ImageCompareFunction
+    Always: ImageCompareFunction
 
     def __hash__(self) -> int: ...
 
-class ImageSamplerBorderColor(Enum):
-    TransparentBlack = "TransparentBlack"
-    OpaqueBlack = "OpaqueBlack"
-    OpaqueWhite = "OpaqueWhite"
-    Zero = "Zero"
+class ImageSamplerBorderColor:
+
+    def __copy__(self) -> ImageSamplerBorderColor: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> ImageSamplerBorderColor: ...
+
+    TransparentBlack: ImageSamplerBorderColor
+    OpaqueBlack: ImageSamplerBorderColor
+    OpaqueWhite: ImageSamplerBorderColor
+    Zero: ImageSamplerBorderColor
 
     def __hash__(self) -> int: ...
 
@@ -100,20 +111,25 @@ class ImageFormatSetting:
         def __init__(self) -> None: ...
 
     class Format(ImageFormatSetting):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: ImageFormat
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> ImageFormat: ...
         def __init__(self, value: ImageFormat) -> None: ...
 
 class SaveImageFormatSetting:
     """How ImageSaver picks the file format: explicit, or from the path extension."""
+
+    def __copy__(self) -> SaveImageFormatSetting: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> SaveImageFormatSetting: ...
 
     class FromExtension(SaveImageFormatSetting):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
 
     class Format(SaveImageFormatSetting):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: ImageFormat
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> ImageFormat: ...
         def __init__(self, value: ImageFormat) -> None: ...
 
 class ImageSaverSettings:
@@ -335,7 +351,7 @@ class Image(Asset):
         """Create a 1x1 transparent image.
 
         Returns:
-            New 1x1 transparent Image (RGBA 0, 0, 0, 0)
+            New 1x1 transparent Image (RGBA 255, 255, 255, 0)
         """
 
     @staticmethod
@@ -1342,11 +1358,17 @@ class ImageSamplerDescriptor:
 class ImageFilterMode:
     """Image filtering mode for texture sampling."""
 
+    def __copy__(self) -> ImageFilterMode: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> ImageFilterMode: ...
+
     Nearest: ClassVar[ImageFilterMode]
     Linear: ClassVar[ImageFilterMode]
 
 class ImageAddressMode:
     """Image addressing mode for texture coordinates outside [0, 1] range."""
+
+    def __copy__(self) -> ImageAddressMode: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> ImageAddressMode: ...
 
     ClampToEdge: ClassVar[ImageAddressMode]
     Repeat: ClassVar[ImageAddressMode]
@@ -1368,8 +1390,9 @@ class ImageSampler:
 
     class Descriptor(ImageSampler):
         """Custom sampler descriptor variant."""
-        __match_args__: ClassVar[tuple[Literal["desc"]]]
-        desc: ImageSamplerDescriptor
+        __match_args__: ClassVar[tuple[Literal["desc"]]] = ("desc",)
+        @property
+        def desc(self) -> ImageSamplerDescriptor: ...
         def __init__(self, desc: ImageSamplerDescriptor) -> None: ...
 
     @staticmethod
@@ -1383,29 +1406,43 @@ class ImageSampler:
 class ImageArrayLayout:
     """Layout specification for image array textures."""
 
+    def __copy__(self) -> ImageArrayLayout: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> ImageArrayLayout: ...
+
     class RowCount(ImageArrayLayout):
-        __match_args__: ClassVar[tuple[Literal["rows"]]]
-        rows: int
+        __match_args__: ClassVar[tuple[Literal["rows"]]] = ("rows",)
+        @property
+        def rows(self) -> int: ...
         def __init__(self, *, rows: int) -> None: ...
 
     class RowHeight(ImageArrayLayout):
-        __match_args__: ClassVar[tuple[Literal["pixels"]]]
-        pixels: int
+        __match_args__: ClassVar[tuple[Literal["pixels"]]] = ("pixels",)
+        @property
+        def pixels(self) -> int: ...
         def __init__(self, *, pixels: int) -> None: ...
 
     class GridCount(ImageArrayLayout):
-        __match_args__: ClassVar[tuple[Literal["columns"], Literal["rows"]]]
-        columns: int
-        rows: int
+        __match_args__: ClassVar[tuple[Literal["columns"], Literal["rows"]]] = (
+            "columns",
+            "rows",
+        )
+        @property
+        def columns(self) -> int: ...
+        @property
+        def rows(self) -> int: ...
         def __init__(self, *, columns: int, rows: int) -> None: ...
 
     class GridSize(ImageArrayLayout):
         __match_args__: ClassVar[
             tuple[Literal["tile_width_pixels"], Literal["tile_height_pixels"]]
-        ]
-        tile_width_pixels: int
-        tile_height_pixels: int
+        ] = ("tile_width_pixels", "tile_height_pixels")
+        @property
+        def tile_width_pixels(self) -> int: ...
+        @property
+        def tile_height_pixels(self) -> int: ...
         def __init__(self, *, tile_width_pixels: int, tile_height_pixels: int) -> None: ...
+
+    def __hash__(self) -> int: ...
 
 class ImageLoaderSettings:
     """Settings for loading an Image using an ImageLoader.
