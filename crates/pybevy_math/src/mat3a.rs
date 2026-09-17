@@ -1,10 +1,6 @@
 use bevy::math::{Mat3A, Vec3, Vec3A};
 use pybevy_core::{FromBorrowedStorage, StorageRef, ValueStorage};
-use pyo3::{
-    basic::CompareOp,
-    exceptions::{PyIndexError, PyTypeError},
-    prelude::*,
-};
+use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 use super::{vec3::PyVec3, vec3a::PyVec3A};
 use crate::richcmp::comparison_result;
@@ -150,14 +146,14 @@ impl PyMat3A {
         Ok(self.as_ref()?.z_axis.into())
     }
 
-    pub fn col(&self, index: usize) -> PyResult<PyVec3A> {
-        let mat = self.as_ref()?;
-        match index {
-            0 => Ok(mat.x_axis.into()),
-            1 => Ok(mat.y_axis.into()),
-            2 => Ok(mat.z_axis.into()),
-            _ => Err(PyIndexError::new_err("Column index out of range (0-2)")),
-        }
+    pub fn col(&self, index: isize) -> PyResult<PyVec3A> {
+        let index = crate::matrix_index("Column", index, "Mat3A", 3)?;
+        Ok(self.as_ref()?.col(index).into())
+    }
+
+    pub fn row(&self, index: isize) -> PyResult<PyVec3A> {
+        let index = crate::matrix_index("Row", index, "Mat3A", 3)?;
+        Ok(self.as_ref()?.row(index).into())
     }
 
     pub fn transpose(&self) -> PyResult<Self> {
@@ -173,7 +169,7 @@ impl PyMat3A {
     }
 
     pub fn mul_vec3a(&self, rhs: &PyVec3A) -> PyResult<PyVec3A> {
-        Ok(self.as_ref()?.mul_vec3a(rhs.try_into()?).try_into()?)
+        Ok(self.as_ref()?.mul_vec3a(rhs.try_into()?).into())
     }
 
     pub fn mul_mat3a(&self, rhs: &PyMat3A) -> PyResult<Self> {
@@ -205,14 +201,17 @@ impl PyMat3A {
     fn __mul__(&self, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         let py = other.py();
         let self_mat = *self.as_ref()?;
-        if let Ok(scalar) = other.extract::<f32>() {
+        if let Ok(other_mat) = other.cast::<PyMat3A>() {
+            let other_mat = Mat3A::try_from(&*other_mat.try_borrow()?)?;
+            Ok(Py::new(py, PyMat3A::mat3a(self_mat * other_mat))?.into_any())
+        } else if let Ok(vec) = other.cast::<PyVec3A>() {
+            let vec = Vec3A::try_from(&*vec.try_borrow()?)?;
+            Ok(Py::new(py, PyVec3A::from_vec3a(self_mat * vec))?.into_any())
+        } else if let Ok(vec) = other.cast::<PyVec3>() {
+            let vec = Vec3::try_from(&*vec.try_borrow()?)?;
+            Ok(Py::new(py, PyVec3::from_vec3(self_mat * vec))?.into_any())
+        } else if let Ok(scalar) = other.extract::<f32>() {
             Ok(Py::new(py, PyMat3A::mat3a(self_mat * scalar))?.into_any())
-        } else if let Ok(other_mat) = other.extract::<PyMat3A>() {
-            Ok(Py::new(py, PyMat3A::mat3a(self_mat * *other_mat.as_ref()?))?.into_any())
-        } else if let Ok(vec) = other.extract::<PyVec3A>() {
-            Ok(Py::new(py, PyVec3A::from_vec3a(self_mat * Vec3A::try_from(&vec)?))?.into_any())
-        } else if let Ok(vec) = other.extract::<PyVec3>() {
-            Ok(Py::new(py, PyVec3::from_vec3(self_mat * Vec3::try_from(&vec)?))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }
@@ -225,8 +224,9 @@ impl PyMat3A {
     fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         let value = self.as_ref()?;
         let py = other.py();
-        if let Ok(other) = other.extract::<PyMat3A>() {
-            Ok(Py::new(py, Self::mat3a(*value + *other.as_ref()?))?.into_any())
+        if let Ok(other_mat) = other.cast::<PyMat3A>() {
+            let other_mat = Mat3A::try_from(&*other_mat.try_borrow()?)?;
+            Ok(Py::new(py, Self::mat3a(*value + other_mat))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }
@@ -235,8 +235,9 @@ impl PyMat3A {
     fn __sub__(&self, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         let value = self.as_ref()?;
         let py = other.py();
-        if let Ok(other) = other.extract::<PyMat3A>() {
-            Ok(Py::new(py, Self::mat3a(*value - *other.as_ref()?))?.into_any())
+        if let Ok(other_mat) = other.cast::<PyMat3A>() {
+            let other_mat = Mat3A::try_from(&*other_mat.try_borrow()?)?;
+            Ok(Py::new(py, Self::mat3a(*value - other_mat))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }

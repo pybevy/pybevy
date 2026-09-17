@@ -1,5 +1,8 @@
 use bevy::math::{Mat4, Vec4};
-use pybevy_core::{FromBorrowedStorage, StorageRef, ValueStorage};
+use pybevy_core::{
+    FromBorrowedStorage, StorageRef, ValueStorage,
+    public_error::{MAT4_PERSPECTIVE_INFINITE_REVERSE_RH_NEAR, UNSUPPORTED_COMPARISON},
+};
 use pyo3::{
     basic::CompareOp,
     exceptions::{PyTypeError, PyValueError},
@@ -214,6 +217,25 @@ impl PyMat4 {
     }
 
     #[staticmethod]
+    pub fn perspective_infinite_reverse_rh(
+        fov_y_radians: f32,
+        aspect_ratio: f32,
+        z_near: f32,
+    ) -> PyResult<Self> {
+        // glam validates z_near only when its optional assertions are enabled.
+        if !(z_near > 0.0) {
+            return Err(PyValueError::new_err(
+                MAT4_PERSPECTIVE_INFINITE_REVERSE_RH_NEAR,
+            ));
+        }
+        Ok(PyMat4::mat4(Mat4::perspective_infinite_reverse_rh(
+            fov_y_radians,
+            aspect_ratio,
+            z_near,
+        )))
+    }
+
+    #[staticmethod]
     pub fn orthographic_lh(
         left: f32,
         right: f32,
@@ -273,20 +295,14 @@ impl PyMat4 {
         )))
     }
 
-    pub fn col(&self, index: usize) -> PyResult<PyVec4> {
-        let mat = self.as_ref()?;
-        if index >= 4 {
-            return Err(PyValueError::new_err("Column index out of range"));
-        }
-        Ok(mat.col(index).into())
+    pub fn col(&self, index: isize) -> PyResult<PyVec4> {
+        let index = crate::matrix_index("Column", index, "Mat4", 4)?;
+        Ok(self.as_ref()?.col(index).into())
     }
 
-    pub fn row(&self, index: usize) -> PyResult<PyVec4> {
-        let mat = self.as_ref()?;
-        if index >= 4 {
-            return Err(PyValueError::new_err("Row index out of range"));
-        }
-        Ok(mat.row(index).into())
+    pub fn row(&self, index: isize) -> PyResult<PyVec4> {
+        let index = crate::matrix_index("Row", index, "Mat4", 4)?;
+        Ok(self.as_ref()?.row(index).into())
     }
 
     pub fn to_cols_array(&self) -> PyResult<[f32; 16]> {
@@ -380,12 +396,14 @@ impl PyMat4 {
     fn __mul__(&self, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         let py = other.py();
         let self_mat = *self.as_ref()?;
-        if let Ok(scalar) = other.extract::<f32>() {
+        if let Ok(other_mat) = other.cast::<PyMat4>() {
+            let other_mat = Mat4::try_from(&*other_mat.try_borrow()?)?;
+            Ok(Py::new(py, PyMat4::mat4(self_mat * other_mat))?.into_any())
+        } else if let Ok(vec) = other.cast::<PyVec4>() {
+            let vec = Vec4::try_from(&*vec.try_borrow()?)?;
+            Ok(Py::new(py, PyVec4::from_vec4(self_mat * vec))?.into_any())
+        } else if let Ok(scalar) = other.extract::<f32>() {
             Ok(Py::new(py, PyMat4::mat4(self_mat * scalar))?.into_any())
-        } else if let Ok(other_mat) = other.extract::<PyMat4>() {
-            Ok(Py::new(py, PyMat4::mat4(self_mat * *other_mat.as_ref()?))?.into_any())
-        } else if let Ok(vec) = other.extract::<PyVec4>() {
-            Ok(Py::new(py, PyVec4::from_vec4(self_mat * Vec4::try_from(&vec)?))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }
@@ -446,7 +464,7 @@ impl PyMat4 {
         let result = match op {
             CompareOp::Eq => self_mat == other_mat,
             CompareOp::Ne => self_mat != other_mat,
-            _ => return Err(PyTypeError::new_err("Unsupported comparison operation")),
+            _ => return Err(PyTypeError::new_err(UNSUPPORTED_COMPARISON)),
         };
         Ok(comparison_result(py, result))
     }

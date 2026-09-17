@@ -31,26 +31,56 @@ pub mod vec3a;
 pub mod vec4;
 pub mod winding_order;
 
-use pyo3::prelude::*;
+use pybevy_core::public_error::matrix_index_out_of_range;
+use pyo3::{exceptions::PyIndexError, prelude::*};
+
+/// Resolve a Python-style column/row index against a square matrix.
+///
+/// Negative indices count from the end, the way every other Python sequence
+/// accessor behaves; anything else is an `IndexError` naming the real range.
+pub(crate) fn matrix_index(
+    axis: &str,
+    index: isize,
+    type_name: &str,
+    count: usize,
+) -> PyResult<usize> {
+    let resolved = if index < 0 {
+        index + count as isize
+    } else {
+        index
+    };
+    if resolved < 0 || resolved >= count as isize {
+        return Err(PyIndexError::new_err(matrix_index_out_of_range(
+            axis, index, type_name, count,
+        )));
+    }
+    Ok(resolved as usize)
+}
 
 pub mod prelude {
+    #[doc(hidden)]
     pub use crate::{
-        affine2::{PyAffine2, PyMat2},
-        affine3a::PyAffine3A,
-        compass::{PyCompassOctant, PyCompassQuadrant},
+        affine2::PyMat2,
+        bounding::{PyIsometry2d, PyIsometry3d},
+        cubic_splines::{
+            PyCubicBSpline2d, PyCubicBSpline3d, PyCubicBezier2d, PyCubicBezier3d,
+            PyCubicCardinalSpline2d, PyCubicCardinalSpline3d, PyCubicCurve2d, PyCubicCurve3d,
+            PyCubicHermite2d, PyCubicHermite3d, PyCubicNurbs2d, PyCubicNurbs3d, PyRationalCurve2d,
+            PyRationalCurve3d,
+        },
         dir2::PyDir2,
         dir3::PyDir3,
-        easing::{PyEaseFunction, PyJumpAt},
-        float_ord::PyFloatOrd,
         interval::PyInterval,
         irect::PyIRect,
         ivec2::PyIVec2,
         mat3::PyMat3,
         mat3a::PyMat3A,
         mat4::PyMat4,
-        primitives::PyInfinitePlane3d,
+        primitives::{
+            PyArc2d, PyHalfSpace, PyInfinitePlane3d, PyLine2d, PyLine3d, PyPlane2d, PyPolygon,
+            PyViewFrustum,
+        },
         quat::{PyEulerRot, PyQuat},
-        range::PyRange,
         ray::{PyRay2d, PyRay3d},
         rect::PyRect,
         rot2::PyRot2,

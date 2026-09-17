@@ -1,7 +1,9 @@
 use bevy::math::{IRect, IVec2};
 use pybevy_core::{
     FromBorrowedStorage, ValueStorage,
-    public_error::{INTEGER_RECT_HALF_SIZE_NEGATIVE, INTEGER_RECT_SIZE_NEGATIVE},
+    public_error::{
+        INTEGER_RECT_HALF_SIZE_NEGATIVE, INTEGER_RECT_SIZE_NEGATIVE, UNSUPPORTED_COMPARISON,
+    },
 };
 use pybevy_macros::pyvalue;
 use pyo3::{
@@ -210,7 +212,7 @@ impl PyIRect {
         let result = match op {
             CompareOp::Eq => a == b,
             CompareOp::Ne => a != b,
-            _ => return Err(PyTypeError::new_err("Unsupported comparison operation")),
+            _ => return Err(PyTypeError::new_err(UNSUPPORTED_COMPARISON)),
         };
         Ok(comparison_result(py, result))
     }

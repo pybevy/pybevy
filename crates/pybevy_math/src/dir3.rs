@@ -199,24 +199,25 @@ impl PyDir3 {
     }
 
     pub fn __mul__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        if let Ok(scalar) = other.extract::<f32>() {
-            Ok(Py::new(py, PyVec3::from_vec3(self.get()? * scalar))?.into_any())
-        } else if other.extract::<PyQuat>().is_ok() {
+        if other.cast::<PyQuat>().is_ok() {
             // Dir3 * Quat is not standard, suggest Quat * Dir3 instead
             Err(PyTypeError::new_err(
                 "Dir3 * Quat is not supported. Use Quat * Dir3 to rotate a direction.",
             ))
+        } else if let Ok(scalar) = other.extract::<f32>() {
+            Ok(Py::new(py, PyVec3::from_vec3(self.get()? * scalar))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }
     }
 
     pub fn __rmul__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        if let Ok(scalar) = other.extract::<f32>() {
-            Ok(Py::new(py, PyVec3::from_vec3(scalar * self.get()?))?.into_any())
-        } else if let Ok(quat) = other.extract::<PyQuat>() {
+        if let Ok(quat) = other.cast::<PyQuat>() {
             // Quat * Dir3 -> Dir3 (rotation)
-            Ok(Py::new(py, PyDir3::dir3(quat.try_get()? * self.get()?))?.into_any())
+            let quat = quat.try_borrow()?.try_get()?;
+            Ok(Py::new(py, PyDir3::dir3(quat * self.get()?))?.into_any())
+        } else if let Ok(scalar) = other.extract::<f32>() {
+            Ok(Py::new(py, PyVec3::from_vec3(scalar * self.get()?))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }

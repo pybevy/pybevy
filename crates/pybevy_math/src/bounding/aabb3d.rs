@@ -17,7 +17,7 @@ use pyo3::{
 use super::bounding_sphere::PyBoundingSphere;
 use crate::{
     dir3::PyDir3,
-    quat::extract_quat_from_any,
+    quat::{PyQuat, extract_quat_from_any},
     vec3::PyVec3,
     vec3a::{PyVec3A, extract_vec3a_from_any},
 };
@@ -26,7 +26,7 @@ use crate::{
 #[pyclass(name = "Isometry3d", module = "pybevy.math", eq, from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyIsometry3d {
-    pub(crate) storage: ValueStorage<bevy::math::Isometry3d>,
+    pub(crate) storage: ValueStorage<Isometry3d>,
 }
 
 impl PartialEq for PyIsometry3d {
@@ -38,7 +38,7 @@ impl PartialEq for PyIsometry3d {
     }
 }
 
-impl TryFrom<PyIsometry3d> for bevy::math::Isometry3d {
+impl TryFrom<PyIsometry3d> for Isometry3d {
     type Error = PyErr;
 
     fn try_from(iso: PyIsometry3d) -> PyResult<Self> {
@@ -46,7 +46,7 @@ impl TryFrom<PyIsometry3d> for bevy::math::Isometry3d {
     }
 }
 
-impl TryFrom<&PyIsometry3d> for bevy::math::Isometry3d {
+impl TryFrom<&PyIsometry3d> for Isometry3d {
     type Error = PyErr;
 
     fn try_from(iso: &PyIsometry3d) -> PyResult<Self> {
@@ -54,8 +54,8 @@ impl TryFrom<&PyIsometry3d> for bevy::math::Isometry3d {
     }
 }
 
-impl From<bevy::math::Isometry3d> for PyIsometry3d {
-    fn from(iso: bevy::math::Isometry3d) -> Self {
+impl From<Isometry3d> for PyIsometry3d {
+    fn from(iso: Isometry3d) -> Self {
         PyIsometry3d::from_owned(iso)
     }
 }
@@ -63,16 +63,13 @@ impl From<bevy::math::Isometry3d> for PyIsometry3d {
 #[pymethods]
 impl PyIsometry3d {
     #[new]
-    #[pyo3(signature = (translation = None, rotation = crate::quat::PyQuat::IDENTITY))]
-    pub fn new(
-        translation: Option<&Bound<'_, PyAny>>,
-        rotation: crate::quat::PyQuat,
-    ) -> PyResult<Self> {
+    #[pyo3(signature = (translation = None, rotation = PyQuat::IDENTITY))]
+    pub fn new(translation: Option<&Bound<'_, PyAny>>, rotation: PyQuat) -> PyResult<Self> {
         let t = match translation {
             Some(obj) => extract_vec3a_from_any(obj)?,
             None => Vec3A::ZERO,
         };
-        Ok(PyIsometry3d::from_owned(bevy::math::Isometry3d::new(
+        Ok(PyIsometry3d::from_owned(Isometry3d::new(
             t,
             rotation.try_into()?,
         )))
@@ -81,27 +78,25 @@ impl PyIsometry3d {
     #[classattr]
     #[pyo3(name = "IDENTITY")]
     fn identity() -> Self {
-        PyIsometry3d::from_owned(bevy::math::Isometry3d::IDENTITY)
+        PyIsometry3d::from_owned(Isometry3d::IDENTITY)
     }
 
     #[staticmethod]
-    pub fn from_rotation(rotation: crate::quat::PyQuat) -> PyResult<Self> {
-        Ok(PyIsometry3d::from_owned(
-            bevy::math::Isometry3d::from_rotation(rotation.try_into()?),
-        ))
+    pub fn from_rotation(rotation: PyQuat) -> PyResult<Self> {
+        Ok(PyIsometry3d::from_owned(Isometry3d::from_rotation(
+            rotation.try_into()?,
+        )))
     }
 
     #[staticmethod]
     pub fn from_translation(translation: &Bound<'_, PyAny>) -> PyResult<Self> {
         let t = extract_vec3a_from_any(translation)?;
-        Ok(PyIsometry3d::from_owned(
-            bevy::math::Isometry3d::from_translation(t),
-        ))
+        Ok(PyIsometry3d::from_owned(Isometry3d::from_translation(t)))
     }
 
     #[staticmethod]
     pub fn from_xyz(x: f32, y: f32, z: f32) -> Self {
-        PyIsometry3d::from_owned(bevy::math::Isometry3d::from_xyz(x, y, z))
+        PyIsometry3d::from_owned(Isometry3d::from_xyz(x, y, z))
     }
 
     #[getter]
@@ -116,12 +111,12 @@ impl PyIsometry3d {
     }
 
     #[getter]
-    pub fn rotation(&self) -> PyResult<crate::quat::PyQuat> {
+    pub fn rotation(&self) -> PyResult<PyQuat> {
         Ok(self.storage.borrow_field_as(|i| &i.rotation)?)
     }
 
     #[setter]
-    pub fn set_rotation(&mut self, value: crate::quat::PyQuat) -> PyResult<()> {
+    pub fn set_rotation(&mut self, value: PyQuat) -> PyResult<()> {
         self.storage.as_mut()?.rotation = value.try_into()?;
         Ok(())
     }
@@ -183,12 +178,6 @@ impl PyIsometry3d {
 #[derive(Debug, Clone)]
 pub struct PyAabb3d {
     storage: ValueStorage<Aabb3d>,
-}
-
-impl PyAabb3d {
-    pub fn try_to_bevy(&self) -> PyResult<Aabb3d> {
-        Ok(self.storage.get()?)
-    }
 }
 
 impl TryFrom<PyAabb3d> for Aabb3d {

@@ -1,6 +1,9 @@
-use bevy::math::{Dir3, Isometry3d, Vec3, Vec3A, primitives::InfinitePlane3d};
+use bevy::math::{Dir3, Isometry3d, Quat, Vec3, Vec3A, primitives::InfinitePlane3d};
 use pybevy_core::public_error::INFINITE_PLANE_POINTS;
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pyo3::{
+    exceptions::{PyTypeError, PyValueError},
+    prelude::*,
+};
 
 use crate::{
     bounding::aabb3d::PyIsometry3d, dir3::PyDir3, quat::PyQuat, vec3::PyVec3, vec3a::PyVec3A,
@@ -20,10 +23,10 @@ fn extract_isometry3d_from_any(obj: &Bound<'_, PyAny>) -> PyResult<Isometry3d> {
         return Ok(Isometry3d::from(vec_a));
     }
     if let Ok(quat) = obj.extract::<PyQuat>() {
-        let quat: bevy::math::Quat = quat.try_into()?;
+        let quat: Quat = quat.try_into()?;
         return Ok(Isometry3d::from(quat));
     }
-    Err(pyo3::exceptions::PyTypeError::new_err(
+    Err(PyTypeError::new_err(
         "Expected Isometry3d, Vec3, Vec3A, or Quat",
     ))
 }

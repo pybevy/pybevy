@@ -8,8 +8,15 @@ use pybevy_macros::pyenum;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 #[pyenum(TimerMode)]
-#[pyclass(name = "TimerMode", module = "pybevy.time", eq, from_py_object)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[pyclass(
+    name = "TimerMode",
+    module = "pybevy.time",
+    eq,
+    from_py_object,
+    frozen,
+    hash
+)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyTimerMode {
     Once,
     Repeating,

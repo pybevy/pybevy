@@ -193,10 +193,7 @@ impl PyAffine3A {
     }
 
     pub fn transform_point3a(&self, rhs: &PyVec3A) -> PyResult<PyVec3A> {
-        Ok(self
-            .as_ref()?
-            .transform_point3a(rhs.try_into()?)
-            .try_into()?)
+        Ok(self.as_ref()?.transform_point3a(rhs.try_into()?).into())
     }
 
     pub fn transform_vector3(&self, rhs: &PyVec3) -> PyResult<PyVec3> {
@@ -205,10 +202,7 @@ impl PyAffine3A {
     }
 
     pub fn transform_vector3a(&self, rhs: &PyVec3A) -> PyResult<PyVec3A> {
-        Ok(self
-            .as_ref()?
-            .transform_vector3a(rhs.try_into()?)
-            .try_into()?)
+        Ok(self.as_ref()?.transform_vector3a(rhs.try_into()?).into())
     }
 
     pub fn inverse(&self) -> PyResult<Self> {

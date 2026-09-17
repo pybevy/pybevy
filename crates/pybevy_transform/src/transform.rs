@@ -2,8 +2,7 @@ use bevy::{
     math::{Dir3, Mat4, Quat, Vec3},
     transform::components::Transform,
 };
-
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, PyComponent, public_error::direction_argument_type};
 use pybevy_macros::pycomponent;
 use pybevy_math::{
     affine3a::PyAffine3A, bounding::PyIsometry3d, dir3::PyDir3, mat4::PyMat4, quat::PyQuat,
@@ -43,9 +42,7 @@ fn extract_dir3_with_fallback(
     if let Ok(vec) = obj.extract::<PyVec3>() {
         return Ok(vec.try_into().unwrap_or(fallback));
     }
-    Err(PyTypeError::new_err(format!(
-        "{param} must be a Vec3 or Dir3"
-    )))
+    Err(PyTypeError::new_err(direction_argument_type(param)))
 }
 
 pub(crate) fn format_transform_repr(

@@ -287,6 +287,12 @@ class Vec3:
     def __rsub__(self, other: float) -> Vec3: ...
     def __rtruediv__(self, other: float) -> Vec3: ...
 
+    def __copy__(self) -> Vec3:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Vec3:
+        """Return an independent copy; the value holds no Python objects."""
+
 class Vec3A:
     """A 3-dimensional SIMD-aligned vector class.
 
@@ -343,6 +349,12 @@ class Vec3A:
     def __radd__(self, other: float) -> Vec3A: ...
     def __rsub__(self, other: float) -> Vec3A: ...
     def __rtruediv__(self, other: float) -> Vec3A: ...
+
+    def __copy__(self) -> Vec3A:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Vec3A:
+        """Return an independent copy; the value holds no Python objects."""
 
 class Vec2:
     x: float
@@ -447,6 +459,12 @@ class Vec2:
     def __rsub__(self, other: float) -> Vec2: ...
     def __rtruediv__(self, other: float) -> Vec2: ...
 
+    def __copy__(self) -> Vec2:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Vec2:
+        """Return an independent copy; the value holds no Python objects."""
+
 class Range:
     """A range of float values with start (inclusive) and end (exclusive).
 
@@ -536,6 +554,12 @@ class Rect:
 
     def __eq__(self, other: object) -> bool: ...
     def __ne__(self, other: object) -> bool: ...
+
+    def __copy__(self) -> Rect:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Rect:
+        """Return an independent copy; the value holds no Python objects."""
 
 class UVec2:
     """A 2-dimensional unsigned integer vector."""
@@ -853,6 +877,12 @@ class URect:
     def __eq__(self, other: object) -> bool: ...
     def __ne__(self, other: object) -> bool: ...
 
+    def __copy__(self) -> URect:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> URect:
+        """Return an independent copy; the value holds no Python objects."""
+
 class IRect:
     """A rectangle defined by minimum and maximum corner points (signed integers)."""
 
@@ -1026,6 +1056,8 @@ class EulerRot:
     XYXEx: EulerRot  # Extrinsic two-axis rotation XYX
     XZXEx: EulerRot  # Extrinsic two-axis rotation XZX
 
+    def __hash__(self) -> int: ...
+
 class Quat:
     IDENTITY: ClassVar[Quat]
     NAN: ClassVar[Quat]
@@ -1066,25 +1098,37 @@ class Quat:
         """Spherical linear interpolation between two quaternions."""
     @staticmethod
     def from_euler(order: EulerRot, x: float, y: float, z: float) -> Quat:
-        """Create a quaternion from Euler angles.
+        """Create a quaternion from Euler angles in the given rotation order.
+
+        The angles follow the selected order: ``x`` is its first angle, ``y`` the
+        second, and ``z`` the third. For ``EulerRot.XYZ`` and
+        ``EulerRot.XYZEx`` the slots coincide with the X, Y, and Z axes
+        respectively; for ``EulerRot.ZYX`` and ``EulerRot.ZYXEx`` the first
+        slot (parameter ``x``) is the Z-axis angle, and for
+        ``EulerRot.YXZ`` and ``EulerRot.YXZEx`` the Y-axis angle.
 
         Args:
             order: The rotation order (e.g., EulerRot.YXZ)
-            x: Rotation around X axis in radians
-            y: Rotation around Y axis in radians
-            z: Rotation around Z axis in radians
+            x: First angle in radians (first slot of the order)
+            y: Second angle in radians (second slot of the order)
+            z: Third angle in radians (third slot of the order)
 
         Returns:
             Quat: The resulting quaternion
         """
     def to_euler(self, order: EulerRot) -> tuple[float, float, float]:
-        """Convert quaternion to Euler angles.
+        """Convert quaternion to Euler angles in the given rotation order.
+
+        The returned tuple follows ``order``: entry 0 is its first angle, entry 1 the
+        second, entry 2 the third, the same slot order ``from_euler(order,
+        ...)`` accepts. For ``EulerRot.ZYX`` entry 0 is the Z-axis angle
+        and for ``EulerRot.YXZ`` the Y-axis angle.
 
         Args:
             order: The rotation order (e.g., EulerRot.YXZ)
 
         Returns:
-            tuple: (x, y, z) rotations in radians
+            tuple: (first, second, third) angles of the order in radians
         """
     def to_axis_angle(self) -> tuple[Vec3, float]: ...
     def to_scaled_axis(self) -> Vec3: ...
@@ -1104,6 +1148,12 @@ class Quat:
     def __truediv__(self, other: float) -> Quat:
         """Divide using IEEE floating-point semantics; zero produces infinities or NaN."""
     def __neg__(self) -> Quat: ...
+
+    def __copy__(self) -> Quat:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Quat:
+        """Return an independent copy; the value holds no Python objects."""
 
 class Dir3:
     X: Dir3
@@ -1168,8 +1218,18 @@ class Mat2:
     def from_scale_angle(scale: Vec2, angle: float) -> Mat2: ...
     @staticmethod
     def from_diagonal(diagonal: Vec2) -> Mat2: ...
-    def col(self, index: int) -> Vec2: ...
-    def row(self, index: int) -> Vec2: ...
+    def col(self, index: int) -> Vec2:
+        """The matrix's column at `index`, counting from the end if negative.
+
+        Raises:
+            IndexError: If the index is outside -2 to 1
+        """
+    def row(self, index: int) -> Vec2:
+        """The matrix's row at `index`, counting from the end if negative.
+
+        Raises:
+            IndexError: If the index is outside -2 to 1
+        """
     @property
     def x_axis(self) -> Vec2: ...
     @property
@@ -1279,7 +1339,19 @@ class Mat3A:
     @property
     def z_axis(self) -> Vec3A: ...
 
-    def col(self, index: int) -> Vec3A: ...
+    def col(self, index: int) -> Vec3A:
+        """The matrix's column at `index`, counting from the end if negative.
+
+        Raises:
+            IndexError: If the index is outside -3 to 2
+        """
+
+    def row(self, index: int) -> Vec3A:
+        """The matrix's row at `index`, counting from the end if negative.
+
+        Raises:
+            IndexError: If the index is outside -3 to 2
+        """
     def transpose(self) -> Mat3A: ...
     def determinant(self) -> float: ...
     def inverse(self) -> Mat3A: ...
@@ -1706,6 +1778,12 @@ class Vec4:
     def __eq__(self, other: object) -> bool: ...
     def __ne__(self, other: object) -> bool: ...
 
+    def __copy__(self) -> Vec4:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Vec4:
+        """Return an independent copy; the value holds no Python objects."""
+
 class Mat3:
     """A 3x3 matrix class."""
     IDENTITY: ClassVar[Mat3]
@@ -1746,8 +1824,18 @@ class Mat3:
     @staticmethod
     def from_scale_angle_translation(scale: Vec2, angle: float, translation: Vec2) -> Mat3: ...
 
-    def col(self, index: int) -> Vec3: ...
-    def row(self, index: int) -> Vec3: ...
+    def col(self, index: int) -> Vec3:
+        """The matrix's column at `index`, counting from the end if negative.
+
+        Raises:
+            IndexError: If the index is outside -3 to 2
+        """
+    def row(self, index: int) -> Vec3:
+        """The matrix's row at `index`, counting from the end if negative.
+
+        Raises:
+            IndexError: If the index is outside -3 to 2
+        """
     def to_cols_array(self) -> list[float]: ...
     def to_cols_array_2d(self) -> list[list[float]]: ...
     def transpose(self) -> Mat3: ...
@@ -1825,6 +1913,19 @@ class Mat4:
     def perspective_lh(fov_y_radians: float, aspect_ratio: float, z_near: float, z_far: float) -> Mat4: ...
     @staticmethod
     def perspective_rh(fov_y_radians: float, aspect_ratio: float, z_near: float, z_far: float) -> Mat4: ...
+
+    @staticmethod
+    def perspective_infinite_reverse_rh(
+        fov_y_radians: float, aspect_ratio: float, z_near: float
+    ) -> Mat4:
+        """Create a right-handed perspective with an infinite far plane and reversed depth.
+
+        This matches Bevy's rendering convention: the near plane maps to NDC 1
+        and infinity approaches 0.
+
+        Raises `ValueError` unless `z_near > 0`.
+        """
+
     @staticmethod
     def orthographic_lh(left: float, right: float, bottom: float, top: float, near: float, far: float) -> Mat4: ...
     @staticmethod
@@ -1838,8 +1939,18 @@ class Mat4:
     @staticmethod
     def look_to_rh(eye: Vec3, dir: Vec3, up: Vec3) -> Mat4: ...
 
-    def col(self, index: int) -> Vec4: ...
-    def row(self, index: int) -> Vec4: ...
+    def col(self, index: int) -> Vec4:
+        """The matrix's column at `index`, counting from the end if negative.
+
+        Raises:
+            IndexError: If the index is outside -4 to 3
+        """
+    def row(self, index: int) -> Vec4:
+        """The matrix's row at `index`, counting from the end if negative.
+
+        Raises:
+            IndexError: If the index is outside -4 to 3
+        """
     def to_cols_array(self) -> list[float]: ...
     def to_cols_array_2d(self) -> list[list[float]]: ...
     def transpose(self) -> Mat4: ...
@@ -2684,6 +2795,10 @@ class RayCast3d:
 class JumpAt:
     """Specifies where a jump should occur in a stepped easing function."""
 
+    def __copy__(self) -> JumpAt: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> JumpAt: ...
+
+
     Start: ClassVar[JumpAt]
     """Jump occurs at the start"""
     End: ClassVar[JumpAt]
@@ -2905,7 +3020,7 @@ class Ellipse(Meshable):
     Example:
         >>> from pybevy.math import Ellipse, Vec2
         >>> # Create an ellipse with semi-axes of 3.0 and 2.0
-        >>> ellipse = Ellipse(Vec2(3.0, 2.0))
+        >>> ellipse = Ellipse(half_size=Vec2(3.0, 2.0))
         >>> mesh = ellipse.mesh().build()  # Create mesh from primitive
     """
 
@@ -4482,6 +4597,10 @@ class CompassOctant:
         direction = CompassOctant.NorthEast  # Moving diagonally up-right
         ```
     """
+
+    def __copy__(self) -> CompassOctant: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> CompassOctant: ...
+
     North: CompassOctant
     """North (up)."""
 
@@ -4519,6 +4638,8 @@ class CompassOctant:
     def to_index(self) -> int:
         """Get the index (0-7) of this compass direction."""
 
+    def __hash__(self) -> int: ...
+
 
 class CompassQuadrant:
     """Four cardinal compass directions.
@@ -4533,6 +4654,10 @@ class CompassQuadrant:
         direction = CompassQuadrant.North  # Moving up
         ```
     """
+
+    def __copy__(self) -> CompassQuadrant: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> CompassQuadrant: ...
+
     North: CompassQuadrant
     """North (up), corresponds to Dir2::Y."""
 
@@ -4554,6 +4679,8 @@ class CompassQuadrant:
 
     def to_index(self) -> int:
         """Get the index (0-3) of this compass direction."""
+
+    def __hash__(self) -> int: ...
 
 
 class Rot2:

@@ -345,6 +345,10 @@ impl PyColor {
         Self::from_color(self.resolved_copy()?, py)
     }
 
+    pub fn __deepcopy__(&self, py: Python<'_>, _memo: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {
+        self.__copy__(py)
+    }
+
     #[staticmethod]
     #[pyo3(name = "WHITE")]
     pub fn white(py: Python<'_>) -> PyResult<Py<Self>> {
