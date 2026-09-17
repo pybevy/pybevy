@@ -2,7 +2,7 @@
 
 use half::f16;
 use pyo3::{
-    exceptions::{PyOverflowError, PyTypeError},
+    exceptions::{PyModuleNotFoundError, PyOverflowError, PyTypeError},
     prelude::*,
     types::PyString,
 };
@@ -72,19 +72,8 @@ impl PyDType {
     }
 }
 
-fn check_integer_range(value: i64, dtype: ArrayDType) -> PyResult<()> {
-    let in_range = match dtype {
-        ArrayDType::Int64
-        | ArrayDType::Float16
-        | ArrayDType::Float32
-        | ArrayDType::Float64
-        | ArrayDType::Bool => true,
-        ArrayDType::Int32 => i32::try_from(value).is_ok(),
-        ArrayDType::Uint32 => u32::try_from(value).is_ok(),
-        ArrayDType::Uint16 => u16::try_from(value).is_ok(),
-        ArrayDType::Uint8 => u8::try_from(value).is_ok(),
-    };
-    if in_range {
+pub(super) fn check_integer_range(value: i64, dtype: ArrayDType) -> PyResult<()> {
+    if dtype.integer_fits(value) {
         Ok(())
     } else {
         Err(PyOverflowError::new_err(format!(
@@ -111,9 +100,40 @@ pub fn parse_dtype(obj: Option<&Bound<'_, PyAny>>) -> PyResult<Option<ArrayDType
             .map(Some)
             .ok_or_else(|| PyTypeError::new_err(format!("unknown dtype {name:?}")));
     }
+    // Match NumPy's accepted dtype spellings when NumPy is available.
+    if let Some(name) = numpy_dtype_name(obj)? {
+        return ArrayDType::from_name(&name)
+            .map(Some)
+            .ok_or_else(|| PyTypeError::new_err(format!("unknown dtype {name:?}")));
+    }
+
     Err(PyTypeError::new_err(
-        "dtype must be a pybevy.array dtype or a dtype name string",
+        "dtype must be a pybevy.array dtype, a NumPy dtype, or a dtype name string",
     ))
+}
+
+fn numpy_dtype_name(obj: &Bound<'_, PyAny>) -> PyResult<Option<String>> {
+    let py = obj.py();
+    let numpy = match PyModule::import(py, "numpy") {
+        Ok(numpy) => numpy,
+        Err(error)
+            if error.is_instance_of::<PyModuleNotFoundError>(py)
+                && error
+                    .value(py)
+                    .getattr("name")
+                    .and_then(|name| name.extract::<String>())
+                    .is_ok_and(|name| name == "numpy") =>
+        {
+            return Ok(None);
+        }
+        Err(error) => return Err(error),
+    };
+    let dtype = match numpy.getattr("dtype")?.call1((obj,)) {
+        Ok(dtype) => dtype,
+        Err(error) if error.is_instance_of::<PyTypeError>(py) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    dtype.getattr("name")?.extract::<String>().map(Some)
 }
 
 /// Cast a scalar to a dtype and return it as `Scalar` (used by constructors).

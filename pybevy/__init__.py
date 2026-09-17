@@ -1,3 +1,6 @@
+from typing import Final
+
+from . import _pybevy as _pybevy  # type: ignore
 from . import (
     a11y,
     animation,
@@ -47,6 +50,14 @@ from .ecs import state, system_set
 
 _apply_constant_descriptors()
 
+# Optional public capabilities compiled into this PyBevy build. The immutable
+# set comes from Rust inventory registrations submitted by feature-gated crates;
+# names match their Cargo features, such as ``mcp``. Fixed per compiled binary.
+FEATURES: Final[frozenset[str]] = _pybevy.features()
+
+# Report the loaded backend's version, including under editable installs.
+__version__: Final[str] = _pybevy.__version__
+
 # Keep top-level CLI import optional for constrained embedding environments.
 try:
     from .cli import main
@@ -54,6 +65,8 @@ except ImportError:
     main = None  # type: ignore[assignment]  # CLI not available
 
 __all__ = [
+    "FEATURES",
+    "__version__",
     "main",
     # decorators
     "component",

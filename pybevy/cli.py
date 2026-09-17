@@ -433,6 +433,17 @@ def _run_script(
     # under a foreign path and silently serves stale first-generation classes.
     script_path = os.path.abspath(script_path)
 
+    # Include project-root helpers when the scene is inside the launch directory.
+    launch_dir = os.path.realpath(os.getcwd())
+    try:
+        scene_in_launch_dir = (
+            os.path.commonpath([launch_dir, os.path.realpath(script_path)])
+            == launch_dir
+        )
+    except ValueError:
+        scene_in_launch_dir = False
+    reload_root = launch_dir if scene_in_launch_dir else os.path.dirname(script_path)
+
     # Set environment variable for Rust code to check
     if verbose:
         os.environ["PYBEVY_VERBOSE"] = "1"
@@ -475,13 +486,15 @@ def _run_script(
     sys.argv = [script_path]
 
     def load_create_app_function(
-        script_path: str, changed_files: set | None = None
+        script_path: str, changed_files: set | None = None, project_dir: str | None = None
     ) -> _CreateAppFunction:
         """Load just the create_app function without executing it
 
         Args:
             script_path: Path to the main script
             changed_files: Set of absolute paths that changed (for selective reload)
+            project_dir: Flush root (launch dir or the script's own dir). Falls
+                back to the script's own directory when not given.
         """
         try:
             # Try to convert file path to module name for relative imports
@@ -521,8 +534,9 @@ def _run_script(
                 # Flush user modules (selective via import graph when available)
                 from .util.hot_reload import flush_user_modules
 
+                flush_root = project_dir if project_dir is not None else parent_dir
                 flushed = flush_user_modules(
-                    parent_dir,
+                    flush_root,
                     verbose=verbose,
                     graph=import_graph_holder.get("graph"),
                     changed_files=changed_files,
@@ -571,8 +585,9 @@ def _run_script(
                 # Flush user modules (selective via import graph when available)
                 from .util.hot_reload import flush_user_modules
 
+                flush_root = project_dir if project_dir is not None else parent_dir
                 flush_user_modules(
-                    parent_dir,
+                    flush_root,
                     verbose=verbose,
                     graph=import_graph_holder.get("graph"),
                     changed_files=changed_files,
@@ -635,7 +650,9 @@ def _run_script(
 
     def load_full_app(script_path: str) -> App:
         """Load and create the initial app instance"""
-        create_app_func = load_create_app_function(script_path)
+        create_app_func = load_create_app_function(
+            script_path, project_dir=reload_root
+        )
         app = create_app_func()
         return app._set_scene_module(create_app_func.__module__)
 
@@ -697,7 +714,9 @@ def _run_script(
 
                     # Load entrypoint with selective reload based on mode
                     return load_create_app_function(
-                        script_path, resolve_changed_files(is_partial, files)
+                        script_path,
+                        resolve_changed_files(is_partial, files),
+                        project_dir=reload_root,
                     )
 
                 app._set_hot_reload_loader(loader)
@@ -734,12 +753,13 @@ def _run_script(
 
         app = load_full_app(script_path)
 
-        # Build import graph for selective module flushing
+        # Build the import graph for selective flushing under the same root
+        # as the flush, so scene and helper resolve identically.
         try:
             from .util.import_graph import ImportGraph
 
             graph = ImportGraph(
-                watch_root=os.path.dirname(os.path.abspath(script_path)),
+                watch_root=reload_root,
                 entry_file=os.path.abspath(script_path),
             )
             graph.build()

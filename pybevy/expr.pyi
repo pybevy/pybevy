@@ -1,5 +1,6 @@
 """Type stubs for lazy expression system."""
 
+from typing import NoReturn
 
 class Expr:
     """Base class for lazy expression tree nodes."""
@@ -8,6 +9,8 @@ class Expr:
     args: list
 
     def __init__(self, op: str, args: list) -> None: ...
+    # Truth testing raises; use &, |, ~ and .where().
+    def __bool__(self) -> NoReturn: ...
 
     # Binary operators
     def __add__(self, other: Expr | float | int) -> Expr: ...

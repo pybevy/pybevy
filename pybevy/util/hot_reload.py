@@ -56,7 +56,10 @@ def flush_user_modules(
     under *project_dir* (full flush).
 
     Modules belonging to pybevy, the stdlib, and site-packages are never
-    removed.
+    removed. Neither is ``__main__``: the running interpreter's own module
+    must stay in place (in a source-checkout dev layout its ``__file__`` sits
+    inside the project root, and evicting it breaks later
+    ``import __main__`` lookups).
 
     Args:
         project_dir: Absolute path to the project root directory.
@@ -91,7 +94,9 @@ def flush_user_modules(
     to_remove: list[str] = []
 
     for name, mod in list(sys.modules.items()):
-        if name in ("pybevy", "_pybevy") or name.startswith(("pybevy.", "_pybevy.")):
+        if name in ("pybevy", "_pybevy", "__main__") or name.startswith(
+            ("pybevy.", "_pybevy.")
+        ):
             continue
         fpath = getattr(mod, "__file__", None)
         if fpath is None:
@@ -400,6 +405,7 @@ def load_entrypoint_function(
     script_path: str,
     changed_files: set[str] | None = None,
     verbose: bool = False,
+    project_dir: str | None = None,
 ) -> Callable:
     """
     Load the entrypoint function from a script, optionally with selective reload.
@@ -416,6 +422,11 @@ def load_entrypoint_function(
                       None = full reload (clear component cache)
                       set() = partial reload (enable component caching)
         verbose: If True, print debug information
+        project_dir: Absolute path to the project root directory whose user
+            modules are flushed before the reload (transitive dependency
+            reload). Defaults to the script's own directory. Pass the project
+            root explicitly when the scene lives in a subdirectory and
+            imports modules from the project root or other subdirectories.
 
     Returns:
         The @entrypoint decorated function (NOT called yet)
@@ -455,11 +466,10 @@ def load_entrypoint_function(
     # Ensure sys.argv only contains the script path so user argparse works correctly
     sys.argv = [script_path]
 
-    # Reload module from source (shared with native plugin hot reload)
-    # Pass project_dir to flush all user modules for transitive dependency reload
+    # project_dir selects the flush root (default: the script's own dir).
     module_globals = reload_module_from_source(
         script_path,
-        project_dir=parent_dir,
+        project_dir=project_dir if project_dir is not None else parent_dir,
         verbose=verbose,
     )
 
@@ -485,6 +495,7 @@ def create_hot_reload_loader(
     reload_state: object,
     verbose: bool = False,
     entrypoint_wrapper: Callable[[Callable], Callable] | None = None,
+    project_dir: str | None = None,
 ) -> Callable[[], Callable[[], "App"]]:
     """
     Create a hot reload loader function for use with app._set_hot_reload_loader().
@@ -501,6 +512,9 @@ def create_hot_reload_loader(
         entrypoint_wrapper: Optional function to wrap the loaded entrypoint.
                            Takes entrypoint function, returns wrapped function.
                            Useful for re-adding plugins or modifying app setup.
+        project_dir: Optional absolute path to the project root directory
+            whose user modules are flushed on each reload. Forwarded to
+            :func:`load_entrypoint_function`; see its *project_dir* argument.
 
     Returns:
         A loader function that returns the fresh entrypoint function
@@ -562,6 +576,7 @@ def create_hot_reload_loader(
                 script_path,
                 resolve_changed_files(is_partial, files),
                 verbose=verbose,
+                project_dir=project_dir,
             )
 
             # Apply wrapper if provided (e.g., to re-add plugins)

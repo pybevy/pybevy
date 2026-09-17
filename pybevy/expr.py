@@ -34,7 +34,15 @@ class Expr:
         Args:
             op: Operation type ("add", "mul", "field", "const", etc.)
             args: Child expressions or constant values
+
+        Raises:
+            TypeError: If `op` is not a str or `args` is not a list.
         """
+        if not isinstance(op, str):
+            raise TypeError(f"Expr op must be a str, got {type(op).__name__}")
+        # `str` is a Sequence, so accepting one would expand "xy" into two operands.
+        if not isinstance(args, list):
+            raise TypeError(f"Expr args must be a list, got {type(args).__name__}")
         self.op = op
         self.args = args
 
@@ -322,6 +330,19 @@ class Expr:
             >>> is_dead = ~is_alive  # Logical negation
         """
         return Expr(op="not", args=[self])
+
+    def __bool__(self) -> bool:
+        """Refuse truth testing: a column has no single truth value.
+
+        `and`, `or`, `not` and chained comparisons cannot be overloaded, so Python
+        would collapse the column to one bool at trace time and silently compile a
+        different expression than the one written.
+        """
+        raise ValueError(
+            "the truth value of a View column is ambiguous; use `&`, `|`, `~` and "
+            ".where(...) instead of `and`, `or`, `not`, and write (a < b) & (b < c) "
+            "instead of a < b < c"
+        )
 
     def __repr__(self) -> str:
         """String representation for debugging"""

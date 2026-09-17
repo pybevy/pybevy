@@ -105,6 +105,25 @@ impl ArrayDType {
         matches!(self, ArrayDType::Bool)
     }
 
+    /// Integer-range acceptance policy for a signed 64-bit integer value.
+    ///
+    /// Bounded integer dtypes accept only values within their exact bounds;
+    /// `int64`, float, and `bool` dtypes accept every i64 value here.
+    /// Float conversion and truthiness are handled by the caller.
+    pub fn integer_fits(self, value: i64) -> bool {
+        match self {
+            ArrayDType::Float16
+            | ArrayDType::Float32
+            | ArrayDType::Float64
+            | ArrayDType::Int64
+            | ArrayDType::Bool => true,
+            ArrayDType::Int32 => i32::try_from(value).is_ok(),
+            ArrayDType::Uint32 => u32::try_from(value).is_ok(),
+            ArrayDType::Uint16 => u16::try_from(value).is_ok(),
+            ArrayDType::Uint8 => u8::try_from(value).is_ok(),
+        }
+    }
+
     /// Resolve a dtype name. Accepts both `"bool"` and the Python constant
     /// spelling `"bool_"`.
     pub fn from_name(name: &str) -> Option<Self> {

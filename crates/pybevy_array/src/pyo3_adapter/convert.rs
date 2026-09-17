@@ -10,6 +10,7 @@ use pyo3::{
 
 use super::{
     array::PyArray,
+    dtype::check_integer_range,
     kernels::{extract_scalar, map_array_err, scalar_to_py},
 };
 use crate::{
@@ -105,6 +106,16 @@ fn infer_dtype(flat: &[Scalar]) -> ArrayDType {
 }
 
 fn storage_from_scalars(flat: &[Scalar], dtype: ArrayDType) -> PyResult<ArrayStorage> {
+    if matches!(
+        dtype,
+        ArrayDType::Int32 | ArrayDType::Uint32 | ArrayDType::Uint16 | ArrayDType::Uint8
+    ) {
+        for s in flat {
+            if let Scalar::I64(v) = s {
+                check_integer_range(*v, dtype)?;
+            }
+        }
+    }
     let mut storage = ArrayStorage::zeros(dtype, flat.len()).map_err(map_array_err)?;
     for (i, &s) in flat.iter().enumerate() {
         storage.set(i, s);
