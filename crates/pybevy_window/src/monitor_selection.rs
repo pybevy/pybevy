@@ -28,7 +28,7 @@ pub enum PyMonitorSelection {
 
 #[pymethods]
 impl PyMonitorSelection {
-    fn __repr__(&self) -> String {
+    pub fn __repr__(&self) -> String {
         match self {
             PyMonitorSelection::Current() => "MonitorSelection.Current()".to_string(),
             PyMonitorSelection::Primary() => "MonitorSelection.Primary()".to_string(),

@@ -5,7 +5,7 @@ use pybevy_input::{
     mouse_scroll_unit::PyMouseScrollUnit, touch_phase::PyTouchPhase,
 };
 use pybevy_math::{ivec2::PyIVec2, vec2::PyVec2};
-use pyo3::{Borrowed, prelude::*};
+use pyo3::{Borrowed, IntoPyObjectExt, prelude::*};
 
 use crate::{
     app_lifecycle::PyAppLifecycle,
@@ -320,9 +320,159 @@ impl PyWindowEvent {
     }
 }
 
+// Render every field through Python's exact repr implementation.
+fn field_repr<'py, T: IntoPyObject<'py>>(py: Python<'py>, value: T) -> PyResult<String> {
+    Ok(value.into_bound_py_any(py)?.repr()?.to_string())
+}
+
 #[pymethods]
 impl PyWindowEvent {
-    fn __repr__(&self) -> String {
-        format!("{:?}", self)
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        Ok(match self {
+            PyWindowEvent::AppLifecycle { lifecycle } => format!(
+                "WindowEvent.AppLifecycle(lifecycle={})",
+                field_repr(py, *lifecycle)?
+            ),
+            PyWindowEvent::CursorEntered { window } => format!(
+                "WindowEvent.CursorEntered(window={})",
+                field_repr(py, *window)?
+            ),
+            PyWindowEvent::CursorLeft { window } => {
+                format!(
+                    "WindowEvent.CursorLeft(window={})",
+                    field_repr(py, *window)?
+                )
+            }
+            PyWindowEvent::CursorMoved {
+                position,
+                window,
+                delta,
+            } => format!(
+                "WindowEvent.CursorMoved(position={}, window={}, delta={})",
+                field_repr(py, position.clone())?,
+                field_repr(py, *window)?,
+                field_repr(py, delta.clone())?
+            ),
+            PyWindowEvent::FileDragAndDrop { value } => format!(
+                "WindowEvent.FileDragAndDrop(value={})",
+                field_repr(py, value.clone())?
+            ),
+            PyWindowEvent::Ime { value } => {
+                format!("WindowEvent.Ime(value={})", field_repr(py, value.clone())?)
+            }
+            PyWindowEvent::RequestRedraw {} => "WindowEvent.RequestRedraw()".to_string(),
+            PyWindowEvent::WindowCloseRequested { window } => format!(
+                "WindowEvent.WindowCloseRequested(window={})",
+                field_repr(py, *window)?
+            ),
+            PyWindowEvent::WindowFocused { focused, window } => format!(
+                "WindowEvent.WindowFocused(focused={}, window={})",
+                field_repr(py, *focused)?,
+                field_repr(py, *window)?
+            ),
+            PyWindowEvent::WindowResized {
+                width,
+                height,
+                window,
+            } => format!(
+                "WindowEvent.WindowResized(width={}, height={}, window={})",
+                field_repr(py, *width)?,
+                field_repr(py, *height)?,
+                field_repr(py, *window)?
+            ),
+            PyWindowEvent::MouseButtonInput {
+                button,
+                state,
+                window,
+            } => format!(
+                "WindowEvent.MouseButtonInput(button={}, state={}, window={})",
+                field_repr(py, *button)?,
+                field_repr(py, *state)?,
+                field_repr(py, *window)?
+            ),
+            PyWindowEvent::MouseMotion { delta } => format!(
+                "WindowEvent.MouseMotion(delta={})",
+                field_repr(py, delta.clone())?
+            ),
+            PyWindowEvent::MouseWheel { unit, x, y, window } => format!(
+                "WindowEvent.MouseWheel(unit={}, x={}, y={}, window={})",
+                field_repr(py, *unit)?,
+                field_repr(py, *x)?,
+                field_repr(py, *y)?,
+                field_repr(py, *window)?
+            ),
+            PyWindowEvent::PinchGesture { value } => format!(
+                "WindowEvent.PinchGesture(value={})",
+                field_repr(py, *value)?
+            ),
+            PyWindowEvent::RotationGesture { value } => format!(
+                "WindowEvent.RotationGesture(value={})",
+                field_repr(py, *value)?
+            ),
+            PyWindowEvent::DoubleTapGesture {} => "WindowEvent.DoubleTapGesture()".to_string(),
+            PyWindowEvent::PanGesture { x, y } => format!(
+                "WindowEvent.PanGesture(x={}, y={})",
+                field_repr(py, *x)?,
+                field_repr(py, *y)?
+            ),
+            PyWindowEvent::TouchInput {
+                phase,
+                position,
+                id,
+                window,
+                force,
+            } => format!(
+                "WindowEvent.TouchInput(phase={}, position={}, id={}, window={}, force={})",
+                field_repr(py, *phase)?,
+                field_repr(py, position.clone())?,
+                field_repr(py, *id)?,
+                field_repr(py, *window)?,
+                field_repr(py, *force)?
+            ),
+            PyWindowEvent::KeyboardFocusLost {} => "WindowEvent.KeyboardFocusLost()".to_string(),
+            PyWindowEvent::WindowCreated { window } => format!(
+                "WindowEvent.WindowCreated(window={})",
+                field_repr(py, *window)?
+            ),
+            PyWindowEvent::WindowDestroyed { window } => format!(
+                "WindowEvent.WindowDestroyed(window={})",
+                field_repr(py, *window)?
+            ),
+            PyWindowEvent::WindowMoved { position, window } => format!(
+                "WindowEvent.WindowMoved(position={}, window={})",
+                field_repr(py, position.clone())?,
+                field_repr(py, *window)?
+            ),
+            PyWindowEvent::WindowOccluded { occluded, window } => format!(
+                "WindowEvent.WindowOccluded(occluded={}, window={})",
+                field_repr(py, *occluded)?,
+                field_repr(py, *window)?
+            ),
+            PyWindowEvent::WindowScaleFactorChanged {
+                scale_factor,
+                window,
+            } => format!(
+                "WindowEvent.WindowScaleFactorChanged(scale_factor={}, window={})",
+                field_repr(py, *scale_factor)?,
+                field_repr(py, *window)?
+            ),
+            PyWindowEvent::WindowBackendScaleFactorChanged {
+                scale_factor,
+                window,
+            } => format!(
+                "WindowEvent.WindowBackendScaleFactorChanged(scale_factor={}, window={})",
+                field_repr(py, *scale_factor)?,
+                field_repr(py, *window)?
+            ),
+            PyWindowEvent::WindowThemeChanged { theme, window } => format!(
+                "WindowEvent.WindowThemeChanged(theme={}, window={})",
+                field_repr(py, *theme)?,
+                field_repr(py, *window)?
+            ),
+            PyWindowEvent::KeyboardInput { value } => format!(
+                "WindowEvent.KeyboardInput(value={})",
+                field_repr(py, value.clone())?
+            ),
+        })
     }
 }

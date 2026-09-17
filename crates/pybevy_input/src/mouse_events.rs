@@ -10,9 +10,10 @@ use pyo3::prelude::*;
 
 use crate::{
     button_state::PyButtonState, mouse_button::PyMouseButton, mouse_scroll_unit::PyMouseScrollUnit,
+    touch_phase::PyTouchPhase,
 };
 
-#[pymessage(MouseButtonInput)]
+#[pymessage(MouseButtonInput, writable)]
 #[pyclass(name = "MouseButtonInput", module = "pybevy.input", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyMouseButtonInput {
@@ -41,6 +42,18 @@ impl From<&MouseButtonInput> for PyMouseButtonInput {
             state: event.state.into(),
             window: event.window.into(),
         }
+    }
+}
+
+impl TryFrom<&PyMouseButtonInput> for MouseButtonInput {
+    type Error = PyErr;
+
+    fn try_from(value: &PyMouseButtonInput) -> PyResult<Self> {
+        Ok(MouseButtonInput {
+            button: value.button.into(),
+            state: value.state.into(),
+            window: value.window.into(),
+        })
     }
 }
 
@@ -87,7 +100,7 @@ impl PyMouseButtonInput {
     }
 }
 
-#[pymessage(MouseMotion)]
+#[pymessage(MouseMotion, writable)]
 #[pyclass(name = "MouseMotion", module = "pybevy.input", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyMouseMotion {
@@ -113,6 +126,16 @@ impl From<&MouseMotion> for PyMouseMotion {
     }
 }
 
+impl TryFrom<&PyMouseMotion> for MouseMotion {
+    type Error = PyErr;
+
+    fn try_from(value: &PyMouseMotion) -> PyResult<Self> {
+        Ok(MouseMotion {
+            delta: value.delta.try_get()?,
+        })
+    }
+}
+
 #[pymethods]
 impl PyMouseMotion {
     #[new]
@@ -132,7 +155,7 @@ impl PyMouseMotion {
     }
 }
 
-#[pymessage(MouseWheel)]
+#[pymessage(MouseWheel, writable)]
 #[pyclass(name = "MouseWheel", module = "pybevy.input", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyMouseWheel {
@@ -140,19 +163,12 @@ pub struct PyMouseWheel {
     pub y: f32,
     pub unit: PyMouseScrollUnit,
     pub window: PyEntity,
+    pub phase: PyTouchPhase,
 }
 
 impl PyMouseWheel {
     pub fn from_bevy(event: &MouseWheel) -> (Self, PyMessage) {
-        (
-            PyMouseWheel {
-                x: event.x,
-                y: event.y,
-                unit: event.unit.into(),
-                window: event.window.into(),
-            },
-            PyMessage,
-        )
+        (Self::from(event), PyMessage)
     }
 }
 
@@ -163,19 +179,35 @@ impl From<&MouseWheel> for PyMouseWheel {
             y: event.y,
             unit: event.unit.into(),
             window: event.window.into(),
+            phase: event.phase.into(),
         }
+    }
+}
+
+impl TryFrom<&PyMouseWheel> for MouseWheel {
+    type Error = PyErr;
+
+    fn try_from(value: &PyMouseWheel) -> PyResult<Self> {
+        Ok(MouseWheel {
+            unit: value.unit.into(),
+            x: value.x,
+            y: value.y,
+            window: value.window.into(),
+            phase: value.phase.into(),
+        })
     }
 }
 
 #[pymethods]
 impl PyMouseWheel {
     #[new]
-    #[pyo3(signature = (*, unit = PyMouseScrollUnit::Line, x, y, window=None))]
+    #[pyo3(signature = (*, unit = PyMouseScrollUnit::Line, x, y, window=None, phase = PyTouchPhase::Moved))]
     fn new(
         unit: PyMouseScrollUnit,
         x: f32,
         y: f32,
         window: Option<PyEntity>,
+        phase: PyTouchPhase,
     ) -> PyClassInitializer<Self> {
         (
             PyMouseWheel {
@@ -183,6 +215,7 @@ impl PyMouseWheel {
                 y,
                 unit,
                 window: window.unwrap_or(Entity::PLACEHOLDER.into()),
+                phase,
             },
             PyMessage,
         )
@@ -209,10 +242,15 @@ impl PyMouseWheel {
         self.window
     }
 
+    #[getter]
+    fn phase(&self) -> PyTouchPhase {
+        self.phase
+    }
+
     fn __repr__(&self) -> String {
         format!(
-            "MouseWheel(x={}, y={}, unit={:?})",
-            self.x, self.y, self.unit
+            "MouseWheel(x={}, y={}, unit={:?}, phase={:?})",
+            self.x, self.y, self.unit, self.phase
         )
     }
 }

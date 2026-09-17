@@ -14,7 +14,9 @@ use pyo3::{
     types::{PyList, PyTuple},
 };
 
-use crate::animation_node_index::PyAnimationNodeIndex;
+use crate::{animation_node_index::PyAnimationNodeIndex, validate::validate_finite};
+
+const CLIP_CANNOT_BE_NONE: &str = "clip cannot be None";
 
 #[pyasset(AnimationGraph, bridge)]
 #[pyclass(name = "AnimationGraph", module = "pybevy.animation", extends = PyAsset, skip_from_py_object)]
@@ -36,7 +38,7 @@ impl PyAnimationGraph {
         py: Python<'py>,
     ) -> PyResult<Bound<'py, PyTuple>> {
         if clip.is_none() {
-            return Err(PyTypeError::new_err("clip cannot be None"));
+            return Err(PyTypeError::new_err(CLIP_CANNOT_BE_NONE));
         }
         let handle = extract_handle_from_any(clip)?;
         let (graph, animation_node_index) = AnimationGraph::from_clip((&handle).try_into()?);
@@ -87,7 +89,7 @@ impl PyAnimationGraph {
         weight: f32,
         parent: &PyAnimationNodeIndex,
     ) -> PyResult<PyAnimationNodeIndex> {
-        let weight = validate_weight(weight)?;
+        let weight = validate_finite(weight, "weight")?;
         Ok(PyAnimationNodeIndex(
             self.as_mut()?.add_blend(weight, parent.0),
         ))
@@ -100,11 +102,11 @@ impl PyAnimationGraph {
         parent: &PyAnimationNodeIndex,
     ) -> PyResult<PyAnimationNodeIndex> {
         if clip.is_none() {
-            return Err(PyTypeError::new_err("clip cannot be None"));
+            return Err(PyTypeError::new_err(CLIP_CANNOT_BE_NONE));
         }
         let handle = extract_handle_from_any(clip)?;
         let handle = (&handle).try_into()?;
-        let weight = validate_weight(weight)?;
+        let weight = validate_finite(weight, "weight")?;
         Ok(PyAnimationNodeIndex(
             self.as_mut()?.add_clip(handle, weight, parent.0),
         ))
@@ -151,16 +153,6 @@ impl PyAnimationGraph {
 
     pub fn nodes(&self) -> PyResult<Vec<PyAnimationNodeIndex>> {
         Ok(self.as_ref()?.nodes().map(PyAnimationNodeIndex).collect())
-    }
-}
-
-fn validate_weight(weight: f32) -> PyResult<f32> {
-    if weight.is_finite() {
-        Ok(weight)
-    } else {
-        Err(PyValueError::new_err(format!(
-            "weight must be finite (got {weight})"
-        )))
     }
 }
 

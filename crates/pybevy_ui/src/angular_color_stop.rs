@@ -1,6 +1,18 @@
 use bevy::{color::Color, ui::AngularColorStop};
 use pybevy_color::color::PyColor;
-use pyo3::prelude::*;
+use pybevy_core::public_error::value_out_of_range;
+use pyo3::{exceptions::PyValueError, prelude::*};
+
+/// bevy interpolates with the hint as a 0.0..=1.0 midpoint fraction.
+fn check_hint(hint: f32) -> PyResult<f32> {
+    if (0.0..=1.0).contains(&hint) {
+        Ok(hint)
+    } else {
+        Err(PyValueError::new_err(value_out_of_range(
+            "hint", 0.0, 1.0, hint,
+        )))
+    }
+}
 
 #[pyclass(name = "AngularColorStop", module = "pybevy.ui", eq, from_py_object)]
 #[derive(Clone, Debug, PartialEq)]
@@ -33,7 +45,7 @@ impl PyAngularColorStop {
             inner: AngularColorStop {
                 color: bevy_color,
                 angle,
-                hint,
+                hint: check_hint(hint)?,
             },
         })
     }
@@ -46,10 +58,10 @@ impl PyAngularColorStop {
         })
     }
 
-    pub fn with_hint(&self, hint: f32) -> Self {
-        PyAngularColorStop {
-            inner: self.inner.with_hint(hint),
-        }
+    pub fn with_hint(&self, hint: f32) -> PyResult<Self> {
+        Ok(PyAngularColorStop {
+            inner: self.inner.with_hint(check_hint(hint)?),
+        })
     }
 
     #[getter]

@@ -4,13 +4,13 @@ use bevy::{
     audio::{AudioSinkPlayback, SpatialAudioSink},
     transform::components::Transform,
 };
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, PyComponent, public_error::audio_seek_failed};
 use pybevy_macros::pycomponent;
 use pybevy_math::vec3::PyVec3;
 use pybevy_transform::transform::PyTransform;
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
 
-use crate::{audio_sink::validate_sink_speed, volume::PyVolume};
+use crate::{audio_sink::validate_speed, volume::PyVolume};
 
 #[pycomponent(SpatialAudioSink, no_clone, bridge, no_reflect)]
 #[pyclass(name = "SpatialAudioSink", module = "pybevy.audio", extends = PyComponent)]
@@ -49,7 +49,7 @@ impl PySpatialAudioSink {
     }
 
     pub fn set_speed(&self, speed: f32) -> PyResult<()> {
-        validate_sink_speed(speed)?;
+        let speed = validate_speed(speed)?;
         self.as_ref()?.set_speed(speed);
         Ok(())
     }
@@ -83,7 +83,7 @@ impl PySpatialAudioSink {
     pub fn try_seek(&self, pos: Duration) -> PyResult<()> {
         self.as_ref()?
             .try_seek(pos)
-            .map_err(|e| PyRuntimeError::new_err(format!("Seek error: {:?}", e)))?;
+            .map_err(|e| PyRuntimeError::new_err(audio_seek_failed(e)))?;
         Ok(())
     }
 

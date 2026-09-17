@@ -25,7 +25,7 @@ from pybevy.color import (
 )
 from pybevy.ecs import Batchable, Component, Entity, Resource
 from pybevy.image import Image
-from pybevy.math import Rect, Rot2, Vec2
+from pybevy.math import Affine2, Mat2, Rect, Rot2, Vec2
 from pybevy.sprite import TextureSlicer
 
 class Val:
@@ -34,6 +34,10 @@ class Val:
     Construct a nested variant or use module px/percent/vw/vh/vmin/vmax helpers.
     Nonfinite values follow Bevy behavior. Bare numeric Node fields mean pixels.
     """
+
+    def __copy__(self) -> Val: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> Val: ...
+
 
     class Auto(Val):
         __match_args__: ClassVar[tuple[()]] = ()
@@ -125,6 +129,7 @@ class UiRect:
         border = UiRect.axes(Val.Px(2), Val.Px(4))
         ```
     """
+
 
     ZERO: ClassVar[UiRect]
     AUTO: ClassVar[UiRect]
@@ -251,6 +256,10 @@ class FlexDirection:
         ```
     """
 
+    def __copy__(self) -> FlexDirection: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> FlexDirection: ...
+
+
     Row: FlexDirection
     """Horizontal layout, left to right (default)."""
 
@@ -278,6 +287,10 @@ class Display:
         ```
     """
 
+    def __copy__(self) -> Display: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> Display: ...
+
+
     Flex: Display
     """Use flexbox layout (default)."""
 
@@ -304,6 +317,10 @@ class AlignItems:
         node.align_items = AlignItems.Center  # Center children vertically
         ```
     """
+
+    def __copy__(self) -> AlignItems: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> AlignItems: ...
+
 
     Default: AlignItems
     """Default alignment."""
@@ -343,6 +360,10 @@ class JustifyContent:
         node.justify_content = JustifyContent.SpaceBetween  # Space items evenly
         ```
     """
+
+    def __copy__(self) -> JustifyContent: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> JustifyContent: ...
+
 
     Default: JustifyContent
     """Default justification."""
@@ -389,6 +410,10 @@ class AlignSelf:
         ```
     """
 
+    def __copy__(self) -> AlignSelf: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> AlignSelf: ...
+
+
     Auto: AlignSelf
     """Use parent's align_items (default)."""
 
@@ -428,6 +453,10 @@ class FlexWrap:
         ```
     """
 
+    def __copy__(self) -> FlexWrap: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> FlexWrap: ...
+
+
     NoWrap: FlexWrap
     """Don't wrap, single line (default)."""
 
@@ -449,6 +478,10 @@ class InlineDirection:
         node.direction = InlineDirection.Rtl  # Right-to-left
         ```
     """
+
+    def __copy__(self) -> InlineDirection: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> InlineDirection: ...
+
 
     Ltr: InlineDirection
     """Left-to-right (default)."""
@@ -472,6 +505,10 @@ class AlignContent:
         node.align_content = AlignContent.SpaceBetween
         ```
     """
+
+    def __copy__(self) -> AlignContent: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> AlignContent: ...
+
 
     Default: AlignContent
     """Default alignment."""
@@ -519,6 +556,10 @@ class OverflowAxis:
         ```
     """
 
+    def __copy__(self) -> OverflowAxis: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> OverflowAxis: ...
+
+
     Visible: OverflowAxis
     """Show overflowing content (default)."""
 
@@ -557,6 +598,7 @@ class Overflow:
         overflow.y = OverflowAxis.Scroll
         ```
     """
+
 
     DEFAULT: ClassVar[Overflow]
 
@@ -643,6 +685,10 @@ class PositionType:
         ```
     """
 
+    def __copy__(self) -> PositionType: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> PositionType: ...
+
+
     Relative: PositionType
     """Position relative to siblings (default)."""
 
@@ -668,6 +714,10 @@ class BoxSizing:
         ```
     """
 
+    def __copy__(self) -> BoxSizing: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> BoxSizing: ...
+
+
     BorderBox: BoxSizing
     """Width/height refer to the border box (including padding and border)."""
 
@@ -690,6 +740,10 @@ class VisualBox:
         clip_box = VisualBox.BorderBox
         ```
     """
+
+    def __copy__(self) -> VisualBox: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> VisualBox: ...
+
 
     ContentBox: VisualBox
     """Clip content outside the content box."""
@@ -721,6 +775,7 @@ class OverflowClipMargin:
         margin = OverflowClipMargin.border_box().with_margin(10.0)
         ```
     """
+
 
     def __init__(
         self,
@@ -781,6 +836,7 @@ class Val2:
         pos = Val2(Val.Px(10.0), Val.Percent(50.0))
         ```
     """
+
 
     ZERO: Val2
     """A zero-valued Val2."""
@@ -888,6 +944,54 @@ class UiTransform(Component):
     def __eq__(self, other: object) -> bool: ...
 
 
+class UiGlobalTransform(Component):
+    """The absolute 2D transform computed for a UI node.
+
+    Bevy updates this component from the node's layout and ``UiTransform``.
+    Query it together with ``ComputedNode`` to inspect a node's resolved size
+    and screen-space placement. It cannot be inserted directly; modify
+    ``UiTransform`` to move an entity in the UI hierarchy.
+    """
+
+    def __init__(self) -> None:
+        """Create an identity transform for standalone calculations."""
+
+    @staticmethod
+    def from_translation(translation: Vec2) -> UiGlobalTransform:
+        """Create a transform containing only a pixel translation."""
+
+    @staticmethod
+    def from_xy(x: float, y: float) -> UiGlobalTransform:
+        """Create a transform translated by ``x`` and ``y`` pixels."""
+
+    @staticmethod
+    def from_rotation(rotation: Rot2) -> UiGlobalTransform:
+        """Create a transform containing only a rotation."""
+
+    @staticmethod
+    def from_scale(scale: Vec2) -> UiGlobalTransform:
+        """Create a transform containing only a scale."""
+
+    @property
+    def matrix2(self) -> Mat2:
+        """The resolved rotation-and-scale matrix."""
+
+    @property
+    def translation(self) -> Vec2:
+        """The resolved absolute translation in physical pixels."""
+
+    def try_inverse(self) -> Affine2 | None:
+        """Return the inverse transform, or ``None`` if it is singular."""
+
+    def to_scale_angle_translation(self) -> tuple[Vec2, float, Vec2]:
+        """Extract scale, rotation angle, and absolute translation."""
+
+    def affine(self) -> Affine2:
+        """Return this transform as an ``Affine2`` value."""
+
+    def __eq__(self, other: object) -> bool: ...
+
+
 class BorderGradient(Component):
     """A gradient displayed on a UI node's border.
 
@@ -920,6 +1024,8 @@ class BorderGradient(Component):
         """Check if empty."""
 
     def __eq__(self, other: object) -> bool: ...
+
+    def __len__(self) -> int: ...
 
 
 class Text(Component):
@@ -1730,6 +1836,10 @@ class NodeImageMode:
         ```
     """
 
+    def __copy__(self) -> NodeImageMode: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> NodeImageMode: ...
+
+
     class Auto(NodeImageMode):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
@@ -1759,9 +1869,8 @@ class NodeImageMode:
 class ImageNode(Component):
     """UI image component for displaying images in UI nodes.
 
-    Displays an image texture on a UI node. An unsized Node takes its intrinsic
-    size from the image. When the Node has an explicit size, the image is
-    stretched to fill it (use BorderRadius for rounded corners).
+    The default `NodeImageMode.Auto` uses intrinsic size and preserves aspect
+    ratio. Assign `NodeImageMode.Stretch()` to fill an explicitly sized node.
 
     Example:
         ```python
@@ -1794,8 +1903,11 @@ class ImageNode(Component):
     def solid_color(color: Color) -> ImageNode:
         """Create a solid-color image backed by a 1-by-1 texture.
 
-        Give the accompanying Node an explicit width and height to fill an
-        area; an unsized Node adopts the texture's intrinsic 1-by-1 size.
+        image_mode stays at NodeImageMode.Auto, so the 1-by-1 texture is
+        scaled uniformly and centered inside the Node: a 200-by-80 Node shows
+        an 80-by-80 square, not a filled 200-by-80 area. Assign
+        image_mode = NodeImageMode.Stretch() to cover the Node exactly. An
+        unsized Node adopts the texture's intrinsic 1-by-1 size.
         """
 
     @property
@@ -1835,7 +1947,7 @@ class ImageNode(Component):
 
     @property
     def image_mode(self) -> NodeImageMode:
-        """How the image fits within the node."""
+        """How the image fits; defaults to aspect-preserving Auto."""
 
     @image_mode.setter
     def image_mode(self, value: NodeImageMode) -> None: ...
@@ -2127,6 +2239,10 @@ class JustifyItems:
         ```
     """
 
+    def __copy__(self) -> JustifyItems: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> JustifyItems: ...
+
+
     Default: JustifyItems
     """Default alignment."""
 
@@ -2159,6 +2275,10 @@ class JustifySelf:
         node.justify_self = JustifySelf.Center
         ```
     """
+
+    def __copy__(self) -> JustifySelf: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> JustifySelf: ...
+
 
     Auto: JustifySelf
     """Use parent's justify_items (default)."""
@@ -2225,6 +2345,10 @@ class GridAutoFlow:
         node.grid_auto_flow = GridAutoFlow.Row  # Fill rows first
         ```
     """
+
+    def __copy__(self) -> GridAutoFlow: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> GridAutoFlow: ...
+
 
     Row: GridAutoFlow
     """Place items by filling each row in turn."""
@@ -2390,6 +2514,10 @@ class GridPlacement:
 class GridTrackRepetition:
     """How many times a repeated grid track repeats (CSS repeat)."""
 
+    def __copy__(self) -> GridTrackRepetition: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> GridTrackRepetition: ...
+
+
     class Count(GridTrackRepetition):
         __match_args__: ClassVar[tuple[Literal["value"]]]
         value: int
@@ -2422,6 +2550,7 @@ class RepeatedGridTrack:
         node.grid_template_rows = [RepeatedGridTrack.fr(4, 1.0)]
         ```
     """
+
 
     def __init__(self) -> None: ...
 
@@ -2578,6 +2707,10 @@ class InterpolationColorSpace:
         ```
     """
 
+    def __copy__(self) -> InterpolationColorSpace: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> InterpolationColorSpace: ...
+
+
     Oklaba: InterpolationColorSpace
     """Oklaba color space (perceptually uniform)."""
 
@@ -2604,6 +2737,8 @@ class InterpolationColorSpace:
 
     HsvaLong: InterpolationColorSpace
     """HSV with long path hue interpolation."""
+
+    def __hash__(self) -> int: ...
 
 
 class ScrollPosition(Component):
@@ -2805,6 +2940,9 @@ class ColorStop:
             color: The color at this stop
             point: Position along the gradient
             hint: Interpolation midpoint hint (0.0 to 1.0)
+
+        Raises:
+            ValueError: If the hint is outside 0.0 to 1.0
         """
 
     @staticmethod
@@ -2820,7 +2958,11 @@ class ColorStop:
         """Create a color stop at a percentage position."""
 
     def with_hint(self, hint: float) -> ColorStop:
-        """Set the interpolation midpoint hint (0.0 to 1.0)."""
+        """Set the interpolation midpoint hint (0.0 to 1.0).
+
+        Raises:
+            ValueError: If the hint is outside 0.0 to 1.0
+        """
 
     @property
     def color(self) -> Color:
@@ -2856,6 +2998,9 @@ class AngularColorStop:
             color: The color at this stop
             angle: Angle in radians (None for auto positioning)
             hint: Interpolation midpoint hint (0.0 to 1.0)
+
+        Raises:
+            ValueError: If the hint is outside 0.0 to 1.0
         """
 
     @staticmethod
@@ -2863,7 +3008,11 @@ class AngularColorStop:
         """Create an automatic angular color stop."""
 
     def with_hint(self, hint: float) -> AngularColorStop:
-        """Set the interpolation midpoint hint."""
+        """Set the interpolation midpoint hint (0.0 to 1.0).
+
+        Raises:
+            ValueError: If the hint is outside 0.0 to 1.0
+        """
 
     @property
     def color(self) -> Color:
@@ -3463,6 +3612,8 @@ class BackgroundGradient(Component):
 
     def __eq__(self, other: object) -> bool: ...
 
+    def __len__(self) -> int: ...
+
 
 class TextShadow(Component):
     """Adds a shadow behind text.
@@ -3578,6 +3729,7 @@ __all__ = [
     "ShadowStyle",
     "Text",
     "TextShadow",
+    "UiGlobalTransform",
     "UiImage",
     "UiPosition",
     "UiRect",

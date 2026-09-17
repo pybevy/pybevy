@@ -1,4 +1,3 @@
-from enum import Enum
 from typing import ClassVar, Final, Literal
 
 import numpy as np
@@ -16,7 +15,7 @@ from pybevy.math import CompassOctant, IVec2, UVec2, Vec2
 
 ExitSystems: Final[SystemSet]
 
-class ExitCondition(Enum):
+class ExitCondition:
     """Determines when the application should exit based on window state.
 
     Variants:
@@ -24,12 +23,20 @@ class ExitCondition(Enum):
         OnAllClosed: Exit when all windows are closed (default)
         DontExit: Never exit automatically (manual control via AppExit event)
     """
-    OnPrimaryClosed = ...
-    OnAllClosed = ...
-    DontExit = ...
+
+    def __copy__(self) -> ExitCondition: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> ExitCondition: ...
+
+    OnPrimaryClosed: ExitCondition
+    OnAllClosed: ExitCondition
+    DontExit: ExitCondition
 
 class WindowRef:
     """A window render-target reference."""
+
+    def __copy__(self) -> WindowRef: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> WindowRef: ...
+
 
     class Primary(WindowRef):
         __match_args__: ClassVar[tuple[()]]
@@ -170,6 +177,10 @@ class VideoModeSelection:
 
     """
 
+    def __copy__(self) -> VideoModeSelection: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> VideoModeSelection: ...
+
+
     class Current(VideoModeSelection):
         """Use the video mode that the monitor is already in."""
         __match_args__: ClassVar[tuple[()]]
@@ -203,6 +214,10 @@ class WindowMode:
         ```
     """
 
+    def __copy__(self) -> WindowMode: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> WindowMode: ...
+
+
     class Windowed(WindowMode):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
@@ -229,6 +244,10 @@ class WindowLevel:
         AlwaysOnTop: Window always on top of Normal and AlwaysOnBottom windows
     """
 
+    def __copy__(self) -> WindowLevel: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> WindowLevel: ...
+
+
     AlwaysOnBottom: WindowLevel
     Normal: WindowLevel
     AlwaysOnTop: WindowLevel
@@ -247,7 +266,7 @@ class Window(Component):
 
         def toggle_fullscreen(
             window: Single[Mut[Window], With[PrimaryWindow]],
-            keyboard: Res[ButtonInput],
+            keyboard: Res[ButtonInput[KeyCode]],
         ) -> None:
             if keyboard.just_pressed(KeyCode.F11):
                 if window.mode == WindowMode.Windowed():
@@ -262,15 +281,49 @@ class Window(Component):
     def __init__(
         self,
         *,
+        present_mode: PresentMode = ...,
         mode: WindowMode = WindowMode.Windowed(),
+        position: WindowPosition | None = None,
         resolution: WindowResolution = WindowResolution(1280, 720),
         title: str = "PyBevy App",
+        name: str | None = None,
+        composite_alpha_mode: CompositeAlphaMode = ...,
+        resize_constraints: WindowResizeConstraints = ...,
         resizable: bool = True,
+        enabled_buttons: EnabledButtons = ...,
         decorations: bool = True,
         transparent: bool = False,
-        window_level: WindowLevel = WindowLevel.Normal
+        window_level: WindowLevel = WindowLevel.Normal,
+        canvas: str | None = None,
+        fit_canvas_to_parent: bool = False,
+        prevent_default_event_handling: bool = True,
+        ime_enabled: bool = False,
+        ime_position: Vec2 = Vec2.ZERO,
+        window_theme: WindowTheme | None = None,
+        visible: bool = True,
+        skip_taskbar: bool = False,
+        clip_children: bool = True,
+        desired_maximum_frame_latency: int | None = None,
+        recognize_pinch_gesture: bool = False,
+        recognize_rotation_gesture: bool = False,
+        recognize_doubletap_gesture: bool = False,
+        recognize_pan_gesture: tuple[int, int] | None = None,
+        movable_by_window_background: bool = False,
+        fullsize_content_view: bool = False,
+        has_shadow: bool = True,
+        titlebar_shown: bool = True,
+        titlebar_transparent: bool = False,
+        titlebar_show_title: bool = True,
+        titlebar_show_buttons: bool = True,
+        borderless_game: bool = True,
+        prefers_home_indicator_hidden: bool = False,
+        prefers_status_bar_hidden: bool = False,
+        preferred_screen_edges_deferring_system_gestures: ScreenEdge = ...,
     ) -> None:
-        """Create a new window."""
+        """Create a window from keyword-only field values.
+
+        An omitted parameter keeps Bevy's default for that field.
+        """
 
     @property
     def title(self) -> str:
@@ -708,6 +761,10 @@ class CursorGrabMode:
     exposed as `None_` in both the stubs and at runtime.
     """
 
+    def __copy__(self) -> CursorGrabMode: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> CursorGrabMode: ...
+
+
     None_: CursorGrabMode
     Confined: CursorGrabMode
     Locked: CursorGrabMode
@@ -727,7 +784,7 @@ class CursorOptions(Component):
 
         def grab_mouse(
             cursor_options: Single[Mut[CursorOptions]],
-            mouse: Res[ButtonInput],
+            mouse: Res[ButtonInput[MouseButton]],
         ) -> None:
             if mouse.just_pressed(MouseButton.Left()):
                 cursor_options.visible = False
@@ -812,6 +869,10 @@ class SystemCursorIcon:
     Standard cursor appearances provided by the operating system.
     """
 
+    def __copy__(self) -> SystemCursorIcon: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> SystemCursorIcon: ...
+
+
     Default: SystemCursorIcon
     ContextMenu: SystemCursorIcon
     Help: SystemCursorIcon
@@ -862,6 +923,10 @@ class WindowTheme:
         window.window_theme = WindowTheme.Dark  # Dark window decorations
         ```
     """
+
+    def __copy__(self) -> WindowTheme: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> WindowTheme: ...
+
     Light: WindowTheme
     """Light theme (light window decorations)."""
 
@@ -882,6 +947,10 @@ class PresentMode:
         window.present_mode = PresentMode.AutoVsync  # Enable VSync
         ```
     """
+
+    def __copy__(self) -> PresentMode: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> PresentMode: ...
+
     AutoVsync: PresentMode
     """Automatic VSync - uses FifoRelaxed -> Fifo based on availability."""
 
@@ -915,6 +984,10 @@ class CompositeAlphaMode:
         window.composite_alpha_mode = CompositeAlphaMode.Opaque
         ```
     """
+
+    def __copy__(self) -> CompositeAlphaMode: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> CompositeAlphaMode: ...
+
     Auto: CompositeAlphaMode
     """Automatic - chooses Opaque or Inherit based on surface support. Default."""
 
@@ -1004,6 +1077,10 @@ class ScreenEdge:
         Right: Right edge of the screen
         All: All edges of the screen
     """
+
+    def __copy__(self) -> ScreenEdge: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> ScreenEdge: ...
+
     None_: ScreenEdge
     """No edge (default). Spelled `None_` because bevy's `None` is a Python keyword."""
 
@@ -1042,6 +1119,10 @@ class AppLifecycle:
                 print("App is active and can update")
         ```
     """
+
+    def __copy__(self) -> AppLifecycle: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> AppLifecycle: ...
+
     Idle: AppLifecycle
     """Application is idle (initial state)."""
 
@@ -1085,6 +1166,10 @@ class MonitorSelection:
         window.monitor_selection = MonitorSelection.Index(1)
         ```
     """
+
+    def __copy__(self) -> MonitorSelection: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> MonitorSelection: ...
+
     class Current(MonitorSelection):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
@@ -1118,6 +1203,7 @@ class EnabledButtons:
         buttons = EnabledButtons(minimize=True, maximize=False, close=True)
         ```
     """
+
 
     minimize: bool
     """Whether the minimize button is enabled."""
@@ -1161,6 +1247,7 @@ class WindowPosition:
         pos = WindowPosition.Centered(MonitorSelection.Primary())
         ```
     """
+
 
     class Automatic(WindowPosition):
         """Let the window manager select the position."""
@@ -1311,6 +1398,10 @@ class Ime(Message):
         ```
     """
 
+    def __copy__(self) -> Ime: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> Ime: ...
+
+
     class Preedit(Ime):
         __match_args__: ClassVar[
             tuple[Literal["window"], Literal["value"], Literal["cursor"]]
@@ -1365,6 +1456,10 @@ class FileDragAndDrop(Message):
                         print("File hover canceled")
         ```
     """
+
+    def __copy__(self) -> FileDragAndDrop: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> FileDragAndDrop: ...
+
 
     class DroppedFile(FileDragAndDrop):
         __match_args__: ClassVar[tuple[Literal["window"], Literal["path_buf"]]]
@@ -1555,8 +1650,14 @@ class RequestRedraw(Message):
     Send this event to force all windows to redraw, even if their control flow
     is set to Wait and there have been no window events.
 
+    The message buffer comes from `WindowPlugin`; writing without it raises
+    `TypeError`.
+
     Example:
         ```python
+        from pybevy.ecs import MessageWriter
+        from pybevy.window import RequestRedraw
+
         def force_redraw(writer: MessageWriter[RequestRedraw]) -> None:
             writer.write(RequestRedraw())
         ```

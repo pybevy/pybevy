@@ -1,5 +1,9 @@
-use bevy::{ecs::entity::Entity, input::keyboard::KeyboardInput};
+use bevy::{
+    ecs::entity::Entity,
+    input::keyboard::{Key, KeyboardInput},
+};
 use pybevy_core::{PyEntity, PyMessage};
+use pybevy_macros::pymessage;
 use pyo3::prelude::*;
 
 use crate::{
@@ -8,6 +12,7 @@ use crate::{
     key_code::{PyKeyCode, materialize_key_code},
 };
 
+#[pymessage(KeyboardInput, writable, materialize = materialize_keyboard_input)]
 #[pyclass(name = "KeyboardInput", module = "pybevy.input", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyKeyboardInput {
@@ -30,6 +35,26 @@ impl PyKeyboardInput {
             window: event.window.into(),
         })
     }
+}
+
+impl TryFrom<&PyKeyboardInput> for KeyboardInput {
+    type Error = PyErr;
+
+    fn try_from(value: &PyKeyboardInput) -> PyResult<Self> {
+        Ok(KeyboardInput {
+            key_code: value.key_code,
+            logical_key: Key::from(value.logical_key.clone()),
+            state: value.state.into(),
+            text: value.text.clone().map(Into::into),
+            repeat: value.repeat,
+            window: value.window.into(),
+        })
+    }
+}
+
+pub fn materialize_keyboard_input(py: Python<'_>, event: &KeyboardInput) -> PyResult<Py<PyAny>> {
+    let py_event = PyKeyboardInput::from_bevy_event(event)?;
+    Ok(Py::new(py, (py_event, PyMessage))?.into_any())
 }
 
 #[pymethods]

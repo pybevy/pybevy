@@ -221,7 +221,8 @@ pub enum PyInlineDirection {
     module = "pybevy.ui",
     eq,
     eq_int,
-    from_py_object
+    from_py_object,
+    frozen
 )]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PyOverflowAxis {
@@ -275,9 +276,11 @@ pub enum PyGridAutoFlow {
     name = "InterpolationColorSpace",
     module = "pybevy.ui",
     eq,
-    from_py_object
+    from_py_object,
+    frozen,
+    hash
 )]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyInterpolationColorSpace {
     Oklaba,
     Oklcha,

@@ -1,6 +1,18 @@
 use bevy::{color::Color, ui::ColorStop};
 use pybevy_color::color::PyColor;
-use pyo3::prelude::*;
+use pybevy_core::public_error::value_out_of_range;
+use pyo3::{exceptions::PyValueError, prelude::*};
+
+/// bevy interpolates with the hint as a 0.0..=1.0 midpoint fraction.
+fn check_hint(hint: f32) -> PyResult<f32> {
+    if (0.0..=1.0).contains(&hint) {
+        Ok(hint)
+    } else {
+        Err(PyValueError::new_err(value_out_of_range(
+            "hint", 0.0, 1.0, hint,
+        )))
+    }
+}
 
 use crate::val::PyVal;
 
@@ -35,7 +47,7 @@ impl PyColorStop {
             inner: ColorStop {
                 color: bevy_color,
                 point: point.into(),
-                hint,
+                hint: check_hint(hint)?,
             },
         })
     }
@@ -64,10 +76,10 @@ impl PyColorStop {
         })
     }
 
-    pub fn with_hint(&self, hint: f32) -> Self {
-        PyColorStop {
-            inner: self.inner.with_hint(hint),
-        }
+    pub fn with_hint(&self, hint: f32) -> PyResult<Self> {
+        Ok(PyColorStop {
+            inner: self.inner.with_hint(check_hint(hint)?),
+        })
     }
 
     #[getter]

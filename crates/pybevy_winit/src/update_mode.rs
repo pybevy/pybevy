@@ -44,8 +44,12 @@ impl PyUpdateMode {
                 react_to_user_events,
                 react_to_window_events,
             } => {
+                let flag = |value: bool| if value { "True" } else { "False" };
                 format!(
-                    "UpdateMode.Reactive(wait={wait}, react_to_device_events={react_to_device_events}, react_to_user_events={react_to_user_events}, react_to_window_events={react_to_window_events})"
+                    "UpdateMode.Reactive(wait={wait}, react_to_device_events={}, react_to_user_events={}, react_to_window_events={})",
+                    flag(*react_to_device_events),
+                    flag(*react_to_user_events),
+                    flag(*react_to_window_events)
                 )
             }
         }

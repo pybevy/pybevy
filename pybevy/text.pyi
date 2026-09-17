@@ -72,9 +72,23 @@ class Font(Asset):
         """
 
     @property
-    def alias(self) -> str: ...
+    def alias(self) -> str:
+        """Engine-owned key that makes a `FontSource.Handle` resolve to this face.
+
+        Not a family name you can choose. bevy overwrites it with
+        `asset_id:<id>` when the font is first registered and whenever the font
+        collection is rebuilt after a removal. It is empty on a freshly parsed
+        `Font` and never reports the family name embedded in the file. Changing
+        it after registration does not rename the face and can break
+        `FontSource.Handle` resolution until the collection is rebuilt.
+
+        To reach a face by name, use `FontSource.Family` with the family name
+        the font file itself declares.
+        """
+
     @alias.setter
-    def alias(self, value: str) -> None: ...
+    def alias(self, value: str) -> None:
+        """Set the raw alias field; this does not rename the registered face."""
 
 class FontAtlas:
     """A font atlas containing rasterized glyphs.
@@ -302,6 +316,10 @@ class FontStyle:
         >>> TextFont(font_size=24.0, style=FontStyle.Oblique(14.0))
     """
 
+    def __copy__(self) -> FontStyle: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> FontStyle: ...
+
+
     class Normal(FontStyle):
         """A face that is neither italic nor obliqued (default)."""
 
@@ -325,6 +343,10 @@ class FontStyle:
 
 class FontHinting:
     """Font hinting strategy controlling glyph rasterization."""
+
+    def __copy__(self) -> FontHinting: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> FontHinting: ...
+
 
     Disabled: FontHinting
     """Glyphs are rasterized without hinting (default)."""
@@ -457,6 +479,10 @@ class FontFeaturesBuilder:
 class FontSmoothing:
     """Antialiasing method for text rendering."""
 
+    def __copy__(self) -> FontSmoothing: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> FontSmoothing: ...
+
+
     None_: FontSmoothing
     """No antialiasing - for pixel art aesthetic"""
 
@@ -468,6 +494,10 @@ class FontSmoothing:
 
 class Justify:
     """Text alignment options."""
+
+    def __copy__(self) -> Justify: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> Justify: ...
+
 
     Left: Justify
     """Left-aligned text"""
@@ -488,9 +518,14 @@ class Justify:
     """Aligned to the end of the line (right for LTR, left for RTL)"""
 
     def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
 
 class LineBreak:
     """Line breaking behavior for text wrapping."""
+
+    def __copy__(self) -> LineBreak: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> LineBreak: ...
+
 
     WordBoundary: LineBreak
     """Break at word boundaries using Unicode Line Breaking Algorithm (default)"""
@@ -505,6 +540,7 @@ class LineBreak:
     """No soft wrapping (hard breaks like \\n still work)"""
 
     def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
 
 class TextBounds(Component):
     """Width and height constraints supplied to world-space text layout.
@@ -602,6 +638,15 @@ class FontSource:
     Wherever a FontSource is accepted, a Handle is treated as
     `FontSource.Handle` and a str as `FontSource.Family` (mirrors bevy's
     `From` impls).
+
+    Only `Handle` and `Family` resolve in the shipped build. The thirteen
+    generic categories need bevy's `system_font_discovery` feature, which is
+    not compiled in, and render nothing without it; bevy logs one message per
+    process naming only the first generic it sees.
+
+    An unresolvable `Family` renders nothing and logs nothing, so load a font and
+    use `Handle`, or `Family` with a name the font file declares, when text has
+    to appear.
     """
 
     class Handle(FontSource):
@@ -610,59 +655,93 @@ class FontSource:
         def __init__(self, value: AssetHandle) -> None: ...
 
     class Family(FontSource):
+        """A family name, matched against the name embedded in a loaded font file.
+
+        Not matched against `Font.alias`, which bevy owns. A name that matches
+        nothing loaded - a typo, an alias, an empty string, or a family that is
+        installed on the machine but not loaded as an asset - renders nothing
+        and reports nothing.
+        """
+
         __match_args__: ClassVar[tuple[Literal["value"]]]
         value: str
         def __init__(self, value: str) -> None: ...
 
     class Serif(FontSource):
+        """Generic category. Renders nothing without `system_font_discovery`."""
+
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
 
     class SansSerif(FontSource):
+        """Generic category. Renders nothing without `system_font_discovery`."""
+
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
 
     class Cursive(FontSource):
+        """Generic category. Renders nothing without `system_font_discovery`."""
+
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
 
     class Fantasy(FontSource):
+        """Generic category. Renders nothing without `system_font_discovery`."""
+
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
 
     class Monospace(FontSource):
+        """Generic category. Renders nothing without `system_font_discovery`."""
+
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
 
     class SystemUi(FontSource):
+        """Generic category. Renders nothing without `system_font_discovery`."""
+
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
 
     class UiSerif(FontSource):
+        """Generic category. Renders nothing without `system_font_discovery`."""
+
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
 
     class UiSansSerif(FontSource):
+        """Generic category. Renders nothing without `system_font_discovery`."""
+
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
 
     class UiMonospace(FontSource):
+        """Generic category. Renders nothing without `system_font_discovery`."""
+
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
 
     class UiRounded(FontSource):
+        """Generic category. Renders nothing without `system_font_discovery`."""
+
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
 
     class Emoji(FontSource):
+        """Generic category. Renders nothing without `system_font_discovery`."""
+
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
 
     class Math(FontSource):
+        """Generic category. Renders nothing without `system_font_discovery`."""
+
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
 
     class FangSong(FontSource):
+        """Generic category. Renders nothing without `system_font_discovery`."""
+
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
 
@@ -787,15 +866,15 @@ class Text2d(Component):
         >>> from pybevy.transform import Transform
         >>>
         >>> # Basic text
-        >>> app.spawn(Text2d("Hello World!"))
+        >>> commands.spawn(Text2d("Hello World!"))
         >>>
         >>> # Styled text
-        >>> app.spawn((
+        >>> commands.spawn(
         >>>     Text2d("Hello!"),
         >>>     TextFont.from_font_size(48.0),
         >>>     TextColor(Color.srgb(1.0, 0.5, 0.0)),
         >>>     Transform.from_xyz(0.0, 0.0, 0.0),
-        >>> ))
+        >>> )
     """
 
     def __init__(self, text: str) -> None:
@@ -824,16 +903,16 @@ class Text2dShadow(Component):
         >>> from pybevy.math import Vec2
         >>>
         >>> # Add shadow to text
-        >>> app.spawn((
+        >>> commands.spawn(
         >>>     Text2d("Hello!"),
         >>>     Text2dShadow(Vec2(4.0, -4.0), Color.BLACK),
-        >>> ))
+        >>> )
         >>>
         >>> # Colored shadow with custom offset
-        >>> app.spawn((
+        >>> commands.spawn(
         >>>     Text2d("Glowing!"),
         >>>     Text2dShadow(Vec2(2.0, -2.0), Color.srgb(1.0, 0.0, 0.0)),
-        >>> ))
+        >>> )
     """
 
     offset: Vec2
@@ -970,20 +1049,27 @@ class UnderlineColor(Component):
     def batch(*, color: np.typing.ArrayLike | None = None) -> Batchable: ...  # type: ignore[override]
 
 class LetterSpacing(Component):
-    """Spacing between characters. Construct via :meth:`px` or :meth:`rem`.
+    """Spacing between characters on a text entity.
 
-    The default constructor yields ``Px(0.0)``.
+    Construct a nested variant; Bevy defaults to ``LetterSpacing.Px(0.0)``.
+    ``LetterSpacing.Rem`` scales by the ``RemSize`` resource, which defaults
+    to 20 logical pixels.
+
+    Example:
+        >>> from pybevy.text import LetterSpacing
+        >>> LetterSpacing.Rem(0.25)
+        LetterSpacing.Rem(0.25)
     """
 
     class Px(LetterSpacing):
-        """Spacing in pixels."""
+        """Spacing in logical pixels."""
 
         __match_args__: ClassVar[tuple[Literal["value"]]]
         value: float
         def __init__(self, value: float) -> None: ...
 
     class Rem(LetterSpacing):
-        """Spacing as a multiple of the font size."""
+        """Spacing as a multiple of Bevy's ``RemSize`` resource."""
 
         __match_args__: ClassVar[tuple[Literal["value"]]]
         value: float
@@ -1147,8 +1233,7 @@ class TextEdit:
 class EditableText(Component):
     """An editable text input field.
 
-    Spawning this component creates an editable text widget; typing, cursor
-    movement, selection, and clipboard are handled by Bevy's systems at runtime.
+    Use `queue_edit` to apply `TextEdit` commands through Bevy's text systems.
     """
 
     def __init__(
@@ -1176,13 +1261,35 @@ class EditableText(Component):
     def is_composing(self) -> bool:
         """True while the IME is composing text for this input."""
 
+    @staticmethod
+    def batch(  # type: ignore[override]
+        *,
+        cursor_width: np.typing.ArrayLike | None = None,
+        allow_newlines: np.typing.ArrayLike | None = None,
+    ) -> Batchable:
+        """Batch-construct from the two fields declared for the View API.
+
+        The text itself and the other five fields are not batchable.
+        """
+
     @property
-    def max_characters(self) -> int | None: ...
+    def max_characters(self) -> int | None:
+        """Maximum number of characters the input can contain.
+
+        An edit that would exceed the cap is ignored rather than truncated.
+        Initial text is not constrained.
+        """
+
     @max_characters.setter
     def max_characters(self, value: int | None) -> None: ...
 
     @property
-    def allow_newlines(self) -> bool: ...
+    def allow_newlines(self) -> bool:
+        """Whether Enter inserts a newline in Bevy's text-input widget.
+
+        This does not filter newlines supplied through `queue_edit`.
+        """
+
     @allow_newlines.setter
     def allow_newlines(self, value: bool) -> None: ...
 

@@ -1,5 +1,17 @@
 use bevy::input::gamepad::GamepadRumbleIntensity;
-use pyo3::prelude::*;
+use pybevy_core::public_error::value_out_of_range;
+use pyo3::{exceptions::PyValueError, prelude::*};
+
+/// bevy documents these as 0.0 to 1.0 and stores them unchecked.
+pub(crate) fn check_motor(name: &str, value: f32) -> PyResult<f32> {
+    if (0.0..=1.0).contains(&value) {
+        Ok(value)
+    } else {
+        Err(PyValueError::new_err(value_out_of_range(
+            name, 0.0, 1.0, value,
+        )))
+    }
+}
 
 #[pyclass(
     name = "GamepadRumbleIntensity",
@@ -36,11 +48,11 @@ impl From<PyGamepadRumbleIntensity> for GamepadRumbleIntensity {
 impl PyGamepadRumbleIntensity {
     #[new]
     #[pyo3(signature = (*, strong_motor = 1.0, weak_motor = 1.0))]
-    fn new(strong_motor: f32, weak_motor: f32) -> Self {
-        PyGamepadRumbleIntensity {
-            strong_motor,
-            weak_motor,
-        }
+    fn new(strong_motor: f32, weak_motor: f32) -> PyResult<Self> {
+        Ok(PyGamepadRumbleIntensity {
+            strong_motor: check_motor("strong_motor", strong_motor)?,
+            weak_motor: check_motor("weak_motor", weak_motor)?,
+        })
     }
 
     #[classattr]

@@ -650,6 +650,8 @@ impl TryFrom<&Key> for PyKey {
 }
 
 impl From<PyKey> for Key {
+    // clippy misreads the String -> SmolStr conversions here as same-type
+    #[allow(clippy::useless_conversion)]
     fn from(value: PyKey) -> Self {
         match value {
             PyKey::Character { value } => Key::Character(value.into()),

@@ -22,6 +22,10 @@ class InputPlugin(Plugin):
 class NativeKeyCode:
     """Platform-specific physical key identifier."""
 
+    def __copy__(self) -> NativeKeyCode: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> NativeKeyCode: ...
+
+
     class Unidentified(NativeKeyCode):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
@@ -1536,9 +1540,8 @@ class ButtonInput(Resource, Generic[ButtonT]):
     """
     Tracks button state - whether buttons are pressed, just pressed, or just released.
 
-    Subscript to pick the button type, matching Bevy's generic `ButtonInput<T>`:
-    `ButtonInput[KeyCode]` is the keyboard resource, `ButtonInput[MouseButton]`
-    the mouse one. A bare `ButtonInput` means the keyboard.
+    Use `ButtonInput[KeyCode]` for keyboard input and
+    `ButtonInput[MouseButton]` for mouse input.
 
     This resource is automatically provided as a system parameter and should not be
     instantiated directly.
@@ -1709,6 +1712,10 @@ class ButtonInput(Resource, Generic[ButtonT]):
 
 class MouseButton:
     """Mouse button codes for input detection."""
+
+    def __copy__(self) -> MouseButton: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> MouseButton: ...
+
 
     class Left(MouseButton):
         __match_args__: ClassVar[tuple[()]]
@@ -1891,6 +1898,10 @@ class MouseInput(Resource):
 class ButtonState:
     """State of a button (pressed or released)."""
 
+    def __copy__(self) -> ButtonState: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> ButtonState: ...
+
+
     @staticmethod
     def Pressed() -> ButtonState: ...
     @staticmethod
@@ -2017,6 +2028,10 @@ class MouseScrollUnit:
     The value can either be interpreted as the amount of lines or the amount of pixels to scroll.
     """
 
+    def __copy__(self) -> MouseScrollUnit: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> MouseScrollUnit: ...
+
+
     Line: MouseScrollUnit
     """The line scroll unit - delta corresponds to lines/rows to scroll."""
     Pixel: MouseScrollUnit
@@ -2045,7 +2060,8 @@ class MouseWheel(Message):
         unit: MouseScrollUnit = ...,
         x: float,
         y: float,
-        window: Entity = ...
+        window: Entity = ...,
+        phase: TouchPhase = ...
     ) -> None: ...
     @property
     def x(self) -> float:
@@ -2063,6 +2079,10 @@ class MouseWheel(Message):
     def window(self) -> Entity:
         """The window entity this event was received on."""
 
+    @property
+    def phase(self) -> TouchPhase:
+        """Touch phase. Hardware wheel events report Moved; synthetic events may differ."""
+
 class GamepadButton:
     """
     Gamepad button codes for input detection.
@@ -2073,6 +2093,10 @@ class GamepadButton:
     - North: Y button on Xbox, Triangle on PlayStation
     - West: X button on Xbox, Square on PlayStation
     """
+
+    def __copy__(self) -> GamepadButton: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> GamepadButton: ...
+
 
     class South(GamepadButton):
         __match_args__: ClassVar[tuple[()]]
@@ -2164,6 +2188,10 @@ class GamepadButton:
 class GamepadAxis:
     """Gamepad axis codes for analog input detection."""
 
+    def __copy__(self) -> GamepadAxis: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> GamepadAxis: ...
+
+
     class LeftStickX(GamepadAxis):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
@@ -2234,6 +2262,7 @@ class Gamepad(Component):
                     print(f"Left stick X: {left_x}")
         ```
     """
+
 
     def just_pressed(self, button_type: GamepadButton) -> bool:
         """Returns true if the button was just pressed this frame."""
@@ -2390,6 +2419,10 @@ class GamepadConnection:
         ```
     """
 
+    def __copy__(self) -> GamepadConnection: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> GamepadConnection: ...
+
+
     class Connected(GamepadConnection):
         __match_args__: ClassVar[
             tuple[Literal["name"], Literal["vendor_id"], Literal["product_id"]]
@@ -2447,6 +2480,10 @@ class TouchPhase:
         Ended: A finger stopped touching the touchscreen
         Canceled: The system canceled tracking (window lost focus, etc.)
     """
+
+    def __copy__(self) -> TouchPhase: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> TouchPhase: ...
+
 
     Started: TouchPhase
     Moved: TouchPhase
@@ -2551,7 +2588,17 @@ class GamepadRumbleIntensity:
         *,
         strong_motor: float = 1.0,
         weak_motor: float = 1.0
-    ) -> None: ...
+    ) -> None:
+        """Create a rumble intensity.
+
+        Args:
+            strong_motor: Strong (low-frequency) motor intensity, 0.0 to 1.0
+            weak_motor: Weak (high-frequency) motor intensity, 0.0 to 1.0
+
+        Raises:
+            ValueError: If either intensity is outside 0.0 to 1.0
+        """
+
     @property
     def strong_motor(self) -> float:
         """Intensity of the strong (low-frequency) motor (0.0-1.0)."""
@@ -2684,6 +2731,10 @@ class GamepadRumbleRequest(Message):
     The base is non-constructible; construct `Add` or `Stop` variants. Send
     through `MessageWriter[GamepadRumbleRequest]`.
     """
+
+    def __copy__(self) -> GamepadRumbleRequest: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> GamepadRumbleRequest: ...
+
 
     class Add(GamepadRumbleRequest):
         __match_args__: ClassVar[tuple[Literal["duration"], Literal["intensity"], Literal["gamepad"]]]

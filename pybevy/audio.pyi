@@ -48,7 +48,11 @@ class Volume:
         """Decrease volume by percentage (e.g., 0.1 for 10% decrease)."""
 
     def fade_towards(self, target: Volume, factor: float) -> Volume:
-        """Fade towards target volume by factor (0.0 to 1.0)."""
+        """Fade towards target volume by factor (0.0 to 1.0).
+
+        bevy clamps the factor into that range, so a value outside it saturates
+        rather than raising.
+        """
 
     def scale_to_factor(self, factor: float) -> Volume:
         """Scale volume by factor."""
@@ -59,6 +63,10 @@ class Volume:
 
 class PlaybackMode:
     """Controls what happens when audio finishes playing."""
+
+    def __copy__(self) -> PlaybackMode: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> PlaybackMode: ...
+
 
     Once: PlaybackMode
     """Play once and stop."""
@@ -235,7 +243,7 @@ class PlaybackSettings(Component):
     def spatial_scale(self, value: SpatialScale | None) -> None: ...
 
 class SpatialScale:
-    def __init__(self, scale: float | Vec3 = 1.0) -> None: ...
+    def __init__(self, scale: float = 1.0) -> None: ...
 
     @staticmethod
     def new_2d(scale: float) -> SpatialScale: ...

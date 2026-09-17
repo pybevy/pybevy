@@ -37,6 +37,10 @@ class Asset: ...
 
 class AssetIndex:
     """Bevy's opaque, generational runtime asset index."""
+
+    def __copy__(self) -> AssetIndex: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> AssetIndex: ...
+
     @staticmethod
     def from_bits(bits: int) -> AssetIndex: ...
     def to_bits(self) -> int: ...
@@ -45,6 +49,10 @@ class AssetIndex:
 
 class AssetId(Generic[A_co]):
     """A copyable, non-owning identifier with exact Bevy enum variants."""
+
+    def __copy__(self) -> AssetId: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> AssetId: ...
+
 
     class Index(AssetId[_VariantA_co], Generic[_VariantA_co]):
         __match_args__: ClassVar[tuple[Literal["index"]]]
@@ -170,6 +178,8 @@ class Assets(Resource, Generic[A]):
     def len(self) -> int: ...
     def remove(self, id: Handle[A] | AssetId[A]) -> None | A: ...
 
+    def __len__(self) -> int: ...
+
 class AssetIter(Iterator[tuple[AssetId[A], A]]):
     """Iterator over (asset ID, asset) pairs in an Assets collection."""
     def __next__(self) -> tuple[AssetId[A], A]: ...
@@ -188,6 +198,9 @@ class AssetServer(Resource):
         Currently supported asset types and their settings:
         - Image + ImageLoaderSettings (sampler mode, sRGB, format)
         - Gltf + GltfLoaderSettings (content, validation, coordinates, bounds, and samplers)
+
+        Bevy caches by path and asset type, so later settings for a live cached
+        load are ignored. Use distinct paths for simultaneous variants.
 
         Args:
             path: Path to the asset file (relative to assets directory)
@@ -351,6 +364,7 @@ class AssetPath:
     def label(self) -> str | None: ...
     @property
     def source(self) -> str | None: ...
+    def __hash__(self) -> int: ...
 
 class DependencyLoadState:
     """Load state of an asset's direct dependencies."""

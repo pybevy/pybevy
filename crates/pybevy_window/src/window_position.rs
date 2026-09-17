@@ -1,4 +1,4 @@
-use bevy::window::{MonitorSelection, WindowPosition};
+use bevy::window::WindowPosition;
 use pybevy_macros::pyenum;
 use pybevy_math::ivec2::PyIVec2;
 use pyo3::prelude::*;
@@ -42,10 +42,8 @@ impl PyWindowPosition {
         match &self.0 {
             WindowPosition::Automatic => "WindowPosition.Automatic()".to_string(),
             WindowPosition::Centered(monitor) => {
-                format!(
-                    "WindowPosition.Centered(value={})",
-                    monitor_selection_repr(monitor)
-                )
+                let monitor: PyMonitorSelection = (*monitor).into();
+                format!("WindowPosition.Centered(value={})", monitor.__repr__())
             }
             WindowPosition::At(position) => format!(
                 "WindowPosition.At(value=IVec2({}, {}))",
@@ -180,13 +178,4 @@ pub fn register_window_position_variants(module: &Bound<'_, PyModule>) -> PyResu
     base.setattr("Centered", py.get_type::<PyWindowPositionCentered>())?;
     base.setattr("At", py.get_type::<PyWindowPositionAt>())?;
     Ok(())
-}
-
-fn monitor_selection_repr(value: &MonitorSelection) -> String {
-    match value {
-        MonitorSelection::Current => "MonitorSelection.Current()".to_string(),
-        MonitorSelection::Primary => "MonitorSelection.Primary()".to_string(),
-        MonitorSelection::Index(index) => format!("MonitorSelection.Index({index})"),
-        MonitorSelection::Entity(_) => "MonitorSelection.Entity(...)".to_string(),
-    }
 }

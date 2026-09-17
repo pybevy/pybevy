@@ -3,8 +3,15 @@ use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 #[pyenum(LineBreak)]
-#[pyclass(name = "LineBreak", module = "pybevy.text", eq, frozen, from_py_object)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[pyclass(
+    name = "LineBreak",
+    module = "pybevy.text",
+    eq,
+    hash,
+    frozen,
+    from_py_object
+)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyLineBreak {
     WordBoundary,
     AnyCharacter,

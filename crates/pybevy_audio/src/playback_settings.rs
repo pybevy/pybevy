@@ -1,11 +1,14 @@
 use std::time::Duration;
 
 use bevy::audio::{PlaybackMode, PlaybackSettings};
-use pybevy_core::{ComponentStorage, PyComponent, public_error::SPEED_NON_FINITE};
+use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pyo3::prelude::*;
 
-use crate::{playback_mode::PyPlaybackMode, spatial_scale::PySpatialScale, volume::PyVolume};
+use crate::{
+    audio_sink::validate_speed, playback_mode::PyPlaybackMode, spatial_scale::PySpatialScale,
+    volume::PyVolume,
+};
 
 #[pycomponent(PlaybackSettings, bridge, view_fields = [speed, paused, muted, spatial])]
 #[pyclass(name = "PlaybackSettings", module = "pybevy.audio", extends = PyComponent)]
@@ -219,25 +222,19 @@ impl PyPlaybackSettings {
 
     fn __repr__(&self) -> String {
         match self.as_ref() {
-            Ok(settings) => format!(
-                "PlaybackSettings(mode={:?}, volume={:?}, speed={}, paused={}, muted={}, spatial={})",
-                settings.mode,
-                settings.volume,
-                settings.speed,
-                settings.paused,
-                settings.muted,
-                settings.spatial
-            ),
+            Ok(settings) => {
+                let flag = |value: bool| if value { "True" } else { "False" };
+                format!(
+                    "PlaybackSettings(mode={:?}, volume={:?}, speed={}, paused={}, muted={}, spatial={})",
+                    settings.mode,
+                    settings.volume,
+                    settings.speed,
+                    flag(settings.paused),
+                    flag(settings.muted),
+                    flag(settings.spatial)
+                )
+            }
             Err(_) => "PlaybackSettings(<invalid>)".to_string(),
         }
-    }
-}
-
-/// Playback speed must be finite; negative (reverse) speed is allowed.
-fn validate_speed(speed: f32) -> PyResult<f32> {
-    if speed.is_finite() {
-        Ok(speed)
-    } else {
-        Err(PyValueError::new_err(SPEED_NON_FINITE))
     }
 }

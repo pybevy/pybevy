@@ -49,9 +49,13 @@ impl PyRelativeCursorPosition {
 
     pub fn __repr__(&self) -> PyResult<String> {
         let inner = self.as_ref()?;
+        let normalized = match inner.normalized {
+            Some(value) => format!("Vec2({}, {})", value.x, value.y),
+            None => "None".to_owned(),
+        };
         Ok(format!(
-            "RelativeCursorPosition(cursor_over={}, normalized={:?})",
-            inner.cursor_over, inner.normalized
+            "RelativeCursorPosition(cursor_over={}, normalized={normalized})",
+            if inner.cursor_over { "True" } else { "False" }
         ))
     }
 }

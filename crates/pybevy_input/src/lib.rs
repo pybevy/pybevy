@@ -15,7 +15,6 @@ pub mod key;
 pub mod key_code;
 pub mod keyboard_events;
 pub mod keyboard_input;
-pub mod keyboard_input_ext;
 pub mod mouse_button;
 pub mod mouse_events;
 pub mod mouse_input;
@@ -49,6 +48,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "input")?;
     m.add_class::<plugin::PyInputPlugin>()?;
     m.add_class::<button_input::PyButtonInput>()?;
+    button_input::register_button_input_specializations(m.py())?;
     m.add_class::<button_state::PyButtonState>()?;
     m.add_class::<gamepad::PyGamepad>()?;
     m.add_class::<gamepad_axis::PyGamepadAxis>()?;

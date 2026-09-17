@@ -34,6 +34,7 @@ pub mod scroll_position;
 pub mod shadow_style;
 pub mod text;
 pub mod text_shadow;
+pub mod ui_global_transform;
 pub mod ui_position;
 pub mod ui_rect;
 pub mod ui_scale;
@@ -69,6 +70,7 @@ pub mod prelude {
         outline::PyOutline,
         overflow::PyOverflow,
         text::PyText,
+        ui_global_transform::PyUiGlobalTransform,
         ui_position::PyUiPosition,
         ui_rect::PyUiRect,
         ui_scale::PyUiScale,
@@ -95,6 +97,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<relative_cursor_position::PyRelativeCursorPosition>()?;
     m.add_class::<scroll_position::PyScrollPosition>()?;
     m.add_class::<ui_target_camera::PyUiTargetCamera>()?;
+    m.add_class::<ui_global_transform::PyUiGlobalTransform>()?;
     m.add_class::<ui_transform::PyUiTransform>()?;
     m.add_class::<text::PyText>()?;
     m.add_class::<text_shadow::PyTextShadow>()?;
