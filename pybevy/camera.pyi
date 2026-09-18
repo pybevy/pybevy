@@ -37,6 +37,10 @@ class CameraPlugin(Plugin):
 class ScalingMode:
     """Camera scaling mode for orthographic projections."""
 
+    def __copy__(self) -> ScalingMode: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> ScalingMode: ...
+
+
     class WindowSize(ScalingMode):
         """Match viewport size so world units map directly to pixels."""
         __match_args__: ClassVar[tuple[()]]
@@ -170,6 +174,10 @@ class ShadowLodOrigin(Component):
 class Camera3dDepthLoadOp:
     """Depth load operation for 3D cameras."""
 
+    def __copy__(self) -> Camera3dDepthLoadOp: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> Camera3dDepthLoadOp: ...
+
+
     class Clear(Camera3dDepthLoadOp):
         __match_args__: ClassVar[tuple[Literal["value"]]]
         value: float
@@ -294,6 +302,10 @@ class Viewport:
             physical_position: Position in pixels from top-left of render target
             physical_size: Size in pixels of the viewport
             depth: Tuple of (near, far) depth range, defaults to (0.0, 1.0)
+
+        Raises:
+            ValueError: If either bound is outside 0.0 to 1.0, which the GPU
+                rejects, or if near is greater than far
         """
 
     @property
@@ -344,7 +356,10 @@ class Viewport:
         """Set the viewport's depth range.
 
         Args:
-            value: Tuple of (near, far) depth range
+            value: Tuple of (near, far) depth range, both within 0.0 to 1.0
+
+        Raises:
+            ValueError: If either bound is outside 0.0 to 1.0, or near > far
         """
 
     def __copy__(self) -> Viewport: ...
@@ -380,6 +395,10 @@ class Viewport:
 
 class MsaaWriteback:
     """Controls how resolved MSAA data is written back to the main texture."""
+
+    def __copy__(self) -> MsaaWriteback: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> MsaaWriteback: ...
+
 
     Off: MsaaWriteback
     Auto: MsaaWriteback
@@ -1132,7 +1151,7 @@ class RenderLayers(Component):
         """
 
     def iter(self) -> list[int]:
-        """Get all enabled layer indices.
+        """Get all enabled layer indices, as Bevy's `RenderLayers::iter` does.
 
         Returns:
             List of layer indices that are enabled
@@ -1140,10 +1159,10 @@ class RenderLayers(Component):
 
     @property
     def active_layers(self) -> list[int]:
-        """Get all enabled layer indices (alias for iter()).
+        """Read the enabled layer indices as a property; PyBevy has no Bevy counterpart.
 
         Returns:
-            List of layer indices that are enabled
+            List of layer indices that are enabled, the same list `iter()` returns
         """
 
     def intersection(self, other: RenderLayers) -> RenderLayers:
@@ -1446,6 +1465,10 @@ class ClearColorConfig:
         ```
     """
 
+    def __copy__(self) -> ClearColorConfig: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> ClearColorConfig: ...
+
+
     class Default(ClearColorConfig):
         """Use the default clear color from the ClearColor resource."""
         __match_args__: ClassVar[tuple[()]]
@@ -1615,6 +1638,10 @@ class CubemapLayout:
     specify how the 6 faces of a cubemap are arranged in a single image.
     """
 
+    def __copy__(self) -> CubemapLayout: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> CubemapLayout: ...
+
+
     CrossVertical: CubemapLayout
     """Layout in a vertical cross format."""
 
@@ -1748,6 +1775,10 @@ class ManualTextureViewHandle:
 
 class NormalizedRenderTarget:
     """A normalized render target, matching Bevy's value-enum variants."""
+
+    def __copy__(self) -> NormalizedRenderTarget: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> NormalizedRenderTarget: ...
+
 
     class Window(NormalizedRenderTarget):
         __match_args__: ClassVar[tuple[Literal["value"]]]

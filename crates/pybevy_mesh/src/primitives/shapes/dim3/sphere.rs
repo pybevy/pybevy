@@ -42,7 +42,7 @@ impl PySphere {
     }
 
     pub fn closest_point(&self, point: &PyVec3) -> PyResult<PyVec3> {
-        Ok(self.0.closest_point(point.try_into()?).try_into()?)
+        Ok(self.0.closest_point(point.try_into()?).into())
     }
 
     pub fn __repr__(&self) -> String {

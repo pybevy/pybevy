@@ -12,6 +12,10 @@ except ImportError:
 class BloomCompositeMode:
     """Bloom composite mode controlling how bloom is blended with the image."""
 
+    def __copy__(self) -> BloomCompositeMode: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> BloomCompositeMode: ...
+
+
     EnergyConserving: BloomCompositeMode
     Additive: BloomCompositeMode
 

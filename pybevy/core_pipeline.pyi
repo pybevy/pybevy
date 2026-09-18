@@ -35,14 +35,14 @@ class Tonemapping(Component):
     def __hash__(self) -> int: ...
 
     def is_enabled(self) -> bool:
-        """True unless this is Tonemapping.NONE."""
+        """True unless this is Tonemapping.None_."""
 
-    NONE: ClassVar[Tonemapping]
-    REINHARD: ClassVar[Tonemapping]
-    REINHARD_LUMINANCE: ClassVar[Tonemapping]
-    ACES_FITTED: ClassVar[Tonemapping]
-    AGX: ClassVar[Tonemapping]
-    SOMEWHAT_BORING_DISPLAY_TRANSFORM: ClassVar[Tonemapping]
-    TONY_MC_MAPFACE: ClassVar[Tonemapping]
-    BLENDER_FILMIC: ClassVar[Tonemapping]
-    PBR_NEUTRAL: ClassVar[Tonemapping]
+    None_: ClassVar[Tonemapping]
+    Reinhard: ClassVar[Tonemapping]
+    ReinhardLuminance: ClassVar[Tonemapping]
+    AcesFitted: ClassVar[Tonemapping]
+    AgX: ClassVar[Tonemapping]
+    SomewhatBoringDisplayTransform: ClassVar[Tonemapping]
+    TonyMcMapface: ClassVar[Tonemapping]
+    BlenderFilmic: ClassVar[Tonemapping]
+    PbrNeutral: ClassVar[Tonemapping]

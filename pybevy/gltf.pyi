@@ -208,6 +208,10 @@ class GltfConvertCoordinates:
     def rotate_meshes(self, value: bool) -> None: ...
 
 class GltfSkinnedMeshBoundsPolicy:
+
+    def __copy__(self) -> GltfSkinnedMeshBoundsPolicy: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> GltfSkinnedMeshBoundsPolicy: ...
+
     BindPose: GltfSkinnedMeshBoundsPolicy
     Dynamic: GltfSkinnedMeshBoundsPolicy
     NoFrustumCulling: GltfSkinnedMeshBoundsPolicy
@@ -223,8 +227,8 @@ class GltfLoaderSettings:
     def __init__(
         self,
         *,
-        load_meshes: RenderAssetUsages | None = None,
-        load_materials: RenderAssetUsages | None = None,
+        load_meshes: RenderAssetUsages = RenderAssetUsages(),
+        load_materials: RenderAssetUsages = RenderAssetUsages(),
         load_cameras: bool = True,
         load_lights: bool = True,
         load_animations: bool = True,
@@ -238,10 +242,10 @@ class GltfLoaderSettings:
         """Create glTF loader settings.
 
         Args:
-            load_meshes: Where loaded mesh data is retained. `None` uses
+            load_meshes: Where loaded mesh data is retained. Defaults to
                 `MAIN_WORLD | RENDER_WORLD`. Python cannot construct the empty
                 usage flags that Bevy uses to skip mesh nodes.
-            load_materials: Where loaded material data is retained. `None` uses
+            load_materials: Where loaded material data is retained. Defaults to
                 `MAIN_WORLD | RENDER_WORLD`. Python cannot construct the empty
                 usage flags that Bevy uses to skip materials.
             load_cameras: Spawn a camera for each glTF camera node.

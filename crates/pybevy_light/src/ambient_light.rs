@@ -22,7 +22,7 @@ impl PyGlobalAmbientLight {
     #[new]
     #[pyo3(signature = (
         *,
-        color = bevy::color::Color::WHITE.into(),
+        color = Color::WHITE.into(),
         brightness = 80.0,
         affects_lightmapped_meshes = true
     ))]
@@ -89,7 +89,7 @@ impl PyAmbientLight {
     #[new]
     #[pyo3(signature = (
         *,
-        color = bevy::color::Color::WHITE.into(),
+        color = Color::WHITE.into(),
         brightness = 80.0,
         affects_lightmapped_meshes = true
     ))]

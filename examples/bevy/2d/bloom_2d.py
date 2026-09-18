@@ -27,7 +27,7 @@ def setup(
     # Using TonyMcMapface tonemapper (desaturates to white)
     commands.spawn(
         Camera2d(),
-        Tonemapping.TONY_MC_MAPFACE,
+        Tonemapping.TonyMcMapface,
         Bloom(),  # Enable bloom with default settings
         BloomCamera(),
     )
@@ -75,7 +75,7 @@ def setup(
 def update_bloom_settings(
     camera_query: Query[tuple[Entity, Mut[Tonemapping], Mut[Bloom]], With[BloomCamera]],
     commands: Commands,
-    keyboard: Res[ButtonInput],
+    keyboard: Res[ButtonInput[KeyCode]],
     time: Res[Time],
 ) -> None:
     """Update bloom settings based on keyboard input.
@@ -163,7 +163,7 @@ def update_bloom_settings(
 def toggle_bloom_back_on(
     camera_query: Query[Entity, tuple[With[BloomCamera], Without[Bloom]]],
     commands: Commands,
-    keyboard: Res[ButtonInput],
+    keyboard: Res[ButtonInput[KeyCode]],
 ) -> None:
     """Re-enable bloom when it's been toggled off."""
     if keyboard.just_pressed(KeyCode.Space):
@@ -178,7 +178,7 @@ def cycle_tonemapping(current: Tonemapping) -> Tonemapping:
     """Get the next tonemapping algorithm in the cycle."""
     # Simplified - just cycle through common tonemappers
     # Since we can't easily compare enum values, just return next in sequence
-    return Tonemapping.TONY_MC_MAPFACE  # Keep it simple for now
+    return Tonemapping.TonyMcMapface  # Keep it simple for now
 
 
 def tonemap_name(tonemap: Tonemapping) -> str:

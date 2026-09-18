@@ -97,7 +97,7 @@ impl PyVisibilityRange {
             vr.start_margin.end,
             vr.end_margin.start,
             vr.end_margin.end,
-            vr.use_aabb
+            if vr.use_aabb { "True" } else { "False" }
         ))
     }
 

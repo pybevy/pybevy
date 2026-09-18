@@ -1,7 +1,7 @@
 use bevy::image::{ImageSampler, ImageSamplerDescriptor};
 use pybevy_core::{FieldStorage, FromBorrowedStorage};
 use pybevy_macros::pyfield;
-use pyo3::prelude::*;
+use pyo3::{prelude::*, types::PyString};
 
 use crate::{
     image_address_mode::PyImageAddressMode, image_compare_function::PyImageCompareFunction,
@@ -212,11 +212,34 @@ impl PyImageSamplerDescriptor {
         Ok(())
     }
 
-    pub fn __repr__(&self) -> PyResult<String> {
+    pub fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
         let descriptor = self.as_ref()?;
+        let compare = match descriptor.compare {
+            Some(value) => PyImageCompareFunction::from(value).__repr__(),
+            None => "None".to_owned(),
+        };
+        let border_color = match descriptor.border_color {
+            Some(value) => PyImageSamplerBorderColor::from(value).__repr__(),
+            None => "None".to_owned(),
+        };
+        let label = match &descriptor.label {
+            Some(value) => PyString::new(py, value).repr()?.extract()?,
+            None => "None".to_owned(),
+        };
         Ok(format!(
-            "ImageSamplerDescriptor(mag_filter={:?}, min_filter={:?}, mipmap_filter={:?})",
-            descriptor.mag_filter, descriptor.min_filter, descriptor.mipmap_filter
+            "ImageSamplerDescriptor(address_mode_u={}, address_mode_v={}, \
+             address_mode_w={}, mag_filter={}, min_filter={}, mipmap_filter={}, \
+             lod_min_clamp={}, lod_max_clamp={}, compare={compare}, \
+             anisotropy_clamp={}, border_color={border_color}, label={label})",
+            PyImageAddressMode::from(descriptor.address_mode_u).__repr__(),
+            PyImageAddressMode::from(descriptor.address_mode_v).__repr__(),
+            PyImageAddressMode::from(descriptor.address_mode_w).__repr__(),
+            PyImageFilterMode::from(descriptor.mag_filter).__repr__(),
+            PyImageFilterMode::from(descriptor.min_filter).__repr__(),
+            PyImageFilterMode::from(descriptor.mipmap_filter).__repr__(),
+            descriptor.lod_min_clamp,
+            descriptor.lod_max_clamp,
+            descriptor.anisotropy_clamp,
         ))
     }
 }

@@ -25,6 +25,10 @@ class LightPlugin(Plugin):
 class LightGizmoColor:
     """Selects how a light gizmo is colored."""
 
+    def __copy__(self) -> LightGizmoColor: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> LightGizmoColor: ...
+
+
     class Manual(LightGizmoColor):
         __match_args__: ClassVar[tuple[Literal["value"]]]
         value: Color
@@ -92,13 +96,13 @@ class ShadowFilteringMethod(Component):
     """
     def __init__(self) -> None: ...
 
-    HARDWARE_2X2: ShadowFilteringMethod
+    Hardware2x2: ClassVar[ShadowFilteringMethod]
     """Fast but poor quality shadow filtering."""
 
-    GAUSSIAN: ShadowFilteringMethod
+    Gaussian: ClassVar[ShadowFilteringMethod]
     """Approximates a fixed Gaussian blur. Good when TAA isn't in use. (Default)"""
 
-    TEMPORAL: ShadowFilteringMethod
+    Temporal: ClassVar[ShadowFilteringMethod]
     """Randomized filter that varies over time. Best when TAA is enabled."""
 
     def __eq__(self, other: ShadowFilteringMethod) -> bool: ...  # type: ignore[override]

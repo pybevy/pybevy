@@ -7,10 +7,11 @@ use pyo3::prelude::*;
     name = "TextureDimension",
     module = "pybevy.render",
     eq,
+    hash,
     frozen,
     from_py_object
 )]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyTextureDimension {
     D1,
     D2,

@@ -4,8 +4,7 @@ use bevy::{
     asset::RenderAssetUsages,
     math::{Quat, Vec3},
     mesh::{
-        Indices, Mesh, MeshVertexAttributeId, PrimitiveTopology, VertexAttributeValues,
-        VertexFormat,
+        Indices, Mesh, MeshVertexAttribute, PrimitiveTopology, VertexAttributeValues, VertexFormat,
     },
     transform::components::Transform,
 };
@@ -28,7 +27,7 @@ use pyo3::{
     PyTraverseError, PyVisit,
     exceptions::{PyRuntimeError, PyValueError},
     prelude::*,
-    types::PyBytes,
+    types::{PyBytes, PyList},
 };
 
 use crate::{
@@ -561,9 +560,8 @@ impl PyMesh {
                 let indices = (a, b, c);
                 let positions_list: Vec<(f32, f32, f32)> =
                     positions.iter().map(|p| (p[0], p[1], p[2])).collect();
-                let normals_py =
-                    pyo3::types::PyList::new(py, normals.iter().map(|n| (n.x, n.y, n.z)))
-                        .expect("tuple list conversion cannot fail");
+                let normals_py = PyList::new(py, normals.iter().map(|n| (n.x, n.y, n.z)))
+                    .expect("tuple list conversion cannot fail");
                 match per_triangle.call1((indices, positions_list, &normals_py)) {
                     Ok(_) => {
                         for (index, slot) in normals.iter_mut().enumerate() {
@@ -571,7 +569,7 @@ impl PyMesh {
                                 .get_item(index)
                                 .and_then(|item| item.extract::<(f32, f32, f32)>());
                             match value {
-                                Ok((x, y, z)) => *slot = bevy::math::Vec3::new(x, y, z),
+                                Ok((x, y, z)) => *slot = Vec3::new(x, y, z),
                                 Err(error) => {
                                     caught = Some(error);
                                     return;
@@ -760,7 +758,7 @@ impl PyMesh {
     /// operation raises a clean `RuntimeError`. Call `.to_numpy()` (or `.copy()`)
     /// for an independent snapshot. The surface is portable across backends.
     pub fn positions(slf: &Bound<'_, Self>, py: Python<'_>) -> PyResult<Py<PyArray>> {
-        Self::attribute_borrowed(slf, py, Mesh::ATTRIBUTE_POSITION.id)
+        Self::attribute_borrowed(slf, py, Mesh::ATTRIBUTE_POSITION)
     }
 
     /// In-place mutable bounded-array context over vertex positions.
@@ -775,12 +773,12 @@ impl PyMesh {
         slf: &Bound<'_, Self>,
         py: Python<'_>,
     ) -> PyResult<Py<MeshBoundedContextMut>> {
-        Self::attribute_borrowed_mut(slf, py, Mesh::ATTRIBUTE_POSITION.id)
+        Self::attribute_borrowed_mut(slf, py, Mesh::ATTRIBUTE_POSITION)
     }
 
     /// Read-only zero-copy bounded array of the normal attribute.
     pub fn normals(slf: &Bound<'_, Self>, py: Python<'_>) -> PyResult<Py<PyArray>> {
-        Self::attribute_borrowed(slf, py, Mesh::ATTRIBUTE_NORMAL.id)
+        Self::attribute_borrowed(slf, py, Mesh::ATTRIBUTE_NORMAL)
     }
 
     /// In-place mutable bounded-array context over vertex normals.
@@ -788,17 +786,17 @@ impl PyMesh {
         slf: &Bound<'_, Self>,
         py: Python<'_>,
     ) -> PyResult<Py<MeshBoundedContextMut>> {
-        Self::attribute_borrowed_mut(slf, py, Mesh::ATTRIBUTE_NORMAL.id)
+        Self::attribute_borrowed_mut(slf, py, Mesh::ATTRIBUTE_NORMAL)
     }
 
     /// Read-only zero-copy bounded array of the UV0 attribute.
     pub fn uvs(slf: &Bound<'_, Self>, py: Python<'_>) -> PyResult<Py<PyArray>> {
-        Self::attribute_borrowed(slf, py, Mesh::ATTRIBUTE_UV_0.id)
+        Self::attribute_borrowed(slf, py, Mesh::ATTRIBUTE_UV_0)
     }
 
     /// In-place mutable bounded-array context over UV0 coordinates.
     pub fn uvs_mut(slf: &Bound<'_, Self>, py: Python<'_>) -> PyResult<Py<MeshBoundedContextMut>> {
-        Self::attribute_borrowed_mut(slf, py, Mesh::ATTRIBUTE_UV_0.id)
+        Self::attribute_borrowed_mut(slf, py, Mesh::ATTRIBUTE_UV_0)
     }
 
     /// Read-only zero-copy bounded array of an arbitrary float32 vertex attribute.
@@ -807,7 +805,7 @@ impl PyMesh {
         py: Python<'_>,
         id: &PyMeshVertexAttribute,
     ) -> PyResult<Py<PyArray>> {
-        Self::attribute_borrowed(slf, py, id.0.id)
+        Self::attribute_borrowed(slf, py, id.0)
     }
 
     /// In-place mutable bounded-array context over an arbitrary float32 attribute.
@@ -816,7 +814,7 @@ impl PyMesh {
         py: Python<'_>,
         id: &PyMeshVertexAttribute,
     ) -> PyResult<Py<MeshBoundedContextMut>> {
-        Self::attribute_borrowed_mut(slf, py, id.0.id)
+        Self::attribute_borrowed_mut(slf, py, id.0)
     }
 
     pub fn set_positions(&mut self, py: Python<'_>, positions: &Bound<'_, PyAny>) -> PyResult<()> {
@@ -861,7 +859,7 @@ impl PyMesh {
     fn attribute_borrowed(
         slf: &Bound<'_, Self>,
         py: Python<'_>,
-        id: MeshVertexAttributeId,
+        attribute: MeshVertexAttribute,
     ) -> PyResult<Py<PyArray>> {
         let this = slf.borrow();
         // Atomically claim a read view (increment + verify no writer), closing
@@ -871,8 +869,10 @@ impl PyMesh {
         let guard = PyNumpyViewGuard::from_acquired(claim, slf.clone().unbind().into_any());
         let validity = this.storage.validity_flag();
         let mesh = this.storage.as_ref()?;
-        let Some(values) = mesh.attribute(id) else {
-            return Err(PyRuntimeError::new_err("Mesh does not have attribute"));
+        let Some(values) = mesh.attribute(attribute.id) else {
+            return Err(PyRuntimeError::new_err(
+                public_error::mesh_attribute_missing(attribute.name),
+            ));
         };
         let (ptr, len, shape) = attribute_f32_view(values)?;
         let probe: Arc<dyn BorrowProbe> = Arc::new(AssetBorrowAnchor::new(validity, guard));
@@ -891,14 +891,14 @@ impl PyMesh {
     fn attribute_borrowed_mut(
         slf: &Bound<'_, Self>,
         py: Python<'_>,
-        id: MeshVertexAttributeId,
+        attribute: MeshVertexAttribute,
     ) -> PyResult<Py<MeshBoundedContextMut>> {
         let mut this = slf.borrow_mut();
         let layout = {
             let mesh = this.storage.as_ref()?;
-            let values = mesh
-                .attribute(id)
-                .ok_or_else(|| PyRuntimeError::new_err("Mesh does not have attribute"))?;
+            let values = mesh.attribute(attribute.id).ok_or_else(|| {
+                PyRuntimeError::new_err(public_error::mesh_attribute_missing(attribute.name))
+            })?;
             attribute_f32_layout(values)?
         };
         let validity = this.storage.validity_flag();
@@ -921,8 +921,10 @@ impl PyMesh {
         let mut transaction = this.storage.begin_write_view(anchor.pending_claim())?;
         let current = transaction
             .preflight()
-            .attribute(id)
-            .ok_or_else(|| PyRuntimeError::new_err("Mesh does not have attribute"))?;
+            .attribute(attribute.id)
+            .ok_or_else(|| {
+                PyRuntimeError::new_err(public_error::mesh_attribute_missing(attribute.name))
+            })?;
         if attribute_f32_layout(current)? != layout {
             return Err(PyRuntimeError::new_err(
                 "Mesh attribute layout changed during view acquisition",
@@ -931,7 +933,7 @@ impl PyMesh {
 
         let mesh = transaction.commit();
         let values = mesh
-            .attribute_mut(id)
+            .attribute_mut(attribute.id)
             .expect("preflight confirmed the mesh attribute exists");
         let ptr = attribute_f32_ptr_mut(values, layout);
         {

@@ -1,8 +1,20 @@
-use bevy::render::camera::TemporalJitter;
-use pybevy_core::{ComponentStorage, PyComponent};
+use bevy::{math::Vec2, render::camera::TemporalJitter};
+use pybevy_core::{ComponentStorage, PyComponent, public_error::value_out_of_range};
 use pybevy_macros::pycomponent;
 use pybevy_math::vec2::PyVec2;
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyValueError, prelude::*};
+
+/// A subpixel offset outside [-0.5, 0.5] jitters the frustum past a whole pixel.
+fn check_offset(offset: Vec2) -> PyResult<Vec2> {
+    for (name, value) in [("offset.x", offset.x), ("offset.y", offset.y)] {
+        if !(-0.5..=0.5).contains(&value) {
+            return Err(PyValueError::new_err(value_out_of_range(
+                name, -0.5, 0.5, value,
+            )));
+        }
+    }
+    Ok(offset)
+}
 
 #[pycomponent(TemporalJitter, bridge)]
 #[pyclass(name = "TemporalJitter", module = "pybevy.render", extends = PyComponent)]
@@ -16,7 +28,7 @@ impl PyTemporalJitter {
     #[pyo3(signature = (*, offset = PyVec2::ZERO))]
     pub fn new(offset: PyVec2) -> PyResult<PyClassInitializer<Self>> {
         Ok(Self::from_owned(TemporalJitter {
-            offset: offset.try_into()?,
+            offset: check_offset(offset.try_into()?)?,
         })
         .into())
     }
@@ -28,7 +40,11 @@ impl PyTemporalJitter {
 
     #[setter]
     pub fn set_offset(&mut self, value: PyVec2) -> PyResult<()> {
-        self.as_mut()?.offset = value.try_into()?;
+        let offset: Vec2 = value.try_into()?;
+        // Authority first: an expired or read-only component must report that,
+        // not a complaint about the value it was never allowed to store.
+        let mut jitter = self.as_mut()?;
+        jitter.offset = check_offset(offset)?;
         Ok(())
     }
 

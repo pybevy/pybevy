@@ -112,7 +112,7 @@ impl PyCuboid {
     }
 
     pub fn closest_point(&self, point: PyVec3) -> PyResult<PyVec3> {
-        Ok(self.as_ref()?.closest_point(point.try_into()?).try_into()?)
+        Ok(self.as_ref()?.closest_point(point.try_into()?).into())
     }
 
     pub fn area(&self) -> PyResult<f32> {

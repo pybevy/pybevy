@@ -15,21 +15,29 @@ impl PyShadowFilteringMethod {
         Self::from_owned(ShadowFilteringMethod::Gaussian).into()
     }
 
-    #[classattr]
-    #[pyo3(name = "HARDWARE_2X2")]
-    pub fn hardware_2x2(py: Python) -> PyResult<Py<Self>> {
+    #[staticmethod]
+    #[pyo3(name = "Hardware2x2")]
+    pub fn hardware_2x2(py: Python<'_>) -> PyResult<Py<Self>> {
         Py::new(py, Self::from_owned(ShadowFilteringMethod::Hardware2x2))
     }
 
-    #[classattr]
-    #[pyo3(name = "GAUSSIAN")]
-    pub fn gaussian(py: Python) -> PyResult<Py<Self>> {
+    #[staticmethod]
+    #[pyo3(name = "Gaussian")]
+    pub fn gaussian(py: Python<'_>) -> PyResult<Py<Self>> {
         Py::new(py, Self::from_owned(ShadowFilteringMethod::Gaussian))
     }
 
-    #[classattr]
-    #[pyo3(name = "TEMPORAL")]
-    pub fn temporal(py: Python) -> PyResult<Py<Self>> {
+    #[staticmethod]
+    #[pyo3(name = "Temporal")]
+    pub fn temporal(py: Python<'_>) -> PyResult<Py<Self>> {
         Py::new(py, Self::from_owned(ShadowFilteringMethod::Temporal))
+    }
+
+    pub fn __repr__(&self) -> &'static str {
+        match self.0 {
+            ShadowFilteringMethod::Hardware2x2 => "ShadowFilteringMethod.Hardware2x2",
+            ShadowFilteringMethod::Gaussian => "ShadowFilteringMethod.Gaussian",
+            ShadowFilteringMethod::Temporal => "ShadowFilteringMethod.Temporal",
+        }
     }
 }

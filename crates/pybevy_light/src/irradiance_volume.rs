@@ -67,7 +67,12 @@ impl PyIrradianceVolume {
         let iv = self.as_ref()?;
         Ok(format!(
             "IrradianceVolume(intensity={}, affects_lightmapped_meshes={})",
-            iv.intensity, iv.affects_lightmapped_meshes
+            iv.intensity,
+            if iv.affects_lightmapped_meshes {
+                "True"
+            } else {
+                "False"
+            }
         ))
     }
 }

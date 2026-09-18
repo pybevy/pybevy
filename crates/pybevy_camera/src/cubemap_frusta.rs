@@ -1,9 +1,11 @@
 use bevy::camera::primitives::CubemapFrusta;
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, PyComponent, public_error::CUBEMAP_FACE_INDEX};
 use pybevy_macros::pycomponent;
 use pyo3::{exceptions::PyIndexError, prelude::*};
 
 use crate::frustum::PyFrustum;
+
+const CUBEMAP_FACE_COUNT: usize = 6;
 
 #[pycomponent(CubemapFrusta, bridge)]
 #[pyclass(name = "CubemapFrusta", module = "pybevy.camera", extends = PyComponent)]
@@ -27,7 +29,7 @@ impl PyCubemapFrusta {
     #[getter]
     pub fn frusta(&self, py: Python<'_>) -> PyResult<Vec<Py<PyFrustum>>> {
         let cf = self.as_ref()?;
-        let mut result = Vec::with_capacity(6);
+        let mut result = Vec::with_capacity(CUBEMAP_FACE_COUNT);
         for frustum in cf.frusta.iter() {
             result.push(Py::new(
                 py,
@@ -43,8 +45,8 @@ impl PyCubemapFrusta {
     }
 
     pub fn get(&self, py: Python<'_>, index: usize) -> PyResult<Py<PyFrustum>> {
-        if index >= 6 {
-            return Err(PyIndexError::new_err("Cubemap face index must be 0-5"));
+        if index >= CUBEMAP_FACE_COUNT {
+            return Err(PyIndexError::new_err(CUBEMAP_FACE_INDEX));
         }
         let cf = self.as_ref()?;
         Py::new(
@@ -59,10 +61,10 @@ impl PyCubemapFrusta {
     }
 
     pub fn __len__(&self) -> usize {
-        6
+        CUBEMAP_FACE_COUNT
     }
 
     pub fn __repr__(&self) -> PyResult<String> {
-        Ok("CubemapFrusta([6 frustums])".to_string())
+        Ok(format!("CubemapFrusta([{CUBEMAP_FACE_COUNT} frustums])"))
     }
 }

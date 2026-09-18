@@ -24,7 +24,12 @@ class Extent3d:
 class TextureDimension:
     """Texture dimension: 1D, 2D, or 3D."""
 
+    def __copy__(self) -> TextureDimension: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> TextureDimension: ...
+
+
     def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
 
     D1: ClassVar[TextureDimension]
     D2: ClassVar[TextureDimension]
@@ -33,7 +38,12 @@ class TextureDimension:
 class VertexFormat:
     """Vertex-buffer element format."""
 
+    def __copy__(self) -> VertexFormat: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> VertexFormat: ...
+
+
     def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
 
     Uint8: ClassVar[VertexFormat]
     Uint8x2: ClassVar[VertexFormat]
@@ -85,6 +95,7 @@ class TextureFormat:
     """Texture format controlling how pixel data is interpreted."""
 
     def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
 
     R8Unorm: ClassVar[TextureFormat]
     R8Snorm: ClassVar[TextureFormat]
@@ -166,6 +177,10 @@ class TextureFormat:
 class PowerPreference:
     """GPU power preference for adapter selection."""
 
+    def __copy__(self) -> PowerPreference: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> PowerPreference: ...
+
+
     None_: ClassVar[PowerPreference]
     LowPower: ClassVar[PowerPreference]
     HighPerformance: ClassVar[PowerPreference]
@@ -175,15 +190,26 @@ class PowerPreference:
 class Face:
     """Face culling mode."""
 
+    def __copy__(self) -> Face: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> Face: ...
+
+
     Front: ClassVar[Face]
     Back: ClassVar[Face]
+
+    def __hash__(self) -> int: ...
 
 PyFace = Face
 
 class TextureViewDimension:
     """Dimension used when interpreting a texture through a view."""
 
+    def __copy__(self) -> TextureViewDimension: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> TextureViewDimension: ...
+
+
     def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
 
     D1: ClassVar[TextureViewDimension]
     D2: ClassVar[TextureViewDimension]
@@ -355,8 +381,9 @@ class ColorGrading(Component):
 
     Provides control over exposure, temperature, tint, hue, saturation,
     and section-specific adjustments for shadows, midtones, and highlights.
-    Global exposure and post-saturation work without HDR. Other global and
-    tonal-section controls require Hdr on the camera.
+
+    On non-HDR cameras, only global exposure and post-saturation apply. Other
+    fields require Hdr and non-NONE tonemapping; Camera2d defaults to NONE.
     """
 
     def __init__(
@@ -472,6 +499,9 @@ class TemporalJitter(Component):
 
         Args:
             offset: Subpixel offset in range [-0.5, 0.5]. Default is zero (no jitter).
+
+        Raises:
+            ValueError: If either component is outside [-0.5, 0.5]
         """
 
     @property
@@ -480,7 +510,7 @@ class TemporalJitter(Component):
 
     @offset.setter
     def offset(self, value: Vec2) -> None:
-        """Set the jitter offset."""
+        """Set the jitter offset. Raises ValueError outside [-0.5, 0.5]."""
 
 class MipBias(Component):
     """Camera component specifying a mip bias for texture sampling.

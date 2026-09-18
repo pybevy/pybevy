@@ -4,7 +4,7 @@ use bevy::{
 };
 use pybevy_macros::pyconstructor;
 use pybevy_math::{bounding::PyIsometry2d, dir2::PyDir2, ray::PyRay2d, rot2::PyRot2, vec2::PyVec2};
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyValueError, prelude::*};
 
 use crate::{
     mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PySegment2dMeshBuilder,
@@ -140,9 +140,7 @@ impl PySegment2d {
         self.0
             .try_direction()
             .map(PyDir2::from_dir2)
-            .map_err(|e: InvalidDirectionError| {
-                pyo3::exceptions::PyValueError::new_err(format!("{}", e))
-            })
+            .map_err(|e: InvalidDirectionError| PyValueError::new_err(format!("{}", e)))
     }
 
     pub fn scaled_direction(&self) -> PyVec2 {
@@ -157,9 +155,7 @@ impl PySegment2d {
         self.0
             .try_left_normal()
             .map(PyDir2::from_dir2)
-            .map_err(|e: InvalidDirectionError| {
-                pyo3::exceptions::PyValueError::new_err(format!("{}", e))
-            })
+            .map_err(|e: InvalidDirectionError| PyValueError::new_err(format!("{}", e)))
     }
 
     pub fn right_normal(&self) -> PyResult<PyDir2> {
@@ -170,9 +166,7 @@ impl PySegment2d {
         self.0
             .try_right_normal()
             .map(PyDir2::from_dir2)
-            .map_err(|e: InvalidDirectionError| {
-                pyo3::exceptions::PyValueError::new_err(format!("{}", e))
-            })
+            .map_err(|e: InvalidDirectionError| PyValueError::new_err(format!("{}", e)))
     }
 
     pub fn scaled_left_normal(&self) -> PyVec2 {

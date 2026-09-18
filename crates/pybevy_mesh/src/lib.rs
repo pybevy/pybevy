@@ -56,9 +56,12 @@ pub fn add_math_primitives(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<primitives::PySegment2d>()?;
     m.add_class::<primitives::PyCapsule3d>()?;
     m.add_class::<primitives::PyCone>()?;
+    m.add_class::<primitives::PyConicalFrustum>()?;
     m.add_class::<primitives::PyCuboid>()?;
     m.add_class::<primitives::PyCylinder>()?;
     m.add_class::<primitives::PyPlane3d>()?;
+    m.add_class::<primitives::PyPolyline2d>()?;
+    m.add_class::<primitives::PyPolyline3d>()?;
     m.add_class::<primitives::PySphere>()?;
     m.add_class::<primitives::PyTetrahedron>()?;
     m.add_class::<primitives::PyTorus>()?;
@@ -96,7 +99,10 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<primitives::PyCapsule2dMeshBuilder>()?;
     m.add_class::<primitives::PyCapsule3dMeshBuilder>()?;
     m.add_class::<primitives::PyCircleMeshBuilder>()?;
+    m.add_class::<primitives::PyPolyline2dMeshBuilder>()?;
+    m.add_class::<primitives::PyPolyline3dMeshBuilder>()?;
     m.add_class::<primitives::PyConeMeshBuilder>()?;
+    m.add_class::<primitives::PyConicalFrustumMeshBuilder>()?;
     m.add_class::<primitives::PyCuboidMeshBuilder>()?;
     m.add_class::<primitives::PyCylinderMeshBuilder>()?;
     m.add_class::<primitives::PyEllipseMeshBuilder>()?;

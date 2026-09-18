@@ -17,6 +17,10 @@ class PbrPlugin(Plugin):
     def build(self, app: App) -> None: ...
 
 class ParallaxMappingMethod:
+
+    def __copy__(self) -> ParallaxMappingMethod: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> ParallaxMappingMethod: ...
+
     class Occlusion(ParallaxMappingMethod):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
@@ -125,13 +129,17 @@ class StandardMaterial(Material):
     specular_transmission_texture: Handle[Image] | None
     """Per-pixel specular transmission. Unavailable on macOS/iOS (Metal sampler limit): setting it raises RuntimeError."""
     thickness: float
+    """Optical thickness. Defaults to `0.0`, where `ior` and `attenuation_*` have no effect."""
     thickness_channel: UvChannel
     """UV channel for `thickness_texture`. Raises RuntimeError on macOS/iOS if set to anything but Uv0."""
     thickness_texture: Handle[Image] | None
     """Per-pixel thickness. Unavailable on macOS/iOS (Metal sampler limit): setting it raises RuntimeError."""
     ior: float
+    """Index of refraction. Requires a non-zero `thickness`: at the default `thickness=0.0` it has no effect."""
     attenuation_distance: float
+    """Distance light travels before it is fully tinted. Requires a non-zero `thickness`: at the default `thickness=0.0` it has no effect."""
     attenuation_color: Color
+    """Tint applied to transmitted light. Requires a non-zero `thickness`: at the default `thickness=0.0` it has no effect."""
     normal_map_channel: UvChannel
     normal_map_texture: Handle[Image] | None
     flip_normal_map_y: bool
@@ -191,6 +199,10 @@ class FogFalloff:
 
     Determines the mathematical relationship between distance and fog density.
     """
+
+    def __copy__(self) -> FogFalloff: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> FogFalloff: ...
+
 
     REVISED_KOSCHMIEDER_CONTRAST_THRESHOLD: float
 
@@ -315,6 +327,10 @@ class ScreenSpaceAmbientOcclusionQualityLevel:
     at the cost of performance.
     """
 
+    def __copy__(self) -> ScreenSpaceAmbientOcclusionQualityLevel: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> ScreenSpaceAmbientOcclusionQualityLevel: ...
+
+
     def __hash__(self) -> int: ...
 
     class Low(ScreenSpaceAmbientOcclusionQualityLevel):
@@ -376,16 +392,17 @@ class ScreenSpaceAmbientOcclusion(Component):
 
 class ScreenSpaceTransmissionQuality:
     """Quality setting for screen space specular transmission."""
+
+    def __copy__(self) -> ScreenSpaceTransmissionQuality: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> ScreenSpaceTransmissionQuality: ...
+
     Low: ScreenSpaceTransmissionQuality
     Medium: ScreenSpaceTransmissionQuality
     High: ScreenSpaceTransmissionQuality
     Ultra: ScreenSpaceTransmissionQuality
 
 class ScreenSpaceTransmission(Component):
-    """Configures screen space transmission (refraction) behavior.
-
-    Trades performance against visual fidelity for transmissive materials.
-    """
+    """Per-camera refraction settings; defaults to one step at Medium quality."""
 
     def __init__(
         self,
@@ -396,13 +413,18 @@ class ScreenSpaceTransmission(Component):
 
     @property
     def steps(self) -> int:
-        """Number of steps in the Transmissive3d pass (0 disables refraction)."""
+        """Pass count, roughly one transmissive layer per texture copy.
+
+        `0` disables screen-space refraction and uses the environment map.
+        """
+
     @steps.setter
     def steps(self, value: int) -> None: ...
 
     @property
     def quality(self) -> ScreenSpaceTransmissionQuality:
-        """Quality of the transmission blur effect."""
+        """Transmission blur quality; has no effect at zero material roughness."""
+
     @quality.setter
     def quality(self, value: ScreenSpaceTransmissionQuality) -> None: ...
 
@@ -465,6 +487,12 @@ class WireframeLineWidth(Component):
     def width(self) -> float: ...
     @width.setter
     def width(self, value: float) -> None: ...
+
+    @staticmethod
+    def batch(  # type: ignore[override]
+        *,
+        width: np.typing.ArrayLike | None = None,
+    ) -> Batchable: ...
 
 class WireframePlugin(Plugin):
     """Enables wireframe rendering for meshes with Wireframe or WireframeConfig.global_."""
@@ -644,6 +672,11 @@ class ContactShadows(Component):
     """Screen-space contact shadows requiring a depth prepass and forward rendering.
 
     Deferred rendering is unsupported and can panic in Bevy prepass queuing.
+
+    Contact shadows are also opt-in per light: set ``contact_shadows_enabled=True``
+    on every ``DirectionalLight``, ``PointLight`` or ``SpotLight`` that should cast
+    them (default ``False``). With no light opted in, this component is silently
+    inert and the frame looks identical to one without it.
     """
 
     def __init__(
@@ -684,7 +717,9 @@ class Lightmap(Component):
     The entity's mesh must contain ``Mesh.ATTRIBUTE_UV_1``; attaching a
     lightmap to a mesh without that second UV set does not produce a valid
     render pipeline. Brightness is controlled by the assigned
-    ``StandardMaterial.lightmap_exposure``.
+    ``StandardMaterial.lightmap_exposure``. The lightmap contribution is
+    multiplied by the material's ``base_color``, so a black or very dark base
+    colour renders black at any ``lightmap_exposure``.
     """
 
     def __init__(
@@ -747,6 +782,10 @@ class AtmosphereMode:
     Controls how the atmosphere is rendered - either using lookup textures
     for performance or raymarching for accuracy.
     """
+
+    def __copy__(self) -> AtmosphereMode: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> AtmosphereMode: ...
+
 
     LookupTexture: ClassVar[AtmosphereMode]
     """High-performance mode using lookup textures."""

@@ -1,9 +1,11 @@
 use bevy::camera::visibility::CubemapVisibleEntities;
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, PyComponent, public_error::CUBEMAP_FACE_INDEX};
 use pybevy_macros::pycomponent;
 use pyo3::{exceptions::PyIndexError, prelude::*};
 
 use crate::visible_mesh_entities::PyVisibleMeshEntities;
+
+const CUBEMAP_FACE_COUNT: usize = 6;
 
 #[pycomponent(CubemapVisibleEntities, bridge)]
 #[pyclass(name = "CubemapVisibleEntities", module = "pybevy.camera", extends = PyComponent)]
@@ -25,8 +27,8 @@ impl PyCubemapVisibleEntities {
     }
 
     pub fn get(&self, py: Python<'_>, i: usize) -> PyResult<Py<PyVisibleMeshEntities>> {
-        if i >= 6 {
-            return Err(PyIndexError::new_err("Cubemap face index must be 0-5"));
+        if i >= CUBEMAP_FACE_COUNT {
+            return Err(PyIndexError::new_err(CUBEMAP_FACE_INDEX));
         }
         let cve = self.as_ref()?;
         let vme = cve.get(i).clone();
@@ -34,10 +36,12 @@ impl PyCubemapVisibleEntities {
     }
 
     pub fn __len__(&self) -> usize {
-        6
+        CUBEMAP_FACE_COUNT
     }
 
     pub fn __repr__(&self) -> PyResult<String> {
-        Ok("CubemapVisibleEntities([6 faces])".to_string())
+        Ok(format!(
+            "CubemapVisibleEntities([{CUBEMAP_FACE_COUNT} faces])"
+        ))
     }
 }

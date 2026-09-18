@@ -113,7 +113,7 @@ def setup(
 ) -> None:
     commands.spawn(
         Camera3d(),
-        Tonemapping.TONY_MC_MAPFACE,
+        Tonemapping.TonyMcMapface,
         Bloom.NATURAL,
         Transform.from_xyz(
             ORBIT_CENTER.x,

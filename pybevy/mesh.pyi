@@ -1,5 +1,4 @@
 from collections.abc import Callable, Sequence
-from enum import Enum
 from types import TracebackType
 from typing import ClassVar, Literal
 
@@ -59,9 +58,15 @@ class Mesh(Asset):
     @property
     def enable_raytracing(self) -> bool: ...
     def get_vertex_buffer_size(self) -> int: ...
-    def count_vertices(self) -> int: ...
+    def count_vertices(self) -> int:
+        """Effective vertex count. With differing per-vertex attribute row
+        counts, the shortest attribute's row count is returned; stored
+        attribute buffers keep their full row counts, and only the packed
+        vertex buffer and the rendered mesh contain the first
+        `count_vertices()` rows of each attribute."""
     def create_packed_vertex_buffer_data(self) -> bytes:
-        """GPU-friendly interleaved vertex bytes."""
+        """GPU-friendly interleaved vertex bytes: the first `count_vertices()`
+        rows of each attribute."""
 
     def compute_custom_smooth_normals(
         self,
@@ -157,11 +162,15 @@ class Mesh(Asset):
 
     def set_positions(self, positions: np.typing.ArrayLike | xp.Array) -> None:
         """Copy vertex positions from an (N, 3) array-like (numpy array, bounded
-        pybevy.array array, or nested list)."""
+        pybevy.array array, or nested list). Each row must have 3 lanes.
+        N may differ from other attributes' row counts. Readback keeps all N
+        rows; `count_vertices()` and rendering use the shortest attribute."""
 
     def set_normals(self, normals: np.typing.ArrayLike | xp.Array) -> None:
         """Copy vertex normals from an (N, 3) array-like (numpy array, bounded
-        pybevy.array array, or nested list)."""
+        pybevy.array array, or nested list). Each row must have 3 lanes.
+        N may differ from other attributes' row counts. Readback keeps all N
+        rows; `count_vertices()` and rendering use the shortest attribute."""
 
     def with_generated_tangents(self) -> Mesh: ...
     def generate_tangents(self) -> None: ...
@@ -187,15 +196,23 @@ class Mesh(Asset):
     def scaled_by(self, scale: Vec3) -> Mesh: ...
     def has_morph_targets(self) -> bool: ...
 
-class PrimitiveTopology(Enum):
-    PointList = ...
-    LineList = ...
-    LineStrip = ...
-    TriangleList = ...
-    TriangleStrip = ...
+class PrimitiveTopology:
+
+    def __copy__(self) -> PrimitiveTopology: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> PrimitiveTopology: ...
+
+    PointList: PrimitiveTopology
+    LineList: PrimitiveTopology
+    LineStrip: PrimitiveTopology
+    TriangleList: PrimitiveTopology
+    TriangleStrip: PrimitiveTopology
 
 class UvChannel:
     """UV channel selection for texture mapping."""
+
+    def __copy__(self) -> UvChannel: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> UvChannel: ...
+
 
     Uv0: ClassVar[UvChannel]
     Uv1: ClassVar[UvChannel]
@@ -232,6 +249,8 @@ class Indices:
     def __iter__(self) -> IndicesIterator: ...
     def __eq__(self, other: object) -> bool: ...
 
+    def __len__(self) -> int: ...
+
 class IndicesIterator:
     def __iter__(self) -> IndicesIterator: ...
     def __next__(self) -> int: ...
@@ -243,6 +262,12 @@ class VertexAttributeValues:
 class CylinderMeshBuilder(MeshBuilder):
     def build(self) -> Mesh: ...
 
+class Polyline2dMeshBuilder(MeshBuilder):
+    def build(self) -> Mesh: ...
+
+class Polyline3dMeshBuilder(MeshBuilder):
+    def build(self) -> Mesh: ...
+
 class ConeMeshBuilder(MeshBuilder):
     def build(self) -> Mesh:
         """Build the cone mesh.
@@ -252,6 +277,11 @@ class ConeMeshBuilder(MeshBuilder):
         that normalizes it gets NaN. `mesh.compute_normals()` after building
         replaces it with the averaged face normal.
         """
+
+class ConicalFrustumMeshBuilder(MeshBuilder):
+    def resolution(self, resolution: int) -> ConicalFrustumMeshBuilder: ...
+    def segments(self, segments: int) -> ConicalFrustumMeshBuilder: ...
+    def build(self) -> Mesh: ...
 
 class CuboidMeshBuilder(MeshBuilder):
     def build(self) -> Mesh: ...
@@ -343,6 +373,10 @@ class Segment2dMeshBuilder(MeshBuilder):
     def build(self) -> Mesh: ...
 
 class SphereKind:
+
+    def __copy__(self) -> SphereKind: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> SphereKind: ...
+
     class Ico(SphereKind):
         __match_args__: ClassVar[tuple[Literal["subdivisions"]]]
         subdivisions: int

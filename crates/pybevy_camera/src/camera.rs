@@ -1,4 +1,7 @@
-use bevy::{camera::Camera, math::Vec3};
+use bevy::{
+    camera::{Camera, SubCameraView},
+    math::Vec3,
+};
 use pybevy_core::{ComponentStorage, FromBorrowedStorage, PyComponent, public_error};
 use pybevy_macros::pycomponent;
 use pybevy_math::{
@@ -141,7 +144,7 @@ impl PyCamera {
     #[setter]
     pub fn set_sub_camera_view(&mut self, value: Option<PySubCameraView>) -> PyResult<()> {
         let converted = match value {
-            Some(scv) => Some(bevy::camera::SubCameraView::try_from(scv)?),
+            Some(scv) => Some(SubCameraView::try_from(scv)?),
             None => None,
         };
         self.as_mut()?.sub_camera_view = converted;
