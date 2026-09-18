@@ -35,7 +35,6 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "image")?;
     m.add_class::<plugin::PyImagePlugin>()?;
     m.add_class::<image::PyImage>()?;
-    m.add_class::<image::PyRenderAssetUsages>()?;
     m.add_class::<image::ImageDataContext>()?;
     m.add_class::<image::ImageDataContextMut>()?;
     m.add_class::<image::ImagePixelContextMut>()?;

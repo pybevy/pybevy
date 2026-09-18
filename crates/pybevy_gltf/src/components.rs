@@ -59,6 +59,12 @@ impl PyGltfMeshName {
         Ok(self.as_ref()?.0.clone())
     }
 
+    #[setter]
+    pub fn set_name(&mut self, value: String) -> PyResult<()> {
+        self.as_mut()?.0 = value;
+        Ok(())
+    }
+
     pub fn __repr__(&self) -> PyResult<String> {
         match self.as_ref() {
             Ok(name) => Ok(format!("GltfMeshName({:?})", name.0)),
@@ -89,6 +95,12 @@ impl PyGltfMaterialName {
     #[getter]
     pub fn name(&self) -> PyResult<String> {
         Ok(self.as_ref()?.0.clone())
+    }
+
+    #[setter]
+    pub fn set_name(&mut self, value: String) -> PyResult<()> {
+        self.as_mut()?.0 = value;
+        Ok(())
     }
 
     pub fn __repr__(&self) -> PyResult<String> {

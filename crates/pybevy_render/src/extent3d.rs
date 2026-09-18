@@ -46,13 +46,28 @@ impl PyExtent3d {
         self.width
     }
 
+    #[setter]
+    pub fn set_width(&mut self, width: u32) {
+        self.width = width;
+    }
+
     #[getter]
     pub fn height(&self) -> u32 {
         self.height
     }
 
+    #[setter]
+    pub fn set_height(&mut self, height: u32) {
+        self.height = height;
+    }
+
     #[getter]
     pub fn depth_or_array_layers(&self) -> u32 {
         self.depth_or_array_layers
+    }
+
+    #[setter]
+    pub fn set_depth_or_array_layers(&mut self, depth_or_array_layers: u32) {
+        self.depth_or_array_layers = depth_or_array_layers;
     }
 }

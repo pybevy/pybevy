@@ -90,8 +90,8 @@ impl PyGltfLoaderSettings {
     ) -> PyResult<Self> {
         Ok(Self {
             inner: GltfLoaderSettings {
-                load_meshes: load_meshes.into(),
-                load_materials: load_materials.into(),
+                load_meshes: load_meshes.try_into()?,
+                load_materials: load_materials.try_into()?,
                 load_cameras,
                 load_lights,
                 load_animations,
@@ -116,8 +116,9 @@ impl PyGltfLoaderSettings {
     }
 
     #[setter]
-    pub fn set_load_meshes(&mut self, value: PyRenderAssetUsages) {
-        self.inner.load_meshes = value.into();
+    pub fn set_load_meshes(&mut self, value: PyRenderAssetUsages) -> PyResult<()> {
+        self.inner.load_meshes = value.try_into()?;
+        Ok(())
     }
 
     #[getter]
@@ -126,8 +127,9 @@ impl PyGltfLoaderSettings {
     }
 
     #[setter]
-    pub fn set_load_materials(&mut self, value: PyRenderAssetUsages) {
-        self.inner.load_materials = value.into();
+    pub fn set_load_materials(&mut self, value: PyRenderAssetUsages) -> PyResult<()> {
+        self.inner.load_materials = value.try_into()?;
+        Ok(())
     }
 
     #[getter]

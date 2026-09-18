@@ -13,13 +13,22 @@ class Extent3d:
     def width(self) -> int:
         """Width of the texture."""
 
+    @width.setter
+    def width(self, value: int) -> None: ...
+
     @property
     def height(self) -> int:
         """Height of the texture."""
 
+    @height.setter
+    def height(self, value: int) -> None: ...
+
     @property
     def depth_or_array_layers(self) -> int:
         """Depth for 3D textures, or number of array layers for 2D array textures."""
+
+    @depth_or_array_layers.setter
+    def depth_or_array_layers(self, value: int) -> None: ...
 
 class TextureDimension:
     """Texture dimension: 1D, 2D, or 3D."""
@@ -383,7 +392,8 @@ class ColorGrading(Component):
     and section-specific adjustments for shadows, midtones, and highlights.
 
     On non-HDR cameras, only global exposure and post-saturation apply. Other
-    fields require Hdr and non-NONE tonemapping; Camera2d defaults to NONE.
+    fields require Hdr and a tonemapper other than Tonemapping.None_, which is
+    what Camera2d defaults to.
     """
 
     def __init__(

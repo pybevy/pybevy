@@ -6,9 +6,8 @@ import numpy as np
 
 from pybevy import array as xp
 from pybevy.app import App, Plugin
-from pybevy.assets import Asset, Handle
+from pybevy.assets import Asset, Handle, RenderAssetUsages
 from pybevy.ecs import Batchable, Component, Entity
-from pybevy.image import RenderAssetUsages
 from pybevy.math import Dir3, Quat, Vec2, Vec3
 from pybevy.pbr import StandardMaterial
 from pybevy.render import VertexFormat
@@ -52,7 +51,8 @@ class Mesh(Asset):
     def __init__(self, primitive_topology: PrimitiveTopology) -> None: ...
     def primitive_topology(self) -> PrimitiveTopology: ...
     @property
-    def asset_usage(self) -> RenderAssetUsages: ...
+    def asset_usage(self) -> RenderAssetUsages:
+        """An independent snapshot of asset usage flags; assign to update the mesh."""
     @asset_usage.setter
     def asset_usage(self, value: RenderAssetUsages) -> None: ...
     @property
@@ -511,9 +511,15 @@ class SkinnedMesh(Component):
     def inverse_bindposes(self) -> Handle:
         """Get the handle to the inverse bind pose matrices asset."""
 
+    @inverse_bindposes.setter
+    def inverse_bindposes(self, value: Handle) -> None: ...
+
     @property
     def joints(self) -> list[Entity]:
         """Get the list of joint (bone) entities."""
+
+    @joints.setter
+    def joints(self, value: list[Entity]) -> None: ...
 
     def joint_count(self) -> int:
         """Get the number of joints in the skeleton."""
