@@ -148,9 +148,9 @@ commands.spawn(Camera3d(), Exposure.INDOOR)  # SUNLIGHT, INDOOR, OVERCAST, BLEND
 ### Color Grading
 
 On non-HDR cameras, only global exposure and post-saturation apply. Full color
-grading requires `Hdr()` and a `Tonemapping` other than `Tonemapping.NONE`.
-`Camera3d` has a non-`NONE` default; `Camera2d` does not. A component such as
-`Bloom` that requires `Hdr` also adds `Hdr`:
+grading requires `Hdr()` and a `Tonemapping` other than `Tonemapping.None_`.
+`Camera3d` defaults to an enabled tonemapper; `Camera2d` does not. A
+component such as `Bloom` that requires `Hdr` also adds `Hdr`:
 
 ```python
 from pybevy.render import ColorGrading, ColorGradingSection, Hdr
@@ -162,8 +162,8 @@ commands.spawn(
 )
 ```
 
-For full grading on `Camera2d`, spawn a non-`NONE` `Tonemapping` alongside
-`Hdr()`; `Hdr()` with the default `Tonemapping.NONE` applies no grading.
+For full grading on `Camera2d`, spawn an enabled `Tonemapping` alongside
+`Hdr()`; `Hdr()` with the default `Tonemapping.None_` applies no grading.
 
 Color grading also requires an enabled tonemapper. With `Hdr()` and
 `Tonemapping.None_`, bevy skips the tonemapping pass, so none of the

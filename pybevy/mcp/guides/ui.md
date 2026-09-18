@@ -92,6 +92,13 @@ def inspect_layout(query: Query[tuple[ComputedNode, UiGlobalTransform]]) -> None
 `UiGlobalTransform` is engine-computed and cannot be inserted directly. Change
 `UiTransform` when you need to translate, rotate, or scale a UI node.
 
+Bevy permits explicit `ComputedNode` adjustments after layout, for example
+for scrollbar geometry. Use `Query[Mut[ComputedNode]]` to assign its fields
+or change a vector child such as `computed.size.x`. These children are live
+borrows, require mutable access, and expire when the system ends. A later
+layout pass can overwrite your adjustment. `ComputedStackIndex.value` is
+also writable, but the UI stacking system normally recomputes it.
+
 ## Layering
 
 `ZIndex(value)` orders siblings and descendants within a UI stacking context;

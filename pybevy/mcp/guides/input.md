@@ -29,6 +29,13 @@ def movement_system(keyboard: Res[ButtonInput[KeyCode]], time: Res[Time]) -> Non
         print("escape released")
 ```
 
+For a keyboard run condition, import `input_just_pressed` from
+`pybevy.ecs.conditions` and use
+`system(jump).run_if(input_just_pressed(KeyCode.Space))`, with `system` from
+`pybevy.ecs`. The helper reads `Res[ButtonInput[KeyCode]]`; install
+`InputPlugin` or the default plugin group to provide the keyboard resource.
+It becomes false again when the next input update clears the press edge.
+
 ### Common KeyCode Variants
 
 | Category | Variants |

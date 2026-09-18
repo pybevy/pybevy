@@ -64,6 +64,21 @@ get_component_schema {"name": "PointLight"}
 → Shows all fields, types, defaults, and a spawn JSON example
 ```
 
+MCP addresses custom components and resources after the active World knows
+their type. A system/query declaration or an inserted instance normally does
+that registration. To let MCP create the first value of an otherwise unused
+class, register it explicitly from scene code or `run_code`:
+
+```
+world.register_component(MyComponent)
+world.register_resource(MyResource)
+```
+
+For a class defined inside `run_code`, register it in that same call. Defining
+or decorating a class alone does not retain or register it, and reloading an
+unused class does not change that. After registration, `spawn_entity`,
+`set_component`, `set_resource`, schemas, and queries can address it by name.
+
 ## Modifying Components
 
 `get_component` returns readable component properties. `GlobalTransform` reports translation, rotation, and scale in world space, including parent transforms.
@@ -117,10 +132,52 @@ set_component {
 }
 ```
 
+An unknown field on an enum component reports this synthetic input and the
+accepted variant names. `set_resource` reports the resource type under
+`resource`; its boolean `inserted` field is `true` when the resource was absent
+and created, and `false` when an existing resource was patched.
+
 Scalar fields require scalar values: an object such as `{}` is rejected for a
 float, integer, boolean, or string. An empty object applied to a structured
 value, such as `Transform.translation`, leaves that value unchanged. The same
 conversion rules apply to component, resource, and asset writes.
+
+## Modifying Resources
+
+`set_resource` patches only the supplied fields of an existing resource;
+omitted fields keep their current values. Native-resource patches validate
+field names, conversions, and setters on a detached value before committing.
+If any field fails, no fields are changed and the resource is not marked
+changed. Successful patches retain the resource entity and mark the resource
+changed without replacement hooks.
+
+Resources that cannot safely provide a detached copy reject patches without
+mutation. An absent resource still requires support for construction and
+insertion; a failed patch does not insert a partial value.
+
+## Batching Mutations
+
+`batch` accepts only flat operation objects with these exact fields:
+
+- `set_component`: `action`, `entity`, `component`, `fields`
+- `spawn`: `action`, `components`
+- `despawn`: `action`, `entity`
+- `remove_component`: `action`, `entity`, `component`
+
+Put a spawn name in its `Name` component. There is no separate `name` field,
+and operations must not be wrapped in an `args` field.
+
+```
+batch {"operations": [
+    {"action": "spawn", "components": {"Name": "marker", "Transform": {}}},
+    {"action": "set_component", "entity": "player", "component": "Visibility", "fields": {"variant": "Hidden"}}
+]}
+```
+
+Operations run independently. Each invalid operation reports its array index
+and does not mutate the world; other valid operations in the same batch still
+run. Inspect `succeeded`, `failed`, and `partial` as well as the per-operation
+results.
 
 ## Parent-Child Hierarchies
 
@@ -214,6 +271,9 @@ set_component {
 
 ## Screenshots
 
+Capture tools hide authored UI by default. Pass `hide_ui=false` when the UI is
+part of the result; internal PyBevy overlays remain hidden.
+
 ```
 capture_screenshot                              - Standard capture (768px wide)
 capture_screenshot {"max_width": 1280}          - Higher resolution
@@ -290,6 +350,12 @@ capture_turnaround {"look_at": [0, 1, 0], "distance": 8, "view_count": 8}
 → Custom orbit around a specific point
 ```
 
+The request `view_count` is the number of orbit positions. With
+`include_top=true` (the default), the response's `view_count` is one larger
+because it counts all composed cells. Read `views` for each cell's angle or
+`top` label and position. Colored bars in turnaround and timeline sheets
+indicate capture order, not scene data.
+
 **Tip:** Auto-fit distance can be dominated by large ground planes. For scenes with wide geometry, explicitly supply `look_at` and `distance` parameters rather than relying on auto-fit.
 
 ### Depth Probing
@@ -302,15 +368,17 @@ capture_depth {"position": [5, 5, 5], "look_at": [0, 0, 0], "grid_density": 8}
 
 Auto-grid samples report `grid: [column, row]` with
 `coordinate_space: "grid_indices"`. When `sample_points` is provided, samples
-instead report `pixel: [x, y]` with `coordinate_space: "pixels_800x800"`.
+instead report `pixel: [x, y]` with
+`coordinate_space: "normalized_800x800"`. These are normalized coordinates on
+a fixed 800x800 scale, not pixels in the returned image. Rays use the selected
+`Camera3d`'s projection and pose; an explicit `position` and `look_at` override
+the pose while retaining that projection. `[400, 400]` is the projection center.
+Large orthographic view areas are supported; a small nonzero projection
+determinant is not treated as a singular matrix.
 
-Despite that name they are not pixels. `capture_depth` casts rays on a fixed
-800x800 grid over a hardcoded ~60 degree frustum, ignoring both the capture size
-and the camera's own projection, so `[400, 400]` is always straight ahead but an
-off-centre point does not land where the rendered frame shows it.
 `capture_stats`' `sample_points` are pixels of the resized capture and move with
-`max_width`. The two are different spaces with no exact conversion: read depth
-by name and label rather than by matching coordinates between the two tools.
+`max_width`. Convert those pixels to the normalized 800x800 scale before using
+them with `capture_depth`.
 
 ## Batched Schedules
 
@@ -527,6 +595,14 @@ prelude is usually the shortest option):
 ```
 run_code {"code": "from pybevy.prelude import Name, Query, Transform\nfor transform, name in world.query(Query[tuple[Transform, Name]]):\n  print(name, transform.translation)"}
 ```
+
+Execution has a cooperative five-second deadline, checked at Python trace
+events. Cancellation bypasses ordinary `except Exception` handlers. Once
+execution unwinds, `run_code` returns `success: false` with a `TimeoutError`
+and releases World access, even if the code caught cancellation before returning.
+This is not a hard execution sandbox: bare `except`, `except BaseException`,
+disabling tracing, or blocking native calls can delay or prevent unwinding.
+Avoid those patterns in `run_code`; a stuck scene process may require a restart.
 
 To access custom scene types inside `run_code`, import the scene module by filename:
 ```

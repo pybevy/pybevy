@@ -51,6 +51,9 @@ if __name__ == "__main__":
 
 Use `DefaultPlugins` for rendered gizmos. `GizmoPlugin` registers gizmo data but
 does not replace the separate renderer that `DefaultPlugins` installs.
+In a minimal app, install `AssetPlugin` and `MeshPlugin` before `GizmoPlugin`;
+the gizmo plugin registers mesh-bound systems that require `Assets[Mesh]`.
+`GizmoPlugin` alone is not a complete minimal-app setup.
 
 `Gizmos` is a system parameter, not a constructible service. Do not save it in a
 global, resource, or component; an instance becomes invalid when its system call
@@ -227,9 +230,25 @@ def show_mesh_bounds(
 ```
 
 `ShowAabbGizmo()` uses the AABB gizmo group's default; without a configured
-group color, Bevy derives a varied color from the entity. An entity without an
-AABB has nothing to draw. For imported scenes, attach the marker to the mesh
-child rather than only to an empty hierarchy root.
+group color, Bevy derives a varied color from the entity. Configure that group
+from a system with `GizmoConfigStore`:
+
+```python
+from pybevy.color import Color
+from pybevy.ecs import ResMut
+from pybevy.gizmos import AabbGizmoConfigGroup, GizmoConfigStore
+
+
+def configure_bounds(store: ResMut[GizmoConfigStore]) -> None:
+    _, group = store.config_mut(AabbGizmoConfigGroup)
+    group.draw_all = True
+    group.default_color = Color.srgb(0.1, 1.0, 0.3)
+```
+
+`draw_all=True` draws bounds for every eligible entity, without adding
+`ShowAabbGizmo`. An entity without an AABB has nothing to draw. For imported
+scenes, attach the marker to the mesh child rather than only to an empty
+hierarchy root.
 
 ## Light Gizmos
 

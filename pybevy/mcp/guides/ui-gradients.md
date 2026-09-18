@@ -117,6 +117,14 @@ commands.spawn(
 
 Control where colors are placed:
 
+Standalone gradients and stops support whole-field assignment. Child values
+returned by `stops`, `position`, `color`, and `anchor_value` are read-only
+snapshots: replace the parent's field instead of mutating a returned child.
+For example, assign `linear.stops = [ColorStop.auto(Color.WHITE)]` or
+`radial.position = UiPosition.top_left()`. Replace a component's entire
+`gradients` list through `Query[Mut[BackgroundGradient]]` or
+`Query[Mut[BorderGradient]]`; a plain `Query` remains read-only.
+
 ```python
 ColorStop.auto(color)              # Evenly distributed
 ColorStop.px(color, 20.0)          # At 20 pixels

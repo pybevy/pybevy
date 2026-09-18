@@ -25,7 +25,7 @@ pub struct GuideEntry {
     pub description: String,
 }
 
-/// Pre-built API index from .pyi stub files (with .py fallback)
+/// Pre-built API index from public .pyi stubs and re-exported Python fallbacks.
 pub struct ApiIndex {
     /// Module name -> index entry
     entries: Vec<ApiIndexEntry>,
@@ -42,12 +42,12 @@ pub struct ApiIndex {
 }
 
 impl ApiIndex {
-    /// Build the API index by scanning the pybevy/ directory for .pyi and .py files
+    /// Build the API index from public stubs and explicitly re-exported Python modules.
     pub fn build(pybevy_dir: &Path) -> Self {
         let mut entries = Vec::new();
         let mut contents = HashMap::new();
 
-        // Collect .pyi files (preferred) and .py fallbacks
+        // Collect .pyi files (preferred) and candidate .py fallbacks.
         let mut pyi_files: Vec<(String, PathBuf)> = Vec::new();
         let mut py_fallbacks: Vec<(String, PathBuf)> = Vec::new();
         let mut package_init_files: Vec<(String, PathBuf)> = Vec::new();
@@ -110,11 +110,41 @@ impl ApiIndex {
             }
         }
 
-        // Deduplicate: if a module has both .pyi and .py, keep only .pyi
+        pyi_files.retain(|(module, _)| is_public_module_name(module));
+        py_fallbacks.retain(|(module, _)| is_public_module_name(module));
+        package_init_files.retain(|(package, _)| is_public_module_name(package));
+
+        let stubbed_packages = package_init_files
+            .iter()
+            .filter(|(_, path)| path.extension().is_some_and(|extension| extension == "pyi"))
+            .map(|(package, _)| package.clone())
+            .collect::<HashSet<_>>();
+        let public_fallback_modules = package_init_files
+            .iter()
+            .filter(|(package, path)| {
+                !stubbed_packages.contains(package)
+                    && path.extension().is_some_and(|extension| extension == "py")
+            })
+            .filter_map(|(package, path)| {
+                std::fs::read_to_string(path)
+                    .ok()
+                    .map(|content| parse_package_reexports(package, &content))
+            })
+            .flat_map(|aliases| aliases.into_values())
+            .filter_map(|target| {
+                target
+                    .rsplit_once('.')
+                    .map(|(module, _)| module.to_string())
+            })
+            .filter(|module| is_public_module_name(module))
+            .collect::<HashSet<_>>();
+
+        // A package stub is the declared public surface. Pure-Python fallbacks
+        // are indexed only when a stub-less package explicitly re-exports them.
         let pyi_modules: std::collections::HashSet<String> =
             pyi_files.iter().map(|(n, _)| n.clone()).collect();
         for (name, path) in py_fallbacks {
-            if !pyi_modules.contains(&name) {
+            if !pyi_modules.contains(&name) && public_fallback_modules.contains(&name) {
                 pyi_files.push((name, path));
             }
         }
@@ -133,6 +163,10 @@ impl ApiIndex {
 
         let mut type_aliases = HashMap::new();
         for (package, path) in package_init_files {
+            let is_stub = path.extension().is_some_and(|extension| extension == "pyi");
+            if !is_stub && stubbed_packages.contains(&package) {
+                continue;
+            }
             if let Ok(content) = std::fs::read_to_string(path) {
                 type_aliases.extend(parse_package_reexports(&package, &content));
             }
@@ -192,7 +226,7 @@ impl ApiIndex {
         let mut results = Vec::new();
 
         for (module_name, content) in &self.contents {
-            for (line_num, line) in content.lines().enumerate() {
+            for (line_num, line) in public_search_lines(content) {
                 if line.to_lowercase().contains(&query_lower) {
                     results.push(SearchResult {
                         module: module_name.clone(),
@@ -369,6 +403,12 @@ impl ApiIndex {
     }
 }
 
+fn is_public_module_name(module: &str) -> bool {
+    module
+        .split('.')
+        .all(|segment| !segment.is_empty() && !segment.starts_with('_'))
+}
+
 fn parse_package_reexports(package: &str, content: &str) -> HashMap<String, String> {
     let mut aliases = HashMap::new();
     let mut lines = content.lines();
@@ -413,7 +453,11 @@ fn parse_package_reexports(package: &str, content: &str) -> HashMap<String, Stri
                 .split_once(" as ")
                 .map(|(source, alias)| (source.trim(), alias.trim()))
                 .unwrap_or((imported_name, imported_name));
-            if source_name.is_empty() || public_name.is_empty() {
+            if source_name.is_empty()
+                || public_name.is_empty()
+                || public_name.starts_with('_')
+                || !is_public_module_name(module)
+            {
                 continue;
             }
 
@@ -475,12 +519,65 @@ fn class_name(line: &str) -> Option<&str> {
 }
 
 fn function_name(line: &str) -> Option<&str> {
-    line.trim()
-        .strip_prefix("def ")?
+    let line = line.trim();
+    line.strip_prefix("def ")
+        .or_else(|| line.strip_prefix("async def "))?
         .split('(')
         .next()
         .map(str::trim)
         .filter(|name| !name.is_empty())
+}
+
+fn public_search_lines(content: &str) -> Vec<(usize, &str)> {
+    let mut visible = Vec::new();
+    let mut private_names = HashSet::new();
+    let mut hidden_indent = None;
+    let mut hidden_parens = 0_isize;
+    let mut in_docstring = false;
+
+    for (index, line) in content.lines().enumerate() {
+        let indent = indentation(line);
+        let was_docstring = in_docstring;
+        let comment = line.trim_start().starts_with('#');
+        if !comment || was_docstring {
+            let quotes = line.matches("\"\"\"").count() + line.matches("'''").count();
+            if quotes % 2 == 1 {
+                in_docstring = !in_docstring;
+            }
+        }
+        if let Some(parent_indent) = hidden_indent {
+            if hidden_parens > 0 {
+                hidden_parens +=
+                    line.matches('(').count() as isize - line.matches(')').count() as isize;
+                continue;
+            }
+            if was_docstring || comment || line.trim().is_empty() || indent > parent_indent {
+                continue;
+            }
+            hidden_indent = None;
+        }
+        if !was_docstring {
+            let name = class_name(line).or_else(|| function_name(line));
+            if let Some(name) = name
+                && name.starts_with('_')
+                && !(indent > 0 && name.starts_with("__") && name.ends_with("__"))
+            {
+                private_names.insert(name);
+                hidden_indent = Some(indent);
+                hidden_parens =
+                    line.matches('(').count() as isize - line.matches(')').count() as isize;
+                continue;
+            }
+        }
+        visible.push((index, line));
+    }
+
+    visible.retain(|(_, line)| {
+        !line
+            .split(|character: char| !character.is_alphanumeric() && character != '_')
+            .any(|token| private_names.contains(token))
+    });
+    visible
 }
 
 fn deindent_definition(lines: &[&str], amount: usize) -> String {
@@ -527,6 +624,8 @@ fn collect_class_definitions(module: &str, content: &str) -> Vec<DefinitionCandi
         {
             parents.pop();
         }
+        let is_private =
+            name.starts_with('_') || parents.iter().any(|(_, parent)| parent.starts_with('_'));
         let qualname = parents
             .iter()
             .map(|(_, parent)| parent.as_str())
@@ -540,12 +639,14 @@ fn collect_class_definitions(module: &str, content: &str) -> Vec<DefinitionCandi
             .find(|(_, next)| !next.trim().is_empty() && indentation(next) <= indent)
             .map(|(next_index, _)| next_index)
             .unwrap_or(lines.len());
-        candidates.push(DefinitionCandidate {
-            module: module.to_string(),
-            qualname,
-            definition: deindent_definition(&lines[index..end], indent),
-            kind: DefinitionKind::Class,
-        });
+        if !is_private {
+            candidates.push(DefinitionCandidate {
+                module: module.to_string(),
+                qualname,
+                definition: deindent_definition(&lines[index..end], indent),
+                kind: DefinitionKind::Class,
+            });
+        }
         parents.push((indent, name.to_string()));
     }
 
@@ -575,6 +676,9 @@ fn collect_function_definitions(module: &str, content: &str) -> Vec<DefinitionCa
         let Some(name) = function_name(line) else {
             continue;
         };
+        if name.starts_with('_') {
+            continue;
+        }
         let mut open_parens = line.matches('(').count();
         let mut close_parens = line.matches(')').count();
         let mut signature_complete = open_parens > 0
@@ -632,7 +736,7 @@ fn parse_stub_definitions(content: &str) -> (Vec<String>, Vec<String>) {
         if let Some(rest) = trimmed.strip_prefix("class ") {
             if let Some(name) = rest.split(['(', ':']).next() {
                 let name = name.trim().to_string();
-                if !name.is_empty() && seen_classes.insert(name.clone()) {
+                if !name.is_empty() && !name.starts_with('_') && seen_classes.insert(name.clone()) {
                     classes.push(name);
                 }
             }
@@ -640,7 +744,7 @@ fn parse_stub_definitions(content: &str) -> (Vec<String>, Vec<String>) {
             && let Some(name) = rest.split('(').next()
         {
             let name = name.trim().to_string();
-            if !name.is_empty() && seen_functions.insert(name.clone()) {
+            if !name.is_empty() && !name.starts_with('_') && seen_functions.insert(name.clone()) {
                 functions.push(name);
             }
         }
@@ -1198,6 +1302,14 @@ mod tests {
         let (classes, functions) = parse_stub_definitions(content);
         assert!(classes.is_empty());
         assert_eq!(functions, vec!["top_level"]);
+    }
+
+    #[test]
+    fn parse_stub_definitions_skips_private_names() {
+        let content = "class Public:\n    pass\nclass _Private:\n    pass\ndef public() -> None: ...\ndef _private() -> None: ...\n";
+        let (classes, functions) = parse_stub_definitions(content);
+        assert_eq!(classes, vec!["Public"]);
+        assert_eq!(functions, vec!["public"]);
     }
 
     #[test]
@@ -1932,18 +2044,26 @@ class Shared:
     }
 
     #[test]
-    fn api_index_py_fallback() {
+    fn api_index_keeps_only_public_python_fallbacks() {
         let dir = std::env::temp_dir().join("pybevy_test_py_fallback");
         let _ = fs::remove_dir_all(&dir);
         let contrib_dir = dir.join("contrib");
+        let mcp_dir = dir.join("mcp");
+        let private_dir = dir.join("_internal");
         fs::create_dir_all(&contrib_dir).unwrap();
+        fs::create_dir_all(&mcp_dir).unwrap();
+        fs::create_dir_all(&private_dir).unwrap();
 
         // .pyi file (preferred)
-        fs::write(dir.join("math.pyi"), "class Vec3:\n    pass\n").unwrap();
-        // .py file that has no .pyi counterpart (should be indexed)
+        fs::write(
+            dir.join("math.pyi"),
+            "class Vec3:\n    pass\nclass _TestHook:\n    pass\ndef length() -> float: ...\ndef _private() -> None: ...\n",
+        )
+        .unwrap();
+        // Explicitly re-exported .py module in a stub-less package.
         fs::write(
             contrib_dir.join("orbit_camera.py"),
-            "class OrbitCamera(Component):\n    pass\n\nclass OrbitCameraPlugin(Plugin):\n    pass\n",
+            "class OrbitCamera(Component):\n    pass\n\nclass OrbitCameraPlugin(Plugin):\n    pass\n\nclass _Pending(Component):\n    pass\n",
         )
         .unwrap();
         // .py file that has a .pyi counterpart (should be skipped)
@@ -1954,6 +2074,13 @@ class Shared:
             "from .orbit_camera import OrbitCamera, OrbitCameraPlugin as CameraPlugin\n",
         )
         .unwrap();
+        // A package stub suppresses implementation-only Python siblings.
+        fs::write(mcp_dir.join("__init__.pyi"), "class ApiIndex:\n    pass\n").unwrap();
+        fs::write(mcp_dir.join("__init__.py"), "from .bridge import Bridge\n").unwrap();
+        fs::write(mcp_dir.join("bridge.py"), "class Bridge:\n    pass\n").unwrap();
+        // Private modules and packages are never part of discovery.
+        fs::write(dir.join("_module_loader.pyi"), "class Loader:\n    pass\n").unwrap();
+        fs::write(private_dir.join("hidden.pyi"), "class Hidden:\n    pass\n").unwrap();
 
         let index = ApiIndex::build(&dir);
 
@@ -1966,6 +2093,10 @@ class Shared:
             index.contents.contains_key("contrib.orbit_camera"),
             "contrib.orbit_camera .py should be indexed as fallback"
         );
+        assert!(index.contents.contains_key("mcp"));
+        assert!(!index.contents.contains_key("mcp.bridge"));
+        assert!(!index.contents.contains_key("_module_loader"));
+        assert!(!index.contents.contains_key("_internal.hidden"));
         // math.py should NOT override math.pyi
         let math_content = index.contents.get("math").unwrap();
         assert!(math_content.contains("Vec3"), "math should come from .pyi");
@@ -1996,6 +2127,16 @@ class Shared:
             camera_plugin["type_name"],
             "pybevy.contrib.orbit_camera.OrbitCameraPlugin"
         );
+        assert!(index.get_type_definition("_TestHook").is_none());
+        assert!(index.get_type_definition("_Pending").is_none());
+
+        let math_entry = index
+            .get_index()
+            .iter()
+            .find(|entry| entry.module == "math")
+            .unwrap();
+        assert_eq!(math_entry.classes, vec!["Vec3"]);
+        assert_eq!(math_entry.functions, vec!["length"]);
 
         // __init__.py should not be indexed
         assert!(!index.contents.contains_key("contrib.__init__"));

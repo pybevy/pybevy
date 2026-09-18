@@ -314,7 +314,10 @@ asset_server.load("models/character.glb#Scene0", WorldAsset)  # assets/models/ch
 asset_server.load_image("textures/ground.png")      # assets/textures/ground.png
 ```
 
-Paths are always relative to `assets/` - do not include `assets/` in the path string.
+Paths are relative to `assets/`; omit that prefix. Absolute paths and `..` paths
+escaping the root are rejected, with no public approval override. Loading still
+returns a handle; check `get_logs(errors_only=true)` for rejection errors and
+move the file under `assets/`.
 
 Mesh attribute input accepts any Python sequence, bounded arrays, and supported NumPy arrays. NumPy arrays must be C-contiguous; use `numpy.ascontiguousarray(values)` when needed. A vertex format mismatch raises `ValueError`.
 

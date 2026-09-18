@@ -12,6 +12,7 @@ use bevy::{
     prelude::{GlobalTransform, Resource, Transform, Without},
     time::{Time, Virtual},
 };
+use pybevy_core::public_error;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
@@ -370,6 +371,9 @@ pub fn validate_schedule(request: &ScheduleRequest) -> Result<(), String> {
                 "action[{}]: tool '{}' is not schedulable",
                 i, action.tool
             ));
+        }
+        if !crate::tools::is_public_tool_name(&action.tool) {
+            return Err(public_error::mcp_schedule_non_public_tool(i, &action.tool));
         }
 
         if let Some(skip_label) = action.skip_if_error.as_deref()
@@ -1176,6 +1180,69 @@ mod tests {
         };
         let err = validate_schedule(&req).unwrap_err();
         assert!(err.contains("not schedulable"));
+    }
+
+    #[test]
+    fn test_validate_rejects_private_and_unknown_tools() {
+        for tool in [
+            "list_entities",
+            "get_entity",
+            "list_resources",
+            "capture_with_gizmos",
+            "get_config",
+            "list_configs",
+            "nonexistent_tool",
+        ] {
+            let req = ScheduleRequest {
+                actions: vec![ScheduleAction {
+                    tool: tool.to_string(),
+                    args: serde_json::Value::Null,
+                    at: Some(0.0),
+                    at_frame: None,
+                    label: None,
+                    skip_if_error: None,
+                }],
+                mode: ScheduleMode::Sync,
+                stop_on_error: false,
+            };
+
+            assert_eq!(
+                validate_schedule(&req).unwrap_err(),
+                format!("action[0]: tool '{tool}' is not a public schedulable tool")
+            );
+        }
+    }
+
+    #[test]
+    fn test_public_tool_schema_matches_schedule_name_validation() {
+        for tool in crate::tools::list_tools() {
+            let name = tool["name"].as_str().unwrap();
+            let req = ScheduleRequest {
+                actions: vec![ScheduleAction {
+                    tool: name.to_string(),
+                    args: serde_json::Value::Null,
+                    at: Some(0.0),
+                    at_frame: None,
+                    label: None,
+                    skip_if_error: None,
+                }],
+                mode: ScheduleMode::Sync,
+                stop_on_error: false,
+            };
+            let result = validate_schedule(&req);
+
+            if is_non_schedulable(name) {
+                assert_eq!(
+                    result.unwrap_err(),
+                    format!("action[0]: tool '{name}' is not schedulable")
+                );
+            } else {
+                assert!(
+                    result.is_ok(),
+                    "public tool '{name}' was rejected: {result:?}"
+                );
+            }
+        }
     }
 
     #[test]

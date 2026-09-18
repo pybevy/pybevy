@@ -15,6 +15,11 @@ PyBevy loads assets from `./assets/` relative to the current working directory (
 handle = asset_server.load("models/character.glb#Scene0", WorldAsset)
 ```
 
+Omit the `assets/` prefix. Absolute paths and `..` paths escaping the asset root
+are rejected, with no public approval override. Loading still returns a handle;
+check `get_logs(errors_only=true)` for rejection errors and move the file under
+`assets/`.
+
 ## Loading GLB Models
 
 ```python

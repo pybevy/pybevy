@@ -121,6 +121,12 @@ app.add_systems(Update, run_if(enemy_ai, in_state(GamePhase.PLAYING)))
 app.add_systems(Update, run_if(pause_menu_input, in_state(GamePhase.PAUSED)))
 ```
 
+`pybevy.ecs.conditions.state_is_active(GamePhase, GamePhase.PLAYING)` is
+equivalent to `in_state(GamePhase.PLAYING)`. Pass the matching `@state` enum
+type and member. It reads that machine's `State[GamePhase]` resource and
+returns false when the machine is absent. It does not inspect arbitrary
+custom-resource fields, which are not safe read-only condition parameters.
+
 ## Complete Example
 
 ```python

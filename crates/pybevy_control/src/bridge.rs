@@ -289,8 +289,8 @@ pub struct CaptureDepthParams {
     pub position: Option<[f32; 3]>,
     /// Camera look-at [x, y, z]
     pub look_at: Option<[f32; 3]>,
-    /// Ray-cast points on a fixed 800x800, ~60 degree frustum independent of
-    /// capture size and camera projection. Grid if omitted.
+    /// Normalized ray-cast coordinates on a fixed 800x800 scale, using the
+    /// selected Camera3d projection. Grid if omitted.
     pub sample_points: Option<Vec<[i64; 2]>>,
     /// Auto-generate NxN sample grid (default 8 if no sample_points)
     #[schemars(extend("default" = 8))]
@@ -453,16 +453,16 @@ pub enum ControlOperation {
         #[serde(default)]
         include_internal: bool,
     },
-    /// Get component field names, types, defaults, and a JSON spawn example.
+    /// Get field names, types, defaults, and a JSON spawn example for a World-registered component.
     GetComponentSchema {
         /// Component name (e.g. 'Transform')
         name: String,
     },
     /// Get live field values for a specific component on an entity.
     GetComponent(GetComponentParams),
-    /// Get the presence and live field values of a resource.
+    /// Get the presence and live field values of a World-registered resource.
     GetResource(GetResourceParams),
-    /// Query entities by With/Without component filters. Returns at most 100 records by default; use limit up to 1000 and inspect total_count/truncated.
+    /// Query entities by registered With/Without component filters. Returns at most 100 records by default; use limit up to 1000 and inspect total_count/truncated.
     QueryEntities(QueryEntitiesParams),
     /// Get a grouped entity inventory: counts by type (e.g. '30 Bubble, 6 Fish, 1 Camera3d'). Faster than query_entities for understanding scene composition.
     GetSceneSummary,
@@ -506,7 +506,7 @@ pub enum ControlOperation {
     /// Get the last Python system error traceback.
     GetLastError,
 
-    /// Spawn a new entity with components specified as JSON.
+    /// Spawn a new entity with World-registered components specified as JSON.
     #[schemars(extend("x-feature-gate" = "manipulation"))]
     SpawnEntity {
         /// Component name -> field values (e.g. {"Transform": {"translation": [0, 5, 0]}})
@@ -519,13 +519,13 @@ pub enum ControlOperation {
         /// Entity ID or Name
         entity: EntityRef,
     },
-    /// Update specific fields on a component without replacing it.
+    /// Update specific fields on a World-registered component without replacing it.
     #[schemars(extend("x-feature-gate" = "manipulation"))]
     SetComponent(SetComponentParams),
     /// Remove a component from an entity.
     #[schemars(extend("x-feature-gate" = "manipulation"))]
     RemoveComponent(RemoveComponentParams),
-    /// Insert or update a resource on a running scene. Custom resources must declare annotated fields, typically with `@resource` above `@dataclass`; attributes created only in `__init__` are not editable here. In scene code, use commands.insert_resource() instead.
+    /// Insert or update a World-registered resource on a running scene. Register an unused custom class first with world.register_resource(Type) in run_code, or insert an instance in scene code. The response returns the type under `resource` and whether a new value was `inserted`. Custom resources must declare annotated fields, typically with `@resource` above `@dataclass`; attributes created only in `__init__` are not editable here.
     #[schemars(extend("x-feature-gate" = "manipulation"))]
     SetResource(SetResourceParams),
     /// Remove a resource from the world.
@@ -537,7 +537,7 @@ pub enum ControlOperation {
     /// Execute multiple mutation operations in a single round-trip. Each operation runs independently - failures don't abort the batch. Actions: set_component, spawn, despawn, remove_component. Returns `total` and the three counts that partition it: `succeeded`, `failed` (the op was rejected outright), and `partial` (the op applied some fields and reported the rest in its own `errors` array).
     #[schemars(extend("x-feature-gate" = "manipulation"))]
     Batch {
-        /// Array of operations to execute. Each item: {"action": "set_component|spawn|despawn|remove_component", "entity": id_or_name, ...}
+        /// Array of flat operation objects. Exact shapes: set_component uses {action, entity, component, fields}; spawn uses {action, components}; despawn uses {action, entity}; remove_component uses {action, entity, component}. Entity accepts an integer ID or string Name. Unsupported keys are errors.
         #[schemars(schema_with = "json_object_array_schema")]
         operations: Vec<serde_json::Value>,
     },
