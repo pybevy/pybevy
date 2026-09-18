@@ -86,6 +86,11 @@ impl PyCompassQuadrant {
         quadrant.opposite().into()
     }
 
+    pub fn is_in_direction(&self, origin: PyVec2, candidate: PyVec2) -> PyResult<bool> {
+        let quadrant: CompassQuadrant = (*self).into();
+        Ok(quadrant.is_in_direction(origin.try_into()?, candidate.try_into()?))
+    }
+
     pub fn __neg__(&self) -> Self {
         self.opposite()
     }

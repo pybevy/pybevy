@@ -4744,6 +4744,9 @@ class CompassQuadrant:
     West: CompassQuadrant
     """West (left), corresponds to Dir2::NEG_X."""
 
+    def is_in_direction(self, origin: Vec2, candidate: Vec2) -> bool:
+        """Check for a positive projection from the origin onto this direction."""
+
     def opposite(self) -> CompassQuadrant:
         """Get the opposite compass direction."""
 
