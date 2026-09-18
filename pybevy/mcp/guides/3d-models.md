@@ -22,6 +22,11 @@ check `get_logs(errors_only=true)` for rejection errors and move the file under
 
 ## Loading GLB Models
 
+`AssetServer.load_state(handle)` returns a `LoadState` variant from
+`pybevy.assets`; `LoadState.Failed(value)` carries the error text in `.value`.
+Use `dependency_load_state()` or `recursive_dependency_load_state()` to inspect
+dependency failures, with the corresponding load-state enum family.
+
 ```python
 from pybevy.prelude import *
 from pybevy.world_serialization import WorldAsset, WorldAssetRoot

@@ -162,6 +162,20 @@ fn parse_variant_def(
     let mut constructor = None;
     let mut cursor = body.walk();
     for child in body.children(&mut cursor) {
+        if child.kind() == "decorated_definition" {
+            let mut parsed = PyClassDef::default();
+            parse_decorated_definition(&child, source, path, &mut parsed);
+            for property in parsed.properties {
+                if property.has_getter
+                    && !property.name.starts_with('_')
+                    && !fields.iter().any(|(name, _)| name == &property.name)
+                    && let Some(field_type) = property.property_type
+                {
+                    fields.push((property.name, field_type));
+                }
+            }
+            continue;
+        }
         if child.kind() == "function_definition"
             && child
                 .child_by_field_name("name")

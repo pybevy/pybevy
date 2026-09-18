@@ -4,6 +4,7 @@ import sys
 from .. import _pybevy  # type: ignore
 from .._module_loader import load_required_sibling_modules as _load_required_siblings
 
+_pybevy._require_optional_feature("mcp", __name__)
 _native = _pybevy.mcp
 _mcp_dir = os.path.dirname(__file__)
 _native.__name__ = __name__  # type: ignore

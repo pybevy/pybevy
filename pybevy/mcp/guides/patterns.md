@@ -836,6 +836,10 @@ use separate systems. Unrelated message channels remain compatible.
 
 Observers react to events or lifecycle hooks without polling. Register with `app.add_observer()`.
 
+For removable observers, retain the entity returned by `world.add_observer()`
+and pass it to `world.despawn_observer()`. Live non-observers raise `ValueError`;
+protected resource entities raise `TypeError`. Already-despawned entities are a no-op.
+
 ```python
 from dataclasses import dataclass
 
