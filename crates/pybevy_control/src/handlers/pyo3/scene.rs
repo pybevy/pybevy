@@ -1078,8 +1078,9 @@ pub fn query_entities(
     unknown_filters.dedup();
     if !unknown_filters.is_empty() {
         return Err(ControlError::invalid_params(format!(
-            "Unknown component filters: {}",
-            unknown_filters.join(", ")
+            "Unknown component filters: {}. {}",
+            unknown_filters.join(", "),
+            public_error::MCP_CUSTOM_COMPONENT_BOOTSTRAP
         )));
     }
 
@@ -1295,7 +1296,8 @@ pub fn get_resource(
     }
 
     Err(ControlError::not_found(format!(
-        "Resource '{resource_type}' not found in registry"
+        "Resource '{resource_type}' not found in registry. {}",
+        public_error::MCP_CUSTOM_RESOURCE_BOOTSTRAP
     )))
 }
 
@@ -1644,7 +1646,8 @@ pub fn get_component_schema(
 
     Err(ControlError::not_found(format!(
         "Component '{name}' not found in registry. It may be an Asset or Resource. \
-         Use get_type_definition(type_name=\"{name}\") to see its API."
+         Use get_type_definition(type_name=\"{name}\") to see its API. {}",
+        public_error::MCP_CUSTOM_COMPONENT_BOOTSTRAP
     )))
 }
 
@@ -2808,7 +2811,10 @@ mod tests {
         assert_eq!(error.code, ErrorCode::InvalidParams);
         assert_eq!(
             error.message,
-            "Unknown component filters: MissingWith, MissingWithout"
+            format!(
+                "Unknown component filters: MissingWith, MissingWithout. {}",
+                public_error::MCP_CUSTOM_COMPONENT_BOOTSTRAP
+            )
         );
     }
     #[test]

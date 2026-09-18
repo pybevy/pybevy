@@ -1,12 +1,14 @@
 use std::{
     alloc::Layout,
-    collections::BTreeSet,
+    any::TypeId,
+    collections::{BTreeSet, HashMap},
     sync::{Arc, OnceLock},
 };
 
 use bevy::{
-    ecs::{entity::Entity, world::World},
-    reflect::enums::VariantInfo,
+    ecs::{entity::Entity, reflect::AppTypeRegistry, world::World},
+    reflect::{TypeInfo, enums::VariantInfo},
+    time::{Fixed, Real, Time, Virtual},
 };
 use pybevy_core::{
     ComponentBridge, CustomComponentInfo, CustomResourceInfo, PyEntity, ValidityFlag,
@@ -133,7 +135,10 @@ pub fn spawn_entity(
                 validation_errors.push(format!("{comp_name}: cannot be spawned from Python"))
             }
             Some(component) => resolved.push(component),
-            None => validation_errors.push(format!("{comp_name}: not found in registry")),
+            None => validation_errors.push(format!(
+                "{comp_name}: not found in registry. {}",
+                public_error::MCP_CUSTOM_COMPONENT_BOOTSTRAP
+            )),
         }
     }
     if !validation_errors.is_empty() {
@@ -804,6 +809,8 @@ fn set_component_python(
         )));
     }
 
+    let optional_types = optional_field_types(world, bridge.bevy_type_id());
+
     let (owned, replacement_variant) = Python::attach(
         |py| -> Result<(Py<PyAny>, Option<String>), ControlError> {
             let validity_flag = pybevy_core::ValidityFlag::new_read();
@@ -860,10 +867,8 @@ fn set_component_python(
                 // Pre-write guard: a later setattr would leak a raw AttributeError for typos.
                 let unknown = unknown_set_fields(current, field_obj.keys());
                 if !unknown.is_empty() {
-                    return Err(ControlError::invalid_params(unknown_field_error(
-                        component,
-                        &unknown,
-                        &writable_field_names(current),
+                    return Err(ControlError::invalid_params(component_unknown_field_error(
+                        component, &unknown, current,
                     )));
                 }
                 current
@@ -899,13 +904,14 @@ fn set_component_python(
 
             let mut converted = Vec::with_capacity(field_obj.len());
             for (field_name, field_value) in field_obj {
-                let py_value = convert_field_value(py, instance, field_name, field_value).map_err(
-                    |error| {
-                        ControlError::invalid_params(format!(
-                            "Failed to set '{component}': {field_name}: {error}"
-                        ))
-                    },
-                )?;
+                let declared = declared_optional_type(&optional_types, field_name);
+                let py_value =
+                    convert_field_value_typed(py, instance, field_name, field_value, declared)
+                        .map_err(|error| {
+                            ControlError::invalid_params(format!(
+                                "Failed to set '{component}': {field_name}: {error}"
+                            ))
+                        })?;
                 converted.push((field_name, py_value));
             }
             for (field_name, py_value) in converted {
@@ -947,6 +953,8 @@ fn insert_component_python(
         )));
     }
 
+    let optional_types = optional_field_types(world, bridge.bevy_type_id());
+
     let new_values = Python::attach(|py| {
         let py_type = bridge.py_type(py);
         let instance = match py_type.call0() {
@@ -974,19 +982,24 @@ fn insert_component_python(
                     // Same pre-write guard before the insert setattr path.
                     let unknown = unknown_set_fields(&instance, field_obj.keys());
                     if !unknown.is_empty() {
-                        return Err(ControlError::invalid_params(unknown_field_error(
-                            component,
-                            &unknown,
-                            &writable_field_names(&instance),
+                        return Err(ControlError::invalid_params(component_unknown_field_error(
+                            component, &unknown, &instance,
                         )));
                     }
                     for (field_name, field_value) in field_obj {
-                        let py_value = convert_field_value(py, &instance, field_name, field_value)
-                            .map_err(|error| {
-                                ControlError::invalid_params(format!(
-                                    "Failed to convert '{component}.{field_name}': {error}"
-                                ))
-                            })?;
+                        let declared = declared_optional_type(&optional_types, field_name);
+                        let py_value = convert_field_value_typed(
+                            py,
+                            &instance,
+                            field_name,
+                            field_value,
+                            declared,
+                        )
+                        .map_err(|error| {
+                            ControlError::invalid_params(format!(
+                                "Failed to convert '{component}.{field_name}': {error}"
+                            ))
+                        })?;
                         instance
                             .setattr(field_name.as_str(), py_value)
                             .map_err(|error| {
@@ -1147,7 +1160,8 @@ fn set_custom_component(
         };
         return Err(ControlError::not_found(format!(
             "Component '{component}' not found in custom component registry. \
-             If this is a custom @component, try reloading the scene.{hint}"
+             {}{hint}",
+            public_error::MCP_CUSTOM_COMPONENT_BOOTSTRAP
         )));
     };
 
@@ -1479,10 +1493,22 @@ fn apply_state_variant(
 
     state_resource::write_variant(bound, kind, variant).map_err(ControlError::invalid_params)?;
 
-    Ok(serde_json::json!({
-        "inserted": resource_type,
-        "custom": true,
-    }))
+    Ok(resource_mutation_response(resource_type, false, true))
+}
+
+fn resource_mutation_response(
+    resource_type: &str,
+    inserted: bool,
+    custom: bool,
+) -> serde_json::Value {
+    let mut response = serde_json::json!({
+        "resource": resource_type,
+        "inserted": inserted,
+    });
+    if custom {
+        response["custom"] = serde_json::Value::Bool(true);
+    }
+    response
 }
 
 fn validate_custom_resource_fields(
@@ -1616,7 +1642,8 @@ pub fn remove_component(
     }
 
     Err(ControlError::not_found(format!(
-        "Component '{component}' not in registry"
+        "Component '{component}' not in registry. {}",
+        public_error::MCP_CUSTOM_COMPONENT_BOOTSTRAP
     )))
 }
 
@@ -1647,32 +1674,34 @@ pub fn insert_resource(
     let bridge_result = Python::attach(|py| {
         for bridge in pybevy_core::registry::global_registry::all_resource_bridges() {
             if bridge.name() == resource_type.as_str() {
-                // Patch semantics: if resource already exists, mutate in-place
-                // to preserve fields not included in the update
+                // Patch semantics: clone the current value into owned storage,
+                // then commit through the existing resource's mutable slot only
+                // after every conversion and setter passes.
                 if bridge.contains_in_world(world) {
                     if let Some(obj) = value.as_object()
                         && !obj.is_empty()
                     {
-                        let write_flag = pybevy_core::ValidityFlag::new_write();
-                        let write_validity =
-                            write_flag.with_access_mode(pybevy_core::AccessMode::Write);
-
-                        let py_resource =
-                            bridge.get_mut(world, write_validity, py).map_err(|e| {
-                                ControlError::internal(format!(
-                                    "Failed to get existing resource for patch: {e}"
-                                ))
-                            })?;
+                        let py_resource = bridge.clone_owned(world, py).map_err(|e| {
+                            ControlError::internal(format!(
+                                "Failed to copy existing resource for atomic patch: {e}"
+                            ))
+                        })?;
                         let instance = py_resource.bind(py);
 
-                        // Convert every field before writing any, so a bad
-                        // value leaves the resource untouched.
+                        let unknown = unknown_set_fields(instance, obj.keys());
+                        if !unknown.is_empty() {
+                            return Err(ControlError::internal(unknown_field_error(
+                                &resource_type,
+                                &unknown,
+                                &writable_field_names(instance),
+                            )));
+                        }
+
                         let mut converted = Vec::with_capacity(obj.len());
                         for (field_name, field_value) in obj {
                             match convert_field_value(py, instance, field_name, field_value) {
                                 Ok(py_value) => converted.push((field_name, py_value)),
                                 Err(e) => {
-                                    write_flag.set_invalid();
                                     return Err(ControlError::internal(format!(
                                         "Failed to convert {field_name}: {e}"
                                     )));
@@ -1681,18 +1710,22 @@ pub fn insert_resource(
                         }
                         for (field_name, py_value) in converted {
                             if let Err(e) = instance.setattr(field_name.as_str(), py_value) {
-                                write_flag.set_invalid();
                                 return Err(ControlError::internal(format!(
                                     "Failed to set {field_name}: {e}"
                                 )));
                             }
                         }
-
-                        write_flag.set_invalid();
+                        bridge.commit_owned(world, instance).map_err(|e| {
+                            ControlError::internal(format!(
+                                "Failed to commit atomic resource patch: {e}"
+                            ))
+                        })?;
                     }
-                    return Ok(Some(serde_json::json!({
-                        "inserted": resource_type,
-                    })));
+                    return Ok(Some(resource_mutation_response(
+                        &resource_type,
+                        false,
+                        false,
+                    )));
                 }
 
                 // Resource doesn't exist yet: create default and apply fields
@@ -1725,9 +1758,11 @@ pub fn insert_resource(
                                 "Failed to insert resource: {e}"
                             )));
                         }
-                        return Ok(Some(serde_json::json!({
-                            "inserted": resource_type,
-                        })));
+                        return Ok(Some(resource_mutation_response(
+                            &resource_type,
+                            true,
+                            false,
+                        )));
                     }
                     Err(e) => {
                         return Err(ControlError::internal(format!(
@@ -1784,10 +1819,7 @@ pub fn insert_resource(
                         }
                     }
                 }
-                return Ok(serde_json::json!({
-                    "inserted": resource_type,
-                    "custom": true,
-                }));
+                return Ok(resource_mutation_response(&resource_type, false, true));
             }
 
             // Resource doesn't exist yet: create default and apply fields
@@ -1828,14 +1860,12 @@ pub fn insert_resource(
             // and control mutations use only the canonical resource path.
             unsafe { insert_dynamic_resource_value(world, comp_id, instance.unbind()) };
 
-            Ok(serde_json::json!({
-                "inserted": resource_type,
-                "custom": true,
-            }))
+            Ok(resource_mutation_response(&resource_type, true, true))
         })
     } else {
         Err(ControlError::not_found(format!(
-            "Resource '{resource_type}' not in registry"
+            "Resource '{resource_type}' not in registry. {}",
+            public_error::MCP_CUSTOM_RESOURCE_BOOTSTRAP
         )))
     }
 }
@@ -1847,6 +1877,19 @@ pub fn remove_resource(
 ) -> Result<serde_json::Value, ControlError> {
     for bridge in pybevy_core::registry::global_registry::all_resource_bridges() {
         if bridge.name() == resource_type.as_str() {
+            let type_id = bridge.bevy_type_id();
+            if [
+                TypeId::of::<Time>(),
+                TypeId::of::<Time<Real>>(),
+                TypeId::of::<Time<Virtual>>(),
+                TypeId::of::<Time<Fixed>>(),
+            ]
+            .contains(&type_id)
+            {
+                return Err(ControlError::invalid_params(
+                    public_error::control_resource_remove_forbidden(&resource_type),
+                ));
+            }
             let was_present = bridge.contains_in_world(world);
             bridge.remove(world);
             return Ok(serde_json::json!({
@@ -1872,7 +1915,8 @@ pub fn remove_resource(
     }
 
     Err(ControlError::not_found(format!(
-        "Resource '{resource_type}' not in registry"
+        "Resource '{resource_type}' not in registry. {}",
+        public_error::MCP_CUSTOM_RESOURCE_BOOTSTRAP
     )))
 }
 
@@ -1885,9 +1929,7 @@ pub fn batch_mutate(
     let mut results = Vec::with_capacity(operations.len());
 
     for (i, op) in operations.iter().enumerate() {
-        let action = op.get("action").and_then(|v| v.as_str()).unwrap_or("");
-
-        let result = match action {
+        let result = validate_batch_operation(i, op).and_then(|action| match action {
             "set_component" => {
                 let entity_ref = parse_entity_ref_from_op(op);
                 let component = op
@@ -1938,7 +1980,7 @@ pub fn batch_mutate(
             _ => Err(ControlError::invalid_params(format!(
                 "op[{i}]: unknown action '{action}'. Valid: set_component, spawn, despawn, remove_component"
             ))),
-        };
+        });
 
         match result {
             Ok(val) => {
@@ -1954,6 +1996,58 @@ pub fn batch_mutate(
     }
 
     Ok(super::super::batch_response(results))
+}
+
+fn validate_batch_operation<'a>(
+    index: usize,
+    operation: &'a serde_json::Value,
+) -> Result<&'a str, ControlError> {
+    let operation = operation.as_object().ok_or_else(|| {
+        ControlError::invalid_params(format!("op[{index}]: operation must be an object"))
+    })?;
+    let action = operation
+        .get("action")
+        .ok_or_else(|| {
+            ControlError::invalid_params(format!(
+                "op[{index}]: missing required string field 'action'"
+            ))
+        })?
+        .as_str()
+        .ok_or_else(|| {
+            ControlError::invalid_params(format!("op[{index}]: 'action' must be a string"))
+        })?;
+
+    let allowed = match action {
+        "set_component" => &["action", "entity", "component", "fields"][..],
+        "spawn" => &["action", "components"][..],
+        "despawn" => &["action", "entity"][..],
+        "remove_component" => &["action", "entity", "component"][..],
+        _ => {
+            return Err(ControlError::invalid_params(format!(
+                "op[{index}]: unknown action '{action}'. Valid: set_component, spawn, despawn, remove_component"
+            )));
+        }
+    };
+    let unsupported = operation
+        .keys()
+        .filter(|key| !allowed.contains(&key.as_str()))
+        .map(|key| format!("'{key}'"))
+        .collect::<Vec<_>>();
+
+    if unsupported.is_empty() {
+        return Ok(action);
+    }
+
+    let field = if unsupported.len() == 1 {
+        "field"
+    } else {
+        "fields"
+    };
+    Err(ControlError::invalid_params(format!(
+        "op[{index}]: action '{action}' does not accept {field} {}; expected only: {}",
+        unsupported.join(", "),
+        allowed.join(", ")
+    )))
 }
 
 /// Parse entity ref from a batch operation JSON object.
@@ -2366,6 +2460,122 @@ fn construct_color_variant(
         .map_err(|error| format!("invalid payload for Color.{variant_name}: {error}"))
 }
 
+fn optional_field_types(world: &World, type_id: TypeId) -> HashMap<String, String> {
+    let mut types = HashMap::new();
+    let Some(app_registry) = world.get_resource::<AppTypeRegistry>() else {
+        return types;
+    };
+    let registry = app_registry.read();
+    let Some(registration) = registry.get(type_id) else {
+        return types;
+    };
+    let TypeInfo::Struct(info) = registration.type_info() else {
+        return types;
+    };
+    for index in 0..info.field_len() {
+        let Some(field) = info.field_at(index) else {
+            continue;
+        };
+        let Some(inner) = field
+            .type_path_table()
+            .short_path()
+            .strip_prefix("Option<")
+            .and_then(|path| path.strip_suffix('>'))
+        else {
+            continue;
+        };
+        types.insert(field.name().to_string(), inner.to_string());
+    }
+    types
+}
+
+fn declared_optional_type<'a>(
+    types: &'a HashMap<String, String>,
+    field_name: &str,
+) -> Option<&'a str> {
+    types
+        .get(field_name)
+        .or_else(|| types.get(field_name.strip_suffix('_')?))
+        .map(String::as_str)
+}
+
+fn math_readback_array(
+    current: &Bound<'_, PyAny>,
+    value: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    let fields = value.as_object()?;
+    let type_name = current.get_type().name().ok()?;
+    let coordinates: &[&str] = match type_name.to_string_lossy().as_ref() {
+        "Vec2" | "UVec2" | "IVec2" => &["x", "y"],
+        "Vec3" | "UVec3" => &["x", "y", "z"],
+        "Vec4" | "Quat" => &["x", "y", "z", "w"],
+        _ => return None,
+    };
+    if fields.len() != coordinates.len() {
+        return None;
+    }
+    coordinates
+        .iter()
+        .map(|name| fields.get(*name).cloned())
+        .collect::<Option<Vec<_>>>()
+        .map(serde_json::Value::Array)
+}
+
+fn construct_declared_optional(
+    py: Python<'_>,
+    type_name: &str,
+    field_value: &serde_json::Value,
+) -> Result<Option<Py<PyAny>>, String> {
+    let Some(class) = find_pybevy_class(py, type_name) else {
+        return Ok(None);
+    };
+    if type_name == "Color" {
+        if let serde_json::Value::Array(values) = field_value {
+            if values.len() != 4 {
+                return Err(format!(
+                    "Color expects [r, g, b, a], got {} elements",
+                    values.len()
+                ));
+            }
+            let red = json_number_to_f32(&values[0])?;
+            let green = json_number_to_f32(&values[1])?;
+            let blue = json_number_to_f32(&values[2])?;
+            let alpha = json_number_to_f32(&values[3])?;
+            return class
+                .call_method1("srgba", (red, green, blue, alpha))
+                .map(Bound::unbind)
+                .map(Some)
+                .map_err(|error| error.to_string());
+        }
+    }
+    let serde_json::Value::Object(fields) = field_value else {
+        return Ok(None);
+    };
+    let template = class
+        .call0()
+        .map_err(|error| format!("{type_name} has no default constructor: {error}"))?;
+    let kwargs = PyDict::new(py);
+    for (name, value) in fields {
+        if !template.hasattr(name.as_str()).unwrap_or(false) {
+            return Err(format!("{type_name} has no field '{name}'"));
+        }
+        let current = template
+            .getattr(name.as_str())
+            .map_err(|error| error.to_string())?;
+        let normalized = math_readback_array(&current, value);
+        let converted =
+            convert_field_value(py, &template, name, normalized.as_ref().unwrap_or(value))?;
+        kwargs
+            .set_item(name, converted)
+            .map_err(|error| error.to_string())?;
+    }
+    class
+        .call((), Some(&kwargs))
+        .map(Bound::unbind)
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
 /// Whether the value is a dataclass instance, the same check `dataclasses`
 /// itself performs, without importing the module for every candidate field.
 fn is_dataclass_instance(value: &Bound<'_, PyAny>) -> bool {
@@ -2561,6 +2771,53 @@ fn unknown_field_error(component: &str, unknown: &[String], writable: &[String])
     format!(
         "Failed to set '{component}': {subject}. See GET /api/v1/components/{component}/schema for the writable fields."
     )
+}
+
+fn component_unknown_field_error(
+    component: &str,
+    unknown: &[String],
+    instance: &Bound<'_, PyAny>,
+) -> String {
+    let variants = component_enum_variant_names(instance);
+    if variants.is_empty() {
+        return unknown_field_error(component, unknown, &writable_field_names(instance));
+    }
+    let subject = if unknown.len() == 1 {
+        format!("unknown field '{}'", unknown[0])
+    } else {
+        format!("unknown fields: {}", unknown.join(", "))
+    };
+    public_error::mcp_enum_component_unknown_fields(component, &subject, &variants)
+}
+
+fn component_enum_variant_names(instance: &Bound<'_, PyAny>) -> Vec<String> {
+    let current_type = instance.get_type();
+    let owner = enum_owner_type(instance);
+    let variants = enum_variant_names(&owner);
+    if variants.is_empty() || !owner.is(&current_type) {
+        return variants;
+    }
+
+    let Ok(owner_name) = owner.name() else {
+        return Vec::new();
+    };
+    let Ok(repr) = instance.repr() else {
+        return Vec::new();
+    };
+    let repr = repr.to_string_lossy();
+    let prefix = format!("{}.", owner_name.to_string_lossy());
+    if variants.iter().any(|variant| {
+        repr.strip_prefix(&prefix).is_some_and(|suffix| {
+            suffix == variant
+                || suffix
+                    .strip_prefix(variant)
+                    .is_some_and(|rest| rest.starts_with('('))
+        })
+    }) {
+        variants
+    } else {
+        Vec::new()
+    }
 }
 
 enum ListElementTarget<'py> {
@@ -2963,6 +3220,16 @@ pub(crate) fn convert_field_value(
     field_name: &str,
     field_value: &serde_json::Value,
 ) -> Result<Py<PyAny>, String> {
+    convert_field_value_typed(py, component, field_name, field_value, None)
+}
+
+fn convert_field_value_typed(
+    py: Python<'_>,
+    component: &Bound<'_, PyAny>,
+    field_name: &str,
+    field_value: &serde_json::Value,
+    declared_type: Option<&str>,
+) -> Result<Py<PyAny>, String> {
     // Try to get the current field value to detect its type
     if let Ok(current) = component.getattr(field_name) {
         let current = if let Ok(variant) = component.cast::<PyType>() {
@@ -2970,6 +3237,12 @@ pub(crate) fn convert_field_value(
         } else {
             current
         };
+        if current.is_none()
+            && let Some(type_name) = declared_type
+            && let Some(value) = construct_declared_optional(py, type_name, field_value)?
+        {
+            return Ok(value);
+        }
         let type_name = current
             .get_type()
             .name()
@@ -2993,6 +3266,12 @@ pub(crate) fn convert_field_value(
             "Vec4" | "Quat" => Some("[x, y, z, w]"),
             _ => None,
         };
+
+        if let Some(serde_json::Value::Array(values)) = math_readback_array(&current, field_value)
+            && let Some(result) = math_value_from_json(py, &type_name, &values)
+        {
+            return result;
+        }
 
         if let Some(shape) = expected_math_shape
             && !field_value.is_array()
@@ -4752,9 +5031,73 @@ track_holder = TrackHolder()
         let ops = vec![serde_json::json!({"entity": 42})];
         let result = batch_mutate(&mut world, ops).unwrap();
         assert_eq!(result["succeeded"], 0);
-        // Empty action string triggers unknown action error
         let results = result["results"].as_array().unwrap();
         assert_eq!(results[0]["status"], "error");
+        assert_eq!(
+            results[0]["error"],
+            "op[0]: missing required string field 'action'"
+        );
+    }
+
+    #[test]
+    fn batch_mutate_rejects_unsupported_fields_before_mutating() {
+        let mut world = World::new();
+        let entity = world.spawn(Name::new("kept")).id();
+        let entity_count = world.iter_entities().count();
+        let ops = vec![
+            serde_json::json!({"action": "spawn", "args": {"components": {}}}),
+            serde_json::json!({"action": "spawn", "name": "hidden"}),
+            serde_json::json!({
+                "action": "set_component",
+                "entity": entity.to_bits(),
+                "component": "Name",
+                "fields": {"name": "changed"},
+                "args": {}
+            }),
+            serde_json::json!({
+                "action": "despawn",
+                "entity": entity.to_bits(),
+                "extra": true
+            }),
+            serde_json::json!({
+                "action": "remove_component",
+                "entity": entity.to_bits(),
+                "component": "Name",
+                "extra": true
+            }),
+            serde_json::json!([]),
+        ];
+
+        let result = batch_mutate(&mut world, ops).unwrap();
+
+        assert_eq!(result["total"], 6);
+        assert_eq!(result["succeeded"], 0);
+        assert_eq!(result["failed"], 6);
+        assert_eq!(result["partial"], 0);
+        let results = result["results"].as_array().unwrap();
+        assert_eq!(
+            results[0]["error"],
+            "op[0]: action 'spawn' does not accept field 'args'; expected only: action, components"
+        );
+        assert_eq!(
+            results[1]["error"],
+            "op[1]: action 'spawn' does not accept field 'name'; expected only: action, components"
+        );
+        assert_eq!(
+            results[2]["error"],
+            "op[2]: action 'set_component' does not accept field 'args'; expected only: action, entity, component, fields"
+        );
+        assert_eq!(
+            results[3]["error"],
+            "op[3]: action 'despawn' does not accept field 'extra'; expected only: action, entity"
+        );
+        assert_eq!(
+            results[4]["error"],
+            "op[4]: action 'remove_component' does not accept field 'extra'; expected only: action, entity, component"
+        );
+        assert_eq!(results[5]["error"], "op[5]: operation must be an object");
+        assert_eq!(world.iter_entities().count(), entity_count);
+        assert_eq!(world.get::<Name>(entity).unwrap().as_str(), "kept");
     }
 
     #[test]

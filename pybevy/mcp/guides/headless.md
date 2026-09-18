@@ -2,17 +2,38 @@
 
 GPU rendering without a window or display server - for CI, remote servers, containers, and automated testing.
 
-For CPU image loading, add `AssetPlugin`, `ImagePlugin`, and
-`pybevy.render.TexturePlugin` to `MinimalPlugins`. `TexturePlugin` registers the
-image codecs during `finish()` without creating a renderer. `RenderPlugin`
-already includes it when rendering is required.
-
 ## When to Use Headless
 
 - No display server available (SSH, CI runners, Docker containers)
 - Automated screenshot pipelines
 - Server-side rendering
 - Integration tests
+
+## Loading Image Files
+
+Creating `Image` values in memory only needs `AssetPlugin` and `ImagePlugin`
+with `MinimalPlugins`. Loading PNG or JPEG files also needs `TexturePlugin`,
+included in `RenderPlugin`. Adding `TexturePlugin` alone reports a missing
+`RenderApp`; PyBevy exposes no renderer-free file-image loader. Use this stack:
+
+```python
+from pybevy.app import MinimalPlugins, ScheduleRunnerPlugin
+from pybevy.assets import AssetPlugin
+from pybevy.camera import CameraPlugin
+from pybevy.image import ImagePlugin
+from pybevy.mesh import MeshPlugin
+from pybevy.render import RenderPlugin
+
+app.add_plugins(
+    MinimalPlugins,
+    AssetPlugin,
+    RenderPlugin,  # Includes TexturePlugin and creates the headless RenderApp.
+    ImagePlugin,
+    MeshPlugin,    # Satisfies RenderPlugin's mesh extraction systems.
+    CameraPlugin,  # Provides ClearColor for RenderPlugin's view systems.
+    ScheduleRunnerPlugin.run_loop(16),
+)
+```
 
 ## Minimal Working Example
 
@@ -130,7 +151,10 @@ All MCP tools work in headless mode:
 - **"No display server" error**: Make sure `WinitPlugin` is disabled and `headless=True` is passed to `run_scene`
 - **Black screenshots**: Ensure the camera has `RenderTarget.Image(ImageRenderTarget(handle=handle))` - without it, the camera targets a non-existent window
 - **No frames captured**: Increase `delay_frames` in `capture_screenshot` - headless rendering may need more warmup frames
-- **UI is missing**: Add `IsDefaultUiCamera()` to the offscreen camera
+- **UI is missing**: Add `IsDefaultUiCamera()` to the offscreen camera. MCP
+  captures hide authored UI by default, so also pass `hide_ui=false` to
+  `capture_screenshot`, `capture_stats`, `capture_turnaround`, or
+  `capture_timeline` when the UI should be visible.
 - **Shadow LOD warning**: Add `ShadowLodOrigin()` to an offscreen camera when using point or spot light shadows
 - **Low resolution**: The render target size (`width`, `height` in `Image.new_render_target`) determines output resolution, not window size
 

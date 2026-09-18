@@ -592,6 +592,17 @@ def apply_velocity(query: Query[tuple[Mut[Transform], Velocity]], time: Res[Time
         transform.translation.y += vel.y * time.delta_secs()
 ```
 
+Nested data tuples keep their grouping. For example,
+`Query[tuple[tuple[Transform, Name], Entity]]` yields
+`((transform, name), entity)`. The same grouping applies to `single()`,
+`get()`, `iter_many()`, and `Single.into_inner()`; component access and expiry
+rules remain the same at every nesting level.
+
+For nested `Mut`, `Has`, or `AnyOf` markers, type checkers may retain the marker
+instead of inferring the runtime result. Use `typing.cast` on the returned row
+to declare its concrete nested result type. This typing limitation does not
+restrict runtime nesting.
+
 #### Filters
 
 ```python

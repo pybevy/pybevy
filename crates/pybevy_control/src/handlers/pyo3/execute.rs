@@ -1,11 +1,19 @@
-use std::{collections::HashMap, sync::OnceLock};
+use std::{
+    collections::HashMap,
+    sync::{
+        OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::{Duration, Instant},
+};
 
 use bevy::ecs::world::World;
 use pybevy_core::{
     ActiveSceneModule, CustomComponentInfo, CustomResourceInfo, ValidityFlag, ValidityGuard,
 };
 use pyo3::{
-    exceptions::PyRuntimeError,
+    create_exception,
+    exceptions::{PyBaseException, PyRuntimeError, PyTimeoutError},
     ffi::{PyObject, PyTypeObject},
     prelude::*,
     types::{PyDict, PyModule, PyType},
@@ -21,6 +29,9 @@ type CreateWorldWrapperFn = fn(*mut World, ValidityFlag, Python) -> PyResult<Py<
 static WORLD_WRAPPER_HOOK: OnceLock<CreateWorldWrapperFn> = OnceLock::new();
 
 const RUN_CODE_FILENAME: &str = "<pybevy run_code>";
+const RUN_CODE_EXECUTION_LIMIT: Duration = Duration::from_secs(5);
+
+create_exception!(pybevy_control, RunCodeCancelled, PyBaseException);
 
 struct StreamRestore<'py> {
     sys: Bound<'py, PyModule>,
@@ -32,6 +43,42 @@ impl Drop for StreamRestore<'_> {
     fn drop(&mut self) {
         let _ = self.sys.setattr("stdout", &self.stdout);
         let _ = self.sys.setattr("stderr", &self.stderr);
+    }
+}
+
+struct TraceRestore<'py> {
+    sys: Bound<'py, PyModule>,
+    trace: Bound<'py, PyAny>,
+}
+
+impl Drop for TraceRestore<'_> {
+    fn drop(&mut self) {
+        let _ = self.sys.call_method1("settrace", (&self.trace,));
+    }
+}
+
+#[pyclass(name = "_RunCodeDeadline", module = "pybevy._pybevy", frozen)]
+struct RunCodeDeadline {
+    deadline: Instant,
+    expired: AtomicBool,
+}
+
+#[pymethods]
+impl RunCodeDeadline {
+    fn __call__(
+        slf: Py<Self>,
+        py: Python<'_>,
+        _frame: &Bound<'_, PyAny>,
+        _event: &str,
+        _arg: &Bound<'_, PyAny>,
+    ) -> PyResult<Py<Self>> {
+        if Instant::now() >= slf.borrow(py).deadline {
+            slf.borrow(py).expired.store(true, Ordering::Relaxed);
+            return Err(RunCodeCancelled::new_err(
+                pybevy_core::public_error::RUN_CODE_EXECUTION_DEADLINE,
+            ));
+        }
+        Ok(slf)
     }
 }
 
@@ -165,6 +212,14 @@ pub(super) fn create_world_wrapper(
 
 /// Execute arbitrary Python code with stdout/stderr capture and world access
 pub fn execute_python(world: &mut World, code: String) -> Result<serde_json::Value, ControlError> {
+    execute_python_with_limit(world, code, RUN_CODE_EXECUTION_LIMIT)
+}
+
+fn execute_python_with_limit(
+    world: &mut World,
+    code: String,
+    execution_limit: Duration,
+) -> Result<serde_json::Value, ControlError> {
     Python::attach(|py| {
         // Create validity flag and guard for borrowed world access
         let validity = ValidityFlag::new();
@@ -243,6 +298,27 @@ pub fn execute_python(world: &mut World, code: String) -> Result<serde_json::Val
             ControlError::internal(format!("Failed to redirect sys.stderr: {error}"))
         })?;
 
+        let trace_restore = TraceRestore {
+            trace: sys.call_method0("gettrace").map_err(|error| {
+                ControlError::internal(format!("Failed to read the Python trace hook: {error}"))
+            })?,
+            sys: sys.clone(),
+        };
+        let deadline = Instant::now() + execution_limit;
+        let tracer = Py::new(
+            py,
+            RunCodeDeadline {
+                deadline,
+                expired: AtomicBool::new(false),
+            },
+        )
+        .map_err(|error| {
+            ControlError::internal(format!("Failed to create the run_code deadline: {error}"))
+        })?;
+        sys.call_method1("settrace", (&tracer,)).map_err(|error| {
+            ControlError::internal(format!("Failed to install the run_code deadline: {error}"))
+        })?;
+
         // Compile the caller's source as-is. In particular, do not embed it in
         // another Python string, which would interpret its backslash escapes a
         // second time and offset every traceback line by the wrapper source.
@@ -253,6 +329,18 @@ pub fn execute_python(world: &mut World, code: String) -> Result<serde_json::Val
                 .call_method1("exec", (compiled, &globals, &globals))
                 .map(|_| ())
         });
+        drop(trace_restore);
+        let execution =
+            if tracer.borrow(py).expired.load(Ordering::Relaxed) || Instant::now() >= deadline {
+                let timeout =
+                    PyTimeoutError::new_err(pybevy_core::public_error::RUN_CODE_EXECUTION_DEADLINE);
+                if let Err(error) = execution {
+                    timeout.set_traceback(py, error.traceback(py));
+                }
+                Err(timeout)
+            } else {
+                execution
+            };
 
         let stdout = stdout_capture
             .call_method0("getvalue")
@@ -372,6 +460,28 @@ print("héllø 🦀")"#);
     fn execute_empty_code() {
         let result = run("");
         assert_eq!(result["success"], true);
+    }
+
+    #[test]
+    fn execute_infinite_bytecode_loop_reaches_deadline_and_restores_trace() {
+        init_python();
+        let _streams = STREAMS.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut world = World::new();
+        let result = execute_python_with_limit(
+            &mut world,
+            "while True:\n    pass".to_string(),
+            Duration::from_millis(10),
+        )
+        .unwrap();
+
+        assert_eq!(result["success"], false);
+        let error = result["error"].as_str().unwrap();
+        assert!(error.contains("TimeoutError: run_code exceeded its execution deadline"));
+
+        Python::attach(|py| {
+            let trace = py.import("sys").unwrap().call_method0("gettrace").unwrap();
+            assert!(trace.is_none());
+        });
     }
 
     #[test]

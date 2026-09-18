@@ -1848,15 +1848,6 @@ notes = "new(Sink) not implementable - Sink is from rodio, internal to Bevy's au
 intentional_missing_methods = ["new"]
 notes = "new(SpatialSink) not implementable - SpatialSink is from rodio, internal to Bevy's audio system"
 
-# Gesture types: Tuple struct wrappers - Python needs explicit accessor
-[bevy.type_ignores.PinchGesture]
-intentional_extra_methods = ["value"]
-notes = "Python accessor for tuple struct .0 field - Bevy uses Deref<Target=f32>"
-
-[bevy.type_ignores.RotationGesture]
-intentional_extra_methods = ["value"]
-notes = "Python accessor for tuple struct .0 field - Bevy uses Deref<Target=f32>"
-
 # ButtonInput<T> generic - lint skips generic bases, methods exist in impl<T> ButtonInput<T>
 [bevy.type_ignores.ButtonInput]
 intentional_extra_methods = [
@@ -2169,12 +2160,10 @@ notes = "Vertex attribute definition is immutable"
 intentional_readonly_properties = ["first_mesh"]
 notes = "Morph weights first mesh reference is fixed"
 
-# Shader: read-only source, generic params specialized to String
+# Shader: generic params specialized to String
 [bevy.type_ignores.Shader]
-intentional_readonly_properties = ["source", "import_path", "imports"]
 intentional_signature_diffs = ["from_glsl", "from_wgsl_with_defs"]
 notes = """
-- Read-only properties: source, import_path, imports
 - from_glsl: naga::ShaderStage -> pybevy.shader.ShaderStage (wrapper naming), and
   impl Into<Cow<str>>/impl Into<String> specialized to str
 - from_wgsl_with_defs: Vec<ShaderDefVal> -> Vec<PyShaderDefVal> (wrapper naming)"""
@@ -2202,17 +2191,8 @@ notes = "Loader settings are configuration"
 # Render asset usages - bitflags
 [bevy.type_ignores.RenderAssetUsages]
 intentional_readonly_properties = ["main_world", "render_world"]
-notes = "Usage flags are set at creation"
-
-# Extent - size struct
-[bevy.type_ignores.Extent3d]
-intentional_readonly_properties = ["width", "height", "depth_or_array_layers"]
-notes = "Extent dimensions - create new Extent3d to change"
-
-# Wireframe material
-[bevy.type_ignores.WireframeMaterial]
-intentional_readonly_properties = ["color"]
-notes = "Wireframe color - consider adding setter if needed"
+intentional_signature_diffs = ["contains", "insert", "remove", "toggle"]
+notes = "Bitflags use Python wrapper values for Bevy's Self parameters and expose constants plus native mutation methods"
 
 # App: Python API differences (explicit type params, callbacks, wrappers)
 [bevy.type_ignores.App]
@@ -2339,11 +2319,12 @@ notes = "custom<P> and the Custom payload require an arbitrary native CameraProj
 
 # RenderLayers: Python uses __and__/__or__/__xor__ operators
 [bevy.type_ignores.RenderLayers]
+intentional_readonly_properties = ["bits", "active_layers"]
 intentional_missing_methods = ["bitand", "bitor", "bitxor"]
 intentional_signature_diffs = ["from_layers", "layer", "without"]
 intentional_extra_methods = ["all"]
 renames = { "with" = "with_" }
-notes = "bitand/bitor/bitxor implemented as __and__/__or__/__xor__, 'with' renamed 'with_' (Python keyword), Layer type -> u8"
+notes = "bitand/bitor/bitxor implemented as __and__/__or__/__xor__, 'with' renamed 'with_' (Python keyword), Layer type -> u8. bits exposes the private bitset as a slice; active_layers is derived iteration."
 
 # RenderTarget: None_ because 'None' is Python keyword
 [bevy.type_ignores.RenderTarget]
@@ -2442,14 +2423,13 @@ notes = """
 - internal: InternalWindowState is engine-internal
 - set_physical_cursor_position: Takes Option<(f64,f64)> tuple instead of DVec2"""
 
-# WindowPosition: center is staticmethod constructor in Python (Bevy uses &mut self)
+# WindowPosition is an immutable value with exact nested variants.
 [bevy.type_ignores.WindowPosition]
-intentional_signature_diffs = ["center"]
+intentional_missing_methods = ["center", "set"]
 notes = """
-center() is a static constructor instead of Bevy's &mut self mutator.
-WindowPosition is an enum value type (cloned on get, replaced on set).
-A &mut self center() would mutate a detached clone — changes wouldn't persist to ECS.
-Usage: window.position = WindowPosition.center(monitor)"""
+Native center/set mutators are represented by whole-field replacement of this
+immutable enum value. Use window.position = WindowPosition.Centered(monitor)
+or window.position = WindowPosition.At(position). No center factory exists."""
 
 # CursorGrabMode: None is Python keyword
 [bevy.type_ignores.CursorGrabMode]
@@ -2459,10 +2439,9 @@ notes = "None renamed to None_ (Python keyword)"
 
 # Sprite: Python-specific API differences
 [bevy.type_ignores.Sprite]
-intentional_missing_methods = ["compute_pixel_space_point", "default"]
+intentional_missing_methods = ["default"]
 intentional_signature_diffs = ["as_asset_id"]
 notes = """
-- compute_pixel_space_point: Requires Assets<Image> and Assets<TextureAtlasLayout> resources (0 usage in Bevy examples)
 - default: Sprite requires an image handle - use Sprite.from_image() or Sprite.from_color() instead
 - as_asset_id: Returns PyHandle (PyBevy's unified asset ID wrapper) instead of AssetId<Image>"""
 
@@ -2723,6 +2702,111 @@ intentional_missing_methods = [
 ]
 notes = "Sync methods need &mut World which isn't available via Res/ResMut. Use deferred methods (spawn, despawn) in systems."
 
+# Per-property W007 dispositions audited against crates/pybevy_gpu native sources.
+# Status/diagnostic resources have no_mut/no_insert/no_remove; their counters are
+# owned by GPU schedules. Component configuration fields are private and their
+# constructors validate cross-field invariants, so replacement requires a new component.
+
+[bevy.type_ignores.Array]
+intentional_readonly_properties = ["dtype", "itemsize", "ndim", "shape", "size", "strides"]
+notes = "Derived array layout and dtype metadata; resizing/retyping is not an in-place operation."
+
+# ECS type descriptors and validity-fenced opaque Numba view metadata.
+[bevy.type_ignores.Mut]
+intentional_readonly_properties = ["inner_type", "value"]
+notes = "Internal proxy type/value references; assignment is delegated to the wrapped value."
+[bevy.type_ignores.Local]
+intentional_readonly_properties = ["value_type"]
+notes = "The Local type is fixed at registration; current is the explicit mutable value property."
+[bevy.type_ignores.ViewColumn]
+intentional_readonly_properties = ["dtype", "is_valid", "len", "ptr", "stride", "writable"]
+notes = "Validity-fenced opaque Numba view metadata; ptr and layout must never be assignable."
+
+# GlobalTransform is derived by Bevy transform propagation, not user-authored state.
+[bevy.type_ignores.GlobalTransform]
+intentional_readonly_properties = ["rotation", "scale", "translation"]
+notes = "Computed decomposition of the engine-derived global affine transform."
+
+[bevy.type_ignores.Interval]
+intentional_readonly_properties = ["start", "end"]
+notes = "Bevy keeps interval endpoints private to enforce a nonempty, NaN-free interval; use the checked constructor or intersect()."
+
+[bevy.type_ignores.WindowResolution]
+intentional_readonly_properties = ["width", "height", "physical_width", "physical_height", "scale_factor", "base_scale_factor"]
+notes = "Derived and backend-managed resolution values; use Bevy's set, set_physical_resolution, set_scale_factor, and set_scale_factor_override methods. Bevy WindowResolution keeps physical dimensions and scale factors private."
+
+
+[bevy.type_ignores.CursorIcon]
+intentional_readonly_properties = ["as_system"]
+notes = "Computed optional projection of the CursorIcon enum; set_system is the native mutation API and no property assignment can represent a custom icon."
+
+
+[bevy.type_ignores.Monitor]
+intentional_readonly_properties = ["name", "physical_height", "physical_width", "physical_position", "refresh_rate_millihertz", "scale_factor", "video_modes"]
+notes = "Bevy's Monitor documentation calls the winit-synchronized component effectively read-only because winit cannot change monitor properties."
+
+
+[bevy.type_ignores.WindowFocused]
+intentional_readonly_properties = ["focused", "window"]
+notes = "The wrapper does not opt into pymessage writable; MessageBridge exposes this engine-reported channel as read-only."
+
+
+[bevy.type_ignores.WindowResized]
+intentional_readonly_properties = ["width", "height", "window"]
+notes = "The wrapper does not opt into pymessage writable; MessageBridge exposes this engine-reported channel as read-only."
+
+
+[bevy.type_ignores.WindowCloseRequested]
+intentional_readonly_properties = ["window"]
+notes = "The wrapper does not opt into pymessage writable; MessageBridge exposes this engine-reported channel as read-only."
+
+
+[bevy.type_ignores.PinchGesture]
+intentional_extra_methods = ["value"]
+intentional_readonly_properties = ["value"]
+notes = "The wrapper does not opt into pymessage writable; MessageBridge exposes this platform gesture channel as read-only."
+
+
+[bevy.type_ignores.RotationGesture]
+intentional_extra_methods = ["value"]
+intentional_readonly_properties = ["value"]
+notes = "The wrapper does not opt into pymessage writable; MessageBridge exposes this platform gesture channel as read-only."
+
+
+[bevy.type_ignores.PanGesture]
+intentional_readonly_properties = ["value", "x", "y", "delta"]
+notes = "The wrapper does not opt into pymessage writable; MessageBridge exposes this platform gesture channel as read-only, and x, y, and delta are computed projections of the Vec2 payload."
+
+
+[bevy.type_ignores.Touch]
+intentional_readonly_properties = ["id", "position", "start_position", "previous_position", "force", "start_force", "previous_force"]
+notes = "Touch is an immutable snapshot materialized from Bevy's private touch-tracking state; position and force histories must remain coherent."
+
+
+[bevy.type_ignores.ActiveAnimation]
+intentional_readonly_properties = ["is_finished", "weight", "is_paused", "completions", "is_playback_reversed", "speed", "elapsed", "last_seek_time", "just_completed", "seek_time"]
+notes = "Playback state is private or derived; native mutations use set_weight, set_speed, set_seek_time, pause, and resume."
+
+
+[bevy.type_ignores.AnimationPlayer]
+intentional_readonly_properties = ["all_finished", "all_paused"]
+notes = "Aggregate predicates over active animations, not stored writable fields."
+
+
+[bevy.type_ignores.EditableText]
+intentional_readonly_properties = ["value"]
+notes = "Native value() reads the editor's private text state; queue_edit and clear preserve cursor and pending-edit coherence."
+
+
+[bevy.type_ignores.FocusPolicy]
+intentional_readonly_properties = ["is_block", "is_pass"]
+notes = "Computed enum predicates; set_block/set_pass change the variant."
+
+
+[bevy.type_ignores.UiGlobalTransform]
+intentional_readonly_properties = ["matrix2", "translation"]
+notes = "Computed decomposition of the layout-derived global affine transform."
+
 [test_coverage]
 test_path = "tests"
 
@@ -2740,10 +2824,6 @@ excluded_classes = [
 # MeshBuilders are created via Shape.mesh(), not directly constructable — tested via shape tests
 # ViewColumns are internal View API types
 excluded_patterns = ["*MeshBuilder", "*ViewColumn"]
-
-[[validation.disabled]]
-code = "W007"
-reason = "read-only getters are the norm for engine-computed and derived values; a Rust setter missing from the stub is still caught by E007"
 
 [[validation.exceptions]]
 code = "E001"
@@ -2978,34 +3058,14 @@ reason = "legacy plain value enum predating the pyenum convention; migration tra
 
 [[validation.exceptions]]
 code = "W013"
-path = "mesh.SphereKind"
-reason = "legacy plain value enum; migration in progress on refactor/mesh-pyenum-sphere-kind, tracked by ISSUE-012"
-
-[[validation.exceptions]]
-code = "W013"
 path = "input.GamepadInput"
 reason = "legacy plain value enum predating the pyenum convention; migration tracked by ISSUE-012"
-
-[[validation.exceptions]]
-code = "W013"
-path = "math.EulerRot"
-reason = "legacy plain value enum; migration in progress on refactor/math-pyenum-enums, tracked by ISSUE-012"
-
-[[validation.exceptions]]
-code = "W013"
-path = "audio.Volume"
-reason = "legacy plain value enum; migration in progress on refactor/audio-pyenum-volume, tracked by ISSUE-012"
 
 [[validation.exceptions]]
 code = "W013"
 path = "render.TextureFormat"
 reason = "legacy plain value enum predating the pyenum convention; migration tracked by ISSUE-012"
 
-
-[[validation.exceptions]]
-code = "E002"
-path = "app.PluginGroup"
-reason = "PluginGroup.name is a live classmethod declared in app.pyi and pinned by surface tests; the Rust parser stores #[classmethod] in methods while the Python parser stores @classmethod in static_methods"
 
 # W016: declarations that still leave __module__ as 'builtins'. Each is a
 # recorded defect in internal/state/bugs/core.md core-010, not an approved

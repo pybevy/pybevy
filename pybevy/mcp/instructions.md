@@ -8,7 +8,7 @@
 2. **When suggesting scenes** - propose ideas that showcase PyBevy's documented features: emissive bloom, glass/transmission materials, volumetric fog, parent-child hierarchy, day/night cycles. Call `get_guide("index")` to see what's available, then suggest scenes that use those features.
 3. **Run scene before scene tools** - `run_scene` must be called before any scene tool (get_component_schema, capture_screenshot, query_entities, etc.). It waits for the scene's control server and first-frame system-error reporting, up to 60 seconds. Startup readiness does not imply asynchronous assets have loaded or a GPU readback frame is available; observe those separately.
 4. **Read topic guides before API lookups** - Before using `search_api` or `get_type_definition`, call `get_guide("index")` and check for a relevant curated guide. Guides are faster and more reliable than raw API exploration. Only fall back to API lookups for specifics not covered in guides.
-5. **Use API lookup tools for specifics** - If you know the class name, use `get_type_definition('ClassName')` directly for the full definition. Ambiguous short names return qualified candidates; retry with one such as `get_type_definition('image.Image')`. If you don't know the name, use `search_api('keyword')` first, then `get_type_definition` on the results.
+5. **Use API lookup tools for specifics** - If you know the class name, use `get_type_definition('ClassName')` directly for the full definition. Ambiguous short names return qualified candidates; retry with one such as `get_type_definition('image.Image')`. If you don't know the name, use `search_api('keyword')` first, then `get_type_definition` on the results. API lookup covers public stubs and explicitly re-exported pure-Python modules; implementation-only modules are intentionally absent. Search also excludes private class/function bodies and helper-reference lines while preserving original source line numbers.
 6. **Reuse the running scene for ordinary edits** - after the first `run_scene`, edit the .py file and call `reload`. Call `run_scene` again when switching scene files, adding or removing bridge-backed plugins, changing core plugin composition, or requiring a clean restart.
 7. **After reload** - call `get_last_error` to check the live Python system-error channel. `reload.error` is sampled once before the response and may miss errors reported on a later frame. Use `get_logs(errors_only=true)` as a secondary check for Bevy, asset, render, and subprocess errors.
 8. **Scene style defaults (3D)** - new 3D scenes MUST include: Bloom on the camera, DistanceFog for atmospheric depth, a warm key directional light (shadows) + cool fill directional light (no shadows, ~40% intensity), ClearColor matching fog color, and lighting above the minimum floors (see Scene Generation below). For 2D scenes, see `guide://2d`. Start bright, dim later.
@@ -45,7 +45,7 @@
 - `check_all_overlaps` - Scene-wide AABB overlap + floating/sunken detection across every entity. Use `ground_y` for first-load GLB sweeps.
 - `reload_and_capture` - One round-trip: reload → error check → screenshot. Replaces 3 separate calls.
 - `capture_turnaround` - Multi-viewpoint orbit capture composited into one contact sheet. Auto-fits to scene bounds.
-- `capture_depth` - RGB screenshot + ray-AABB depth samples. Returns **entity names at each sample point** (semantic segmentation), making it the primary tool for diagnosing **occlusion, visibility, and "wrong entity showing"** problems. Use it before repeated screenshots when geometry appears wrong.
+- `capture_depth` - RGB screenshot + ray-AABB depth samples through the selected `Camera3d` projection. Returns **entity names at each sample point** (semantic segmentation), making it the primary tool for diagnosing **occlusion, visibility, and "wrong entity showing"** problems. Use it before repeated screenshots when geometry appears wrong.
 - `capture_stats` - Numeric RGB/luma summaries, grid cells, and pixel samples without returning a PNG. Captures a retained `frame_id` for later `compare_frames` calls. Pass `entity` to either `capture_stats` or `capture_screenshot` to isolate one entity subtree while retaining camera and lighting support.
 - `compare_frames` - Compare two retained captures and report pixel-difference magnitude, changed percentage, bounding box, and centroid.
 
@@ -56,7 +56,7 @@ When geometry looks wrong (wrong size, shape, missing, or occluded), follow this
 1. **`check_all_overlaps(ground_y=0)`** - run scene-wide first. Catches: interpenetrating entities, models sunken below ground, floating objects. If this returns problems, fix them before anything else. This is the single highest-value diagnostic call. For follow-up on one entity, use `check_overlaps(entity=...)`.
 2. **`get_bounding_box`** on suspect entities - compare actual dimensions vs intended. A "table" with height 0.01 is a plane, not a table. A "wall" with equal X/Y/Z is a cube, not a wall. Mismatched dimensions are the #1 cause of "it doesn't look right."
 3. **`query_spatial`** between entity pairs - check distance and direction. "The chair should face the desk" becomes: is the direction vector from chair to desk aligned with the chair's forward? Answers relative positioning questions without visual ambiguity. Use `query_spatial_neighborhood(entity=..., radius=...)` when you need every nearby entity.
-4. **`capture_depth`** - when you suspect occlusion or visibility issues. Returns entity names at screen-space sample points. If you expect to see `lamp_1` at screen center but depth reports `wall_east`, the lamp is occluded. Diagnoses "wrong entity showing" without guessing from pixels.
+4. **`capture_depth`** - when you suspect occlusion or visibility issues. Returns entity names at normalized sample points cast through the selected `Camera3d` projection. If you expect to see `lamp_1` at screen center but depth reports `wall_east`, the lamp is occluded. Diagnoses "wrong entity showing" without guessing from pixels.
 5. **`capture_stats`** - quantify brightness, clipping, flat output, or a deterministic before/after change without transferring an image.
 6. **`capture_screenshot`** - last, for visual polish only. Colors, lighting, bloom, material appearance. By this point, structural issues should already be resolved.
 
@@ -76,6 +76,10 @@ See `guide://hot-reload` for reload modes (Full vs Partial), type re-aliasing, m
 ## Critical Rules
 
 Integer rectangle arithmetic raises `OverflowError` for out-of-range results; `IRect` center constructors require non-negative sizes. `URect.inflate` saturates coordinates and rejects an unrepresentable negation.
+
+Owned nested UI gradient values and `Isometry2d` vector fields are read-only snapshots; replace the whole parent field to change them. Live accumulated-mouse and `ComputedNode` vector fields write through only with mutable resource/component access and expire at system exit.
+
+`MouseMotion.delta` and `CursorMoved.position`/`delta` are also read-only child snapshots; replace the complete field on an owned message before sending it.
 
 - Primitive dimensions and their corresponding field alternative are mutually exclusive: use `Cuboid(x_length=..., y_length=..., z_length=...)` or `Cuboid(half_size=...)`, not both, even when dimensions equal their defaults.
 - For these dual-form constructors, omit defaulted arguments instead of passing `None`.
@@ -113,6 +117,12 @@ Python field reads use `{"serialization_error": ...}` markers for cycles and nes
 
 Reflected struct enum variants must include every required field. Incomplete payloads return an error naming the missing field and leave the component unchanged. Reflected single-field tuple variants accept either their direct payload value or a one-element array. For a tuple variant whose single payload is a default-constructible wrapper, an object may provide only the fields to override; omitted fields use that wrapper's constructor defaults. Null payloads for named variants are rejected, including the current variant.
 
+MCP mutation, schema, and query tools address types registered with the active
+World. To create the first value of an otherwise unused custom class, call
+`world.register_component(Type)` or `world.register_resource(Type)` in scene
+code or `run_code`. A class defined inside `run_code` must be registered in
+that same call. Decoration or reload alone does not register an unused type.
+
 When using `set_component`, `spawn_entity`, or `set_resource`, field values are automatically converted:
 
 - **Enum fields** (Color, PlaybackMode, etc.): `{"Srgba": {"red": 1.0, "green": 0.5, "blue": 0.0, "alpha": 1.0}}` or unit variant as string: `"Manual"`
@@ -120,7 +130,7 @@ When using `set_component`, `spawn_entity`, or `set_resource`, field values are 
 - **Vec2/Vec3/Vec4**: `[x, y]`, `[x, y, z]`, `[x, y, z, w]`
 - **Option fields**: `null` for None, value directly for Some
 - **Nested structs**: `{"x": 1.0, "y": 2.0, "z": 3.0}`
-- **Resources**: `set_resource` patches existing fields - only provided fields are updated, others preserved
+- **Resources**: `set_resource` patches existing fields - only provided fields are updated, others preserved. Native-resource patches validate all conversions and setters on a detached value; failure leaves the resource unchanged. Types that cannot safely stage a copy reject patches without mutation. Its response returns `resource` with the type name and `inserted: true` for a newly created value or `inserted: false` for a patch.
 
 ## Available Guides
 
@@ -179,6 +189,10 @@ with other Apps; duplicate native plugins in the same App raise `RuntimeError`.
 3. **Capture tools work** - `capture_screenshot`, `capture_stats`, `capture_turnaround`, and `capture_timeline` all fall back to GPU readback when no window exists.
 
 4. **Full setup** - read `guide://headless` for a complete working scene.
+
+`RenderAssetUsages` in `pybevy.assets` supports `insert`, `remove`, `toggle`,
+and `set`. Getter results are independent mutable snapshots; assign them back
+to update an image, mesh, or loader setting. Flag constants return fresh values.
 
 ## Getting Started
 

@@ -1,17 +1,18 @@
 use bevy::{
+    camera::Projection,
     ecs::{entity::Entity, name::Name, world::World},
     math::{Ray3d, Vec3},
     prelude::*,
 };
 
-use super::spatial::compute_world_aabb;
+use super::{screenshot::select_capture_camera_3d, spatial::compute_world_aabb};
 use crate::bridge::ControlError;
 
 const EXPLICIT_SAMPLE_EXTENT: i64 = 800;
 
-fn camera_basis(position: Vec3, target: Vec3) -> Result<(Vec3, Vec3, Vec3), ControlError> {
+fn camera_transform(position: Vec3, target: Vec3) -> Result<GlobalTransform, ControlError> {
     let forward = (target - position).normalize_or_zero();
-    if forward == Vec3::ZERO {
+    if !position.is_finite() || !target.is_finite() || forward == Vec3::ZERO {
         return Err(ControlError::invalid_params(
             "position and look_at must be distinct finite points",
         ));
@@ -21,9 +22,41 @@ fn camera_basis(position: Vec3, target: Vec3) -> Result<(Vec3, Vec3, Vec3), Cont
     } else {
         Vec3::Y
     };
-    let right = forward.cross(reference_up).normalize();
-    let up = right.cross(forward).normalize();
-    Ok((forward, right, up))
+    Ok(GlobalTransform::from(
+        Transform::from_translation(position).looking_at(target, reference_up),
+    ))
+}
+
+fn projection_ray(
+    projection: &Projection,
+    camera_transform: &GlobalTransform,
+    normalized_x: f32,
+    normalized_y: f32,
+) -> Result<Ray3d, ControlError> {
+    let clip_from_view = projection.get_clip_from_view();
+    let determinant = clip_from_view.determinant();
+    if !determinant.is_finite() || determinant == 0.0 {
+        return Err(ControlError::invalid_params(
+            "capture_depth camera projection is not invertible",
+        ));
+    }
+
+    let view_from_clip = clip_from_view.inverse();
+    if !view_from_clip.is_finite() {
+        return Err(ControlError::invalid_params(
+            "capture_depth camera projection is not invertible",
+        ));
+    }
+    let ndc_x = normalized_x * 2.0 - 1.0;
+    let ndc_y = -(normalized_y * 2.0 - 1.0);
+    let view_near = view_from_clip.project_point3(Vec3::new(ndc_x, ndc_y, 1.0));
+    let view_far = view_from_clip.project_point3(Vec3::new(ndc_x, ndc_y, f32::EPSILON));
+    let world_near = camera_transform.transform_point(view_near);
+    let world_far = camera_transform.transform_point(view_far);
+    let direction = Dir3::new(world_far - world_near).map_err(|_| {
+        ControlError::invalid_params("capture_depth camera projection produced an invalid ray")
+    })?;
+    Ok(Ray3d::new(world_near, direction))
 }
 
 fn validate_sample_points(sample_points: &[[i64; 2]]) -> Result<Vec<[u32; 2]>, ControlError> {
@@ -67,32 +100,23 @@ pub fn compute_depth_samples(
         .map(validate_sample_points)
         .transpose()?;
 
-    // Determine camera position and orientation
-    let (cam_pos, cam_forward, cam_right, cam_up) = if let Some(pos) = position {
-        let p = Vec3::from_array(*pos);
-        let target = Vec3::from_array(look_at.unwrap_or([0.0, 0.0, 0.0]));
-        let (forward, right, up) = camera_basis(p, target)?;
-        (p, forward, right, up)
+    let camera_entity = select_capture_camera_3d(world)
+        .ok_or_else(|| ControlError::not_found("No Camera3d found for capture_depth projection"))?;
+    let projection = world
+        .get::<Projection>(camera_entity)
+        .cloned()
+        .ok_or_else(|| ControlError::not_found("Selected Camera3d has no Projection component"))?;
+    let camera_transform = if let Some(pos) = position {
+        camera_transform(
+            Vec3::from_array(*pos),
+            Vec3::from_array(look_at.unwrap_or([0.0, 0.0, 0.0])),
+        )?
     } else {
-        // Try to find active scene camera
-        let mut query = world.query::<(&Camera, &GlobalTransform)>();
-        let mut found = None;
-        for (cam, gt) in query.iter(world) {
-            if cam.is_active {
-                let t = gt.compute_transform();
-                found = Some((
-                    t.translation,
-                    t.forward().as_vec3(),
-                    t.right().as_vec3(),
-                    t.up().as_vec3(),
-                ));
-                break;
-            }
-        }
-        found.ok_or_else(|| {
-            ControlError::not_found("No active camera found and no position specified")
+        *world.get::<GlobalTransform>(camera_entity).ok_or_else(|| {
+            ControlError::not_found("Selected Camera3d has no GlobalTransform component")
         })?
     };
+    let cam_pos = camera_transform.translation();
 
     // Generate sample points
     let density = grid_density.unwrap_or(8);
@@ -109,10 +133,6 @@ pub fn compute_depth_samples(
         }
         pts
     };
-
-    // For grid-based sampling, convert grid coords to normalized screen coords
-    // and then to ray directions using a simple perspective model
-    let fov_half_tan = (30.0_f32).to_radians().tan(); // ~60° FOV
 
     // Collect all entity AABBs
     let mut aabb_query =
@@ -136,15 +156,9 @@ pub fn compute_depth_samples(
     };
     let cell_offset = if explicit_sampling { 0.0 } else { 0.5 };
     for point in &points {
-        // Convert to normalized coordinates (-1 to 1)
-        let nx = ((point[0] as f32 + cell_offset) / divisor) * 2.0 - 1.0;
-        let ny = -(((point[1] as f32 + cell_offset) / divisor) * 2.0 - 1.0); // flip Y
-
-        // Compute ray direction
-        let dir = (cam_forward + cam_right * nx * fov_half_tan + cam_up * ny * fov_half_tan)
-            .normalize_or_zero();
-
-        let ray = Ray3d::new(cam_pos, Dir3::new(dir).unwrap_or(Dir3::NEG_Z));
+        let normalized_x = (point[0] as f32 + cell_offset) / divisor;
+        let normalized_y = (point[1] as f32 + cell_offset) / divisor;
+        let ray = projection_ray(&projection, &camera_transform, normalized_x, normalized_y)?;
 
         // Find nearest AABB intersection
         let mut nearest_hit: Option<(Entity, f32)> = None;
@@ -159,12 +173,13 @@ pub fn compute_depth_samples(
         }
 
         let mut sample = if let Some((entity, distance)) = nearest_hit {
-            let hit_pos = cam_pos + dir * distance;
+            let hit_pos = ray.get_point(distance);
+            let camera_distance = cam_pos.distance(hit_pos);
             let name = world.get::<Name>(entity).map(|n| n.as_str().to_string());
             let label = super::spatial::entity_label_with(world, entity, &occurrences);
             serde_json::json!({
                 "hit": true,
-                "distance": distance,
+                "distance": camera_distance,
                 "world_position": [hit_pos.x, hit_pos.y, hit_pos.z],
                 "entity_id": entity.to_bits(),
                 "entity_name": name,
@@ -188,7 +203,7 @@ pub fn compute_depth_samples(
         "sample_count": samples.len(),
         "hit_count": hit_count,
         "camera_position": [cam_pos.x, cam_pos.y, cam_pos.z],
-        "coordinate_space": if explicit_sampling { "pixels_800x800" } else { "grid_indices" },
+        "coordinate_space": if explicit_sampling { "normalized_800x800" } else { "grid_indices" },
         "samples": samples,
     }))
 }
@@ -224,7 +239,9 @@ fn ray_aabb_intersection(ray: &Ray3d, aabb: &super::spatial::WorldAabb) -> Optio
 #[cfg(test)]
 mod tests {
     use bevy::{
-        camera::{PerspectiveProjection, Projection, primitives::Aabb},
+        camera::{
+            Camera3d, OrthographicProjection, PerspectiveProjection, Projection, primitives::Aabb,
+        },
         ecs::entity::Entity,
         math::Vec3A,
         transform::components::Transform,
@@ -238,6 +255,20 @@ mod tests {
             max: Vec3A::from_array(max),
             entity: Entity::from_bits(1),
         }
+    }
+
+    fn spawn_camera(world: &mut World, fov: f32, aspect_ratio: f32) -> Entity {
+        world
+            .spawn((
+                Camera3d::default(),
+                Projection::Perspective(PerspectiveProjection {
+                    fov,
+                    aspect_ratio,
+                    ..PerspectiveProjection::default()
+                }),
+                GlobalTransform::from(Transform::from_xyz(0.0, 0.0, 10.0)),
+            ))
+            .id()
     }
 
     #[test]
@@ -291,6 +322,7 @@ mod tests {
     #[test]
     fn compute_depth_samples_explicit_position() {
         let mut world = World::new();
+        spawn_camera(&mut world, std::f32::consts::FRAC_PI_3, 1.0);
         // Use a large cube so that off-center grid rays still hit
         world.spawn((
             Aabb::from_min_max(Vec3::new(-5.0, -5.0, -5.0), Vec3::new(5.0, 5.0, 5.0)),
@@ -327,6 +359,7 @@ mod tests {
     #[test]
     fn compute_depth_samples_no_entities() {
         let mut world = World::new();
+        spawn_camera(&mut world, std::f32::consts::FRAC_PI_3, 1.0);
 
         let position = Some([0.0_f32, 0.0, 10.0]);
         let look_at = Some([0.0_f32, 0.0, 0.0]);
@@ -349,6 +382,7 @@ mod tests {
     #[test]
     fn odd_density_grid_samples_the_center_cell() {
         let mut world = World::new();
+        spawn_camera(&mut world, std::f32::consts::FRAC_PI_3, 1.0);
         world.spawn((
             Aabb::from_min_max(Vec3::splat(-0.25), Vec3::splat(0.25)),
             GlobalTransform::default(),
@@ -371,6 +405,7 @@ mod tests {
     #[test]
     fn compute_depth_samples_custom_sample_points() {
         let mut world = World::new();
+        spawn_camera(&mut world, std::f32::consts::FRAC_PI_3, 1.0);
         world.spawn((
             Aabb::from_min_max(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0)),
             GlobalTransform::default(),
@@ -392,7 +427,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(result["sample_count"], 1);
-        assert_eq!(result["coordinate_space"], "pixels_800x800");
+        assert_eq!(result["coordinate_space"], "normalized_800x800");
         assert_eq!(result["samples"][0]["pixel"], serde_json::json!([400, 400]));
         assert!(result["samples"][0].get("grid").is_none());
         assert!(result["samples"][0].get("screen").is_none());
@@ -402,31 +437,79 @@ mod tests {
     }
 
     #[test]
-    fn compute_depth_samples_ignore_the_cameras_projection() {
-        fn distance_with(fov: f32) -> f64 {
+    fn compute_depth_samples_uses_the_cameras_field_of_view() {
+        fn hit_x_with(fov: f32) -> f64 {
             let mut world = World::new();
             world.spawn((
-                Aabb::from_min_max(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0)),
+                Aabb::from_min_max(
+                    Vec3::new(-100.0, -100.0, -1.0),
+                    Vec3::new(100.0, 100.0, 1.0),
+                ),
                 GlobalTransform::default(),
                 Name::new("Cube"),
             ));
-            world.spawn((
-                Camera::default(),
-                Projection::Perspective(PerspectiveProjection {
-                    fov,
-                    ..PerspectiveProjection::default()
-                }),
-                GlobalTransform::from(Transform::from_xyz(0.0, 0.0, 10.0)),
-            ));
+            spawn_camera(&mut world, fov, 1.0);
 
             let result =
-                compute_depth_samples(&mut world, &None, &None, &Some(vec![[440_i64, 400]]), &None)
+                compute_depth_samples(&mut world, &None, &None, &Some(vec![[600_i64, 400]]), &None)
                     .unwrap();
-            result["samples"][0]["distance"].as_f64().unwrap()
+            result["samples"][0]["world_position"][0].as_f64().unwrap()
         }
 
-        let narrow = distance_with(0.2);
-        assert_eq!(narrow, distance_with(2.0));
+        let narrow = hit_x_with(0.2);
+        let wide = hit_x_with(2.0);
+        assert!(wide > narrow * 10.0, "narrow={narrow}, wide={wide}");
+    }
+
+    #[test]
+    fn compute_depth_samples_uses_the_cameras_aspect_ratio() {
+        fn hit_x_with(aspect_ratio: f32) -> f64 {
+            let mut world = World::new();
+            world.spawn((
+                Aabb::from_min_max(
+                    Vec3::new(-100.0, -100.0, -1.0),
+                    Vec3::new(100.0, 100.0, 1.0),
+                ),
+                GlobalTransform::default(),
+            ));
+            spawn_camera(&mut world, std::f32::consts::FRAC_PI_2, aspect_ratio);
+
+            let result =
+                compute_depth_samples(&mut world, &None, &None, &Some(vec![[600_i64, 400]]), &None)
+                    .unwrap();
+            result["samples"][0]["world_position"][0].as_f64().unwrap()
+        }
+
+        let square = hit_x_with(1.0);
+        let wide = hit_x_with(2.0);
+        assert!(wide > square * 1.9, "square={square}, wide={wide}");
+    }
+
+    #[test]
+    fn compute_depth_samples_uses_an_orthographic_projection() {
+        let mut world = World::new();
+        world.spawn((
+            Aabb::from_min_max(
+                Vec3::new(-100.0, -100.0, -1.0),
+                Vec3::new(100.0, 100.0, 1.0),
+            ),
+            GlobalTransform::default(),
+        ));
+        let mut projection = OrthographicProjection::default_3d();
+        projection.area = Rect::new(-4.0, -2.0, 4.0, 2.0);
+        world.spawn((
+            Camera3d::default(),
+            Projection::Orthographic(projection),
+            GlobalTransform::from(Transform::from_xyz(0.0, 0.0, 10.0)),
+        ));
+
+        let result =
+            compute_depth_samples(&mut world, &None, &None, &Some(vec![[600, 400]]), &None)
+                .unwrap();
+
+        assert_eq!(result["hit_count"], 1);
+        let hit_x = result["samples"][0]["world_position"][0].as_f64().unwrap();
+        assert!((hit_x - 2.0).abs() < 1e-5, "hit_x={hit_x}");
     }
 
     #[test]
@@ -472,12 +555,18 @@ mod tests {
             &grid_density,
         );
 
-        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.code, crate::bridge::ErrorCode::NotFound);
+        assert_eq!(
+            error.message,
+            "No Camera3d found for capture_depth projection"
+        );
     }
 
     #[test]
     fn compute_depth_samples_hit_returns_entity_info() {
         let mut world = World::new();
+        spawn_camera(&mut world, std::f32::consts::FRAC_PI_3, 1.0);
         world.spawn((
             Aabb::from_min_max(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0)),
             GlobalTransform::default(),
@@ -510,6 +599,7 @@ mod tests {
     #[test]
     fn compute_depth_samples_miss_returns_null_distance() {
         let mut world = World::new();
+        spawn_camera(&mut world, std::f32::consts::FRAC_PI_3, 1.0);
         // Entity far off to the side
         world.spawn((
             Aabb::from_min_max(
@@ -561,10 +651,15 @@ mod tests {
     }
 
     #[test]
-    fn vertical_camera_basis_remains_orthonormal() {
-        let (forward, right, up) = camera_basis(Vec3::new(0.0, 11.0, 0.0), Vec3::ZERO).unwrap();
+    fn vertical_camera_transform_remains_orthonormal() {
+        let transform = camera_transform(Vec3::new(0.0, 11.0, 0.0), Vec3::ZERO)
+            .unwrap()
+            .compute_transform();
+        let forward = transform.forward().as_vec3();
+        let right = transform.right().as_vec3();
+        let up = transform.up().as_vec3();
 
-        assert_eq!(forward, Vec3::NEG_Y);
+        assert!(forward.dot(Vec3::NEG_Y) > 0.999_999);
         assert!((right.length() - 1.0).abs() < 1e-6);
         assert!((up.length() - 1.0).abs() < 1e-6);
         assert!(forward.dot(right).abs() < 1e-6);
@@ -575,6 +670,7 @@ mod tests {
     #[test]
     fn vertical_camera_produces_distinct_grid_samples() {
         let mut world = World::new();
+        spawn_camera(&mut world, std::f32::consts::FRAC_PI_3, 1.0);
         world.spawn((
             Aabb::from_min_max(
                 Vec3::new(-100.0, -0.1, -100.0),
@@ -599,7 +695,7 @@ mod tests {
 
     #[test]
     fn coincident_camera_points_are_rejected() {
-        let error = camera_basis(Vec3::ONE, Vec3::ONE).unwrap_err();
+        let error = camera_transform(Vec3::ONE, Vec3::ONE).unwrap_err();
 
         assert_eq!(error.code, crate::bridge::ErrorCode::InvalidParams);
         assert_eq!(

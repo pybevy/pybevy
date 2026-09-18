@@ -24,7 +24,7 @@ pub fn list_resources() -> Vec<Value> {
         json!({
             "uri": "api://index",
             "name": "API Index",
-            "description": "Module names with class/function lists (lightweight, no content)",
+            "description": "Public module names with class/function lists (lightweight, no content)",
             "mimeType": "application/json",
             "feature_gate": "api_discovery",
         }),

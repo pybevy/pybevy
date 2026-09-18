@@ -2,9 +2,24 @@
 //!
 //! Transforms schemars output into the MCP tools/list response format.
 
+use std::{collections::HashSet, sync::OnceLock};
+
 use serde_json::{Map, Value, json};
 
 use crate::bridge::ControlOperation;
+
+static PUBLIC_TOOL_NAMES: OnceLock<HashSet<String>> = OnceLock::new();
+
+pub(crate) fn is_public_tool_name(name: &str) -> bool {
+    PUBLIC_TOOL_NAMES
+        .get_or_init(|| {
+            list_tools()
+                .into_iter()
+                .filter_map(|tool| tool["name"].as_str().map(str::to_owned))
+                .collect()
+        })
+        .contains(name)
+}
 
 /// Generate the full list of MCP tool definitions from ControlOperation's JSON schema.
 ///

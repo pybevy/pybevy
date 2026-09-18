@@ -1053,16 +1053,7 @@ pub(crate) fn setup_debug_camera_with_up(
     };
 
     // Find an existing Camera3d to reuse (prefer an active one)
-    let reuse_entity: Option<Entity> = {
-        let mut query = world.query_filtered::<(Entity, &Camera), With<Camera3d>>();
-        let candidates: Vec<(Entity, bool)> =
-            query.iter(world).map(|(e, c)| (e, c.is_active)).collect();
-        candidates
-            .iter()
-            .find(|(_, active)| *active)
-            .or(candidates.first())
-            .map(|(e, _)| *e)
-    };
+    let reuse_entity = select_capture_camera_3d(world);
 
     if let Some(reuse) = reuse_entity {
         let original_transform = world.get::<Transform>(reuse).copied().unwrap_or_default();
@@ -1145,6 +1136,19 @@ pub(crate) fn setup_debug_camera_with_up(
             original_cameras,
         })
     }
+}
+
+pub(crate) fn select_capture_camera_3d(world: &mut World) -> Option<Entity> {
+    let mut query = world.query_filtered::<(Entity, &Camera), With<Camera3d>>();
+    let cameras = query
+        .iter(world)
+        .map(|(entity, camera)| (entity, camera.is_active))
+        .collect::<Vec<_>>();
+    cameras
+        .iter()
+        .find(|(_, active)| *active)
+        .or(cameras.first())
+        .map(|(entity, _)| *entity)
 }
 
 pub(crate) fn cleanup_debug_camera_world(cleanup: DebugCameraCleanup, world: &mut World) {
