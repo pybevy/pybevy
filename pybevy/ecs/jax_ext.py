@@ -8,6 +8,9 @@ Importing this module activates JAX support:
   - ViewColumn gains .to_jax() and .from_jax() methods
   - ViewColumn implements __jax_array__ for transparent @jax.jit input conversion
   - Vec3ViewColumn and QuatViewColumn are registered as JAX pytrees
+
+Vec3 and Quat trees unflatten to private registered SimpleNamespace
+subclasses. Importing this module does not register stdlib SimpleNamespace.
 """
 
 from types import SimpleNamespace
@@ -129,14 +132,33 @@ def _viewcolumn_unflatten(aux: None, children: list[JaxArray]) -> JaxArray:
     return children[0]
 
 
+class _JaxVec3Output(SimpleNamespace):
+    x: JaxArray
+    y: JaxArray
+    z: JaxArray
+
+    def __init__(self, x: JaxArray, y: JaxArray, z: JaxArray) -> None:
+        super().__init__(x=x, y=y, z=z)
+
+
+class _JaxQuatOutput(SimpleNamespace):
+    x: JaxArray
+    y: JaxArray
+    z: JaxArray
+    w: JaxArray
+
+    def __init__(self, x: JaxArray, y: JaxArray, z: JaxArray, w: JaxArray) -> None:
+        super().__init__(x=x, y=y, z=z, w=w)
+
+
 def _vec3_flatten(v: Vec3ViewColumn) -> tuple[list[JaxArray], None]:
     return [_to_jax(v.x), _to_jax(v.y), _to_jax(v.z)], None
 
 
 def _vec3_unflatten(
     aux: None, children: list[JaxArray],
-) -> SimpleNamespace:
-    return SimpleNamespace(x=children[0], y=children[1], z=children[2])
+) -> _JaxVec3Output:
+    return _JaxVec3Output(x=children[0], y=children[1], z=children[2])
 
 
 def _quat_flatten(v: QuatViewColumn) -> tuple[list[JaxArray], None]:
@@ -145,28 +167,29 @@ def _quat_flatten(v: QuatViewColumn) -> tuple[list[JaxArray], None]:
 
 def _quat_unflatten(
     aux: None, children: list[JaxArray],
-) -> SimpleNamespace:
-    return SimpleNamespace(
+) -> _JaxQuatOutput:
+    return _JaxQuatOutput(
         x=children[0], y=children[1], z=children[2], w=children[3],
     )
+
+
+def _vec3_output_flatten(v: _JaxVec3Output) -> tuple[list[JaxArray], None]:
+    return [v.x, v.y, v.z], None
+
+
+def _quat_output_flatten(v: _JaxQuatOutput) -> tuple[list[JaxArray], None]:
+    return [v.x, v.y, v.z, v.w], None
 
 
 jax.tree_util.register_pytree_node(ViewColumn, _viewcolumn_flatten, _viewcolumn_unflatten)  # type: ignore[arg-type]
 jax.tree_util.register_pytree_node(Vec3ViewColumn, _vec3_flatten, _vec3_unflatten)  # type: ignore[arg-type]
 jax.tree_util.register_pytree_node(QuatViewColumn, _quat_flatten, _quat_unflatten)  # type: ignore[arg-type]
-
-
-
-def _sns_flatten(ns: SimpleNamespace) -> tuple[list[object], list[str]]:
-    keys = sorted(ns.__dict__.keys())
-    return [ns.__dict__[k] for k in keys], keys
-
-
-def _sns_unflatten(keys: list[str], children: list[object]) -> SimpleNamespace:
-    return SimpleNamespace(**dict(zip(keys, children, strict=True)))
-
-
-jax.tree_util.register_pytree_node(SimpleNamespace, _sns_flatten, _sns_unflatten)  # type: ignore[arg-type,type-var]
+jax.tree_util.register_pytree_node(
+    _JaxVec3Output, _vec3_output_flatten, _vec3_unflatten
+)
+jax.tree_util.register_pytree_node(
+    _JaxQuatOutput, _quat_output_flatten, _quat_unflatten
+)
 
 
 __all__ = [

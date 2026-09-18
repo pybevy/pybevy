@@ -7,6 +7,7 @@ import weakref
 from collections.abc import Callable
 from functools import wraps
 from typing import Any, TypeVar, Union, get_args, get_origin, get_type_hints
+from weakref import WeakValueDictionary
 
 from .app import Plugin
 from .ecs import Component, Event, Message, Resource
@@ -21,6 +22,21 @@ _component_layout_signatures: dict[str, tuple[object, ...]] = {}
 _component_layout_reload_required: set[str] = set()
 _resource_cache: dict[str, type[Resource]] = {}
 _component_cache_enabled = False
+
+# Decorated component classes by `module.qualname`. Weak so a reloaded scene
+# module's classes stay collectable.
+_component_classes_by_name: WeakValueDictionary[str, type[Component]] = (
+    WeakValueDictionary()
+)
+
+
+def _component_class_by_name(qualified_name: str) -> type[Component] | None:
+    """Resolve a decorated component class by its ``module.qualname``.
+
+    World deserialization meets a custom component by name before anything
+    spawns it, so the class has to be findable from decoration time onwards.
+    """
+    return _component_classes_by_name.get(qualified_name)
 
 
 def message(cls: type[MT]) -> type[MT]:
@@ -363,6 +379,9 @@ def _register_component(cls: type[CT], *, storage: str | None = None) -> type[CT
 
     # Mark the component as properly decorated
     cls.__pybevy_component_decorated__ = True  # type: ignore[attr-defined]
+
+    # Make the class resolvable by name before anything spawns it.
+    _component_classes_by_name[key] = cls
 
     # Add batch() classmethod for wrapper-storage components
     if storage == "python":

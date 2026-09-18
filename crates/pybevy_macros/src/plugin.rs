@@ -113,7 +113,12 @@ pub fn pyplugin(attr: TokenStream, item: TokenStream) -> TokenStream {
             #default_plugin_kind
 
             fn build(&self, py_plugin: &pyo3::Bound<'_, pyo3::PyAny>, app: &mut bevy::app::App) -> pyo3::PyResult<()> {
-                <#py_type as pybevy_core::PluginBuild>::build(py_plugin, app)
+                <#py_type as pybevy_core::PluginBuild>::build(py_plugin, app)?;
+                <#py_type as pybevy_core::PluginBuild>::wire(py_plugin, app)
+            }
+
+            fn wire(&self, py_plugin: &pyo3::Bound<'_, pyo3::PyAny>, app: &mut bevy::app::App) -> pyo3::PyResult<()> {
+                <#py_type as pybevy_core::PluginBuild>::wire(py_plugin, app)
             }
 
             fn native_type_id(&self) -> std::any::TypeId { std::any::TypeId::of::<#bevy_type>() }

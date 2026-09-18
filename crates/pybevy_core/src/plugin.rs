@@ -113,6 +113,15 @@ pub fn add_plugin_if_missing<P: Plugin>(app: &mut App, plugin: P) -> bool {
 /// to generate the bridge and inventory registration automatically.
 pub trait PluginBuild {
     fn build(py_plugin: &Bound<'_, PyAny>, app: &mut App) -> PyResult<()>;
+
+    /// PyBevy-side wiring that is not part of adding the wrapped Bevy plugin.
+    ///
+    /// The wrapped plugin can already be installed (it is a `DefaultPlugins`
+    /// member, say), in which case `build` is skipped and only this runs. It
+    /// must therefore be idempotent: `build` runs it too.
+    fn wire(_py_plugin: &Bound<'_, PyAny>, _app: &mut App) -> PyResult<()> {
+        Ok(())
+    }
 }
 
 pub trait PluginBridge: Send + Sync + 'static {
@@ -130,6 +139,15 @@ pub trait PluginBridge: Send + Sync + 'static {
     /// The `py_plugin` contains configuration (e.g., volume settings).
     /// This method creates the appropriate Bevy plugin and adds it to the app.
     fn build(&self, py_plugin: &Bound<'_, PyAny>, app: &mut App) -> PyResult<()>;
+
+    /// Run the wrapper's PyBevy-side wiring without adding the Bevy plugin.
+    ///
+    /// `add_plugins` calls this instead of [`PluginBridge::build`] when the
+    /// wrapped Bevy plugin is already installed, so wiring beyond the native
+    /// `add_plugins` is not silently lost. Idempotent by contract.
+    fn wire(&self, _py_plugin: &Bound<'_, PyAny>, _app: &mut App) -> PyResult<()> {
+        Ok(())
+    }
 
     /// Return whether the wrapped Bevy plugin is already installed in this app.
     fn is_added(&self, app: &App) -> bool;

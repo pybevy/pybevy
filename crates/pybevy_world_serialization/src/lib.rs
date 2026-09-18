@@ -57,11 +57,26 @@ impl PyWorldSerializationPlugin {
 impl PluginBuild for PyWorldSerializationPlugin {
     fn build(_py_plugin: &Bound<'_, PyAny>, app: &mut App) -> PyResult<()> {
         app.add_plugins(WorldSerializationPlugin);
-        let registry = app.world().resource::<AppTypeRegistry>().clone();
-        custom_component::register_custom_component_reflection(&mut registry.write());
         app.add_observer(world_instance_ready_bridge);
         Ok(())
     }
+
+    fn wire(_py_plugin: &Bound<'_, PyAny>, app: &mut App) -> PyResult<()> {
+        install_custom_component_materializer(app);
+        Ok(())
+    }
+}
+
+/// Install the materializer that restores wrapper-stored Python `@component`
+/// values from a deserialized world.
+///
+/// Bevy's own `WorldSerializationPlugin` supplies the derived component
+/// functions, so this has to run for every app that can load a world, not only
+/// for one that adds the Python `WorldSerializationPlugin` wrapper. Idempotent:
+/// it replaces the envelope's type data unconditionally.
+pub fn install_custom_component_materializer(app: &mut App) {
+    let registry = app.world().resource::<AppTypeRegistry>().clone();
+    custom_component::register_custom_component_reflection(&mut registry.write());
 }
 
 pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {

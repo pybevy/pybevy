@@ -747,6 +747,25 @@ pub(crate) fn register_custom_component(
     register_prepared_custom_component(world, &prepared)
 }
 
+/// Register the decorated `@component` class named `module.qualname`.
+///
+/// Installed as the shared `CustomComponentRegistry` resolver so world
+/// deserialization, which meets a component by name before anything spawns it,
+/// still finds the class the `@component` decorator recorded.
+pub(crate) fn register_custom_component_by_qualified_name(
+    world: &mut World,
+    qualified_name: &str,
+) -> Option<ComponentId> {
+    Python::attach(|py| {
+        let decorators = py.import("pybevy.decorators").ok()?;
+        let resolved = decorators
+            .call_method1("_component_class_by_name", (qualified_name,))
+            .ok()?;
+        let cls = resolved.cast_into::<PyType>().ok()?;
+        Some(register_custom_component(world, cls.as_type_ptr(), py))
+    })
+}
+
 /// Helper function to register a component and get its ComponentId.
 ///
 /// This function centralizes the component type to Rust type mapping and registration,

@@ -6,15 +6,32 @@ Note: These are Python-side helpers that work with the current run_if() implemen
 They create simple condition functions that can be used directly.
 """
 
-from collections.abc import Callable
+from __future__ import annotations
 
-__all__ = ["always", "and_", "never", "not_", "or_"]
+from collections.abc import Callable
+from enum import Enum
+from typing import TypeVar
+
+from ..input import ButtonInput, KeyCode
+from . import Res, State, in_state
+
+__all__ = [
+    "always",
+    "and_",
+    "input_just_pressed",
+    "never",
+    "not_",
+    "or_",
+    "state_is_active",
+]
+
+StateT = TypeVar("StateT", bound=Enum)
 
 
 def always() -> Callable[[], bool]:
-    """A condition that always returns True.
+    """Build a condition that always returns True.
 
-    Useful for testing or as a placeholder.
+    Call this factory before passing its result to `run_if`.
 
     Returns:
         A condition function that always returns True
@@ -35,9 +52,9 @@ def always() -> Callable[[], bool]:
 
 
 def never() -> Callable[[], bool]:
-    """A condition that always returns False.
+    """Build a condition that always returns False.
 
-    Useful for temporarily disabling systems.
+    Call this factory before passing its result to `run_if`.
 
     Returns:
         A condition function that always returns False
@@ -159,9 +176,9 @@ def not_(condition: Callable[..., bool]) -> Callable[..., bool]:
     return negated
 
 
-
-
-def input_just_pressed(key_code):
+def input_just_pressed(
+    key_code: KeyCode,
+) -> Callable[[Res[ButtonInput[KeyCode]]], bool]:
     """
     Create a condition that checks if a keyboard key was just pressed.
 
@@ -182,45 +199,51 @@ def input_just_pressed(key_code):
         )
         ```
     """
-    from ..input import ButtonInput
-
-    def condition(input_state: ButtonInput) -> bool:
+    def condition(input_state: Res[ButtonInput[KeyCode]]) -> bool:
         return input_state.just_pressed(key_code)
 
     condition.__name__ = f"input_just_pressed_{key_code}"
     return condition
 
 
-def state_is_active(state_type: type, target_value: int):
+def state_is_active(
+    state_type: type[StateT], target_value: StateT
+) -> Callable[[Res[State[StateT]]], bool]:
     """
-    Create a condition that checks if a resource's value matches a target.
+    Create a condition that checks if a state machine has the target state.
 
     Args:
-        state_type: The resource type to check
-        target_value: The value to compare against
+        state_type: The ``@state`` enum type to check
+        target_value: The enum member to compare against
 
     Returns:
         A condition function with proper type annotations
 
     Example:
         ```python
-        from . import Resource, Res
+        from enum import Enum, auto
+
+        from pybevy.ecs import state
         from pybevy.ecs.conditions import state_is_active
 
-        class GamePhase(Resource):
-            phase: int = 0
+        @state
+        class GamePhase(Enum):
+            MENU = auto()
+            PLAYING = auto()
 
-        # Only run when phase == 2
+        # Only run while the game is playing
         app.add_systems(
             Update,
-            run_if(my_system, state_is_active(GamePhase, 2))
+            run_if(my_system, state_is_active(GamePhase, GamePhase.PLAYING))
         )
         ```
     """
-    from . import Res
+    if not isinstance(target_value, state_type):
+        raise TypeError(
+            f"target_value must be a member of {state_type.__name__}, "
+            f"got {type(target_value).__name__}"
+        )
 
-    def condition(res: Res) -> bool:  # type: ignore
-        return hasattr(res, 'value') and res.value == target_value
-
+    condition = in_state(target_value)
     condition.__name__ = f"state_is_{state_type.__name__}_{target_value}"
     return condition
