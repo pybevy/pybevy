@@ -140,7 +140,7 @@ pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
             bevy_type,
             py_type,
             args.bridge_name.as_deref(),
-            args.no_insert || (args.no_clone && !args.default_insert && args.clone_with.is_none()),
+            args.no_insert,
             args.no_mut,
             args.no_remove,
             args.default_insert,
@@ -149,6 +149,7 @@ pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
             args.no_reflect,
             args.materialize.as_ref(),
             args.clone_with.as_ref(),
+            args.no_clone,
         )
     } else {
         quote! {}
@@ -246,6 +247,7 @@ pub(crate) fn generate_resource_bridge_tokens(
     no_reflect: bool,
     materialize: Option<&Path>,
     clone_with: Option<&Path>,
+    no_clone: bool,
 ) -> proc_macro2::TokenStream {
     // Derive bridge name: either from explicit string or from py_type (strip "Py" prefix)
     let bridge_name_str = bridge_name_override.map(String::from).unwrap_or_else(|| {
@@ -256,7 +258,8 @@ pub(crate) fn generate_resource_bridge_tokens(
     let resource_name = &bridge_name_str;
 
     // Generate insert method based on flags
-    let insert_impl = if no_insert {
+    let insert_disabled = no_insert || (no_clone && !default_insert && clone_with.is_none());
+    let insert_impl = if insert_disabled {
         quote! {
             fn insert(
                 &self,
@@ -314,6 +317,97 @@ pub(crate) fn generate_resource_bridge_tokens(
                     let obj = pyo3::Py::new(py, #py_type::from_borrowed(#storage))?;
                     Ok(obj.into_any())
                 }
+            }
+        }
+    };
+
+    let clone_owned_impl = if no_mut || (no_clone && clone_with.is_none()) {
+        quote! {
+            fn clone_owned(
+                &self,
+                _world: &bevy::ecs::world::World,
+                _py: pyo3::Python,
+            ) -> pyo3::PyResult<pyo3::Py<pyo3::PyAny>> {
+                Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                    pybevy_core::public_error::resource_atomic_patch_unsupported(#resource_name)
+                ))
+            }
+        }
+    } else if let Some(clone_with) = clone_with {
+        let wrapped = wrap_storage(quote! {
+            pybevy_core::ResourceStorage::owned(#clone_with(resource)?)
+        });
+        quote! {
+            fn clone_owned(
+                &self,
+                world: &bevy::ecs::world::World,
+                py: pyo3::Python,
+            ) -> pyo3::PyResult<pyo3::Py<pyo3::PyAny>> {
+                let resource = world.get_resource::<#bevy_type>().ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err(concat!(#resource_name, " resource not found"))
+                })?;
+                #wrapped
+            }
+        }
+    } else {
+        let wrapped = wrap_storage(quote! {
+            pybevy_core::ResourceStorage::owned(resource.clone())
+        });
+        quote! {
+            fn clone_owned(
+                &self,
+                world: &bevy::ecs::world::World,
+                py: pyo3::Python,
+            ) -> pyo3::PyResult<pyo3::Py<pyo3::PyAny>> {
+                let resource = world.get_resource::<#bevy_type>().ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err(concat!(#resource_name, " resource not found"))
+                })?;
+                #wrapped
+            }
+        }
+    };
+
+    let commit_owned_impl = if no_mut || (no_clone && clone_with.is_none()) {
+        quote! {
+            fn commit_owned(
+                &self,
+                _world: &mut bevy::ecs::world::World,
+                _resource: &pyo3::Bound<pyo3::PyAny>,
+            ) -> pyo3::PyResult<()> {
+                Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                    pybevy_core::public_error::resource_atomic_patch_unsupported(#resource_name)
+                ))
+            }
+        }
+    } else if let Some(clone_with) = clone_with {
+        quote! {
+            fn commit_owned(
+                &self,
+                world: &mut bevy::ecs::world::World,
+                resource: &pyo3::Bound<pyo3::PyAny>,
+            ) -> pyo3::PyResult<()> {
+                let py_resource = resource.extract::<pyo3::PyRef<#py_type>>()?;
+                let value = #clone_with(<#py_type>::as_ref(&py_resource)?)?;
+                let mut current = world.get_resource_mut::<#bevy_type>().ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err(concat!(#resource_name, " resource not found"))
+                })?;
+                *current = value;
+                Ok(())
+            }
+        }
+    } else {
+        quote! {
+            fn commit_owned(
+                &self,
+                world: &mut bevy::ecs::world::World,
+                resource: &pyo3::Bound<pyo3::PyAny>,
+            ) -> pyo3::PyResult<()> {
+                let value: #bevy_type = resource.extract::<#py_type>()?.try_into()?;
+                let mut current = world.get_resource_mut::<#bevy_type>().ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err(concat!(#resource_name, " resource not found"))
+                })?;
+                *current = value;
+                Ok(())
             }
         }
     };
@@ -658,6 +752,10 @@ pub(crate) fn generate_resource_bridge_tokens(
             }
 
             #get_mut_impl
+
+            #clone_owned_impl
+
+            #commit_owned_impl
 
             #get_from_cell_impl
 

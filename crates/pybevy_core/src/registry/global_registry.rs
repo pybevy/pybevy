@@ -939,6 +939,14 @@ mod tests {
             unreachable!()
         }
 
+        fn clone_owned(&self, _world: &World, _py: Python) -> PyResult<Py<PyAny>> {
+            unreachable!()
+        }
+
+        fn commit_owned(&self, _world: &mut World, _resource: &Bound<PyAny>) -> PyResult<()> {
+            unreachable!()
+        }
+
         unsafe fn get_from_cell(
             &self,
             _cell: UnsafeWorldCell<'_>,

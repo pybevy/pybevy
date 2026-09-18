@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use pybevy_core::LogicalTypeId;
+use pybevy_ecs::shared::query_runtime::QueryRowShape;
 use pyo3::{
     PyTraverseError, PyTypeInfo, PyVisit,
     prelude::*,
@@ -23,6 +24,8 @@ use crate::ecs::{
 pub struct PyQueryParam {
     /// The component types in the query parameter.
     pub(crate) data: SmallVec<[QueryData; 16]>,
+    /// Original recursive tuple shape for materializing the flattened data.
+    pub(crate) row_shape: QueryRowShape,
     /// Indicates if the query is for a single component type only.
     pub(crate) single: bool,
     /// The filters in the query parameter.
@@ -68,6 +71,7 @@ impl PyQueryParam {
     pub(crate) fn clone_without_retained_types(&self) -> Self {
         Self {
             data: self.data.clone(),
+            row_shape: self.row_shape.clone(),
             single: self.single,
             filters: self.filters.clone(),
             single_entity_enforced: self.single_entity_enforced,
@@ -81,6 +85,7 @@ impl Clone for PyQueryParam {
     fn clone(&self) -> Self {
         Python::attach(|py| Self {
             data: self.data.clone(),
+            row_shape: self.row_shape.clone(),
             single: self.single,
             filters: self.filters.clone(),
             single_entity_enforced: self.single_entity_enforced,
@@ -95,6 +100,7 @@ impl Clone for PyQueryParam {
 impl PartialEq for PyQueryParam {
     fn eq(&self, other: &Self) -> bool {
         self.data == other.data
+            && self.row_shape == other.row_shape
             && self.single == other.single
             && self.filters == other.filters
             && self.single_entity_enforced == other.single_entity_enforced

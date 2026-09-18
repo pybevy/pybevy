@@ -2,6 +2,7 @@ use pybevy_core::{
     LogicalTypeId, PyLogicalComponentParam,
     public_error::{ANY_OF_EMPTY, ANY_OF_TUPLE_REQUIRED, OR_IS_FILTER, query_data_required},
 };
+use pybevy_ecs::shared::query_runtime::QueryRowShape;
 use pyo3::{
     IntoPyObjectExt, PyTypeInfo,
     exceptions::PyTypeError,
@@ -118,6 +119,37 @@ pub(crate) fn extract_param_type_from_query_param(
             logical_type_id,
         })
     }
+}
+
+fn query_row_shape(py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<Option<QueryRowShape>> {
+    if key.is_instance_of::<PyWith>()
+        || key.is_instance_of::<PyWithout>()
+        || key.is_instance_of::<PyChanged>()
+        || key.is_instance_of::<PyAdded>()
+        || key.is_instance_of::<PyOr>()
+    {
+        return Ok(None);
+    }
+
+    if key.is_instance_of::<PyGenericAlias>()
+        && key.getattr("__origin__")?.is(py.get_type::<PyTuple>())
+    {
+        let args = key.getattr("__args__")?.cast_into::<PyTuple>()?;
+        let arg_count = args.len();
+        let children = args
+            .iter()
+            .map(|arg| query_row_shape(py, &arg))
+            .collect::<PyResult<Vec<_>>>()?
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+        if arg_count != 0 && children.is_empty() {
+            return Ok(None);
+        }
+        return Ok(Some(QueryRowShape::Tuple(children)));
+    }
+
+    Ok(Some(QueryRowShape::Item))
 }
 
 /// Extract component type and check if it's wrapped in Mut[]
@@ -265,6 +297,23 @@ pub(crate) fn construct_query_class_item_with_options(
 ) -> PyResult<Py<PyAny>> {
     let py = cls.py();
 
+    let row_shape = if let Ok(items) = key.cast::<PyTuple>() {
+        let shapes = items
+            .iter()
+            .map(|item| query_row_shape(py, &item))
+            .collect::<PyResult<Vec<_>>>()?
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+        if shapes.len() == 1 {
+            shapes.into_iter().next().expect("length checked")
+        } else {
+            QueryRowShape::Tuple(shapes)
+        }
+    } else {
+        query_row_shape(py, key)?.unwrap_or_else(|| QueryRowShape::Tuple(Vec::new()))
+    };
+
     let (single, param_types) = match key.try_iter() {
         Ok(iter) => {
             let mut single = true;
@@ -393,6 +442,7 @@ pub(crate) fn construct_query_class_item_with_options(
     PyQueryParam {
         retained_types: PyQueryParam::retain_custom_types(py, &data, &filters),
         data,
+        row_shape,
         filters,
         single,
         single_entity_enforced,

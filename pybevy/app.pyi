@@ -571,9 +571,6 @@ class App:
     def _set_scene_module(self, module_name: str) -> App: ...
 
 
-class Schedule:
-    def run_stage(self, stage: Stage) -> None: ...
-
 class RunMode:
     """Determines the method used to run an App's schedule.
 

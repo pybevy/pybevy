@@ -57,9 +57,21 @@ impl PyShader {
         Ok(self.as_ref()?.path.clone())
     }
 
+    #[setter]
+    pub fn set_path(&mut self, path: String) -> PyResult<()> {
+        self.as_mut()?.path = path;
+        Ok(())
+    }
+
     #[getter]
     pub fn source(&self) -> PyResult<PySource> {
         Ok((&self.as_ref()?.source).into())
+    }
+
+    #[setter]
+    pub fn set_source(&mut self, source: PyRef<'_, PySource>) -> PyResult<()> {
+        self.as_mut()?.source = source.clone().into();
+        Ok(())
     }
 
     #[getter]
@@ -83,6 +95,12 @@ impl PyShader {
             .collect())
     }
 
+    #[setter]
+    pub fn set_imports(&mut self, imports: Vec<PyShaderImport>) -> PyResult<()> {
+        self.as_mut()?.imports = imports.into_iter().map(Into::into).collect();
+        Ok(())
+    }
+
     #[getter]
     pub fn shader_defs(&self) -> PyResult<Vec<PyShaderDefVal>> {
         Ok(self
@@ -91,6 +109,13 @@ impl PyShader {
             .iter()
             .map(|d| d.clone().into())
             .collect())
+    }
+
+    #[setter]
+    pub fn set_shader_defs(&mut self, shader_defs: Vec<PyShaderDefVal>) -> PyResult<()> {
+        let shader_defs = shader_defs.into_iter().map(Into::into).collect();
+        self.as_mut()?.shader_defs = shader_defs;
+        Ok(())
     }
 
     #[getter]

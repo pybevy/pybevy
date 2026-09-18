@@ -102,6 +102,20 @@ pub trait ResourceBridge: Send + Sync + 'static {
         py: Python,
     ) -> PyResult<Py<PyAny>>;
 
+    /// Clone the current native resource into independently owned Python storage.
+    ///
+    /// Control-plane patching uses this to validate and apply every Python setter
+    /// before committing the live resource in one operation. Bridges that cannot
+    /// faithfully clone and commit their value must fail without touching the
+    /// world.
+    fn clone_owned(&self, world: &World, py: Python) -> PyResult<Py<PyAny>>;
+
+    /// Replace the current native value from independently owned Python storage.
+    ///
+    /// Implementations update through Bevy's existing resource mutable access so
+    /// the stable resource entity and its insertion lifecycle are preserved.
+    fn commit_owned(&self, world: &mut World, resource: &Bound<PyAny>) -> PyResult<()>;
+
     /// Get resource through an [`UnsafeWorldCell`] (read-only), touching only this
     /// bridge's `Resource` type instead of borrowing the whole `World`.
     ///

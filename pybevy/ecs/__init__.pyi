@@ -1610,6 +1610,10 @@ class Query(Generic[QueryParam_T, *Qs]):
 
     Use Query[data, filters], with optional filters in the second position.
     Group multiple data items or filters with tuple[...], not parentheses.
+    Nested data tuples preserve their nesting in every returned row, matching
+    Bevy's recursive tuple QueryData semantics.
+    For nested Mut/Has/AnyOf markers, use typing.cast on the returned row when
+    the type checker cannot infer the concrete nested result type.
     Mut[T] enables writes and yields T; Optional[T] yields None when absent.
 
     Examples:
@@ -1849,6 +1853,10 @@ class Query(Generic[QueryParam_T, *Qs]):
     def __iter__(
         self: Query[tuple[Mut[T1], Mut[T2], Mut[T3], Mut[T4]], *Qs],
     ) -> Iterator[tuple[T1, T2, T3, T4]]: ...
+    @overload
+    def __iter__(
+        self: Query[QueryParam_T, *Qs],
+    ) -> Iterator[QueryParam_T]: ...
 
 
     @overload
@@ -1891,6 +1899,10 @@ class Query(Generic[QueryParam_T, *Qs]):
     def get(
         self: Query[tuple[Mut[T1], T2], *Qs], entity: Entity
     ) -> tuple[T1, T2] | None: ...
+    @overload
+    def get(
+        self: Query[QueryParam_T, *Qs], entity: Entity
+    ) -> QueryParam_T | None: ...
 
     @overload
     def single(
@@ -1926,6 +1938,8 @@ class Query(Generic[QueryParam_T, *Qs]):
     def single(self: Query[tuple[T1, Mut[T2]], *Qs]) -> tuple[T1, T2]: ...
     @overload
     def single(self: Query[tuple[Mut[T1], T2], *Qs]) -> tuple[T1, T2]: ...
+    @overload
+    def single(self: Query[QueryParam_T, *Qs]) -> QueryParam_T: ...
 
     def __len__(self) -> int:
         """Get the number of entities matching this query."""
@@ -2023,6 +2037,10 @@ class Query(Generic[QueryParam_T, *Qs]):
         Returns:
             A list of tuples containing query results for matching entities
         """
+    @overload
+    def iter_many(
+        self: Query[QueryParam_T, *Qs], entities: Iterable[Entity]
+    ) -> list[QueryParam_T]: ...
 
 class Single(Generic[QueryParam_T, *Qs]):
     """
@@ -2197,6 +2215,8 @@ class Single(Generic[QueryParam_T, *Qs]):
     def into_inner(self: Single[tuple[T], *Qs]) -> tuple[T]: ...
     @overload
     def into_inner(self: Single[tuple[Mut[T]], *Qs]) -> tuple[T]: ...
+    @overload
+    def into_inner(self: Single[QueryParam_T, *Qs]) -> QueryParam_T: ...
 
 V = TypeVar("V")
 
