@@ -73,16 +73,24 @@ def _strip_ansi(line: str) -> str:
     return _ANSI_ESCAPE.sub("", line)
 
 
-def _is_log_error_line(line: str) -> bool:
-    """Check if line is a tracing/log ERROR line (e.g. 'ERROR bevy_render::...')."""
+def _is_log_level_line(line: str, level: str) -> bool:
+    """Check if line is a tracing/log line at `level` (e.g. 'ERROR bevy_render::...')."""
     # Strip optional timestamp prefix like "2024-01-01T12:00:00.000Z "
     stripped = _strip_ansi(line).lstrip()
-    # Match "ERROR " at start, or after timestamp-like prefix
-    if stripped.startswith("ERROR "):
+    # Match the level at start, or after timestamp-like prefix
+    if stripped.startswith(level + " "):
         return True
     # Handle timestamped lines: "2024-... ERROR ..."
     parts = stripped.split(None, 2)
-    return len(parts) >= 2 and parts[1] == "ERROR"
+    return len(parts) >= 2 and parts[1] == level
+
+
+def _is_log_error_line(line: str) -> bool:
+    return _is_log_level_line(line, "ERROR")
+
+
+def _is_log_warn_line(line: str) -> bool:
+    return _is_log_level_line(line, "WARN")
 
 
 LOAD_SCENE_TOOL: JsonDict = {
@@ -112,15 +120,20 @@ LOAD_SCENE_TOOL: JsonDict = {
     },
 }
 
-_MAX_CAPTURED_OUTPUT_LINES = 100
+# Retain startup warnings through the DefaultPlugins output burst.
+_MAX_CAPTURED_OUTPUT_LINES = 500
 _STARTUP_TIMEOUT = 60.0
+
+_MAX_REPORTED_WARN_LINES = 25
 
 
 GET_LOGS_TOOL: JsonDict = {
     "name": "get_logs",
     "description": (
         "Get recent captured Bevy subprocess stdout and stderr. With errors_only=true, "
-        "combine the live Python system error with matching stderr errors. "
+        "combine the live Python system error with matching stderr errors; add "
+        "include_warnings=true to also list WARN lines, which is how startup "
+        "degradations such as a missing audio device surface. "
         "Use get_last_error as the primary Python check after reload."
     ),
     "inputSchema": {
@@ -129,7 +142,7 @@ GET_LOGS_TOOL: JsonDict = {
         "properties": {
             "lines": {
                 "type": "integer",
-                "description": "Number of recent combined output lines to return (default 50, max 100)",
+                "description": f"Number of recent combined output lines to return (default 50, max {_MAX_CAPTURED_OUTPUT_LINES})",
                 "default": 50,
                 "minimum": 1,
                 "maximum": _MAX_CAPTURED_OUTPUT_LINES,
@@ -137,6 +150,11 @@ GET_LOGS_TOOL: JsonDict = {
             "errors_only": {
                 "type": "boolean",
                 "description": "Only return Python errors/tracebacks (default false)",
+                "default": False,
+            },
+            "include_warnings": {
+                "type": "boolean",
+                "description": "With errors_only=true, also list captured WARN lines (default false)",
                 "default": False,
             },
         },
@@ -1093,7 +1111,12 @@ class McpBridge:
                 )
         else:
             result = json.dumps(
-                {"type_name": type_name, "error": "Symbol not found in stubs"}, indent=2
+                {
+                    "type_name": type_name,
+                    "error": "Symbol not found in stubs",
+                    "suggestions": self._api_index.suggest_type_names(type_name),
+                },
+                indent=2,
             )
 
         tip = "Tip: For scene patterns and code templates, read guide://patterns. For topic-specific docs (lighting, materials, camera), check guide://index."
@@ -1113,6 +1136,7 @@ class McpBridge:
         except (TypeError, ValueError):
             return self._error(req_id, -32602, "get_logs 'lines' must be an integer")
         errors_only = bool(arguments.get("errors_only", False))
+        include_warnings = bool(arguments.get("include_warnings", False))
 
         if self._subprocess is None:
             return self._error(
@@ -1148,6 +1172,14 @@ class McpBridge:
                 )
             else:
                 output = "No Python system errors or matching stderr errors detected."
+
+            if include_warnings:
+                warnings = self._collect_stderr_warnings()
+                output += (
+                    f"\n\nCaptured warnings (WARN):\n{warnings}"
+                    if warnings
+                    else "\n\nNo WARN lines in captured stderr."
+                )
         else:
             line_limit = max(1, min(lines, _MAX_CAPTURED_OUTPUT_LINES))
             output = self._get_recent_process_output(max_lines=line_limit)
@@ -1431,6 +1463,34 @@ class McpBridge:
             f"[{stream}] {self._format_captured_line(line, repeat_count)}"
             for (stream, line), repeat_count in zip(lines, repeat_counts, strict=True)
         )
+
+    def _collect_stderr_warnings(self) -> str:
+        """Return distinct captured WARN lines, oldest first."""
+        with self._output_lock:
+            if len(self._stderr_repeat_counts) != len(self._stderr_lines):
+                self._stderr_repeat_counts = [1] * len(self._stderr_lines)
+            captured = list(
+                zip(self._stderr_lines, self._stderr_repeat_counts, strict=True)
+            )
+
+        seen: set[str] = set()
+        warnings: list[str] = []
+        for line, repeat_count in captured:
+            if not _is_log_warn_line(line):
+                continue
+            key = _strip_ansi(line)
+            if key in seen:
+                continue
+            seen.add(key)
+            if len(warnings) >= _MAX_REPORTED_WARN_LINES:
+                warnings.append(
+                    "(later WARN lines omitted; showing the first "
+                    f"{_MAX_REPORTED_WARN_LINES})"
+                )
+                break
+            warnings.append(self._format_captured_line(line, repeat_count))
+
+        return "\n".join(warnings)
 
     def _check_stderr_for_errors(self) -> str:
         with self._output_lock:
