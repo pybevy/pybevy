@@ -97,8 +97,9 @@ pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     app.add_class::<plugin::PyPluginGroup>()?;
     app.add_class::<schedule_runner::PyScheduleRunnerPlugin>()?;
     app.add_class::<schedule_runner::PyRunMode>()?;
+    app.add_class::<task_pool::PyTaskPoolThreadAssignmentPolicy>()?;
+    app.add_class::<task_pool::PyTaskPoolOptions>()?;
     app.add_class::<task_pool::PyTaskPoolPlugin>()?;
-    app.add_function(wrap_pyfunction!(chained_systems::chain, &app)?)?;
 
     // Internal test-only functions
     app.add_function(wrap_pyfunction!(app::_test_get_app_count, &app)?)?;

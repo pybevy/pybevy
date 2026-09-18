@@ -1,5 +1,7 @@
 use pyo3::{prelude::*, types::PyDict};
 
+use crate::app::chained_systems::chain;
+
 pub mod batch_spawn;
 pub mod commands;
 pub(crate) mod component;
@@ -60,6 +62,7 @@ pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     custom_batch::register_custom_batch_bridge();
 
     let ecs = PyModule::new(m.py(), "ecs")?;
+    ecs.add_function(wrap_pyfunction!(chain, &ecs)?)?;
     ecs.add_class::<commands::PyCommands>()?;
     // Re-export PyComponent so Python can import it from pybevy.ecs
     ecs.add_class::<component::PyComponent>()?;

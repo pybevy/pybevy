@@ -16,7 +16,7 @@ use pybevy_core::{
     public_error::{ASSET_LOADING_TASK_POOL_MISSING, invalid_asset_type},
     registry::global_registry,
 };
-use pybevy_gltf::loader_settings::PyGltfLoaderSettings;
+use pybevy_gltf::loader_settings::{GltfLoaderSettingsValue, PyGltfLoaderSettings};
 use pybevy_image::{
     image::PyImage, image_saver_settings::PyImageSaverSettings,
     loader_settings::PyImageLoaderSettings,
@@ -153,7 +153,7 @@ impl PyAssetServer {
                     bridge.name()
                 )));
             }
-            let bevy_settings: bevy::image::ImageLoaderSettings = image_settings.into();
+            let bevy_settings = bevy::image::ImageLoaderSettings::try_from(image_settings)?;
             asset_server
                 .load_builder()
                 .with_settings(move |s: &mut bevy::image::ImageLoaderSettings| {
@@ -168,7 +168,7 @@ impl PyAssetServer {
                     bridge.name()
                 )));
             }
-            let gltf_settings = PyGltfLoaderSettings::clone(&gltf_settings);
+            let gltf_settings = GltfLoaderSettingsValue::try_from(&*gltf_settings)?;
             asset_server
                 .load_builder()
                 .with_settings(move |s: &mut GltfLoaderSettings| {
@@ -199,7 +199,7 @@ impl PyAssetServer {
 
         let asset_server = self.loading_asset_server()?;
         let asset_path = extract_asset_path(&path)?;
-        let bevy_settings: bevy::image::ImageLoaderSettings = settings.into();
+        let bevy_settings = bevy::image::ImageLoaderSettings::try_from(settings)?;
         let untyped_handle = asset_server
             .load_builder()
             .with_settings(move |s: &mut bevy::image::ImageLoaderSettings| {

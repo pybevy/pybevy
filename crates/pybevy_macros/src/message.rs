@@ -116,7 +116,7 @@ pub(crate) fn generate_message_bridge_tokens(
                 py: pyo3::Python,
                 world: &mut bevy::ecs::world::World,
                 message: &pyo3::Bound<'_, pyo3::PyAny>,
-            ) -> pyo3::PyResult<Box<dyn std::any::Any + Send + Sync>> {
+            ) -> pyo3::PyResult<u64> {
                 use bevy::ecs::message::Messages;
 
                 let py_message = message.extract::<pyo3::PyRef<#py_type>>()?;
@@ -133,7 +133,7 @@ pub(crate) fn generate_message_bridge_tokens(
                     ));
                 };
                 let id = messages.write(native);
-                Ok(Box::new(id))
+                Ok(id.id as u64)
             }
         }
     } else {

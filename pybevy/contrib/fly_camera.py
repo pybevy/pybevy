@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 from ..app import App, Plugin, Update
 from ..decorators import component, plugin, resource
-from ..ecs import Component, MessageReader, Mut, Query, Res, ResMut, Resource
+from ..ecs import Component, MessageReader, Mut, Query, Res, ResMut, Resource, system
 from ..input import ButtonInput, KeyCode, MouseButton, MouseMotion
 from ..math import Quat, Vec3
 from ..time import Time
@@ -26,9 +26,12 @@ class FlyCamera(Component):
         move_speed: Movement speed in units per second (default: 10.0)
         sprint_multiplier: Speed multiplier when shift is held (default: 2.5)
         look_sensitivity: Mouse look sensitivity (default: 0.003)
-        pitch: Current vertical rotation angle in radians (default: 0.0)
-        yaw: Current horizontal rotation angle in radians (default: 0.0)
+        pitch: Vertical rotation angle in radians, applied every frame (default: 0.0)
+        yaw: Horizontal rotation angle in radians, applied every frame (default: 0.0)
         max_pitch: Maximum pitch angle in radians (default: π/2 - 0.01)
+
+    pitch/yaw are the authoritative orientation: fly_camera_control_system writes
+    Transform.rotation from them each frame, so set them instead of the transform.
     """
 
     move_speed: float = 10.0
@@ -61,30 +64,24 @@ def fly_camera_control_system(
         - Shift: Sprint (faster movement)
         - Right mouse + drag: Look around
     """
-    # Track right mouse button state
     camera_state.right_mouse_pressed = mouse_buttons.pressed(MouseButton.Right())
 
     # Drain the shared reader before iterating cameras.
     motions = list(mouse_motion)
 
     for transform, camera in query:
-        # Mouse look (right button)
         if camera_state.right_mouse_pressed:
             for motion in motions:
-                # Update yaw (horizontal rotation)
                 camera.yaw -= motion.delta.x * camera.look_sensitivity
-
-                # Update pitch (vertical rotation) with clamping
                 camera.pitch -= motion.delta.y * camera.look_sensitivity
                 camera.pitch = max(
                     -camera.max_pitch, min(camera.max_pitch, camera.pitch)
                 )
 
-                # Apply rotation to transform
-                # Yaw around world Y axis, then pitch around local X axis
-                yaw_quat = Quat.from_axis_angle(Vec3.Y, camera.yaw)
-                pitch_quat = Quat.from_axis_angle(Vec3.X, camera.pitch)
-                transform.rotation = yaw_quat * pitch_quat
+        # Yaw around world Y axis, then pitch around local X axis
+        yaw_quat = Quat.from_axis_angle(Vec3.Y, camera.yaw)
+        pitch_quat = Quat.from_axis_angle(Vec3.X, camera.pitch)
+        transform.rotation = yaw_quat * pitch_quat
 
 
 def fly_camera_movement_system(
@@ -166,4 +163,7 @@ class FlyCameraPlugin(Plugin):
 
         # Add control systems to Update stage
         app.add_systems(Update, fly_camera_control_system)
-        app.add_systems(Update, fly_camera_movement_system)
+        app.add_systems(
+            Update,
+            system(fly_camera_movement_system).after(fly_camera_control_system),
+        )

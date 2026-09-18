@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from typing import Any, ClassVar, Final, Literal, TypeVar, overload
+from typing import Any, ClassVar, Final, Literal, TypeVar
 
 from pybevy.ecs import (
     ConditionalSystem,
@@ -38,38 +38,6 @@ class ChainedSystems:
 class ChainedSystemSets:
     """Wrapper for a sequence of system sets configured in order."""
     def __init__(self, *sets: SystemSetChainItem) -> None: ...
-
-@overload
-def chain(*systems: SystemChainItem) -> ChainedSystems: ...
-@overload
-def chain(*sets: SystemSetChainItem) -> ChainedSystemSets:
-    """Chain multiple systems or system sets to run sequentially.
-
-    Chained systems will execute in the order they are provided, with each
-    system completing before the next one starts.
-
-    Args:
-        *systems: Homogeneous system configurations or system-set configurations.
-
-    Returns:
-        A chain accepted by `add_systems()` or `configure_sets()`.
-
-    Example:
-        ```python
-        from pybevy import chain
-
-        def system1(): pass
-        def system2(): pass
-        def system3(): pass
-
-        # These systems will run in order: system1 -> system2 -> system3
-        app.add_systems(Update, chain(system1, system2, system3))
-
-        # Set-family ordering: Input -> Movement -> Audit
-        app.configure_sets(Update, chain(Sets.Input, Sets.Movement, Sets.Audit))
-        ```
-    """
-
 
 def _test_get_app_count() -> int:
     """TEST ONLY: Get the count of Apps currently in thread-local storage.
@@ -304,8 +272,78 @@ class MinimalPlugins(PluginGroup):
     def finish(self, app: App) -> None:
         """Apply minimal plugins, skipping members already installed on the App."""
 
+class TaskPoolThreadAssignmentPolicy:
+    """Bevy's per-pool thread assignment policy.
+
+    The native worker-thread lifecycle callbacks are intentionally unavailable;
+    invoking retained Python callables on Bevy worker threads requires a separate
+    free-threading and exception-delivery contract.
+    """
+
+    def __init__(
+        self, *, min_threads: int, max_threads: int, percent: float
+    ) -> None: ...
+    @property
+    def min_threads(self) -> int: ...
+    @min_threads.setter
+    def min_threads(self, value: int) -> None: ...
+    @property
+    def max_threads(self) -> int: ...
+    @max_threads.setter
+    def max_threads(self, value: int) -> None: ...
+    @property
+    def percent(self) -> float: ...
+    @percent.setter
+    def percent(self, value: float) -> None: ...
+
+class TaskPoolOptions:
+    """Configure how Bevy divides available threads among its global pools."""
+
+    def __init__(
+        self,
+        *,
+        min_total_threads: int = 1,
+        max_total_threads: int = ...,
+        io: TaskPoolThreadAssignmentPolicy | None = None,
+        async_compute: TaskPoolThreadAssignmentPolicy | None = None,
+        compute: TaskPoolThreadAssignmentPolicy | None = None,
+    ) -> None: ...
+    @staticmethod
+    def with_num_threads(thread_count: int) -> TaskPoolOptions: ...
+    @property
+    def min_total_threads(self) -> int: ...
+    @min_total_threads.setter
+    def min_total_threads(self, value: int) -> None: ...
+    @property
+    def max_total_threads(self) -> int: ...
+    @max_total_threads.setter
+    def max_total_threads(self, value: int) -> None: ...
+    @property
+    def io(self) -> TaskPoolThreadAssignmentPolicy: ...
+    @io.setter
+    def io(self, value: TaskPoolThreadAssignmentPolicy) -> None: ...
+    @property
+    def async_compute(self) -> TaskPoolThreadAssignmentPolicy: ...
+    @async_compute.setter
+    def async_compute(self, value: TaskPoolThreadAssignmentPolicy) -> None: ...
+    @property
+    def compute(self) -> TaskPoolThreadAssignmentPolicy: ...
+    @compute.setter
+    def compute(self, value: TaskPoolThreadAssignmentPolicy) -> None: ...
+
 class TaskPoolPlugin(Plugin):
-    def __init__(self) -> None: ...
+    """Install Bevy's process-global pools with the supplied options.
+
+    The first built plugin initializes the pools; later apps cannot resize them.
+    The options and nested assignment-policy properties are live configuration
+    objects, so field edits made before adding the plugin are preserved.
+    """
+
+    def __init__(self, *, task_pool_options: TaskPoolOptions | None = None) -> None: ...
+    @property
+    def task_pool_options(self) -> TaskPoolOptions: ...
+    @task_pool_options.setter
+    def task_pool_options(self, value: TaskPoolOptions) -> None: ...
     def build(self, app: App) -> None: ...
 
 class HotReloadPlugin(Plugin):

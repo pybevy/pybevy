@@ -303,6 +303,12 @@ pub fn optional_module_requires_feature(module: &str, feature: &str) -> String {
 
 pub const SHADER_DEFS_WITHOUT_NAMES: &str =
     "shader_defs contains enabled bits without matching shader_def_names entries";
+pub const SHADER_BUFFER_DATA_TYPE: &str =
+    "ShaderBuffer data must be bytes or a uint8 pybevy.array.Array";
+pub const SHADER_BUFFER_NO_DATA: &str =
+    "ShaderBuffer has no CPU data; upload data is consumed during render extraction";
+pub const SHADER_BUFFER_DATA_CHANGED: &str =
+    "ShaderBuffer data length changed during view acquisition";
 
 pub const TIME_CONTEXT_TYPE_REQUIRED: &str =
     "Time[...] expects one of the Fixed, Real, or Virtual marker types";
@@ -318,6 +324,21 @@ pub fn too_many_shader_def_names(actual: usize) -> String {
 
 pub const DESIRED_MAXIMUM_FRAME_LATENCY_AT_LEAST_ONE: &str =
     "desired_maximum_frame_latency must be at least 1";
+
+pub fn task_pool_thread_bounds(min_threads: usize, max_threads: usize) -> String {
+    format!(
+        "TaskPoolThreadAssignmentPolicy min_threads ({min_threads}) cannot exceed max_threads ({max_threads})"
+    )
+}
+
+pub const TASK_POOL_PERCENT_NONNEGATIVE: &str =
+    "TaskPoolThreadAssignmentPolicy percent must be nonnegative";
+
+pub fn task_pool_total_thread_bounds(min_total_threads: usize, max_total_threads: usize) -> String {
+    format!(
+        "TaskPoolOptions min_total_threads ({min_total_threads}) cannot exceed max_total_threads ({max_total_threads})"
+    )
+}
 
 pub const UNSUPPORTED_GIZMO_LINE_STYLE: &str =
     "the native GizmoLineStyle variant is not supported by this PyBevy build";

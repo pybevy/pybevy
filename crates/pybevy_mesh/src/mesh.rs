@@ -15,7 +15,6 @@ use pybevy_array::{
 use pybevy_core::{
     AssetInputConverter, AssetStorage, PyAsset,
     borrowed_array_anchor::{AssetBorrowAnchor, AssetBorrowAnchorMut},
-    computed_owned,
     content_hash::CanonicalContentHasher,
     numpy_view_guard::{PendingNumpyViewGuard, PyNumpyViewGuard},
     public_error,
@@ -335,9 +334,11 @@ impl PyMesh {
 
     #[getter]
     pub fn asset_usage(&self) -> PyResult<PyRenderAssetUsages> {
-        Ok(computed_owned(mesh_with!(self, |mesh: &Mesh| mesh
-            .asset_usage
-            .into())))
+        drop(self.as_ref()?);
+        Ok(self.storage.borrow_field_as(
+            |mesh: &Mesh| &mesh.asset_usage,
+            |mesh: &mut Mesh| &mut mesh.asset_usage,
+        )?)
     }
 
     #[setter]

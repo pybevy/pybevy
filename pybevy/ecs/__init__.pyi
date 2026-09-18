@@ -10,8 +10,18 @@ from typing import (
     overload,
     runtime_checkable,
 )
+from typing import (
+    Optional as Optional,
+)
 
-from pybevy.app import Stage, SystemFn
+from pybevy.app import (
+    ChainedSystems,
+    ChainedSystemSets,
+    Stage,
+    SystemChainItem,
+    SystemFn,
+    SystemSetChainItem,
+)
 from pybevy.expr import Expr
 from pybevy.expr import FieldExpr as _FieldExpr
 from pybevy.light import PointLight
@@ -153,7 +163,7 @@ class MessageWriter(Generic[M]):
     def write(self, message: M) -> MessageId:
         """Write a message to the message buffer."""
     def write_batch(self, messages: list[M]) -> list[MessageId]:
-        """Validate and write a batch atomically, returning contiguous channel IDs."""
+        """Validate and write a batch atomically, returning contiguous message IDs."""
     def write_default(self) -> MessageId:
         """Write a default instance of the message type."""
 
@@ -195,7 +205,7 @@ class MessageMutator(Generic[M]):
     that field mutations persist.
     """
     def write(self, message: M) -> MessageId:
-        """Write a message and return its channel-local ID."""
+        """Write a message and return its ID."""
     def write_batch(self, messages: list[M]) -> list[MessageId]:
         """Validate and write a batch atomically."""
     def write_default(self) -> MessageId:
@@ -2047,9 +2057,9 @@ class Single(Generic[QueryParam_T, *Qs]):
     Single entity query that enforces exactly one entity matches.
 
     Skips the system before its body runs if zero or multiple entities match.
-    Optional[Single[T]] from typing instead injects None for invalid cardinality
-    and runs the system with unchanged scheduler access. Single[T] | None is
-    also supported.
+    Optional[Single[T]], using typing.Optional re-exported by this module,
+    instead injects None for invalid cardinality and runs the system with
+    unchanged scheduler access. Single[T] | None is also supported.
 
     Examples:
         Single[Player] - single Player entity (read-only)
@@ -2503,9 +2513,41 @@ class Children(Component):
     def __iter__(self) -> Iterator[Entity]: ...
     def __getitem__(self, index: int) -> Entity: ...
 
-class MessageId:
-    """A channel-qualified identifier for a sent message.
+@overload
+def chain(*systems: SystemChainItem) -> ChainedSystems: ...
+@overload
+def chain(*sets: SystemSetChainItem) -> ChainedSystemSets:
+    """Chain homogeneous systems or system sets in execution order."""
 
-    Custom-message sequence numbers are contiguous within one channel and may
-    repeat across message types; the opaque ID also retains the channel identity.
+class MessageId:
+    """A Bevy-style identifier for a sent message.
+
+    IDs increase in write order within one message type and World. Equality and
+    hashing include the message type because Python erases Bevy's generic
+    ``MessageId[M]`` type; ordering is supported only between IDs for the same
+    message type. Custom types use their registered qualified name, including
+    across reloads; later class metadata edits do not change that identity.
+    Native types use Bevy's type identity. Bevy's ``caller: MaybeLocation`` field
+    is omitted: its payload is disabled without ``track_location``, and PyBevy
+    does not expose ``MaybeLocation``.
+
+    Example:
+        ```python
+        first = writer.write(Ping(1))
+        second = writer.write(Ping(2))
+        assert second.id == first.id + 1
+        assert first < second
+        ```
     """
+
+    @property
+    def id(self) -> int:
+        """Order in which this message was written to its World and type."""
+
+    def __eq__(self, other: object) -> bool: ...
+    def __lt__(self, other: MessageId) -> bool: ...
+    def __le__(self, other: MessageId) -> bool: ...
+    def __gt__(self, other: MessageId) -> bool: ...
+    def __ge__(self, other: MessageId) -> bool: ...
+    def __hash__(self) -> int: ...
+    def __repr__(self) -> str: ...

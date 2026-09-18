@@ -26,6 +26,13 @@ class RenderAssetUsages:
     """Mutable asset usage flags indicating which worlds can access this asset.
 
     Combine flags with `|`: `RenderAssetUsages.MAIN_WORLD | RenderAssetUsages.RENDER_WORLD`.
+
+    `insert`, `remove`, `toggle` and `set` mutate in place. The flag constants
+    are independent owned values, but a value read from a holder's property
+    borrows that holder's field: the mutators write through to an asset fetched
+    with `get_mut`, and raise on a read-only asset or a Python-constructed
+    holder rather than editing a detached copy. Whole-field assignment works
+    on owned holders and mutable asset references.
     """
 
     MAIN_WORLD: ClassVar[RenderAssetUsages]

@@ -5183,6 +5183,7 @@ version = "0.3.0"
 dependencies = [
  "bevy",
  "crossbeam-channel",
+ "pybevy_array",
  "pybevy_color",
  "pybevy_core",
  "pybevy_macros",
