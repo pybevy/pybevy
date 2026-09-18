@@ -52,7 +52,12 @@ class Mesh(Asset):
     def primitive_topology(self) -> PrimitiveTopology: ...
     @property
     def asset_usage(self) -> RenderAssetUsages:
-        """An independent snapshot of asset usage flags; assign to update the mesh."""
+        """The asset usage flags, borrowed from the mesh.
+
+        In-place mutation writes through to a mesh fetched with `get_mut`, and
+        raises on a read-only or Python-constructed mesh. Whole-field assignment
+        requires an owned mesh or mutable asset access.
+        """
     @asset_usage.setter
     def asset_usage(self, value: RenderAssetUsages) -> None: ...
     @property

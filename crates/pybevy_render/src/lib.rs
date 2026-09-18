@@ -7,9 +7,12 @@ pub mod msaa;
 pub mod plugin;
 pub mod power_preference;
 pub mod readback;
+pub mod shader_buffer;
 pub mod temporal_jitter;
+pub mod texture_descriptor;
 pub mod texture_dimension;
 pub mod texture_format;
+pub mod texture_usages;
 pub mod texture_view_dimension;
 pub mod unit_markers;
 pub mod vertex_format;
@@ -28,6 +31,7 @@ pub mod prelude {
         temporal_jitter::PyTemporalJitter,
         texture_dimension::PyTextureDimension,
         texture_format::PyTextureFormat,
+        texture_usages::PyTextureUsages,
         unit_markers::PyHdr,
         vertex_format::PyVertexFormat,
     };
@@ -47,6 +51,8 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<extent3d::PyExtent3d>()?;
     m.add_class::<texture_dimension::PyTextureDimension>()?;
     m.add_class::<texture_format::PyTextureFormat>()?;
+    m.add_class::<texture_usages::PyTextureUsages>()?;
+    m.add_class::<texture_descriptor::PyTextureDescriptor>()?;
     m.add_class::<texture_view_dimension::PyTextureViewDimension>()?;
     m.add_class::<vertex_format::PyVertexFormat>()?;
     m.add_class::<msaa::PyMsaa>()?;
@@ -54,5 +60,6 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<color_grading_component::PyColorGrading>()?;
     m.add_class::<color_grading::PyColorGradingSection>()?;
     m.add_class::<color_grading::PyColorGradingGlobal>()?;
+    m.add_class::<shader_buffer::PyShaderBuffer>()?;
     parent.add_submodule(&m)
 }

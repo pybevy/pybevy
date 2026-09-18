@@ -2,8 +2,11 @@ use bevy::{
     asset::RenderAssetUsages,
     image::{ImageFormatSetting, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor},
 };
-use pybevy_core::{FieldStorage, StorageRef, public_error::enum_variant_changed};
-use pybevy_macros::pyenum;
+use pybevy_core::{
+    FieldStorage, FromBorrowedStorage, StorageRef, computed_owned,
+    public_error::enum_variant_changed,
+};
+use pybevy_macros::{pyenum, pyfield};
 use pyo3::{exceptions::PyRuntimeError, prelude::*, types::PyTuple};
 
 use crate::{
@@ -248,10 +251,11 @@ pub fn register_image_sampler_variants(module: &Bound<'_, PyModule>) -> PyResult
     Ok(())
 }
 
+#[pyfield]
 #[pyclass(name = "ImageLoaderSettings", module = "pybevy.image", from_py_object)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PyImageLoaderSettings {
-    inner: ImageLoaderSettings,
+    storage: FieldStorage<ImageLoaderSettings>,
 }
 
 #[pymethods]
@@ -263,19 +267,17 @@ impl PyImageLoaderSettings {
         sampler = None
     ))]
     pub fn new(is_srgb: bool, sampler: Option<PyImageSampler>) -> PyResult<Self> {
-        Ok(Self {
-            inner: ImageLoaderSettings {
-                format: ImageFormatSetting::FromExtension,
-                texture_format: None,
-                is_srgb,
-                sampler: sampler
-                    .map(ImageSampler::try_from)
-                    .transpose()?
-                    .unwrap_or(ImageSampler::Default),
-                asset_usage: RenderAssetUsages::default(),
-                array_layout: None,
-            },
-        })
+        Ok(Self::from_owned(ImageLoaderSettings {
+            format: ImageFormatSetting::FromExtension,
+            texture_format: None,
+            is_srgb,
+            sampler: sampler
+                .map(ImageSampler::try_from)
+                .transpose()?
+                .unwrap_or(ImageSampler::Default),
+            asset_usage: RenderAssetUsages::default(),
+            array_layout: None,
+        }))
     }
 
     #[staticmethod]
@@ -285,82 +287,72 @@ impl PyImageLoaderSettings {
         is_srgb: bool,
         sampler: Option<PyImageSampler>,
     ) -> PyResult<Self> {
-        Ok(Self {
-            inner: ImageLoaderSettings {
-                format: ImageFormatSetting::Format(format.into()),
-                texture_format: None,
-                is_srgb,
-                sampler: sampler
-                    .map(ImageSampler::try_from)
-                    .transpose()?
-                    .unwrap_or(ImageSampler::Default),
-                asset_usage: RenderAssetUsages::default(),
-                array_layout: None,
-            },
-        })
+        Ok(Self::from_owned(ImageLoaderSettings {
+            format: ImageFormatSetting::Format(format.into()),
+            texture_format: None,
+            is_srgb,
+            sampler: sampler
+                .map(ImageSampler::try_from)
+                .transpose()?
+                .unwrap_or(ImageSampler::Default),
+            asset_usage: RenderAssetUsages::default(),
+            array_layout: None,
+        }))
     }
 
     #[getter]
-    pub fn is_srgb(&self) -> bool {
-        self.inner.is_srgb
+    pub fn is_srgb(&self) -> PyResult<bool> {
+        Ok(self.as_ref()?.is_srgb)
     }
 
     #[setter]
-    pub fn set_is_srgb(&mut self, value: bool) {
-        self.inner.is_srgb = value;
+    pub fn set_is_srgb(&mut self, value: bool) -> PyResult<()> {
+        self.as_mut()?.is_srgb = value;
+        Ok(())
     }
 
     #[getter]
     pub fn sampler(&self, py: Python<'_>) -> PyResult<Py<PyImageSampler>> {
-        PyImageSampler::from_sampler(self.inner.sampler.clone(), py)
+        let storage: FieldStorage<ImageSampler> = self
+            .storage
+            .borrow_field(|settings: &ImageLoaderSettings| &settings.sampler)?;
+        PyImageSampler::from_storage(storage, py)
     }
 
     #[setter]
     pub fn set_sampler(&mut self, value: PyImageSampler) -> PyResult<()> {
-        self.inner.sampler = value.try_into()?;
+        let sampler = ImageSampler::try_from(value)?;
+        self.as_mut()?.sampler = sampler;
         Ok(())
     }
 
     #[getter]
-    pub fn format(&self) -> PyImageFormatSetting {
-        self.inner.format.clone().into()
+    pub fn format(&self) -> PyResult<PyImageFormatSetting> {
+        Ok(computed_owned(self.as_ref()?.format.clone().into()))
     }
 
     #[getter]
-    pub fn asset_usage(&self) -> PyRenderAssetUsages {
-        self.inner.asset_usage.into()
+    pub fn asset_usage(&self) -> PyResult<PyRenderAssetUsages> {
+        Ok(self.storage.borrow_resolved_field_as(
+            |settings| &settings.asset_usage,
+            |settings| &mut settings.asset_usage,
+        )?)
     }
 
     #[setter]
     pub fn set_asset_usage(&mut self, value: PyRenderAssetUsages) -> PyResult<()> {
-        self.inner.asset_usage = value.try_into()?;
+        let usage = RenderAssetUsages::try_from(value)?;
+        self.as_mut()?.asset_usage = usage;
         Ok(())
     }
 
-    pub fn __repr__(&self) -> String {
-        format!(
+    pub fn __repr__(&self) -> PyResult<String> {
+        let settings = self.as_ref()?;
+        Ok(format!(
             "ImageLoaderSettings(format={:?}, is_srgb={}, sampler={:?})",
-            self.inner.format,
-            if self.inner.is_srgb { "True" } else { "False" },
-            self.inner.sampler
-        )
-    }
-}
-
-impl From<ImageLoaderSettings> for PyImageLoaderSettings {
-    fn from(inner: ImageLoaderSettings) -> Self {
-        Self { inner }
-    }
-}
-
-impl From<PyImageLoaderSettings> for ImageLoaderSettings {
-    fn from(py: PyImageLoaderSettings) -> Self {
-        py.inner
-    }
-}
-
-impl From<&PyImageLoaderSettings> for ImageLoaderSettings {
-    fn from(py: &PyImageLoaderSettings) -> Self {
-        py.inner.clone()
+            settings.format,
+            if settings.is_srgb { "True" } else { "False" },
+            settings.sampler
+        ))
     }
 }

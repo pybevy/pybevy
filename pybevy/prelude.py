@@ -23,8 +23,8 @@ from .app import (
     Plugin,
     PluginGroup,
     Stage,
+    TaskPoolOptions,
     TaskPoolPlugin,
-    chain,
 )
 from .assets import Asset, AssetEvent, AssetId, AssetPlugin, Assets, AssetServer, Handle
 from .audio import (
@@ -121,6 +121,7 @@ from .ecs import (
     With,
     Without,
     World,
+    chain,
     in_state,
     pipe,
     run_if,
@@ -374,6 +375,7 @@ __all__ = [
     "Plugin",
     "PluginGroup",
     "Stage",
+    "TaskPoolOptions",
     "TaskPoolPlugin",
     "chain",
     # Assets

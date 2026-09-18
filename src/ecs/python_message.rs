@@ -71,6 +71,7 @@ pub(crate) struct ResolvedPythonMessage {
     /// Python values alive behind an interpreter-invisible Rust store handle.
     pub store: WeakPythonMessageStore,
     pub channel: MessageChannelId,
+    pub qualified_name: String,
     /// An independently owned reference for the Python-visible wrapper that
     /// receives this value. It must not share the class table's `Arc`: Python's
     /// collector needs the wrapper to report the exact reference it owns.
@@ -82,6 +83,7 @@ impl Clone for ResolvedPythonMessage {
         Python::attach(|py| Self {
             store: self.store.clone(),
             channel: self.channel,
+            qualified_name: self.qualified_name.clone(),
             class: self.class.clone_ref(py),
         })
     }
@@ -91,7 +93,7 @@ fn type_key(type_ptr: *const PyTypeObject) -> MessageTypeKey {
     MessageTypeKey::new(type_ptr as usize)
 }
 
-fn qualified_name(message: &Bound<'_, PyType>) -> PyResult<String> {
+pub(crate) fn qualified_name(message: &Bound<'_, PyType>) -> PyResult<String> {
     let module = message.getattr("__module__")?.extract::<String>()?;
     let qualname = message.getattr("__qualname__")?.extract::<String>()?;
     Ok(format!("{module}.{qualname}"))
@@ -184,12 +186,22 @@ pub(crate) unsafe fn resolve_from_cell(
 ) -> PyResult<ResolvedPythonMessage> {
     // SAFETY: upheld by the caller and restricted to the declared resources.
     let key = type_key(type_ptr);
-    let channel = {
+    let (channel, qualified_name) = {
         let registry = unsafe { world.get_resource::<MessageRegistryCore>() }
             .ok_or_else(|| PyTypeError::new_err("Message registry is not initialized"))?;
-        registry.channel_for_type(key).ok_or_else(|| {
-            PyTypeError::new_err("Message type is not registered; call app.add_message(T) first")
-        })?
+        let (channel, metadata) = registry
+            .channel_for_type(key)
+            .and_then(|channel| {
+                registry
+                    .metadata(channel)
+                    .map(|metadata| (channel, metadata))
+            })
+            .ok_or_else(|| {
+                PyTypeError::new_err(
+                    "Message type is not registered; call app.add_message(T) first",
+                )
+            })?;
+        (channel, metadata.qualified_name.clone())
     };
 
     // SAFETY: upheld by the caller and restricted to the declared resource.
@@ -206,6 +218,7 @@ pub(crate) unsafe fn resolve_from_cell(
     Ok(ResolvedPythonMessage {
         store,
         channel,
+        qualified_name,
         class,
     })
 }

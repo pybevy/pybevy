@@ -343,14 +343,22 @@ class GltfLoaderSettings:
 
     @property
     def load_meshes(self) -> RenderAssetUsages:
-        """Where loaded mesh data is retained. An independent snapshot; assign a replacement to update the settings."""
+        """Where loaded mesh data is retained, borrowed from these settings.
+
+        These settings are Python-owned, so in-place mutation of the returned
+        value raises; assign a replacement to change it.
+        """
 
     @load_meshes.setter
     def load_meshes(self, value: RenderAssetUsages) -> None: ...
 
     @property
     def load_materials(self) -> RenderAssetUsages:
-        """Where loaded material data is retained. An independent snapshot; assign a replacement to update the settings."""
+        """Where loaded material data is retained, borrowed from these settings.
+
+        These settings are Python-owned, so in-place mutation of the returned
+        value raises; assign a replacement to change it.
+        """
 
     @load_materials.setter
     def load_materials(self, value: RenderAssetUsages) -> None: ...
@@ -385,7 +393,11 @@ class GltfLoaderSettings:
 
     @property
     def default_sampler(self) -> ImageSamplerDescriptor | None:
-        """Sampler applied before the document's own sampler data."""
+        """Sampler applied before the document's own sampler data.
+
+        Borrowed from these Python-owned settings, so writing one of its fields
+        raises; assign a replacement descriptor instead.
+        """
 
     @default_sampler.setter
     def default_sampler(self, value: ImageSamplerDescriptor | None) -> None: ...
@@ -408,7 +420,11 @@ class GltfLoaderSettings:
 
     @property
     def convert_coordinates(self) -> GltfConvertCoordinates | None:
-        """Coordinate conversion for this load; None uses the unexposed Bevy plugin default."""
+        """Coordinate conversion for this load; None uses the unexposed Bevy plugin default.
+
+        Borrowed from these Python-owned settings, so writing one of its fields
+        raises; assign a replacement value instead.
+        """
 
     @convert_coordinates.setter
     def convert_coordinates(self, value: GltfConvertCoordinates | None) -> None: ...

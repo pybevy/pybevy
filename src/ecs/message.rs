@@ -241,7 +241,10 @@ impl PyMessageWriter {
                     .append(writer.resolved.channel, Arc::new(message))
                     .map_err(store_error)?;
                 self.record_trace_op(trace_operation);
-                Ok(PyMessageId::new(id))
+                Ok(PyMessageId::new(
+                    writer.resolved.qualified_name.clone(),
+                    id.sequence,
+                ))
             }
             MessageType::Dynamic(type_ptr) => {
                 let trace_operation = self.prepare_trace_op(bound_message)?;
@@ -259,9 +262,13 @@ impl PyMessageWriter {
                 }
 
                 let mut world = self.native_world()?.world_mut()?;
-                let event_id = bridge.write_message(py, &mut world, bound_message)?;
+                let sequence = bridge.write_message(py, &mut world, bound_message)?;
                 self.record_trace_op(trace_operation);
-                Ok(PyMessageId::from_boxed(event_id))
+                Ok(PyMessageId::native(
+                    bridge.bevy_type_id(),
+                    bridge.name(),
+                    sequence,
+                ))
             }
         }
     }
@@ -288,13 +295,18 @@ impl PyMessageWriter {
                     )));
                 }
             }
+            let channel = &writer.resolved.qualified_name;
             let values = messages.into_iter().map(Arc::new).collect();
-            let ids = writer
+            let ids: Vec<PyMessageId> = writer
                 .resolved
                 .store
                 .append_batch(writer.resolved.channel, values)
                 .map_err(store_error)
-                .map(|ids| ids.into_iter().map(PyMessageId::new).collect())?;
+                .map(|ids| {
+                    ids.into_iter()
+                        .map(|id| PyMessageId::new(channel.clone(), id.sequence))
+                        .collect()
+                })?;
             for operation in trace_operations {
                 self.record_trace_op(operation);
             }

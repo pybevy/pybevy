@@ -11,6 +11,7 @@ from pybevy.color import Color
 from pybevy.math import URect, UVec2, UVec3, Vec2
 from pybevy.render import (
     Extent3d,
+    TextureDescriptor,
     TextureDimension,
     TextureFormat,
     TextureViewDimension,
@@ -373,10 +374,13 @@ class Image(Asset):
         Convenience method that creates a render target with the most commonly
         used format (RGBA8_UNORM_SRGB) and enables GPU readback. Unlike
         `Image.new_target_texture`, this constructor adds `COPY_SRC` usage.
+        It uses `Image.new_target_texture` with `TextureFormat.Rgba8UnormSrgb`
+        and adds `COPY_SRC` to the texture descriptor's usage flags.
 
         The texture is configured with proper usage flags for:
         - TEXTURE_BINDING: Can be sampled in shaders
         - COPY_SRC: Can be copied from (for readback)
+        - COPY_DST: Can be copied to
         - RENDER_ATTACHMENT: Can be used as a render target
 
         Args:
@@ -498,11 +502,26 @@ class Image(Asset):
         """
 
     @property
+    def texture_descriptor(self) -> TextureDescriptor:
+        """Texture descriptor, borrowing asset authority and lifetime.
+
+        Nested mutations require get_mut access and update the asset. Owned images
+        return a read-only snapshot; copy.copy() the descriptor, edit it, and
+        assign it back to texture_descriptor.
+        """
+
+    @texture_descriptor.setter
+    def texture_descriptor(self, value: TextureDescriptor) -> None: ...
+
+    @property
     def asset_usage(self) -> RenderAssetUsages:
         """Get the asset usage flags.
 
-        Indicates which worlds (main/render) can access this asset. Returns an
-        independent snapshot; assign a modified value back to update the image.
+        Indicates which worlds (main/render) can access this asset. The value
+        borrows the image's field, so `insert`, `remove`, `toggle` and `set`
+        write through to an image fetched with `get_mut`, and raise on a
+        read-only or Python-constructed image. Whole-field assignment requires
+        an owned image or mutable asset access.
         """
     @asset_usage.setter
     def asset_usage(self, value: RenderAssetUsages) -> None: ...
@@ -1481,7 +1500,11 @@ class ImageLoaderSettings:
 
     @property
     def asset_usage(self) -> RenderAssetUsages:
-        """An independent snapshot of the asset usage flags; assign to update the settings."""
+        """The asset usage flags, borrowed from these settings.
+
+        These settings are Python-owned, so in-place mutation of the returned
+        value raises; assign the property to change the flags.
+        """
 
     @asset_usage.setter
     def asset_usage(self, value: RenderAssetUsages) -> None: ...

@@ -23,7 +23,8 @@ use pybevy_core::{
 use pybevy_macros::{pyasset, pyvalue};
 use pybevy_math::{uvec2::PyUVec2, uvec3::PyUVec3, vec2::PyVec2};
 use pybevy_render::{
-    extent3d::PyExtent3d, texture_dimension::PyTextureDimension, texture_format::PyTextureFormat,
+    extent3d::PyExtent3d, texture_descriptor::PyTextureDescriptor,
+    texture_dimension::PyTextureDimension, texture_format::PyTextureFormat,
     texture_view_dimension::PyTextureViewDimension,
 };
 use pyo3::{
@@ -1249,10 +1250,30 @@ impl PyImage {
     }
 
     #[getter]
+    pub fn texture_descriptor(&self) -> PyResult<PyTextureDescriptor> {
+        drop(self.as_ref()?);
+        Ok(self.storage.borrow_field_as(
+            |image: &Image| &image.texture_descriptor,
+            |image: &mut Image| &mut image.texture_descriptor,
+        )?)
+    }
+
+    #[setter]
+    pub fn set_texture_descriptor(&mut self, descriptor: PyTextureDescriptor) -> PyResult<()> {
+        let descriptor = descriptor.try_into()?;
+        image_with_mut!(self, |image: &mut Image| {
+            image.texture_descriptor = descriptor;
+            Ok(())
+        })
+    }
+
+    #[getter]
     pub fn asset_usage(&self) -> PyResult<PyRenderAssetUsages> {
-        image_with!(self, |image: &Image| Ok(computed_owned(
-            image.asset_usage.into()
-        )))
+        drop(self.as_ref()?);
+        Ok(self.storage.borrow_field_as(
+            |image: &Image| &image.asset_usage,
+            |image: &mut Image| &mut image.asset_usage,
+        )?)
     }
 
     #[setter]

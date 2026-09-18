@@ -1,9 +1,78 @@
+from contextlib import AbstractContextManager
 from typing import ClassVar
 
 from pybevy.app import App, Plugin
+from pybevy.array import Array
+from pybevy.assets import Asset
 from pybevy.ecs import Component
 from pybevy.math import Vec2
 from pybevy.pbr import StandardMaterial as StandardMaterial
+
+class ShaderBuffer(Asset):
+    """A storage-buffer asset uploaded for shader access.
+
+    Data is supplied as raw bytes or a bounded uint8 ``Array``; callers provide
+    shader layout and padding. CPU data is consumed by render extraction and
+    is not a GPU readback. Use ``with_size`` to reserve GPU allocation size.
+    """
+
+    def __init__(
+        self, data: bytes | Array | None = None, *, copy_on_resize: bool = False
+    ) -> None: ...
+    @staticmethod
+    def with_size(size: int) -> ShaderBuffer: ...
+    def data(self) -> AbstractContextManager[Array]:
+        """Borrow read-only CPU bytes; raises RuntimeError when data is absent."""
+    def data_mut(self) -> AbstractContextManager[Array]:
+        """Borrow writable CPU bytes with asset change tracking; no GPU mapping."""
+    def data_copy(self) -> bytes | None:
+        """Copy current CPU bytes, or return None if no CPU data is present."""
+    def data_len(self) -> int | None:
+        """Current CPU byte count, or None; not the GPU allocation size."""
+    @property
+    def copy_on_resize(self) -> bool: ...
+    @copy_on_resize.setter
+    def copy_on_resize(self, value: bool) -> None: ...
+    def set_data(self, value: bytes | Array | None) -> None:
+        """Replace raw upload bytes, or clear CPU data with None; no shader encoding."""
+    def resize(self, size: int) -> None: ...
+    def resize_in_place(self, size: int) -> None: ...
+
+class TextureDescriptor:
+    """Image texture descriptor. Currently exposes usage flags only.
+
+    Obtain from Image.texture_descriptor; copy.copy() creates a mutable copy.
+    """
+
+    @property
+    def usage(self) -> TextureUsages: ...
+    @usage.setter
+    def usage(self, value: TextureUsages) -> None: ...
+    def __copy__(self) -> TextureDescriptor: ...
+
+class TextureUsages:
+    """Mutable texture descriptor usage flags. Combine flags with `|`."""
+
+    COPY_SRC: ClassVar[TextureUsages]
+    COPY_DST: ClassVar[TextureUsages]
+    TEXTURE_BINDING: ClassVar[TextureUsages]
+    STORAGE_BINDING: ClassVar[TextureUsages]
+    RENDER_ATTACHMENT: ClassVar[TextureUsages]
+    STORAGE_ATOMIC: ClassVar[TextureUsages]
+    TRANSIENT: ClassVar[TextureUsages]
+
+    def __init__(self) -> None:
+        """Create an empty set of texture usage flags."""
+
+    def __or__(self, other: TextureUsages) -> TextureUsages: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __copy__(self) -> TextureUsages: ...
+    def insert(self, other: TextureUsages) -> None: ...
+    def remove(self, other: TextureUsages) -> None: ...
+    def toggle(self, other: TextureUsages) -> None: ...
+    def set(self, other: TextureUsages, value: bool) -> None: ...
+    def contains(self, other: TextureUsages) -> bool:
+        """Whether all flags in other are present."""
 
 class Extent3d:
     """3D texture extent (width, height, depth_or_array_layers)."""

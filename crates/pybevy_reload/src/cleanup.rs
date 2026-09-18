@@ -157,10 +157,13 @@ mod tests {
     use std::time::Duration;
 
     use bevy::{
-        asset::{Asset, AssetServer, Assets, RenderAssetUsages},
+        MinimalPlugins,
+        app::App,
+        asset::{Asset, AssetApp, AssetPlugin, AssetServer, Assets, Handle, RenderAssetUsages},
         mesh::{Mesh, Mesh3d, PrimitiveTopology},
         pbr::StandardMaterial,
         reflect::TypePath,
+        render::storage::ShaderBuffer,
     };
 
     use super::*;
@@ -245,6 +248,10 @@ mod tests {
 
     #[derive(Component)]
     struct Marker;
+
+    #[derive(Component)]
+    #[allow(dead_code)]
+    struct ShaderBufferHandle(Handle<ShaderBuffer>);
 
     fn live_entity_count(world: &mut World) -> usize {
         // Resources are stored as entities; exclude them via the
@@ -363,6 +370,27 @@ mod tests {
             1,
             "orphaned asset remains until Bevy's track_assets GC runs"
         );
+    }
+
+    #[test]
+    fn full_reload_cleanup_allows_orphaned_shader_buffer_collection() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<ShaderBuffer>();
+        insert_base_set(app.world_mut(), vec![]);
+
+        let handle = app
+            .world_mut()
+            .resource_mut::<Assets<ShaderBuffer>>()
+            .add(ShaderBuffer::with_size(64, RenderAssetUsages::default()));
+        app.world_mut().spawn(ShaderBufferHandle(handle));
+        assert_eq!(live_count::<ShaderBuffer>(app.world()), 1);
+
+        clear_world_state(app.world_mut(), &mut NoopRuntime, false);
+        app.update();
+        app.update();
+
+        assert_eq!(live_count::<ShaderBuffer>(app.world()), 0);
     }
 
     #[test]

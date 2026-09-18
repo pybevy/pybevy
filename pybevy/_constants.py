@@ -48,6 +48,7 @@ def _apply() -> None:
         Vec4,
     )
     from .post_process import Bloom
+    from .render import TextureUsages
     from .sprite import Anchor
     from .text import TextBackgroundColor, TextBounds, TextColor
     from .transform import GlobalTransform, Transform
@@ -76,6 +77,7 @@ def _apply() -> None:
         (ShadowFilteringMethod, ["Hardware2x2", "Gaussian", "Temporal"]),
         # assets
         (RenderAssetUsages, ["MAIN_WORLD", "RENDER_WORLD"]),
+        (TextureUsages, ["COPY_SRC", "COPY_DST", "TEXTURE_BINDING", "STORAGE_BINDING", "RENDER_ATTACHMENT", "STORAGE_ATOMIC", "TRANSIENT"]),
         # light
         (SunDisk, ["EARTH", "OFF"]),
         # math

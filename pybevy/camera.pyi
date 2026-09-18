@@ -21,6 +21,7 @@ from pybevy.math import (
     Vec4,
     ViewFrustum,
 )
+from pybevy.render import TextureUsages
 from pybevy.transform import GlobalTransform
 from pybevy.window import NormalizedWindowRef, WindowRef
 
@@ -1569,50 +1570,21 @@ class ViewVisibility(Component):
         """Check equality with another ViewVisibility."""
 
 class CameraMainTextureUsages(Component):
-    """Controls the TextureUsages of the main texture generated for the camera.
+    """Usage flags for the camera's main texture.
 
-    This allows you to configure how the camera's output texture can be used.
-    By default, the texture can be used as a render attachment, sampled in shaders,
-    and copied from.
+    Defaults to RENDER_ATTACHMENT | TEXTURE_BINDING | COPY_SRC.
     """
 
-    COPY_SRC: int
-    """Texture usage: can copy from this texture."""
-
-    COPY_DST: int
-    """Texture usage: can copy to this texture."""
-
-    TEXTURE_BINDING: int
-    """Texture usage: can be sampled in shaders."""
-
-    STORAGE_BINDING: int
-    """Texture usage: can be used as storage texture."""
-
-    RENDER_ATTACHMENT: int
-    """Texture usage: can be used as render target."""
-
-    def __init__(self, flags: int = ...) -> None:
-        """Create a new CameraMainTextureUsages with the specified texture usage flags.
-
-        Args:
-            flags: Texture usage flags as a bitmask.
-        """
-
+    def __init__(self, value: TextureUsages = ...) -> None: ...
     @property
-    def flags(self) -> int:
-        """Get the texture usage flags as a bitmask."""
+    def value(self) -> TextureUsages:
+        """Live flags for queried components; a read-only snapshot for owned values."""
 
-    def with_(self, usages: int) -> CameraMainTextureUsages:
-        """Add additional texture usages to this component.
+    @value.setter
+    def value(self, value: TextureUsages) -> None: ...
 
-        Returns a new CameraMainTextureUsages with the combined flags.
-
-        Args:
-            usages: Texture usage flags to add as a bitmask.
-
-        Returns:
-            New CameraMainTextureUsages with combined usage flags.
-        """
+    def with_(self, usages: TextureUsages) -> CameraMainTextureUsages:
+        """Return a new component with additional texture usages."""
 
 class MainPassResolutionOverride(Component):
     """Render-world-only component, read while preparing view uniforms;
