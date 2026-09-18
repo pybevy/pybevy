@@ -302,6 +302,10 @@ impl PyAssets {
         ))
     }
 
+    fn __len__(&self, py: Python<'_>) -> PyResult<usize> {
+        self.len(py)
+    }
+
     pub fn len(&self, py: Python<'_>) -> PyResult<usize> {
         let world = self.world_ref()?;
         let bridge = self.bridge()?;

@@ -37,6 +37,8 @@ impl From<&NativeKey> for PyNativeKey {
 }
 
 impl From<PyNativeKey> for NativeKey {
+    // clippy misreads the String -> SmolStr conversion here as same-type
+    #[allow(clippy::useless_conversion)]
     fn from(value: PyNativeKey) -> Self {
         match value {
             PyNativeKey::Unidentified() => Self::Unidentified,

@@ -1,7 +1,12 @@
 use bevy::input::{ButtonInput, keyboard::KeyCode};
-use pybevy_core::{PyResource, ResourceStorage, resource_initializer};
+use pybevy_core::{PyResource, ResourceStorage, registry::global_registry, resource_initializer};
 use pybevy_macros::pyresource;
-use pyo3::{PyTypeInfo, exceptions::PyTypeError, prelude::*, types::PyType};
+use pyo3::{
+    PyTypeInfo,
+    exceptions::{PyRuntimeError, PyTypeError},
+    prelude::*,
+    types::{PyDict, PyTuple, PyType},
+};
 
 use crate::{
     key_code::{PyKeyCode, materialize_key_code},
@@ -9,10 +14,41 @@ use crate::{
     mouse_input::PyMouseInput,
 };
 
+/// Python name of the class `ButtonInput[KeyCode]` resolves to.
+const KEY_CODE_SPECIALIZATION_NAME: &str = "ButtonInput[KeyCode]";
+
+/// Attribute on `ButtonInput` holding that class.
+const KEY_CODE_SPECIALIZATION_ATTR: &str = "__pybevy_button_input_key_code__";
+
 #[pyresource(ButtonInput<KeyCode>, no_clone, bridge, "ButtonInput", default_insert)]
-#[pyclass(name = "ButtonInput", module = "pybevy.input", extends = PyResource)]
+#[pyclass(name = "ButtonInput", module = "pybevy.input", extends = PyResource, subclass)]
 pub struct PyButtonInput {
     pub(crate) storage: ResourceStorage<ButtonInput<KeyCode>>,
+}
+
+/// Build the distinct `ButtonInput[KeyCode]` class and point it at the keyboard bridge.
+pub fn register_button_input_specializations(py: Python<'_>) -> PyResult<()> {
+    let base = PyButtonInput::type_object(py);
+    let namespace = PyDict::new(py);
+    namespace.set_item("__module__", "pybevy.input")?;
+    namespace.set_item("__qualname__", KEY_CODE_SPECIALIZATION_NAME)?;
+    let bases = PyTuple::new(py, [&base])?;
+    let specialization = py
+        .get_type::<PyType>()
+        .call1((KEY_CODE_SPECIALIZATION_NAME, bases, namespace))?
+        .cast_into::<PyType>()?;
+
+    if !global_registry::register_resource_bridge_alias(
+        specialization.as_type_ptr(),
+        base.as_type_ptr(),
+    ) {
+        return Err(PyRuntimeError::new_err(
+            "ButtonInput[KeyCode] cannot be registered before the ButtonInput resource bridge",
+        ));
+    }
+
+    base.setattr(KEY_CODE_SPECIALIZATION_ATTR, &specialization)?;
+    Ok(())
 }
 
 #[pymethods]
@@ -36,7 +72,10 @@ impl PyButtonInput {
         })?;
 
         if key_type.is(PyKeyCode::type_object(py)) {
-            return Ok(PyButtonInput::type_object(py).unbind());
+            return Ok(PyButtonInput::type_object(py)
+                .getattr(KEY_CODE_SPECIALIZATION_ATTR)?
+                .cast_into::<PyType>()?
+                .unbind());
         }
         if key_type.is(PyMouseButton::type_object(py)) {
             return Ok(PyMouseInput::type_object(py).unbind());

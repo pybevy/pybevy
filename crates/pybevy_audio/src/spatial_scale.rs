@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 #[pyclass(name = "SpatialScale", module = "pybevy.audio", frozen, from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PySpatialScale {
-    pub inner: SpatialScale,
+    pub(crate) inner: SpatialScale,
 }
 
 impl From<SpatialScale> for PySpatialScale {
@@ -23,13 +23,11 @@ impl From<PySpatialScale> for SpatialScale {
 #[pymethods]
 impl PySpatialScale {
     #[new]
-    #[pyo3(signature = (scale=None))]
-    pub fn new(scale: Option<f32>) -> PyResult<Self> {
-        let inner = match scale {
-            None => SpatialScale::new(1.0),
-            Some(value) => SpatialScale::new(value),
-        };
-        Ok(Self { inner })
+    #[pyo3(signature = (scale=1.0))]
+    pub fn new(scale: f32) -> Self {
+        Self {
+            inner: SpatialScale::new(scale),
+        }
     }
 
     #[staticmethod]

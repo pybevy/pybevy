@@ -37,7 +37,7 @@ impl Default for PyWindowMode {
 
 #[pymethods]
 impl PyWindowMode {
-    fn __repr__(&self) -> String {
+    pub fn __repr__(&self) -> String {
         match self {
             PyWindowMode::Windowed() => "WindowMode.Windowed()".to_string(),
             PyWindowMode::BorderlessFullscreen { monitor } => {

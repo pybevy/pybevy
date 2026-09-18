@@ -77,11 +77,15 @@ impl PyTextureSlicer {
         self.sides_scale_mode = mode.into();
     }
 
-    pub fn __repr__(&self) -> String {
-        format!(
-            "TextureSlicer(border={:?}, center={:?}, sides={:?}, max_corner_scale={})",
-            self.border, self.center_scale_mode, self.sides_scale_mode, self.max_corner_scale
-        )
+    pub fn __repr__(&self) -> PyResult<String> {
+        Ok(format!(
+            "TextureSlicer(border={}, center_scale_mode={}, sides_scale_mode={}, \
+             max_corner_scale={})",
+            PyBorderRect::from(self.border).__repr__()?,
+            PySliceScaleMode::from(self.center_scale_mode).__repr__(),
+            PySliceScaleMode::from(self.sides_scale_mode).__repr__(),
+            self.max_corner_scale,
+        ))
     }
 }
 

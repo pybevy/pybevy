@@ -3,7 +3,13 @@ use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 #[pyenum(AppLifecycle)]
-#[pyclass(name = "AppLifecycle", module = "pybevy.window", eq, from_py_object)]
+#[pyclass(
+    name = "AppLifecycle",
+    module = "pybevy.window",
+    eq,
+    from_py_object,
+    frozen
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyAppLifecycle {
     Idle,

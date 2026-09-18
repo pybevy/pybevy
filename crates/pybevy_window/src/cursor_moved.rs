@@ -4,7 +4,7 @@ use pybevy_macros::pymessage;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
-#[pymessage(CursorMoved)]
+#[pymessage(CursorMoved, writable)]
 #[pyclass(name = "CursorMoved", module = "pybevy.window", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyCursorMoved {
@@ -20,6 +20,18 @@ impl From<&CursorMoved> for PyCursorMoved {
             delta: event.delta.map(Into::into),
             window: event.window.into(),
         }
+    }
+}
+
+impl TryFrom<&PyCursorMoved> for CursorMoved {
+    type Error = PyErr;
+
+    fn try_from(value: &PyCursorMoved) -> PyResult<Self> {
+        Ok(CursorMoved {
+            window: value.window.into(),
+            position: value.position.try_get()?,
+            delta: value.delta.as_ref().map(PyVec2::try_get).transpose()?,
+        })
     }
 }
 

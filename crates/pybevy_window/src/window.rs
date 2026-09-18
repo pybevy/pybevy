@@ -1,7 +1,7 @@
 use std::num::NonZero;
 
 use bevy::{math::DVec2, window::Window};
-use pybevy_core::{ComponentStorage, PyComponent, computed_owned};
+use pybevy_core::{ComponentStorage, PyComponent, computed_owned, public_error};
 use pybevy_macros::pycomponent;
 use pybevy_math::{compass::PyCompassOctant, uvec2::PyUVec2, vec2::PyVec2};
 use pyo3::{exceptions::PyValueError, prelude::*};
@@ -16,6 +16,16 @@ use crate::{
 
 pub const DEFAULT_APP_TITLE: &str = "PyBevy App";
 
+fn maximum_frame_latency(value: Option<u32>) -> PyResult<Option<NonZero<u32>>> {
+    value
+        .map(|value| {
+            NonZero::new(value).ok_or_else(|| {
+                PyValueError::new_err(public_error::DESIRED_MAXIMUM_FRAME_LATENCY_AT_LEAST_ONE)
+            })
+        })
+        .transpose()
+}
+
 #[pycomponent(Window, bridge, view_fields = [decorations, resizable, transparent])]
 #[pyclass(name = "Window", module = "pybevy.window", extends = PyComponent)]
 #[derive(Debug)]
@@ -26,33 +36,134 @@ pub struct PyWindow {
 #[pymethods]
 impl PyWindow {
     #[new]
+    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         *,
+        present_mode = PyPresentMode::Fifo,
         mode = PyWindowMode::default(),
+        position = None,
         resolution = PyWindowResolution::default(),
         title = DEFAULT_APP_TITLE.to_string(),
+        name = None,
+        composite_alpha_mode = PyCompositeAlphaMode::Auto,
+        resize_constraints = PyWindowResizeConstraints::new(
+            180.0,
+            120.0,
+            f32::INFINITY,
+            f32::INFINITY,
+        ),
         resizable = true,
+        enabled_buttons = PyEnabledButtons::new(true, true, true),
         decorations = true,
         transparent = false,
-        window_level = PyWindowLevel::default()
+        window_level = PyWindowLevel::default(),
+        canvas = None,
+        fit_canvas_to_parent = false,
+        prevent_default_event_handling = true,
+        ime_enabled = false,
+        ime_position = PyVec2::ZERO,
+        window_theme = None,
+        visible = true,
+        skip_taskbar = false,
+        clip_children = true,
+        desired_maximum_frame_latency = None,
+        recognize_pinch_gesture = false,
+        recognize_rotation_gesture = false,
+        recognize_doubletap_gesture = false,
+        recognize_pan_gesture = None,
+        movable_by_window_background = false,
+        fullsize_content_view = false,
+        has_shadow = true,
+        titlebar_shown = true,
+        titlebar_transparent = false,
+        titlebar_show_title = true,
+        titlebar_show_buttons = true,
+        borderless_game = true,
+        prefers_home_indicator_hidden = false,
+        prefers_status_bar_hidden = false,
+        preferred_screen_edges_deferring_system_gestures = PyScreenEdge::None,
     ))]
     pub fn new(
+        present_mode: PyPresentMode,
         mode: PyWindowMode,
+        position: Option<PyRef<'_, PyWindowPosition>>,
         resolution: PyWindowResolution,
         title: String,
+        name: Option<String>,
+        composite_alpha_mode: PyCompositeAlphaMode,
+        resize_constraints: PyWindowResizeConstraints,
         resizable: bool,
+        enabled_buttons: PyEnabledButtons,
         decorations: bool,
         transparent: bool,
         window_level: PyWindowLevel,
+        canvas: Option<String>,
+        fit_canvas_to_parent: bool,
+        prevent_default_event_handling: bool,
+        ime_enabled: bool,
+        ime_position: PyVec2,
+        window_theme: Option<PyWindowTheme>,
+        visible: bool,
+        skip_taskbar: bool,
+        clip_children: bool,
+        desired_maximum_frame_latency: Option<u32>,
+        recognize_pinch_gesture: bool,
+        recognize_rotation_gesture: bool,
+        recognize_doubletap_gesture: bool,
+        recognize_pan_gesture: Option<(u8, u8)>,
+        movable_by_window_background: bool,
+        fullsize_content_view: bool,
+        has_shadow: bool,
+        titlebar_shown: bool,
+        titlebar_transparent: bool,
+        titlebar_show_title: bool,
+        titlebar_show_buttons: bool,
+        borderless_game: bool,
+        prefers_home_indicator_hidden: bool,
+        prefers_status_bar_hidden: bool,
+        preferred_screen_edges_deferring_system_gestures: PyScreenEdge,
     ) -> PyResult<PyClassInitializer<Self>> {
+        let defaults = Window::default();
         let window = Window {
-            title,
-            resolution: resolution.try_into()?,
-            decorations,
-            resizable,
-            transparent,
+            present_mode: present_mode.into(),
             mode: mode.into(),
+            position: position.map_or(defaults.position, |value| value.0),
+            resolution: resolution.try_into()?,
+            title,
+            name,
+            composite_alpha_mode: composite_alpha_mode.into(),
+            resize_constraints: resize_constraints.try_into()?,
+            resizable,
+            enabled_buttons: enabled_buttons.try_into()?,
+            decorations,
+            transparent,
             window_level: window_level.into(),
+            canvas,
+            fit_canvas_to_parent,
+            prevent_default_event_handling,
+            ime_enabled,
+            ime_position: (&ime_position).try_into()?,
+            window_theme: window_theme.map(Into::into),
+            visible,
+            skip_taskbar,
+            clip_children,
+            desired_maximum_frame_latency: maximum_frame_latency(desired_maximum_frame_latency)?,
+            recognize_pinch_gesture,
+            recognize_rotation_gesture,
+            recognize_doubletap_gesture,
+            recognize_pan_gesture,
+            movable_by_window_background,
+            fullsize_content_view,
+            has_shadow,
+            titlebar_shown,
+            titlebar_transparent,
+            titlebar_show_title,
+            titlebar_show_buttons,
+            borderless_game,
+            prefers_home_indicator_hidden,
+            prefers_status_bar_hidden,
+            preferred_screen_edges_deferring_system_gestures:
+                preferred_screen_edges_deferring_system_gestures.into(),
             ..Default::default()
         };
 
@@ -462,13 +573,7 @@ impl PyWindow {
 
     #[setter]
     pub fn set_desired_maximum_frame_latency(&mut self, value: Option<u32>) -> PyResult<()> {
-        let latency = match value {
-            Some(v) => Some(NonZero::new(v).ok_or_else(|| {
-                PyValueError::new_err("desired_maximum_frame_latency must be at least 1")
-            })?),
-            None => None,
-        };
-        self.as_mut()?.desired_maximum_frame_latency = latency;
+        self.as_mut()?.desired_maximum_frame_latency = maximum_frame_latency(value)?;
         Ok(())
     }
 
@@ -572,12 +677,19 @@ impl PyWindow {
 
     pub fn __repr__(&self) -> PyResult<String> {
         let window = self.as_ref()?;
+        let flag = |value: bool| if value { "True" } else { "False" };
         Ok(format!(
-            "Window(title='{}', {}x{}, focused={})",
+            "Window(title='{}', {}x{}, decorations={}, resizable={}, mode={}, \
+             transparent={}, window_level={}, focused={})",
             window.title,
             window.resolution.width(),
             window.resolution.height(),
-            window.focused
+            flag(window.decorations),
+            flag(window.resizable),
+            PyWindowMode::from(window.mode).__repr__(),
+            flag(window.transparent),
+            PyWindowLevel::from(window.window_level).__repr__(),
+            flag(window.focused),
         ))
     }
 }

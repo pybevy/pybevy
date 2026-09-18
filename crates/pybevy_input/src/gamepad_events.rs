@@ -14,7 +14,7 @@ use crate::{
     button_state::PyButtonState, gamepad_axis::PyGamepadAxis, gamepad_button::PyGamepadButton,
 };
 
-#[pymessage(GamepadButtonChangedEvent)]
+#[pymessage(GamepadButtonChangedEvent, writable)]
 #[pyclass(name = "GamepadButtonChangedEvent", module = "pybevy.input", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyGamepadButtonChangedEvent {
@@ -46,6 +46,19 @@ impl From<&GamepadButtonChangedEvent> for PyGamepadButtonChangedEvent {
             state: event.state.into(),
             value: event.value,
         }
+    }
+}
+
+impl TryFrom<&PyGamepadButtonChangedEvent> for GamepadButtonChangedEvent {
+    type Error = PyErr;
+
+    fn try_from(value: &PyGamepadButtonChangedEvent) -> PyResult<Self> {
+        Ok(GamepadButtonChangedEvent {
+            entity: value.entity.into(),
+            button: value.button.into(),
+            state: value.state.into(),
+            value: value.value,
+        })
     }
 }
 
@@ -99,7 +112,7 @@ impl PyGamepadButtonChangedEvent {
     }
 }
 
-#[pymessage(GamepadAxisChangedEvent)]
+#[pymessage(GamepadAxisChangedEvent, writable)]
 #[pyclass(name = "GamepadAxisChangedEvent", module = "pybevy.input", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyGamepadAxisChangedEvent {
@@ -128,6 +141,18 @@ impl From<&GamepadAxisChangedEvent> for PyGamepadAxisChangedEvent {
             axis: event.axis.into(),
             value: event.value,
         }
+    }
+}
+
+impl TryFrom<&PyGamepadAxisChangedEvent> for GamepadAxisChangedEvent {
+    type Error = PyErr;
+
+    fn try_from(value: &PyGamepadAxisChangedEvent) -> PyResult<Self> {
+        Ok(GamepadAxisChangedEvent {
+            entity: value.entity.into(),
+            axis: value.axis.into(),
+            value: value.value,
+        })
     }
 }
 
@@ -210,7 +235,7 @@ fn optional_id(id: Option<u16>) -> String {
     id.map_or_else(|| "None".to_string(), |id| id.to_string())
 }
 
-#[pymessage(GamepadConnectionEvent)]
+#[pymessage(GamepadConnectionEvent, writable)]
 #[pyclass(name = "GamepadConnectionEvent", module = "pybevy.input", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyGamepadConnectionEvent {
@@ -230,6 +255,17 @@ impl From<&GamepadConnectionEvent> for PyGamepadConnectionEvent {
             gamepad: event.gamepad.into(),
             connection: event.connection.clone().into(),
         }
+    }
+}
+
+impl TryFrom<&PyGamepadConnectionEvent> for GamepadConnectionEvent {
+    type Error = PyErr;
+
+    fn try_from(value: &PyGamepadConnectionEvent) -> PyResult<Self> {
+        Ok(GamepadConnectionEvent {
+            gamepad: value.gamepad.into(),
+            connection: value.connection.clone().into(),
+        })
     }
 }
 
@@ -275,7 +311,7 @@ impl PyGamepadConnectionEvent {
     }
 }
 
-#[pymessage(GamepadButtonStateChangedEvent)]
+#[pymessage(GamepadButtonStateChangedEvent, writable)]
 #[pyclass(name = "GamepadButtonStateChangedEvent", module = "pybevy.input", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyGamepadButtonStateChangedEvent {
@@ -304,6 +340,18 @@ impl From<&GamepadButtonStateChangedEvent> for PyGamepadButtonStateChangedEvent 
             button: event.button.into(),
             state: event.state.into(),
         }
+    }
+}
+
+impl TryFrom<&PyGamepadButtonStateChangedEvent> for GamepadButtonStateChangedEvent {
+    type Error = PyErr;
+
+    fn try_from(value: &PyGamepadButtonStateChangedEvent) -> PyResult<Self> {
+        Ok(GamepadButtonStateChangedEvent {
+            entity: value.entity.into(),
+            button: value.button.into(),
+            state: value.state.into(),
+        })
     }
 }
 

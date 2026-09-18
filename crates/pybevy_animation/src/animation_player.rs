@@ -1,5 +1,9 @@
-use bevy::animation::{AnimationPlayer, RepeatAnimation, graph::AnimationNodeIndex};
-use pybevy_core::{ComponentStorage, PyComponent};
+use bevy::animation::{
+    ActiveAnimation, AnimationPlayer, RepeatAnimation, graph::AnimationNodeIndex,
+};
+use pybevy_core::{
+    ComponentStorage, PyComponent, public_error::ANIMATION_PLAYER_ANIMATION_MISSING,
+};
 use pybevy_macros::pycomponent;
 use pyo3::{PyRefMut, Python, exceptions::PyValueError, prelude::*};
 
@@ -15,23 +19,23 @@ pub struct PyActiveAnimation {
 impl PyActiveAnimation {
     fn with_animation<T, F>(&self, f: F) -> PyResult<T>
     where
-        F: FnOnce(&bevy::animation::ActiveAnimation) -> PyResult<T>,
+        F: FnOnce(&ActiveAnimation) -> PyResult<T>,
     {
         let player = self.storage.as_ref()?;
         let anim = player
             .animation(self.node_index)
-            .ok_or_else(|| PyValueError::new_err("Animation not found for node index"))?;
+            .ok_or_else(|| PyValueError::new_err(ANIMATION_PLAYER_ANIMATION_MISSING))?;
         f(anim)
     }
 
     fn with_animation_mut<T, F>(&mut self, f: F) -> PyResult<T>
     where
-        F: FnOnce(&mut bevy::animation::ActiveAnimation) -> PyResult<T>,
+        F: FnOnce(&mut ActiveAnimation) -> PyResult<T>,
     {
         let mut player = self.storage.as_mut()?;
         let anim = player
             .animation_mut(self.node_index)
-            .ok_or_else(|| PyValueError::new_err("Animation not found for node index"))?;
+            .ok_or_else(|| PyValueError::new_err(ANIMATION_PLAYER_ANIMATION_MISSING))?;
         f(anim)
     }
 }
@@ -87,7 +91,7 @@ impl PyActiveAnimation {
 
     pub fn set_repeat<'py>(
         mut pyself: PyRefMut<'py, Self>,
-        repeat: &PyRepeatAnimation,
+        repeat: PyRepeatAnimation,
     ) -> PyResult<PyRefMut<'py, Self>> {
         pyself.with_animation_mut(|anim| {
             anim.set_repeat(RepeatAnimation::from(repeat));

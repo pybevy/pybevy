@@ -128,11 +128,15 @@ impl PyColorMaterial {
     pub fn __repr__(&self) -> PyResult<String> {
         let mat = self.as_ref()?;
         Ok(format!(
-            "ColorMaterial(color={:?}, alpha_mode={:?}, uv_transform={:?}, texture={:?})",
-            mat.color,
-            mat.alpha_mode,
-            mat.uv_transform,
-            mat.texture.is_some()
+            "ColorMaterial(color={}, alpha_mode={}, uv_transform={}, texture={})",
+            PyColor::from(Color::from(mat.color)).__repr__()?,
+            PyAlphaMode2d::from(mat.alpha_mode).__repr__(),
+            PyAffine2::from_affine2(mat.uv_transform).__repr__()?,
+            if mat.texture.is_some() {
+                "True"
+            } else {
+                "False"
+            }
         ))
     }
 }

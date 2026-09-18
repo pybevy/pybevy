@@ -1,4 +1,21 @@
 use bevy::ui::{Node, UiRect, Val};
+use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_macros::pycomponent;
+use pyo3::{exceptions::PyValueError, prelude::*};
+
+use crate::{
+    PyAlignContent, PyAlignItems, PyAlignSelf, PyBoxSizing, PyDisplay, PyFlexDirection, PyFlexWrap,
+    PyGridAutoFlow, PyInlineDirection, PyJustifyContent, PyJustifyItems, PyJustifySelf,
+    PyOverflowAxis, PyPositionType,
+    border_radius::PyBorderRadius,
+    grid_placement::PyGridPlacement,
+    grid_track::PyGridTrack,
+    overflow::PyOverflow,
+    overflow_clip_margin::PyOverflowClipMargin,
+    repeated_grid_track::PyRepeatedGridTrack,
+    ui_rect::PyUiRect,
+    val::{PyVal, extract_val_from_any},
+};
 
 fn validate_non_negative_rect(rect: UiRect, parameter: &str) -> PyResult<UiRect> {
     for (side, value) in [
@@ -24,23 +41,6 @@ fn validate_non_negative_rect(rect: UiRect, parameter: &str) -> PyResult<UiRect>
     }
     Ok(rect)
 }
-use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::pycomponent;
-use pyo3::{exceptions::PyValueError, prelude::*};
-
-use crate::{
-    PyAlignContent, PyAlignItems, PyAlignSelf, PyBoxSizing, PyDisplay, PyFlexDirection, PyFlexWrap,
-    PyGridAutoFlow, PyInlineDirection, PyJustifyContent, PyJustifyItems, PyJustifySelf,
-    PyOverflowAxis, PyPositionType,
-    border_radius::PyBorderRadius,
-    grid_placement::PyGridPlacement,
-    grid_track::PyGridTrack,
-    overflow::PyOverflow,
-    overflow_clip_margin::PyOverflowClipMargin,
-    repeated_grid_track::PyRepeatedGridTrack,
-    ui_rect::PyUiRect,
-    val::{PyVal, extract_val_from_any},
-};
 
 #[pycomponent(Node, bridge)]
 #[pyclass(name = "Node", module = "pybevy.ui", extends = PyComponent)]

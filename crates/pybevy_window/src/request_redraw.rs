@@ -3,7 +3,7 @@ use pybevy_core::PyMessage;
 use pybevy_macros::pymessage;
 use pyo3::prelude::*;
 
-#[pymessage(RequestRedraw)]
+#[pymessage(RequestRedraw, writable)]
 #[pyclass(name = "RequestRedraw", module = "pybevy.window", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PyRequestRedraw;
@@ -11,6 +11,14 @@ pub struct PyRequestRedraw;
 impl From<&RequestRedraw> for PyRequestRedraw {
     fn from(_event: &RequestRedraw) -> Self {
         PyRequestRedraw
+    }
+}
+
+impl TryFrom<&PyRequestRedraw> for RequestRedraw {
+    type Error = PyErr;
+
+    fn try_from(_value: &PyRequestRedraw) -> PyResult<Self> {
+        Ok(RequestRedraw)
     }
 }
 

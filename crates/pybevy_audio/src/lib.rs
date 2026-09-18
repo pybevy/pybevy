@@ -19,10 +19,10 @@ use pyo3::prelude::*;
 pub mod prelude {
     pub use crate::{
         PyAudioPlugin, audio_player::PyAudioPlayer, audio_sink::PyAudioSink,
-        audio_source::PyAudioSource, global_volume::PyGlobalVolume, pitch::PyPitch,
-        playback_mode::PyPlaybackMode, playback_settings::PyPlaybackSettings,
-        spatial_audio_sink::PySpatialAudioSink, spatial_listener::PySpatialListener,
-        spatial_scale::PySpatialScale, volume::PyVolume,
+        audio_source::PyAudioSource, default_spatial_scale::PyDefaultSpatialScale,
+        global_volume::PyGlobalVolume, pitch::PyPitch, playback_mode::PyPlaybackMode,
+        playback_settings::PyPlaybackSettings, spatial_audio_sink::PySpatialAudioSink,
+        spatial_listener::PySpatialListener, spatial_scale::PySpatialScale, volume::PyVolume,
     };
 }
 

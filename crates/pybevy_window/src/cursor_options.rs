@@ -63,9 +63,12 @@ impl PyCursorOptions {
 
     pub fn __repr__(&self) -> PyResult<String> {
         let cursor = self.as_ref()?;
+        let flag = |value: bool| if value { "True" } else { "False" };
         Ok(format!(
-            "CursorOptions(visible={}, grab_mode={:?}, hit_test={})",
-            cursor.visible, cursor.grab_mode, cursor.hit_test
+            "CursorOptions(visible={}, grab_mode={}, hit_test={})",
+            flag(cursor.visible),
+            PyCursorGrabMode::from(cursor.grab_mode).__repr__(),
+            flag(cursor.hit_test)
         ))
     }
 }

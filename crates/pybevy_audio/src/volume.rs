@@ -1,34 +1,20 @@
 use bevy::audio::Volume;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
+#[pyenum(Volume)]
 #[pyclass(name = "Volume", module = "pybevy.audio", eq, frozen, from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub enum PyVolume {
+    #[py_bevy(tuple)]
     Linear { value: f32 },
+    #[py_bevy(tuple)]
     Decibels { value: f32 },
 }
 
 impl PartialEq for PyVolume {
     fn eq(&self, other: &Self) -> bool {
         self.inner() == other.inner()
-    }
-}
-
-impl From<Volume> for PyVolume {
-    fn from(volume: Volume) -> Self {
-        match volume {
-            Volume::Linear(value) => PyVolume::Linear { value },
-            Volume::Decibels(value) => PyVolume::Decibels { value },
-        }
-    }
-}
-
-impl From<PyVolume> for Volume {
-    fn from(volume: PyVolume) -> Self {
-        match volume {
-            PyVolume::Linear { value } => Volume::Linear(value),
-            PyVolume::Decibels { value } => Volume::Decibels(value),
-        }
     }
 }
 
@@ -82,12 +68,5 @@ impl PyVolume {
 
     fn __truediv__(&self, other: &Self) -> Self {
         Self::from_volume(self.inner() / other.inner())
-    }
-
-    fn __repr__(&self) -> String {
-        match self {
-            PyVolume::Linear { value } => format!("Volume.Linear({value})"),
-            PyVolume::Decibels { value } => format!("Volume.Decibels({value})"),
-        }
     }
 }

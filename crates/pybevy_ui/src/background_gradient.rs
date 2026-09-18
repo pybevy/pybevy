@@ -33,6 +33,10 @@ impl PyBackgroundGradient {
         Ok(self.as_ref()?.0.iter().cloned().map(|g| g.into()).collect())
     }
 
+    fn __len__(&self) -> PyResult<usize> {
+        self.len()
+    }
+
     pub fn len(&self) -> PyResult<usize> {
         Ok(self.as_ref()?.0.len())
     }

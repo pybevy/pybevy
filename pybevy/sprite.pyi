@@ -48,6 +48,10 @@ class SpritePlugin(Plugin):
 class AlphaMode2d:
     """Transparency mode for 2D sprites and materials."""
 
+    def __copy__(self) -> AlphaMode2d: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> AlphaMode2d: ...
+
+
     class Opaque(AlphaMode2d):
         """Ignore base-color alpha and render fully opaque."""
         __match_args__: ClassVar[tuple[()]]
@@ -86,6 +90,10 @@ class SpriteImageMode:
                 print(mode)
         ```
     """
+
+    def __copy__(self) -> SpriteImageMode: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> SpriteImageMode: ...
+
 
     class Auto(SpriteImageMode):
         """Render the image without explicit scaling or slicing."""
@@ -171,25 +179,25 @@ class Anchor(Component):
         from pybevy.transform import Transform
 
         # Sprite positioned at (100, 50) with center as anchor
-        app.spawn((
+        commands.spawn(
             Sprite.from_image(image),
             Transform.from_xyz(100.0, 50.0, 0.0),
             Anchor.CENTER  # (0, 0) - sprite center at (100, 50)
-        ))
+        )
 
         # Bottom-left corner at (100, 50)
-        app.spawn((
+        commands.spawn(
             Sprite.from_image(image),
             Transform.from_xyz(100.0, 50.0, 0.0),
             Anchor.BOTTOM_LEFT  # (-0.5, -0.5)
-        ))
+        )
 
         # Custom anchor point
-        app.spawn((
+        commands.spawn(
             Sprite.from_image(image),
             Transform.from_xyz(100.0, 50.0, 0.0),
             Anchor.custom(Vec2(0.25, -0.25))  # Right of center, below center
-        ))
+        )
         ```
 
     Notes:
@@ -370,6 +378,10 @@ class SpriteScalingMode:
         - SpriteImageMode.Scale(): Applies scaling mode to sprite rendering
     """
 
+    def __copy__(self) -> SpriteScalingMode: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> SpriteScalingMode: ...
+
+
     FillCenter: ClassVar[SpriteScalingMode]
     """Scale to fill sprite area, centered. May crop edges to maintain aspect ratio."""
 
@@ -392,6 +404,10 @@ class SpriteScalingMode:
 
 class SliceScaleMode:
     """Scaling mode for nine-patch texture slices."""
+
+    def __copy__(self) -> SliceScaleMode: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> SliceScaleMode: ...
+
 
     class Stretch(SliceScaleMode):
         """Stretch the slice to fit the target area."""
@@ -536,13 +552,13 @@ class Sprite(Component):
         from pybevy.math import Vec2
 
         # Simple sprite from an image
-        app.spawn((
+        commands.spawn(
             Sprite.from_image(image_handle),
             Transform.from_xyz(100.0, 50.0, 0.0),
-        ))
+        )
 
         # Sprite with custom size and color tint
-        app.spawn((
+        commands.spawn(
             Sprite(
                 image=image_handle,
                 color=Color.srgb(1.0, 0.5, 0.5),  # Red tint
@@ -550,20 +566,20 @@ class Sprite(Component):
                 flip_x=True
             ),
             Transform.from_xyz(200.0, 100.0, 0.0),
-        ))
+        )
 
         # Solid color rectangle
-        app.spawn((
+        commands.spawn(
             Sprite.from_color(Color.srgb(0.2, 0.4, 0.8), Vec2(100.0, 50.0)),
             Transform.from_xyz(0.0, 0.0, 0.0),
-        ))
+        )
 
         # Sprite from texture atlas (sprite sheet)
         atlas = TextureAtlas(...)
-        app.spawn((
+        commands.spawn(
             Sprite.from_atlas_image(image_handle, atlas),
             Transform.from_xyz(0.0, 0.0, 0.0),
-        ))
+        )
         ```
 
     Notes:
@@ -701,16 +717,16 @@ class Sprite(Component):
         Examples:
             ```python
             # Red rectangle 100x50
-            app.spawn((
+            commands.spawn(
                 Sprite.from_color(Color.srgb(1.0, 0.0, 0.0), Vec2(100.0, 50.0)),
                 Transform.from_xyz(0.0, 0.0, 0.0),
-            ))
+            )
 
             # Semi-transparent blue square
-            app.spawn((
+            commands.spawn(
                 Sprite.from_color(Color.srgba(0.0, 0.0, 1.0, 0.5), Vec2(50.0, 50.0)),
                 Transform.from_xyz(100.0, 0.0, 0.0),
-            ))
+            )
             ```
         """
 
@@ -731,10 +747,10 @@ class Sprite(Component):
         Examples:
             ```python
             # Create a 64x64 sprite (image will be scaled to fit)
-            app.spawn((
+            commands.spawn(
                 Sprite.sized((64.0, 64.0)),
                 Transform.from_xyz(0.0, 0.0, 0.0),
-            ))
+            )
             ```
         """
 

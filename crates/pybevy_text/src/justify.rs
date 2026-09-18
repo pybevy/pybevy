@@ -3,8 +3,15 @@ use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 #[pyenum(Justify)]
-#[pyclass(name = "Justify", module = "pybevy.text", eq, frozen, from_py_object)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[pyclass(
+    name = "Justify",
+    module = "pybevy.text",
+    eq,
+    hash,
+    frozen,
+    from_py_object
+)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyJustify {
     Left,
     Center,
