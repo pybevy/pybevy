@@ -23,9 +23,9 @@ impl PyWinitPlugin {
         (PyWinitPlugin { settings }, PyPlugin).into()
     }
 
-    pub fn __repr__(&self) -> PyResult<String> {
+    pub fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
         match &self.settings {
-            Some(s) => Ok(format!("WinitPlugin(settings={})", s.__repr__())),
+            Some(s) => Ok(format!("WinitPlugin(settings={})", s.__repr__(py)?)),
             None => Ok("WinitPlugin()".to_string()),
         }
     }
