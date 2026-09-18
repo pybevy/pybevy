@@ -519,7 +519,7 @@ app.configure_sets(Update, MovementSystems.run_if(is_game_active))
 
 Use `chain(first, second, third)` when the systems form one simple sequential
 pipeline. Use sets when multiple systems share a phase or other code needs a
-stable ordering target.
+stable ordering target. Import `chain` from `pybevy.ecs` or `pybevy.prelude`.
 
 The same helper chains system-set configurations:
 
@@ -634,6 +634,9 @@ Query[AnyOf[tuple[Transform, Visibility]]]
 # Or combines query filters; each tuple item is one alternative
 Query[Entity, Or[tuple[With[Sprite], With[Mesh3d]]]]
 ```
+
+`Optional` is `typing.Optional` re-exported by `pybevy.ecs`, so it can be
+imported beside `Query`, `Mut`, and the filters used above.
 
 A query needs data in the first position. Filter-only forms such as
 `Query[With[Player]]` raise `TypeError`. Use `Query[Player]` for components
@@ -804,6 +807,11 @@ def receive_damage(reader: MessageReader[DamageEvent], query: Query[Mut[Player]]
 ```
 
 `MessageWriter` methods: `write(msg)`, `write_batch([msg1, msg2])`, `write_default()`.
+Writes return `MessageId` values (a list for `write_batch`) with read-only `id`.
+IDs compare and hash by message type and numeric ID; ordering requires the same
+message type. Custom types use their registered qualified name, preserved across
+reloads and unaffected by later class metadata edits. Native types use Bevy's type
+identity. IDs do not retain the Python class or message payload.
 `MessageReader` methods: iteration via `for msg in reader`, `read()`, reader-local `clear()`, `is_empty()`, `len()`. Each reader parameter has an independent cursor, and iteration consumes only values actually yielded.
 
 For a custom Python message system that must read, mutate, and write the same channel, use

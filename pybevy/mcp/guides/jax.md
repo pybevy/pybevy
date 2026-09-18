@@ -42,11 +42,10 @@ from pybevy.ecs import View
 # 1. Define kernel at MODULE LEVEL. XLA compiles on first call and caches.
 @jax.jit
 def my_kernel(pos, speed, t, dt):
-    # pos is SimpleNamespace(x=, y=, z=) from Vec3ViewColumn pytree
-    from types import SimpleNamespace
+    # pos exposes x, y, z as JAX arrays.
     new_x = pos.x + jnp.cos(speed + t) * dt
     new_y = jnp.maximum(pos.y + jnp.sin(speed + t) * dt, 0.0)
-    return SimpleNamespace(x=new_x, y=new_y, z=pos.z)
+    return new_x, new_y, pos.z
 
 # 2. System extracts ViewColumns, passes to kernel, writes back
 def my_system(
@@ -61,10 +60,10 @@ def my_system(
         comp = batch.column(MyComponent)
 
         # Read: Vec3ViewColumn auto-converts via pytree protocol
-        new_pos = my_kernel(pos.translation, comp.speed, t, dt)
+        new_x, new_y, new_z = my_kernel(pos.translation, comp.speed, t, dt)
 
-        # Write back: accepts SimpleNamespace with .x, .y, .z
-        pos.translation.from_jax(new_pos)
+        # Write back: accepts 3 arrays or an object with .x, .y, .z
+        pos.translation.from_jax(new_x, new_y, new_z)
 ```
 
 ## Data Flow
@@ -92,7 +91,7 @@ col.from_jax(arr)     # Write jax.Array back into ECS storage
 ### Vec3ViewColumn / QuatViewColumn Write-Back
 
 ```python
-# From SimpleNamespace (matches pytree unflatten output)
+# From any object with .x, .y, .z, including SimpleNamespace
 pos.translation.from_jax(result)     # result has .x, .y, .z attributes
 
 # From separate arrays
@@ -102,6 +101,14 @@ pos.translation.from_jax(new_x, new_y, new_z)
 col.rotation.from_jax(result)        # result has .x, .y, .z, .w
 col.rotation.from_jax(qx, qy, qz, qw)
 ```
+
+### Pytree Output Type
+
+`Vec3ViewColumn` and `QuatViewColumn` tree results are private registered
+`SimpleNamespace` subclasses.
+Importing `jax_ext` does not register the stdlib class, and `from_jax()` still
+accepts objects with the component attributes. A jitted kernel must return
+arrays or a registered pytree rather than a bare `SimpleNamespace`.
 
 ### Transparent Pytree Conversion
 
@@ -121,7 +128,7 @@ Vec3ViewColumn flattens to 3 arrays (x, y, z):
 ```python
 @jax.jit
 def kernel(translation):
-    # translation is SimpleNamespace(x=array, y=array, z=array)
+    # translation exposes x, y, z as JAX arrays
     return translation.x + 1.0, translation.y + 2.0, translation.z + 3.0
 
 new_x, new_y, new_z = kernel(pos.translation)
@@ -172,8 +179,6 @@ class Body(Component):
 
 @jax.jit
 def nbody_step(pos, mass, dt):
-    from types import SimpleNamespace
-    # pos is SimpleNamespace(x=, y=, z=) from Vec3ViewColumn pytree
     dx = pos.x[:, None] - pos.x[None, :]
     dy = pos.y[:, None] - pos.y[None, :]
     dz = pos.z[:, None] - pos.z[None, :]
@@ -184,7 +189,7 @@ def nbody_step(pos, mass, dt):
     ay = jnp.sum(dy * inv_r3 * mass[None, :], axis=1) * dt
     az = jnp.sum(dz * inv_r3 * mass[None, :], axis=1) * dt
 
-    return SimpleNamespace(x=pos.x + ax, y=pos.y + ay, z=pos.z + az)
+    return pos.x + ax, pos.y + ay, pos.z + az
 
 def gravity_system(
     view: View[tuple[Mut[Transform], Mass], With[Body]],
@@ -198,8 +203,8 @@ def gravity_system(
         pos = batch.column_mut(Transform)
         mass_col = batch.column(Mass)
 
-        new_pos = nbody_step(pos.translation, mass_col.value, dt)
-        pos.translation.from_jax(new_pos)
+        new_x, new_y, new_z = nbody_step(pos.translation, mass_col.value, dt)
+        pos.translation.from_jax(new_x, new_y, new_z)
 ```
 
 ## JAX vs Numba

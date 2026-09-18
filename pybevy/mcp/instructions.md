@@ -190,9 +190,16 @@ with other Apps; duplicate native plugins in the same App raise `RuntimeError`.
 
 4. **Full setup** - read `guide://headless` for a complete working scene.
 
-`RenderAssetUsages` in `pybevy.assets` supports `insert`, `remove`, `toggle`,
-and `set`. Getter results are independent mutable snapshots; assign them back
-to update an image, mesh, or loader setting. Flag constants return fresh values.
+Texture flags belong to `pybevy.render.TextureUsages`; asset world flags belong to
+`pybevy.assets.RenderAssetUsages`. Both support in-place `insert`, `remove`,
+`toggle`, and `set`; flag constants return fresh values.
+
+`Image.texture_descriptor.usage` and `CameraMainTextureUsages.value` borrow their parent's access
+mode and lifetime. Nested writes persist through mutable asset/query access.
+Owned parents return read-only snapshots; copy and replace the parent field.
+Use `copy.copy()` for independent mutable flags. The same rules apply to
+`Image.asset_usage`, `Mesh.asset_usage`, `ImageLoaderSettings.asset_usage`,
+and `GltfLoaderSettings.load_meshes`/`load_materials`.
 
 ## Getting Started
 

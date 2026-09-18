@@ -20,7 +20,7 @@ Controls:
 
 import math
 from dataclasses import dataclass, field
-from types import SimpleNamespace
+from typing import Protocol
 
 try:
     import jax  # type: ignore[import-untyped,import-not-found]
@@ -41,6 +41,15 @@ N_BODIES = 512
 GRAVITY_STRENGTH = 50.0
 SOFTENING = 0.5
 SPAWN_RADIUS = 30.0
+
+
+class _Vec3Arrays(Protocol):
+    x: jax.Array
+    y: jax.Array
+    z: jax.Array
+
+
+type _Vec3ArrayTuple = tuple[jax.Array, jax.Array, jax.Array]
 
 
 
@@ -64,14 +73,14 @@ class Body(Component):
 
 @jax.jit
 def nbody_step(
-    pos: SimpleNamespace,
-    vel: SimpleNamespace,
-    mass: jnp.ndarray,
+    pos: _Vec3Arrays,
+    vel: _Vec3Arrays,
+    mass: jax.Array,
     dt: float,
-) -> tuple[SimpleNamespace, SimpleNamespace]:
+) -> tuple[_Vec3ArrayTuple, _Vec3ArrayTuple]:
     """All-pairs gravitational interaction.
 
-    pos and vel are SimpleNamespace(x=, y=, z=) from Vec3ViewColumn pytree.
+    pos and vel are pytrees exposing x, y, and z arrays.
     For N bodies, computes NxN distance matrix and sums forces.
     This is O(n^2) -- exactly the workload where GPU shines.
     """
@@ -88,17 +97,17 @@ def nbody_step(
     az = jnp.sum(dz * inv_r3 * mass[None, :], axis=1) * GRAVITY_STRENGTH
 
     # Integrate velocity
-    new_vel = SimpleNamespace(
-        x=vel.x + ax * dt,
-        y=vel.y + ay * dt,
-        z=vel.z + az * dt,
+    new_vel = (
+        vel.x + ax * dt,
+        vel.y + ay * dt,
+        vel.z + az * dt,
     )
 
     # Integrate position
-    new_pos = SimpleNamespace(
-        x=pos.x + new_vel.x * dt,
-        y=pos.y + new_vel.y * dt,
-        z=pos.z + new_vel.z * dt,
+    new_pos = (
+        pos.x + new_vel[0] * dt,
+        pos.y + new_vel[1] * dt,
+        pos.z + new_vel[2] * dt,
     )
 
     return new_pos, new_vel
@@ -170,14 +179,14 @@ def gravity_system(
         vel = batch.column_mut(Velocity)
         mass_col = batch.column(Mass)
 
-        # Vec3ViewColumn passes directly as pytree → SimpleNamespace(x=, y=, z=)
-        new_pos, new_vel = nbody_step(
+        # Vec3ViewColumn passes directly as a pytree exposing x, y, and z arrays.
+        (px, py, pz), (vx, vy, vz) = nbody_step(
             pos.translation, vel.vel, mass_col.value, dt,  # type: ignore[attr-defined]
         )
 
-        # Write results back to ECS (accepts SimpleNamespace with .x, .y, .z)
-        pos.translation.from_jax(new_pos)
-        vel.vel.from_jax(new_vel)  # type: ignore[attr-defined]
+        # Write each result array back to ECS storage.
+        pos.translation.from_jax(px, py, pz)
+        vel.vel.from_jax(vx, vy, vz)  # type: ignore[attr-defined]
 
 
 

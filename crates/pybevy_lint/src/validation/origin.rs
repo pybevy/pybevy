@@ -756,7 +756,7 @@ enum FoundItem<'a> {
 }
 
 /// Synthetic upstream items for wrappers whose audited declaration lives
-/// outside the pinned registry (std::ops::Range<f32>, wgpu-types Extent3d).
+/// outside the pinned registry (std::ops::Range<f32>, wgpu-types values).
 /// These resolve so the reviewed FIELD contract is ENFORCED by the policy —
 /// never masked behind an E013 exception.
 fn synthetic_upstream(preferred: &str, short_name: &str) -> Option<BevyItem> {
@@ -768,6 +768,7 @@ fn synthetic_upstream(preferred: &str, short_name: &str) -> Option<BevyItem> {
             "height".to_string(),
             "depth_or_array_layers".to_string(),
         ],
+        ("render", "TextureUsages") => Vec::new(),
         _ => return None,
     };
     Some(bevy_item_with_fields(

@@ -622,7 +622,12 @@ fn find_matching_python_class<'a>(
     rust_class: &PyClassDef,
     python_classes: &'a [PyClassDef],
 ) -> Option<&'a PyClassDef> {
-    if let Some(rust_module) = &rust_class.module_path {
+    let public_module = rust_class
+        .python_module_path
+        .as_deref()
+        .and_then(|module| module.strip_prefix("pybevy."))
+        .or(rust_class.module_path.as_deref());
+    if let Some(rust_module) = public_module {
         // Try exact module match first
         if let Some(py_class) = python_classes.iter().find(|p| {
             p.python_name == rust_class.python_name

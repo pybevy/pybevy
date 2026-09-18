@@ -123,11 +123,13 @@ matches. This is checked on each run, including when the body never accesses
 the parameter. `Query.single()` is an explicit lookup inside a running system
 and raises `RuntimeError` for zero or multiple matches.
 
-Use `Optional[Single[T]]` with `from typing import Optional`, matching Bevy's
-`Option<Single<...>>`. The system runs with `None` for zero or multiple matches;
-exactly one match supplies the ordinary validity-bound Single wrapper. Tuple
-data, filters, and `Mut` declare the same scheduler access as a required Single.
-The equivalent `Single[T] | None` spelling is also supported.
+Use `Optional[Single[T]]` with `from pybevy.ecs import Optional`, matching
+Bevy's `Option<Single<...>>`. This is the standard `typing.Optional` re-exported
+beside the ECS query types; importing it from `typing` remains equivalent. The
+system runs with `None` for zero or multiple matches; exactly one match supplies
+the ordinary validity-bound Single wrapper. Tuple data, filters, and `Mut`
+declare the same scheduler access as a required Single. The equivalent
+`Single[T] | None` spelling is also supported.
 
 Use `into_inner()` for typed component access and tuple unpacking, matching
 Bevy's extraction API. Extraction keeps the existing access mode and system
