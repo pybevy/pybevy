@@ -21,6 +21,7 @@ pub const SINGLE_NOT_ITERABLE: &str =
     "Single is not iterable; use single.into_inner() before unpacking or iterating the row";
 pub const SINGLE_NOT_SUBSCRIPTABLE: &str =
     "Single is not subscriptable; use single.into_inner() before indexing the row";
+pub const QUERY_ROW_SHAPE_MISMATCH: &str = "Query row shape did not match its data";
 
 pub const COLOR_INPUT_TYPES: &str =
     "expected Color, Srgba, LinearRgba, Hsla, Hsva, Hwba, Laba, Lcha, Oklaba, Oklcha, or Xyza";
@@ -29,10 +30,35 @@ pub fn mcp_scalar_object(type_name: &str) -> String {
     format!("expected {type_name} value, got object")
 }
 
+pub fn resource_atomic_patch_unsupported(type_name: &str) -> String {
+    format!(
+        "Resource '{type_name}' cannot be patched atomically because its bridge does not support owned staging"
+    )
+}
+
 pub const MCP_ENUM_SCALAR_OBJECT_PAYLOAD: &str = "expected a single payload value, not an object";
 pub const MCP_ENUM_SCALAR_ARRAY_PAYLOAD: &str = "expected a single payload value, not an array";
 pub const MCP_ENUM_WRAPPED_ARRAY_PAYLOAD: &str =
     "expected an object with the payload's fields, not an array";
+pub const MCP_CUSTOM_COMPONENT_BOOTSTRAP: &str = "If this is a custom @component class, call world.register_component(Type) in scene code or run_code, or insert an instance first; defining or reloading an unused class does not register it.";
+pub const MCP_CUSTOM_RESOURCE_BOOTSTRAP: &str = "If this is a custom @resource class, call world.register_resource(Type) in scene code or run_code, or insert an instance first; defining or reloading an unused class does not register it.";
+
+pub fn mcp_schedule_non_public_tool(index: usize, tool: &str) -> String {
+    format!("action[{index}]: tool '{tool}' is not a public schedulable tool")
+}
+
+pub fn mcp_enum_component_unknown_fields(
+    component: &str,
+    subject: &str,
+    variants: &[String],
+) -> String {
+    format!(
+        "Failed to set '{component}': {subject}. Enum components use the synthetic 'variant' field: {{\"variant\": \"<name>\"}}. Allowed variants: {}.",
+        variants.join(", ")
+    )
+}
+
+pub const RUN_CODE_EXECUTION_DEADLINE: &str = "run_code exceeded its execution deadline";
 
 pub const CONSTRUCTOR_ROTATION: &str =
     "Rot2() requires finite cos and sin with cos*cos + sin*sin within 0.0002 of 1";
@@ -144,6 +170,7 @@ pub fn viewport_conversion_failed(error: impl Display) -> String {
 }
 
 pub const CUBEMAP_FACE_INDEX: &str = "Cubemap face index must be 0-5";
+pub const CUBEMAP_FACE_COUNT: &str = "CubemapFrusta requires exactly 6 frustums";
 
 pub fn unregistered_component_type(name: &str) -> String {
     format!("Type '{name}' is not a registered component type")
@@ -239,6 +266,9 @@ pub const ASSET_SERVER_MANUAL_INSERT: &str =
     "AssetServer cannot be manually inserted. It is provided by AssetPlugin.";
 pub const ASSET_SERVER_MANUAL_REMOVE: &str =
     "AssetServer cannot be manually removed. It is managed by AssetPlugin.";
+pub fn control_resource_remove_forbidden(resource: &str) -> String {
+    format!("Resource '{resource}' is engine-managed and cannot be removed through the control API")
+}
 pub const ANY_OF_TUPLE_REQUIRED: &str =
     "AnyOf query data requires a tuple: AnyOf[tuple[A, B, Mut[C]]]";
 pub const ANY_OF_EMPTY: &str = "AnyOf requires at least one query-data item";
@@ -291,7 +321,7 @@ pub const DESIRED_MAXIMUM_FRAME_LATENCY_AT_LEAST_ONE: &str =
 
 pub const UNSUPPORTED_GIZMO_LINE_STYLE: &str =
     "the native GizmoLineStyle variant is not supported by this PyBevy build";
-pub const GIZMOS_PLUGIN_REQUIRED: &str = "Gizmos requires DefaultGizmoConfigGroup; add GizmoPlugin before using the Gizmos system parameter";
+pub const GIZMOS_PLUGIN_REQUIRED: &str = "Gizmos requires DefaultGizmoConfigGroup; add GizmoPlugin before using the Gizmos system parameter (minimal apps also require AssetPlugin and MeshPlugin)";
 pub const DEFAULT_GIZMO_CONFIG_MISSING: &str =
     "DefaultGizmoConfigGroup is not registered; add GizmoPlugin before accessing its config";
 

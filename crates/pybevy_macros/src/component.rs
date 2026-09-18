@@ -440,6 +440,44 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
 
+    let clone_with_copy_methods = if let Some(clone_with) = args.clone_with.as_ref() {
+        if let Some(materialize) = args.materialize.as_ref() {
+            quote! {
+                #[pyo3::pymethods]
+                impl #py_type {
+                    pub fn __copy__(&self, py: Python) -> PyResult<Py<PyAny>> {
+                        let native = #clone_with(self.storage.as_ref()?.reborrow());
+                        #materialize(py, pybevy_core::ComponentStorage::owned(native))
+                    }
+
+                    pub fn __deepcopy__(&self, py: Python, _memo: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+                        let native = #clone_with(self.storage.as_ref()?.reborrow());
+                        #materialize(py, pybevy_core::ComponentStorage::owned(native))
+                    }
+                }
+            }
+        } else {
+            quote! {
+                #[pyo3::pymethods]
+                impl #py_type {
+                    pub fn __copy__(&self, py: Python) -> PyResult<Py<Self>> {
+                        let native = #clone_with(self.storage.as_ref()?.reborrow());
+                        let storage = pybevy_core::ComponentStorage::owned(native);
+                        Py::new(py, (Self { storage, #extra_field_inits }, pybevy_core::PyComponent))
+                    }
+
+                    pub fn __deepcopy__(&self, py: Python, _memo: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {
+                        let native = #clone_with(self.storage.as_ref()?.reborrow());
+                        let storage = pybevy_core::ComponentStorage::owned(native);
+                        Py::new(py, (Self { storage, #extra_field_inits }, pybevy_core::PyComponent))
+                    }
+                }
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     if args.no_clone {
         // Non-Clone component: only generate borrowed access
         let expanded = quote! {
@@ -461,6 +499,8 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
                     Ok(self.storage.as_mut()?)
                 }
             }
+
+            #clone_with_copy_methods
 
             #bridge_tokens
         };

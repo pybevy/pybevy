@@ -28,6 +28,19 @@ use super::{
     run_ticks::RunTicks,
 };
 
+/// Backend-neutral description of the row nesting requested by query data.
+///
+/// Bevy implements `QueryData` recursively for tuples. Query adapters may keep
+/// component access in a flat array, but must use this shape when assembling a
+/// backend row so tuple boundaries are not lost.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum QueryRowShape {
+    /// One item in the flattened query-data array.
+    Item,
+    /// A tuple whose children retain their original nesting.
+    Tuple(Vec<Self>),
+}
+
 const NESTED_ITERATION_MESSAGE: &str = "Cannot nest iteration on the same Query (Bevy disallows this via borrow rules). \
      Collect into a list first: items = list(query)";
 const REENTRANT_OPERATION_MESSAGE: &str =

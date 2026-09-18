@@ -328,6 +328,39 @@ impl<T: Clone> FieldStorage<T> {
         }
     }
 
+    /// Borrow an optional field from the stored value.
+    ///
+    /// Owned storage returns a read-only snapshot. Borrowed storage returns a
+    /// validity-bound field inheriting the parent's read/write access.
+    pub fn borrow_optional_field<F: Clone, S>(
+        &self,
+        field_accessor: impl Fn(&T) -> &Option<F>,
+    ) -> Result<Option<S>, StorageError>
+    where
+        S: BorrowableStorage<F>,
+    {
+        match &self.inner {
+            FieldStorageInner::Owned { data, .. } | FieldStorageInner::OwnedReadOnly { data } => {
+                match field_accessor(data) {
+                    Some(field) => Ok(Some(S::snapshot(field))),
+                    None => Ok(None),
+                }
+            }
+            FieldStorageInner::BorrowedRef(borrow) => borrow.borrow_optional_field(field_accessor),
+            FieldStorageInner::BorrowedMut(borrow) => borrow.borrow_optional_field(field_accessor),
+            FieldStorageInner::Revalidating(field) => {
+                field.child_of_optional::<T, F, S>(field_accessor)
+            }
+            FieldStorageInner::Source(source) => {
+                let resolved = source.resolve_ref()?;
+                match field_accessor(&resolved) {
+                    Some(field) => Ok(Some(S::snapshot(field))),
+                    None => Ok(None),
+                }
+            }
+        }
+    }
+
     /// Helper to borrow a field and wrap it in the final Python type
     ///
     /// Combines `borrow_field` with `FromBorrowedStorage::from_borrowed` to reduce boilerplate.
@@ -543,6 +576,11 @@ mod tests {
         values: Vec<i32>,
     }
 
+    #[derive(Clone, Debug, PartialEq)]
+    struct OptionalField {
+        value: Option<String>,
+    }
+
     #[test]
     fn test_owned_storage() {
         let storage = FieldStorage::owned(TestField {
@@ -744,6 +782,51 @@ mod tests {
         borrowed.as_mut().unwrap().push(30);
         // Mutation persists all the way to the original
         assert_eq!(field.values, vec![10, 20, 30]);
+    }
+
+    #[test]
+    fn test_borrow_optional_field_from_owned_is_read_only_snapshot() {
+        let storage = FieldStorage::owned(OptionalField {
+            value: Some("owned".into()),
+        });
+
+        let mut value: FieldStorage<String> = storage
+            .borrow_optional_field(|field| &field.value)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(&*value.as_ref().unwrap(), "owned");
+        assert!(matches!(
+            value.as_mut(),
+            Err(StorageError::OwnedFieldReadOnly)
+        ));
+    }
+
+    #[test]
+    fn test_borrow_optional_field_from_mutable_borrow_writes_through() {
+        let mut field = OptionalField {
+            value: Some("before".into()),
+        };
+        let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
+        let storage =
+            unsafe { FieldStorage::borrowed(&mut field as *mut OptionalField, validity.clone()) };
+
+        let mut value: FieldStorage<String> = storage
+            .borrow_optional_field(|field| &field.value)
+            .unwrap()
+            .unwrap();
+        value.as_mut().unwrap().push_str(" after");
+
+        assert_eq!(field.value.as_deref(), Some("before after"));
+    }
+
+    #[test]
+    fn test_borrow_optional_field_preserves_none() {
+        let storage = FieldStorage::owned(OptionalField { value: None });
+        let value: Option<FieldStorage<String>> =
+            storage.borrow_optional_field(|field| &field.value).unwrap();
+
+        assert!(value.is_none());
     }
 
     #[test]

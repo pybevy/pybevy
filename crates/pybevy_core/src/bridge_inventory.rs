@@ -304,6 +304,14 @@ mod tests {
             unreachable!("identity-only fake bridge")
         }
 
+        fn clone_owned(&self, _world: &World, _py: Python) -> PyResult<Py<PyAny>> {
+            unreachable!("identity-only fake bridge")
+        }
+
+        fn commit_owned(&self, _world: &mut World, _resource: &Bound<'_, PyAny>) -> PyResult<()> {
+            unreachable!("identity-only fake bridge")
+        }
+
         unsafe fn get_from_cell(
             &self,
             _cell: UnsafeWorldCell<'_>,

@@ -15,13 +15,14 @@ use bevy::{
 };
 use pybevy_core::{
     ComponentWriteContext, ExtractFn, FilteredEntityAccess, LogicalTypeId, LogicalTypeMap,
-    extract_entity_from_any, registry::global_registry,
+    extract_entity_from_any, public_error::QUERY_ROW_SHAPE_MISMATCH, registry::global_registry,
 };
 use pybevy_ecs::shared::{
     cached_query::CachedQueryCore,
     query_builder_ext::{QueryBuildSpec, QueryComponent, QueryFilterBranch},
     query_runtime::{
-        IterationToken, QueryExecutionError, QueryRuntimeCore, QueryRuntimeError, RowMaterializer,
+        IterationToken, QueryExecutionError, QueryRowShape, QueryRuntimeCore, QueryRuntimeError,
+        RowMaterializer,
     },
 };
 use pyo3::{
@@ -1152,24 +1153,48 @@ impl PyQueryIter {
 
     fn materialized_result(&self, py: Python) -> PyResult<Py<PyAny>> {
         let values_buffer = self.values_buffer.borrow();
-        if self.param.single {
-            let Some(value) = values_buffer.first() else {
-                let kind = if self.param.single_entity_enforced {
-                    "Single"
-                } else {
-                    "Query"
-                };
-                return Err(PyRuntimeError::new_err(filter_only_error_message(
-                    py,
-                    kind,
-                    &self.param.filters,
-                )));
-            };
-            Ok(value.clone_ref(py))
-        } else {
-            let tuple = PyTuple::new(py, values_buffer.iter())?;
-            Ok(tuple.into_any().unbind())
+        fn build(
+            shape: &QueryRowShape,
+            values: &[Py<PyAny>],
+            index: &mut usize,
+            py: Python<'_>,
+        ) -> PyResult<Py<PyAny>> {
+            match shape {
+                QueryRowShape::Item => {
+                    let value = values
+                        .get(*index)
+                        .ok_or_else(|| PyRuntimeError::new_err(QUERY_ROW_SHAPE_MISMATCH))?;
+                    *index += 1;
+                    Ok(value.clone_ref(py))
+                }
+                QueryRowShape::Tuple(children) => {
+                    let items = children
+                        .iter()
+                        .map(|child| build(child, values, index, py))
+                        .collect::<PyResult<Vec<_>>>()?;
+                    Ok(PyTuple::new(py, items)?.into_any().unbind())
+                }
+            }
         }
+
+        if values_buffer.is_empty() && matches!(self.param.row_shape, QueryRowShape::Item) {
+            let kind = if self.param.single_entity_enforced {
+                "Single"
+            } else {
+                "Query"
+            };
+            return Err(PyRuntimeError::new_err(filter_only_error_message(
+                py,
+                kind,
+                &self.param.filters,
+            )));
+        }
+        let mut index = 0;
+        let result = build(&self.param.row_shape, &values_buffer, &mut index, py)?;
+        if index != values_buffer.len() {
+            return Err(PyRuntimeError::new_err(QUERY_ROW_SHAPE_MISMATCH));
+        }
+        Ok(result)
     }
 
     pub(crate) fn check_valid(&self) -> PyResult<()> {
