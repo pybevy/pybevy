@@ -57,12 +57,12 @@ impl PyWinitSettings {
         self.0.unfocused_mode.into()
     }
 
-    pub fn __repr__(&self) -> String {
-        format!(
+    pub fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        Ok(format!(
             "WinitSettings(focused_mode={}, unfocused_mode={})",
-            PyUpdateMode::from(self.0.focused_mode).__repr__(),
-            PyUpdateMode::from(self.0.unfocused_mode).__repr__(),
-        )
+            PyUpdateMode::from(self.0.focused_mode).__repr__(py)?,
+            PyUpdateMode::from(self.0.unfocused_mode).__repr__(py)?,
+        ))
     }
 }
 

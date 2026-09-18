@@ -12,6 +12,7 @@ See Also:
     - `pybevy.app.ScheduleRunnerPlugin`: Alternative for headless applications
 """
 
+from datetime import timedelta
 from typing import ClassVar, Literal
 
 from pybevy.app import App, Plugin
@@ -24,13 +25,13 @@ class UpdateMode:
     Examples:
         ```python
         UpdateMode.Continuous()           # Full speed rendering
-        UpdateMode.reactive(wait=0.1)     # Reactive, all events, 100ms wait
-        UpdateMode.reactive_low_power(wait=0.2)  # Low power mode
+        UpdateMode.reactive(timedelta(milliseconds=100))
+        UpdateMode.reactive_low_power(timedelta(milliseconds=200))
         ```
     """
 
     class Continuous(UpdateMode):
-        __match_args__: ClassVar[tuple[()]]
+        __match_args__: ClassVar[tuple[()]] = ()
 
         def __init__(self) -> None: ...
 
@@ -42,33 +43,41 @@ class UpdateMode:
                 Literal["react_to_user_events"],
                 Literal["react_to_window_events"],
             ]
-        ]
-        wait: float
-        react_to_device_events: bool
-        react_to_user_events: bool
-        react_to_window_events: bool
-
+        ] = (
+            "wait",
+            "react_to_device_events",
+            "react_to_user_events",
+            "react_to_window_events",
+        )
+        @property
+        def wait(self) -> timedelta: ...
+        @property
+        def react_to_device_events(self) -> bool: ...
+        @property
+        def react_to_user_events(self) -> bool: ...
+        @property
+        def react_to_window_events(self) -> bool: ...
         def __init__(
             self,
             *,
-            wait: float,
+            wait: timedelta,
             react_to_device_events: bool,
             react_to_user_events: bool,
             react_to_window_events: bool,
         ) -> None: ...
 
     @staticmethod
-    def reactive(wait: float = 1.0) -> UpdateMode.Reactive:
-        """Reactive mode - updates in response to events or after `wait` seconds.
+    def reactive(wait: timedelta) -> UpdateMode.Reactive:
+        """Reactive mode that updates in response to events or after `wait`.
 
         Reacts to all event types (window, device, and user events).
 
         Args:
-            wait: Time in seconds between updates (default: 1.0)
+            wait: Approximate duration between updates.
         """
 
     @staticmethod
-    def reactive_low_power(wait: float = 1.0) -> UpdateMode.Reactive:
+    def reactive_low_power(wait: timedelta) -> UpdateMode.Reactive:
         """Low power reactive mode - only reacts to window and user events.
 
         Unlike `reactive()`, this ignores device events like general mouse
@@ -76,7 +85,7 @@ class UpdateMode:
         greatly reduce power consumption.
 
         Args:
-            wait: Time in seconds between updates (default: 1.0)
+            wait: Approximate duration between updates.
         """
 
 class WinitSettings:
@@ -93,8 +102,8 @@ class WinitSettings:
 
         # Custom
         WinitSettings(
-            focused_mode=UpdateMode.reactive(wait=0.05),
-            unfocused_mode=UpdateMode.reactive_low_power(wait=0.5)
+            focused_mode=UpdateMode.reactive(timedelta(milliseconds=50)),
+            unfocused_mode=UpdateMode.reactive_low_power(timedelta(milliseconds=500))
         )
         ```
     """
@@ -164,8 +173,10 @@ class WinitPlugin(Plugin):
         app.add_plugins(
             DefaultPlugins().set(WinitPlugin(
                 settings=WinitSettings(
-                    focused_mode=UpdateMode.reactive(wait=0.05),
-                    unfocused_mode=UpdateMode.reactive_low_power(wait=0.5)
+                    focused_mode=UpdateMode.reactive(timedelta(milliseconds=50)),
+                    unfocused_mode=UpdateMode.reactive_low_power(
+                        timedelta(milliseconds=500)
+                    )
                 )
             ))
         )
