@@ -1581,7 +1581,10 @@ class InfinitePlane3d:
     def isometries_xy(self, origin: Vec3) -> tuple[Isometry3d, Isometry3d]:
         """Both isometries: plane to XY and back."""
     @property
-    def normal(self) -> Dir3: ...
+    def normal(self) -> Dir3:
+        """Read-only direction snapshot; assign this property to update the plane."""
+    @normal.setter
+    def normal(self, value: Dir3) -> None: ...
 
 class HalfSpace:
     """A region of 3D space defined by a bisecting 2D plane.
@@ -2017,8 +2020,12 @@ class Isometry2d:
 
     @property
     def translation(self) -> Vec2: ...
+    @translation.setter
+    def translation(self, value: Vec2) -> None: ...
     @property
     def rotation(self) -> Rot2: ...
+    @rotation.setter
+    def rotation(self, value: Rot2) -> None: ...
 
     def __init__(self, translation: Vec2 = ..., rotation: Rot2 | None = None) -> None:
         """Create a 2D isometry.
@@ -3546,7 +3553,11 @@ class Plane2d:
         >>> plane = Plane2d(Vec2(0, 1))
     """
 
-    normal: Dir2
+    @property
+    def normal(self) -> Dir2:
+        """Read-only direction snapshot; assign this property to update the plane."""
+    @normal.setter
+    def normal(self, value: Dir2) -> None: ...
 
     def __init__(self, normal: Vec2 = ...) -> None:
         """Create a new plane from a normal vector.
