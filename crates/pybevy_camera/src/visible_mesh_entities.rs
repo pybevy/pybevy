@@ -32,6 +32,12 @@ impl PyVisibleMeshEntities {
             .collect())
     }
 
+    #[setter]
+    pub fn set_entities(&mut self, entities: Vec<PyEntity>) -> PyResult<()> {
+        self.as_mut()?.entities = entities.into_iter().map(|entity| entity.0).collect();
+        Ok(())
+    }
+
     pub fn __len__(&self) -> PyResult<usize> {
         Ok(self.as_ref()?.entities.len())
     }

@@ -5,7 +5,7 @@ import numpy as np
 
 from pybevy.app import App, Plugin
 from pybevy.array import Array
-from pybevy.assets import Asset, Handle
+from pybevy.assets import Asset, Handle, RenderAssetUsages
 from pybevy.collections import LiveList
 from pybevy.color import Color
 from pybevy.math import URect, UVec2, UVec3, Vec2
@@ -140,23 +140,6 @@ class ImageSaverSettings:
     def format(self) -> SaveImageFormatSetting: ...
     @format.setter
     def format(self, value: SaveImageFormatSetting) -> None: ...
-
-class RenderAssetUsages:
-    """Asset usage flags indicating which worlds can access this asset.
-
-    Combine flags with `|`: `RenderAssetUsages.MAIN_WORLD | RenderAssetUsages.RENDER_WORLD`.
-    """
-
-    MAIN_WORLD: ClassVar[RenderAssetUsages]
-    RENDER_WORLD: ClassVar[RenderAssetUsages]
-
-    def __init__(self) -> None:
-        """Create the default usage flags, `MAIN_WORLD | RENDER_WORLD` (matches bevy's `RenderAssetUsages::default()`)."""
-
-    def __or__(self, other: RenderAssetUsages) -> RenderAssetUsages: ...
-    def __eq__(self, other: object) -> bool: ...
-    def contains(self, other: RenderAssetUsages) -> bool:
-        """Whether all flags in `other` are set on this value."""
 
 class ImagePlugin(Plugin):
     """Plugin that adds Image asset support and configures texture loading.
@@ -518,7 +501,8 @@ class Image(Asset):
     def asset_usage(self) -> RenderAssetUsages:
         """Get the asset usage flags.
 
-        Indicates which worlds (main/render) can access this asset.
+        Indicates which worlds (main/render) can access this asset. Returns an
+        independent snapshot; assign a modified value back to update the image.
         """
     @asset_usage.setter
     def asset_usage(self, value: RenderAssetUsages) -> None: ...
@@ -1497,7 +1481,7 @@ class ImageLoaderSettings:
 
     @property
     def asset_usage(self) -> RenderAssetUsages:
-        """Asset usage flags indicating which worlds can access this image."""
+        """An independent snapshot of the asset usage flags; assign to update the settings."""
 
     @asset_usage.setter
     def asset_usage(self, value: RenderAssetUsages) -> None: ...

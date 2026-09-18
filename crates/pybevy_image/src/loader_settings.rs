@@ -332,8 +332,9 @@ impl PyImageLoaderSettings {
     }
 
     #[setter]
-    pub fn set_asset_usage(&mut self, value: PyRenderAssetUsages) {
-        self.inner.asset_usage = value.into();
+    pub fn set_asset_usage(&mut self, value: PyRenderAssetUsages) -> PyResult<()> {
+        self.inner.asset_usage = value.try_into()?;
+        Ok(())
     }
 
     pub fn __repr__(&self) -> String {

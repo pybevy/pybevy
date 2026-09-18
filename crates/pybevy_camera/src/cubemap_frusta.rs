@@ -1,7 +1,13 @@
-use bevy::camera::primitives::CubemapFrusta;
-use pybevy_core::{ComponentStorage, PyComponent, public_error::CUBEMAP_FACE_INDEX};
+use bevy::camera::primitives::{CubemapFrusta, Frustum};
+use pybevy_core::{
+    ComponentStorage, PyComponent,
+    public_error::{CUBEMAP_FACE_COUNT as CUBEMAP_FACE_COUNT_ERROR, CUBEMAP_FACE_INDEX},
+};
 use pybevy_macros::pycomponent;
-use pyo3::{exceptions::PyIndexError, prelude::*};
+use pyo3::{
+    exceptions::{PyIndexError, PyValueError},
+    prelude::*,
+};
 
 use crate::frustum::PyFrustum;
 
@@ -42,6 +48,19 @@ impl PyCubemapFrusta {
             )?);
         }
         Ok(result)
+    }
+
+    #[setter]
+    pub fn set_frusta(&mut self, frusta: Vec<PyRef<'_, PyFrustum>>) -> PyResult<()> {
+        let frusta: Vec<Frustum> = frusta
+            .iter()
+            .map(|frustum| PyFrustum::as_ref(frustum).map(|value| *value))
+            .collect::<PyResult<_>>()?;
+        let frusta: [Frustum; CUBEMAP_FACE_COUNT] = frusta
+            .try_into()
+            .map_err(|_| PyValueError::new_err(CUBEMAP_FACE_COUNT_ERROR))?;
+        self.as_mut()?.frusta = frusta;
+        Ok(())
     }
 
     pub fn get(&self, py: Python<'_>, index: usize) -> PyResult<Py<PyFrustum>> {

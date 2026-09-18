@@ -73,9 +73,21 @@ impl PySkinnedMesh {
         Ok(PyHandle::from(&self.as_ref()?.inverse_bindposes))
     }
 
+    #[setter]
+    pub fn set_inverse_bindposes(&mut self, value: &PyHandle) -> PyResult<()> {
+        self.as_mut()?.inverse_bindposes = value.try_into()?;
+        Ok(())
+    }
+
     #[getter]
     pub fn joints(&self) -> PyResult<Vec<PyEntity>> {
         Ok(self.as_ref()?.joints.iter().map(|&e| PyEntity(e)).collect())
+    }
+
+    #[setter]
+    pub fn set_joints(&mut self, value: Vec<PyEntity>) -> PyResult<()> {
+        self.as_mut()?.joints = value.into_iter().map(|entity| entity.0).collect();
+        Ok(())
     }
 
     pub fn joint_count(&self) -> PyResult<usize> {

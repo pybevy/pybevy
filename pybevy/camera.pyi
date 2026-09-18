@@ -1672,6 +1672,9 @@ class CubemapFrusta(Component):
     def frusta(self) -> list[Frustum]:
         """Get all 6 frustums as a list."""
 
+    @frusta.setter
+    def frusta(self, value: list[Frustum]) -> None: ...
+
     def get(self, index: int) -> Frustum:
         """Get the frustum at the specified index (0-5)."""
 
@@ -1690,6 +1693,9 @@ class VisibleMeshEntities(Component):
     @property
     def entities(self) -> list[Entity]:
         """Get all visible entities as a list."""
+
+    @entities.setter
+    def entities(self, value: list[Entity]) -> None: ...
 
     def __len__(self) -> int:
         """Get the number of visible entities."""

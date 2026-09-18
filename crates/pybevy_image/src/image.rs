@@ -13,14 +13,14 @@ use image::{
 use pybevy_array::{BorrowProbe, PyArray, borrowed_read_only_u8, extract_u8_array_data, owned_u8};
 use pybevy_color::color::PyColor;
 use pybevy_core::{
-    AssetStorage, PyAsset,
+    AssetStorage, FromBorrowedStorage, PyAsset, ValueStorage,
     borrowed_array_anchor::{AssetBorrowAnchor, AssetBorrowAnchorMut},
     computed_owned,
     content_hash::CanonicalContentHasher,
     numpy_view_guard::{PendingNumpyViewGuard, PyNumpyViewGuard},
     public_error,
 };
-use pybevy_macros::pyasset;
+use pybevy_macros::{pyasset, pyvalue};
 use pybevy_math::{uvec2::PyUVec2, uvec3::PyUVec3, vec2::PyVec2};
 use pybevy_render::{
     extent3d::PyExtent3d, texture_dimension::PyTextureDimension, texture_format::PyTextureFormat,
@@ -593,26 +593,32 @@ fn export_dynamic_image(image: &Image, destination: PyImageFormat) -> PyResult<D
     Ok(dynamic)
 }
 
-#[pyclass(
-    name = "RenderAssetUsages",
-    module = "pybevy.image",
-    from_py_object,
-    frozen
-)]
-#[derive(Debug, Clone, Copy)]
+#[pyvalue]
+#[pyclass(name = "RenderAssetUsages", module = "pybevy.assets", from_py_object)]
+#[derive(Debug, Clone)]
 pub struct PyRenderAssetUsages {
-    inner: RenderAssetUsages,
+    storage: ValueStorage<RenderAssetUsages>,
 }
 
 impl From<RenderAssetUsages> for PyRenderAssetUsages {
     fn from(usages: RenderAssetUsages) -> Self {
-        Self { inner: usages }
+        Self::from_owned(usages)
     }
 }
 
-impl From<PyRenderAssetUsages> for RenderAssetUsages {
-    fn from(py_usages: PyRenderAssetUsages) -> Self {
-        py_usages.inner
+impl TryFrom<PyRenderAssetUsages> for RenderAssetUsages {
+    type Error = PyErr;
+
+    fn try_from(usages: PyRenderAssetUsages) -> PyResult<Self> {
+        usages.to_bevy()
+    }
+}
+
+impl TryFrom<&PyRenderAssetUsages> for RenderAssetUsages {
+    type Error = PyErr;
+
+    fn try_from(usages: &PyRenderAssetUsages) -> PyResult<Self> {
+        usages.to_bevy()
     }
 }
 
@@ -626,54 +632,75 @@ impl Default for PyRenderAssetUsages {
 impl PyRenderAssetUsages {
     #[new]
     pub fn new() -> Self {
-        Self {
-            inner: RenderAssetUsages::default(),
-        }
+        RenderAssetUsages::default().into()
     }
 
     #[staticmethod]
     #[pyo3(name = "MAIN_WORLD")]
     pub fn main_world_flag() -> Self {
-        Self {
-            inner: RenderAssetUsages::MAIN_WORLD,
-        }
+        RenderAssetUsages::MAIN_WORLD.into()
     }
 
     #[staticmethod]
     #[pyo3(name = "RENDER_WORLD")]
     pub fn render_world_flag() -> Self {
-        Self {
-            inner: RenderAssetUsages::RENDER_WORLD,
-        }
+        RenderAssetUsages::RENDER_WORLD.into()
     }
 
-    fn __or__(&self, other: &Self) -> Self {
-        Self {
-            inner: self.inner | other.inner,
-        }
+    fn __or__(&self, other: &Self) -> PyResult<Self> {
+        Ok((self.to_bevy()? | other.to_bevy()?).into())
     }
 
-    fn __eq__(&self, other: &Self) -> bool {
-        self.inner == other.inner
+    fn __eq__(&self, other: &Self) -> PyResult<bool> {
+        Ok(self.to_bevy()? == other.to_bevy()?)
     }
 
-    pub fn contains(&self, other: &Self) -> bool {
-        self.inner.contains(other.inner)
+    fn __copy__(&self) -> PyResult<Self> {
+        Ok(self.to_bevy()?.into())
     }
 
-    pub fn __repr__(&self) -> String {
+    pub fn contains(&self, other: &Self) -> PyResult<bool> {
+        Ok(self.to_bevy()?.contains(other.to_bevy()?))
+    }
+
+    pub fn insert(slf: &Bound<'_, Self>, other: Self) -> PyResult<()> {
+        let other = other.to_bevy()?;
+        slf.try_borrow_mut()?.as_mut()?.insert(other);
+        Ok(())
+    }
+
+    pub fn remove(slf: &Bound<'_, Self>, other: Self) -> PyResult<()> {
+        let other = other.to_bevy()?;
+        slf.try_borrow_mut()?.as_mut()?.remove(other);
+        Ok(())
+    }
+
+    pub fn toggle(slf: &Bound<'_, Self>, other: Self) -> PyResult<()> {
+        let other = other.to_bevy()?;
+        slf.try_borrow_mut()?.as_mut()?.toggle(other);
+        Ok(())
+    }
+
+    pub fn set(slf: &Bound<'_, Self>, other: Self, value: bool) -> PyResult<()> {
+        let other = other.to_bevy()?;
+        slf.try_borrow_mut()?.as_mut()?.set(other, value);
+        Ok(())
+    }
+
+    pub fn __repr__(&self) -> PyResult<String> {
+        let usages = self.to_bevy()?;
         let mut parts = Vec::new();
-        if self.inner.contains(RenderAssetUsages::MAIN_WORLD) {
+        if usages.contains(RenderAssetUsages::MAIN_WORLD) {
             parts.push("MAIN_WORLD");
         }
-        if self.inner.contains(RenderAssetUsages::RENDER_WORLD) {
+        if usages.contains(RenderAssetUsages::RENDER_WORLD) {
             parts.push("RENDER_WORLD");
         }
-        if parts.is_empty() {
+        Ok(if parts.is_empty() {
             "RenderAssetUsages()".to_string()
         } else {
             format!("RenderAssetUsages({})", parts.join(" | "))
-        }
+        })
     }
 }
 
@@ -824,7 +851,10 @@ impl PyImage {
             dimension,
             data,
             format,
-            asset_usage.map(Into::into).unwrap_or_default(),
+            asset_usage
+                .map(TryInto::try_into)
+                .transpose()?
+                .unwrap_or_default(),
         ))
         .into())
     }
@@ -1220,12 +1250,14 @@ impl PyImage {
 
     #[getter]
     pub fn asset_usage(&self) -> PyResult<PyRenderAssetUsages> {
-        image_with!(self, |image: &Image| Ok(image.asset_usage.into()))
+        image_with!(self, |image: &Image| Ok(computed_owned(
+            image.asset_usage.into()
+        )))
     }
 
     #[setter]
     pub fn set_asset_usage(&mut self, usage: PyRenderAssetUsages) -> PyResult<()> {
-        let usage = usage.into();
+        let usage = usage.try_into()?;
         image_with_mut!(self, |image: &mut Image| {
             image.asset_usage = usage;
             Ok(())
