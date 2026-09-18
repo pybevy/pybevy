@@ -27,11 +27,11 @@ class _ConstantFactory:
 
 def _apply() -> None:
     """Wrap registered static factories with ``_ConstantFactory`` descriptors."""
+    from .assets import RenderAssetUsages
     from .audio import PlaybackSettings, Volume
     from .camera import Exposure, Visibility
     from .color import Color, Hwba, Laba, LinearRgba, Oklaba, Srgba, Xyza
     from .core_pipeline import Tonemapping
-    from .image import RenderAssetUsages
     from .light import ShadowFilteringMethod, SunDisk
     from .math import (
         Affine2,
@@ -74,7 +74,7 @@ def _apply() -> None:
         ]),
         # light
         (ShadowFilteringMethod, ["Hardware2x2", "Gaussian", "Temporal"]),
-        # image
+        # assets
         (RenderAssetUsages, ["MAIN_WORLD", "RENDER_WORLD"]),
         # light
         (SunDisk, ["EARTH", "OFF"]),
