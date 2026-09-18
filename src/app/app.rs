@@ -1232,6 +1232,17 @@ impl PyApp {
                         key,
                     )));
                 }
+                // A present Bevy plugin does not prove the wrapper's PyBevy-side
+                // wiring ran: it can arrive through DefaultPlugins instead.
+                if let Some(bridge) = bridge.as_ref()
+                    && !is_reload
+                {
+                    pyself
+                        .borrow(py)
+                        .with_bevy_app_operation(AppOperation::BridgeBuild, |bevy_app| {
+                            bridge.wire(&plugin_instance, bevy_app)
+                        })?;
+                }
                 // Skip this plugin - it was already added in a previous generation
                 // This prevents "RecreationAttempt" errors with winit and other singleton plugins
                 let app_borrow = pyself.borrow(py);

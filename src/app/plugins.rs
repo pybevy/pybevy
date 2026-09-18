@@ -390,6 +390,9 @@ impl PyPluginGroupBuilder {
                 }
                 if native.is_plugin_added::<WorldSerializationPlugin>() {
                     native.add_observer(pybevy_world_serialization::world_instance_ready_bridge);
+                    // Bevy's own WorldSerializationPlugin ships in DefaultPlugins, so the
+                    // Python wrapper's build never runs for this app.
+                    pybevy_world_serialization::install_custom_component_materializer(native);
                 }
                 Ok(())
             })

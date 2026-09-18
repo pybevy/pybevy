@@ -5,7 +5,7 @@
 //! functions and provide their own [`PythonObjectDescriptor`] implementation
 //! for interpreter-object storage.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::OnceLock};
 
 use bevy::{
     ecs::{
@@ -164,6 +164,30 @@ impl CustomComponentRegistry {
         }
         removed
     }
+}
+
+/// Backend hook registering a decorated Python component class by its
+/// `module.qualname`, for callers that meet a component before any spawn.
+pub type QualifiedNameResolver = fn(&mut World, &str) -> Option<ComponentId>;
+
+static QUALIFIED_NAME_RESOLVER: OnceLock<QualifiedNameResolver> = OnceLock::new();
+
+/// Install the backend's decorated-class resolver. Called once at module init.
+pub fn set_qualified_name_resolver(resolver: QualifiedNameResolver) {
+    let _ = QUALIFIED_NAME_RESOLVER.set(resolver);
+}
+
+/// Register the decorated class named `qualified_name`, if the backend finds one.
+///
+/// [`CustomComponentRegistry`] is otherwise populated only by a spawn/insert or
+/// a system's access walk, so world deserialization has nothing to resolve
+/// against in an app that never used the component.
+pub fn register_custom_component_by_qualified_name(
+    world: &mut World,
+    qualified_name: &str,
+) -> Option<ComponentId> {
+    let resolver = QUALIFIED_NAME_RESOLVER.get()?;
+    resolver(world, qualified_name)
 }
 
 /// What a call to [`register_custom_component_guarded`] did, so the caller can

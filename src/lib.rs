@@ -155,6 +155,12 @@ pub fn init_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
         );
     }
 
+    // Let the shared registry resolve a decorated @component class by name for
+    // callers that meet a component before any spawn registers it.
+    pybevy_core::custom_component::set_qualified_name_resolver(
+        ecs::component_type::register_custom_component_by_qualified_name,
+    );
+
     // Main crate modules (local code)
     app::add_module(m)?;
     assets::add_module(m)?;

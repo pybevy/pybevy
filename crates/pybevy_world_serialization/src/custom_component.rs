@@ -4,7 +4,7 @@ use std::any::TypeId;
 
 use bevy::{
     ecs::{
-        component::Component,
+        component::{Component, ComponentId},
         entity::{Entity, EntityMapper},
         reflect::{ReflectComponent, ReflectComponentFns},
         relationship::RelationshipHookMode,
@@ -16,8 +16,11 @@ use bevy::{
     reflect::{FromReflect, PartialReflect, Reflect, TypeRegistry},
 };
 use pybevy_core::{
-    ReflectTypeRegistration, component_layout::PrimitiveValue,
-    component_wrapper::insert_wrapper_bytes, custom_component::CustomComponentRegistry, inventory,
+    ReflectTypeRegistration,
+    component_layout::{PrimitiveValue, WrapperComponentSchema},
+    component_wrapper::insert_wrapper_bytes,
+    custom_component::{CustomComponentRegistry, register_custom_component_by_qualified_name},
+    inventory,
 };
 
 /// One reflected value variant for every primitive supported by wrapper storage.
@@ -147,16 +150,27 @@ fn materialize_apply_or_insert(
     materialize(entity, reflected_snapshot(component));
 }
 
+/// The live `ComponentId` and wrapper schema recorded for a qualified name.
+fn registered_wrapper(
+    entity: &EntityWorldMut<'_>,
+    qualified_name: &str,
+) -> Option<(ComponentId, WrapperComponentSchema)> {
+    let registry = entity.world().get_resource::<CustomComponentRegistry>()?;
+    let id = registry.id_by_qualified_name(qualified_name)?;
+    Some((id, registry.wrapper_schema(id)?.clone()))
+}
+
 fn materialize(entity: &mut EntityWorldMut<'_>, snapshot: ReflectedPythonComponents) {
     for component in snapshot.components {
-        let Some((component_id, schema)) = entity
-            .world()
-            .get_resource::<CustomComponentRegistry>()
-            .and_then(|registry| {
-                let id = registry.id_by_qualified_name(&component.qualified_name)?;
-                Some((id, registry.wrapper_schema(id)?.clone()))
-            })
-        else {
+        let mut resolved = registered_wrapper(entity, &component.qualified_name);
+        if resolved.is_none() {
+            // A load-only app never spawned this class, so register it on demand.
+            let _ = entity.world_scope(|world| {
+                register_custom_component_by_qualified_name(world, &component.qualified_name)
+            });
+            resolved = registered_wrapper(entity, &component.qualified_name);
+        }
+        let Some((component_id, schema)) = resolved else {
             warn!(
                 "skipping reflected Python component `{}` because its wrapper schema is not registered",
                 component.qualified_name

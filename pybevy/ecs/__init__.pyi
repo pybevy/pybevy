@@ -1389,6 +1389,11 @@ class World:
         Removes the observer from the registry and despawns its entity.
         The observer will no longer trigger for events.
 
+        The argument must be the Entity returned by add_observer(). A live
+        entity that is not a registered observer raises ValueError, and an
+        already despawned observer is a no-op.
+        Protected resource entities raise TypeError and remain unchanged.
+
         Example:
             observer_id = world.add_observer(on_event)
             # Later...

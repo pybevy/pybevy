@@ -6,6 +6,10 @@
 
 use std::fmt::{Debug, Display};
 
+pub fn enum_base_construction(name: &str) -> String {
+    format!("{name} is an enum base; construct a nested variant")
+}
+
 pub use pybevy_storage::{
     conflict_message::{
         CONDITION_READ_ONLY_GUIDANCE, CONFLICT_ASSETS, CONFLICT_ASSETS_SHARED_VIEW,
@@ -137,6 +141,8 @@ pub const RESOURCE_ENTITY_DESPAWN: &str =
     "resource entities cannot be despawned; use remove_resource() to remove the resource";
 pub const RESOURCE_ENTITY_REPARENT: &str = "resource entities cannot take part in a parent-child relationship; despawning the parent \
      would discard the resource value";
+pub const NOT_AN_OBSERVER_ENTITY: &str =
+    "entity is not a registered observer; pass the Entity returned by world.add_observer()";
 pub const HIERARCHY_SELF_PARENT: &str = "an entity cannot be its own parent";
 pub const HIERARCHY_CYCLE: &str = "the requested parent would create a hierarchy cycle";
 pub const WORLD_SERIALIZATION_TYPE_REGISTRY_MISSING: &str =

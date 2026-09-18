@@ -1,5 +1,6 @@
 import os
 import sys
+import typing as _typing
 
 from .. import _pybevy  # type: ignore
 from .._module_loader import load_sibling_module as _load_sibling_module
@@ -34,3 +35,5 @@ for _fname in os.listdir(_ecs_dir):
             os.path.join(_ecs_dir, _fname),
             optional=_mod_name in _optional_modules,
         )
+
+_native.Optional = _typing.Optional  # type: ignore[attr-defined]
