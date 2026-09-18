@@ -113,8 +113,11 @@ pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     assets.add_class::<assets::PyAssetIter>()?;
     assets.add_class::<pybevy_core::handle::PyHandle>()?;
     assets.add_class::<load_state::PyLoadState>()?;
+    load_state::register_load_state_variants(&assets)?;
     assets.add_class::<dependency_load_state::PyDependencyLoadState>()?;
+    dependency_load_state::register_dependency_load_state_variants(&assets)?;
     assets.add_class::<recursive_dependency_load_state::PyRecursiveDependencyLoadState>()?;
+    recursive_dependency_load_state::register_recursive_dependency_load_state_variants(&assets)?;
     assets.add_class::<asset_server_mode::PyAssetServerMode>()?;
     assets.add_class::<unapproved_path_mode::PyUnapprovedPathMode>()?;
     assets.add_class::<loaded_folder::PyLoadedFolder>()?;

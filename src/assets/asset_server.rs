@@ -29,7 +29,10 @@ use pyo3::{
 };
 
 use crate::{
-    assets::{PyAssetPath, load_state::PyLoadState},
+    assets::{
+        PyAssetPath, dependency_load_state::PyDependencyLoadState, load_state::PyLoadState,
+        recursive_dependency_load_state::PyRecursiveDependencyLoadState,
+    },
     ecs::{helpers::validity_guard::ValidityFlag, resource::PyResource},
 };
 
@@ -228,11 +231,36 @@ impl PyAssetServer {
         PyHandle::from_untyped(handle, bridge.py_type_ptr()).into_py_any(py)
     }
 
-    pub fn load_state(&self, id: &Bound<'_, PyAny>) -> PyResult<PyLoadState> {
+    pub fn load_state(&self, py: Python<'_>, id: &Bound<'_, PyAny>) -> PyResult<Py<PyLoadState>> {
         let asset_server = self.asset_server()?;
-        Ok(PyLoadState::from(
+        PyLoadState::from_state(
             asset_server.load_state(extract_asset_id_from_any(id)?.untyped()),
-        ))
+            py,
+        )
+    }
+
+    pub fn dependency_load_state(
+        &self,
+        py: Python<'_>,
+        id: &Bound<'_, PyAny>,
+    ) -> PyResult<Py<PyDependencyLoadState>> {
+        let asset_server = self.asset_server()?;
+        PyDependencyLoadState::from_state(
+            asset_server.dependency_load_state(extract_asset_id_from_any(id)?.untyped()),
+            py,
+        )
+    }
+
+    pub fn recursive_dependency_load_state(
+        &self,
+        py: Python<'_>,
+        id: &Bound<'_, PyAny>,
+    ) -> PyResult<Py<PyRecursiveDependencyLoadState>> {
+        let asset_server = self.asset_server()?;
+        PyRecursiveDependencyLoadState::from_state(
+            asset_server.recursive_dependency_load_state(extract_asset_id_from_any(id)?.untyped()),
+            py,
+        )
     }
 
     pub fn is_loaded(&self, id: &Bound<'_, PyAny>) -> PyResult<bool> {

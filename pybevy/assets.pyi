@@ -127,19 +127,30 @@ class LoadState:
     - NotLoaded: The asset has not started loading yet
     - Loading: The asset is in the process of loading
     - Loaded: The asset has been loaded and added to the world
-    - Failed: The asset failed to load
+    - Failed: The asset failed to load; ``value`` contains Bevy's rendered error
 
-    Use enum comparison (``state == LoadState.Loading()``) or the ``is_*`` methods.
+    Match with ``isinstance``, compare with ``==``, or use the ``is_*``
+    methods. Two ``Failed`` states are equal only when their ``value`` matches.
     """
 
-    @staticmethod
-    def NotLoaded() -> LoadState: ...
-    @staticmethod
-    def Loading() -> LoadState: ...
-    @staticmethod
-    def Loaded() -> LoadState: ...
-    @staticmethod
-    def Failed() -> LoadState: ...
+    class NotLoaded(LoadState):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Loading(LoadState):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Loaded(LoadState):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Failed(LoadState):
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: str) -> None: ...
+        @property
+        def value(self) -> str:
+            """Bevy's rendered asset-load error."""
 
     def is_not_loaded(self) -> bool:
         """Returns `True` if this instance is `LoadState.NotLoaded`"""
@@ -295,7 +306,7 @@ class AssetServer(Resource):
     def load_state(self, id: Handle[A] | AssetId[A]) -> LoadState:
         """Get the load state for the given asset handle.
 
-        Returns `LoadState.NotLoaded` if the asset is not tracked.
+        Returns ``LoadState.NotLoaded()`` if the asset is not tracked.
 
         Args:
             id: The asset handle to check
@@ -304,10 +315,27 @@ class AssetServer(Resource):
             The current load state of the asset
         """
 
+    def dependency_load_state(
+        self, id: Handle[A] | AssetId[A]
+    ) -> DependencyLoadState:
+        """Get the load state of the asset's direct dependencies.
+
+        Returns ``DependencyLoadState.NotLoaded()`` when the asset is not tracked.
+        """
+
+    def recursive_dependency_load_state(
+        self, id: Handle[A] | AssetId[A]
+    ) -> RecursiveDependencyLoadState:
+        """Get the load state of the asset's full dependency tree.
+
+        Returns ``RecursiveDependencyLoadState.NotLoaded()`` when the asset is
+        not tracked.
+        """
+
     def is_loaded(self, id: Handle[A] | AssetId[A]) -> bool:
         """Check if the asset is loaded (but not necessarily its dependencies).
 
-        Returns `True` if the asset's load state is `LoadState.Loaded`.
+        Returns ``True`` if the asset's load state is ``LoadState.Loaded``.
 
         Args:
             id: The asset handle to check
@@ -396,16 +424,30 @@ class AssetPath:
     def __hash__(self) -> int: ...
 
 class DependencyLoadState:
-    """Load state of an asset's direct dependencies."""
+    """Load state of an asset's direct dependencies.
 
-    @staticmethod
-    def NotLoaded() -> DependencyLoadState: ...
-    @staticmethod
-    def Loading() -> DependencyLoadState: ...
-    @staticmethod
-    def Loaded() -> DependencyLoadState: ...
-    @staticmethod
-    def Failed() -> DependencyLoadState: ...
+    Compare with ``==`` or match with ``isinstance``. A failed state's
+    ``value`` is Bevy's rendered asset-load error.
+    """
+
+    class NotLoaded(DependencyLoadState):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Loading(DependencyLoadState):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Loaded(DependencyLoadState):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Failed(DependencyLoadState):
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: str) -> None: ...
+        @property
+        def value(self) -> str:
+            """Bevy's rendered asset-load error."""
 
     def is_not_loaded(self) -> bool:
         """Returns True if dependencies have not started loading."""
@@ -420,16 +462,30 @@ class DependencyLoadState:
         """Returns True if any dependency failed to load."""
 
 class RecursiveDependencyLoadState:
-    """Load state of an asset's recursive (transitive) dependencies."""
+    """Load state of an asset's recursive (transitive) dependencies.
 
-    @staticmethod
-    def NotLoaded() -> RecursiveDependencyLoadState: ...
-    @staticmethod
-    def Loading() -> RecursiveDependencyLoadState: ...
-    @staticmethod
-    def Loaded() -> RecursiveDependencyLoadState: ...
-    @staticmethod
-    def Failed() -> RecursiveDependencyLoadState: ...
+    Compare with ``==`` or match with ``isinstance``. A failed state's
+    ``value`` is Bevy's rendered asset-load error.
+    """
+
+    class NotLoaded(RecursiveDependencyLoadState):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Loading(RecursiveDependencyLoadState):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Loaded(RecursiveDependencyLoadState):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Failed(RecursiveDependencyLoadState):
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: str) -> None: ...
+        @property
+        def value(self) -> str:
+            """Bevy's rendered asset-load error."""
 
     def is_not_loaded(self) -> bool:
         """Returns True if recursive dependencies have not started loading."""
