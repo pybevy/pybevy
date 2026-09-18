@@ -331,12 +331,24 @@ impl PyIsometry2d {
 
     #[getter]
     pub fn rotation(&self) -> PyRot2 {
-        self.inner.rotation.into()
+        PyRot2::from_borrowed(ValueStorage::read_only_snapshot(self.inner.rotation))
+    }
+
+    #[setter]
+    pub fn set_rotation(&mut self, rotation: &PyRot2) -> PyResult<()> {
+        self.inner.rotation = rotation.try_into()?;
+        Ok(())
     }
 
     #[getter]
     pub fn translation(&self) -> PyVec2 {
-        PyVec2::from_vec2(self.inner.translation)
+        PyVec2::from_borrowed(ValueStorage::read_only_snapshot(self.inner.translation))
+    }
+
+    #[setter]
+    pub fn set_translation(&mut self, translation: &PyVec2) -> PyResult<()> {
+        self.inner.translation = translation.try_into()?;
+        Ok(())
     }
 
     pub fn inverse(&self) -> Self {

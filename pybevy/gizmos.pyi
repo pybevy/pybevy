@@ -228,6 +228,18 @@ class Gizmos:
         double_ended: bool = False,
     ) -> None: ...
 
+class AabbGizmoConfigGroup(GizmoConfigGroup):
+    """Configuration and selector for Bevy's AABB gizmo group."""
+
+    def __init__(
+        self,
+        *,
+        draw_all: bool = False,
+        default_color: Color | None = None,
+    ) -> None: ...
+    draw_all: bool
+    default_color: Color | None
+
 class ShowAabbGizmo(Component):
     """Draw the entity's axis-aligned bounding box."""
 

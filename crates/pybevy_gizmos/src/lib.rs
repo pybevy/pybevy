@@ -7,7 +7,7 @@ use pyo3::prelude::*;
 
 pub mod prelude {
     pub use crate::{
-        aabb::PyShowAabbGizmo,
+        aabb::{PyAabbGizmoConfigGroup, PyShowAabbGizmo},
         config::{
             PyGizmoConfig, PyGizmoConfigGroup, PyGizmoConfigStore, PyGizmoLineConfig,
             PyGizmoLineJoint, PyGizmoLineStyle,
@@ -21,6 +21,7 @@ pub use config::GizmoConfigGroupRegistration;
 
 pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "gizmos")?;
+    m.add_class::<aabb::PyAabbGizmoConfigGroup>()?;
     m.add_class::<aabb::PyShowAabbGizmo>()?;
     m.add_class::<config::PyGizmoLineJoint>()?;
     m.add_class::<config::PyGizmoLineStyle>()?;

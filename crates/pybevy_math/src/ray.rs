@@ -101,7 +101,7 @@ impl PyRay2d {
     ) -> PyResult<Option<f32>> {
         Ok(self
             .as_ref()?
-            .intersect_plane(plane_origin.try_into()?, plane.inner))
+            .intersect_plane(plane_origin.try_into()?, plane.to_bevy()?))
     }
 
     pub fn plane_intersection_point(
@@ -111,7 +111,7 @@ impl PyRay2d {
     ) -> PyResult<Option<PyVec2>> {
         Ok(self
             .as_ref()?
-            .plane_intersection_point(plane_origin.try_into()?, plane.inner)
+            .plane_intersection_point(plane_origin.try_into()?, plane.to_bevy()?)
             .map(PyVec2::from_vec2))
     }
 
@@ -214,7 +214,7 @@ impl PyRay3d {
     ) -> PyResult<Option<f32>> {
         Ok(self
             .as_ref()?
-            .intersect_plane(plane_origin.try_into()?, plane.inner))
+            .intersect_plane(plane_origin.try_into()?, plane.to_bevy()?))
     }
 
     pub fn plane_intersection_point(
@@ -224,7 +224,7 @@ impl PyRay3d {
     ) -> PyResult<Option<PyVec3>> {
         Ok(self
             .as_ref()?
-            .plane_intersection_point(plane_origin.try_into()?, plane.inner)
+            .plane_intersection_point(plane_origin.try_into()?, plane.to_bevy()?)
             .map(PyVec3::from_vec3))
     }
 
