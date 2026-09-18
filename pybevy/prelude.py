@@ -130,6 +130,7 @@ from .ecs import (
 )
 from .expr import FieldExpr
 from .gizmos import (
+    AabbGizmoConfigGroup,
     GizmoConfig,
     GizmoConfigGroup,
     GizmoConfigStore,
@@ -487,6 +488,7 @@ __all__ = [
     # Expr (PyBevy-specific)
     "FieldExpr",
     # Gizmos
+    "AabbGizmoConfigGroup",
     "GizmoConfig",
     "GizmoConfigGroup",
     "GizmoConfigStore",
