@@ -111,7 +111,7 @@ Integer rectangle arithmetic raises `OverflowError` for out-of-range results; `I
 
 Python field reads use `{"serialization_error": ...}` markers for cycles and nesting beyond 64 levels. Dictionary key/value pair arrays are read-only.
 
-Explicit named enum variant payloads must include every required field. Incomplete payloads return an error naming the missing field and leave the component unchanged. Null payloads for named variants are rejected, including the current variant.
+Reflected struct enum variants must include every required field. Incomplete payloads return an error naming the missing field and leave the component unchanged. Reflected single-field tuple variants accept either their direct payload value or a one-element array. For a tuple variant whose single payload is a default-constructible wrapper, an object may provide only the fields to override; omitted fields use that wrapper's constructor defaults. Null payloads for named variants are rejected, including the current variant.
 
 When using `set_component`, `spawn_entity`, or `set_resource`, field values are automatically converted:
 

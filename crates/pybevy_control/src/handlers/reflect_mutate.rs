@@ -1149,7 +1149,7 @@ mod tests {
         math::{UVec2, Vec3},
         prelude::*,
         reflect::Typed,
-        ui::GridTrack,
+        ui::{GridTrack, ShadowStyle, Val},
     };
 
     use super::*;
@@ -1198,7 +1198,6 @@ mod tests {
         assert_eq!(error, "cannot convert string \"Auto\" to GridTrack");
     }
 
-    /// Helper to set up a minimal world with type registry and Transform registered.
     fn setup_world_with_transform() -> (App, Entity) {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
@@ -1332,8 +1331,174 @@ mod tests {
         assert_eq!(t.translation, Vec3::ZERO);
     }
 
-    /// A private test-only type that is never registered with the type registry.
     struct UnregisteredTestType;
+
+    #[derive(Component, Reflect, Default)]
+    #[reflect(Component, Default)]
+    struct ShadowListComponent {
+        shadows: Vec<ShadowStyle>,
+    }
+
+    fn shadow_list_fields() -> Map<String, Value> {
+        Map::from_iter([(
+            "shadows".to_string(),
+            serde_json::json!([
+                {
+                    "color": {"Srgba": {"red": 0.1, "green": 0.2, "blue": 0.3, "alpha": 0.4}},
+                    "x_offset": {"variant": "Px", "value": 1.0},
+                    "y_offset": {"Px": 2.0},
+                    "spread_radius": {"Auto": null},
+                    "blur_radius": {"Px": 4.0}
+                },
+                {
+                    "color": {"Srgba": {"red": 1.0, "green": 1.0, "blue": 0.0, "alpha": 1.0}},
+                    "x_offset": {"Auto": null},
+                    "y_offset": {"Auto": null},
+                    "spread_radius": {"Auto": null},
+                    "blur_radius": {"Auto": null}
+                }
+            ]),
+        )])
+    }
+
+    #[derive(Clone, Debug, PartialEq, Reflect)]
+    enum PointOrZero {
+        Point { x: f32, y: f32 },
+        Zero,
+    }
+
+    #[derive(Component, Reflect, Default)]
+    #[reflect(Component, Default)]
+    struct PointListComponent {
+        points: Vec<PointOrZero>,
+    }
+
+    fn point_list_fields() -> Map<String, Value> {
+        Map::from_iter([(
+            "points".to_string(),
+            serde_json::json!([
+                {"Point": {"x": 1.0}}
+            ]),
+        )])
+    }
+
+    #[test]
+    fn reflect_set_list_of_struct_fields_converts_elements() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.register_type::<ShadowListComponent>();
+        app.update();
+        let entity = app.world_mut().spawn(ShadowListComponent::default()).id();
+        let world = app.world_mut();
+
+        let fields = shadow_list_fields();
+        let result =
+            reflect_set_component(world, entity, TypeId::of::<ShadowListComponent>(), &fields);
+        assert!(
+            result.is_ok(),
+            "reflect_set_component failed: {:?}",
+            result.as_ref().err()
+        );
+
+        let shadows = world
+            .get::<ShadowListComponent>(entity)
+            .unwrap()
+            .shadows
+            .clone();
+        assert_eq!(shadows.len(), 2);
+        assert_eq!(shadows[0].x_offset, Val::Px(1.0));
+        assert_eq!(shadows[0].y_offset, Val::Px(2.0));
+        assert_eq!(shadows[0].blur_radius, Val::Px(4.0));
+        assert_eq!(shadows[0].spread_radius, Val::Auto);
+        assert_eq!(shadows[1].x_offset, Val::Auto);
+        match shadows[0].color {
+            Color::Srgba(color) => {
+                assert!((color.red - 0.1).abs() < f32::EPSILON);
+                assert!((color.blue - 0.3).abs() < f32::EPSILON);
+                assert!((color.alpha - 0.4).abs() < f32::EPSILON);
+            }
+            other => panic!("expected Srgba, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn reflect_spawn_list_of_struct_fields_converts_elements() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.register_type::<ShadowListComponent>();
+        app.update();
+        let world = app.world_mut();
+        let entity = world.spawn_empty().id();
+
+        let fields = shadow_list_fields();
+        let result =
+            reflect_spawn_component(world, entity, TypeId::of::<ShadowListComponent>(), &fields);
+        assert!(result.is_ok(), "reflect_spawn_component failed: {result:?}");
+
+        let shadows = world
+            .get::<ShadowListComponent>(entity)
+            .unwrap()
+            .shadows
+            .clone();
+        assert_eq!(shadows.len(), 2);
+        assert_eq!(shadows[1].blur_radius, Val::Auto);
+    }
+
+    fn missing_point_field_app() -> App {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.register_type::<PointListComponent>();
+        app.register_type::<PointOrZero>();
+        app.update();
+        app
+    }
+
+    #[test]
+    fn reflect_set_list_enum_struct_variant_missing_field_reports_requires_field() {
+        let mut app = missing_point_field_app();
+        let entity = app.world_mut().spawn(PointListComponent::default()).id();
+        let world = app.world_mut();
+
+        let fields = point_list_fields();
+        let result =
+            reflect_set_component(world, entity, TypeId::of::<PointListComponent>(), &fields);
+        let error = result.err().unwrap();
+        assert!(
+            matches!(&error, ReflectError::FieldError(message)
+                if message == "points: variant 'Point' requires field 'y'"),
+            "unexpected error: {error:?}"
+        );
+        let points = world
+            .get::<PointListComponent>(entity)
+            .unwrap()
+            .points
+            .clone();
+        assert!(
+            points.is_empty(),
+            "failed set must leave the field untouched"
+        );
+    }
+
+    #[test]
+    fn reflect_spawn_list_enum_struct_variant_missing_field_reports_requires_field() {
+        let mut app = missing_point_field_app();
+        let entity = app.world_mut().spawn_empty().id();
+        let world = app.world_mut();
+
+        let fields = point_list_fields();
+        let error =
+            reflect_spawn_component(world, entity, TypeId::of::<PointListComponent>(), &fields)
+                .unwrap_err();
+        assert!(
+            matches!(&error, ReflectError::FieldError(message)
+                if message == "points: variant 'Point' requires field 'y'"),
+            "unexpected error: {error:?}"
+        );
+        assert!(
+            world.get::<PointListComponent>(entity).is_none(),
+            "failed spawn must not insert the component"
+        );
+    }
 
     #[test]
     fn reflect_fallback_unregistered_type() {

@@ -4,7 +4,7 @@ Handling keyboard, mouse, and gamepad input in PyBevy.
 
 ## Keyboard Input
 
-Use `Res[ButtonInput[KeyCode]]` to read keyboard state. Bare `Res[ButtonInput]` means the same thing and stays valid.
+Use `Res[ButtonInput[KeyCode]]` to read keyboard state.
 
 ```python
 from pybevy.input import ButtonInput, KeyCode
@@ -126,7 +126,7 @@ def scroll_system(scroll: MessageReader[MouseWheel]) -> None:
 
 | Type | Import |
 |------|--------|
-| `ButtonInput`, `KeyCode`, `NativeKeyCode` | `from pybevy.input import ButtonInput, KeyCode, NativeKeyCode` |
+| `ButtonInput[KeyCode]`, `KeyCode`, `NativeKeyCode` | `from pybevy.input import ButtonInput, KeyCode, NativeKeyCode` |
 | `ButtonInput[MouseButton]` | `from pybevy.input import ButtonInput, MouseButton` |
 | `AccumulatedMouseMotion` | `from pybevy.input import AccumulatedMouseMotion` |
 | `MouseWheel` | `from pybevy.input import MouseWheel` |
@@ -158,3 +158,31 @@ def gamepad_system(query: Query[Gamepad]) -> None:
 ```
 
 See `pybevy.input` stubs for the full API including `GamepadAxis`, `GamepadSettings`, `Touches`, and gesture events.
+
+## Simulating Input
+
+Input messages are writable, so a test or headless scene can drive the real
+pipeline instead of faking state: `InputPlugin`'s own systems consume them in
+`PreUpdate` and update `ButtonInput`, keeping `pressed` / `just_pressed` honest.
+A message written during `Update` reaches `ButtonInput` on the next frame, and
+releasing a key needs a matching `ButtonState.Released()` message.
+
+```python
+from pybevy.ecs import MessageWriter
+from pybevy.input import ButtonState, Key, KeyboardInput, KeyCode
+
+def simulate_jump(writer: MessageWriter[KeyboardInput]) -> None:
+    writer.write(
+        KeyboardInput(
+            key_code=KeyCode.Space,
+            logical_key=Key.Space(),
+            state=ButtonState.Pressed(),
+        )
+    )
+```
+
+Writable: `KeyboardInput`, `MouseButtonInput`, `MouseMotion`, `MouseWheel`,
+`GamepadButtonChangedEvent`, `GamepadButtonStateChangedEvent`,
+`GamepadAxisChangedEvent`, `GamepadConnectionEvent`, `GamepadRumbleRequest`, and
+`CursorMoved` / `RequestRedraw` from `pybevy.window`. Synthetic `MouseWheel`
+messages default to `TouchPhase.Moved` but may provide another phase.

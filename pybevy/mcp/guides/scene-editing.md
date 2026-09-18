@@ -89,7 +89,10 @@ for editable components. `set_component` echoes each written field under that
 same Python spelling, so a response replays unchanged; a Bevy field named after
 a Python keyword carries a trailing underscore, such as `global_`.
 `GlobalTransform` reports only computed world-space `translation`, `rotation`,
-and `scale`; these fields are read-only. Derived enum predicates such as `is_*`
+and `scale`; these fields are read-only. Readable read-only fields on other
+components, such as `BackgroundGradient.gradients` and the `AccessibilityNode`
+`role`, `label`, and `value` properties, are included on read and rejected
+with a field-named error when written. Derived enum predicates such as `is_*`
 are omitted.
 
 A request that applies nothing fails with 400 rather than reporting success:
@@ -387,7 +390,11 @@ Engine-side tools can be scheduled, including:
 - Scene inspection: `query_entities`, `get_scene_summary`, `query_spatial`, `query_spatial_neighborhood`, `check_overlaps`, `check_all_overlaps`, `get_bounding_box`, `get_component`, `get_component_schema`, `get_registry`, `get_last_error`, `get_performance`, `get_reload_status`
 - Mutation and code: `set_component`, `remove_component`, `spawn_entity`, `despawn_entity`, `set_resource`, `remove_resource`, `set_asset`, `batch`, `run_code`
 
-**Not schedulable**: `get_logs`, `search_api`, `get_type_definition`, `run_scene`, `get_started` (bridge-local), and `reload`, `reload_and_capture` (the schedule blocks the same frame loop the reload needs to drop and re-enter).
+**Not schedulable**: `schedule_actions`, `get_schedule_result`, `get_guide`,
+`get_started`, `get_type_definition`, `search_api`, `get_logs`, `run_scene`,
+`reload`, and `reload_and_capture`. These are rejected before any action runs;
+the reload tools would otherwise deadlock the frame loop. `get_resource` and
+`get_system_list` are schedulable.
 
 ## Iterative Editing
 
@@ -459,6 +466,8 @@ not jump to the requested moment.
 
 ## Field Value Formats (MCP JSON)
 
+Integer vector coordinates must be JSON integers; floats and booleans are rejected.
+
 | Type | JSON Format | Example |
 |------|-------------|---------|
 | Vec2 | `[x, y]` | `[1.0, 2.0]` |
@@ -467,6 +476,7 @@ not jump to the requested moment.
 | Quat | `[x, y, z, w]` | `[0, 0, 0, 1]` |
 | Color | `[r, g, b, a]` | `[1.0, 0.5, 0.0, 1.0]` |
 | UVec2/IVec2 | `[x, y]` | `[700, 0]` |
+| UVec3 | `[x, y, z]` | `[8, 12, 16]` |
 | float | number | `500.0` |
 | int/isize | integer | `2` |
 | bool | boolean | `true` |

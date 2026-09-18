@@ -498,22 +498,40 @@ fn spawn_component_python(
 
         // Try default constructor first
         let instance = match py_type.call0() {
-            Ok(inst) => {
-                // Apply field values via setattr
-                for (field_name, field_value) in fields {
-                    match convert_field_value(py, &inst, field_name, field_value) {
-                        Ok(py_value) => {
-                            if let Err(e) = inst.setattr(field_name.as_str(), py_value) {
+            Ok(inst) => match resolve_enum_instance(py, &inst, fields) {
+                Ok(Some(resolved)) => {
+                    let bound = resolved.bind(py);
+                    if let Err(e) = check_relationship_link(world, entity, bound, bridge) {
+                        errors.push(format!("{comp_name}: {e}"));
+                        return;
+                    }
+                    if let Err(e) = bridge.insert(world, entity, bound) {
+                        errors.push(format!("{comp_name}: {e}"));
+                    } else {
+                        added_components.push(comp_name.to_string());
+                    }
+                    return;
+                }
+                Ok(None) => {
+                    for (field_name, field_value) in fields {
+                        match convert_field_value(py, &inst, field_name, field_value) {
+                            Ok(py_value) => {
+                                if let Err(e) = inst.setattr(field_name.as_str(), py_value) {
+                                    errors.push(format!("{comp_name}.{field_name}: {e}"));
+                                }
+                            }
+                            Err(e) => {
                                 errors.push(format!("{comp_name}.{field_name}: {e}"));
                             }
                         }
-                        Err(e) => {
-                            errors.push(format!("{comp_name}.{field_name}: {e}"));
-                        }
                     }
+                    inst
                 }
-                inst
-            }
+                Err(e) => {
+                    errors.push(format!("{comp_name}: {e}"));
+                    return;
+                }
+            },
             Err(_) if !fields.is_empty() => {
                 // Default constructor failed - try passing fields as kwargs
                 let kwargs = PyDict::new(py);
@@ -839,6 +857,15 @@ fn set_component_python(
                         }),
                 }
             } else {
+                // Pre-write guard: a later setattr would leak a raw AttributeError for typos.
+                let unknown = unknown_set_fields(current, field_obj.keys());
+                if !unknown.is_empty() {
+                    return Err(ControlError::invalid_params(unknown_field_error(
+                        component,
+                        &unknown,
+                        &writable_field_names(current),
+                    )));
+                }
                 current
                     .call_method0("__copy__")
                     .map(|copy| (copy.unbind(), None))
@@ -923,24 +950,59 @@ fn insert_component_python(
     let new_values = Python::attach(|py| {
         let py_type = bridge.py_type(py);
         let instance = match py_type.call0() {
-            Ok(instance) => {
-                for (field_name, field_value) in field_obj {
-                    let py_value = convert_field_value(py, &instance, field_name, field_value)
-                        .map_err(|error| {
-                            ControlError::invalid_params(format!(
-                                "Failed to convert '{component}.{field_name}': {error}"
-                            ))
-                        })?;
-                    instance
-                        .setattr(field_name.as_str(), py_value)
-                        .map_err(|error| {
-                            ControlError::invalid_params(format!(
-                                "Failed to set '{component}.{field_name}': {error}"
-                            ))
-                        })?;
+            Ok(instance) => match resolve_enum_instance(py, &instance, field_obj) {
+                Ok(Some(resolved)) => {
+                    let bound = resolved.bind(py);
+                    check_relationship_link(world, entity, bound, bridge)
+                        .map_err(ControlError::invalid_params)?;
+                    bridge.insert(world, entity, bound).map_err(|error| {
+                        ControlError::invalid_params(format!(
+                            "Failed to insert component '{component}': {error}"
+                        ))
+                    })?;
+                    let mut post = read_back_fields(bound, field_obj.keys());
+                    if let Some(serde_json::Value::String(variant_name)) = field_obj.get("variant")
+                    {
+                        post.insert(
+                            "variant".to_string(),
+                            serde_json::Value::String(variant_name.clone()),
+                        );
+                    }
+                    return Ok(post);
                 }
-                instance
-            }
+                Ok(None) => {
+                    // Same pre-write guard before the insert setattr path.
+                    let unknown = unknown_set_fields(&instance, field_obj.keys());
+                    if !unknown.is_empty() {
+                        return Err(ControlError::invalid_params(unknown_field_error(
+                            component,
+                            &unknown,
+                            &writable_field_names(&instance),
+                        )));
+                    }
+                    for (field_name, field_value) in field_obj {
+                        let py_value = convert_field_value(py, &instance, field_name, field_value)
+                            .map_err(|error| {
+                                ControlError::invalid_params(format!(
+                                    "Failed to convert '{component}.{field_name}': {error}"
+                                ))
+                            })?;
+                        instance
+                            .setattr(field_name.as_str(), py_value)
+                            .map_err(|error| {
+                                ControlError::invalid_params(format!(
+                                    "Failed to set '{component}.{field_name}': {error}"
+                                ))
+                            })?;
+                    }
+                    instance
+                }
+                Err(error) => {
+                    return Err(ControlError::invalid_params(format!(
+                        "Failed to set '{component}': {error}"
+                    )));
+                }
+            },
             Err(_) if !field_obj.is_empty() => {
                 let kwargs = PyDict::new(py);
                 for (field_name, field_value) in field_obj {
@@ -1891,21 +1953,7 @@ pub fn batch_mutate(
         }
     }
 
-    let succeeded = results
-        .iter()
-        .filter(|r| r.get("status").and_then(|v| v.as_str()) == Some("ok"))
-        .count();
-    let partial = results
-        .iter()
-        .filter(|r| r.get("status").and_then(|v| v.as_str()) == Some("partial"))
-        .count();
-
-    Ok(serde_json::json!({
-        "results": results,
-        "total": operations.len(),
-        "succeeded": succeeded,
-        "partial": partial,
-    }))
+    Ok(super::super::batch_response(results))
 }
 
 /// Parse entity ref from a batch operation JSON object.
@@ -2069,6 +2117,41 @@ enum VariantSource {
     ObjectKey,
 }
 
+fn construct_wrapped_variant_payload<'py>(
+    py: Python<'py>,
+    variant: &Bound<'py, PyAny>,
+    variant_name: &str,
+    fields: &serde_json::Map<String, serde_json::Value>,
+) -> Result<Option<Py<PyAny>>, String> {
+    let Ok(prototype) = variant.getattr("__pybevy_control_payload_prototype__") else {
+        return Ok(None);
+    };
+    let Ok(payload_type) = prototype.cast::<PyType>() else {
+        return Ok(None);
+    };
+    let Ok(prototype) = payload_type.call0() else {
+        return Ok(None);
+    };
+    let holder = PyModule::import(py, "types")
+        .and_then(|types| types.getattr("SimpleNamespace"))
+        .and_then(|ns| {
+            let kwargs = PyDict::new(py);
+            kwargs.set_item("value", prototype.clone())?;
+            ns.call((), Some(&kwargs))
+        })
+        .map_err(|error| format!("invalid payload for variant '{variant_name}': {error}"))?;
+    let payload = convert_field_value(
+        py,
+        &holder,
+        "value",
+        &serde_json::Value::Object(fields.clone()),
+    )?;
+    variant
+        .call1((payload,))
+        .map(|result| Some(result.unbind()))
+        .map_err(|error| format!("invalid payload for variant '{variant_name}': {error}"))
+}
+
 fn construct_enum_variant(
     py: Python<'_>,
     current: &Bound<'_, PyAny>,
@@ -2121,11 +2204,37 @@ fn construct_enum_variant(
         return Err(format!("variant '{variant_name}' requires a payload"));
     }
 
+    let has_wrapped_payload = variant
+        .hasattr("__pybevy_control_payload_prototype__")
+        .unwrap_or(false);
+    if variant_value.is_array() {
+        let expected = if has_wrapped_payload {
+            public_error::MCP_ENUM_WRAPPED_ARRAY_PAYLOAD
+        } else {
+            public_error::MCP_ENUM_SCALAR_ARRAY_PAYLOAD
+        };
+        return Err(format!(
+            "invalid payload for variant '{variant_name}': {expected}"
+        ));
+    }
+
     if variant
         .cast::<PyType>()
         .is_ok_and(|variant_type| current.is_instance(variant_type).unwrap_or(false))
         && current.hasattr("value").unwrap_or(false)
     {
+        let scalar_payload = current.getattr("value").is_ok_and(|payload| {
+            payload.is_instance_of::<PyBool>()
+                || payload.is_instance_of::<PyFloat>()
+                || payload.is_instance_of::<PyInt>()
+                || payload.is_instance_of::<PyString>()
+        });
+        if variant_value.is_object() && !has_wrapped_payload && scalar_payload {
+            return Err(format!(
+                "invalid payload for variant '{variant_name}': {}",
+                public_error::MCP_ENUM_SCALAR_OBJECT_PAYLOAD
+            ));
+        }
         let argument = convert_field_value(py, current, "value", variant_value)?;
         return variant
             .call1((argument,))
@@ -2159,15 +2268,51 @@ fn construct_enum_variant(
                     "invalid payload for variant '{variant_name}': {error}"
                 ));
             }
-            Err(_) => {}
+            Err(_) => {
+                // A failed kwargs call may mean the variant wraps one payload struct.
+                if let Some(result) =
+                    construct_wrapped_variant_payload(py, &variant, variant_name, fields)?
+                {
+                    return Ok(Some(result));
+                }
+            }
         }
     }
 
     let argument = json_to_py(py, variant_value)?;
-    variant
-        .call1((argument,))
-        .map(|result| Some(result.unbind()))
-        .map_err(|error| format!("invalid payload for variant '{variant_name}': {error}"))
+    match variant.call1((argument,)) {
+        Ok(result) => Ok(Some(result.unbind())),
+        Err(_) if variant_value.is_object() => Err(format!(
+            "invalid payload for variant '{variant_name}': {}",
+            public_error::MCP_ENUM_SCALAR_OBJECT_PAYLOAD
+        )),
+        Err(error) => Err(format!(
+            "invalid payload for variant '{variant_name}': {error}"
+        )),
+    }
+}
+
+// An enum has no variant field to setattr; resolve the tagged payload via the shared resolver.
+fn resolve_enum_instance(
+    py: Python<'_>,
+    default: &Bound<'_, PyAny>,
+    fields: &serde_json::Map<String, serde_json::Value>,
+) -> Result<Option<Py<PyAny>>, String> {
+    let Some(serde_json::Value::String(variant_name)) = fields.get("variant") else {
+        return Ok(None);
+    };
+    let mut payload = fields.clone();
+    payload.remove("variant");
+    let payload = if payload.is_empty() {
+        serde_json::Value::Null
+    } else if payload.len() == 1 {
+        payload
+            .remove("value")
+            .unwrap_or(serde_json::Value::Object(payload))
+    } else {
+        serde_json::Value::Object(payload)
+    };
+    construct_enum_variant(py, default, variant_name, &payload, VariantSource::Named)
 }
 
 fn construct_color_variant(
@@ -2283,6 +2428,535 @@ fn has_public_getset_fields(value: &Bound<'_, PyAny>) -> bool {
     })
 }
 
+fn writable_field_names(instance: &Bound<'_, PyAny>) -> Vec<String> {
+    let class = instance.get_type();
+    // Probe a fresh owned copy so a read-only setter error cannot touch the live component.
+    let probe = match instance.call_method0("__copy__").or_else(|_| class.call0()) {
+        Ok(copy) => copy,
+        Err(_) => return Vec::new(),
+    };
+    let mut names = Vec::new();
+    let Ok(dir_list) = class.dir() else {
+        return names;
+    };
+    for attr_obj in dir_list.iter() {
+        let Ok(name) = attr_obj.extract::<String>() else {
+            continue;
+        };
+        if name.starts_with('_') {
+            continue;
+        }
+        let Ok(attr) = class.getattr(name.as_str()) else {
+            continue;
+        };
+        let descriptor = attr
+            .get_type()
+            .name()
+            .ok()
+            .map(|kind| kind.to_string_lossy().into_owned())
+            .is_some_and(|kind| kind == "getset_descriptor" || kind == "property");
+        if !descriptor {
+            continue;
+        }
+        // Assigning the field's own value distinguishes a getter from a getter/setter.
+        if probe
+            .getattr(name.as_str())
+            .and_then(|value| probe.setattr(name.as_str(), value))
+            .is_ok()
+        {
+            names.push(name);
+        }
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
+fn declares_component_field(py_type: &Bound<'_, PyType>, name: &str) -> bool {
+    py_type.getattr(name).is_ok_and(|attr| {
+        attr.get_type().name().ok().is_some_and(|kind| {
+            matches!(
+                kind.to_string_lossy().as_ref(),
+                "getset_descriptor" | "property"
+            )
+        })
+    })
+}
+
+fn unknown_set_fields<'a>(
+    instance: &Bound<'_, PyAny>,
+    field_names: impl IntoIterator<Item = &'a String>,
+) -> Vec<String> {
+    if instance.getattr("__dict__").is_ok() {
+        return Vec::new();
+    }
+    let class = instance.get_type();
+    field_names
+        .into_iter()
+        .filter(|name| {
+            instance.getattr(name.as_str()).is_err() && !declares_component_field(&class, name)
+        })
+        .cloned()
+        .collect()
+}
+
+fn levenshtein_distance(left: &str, right: &str) -> usize {
+    let left: Vec<char> = left.chars().collect();
+    let right: Vec<char> = right.chars().collect();
+    let mut previous: Vec<usize> = (0..=right.len()).collect();
+    for (i, left_char) in left.iter().enumerate() {
+        let mut current = vec![i + 1];
+        for (j, right_char) in right.iter().enumerate() {
+            let cost = usize::from(left_char != right_char);
+            current.push(std::cmp::min(
+                std::cmp::min(previous[j + 1] + 1, current[j] + 1),
+                previous[j] + cost,
+            ));
+        }
+        previous = current;
+    }
+    previous[right.len()]
+}
+
+fn close_field_suggestion(typo: &str, candidates: &[String]) -> Option<String> {
+    let typo = typo.to_lowercase();
+    let mut best: Option<(usize, &String)> = None;
+    for candidate in candidates {
+        let distance = levenshtein_distance(&typo, &candidate.to_lowercase());
+        if (1..=2).contains(&distance) && best.is_none_or(|(known, _)| distance < known) {
+            best = Some((distance, candidate));
+        }
+    }
+    best.map(|(_, candidate)| candidate.clone())
+}
+
+fn unknown_field_error(component: &str, unknown: &[String], writable: &[String]) -> String {
+    let suggestion = if unknown.len() == 1 {
+        close_field_suggestion(&unknown[0], writable)
+    } else {
+        None
+    };
+    if let Some(candidate) = suggestion {
+        return format!(
+            "Failed to set '{component}': unknown field '{}'. Did you mean '{}'?",
+            unknown[0], candidate
+        );
+    }
+    let subject = if unknown.len() == 1 {
+        format!("unknown field '{}'", unknown[0])
+    } else {
+        format!("unknown fields: {}", unknown.join(", "))
+    };
+    if writable.is_empty() {
+        return format!(
+            "Failed to set '{component}': {subject}. This component exposes no writable fields."
+        );
+    }
+    if writable.len() <= 8 {
+        return format!(
+            "Failed to set '{component}': {subject}. Valid writable fields: {}.",
+            writable.join(", ")
+        );
+    }
+    format!(
+        "Failed to set '{component}': {subject}. See GET /api/v1/components/{component}/schema for the writable fields."
+    )
+}
+
+enum ListElementTarget<'py> {
+    Generic,
+    Wrapper {
+        class: Bound<'py, PyType>,
+        instance: Option<Bound<'py, PyAny>>,
+    },
+}
+
+fn convert_list_elements<'py>(
+    py: Python<'py>,
+    component: &Bound<'py, PyAny>,
+    field_name: &str,
+    current: &Bound<'py, PyAny>,
+    arr: &[serde_json::Value],
+) -> Result<Option<Py<PyAny>>, String> {
+    let ListElementTarget::Wrapper { class, instance } =
+        list_element_target(py, component, field_name, current)?
+    else {
+        return Ok(None);
+    };
+    let class_name = class
+        .name()
+        .map_err(|error| error.to_string())?
+        .to_string_lossy()
+        .into_owned();
+    let math_shape = match class_name.as_str() {
+        "Vec2" => Some("[x, y]"),
+        "Vec3" => Some("[x, y, z]"),
+        "Vec4" | "Quat" => Some("[x, y, z, w]"),
+        _ => None,
+    };
+    let is_enum = instance
+        .as_ref()
+        .is_some_and(|instance| !enum_variant_names(&enum_owner_type(instance)).is_empty());
+    let items = arr
+        .iter()
+        .enumerate()
+        .map(|(index, value)| -> Result<Py<PyAny>, String> {
+            if let Some(shape) = math_shape {
+                if let serde_json::Value::Array(values) = value {
+                    if let Some(result) = math_value_from_json(py, &class_name, values) {
+                        return result;
+                    }
+                    return Err(format!(
+                        "element {index}: {class_name} expects {shape}, got {} elements",
+                        values.len()
+                    ));
+                }
+                return Err(format!(
+                    "element {index}: {class_name} expects {shape}, got {}",
+                    json_kind_name(value)
+                ));
+            }
+            match value {
+                serde_json::Value::Object(fields) => {
+                    if is_enum {
+                        let instance = instance.as_ref().ok_or_else(|| {
+                            format!("element {index}: expected a {class_name} element")
+                        })?;
+                        convert_enum_element(py, instance, index, fields)
+                    } else {
+                        convert_struct_element(py, &class, instance.as_ref(), index, fields)
+                    }
+                }
+                _ => Err(format!(
+                    "element {index}: expected object, got {}",
+                    json_kind_name(value)
+                )),
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    PyList::new(py, items)
+        .map(|list| list.unbind().into_any())
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
+fn list_element_target<'py>(
+    py: Python<'py>,
+    component: &Bound<'py, PyAny>,
+    field_name: &str,
+    current: &Bound<'py, PyAny>,
+) -> Result<ListElementTarget<'py>, String> {
+    if let Ok(first) = current.get_item(0usize) {
+        if first.is_instance_of::<PyString>()
+            || first.is_instance_of::<PyInt>()
+            || first.is_instance_of::<PyFloat>()
+            || first.is_instance_of::<PyBool>()
+            || first.is_none()
+            || first.is_instance_of::<PyDict>()
+            || first.is_instance_of::<PyList>()
+            || first.is_instance_of::<PySet>()
+            || first.is_instance_of::<PyTuple>()
+        {
+            return Ok(ListElementTarget::Generic);
+        }
+        return Ok(ListElementTarget::Wrapper {
+            class: first.get_type(),
+            instance: Some(first),
+        });
+    }
+    // Probe a detached value because the component can be a live resource borrow.
+    let Ok(probe_owner) = component
+        .call_method0("__copy__")
+        .or_else(|_| component.get_type().call0())
+    else {
+        return Ok(ListElementTarget::Generic);
+    };
+    let probe = PyList::new(py, [PyDict::new(py)]).map_err(|error| error.to_string())?;
+    match probe_owner.setattr(field_name, &probe) {
+        Ok(()) => Ok(ListElementTarget::Generic),
+        Err(error) => {
+            const MARKER: &str = "is not an instance of '";
+            let message = error.to_string();
+            let class_name = message.rfind(MARKER).and_then(|position| {
+                let rest = &message[position + MARKER.len()..];
+                rest.find('\'').map(|end| rest[..end].to_string())
+            });
+            let Some(class_name) = class_name else {
+                return Ok(ListElementTarget::Generic);
+            };
+            let Some(class) = find_pybevy_class(py, &class_name) else {
+                return Ok(ListElementTarget::Generic);
+            };
+            let instance = constructible_representative(&class);
+            Ok(ListElementTarget::Wrapper { class, instance })
+        }
+    }
+}
+
+fn find_pybevy_class<'py>(py: Python<'py>, name: &str) -> Option<Bound<'py, PyType>> {
+    let sys = PyModule::import(py, "sys").ok()?;
+    let modules_bound = sys.getattr("modules").ok()?;
+    let modules = modules_bound.cast::<PyDict>().ok()?;
+    for entry in modules.iter() {
+        let (key, _value) = entry;
+        let Ok(key) = key.extract::<String>() else {
+            continue;
+        };
+        if !key.starts_with("pybevy.") {
+            continue;
+        }
+        let Some(module) = modules.get_item(key.as_str()).ok().flatten() else {
+            continue;
+        };
+        let Ok(candidate) = module.getattr(name) else {
+            continue;
+        };
+        let Ok(candidate) = candidate.cast::<PyType>() else {
+            continue;
+        };
+        let defined_here = candidate
+            .getattr("__module__")
+            .ok()
+            .and_then(|module| module.extract::<String>().ok())
+            .is_some_and(|module| module == key);
+        if defined_here {
+            return Some(candidate.clone());
+        }
+    }
+    None
+}
+
+fn constructible_representative<'py>(class: &Bound<'py, PyType>) -> Option<Bound<'py, PyAny>> {
+    if let Ok(instance) = class.call0() {
+        return Some(instance);
+    }
+    for name in enum_variant_names(class) {
+        let Ok(candidate) = class.getattr(name.as_str()) else {
+            continue;
+        };
+        if candidate.is_instance(class).unwrap_or(false) {
+            return Some(candidate);
+        }
+        let instance = candidate
+            .cast::<PyType>()
+            .ok()
+            .and_then(|variant| variant.call0().ok());
+        if let Some(instance) = instance {
+            return Some(instance);
+        }
+    }
+    None
+}
+
+fn convert_struct_element(
+    py: Python<'_>,
+    class: &Bound<'_, PyType>,
+    instance: Option<&Bound<'_, PyAny>>,
+    index: usize,
+    fields: &serde_json::Map<String, serde_json::Value>,
+) -> Result<Py<PyAny>, String> {
+    let class_name = class
+        .name()
+        .map_err(|error| error.to_string())?
+        .to_string_lossy()
+        .into_owned();
+    let kwargs = PyDict::new(py);
+    for (name, value) in fields {
+        if !class.hasattr(name.as_str()).unwrap_or(false) {
+            return Err(format!(
+                "element {index}: {class_name} has no field '{name}'"
+            ));
+        }
+        let converted = match instance {
+            Some(instance) => convert_field_value(py, instance, name, value)
+                .map_err(|error| format!("{name}: {error}"))?,
+            None => json_to_py(py, value)?,
+        };
+        kwargs
+            .set_item(name, converted)
+            .map_err(|error| error.to_string())?;
+    }
+    if let Some(required) = missing_constructor_field(class, fields.keys()) {
+        return Err(format!(
+            "element {index}: {class_name} requires field '{required}'"
+        ));
+    }
+    class
+        .call((), Some(&kwargs))
+        .map(Bound::unbind)
+        .map_err(|error| format!("element {index}: invalid {class_name} element: {error}"))
+}
+
+fn enum_element_missing_field(
+    owner: &Bound<'_, PyType>,
+    variant_name: &str,
+    payload: &serde_json::Value,
+) -> Option<String> {
+    let serde_json::Value::Object(fields) = payload else {
+        return None;
+    };
+    if fields.is_empty() {
+        return None;
+    }
+    if !enum_variant_names(owner)
+        .iter()
+        .any(|name| name == variant_name)
+    {
+        return None;
+    }
+    let variant = owner.getattr(variant_name).ok()?;
+    let variant_type = variant.cast::<PyType>().ok()?;
+    missing_constructor_field(variant_type, fields.keys())
+}
+
+fn convert_enum_element(
+    py: Python<'_>,
+    instance: &Bound<'_, PyAny>,
+    index: usize,
+    fields: &serde_json::Map<String, serde_json::Value>,
+) -> Result<Py<PyAny>, String> {
+    let owner = enum_owner_type(instance);
+    let owner_name = owner
+        .name()
+        .map_err(|error| error.to_string())?
+        .to_string_lossy()
+        .into_owned();
+    if let Some(serde_json::Value::String(variant_name)) = fields.get("variant") {
+        let mut payload = fields.clone();
+        payload.remove("variant");
+        let payload = if payload.is_empty() {
+            serde_json::Value::Null
+        } else if payload.len() == 1 && payload.contains_key("value") {
+            payload.remove("value").unwrap()
+        } else {
+            serde_json::Value::Object(payload)
+        };
+        if let Some(field) = enum_element_missing_field(&owner, variant_name, &payload) {
+            return Err(format!(
+                "element {index}: variant '{variant_name}' requires field '{field}'"
+            ));
+        }
+        return construct_enum_variant(py, instance, variant_name, &payload, VariantSource::Named)
+            .map_err(|error| format!("element {index}: {error}"))?
+            .ok_or_else(|| format!("element {index}: expected a {owner_name} element"));
+    }
+    if fields.len() == 1 {
+        let (variant_name, variant_value) = fields.iter().next().unwrap();
+        if let Some(field) = enum_element_missing_field(&owner, variant_name, variant_value) {
+            return Err(format!(
+                "element {index}: variant '{variant_name}' requires field '{field}'"
+            ));
+        }
+        return construct_enum_variant(
+            py,
+            instance,
+            variant_name,
+            variant_value,
+            VariantSource::ObjectKey,
+        )
+        .map_err(|error| format!("element {index}: {error}"))?
+        .ok_or_else(|| format!("element {index}: expected a {owner_name} element"));
+    }
+    Err(format!(
+        "element {index}: expected a {owner_name} element with a single variant key"
+    ))
+}
+
+fn missing_constructor_field<'a>(
+    class: &Bound<'_, PyType>,
+    given: impl Iterator<Item = &'a String>,
+) -> Option<String> {
+    let py = class.py();
+    let inspect = PyModule::import(py, "inspect").ok()?;
+    let signature = inspect.getattr("signature").ok()?.call1((class,)).ok()?;
+    let parameters = signature.getattr("parameters").ok()?;
+    let empty = inspect.getattr("Parameter").ok()?.getattr("empty").ok()?;
+    let given: Vec<&String> = given.collect();
+    let Ok(mut iterator) = parameters.try_iter() else {
+        return None;
+    };
+    let mut missing = None;
+    while let Some(Ok(name)) = iterator.next() {
+        let Ok(name) = name.extract::<String>() else {
+            continue;
+        };
+        let Some(parameter) = parameters.get_item(&name).ok() else {
+            continue;
+        };
+        let variadic = parameter
+            .getattr("kind")
+            .ok()
+            .and_then(|kind| kind.getattr("name").ok())
+            .and_then(|name| name.extract::<String>().ok())
+            .is_some_and(|kind| kind == "VAR_POSITIONAL" || kind == "VAR_KEYWORD");
+        if variadic {
+            continue;
+        }
+        let has_default = parameter
+            .getattr("default")
+            .ok()
+            .is_some_and(|default| !default.is(empty.clone()));
+        if !has_default && missing.is_none() && !given.contains(&&name) {
+            missing = Some(name);
+        }
+    }
+    missing
+}
+
+fn math_value_from_json(
+    py: Python<'_>,
+    type_name: &str,
+    values: &[serde_json::Value],
+) -> Option<Result<Py<PyAny>, String>> {
+    let count = match type_name {
+        "Vec2" | "UVec2" | "IVec2" => 2,
+        "Vec3" | "UVec3" => 3,
+        "Vec4" | "Quat" => 4,
+        _ => return None,
+    };
+    if values.len() != count {
+        return None;
+    }
+    let integral = matches!(type_name, "UVec2" | "IVec2" | "UVec3");
+    let mut coordinates = Vec::with_capacity(count);
+    for value in values {
+        let coordinate = if integral {
+            integer_vector_coordinate_to_py(py, type_name, value)
+        } else {
+            json_number_to_f32(value).and_then(|number| {
+                number
+                    .into_pyobject(py)
+                    .map(|number| number.into_any().unbind())
+                    .map_err(|error| error.to_string())
+            })
+        };
+        match coordinate {
+            Ok(coordinate) => coordinates.push(coordinate),
+            Err(error) => return Some(Err(error)),
+        }
+    }
+    Some((|| -> Result<Py<PyAny>, String> {
+        let math = PyModule::import(py, "pybevy.math").map_err(|error| error.to_string())?;
+        let class = math.getattr(type_name).map_err(|error| error.to_string())?;
+        let args = PyTuple::new(py, coordinates).map_err(|error| error.to_string())?;
+        class
+            .call1(args)
+            .map(Bound::unbind)
+            .map_err(|error| error.to_string())
+    })())
+}
+
+fn json_kind_name(value: &serde_json::Value) -> &'static str {
+    match value {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "boolean",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::Object(_) => "object",
+    }
+}
+
 pub(crate) fn convert_field_value(
     py: Python<'_>,
     component: &Bound<'_, PyAny>,
@@ -2314,8 +2988,8 @@ pub(crate) fn convert_field_value(
             .name()
             .is_ok_and(|name| name.to_string_lossy() == "Color");
         let expected_math_shape = match type_name.as_str() {
-            "Vec2" => Some("[x, y]"),
-            "Vec3" => Some("[x, y, z]"),
+            "Vec2" | "UVec2" | "IVec2" => Some("[x, y]"),
+            "Vec3" | "UVec3" => Some("[x, y, z]"),
             "Vec4" | "Quat" => Some("[x, y, z, w]"),
             _ => None,
         };
@@ -2526,9 +3200,15 @@ pub(crate) fn convert_field_value(
             if let Some(array) = rebuild_array_like(py, &current, field_value)? {
                 return Ok(array);
             }
+            if current.is_instance_of::<PyList>()
+                && !arr.is_empty()
+                && let Some(list) = convert_list_elements(py, component, field_name, &current, arr)?
+            {
+                return Ok(list);
+            }
             let expected_shape = match type_name.as_str() {
-                "Vec2" => Some(("[x, y]", 2)),
-                "Vec3" => Some(("[x, y, z]", 3)),
+                "Vec2" | "UVec2" | "IVec2" => Some(("[x, y]", 2)),
+                "Vec3" | "UVec3" => Some(("[x, y, z]", 3)),
                 "Vec4" | "Quat" => Some(("[x, y, z, w]", 4)),
                 _ => None,
             };
@@ -2541,42 +3221,8 @@ pub(crate) fn convert_field_value(
                 ));
             }
 
-            let pybevy_math = PyModule::import(py, "pybevy.math").map_err(|e| e.to_string())?;
-
-            match (type_name.as_str(), arr.len()) {
-                ("Vec2", 2) => {
-                    let x = json_number_to_f32(&arr[0])?;
-                    let y = json_number_to_f32(&arr[1])?;
-                    let vec2_cls = pybevy_math.getattr("Vec2").map_err(|e| e.to_string())?;
-                    return vec2_cls
-                        .call1((x, y))
-                        .map(|v| v.unbind())
-                        .map_err(|e| e.to_string());
-                }
-                ("Vec3", 3) => {
-                    let x = json_number_to_f32(&arr[0])?;
-                    let y = json_number_to_f32(&arr[1])?;
-                    let z = json_number_to_f32(&arr[2])?;
-                    let vec3_cls = pybevy_math.getattr("Vec3").map_err(|e| e.to_string())?;
-                    return vec3_cls
-                        .call1((x, y, z))
-                        .map(|v| v.unbind())
-                        .map_err(|e| e.to_string());
-                }
-                ("Vec4" | "Quat", 4) => {
-                    let x = json_number_to_f32(&arr[0])?;
-                    let y = json_number_to_f32(&arr[1])?;
-                    let z = json_number_to_f32(&arr[2])?;
-                    let w = json_number_to_f32(&arr[3])?;
-                    let cls = pybevy_math
-                        .getattr(type_name.as_str())
-                        .map_err(|e| e.to_string())?;
-                    return cls
-                        .call1((x, y, z, w))
-                        .map(|v| v.unbind())
-                        .map_err(|e| e.to_string());
-                }
-                _ => {} // Fall through to generic conversion
+            if let Some(result) = math_value_from_json(py, &type_name, arr) {
+                return result;
             }
         }
 
@@ -2632,6 +3278,62 @@ pub(crate) fn convert_field_value(
 
     // Default: generic JSON → Python conversion
     json_to_py(py, field_value)
+}
+
+fn integer_vector_coordinate_to_py(
+    py: Python<'_>,
+    type_name: &str,
+    value: &serde_json::Value,
+) -> Result<Py<PyAny>, String> {
+    match type_name {
+        "UVec2" | "UVec3" => {
+            let coordinate = if let Some(integer) = value.as_i64() {
+                u32::try_from(integer)
+            } else if let Some(integer) = value.as_u64() {
+                u32::try_from(integer)
+            } else {
+                return Err(public_error::integer_vector_coordinate(type_name, value));
+            }
+            .map_err(|_| {
+                public_error::integer_vector_coordinate_out_of_range(
+                    type_name,
+                    value,
+                    u32::MIN,
+                    u32::MAX,
+                )
+            })?;
+            coordinate
+                .into_pyobject(py)
+                .map(|value| value.into_any().unbind())
+                .map_err(|error| error.to_string())
+        }
+        "IVec2" => {
+            let Some(integer) = value.as_i64() else {
+                if value.as_u64().is_some() {
+                    return Err(public_error::integer_vector_coordinate_out_of_range(
+                        type_name,
+                        value,
+                        i32::MIN,
+                        i32::MAX,
+                    ));
+                }
+                return Err(public_error::integer_vector_coordinate(type_name, value));
+            };
+            let coordinate = i32::try_from(integer).map_err(|_| {
+                public_error::integer_vector_coordinate_out_of_range(
+                    type_name,
+                    value,
+                    i32::MIN,
+                    i32::MAX,
+                )
+            })?;
+            coordinate
+                .into_pyobject(py)
+                .map(|value| value.into_any().unbind())
+                .map_err(|error| error.to_string())
+        }
+        _ => unreachable!("integer vector conversion requires a known integer vector type"),
+    }
 }
 
 pub(crate) fn json_number_to_f64(value: &serde_json::Value) -> Result<f64, String> {
@@ -2726,6 +3428,34 @@ mod tests {
     use crate::bridge::ErrorCode;
 
     static INIT: Once = Once::new();
+
+    #[pyclass]
+    struct ControlPayloadFixture {
+        required: i64,
+        preserved: i64,
+    }
+
+    #[pymethods]
+    impl ControlPayloadFixture {
+        #[new]
+        #[pyo3(signature = (*, required = 1, preserved = 9))]
+        fn new(required: i64, preserved: i64) -> Self {
+            Self {
+                required,
+                preserved,
+            }
+        }
+
+        #[getter]
+        fn required(&self) -> i64 {
+            self.required
+        }
+
+        #[getter]
+        fn preserved(&self) -> i64 {
+            self.preserved
+        }
+    }
 
     fn setup_python() {
         INIT.call_once(|| {
@@ -2949,6 +3679,61 @@ holder = Holder()
     }
 
     #[test]
+    fn wrapped_enum_payload_uses_registered_payload_type_defaults() {
+        setup_python();
+        Python::attach(|py| {
+            let code = CString::new(
+                r#"
+class Variant:
+    __pybevy_control_payload_prototype__ = Payload
+
+    def __init__(self, value):
+        if not isinstance(value, Payload):
+            raise TypeError("expected Payload")
+        self.value = value
+
+variant = Variant
+"#,
+            )
+            .unwrap();
+            let globals = PyDict::new(py);
+            globals
+                .set_item("Payload", py.get_type::<ControlPayloadFixture>())
+                .unwrap();
+            py.run(&code, Some(&globals), None).unwrap();
+            let variant = globals.get_item("variant").unwrap().unwrap();
+            let fields = serde_json::json!({"required": 4});
+
+            let result = construct_wrapped_variant_payload(
+                py,
+                &variant,
+                "Wrapped",
+                fields.as_object().unwrap(),
+            )
+            .unwrap()
+            .expect("metadata should construct a wrapped payload");
+            let payload = result.bind(py).getattr("value").unwrap();
+
+            assert_eq!(
+                payload
+                    .getattr("required")
+                    .unwrap()
+                    .extract::<i64>()
+                    .unwrap(),
+                4
+            );
+            assert_eq!(
+                payload
+                    .getattr("preserved")
+                    .unwrap()
+                    .extract::<i64>()
+                    .unwrap(),
+                9
+            );
+        });
+    }
+
+    #[test]
     fn convert_field_value_set_from_array() {
         setup_python();
         Python::attach(|py| {
@@ -3034,6 +3819,597 @@ holder = Holder()
                     .unwrap_err();
 
             assert_eq!(error, "Vec3 expects [x, y, z], got string");
+        });
+    }
+
+    #[test]
+    fn convert_field_value_list_of_struct_elements_converts_dicts() {
+        setup_python();
+        Python::attach(|py| {
+            let code = CString::new(
+                r#"
+import sys, types
+
+if "pybevy" not in sys.modules:
+    sys.modules["pybevy"] = types.ModuleType("pybevy")
+ui_mod = sys.modules.get("pybevy.ui")
+if ui_mod is None:
+    ui_mod = types.ModuleType("pybevy.ui")
+    sys.modules["pybevy.ui"] = ui_mod
+
+class ShadowStyle:
+    color = None
+    x_offset = None
+    def __init__(self, *, color=None, x_offset=None):
+        self.color = color
+        self.x_offset = x_offset
+
+ShadowStyle.__module__ = "pybevy.ui"
+ui_mod.ShadowStyle = ShadowStyle
+
+class BoxHolder:
+    def __init__(self):
+        self._shadows = [ShadowStyle()]
+    @property
+    def shadows(self):
+        return self._shadows
+    @shadows.setter
+    def shadows(self, value):
+        for item in value:
+            if not isinstance(item, ShadowStyle):
+                raise TypeError("'dict' object is not an instance of 'ShadowStyle'")
+        self._shadows = list(value)
+
+holder = BoxHolder()
+holder_empty = BoxHolder.__new__(BoxHolder)
+holder_empty._shadows = []
+"#,
+            )
+            .unwrap();
+
+            let globals = PyDict::new(py);
+            py.run(&code, Some(&globals), None).unwrap();
+            let holder = globals.get_item("holder").unwrap().unwrap();
+
+            let field_value = serde_json::json!([
+                {"color": [1.0, 0.5], "x_offset": 3.0},
+                {"color": null, "x_offset": 1.5}
+            ]);
+            let result = convert_field_value(py, &holder, "shadows", &field_value).unwrap();
+            let list = result.bind(py).cast::<PyList>().unwrap();
+            assert_eq!(list.len(), 2);
+            let first = list.get_item(0).unwrap();
+            assert_eq!(
+                first.get_type().name().unwrap().to_string_lossy(),
+                "ShadowStyle"
+            );
+            assert_eq!(
+                first.getattr("x_offset").unwrap().extract::<f64>().unwrap(),
+                3.0
+            );
+            let second = list.get_item(1).unwrap();
+            assert!(second.getattr("color").unwrap().is_none());
+            assert_eq!(
+                second
+                    .getattr("x_offset")
+                    .unwrap()
+                    .extract::<f64>()
+                    .unwrap(),
+                1.5
+            );
+        });
+    }
+
+    #[test]
+    fn convert_field_value_list_of_structs_empty_list_probes_detached_setter() {
+        setup_python();
+        Python::attach(|py| {
+            let code = CString::new(
+                r#"
+import sys, types
+
+if "pybevy" not in sys.modules:
+    sys.modules["pybevy"] = types.ModuleType("pybevy")
+ui_mod = sys.modules.get("pybevy.ui")
+if ui_mod is None:
+    ui_mod = types.ModuleType("pybevy.ui")
+    sys.modules["pybevy.ui"] = ui_mod
+
+class ShadowStyle:
+    color = None
+    x_offset = None
+    def __init__(self, *, color=None, x_offset=None):
+        self.color = color
+        self.x_offset = x_offset
+
+ShadowStyle.__module__ = "pybevy.ui"
+ui_mod.ShadowStyle = ShadowStyle
+
+class BoxHolder:
+    def __init__(self):
+        self._shadows = []
+        self.setter_attempts = 0
+    @property
+    def shadows(self):
+        return self._shadows
+    @shadows.setter
+    def shadows(self, value):
+        self.setter_attempts += 1
+        for item in value:
+            if not isinstance(item, ShadowStyle):
+                raise TypeError("'dict' object is not an instance of 'ShadowStyle'")
+        self._shadows = list(value)
+
+holder_empty = BoxHolder()
+"#,
+            )
+            .unwrap();
+
+            let globals = PyDict::new(py);
+            py.run(&code, Some(&globals), None).unwrap();
+            let holder_empty = globals.get_item("holder_empty").unwrap().unwrap();
+
+            let field_value = serde_json::json!([{"color": null, "x_offset": 7.0}]);
+            let result = convert_field_value(py, &holder_empty, "shadows", &field_value).unwrap();
+            let list = result.bind(py).cast::<PyList>().unwrap();
+            assert_eq!(list.len(), 1);
+            assert_eq!(
+                list.get_item(0)
+                    .unwrap()
+                    .getattr("x_offset")
+                    .unwrap()
+                    .extract::<f64>()
+                    .unwrap(),
+                7.0
+            );
+            let shadows = holder_empty.getattr("shadows").unwrap();
+            assert_eq!(shadows.len().unwrap(), 0);
+            assert_eq!(
+                holder_empty
+                    .getattr("setter_attempts")
+                    .unwrap()
+                    .extract::<usize>()
+                    .unwrap(),
+                0
+            );
+        });
+    }
+
+    #[test]
+    fn convert_field_value_empty_list_probe_unresolvable_class_falls_back_generic() {
+        setup_python();
+        Python::attach(|py| {
+            let code = CString::new(
+                r#"
+class UnresolvableHolder:
+    def __init__(self):
+        self._items = []
+    @property
+    def items(self):
+        return self._items
+    @items.setter
+    def items(self, value):
+        for item in value:
+            if type(item) is dict:
+                raise TypeError("'dict' object is not an instance of 'UnloadedThing'")
+        self._items = list(value)
+
+holder = UnresolvableHolder()
+"#,
+            )
+            .unwrap();
+
+            let globals = PyDict::new(py);
+            py.run(&code, Some(&globals), None).unwrap();
+            let holder = globals.get_item("holder").unwrap().unwrap();
+
+            let field_value = serde_json::json!([{"a": 1}]);
+            let result = convert_field_value(py, &holder, "items", &field_value).unwrap();
+            let list = result.bind(py).cast::<PyList>().unwrap();
+            assert_eq!(list.len(), 1);
+            let element = list.get_item(0).unwrap();
+            assert!(element.is_instance_of::<PyDict>());
+            let items = holder.getattr("items").unwrap();
+            assert_eq!(items.len().unwrap(), 0);
+        });
+    }
+
+    #[test]
+    fn convert_field_value_list_element_unknown_field() {
+        setup_python();
+        Python::attach(|py| {
+            let code = CString::new(
+                r#"
+import sys, types
+
+if "pybevy" not in sys.modules:
+    sys.modules["pybevy"] = types.ModuleType("pybevy")
+ui_mod = sys.modules.get("pybevy.ui")
+if ui_mod is None:
+    ui_mod = types.ModuleType("pybevy.ui")
+    sys.modules["pybevy.ui"] = ui_mod
+
+class ShadowStyle:
+    color = None
+    x_offset = None
+    def __init__(self, *, color=None, x_offset=None):
+        self.color = color
+        self.x_offset = x_offset
+
+ShadowStyle.__module__ = "pybevy.ui"
+ui_mod.ShadowStyle = ShadowStyle
+
+class BoxHolder:
+    def __init__(self):
+        self._shadows = [ShadowStyle()]
+    @property
+    def shadows(self):
+        return self._shadows
+    @shadows.setter
+    def shadows(self, value):
+        for item in value:
+            if not isinstance(item, ShadowStyle):
+                raise TypeError("'dict' object is not an instance of 'ShadowStyle'")
+        self._shadows = list(value)
+
+holder = BoxHolder()
+"#,
+            )
+            .unwrap();
+
+            let globals = PyDict::new(py);
+            py.run(&code, Some(&globals), None).unwrap();
+            let holder = globals.get_item("holder").unwrap().unwrap();
+
+            let field_value = serde_json::json!([{"bogus": 1.0}]);
+            let error = convert_field_value(py, &holder, "shadows", &field_value).unwrap_err();
+            assert_eq!(error, "element 0: ShadowStyle has no field 'bogus'");
+        });
+    }
+
+    #[test]
+    fn convert_field_value_list_element_wrong_kind() {
+        setup_python();
+        Python::attach(|py| {
+            let code = CString::new(
+                r#"
+class ShadowStyle:
+    def __init__(self):
+        pass
+
+class BoxHolder:
+    def __init__(self):
+        self._shadows = [ShadowStyle()]
+    @property
+    def shadows(self):
+        return self._shadows
+    @shadows.setter
+    def shadows(self, value):
+        for item in value:
+            if not isinstance(item, ShadowStyle):
+                raise TypeError("'dict' object is not an instance of 'ShadowStyle'")
+        self._shadows = list(value)
+
+holder = BoxHolder()
+"#,
+            )
+            .unwrap();
+
+            let globals = PyDict::new(py);
+            py.run(&code, Some(&globals), None).unwrap();
+            let holder = globals.get_item("holder").unwrap().unwrap();
+
+            let field_value = serde_json::json!(["just a string"]);
+            let error = convert_field_value(py, &holder, "shadows", &field_value).unwrap_err();
+            assert_eq!(error, "element 0: expected object, got string");
+        });
+    }
+
+    #[test]
+    fn convert_field_value_list_element_missing_constructor_field() {
+        setup_python();
+        Python::attach(|py| {
+            let code = CString::new(
+                r#"
+import sys, types
+
+if "pybevy" not in sys.modules:
+    sys.modules["pybevy"] = types.ModuleType("pybevy")
+ui_mod = sys.modules.get("pybevy.ui")
+if ui_mod is None:
+    ui_mod = types.ModuleType("pybevy.ui")
+    sys.modules["pybevy.ui"] = ui_mod
+
+class HalfSpace:
+    normal_d = None
+    def __init__(self, normal_d):
+        self.normal_d = normal_d
+
+HalfSpace.__module__ = "pybevy.ui"
+ui_mod.HalfSpace = HalfSpace
+
+class FrustumHolder:
+    def __init__(self):
+        self._half_spaces = []
+    @property
+    def half_spaces(self):
+        return self._half_spaces
+    @half_spaces.setter
+    def half_spaces(self, value):
+        for item in value:
+            if not isinstance(item, HalfSpace):
+                raise TypeError("'dict' object is not an instance of 'HalfSpace'")
+        self._half_spaces = list(value)
+
+frustum = FrustumHolder()
+"#,
+            )
+            .unwrap();
+
+            let globals = PyDict::new(py);
+            py.run(&code, Some(&globals), None).unwrap();
+            let frustum = globals.get_item("frustum").unwrap().unwrap();
+
+            let error = convert_field_value(py, &frustum, "half_spaces", &serde_json::json!([{}]))
+                .unwrap_err();
+            assert_eq!(error, "element 0: HalfSpace requires field 'normal_d'");
+
+            let field_value = serde_json::json!([{"normal_d": [1.0, 2.0, 3.0, 4.0]}]);
+            let result = convert_field_value(py, &frustum, "half_spaces", &field_value).unwrap();
+            let list = result.bind(py).cast::<PyList>().unwrap();
+            assert_eq!(list.len(), 1);
+            let element = list.get_item(0).unwrap();
+            assert_eq!(
+                element.get_type().name().unwrap().to_string_lossy(),
+                "HalfSpace"
+            );
+            let normal_d = element.getattr("normal_d").unwrap();
+            assert_eq!(normal_d.get_item(0).unwrap().extract::<f64>().unwrap(), 1.0);
+        });
+    }
+
+    #[test]
+    fn convert_field_value_list_of_scalars_keeps_generic_path() {
+        setup_python();
+        Python::attach(|py| {
+            let code = CString::new(
+                r#"
+class TagHolder:
+    def __init__(self):
+        self.tags = ["a"]
+
+tag_holder = TagHolder()
+tag_holder_empty = TagHolder()
+tag_holder_empty.tags = []
+"#,
+            )
+            .unwrap();
+
+            let globals = PyDict::new(py);
+            py.run(&code, Some(&globals), None).unwrap();
+            let tag_holder = globals.get_item("tag_holder").unwrap().unwrap();
+            let tag_holder_empty = globals.get_item("tag_holder_empty").unwrap().unwrap();
+
+            let result =
+                convert_field_value(py, &tag_holder, "tags", &serde_json::json!(["x", "y"]))
+                    .unwrap();
+            let list = result.bind(py).cast::<PyList>().unwrap();
+            assert_eq!(list.len(), 2);
+            assert_eq!(list.get_item(0).unwrap().extract::<String>().unwrap(), "x");
+
+            let result =
+                convert_field_value(py, &tag_holder_empty, "tags", &serde_json::json!(["x"]))
+                    .unwrap();
+            let list = result.bind(py).cast::<PyList>().unwrap();
+            assert_eq!(list.len(), 1);
+            let tags = tag_holder_empty.getattr("tags").unwrap();
+            assert_eq!(tags.len().unwrap(), 0);
+        });
+    }
+
+    #[test]
+    fn convert_field_value_list_of_math_elements() {
+        setup_python();
+        Python::attach(|py| {
+            let code = CString::new(
+                r#"
+import sys, types
+
+if "pybevy" not in sys.modules:
+    sys.modules["pybevy"] = types.ModuleType("pybevy")
+math_mod = sys.modules.get("pybevy.math")
+if math_mod is None:
+    math_mod = types.ModuleType("pybevy.math")
+    sys.modules["pybevy.math"] = math_mod
+
+class Vec3:
+    def __init__(self, x, y, z):
+        self.x = x
+        self.y = y
+        self.z = z
+
+Vec3.__module__ = "pybevy.math"
+math_mod.Vec3 = Vec3
+
+class Vec3Holder:
+    def __init__(self):
+        self._points = [Vec3(0.0, 0.0, 0.0)]
+    @property
+    def points(self):
+        return self._points
+    @points.setter
+    def points(self, value):
+        for item in value:
+            if not isinstance(item, Vec3):
+                raise TypeError("'dict' object is not an instance of 'Vec3'")
+        self._points = list(value)
+
+vec3_holder = Vec3Holder()
+"#,
+            )
+            .unwrap();
+
+            let globals = PyDict::new(py);
+            py.run(&code, Some(&globals), None).unwrap();
+            let vec3_holder = globals.get_item("vec3_holder").unwrap().unwrap();
+
+            let result =
+                convert_field_value(py, &vec3_holder, "points", &serde_json::json!([[1, 2, 3]]))
+                    .unwrap();
+            let list = result.bind(py).cast::<PyList>().unwrap();
+            let element = list.get_item(0).unwrap();
+            assert_eq!(element.get_type().name().unwrap().to_string_lossy(), "Vec3");
+            assert_eq!(element.getattr("x").unwrap().extract::<f64>().unwrap(), 1.0);
+            assert_eq!(element.getattr("z").unwrap().extract::<f64>().unwrap(), 3.0);
+
+            let error =
+                convert_field_value(py, &vec3_holder, "points", &serde_json::json!(["bad"]))
+                    .unwrap_err();
+            assert_eq!(error, "element 0: Vec3 expects [x, y, z], got string");
+
+            let error =
+                convert_field_value(py, &vec3_holder, "points", &serde_json::json!([[1.0, 2.0]]))
+                    .unwrap_err();
+            assert_eq!(error, "element 0: Vec3 expects [x, y, z], got 2 elements");
+        });
+    }
+
+    #[test]
+    fn convert_field_value_list_of_enum_elements() {
+        setup_python();
+        Python::attach(|py| {
+            let code = CString::new(
+                r#"
+class Track:
+    pass
+
+class Auto(Track):
+    def __init__(self):
+        pass
+
+class Px(Track):
+    def __init__(self, value):
+        self.value = value
+
+Track.Auto = Auto
+Track.Px = Px
+
+class TrackHolder:
+    def __init__(self):
+        self._tracks = [Track.Px(1.0)]
+    @property
+    def tracks(self):
+        return self._tracks
+    @tracks.setter
+    def tracks(self, value):
+        for item in value:
+            if not isinstance(item, Track):
+                raise TypeError("'dict' object is not an instance of 'Track'")
+        self._tracks = list(value)
+
+track_holder = TrackHolder()
+"#,
+            )
+            .unwrap();
+
+            let globals = PyDict::new(py);
+            py.run(&code, Some(&globals), None).unwrap();
+            let track_holder = globals.get_item("track_holder").unwrap().unwrap();
+
+            let field_value = serde_json::json!([
+                {"Px": 5.0},
+                {"Auto": null},
+                {"variant": "Px", "value": 2.5}
+            ]);
+            let result = convert_field_value(py, &track_holder, "tracks", &field_value).unwrap();
+            let list = result.bind(py).cast::<PyList>().unwrap();
+            assert_eq!(list.len(), 3);
+            let first = list.get_item(0).unwrap();
+            assert_eq!(first.get_type().name().unwrap().to_string_lossy(), "Px");
+            assert_eq!(
+                first.getattr("value").unwrap().extract::<f64>().unwrap(),
+                5.0
+            );
+            let second = list.get_item(1).unwrap();
+            assert_eq!(second.get_type().name().unwrap().to_string_lossy(), "Auto");
+            let third = list.get_item(2).unwrap();
+            assert_eq!(
+                third.getattr("value").unwrap().extract::<f64>().unwrap(),
+                2.5
+            );
+
+            let error = convert_field_value(
+                py,
+                &track_holder,
+                "tracks",
+                &serde_json::json!([{"Bogus": 1.0}]),
+            )
+            .unwrap_err();
+            assert_eq!(
+                error,
+                "element 0: unknown variant 'Bogus' for Track. Valid variants: Auto, Px"
+            );
+        });
+    }
+
+    #[test]
+    fn convert_field_value_list_enum_element_missing_field() {
+        setup_python();
+        Python::attach(|py| {
+            let code = CString::new(
+                r#"
+class Track:
+    pass
+
+class Box(Track):
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+Track.Box = Box
+
+class TrackHolder:
+    def __init__(self):
+        self._tracks = [Track.Box(1.0, 2.0)]
+    @property
+    def tracks(self):
+        return self._tracks
+    @tracks.setter
+    def tracks(self, value):
+        for item in value:
+            if not isinstance(item, Track):
+                raise TypeError("'dict' object is not an instance of 'Track'")
+        self._tracks = list(value)
+
+track_holder = TrackHolder()
+"#,
+            )
+            .unwrap();
+
+            let globals = PyDict::new(py);
+            py.run(&code, Some(&globals), None).unwrap();
+            let track_holder = globals.get_item("track_holder").unwrap().unwrap();
+
+            let error = convert_field_value(
+                py,
+                &track_holder,
+                "tracks",
+                &serde_json::json!([{"Box": {"x": 1.0}}]),
+            )
+            .unwrap_err();
+            assert_eq!(error, "element 0: variant 'Box' requires field 'y'");
+
+            let result = convert_field_value(
+                py,
+                &track_holder,
+                "tracks",
+                &serde_json::json!([{"variant": "Box", "value": {"x": 1.0, "y": 2.0}}]),
+            )
+            .unwrap();
+            let list = result.bind(py).cast::<PyList>().unwrap();
+            let element = list.get_item(0).unwrap();
+            assert_eq!(element.get_type().name().unwrap().to_string_lossy(), "Box");
+            assert_eq!(element.getattr("y").unwrap().extract::<f64>().unwrap(), 2.0);
         });
     }
 
@@ -4261,5 +5637,104 @@ holder = Holder()
         );
         let value = result.expect("PyObject component must be found via last resort");
         assert_eq!(value["new_values"], serde_json::json!({"x": 5}));
+    }
+
+    #[test]
+    fn levenshtein_distance_measures_edits() {
+        assert_eq!(levenshtein_distance("translation", "translation"), 0);
+        assert_eq!(levenshtein_distance("traslation", "translation"), 1);
+        assert_eq!(levenshtein_distance("align_conntent", "align_content"), 1);
+        assert_eq!(levenshtein_distance("pos", "scale"), 5);
+        assert_eq!(levenshtein_distance("", "abc"), 3);
+        // Case-sensitive by contract; case folding happens in close_field_suggestion.
+        assert_eq!(levenshtein_distance("ABC", "abc"), 3);
+    }
+
+    #[test]
+    fn close_field_suggestion_requires_a_genuinely_close_name() {
+        let fields: Vec<String> = ["rotation", "scale", "translation"]
+            .iter()
+            .map(|name| name.to_string())
+            .collect();
+        assert_eq!(
+            close_field_suggestion("traslation", &fields).as_deref(),
+            Some("translation")
+        );
+        assert_eq!(
+            close_field_suggestion("Translaton", &fields).as_deref(),
+            Some("translation")
+        );
+        assert_eq!(close_field_suggestion("pos", &fields), None);
+        assert_eq!(close_field_suggestion("bogus", &fields), None);
+    }
+
+    #[test]
+    fn close_field_suggestion_breaks_ties_alphabetically() {
+        let fields: Vec<String> = ["abcd", "abce"]
+            .iter()
+            .map(|name| name.to_string())
+            .collect();
+        assert_eq!(
+            close_field_suggestion("abcf", &fields).as_deref(),
+            Some("abcd")
+        );
+    }
+
+    #[test]
+    fn unknown_field_error_names_field_component_and_close_suggestion() {
+        let writable: Vec<String> = ["rotation", "scale", "translation"]
+            .iter()
+            .map(|name| name.to_string())
+            .collect();
+        let unknown = vec!["traslation".to_string()];
+        assert_eq!(
+            unknown_field_error("Transform", &unknown, &writable),
+            "Failed to set 'Transform': unknown field 'traslation'. Did you mean 'translation'?"
+        );
+    }
+
+    #[test]
+    fn unknown_field_error_lists_small_writable_inventories() {
+        let writable: Vec<String> = ["affects_lightmapped_meshes", "brightness", "color"]
+            .iter()
+            .map(|name| name.to_string())
+            .collect();
+        let unknown = vec!["bogus".to_string()];
+        assert_eq!(
+            unknown_field_error("AmbientLight", &unknown, &writable),
+            "Failed to set 'AmbientLight': unknown field 'bogus'. Valid writable fields: affects_lightmapped_meshes, brightness, color."
+        );
+    }
+
+    #[test]
+    fn unknown_field_error_points_to_schema_for_large_inventories() {
+        let writable: Vec<String> = (0..12).map(|index| format!("field_{index}")).collect();
+        let unknown = vec!["bogus".to_string()];
+        assert_eq!(
+            unknown_field_error("Node", &unknown, &writable),
+            "Failed to set 'Node': unknown field 'bogus'. See GET /api/v1/components/Node/schema for the writable fields."
+        );
+    }
+
+    #[test]
+    fn unknown_field_error_reports_multiple_unknowns_without_suggestion() {
+        let writable: Vec<String> = ["color", "intensity"]
+            .iter()
+            .map(|name| name.to_string())
+            .collect();
+        let unknown = vec!["bogus".to_string(), "worse".to_string()];
+        assert_eq!(
+            unknown_field_error("PointLight", &unknown, &writable),
+            "Failed to set 'PointLight': unknown fields: bogus, worse. Valid writable fields: color, intensity."
+        );
+    }
+
+    #[test]
+    fn unknown_field_error_names_components_without_writable_fields() {
+        let unknown = vec!["bogus".to_string()];
+        assert_eq!(
+            unknown_field_error("Camera3d", &unknown, &[]),
+            "Failed to set 'Camera3d': unknown field 'bogus'. This component exposes no writable fields."
+        );
     }
 }

@@ -117,16 +117,18 @@ See `guide://lighting` for full details:
 
 ### Tonemapping
 
-`Tonemapping` values compare and hash by variant, so queried copies can be used
-as dictionary keys alongside the class constants.
+Variants are spelled exactly as Bevy spells them; `Tonemapping.None_` carries a
+trailing underscore because `None` is a Python keyword. `Tonemapping` values
+compare and hash by variant, so queried copies can be used as dictionary keys
+alongside the class variants.
 
 Controls how HDR colors map to screen colors.
 
 ```python
-commands.spawn(Camera3d(), Tonemapping.TONY_MC_MAPFACE)
+commands.spawn(Camera3d(), Tonemapping.TonyMcMapface)
 ```
 
-Common options: `Tonemapping.TONY_MC_MAPFACE` (cinematic), `Tonemapping.ACES_FITTED` (film), `Tonemapping.BLENDER_FILMIC` (matches Blender renders).
+Common options: `Tonemapping.TonyMcMapface` (cinematic), `Tonemapping.AcesFitted` (film), `Tonemapping.BlenderFilmic` (matches Blender renders).
 
 ### Wireframe
 
@@ -145,8 +147,10 @@ commands.spawn(Camera3d(), Exposure.INDOOR)  # SUNLIGHT, INDOOR, OVERCAST, BLEND
 
 ### Color Grading
 
-Most grading controls require HDR. Add `Hdr()` explicitly, or use a component
-such as `Bloom` that requires it:
+On non-HDR cameras, only global exposure and post-saturation apply. Full color
+grading requires `Hdr()` and a `Tonemapping` other than `Tonemapping.NONE`.
+`Camera3d` has a non-`NONE` default; `Camera2d` does not. A component such as
+`Bloom` that requires `Hdr` also adds `Hdr`:
 
 ```python
 from pybevy.render import ColorGrading, ColorGradingSection, Hdr
@@ -158,8 +162,12 @@ commands.spawn(
 )
 ```
 
-Without `Hdr`, only global exposure and post-saturation are applied; hue,
-temperature, tint, and the shadow/midtone/highlight controls are ignored.
+For full grading on `Camera2d`, spawn a non-`NONE` `Tonemapping` alongside
+`Hdr()`; `Hdr()` with the default `Tonemapping.NONE` applies no grading.
+
+Color grading also requires an enabled tonemapper. With `Hdr()` and
+`Tonemapping.None_`, bevy skips the tonemapping pass, so none of the
+`ColorGrading` fields apply.
 
 `ColorGradingGlobal.temperature` and `tint` shift the white point along the
 CIE 1931 chromaticity x and y axes: positive `temperature` renders redder,

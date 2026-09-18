@@ -6,6 +6,9 @@ use std::{
 use pyo3::prelude::*;
 use serde::Serialize;
 
+/// Upper bound on near-miss names reported for an unresolved type query.
+const MAX_TYPE_SUGGESTIONS: usize = 10;
+
 /// Lightweight API index: module names -> class/function lists
 #[derive(Debug, Serialize, Clone)]
 pub struct ApiIndexEntry {
@@ -267,33 +270,72 @@ impl ApiIndex {
         }
     }
 
-    fn find_type_candidates(&self, type_name: &str) -> Vec<DefinitionCandidate> {
-        let normalized = type_name
-            .trim()
-            .strip_prefix("pybevy.")
-            .unwrap_or(type_name.trim());
-        let normalized = self
-            .type_aliases
+    /// Near-miss qualified names for a query that did not resolve.
+    ///
+    /// Matches the trailing name segment, so an unresolved `Colour.Srgba` still
+    /// points at both `pybevy.color.Color.Srgba` and `pybevy.color.Srgba`.
+    pub fn suggest_type_names(&self, type_name: &str) -> Vec<String> {
+        let normalized = self.normalize_type_query(type_name);
+        let leaf = normalized
+            .rsplit('.')
+            .next()
+            .unwrap_or(normalized)
+            .to_lowercase();
+        let mut suggestions = self
+            .matching_definitions(|candidate| {
+                candidate
+                    .qualname
+                    .rsplit('.')
+                    .next()
+                    .is_some_and(|name| name.to_lowercase() == leaf)
+            })
+            .iter()
+            .map(DefinitionCandidate::qualified_name)
+            .collect::<Vec<_>>();
+        suggestions.sort();
+        suggestions.dedup();
+        suggestions.truncate(MAX_TYPE_SUGGESTIONS);
+        suggestions
+    }
+
+    fn normalize_type_query<'a>(&'a self, type_name: &'a str) -> &'a str {
+        let trimmed = type_name.trim();
+        let normalized = trimmed.strip_prefix("pybevy.").unwrap_or(trimmed);
+        self.type_aliases
             .get(normalized)
             .map(String::as_str)
-            .unwrap_or(normalized);
-        let qualified = normalized.contains('.');
-        let mut candidates = self
-            .contents
+            .unwrap_or(normalized)
+    }
+
+    fn matching_definitions(
+        &self,
+        matches: impl Fn(&DefinitionCandidate) -> bool,
+    ) -> Vec<DefinitionCandidate> {
+        self.contents
             .iter()
             .flat_map(|(module, content)| collect_definitions(module, content))
-            .filter(|candidate| {
-                if qualified {
-                    candidate.short_qualified_name() == normalized
-                } else {
-                    candidate
-                        .qualname
-                        .rsplit('.')
-                        .next()
-                        .is_some_and(|name| name == normalized)
-                }
-            })
-            .collect::<Vec<_>>();
+            .filter(|candidate| matches(candidate))
+            .collect()
+    }
+
+    fn find_type_candidates(&self, type_name: &str) -> Vec<DefinitionCandidate> {
+        let normalized = self.normalize_type_query(type_name);
+        let qualified = normalized.contains('.');
+        let mut candidates = self.matching_definitions(|candidate| {
+            if qualified {
+                candidate.short_qualified_name() == normalized
+            } else {
+                candidate
+                    .qualname
+                    .rsplit('.')
+                    .next()
+                    .is_some_and(|name| name == normalized)
+            }
+        });
+        if qualified && candidates.is_empty() {
+            // A dotted name with no module segment is the nested variant spelling.
+            candidates = self.matching_definitions(|candidate| candidate.qualname == normalized);
+        }
         if !qualified
             && candidates
                 .iter()
@@ -1103,6 +1145,11 @@ impl PyApiIndex {
         self.inner
             .get_type_definition_structured(type_name)
             .map(|v| serde_json::to_string_pretty(&v).unwrap_or_default())
+    }
+
+    /// Near-miss qualified names for a type query that did not resolve.
+    fn suggest_type_names(&self, type_name: &str) -> Vec<String> {
+        self.inner.suggest_type_names(type_name)
     }
 
     /// Get the lightweight API index as JSON string.

@@ -148,7 +148,7 @@ def enter_playing(commands: Commands) -> None:
 
 def start_game(
     next_state: ResMut[NextState[Phase]],
-    keys: Res[ButtonInput],
+    keys: Res[ButtonInput[KeyCode]],
 ) -> None:
     if keys.just_pressed(KeyCode.Space):
         next_state.set(Phase.PLAYING)

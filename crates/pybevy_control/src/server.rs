@@ -1357,7 +1357,10 @@ async fn stubs_type(
         ),
         None => (
             StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": format!("Type '{type_name}' not found") })),
+            Json(serde_json::json!({
+                "error": format!("Type '{type_name}' not found"),
+                "suggestions": state.api_index.suggest_type_names(&type_name),
+            })),
         ),
     }
 }
@@ -1376,7 +1379,10 @@ async fn stubs_type_structured(
         Some(structured) => (StatusCode::OK, Json(structured)),
         None => (
             StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": format!("Type '{type_name}' not found") })),
+            Json(serde_json::json!({
+                "error": format!("Type '{type_name}' not found"),
+                "suggestions": state.api_index.suggest_type_names(&type_name),
+            })),
         ),
     }
 }

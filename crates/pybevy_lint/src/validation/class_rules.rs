@@ -1,5 +1,6 @@
 use crate::{
-    model::{EnumVariantKind, PyClassDef},
+    bevy_parser::types::{BevyItem, BevyItemKind},
+    model::{EnumVariantKind, MacroInfo, PyClassDef},
     output::{Diagnostic, DiagnosticCode, Suggestion},
 };
 
@@ -30,6 +31,42 @@ pub fn validate_class_match(rust: &PyClassDef, python: &PyClassDef) -> Vec<Diagn
     }
 
     diagnostics
+}
+
+/// Reject Python enum-family bases on stubs for native `#[pyenum]` wrappers.
+pub fn validate_pyenum_stub_base(rust: &PyClassDef, python: &PyClassDef) -> Vec<Diagnostic> {
+    if !matches!(rust.macro_info, Some(MacroInfo::BevyEnum { .. })) {
+        return Vec::new();
+    }
+
+    let Some(base) = python.extends.as_deref() else {
+        return Vec::new();
+    };
+    let base_name = base
+        .rsplit(['.', ':'])
+        .find(|part| !part.is_empty())
+        .unwrap_or(base);
+    if !matches!(base_name, "Enum" | "IntEnum" | "Flag" | "IntFlag") {
+        return Vec::new();
+    }
+
+    let mut diagnostic = Diagnostic::error(
+        DiagnosticCode::E017,
+        format!(
+            "pyenum '{}' is a native value class, but its stub inherits Python '{}'",
+            rust.python_name, base
+        ),
+    )
+    .with_note("Declare the stub as a plain class with typed variant attributes")
+    .with_suggestion(Suggestion::new(format!(
+        "replace `class {}({base}):` with `class {}:`",
+        rust.python_name, rust.python_name
+    )));
+    if let Some(location) = &python.location {
+        diagnostic = diagnostic.with_location(location.clone());
+    }
+
+    vec![diagnostic]
 }
 
 /// Create diagnostic for missing class in Python stub
@@ -199,6 +236,65 @@ pub fn validate_value_enum_without_pyenum(rust: &PyClassDef) -> Vec<Diagnostic> 
     vec![diag]
 }
 
+/// Flags payload-free immutable value enums that omit Python hashing even
+/// though both the wrapper and upstream contracts define compatible values.
+pub fn validate_enum_hashability(rust: &PyClassDef, bevy: &BevyItem) -> Vec<Diagnostic> {
+    let ordinary_pyenum = matches!(
+        &rust.macro_info,
+        Some(MacroInfo::BevyEnum {
+            manual: false,
+            message: false,
+            component: false,
+            resource: false,
+            ..
+        })
+    );
+    let upstream_hashes = bevy
+        .trait_impls
+        .iter()
+        .any(|trait_name| trait_name == "Hash" || trait_name.ends_with("::Hash"));
+    let payload_free = !rust.enum_variants.is_empty()
+        && rust.enum_variants.iter().all(|variant| {
+            matches!(
+                variant.kind,
+                EnumVariantKind::Unit | EnumVariantKind::EmptyTuple
+            )
+        });
+    let wrapper_hashes = rust.hash || rust.methods.iter().any(|method| method.name == "__hash__");
+
+    if !ordinary_pyenum
+        || !rust.is_enum
+        || bevy.kind != BevyItemKind::Enum
+        || !rust.frozen
+        || !rust.eq
+        || rust.eq_int
+        || !payload_free
+        || !upstream_hashes
+        || wrapper_hashes
+    {
+        return Vec::new();
+    }
+
+    let mut diagnostic = Diagnostic::warning(
+        DiagnosticCode::W015,
+        format!(
+            "payload-free immutable value enum '{}' has value equality and upstream Hash but omits Python hashing",
+            rust.python_name
+        ),
+    )
+    .with_note(format!("upstream type '{}' implements Hash", bevy.full_path))
+    .with_note("eq_int enums are excluded because equality with an integer requires an integer-compatible hash")
+    .with_suggestion(
+        Suggestion::new("derive Hash on the wrapper and enable PyO3 hashing")
+            .with_replacement("add `Hash` to `#[derive(...)]` and `hash` to `#[pyclass(...)]`"),
+    );
+    if let Some(location) = &rust.location {
+        diagnostic = diagnostic.with_location(location.clone());
+    }
+
+    vec![diagnostic]
+}
+
 /// A catch-all arm that yields a concrete value reports the wrong variant to
 /// Python instead of the one bevy actually held.
 pub fn validate_conversion_fallbacks(rust: &PyClassDef) -> Vec<Diagnostic> {
@@ -223,4 +319,51 @@ pub fn validate_conversion_fallbacks(rust: &PyClassDef) -> Vec<Diagnostic> {
             ))
         })
         .collect()
+}
+
+/// Flags a `#[pyclass]` that names no `module = "pybevy...."`.
+///
+/// PyO3 then leaves `__module__` as `builtins`, so the class names no import
+/// path in reprs, tracebacks, and attribute errors ("type object
+/// 'builtins.EulerRot' has no attribute 'X'").
+/// `tests/surface/test_class_module_names.py` pins this for classes declared
+/// in a public stub; this rule covers every declaration, including the private
+/// `_`-prefixed helpers that reach users only through repr and error text.
+pub fn validate_pyclass_module_attribute(rust: &PyClassDef) -> Vec<Diagnostic> {
+    let declared = rust.python_module_path.as_deref();
+    if declared.is_some_and(|module| module == "pybevy" || module.starts_with("pybevy.")) {
+        return Vec::new();
+    }
+
+    let message = match declared {
+        Some(module) => format!(
+            "pyclass '{}' declares module '{}', which is not a pybevy module",
+            rust.python_name, module
+        ),
+        None => format!(
+            "pyclass '{}' declares no module, so its __module__ is 'builtins'",
+            rust.python_name
+        ),
+    };
+
+    let suggested = rust
+        .module_path
+        .as_deref()
+        .and_then(|path| path.split('.').next())
+        .map(|module| format!("pybevy.{module}"))
+        .unwrap_or_else(|| "pybevy.<module>".to_string());
+
+    let mut diagnostic = Diagnostic::warning(DiagnosticCode::W016, message)
+        .with_note("'builtins' names no import path in reprs, tracebacks, or attribute errors")
+        .with_note(
+            "the canonical Bevy public item path fixes the module; see 'Public module placement'",
+        )
+        .with_suggestion(Suggestion::new(format!(
+            "add module = \"{suggested}\" to the #[pyclass(...)] attribute"
+        )));
+    if let Some(location) = &rust.location {
+        diagnostic = diagnostic.with_location(location.clone());
+    }
+
+    vec![diagnostic]
 }

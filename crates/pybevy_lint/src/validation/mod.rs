@@ -16,6 +16,7 @@ use crate::{
         PropertyDef, PyClassDef,
     },
     output::{Diagnostic, DiagnosticCode},
+    validation::method_rules::SharedBorrowTarget,
 };
 
 /// Validate all Rust classes against Python stubs
@@ -96,6 +97,14 @@ pub fn validate_with_bevy(
             .as_ref()
             .map(|origin| origin::check_constructor_policy(origin, rust_class))
             .unwrap_or_default();
+
+        if let Some(MacroInfo::BevyEnum { bevy_type, .. }) = &rust_class.macro_info
+            && let Some((_, bevy_item)) = find_bevy_item(bevy_crates, bevy_type)
+        {
+            policy_diagnostics.extend(class_rules::validate_enum_hashability(
+                rust_class, bevy_item,
+            ));
+        }
 
         // Generated variants are covered even when the base has no
         // constructor: merge the stub-side variant constructors.
@@ -332,6 +341,25 @@ fn validate_all_impl_with_consumed(
     check_stale_exceptions: bool,
 ) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
+    let mut matched_shared_borrow_types = config
+        .map(|config| vec![false; config.validation.shared_borrow_types.len()])
+        .unwrap_or_default();
+    let borrow_targets = shared_borrow_targets(config, rust_classes);
+
+    // A missing `module = "pybevy...."` leaves `__module__` as `builtins` for
+    // private helpers too, so this rule runs ahead of the `_`-prefix skip below.
+    for rust_class in rust_classes {
+        let path = class_path(rust_class);
+        for diagnostic in class_rules::validate_pyclass_module_attribute(rust_class) {
+            if is_disabled_code(config, diagnostic.code.as_str()) {
+                continue;
+            }
+            if consume_exception(config, consumed_exceptions, &path, diagnostic.code.as_str()) {
+                continue;
+            }
+            diagnostics.push(diagnostic);
+        }
+    }
 
     for rust_class in rust_classes {
         if rust_class.python_name.starts_with('_') {
@@ -347,11 +375,24 @@ fn validate_all_impl_with_consumed(
         class_diagnostics.extend(class_rules::validate_value_enum_without_pyenum(rust_class));
         class_diagnostics.extend(method_rules::validate_builder_receivers(rust_class));
         class_diagnostics.extend(class_rules::validate_conversion_fallbacks(rust_class));
+        let self_borrow_reason =
+            shared_borrow_reason(config, &mut matched_shared_borrow_types, rust_class);
+        if let Some(reason) = self_borrow_reason {
+            class_diagnostics.extend(method_rules::validate_shared_borrow_receivers(
+                rust_class, reason,
+            ));
+        }
+        class_diagnostics.extend(method_rules::validate_shared_borrow_parameters(
+            rust_class,
+            &class_borrow_targets(&borrow_targets, self_borrow_reason),
+        ));
 
         match python_class.or(manual_variant.as_ref()) {
             Some(py_class) => {
                 // Validate class match
                 class_diagnostics.extend(class_rules::validate_class_match(rust_class, py_class));
+                class_diagnostics
+                    .extend(class_rules::validate_pyenum_stub_base(rust_class, py_class));
 
                 // Validate constructor
                 if !is_manual_enum_base(rust_class, py_class) {
@@ -438,9 +479,96 @@ fn validate_all_impl_with_consumed(
                 );
             }
         }
+
+        for (declared, matched) in config
+            .validation
+            .shared_borrow_types
+            .iter()
+            .zip(matched_shared_borrow_types)
+        {
+            if !matched {
+                diagnostics.push(
+                    Diagnostic::error(
+                        DiagnosticCode::E010,
+                        format!(
+                            "shared-borrow type '{}' matches no Rust class",
+                            declared.path
+                        ),
+                    )
+                    .with_note(declared.reason.clone()),
+                );
+            }
+        }
     }
 
     diagnostics
+}
+
+/// Rust type names of the declared shared-borrow proxies, so a
+/// `PyRefMut<'_, T>` parameter naming one is found on whatever class declares
+/// it. A declaration matching no parsed class is reported as stale instead.
+fn shared_borrow_targets<'a>(
+    config: Option<&'a Config>,
+    rust_classes: &[PyClassDef],
+) -> Vec<(String, &'a str)> {
+    let Some(config) = config else {
+        return Vec::new();
+    };
+    config
+        .validation
+        .shared_borrow_types
+        .iter()
+        .filter_map(|declared| {
+            let class = rust_classes
+                .iter()
+                .find(|class| class_path(class) == declared.path)?;
+            Some((class.rust_name.clone(), declared.reason.as_str()))
+        })
+        .collect()
+}
+
+/// The targets visible from one class: every declared type by name, plus
+/// `Self` when the class is itself declared.
+fn class_borrow_targets<'a>(
+    targets: &'a [(String, &'a str)],
+    self_reason: Option<&'a str>,
+) -> Vec<SharedBorrowTarget<'a>> {
+    let mut visible: Vec<SharedBorrowTarget<'a>> = targets
+        .iter()
+        .map(|(type_name, reason)| SharedBorrowTarget {
+            type_name: type_name.as_str(),
+            reason,
+        })
+        .collect();
+
+    if let Some(reason) = self_reason {
+        visible.push(SharedBorrowTarget {
+            type_name: "Self",
+            reason,
+        });
+    }
+
+    visible
+}
+
+/// The reason a class is declared a shared-borrow proxy, marking the
+/// declaration as matched so a stale path is reported.
+fn shared_borrow_reason<'a>(
+    config: Option<&'a Config>,
+    matched: &mut [bool],
+    class: &PyClassDef,
+) -> Option<&'a str> {
+    let path = class_path(class);
+    config?
+        .validation
+        .shared_borrow_types
+        .iter()
+        .enumerate()
+        .find(|(_, declared)| declared.path == path)
+        .map(|(index, declared)| {
+            matched[index] = true;
+            declared.reason.as_str()
+        })
 }
 
 fn class_path(class: &PyClassDef) -> String {

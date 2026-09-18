@@ -126,6 +126,17 @@ class GamePlugins(PluginGroup):
 app = App().add_plugins(GamePlugins())
 ```
 
+### Optional compiled APIs
+
+Stubs may describe an API that is not compiled into every wheel. Check
+`pybevy.FEATURES`.
+
+```python
+import pybevy
+
+if "mcp" in pybevy.FEATURES:
+    from pybevy import mcp
+```
 
 ## ECS Essentials
 
@@ -396,6 +407,10 @@ def count_frames(counter: Local[int]) -> None:
     counter.current += 1
 ```
 
+Every hot reload, partial included, rebuilds the system, so the local is
+constructed again and this counter restarts at zero. Keep state that must
+survive iteration in a `@resource`. See `guide://hot-reload`.
+
 #### Conditional Systems
 
 <!-- pybevy-snippet: smoke
@@ -608,6 +623,10 @@ Query[AnyOf[tuple[Transform, Visibility]]]
 # Or combines query filters; each tuple item is one alternative
 Query[Entity, Or[tuple[With[Sprite], With[Mesh3d]]]]
 ```
+
+A query needs data in the first position. Filter-only forms such as
+`Query[With[Player]]` raise `TypeError`. Use `Query[Player]` for components
+or `Query[Entity, With[Player]]` for entity IDs.
 
 #### Borrow Rules (IMPORTANT)
 

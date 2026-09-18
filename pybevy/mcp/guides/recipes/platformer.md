@@ -63,7 +63,7 @@ Reads keyboard input, applies horizontal movement, gravity, and jump impulse. Re
 ```python
 def move_player(
     query: Query[tuple[Mut[Transform], Mut[PlayerState]], With[Player]],
-    keyboard: Res[ButtonInput],
+    keyboard: Res[ButtonInput[KeyCode]],
     time: Res[Time],
 ) -> None:
     dt = time.delta_secs()
@@ -199,6 +199,7 @@ def update_hud(
 
 ## Setup & Registration
 
+<!-- pybevy-snippet: scene continues -->
 ```python
 PLAYER_Z = 6.5  # Z position for side-scrolling plane
 GEM_POSITIONS = [-8.0, -4.0, 0.0, 4.0, 8.0]

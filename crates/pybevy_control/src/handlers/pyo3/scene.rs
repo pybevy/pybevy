@@ -510,7 +510,7 @@ fn parse_variant_from_repr(repr: &str) -> Option<String> {
     match sep {
         '.' => {
             // Variant must be a Python identifier ending the string.
-            // Accepts SCREAMING_SNAKE (Tonemapping.NONE) and mixed case
+            // Accepts SCREAMING_SNAKE (Foo.BAR_BAZ) and mixed case
             // with digits (Msaa.Sample4, Foo.bar_baz).
             if rest.is_empty() {
                 return None;
@@ -593,13 +593,19 @@ fn has_writable_properties(_py: Python<'_>, py_type: &Bound<'_, PyType>) -> bool
 
 /// Extract field values from a bridge (PyO3) component by iterating its `getset_descriptor` properties.
 /// Returns a JSON map of field_name → value, recursing into nested structs.
+/// Reflected enum values keep the writability probe so their payloads stay
+/// replayable; every other value reports every readable field.
 fn extract_bridge_fields(
     _py: Python<'_>,
     bound: &Bound<'_, PyAny>,
+    reflected_enum: bool,
 ) -> serde_json::Map<String, serde_json::Value> {
     let mut fields = extract_bridge_fields_inner(bound);
     if bound.is_instance_of::<PyGlobalTransform>() {
         fields.retain(|name, _| matches!(name.as_str(), "translation" | "rotation" | "scale"));
+        return fields;
+    }
+    if !reflected_enum {
         return fields;
     }
     let Ok(owned) = bound.call_method0("__copy__") else {
@@ -618,14 +624,25 @@ fn extract_bridge_fields(
     fields
 }
 
+/// Whether a reflected Bevy type is an enum, from the `AppTypeRegistry` TypeInfo.
+fn reflected_type_is_enum(world: &World, type_id: TypeId) -> bool {
+    world
+        .get_resource::<AppTypeRegistry>()
+        .is_some_and(|registry| {
+            registry
+                .read()
+                .get(type_id)
+                .is_some_and(|registration| matches!(registration.type_info(), TypeInfo::Enum(_)))
+        })
+}
+
 fn reflected_enum_variant_name(world: &World, entity: Entity, type_id: TypeId) -> Option<String> {
-    let registry = world.get_resource::<AppTypeRegistry>()?.clone();
-    let registry = registry.read();
-    let registration = registry.get(type_id)?;
-    if !matches!(registration.type_info(), TypeInfo::Enum(_)) {
+    if !reflected_type_is_enum(world, type_id) {
         return None;
     }
-    let reflect_component = registration.data::<ReflectComponent>()?;
+    let registry = world.get_resource::<AppTypeRegistry>()?;
+    let registry = registry.read();
+    let reflect_component = registry.get(type_id)?.data::<ReflectComponent>()?;
     let entity_ref = world.get_entity(entity).ok()?;
     let value = reflect_component.reflect(entity_ref)?;
     let ReflectRef::Enum(value) = value.reflect_ref() else {
@@ -800,8 +817,12 @@ pub fn get_entity(
                 .unwrap_or(false);
             if contains {
                 let name = bridge.name().to_string();
-                let reflected_variant =
-                    reflected_enum_variant_name(world, entity, bridge.bevy_type_id());
+                let reflected_enum = reflected_type_is_enum(world, bridge.bevy_type_id());
+                let reflected_variant = if reflected_enum {
+                    reflected_enum_variant_name(world, entity, bridge.bevy_type_id())
+                } else {
+                    None
+                };
                 // SAFETY: `world` is a live &mut World; the pointer is valid for this call.
                 let value = unsafe {
                     bridge.extract_from_entity_ref(
@@ -815,7 +836,7 @@ pub fn get_entity(
                 .flatten()
                 .map(|py_obj| {
                     let bound = py_obj.bind(py);
-                    let mut fields = extract_bridge_fields(py, bound);
+                    let mut fields = extract_bridge_fields(py, bound, reflected_enum);
                     if let Some(variant) = reflected_variant {
                         if bound.call_method0("__copy__").is_err() {
                             fields.clear();
@@ -943,8 +964,12 @@ pub fn get_component(
                 validity_flag.set_invalid();
                 return None;
             }
-            let reflected_variant =
-                reflected_enum_variant_name(world, entity, bridge.bevy_type_id());
+            let reflected_enum = reflected_type_is_enum(world, bridge.bevy_type_id());
+            let reflected_variant = if reflected_enum {
+                reflected_enum_variant_name(world, entity, bridge.bevy_type_id())
+            } else {
+                None
+            };
             // SAFETY: `world` is a live &mut World; the pointer is valid for this call.
             let fields = unsafe {
                 bridge.extract_from_entity_ref(entity, world as *mut World, validity.clone(), py)
@@ -953,7 +978,7 @@ pub fn get_component(
             .flatten()
             .map(|py_obj| {
                 let bound = py_obj.bind(py);
-                let mut fields = extract_bridge_fields(py, bound);
+                let mut fields = extract_bridge_fields(py, bound, reflected_enum);
                 if let Some(variant) = reflected_variant {
                     if bound.call_method0("__copy__").is_err() {
                         fields.clear();
@@ -1282,13 +1307,14 @@ fn bridge_resource_entry(world: &World, bridge: &Arc<dyn ResourceBridge>) -> ser
     });
 
     if present {
+        let reflected_enum = reflected_type_is_enum(world, bridge.bevy_type_id());
         let fields = Python::attach(|py| {
             let validity_flag = pybevy_core::ValidityFlag::new_read();
             let validity = validity_flag.with_access_mode(pybevy_core::AccessMode::Read);
             let result = bridge
                 .get(world, validity, py)
                 .ok()
-                .map(|py_obj| extract_bridge_fields(py, py_obj.bind(py)));
+                .map(|py_obj| extract_bridge_fields(py, py_obj.bind(py), reflected_enum));
             validity_flag.set_invalid();
             result
         });
@@ -2049,7 +2075,7 @@ mod tests {
         prelude::{GlobalTransform, Transform},
     };
     use pybevy_color::color::PyColor;
-    use pyo3::types::{PyDict, PyList, PyTuple};
+    use pyo3::types::{PyAnyMethods, PyDict, PyList, PyTuple};
 
     // Force linker to include pybevy_transform (its inventory entries register Transform bridge)
     extern crate pybevy_transform;
@@ -2064,6 +2090,21 @@ mod tests {
             Python::initialize();
             pybevy_core::bridge_inventory::collect_all();
         });
+    }
+
+    // Test-only value type with a read-only getter and a working `__copy__`,
+    // mirroring the shape of the component wrapper classes.
+    #[pyclass]
+    struct ProbeCopyValue {
+        #[pyo3(get)]
+        value: f32,
+    }
+
+    #[pymethods]
+    impl ProbeCopyValue {
+        fn __copy__(&self) -> Self {
+            Self { value: self.value }
+        }
     }
 
     #[test]
@@ -3186,7 +3227,7 @@ mod tests {
                     )
                 } {
                     let bound = py_obj.bind(py);
-                    let fields = extract_bridge_fields(py, bound);
+                    let fields = extract_bridge_fields(py, bound, false);
 
                     // translation should be a nested dict (Vec3 has x, y, z)
                     assert!(
@@ -3236,7 +3277,7 @@ mod tests {
                     )
                 } {
                     let bound = py_obj.bind(py);
-                    let fields = extract_bridge_fields(py, bound);
+                    let fields = extract_bridge_fields(py, bound, false);
 
                     // scale should be a numeric Vec3 array
                     let scale = &fields["scale"];
@@ -3257,6 +3298,21 @@ mod tests {
             validity_flag.set_invalid();
         });
     }
+
+    #[test]
+    fn plain_value_with_same_type_class_constant_keeps_readable_fields() {
+        setup();
+        Python::attach(|py| {
+            let ty = <ProbeCopyValue as pyo3::PyTypeInfo>::type_object(py);
+            let instance = Py::new(py, ProbeCopyValue { value: 7.0 }).unwrap();
+            ty.setattr("INSTANCE", instance.clone_ref(py)).unwrap();
+            let bound = instance.bind(py).as_any();
+            let fields = extract_bridge_fields(py, bound, false);
+            assert_eq!(fields.len(), 1);
+            assert_eq!(fields["value"].as_f64(), Some(7.0));
+        });
+    }
+
     #[test]
     fn has_writable_properties_detects_pyo3_setters() {
         setup();

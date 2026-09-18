@@ -229,6 +229,11 @@ def batch_update(
 
 Key View rules:
 - `column_mut(T)` for mutable, `column(T)` for read-only
+- Read-only `column(T)` rejects writes: `col.a = value` and `col.a.set(value)`
+  raise a `RuntimeError` pointing at `column_mut()`
+- `column(T)`/`column_mut(T)` return a lazy expression column.
+  For a concrete `ViewColumn` buffer use `iter_batches()` then
+  `batch.column(T)`/`batch.column_mut(T)` (see `guide://numba` and `guide://jax`).
 - Expressions operate on ALL matching entities at once (SIMD-like)
 - Cross-component expressions supported
 - `from pybevy import expr` for math functions: `sin`, `cos`, `sqrt`, `clamp`, etc.
@@ -246,7 +251,8 @@ The View API supports **per-entity conditionals** via `.where()`, making it suit
 `FieldExpr` (pybevy.expr or prelude) supports:
 - `.where(true_val, false_val)` - vectorized ternary (like `np.where`)
 - `.min(val)` / `.max(val)` / `.clamp(min, max)` - per-element clamping
-- `|` and `&` - combine boolean conditions
+- Use `&`, `|`, `~` and `.where()`; Python truth testing and chained comparisons
+  raise `ValueError`.
 - `<`, `>`, `<=`, `>=`, `==`, `!=` - comparisons that produce boolean columns
 
 **Example: 5,000 bouncing balls (6.7x faster than Query)**

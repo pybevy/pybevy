@@ -109,13 +109,13 @@ pub fn get_performance(world: &mut World) -> Result<serde_json::Value, ControlEr
         if snap.memory_growth_mb != 0.0 {
             result.insert(
                 "memory_growth_mb".into(),
-                serde_json::json!(format!("{:.1}", snap.memory_growth_mb)),
+                serde_json::json!(snap.memory_growth_mb),
             );
         }
         if snap.memory_peak_mb > 0.0 {
             result.insert(
                 "memory_peak_mb".into(),
-                serde_json::json!(format!("{:.1}", snap.memory_peak_mb)),
+                serde_json::json!(snap.memory_peak_mb),
             );
         }
         if snap.memory_warning {
@@ -127,8 +127,8 @@ pub fn get_performance(world: &mut World) -> Result<serde_json::Value, ControlEr
             .map(|s| {
                 serde_json::json!({
                     "generation": s.generation,
-                    "rss_mb": format!("{:.1}", s.rss_mb),
-                    "delta_mb": format!("{:.1}", s.delta_mb),
+                    "rss_mb": s.rss_mb,
+                    "delta_mb": s.delta_mb,
                     "gc_objects": s.gc_objects,
                     "schedule_systems": s.schedule_systems,
                     "current_generation_systems": s.current_generation_systems,
@@ -202,6 +202,9 @@ mod tests {
             result["reload_memory_snapshots"].as_array().map(Vec::len),
             Some(0)
         );
+        assert!(result.get("memory_growth_mb").is_none());
+        assert!(result.get("memory_peak_mb").is_none());
+        assert!(result.get("memory_warning").is_none());
     }
 
     #[test]
@@ -363,11 +366,99 @@ mod tests {
             6
         );
         assert_eq!(result["python_gc_objects"], 5000);
-        assert!(result["memory_growth_mb"].is_string());
-        assert!(result["memory_peak_mb"].is_string());
+        assert_eq!(result["memory_growth_mb"], 8.5);
+        assert_eq!(result["memory_peak_mb"], 300.0);
+        assert!(result["memory_growth_mb"].as_f64().is_some());
+        assert!(result["memory_peak_mb"].as_f64().is_some());
         assert_eq!(result["memory_warning"], true);
         assert!(result["reload_memory_snapshots"].is_array());
+        assert_eq!(result["reload_memory_snapshots"][0]["rss_mb"], 250.0);
+        assert_eq!(result["reload_memory_snapshots"][0]["delta_mb"], 10.0);
+        assert_eq!(result["reload_memory_snapshots"][0]["generation"], 1);
+        assert_eq!(result["reload_memory_snapshots"][0]["gc_objects"], 4000);
+        assert_eq!(result["reload_memory_snapshots"][0]["schedule_systems"], 10);
         assert_eq!(result["gil_enabled"], true);
         assert_eq!(result["cpu_cores"], 8);
+    }
+
+    #[test]
+    fn get_performance_memory_quantities_are_exact_json_numbers() {
+        let mut world = World::new();
+        let snap = pybevy_core::DebugSnapshot {
+            populated: true,
+            memory_mb: 254.75,
+            memory_growth_mb: -4.25,
+            memory_peak_mb: 300.5,
+            memory_warning: true,
+            reload_memory_snapshots: vec![
+                pybevy_core::ReloadMemorySnapshotInfo {
+                    generation: 1,
+                    rss_mb: 300.25,
+                    delta_mb: 5.5,
+                    gc_objects: 100,
+                    schedule_systems: 10,
+                    current_generation_systems: 5,
+                },
+                pybevy_core::ReloadMemorySnapshotInfo {
+                    generation: 2,
+                    rss_mb: 294.75,
+                    delta_mb: -5.5,
+                    gc_objects: 90,
+                    schedule_systems: 9,
+                    current_generation_systems: 5,
+                },
+            ],
+            ..Default::default()
+        };
+        world.insert_resource(snap);
+
+        let result = get_performance(&mut world).unwrap();
+        assert_eq!(result["memory_growth_mb"], -4.25);
+        assert_eq!(result["memory_peak_mb"], 300.5);
+        assert_eq!(result["memory_mb"], 254.75);
+        assert!(result["memory_growth_mb"].as_f64().is_some());
+        assert!(result["memory_peak_mb"].as_f64().is_some());
+        assert!(result["memory_mb"].as_f64().is_some());
+        assert_eq!(result["memory_warning"], true);
+
+        let snapshots = result["reload_memory_snapshots"].as_array().unwrap();
+        assert_eq!(snapshots.len(), 2);
+        assert_eq!(snapshots[0]["rss_mb"], 300.25);
+        assert_eq!(snapshots[0]["delta_mb"], 5.5);
+        assert_eq!(snapshots[1]["rss_mb"], 294.75);
+        assert_eq!(snapshots[1]["delta_mb"], -5.5);
+        assert!(snapshots[0]["rss_mb"].as_f64().is_some());
+        assert!(snapshots[1]["delta_mb"].as_f64().is_some());
+        assert_eq!(snapshots[0]["generation"], 1);
+        assert_eq!(snapshots[1]["generation"], 2);
+        assert_eq!(snapshots[0]["gc_objects"], 100);
+        assert_eq!(snapshots[1]["schedule_systems"], 9);
+        assert_eq!(result["reload_count"], 0);
+        assert!(result["last_reload_mode"].is_null());
+    }
+
+    #[test]
+    fn get_performance_omits_memory_figures_when_there_is_nothing_to_report() {
+        let mut world = World::new();
+        let snap = pybevy_core::DebugSnapshot {
+            populated: true,
+            memory_mb: 240.0,
+            memory_growth_mb: 0.0,
+            memory_peak_mb: 0.0,
+            memory_warning: false,
+            ..Default::default()
+        };
+        world.insert_resource(snap);
+
+        let result = get_performance(&mut world).unwrap();
+        assert!(result.get("memory_growth_mb").is_none());
+        assert!(result.get("memory_peak_mb").is_none());
+        assert!(result.get("memory_warning").is_none());
+        assert_eq!(
+            result["reload_memory_snapshots"].as_array().map(Vec::len),
+            Some(0)
+        );
+        assert_eq!(result["memory_mb"], 240.0);
+        assert!(result["memory_mb"].as_f64().is_some());
     }
 }

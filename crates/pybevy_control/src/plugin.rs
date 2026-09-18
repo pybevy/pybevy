@@ -64,14 +64,15 @@ impl PyControlPlugin {
     }
 
     pub fn __repr__(&self) -> String {
+        let flag = |value: bool| if value { "True" } else { "False" };
         format!(
             "McpPlugin(port={}, host='{}', screenshot={}, manipulation={}, execute_python={}, api_discovery={})",
             self.port,
             self.host,
-            self.screenshot,
-            self.manipulation,
-            self.execute_python,
-            self.api_discovery,
+            flag(self.screenshot),
+            flag(self.manipulation),
+            flag(self.execute_python),
+            flag(self.api_discovery),
         )
     }
 }

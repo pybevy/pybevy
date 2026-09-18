@@ -534,7 +534,7 @@ pub enum ControlOperation {
         /// Resource type name
         resource_type: String,
     },
-    /// Execute multiple mutation operations in a single round-trip. Each operation runs independently - failures don't abort the batch. Actions: set_component, spawn, despawn, remove_component.
+    /// Execute multiple mutation operations in a single round-trip. Each operation runs independently - failures don't abort the batch. Actions: set_component, spawn, despawn, remove_component. Returns `total` and the three counts that partition it: `succeeded`, `failed` (the op was rejected outright), and `partial` (the op applied some fields and reported the rest in its own `errors` array).
     #[schemars(extend("x-feature-gate" = "manipulation"))]
     Batch {
         /// Array of operations to execute. Each item: {"action": "set_component|spawn|despawn|remove_component", "entity": id_or_name, ...}
@@ -568,7 +568,7 @@ pub enum ControlOperation {
     /// Detect all AABB overlaps scene-wide.
     CheckAllOverlaps(CheckAllOverlapsParams),
 
-    /// Run arbitrary Python code with World context. Returns stdout/stderr capture and change summary.
+    /// Run arbitrary Python code with World context. Returns captured stdout and stderr.
     #[schemars(extend("x-feature-gate" = "execute_python"))]
     RunCode {
         /// Python code to execute

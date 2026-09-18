@@ -52,6 +52,15 @@ def batch_update(view: View[Mut[Transform], With[Marker]]) -> None:
     pos.translation.y = expr.sin(time_val) * 10.0  # Updates ALL matching entities at once
 ```
 
+`view.column(T)` and `view.column_mut(T)` return a lazy expression column.
+Field access yields expressions; assigning to a field compiles and runs the
+expression across every matching entity in one step. For a concrete
+`ViewColumn` buffer, iterate with `iter_batches()` and call
+`batch.column(T)` / `batch.column_mut(T)`. It has `len`/`dtype`/`stride`, Numba
+zero-copy indexing, and optional JAX copy conversion, with a batch-scoped lifetime. A
+concrete `ViewColumn` refuses direct NumPy conversion (`__array__` raises); a NumPy
+array is a copy built with `to_contiguous_bytes()` and `numpy.frombuffer()`.
+
 Entity IDs are available via `batch.entities()` when using `iter_batches()`:
 
 ```python

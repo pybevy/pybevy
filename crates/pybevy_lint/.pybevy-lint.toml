@@ -1,5 +1,19 @@
 # PyBevy Lint Configuration
 # This file configures the linter's behavior for Bevy API comparison
+# Types borrowed as a shared PyRef across calls back into Python.
+# See docs/safety.md, "Shared-Borrow Proxies".
+[[validation.shared_borrow_types]]
+path = "ecs.Commands"
+reason = "its &self methods hold the receiver borrow across component conversion, which is arbitrary Python and can re-enter the same Commands"
+
+[[validation.shared_borrow_types]]
+path = "ecs.EntityCommands"
+reason = "with_children holds the receiver borrow across the user callback, which can reach the same handle"
+
+[[validation.shared_borrow_types]]
+path = "ecs.RelatedSpawnerCommands"
+reason = "its &self spawn methods hold the receiver borrow across component conversion, which is arbitrary Python and receives the spawner"
+
 [bevy]
 # Path to Bevy source (relative to project root or absolute)
 # Can be overridden with --bevy-path CLI option
@@ -44,6 +58,11 @@ bevy_math = ["glam"]
 bevy_mesh = ["bevy_sprite_render"]
 bevy_sprite = ["bevy_sprite_render"]
 bevy_animation = ["petgraph"]
+
+# External sources used only for enum topology and trait contracts. Keeping
+# structs out avoids treating cargo-public-api's sorted fields as source order.
+[bevy.crate_enum_sources]
+bevy_render = ["wgpu-types"]
 
 [bevy.crate_mappings]
 transform = "bevy_transform"
@@ -2156,7 +2175,8 @@ intentional_readonly_properties = ["source", "import_path", "imports"]
 intentional_signature_diffs = ["from_glsl", "from_wgsl_with_defs"]
 notes = """
 - Read-only properties: source, import_path, imports
-- from_glsl: ShaderStage -> String (Python doesn't have naga::ShaderStage)
+- from_glsl: naga::ShaderStage -> pybevy.shader.ShaderStage (wrapper naming), and
+  impl Into<Cow<str>>/impl Into<String> specialized to str
 - from_wgsl_with_defs: Vec<ShaderDefVal> -> Vec<PyShaderDefVal> (wrapper naming)"""
 
 [bevy.type_ignores.ShaderDefVal]
@@ -2305,11 +2325,11 @@ notes = "Uses PySphere wrapper instead of bevy::camera::primitives::Sphere"
 renames = { "None" = "None_" }
 notes = "None renamed to None_ because None is a Python keyword"
 
-# OrthographicProjection: from_world is FromWorld trait, constructor defaults are intentional
+# OrthographicProjection: from_world is FromWorld trait; Bevy has no Default impl for it
 [bevy.type_ignores.OrthographicProjection]
 intentional_missing_methods = ["from_world"]
 ignore_constructor_warnings = true
-notes = "from_world is FromWorld trait (not user-callable), defaults follow CLAUDE.md pattern"
+notes = "from_world is FromWorld trait (not user-callable); Bevy's OrthographicProjection has no Default impl, so its keyword defaults are flagged even though they mirror OrthographicProjection::default_3d() field for field"
 
 # Projection: custom<P> requires generic trait bounds
 [bevy.type_ignores.Projection]
@@ -2831,6 +2851,11 @@ path = "array.Array"
 reason = "the dtype class is deliberately named lowercase to mirror numpy, so the PyDType wrapper name never matches"
 
 [[validation.exceptions]]
+code = "W009"
+path = "window.Window"
+reason = "constructor coverage exposes 19 additional platform-policy booleans; that does not make these low-frequency controls a reviewed columnar API, so retain the established decorations/resizable/transparent View lanes pending separate review"
+
+[[validation.exceptions]]
 code = "E013"
 path = "animation.AnimationEvent"
 reason = "pybevy-animation Python-defined type; no upstream Bevy constructor"
@@ -2963,28 +2988,13 @@ reason = "legacy plain value enum predating the pyenum convention; migration tra
 
 [[validation.exceptions]]
 code = "W013"
-path = "a11y.Role"
-reason = "legacy plain value enum predating the pyenum convention; migration tracked by ISSUE-012"
-
-[[validation.exceptions]]
-code = "W013"
-path = "audio.Volume"
-reason = "legacy plain value enum; migration in progress on refactor/audio-pyenum-volume, tracked by ISSUE-012"
-
-[[validation.exceptions]]
-code = "W013"
 path = "math.EulerRot"
 reason = "legacy plain value enum; migration in progress on refactor/math-pyenum-enums, tracked by ISSUE-012"
 
 [[validation.exceptions]]
 code = "W013"
-path = "shader.ShaderImport"
-reason = "legacy plain value enum predating the pyenum convention; migration tracked by ISSUE-012"
-
-[[validation.exceptions]]
-code = "W013"
-path = "shader.ShaderDefVal"
-reason = "legacy plain value enum predating the pyenum convention; migration tracked by ISSUE-012"
+path = "audio.Volume"
+reason = "legacy plain value enum; migration in progress on refactor/audio-pyenum-volume, tracked by ISSUE-012"
 
 [[validation.exceptions]]
 code = "W013"
@@ -2996,3 +3006,107 @@ reason = "legacy plain value enum predating the pyenum convention; migration tra
 code = "E002"
 path = "app.PluginGroup"
 reason = "PluginGroup.name is a live classmethod declared in app.pyi and pinned by surface tests; the Rust parser stores #[classmethod] in methods while the Python parser stores @classmethod in static_methods"
+
+# W016: declarations that still leave __module__ as 'builtins'. Each is a
+# recorded defect in internal/state/bugs/core.md core-010, not an approved
+# shape; delete the entry when the declaration names its module.
+
+[[validation.exceptions]]
+code = "W016"
+path = "core.Materializable"
+reason = "core-010: runtime MRO marker still reports builtins.Materializable"
+
+[[validation.exceptions]]
+code = "W016"
+path = "core.LogicalComponentParam"
+reason = "core-010: descriptor still reports builtins.LogicalComponentParam in TypeError text"
+
+[[validation.exceptions]]
+code = "W016"
+path = "core.RustComponentBatch"
+reason = "core-010: native batch transport reaches users through component batch factories"
+
+[[validation.exceptions]]
+code = "W016"
+path = "core._FloatLiveList"
+reason = "core-010: private live sequence visible through repr and index errors"
+
+[[validation.exceptions]]
+code = "W016"
+path = "core._NumpyViewGuard"
+reason = "core-010: private array view guard visible through repr and error text"
+
+[[validation.exceptions]]
+code = "W016"
+path = "time._TimeFixed"
+reason = "core-010: private Time context class visible through repr and error text"
+
+[[validation.exceptions]]
+code = "W016"
+path = "time._TimeVirtual"
+reason = "core-010: private Time context class visible through repr and error text"
+
+[[validation.exceptions]]
+code = "W016"
+path = "time._TimeReal"
+reason = "core-010: private Time context class visible through repr and error text"
+
+[[validation.exceptions]]
+code = "W016"
+path = "app._FileWatcher"
+reason = "core-010: private hot-reload watcher visible through repr and error text"
+
+[[validation.exceptions]]
+code = "W016"
+path = "ecs.Res"
+reason = "core-010: subscription helper still reports builtins.Res in TypeError text"
+
+[[validation.exceptions]]
+code = "W016"
+path = "ecs.ResMut"
+reason = "core-010: subscription helper still reports builtins.ResMut in TypeError text"
+
+[[validation.exceptions]]
+code = "W016"
+path = "ecs.ResParam"
+reason = "core-010: system-parameter descriptor still reports builtins.ResParam"
+
+[[validation.exceptions]]
+code = "W016"
+path = "ecs.In"
+reason = "core-010: system-input marker still reports builtins.In"
+
+[[validation.exceptions]]
+code = "W016"
+path = "ecs.InParam"
+reason = "core-010: system-input descriptor still reports builtins.InParam"
+
+[[validation.exceptions]]
+code = "W016"
+path = "ecs.CustomComponentBatch"
+reason = "core-010: custom batch transport reaches users through component batch factories"
+
+[[validation.exceptions]]
+code = "W016"
+path = "ecs.MessageReaderIter"
+reason = "core-010: iterator implementation type, also a reviewed tests/surface/_exceptions.py entry"
+
+[[validation.exceptions]]
+code = "W016"
+path = "ecs.MessageTypeParam"
+reason = "core-010: unregistered shadow of the exported ecs.MessageTypeParam; the ledger routes it to removal"
+
+[[validation.exceptions]]
+code = "W016"
+path = "ecs._LogicalTypeMap"
+reason = "core-010: private logical-type component visible through repr and error text"
+
+[[validation.exceptions]]
+code = "W016"
+path = "ecs.SystemConfig"
+reason = "core-010: instance __module__ proxies the wrapped callable, but the type itself still reports builtins"
+
+[[validation.exceptions]]
+code = "W016"
+path = "render.ImageCopyPlugin"
+reason = "core-010: registered plugin class still reports builtins.ImageCopyPlugin"

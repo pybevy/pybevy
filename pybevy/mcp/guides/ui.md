@@ -73,6 +73,25 @@ different colors. `border.set_all(color)` mutates all sides and returns that sam
 border; a queried border still requires `Mut[BorderColor]` and expires with its system.
 Use `BoxShadow([ShadowStyle(color=color), ...])` for layered shadows.
 
+## Resolved Geometry
+
+After UI layout has run, query `ComputedNode` for the resolved size and
+`UiGlobalTransform` for the absolute screen-space transform. The translation is
+reported in physical pixels:
+
+```python
+from pybevy.ecs import Query
+from pybevy.ui import ComputedNode, UiGlobalTransform
+
+
+def inspect_layout(query: Query[tuple[ComputedNode, UiGlobalTransform]]) -> None:
+    for computed, transform in query:
+        print("size", computed.size, "position", transform.translation)
+```
+
+`UiGlobalTransform` is engine-computed and cannot be inserted directly. Change
+`UiTransform` when you need to translate, rotate, or scale a UI node.
+
 ## Layering
 
 `ZIndex(value)` orders siblings and descendants within a UI stacking context;
@@ -86,10 +105,22 @@ commands.spawn(Node(), GlobalZIndex(100))
 
 ## Images and Intrinsic Size
 
-An unsized `Node` containing `ImageNode(handle)` takes its intrinsic size from
-the image. Set `Node.width` and `Node.height` to stretch it to a known area.
-`ImageNode.solid_color(color)` uses a 1-by-1 texture, so it also needs an
-explicitly sized node to fill more than one pixel. For a plain colored panel,
+`ImageNode(handle)` defaults to `NodeImageMode.Auto()`: an unsized `Node` takes
+the image's intrinsic size, while explicit dimensions preserve its aspect ratio.
+Use `NodeImageMode.Stretch()` to fill the node instead:
+
+```python
+from pybevy.ui import ImageNode, Node, NodeImageMode, Val
+
+image = ImageNode(handle)
+image.image_mode = NodeImageMode.Stretch()
+commands.spawn(Node(width=Val.Px(200.0), height=Val.Px(80.0)), image)
+```
+
+`ImageNode.solid_color(color)` uses a 1-by-1 texture and also stays at
+`NodeImageMode.Auto`, so an explicitly sized node shows a centered square of
+its shorter side (80-by-80 on a 200-by-80 node), not a filled area. Assign
+`NodeImageMode.Stretch()` to cover the node. For a plain colored panel,
 `BackgroundColor` is usually simpler.
 
 ## Global UI Scale
