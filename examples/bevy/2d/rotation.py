@@ -97,7 +97,7 @@ def setup(commands: Commands, assets: Res[AssetServer]) -> None:
 
 def player_movement_system(
     time: Res[Time],
-    keyboard_input: Res[ButtonInput],
+    keyboard_input: Res[ButtonInput[KeyCode]],
     player_query: Single[tuple[Player, Mut[Transform]]],
 ) -> None:
     """Handle player movement and rotation based on keyboard input.

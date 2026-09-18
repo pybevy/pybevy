@@ -99,7 +99,7 @@ def move_player(
     player_query: Query[Mut[Transform], With[Player]],
     player_pos: ResMut[PlayerPosition],
     time: Res[Time],
-    kb_input: Res[ButtonInput],
+    kb_input: Res[ButtonInput[KeyCode]],
 ) -> None:
     """Update player position with keyboard inputs (WASD)."""
     for player in player_query:

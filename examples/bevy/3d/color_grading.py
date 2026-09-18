@@ -64,7 +64,7 @@ def setup(
 
 
 def handle_input(
-    input: Res[ButtonInput],
+    input: Res[ButtonInput[KeyCode]],
     query: Query[Mut[ColorGrading], With[Camera3d]],
     time: Res[Time],
 ):

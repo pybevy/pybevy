@@ -16,7 +16,7 @@ def setup(commands: Commands) -> None:
 
 
 def change_clear_color(
-    input: Res[ButtonInput], clear_color: ResMut[ClearColor]
+    input: Res[ButtonInput[KeyCode]], clear_color: ResMut[ClearColor]
 ) -> None:
     """Change the clear color when space is pressed."""
     if input.just_pressed(KeyCode.Space):

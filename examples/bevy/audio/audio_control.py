@@ -75,7 +75,7 @@ def update_speed(
 
 
 def pause(
-    keyboard_input: Res[ButtonInput],
+    keyboard_input: Res[ButtonInput[KeyCode]],
     music_controller: Query[AudioSink, With[MyMusic]],
 ) -> None:
     """Toggle playback with spacebar."""
@@ -88,7 +88,7 @@ def pause(
 
 
 def mute(
-    keyboard_input: Res[ButtonInput],
+    keyboard_input: Res[ButtonInput[KeyCode]],
     music_controller: Query[AudioSink, With[MyMusic]],
 ) -> None:
     """Toggle mute with M key."""
@@ -101,7 +101,7 @@ def mute(
 
 
 def volume(
-    keyboard_input: Res[ButtonInput],
+    keyboard_input: Res[ButtonInput[KeyCode]],
     music_controller: Query[AudioSink, With[MyMusic]],
 ) -> None:
     """Adjust volume with arrow up/down keys."""

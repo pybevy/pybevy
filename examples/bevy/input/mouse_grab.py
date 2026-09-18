@@ -19,7 +19,7 @@ from pybevy.window import CursorGrabMode, CursorOptions
 def grab_mouse(
     cursor_options_query: Single[Mut[CursorOptions]],
     mouse: Res[ButtonInput[MouseButton]],
-    key: Res[ButtonInput],
+    key: Res[ButtonInput[KeyCode]],
 ) -> None:
     """Grab mouse on left click, release on Escape."""
     cursor_options = cursor_options_query.into_inner()

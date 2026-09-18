@@ -85,7 +85,7 @@ def setup(
 
 
 def toggle_fog_mode(
-    keyboard: Res[ButtonInput],
+    keyboard: Res[ButtonInput[KeyCode]],
     fog_query: Query[Mut[DistanceFog]],
     settings: ResMut[FogSettings],
 ) -> None:
