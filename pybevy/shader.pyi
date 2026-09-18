@@ -15,14 +15,20 @@ class ShaderImport:
     - Custom: Named module imports (e.g., "bevy_pbr::utils")
     """
 
+    def __copy__(self) -> ShaderImport: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> ShaderImport: ...
+
+
     class AssetPath(ShaderImport):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: str
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> str: ...
         def __init__(self, value: str) -> None: ...
 
     class Custom(ShaderImport):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: str
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> str: ...
         def __init__(self, value: str) -> None: ...
 
     def module_name(self) -> str:
@@ -38,6 +44,10 @@ class ValidateShader:
     Runtime checks can be enabled for safety at the cost of speed.
     By default no runtime checks will be performed.
     """
+
+    def __copy__(self) -> ValidateShader: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> ValidateShader: ...
+
 
     Disabled: ClassVar[ValidateShader]
     """Do not perform runtime shader validation."""
@@ -65,22 +75,41 @@ class ShaderDefVal:
         ```
     """
 
+    def __copy__(self) -> ShaderDefVal: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> ShaderDefVal: ...
+
+
     class Bool(ShaderDefVal):
-        __match_args__: ClassVar[tuple[Literal["name"], Literal["value"]]]
-        name: str
-        value: builtins.bool
+        __match_args__: ClassVar[tuple[Literal["name"], Literal["value"]]] = (
+            "name",
+            "value",
+        )
+        @property
+        def name(self) -> str: ...
+        @property
+        def value(self) -> builtins.bool: ...
         def __init__(self, name: str, value: builtins.bool) -> None: ...
 
     class Int(ShaderDefVal):
-        __match_args__: ClassVar[tuple[Literal["name"], Literal["value"]]]
-        name: str
-        value: builtins.int
+        __match_args__: ClassVar[tuple[Literal["name"], Literal["value"]]] = (
+            "name",
+            "value",
+        )
+        @property
+        def name(self) -> str: ...
+        @property
+        def value(self) -> builtins.int: ...
         def __init__(self, name: str, value: builtins.int) -> None: ...
 
     class UInt(ShaderDefVal):
-        __match_args__: ClassVar[tuple[Literal["name"], Literal["value"]]]
-        name: str
-        value: builtins.int
+        __match_args__: ClassVar[tuple[Literal["name"], Literal["value"]]] = (
+            "name",
+            "value",
+        )
+        @property
+        def name(self) -> str: ...
+        @property
+        def value(self) -> builtins.int: ...
         def __init__(self, name: str, value: builtins.int) -> None: ...
 
     def value_as_string(self) -> str:
@@ -106,7 +135,7 @@ class ShaderRef:
     Example:
         ```python
         # Use default shader
-        shader_ref = ShaderRef.default()
+        shader_ref = ShaderRef.Default()
 
         # Reference by handle
         shader_handle = shaders.add(my_shader)
@@ -116,6 +145,7 @@ class ShaderRef:
         shader_ref = ShaderRef.Path("shaders/custom.wgsl")
         ```
     """
+
 
     class Default(ShaderRef):
         __match_args__: ClassVar[tuple[()]]
@@ -131,19 +161,55 @@ class ShaderRef:
         value: str
         def __init__(self, value: str) -> None: ...
 
-    @staticmethod
-    def default() -> ShaderRef:
-        """
-        Create a ShaderRef that uses the default shader.
 
-        Returns:
-            ShaderRef.Default instance
+class ShaderStage:
+    """
+    Stage of the programmable pipeline a GLSL source belongs to.
 
-        Example:
-            ```python
-            shader_ref = ShaderRef.default()
-            ```
-        """
+    Passed to `Shader.from_glsl` to say how the source should be compiled.
+
+    Example:
+        ```python
+        from pybevy.shader import Shader, ShaderStage
+
+        shader = Shader.from_glsl(source, ShaderStage.Fragment, "custom_shader")
+        ```
+    """
+
+    def __copy__(self) -> ShaderStage: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> ShaderStage: ...
+
+
+    Vertex: ClassVar[ShaderStage]
+    """A vertex shader, in a render pipeline."""
+
+    Task: ClassVar[ShaderStage]
+    """A task shader, in a mesh render pipeline."""
+
+    Mesh: ClassVar[ShaderStage]
+    """A mesh shader, in a mesh render pipeline."""
+
+    Fragment: ClassVar[ShaderStage]
+    """A fragment shader, in a render pipeline."""
+
+    Compute: ClassVar[ShaderStage]
+    """A compute pipeline shader."""
+
+    RayGeneration: ClassVar[ShaderStage]
+    """A ray generation shader, in a ray tracing pipeline."""
+
+    Miss: ClassVar[ShaderStage]
+    """A miss shader, in a ray tracing pipeline."""
+
+    AnyHit: ClassVar[ShaderStage]
+    """An any hit shader, in a ray tracing pipeline."""
+
+    ClosestHit: ClassVar[ShaderStage]
+    """A closest hit shader, in a ray tracing pipeline."""
+
+    def __eq__(self, other: object) -> builtins.bool: ...
+    def __ne__(self, other: object) -> builtins.bool: ...
+    def __hash__(self) -> builtins.int: ...
 
 class Source:
     """
@@ -223,6 +289,8 @@ class Source:
             RuntimeError: If source is SPIR-V bytecode (cannot convert to string)
         """
 
+    def __hash__(self) -> int: ...
+
 class Shader(Asset):
     """
     A shader asset containing WGSL, GLSL, or SPIR-V source code.
@@ -299,29 +367,28 @@ class Shader(Asset):
         """
 
     @staticmethod
-    def from_glsl(source: str, stage: str, path: str) -> Shader:
+    def from_glsl(source: str, stage: ShaderStage, path: str) -> Shader:
         """
         Create a new shader from GLSL source code.
 
         Args:
             source: GLSL shader source code
-            stage: Shader stage - "vertex", "fragment", or "compute"
+            stage: Pipeline stage the source belongs to
             path: Shader path/name for debugging
 
         Returns:
             New Shader instance
 
-        Raises:
-            ValueError: If stage is not "vertex", "fragment", or "compute"
-
         Example:
             ```python
+            from pybevy.shader import Shader, ShaderStage
+
             shader = Shader.from_glsl('''
                 #version 450
                 void main() {
                     gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);
                 }
-            ''', "fragment", "custom_shader")
+            ''', ShaderStage.Fragment, "custom_shader")
             ```
         """
 
@@ -344,8 +411,11 @@ class Shader(Asset):
         Get the shader path/name.
 
         Returns:
-            Shader path string
+        Shader path string
         """
+
+    @path.setter
+    def path(self, value: str) -> None: ...
 
     @property
     def source(self) -> Source:
@@ -353,8 +423,11 @@ class Shader(Asset):
         Get the shader source.
 
         Returns:
-            Source instance containing shader code
+        Source instance containing shader code
         """
+
+    @source.setter
+    def source(self, value: Source) -> None: ...
 
     @property
     def import_path(self) -> ShaderImport:
@@ -380,8 +453,11 @@ class Shader(Asset):
         Get the list of imports this shader depends on.
 
         Returns:
-            List of ShaderImport instances representing shader dependencies
+        List of ShaderImport instances representing shader dependencies
         """
+
+    @imports.setter
+    def imports(self, value: list[ShaderImport]) -> None: ...
 
     @property
     def shader_defs(self) -> list[ShaderDefVal]:
@@ -389,8 +465,11 @@ class Shader(Asset):
         Get the shader preprocessor definitions.
 
         Returns:
-            List of ShaderDefVal instances representing shader defines
+        List of ShaderDefVal instances representing shader defines
         """
+
+    @shader_defs.setter
+    def shader_defs(self, value: list[ShaderDefVal]) -> None: ...
 
     @property
     def validate_shader(self) -> ValidateShader:
@@ -415,6 +494,7 @@ __all__ = [
     "ShaderDefVal",
     "ShaderImport",
     "ShaderRef",
+    "ShaderStage",
     "Source",
     "ValidateShader",
 ]
