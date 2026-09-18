@@ -930,8 +930,6 @@ types = [
     "app::SpawnScene",
     "app::SubApp",
     "app::SubApps",
-    "app::TaskPoolThreadAssignmentPolicy",
-
     # bevy_time - internal time types not used in examples
     "time::TimeReceiver",
     "time::TimeSender",
@@ -1048,6 +1046,12 @@ PyTimeFixed = "Time<Fixed>"
 [bevy.constructor_functions."pybevy.math.PyAffine2"]
 function = "from_mat2_translation"
 reason = "affine2.rs calls glam::Affine2::from_mat2_translation(matrix2: Mat2, translation: Vec2); the accepted inputs map this factory, not field assignment"
+
+[bevy.constructor_functions."pybevy.render.PyShaderBuffer"]
+function = "new"
+internal_parameters = ["asset_usage"]
+field_inputs = ["copy_on_resize"]
+reason = "ShaderBuffer maps Bevy 0.19.1 ShaderBuffer::new(data, asset_usage); Python exposes the native data prefix, supplies default asset usage, and keeps the independent copy_on_resize field keyword-only"
 
 [bevy.constructor_functions."pybevy.math.PyMat2"]
 function = "from_cols"
@@ -1417,6 +1421,8 @@ reason = "Bevy 0.19.1 bevy_mesh::Mesh::new maps primitive_topology; PyBevy suppl
 
 
 [bevy.constructor_fields]
+"pybevy.app.PyTaskPoolOptions" = "Bevy 0.19.1 bevy_app::TaskPoolOptions fields define the Python constructor; None selects the corresponding Bevy default policy"
+"pybevy.app.PyTaskPoolThreadAssignmentPolicy" = "Bevy 0.19.1 bevy_app::TaskPoolThreadAssignmentPolicy fields define the Python constructor; worker-thread callbacks are intentionally omitted"
 "pybevy.transform.PyTransform" = "Bevy 0.19.1 bevy_transform/src/components/transform.rs:86; established field-derived translation/rotation/scale inputs, independent of future associated constructors"
 "pybevy.ui.PyNode" = "Bevy 0.19.1 bevy_ui/src/ui_node.rs:492; established field-derived layout inputs, independent of future associated constructors"
 "pybevy.math.PyRot2" = "Bevy 0.19.1 bevy_math/src/rotation2d.rs:52; cos/sin fields with a complete-pair normalization check, not an associated angle constructor"
@@ -1843,6 +1849,11 @@ traits = [
 intentional_missing_methods = ["new"]
 notes = "new(Sink) not implementable - Sink is from rodio, internal to Bevy's audio system"
 
+[bevy.type_ignores.TaskPoolThreadAssignmentPolicy]
+ignore_constructor_params = ["on_thread_spawn", "on_thread_destroy"]
+intentional_missing_fields = ["on_thread_spawn", "on_thread_destroy"]
+notes = "Bevy worker-thread lifecycle callbacks cannot retain and invoke Python without a reviewed free-threading and exception-delivery contract"
+
 # SpatialAudioSink: Same as AudioSink, uses rodio::SpatialSink
 [bevy.type_ignores.SpatialAudioSink]
 intentional_missing_methods = ["new"]
@@ -2075,13 +2086,10 @@ notes = "Engine-managed component - cascade data computed by Bevy's shadow syste
 intentional_readonly_properties = ["resolution"]
 notes = "Resolution override is engine-managed"
 
-# CameraMainTextureUsages: Python keyword collision and extra property
 [bevy.type_ignores.CameraMainTextureUsages]
 intentional_missing_methods = ["to_dynamic"]
-intentional_extra_methods = ["flags"]
-intentional_readonly_properties = ["flags"]
 renames = { "with" = "with_" }
-notes = "'with' renamed to 'with_' (Python keyword). 'flags' is Python-friendly accessor. to_dynamic needs PartialReflect."
+notes = "with_ escapes the Python keyword; value preserves component borrowing and writability. to_dynamic needs PartialReflect."
 
 # Font - Asset loaded from font files (TTF, OTF)
 # Created via Font.try_from_bytes() or asset_server.load(), not constructor
@@ -2167,6 +2175,25 @@ notes = """
 - from_glsl: naga::ShaderStage -> pybevy.shader.ShaderStage (wrapper naming), and
   impl Into<Cow<str>>/impl Into<String> specialized to str
 - from_wgsl_with_defs: Vec<ShaderDefVal> -> Vec<PyShaderDefVal> (wrapper naming)"""
+
+[bevy.type_ignores.ShaderBuffer]
+intentional_signature_diffs = ["with_size"]
+intentional_missing_fields = ["asset_usage", "buffer_description"]
+intentional_extra_methods = ["data_mut", "data_copy", "data_len"]
+notes = """
+- with_size/asset_usage: the current RenderAssetUsages wrapper is owned by
+  pybevy_image, which already depends on pybevy_render; its Python module is
+  pybevy.assets, but Rust ownership still prevents importing it here, so this
+  wrapper supplies Bevy's default without creating a dependency cycle
+- buffer_description: wgpu BufferDescriptor is not exposed; resize methods are
+  the supported size mutation boundary
+- copy_on_resize is an independent keyword-only field override after Bevy's
+  mapped new() prefix
+- data is exposed through guarded CPU byte contexts, not a detached property;
+  data_copy is an explicit snapshot and data_len reports optional CPU length
+- set_data accepts already encoded bytes or uint8 Array instead of Bevy's
+  ShaderType serialization; None clears the optional CPU payload
+- no CPU accessor claims to report live GPU allocation size"""
 
 [bevy.type_ignores.ShaderDefVal]
 intentional_readonly_properties = ["name"]
@@ -2892,6 +2919,21 @@ reason = "private generated indexed adapter structurally implements the public L
 
 [[validation.exceptions]]
 code = "E006"
+path = "render.ShaderBuffer"
+reason = "data returns private ShaderBufferDataContext implementing AbstractContextManager[Array]; public runtime tests cover enter, close, and expiry"
+
+[[validation.exceptions]]
+code = "E006"
+path = "render.ShaderBuffer"
+reason = "data_mut returns private ShaderBufferDataContext implementing AbstractContextManager[Array]; public runtime tests cover writeback, close, and expiry"
+
+[[validation.exceptions]]
+code = "W006"
+path = "render.ShaderBuffer"
+reason = "data returns a live read-only Array through prepare_read_view and AssetBorrowAnchor; the parser does not recognize this read-lease helper, and runtime tests cover alias conflicts and expiry"
+
+[[validation.exceptions]]
+code = "E006"
 path = "light.CascadeShadowConfig"
 reason = "private generated indexed adapter structurally implements the public LiveList[float] protocol"
 
@@ -3039,11 +3081,6 @@ reason = "legacy plain value enum predating the pyenum convention; migration tra
 [[validation.exceptions]]
 code = "W013"
 path = "app.RunMode"
-reason = "legacy plain value enum predating the pyenum convention; migration tracked by ISSUE-012"
-
-[[validation.exceptions]]
-code = "W013"
-path = "winit.UpdateMode"
 reason = "legacy plain value enum predating the pyenum convention; migration tracked by ISSUE-012"
 
 [[validation.exceptions]]

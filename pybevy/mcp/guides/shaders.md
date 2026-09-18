@@ -120,6 +120,19 @@ resource. A system therefore cannot request two mutable custom-material collecti
 once, such as both `ResMut[Assets[A]]` and `ResMut[Assets[B]]`; split those mutations
 across ordered systems.
 
+## Raw Shader Buffers
+
+Construct `ShaderBuffer` from `bytes` or a bounded `uint8` `Array`, or reserve
+space with `ShaderBuffer.with_size()`. Mutate it through `Assets[ShaderBuffer]`;
+`resize_in_place()` preserves GPU data when no CPU copy is available.
+Use `with buffer.data() as data` for read-only CPU bytes, `data_mut()` for
+scoped writes, and `data_copy()` for an independent copy. Views block conflicting
+asset mutations and expire on context exit or system completion. `data_len()`
+returns the current CPU byte count or `None`, not GPU allocation size.
+Bevy consumes CPU upload data during render extraction; these accessors do not
+read back GPU writes. `set_data()` takes already encoded bytes (including shader
+layout padding), not Bevy's typed shader serialization; `None` clears CPU data.
+
 ## WGSL Shader Side
 
 Both vertex and fragment shaders can read the material uniforms at

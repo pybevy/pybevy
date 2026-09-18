@@ -94,9 +94,9 @@ def main(app: App) -> App:
 def setup(commands: Commands) -> None:
     commands.spawn(
         Camera3d(),
-        Transform.from_xyz(0, 10, 20).looking_at(Vec3.ZERO, Vec3.Y),
+        Transform.from_xyz(0, 10, 20),
         Bloom(intensity=0.15),
-        FlyCamera(move_speed=15.0),
+        FlyCamera(move_speed=15.0, pitch=-0.46),
     )
 
 if __name__ == "__main__":
@@ -123,9 +123,15 @@ if __name__ == "__main__":
 | `move_speed` | float | 10.0 | Movement speed (units/sec) |
 | `sprint_multiplier` | float | 2.5 | Speed multiplier when shift held |
 | `look_sensitivity` | float | 0.003 | Mouse look sensitivity |
-| `pitch` | float | 0.0 | Current vertical rotation (radians) |
-| `yaw` | float | 0.0 | Current horizontal rotation (radians) |
+| `pitch` | float | 0.0 | Vertical rotation (radians), applied every frame |
+| `yaw` | float | 0.0 | Horizontal rotation (radians), applied every frame |
 | `max_pitch` | float | ~1.56 | Maximum pitch angle (radians) |
+
+`pitch` and `yaw` are the authoritative orientation: the control system writes
+`Transform.rotation` from them on every frame, so set the starting facing (and any
+scripted camera moves) through those fields. A `Transform.looking_at(...)` rotation on
+a `FlyCamera` entity is overwritten on the first update. Mouse-drag look clamps pitch
+to `max_pitch`; values assigned directly are not clamped.
 
 ## Direct Registration Pattern
 

@@ -134,7 +134,7 @@ def control_audio(query: Query[AudioSink]) -> None:
         sink.empty()
 ```
 
-**Important:** `AudioSink` is engine-managed. You can query it but cannot spawn it directly. It appears automatically after `AudioPlayer` starts playing.
+**Important:** `AudioSink` is engine-managed. You can query it but cannot spawn it directly. It appears automatically after `AudioPlayer` starts playing. If it never appears, see Troubleshooting below.
 
 **Seeking:** `try_seek()` needs a non-looping source whose decoder can seek:
 
@@ -144,6 +144,13 @@ def control_audio(query: Query[AudioSink]) -> None:
 | `.ogg` | fails | fails |
 
 For seekable background music, use `.wav` with `ONCE` and restart it yourself.
+
+## Troubleshooting
+
+Without an audio output device, Bevy logs `No audio device found.` and does not
+create `AudioSink`. Check `get_logs(errors_only=true, include_warnings=true)`
+before reloading or restarting, which clears captured logs. This is a warning,
+so `get_last_error` alone will not report it.
 
 ## Spatial Audio
 

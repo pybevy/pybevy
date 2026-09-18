@@ -2,6 +2,16 @@
 
 GPU rendering without a window or display server - for CI, remote servers, containers, and automated testing.
 
+`Image.new_render_target` creates an RGBA8 sRGB target with `TEXTURE_BINDING`,
+`COPY_SRC`, `COPY_DST`, and `RENDER_ATTACHMENT`. It is a convenience for
+`Image.new_target_texture` with that format and `COPY_SRC` added. Import
+`TextureUsages` from `pybevy.render`; `insert`, `remove`, `toggle`, and `set`
+mutate a flag value in place. `Image.texture_descriptor.usage` borrows asset flags; nested writes
+require `Assets[Image].get_mut`. For an owned image, copy its descriptor with
+`copy.copy()`, modify the copy's `usage`, then assign the descriptor back.
+`CameraMainTextureUsages(value=TextureUsages.COPY_SRC)` uses the same flags
+type; its `value` property and `with_` builder use `TextureUsages`.
+
 ## When to Use Headless
 
 - No display server available (SSH, CI runners, Docker containers)
