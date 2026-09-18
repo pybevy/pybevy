@@ -165,6 +165,10 @@ impl PyGizmoLineStyle {
         *self
     }
 
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> Self {
+        *self
+    }
+
     pub fn __repr__(&self) -> String {
         match self {
             Self::Solid() => "GizmoLineStyle.Solid()".to_owned(),

@@ -1,5 +1,7 @@
 use bevy::math::{BVec4A, Vec4, Vec4Swizzles};
-use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
+use pybevy_core::{
+    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage, public_error::UNSUPPORTED_COMPARISON,
+};
 use pyo3::{
     basic::CompareOp,
     exceptions::{PyTypeError, PyValueError},
@@ -551,10 +553,11 @@ impl PyVec4 {
 
     fn __add__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let self_vec = *self.as_ref()?;
-        if let Ok(scalar) = other.extract::<f32>() {
+        if let Ok(other_vec) = other.cast::<PyVec4>() {
+            let other_vec = Vec4::try_from(&*other_vec.try_borrow()?)?;
+            Ok(Py::new(py, PyVec4::from_vec4(self_vec + other_vec))?.into_any())
+        } else if let Ok(scalar) = other.extract::<f32>() {
             Ok(Py::new(py, PyVec4::from_vec4(self_vec + scalar))?.into_any())
-        } else if let Ok(other_vec) = other.extract::<PyVec4>() {
-            Ok(Py::new(py, PyVec4::from_vec4(self_vec + *other_vec.as_ref()?))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }
@@ -562,10 +565,11 @@ impl PyVec4 {
 
     fn __sub__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let self_vec = *self.as_ref()?;
-        if let Ok(scalar) = other.extract::<f32>() {
+        if let Ok(other_vec) = other.cast::<PyVec4>() {
+            let other_vec = Vec4::try_from(&*other_vec.try_borrow()?)?;
+            Ok(Py::new(py, PyVec4::from_vec4(self_vec - other_vec))?.into_any())
+        } else if let Ok(scalar) = other.extract::<f32>() {
             Ok(Py::new(py, PyVec4::from_vec4(self_vec - scalar))?.into_any())
-        } else if let Ok(other_vec) = other.extract::<PyVec4>() {
-            Ok(Py::new(py, PyVec4::from_vec4(self_vec - *other_vec.as_ref()?))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }
@@ -573,10 +577,11 @@ impl PyVec4 {
 
     fn __mul__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let self_vec = *self.as_ref()?;
-        if let Ok(scalar) = other.extract::<f32>() {
+        if let Ok(other_vec) = other.cast::<PyVec4>() {
+            let other_vec = Vec4::try_from(&*other_vec.try_borrow()?)?;
+            Ok(Py::new(py, PyVec4::from_vec4(self_vec * other_vec))?.into_any())
+        } else if let Ok(scalar) = other.extract::<f32>() {
             Ok(Py::new(py, PyVec4::from_vec4(self_vec * scalar))?.into_any())
-        } else if let Ok(other_vec) = other.extract::<PyVec4>() {
-            Ok(Py::new(py, PyVec4::from_vec4(self_vec * *other_vec.as_ref()?))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }
@@ -584,10 +589,11 @@ impl PyVec4 {
 
     fn __div__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let self_vec = *self.as_ref()?;
-        if let Ok(scalar) = other.extract::<f32>() {
+        if let Ok(other_vec) = other.cast::<PyVec4>() {
+            let other_vec = Vec4::try_from(&*other_vec.try_borrow()?)?;
+            Ok(Py::new(py, PyVec4::from_vec4(self_vec / other_vec))?.into_any())
+        } else if let Ok(scalar) = other.extract::<f32>() {
             Ok(Py::new(py, PyVec4::from_vec4(self_vec / scalar))?.into_any())
-        } else if let Ok(other_vec) = other.extract::<PyVec4>() {
-            Ok(Py::new(py, PyVec4::from_vec4(self_vec / *other_vec.as_ref()?))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }
@@ -603,10 +609,11 @@ impl PyVec4 {
 
     fn __rmul__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let self_vec = *self.as_ref()?;
-        if let Ok(scalar) = other.extract::<f32>() {
+        if let Ok(other_vec) = other.cast::<PyVec4>() {
+            let other_vec = Vec4::try_from(&*other_vec.try_borrow()?)?;
+            Ok(Py::new(py, PyVec4::from_vec4(other_vec * self_vec))?.into_any())
+        } else if let Ok(scalar) = other.extract::<f32>() {
             Ok(Py::new(py, PyVec4::from_vec4(scalar * self_vec))?.into_any())
-        } else if let Ok(other_vec) = other.extract::<PyVec4>() {
-            Ok(Py::new(py, PyVec4::from_vec4(*other_vec.as_ref()? * self_vec))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }
@@ -639,6 +646,16 @@ impl PyVec4 {
         }
     }
 
+    fn __copy__(&self) -> PyResult<Self> {
+        Ok(PyVec4 {
+            storage: ValueStorage::owned(*self.as_ref()?),
+        })
+    }
+
+    fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
+
     fn __repr__(&self) -> PyResult<String> {
         let v = *self.as_ref()?;
         Ok(format!("Vec4({}, {}, {}, {})", v.x, v.y, v.z, v.w))
@@ -660,7 +677,7 @@ impl PyVec4 {
         let result = match op {
             CompareOp::Eq => equal,
             CompareOp::Ne => !equal,
-            _ => return Err(PyTypeError::new_err("Unsupported comparison operation")),
+            _ => return Err(PyTypeError::new_err(UNSUPPORTED_COMPARISON)),
         };
         Ok(comparison_result(py, result))
     }

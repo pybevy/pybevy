@@ -1,5 +1,7 @@
 use bevy::math::UVec3;
-use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
+use pybevy_core::{
+    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage, public_error::UNSUPPORTED_COMPARISON,
+};
 use pyo3::{
     basic::CompareOp,
     exceptions::{PyTypeError, PyZeroDivisionError},
@@ -174,7 +176,7 @@ impl PyUVec3 {
         let result = match op {
             CompareOp::Eq => a == b,
             CompareOp::Ne => a != b,
-            _ => return Err(PyTypeError::new_err("Unsupported comparison operation")),
+            _ => return Err(PyTypeError::new_err(UNSUPPORTED_COMPARISON)),
         };
         Ok(comparison_result(py, result))
     }

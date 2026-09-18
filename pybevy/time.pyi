@@ -460,6 +460,10 @@ class TimerMode:
         - Timer: The timer class that uses this mode enum
     """
 
+    def __copy__(self) -> TimerMode: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> TimerMode: ...
+
+
     Once: TimerMode
     """Run once and stop. Timer stays finished until reset() is called."""
 
@@ -473,6 +477,8 @@ class TimerMode:
         Returns:
             "once" or "repeating"
         """
+
+    def __hash__(self) -> int: ...
 
 class Timer:
     """A timer that tracks elapsed time and can trigger when finished.

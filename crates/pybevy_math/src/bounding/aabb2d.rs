@@ -1,5 +1,5 @@
 use bevy::math::{
-    Dir2, Isometry2d, Mat2, Vec2,
+    Dir2, Isometry2d, Mat2, Rot2, Vec2,
     bounding::{Aabb2d, BoundingCircle, BoundingVolume, IntersectsVolume},
 };
 use pybevy_core::{
@@ -14,7 +14,7 @@ use pyo3::{
 use super::bounding_circle::PyBoundingCircle;
 use crate::{
     dir2::PyDir2,
-    rot2::extract_rot2_from_any,
+    rot2::{PyRot2, extract_rot2_from_any},
     vec2::{PyVec2, extract_vec2_from_any},
 };
 
@@ -298,18 +298,18 @@ impl PyIsometry2d {
 
     #[new]
     #[pyo3(signature = (translation = PyVec2::ZERO, rotation = None))]
-    pub fn new(translation: PyVec2, rotation: Option<&crate::rot2::PyRot2>) -> PyResult<Self> {
+    pub fn new(translation: PyVec2, rotation: Option<&PyRot2>) -> PyResult<Self> {
         let rot = rotation
             .map(|rotation| rotation.inner())
             .transpose()?
-            .unwrap_or(bevy::math::Rot2::IDENTITY);
+            .unwrap_or(Rot2::IDENTITY);
         Ok(PyIsometry2d {
             inner: Isometry2d::new(translation.try_into()?, rot),
         })
     }
 
     #[staticmethod]
-    pub fn from_rotation(rotation: &crate::rot2::PyRot2) -> PyResult<Self> {
+    pub fn from_rotation(rotation: &PyRot2) -> PyResult<Self> {
         Ok(PyIsometry2d {
             inner: Isometry2d::from_rotation(rotation.inner()?),
         })
@@ -330,7 +330,7 @@ impl PyIsometry2d {
     }
 
     #[getter]
-    pub fn rotation(&self) -> crate::rot2::PyRot2 {
+    pub fn rotation(&self) -> PyRot2 {
         self.inner.rotation.into()
     }
 

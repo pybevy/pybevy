@@ -254,10 +254,12 @@ impl PyRot2 {
 
     pub fn __mul__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let rotation = *self.as_ref()?;
-        if let Ok(other_rotation) = other.extract::<PyRot2>() {
-            Ok(Py::new(py, Self::rot2(rotation * *other_rotation.as_ref()?))?.into_any())
-        } else if let Ok(vector) = other.extract::<PyVec2>() {
-            Ok(Py::new(py, PyVec2::from_vec2(rotation * vector.try_get()?))?.into_any())
+        if let Ok(other_rotation) = other.cast::<PyRot2>() {
+            let other_rotation = Rot2::try_from(&*other_rotation.try_borrow()?)?;
+            Ok(Py::new(py, Self::rot2(rotation * other_rotation))?.into_any())
+        } else if let Ok(vector) = other.cast::<PyVec2>() {
+            let vector = Vec2::try_from(&*vector.try_borrow()?)?;
+            Ok(Py::new(py, PyVec2::from_vec2(rotation * vector))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }

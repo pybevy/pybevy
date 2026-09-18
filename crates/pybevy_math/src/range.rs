@@ -1,6 +1,8 @@
 use std::ops::Range;
 
-use pybevy_core::{FieldStorage, FromBorrowedStorage, StorageMut, StorageRef};
+use pybevy_core::{
+    FieldStorage, FromBorrowedStorage, StorageMut, StorageRef, public_error::UNSUPPORTED_COMPARISON,
+};
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 use crate::richcmp::comparison_result;
@@ -109,7 +111,7 @@ impl PyRange {
         let result = match op {
             CompareOp::Eq => a == b,
             CompareOp::Ne => a != b,
-            _ => return Err(PyTypeError::new_err("Unsupported comparison operation")),
+            _ => return Err(PyTypeError::new_err(UNSUPPORTED_COMPARISON)),
         };
         Ok(comparison_result(py, result))
     }

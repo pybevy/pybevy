@@ -1,5 +1,8 @@
 use bevy::math::{URect, UVec2};
-use pybevy_core::{FromBorrowedStorage, ValueStorage, public_error::unsigned_rect_origin};
+use pybevy_core::{
+    FromBorrowedStorage, ValueStorage,
+    public_error::{UNSUPPORTED_COMPARISON, unsigned_rect_origin},
+};
 use pybevy_macros::pyvalue;
 use pyo3::{
     basic::CompareOp,
@@ -188,6 +191,16 @@ impl PyURect {
         Ok(self.to_bevy()?.intersect(other.to_bevy()?).into())
     }
 
+    pub fn __copy__(&self) -> PyResult<Self> {
+        Ok(PyURect {
+            storage: ValueStorage::owned(*self.as_ref()?),
+        })
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
+
     pub fn __repr__(&self) -> PyResult<String> {
         let rect = self.to_bevy()?;
         Ok(format!(
@@ -210,7 +223,7 @@ impl PyURect {
         let result = match op {
             CompareOp::Eq => a == b,
             CompareOp::Ne => a != b,
-            _ => return Err(PyTypeError::new_err("Unsupported comparison operation")),
+            _ => return Err(PyTypeError::new_err(UNSUPPORTED_COMPARISON)),
         };
         Ok(comparison_result(py, result))
     }

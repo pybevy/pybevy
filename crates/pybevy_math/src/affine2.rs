@@ -1,5 +1,7 @@
-use bevy::math::{Affine2, Mat2, Vec2};
-use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
+use bevy::math::{Affine2, Mat2, Mat3, Vec2};
+use pybevy_core::{
+    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage, public_error::UNSUPPORTED_COMPARISON,
+};
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 use super::{mat3::PyMat3, vec2::PyVec2};
@@ -203,17 +205,11 @@ impl PyAffine2 {
     }
 
     pub fn transform_point2(&self, point: PyVec2) -> PyResult<PyVec2> {
-        Ok(self
-            .as_ref()?
-            .transform_point2(point.try_into()?)
-            .try_into()?)
+        Ok(self.as_ref()?.transform_point2(point.try_into()?).into())
     }
 
     pub fn transform_vector2(&self, vector: PyVec2) -> PyResult<PyVec2> {
-        Ok(self
-            .as_ref()?
-            .transform_vector2(vector.try_into()?)
-            .try_into()?)
+        Ok(self.as_ref()?.transform_vector2(vector.try_into()?).into())
     }
 
     pub fn is_finite(&self) -> PyResult<bool> {
@@ -226,7 +222,7 @@ impl PyAffine2 {
 
     pub fn into_mat3(&self) -> PyResult<PyMat3> {
         let affine = self.as_ref()?;
-        let mat3: bevy::math::Mat3 = (*affine).into();
+        let mat3: Mat3 = (*affine).into();
         Ok(mat3.into())
     }
 
@@ -234,7 +230,7 @@ impl PyAffine2 {
         Ok(PyAffine2::from_affine2(self.try_get()? * other.try_get()?))
     }
 
-    fn __repr__(&self) -> PyResult<String> {
+    pub fn __repr__(&self) -> PyResult<String> {
         let a = self.as_ref()?;
         Ok(format!(
             "Affine2(matrix2={:?}, translation={:?})",
@@ -256,7 +252,7 @@ impl PyAffine2 {
         let result = match op {
             CompareOp::Eq => a == b,
             CompareOp::Ne => a != b,
-            _ => return Err(PyTypeError::new_err("Unsupported comparison operation")),
+            _ => return Err(PyTypeError::new_err(UNSUPPORTED_COMPARISON)),
         };
         Ok(comparison_result(py, result))
     }
@@ -375,11 +371,13 @@ impl PyMat2 {
         Ok(PyMat2::from_mat2(Mat2::from_diagonal(diagonal.try_into()?)))
     }
 
-    pub fn col(&self, index: usize) -> PyResult<PyVec2> {
+    pub fn col(&self, index: isize) -> PyResult<PyVec2> {
+        let index = crate::matrix_index("Column", index, "Mat2", 2)?;
         Ok(self.as_ref()?.col(index).into())
     }
 
-    pub fn row(&self, index: usize) -> PyResult<PyVec2> {
+    pub fn row(&self, index: isize) -> PyResult<PyVec2> {
+        let index = crate::matrix_index("Row", index, "Mat2", 2)?;
         Ok(self.as_ref()?.row(index).into())
     }
 
@@ -406,7 +404,7 @@ impl PyMat2 {
     }
 
     pub fn mul_vec2(&self, rhs: PyVec2) -> PyResult<PyVec2> {
-        Ok(self.as_ref()?.mul_vec2(rhs.try_into()?).try_into()?)
+        Ok(self.as_ref()?.mul_vec2(rhs.try_into()?).into())
     }
 
     pub fn mul_mat2(&self, rhs: &PyMat2) -> PyResult<PyMat2> {
@@ -432,17 +430,15 @@ impl PyMat2 {
     }
 
     fn __mul__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        if let Ok(scalar) = other.extract::<f32>() {
-            Ok(Py::new(py, PyMat2::from_mat2(self.try_get()? * scalar))?.into_any())
-        } else if let Ok(other_mat) = other.extract::<PyMat2>() {
-            Ok(Py::new(
-                py,
-                PyMat2::from_mat2(self.try_get()? * other_mat.try_get()?),
-            )?
-            .into_any())
-        } else if let Ok(other_vec) = other.extract::<PyVec2>() {
-            let transformed: Vec2 = self.try_get()? * Vec2::try_from(other_vec)?;
+        if let Ok(other_mat) = other.cast::<PyMat2>() {
+            let other_mat = Mat2::try_from(&*other_mat.try_borrow()?)?;
+            Ok(Py::new(py, PyMat2::from_mat2(self.try_get()? * other_mat))?.into_any())
+        } else if let Ok(other_vec) = other.cast::<PyVec2>() {
+            let other_vec = Vec2::try_from(&*other_vec.try_borrow()?)?;
+            let transformed: Vec2 = self.try_get()? * other_vec;
             Ok(Py::new(py, PyVec2::from_vec2(transformed))?.into_any())
+        } else if let Ok(scalar) = other.extract::<f32>() {
+            Ok(Py::new(py, PyMat2::from_mat2(self.try_get()? * scalar))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }
@@ -469,7 +465,7 @@ impl PyMat2 {
         Ok(PyMat2::from_mat2(-self.try_get()?))
     }
 
-    fn __repr__(&self) -> PyResult<String> {
+    pub fn __repr__(&self) -> PyResult<String> {
         let m = self.as_ref()?;
         Ok(format!(
             "Mat2(x_axis={:?}, y_axis={:?})",
@@ -491,7 +487,7 @@ impl PyMat2 {
         let result = match op {
             CompareOp::Eq => a == b,
             CompareOp::Ne => a != b,
-            _ => return Err(PyTypeError::new_err("Unsupported comparison operation")),
+            _ => return Err(PyTypeError::new_err(UNSUPPORTED_COMPARISON)),
         };
         Ok(comparison_result(py, result))
     }

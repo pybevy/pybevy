@@ -1,10 +1,8 @@
 use bevy::math::{Mat3, Vec3};
-use pybevy_core::{FromBorrowedStorage, StorageRef, ValueStorage};
-use pyo3::{
-    basic::CompareOp,
-    exceptions::{PyTypeError, PyValueError},
-    prelude::*,
+use pybevy_core::{
+    FromBorrowedStorage, StorageRef, ValueStorage, public_error::UNSUPPORTED_COMPARISON,
 };
+use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 use super::{quat::PyQuat, vec2::PyVec2, vec3::PyVec3};
 use crate::richcmp::comparison_result;
@@ -180,20 +178,14 @@ impl PyMat3 {
         )))
     }
 
-    pub fn col(&self, index: usize) -> PyResult<PyVec3> {
-        let mat = self.as_ref()?;
-        if index >= 3 {
-            return Err(PyValueError::new_err("Column index out of range"));
-        }
-        Ok(mat.col(index).into())
+    pub fn col(&self, index: isize) -> PyResult<PyVec3> {
+        let index = crate::matrix_index("Column", index, "Mat3", 3)?;
+        Ok(self.as_ref()?.col(index).into())
     }
 
-    pub fn row(&self, index: usize) -> PyResult<PyVec3> {
-        let mat = self.as_ref()?;
-        if index >= 3 {
-            return Err(PyValueError::new_err("Row index out of range"));
-        }
-        Ok(mat.row(index).into())
+    pub fn row(&self, index: isize) -> PyResult<PyVec3> {
+        let index = crate::matrix_index("Row", index, "Mat3", 3)?;
+        Ok(self.as_ref()?.row(index).into())
     }
 
     pub fn to_cols_array(&self) -> PyResult<[f32; 9]> {
@@ -285,12 +277,14 @@ impl PyMat3 {
     fn __mul__(&self, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         let py = other.py();
         let self_mat = *self.as_ref()?;
-        if let Ok(scalar) = other.extract::<f32>() {
+        if let Ok(other_mat) = other.cast::<PyMat3>() {
+            let other_mat = Mat3::try_from(&*other_mat.try_borrow()?)?;
+            Ok(Py::new(py, PyMat3::mat3(self_mat * other_mat))?.into_any())
+        } else if let Ok(vec) = other.cast::<PyVec3>() {
+            let vec = Vec3::try_from(&*vec.try_borrow()?)?;
+            Ok(Py::new(py, PyVec3::from_vec3(self_mat * vec))?.into_any())
+        } else if let Ok(scalar) = other.extract::<f32>() {
             Ok(Py::new(py, PyMat3::mat3(self_mat * scalar))?.into_any())
-        } else if let Ok(other_mat) = other.extract::<PyMat3>() {
-            Ok(Py::new(py, PyMat3::mat3(self_mat * *other_mat.as_ref()?))?.into_any())
-        } else if let Ok(vec) = other.extract::<PyVec3>() {
-            Ok(Py::new(py, PyVec3::from_vec3(self_mat * Vec3::try_from(&vec)?))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }
@@ -336,7 +330,7 @@ impl PyMat3 {
         let result = match op {
             CompareOp::Eq => self_mat == other_mat,
             CompareOp::Ne => self_mat != other_mat,
-            _ => return Err(PyTypeError::new_err("Unsupported comparison operation")),
+            _ => return Err(PyTypeError::new_err(UNSUPPORTED_COMPARISON)),
         };
         Ok(comparison_result(py, result))
     }

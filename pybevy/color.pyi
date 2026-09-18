@@ -24,56 +24,69 @@ class Color:
     This matches Bevy's Rust API where only LinearRgba implements Mul<f32>.
     """
 
+    def __deepcopy__(self, memo: dict[int, object]) -> Color: ...
+
+
     def __copy__(self) -> Color: ...
 
     class Srgba(Color):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: pybevy.color.Srgba
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> pybevy.color.Srgba: ...
         def __init__(self, value: pybevy.color.Srgba) -> None: ...
 
     class LinearRgba(Color):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: pybevy.color.LinearRgba
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> pybevy.color.LinearRgba: ...
         def __init__(self, value: pybevy.color.LinearRgba) -> None: ...
 
     class Hsla(Color):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: pybevy.color.Hsla
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> pybevy.color.Hsla: ...
         def __init__(self, value: pybevy.color.Hsla) -> None: ...
 
     class Hsva(Color):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: pybevy.color.Hsva
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> pybevy.color.Hsva: ...
         def __init__(self, value: pybevy.color.Hsva) -> None: ...
 
     class Hwba(Color):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: pybevy.color.Hwba
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> pybevy.color.Hwba: ...
         def __init__(self, value: pybevy.color.Hwba) -> None: ...
 
     class Laba(Color):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: pybevy.color.Laba
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> pybevy.color.Laba: ...
         def __init__(self, value: pybevy.color.Laba) -> None: ...
 
     class Lcha(Color):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: pybevy.color.Lcha
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> pybevy.color.Lcha: ...
         def __init__(self, value: pybevy.color.Lcha) -> None: ...
 
     class Oklaba(Color):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: pybevy.color.Oklaba
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> pybevy.color.Oklaba: ...
         def __init__(self, value: pybevy.color.Oklaba) -> None: ...
 
     class Oklcha(Color):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: pybevy.color.Oklcha
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> pybevy.color.Oklcha: ...
         def __init__(self, value: pybevy.color.Oklcha) -> None: ...
 
     class Xyza(Color):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: pybevy.color.Xyza
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> pybevy.color.Xyza: ...
         def __init__(self, value: pybevy.color.Xyza) -> None: ...
 
     WHITE: ClassVar[Color]

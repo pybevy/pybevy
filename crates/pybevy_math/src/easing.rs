@@ -3,7 +3,7 @@ use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 #[pyenum(JumpAt)]
-#[pyclass(name = "JumpAt", module = "pybevy.math", eq, from_py_object)]
+#[pyclass(name = "JumpAt", module = "pybevy.math", eq, from_py_object, frozen)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyJumpAt {
     Start,

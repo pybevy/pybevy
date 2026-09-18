@@ -1,5 +1,8 @@
 use bevy::math::{EulerRot, Quat, Vec3, Vec3A};
-use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
+use pybevy_core::{
+    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage, public_error::UNSUPPORTED_COMPARISON,
+};
+use pybevy_macros::pyenum;
 use pyo3::{
     Bound,
     basic::CompareOp,
@@ -10,8 +13,16 @@ use pyo3::{
 
 use crate::{richcmp::comparison_result, vec3::PyVec3, vec3a::PyVec3A};
 
-#[pyclass(name = "EulerRot", module = "pybevy.math", from_py_object)]
-#[derive(Debug, Clone, Copy)]
+#[pyenum(EulerRot)]
+#[pyclass(
+    name = "EulerRot",
+    module = "pybevy.math",
+    frozen,
+    eq,
+    hash,
+    from_py_object
+)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyEulerRot {
     ZYX,
     ZXY,
@@ -37,37 +48,6 @@ pub enum PyEulerRot {
     YZYEx,
     XYXEx,
     XZXEx,
-}
-
-impl From<PyEulerRot> for EulerRot {
-    fn from(rot: PyEulerRot) -> Self {
-        match rot {
-            PyEulerRot::ZYX => EulerRot::ZYX,
-            PyEulerRot::ZXY => EulerRot::ZXY,
-            PyEulerRot::YXZ => EulerRot::YXZ,
-            PyEulerRot::YZX => EulerRot::YZX,
-            PyEulerRot::XYZ => EulerRot::XYZ,
-            PyEulerRot::XZY => EulerRot::XZY,
-            PyEulerRot::ZYZ => EulerRot::ZYZ,
-            PyEulerRot::ZXZ => EulerRot::ZXZ,
-            PyEulerRot::YXY => EulerRot::YXY,
-            PyEulerRot::YZY => EulerRot::YZY,
-            PyEulerRot::XYX => EulerRot::XYX,
-            PyEulerRot::XZX => EulerRot::XZX,
-            PyEulerRot::ZYXEx => EulerRot::ZYXEx,
-            PyEulerRot::ZXYEx => EulerRot::ZXYEx,
-            PyEulerRot::YXZEx => EulerRot::YXZEx,
-            PyEulerRot::YZXEx => EulerRot::YZXEx,
-            PyEulerRot::XYZEx => EulerRot::XYZEx,
-            PyEulerRot::XZYEx => EulerRot::XZYEx,
-            PyEulerRot::ZYZEx => EulerRot::ZYZEx,
-            PyEulerRot::ZXZEx => EulerRot::ZXZEx,
-            PyEulerRot::YXYEx => EulerRot::YXYEx,
-            PyEulerRot::YZYEx => EulerRot::YZYEx,
-            PyEulerRot::XYXEx => EulerRot::XYXEx,
-            PyEulerRot::XZXEx => EulerRot::XZXEx,
-        }
-    }
 }
 
 #[pyclass(name = "Quat", module = "pybevy.math", from_py_object)]
@@ -351,22 +331,17 @@ impl PyQuat {
 
     pub fn __mul__(&self, other: &Bound<'_, PyAny>, py: Python) -> PyResult<Py<PyAny>> {
         let self_quat = self.as_ref()?;
-        if let Ok(scalar) = other.extract::<f32>() {
-            Ok(Py::new(py, Self::from_quat(*self_quat * scalar))?.into_any())
-        } else if let Ok(other_quat) = other.extract::<PyQuat>() {
-            Ok(Py::new(
-                py,
-                PyQuat {
-                    storage: ValueStorage::owned(*self_quat * other_quat.try_get()?),
-                },
-            )?
-            .into_any())
-        } else if let Ok(other_vec3) = other.extract::<PyVec3>() {
-            let v = *self_quat * other_vec3.try_get()?;
+        if let Ok(other_quat) = other.cast::<PyQuat>() {
+            let other_quat = Quat::try_from(&*other_quat.try_borrow()?)?;
+            Ok(Py::new(py, Self::from_quat(*self_quat * other_quat))?.into_any())
+        } else if let Ok(other_vec3) = other.cast::<PyVec3>() {
+            let v = *self_quat * Vec3::try_from(&*other_vec3.try_borrow()?)?;
             Ok(Py::new(py, PyVec3::from_vec3(v))?.into_any())
-        } else if let Ok(other_vec3a) = other.extract::<PyVec3A>() {
-            let v = *self_quat * Vec3A::try_from(&other_vec3a)?;
+        } else if let Ok(other_vec3a) = other.cast::<PyVec3A>() {
+            let v = *self_quat * Vec3A::try_from(&*other_vec3a.try_borrow()?)?;
             Ok(Py::new(py, PyVec3A::from_vec3a(v))?.into_any())
+        } else if let Ok(scalar) = other.extract::<f32>() {
+            Ok(Py::new(py, Self::from_quat(*self_quat * scalar))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }
@@ -374,8 +349,9 @@ impl PyQuat {
 
     pub fn __add__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let value = self.as_ref()?;
-        if let Ok(other) = other.extract::<PyQuat>() {
-            Ok(Py::new(py, Self::from_quat(*value + other.try_get()?))?.into_any())
+        if let Ok(other_quat) = other.cast::<PyQuat>() {
+            let other_quat = Quat::try_from(&*other_quat.try_borrow()?)?;
+            Ok(Py::new(py, Self::from_quat(*value + other_quat))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }
@@ -383,8 +359,9 @@ impl PyQuat {
 
     pub fn __sub__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let value = self.as_ref()?;
-        if let Ok(other) = other.extract::<PyQuat>() {
-            Ok(Py::new(py, Self::from_quat(*value - other.try_get()?))?.into_any())
+        if let Ok(other_quat) = other.cast::<PyQuat>() {
+            let other_quat = Quat::try_from(&*other_quat.try_borrow()?)?;
+            Ok(Py::new(py, Self::from_quat(*value - other_quat))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }
@@ -392,8 +369,9 @@ impl PyQuat {
 
     pub fn __rmul__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let value = self.as_ref()?;
-        if let Ok(other) = other.extract::<PyQuat>() {
-            Ok(Py::new(py, Self::from_quat(other.try_get()? * *value))?.into_any())
+        if let Ok(other_quat) = other.cast::<PyQuat>() {
+            let other_quat = Quat::try_from(&*other_quat.try_borrow()?)?;
+            Ok(Py::new(py, Self::from_quat(other_quat * *value))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }
@@ -410,6 +388,16 @@ impl PyQuat {
 
     pub fn __neg__(&self) -> PyResult<Self> {
         Ok(Self::from_quat(-*self.as_ref()?))
+    }
+
+    pub fn __copy__(&self) -> PyResult<Self> {
+        Ok(PyQuat {
+            storage: ValueStorage::owned(*self.as_ref()?),
+        })
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
     }
 
     pub fn __repr__(&self) -> PyResult<String> {
@@ -431,7 +419,7 @@ impl PyQuat {
         let result = match op {
             CompareOp::Eq => a == b,
             CompareOp::Ne => a != b,
-            _ => return Err(PyTypeError::new_err("Unsupported comparison operation")),
+            _ => return Err(PyTypeError::new_err(UNSUPPORTED_COMPARISON)),
         };
         Ok(comparison_result(py, result))
     }

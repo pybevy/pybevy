@@ -14,3 +14,18 @@ pub mod linear_spline2d;
 pub mod linear_spline3d;
 pub mod rational_curve2d;
 pub mod rational_curve3d;
+
+pub use cubic_bezier::PyCubicBezier2d;
+pub use cubic_bezier3d::PyCubicBezier3d;
+pub use cubic_bspline2d::PyCubicBSpline2d;
+pub use cubic_bspline3d::PyCubicBSpline3d;
+pub use cubic_cardinal_spline::PyCubicCardinalSpline2d;
+pub use cubic_cardinal_spline3d::PyCubicCardinalSpline3d;
+pub use cubic_curve::PyCubicCurve2d;
+pub use cubic_curve3d::PyCubicCurve3d;
+pub use cubic_hermite::PyCubicHermite2d;
+pub use cubic_hermite3d::PyCubicHermite3d;
+pub use cubic_nurbs2d::PyCubicNurbs2d;
+pub use cubic_nurbs3d::PyCubicNurbs3d;
+pub use rational_curve2d::PyRationalCurve2d;
+pub use rational_curve3d::PyRationalCurve3d;

@@ -1,5 +1,5 @@
 use bevy::math::{
-    Ray3d, Vec2, Vec3,
+    Dir3, Ray3d, Vec2, Vec3,
     bounding::{
         Aabb2d, Aabb3d, BoundingCircle, BoundingSphere, IntersectsVolume, RayCast2d, RayCast3d,
     },
@@ -120,7 +120,7 @@ impl PyRayCast3d {
     #[getter]
     pub fn ray(&self) -> PyResult<PyRay3d> {
         let cast = self.as_ref()?;
-        let dir3: bevy::math::Dir3 = cast.direction.into();
+        let dir3: Dir3 = cast.direction.into();
         let ray = Ray3d::new(cast.origin.into(), dir3);
         // bevy's RayCast3d stores origin/direction primitives, not a ray, so
         // this getter synthesizes a fresh owned Ray3d. Return an enforced

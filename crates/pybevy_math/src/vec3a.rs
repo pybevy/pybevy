@@ -1,5 +1,7 @@
 use bevy::math::{Vec3, Vec3A};
-use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
+use pybevy_core::{
+    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage, public_error::UNSUPPORTED_COMPARISON,
+};
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 use crate::{richcmp::comparison_result, vec3::PyVec3};
@@ -215,10 +217,11 @@ impl PyVec3A {
 
     pub fn __add__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let value = self.as_ref()?;
-        if let Ok(scalar) = other.extract::<f32>() {
+        if let Ok(other_vec) = other.cast::<PyVec3A>() {
+            let other_vec = Vec3A::try_from(&*other_vec.try_borrow()?)?;
+            Ok(Py::new(py, Self::from_vec3a(*value + other_vec))?.into_any())
+        } else if let Ok(scalar) = other.extract::<f32>() {
             Ok(Py::new(py, Self::from_vec3a(*value + scalar))?.into_any())
-        } else if let Ok(other) = other.extract::<PyVec3A>() {
-            Ok(Py::new(py, Self::from_vec3a(*value + *other.as_ref()?))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }
@@ -226,10 +229,11 @@ impl PyVec3A {
 
     pub fn __sub__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let value = self.as_ref()?;
-        if let Ok(scalar) = other.extract::<f32>() {
+        if let Ok(other_vec) = other.cast::<PyVec3A>() {
+            let other_vec = Vec3A::try_from(&*other_vec.try_borrow()?)?;
+            Ok(Py::new(py, Self::from_vec3a(*value - other_vec))?.into_any())
+        } else if let Ok(scalar) = other.extract::<f32>() {
             Ok(Py::new(py, Self::from_vec3a(*value - scalar))?.into_any())
-        } else if let Ok(other) = other.extract::<PyVec3A>() {
-            Ok(Py::new(py, Self::from_vec3a(*value - *other.as_ref()?))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }
@@ -237,10 +241,11 @@ impl PyVec3A {
 
     pub fn __mul__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let value = self.as_ref()?;
-        if let Ok(scalar) = other.extract::<f32>() {
+        if let Ok(other_vec) = other.cast::<PyVec3A>() {
+            let other_vec = Vec3A::try_from(&*other_vec.try_borrow()?)?;
+            Ok(Py::new(py, Self::from_vec3a(*value * other_vec))?.into_any())
+        } else if let Ok(scalar) = other.extract::<f32>() {
             Ok(Py::new(py, Self::from_vec3a(*value * scalar))?.into_any())
-        } else if let Ok(other) = other.extract::<PyVec3A>() {
-            Ok(Py::new(py, Self::from_vec3a(*value * *other.as_ref()?))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }
@@ -248,10 +253,11 @@ impl PyVec3A {
 
     pub fn __truediv__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let value = self.as_ref()?;
-        if let Ok(scalar) = other.extract::<f32>() {
+        if let Ok(other_vec) = other.cast::<PyVec3A>() {
+            let other_vec = Vec3A::try_from(&*other_vec.try_borrow()?)?;
+            Ok(Py::new(py, Self::from_vec3a(*value / other_vec))?.into_any())
+        } else if let Ok(scalar) = other.extract::<f32>() {
             Ok(Py::new(py, Self::from_vec3a(*value / scalar))?.into_any())
-        } else if let Ok(other) = other.extract::<PyVec3A>() {
-            Ok(Py::new(py, Self::from_vec3a(*value / *other.as_ref()?))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }
@@ -315,9 +321,19 @@ impl PyVec3A {
         let result = match op {
             CompareOp::Eq => equal,
             CompareOp::Ne => !equal,
-            _ => return Err(PyTypeError::new_err("Unsupported comparison operation")),
+            _ => return Err(PyTypeError::new_err(UNSUPPORTED_COMPARISON)),
         };
         Ok(comparison_result(py, result))
+    }
+
+    pub fn __copy__(&self) -> PyResult<Self> {
+        Ok(PyVec3A {
+            storage: ValueStorage::owned(*self.as_ref()?),
+        })
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
     }
 
     pub fn __repr__(&self) -> PyResult<String> {

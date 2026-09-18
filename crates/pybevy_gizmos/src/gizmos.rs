@@ -1,7 +1,7 @@
 use bevy::{
     color::Color,
     gizmos::{config::GizmoConfig, prelude::gizmo},
-    math::{Affine3A, Isometry2d, Isometry3d, Mat4, Vec2, Vec3},
+    math::{Affine3A, Isometry2d, Isometry3d, Mat4, Vec2, Vec3, bounding::Aabb3d},
 };
 use pybevy_color::color::PyColor;
 use pybevy_core::{FieldStorage, ValidityFlag};
@@ -305,7 +305,7 @@ impl PyGizmos {
         if !self.config.as_ref()?.enabled {
             return Ok(());
         }
-        gizmo().aabb_3d(aabb.try_to_bevy()?, transform, native_color(color)?);
+        gizmo().aabb_3d(Aabb3d::try_from(aabb)?, transform, native_color(color)?);
         Ok(())
     }
 
