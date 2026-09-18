@@ -26,7 +26,13 @@ impl PyAccumulatedMouseMotion {
 
     #[getter]
     fn delta(&self) -> PyResult<PyVec2> {
-        Ok(self.storage.snapshot_field_as(|motion| &motion.delta)?)
+        Ok(self.storage.borrow_field_as(|motion| &motion.delta)?)
+    }
+
+    #[setter]
+    fn set_delta(&mut self, delta: PyVec2) -> PyResult<()> {
+        self.as_mut()?.delta = delta.try_get()?;
+        Ok(())
     }
 
     fn __repr__(&self) -> String {
@@ -75,12 +81,24 @@ impl PyAccumulatedMouseScroll {
 
     #[getter]
     fn delta(&self) -> PyResult<PyVec2> {
-        Ok(self.storage.snapshot_field_as(|scroll| &scroll.delta)?)
+        Ok(self.storage.borrow_field_as(|scroll| &scroll.delta)?)
+    }
+
+    #[setter]
+    fn set_delta(&mut self, delta: PyVec2) -> PyResult<()> {
+        self.as_mut()?.delta = delta.try_get()?;
+        Ok(())
     }
 
     #[getter]
     fn unit(&self) -> PyResult<PyMouseScrollUnit> {
         Ok(self.as_ref()?.unit.into())
+    }
+
+    #[setter]
+    fn set_unit(&mut self, unit: PyMouseScrollUnit) -> PyResult<()> {
+        self.as_mut()?.unit = unit.into();
+        Ok(())
     }
 
     fn __repr__(&self) -> String {

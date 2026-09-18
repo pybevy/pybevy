@@ -262,6 +262,9 @@ class Anchor(Component):
             Vec2 containing the anchor's (x, y) normalized coordinates
         """
 
+    @value.setter
+    def value(self, value: Vec2) -> None: ...
+
     def as_vec(self) -> Vec2:
         """Get the anchor position as a Vec2.
 

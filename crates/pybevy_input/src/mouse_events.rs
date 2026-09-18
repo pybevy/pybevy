@@ -2,8 +2,8 @@ use bevy::{
     ecs::entity::Entity,
     input::mouse::{MouseButtonInput, MouseMotion, MouseWheel},
 };
-use pybevy_core::PyEntity;
 pub use pybevy_core::PyMessage;
+use pybevy_core::{FromBorrowedStorage, PyEntity, ValueStorage};
 use pybevy_macros::pymessage;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
@@ -82,14 +82,29 @@ impl PyMouseButtonInput {
         self.button
     }
 
+    #[setter]
+    fn set_button(&mut self, button: PyMouseButton) {
+        self.button = button;
+    }
+
     #[getter]
     fn state(&self) -> PyButtonState {
         self.state
     }
 
+    #[setter]
+    fn set_state(&mut self, state: PyButtonState) {
+        self.state = state;
+    }
+
     #[getter]
     fn window(&self) -> PyEntity {
         self.window
+    }
+
+    #[setter]
+    fn set_window(&mut self, window: PyEntity) {
+        self.window = window;
     }
 
     fn __repr__(&self) -> String {
@@ -145,8 +160,15 @@ impl PyMouseMotion {
     }
 
     #[getter]
-    fn delta(&self) -> PyVec2 {
-        self.delta.clone()
+    fn delta(&self) -> PyResult<PyVec2> {
+        Ok(PyVec2::from_borrowed(ValueStorage::read_only_snapshot(
+            self.delta.try_get()?,
+        )))
+    }
+
+    #[setter]
+    fn set_delta(&mut self, delta: PyVec2) {
+        self.delta = delta;
     }
 
     fn __repr__(&self) -> PyResult<String> {
@@ -227,9 +249,19 @@ impl PyMouseWheel {
         self.x
     }
 
+    #[setter]
+    fn set_x(&mut self, x: f32) {
+        self.x = x;
+    }
+
     #[getter]
     fn y(&self) -> f32 {
         self.y
+    }
+
+    #[setter]
+    fn set_y(&mut self, y: f32) {
+        self.y = y;
     }
 
     #[getter]
@@ -237,14 +269,29 @@ impl PyMouseWheel {
         self.unit
     }
 
+    #[setter]
+    fn set_unit(&mut self, unit: PyMouseScrollUnit) {
+        self.unit = unit;
+    }
+
     #[getter]
     fn window(&self) -> PyEntity {
         self.window
     }
 
+    #[setter]
+    fn set_window(&mut self, window: PyEntity) {
+        self.window = window;
+    }
+
     #[getter]
     fn phase(&self) -> PyTouchPhase {
         self.phase
+    }
+
+    #[setter]
+    fn set_phase(&mut self, phase: PyTouchPhase) {
+        self.phase = phase;
     }
 
     fn __repr__(&self) -> String {

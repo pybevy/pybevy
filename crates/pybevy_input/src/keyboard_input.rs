@@ -88,9 +88,19 @@ impl PyKeyboardInput {
         materialize_key_code(py, self.key_code)
     }
 
+    #[setter]
+    fn set_key_code(&mut self, key_code: &PyKeyCode) {
+        self.key_code = key_code.to_bevy();
+    }
+
     #[getter]
     fn logical_key(&self) -> PyKey {
         self.logical_key.clone()
+    }
+
+    #[setter]
+    fn set_logical_key(&mut self, logical_key: PyKey) {
+        self.logical_key = logical_key;
     }
 
     #[getter]
@@ -98,9 +108,19 @@ impl PyKeyboardInput {
         self.state
     }
 
+    #[setter]
+    fn set_state(&mut self, state: PyButtonState) {
+        self.state = state;
+    }
+
     #[getter]
     fn text(&self) -> Option<String> {
         self.text.clone()
+    }
+
+    #[setter]
+    fn set_text(&mut self, text: Option<String>) {
+        self.text = text;
     }
 
     #[getter]
@@ -108,9 +128,19 @@ impl PyKeyboardInput {
         self.repeat
     }
 
+    #[setter]
+    fn set_repeat(&mut self, repeat: bool) {
+        self.repeat = repeat;
+    }
+
     #[getter]
     fn window(&self) -> PyEntity {
         self.window
+    }
+
+    #[setter]
+    fn set_window(&mut self, window: PyEntity) {
+        self.window = window;
     }
 
     fn __repr__(&self) -> String {

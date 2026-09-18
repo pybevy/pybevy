@@ -18,6 +18,7 @@ use bevy::{asset::AssetPlugin, log::warn};
 #[allow(unused_imports)]
 pub use pybevy_core::{NativeAsset, PyAsset, PyAssetPath};
 use pybevy_core::{PyPlugin, plugin::add_plugin_if_missing};
+use pybevy_image::image::PyRenderAssetUsages;
 use pyo3::prelude::*;
 
 use crate::app::app::PyApp;
@@ -98,6 +99,7 @@ impl PyAssetPlugin {
 pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let assets = PyModule::new(m.py(), "assets")?;
     assets.add_class::<PyAssetPlugin>()?;
+    assets.add_class::<PyRenderAssetUsages>()?;
     assets.add_class::<PyAsset>()?;
     assets.add_class::<pybevy_core::PyAssetIndex>()?;
     assets.add_class::<pybevy_core::PyAssetId>()?;

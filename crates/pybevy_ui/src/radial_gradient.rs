@@ -1,4 +1,5 @@
 use bevy::{prelude::InColorSpace, ui::RadialGradient};
+use pybevy_core::ValueStorage;
 use pyo3::prelude::*;
 
 use crate::{
@@ -32,14 +33,17 @@ impl PyRadialGradient {
         position: PyUiPosition,
         shape: PyRadialGradientShape,
         stops: Vec<PyColorStop>,
-    ) -> Self {
-        PyRadialGradient {
+    ) -> PyResult<Self> {
+        Ok(PyRadialGradient {
             inner: RadialGradient::new(
-                position.into(),
+                position.try_into()?,
                 shape.into(),
-                stops.into_iter().map(|s| s.inner).collect(),
+                stops
+                    .into_iter()
+                    .map(|stop| stop.to_bevy())
+                    .collect::<PyResult<_>>()?,
             ),
-        }
+        })
     }
 
     pub fn in_color_space(&self, color_space: PyInterpolationColorSpace) -> Self {
@@ -71,9 +75,20 @@ impl PyRadialGradient {
         self.inner.color_space.into()
     }
 
+    #[setter]
+    pub fn set_color_space(&mut self, value: PyInterpolationColorSpace) {
+        self.inner.color_space = value.into();
+    }
+
     #[getter]
     pub fn position(&self) -> PyUiPosition {
-        self.inner.position.into()
+        PyUiPosition::from_borrowed(ValueStorage::read_only_snapshot(self.inner.position))
+    }
+
+    #[setter]
+    pub fn set_position(&mut self, value: PyUiPosition) -> PyResult<()> {
+        self.inner.position = value.try_into()?;
+        Ok(())
     }
 
     #[getter]
@@ -81,9 +96,27 @@ impl PyRadialGradient {
         self.inner.shape.into()
     }
 
+    #[setter]
+    pub fn set_shape(&mut self, value: PyRadialGradientShape) {
+        self.inner.shape = value.into();
+    }
+
     #[getter]
     pub fn stops(&self) -> Vec<PyColorStop> {
-        self.inner.stops.iter().cloned().map(|s| s.into()).collect()
+        self.inner
+            .stops
+            .iter()
+            .map(|stop| PyColorStop::from_borrowed(ValueStorage::read_only_snapshot(*stop)))
+            .collect()
+    }
+
+    #[setter]
+    pub fn set_stops(&mut self, value: Vec<PyColorStop>) -> PyResult<()> {
+        self.inner.stops = value
+            .into_iter()
+            .map(|stop| stop.to_bevy())
+            .collect::<PyResult<_>>()?;
+        Ok(())
     }
 
     pub fn __repr__(&self) -> String {

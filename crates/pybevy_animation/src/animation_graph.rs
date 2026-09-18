@@ -84,6 +84,15 @@ impl PyAnimationGraph {
         Ok(PyAnimationNodeIndex(self.as_ref()?.root))
     }
 
+    #[setter]
+    pub fn set_root(&mut self, value: &PyAnimationNodeIndex) -> PyResult<()> {
+        if self.as_ref()?.get(value.0).is_none() {
+            return Err(PyValueError::new_err(ANIMATION_GRAPH_NODE_MISSING));
+        }
+        self.as_mut()?.root = value.0;
+        Ok(())
+    }
+
     pub fn add_blend(
         &mut self,
         weight: f32,
@@ -256,6 +265,20 @@ impl PyAnimationGraphNode {
     #[getter]
     pub fn node_type(&self, py: Python<'_>) -> PyResult<PyAnimationNodeType> {
         self.with_node(py, |node| PyAnimationNodeType::from(&node.node_type))
+    }
+
+    #[setter]
+    pub fn set_node_type(
+        &mut self,
+        py: Python<'_>,
+        value: PyRef<'_, PyAnimationNodeType>,
+    ) -> PyResult<()> {
+        let value = match &*value {
+            PyAnimationNodeType::Clip { handle } => AnimationNodeType::Clip(handle.try_into()?),
+            PyAnimationNodeType::Blend() => AnimationNodeType::Blend,
+            PyAnimationNodeType::Add() => AnimationNodeType::Add,
+        };
+        self.with_node_mut(py, |node| node.node_type = value)
     }
 
     #[getter]

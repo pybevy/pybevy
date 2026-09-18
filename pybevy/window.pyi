@@ -87,12 +87,6 @@ class WindowPlugin(Plugin):
     ) -> None: ...
     def build(self, app: App) -> None: ...
 
-# Plugin type markers for builder.disable() method
-class AudioPlugin(Plugin):
-    """Audio plugin - can be disabled for silent applications."""
-    def __init__(self) -> None: ...
-    def build(self, app: App) -> None: ...
-
 class WindowResolution:
     """
     Window resolution and DPI scaling.
@@ -343,7 +337,11 @@ class Window(Component):
 
     @property
     def focused(self) -> bool:
-        """Get whether window has input focus (read-only)."""
+        """Get whether window has input focus."""
+
+    @focused.setter
+    def focused(self, focused: bool) -> None:
+        """Set the desired focus state; backend support varies by platform."""
 
     @property
     def decorations(self) -> bool:
@@ -1551,17 +1549,9 @@ class CursorMoved(Message):
         position: Vec2,
         delta: Vec2 | None = None
     ) -> None: ...
-    @property
-    def position(self) -> Vec2:
-        """Cursor position in window coordinates."""
-
-    @property
-    def window(self) -> Entity:
-        """Window entity that received the cursor event."""
-
-    @property
-    def delta(self) -> Vec2 | None:
-        """Change in cursor position since last event, or None if cursor was outside."""
+    position: Vec2
+    window: Entity
+    delta: Vec2 | None
 
 
 class WindowResized(Message):

@@ -15,17 +15,41 @@ pub struct PyComputedNode {
 impl PyComputedNode {
     #[getter]
     pub fn size(&self) -> PyResult<PyVec2> {
-        Ok(self.storage.borrow_field_as(|c| &c.size)?)
+        Ok(self
+            .storage
+            .borrow_resolved_field_as(|c| &c.size, |c| &mut c.size)?)
+    }
+
+    #[setter]
+    pub fn set_size(&mut self, value: PyVec2) -> PyResult<()> {
+        self.as_mut()?.size = value.try_into()?;
+        Ok(())
     }
 
     #[getter]
     pub fn content_size(&self) -> PyResult<PyVec2> {
-        Ok(self.storage.borrow_field_as(|c| &c.content_size)?)
+        Ok(self
+            .storage
+            .borrow_resolved_field_as(|c| &c.content_size, |c| &mut c.content_size)?)
+    }
+
+    #[setter]
+    pub fn set_content_size(&mut self, value: PyVec2) -> PyResult<()> {
+        self.as_mut()?.content_size = value.try_into()?;
+        Ok(())
     }
 
     #[getter]
     pub fn unrounded_size(&self) -> PyResult<PyVec2> {
-        Ok(self.storage.borrow_field_as(|c| &c.unrounded_size)?)
+        Ok(self
+            .storage
+            .borrow_resolved_field_as(|c| &c.unrounded_size, |c| &mut c.unrounded_size)?)
+    }
+
+    #[setter]
+    pub fn set_unrounded_size(&mut self, value: PyVec2) -> PyResult<()> {
+        self.as_mut()?.unrounded_size = value.try_into()?;
+        Ok(())
     }
 
     #[getter]
@@ -33,9 +57,21 @@ impl PyComputedNode {
         Ok(self.as_ref()?.outline_width)
     }
 
+    #[setter]
+    pub fn set_outline_width(&mut self, value: f32) -> PyResult<()> {
+        self.as_mut()?.outline_width = value;
+        Ok(())
+    }
+
     #[getter]
     pub fn outline_offset(&self) -> PyResult<f32> {
         Ok(self.as_ref()?.outline_offset)
+    }
+
+    #[setter]
+    pub fn set_outline_offset(&mut self, value: f32) -> PyResult<()> {
+        self.as_mut()?.outline_offset = value;
+        Ok(())
     }
 
     #[getter]
@@ -48,16 +84,37 @@ impl PyComputedNode {
         Ok(self.as_ref()?.inverse_scale_factor)
     }
 
+    #[setter]
+    pub fn set_inverse_scale_factor(&mut self, value: f32) -> PyResult<()> {
+        self.as_mut()?.inverse_scale_factor = value;
+        Ok(())
+    }
+
     #[getter]
     pub fn scrollbar_size(&self) -> PyResult<PyVec2> {
-        Ok(self.storage.borrow_field_as(|c| &c.scrollbar_size)?)
+        Ok(self
+            .storage
+            .borrow_resolved_field_as(|c| &c.scrollbar_size, |c| &mut c.scrollbar_size)?)
+    }
+
+    #[setter]
+    pub fn set_scrollbar_size(&mut self, value: PyVec2) -> PyResult<()> {
+        self.as_mut()?.scrollbar_size = value.try_into()?;
+        Ok(())
     }
 
     #[getter]
     pub fn scroll_position(&self) -> PyResult<PyVec2> {
-        Ok(self.storage.borrow_field_as(|c| &c.scroll_position)?)
+        Ok(self
+            .storage
+            .borrow_resolved_field_as(|c| &c.scroll_position, |c| &mut c.scroll_position)?)
     }
 
+    #[setter]
+    pub fn set_scroll_position(&mut self, value: PyVec2) -> PyResult<()> {
+        self.as_mut()?.scroll_position = value.try_into()?;
+        Ok(())
+    }
     pub fn is_empty(&self) -> PyResult<bool> {
         Ok(self.as_ref()?.is_empty())
     }

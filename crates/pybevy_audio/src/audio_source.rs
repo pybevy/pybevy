@@ -18,6 +18,12 @@ impl PyAudioSource {
         Ok(PyBytes::new(py, &audio_source.bytes))
     }
 
+    #[setter]
+    pub fn set_bytes(&mut self, bytes: &Bound<'_, PyBytes>) -> PyResult<()> {
+        self.as_mut()?.bytes = bytes.as_bytes().into();
+        Ok(())
+    }
+
     fn __repr__(&self) -> String {
         match self.storage.as_ref() {
             Ok(source) => format!("AudioSource({} bytes)", source.bytes.len()),

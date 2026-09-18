@@ -1,5 +1,5 @@
 use bevy::window::CursorMoved;
-use pybevy_core::{PyEntity, PyMessage};
+use pybevy_core::{FromBorrowedStorage, PyEntity, PyMessage, ValueStorage};
 use pybevy_macros::pymessage;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
@@ -52,18 +52,42 @@ impl PyCursorMoved {
     }
 
     #[getter]
-    fn position(&self) -> PyVec2 {
-        self.position.clone()
+    fn position(&self) -> PyResult<PyVec2> {
+        Ok(PyVec2::from_borrowed(ValueStorage::read_only_snapshot(
+            self.position.try_get()?,
+        )))
+    }
+
+    #[setter]
+    fn set_position(&mut self, position: PyVec2) {
+        self.position = position;
     }
 
     #[getter]
-    fn delta(&self) -> Option<PyVec2> {
-        self.delta.clone()
+    fn delta(&self) -> PyResult<Option<PyVec2>> {
+        self.delta
+            .as_ref()
+            .map(|delta| {
+                Ok(PyVec2::from_borrowed(ValueStorage::read_only_snapshot(
+                    delta.try_get()?,
+                )))
+            })
+            .transpose()
+    }
+
+    #[setter]
+    fn set_delta(&mut self, delta: Option<PyVec2>) {
+        self.delta = delta;
     }
 
     #[getter]
     fn window(&self) -> PyEntity {
         self.window
+    }
+
+    #[setter]
+    fn set_window(&mut self, window: PyEntity) {
+        self.window = window;
     }
 
     fn __repr__(&self) -> PyResult<String> {

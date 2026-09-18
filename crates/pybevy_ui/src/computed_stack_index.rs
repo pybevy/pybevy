@@ -16,6 +16,12 @@ impl PyComputedStackIndex {
         Ok(self.as_ref()?.0)
     }
 
+    #[setter]
+    pub fn set_value(&mut self, value: u32) -> PyResult<()> {
+        self.as_mut()?.0 = value;
+        Ok(())
+    }
+
     pub fn __repr__(&self) -> String {
         match self.as_ref() {
             Ok(v) => format!("ComputedStackIndex({})", v.0),

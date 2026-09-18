@@ -33,6 +33,15 @@ impl PyBorderGradient {
         Ok(self.as_ref()?.0.iter().cloned().map(|g| g.into()).collect())
     }
 
+    #[setter]
+    pub fn set_gradients(&mut self, gradients: Vec<PyGradient>) -> PyResult<()> {
+        self.as_mut()?.0 = gradients
+            .into_iter()
+            .map(|gradient| gradient.inner)
+            .collect();
+        Ok(())
+    }
+
     fn __len__(&self) -> PyResult<usize> {
         self.len()
     }

@@ -21,4 +21,10 @@ impl PyAnimatedBy {
     pub fn entity(&self) -> PyResult<PyEntity> {
         Ok(PyEntity::from(self.as_ref()?.0))
     }
+
+    #[setter]
+    pub fn set_entity(&mut self, value: PyEntity) -> PyResult<()> {
+        self.as_mut()?.0 = value.0;
+        Ok(())
+    }
 }
