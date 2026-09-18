@@ -197,6 +197,12 @@ impl PyWindow {
         Ok(self.as_ref()?.focused)
     }
 
+    #[setter]
+    pub fn set_focused(&mut self, focused: bool) -> PyResult<()> {
+        self.as_mut()?.focused = focused;
+        Ok(())
+    }
+
     #[getter]
     pub fn decorations(&self) -> PyResult<bool> {
         Ok(self.as_ref()?.decorations)

@@ -1,4 +1,6 @@
 use bevy::ui::UiPosition;
+use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_macros::pyvalue;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
@@ -6,19 +8,30 @@ use crate::val::PyVal;
 
 #[pyclass(name = "UiPosition", module = "pybevy.ui", eq, from_py_object)]
 #[derive(Clone, Debug, PartialEq)]
+#[pyvalue]
 pub struct PyUiPosition {
-    pub(crate) inner: UiPosition,
+    pub(crate) storage: ValueStorage<UiPosition>,
 }
 
 impl From<UiPosition> for PyUiPosition {
     fn from(pos: UiPosition) -> Self {
-        PyUiPosition { inner: pos }
+        PyUiPosition::from_owned(pos)
     }
 }
 
-impl From<PyUiPosition> for UiPosition {
-    fn from(py_pos: PyUiPosition) -> Self {
-        py_pos.inner
+impl TryFrom<PyUiPosition> for UiPosition {
+    type Error = PyErr;
+
+    fn try_from(py_pos: PyUiPosition) -> PyResult<Self> {
+        py_pos.to_bevy()
+    }
+}
+
+impl TryFrom<&PyUiPosition> for UiPosition {
+    type Error = PyErr;
+
+    fn try_from(py_pos: &PyUiPosition) -> PyResult<Self> {
+        py_pos.to_bevy()
     }
 }
 
@@ -27,121 +40,132 @@ impl PyUiPosition {
     #[new]
     #[pyo3(signature = (anchor, x, y))]
     pub fn new(anchor: PyVec2, x: PyVal, y: PyVal) -> PyResult<Self> {
-        Ok(PyUiPosition {
-            inner: UiPosition::new(anchor.try_into()?, x.into(), y.into()),
-        })
+        Ok(Self::from_owned(UiPosition::new(
+            anchor.try_into()?,
+            x.into(),
+            y.into(),
+        )))
     }
 
     #[staticmethod]
     pub fn anchor(anchor: PyVec2) -> PyResult<Self> {
-        Ok(PyUiPosition {
-            inner: UiPosition::anchor(anchor.try_into()?),
-        })
+        Ok(Self::from_owned(UiPosition::anchor(anchor.try_into()?)))
     }
 
     #[staticmethod]
     #[pyo3(signature = (x=PyVal::default(), y=PyVal::default()))]
     pub fn center(x: PyVal, y: PyVal) -> Self {
-        UiPosition::center(x.into(), y.into()).into()
+        Self::from_owned(UiPosition::center(x.into(), y.into()))
     }
 
     #[staticmethod]
     #[pyo3(signature = (x=PyVal::default(), y=PyVal::default()))]
     pub fn top(x: PyVal, y: PyVal) -> Self {
-        UiPosition::top(x.into(), y.into()).into()
+        Self::from_owned(UiPosition::top(x.into(), y.into()))
     }
 
     #[staticmethod]
     #[pyo3(signature = (x=PyVal::default(), y=PyVal::default()))]
     pub fn bottom(x: PyVal, y: PyVal) -> Self {
-        UiPosition::bottom(x.into(), y.into()).into()
+        Self::from_owned(UiPosition::bottom(x.into(), y.into()))
     }
 
     #[staticmethod]
     #[pyo3(signature = (x=PyVal::default(), y=PyVal::default()))]
     pub fn left(x: PyVal, y: PyVal) -> Self {
-        UiPosition::left(x.into(), y.into()).into()
+        Self::from_owned(UiPosition::left(x.into(), y.into()))
     }
 
     #[staticmethod]
     #[pyo3(signature = (x=PyVal::default(), y=PyVal::default()))]
     pub fn right(x: PyVal, y: PyVal) -> Self {
-        UiPosition::right(x.into(), y.into()).into()
+        Self::from_owned(UiPosition::right(x.into(), y.into()))
     }
 
     #[staticmethod]
     #[pyo3(signature = (x=PyVal::default(), y=PyVal::default()))]
     pub fn top_left(x: PyVal, y: PyVal) -> Self {
-        UiPosition::top_left(x.into(), y.into()).into()
+        Self::from_owned(UiPosition::top_left(x.into(), y.into()))
     }
 
     #[staticmethod]
     #[pyo3(signature = (x=PyVal::default(), y=PyVal::default()))]
     pub fn top_right(x: PyVal, y: PyVal) -> Self {
-        UiPosition::top_right(x.into(), y.into()).into()
+        Self::from_owned(UiPosition::top_right(x.into(), y.into()))
     }
 
     #[staticmethod]
     #[pyo3(signature = (x=PyVal::default(), y=PyVal::default()))]
     pub fn bottom_left(x: PyVal, y: PyVal) -> Self {
-        UiPosition::bottom_left(x.into(), y.into()).into()
+        Self::from_owned(UiPosition::bottom_left(x.into(), y.into()))
     }
 
     #[staticmethod]
     #[pyo3(signature = (x=PyVal::default(), y=PyVal::default()))]
     pub fn bottom_right(x: PyVal, y: PyVal) -> Self {
-        UiPosition::bottom_right(x.into(), y.into()).into()
+        Self::from_owned(UiPosition::bottom_right(x.into(), y.into()))
     }
 
-    pub fn at(&self, x: PyVal, y: PyVal) -> Self {
-        PyUiPosition {
-            inner: self.inner.at(x.into(), y.into()),
-        }
+    pub fn at(&self, x: PyVal, y: PyVal) -> PyResult<Self> {
+        Ok(Self::from_owned(self.to_bevy()?.at(x.into(), y.into())))
     }
 
-    pub fn at_x(&self, x: PyVal) -> Self {
-        PyUiPosition {
-            inner: self.inner.at_x(x.into()),
-        }
+    pub fn at_x(&self, x: PyVal) -> PyResult<Self> {
+        Ok(Self::from_owned(self.to_bevy()?.at_x(x.into())))
     }
 
-    pub fn at_y(&self, y: PyVal) -> Self {
-        PyUiPosition {
-            inner: self.inner.at_y(y.into()),
-        }
+    pub fn at_y(&self, y: PyVal) -> PyResult<Self> {
+        Ok(Self::from_owned(self.to_bevy()?.at_y(y.into())))
     }
 
-    pub fn at_px(&self, x: f32, y: f32) -> Self {
-        PyUiPosition {
-            inner: self.inner.at_px(x, y),
-        }
+    pub fn at_px(&self, x: f32, y: f32) -> PyResult<Self> {
+        Ok(Self::from_owned(self.to_bevy()?.at_px(x, y)))
     }
 
-    pub fn at_percent(&self, x: f32, y: f32) -> Self {
-        PyUiPosition {
-            inner: self.inner.at_percent(x, y),
-        }
+    pub fn at_percent(&self, x: f32, y: f32) -> PyResult<Self> {
+        Ok(Self::from_owned(self.to_bevy()?.at_percent(x, y)))
     }
 
     #[getter]
-    pub fn anchor_value(&self) -> PyVec2 {
-        self.inner.anchor.into()
+    pub fn anchor_value(&self) -> PyResult<PyVec2> {
+        Ok(PyVec2::from_borrowed(ValueStorage::read_only_snapshot(
+            self.to_bevy()?.anchor,
+        )))
+    }
+
+    #[setter]
+    pub fn set_anchor_value(&mut self, value: PyVec2) -> PyResult<()> {
+        self.as_mut()?.anchor = value.try_into()?;
+        Ok(())
     }
 
     #[getter]
-    pub fn x(&self) -> PyVal {
-        self.inner.x.into()
+    pub fn x(&self) -> PyResult<PyVal> {
+        Ok(self.to_bevy()?.x.into())
+    }
+
+    #[setter]
+    pub fn set_x(&mut self, value: PyVal) -> PyResult<()> {
+        self.as_mut()?.x = value.into();
+        Ok(())
     }
 
     #[getter]
-    pub fn y(&self) -> PyVal {
-        self.inner.y.into()
+    pub fn y(&self) -> PyResult<PyVal> {
+        Ok(self.to_bevy()?.y.into())
     }
 
-    pub fn __repr__(&self) -> String {
-        format!(
+    #[setter]
+    pub fn set_y(&mut self, value: PyVal) -> PyResult<()> {
+        self.as_mut()?.y = value.into();
+        Ok(())
+    }
+
+    pub fn __repr__(&self) -> PyResult<String> {
+        let position = self.to_bevy()?;
+        Ok(format!(
             "UiPosition(anchor={:?}, x={:?}, y={:?})",
-            self.inner.anchor, self.inner.x, self.inner.y
-        )
+            position.anchor, position.x, position.y
+        ))
     }
 }

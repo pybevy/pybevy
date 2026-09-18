@@ -89,9 +89,19 @@ impl PyGamepadButtonChangedEvent {
         self.entity
     }
 
+    #[setter]
+    fn set_entity(&mut self, entity: PyEntity) {
+        self.entity = entity;
+    }
+
     #[getter]
     fn button(&self) -> PyGamepadButton {
         self.button
+    }
+
+    #[setter]
+    fn set_button(&mut self, button: PyGamepadButton) {
+        self.button = button;
     }
 
     #[getter]
@@ -99,9 +109,19 @@ impl PyGamepadButtonChangedEvent {
         self.state
     }
 
+    #[setter]
+    fn set_state(&mut self, state: PyButtonState) {
+        self.state = state;
+    }
+
     #[getter]
     fn value(&self) -> f32 {
         self.value
+    }
+
+    #[setter]
+    fn set_value(&mut self, value: f32) {
+        self.value = value;
     }
 
     fn __repr__(&self) -> String {
@@ -177,14 +197,29 @@ impl PyGamepadAxisChangedEvent {
         self.entity
     }
 
+    #[setter]
+    fn set_entity(&mut self, entity: PyEntity) {
+        self.entity = entity;
+    }
+
     #[getter]
     fn axis(&self) -> PyGamepadAxis {
         self.axis
     }
 
+    #[setter]
+    fn set_axis(&mut self, axis: PyGamepadAxis) {
+        self.axis = axis;
+    }
+
     #[getter]
     fn value(&self) -> f32 {
         self.value
+    }
+
+    #[setter]
+    fn set_value(&mut self, value: f32) {
+        self.value = value;
     }
 
     fn __repr__(&self) -> String {
@@ -289,9 +324,19 @@ impl PyGamepadConnectionEvent {
         self.gamepad
     }
 
+    #[setter]
+    fn set_gamepad(&mut self, gamepad: PyEntity) {
+        self.gamepad = gamepad;
+    }
+
     #[getter]
     fn connection(&self) -> PyGamepadConnection {
         self.connection.clone()
+    }
+
+    #[setter]
+    fn set_connection(&mut self, connection: PyGamepadConnection) {
+        self.connection = connection;
     }
 
     fn connected(&self) -> bool {
@@ -380,14 +425,29 @@ impl PyGamepadButtonStateChangedEvent {
         self.entity
     }
 
+    #[setter]
+    fn set_entity(&mut self, entity: PyEntity) {
+        self.entity = entity;
+    }
+
     #[getter]
     fn button(&self) -> PyGamepadButton {
         self.button
     }
 
+    #[setter]
+    fn set_button(&mut self, button: PyGamepadButton) {
+        self.button = button;
+    }
+
     #[getter]
     fn state(&self) -> PyButtonState {
         self.state
+    }
+
+    #[setter]
+    fn set_state(&mut self, state: PyButtonState) {
+        self.state = state;
     }
 
     fn __repr__(&self) -> String {

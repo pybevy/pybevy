@@ -298,6 +298,9 @@ class AudioSource(Asset):
     def bytes(self) -> bytes:
         """Raw audio data bytes."""
 
+    @bytes.setter
+    def bytes(self, value: bytes) -> None: ...
+
 class Pitch(Asset):
     """Procedural audio asset that generates a sine wave at a specific frequency.
 

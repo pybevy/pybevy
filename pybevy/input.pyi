@@ -1941,13 +1941,22 @@ class KeyboardInput(Message):
     def key_code(self) -> KeyCode:
         """The key that was pressed or released."""
 
+    @key_code.setter
+    def key_code(self, value: KeyCode) -> None: ...
+
     @property
     def logical_key(self) -> Key:
         """The logical meaning of the key."""
 
+    @logical_key.setter
+    def logical_key(self, value: Key) -> None: ...
+
     @property
     def state(self) -> ButtonState:
         """Whether the key was pressed or released."""
+
+    @state.setter
+    def state(self, value: ButtonState) -> None: ...
 
     @property
     def text(self) -> str | None:
@@ -1957,13 +1966,23 @@ class KeyboardInput(Message):
         Returns None if this keypress cannot be interpreted as text.
         """
 
+    @text.setter
+    def text(self, value: str | None) -> None: ...
+
     @property
     def repeat(self) -> bool:
         """Whether this is a repeated key event (key held down)."""
 
+    @repeat.setter
+    def repeat(self, value: bool) -> None: ...
+
     @property
     def window(self) -> Entity:
         """The window entity this event was received on."""
+
+    @window.setter
+    def window(self, value: Entity) -> None: ...
+
 
 class MouseButtonInput(Message):
     """
@@ -1992,13 +2011,23 @@ class MouseButtonInput(Message):
     def button(self) -> MouseButton:
         """The mouse button that was pressed or released."""
 
+    @button.setter
+    def button(self, value: MouseButton) -> None: ...
+
     @property
     def state(self) -> ButtonState:
         """Whether the button was pressed or released."""
 
+    @state.setter
+    def state(self, value: ButtonState) -> None: ...
+
     @property
     def window(self) -> Entity:
         """The window entity this event was received on."""
+
+    @window.setter
+    def window(self, value: Entity) -> None: ...
+
 
 class MouseMotion(Message):
     """
@@ -2019,6 +2048,10 @@ class MouseMotion(Message):
     @property
     def delta(self) -> Vec2:
         """Mouse movement delta as a Vec2."""
+
+    @delta.setter
+    def delta(self, value: Vec2) -> None: ...
+
 
 class MouseScrollUnit:
     """
@@ -2067,21 +2100,37 @@ class MouseWheel(Message):
     def x(self) -> float:
         """Horizontal scroll amount."""
 
+    @x.setter
+    def x(self, value: float) -> None: ...
+
     @property
     def y(self) -> float:
         """Vertical scroll amount."""
+
+    @y.setter
+    def y(self, value: float) -> None: ...
 
     @property
     def unit(self) -> MouseScrollUnit:
         """The scroll unit (Line or Pixel)."""
 
+    @unit.setter
+    def unit(self, value: MouseScrollUnit) -> None: ...
+
     @property
     def window(self) -> Entity:
         """The window entity this event was received on."""
 
+    @window.setter
+    def window(self, value: Entity) -> None: ...
+
     @property
     def phase(self) -> TouchPhase:
         """Touch phase. Hardware wheel events report Moved; synthetic events may differ."""
+
+    @phase.setter
+    def phase(self, value: TouchPhase) -> None: ...
+
 
 class GamepadButton:
     """
@@ -2358,17 +2407,30 @@ class GamepadButtonChangedEvent(Message):
     def entity(self) -> Entity:
         """The gamepad this button belongs to."""
 
+    @entity.setter
+    def entity(self, value: Entity) -> None: ...
+
     @property
     def button(self) -> GamepadButton:
         """The gamepad button that changed."""
+
+    @button.setter
+    def button(self, value: GamepadButton) -> None: ...
 
     @property
     def state(self) -> ButtonState:
         """Whether the button is pressed or released."""
 
+    @state.setter
+    def state(self, value: ButtonState) -> None: ...
+
     @property
     def value(self) -> float:
         """Analog value of the button (0.0 to 1.0)."""
+
+    @value.setter
+    def value(self, value: float) -> None: ...
+
 
 class GamepadAxisChangedEvent(Message):
     """
@@ -2392,13 +2454,23 @@ class GamepadAxisChangedEvent(Message):
     def entity(self) -> Entity:
         """The gamepad this axis belongs to."""
 
+    @entity.setter
+    def entity(self, value: Entity) -> None: ...
+
     @property
     def axis(self) -> GamepadAxis:
         """The gamepad axis that changed."""
 
+    @axis.setter
+    def axis(self, value: GamepadAxis) -> None: ...
+
     @property
     def value(self) -> float:
         """Axis value (-1.0 to 1.0)."""
+
+    @value.setter
+    def value(self, value: float) -> None: ...
+
 
 class GamepadConnection:
     """
@@ -2460,9 +2532,15 @@ class GamepadConnectionEvent(Message):
     def gamepad(self) -> Entity:
         """The gamepad entity that connected or disconnected."""
 
+    @gamepad.setter
+    def gamepad(self, value: Entity) -> None: ...
+
     @property
     def connection(self) -> GamepadConnection:
         """The change in the gamepad's connection."""
+
+    @connection.setter
+    def connection(self, value: GamepadConnection) -> None: ...
 
     def connected(self) -> bool:
         """Whether the gamepad is connected."""
@@ -2564,6 +2642,10 @@ class AccumulatedMouseMotion(Resource):
     def delta(self) -> Vec2:
         """Accumulated mouse movement this frame as a Vec2."""
 
+    @delta.setter
+    def delta(self, value: Vec2) -> None: ...
+
+
 class AccumulatedMouseScroll(Resource):
     """Resource that accumulates mouse scroll delta per frame."""
 
@@ -2572,9 +2654,16 @@ class AccumulatedMouseScroll(Resource):
     def delta(self) -> Vec2:
         """Accumulated scroll this frame as a Vec2."""
 
+    @delta.setter
+    def delta(self, value: Vec2) -> None: ...
+
     @property
     def unit(self) -> MouseScrollUnit:
         """The scroll unit (Line or Pixel)."""
+
+    @unit.setter
+    def unit(self, value: MouseScrollUnit) -> None: ...
+
 
 class GamepadRumbleIntensity:
     """Gamepad rumble/haptic intensity settings."""
@@ -2658,13 +2747,23 @@ class GamepadButtonStateChangedEvent(Message):
     def entity(self) -> Entity:
         """The gamepad this button belongs to."""
 
+    @entity.setter
+    def entity(self, value: Entity) -> None: ...
+
     @property
     def button(self) -> GamepadButton:
         """The gamepad button that changed state."""
 
+    @button.setter
+    def button(self, value: GamepadButton) -> None: ...
+
     @property
     def state(self) -> ButtonState:
         """The new state of the button."""
+
+    @state.setter
+    def state(self, value: ButtonState) -> None: ...
+
 
 class GamepadEvent:
     """Unified gamepad event (connection, button, or axis).

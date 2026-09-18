@@ -22,6 +22,12 @@ impl PyUiTargetCamera {
         Ok(self.as_ref()?.entity().into())
     }
 
+    #[setter]
+    pub fn set_entity(&mut self, value: PyEntity) -> PyResult<()> {
+        self.as_mut()?.0 = value.into();
+        Ok(())
+    }
+
     pub fn __repr__(&self) -> PyResult<String> {
         Ok(format!("UiTargetCamera({:?})", self.as_ref()?.entity()))
     }

@@ -83,6 +83,12 @@ impl PyAnchor {
         Ok(self.storage.borrow_field_as(|a| &a.0)?)
     }
 
+    #[setter]
+    pub fn set_value(&mut self, value: PyVec2) -> PyResult<()> {
+        self.as_mut()?.0 = value.try_into()?;
+        Ok(())
+    }
+
     pub fn as_vec(&self) -> PyResult<PyVec2> {
         Ok(self.as_ref()?.as_vec().into())
     }

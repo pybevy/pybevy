@@ -1017,6 +1017,9 @@ class BorderGradient(Component):
     def gradients(self) -> list[Gradient]:
         """Get all gradients."""
 
+    @gradients.setter
+    def gradients(self, value: list[Gradient]) -> None: ...
+
     def len(self) -> int:
         """Number of gradients."""
 
@@ -2636,6 +2639,9 @@ class UiTargetCamera(Component):
     def entity(self) -> Entity:
         """The camera entity this UI targets."""
 
+    @entity.setter
+    def entity(self, value: Entity) -> None: ...
+
     def __eq__(self, other: object) -> bool: ...
 
 
@@ -2810,8 +2816,12 @@ class ComputedStackIndex(Component):
     def value(self) -> int:
         """The node's position in the UI stack (higher is drawn on top)."""
 
+    @value.setter
+    def value(self, value: int) -> None: ...
+
+
 class ComputedNode(Component):
-    """Read-only computed layout information for a UI node.
+    """Computed layout information for a UI node.
 
     Contains the final computed sizes and layout information after Bevy's
     UI layout system has processed the node. This component is automatically
@@ -2835,6 +2845,9 @@ class ComputedNode(Component):
     def size(self) -> Vec2:
         """The final computed size of the node in physical pixels."""
 
+    @size.setter
+    def size(self, value: Vec2) -> None: ...
+
     @property
     def content_size(self) -> Vec2:
         """Taffy content size differs from CSS content-box size. For a container,
@@ -2842,17 +2855,29 @@ class ComputedNode(Component):
         for a childless node, measured content plus padding on both sides.
         """
 
+    @content_size.setter
+    def content_size(self, value: Vec2) -> None: ...
+
     @property
     def unrounded_size(self) -> Vec2:
         """The size before rounding to physical pixels."""
+
+    @unrounded_size.setter
+    def unrounded_size(self, value: Vec2) -> None: ...
 
     @property
     def outline_width(self) -> float:
         """The computed outline width in physical pixels."""
 
+    @outline_width.setter
+    def outline_width(self, value: float) -> None: ...
+
     @property
     def outline_offset(self) -> float:
         """The computed outline offset in physical pixels."""
+
+    @outline_offset.setter
+    def outline_offset(self, value: float) -> None: ...
 
     @property
     def outlined_node_size(self) -> Vec2:
@@ -2862,13 +2887,22 @@ class ComputedNode(Component):
     def inverse_scale_factor(self) -> float:
         """Inverse of the UI scale factor."""
 
+    @inverse_scale_factor.setter
+    def inverse_scale_factor(self, value: float) -> None: ...
+
     @property
     def scrollbar_size(self) -> Vec2:
         """Size reserved for scrollbars in physical pixels."""
 
+    @scrollbar_size.setter
+    def scrollbar_size(self, value: Vec2) -> None: ...
+
     @property
     def scroll_position(self) -> Vec2:
         """Current computed scroll position in physical pixels."""
+
+    @scroll_position.setter
+    def scroll_position(self, value: Vec2) -> None: ...
 
     def is_empty(self) -> bool:
         """Check if the node has zero size."""
@@ -2968,13 +3002,22 @@ class ColorStop:
     def color(self) -> Color:
         """The color at this stop."""
 
+    @color.setter
+    def color(self, value: Color) -> None: ...
+
     @property
     def point(self) -> Val:
         """The position along the gradient."""
 
+    @point.setter
+    def point(self, value: Val) -> None: ...
+
     @property
     def hint(self) -> float:
         """The interpolation midpoint hint."""
+
+    @hint.setter
+    def hint(self, value: float) -> None: ...
 
     def __eq__(self, other: object) -> bool: ...
 
@@ -3018,13 +3061,22 @@ class AngularColorStop:
     def color(self) -> Color:
         """The color at this stop."""
 
+    @color.setter
+    def color(self, value: Color) -> None: ...
+
     @property
     def angle(self) -> float | None:
         """The angle in radians (None for auto stops)."""
 
+    @angle.setter
+    def angle(self, value: float | None) -> None: ...
+
     @property
     def hint(self) -> float:
         """The interpolation midpoint hint."""
+
+    @hint.setter
+    def hint(self, value: float) -> None: ...
 
     def __eq__(self, other: object) -> bool: ...
 
@@ -3110,13 +3162,22 @@ class UiPosition:
     def anchor_value(self) -> Vec2:
         """The anchor point (normalized 0-1)."""
 
+    @anchor_value.setter
+    def anchor_value(self, value: Vec2) -> None: ...
+
     @property
     def x(self) -> Val:
         """Horizontal offset."""
 
+    @x.setter
+    def x(self, value: Val) -> None: ...
+
     @property
     def y(self) -> Val:
         """Vertical offset."""
+
+    @y.setter
+    def y(self, value: Val) -> None: ...
 
 
 class RadialGradientShape:
@@ -3236,13 +3297,22 @@ class LinearGradient:
     def color_space(self) -> InterpolationColorSpace:
         """The interpolation color space."""
 
+    @color_space.setter
+    def color_space(self, value: InterpolationColorSpace) -> None: ...
+
     @property
     def angle(self) -> float:
         """The gradient angle in radians."""
 
+    @angle.setter
+    def angle(self, value: float) -> None: ...
+
     @property
     def stops(self) -> list[ColorStop]:
         """The color stops."""
+
+    @stops.setter
+    def stops(self, value: list[ColorStop]) -> None: ...
 
 
 class RadialGradient:
@@ -3285,17 +3355,29 @@ class RadialGradient:
     def color_space(self) -> InterpolationColorSpace:
         """The interpolation color space."""
 
+    @color_space.setter
+    def color_space(self, value: InterpolationColorSpace) -> None: ...
+
     @property
     def position(self) -> UiPosition:
         """The center position."""
+
+    @position.setter
+    def position(self, value: UiPosition) -> None: ...
 
     @property
     def shape(self) -> RadialGradientShape:
         """The gradient shape."""
 
+    @shape.setter
+    def shape(self, value: RadialGradientShape) -> None: ...
+
     @property
     def stops(self) -> list[ColorStop]:
         """The color stops."""
+
+    @stops.setter
+    def stops(self, value: list[ColorStop]) -> None: ...
 
     def __eq__(self, other: object) -> bool: ...
 
@@ -3344,17 +3426,29 @@ class ConicGradient:
     def color_space(self) -> InterpolationColorSpace:
         """The interpolation color space."""
 
+    @color_space.setter
+    def color_space(self, value: InterpolationColorSpace) -> None: ...
+
     @property
     def start(self) -> float:
         """The starting angle in radians."""
+
+    @start.setter
+    def start(self, value: float) -> None: ...
 
     @property
     def position(self) -> UiPosition:
         """The center position."""
 
+    @position.setter
+    def position(self, value: UiPosition) -> None: ...
+
     @property
     def stops(self) -> list[AngularColorStop]:
         """The angular color stops."""
+
+    @stops.setter
+    def stops(self, value: list[AngularColorStop]) -> None: ...
 
     def __eq__(self, other: object) -> bool: ...
 
@@ -3603,6 +3697,9 @@ class BackgroundGradient(Component):
     @property
     def gradients(self) -> list[Gradient]:
         """The list of gradients."""
+
+    @gradients.setter
+    def gradients(self, value: list[Gradient]) -> None: ...
 
     def len(self) -> int:
         """Number of gradients."""
