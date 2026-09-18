@@ -11,7 +11,7 @@ use bevy_ecs::{
     change_detection::Tick,
     component::{ComponentId, StorageType},
     entity::Entity,
-    storage::{Table, TableId, TableRow},
+    storage::{Table, TableId, TableRow, Tables},
     world::{World, unsafe_world_cell::UnsafeWorldCell},
 };
 use nonmax::NonMaxU32;
@@ -372,26 +372,76 @@ fn build_tick_mask_for_table(
 /// components. Rows are grouped by table, sorted, deduplicated defensively, and
 /// coalesced into maximal contiguous ranges. Consequently each selected table
 /// row appears in exactly one returned range.
+/// Does this archetype carry every component the filter selects on?
+fn archetype_matches(archetype: &bevy_ecs::archetype::Archetype, filter: &ViewFilter) -> bool {
+    filter
+        .component_ids
+        .iter()
+        .all(|id| archetype.contains(*id))
+        && filter.with_ids.iter().all(|id| archetype.contains(*id))
+        && !filter.without_ids.iter().any(|id| archetype.contains(*id))
+        && filter.changed_ids.iter().all(|id| archetype.contains(*id))
+        && filter.added_ids.iter().all(|id| archetype.contains(*id))
+}
+
 fn matching_table_row_ranges_from_archetypes(
     archetypes: &Archetypes,
+    tables: &Tables,
     filter: &ViewFilter,
 ) -> Vec<TableRowRange> {
+    // A table whose every row is selected needs no per-entity work: the range is
+    // the whole table. Tally the selection per table first and only walk entities
+    // for tables that are partially selected.
+    let mut selected_per_table = Vec::<(TableId, usize)>::new();
+    for archetype in archetypes.iter() {
+        if !archetype_matches(archetype, filter) {
+            continue;
+        }
+        let table_id = archetype.table_id();
+        let count = archetype.entities().len();
+        match selected_per_table
+            .iter_mut()
+            .find(|(existing, _)| *existing == table_id)
+        {
+            Some((_, total)) => *total += count,
+            None => selected_per_table.push((table_id, count)),
+        }
+    }
+
+    let mut ranges = Vec::new();
+    let mut partial_tables = Vec::<TableId>::new();
+    for (table_id, selected) in selected_per_table {
+        if selected == 0 {
+            continue;
+        }
+        let table_rows = tables
+            .get(table_id)
+            .map(|table| table.entity_count() as usize);
+        if table_rows == Some(selected) {
+            ranges.push(TableRowRange {
+                table_id,
+                start_row: 0,
+                entity_count: selected,
+            });
+        } else {
+            partial_tables.push(table_id);
+        }
+    }
+    if partial_tables.is_empty() {
+        return ranges;
+    }
+
     let mut rows_by_table = Vec::<(TableId, Vec<usize>)>::new();
 
     for archetype in archetypes.iter() {
-        if !filter
-            .component_ids
-            .iter()
-            .all(|id| archetype.contains(*id))
-            || !filter.with_ids.iter().all(|id| archetype.contains(*id))
-            || filter.without_ids.iter().any(|id| archetype.contains(*id))
-            || !filter.changed_ids.iter().all(|id| archetype.contains(*id))
-            || !filter.added_ids.iter().all(|id| archetype.contains(*id))
-        {
+        if !archetype_matches(archetype, filter) {
             continue;
         }
 
         let table_id = archetype.table_id();
+        if !partial_tables.contains(&table_id) {
+            continue;
+        }
         let index = rows_by_table
             .iter()
             .position(|(existing_id, _)| *existing_id == table_id)
@@ -408,7 +458,6 @@ fn matching_table_row_ranges_from_archetypes(
         );
     }
 
-    let mut ranges = Vec::new();
     for (table_id, mut rows) in rows_by_table {
         rows.sort_unstable();
         rows.dedup();
@@ -442,15 +491,21 @@ fn matching_table_row_ranges_from_archetypes(
 
 /// Resolve exact selected rows using an ordinary shared World reference.
 pub fn matching_table_row_ranges(world: &World, filter: &ViewFilter) -> Vec<TableRowRange> {
-    matching_table_row_ranges_from_archetypes(world.archetypes(), filter)
+    matching_table_row_ranges_from_archetypes(world.archetypes(), &world.storages().tables, filter)
 }
 
 /// Resolve exact selected rows from World metadata without borrowing the World.
-pub fn matching_table_row_ranges_from_cell(
+///
+/// # Safety
+///
+/// `world_cell` must permit reading table metadata for the duration of the call.
+pub unsafe fn matching_table_row_ranges_from_cell(
     world_cell: UnsafeWorldCell<'_>,
     filter: &ViewFilter,
 ) -> Vec<TableRowRange> {
-    matching_table_row_ranges_from_archetypes(world_cell.archetypes(), filter)
+    // SAFETY: guaranteed by the caller; this reads table metadata only.
+    let storages = unsafe { world_cell.storages() };
+    matching_table_row_ranges_from_archetypes(world_cell.archetypes(), &storages.tables, filter)
 }
 
 /// Gather exact dense-table batches through access-bounded World-cell storage.
@@ -502,7 +557,8 @@ pub unsafe fn gather_table_batches_from_cell(
     let tables = &storages.tables;
 
     let mut batches = Vec::new();
-    for row_range in matching_table_row_ranges_from_cell(world_cell, filter) {
+    // SAFETY: guaranteed by this function's own contract.
+    for row_range in unsafe { matching_table_row_ranges_from_cell(world_cell, filter) } {
         let Some(table) = tables.get(row_range.table_id) else {
             continue;
         };
@@ -2107,5 +2163,67 @@ mod tests {
             field_map: vec![],
         };
         assert!(validate_bytecode_field_types(&bytecode, &allowed).is_ok());
+    }
+
+    #[derive(Component)]
+    struct RowA(#[allow(dead_code)] f32);
+
+    #[derive(Component)]
+    struct RowSkip;
+
+    fn row_filter(world: &mut World, without: Option<ComponentId>) -> ViewFilter {
+        let mut component_ids = HashSet::new();
+        component_ids.insert(world.register_component::<RowA>());
+        ViewFilter {
+            component_ids,
+            with_ids: Vec::new(),
+            without_ids: without.into_iter().collect(),
+            changed_ids: Vec::new(),
+            added_ids: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn whole_table_selection_needs_no_row_walk() {
+        let mut world = World::new();
+        for i in 0..8 {
+            world.spawn(RowA(i as f32));
+        }
+        let filter = row_filter(&mut world, None);
+        let ranges = matching_table_row_ranges(&world, &filter);
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(ranges[0].start_row, 0);
+        assert_eq!(ranges[0].entity_count, 8);
+    }
+
+    #[test]
+    fn partially_selected_table_still_reports_exact_runs() {
+        let mut world = World::new();
+        // Rows 0..6 in one table; the odd ones also carry RowSkip, which the
+        // filter excludes, so selection is non-contiguous and the fast path
+        // must not fire.
+        for i in 0..6 {
+            if i % 2 == 0 {
+                world.spawn(RowA(i as f32));
+            } else {
+                world.spawn((RowA(i as f32), RowSkip));
+            }
+        }
+        let skip = world.register_component::<RowSkip>();
+        let filter = row_filter(&mut world, Some(skip));
+        let ranges = matching_table_row_ranges(&world, &filter);
+        let selected: usize = ranges.iter().map(|r| r.entity_count).sum();
+        assert_eq!(selected, 3, "three entities lack RowSkip");
+        for range in &ranges {
+            assert!(range.entity_count > 0);
+        }
+    }
+
+    #[test]
+    fn empty_selection_yields_no_ranges() {
+        let mut world = World::new();
+        world.spawn(RowSkip);
+        let filter = row_filter(&mut world, None);
+        assert!(matching_table_row_ranges(&world, &filter).is_empty());
     }
 }

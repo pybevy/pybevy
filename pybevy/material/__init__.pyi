@@ -8,13 +8,18 @@ MaterialT = TypeVar("MaterialT", bound=Material)
 class AlphaMode:
     """Alpha blending mode for materials."""
 
+    def __copy__(self) -> AlphaMode: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> AlphaMode: ...
+
+
     class Opaque(AlphaMode):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
 
     class Mask(AlphaMode):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: float
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> float: ...
         def __init__(self, value: float) -> None: ...
 
     class Blend(AlphaMode):
@@ -39,6 +44,10 @@ class AlphaMode:
 
 class OpaqueRendererMethod:
     """Opaque rendering method selection."""
+
+    def __copy__(self) -> OpaqueRendererMethod: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> OpaqueRendererMethod: ...
+
 
     Forward: ClassVar[OpaqueRendererMethod]
     Deferred: ClassVar[OpaqueRendererMethod]
