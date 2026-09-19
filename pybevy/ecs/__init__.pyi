@@ -62,9 +62,11 @@ class Resource(Component):
 
     Example:
         ```python
+        from dataclasses import dataclass
         from pybevy.decorators import resource
 
         @resource  # Required decorator
+        @dataclass
         class GameState(Resource):  # MUST inherit from Resource
             score: int = 0
             level: int = 1
