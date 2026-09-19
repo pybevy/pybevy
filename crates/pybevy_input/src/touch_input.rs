@@ -1,4 +1,7 @@
-use bevy::{ecs::entity::Entity, input::touch::TouchInput};
+use bevy::{
+    ecs::entity::Entity,
+    input::touch::{ForceTouch, TouchInput},
+};
 use pybevy_core::PyEntity;
 pub use pybevy_core::PyMessage;
 use pybevy_macros::pymessage;
@@ -7,7 +10,7 @@ use pyo3::prelude::*;
 
 use crate::touch_phase::PyTouchPhase;
 
-#[pymessage(TouchInput)]
+#[pymessage(TouchInput, writable)]
 #[pyclass(name = "TouchInput", module = "pybevy.input", extends = PyMessage, frozen, skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyTouchInput {
@@ -51,6 +54,20 @@ impl From<&TouchInput> for PyTouchInput {
             force,
             window: event.window.into(),
         }
+    }
+}
+
+impl TryFrom<&PyTouchInput> for TouchInput {
+    type Error = PyErr;
+
+    fn try_from(value: &PyTouchInput) -> PyResult<Self> {
+        Ok(Self {
+            phase: value.phase.into(),
+            position: (&value.position).try_into()?,
+            window: value.window.into(),
+            force: value.force.map(ForceTouch::Normalized),
+            id: value.id,
+        })
     }
 }
 

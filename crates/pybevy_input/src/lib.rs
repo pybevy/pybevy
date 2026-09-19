@@ -88,6 +88,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<accumulated_mouse::PyAccumulatedMouseMotion>()?;
     m.add_class::<accumulated_mouse::PyAccumulatedMouseScroll>()?;
     m.add_class::<gamepad_event::PyGamepadEvent>()?;
+    gamepad_event::register_gamepad_event_variants(&m)?;
     m.add_class::<keyboard_input::PyKeyboardInput>()?;
     m.add_class::<touches::PyTouch>()?;
     m.add_class::<touches::PyTouches>()?;

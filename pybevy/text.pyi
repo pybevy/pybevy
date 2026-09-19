@@ -39,7 +39,7 @@ class Font(Asset):
         >>>
         >>> # Load a custom font
         >>> def setup(asset_server: Res[AssetServer]):
-        >>>     font_handle = asset_server.load("fonts/custom.ttf")
+        >>>     font_handle = asset_server.load("fonts/custom.ttf", asset_type=Font)
         >>>     commands.spawn((
         >>>         Text2d("Custom Font!"),
         >>>         TextFont(font=font_handle, font_size=48.0),

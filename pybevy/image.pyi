@@ -266,7 +266,7 @@ class Image(Asset):
 
         # Load from file (via asset system)
         # In a system with asset_server: Res[AssetServer]
-        # handle = asset_server.load("bevy/textures/sprite.png")
+        # handle = asset_server.load_image("bevy/textures/sprite.png")
         ```
 
     See Also:

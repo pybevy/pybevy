@@ -2284,13 +2284,15 @@ class GamepadInput:
     """
 
     class Axis(GamepadInput):
-        __match_args__: ClassVar[tuple[Literal["axis"]]]
-        axis: GamepadAxis
+        __match_args__: ClassVar[tuple[Literal["axis"]]] = ("axis",)
+        @property
+        def axis(self) -> GamepadAxis: ...
         def __init__(self, axis: GamepadAxis) -> None: ...
 
     class Button(GamepadInput):
-        __match_args__: ClassVar[tuple[Literal["button"]]]
-        button: GamepadButton
+        __match_args__: ClassVar[tuple[Literal["button"]]] = ("button",)
+        @property
+        def button(self) -> GamepadButton: ...
         def __init__(self, button: GamepadButton) -> None: ...
 
 class Gamepad(Component):
@@ -2575,7 +2577,9 @@ class TouchInput(Message):
     Touch input event message.
 
     Contains information about touch screen interactions.
-    Use with MessageReader to receive touch events.
+    Use MessageReader to receive touches or MessageWriter to simulate them.
+    InputPlugin processes messages in PreUpdate to update Touches.
+    Written force values map to Bevy's normalized pressure variant.
 
     Example:
         ```python
@@ -2767,48 +2771,32 @@ class GamepadButtonStateChangedEvent(Message):
     def state(self, value: ButtonState) -> None: ...
 
 
-class GamepadEvent:
-    """Unified gamepad event (connection, button, or axis).
+class GamepadEvent(Message):
+    """Unified gamepad message with an owned event payload."""
 
-    This is a PyO3 complex enum with Connection, Button, and Axis variants.
-    Use pattern matching to handle different event types.
-    """
-
-    def __hash__(self) -> int: ...
+    def __copy__(self) -> GamepadEvent: ...
+    def __deepcopy__(self, memo: object) -> GamepadEvent: ...
+    def __repr__(self) -> str: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __ne__(self, other: object) -> bool: ...
 
     class Connection(GamepadEvent):
-        __match_args__: ClassVar[
-            tuple[
-                Literal["connected"],
-                Literal["name"],
-                Literal["vendor_id"],
-                Literal["product_id"],
-            ]
-        ]
-        connected: bool
-        name: str | None
-        vendor_id: int | None
-        product_id: int | None
-
-        def __init__(
-            self,
-            connected: bool,
-            name: str | None = None,
-            vendor_id: int | None = None,
-            product_id: int | None = None,
-        ) -> None: ...
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: GamepadConnectionEvent) -> None: ...
+        @property
+        def value(self) -> GamepadConnectionEvent: ...
 
     class Button(GamepadEvent):
-        __match_args__: ClassVar[tuple[Literal["button"], Literal["value"]]]
-        button: GamepadButton
-        value: float
-        def __init__(self, button: GamepadButton, value: float) -> None: ...
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: GamepadButtonChangedEvent) -> None: ...
+        @property
+        def value(self) -> GamepadButtonChangedEvent: ...
 
     class Axis(GamepadEvent):
-        __match_args__: ClassVar[tuple[Literal["axis"], Literal["value"]]]
-        axis: GamepadAxis
-        value: float
-        def __init__(self, axis: GamepadAxis, value: float) -> None: ...
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: GamepadAxisChangedEvent) -> None: ...
+        @property
+        def value(self) -> GamepadAxisChangedEvent: ...
 
 class KeyboardFocusLost(Message):
     """

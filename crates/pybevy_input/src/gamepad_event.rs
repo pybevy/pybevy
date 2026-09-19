@@ -1,111 +1,91 @@
-use bevy::input::gamepad::{GamepadConnection, GamepadEvent};
-use pybevy_core::enum_comparison::reject_variant_type;
-use pyo3::{prelude::*, pyclass::CompareOp};
+use bevy::input::gamepad::{
+    GamepadAxisChangedEvent, GamepadButtonChangedEvent, GamepadConnectionEvent, GamepadEvent,
+};
+use pybevy_core::PyMessage;
+use pybevy_macros::pyenum;
+use pyo3::{Borrowed, prelude::*};
 
-use crate::{gamepad_axis::PyGamepadAxis, gamepad_button::PyGamepadButton};
+use crate::gamepad_events::{
+    PyGamepadAxisChangedEvent, PyGamepadButtonChangedEvent, PyGamepadConnectionEvent,
+};
 
-#[pyclass(name = "GamepadEvent", module = "pybevy.input", skip_from_py_object)]
-#[derive(Debug, Clone)]
+// Message subclasses need their complete Python initializer at the payload boundary.
+macro_rules! message_payload {
+    ($payload:ident, $native:ty, $wrapper:ty) => {
+        pub struct $payload($native);
+
+        impl From<$native> for $payload {
+            fn from(value: $native) -> Self {
+                Self(value)
+            }
+        }
+
+        impl From<$payload> for $native {
+            fn from(value: $payload) -> Self {
+                value.0
+            }
+        }
+
+        impl<'py> IntoPyObject<'py> for $payload {
+            type Target = $wrapper;
+            type Output = Bound<'py, $wrapper>;
+            type Error = PyErr;
+
+            fn into_pyobject(self, py: Python<'py>) -> PyResult<Self::Output> {
+                Py::new(py, (<$wrapper>::from(&self.0), PyMessage))
+                    .map(|value| value.into_bound(py))
+            }
+        }
+
+        impl FromPyObject<'_, '_> for $payload {
+            type Error = PyErr;
+
+            fn extract(value: Borrowed<'_, '_, PyAny>) -> PyResult<Self> {
+                let wrapper = value.extract::<PyRef<'_, $wrapper>>()?;
+                <$native>::try_from(&*wrapper).map(Self)
+            }
+        }
+    };
+}
+
+message_payload!(
+    ConnectionPayload,
+    GamepadConnectionEvent,
+    PyGamepadConnectionEvent
+);
+message_payload!(
+    ButtonPayload,
+    GamepadButtonChangedEvent,
+    PyGamepadButtonChangedEvent
+);
+message_payload!(
+    AxisPayload,
+    GamepadAxisChangedEvent,
+    PyGamepadAxisChangedEvent
+);
+
+#[pyenum(GamepadEvent, message, writable)]
+#[pyclass(name = "GamepadEvent", module = "pybevy.input")]
 pub enum PyGamepadEvent {
-    #[pyo3(constructor = (connected, name = None, vendor_id = None, product_id = None))]
+    #[py_bevy(tuple)]
     Connection {
-        connected: bool,
-        name: Option<String>,
-        vendor_id: Option<u16>,
-        product_id: Option<u16>,
+        #[py_type(ConnectionPayload)]
+        value: GamepadConnectionEvent,
     },
+    #[py_bevy(tuple)]
     Button {
-        button: PyGamepadButton,
-        value: f32,
+        #[py_type(ButtonPayload)]
+        value: GamepadButtonChangedEvent,
     },
+    #[py_bevy(tuple)]
     Axis {
-        axis: PyGamepadAxis,
-        value: f32,
+        #[py_type(AxisPayload)]
+        value: GamepadAxisChangedEvent,
     },
 }
 
-impl PyGamepadEvent {
-    pub fn from_bevy(event: &GamepadEvent) -> Self {
-        match event {
-            GamepadEvent::Connection(conn) => {
-                let (connected, name, vendor_id, product_id) = match &conn.connection {
-                    GamepadConnection::Connected {
-                        name,
-                        vendor_id,
-                        product_id,
-                    } => (true, Some(name.clone()), *vendor_id, *product_id),
-                    GamepadConnection::Disconnected => (false, None, None, None),
-                };
-                PyGamepadEvent::Connection {
-                    connected,
-                    name,
-                    vendor_id,
-                    product_id,
-                }
-            }
-            GamepadEvent::Button(btn) => PyGamepadEvent::Button {
-                button: btn.button.into(),
-                value: btn.value,
-            },
-            GamepadEvent::Axis(axis) => PyGamepadEvent::Axis {
-                axis: axis.axis.into(),
-                value: axis.value,
-            },
-        }
-    }
-}
-
-#[pymethods]
-impl PyGamepadEvent {
-    fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<Py<PyAny>> {
-        if matches!(op, CompareOp::Eq | CompareOp::Ne) {
-            reject_variant_type::<Self>(other)?;
-        }
-        Ok(other.py().NotImplemented())
-    }
-
-    fn __hash__(slf: &Bound<'_, Self>) -> PyResult<isize> {
-        slf.py()
-            .get_type::<PyAny>()
-            .call_method1("__hash__", (slf,))?
-            .extract()
-    }
-
-    fn __repr__(&self) -> String {
-        match self {
-            PyGamepadEvent::Connection {
-                connected,
-                name,
-                vendor_id,
-                product_id,
-            } => {
-                if *connected {
-                    let name_str = match name {
-                        Some(n) => format!("\"{}\"", n),
-                        None => "None".to_string(),
-                    };
-                    let vendor_str = match vendor_id {
-                        Some(v) => format!("0x{:04X}", v),
-                        None => "None".to_string(),
-                    };
-                    let product_str = match product_id {
-                        Some(p) => format!("0x{:04X}", p),
-                        None => "None".to_string(),
-                    };
-                    format!(
-                        "GamepadEvent.Connection(connected=True, name={}, vendor_id={}, product_id={})",
-                        name_str, vendor_str, product_str
-                    )
-                } else {
-                    "GamepadEvent.Connection(connected=False)".to_string()
-                }
-            }
-            PyGamepadEvent::Button { button, value } => {
-                format!("GamepadEvent.Button(button={:?}, value={})", button, value)
-            }
-            PyGamepadEvent::Axis { axis, value } => {
-                format!("GamepadEvent.Axis(axis={:?}, value={})", axis, value)
-            }
-        }
+impl From<&PyGamepadEvent> for GamepadEvent {
+    fn from(value: &PyGamepadEvent) -> Self {
+        value.clone().into()
     }
 }

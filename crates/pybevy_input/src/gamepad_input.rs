@@ -1,10 +1,10 @@
-use bevy::input::gamepad::GamepadInput;
+use bevy::input::gamepad::{GamepadAxis, GamepadButton, GamepadInput};
 use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 use crate::{gamepad_axis::PyGamepadAxis, gamepad_button::PyGamepadButton};
 
-#[pyenum(GamepadInput, manual)]
+#[pyenum(GamepadInput, no_repr)]
 #[pyclass(
     name = "GamepadInput",
     module = "pybevy.input",
@@ -14,28 +14,16 @@ use crate::{gamepad_axis::PyGamepadAxis, gamepad_button::PyGamepadButton};
 )]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PyGamepadInput {
-    Axis { axis: PyGamepadAxis },
-    Button { button: PyGamepadButton },
-}
-
-impl From<GamepadInput> for PyGamepadInput {
-    fn from(input: GamepadInput) -> Self {
-        match input {
-            GamepadInput::Axis(axis) => PyGamepadInput::Axis { axis: axis.into() },
-            GamepadInput::Button(button) => PyGamepadInput::Button {
-                button: button.into(),
-            },
-        }
-    }
-}
-
-impl From<PyGamepadInput> for GamepadInput {
-    fn from(input: PyGamepadInput) -> Self {
-        match input {
-            PyGamepadInput::Axis { axis } => GamepadInput::Axis(axis.into()),
-            PyGamepadInput::Button { button } => GamepadInput::Button(button.into()),
-        }
-    }
+    #[py_bevy(tuple)]
+    Axis {
+        #[py_type(PyGamepadAxis)]
+        axis: GamepadAxis,
+    },
+    #[py_bevy(tuple)]
+    Button {
+        #[py_type(PyGamepadButton)]
+        button: GamepadButton,
+    },
 }
 
 #[pymethods]

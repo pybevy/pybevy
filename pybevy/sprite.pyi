@@ -668,7 +668,7 @@ class Sprite(Component):
             ```python
             # Load and display an image
             def setup(commands: Commands, assets: Res[AssetServer]):
-                image = assets.load("character.png")
+                image = assets.load_image("character.png")
                 commands.spawn((
                     Sprite.from_image(image),
                     Transform.from_xyz(0.0, 0.0, 0.0),
@@ -694,7 +694,7 @@ class Sprite(Component):
             ```python
             # Display one frame from a sprite sheet
             def setup(commands: Commands, assets: Res[AssetServer]):
-                image = assets.load("sprites.png")
+                image = assets.load_image("sprites.png")
                 atlas = TextureAtlas(index=0, layout=layout_handle)
                 commands.spawn((
                     Sprite.from_atlas_image(image, atlas),
