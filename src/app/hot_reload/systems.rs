@@ -14,7 +14,7 @@ use pybevy_reload::{
 use pyo3::prelude::*;
 
 use super::{
-    runtime_pyo3::Pyo3ReloadRuntime,
+    runtime_pyo3::{ModuleReloadTransaction, Pyo3ReloadRuntime},
     state::{HotReloadResource, HotReloadState},
 };
 
@@ -91,8 +91,20 @@ fn run_definition_reload_attempt(
     error_state: std::sync::Arc<std::sync::Mutex<Vec<PyErr>>>,
     hot_reload_state: HotReloadState,
 ) {
+    let transaction = match ModuleReloadTransaction::new() {
+        Ok(transaction) => transaction,
+        Err(error) => {
+            publish_reload_diagnostic(world, error.to_string(), None);
+            return;
+        }
+    };
     let mut runtime = Pyo3ReloadRuntime::new(loader_func, error_state);
-    if let Err(error) = perform_reload(world, &mut runtime, mode, &hot_reload_state) {
+    let result = perform_reload(world, &mut runtime, mode, &hot_reload_state);
+    if let Err(error) = transaction.finish(result.is_ok()) {
+        publish_reload_diagnostic(world, error.to_string(), None);
+        return;
+    }
+    if let Err(error) = result {
         let traceback = error.traceback.clone();
         publish_reload_diagnostic(world, error.message, traceback);
     }

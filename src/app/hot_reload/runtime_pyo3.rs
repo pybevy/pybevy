@@ -257,6 +257,42 @@ fn add_systems_to_schedule(
     }
 }
 
+pub(crate) struct ModuleReloadTransaction(Option<Py<PyAny>>);
+
+impl ModuleReloadTransaction {
+    pub(crate) fn new() -> PyResult<Self> {
+        Python::attach(|py| {
+            let transaction = py
+                .import("pybevy._internal.reload_modules")?
+                .getattr("ModuleReloadTransaction")?
+                .call0()?;
+            Ok(Self(Some(transaction.unbind())))
+        })
+    }
+
+    pub(crate) fn finish(mut self, success: bool) -> PyResult<()> {
+        if let Some(transaction) = self.0.take() {
+            Python::attach(|py| {
+                transaction.bind(py).call_method1("finish", (success,))?;
+                Ok::<(), PyErr>(())
+            })?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for ModuleReloadTransaction {
+    fn drop(&mut self) {
+        if let Some(transaction) = self.0.take() {
+            Python::attach(|py| {
+                if let Err(error) = transaction.bind(py).call_method1("finish", (false,)) {
+                    eprintln!("Could not restore reload module registrations: {error}");
+                }
+            });
+        }
+    }
+}
+
 pub(crate) struct Pyo3ReloadRuntime {
     pub loader_func: Py<PyAny>,
     pub error_state: Arc<Mutex<Vec<PyErr>>>,
