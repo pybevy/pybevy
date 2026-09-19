@@ -397,7 +397,7 @@ class Image(Asset):
             >>> # Create render target for headless rendering
             >>> image = Image.new_render_target(width=800, height=600)
             >>> handle = images.add(image)
-            >>> commands.spawn((Camera3d(), Camera(), RenderTarget.Image(ImageRenderTarget(handle))))
+            >>> commands.spawn(Camera3d(), Camera(), RenderTarget.Image(ImageRenderTarget(handle=handle)))
         """
 
     @staticmethod

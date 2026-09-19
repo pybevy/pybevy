@@ -472,7 +472,7 @@ class GltfAssetLabel:
 
             The processed StandardMaterial lives under the "/std" suffix; load it
             with an explicit label, e.g.
-            ``AssetPath(path, label=f"{GltfAssetLabel.Material(0, False)}/std")``.
+            ``AssetPath(path=path, label=f"{GltfAssetLabel.Material(index=0, is_scale_inverted=False)}/std")``.
             """
 
     class DefaultMaterial(GltfAssetLabel):
