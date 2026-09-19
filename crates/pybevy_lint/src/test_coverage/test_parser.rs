@@ -44,6 +44,9 @@ impl<'a> ImportBindings<'a> {
     }
 
     fn resolve_expression(&self, node: Node<'_>, source: &[u8]) -> Option<ApiPath> {
+        if node.kind() == "subscript" {
+            return self.resolve_expression(node.child_by_field_name("value")?, source);
+        }
         if node.kind() == "identifier" {
             return node
                 .utf8_text(source)
@@ -53,6 +56,18 @@ impl<'a> ImportBindings<'a> {
         }
         if node.kind() != "attribute" {
             return None;
+        }
+        if let Some(owner) = node
+            .child_by_field_name("object")
+            .and_then(|object| self.resolve_expression(object, source))
+        {
+            let name = node
+                .child_by_field_name("attribute")?
+                .utf8_text(source)
+                .ok()?;
+            if let Some(path) = self.catalog.class_path(&format!("{owner}.{name}")) {
+                return Some(path);
+            }
         }
 
         let expression = node.utf8_text(source).ok()?;
@@ -873,7 +888,12 @@ fn process_assignment(
     if left.kind() == "identifier" {
         let variable = left.utf8_text(source).unwrap_or_default();
         if !variable.is_empty() {
-            if let Some(class_path) = resolve_value_type(right, source, imports, var_types) {
+            if let Some(class_path) =
+                resolve_value_type(right, source, imports, var_types).or_else(|| {
+                    let annotation = node.child_by_field_name("type")?.utf8_text(source).ok()?;
+                    imports.get(annotation.trim()).cloned()
+                })
+            {
                 var_types
                     .entry(variable.to_string())
                     .or_default()
@@ -1122,6 +1142,11 @@ fn process_call_expression(
     };
 
     match func.kind() {
+        "subscript" => {
+            if let Some(class_name) = imports.resolve_expression(func, source) {
+                record_member_node(usage, &class_name, MemberRef::Constructor, file_path, node);
+            }
+        }
         "identifier" => {
             // Direct call: `ClassName(...)` -> constructor
             let name = func.utf8_text(source).unwrap_or("");
@@ -1148,6 +1173,17 @@ fn process_call_expression(
             }
         }
         "attribute" => {
+            if let Some(object) = func.child_by_field_name("object") {
+                process_expression(
+                    object,
+                    source,
+                    file_path,
+                    imports,
+                    has_wildcard,
+                    var_types,
+                    usage,
+                );
+            }
             if let Some((path, _kind)) = imports.resolve_symbol_expression(func, source) {
                 record_symbol_node(usage, &path, SymbolUseKind::Call, file_path, node);
             } else if let Some(class_path) = imports.resolve_expression(func, source) {
@@ -1158,23 +1194,24 @@ fn process_call_expression(
             ) {
                 let method_name = attr.utf8_text(source).unwrap_or("").to_string();
                 if let Some(class_name) = imports.resolve_expression(object, source) {
-                    record_member_node(
-                        usage,
-                        &class_name,
-                        MemberRef::StaticMethod(method_name),
-                        file_path,
-                        node,
-                    );
+                    let member = if imports
+                        .catalog
+                        .is_variant_constructor(&class_name, &method_name)
+                    {
+                        MemberRef::EnumVariant(method_name)
+                    } else {
+                        MemberRef::StaticMethod(method_name)
+                    };
+                    record_member_node(usage, &class_name, member, file_path, node);
                 } else if let Some(class_name) =
                     resolve_object_type(object, source, imports, has_wildcard, var_types)
                 {
-                    record_member_node(
-                        usage,
-                        &class_name,
-                        MemberRef::Method(method_name),
-                        file_path,
-                        node,
-                    );
+                    let member = MemberRef::Method(method_name);
+                    let owner = imports
+                        .catalog
+                        .member_owner(&class_name, &member)
+                        .unwrap_or(class_name);
+                    record_member_node(usage, &owner, member, file_path, node);
                 } else if imports.is_pybevy_qualified(object, source)
                     && !imports.is_source_only_expression(object, source)
                     && object
@@ -1559,7 +1596,11 @@ fn resolve_call_result_type(
                 .utf8_text(source)
                 .ok()?;
             if let Some(owner) = imports.resolve_expression(object, source) {
-                imports.catalog.resolve_method_return(&owner, method, true)
+                if imports.catalog.is_variant_constructor(&owner, method) {
+                    Some(owner)
+                } else {
+                    imports.catalog.resolve_method_return(&owner, method, true)
+                }
             } else {
                 let owner = resolve_object_type(object, source, imports, false, var_types)?;
                 imports.catalog.resolve_method_return(&owner, method, false)
@@ -1639,9 +1680,10 @@ fn process_function_params(
             let inner = extract_bracket_content(&type_text);
             if let Some(inner) = inner {
                 let class = strip_wrapper(&inner);
+                let class = class.split('[').next().unwrap_or(&class).trim();
                 if !class.is_empty()
-                    && !is_type_wrapper(&class)
-                    && let Some(resolved) = imports.get(&class).cloned()
+                    && !is_type_wrapper(class)
+                    && let Some(resolved) = imports.get(class).cloned()
                 {
                     var_types
                         .entry(param_name.to_string())
@@ -1665,9 +1707,12 @@ fn process_function_params(
                         .extend(types);
                 }
             }
-        } else if !type_text.contains('[') && !is_type_wrapper(&type_text) {
+        } else if !is_type_wrapper(type_text.split('[').next().unwrap_or(&type_text)) {
             // Bare type annotation: `commands: Commands`, `time: Time`
-            if let Some(resolved) = imports.get(&type_text).cloned() {
+            if let Some(resolved) = imports
+                .get(type_text.split('[').next().unwrap_or(&type_text))
+                .cloned()
+            {
                 var_types
                     .entry(param_name.to_string())
                     .or_default()

@@ -140,6 +140,15 @@ pub fn generate_field_mappings_with_provenance(
         if bridge.storage_kind != BridgeStorageKind::Component {
             continue;
         }
+        if class.python_name.starts_with('_') {
+            uncovered_types.insert(class.python_name.clone());
+            uncovered_type_reasons.insert(
+                class.python_name.clone(),
+                "private component adapter is not discoverable as a module-exported wrapper"
+                    .to_owned(),
+            );
+            continue;
+        }
         if bridge.no_reflect {
             uncovered_types.insert(class.python_name.clone());
             uncovered_type_reasons.insert(

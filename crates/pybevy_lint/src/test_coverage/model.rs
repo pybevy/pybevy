@@ -224,6 +224,35 @@ impl ApiCatalog {
         }
     }
 
+    pub fn is_variant_constructor(&self, owner: &ApiPath, name: &str) -> bool {
+        self.classes.get(owner).is_some_and(|class| {
+            class
+                .enum_variants
+                .iter()
+                .any(|variant| variant.name == name && variant.constructor.is_some())
+        })
+    }
+
+    pub fn member_owner(&self, path: &ApiPath, member: &MemberRef) -> Option<ApiPath> {
+        let mut current = path.clone();
+        let mut visited = HashSet::new();
+        while visited.insert(current.clone()) {
+            if self.has_member(&current, member) {
+                return Some(current);
+            }
+            if matches!(member, MemberRef::Constructor) {
+                return None;
+            }
+            let class = self.classes.get(&current)?;
+            let base = class.extends.as_deref()?.split('[').next()?.trim();
+            let module = class.module_path.as_deref()?;
+            current = self
+                .class_path(base)
+                .or_else(|| self.class_path(ApiPath::new(module, base).as_str()))?;
+        }
+        None
+    }
+
     pub fn len(&self) -> usize {
         self.classes.len()
     }

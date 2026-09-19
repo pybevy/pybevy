@@ -43,6 +43,9 @@ reflection_unavailable_types = [
 
 # Module placement overrides: types intentionally in a different PyBevy module
 # Format: "bevy_module::Type" = "pybevy_module"
+[bevy.mapping_overrides.VisibleMeshEntities.entities]
+exclude_reason = "Bevy marks the field #[reflect(ignore)], so reflection cannot observe it"
+
 [bevy.module_placement_overrides]
 # Base classes in pybevy_core, exported from pybevy.ecs at Python level
 "ecs::ChildOf" = "core"
@@ -229,7 +232,6 @@ types = [
     "ui::ValArithmeticError",
     "ui::ValParseError",
     "ui::ComputedUiRenderTargetInfo",
-    "ui::UiGlobalTransform",
     "ui::Checkable",
     "ui::GridPlacementError",
     "ui::ImageNodeSize",
@@ -286,7 +288,6 @@ types = [
     "mesh::IcosphereError",
     "mesh::MeshMergeError",
     "mesh::MeshTrianglesError",
-    "mesh::MeshVertexAttributeId",
     "mesh::MeshVertexBufferLayout",
     "mesh::MeshVertexBufferLayoutRef",
     "mesh::MeshVertexBufferLayouts",
@@ -1692,6 +1693,8 @@ reason = "Bevy 0.19.1 bevy_audio::SpatialListener::new defines the gap prefix fo
 "pybevy.world_serialization.PyWorldAssetRoot" = "Bevy 0.19.1 bevy_world_serialization::WorldAssetRoot is a tuple struct/newtype; Python construction preserves its positional payload contract"
 
 [bevy.constructor_adapters]
+"pybevy.winit.PyWinitPlugin" = "The settings input inserts the separate WinitSettings resource before building Bevy's default WinitPlugin"
+"pybevy.render.PyRenderPlugin" = "The constructor maps power_preference into nested WgpuSettings and accepts an optional synchronous pipeline compilation override"
 "pybevy.math.PyDir2" = "PyBevy flattens the Vec2 accepted by Bevy Dir2::new into x and y inputs"
 "pybevy.math.PyDir3" = "PyBevy flattens the Vec3 accepted by Bevy Dir3::new into x, y, and z inputs"
 "pybevy.math.PyMat3" = "PyBevy flattens the array accepted by glam Mat3::from_cols_array into nine matrix entries"
@@ -2066,8 +2069,8 @@ intentional_signature_diffs = [
     { name = "aspect_ratio", expected_return = "f32" },
     { name = "convert", expected_return = "Option<Py<PyImage>>" },
     { name = "pixel_bytes_mut", expected_return = "ImagePixelContextMut" },
-    { name = "reinterpret_size", expected_params = { "size" = "PyUVec2" } },
-    { name = "resize_in_place", expected_params = { "size" = "PyUVec2" } },
+    { name = "reinterpret_size", expected_params = { "size" = "PyExtent3d" } },
+    { name = "resize_in_place", expected_params = { "size" = "PyExtent3d" } },
 ]
 notes = """
 - _content_hash: Internal PyBevy snapshot/regression hook with a versioned canonical format
@@ -2086,10 +2089,6 @@ notes = "Shadow cascade properties computed by engine"
 intentional_readonly_properties = ["cascades"]
 ignore_constructor_warnings = true
 notes = "Engine-managed component - cascade data computed by Bevy's shadow system, not user-constructable"
-
-[bevy.type_ignores.MainPassResolutionOverride]
-intentional_readonly_properties = ["resolution"]
-notes = "Resolution override is engine-managed"
 
 [bevy.type_ignores.CameraMainTextureUsages]
 intentional_missing_methods = ["to_dynamic"]
@@ -2141,15 +2140,16 @@ notes = "Python accessor for Deref<Target=String> - Bevy uses *self to access in
 # Mesh: context wrappers for safe attribute access
 [bevy.type_ignores.Mesh]
 intentional_extra_methods = ["_content_hash"]
-intentional_readonly_properties = ["asset_usage", "enable_raytracing"]
+intentional_readonly_properties = ["enable_raytracing"]
 intentional_signature_diffs = [
-    { name = "attribute", expected_return = "MeshAttributeContext" },
-    { name = "attribute_mut", expected_return = "MeshAttributeContextMut" },
+    { name = "attribute", expected_return = "PyResult<Py<PyArray>>" },
+    { name = "attribute_mut", expected_return = "PyResult<Py<MeshBoundedContextMut>>" },
 ]
 notes = """
 - _content_hash: Internal PyBevy snapshot/regression hook with a versioned canonical format
-- attribute/attribute_mut: Return context wrappers for safe borrowed access
-- asset_usage/enable_raytracing: Read-only properties set at creation"""
+- attribute: Returns a read-only bounded array
+- attribute_mut: Returns a mutable bounded-array context
+- enable_raytracing: Read-only property set at creation"""
 
 # Mesh2d/Mesh3d: handle wrappers (same pattern as WorldAssetRoot)
 [bevy.type_ignores.Mesh2d]
@@ -2206,23 +2206,18 @@ notes = "Shader define name is fixed"
 
 # Texture/Image loader - configuration types
 [bevy.type_ignores.TextureAtlasLayout]
-intentional_readonly_properties = ["size", "textures"]
+intentional_readonly_properties = ["textures"]
 intentional_signature_diffs = [
     { name = "new_empty", expected_params = { "size" = "PyUVec2" } },
 ]
-notes = "Atlas layout is computed/fixed at creation. new_empty param renamed dimensions → size"
-
-[bevy.type_ignores.ImageSampler]
-intentional_readonly_properties = ["descriptor"]
-notes = "Sampler descriptor is configuration"
+notes = "textures is read-only; add_texture extends the atlas. new_empty param renamed dimensions to size"
 
 [bevy.type_ignores.ImageLoaderSettings]
-intentional_readonly_properties = ["format", "is_srgb", "sampler", "asset_usage"]
-notes = "Loader settings are configuration"
+intentional_readonly_properties = ["format"]
+notes = "format is selected through with_format; other settings remain writable"
 
 # Render asset usages - bitflags
 [bevy.type_ignores.RenderAssetUsages]
-intentional_readonly_properties = ["main_world", "render_world"]
 intentional_signature_diffs = ["contains", "insert", "remove", "toggle"]
 notes = "Bitflags use Python wrapper values for Bevy's Self parameters and expose constants plus native mutation methods"
 
@@ -2244,50 +2239,14 @@ notes = """
 - run() returns PyResult<()> (Python exception model)
 - configure_sets: leading underscore params (unused in current impl)"""
 
-# AppExit: extra code param for Python convenience
-[bevy.type_ignores.AppExit]
-intentional_signature_diffs = [
-    { name = "error", expected_params = { "code" = "u8" } },
-]
-notes = "error() takes explicit code param (Bevy uses AppExit::Error with default code)"
-
 # ComputedNode - computed layout values (outlined_node_size is a method, not a field)
 [bevy.type_ignores.ComputedNode]
 intentional_readonly_properties = ["outlined_node_size"]
 notes = "outlined_node_size is a computed method, not a stored field"
 
-# Remaining read-only primitive properties
-# These primitives have some properties that are intentionally read-only:
-# - Properties that return composite objects (Circle, Arc2d)
-# - Properties that require normalization invariants (direction, normal)
-# - Properties from frozen primitives not yet converted to mutable
-
-# Returns Circle object - would need special setter handling
-[bevy.type_ignores.Annulus]
-intentional_readonly_properties = ["inner_circle", "outer_circle"]
-notes = "Returns Circle objects - use constructor to change"
-
 [bevy.type_ignores.RegularPolygon]
 intentional_readonly_properties = ["circumcircle"]
 notes = "Returns Circle object - use constructor to change"
-
-# Returns Arc2d object
-[bevy.type_ignores.CircularSector]
-intentional_readonly_properties = ["arc"]
-notes = "Returns Arc2d object - use constructor to change"
-
-[bevy.type_ignores.CircularSegment]
-intentional_readonly_properties = ["arc"]
-notes = "Returns Arc2d object - use constructor to change"
-
-# Normalized direction types - setters would break invariants
-[bevy.type_ignores.Line2d]
-intentional_readonly_properties = ["direction"]
-notes = "Direction is normalized Dir2 - use constructor to change"
-
-[bevy.type_ignores.Plane2d]
-intentional_readonly_properties = ["normal"]
-notes = "Normal is normalized Dir2 - use constructor to change"
 
 # Transform: PyBevy-specific numpy integration
 [bevy.type_ignores.Transform]
@@ -2523,14 +2482,22 @@ intentional_signature_diffs = [
 notes = "hex() takes &str in Python - correct specialization of Bevy's generic T: AsRef<[u8]>"
 
 
-# AssetServer: Python needs explicit asset_type param where Rust uses generics
+# Asset loading specializes Rust generics with keyword-only Python asset classes.
 [bevy.type_ignores.AssetServer]
+intentional_extra_methods = ["load_image", "load_audio"]
 intentional_signature_diffs = [
     { name = "get_handle", expected_params = { "asset_type" = "PyType" } },
     { name = "load", expected_params = { "asset_type" = "PyType" } },
     { name = "load_with_settings", expected_params = { "asset_type" = "PyType" } },
 ]
-notes = "Python needs explicit asset_type param where Rust uses generics <A: Asset>"
+notes = "load requires keyword-only asset_type for Handle[A]; load_image/load_audio are permanent typed Python conveniences. Deprecated load_with_settings derives its type from native settings and accepts only a matching keyword override"
+
+[bevy.type_ignores.LoadBuilder]
+intentional_signature_diffs = [
+    { name = "load", expected_params = { "asset_type" = "PyType" } },
+    { name = "with_settings", expected_params = { "settings" = "PyAny" } },
+]
+notes = "with_settings snapshots ImageLoaderSettings or GltfLoaderSettings instead of accepting a Rust closure; settings establish the load type. Python builders are immutable, reusable and bound to the originating AssetServer scope"
 
 
 # World: Python API differences (explicit type params, wrapper returns)
@@ -2858,6 +2825,60 @@ excluded_classes = [
 excluded_patterns = ["*MeshBuilder", "*ViewColumn"]
 
 [[validation.exceptions]]
+code = "E002"
+path = "array.Array"
+message = "method 'Array::__matmul__' not found in Python stub"
+reason = "Deliberate TypeError-only rejection hook; declaring it would advertise unsupported matrix multiplication"
+
+[[validation.exceptions]]
+code = "E002"
+path = "array.Array"
+message = "method 'Array::__rmatmul__' not found in Python stub"
+reason = "Deliberate reflected TypeError-only rejection hook; declaring it would advertise unsupported matrix multiplication"
+
+[[validation.exceptions]]
+code = "E008"
+path = "ecs.NextState"
+message = "class 'NextState' has constructor in Rust but not in Python stub"
+reason = "Direct construction deliberately raises; NextState is injected as a typed resource"
+
+[[validation.exceptions]]
+code = "E008"
+path = "ecs.MessageWriter"
+message = "class 'MessageWriter' has constructor in Rust but not in Python stub"
+reason = "Direct construction deliberately raises; the scheduler injects the system parameter"
+
+[[validation.exceptions]]
+code = "E008"
+path = "ecs.MessageReader"
+message = "class 'MessageReader' has constructor in Rust but not in Python stub"
+reason = "Direct construction deliberately raises; the scheduler injects the system parameter"
+
+[[validation.exceptions]]
+code = "E008"
+path = "ecs.MessageMutator"
+message = "class 'MessageMutator' has constructor in Rust but not in Python stub"
+reason = "Direct construction deliberately raises; the scheduler injects the system parameter"
+
+[[validation.exceptions]]
+code = "E001"
+path = "ecs.In"
+message = "class 'In' (Rust: PyIn) not found in Python stubs"
+reason = "Subscription marker represented by the public In[T] = T typing alias"
+
+[[validation.exceptions]]
+code = "E001"
+path = "ecs.InParam"
+message = "class 'InParam' (Rust: PyInParam) not found in Python stubs"
+reason = "Internal descriptor returned by In[T], not a public constructible class"
+
+[[validation.exceptions]]
+code = "E001"
+path = "core.LogicalComponentParam"
+message = "class 'LogicalComponentParam' (Rust: PyLogicalComponentParam) not found in Python stubs"
+reason = "Internal callable specialization descriptor behind typed component aliases, not a public module export"
+
+[[validation.exceptions]]
 code = "E001"
 path = "render.ImageCopyPlugin"
 reason = "internal render-readback plugin used by decorators, not part of the public stub namespace"
@@ -2931,11 +2952,6 @@ reason = "data returns private ShaderBufferDataContext implementing AbstractCont
 code = "E006"
 path = "render.ShaderBuffer"
 reason = "data_mut returns private ShaderBufferDataContext implementing AbstractContextManager[Array]; public runtime tests cover writeback, close, and expiry"
-
-[[validation.exceptions]]
-code = "W006"
-path = "render.ShaderBuffer"
-reason = "data returns a live read-only Array through prepare_read_view and AssetBorrowAnchor; the parser does not recognize this read-lease helper, and runtime tests cover alias conflicts and expiry"
 
 [[validation.exceptions]]
 code = "E006"
@@ -3062,6 +3078,36 @@ reason = "Python-state resource adapter storing a validated Python enum member b
 code = "E013"
 path = "ecs.SystemConfig"
 reason = "pybevy-ecs SystemConfig; no upstream Bevy declaration for this constructor"
+
+[[validation.exceptions]]
+code = "E013"
+path = "app.HotReloadPlugin"
+reason = "PyBevy's Python module reload plugin has no upstream Bevy constructor"
+
+[[validation.exceptions]]
+code = "E013"
+path = "app.ChainedSystems"
+reason = "Python callable sequence adapter for chained scheduling, not a constructible Bevy type"
+
+[[validation.exceptions]]
+code = "E013"
+path = "ecs.SystemSet"
+reason = "Python named scheduling-set adapter; Bevy SystemSet is a trait rather than a matching constructor"
+
+[[validation.exceptions]]
+code = "E013"
+path = "render.ImageCopyPlugin"
+reason = "PyBevy's screenshot readback plugin is implemented locally, not in upstream Bevy"
+
+[[validation.exceptions]]
+code = "E013"
+path = "pbr.ShaderMaterialPlugin"
+reason = "PyBevy's dynamic shader material plugin combines MaterialPlugin<ShaderMaterial> with local handle synchronization"
+
+[[validation.exceptions]]
+code = "E013"
+path = "control.McpPlugin"
+reason = "PyBevy MCP server configuration has no upstream Bevy constructor"
 
 [[validation.exceptions]]
 code = "E013"

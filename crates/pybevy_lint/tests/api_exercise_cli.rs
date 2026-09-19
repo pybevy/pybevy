@@ -51,6 +51,82 @@ fn run_linter(root: &Path, mode: &str) -> std::process::Output {
 }
 
 #[test]
+fn nested_inherited_and_generic_calls_preserve_operation_evidence() {
+    let root = TempDirectory::new();
+    fs::create_dir(root.join("pybevy")).unwrap();
+    fs::create_dir(root.join("tests")).unwrap();
+    fs::write(
+        root.join("pybevy/sample.pyi"),
+        r#"
+class State:
+    def ready(self) -> bool: ...
+    def overridden(self) -> bool: ...
+    class Loaded(State):
+        def __init__(self) -> None: ...
+class Child(State):
+    def __init__(self) -> None: ...
+    def overridden(self) -> bool: ...
+class Buttons:
+    def __init__(self) -> None: ...
+    def pressed(self) -> bool: ...
+    def released(self) -> bool: ...
+class Other:
+    def ready(self) -> bool: ...
+"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("tests/test_sample.py"),
+        r#"
+from pybevy.sample import State, Buttons, Child
+
+def test_state():
+    state = State.Loaded()
+    assert state.ready()
+    assert Child().overridden()
+
+def check_resource(buttons: Res[Buttons[int]]):
+    assert buttons.released()
+
+def test_generic():
+    buttons = Buttons[int]()
+    assert buttons.pressed()
+"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("exceptions.json"),
+        r#"{"schema_version": 2, "exceptions": []}"#,
+    )
+    .unwrap();
+    let output = run_linter(&root.0, "--update-baseline");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let baseline: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(root.join("baseline.json")).unwrap()).unwrap();
+    for (path, expected) in [
+        ("pybevy.sample.State.ready", "exercised"),
+        ("pybevy.sample.State.overridden", "debt"),
+        ("pybevy.sample.Child.overridden", "exercised"),
+        ("pybevy.sample.Buttons", "exercised"),
+        ("pybevy.sample.Buttons.pressed", "exercised"),
+        ("pybevy.sample.Buttons.released", "exercised"),
+        ("pybevy.sample.Other.ready", "debt"),
+    ] {
+        let operations = baseline["operations"].as_array().unwrap();
+        let operation = operations
+            .iter()
+            .find(|op| op["path"] == path)
+            .unwrap_or_else(|| panic!("missing {path}: {baseline}"));
+        assert_eq!(operation["status"], expected, "{path}");
+    }
+    assert!(run_linter(&root.0, "--check-baseline").status.success());
+}
+
+#[test]
 fn check_mode_exits_nonzero_when_evidence_is_removed() {
     let root = TempDirectory::new();
     fs::create_dir(root.join("pybevy")).unwrap();

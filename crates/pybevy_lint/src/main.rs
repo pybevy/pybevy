@@ -1090,6 +1090,7 @@ fn run_compare(
     }
 
     let enum_mismatch = result.report.enum_representation_mismatches > 0
+        || result.report.unverified_variants > 0
         || result.report.missing_variants > 0
         || result.report.mismatched_variants > 0
         || result.report.extra_variants > 0;
@@ -1700,6 +1701,7 @@ fn run_audit(
         .cloned()
         .collect();
     let excluded_patterns: Vec<String> = config.bevy.excluded_types.patterns.clone();
+    let mut has_warnings = false;
 
     if args.verbose {
         eprintln!(
@@ -1722,7 +1724,11 @@ fn run_audit(
     println!();
 
     if !excluded_types.is_empty() {
-        let usage = check_type_usage_in_examples(&examples_dir, &excluded_types)?;
+        let type_names: Vec<String> = excluded_types
+            .iter()
+            .map(|name| name.rsplit("::").next().unwrap_or(name).to_owned())
+            .collect();
+        let usage = check_type_usage_in_examples(&examples_dir, &type_names)?;
 
         let mut found: Vec<_> = usage
             .into_iter()
@@ -1733,11 +1739,13 @@ fn run_audit(
         if found.is_empty() {
             println!("{}", "Excluded Types".bold());
             println!(
-                "  {} All {} excluded types have zero usage in examples ✓",
+                "  {} None of {} excluded types meet the minimum usage of {}",
                 "OK:".green().bold(),
-                excluded_types.len()
+                excluded_types.len(),
+                min_usage
             );
         } else {
+            has_warnings = true;
             println!(
                 "{} {} excluded types found in examples:",
                 "WARNING:".yellow().bold(),
@@ -1796,6 +1804,7 @@ fn run_audit(
                 found.sort_by_key(|entry| Reverse(entry.1));
 
                 if !found.is_empty() {
+                    has_warnings = true;
                     println!();
                     println!(
                         "  {} {} excluded methods found in examples:",
@@ -1831,7 +1840,7 @@ fn run_audit(
     }
     println!();
 
-    Ok(false)
+    Ok(args.deny_warnings && has_warnings)
 }
 
 fn print_coverage_table(
@@ -1991,14 +2000,19 @@ fn print_coverage_table(
             (format!("{:>14}", "-"), format!("{:>6}", "-".dimmed()))
         };
 
+        let unverified = report.crates[name].implemented_totals().unverified_variants;
         // Build issues string - compact format showing all issue types
         let has_issues = *sig_mismatches > 0
+            || unverified > 0
             || *missing_fields > 0
             || *missing_variants > 0
             || *extra_variants > 0
             || *extra_methods > 0;
         let issues_str = if has_issues {
             let mut parts = Vec::new();
+            if unverified > 0 {
+                parts.push(format!("{unverified}var?"));
+            }
             if *sig_mismatches > 0 {
                 parts.push(format!("{}sig", sig_mismatches));
             }
@@ -2060,13 +2074,21 @@ fn print_coverage_table(
     let total_missing_variants: usize = rows.iter().map(|r| r.9).sum();
     let total_extra_variants: usize = rows.iter().map(|r| r.10).sum();
     let total_extra_methods: usize = rows.iter().map(|r| r.11).sum();
+    let total_unverified: usize = rows
+        .iter()
+        .map(|r| report.crates[&r.0].implemented_totals().unverified_variants)
+        .sum();
     let has_total_issues = total_sig_mismatches > 0
+        || total_unverified > 0
         || total_missing_fields > 0
         || total_missing_variants > 0
         || total_extra_variants > 0
         || total_extra_methods > 0;
     let total_issues_str = if has_total_issues {
         let mut parts = Vec::new();
+        if total_unverified > 0 {
+            parts.push(format!("{total_unverified}var?"));
+        }
         if total_sig_mismatches > 0 {
             parts.push(format!("{}sig", total_sig_mismatches));
         }
@@ -2134,6 +2156,12 @@ fn print_coverage_table(
             println!(
                 "            {} missing variants in PyBevy",
                 report.missing_variants
+            );
+        }
+        if report.unverified_variants > 0 {
+            println!(
+                "            {} unverified variants in handwritten adapters (var?)",
+                report.unverified_variants
             );
         }
         if report.mismatched_variants > 0 {
@@ -2207,10 +2235,14 @@ fn print_coverage_text_with_usage(
         let variant_info = if report.extra_variants > 0
             || report.missing_variants > 0
             || report.mismatched_variants > 0
+            || report.unverified_variants > 0
         {
             format!(
-                " (+{} extra, -{} missing, ~{} mismatched)",
-                report.extra_variants, report.missing_variants, report.mismatched_variants
+                " (+{} extra, -{} missing, ~{} mismatched, {} unverified)",
+                report.extra_variants,
+                report.missing_variants,
+                report.mismatched_variants,
+                report.unverified_variants
             )
         } else {
             String::new()
@@ -2326,7 +2358,12 @@ fn print_coverage_text_with_usage(
                 String::new()
             };
 
-            let variant_info = if type_cov.is_implemented && type_cov.bevy_variant_count > 0 {
+            let variant_info = if type_cov.unverified_variant_count > 0 {
+                format!(
+                    " [{} unverified variants: handwritten adapter]",
+                    type_cov.unverified_variant_count
+                )
+            } else if type_cov.is_implemented && type_cov.bevy_variant_count > 0 {
                 let extra_suffix = if type_cov.extra_variant_count > 0 {
                     format!(" +{} extra", type_cov.extra_variant_count)
                 } else {
@@ -2776,6 +2813,12 @@ fn print_coverage_markdown(
     println!();
 
     println!("## Per-Crate Coverage\n");
+    if report.unverified_variants > 0 {
+        println!(
+            "{} enum variants are unverified in handwritten adapters.\n",
+            report.unverified_variants
+        );
+    }
 
     let mut crates: Vec<_> = report.crates.iter().collect();
     crates.sort_by(|a, b| a.0.cmp(b.0));
@@ -2798,7 +2841,9 @@ fn print_coverage_markdown(
             }
 
             let status = if type_cov.is_implemented {
-                if type_cov.bevy_method_count > 0 && type_cov.matched_method_count == 0 {
+                if type_cov.unverified_variant_count > 0 {
+                    "⚠ Variants unverified"
+                } else if type_cov.bevy_method_count > 0 && type_cov.matched_method_count == 0 {
                     "🔶 Partial" // Type exists but no methods
                 } else {
                     "✅ Implemented"
@@ -2900,6 +2945,10 @@ fn print_coverage_json(report: &pybevy_lint::CoverageReport) {
     );
     println!("    \"matched_variants\": {},", report.matched_variants);
     println!("    \"missing_variants\": {},", report.missing_variants);
+    println!(
+        "    \"unverified_variants\": {},",
+        report.unverified_variants
+    );
     println!(
         "    \"mismatched_variants\": {},",
         report.mismatched_variants

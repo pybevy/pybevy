@@ -98,6 +98,9 @@ fn parse_signature_kinds_and_defaults(
         }
 
         let segment_trimmed = segment.trim();
+        let segment_trimmed = segment_trimmed
+            .strip_prefix("r#")
+            .unwrap_or(segment_trimmed);
         if let Some(stripped) = segment_trimmed.strip_prefix("**") {
             let name = stripped.trim();
             if !name.is_empty() {

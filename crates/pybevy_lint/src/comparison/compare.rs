@@ -8,7 +8,7 @@ use super::report::{
 use crate::{
     bevy_parser::{BevyCrate, BevyItem, BevyItemKind, BevyMethod, SelfKind},
     config::{BevyConfig, SignatureDiffSpec},
-    model::{MethodDef, PropertyDef, PyClassDef, SelfMutability},
+    model::{MacroInfo, MethodDef, PropertyDef, PyClassDef, SelfMutability},
     python_parser::types::{resolve_self, types_compatible as stub_types_compatible},
     rust_parser::types::{normalize_rust_type, split_by_comma},
 };
@@ -119,6 +119,7 @@ pub fn compare_apis(
                 report.total_bevy_variants += type_cov.bevy_variant_count;
                 report.matched_variants += type_cov.matched_variant_count;
                 report.missing_variants += type_cov.missing_variants().len();
+                report.unverified_variants += type_cov.unverified_variant_count;
                 report.mismatched_variants += type_cov.mismatched_variants().len();
                 report.extra_variants += type_cov.extra_variant_count;
                 if type_cov.enum_representation_matches == Some(false) {
@@ -292,6 +293,7 @@ fn compare_crate(
                 matched_field_count: 0,
                 constructor_settable_field_count: 0,
                 bevy_variant_count: bevy_item.variants.len(),
+                unverified_variant_count: 0,
                 pybevy_variant_count: 0,
                 matched_variant_count: 0,
                 extra_variant_count: 0,
@@ -613,7 +615,7 @@ fn compare_type(
         fields: field_coverages,
         variants: variant_coverages,
         enum_representation_matches: (bevy_item.kind == BevyItemKind::Enum)
-            .then_some(pyclass.is_enum),
+            .then_some(pyclass.is_enum || is_manual_enum_adapter(pyclass)),
         constructor_warnings,
         extends_warnings,
         bevy_method_count,
@@ -629,6 +631,13 @@ fn compare_type(
         matched_field_count,
         constructor_settable_field_count,
         bevy_variant_count,
+        unverified_variant_count: if is_manual_enum_adapter(pyclass)
+            && !pyclass.manual_enum_verified
+        {
+            bevy_variant_count
+        } else {
+            0
+        },
         pybevy_variant_count,
         matched_variant_count,
         extra_variant_count,
@@ -1048,6 +1057,14 @@ fn check_extends_consistency(
     warnings
 }
 
+fn is_manual_enum_adapter(class: &PyClassDef) -> bool {
+    !class.is_enum
+        && matches!(
+            class.macro_info,
+            Some(MacroInfo::BevyEnum { manual: true, .. })
+        )
+}
+
 /// Compare enum variants between Bevy and PyBevy
 /// Returns (variant_coverages, bevy_count, pybevy_count, matched_count, extra_count)
 fn compare_variants(
@@ -1062,6 +1079,16 @@ fn compare_variants(
     // every Bevy variant is then reported missing instead of silently ignored.
     if bevy_item.kind != BevyItemKind::Enum {
         return (Vec::new(), 0, 0, 0, 0);
+    }
+    if is_manual_enum_adapter(pyclass) && !pyclass.manual_enum_verified {
+        let count = bevy_item
+            .variants
+            .iter()
+            .filter(|variant| {
+                !config.is_variant_intentionally_missing(&bevy_item.name, &variant.name)
+            })
+            .count();
+        return (Vec::new(), count, 0, 0, 0);
     }
 
     let mut coverages = Vec::new();
@@ -1821,7 +1848,7 @@ fn normalize_bevy_type(ty: &str) -> String {
             "int".to_string()
         }
         "bool" => "bool".to_string(),
-        "String" | "&str" | "str" => "str".to_string(),
+        "String" | "SmolStr" | "&str" | "str" => "str".to_string(),
         "()" => "None".to_string(),
         "Self" => "Self".to_string(),
         _ => {

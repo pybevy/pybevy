@@ -211,7 +211,7 @@ pub fn audit(
 
     // type_ignores is keyed by the Bevy name at one call site and the PyBevy
     // class name at another, so an entry is stale only when neither side has it.
-    for entry in config.bevy.type_ignores.keys() {
+    for (entry, ignores) in &config.bevy.type_ignores {
         let name = entry.rsplit("::").next().unwrap_or(entry);
         if source.mentioned_in(name).is_empty() && !py_any.contains(name) {
             diagnostics.push(stale(
@@ -219,6 +219,23 @@ pub fn audit(
                 "bevy.type_ignores",
                 "neither Bevy nor PyBevy mentions this type".to_owned(),
             ));
+        }
+        for property in &ignores.intentional_readonly_properties {
+            let writable = pybevy_classes.iter().any(|class| {
+                class.python_name == name
+                    && class
+                        .properties
+                        .iter()
+                        .any(|field| field.name == *property && field.has_setter)
+            });
+            if writable {
+                diagnostics.push(Diagnostic::error(
+                    DiagnosticCode::E012,
+                    format!(
+                        "bevy.type_ignores.{entry}.intentional_readonly_properties entry '{property}' targets a writable property"
+                    ),
+                ));
+            }
         }
     }
 

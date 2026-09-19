@@ -1,5 +1,6 @@
 mod conversions;
 mod macros;
+mod manual_enum;
 mod pyclass;
 mod pymethods;
 mod signature;
@@ -164,5 +165,6 @@ pub fn parse_file(path: &Path) -> Result<Vec<PyClassDef>> {
         }
     }
 
+    manual_enum::extract(&syntax, &mut classes);
     Ok(classes)
 }

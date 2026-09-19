@@ -126,6 +126,9 @@ pub struct SharedBorrowType {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ValidationException {
+    /// Optional exact diagnostic wording, to avoid suppressing unrelated members.
+    #[serde(default)]
+    pub message: Option<String>,
     /// Diagnostic code, such as `E001` or `E008`.
     pub code: String,
     /// Parser-origin path in `<module>.<Class>` form.

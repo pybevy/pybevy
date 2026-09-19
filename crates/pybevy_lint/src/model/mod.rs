@@ -55,7 +55,9 @@ pub struct PyClassDef {
     pub silent_fallbacks: Vec<SilentFallbackInfo>,
     /// Whether this is an enum (vs struct)
     pub is_enum: bool,
-    /// Enum variants (if is_enum)
+    /// Handwritten struct adapter topology was recovered from registrations.
+    pub manual_enum_verified: bool,
+    /// Enum variants, including verified handwritten adapters.
     pub enum_variants: Vec<EnumVariantDef>,
     /// Named Python variants explicitly mapped by declaration order to Bevy tuple variants.
     pub bevy_tuple_variants: HashSet<String>,

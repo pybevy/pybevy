@@ -34,6 +34,7 @@ pub struct CoverageReport {
     pub total_bevy_variants: usize,
     pub matched_variants: usize,
     pub missing_variants: usize,
+    pub unverified_variants: usize,
     pub mismatched_variants: usize,
     pub extra_variants: usize,
     /// Bevy enums represented as ordinary PyBevy classes instead of enum adapters.
@@ -71,6 +72,7 @@ pub struct ImplementedTotals {
     pub bevy_fields: usize,
     pub matched_variants: usize,
     pub bevy_variants: usize,
+    pub unverified_variants: usize,
     pub extra_variants: usize,
 }
 
@@ -80,7 +82,7 @@ impl ImplementedTotals {
     }
 
     pub fn missing_variants(&self) -> usize {
-        self.bevy_variants - self.matched_variants
+        self.bevy_variants - self.matched_variants - self.unverified_variants
     }
 
     pub fn method_percent(&self) -> f64 {
@@ -110,6 +112,7 @@ impl CrateCoverage {
                 totals.bevy_fields += type_coverage.bevy_field_count;
                 totals.matched_variants += type_coverage.matched_variant_count;
                 totals.bevy_variants += type_coverage.bevy_variant_count;
+                totals.unverified_variants += type_coverage.unverified_variant_count;
                 totals.extra_variants += type_coverage.extra_variant_count;
                 totals
             })
@@ -169,6 +172,8 @@ pub struct TypeCoverage {
 
     /// Variant statistics (for enums)
     pub bevy_variant_count: usize,
+    /// Variants whose handwritten adapter topology cannot be read statically.
+    pub unverified_variant_count: usize,
     pub pybevy_variant_count: usize,
     pub matched_variant_count: usize,
     pub extra_variant_count: usize,
