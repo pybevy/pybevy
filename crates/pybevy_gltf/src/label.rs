@@ -1,6 +1,8 @@
 use pybevy_core::PyAssetPath;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
+#[pyenum(bevy::gltf::GltfAssetLabel, manual)]
 #[pyclass(
     name = "GltfAssetLabel",
     module = "pybevy.gltf",

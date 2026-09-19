@@ -1,7 +1,9 @@
 use bevy::image::ImageFormatSetting;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 use crate::image_format::PyImageFormat;
+#[pyenum(ImageFormatSetting, manual)]
 #[pyclass(
     name = "ImageFormatSetting",
     module = "pybevy.image",

@@ -212,6 +212,8 @@ class Camera3d(Component):
 class RenderTarget(Component):
     """Specifies where a camera renders, matching Bevy's value-enum variants."""
 
+    def __hash__(self) -> int: ...
+
     class Window(RenderTarget):
         __match_args__: ClassVar[tuple[Literal["value"]]]
         value: WindowRef
@@ -1421,6 +1423,8 @@ class PerspectiveProjection:
 
 class Projection(Component):
     """Camera projection (perspective or orthographic)."""
+
+    def __hash__(self) -> int: ...
 
     class Perspective(Projection):
         __match_args__: ClassVar[tuple[Literal["value"]]]

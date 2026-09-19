@@ -1,7 +1,7 @@
 use bevy::{asset::Handle, image::Image, light::atmosphere::PhaseFunction};
-use pybevy_core::{PyHandle, extract_handle_from_any};
+use pybevy_core::{PyHandle, enum_comparison::reject_variant_type, extract_handle_from_any};
 use pybevy_macros::pyenum;
-use pyo3::{exceptions::PyTypeError, prelude::*};
+use pyo3::{exceptions::PyTypeError, prelude::*, pyclass::CompareOp};
 
 #[pyenum(PhaseFunction, manual)]
 #[pyclass(
@@ -22,6 +22,20 @@ impl From<PyPhaseFunction> for PhaseFunction {
 
 #[pymethods]
 impl PyPhaseFunction {
+    fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<Py<PyAny>> {
+        if matches!(op, CompareOp::Eq | CompareOp::Ne) {
+            reject_variant_type::<Self>(other)?;
+        }
+        Ok(other.py().NotImplemented())
+    }
+
+    fn __hash__(slf: &Bound<'_, Self>) -> PyResult<isize> {
+        slf.py()
+            .get_type::<PyAny>()
+            .call_method1("__hash__", (slf,))?
+            .extract()
+    }
+
     #[new]
     pub fn new() -> PyResult<Self> {
         Err(PyTypeError::new_err(

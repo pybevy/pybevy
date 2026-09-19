@@ -4,7 +4,7 @@ use bevy::{
         schedule::IntoScheduleConfigs,
         system::{Query, Res, ResMut},
     },
-    pbr::{BinUnpackingBindGroups, ViewKeyCache},
+    pbr::{BinUnpackingBindGroups, ViewKeyCache, ViewKeyPrepassCache},
     platform::collections::{HashMap, HashSet},
     render::{
         Render, RenderApp, RenderSystems,
@@ -29,9 +29,19 @@ impl Plugin for RenderCacheCleanupPlugin {
     }
 }
 
-fn prune_view_keys(views: Query<&ExtractedView>, keys: Option<ResMut<ViewKeyCache>>) {
+fn prune_view_keys(
+    views: Query<&ExtractedView>,
+    keys: Option<ResMut<ViewKeyCache>>,
+    prepass_keys: Option<ResMut<ViewKeyPrepassCache>>,
+) {
+    if keys.is_none() && prepass_keys.is_none() {
+        return;
+    }
+    let live: HashSet<_> = views.iter().map(|view| view.retained_view_entity).collect();
     if let Some(mut keys) = keys {
-        let live: HashSet<_> = views.iter().map(|view| view.retained_view_entity).collect();
+        keys.retain(|view, _| live.contains(view));
+    }
+    if let Some(mut keys) = prepass_keys {
         keys.retain(|view, _| live.contains(view));
     }
 }
