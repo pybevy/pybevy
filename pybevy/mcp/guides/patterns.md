@@ -67,7 +67,7 @@ if __name__ == "__main__":
 ```
 
 **Key rules:**
-- `@entrypoint` signature is `def main(app: App) -> App:` - not `def main():`
+- `@entrypoint` requires a synchronous `def main(app: App) -> App:` that returns the configured App.
 - End with `if __name__ == "__main__": main().run()` for direct `python scene.py` execution. The CLI and MCP loaders invoke the entrypoint themselves.
 - Register systems with `app.add_systems(Stage, fn)` - there is no `@app.system()` decorator
 - Multiple systems in one stage: `app.add_systems(Update, sys1, sys2, sys3)`

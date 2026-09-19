@@ -141,6 +141,10 @@ If a reload introduces a Python error:
 3. Fix the Python source
 4. Call `reload {"mode": "full"}` to retry
 
+A failed import can leave `run_code` without a scene namespace even while the
+previous world keeps running. Fix the source and reload successfully, or restart
+with `run_scene`.
+
 Runtime system failures are also printed to stderr once per registered system
 generation; `get_last_error` continues to expose the latest failure. SSE events
 (`/mcp/v1/sse`) broadcast errors in real-time.

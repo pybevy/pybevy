@@ -962,10 +962,20 @@ class McpBridge:
             exit_code = proc.returncode
             stderr_output = self._check_stderr_for_errors()
             process_output = self._get_recent_process_output()
-            error_msg = f"Bevy subprocess crashed on startup (exit code {exit_code})"
+            if exit_code == 0:
+                error_msg = (
+                    "Bevy subprocess exited before startup completed (exit code 0). "
+                    "For a persistent scene, configure a runner and check its exit conditions."
+                )
+            else:
+                error_msg = f"Bevy subprocess crashed on startup (exit code {exit_code})"
             if stderr_output or process_output:
                 error_msg += (
                     f"\n\nSubprocess output:\n{process_output or stderr_output}"
+                )
+                error_msg += (
+                    "\n\nUse get_logs with a larger 'lines' value to inspect the "
+                    "retained subprocess output before starting another scene."
                 )
             if not headless and self._looks_like_graphical_startup_failure(
                 process_output or stderr_output
