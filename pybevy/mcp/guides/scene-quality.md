@@ -2,6 +2,9 @@
 
 Composition, lighting, color, and common mistakes that produce dark or flat results. Consult when refining visuals - not necessarily before writing the first line of code.
 
+NumPy examples require the optional dependency: install `pybevy[numpy]` in the
+scene's Python environment.
+
 ## Lighting Quick-Reference
 
 For paste-ready lighting recipes by scene type (outdoor, interior, cave, industrial, moody), see `guide://lighting` (Recipes section). Always start bright, dim later.
@@ -293,6 +296,8 @@ rock.set_positions(positions)
 
 ### Soft Shadows
 ```python
+from pybevy.light import ShadowFilteringMethod
+
 commands.spawn(Camera3d(), ShadowFilteringMethod.Temporal)  # or .Gaussian
 ```
 

@@ -262,6 +262,9 @@ The same response distinguishes process lifetime from reload lifetime:
 not reload leak: it reads hundreds of MB at `reload_count: 0`. For per-reload growth
 use `delta_mb` in `reload_memory_snapshots`.
 
+Retired views release their bin-unpacking bind groups and cached pipeline keys during render cleanup;
+allocator and driver caching can still keep reported memory above its startup level.
+
 ## System Rename/Removal Detection
 
 When systems are renamed or removed across reloads, the reload system detects the delta:
