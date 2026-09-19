@@ -21,6 +21,8 @@ _component_cache: dict[str, type[Component]] = {}
 _component_layout_signatures: dict[str, tuple[object, ...]] = {}
 _component_layout_reload_required: set[str] = set()
 _resource_cache: dict[str, type[Resource]] = {}
+_resource_layout_signatures: dict[str, tuple[object, ...]] = {}
+_resource_layout_reload_required: set[str] = set()
 _component_cache_enabled = False
 
 # Decorated component classes by `module.qualname`. Weak so a reloaded scene
@@ -151,7 +153,13 @@ def resource(cls: type[RT]) -> type[RT]:
         raise TypeError(f"{cls.__name__} must inherit from Resource.")
 
     key = f"{cls.__module__}.{cls.__qualname__}"
-    if _component_cache_enabled and key in _resource_cache:
+    layout_signature = _resource_layout_signature(cls)
+
+    # Full reload drops classes, but the next Partial still needs their layouts.
+    previous_signature = _resource_layout_signatures.get(key)
+    if previous_signature is not None and previous_signature != layout_signature:
+        _resource_layout_reload_required.add(key)
+    elif _component_cache_enabled and key in _resource_cache:
         return _resource_cache[key]  # type: ignore[return-value]
 
     if not dataclasses.is_dataclass(cls) and cls.__init__ is object.__init__:
@@ -181,25 +189,36 @@ def resource(cls: type[RT]) -> type[RT]:
     cls.__pybevy_resource_decorated__ = True
     _install_resource_assignment_validation(cls)
 
+    _resource_layout_signatures[key] = layout_signature
     if _component_cache_enabled:
         _resource_cache[key] = cls
 
     return cls
 
 
+def _resource_layout_signature(cls: type) -> tuple[object, ...]:
+    try:
+        field_hints = get_type_hints(cls)
+    except (NameError, TypeError):
+        field_hints = getattr(cls, "__annotations__", {})
+    return tuple(
+        (name, _component_annotation_identity(annotation))
+        for name, annotation in field_hints.items()
+    )
+
+
 CT = TypeVar("CT", bound=Component)
 
 
 def clear_component_cache(verbose: bool = False) -> None:
-    """Clear cached custom ECS types before a full reload."""
-    global _component_cache, _component_layout_signatures, _resource_cache
+    """Clear cached ECS classes, retaining layout signatures for reload comparison."""
+    global _component_cache, _resource_cache
     if verbose:
         print(
             "🗑️  Clearing ECS type cache "
             f"({len(_component_cache)} components, {len(_resource_cache)} resources)"
         )
     _component_cache.clear()
-    _component_layout_signatures.clear()
     _resource_cache.clear()
     # Avoid importing pybevy.material eagerly (it imports native rendering types).
     # If it has been used, a full reload must invalidate its logical class aliases too.
@@ -220,6 +239,14 @@ def _component_layout_reload_names() -> tuple[str, ...]:
 
 def _commit_component_layout_reload() -> None:
     _component_layout_reload_required.clear()
+
+
+def _resource_layout_reload_names() -> tuple[str, ...]:
+    return tuple(sorted(_resource_layout_reload_required))
+
+
+def _commit_resource_layout_reload() -> None:
+    _resource_layout_reload_required.clear()
 
 
 def enable_component_caching(enabled: bool, verbose: bool = False) -> None:
@@ -367,15 +394,18 @@ def _register_component(cls: type[CT], *, storage: str | None = None) -> type[CT
     # Check if verbose mode is enabled
     verbose = os.environ.get("PYBEVY_VERBOSE") == "1"
 
-    # Return cached component if caching is enabled and component exists in cache
-    if _component_cache_enabled and key in _component_cache:
-        if _component_layout_signatures.get(key) == layout_signature:
-            if verbose:
-                print(f"Using CACHED component: {key}")
-            return _component_cache[key]  # type: ignore
+    # Layout comparison is independent of the class cache: a full reload drops
+    # the cached classes, and the partial reload after it must still see a
+    # changed layout.
+    previous_signature = _component_layout_signatures.get(key)
+    if previous_signature is not None and previous_signature != layout_signature:
         _component_layout_reload_required.add(key)
         if verbose:
             print(f"Component layout changed; replacing cached component: {key}")
+    elif _component_cache_enabled and key in _component_cache:
+        if verbose:
+            print(f"Using CACHED component: {key}")
+        return _component_cache[key]  # type: ignore
 
     # Mark the component as properly decorated
     cls.__pybevy_component_decorated__ = True  # type: ignore[attr-defined]
@@ -407,12 +437,15 @@ def _register_component(cls: type[CT], *, storage: str | None = None) -> type[CT
     # Auto-generate ViewColumn proxy class for batched View API
     _create_view_column_proxy(cls)
 
+    # Recorded even with caching disabled, so a full reload still leaves the
+    # next partial reload something to compare against.
+    _component_layout_signatures[key] = layout_signature
+
     # Store in cache for future lookups
     if _component_cache_enabled:
         if verbose:
             print(f"Caching NEW component: {key}")
         _component_cache[key] = cls
-        _component_layout_signatures[key] = layout_signature
     else:
         if verbose:
             print(f"Using FRESH component (caching disabled): {key}")
