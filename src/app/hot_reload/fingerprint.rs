@@ -1,11 +1,12 @@
 //! Structural fingerprints deciding whether a reload stays Partial or escalates.
 
-use std::hash::{Hash, Hasher};
+use std::hash::{DefaultHasher, Hash, Hasher};
 
-use pyo3::prelude::*;
+use pybevy_reload::DefsFingerprint;
+use pyo3::{prelude::*, types::PyType};
 
 use crate::{
-    app::chained_systems::PyChainedSystems,
+    app::{PyStage, chained_systems::PyChainedSystems},
     ecs::{conditional_system::PyConditionalSystem, system_config::PySystemConfig},
 };
 
@@ -87,7 +88,7 @@ fn hash_callable_code(obj: &Bound<'_, PyAny>, hasher: &mut impl Hasher) {
 pub(super) fn hash_system_code(
     py: Python<'_>,
     sys_bound: &Bound<'_, PyAny>,
-    hasher: &mut impl std::hash::Hasher,
+    hasher: &mut impl Hasher,
 ) {
     if let Ok(config) = sys_bound.extract::<PySystemConfig>() {
         hash_callable_code(config.system.bind(py), hasher);
@@ -105,5 +106,87 @@ pub(super) fn hash_system_code(
         }
     } else {
         hash_callable_code(sys_bound, hasher);
+    }
+}
+
+/// Shared fingerprint builder for initial and reloaded Python definitions.
+pub(crate) struct InitialDefsFingerprint {
+    startup: DefaultHasher,
+    observers: DefaultHasher,
+    resource_names: Vec<String>,
+    has_startup: bool,
+    has_observers: bool,
+}
+
+impl Default for InitialDefsFingerprint {
+    fn default() -> Self {
+        Self {
+            startup: DefaultHasher::new(),
+            observers: DefaultHasher::new(),
+            resource_names: Vec::new(),
+            has_startup: false,
+            has_observers: false,
+        }
+    }
+}
+
+impl InitialDefsFingerprint {
+    /// Record the flattened systems from one successful registration call.
+    pub(crate) fn record_systems(
+        &mut self,
+        py: Python<'_>,
+        stage: PyStage,
+        systems: &[Bound<'_, PyAny>],
+    ) {
+        if !stage.is_startup() || systems.is_empty() {
+            return;
+        }
+        self.has_startup = true;
+        format!("{stage:?}").hash(&mut self.startup);
+        for system in systems {
+            hash_system_code(py, system, &mut self.startup);
+        }
+    }
+
+    pub(crate) fn record_resource(&mut self, resource_type: &Bound<'_, PyType>) {
+        self.resource_names.push(
+            resource_type
+                .fully_qualified_name()
+                .map(|name| name.to_string())
+                .unwrap_or_else(|_| "<unknown>".to_string()),
+        );
+    }
+
+    pub(crate) fn record_state(&mut self, state_type: &Bound<'_, PyType>) {
+        self.resource_names.push(
+            state_type
+                .fully_qualified_name()
+                .map(|name| format!("State[{name}]"))
+                .unwrap_or_else(|_| "State[<unknown>]".to_string()),
+        );
+    }
+
+    pub(crate) fn record_observer(&mut self, py: Python<'_>, observer: &Bound<'_, PyAny>) {
+        self.has_observers = true;
+        hash_system_code(py, observer, &mut self.observers);
+    }
+
+    /// Build the baseline the first reload's fingerprint is compared against.
+    pub(crate) fn finish(&self) -> DefsFingerprint {
+        let mut resource_names = self.resource_names.clone();
+        resource_names.sort();
+        let mut resources_hasher = DefaultHasher::new();
+        resource_names.hash(&mut resources_hasher);
+
+        DefsFingerprint {
+            startup_code: self.startup.finish(),
+            resource_types: resources_hasher.finish(),
+            observer_code: self.observers.finish(),
+            component_layout_changed: false,
+            resource_layout_changed: false,
+            has_startup: self.has_startup,
+            has_resources: !self.resource_names.is_empty(),
+            has_observers: self.has_observers,
+        }
     }
 }

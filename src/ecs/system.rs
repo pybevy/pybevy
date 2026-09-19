@@ -15,7 +15,7 @@ use pyo3::{
     PyTypeInfo,
     exceptions::{PyRuntimeError, PyTypeError},
     prelude::*,
-    types::{PyAny, PyTuple, PyType},
+    types::{PyAny, PyTuple, PyType, PyWeakrefMethods, PyWeakrefReference},
 };
 use smallvec::SmallVec;
 
@@ -42,16 +42,24 @@ use crate::{
 
 const STACK_PARAMS: usize = 8;
 
-/// Global cache for parsed system parameters to avoid re-parsing the same function
-/// Key: Python function pointer address (as usize)
-/// Value: Parsed parameters
-/// Cache entry: (code_object_ptr, params).
+/// One parsed-parameter cache entry for a Python system function.
 ///
-/// We store the `__code__` object address alongside the params so we can detect
-/// address reuse: if CPython recycles a function's memory for a new closure with
-/// different parameters, the `__code__` pointer will differ and we re-parse.
-type SystemParamCacheEntry = (usize, Arc<SmallVec<[SystemParam; STACK_PARAMS]>>);
-type SystemParamCache = HashMap<usize, SystemParamCacheEntry>;
+/// The weak reference prevents the cache from keeping the callable alive. A hit
+/// requires it to resolve to the exact function whose address keys the map. The
+/// `__code__` pointer remains an additional cheap fingerprint, but cannot prove
+/// identity by itself because closures from one factory share a code object.
+struct SystemParamCacheEntry {
+    code_ptr: usize,
+    function: Py<PyWeakrefReference>,
+    params: Arc<SmallVec<[SystemParam; STACK_PARAMS]>>,
+}
+
+/// Global cache for parsed system parameters, keyed by Python function address.
+///
+/// Entries are behind `Arc` so lookup only clones a Rust pointer while holding
+/// the mutex. Weakref inspection and every operation that can touch Python
+/// reference counts happen after unlocking.
+type SystemParamCache = HashMap<usize, Arc<SystemParamCacheEntry>>;
 static SYSTEM_PARAM_CACHE: Mutex<Option<SystemParamCache>> = Mutex::new(None);
 
 /// Represents a pythonic system function with its parameters cached for efficient calls
@@ -243,30 +251,46 @@ impl SystemFunction {
         }
 
         let func_addr = func.as_ptr() as usize;
-        // Use __code__ object pointer as a fingerprint so we detect CPython address
-        // reuse: if a new closure is allocated at the same address as a GC'd one,
-        // its __code__ will differ and the stale cache entry is discarded.
         let code_ptr = func
             .getattr("__code__")
             .map(|c| c.as_ptr() as usize)
             .unwrap_or(0);
 
-        // Only clone the Arc while holding the cache lock. Cloning the actual
-        // parameters can incref Python objects and must happen after unlocking.
-        let (cached_params, stale_entry) = {
+        // Clone only the Rust Arc while locked. Inspecting the weakref upgrades
+        // a Python reference and must happen after unlocking.
+        let cached_entry = {
             let mut cache_guard = SYSTEM_PARAM_CACHE.lock().unwrap();
-            let cache = cache_guard.get_or_insert_with(HashMap::new);
+            cache_guard
+                .get_or_insert_with(HashMap::new)
+                .get(&func_addr)
+                .map(Arc::clone)
+        };
 
-            if let Some((cached_code, cached_params)) = cache.get(&func_addr) {
-                if *cached_code == code_ptr {
-                    (Some(Arc::clone(cached_params)), None)
-                } else {
-                    // Move the stale entry out so it is dropped after unlocking.
-                    (None, cache.remove(&func_addr))
-                }
-            } else {
-                (None, None)
+        let cached_params = cached_entry.as_ref().and_then(|entry| {
+            if entry.code_ptr != code_ptr {
+                return None;
             }
+            entry
+                .function
+                .bind(py)
+                .upgrade()
+                .filter(|cached_function| cached_function.is(&func))
+                .map(|_| Arc::clone(&entry.params))
+        });
+
+        // Remove only the entry we inspected: another thread may have replaced
+        // it while weakref validation ran outside the mutex. Move the stale Arc
+        // out of the map and drop it after unlocking.
+        let stale_entry = match (&cached_entry, &cached_params) {
+            (Some(cached_entry), None) => {
+                let mut cache_guard = SYSTEM_PARAM_CACHE.lock().unwrap();
+                let cache = cache_guard.get_or_insert_with(HashMap::new);
+                match cache.get(&func_addr) {
+                    Some(current) if Arc::ptr_eq(current, cached_entry) => cache.remove(&func_addr),
+                    _ => None,
+                }
+            }
+            _ => None,
         };
         drop(stale_entry);
 
@@ -274,15 +298,21 @@ impl SystemFunction {
             cached_params.as_ref().clone()
         } else {
             let parsed_params = Self::parse_system_parameters(&func, py)?;
-            let params_for_cache = Arc::new(parsed_params.clone());
-
-            // Move any concurrently replaced entry out and drop it after unlocking.
-            let replaced_entry = {
-                let mut cache_guard = SYSTEM_PARAM_CACHE.lock().unwrap();
-                let cache = cache_guard.get_or_insert_with(HashMap::new);
-                cache.insert(func_addr, (code_ptr, params_for_cache))
-            };
-            drop(replaced_entry);
+            // Ordinary Python functions support weakrefs. Other callable
+            // objects that do not are valid systems, but are simply not cached.
+            if let Ok(function) = PyWeakrefReference::new(&func) {
+                let entry = Arc::new(SystemParamCacheEntry {
+                    code_ptr,
+                    function: function.unbind(),
+                    params: Arc::new(parsed_params.clone()),
+                });
+                let replaced_entry = {
+                    let mut cache_guard = SYSTEM_PARAM_CACHE.lock().unwrap();
+                    let cache = cache_guard.get_or_insert_with(HashMap::new);
+                    cache.insert(func_addr, entry)
+                };
+                drop(replaced_entry);
+            }
 
             parsed_params
         };

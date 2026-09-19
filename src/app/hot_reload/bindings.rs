@@ -10,10 +10,10 @@ use bevy::{
 use pybevy_core::{PyPlugin, ensure_asset_access_registry, resource_initializer};
 use pybevy_ecs::shared::system_runtime::RunProfileSinkResource;
 use pybevy_reload::{
-    HotReloadGeneration, HotReloadStats, MemoryOverlayVisible, MemoryProfile, PluginTracker,
-    ReloadMode, ReloadStartupScheduleOrder, StartPaused, SystemMonitor, SystemProfiler, is_verbose,
-    parse_resolution, render_hot_reload_overlay, spawn_hot_reload_overlay_system,
-    update_system_stats,
+    DefsFingerprint, EscalationTracker, HotReloadGeneration, HotReloadStats, MemoryOverlayVisible,
+    MemoryProfile, PluginTracker, ReloadMode, ReloadStartupScheduleOrder, StartPaused,
+    SystemMonitor, SystemProfiler, is_verbose, parse_resolution, render_hot_reload_overlay,
+    spawn_hot_reload_overlay_system, update_system_stats,
 };
 use pyo3::prelude::*;
 
@@ -126,15 +126,31 @@ impl PyHotReloadControl {
 
 /// Add hot reload support to an app
 /// This function is idempotent - calling it multiple times is safe (subsequent calls are no-ops)
+///
+/// `initial_fingerprint` is the fingerprint of the definitions the entrypoint
+/// already built. Seeding it gives the first Partial reload a baseline to
+/// compare against instead of escalating to Full for lack of one.
 pub fn add_hot_reload_system(
     app: &mut App,
     state: HotReloadState,
     error_state: Arc<Mutex<Vec<PyErr>>>,
+    initial_fingerprint: Option<DefsFingerprint>,
 ) {
     let verbose = is_verbose();
 
     if verbose {
         eprintln!("🔧 [Hot Reload] add_hot_reload_system called");
+    }
+
+    // Seeded before the idempotence check: the loader can be installed after a
+    // scene already added HotReloadPlugin itself.
+    if let Some(fingerprint) = initial_fingerprint {
+        let mut tracker = app
+            .world_mut()
+            .get_resource_or_insert_with(EscalationTracker::default);
+        if tracker.last.is_none() {
+            tracker.last = Some(fingerprint);
+        }
     }
 
     // Check if hot reload is already set up
@@ -467,8 +483,9 @@ impl PyHotReloadPlugin {
             let state = HotReloadState::new();
             let error_state = Arc::new(Mutex::new(Vec::new()));
 
-            // Add hot reload systems and resources
-            add_hot_reload_system(bevy_app, state, error_state);
+            // Add hot reload systems and resources. The plugin runs while the
+            // entrypoint is still building, so there is nothing to seed yet.
+            add_hot_reload_system(bevy_app, state, error_state, None);
 
             Ok(())
         })
