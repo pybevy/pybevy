@@ -339,7 +339,7 @@ class BorderRect:
         """
 
 class SpriteScalingMode:
-    """Image scaling modes for `SpriteImageMode.Scale()`.
+    """Image scaling modes for `SpriteImageMode.Scale`.
 
     Controls how a sprite's image scales to fit its display size while
     maintaining aspect ratio. Choose between filling the area (may crop)
@@ -378,7 +378,7 @@ class SpriteScalingMode:
         - Start/End alignment useful for multi-image layouts
 
     See Also:
-        - SpriteImageMode.Scale(): Applies scaling mode to sprite rendering
+        - SpriteImageMode.Scale: Applies scaling mode to sprite rendering
     """
 
     def __copy__(self) -> SpriteScalingMode: ...
@@ -485,7 +485,7 @@ class TextureSlicer:
     See Also:
         - BorderRect: Defines the border dimensions
         - SliceScaleMode: Controls stretch vs tile behavior
-        - SpriteImageMode.Sliced(): Applies nine-patch rendering to sprites
+        - SpriteImageMode.Sliced: Applies nine-patch rendering to sprites
     """
 
     border: BorderRect
