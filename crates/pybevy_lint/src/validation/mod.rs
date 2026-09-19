@@ -83,9 +83,6 @@ pub fn validate_with_bevy(
         if !in_scope {
             continue;
         }
-        if is_excluded_for_policy(config, rust_class) {
-            continue;
-        }
 
         let origin = if rust_class.constructor.is_some() {
             origin::resolve_constructor_origin(rust_class, bevy_crates, &config.bevy, bevy_path)
@@ -156,12 +153,7 @@ pub fn validate_with_bevy(
             // Fail closed, but reviewed per-class exceptions may document a
             // genuinely Python-specific adaptation whose constructor has no
             // upstream identity.
-            if !consume_exception(
-                Some(config),
-                &mut consumed_exceptions,
-                &path,
-                code.code.as_str(),
-            ) {
+            if !consume_exception(Some(config), &mut consumed_exceptions, &path, &code) {
                 diagnostics.push(code);
             }
         }
@@ -177,13 +169,15 @@ pub fn validate_with_bevy(
             if policy_seen.contains(&key) {
                 continue;
             }
-            if consume_exception(
-                Some(config),
-                &mut consumed_exceptions,
-                &path,
-                diagnostic.code.as_str(),
-            ) {
-                policy_seen.insert(key);
+            if consume_exception(Some(config), &mut consumed_exceptions, &path, &diagnostic) {
+                if config.validation.exceptions.iter().any(|exception| {
+                    exception.path == path
+                        && exception.code == diagnostic.code.as_str()
+                        && exception.message.is_none()
+                        && !exception.reason.trim().is_empty()
+                }) {
+                    policy_seen.insert(key);
+                }
                 continue;
             }
             diagnostics.push(diagnostic);
@@ -215,13 +209,6 @@ pub fn validate_with_bevy(
     }
 
     diagnostics
-}
-
-/// Reviewed exclusion for policy checks: a configured type exclusion also
-/// excludes the type from constructor-policy checks (fail-closed E013 does
-/// not bypass reviewed exclusions).
-fn is_excluded_for_policy(config: &Config, class: &PyClassDef) -> bool {
-    config.bevy.is_type_excluded(&class.python_name)
 }
 
 /// Per-variant constructor-policy checks for generated nested classes.
@@ -354,7 +341,7 @@ fn validate_all_impl_with_consumed(
             if is_disabled_code(config, diagnostic.code.as_str()) {
                 continue;
             }
-            if consume_exception(config, consumed_exceptions, &path, diagnostic.code.as_str()) {
+            if consume_exception(config, consumed_exceptions, &path, &diagnostic) {
                 continue;
             }
             diagnostics.push(diagnostic);
@@ -443,7 +430,7 @@ fn validate_all_impl_with_consumed(
             if is_disabled_code(config, diagnostic.code.as_str()) {
                 continue;
             }
-            if consume_exception(config, consumed_exceptions, &path, diagnostic.code.as_str()) {
+            if consume_exception(config, consumed_exceptions, &path, &diagnostic) {
                 continue;
             }
             diagnostics.push(diagnostic);
@@ -592,7 +579,7 @@ fn consume_exception(
     config: Option<&Config>,
     consumed: &mut [bool],
     path: &str,
-    code: &str,
+    diagnostic: &Diagnostic,
 ) -> bool {
     let Some(config) = config else {
         return false;
@@ -607,7 +594,11 @@ fn consume_exception(
                 !consumed[*index]
                     && !exception.reason.trim().is_empty()
                     && exception.path == path
-                    && exception.code == code
+                    && exception.code == diagnostic.code.as_str()
+                    && exception
+                        .message
+                        .as_ref()
+                        .is_none_or(|message| message == &diagnostic.message)
             })
     else {
         return false;

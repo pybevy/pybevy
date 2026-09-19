@@ -69,6 +69,329 @@ fn pinned_bevy_source() -> PathBuf {
         .expect("API parity CLI regressions require the pinned Bevy source")
 }
 
+fn enum_summary(source: &str, module: &str) -> (i32, serde_json::Value) {
+    let bevy = pinned_bevy_source();
+    let fixture = Fixture::new(
+        source,
+        "",
+        &format!("[bevy.crate_mappings]\n{module} = 'bevy_{module}'\n"),
+    );
+    let (code, output) = fixture.run(&[
+        "compare",
+        module,
+        "--bevy-path",
+        bevy.to_str().unwrap(),
+        "--check-enums",
+        "--check-usage",
+        "false",
+        "--format",
+        "json",
+    ]);
+    let report = serde_json::Deserializer::from_str(&output)
+        .into_iter::<serde_json::Value>()
+        .next()
+        .unwrap()
+        .unwrap_or_else(|error| panic!("{error}: {output}"));
+    (code, report["summary"].clone())
+}
+
+#[test]
+fn enum_source_order_is_checked_instead_of_alphabetical_api_order() {
+    let connection = r#"
+        #[pyenum(GamepadConnection, empty_tuple)]
+        #[pyclass(name = "GamepadConnection", module = "pybevy.input")]
+        enum PyGamepadConnection {
+            Connected { name: String, vendor_id: Option<u16>, product_id: Option<u16> },
+            Disconnected(),
+        }
+    "#;
+    for (module, source, original, reordered) in [
+        (
+            "input",
+            connection,
+            "vendor_id: Option<u16>, product_id: Option<u16>",
+            "product_id: Option<u16>, vendor_id: Option<u16>",
+        ),
+        (
+            "image",
+            include_str!("../../pybevy_image/src/image_array_layout.rs"),
+            "tile_width_pixels: u32,\n        tile_height_pixels: u32",
+            "tile_height_pixels: u32,\n        tile_width_pixels: u32",
+        ),
+        (
+            "input",
+            include_str!("../../pybevy_input/src/gamepad_rumble_request.rs"),
+            "duration: Duration,\n        #[py_type(PyGamepadRumbleIntensity)]\n        intensity: GamepadRumbleIntensity,\n        #[py_type(PyEntity)]\n        gamepad: Entity,",
+            "#[py_type(PyEntity)]\n        gamepad: Entity,\n        #[py_type(PyGamepadRumbleIntensity)]\n        intensity: GamepadRumbleIntensity,\n        duration: Duration,",
+        ),
+    ] {
+        let (code, summary) = enum_summary(source, module);
+        assert_eq!(code, 0, "{module}: {summary}");
+        assert_eq!(summary["mismatched_variants"], 0);
+        let mutated = source.replace(original, reordered);
+        assert_ne!(mutated, source);
+        let (code, summary) = enum_summary(&mutated, module);
+        assert_eq!(code, 1, "{module}: {summary}");
+        assert_eq!(summary["mismatched_variants"], 1, "{summary}");
+    }
+}
+
+#[test]
+fn enum_string_adapters_still_reject_wrong_payload_types() {
+    for source in [
+        include_str!("../../pybevy_input/src/key.rs"),
+        include_str!("../../pybevy_input/src/native_key.rs"),
+    ] {
+        let (code, summary) = enum_summary(source, "input");
+        assert_eq!(code, 0, "{summary}");
+        let mutated = source.replace("value: String", "value: u32");
+        assert_ne!(mutated, source);
+        let (code, summary) = enum_summary(&mutated, "input");
+        assert_eq!(code, 1, "{summary}");
+        assert_eq!(summary["mismatched_variants"], 1, "{summary}");
+    }
+}
+
+#[test]
+fn gamepad_input_requires_explicit_tuple_adapter_metadata() {
+    let source = include_str!("../../pybevy_input/src/gamepad_input.rs");
+    let (code, summary) = enum_summary(source, "input");
+    assert_eq!(code, 0, "{summary}");
+    assert_eq!(summary["matched_variants"], 2);
+    let (code, summary) = enum_summary(&source.replace("#[py_bevy(tuple)]", ""), "input");
+    assert_eq!(code, 1, "{summary}");
+    assert_eq!(summary["mismatched_variants"], 2);
+}
+
+#[test]
+fn image_format_oracle_includes_wrapped_codecs_but_rejects_extra_variants() {
+    let source = include_str!("../../pybevy_image/src/image_format.rs");
+    let (code, summary) = enum_summary(source, "image");
+    assert_eq!(code, 0, "{summary}");
+    assert_eq!(summary["matched_variants"], 15);
+    let (code, summary) = enum_summary(&source.replace("    Bmp,", "    Bmp, Invented,"), "image");
+    assert_eq!(code, 1, "{summary}");
+    assert_eq!(summary["extra_variants"], 1);
+}
+
+#[test]
+fn manual_enum_adapters_are_unverified_not_missing_and_fail_the_gate() {
+    let bevy = pinned_bevy_source();
+    let fixture = Fixture::new(
+        r#"
+#[pyenum(KeyCode, manual)]
+#[pyclass(name = "KeyCode", module = "pybevy.input")]
+pub struct PyKeyCode;
+"#,
+        "class KeyCode: ...\n",
+        "[bevy.crate_mappings]\ninput = 'bevy_input'\n",
+    );
+    for format in ["text", "json", "markdown"] {
+        let (code, output) = fixture.run(&[
+            "compare",
+            "input",
+            "--bevy-path",
+            bevy.to_str().unwrap(),
+            "--check-enums",
+            "--check-usage",
+            "false",
+            "--format",
+            format,
+        ]);
+        assert_eq!(code, 1, "{output}");
+        assert!(output.contains("unverified"), "{output}");
+        assert!(!output.contains("Missing variants:"), "{output}");
+        assert!(!output.contains("ordinary PyBevy class"), "{output}");
+        if format == "json" {
+            let report = serde_json::Deserializer::from_str(&output)
+                .into_iter::<serde_json::Value>()
+                .next()
+                .unwrap()
+                .unwrap();
+            let summary = &report["summary"];
+            assert_eq!(summary["missing_variants"], 0);
+            assert_eq!(summary["matched_variants"], 0);
+            assert_eq!(summary["enum_representation_mismatches"], 0);
+            assert!(summary["unverified_variants"].as_u64().unwrap() > 0);
+            assert_eq!(
+                summary["unverified_variants"],
+                summary["total_bevy_variants"]
+            );
+        }
+    }
+}
+
+#[test]
+fn manual_enum_topology_checks_registration_names_and_payloads() {
+    let bevy = pinned_bevy_source();
+    let source = include_str!("../../pybevy_input/src/key_code.rs");
+    for (source, missing, mismatched, extra) in [
+        (source.to_string(), 0, 0, 0),
+        (source.replace("    Backquote,", ""), 1, 0, 0),
+        (
+            source.replace("    Backquote,", "    Backquote, Extra,"),
+            0,
+            0,
+            1,
+        ),
+        (
+            source.replace("value: PyNativeKeyCode", "value: u32"),
+            0,
+            1,
+            0,
+        ),
+        (
+            source.replace(
+                ".setattr(\"Unidentified\", py.get_type::<PyKeyCodeUnidentified>())",
+                ".getattr(\"Unidentified\")",
+            ),
+            1,
+            0,
+            0,
+        ),
+    ] {
+        let fixture = Fixture::new(
+            &source,
+            "class KeyCode: ...\n",
+            "[bevy.crate_mappings]\ninput = 'bevy_input'\n",
+        );
+        let (code, output) = fixture.run(&[
+            "compare",
+            "input",
+            "--bevy-path",
+            bevy.to_str().unwrap(),
+            "--check-enums",
+            "--check-usage",
+            "false",
+            "--format",
+            "json",
+        ]);
+        assert_eq!(
+            code,
+            i32::from(missing + mismatched + extra > 0),
+            "{output}"
+        );
+        let report = serde_json::Deserializer::from_str(&output)
+            .into_iter::<serde_json::Value>()
+            .next()
+            .unwrap()
+            .unwrap();
+        let summary = &report["summary"];
+        assert_eq!(summary["unverified_variants"], 0, "{output}");
+        assert_eq!(summary["missing_variants"], missing, "{output}");
+        assert_eq!(summary["mismatched_variants"], mismatched, "{output}");
+        assert_eq!(summary["extra_variants"], extra, "{output}");
+        assert_eq!(
+            summary["matched_variants"],
+            195 - missing - mismatched,
+            "{output}"
+        );
+    }
+}
+
+#[test]
+fn manual_enum_nested_registration_checks_payload_shape() {
+    let bevy = pinned_bevy_source();
+    let source = include_str!("../../pybevy_image/src/loader_settings.rs");
+    for (source, missing, mismatched) in [
+        (source.to_string(), 0, 0),
+        (
+            source.replace(
+                "base.setattr(\"Default\", py.get_type::<PyImageSamplerDefault>())?;",
+                "",
+            ),
+            1,
+            0,
+        ),
+        (
+            source.replace("desc: &PyImageSamplerDescriptor", "desc: u32"),
+            0,
+            1,
+        ),
+        (
+            source.replace(
+                "ImageSampler::Descriptor(desc)",
+                "ImageSampler::Descriptor { desc }",
+            ),
+            0,
+            1,
+        ),
+    ] {
+        let fixture = Fixture::new(
+            &source,
+            "class ImageSampler: ...\n",
+            "[bevy.crate_mappings]\nimage = 'bevy_image'\n",
+        );
+        let (code, output) = fixture.run(&[
+            "compare",
+            "image",
+            "--bevy-path",
+            bevy.to_str().unwrap(),
+            "--check-enums",
+            "--check-usage",
+            "false",
+            "--format",
+            "json",
+        ]);
+        assert_eq!(code, i32::from(missing + mismatched > 0), "{output}");
+        let report = serde_json::Deserializer::from_str(&output)
+            .into_iter::<serde_json::Value>()
+            .next()
+            .unwrap()
+            .unwrap();
+        let summary = &report["summary"];
+        assert_eq!(summary["unverified_variants"], 0, "{output}");
+        assert_eq!(summary["missing_variants"], missing, "{output}");
+        assert_eq!(summary["mismatched_variants"], mismatched, "{output}");
+        assert_eq!(
+            summary["matched_variants"],
+            2 - missing - mismatched,
+            "{output}"
+        );
+    }
+}
+
+#[test]
+fn audit_finds_qualified_exclusions_in_examples() {
+    let fixture = Fixture::new(
+        "",
+        "",
+        r#"
+[bevy.excluded_types]
+types = ["ui::UiGlobalTransform", "mesh::Unused"]
+"#,
+    );
+    fs::create_dir_all(fixture.0.join("bevy/examples")).unwrap();
+    fs::write(
+        fixture.0.join("bevy/examples/scene.rs"),
+        "fn inspect(value: &UiGlobalTransform) {}\n// Unused is not an API use.\n",
+    )
+    .unwrap();
+
+    let (code, output) = fixture.run(&["audit", "--bevy-path", "bevy"]);
+    assert_eq!(code, 0, "{output}");
+    assert!(
+        output.contains("1 excluded types found in examples"),
+        "{output}"
+    );
+    assert!(output.contains("UiGlobalTransform"), "{output}");
+    assert!(!output.contains("zero usage"), "{output}");
+    assert!(!output.contains("Unused"), "{output}");
+
+    let (code, output) = fixture.run(&["audit", "--bevy-path", "bevy", "--deny-warnings"]);
+    assert_eq!(code, 1, "{output}");
+    let (code, output) = fixture.run(&[
+        "audit",
+        "--bevy-path",
+        "bevy",
+        "--deny-warnings",
+        "--min-usage",
+        "2",
+    ]);
+    assert_eq!(code, 0, "{output}");
+    assert!(output.contains("minimum usage of 2"), "{output}");
+}
+
 fn validate_return(rust_return: &str, stub_return: &str) -> (i32, String) {
     let fixture = Fixture::new(
         &format!(

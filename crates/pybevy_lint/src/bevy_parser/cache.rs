@@ -1,8 +1,7 @@
 //! Cache for Bevy API parsing results.
 //!
-//! Caches `cargo public-api` output to avoid re-parsing unchanged Bevy versions.
-//! The key combines the Bevy checkout's git commit with the feature set the
-//! parse asked for, so widening the features does not reuse a narrower parse.
+//! Caches parsed `cargo public-api` data for unchanged Bevy versions.
+//! Keys include the Bevy commit, requested features, and parser version.
 
 use std::{
     fs,
@@ -13,6 +12,9 @@ use std::{
 use anyhow::{Context, Result};
 
 use super::types::BevyCrate;
+
+// Bump when parser semantics change, even if the serialized shape is unchanged.
+const PARSER_CACHE_VERSION: u32 = 2;
 
 /// Get the git commit hash for a Bevy checkout.
 pub fn get_bevy_git_ref(bevy_path: &Path) -> Result<String> {
@@ -43,7 +45,9 @@ fn cache_path_in_dir(dir: PathBuf, git_ref: &str, crate_name: &str) -> Option<Pa
     // Use first 12 chars of commit hash for readability
     let short_ref = &git_ref[..git_ref.len().min(12)];
     let features = super::parser::feature_key(crate_name);
-    Some(dir.join(format!("{}_{}_{}.json", short_ref, crate_name, features)))
+    Some(dir.join(format!(
+        "{short_ref}_{crate_name}_{features}_v{PARSER_CACHE_VERSION}.json"
+    )))
 }
 
 /// Try to load a cached BevyCrate.

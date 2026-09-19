@@ -83,6 +83,7 @@ fn uses_borrow_field_pattern(method: &syn::ImplItemFn) -> bool {
         || body.contains("from_resource_field")
         || body.contains("PyAnimationGraphNode :: view")
         || body.contains("try_acquire_read_view")
+        || body.contains("prepare_read_view")
         || body.contains("prepare_write_view")
 }
 
@@ -327,7 +328,8 @@ fn parse_parameters(
         if let FnArg::Typed(pat_type) = arg {
             // Skip self parameters
             if let Pat::Ident(pat_ident) = &*pat_type.pat {
-                let name = pat_ident.ident.to_string();
+                let raw_name = pat_ident.ident.to_string();
+                let name = raw_name.strip_prefix("r#").unwrap_or(&raw_name).to_string();
 
                 // Skip special PyO3 parameters that aren't visible to Python
                 // - self, self_, pyself: standard self receivers (self_ avoids Rust keyword)

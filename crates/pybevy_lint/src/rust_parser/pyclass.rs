@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use proc_macro2::TokenStream;
 use syn::{Attribute, Expr, Fields, ItemEnum, ItemStruct, Lit, Meta};
 
 use super::{macros, signature, types::type_to_string};
@@ -146,6 +147,18 @@ pub fn parse_enum(item: &ItemEnum, file_path: &Path) -> Option<PyClassDef> {
     );
     let generated_resource_base =
         matches!(macro_info, Some(MacroInfo::BevyEnum { resource: true, .. }));
+    let generated_message_base =
+        matches!(macro_info, Some(MacroInfo::BevyEnum { message: true, .. }));
+    let message_value_equality = generated_message_base
+        && !item.attrs.iter().any(|attr| {
+            attr.path().is_ident("pyenum")
+                && attr.parse_args::<TokenStream>().is_ok_and(|tokens| {
+                    tokens
+                        .to_string()
+                        .split(',')
+                        .any(|option| option.trim() == "no_eq")
+                })
+        });
 
     Some(PyClassDef {
         python_name,
@@ -154,9 +167,10 @@ pub fn parse_enum(item: &ItemEnum, file_path: &Path) -> Option<PyClassDef> {
         extends: pyclass_args
             .extends
             .or_else(|| generated_component_base.then(|| "PyComponent".to_string()))
-            .or_else(|| generated_resource_base.then(|| "PyResource".to_string())),
-        frozen: pyclass_args.frozen,
-        eq: pyclass_args.eq,
+            .or_else(|| generated_resource_base.then(|| "PyResource".to_string()))
+            .or_else(|| generated_message_base.then(|| "PyMessage".to_string())),
+        frozen: pyclass_args.frozen || generated_message_base,
+        eq: pyclass_args.eq || message_value_equality,
         hash: pyclass_args.hash,
         eq_int: pyclass_args.eq_int,
         subclass: pyclass_args.subclass,

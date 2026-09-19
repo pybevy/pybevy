@@ -13,6 +13,7 @@ use super::{
         BevyVariantKind, SelfKind,
     },
 };
+use crate::validation::origin::source_variant_field_order;
 
 /// Bevy can re-export a dependency wholesale (`pub use glam::*`), so those types are absent
 /// from the re-exporting crate's own API. Merge the ones PyBevy wraps; target-defined items win.
@@ -182,9 +183,10 @@ fn parse_bevy_crate_impl(
     git_ref: Option<&str>,
 ) -> Result<BevyCrate> {
     if let Some(git_ref) = git_ref
-        && let Some(cached) = cache::load_cached(git_ref, crate_name)
+        && let Some(mut cached) = cache::load_cached(git_ref, crate_name)
     {
         eprintln!("  Using cached API for {}", crate_name);
+        restore_variant_field_order(&mut cached, bevy_path);
         return Ok(cached);
     }
 
@@ -206,7 +208,7 @@ fn parse_bevy_crate_impl(
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let result = parse_public_api_output(crate_name, &stdout)?;
+    let mut result = parse_public_api_output(crate_name, &stdout)?;
 
     if let Some(git_ref) = git_ref
         && let Err(e) = cache::save_to_cache(git_ref, crate_name, &result)
@@ -214,7 +216,34 @@ fn parse_bevy_crate_impl(
         eprintln!("Warning: Failed to cache {}: {}", crate_name, e);
     }
 
+    restore_variant_field_order(&mut result, bevy_path);
     Ok(result)
+}
+
+fn restore_variant_field_order(parsed: &mut BevyCrate, bevy_path: &Path) {
+    for item in parsed.items.values_mut() {
+        for variant in &mut item.variants {
+            let BevyVariantKind::Struct(fields) = &mut variant.kind else {
+                continue;
+            };
+            if fields.len() < 2 {
+                continue;
+            }
+            let Some(order) = source_variant_field_order(
+                &item.full_path,
+                &parsed.name,
+                Some(bevy_path),
+                &variant.name,
+            ) else {
+                // Dependency re-exports and generated types may have no local declaration.
+                continue;
+            };
+            if fields.iter().any(|(name, _)| !order.contains(name)) {
+                continue;
+            }
+            fields.sort_by_key(|(name, _)| order.iter().position(|field| field == name));
+        }
+    }
 }
 
 /// Features that expose modules Bevy gates off by default.
@@ -230,6 +259,13 @@ fn parse_bevy_crate_impl(
 /// `bevy_image`'s `compile_error!` for an unbacked `zstd` then takes
 /// `bevy_ecs`, `bevy_app`, `bevy_winit` and `bevy_core_pipeline` down with it.
 const CRATE_FEATURES: &[(&str, &[&str])] = &[
+    (
+        "bevy_image",
+        &[
+            "bmp", "dds", "exr", "ff", "gif", "hdr", "ico", "jpeg", "ktx2", "png", "pnm", "qoi",
+            "tga", "tiff", "webp",
+        ],
+    ),
     (
         "bevy_input",
         &["gamepad", "gestures", "keyboard", "mouse", "touch"],
@@ -623,10 +659,7 @@ fn parse_line(line: &str, crate_name: &str) -> Option<ParsedLine> {
         });
     }
 
-    if line.starts_with("pub fn ")
-        || line.starts_with("pub const fn ")
-        || line.starts_with("pub unsafe fn ")
-    {
+    if method_qualifiers(line).is_some() {
         return parse_method_line(line, crate_name);
     }
 
@@ -659,9 +692,16 @@ fn parse_line(line: &str, crate_name: &str) -> Option<ParsedLine> {
     Some(ParsedLine::Skip)
 }
 
+fn method_qualifiers(line: &str) -> Option<&str> {
+    let (qualifiers, _) = line.strip_prefix("pub ")?.split_once("fn ")?;
+    qualifiers
+        .split_whitespace()
+        .all(|word| matches!(word, "const" | "async" | "unsafe"))
+        .then_some(qualifiers)
+}
+
 fn parse_method_line(line: &str, _crate_name: &str) -> Option<ParsedLine> {
-    let is_const = line.contains("const fn ");
-    let is_unsafe = line.contains("unsafe fn ");
+    let qualifiers: Vec<_> = method_qualifiers(line)?.split_whitespace().collect();
 
     let fn_start = line.find("fn ")? + 3;
     let rest = &line[fn_start..];
@@ -702,9 +742,9 @@ fn parse_method_line(line: &str, _crate_name: &str) -> Option<ParsedLine> {
         parameters,
         return_type,
         self_kind,
-        is_const,
-        is_unsafe,
-        is_async: line.contains("async fn "),
+        is_const: qualifiers.contains(&"const"),
+        is_unsafe: qualifiers.contains(&"unsafe"),
+        is_async: qualifiers.contains(&"async"),
         from_trait: None, // Set later in parse_public_api_output based on context
     };
 
@@ -949,11 +989,21 @@ fn parse_parameters(params_str: &str) -> (SelfKind, Vec<BevyParameter>) {
             self_kind = SelfKind::Owned;
             continue;
         }
-        if param == "&self" {
+        let borrowed_receiver = param.strip_prefix('&').map(|receiver| {
+            let receiver = receiver.trim_start();
+            if receiver.starts_with('\'') {
+                receiver
+                    .split_once(char::is_whitespace)
+                    .map_or(receiver, |(_, receiver)| receiver.trim_start())
+            } else {
+                receiver
+            }
+        });
+        if borrowed_receiver == Some("self") {
             self_kind = SelfKind::Ref;
             continue;
         }
-        if param == "&mut self" {
+        if borrowed_receiver == Some("mut self") {
             self_kind = SelfKind::RefMut;
             continue;
         }
