@@ -386,6 +386,8 @@ class RectLight(Component):
 class ParallaxCorrection(Component):
     """Parallax correction mode for reflection (light) probes."""
 
+    def __hash__(self) -> int: ...
+
     class None_(ParallaxCorrection):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
@@ -893,6 +895,8 @@ class Falloff:
     Bevy's Curve variant holds a Rust callback and cannot be constructed from Python.
     """
 
+    def __hash__(self) -> int: ...
+
     class Linear(Falloff):
         """Linear falloff."""
         __match_args__: ClassVar[tuple[()]]
@@ -917,6 +921,8 @@ class PhaseFunction:
     Bevy's Curve and ChromaticCurve variants hold Rust closures and cannot be
     constructed from Python.
     """
+
+    def __hash__(self) -> int: ...
 
     class Isotropic(PhaseFunction):
         """Scatters light evenly in all directions."""

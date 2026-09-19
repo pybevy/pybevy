@@ -1,6 +1,7 @@
 use bevy::light::atmosphere::Falloff;
+use pybevy_core::enum_comparison::reject_variant_type;
 use pybevy_macros::pyenum;
-use pyo3::{exceptions::PyTypeError, prelude::*};
+use pyo3::{exceptions::PyTypeError, prelude::*, pyclass::CompareOp};
 
 #[pyenum(Falloff, manual)]
 #[pyclass(
@@ -21,6 +22,20 @@ impl From<PyFalloff> for Falloff {
 
 #[pymethods]
 impl PyFalloff {
+    fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<Py<PyAny>> {
+        if matches!(op, CompareOp::Eq | CompareOp::Ne) {
+            reject_variant_type::<Self>(other)?;
+        }
+        Ok(other.py().NotImplemented())
+    }
+
+    fn __hash__(slf: &Bound<'_, Self>) -> PyResult<isize> {
+        slf.py()
+            .get_type::<PyAny>()
+            .call_method1("__hash__", (slf,))?
+            .extract()
+    }
+
     #[new]
     pub fn new() -> PyResult<Self> {
         Err(PyTypeError::new_err(

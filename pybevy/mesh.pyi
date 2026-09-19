@@ -1,6 +1,6 @@
 from collections.abc import Callable, Sequence
 from types import TracebackType
-from typing import ClassVar, Literal
+from typing import ClassVar, Literal, overload
 
 import numpy as np
 
@@ -296,7 +296,10 @@ class RectangleMeshBuilder(MeshBuilder):
 
 class SphereMeshBuilder(MeshBuilder):
     def build(self) -> Mesh: ...
-    def kind(self) -> SphereKind: ...
+    @overload
+    def kind(self, kind: SphereKind) -> SphereMeshBuilder: ...
+    @overload
+    def kind(self, kind: None = None) -> SphereKind: ...
     def ico(self, subdivisions: int) -> Mesh: ...
     def uv(self, sectors: int, stacks: int) -> Mesh: ...
 
@@ -465,6 +468,8 @@ class MorphWeights(Component):
 
 class MeshMorphWeights(Component):
     """Controls morph targets for one Mesh3d entity."""
+
+    def __hash__(self) -> int: ...
 
     class Value(MeshMorphWeights):
         __match_args__: ClassVar[tuple[Literal["weights"]]]

@@ -3,11 +3,11 @@ use bevy::{
     image::{ImageFormatSetting, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor},
 };
 use pybevy_core::{
-    FieldStorage, FromBorrowedStorage, StorageRef, computed_owned,
+    FieldStorage, FromBorrowedStorage, StorageRef, computed_owned, enum_comparison::compare_values,
     public_error::enum_variant_changed,
 };
 use pybevy_macros::{pyenum, pyfield};
-use pyo3::{exceptions::PyRuntimeError, prelude::*, types::PyTuple};
+use pyo3::{exceptions::PyRuntimeError, prelude::*, pyclass::CompareOp, types::PyTuple};
 
 use crate::{
     image::PyRenderAssetUsages, image_format::PyImageFormat,
@@ -119,12 +119,10 @@ impl PyImageSampler {
         self.__copy__(py)
     }
 
-    pub fn __eq__(&self, other: &Self) -> PyResult<bool> {
-        Ok(self.resolved_clone()? == other.resolved_clone()?)
-    }
-
-    pub fn __ne__(&self, other: &Self) -> PyResult<bool> {
-        Ok(!self.__eq__(other)?)
+    pub fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<Py<PyAny>> {
+        compare_values(self, other, op, |left, right| {
+            Ok(left.resolved_clone()? == right.resolved_clone()?)
+        })
     }
 
     #[classattr]
