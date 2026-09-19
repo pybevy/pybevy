@@ -34,6 +34,7 @@ pub mod asset_access;
 pub mod asset_cleanup;
 pub mod asset_id;
 pub mod asset_index;
+pub mod asset_load_plan;
 pub mod asset_path;
 pub mod component;
 pub mod component_batch;

@@ -4,7 +4,28 @@
 //! when both PyO3 and RustPython expose the same invalid operation so wording
 //! cannot drift independently.
 
-use std::fmt::{Debug, Display};
+use std::{
+    ffi::CStr,
+    fmt::{Debug, Display},
+};
+
+pub const LOAD_BUILDER_TYPE_REQUIRED: &str = "LoadBuilder.load() requires keyword-only asset_type when no settings establish the type; use load(path, asset_type=Image)";
+pub const LOAD_WITH_SETTINGS_DEPRECATED: &CStr = c"AssetServer.load_with_settings() is deprecated; use load_builder().with_settings(settings).load(path) instead";
+pub const LOADER_SETTINGS_BRIDGE_MISSING: &str = "Loader settings asset bridge is not registered";
+
+pub fn asset_settings_type_mismatch(expected: &str, actual: &str) -> String {
+    format!("Loader settings require asset type {expected}, got `{actual}`")
+}
+
+pub fn unsupported_loader_settings(actual: &str) -> String {
+    format!(
+        "`{actual}` is not a supported loader settings type (supported: ImageLoaderSettings, GltfLoaderSettings)"
+    )
+}
+
+pub fn removed_asset_load_method(name: &str, replacement: &str) -> String {
+    format!("AssetServer.{name}() was removed. Use {replacement} instead.")
+}
 
 pub fn enum_base_construction(name: &str) -> String {
     format!("{name} is an enum base; construct a nested variant")

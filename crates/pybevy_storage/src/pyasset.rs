@@ -50,6 +50,7 @@ use crate::{
     ErasedRevalidatingSource, FromBorrowedStorage, PendingViewClaim, ReadField, ReadViewClaim,
     RevalidatingSource, StorageMut, StorageRef, ValidityFlag, ValidityFlagWithMode, ViewCounters,
     WriteField,
+    asset_path::{SourceIdentity, SourceReadGuard, SourceWriteGuard},
     borrowed::{BorrowedMut, BorrowedRef},
     storage_error::StorageError,
 };
@@ -317,7 +318,10 @@ impl<A: Asset> ErasedRevalidatingSource for AssetResolverSource<A> {
         // SAFETY: the resolver returned a live `A` under the retained guard;
         // `AssetPath` validates the typed step chain when it is built.
         let ptr = unsafe { self.path.project_ref(root.cast::<u8>())? };
-        Ok(ErasedResolvedRef { ptr, guard })
+        Ok(ErasedResolvedRef {
+            ptr,
+            guard: SourceReadGuard::Asset { _guard: guard },
+        })
     }
 
     fn resolve_mut(&self) -> Result<ErasedResolvedMut, StorageError> {
@@ -348,7 +352,10 @@ impl<A: Asset> ErasedRevalidatingSource for AssetResolverSource<A> {
                 .project_mut(root.cast::<u8>())
                 .expect("asset path stayed valid under its write guard")
         };
-        Ok(ErasedResolvedMut { ptr, guard })
+        Ok(ErasedResolvedMut {
+            ptr,
+            guard: SourceWriteGuard::Asset { _guard: guard },
+        })
     }
 
     fn append_step(&self, path: AssetPath) -> Arc<dyn ErasedRevalidatingSource> {
@@ -359,8 +366,8 @@ impl<A: Asset> ErasedRevalidatingSource for AssetResolverSource<A> {
         Arc::new(self.clone_with(self.resolver.clone_readonly(), self.path.clone()))
     }
 
-    fn root_identity(&self) -> (TypeId, UntypedAssetId, usize) {
-        (
+    fn root_identity(&self) -> SourceIdentity {
+        SourceIdentity::Asset(
             TypeId::of::<A>(),
             self.resolver.root.asset_id.into(),
             Arc::as_ptr(&self.resolver.root.state) as usize,

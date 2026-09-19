@@ -382,6 +382,11 @@ class AppReloadState:
         """Trigger reload if not already pending, using current default mode."""
     def get_default_mode(self) -> str:
         """Get the current default reload mode ('Full' or 'Partial')."""
+    def set_default_mode(self, *, partial: bool) -> None:
+        """Set the mode for future watcher requests, without queuing a reload.
+
+        Does not replace a pending request. F6 can subsequently toggle this mode.
+        """
     def is_partial_reload(self) -> bool:
         """Check if the next reload will be in partial mode."""
     def generation(self) -> int:

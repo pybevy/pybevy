@@ -209,7 +209,8 @@ pub fn update_system_stats(world: &mut World) {
 
     // Update stats every 1 second (respects sysinfo's minimum interval while reducing overhead)
     const UPDATE_INTERVAL: f64 = 1.0;
-    if real_now - monitor.last_update >= UPDATE_INTERVAL {
+    // Full reload can reset the real clock while the monitor survives.
+    if real_now < monitor.last_update || real_now - monitor.last_update >= UPDATE_INTERVAL {
         // Only update process stats if we have a valid PID
         if let Some(pid) = monitor.process_pid {
             // On Linux, must refresh global CPU state before process CPU for accurate measurements
@@ -476,7 +477,9 @@ pub fn render_hot_reload_overlay(
 
     // Throttle updates to 4 times per second (every 250ms) for readability
     const RENDER_INTERVAL: f64 = 0.25;
-    if render_time - monitor.last_render_update < RENDER_INTERVAL {
+    if render_time >= monitor.last_render_update
+        && render_time - monitor.last_render_update < RENDER_INTERVAL
+    {
         return;
     }
     monitor.last_render_update = render_time;
@@ -651,8 +654,8 @@ pub fn render_hot_reload_overlay(
 
         if let Some(last_err) = last_error.as_ref()
             && last_err.error.is_some()
-            && last_err.timestamp_secs > stats.last_error_timestamp
         {
+            // Error timestamps can restart at zero or repeat within one frame.
             // Extract the meaningful error line from traceback or error message
             let error_msg = last_err
                 .traceback
@@ -922,6 +925,133 @@ mod stats_gate_tests {
         let mut world = stats_world(0.5, 60.5, 60.0);
         update_system_stats(&mut world);
         assert_eq!(world.resource::<SystemMonitor>().last_update, 60.0);
+    }
+
+    #[test]
+    fn stats_refresh_reanchors_after_clock_reset() {
+        for has_real_time in [true, false] {
+            let mut world = stats_world(0.125, 0.125, 120.0);
+            if !has_real_time {
+                world.remove_resource::<Time<Real>>();
+            }
+            world.spawn_empty();
+
+            update_system_stats(&mut world);
+
+            assert_eq!(world.resource::<SystemMonitor>().last_update, 0.125);
+            assert_eq!(world.resource::<HotReloadStats>().entity_count, 1);
+            assert_eq!(world.resource::<DebugSnapshot>().entity_count, 1);
+
+            world.spawn_empty();
+            world
+                .resource_mut::<Time>()
+                .advance_by(Duration::from_millis(500));
+            if let Some(mut time) = world.get_resource_mut::<Time<Real>>() {
+                time.advance_by(Duration::from_millis(500));
+            }
+            update_system_stats(&mut world);
+            assert_eq!(world.resource::<HotReloadStats>().entity_count, 1);
+
+            world
+                .resource_mut::<Time>()
+                .advance_by(Duration::from_millis(500));
+            if let Some(mut time) = world.get_resource_mut::<Time<Real>>() {
+                time.advance_by(Duration::from_millis(500));
+            }
+            update_system_stats(&mut world);
+            assert_eq!(world.resource::<SystemMonitor>().last_update, 1.125);
+            assert_eq!(world.resource::<HotReloadStats>().entity_count, 2);
+        }
+    }
+
+    #[test]
+    fn overlay_clears_failed_reload_after_clock_reset() {
+        for has_real_time in [true, false] {
+            let mut world = stats_world(120.0, 120.0, 119.0);
+            if !has_real_time {
+                world.remove_resource::<Time<Real>>();
+            }
+            let status = world.spawn((Text::default(), HotReloadOverlayText)).id();
+            let error = world
+                .spawn((Text::default(), Visibility::Hidden, HotReloadErrorText))
+                .id();
+            world.insert_resource(ReloadResult {
+                failed: true,
+                ..default()
+            });
+            world.insert_resource(LastSystemError {
+                error: Some("old failure".into()),
+                timestamp_secs: 120.0,
+                ..default()
+            });
+            world.run_system_once(render_hot_reload_overlay).unwrap();
+            assert!(
+                world
+                    .get::<Text>(status)
+                    .unwrap()
+                    .0
+                    .contains("FAILED (prev gen)")
+            );
+            assert_eq!(world.get::<Text>(error).unwrap().0, "Error: old failure");
+            assert_eq!(
+                *world.get::<Visibility>(error).unwrap(),
+                Visibility::Inherited
+            );
+
+            world.insert_resource(Time::<()>::default());
+            if has_real_time {
+                world.insert_resource(Time::<Real>::default());
+            }
+            world.insert_resource(ReloadResult::default());
+            world.insert_resource(LastSystemError::default());
+            world.resource_mut::<HotReloadStats>().last_mode = Some(ReloadMode::Full);
+            world.run_system_once(render_hot_reload_overlay).unwrap();
+
+            let text = &world.get::<Text>(status).unwrap().0;
+            assert!(text.contains("Last: Full"), "{text}");
+            assert!(!text.contains("FAILED"), "{text}");
+            assert_eq!(*world.get::<Visibility>(error).unwrap(), Visibility::Hidden);
+            assert_eq!(world.resource::<SystemMonitor>().last_render_update, 0.0);
+
+            world.resource_mut::<HotReloadStats>().reload_count = 7;
+            world.run_system_once(render_hot_reload_overlay).unwrap();
+            assert!(!world.get::<Text>(status).unwrap().0.contains("Reloads: 7"));
+            world
+                .resource_mut::<Time>()
+                .advance_by(Duration::from_millis(250));
+            if let Some(mut time) = world.get_resource_mut::<Time<Real>>() {
+                time.advance_by(Duration::from_millis(250));
+            }
+            world.run_system_once(render_hot_reload_overlay).unwrap();
+            assert!(world.get::<Text>(status).unwrap().0.contains("Reloads: 7"));
+        }
+    }
+
+    #[test]
+    fn overlay_updates_errors_with_reset_or_equal_timestamps() {
+        let mut world = stats_world(120.0, 120.0, 119.0);
+        let error = world
+            .spawn((Text::default(), Visibility::Hidden, HotReloadErrorText))
+            .id();
+        for (timestamp, message) in [(120.0, "old"), (0.0, "new"), (0.0, "same frame")] {
+            world.insert_resource(LastSystemError {
+                error: Some(message.into()),
+                timestamp_secs: timestamp,
+                ..default()
+            });
+            world
+                .resource_mut::<Time<Real>>()
+                .advance_by(Duration::from_millis(250));
+            world.run_system_once(render_hot_reload_overlay).unwrap();
+            assert_eq!(
+                world.get::<Text>(error).unwrap().0,
+                format!("Error: {message}")
+            );
+            assert_eq!(
+                *world.get::<Visibility>(error).unwrap(),
+                Visibility::Inherited
+            );
+        }
     }
 
     #[test]
