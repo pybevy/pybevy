@@ -118,6 +118,9 @@ same scheduler access as resource queries, so `Res[T]` correctly conflicts
 with `Query[Mut[T]]` unless the query excludes resource entities with
 `Without[IsResource]`.
 
+Custom resource handles returned by queries expire when their system finishes,
+just like `Res[T]` and `ResMut[T]`; later reads or writes raise `RuntimeError`.
+
 `Single[T]` skips its system before the body runs unless exactly one entity
 matches. This is checked on each run, including when the body never accesses
 the parameter. `Query.single()` is an explicit lookup inside a running system
