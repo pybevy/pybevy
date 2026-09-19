@@ -118,6 +118,16 @@ fn run_definition_reload_attempt(
 /// Built-in system that checks for F5/F6 keypress and triggers reload or mode toggle
 /// This runs automatically when hot reload is enabled
 pub(crate) fn handle_f5_reload_system(world: &mut World) {
+    // The watcher can initialize the mode after the overlay was created.
+    if let Some(mode) = world
+        .get_resource::<HotReloadResource>()
+        .map(|reload| reload.state.get_default_mode())
+        && let Some(mut stats) = world.get_resource_mut::<HotReloadStats>()
+        && stats.default_mode != mode
+    {
+        stats.default_mode = mode;
+    }
+
     // Read all key states upfront, then drop the immutable borrow
     let (f5_pressed, f6_pressed, f7_pressed, space_pressed) = {
         let Some(input) = world.get_resource::<ButtonInput<KeyCode>>() else {

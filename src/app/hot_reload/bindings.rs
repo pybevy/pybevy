@@ -72,6 +72,16 @@ impl PyAppReloadState {
         }
     }
 
+    /// Select the mode for future watcher requests without queuing a reload.
+    #[pyo3(signature = (*, partial))]
+    pub fn set_default_mode(&self, partial: bool) {
+        self.state.set_default_mode(if partial {
+            ReloadMode::Partial
+        } else {
+            ReloadMode::Full
+        });
+    }
+
     /// Check if the next reload will be in partial mode
     /// Used by CLI loader to determine whether to enable component caching
     pub fn is_partial_reload(&self) -> bool {
@@ -265,7 +275,7 @@ pub fn add_hot_reload_system(
         last_mode: None,
         last_reload_time: 0.0,
         reload_count: 0,
-        default_mode: ReloadMode::Partial, // Default to partial reload for file changes
+        default_mode: state.get_default_mode(),
         memory_mb: initial_memory_mb,
         cpu_percent: initial_cpu,
         fps_average: 0.0,

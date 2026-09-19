@@ -410,7 +410,7 @@ impl<T: Copy> ValueStorage<T> {
         write: WriteVariant<T, F>,
     ) -> Result<W, StorageError>
     where
-        T: 'static,
+        T: Send + Sync + 'static,
         W: FromBorrowedStorage<ValueStorage<F>>,
     {
         let storage = match &self.inner {
@@ -423,7 +423,12 @@ impl<T: Copy> ValueStorage<T> {
             _ => {
                 let current = self.as_ref()?;
                 let value = read(&current).ok_or(StorageError::VariantChanged(name))?;
-                ValueStorage::snapshot(value)
+                match RevalidatingSource::from_borrowed_value(self) {
+                    Some(source) => {
+                        ValueStorage::revalidating_source(source.variant(name, read, write))
+                    }
+                    None => ValueStorage::snapshot(value),
+                }
             }
         };
         Ok(W::from_borrowed(storage))

@@ -3,7 +3,9 @@ use quote::{format_ident, quote};
 use syn::{Expr, ItemEnum, Lit, Meta, punctuated::Punctuated, token::Comma};
 
 use crate::{
-    enum_spec::{EnumSpec, VariantShape, constructor_signature, parameter, parameter_name},
+    enum_spec::{
+        BevyVariantShape, EnumSpec, VariantShape, constructor_signature, parameter, parameter_name,
+    },
     message::generate_message_bridge_tokens,
     util::to_snake_case,
 };
@@ -48,6 +50,7 @@ fn try_expand(
     let class = python_class_name(input)?;
     let py_type = spec.wrapper_name;
     let inner_type = spec.inner_type;
+    let uses_mirror = quote!(#inner_type).to_string() != quote!(#message_type).to_string();
     let stem = to_snake_case(
         py_type
             .to_string()
@@ -68,6 +71,7 @@ fn try_expand(
 
     for variant in &spec.variants {
         let rust_name = variant.rust_name;
+        let native_tuple = variant.bevy_shape == BevyVariantShape::Tuple && !uses_mirror;
         let variant_name = &variant.python_name;
         let variant_type = format_ident!("{}{}", py_type, rust_name);
         let qualname = format!("{python_name}.{variant_name}");
@@ -111,11 +115,15 @@ fn try_expand(
             .collect::<Vec<_>>();
         let inner_constructor = if unit_variant {
             quote! { #inner_type::#rust_name }
+        } else if native_tuple {
+            quote! { #inner_type::#rust_name(#(#parameter_names),*) }
         } else {
             quote! { #inner_type::#rust_name { #(#stored_names: #parameter_names),* } }
         };
         let inner_match = if unit_variant {
             quote! { #inner_type::#rust_name }
+        } else if native_tuple {
+            quote! { #inner_type::#rust_name(..) }
         } else {
             quote! { #inner_type::#rust_name { .. } }
         };
@@ -152,12 +160,24 @@ fn try_expand(
             } else {
                 quote! { #stored_name.clone() }
             };
+            let payload_match = if native_tuple {
+                let bindings = fields.iter().map(|candidate| {
+                    if candidate.declaration_index == field.declaration_index {
+                        quote! { #stored_name }
+                    } else {
+                        quote! { _ }
+                    }
+                });
+                quote! { #inner_type::#rust_name(#(#bindings),*) }
+            } else {
+                quote! { #inner_type::#rust_name { #stored_name, .. } }
+            };
             quote! {
                 #[getter]
                 pub fn #getter(slf: pyo3::PyRef<'_, Self>) -> #return_type {
                     let base = slf.into_super();
                     match &base.inner {
-                        #inner_type::#rust_name { #stored_name, .. } => #value,
+                        #payload_match => #value,
                         _ => unreachable!(concat!(#qualname, " instance changed discriminant")),
                     }
                 }
@@ -210,6 +230,8 @@ fn try_expand(
         let prefix = format!("{python_name}.{variant_name}(");
         let repr_match = if unit_variant {
             quote! { #inner_type::#rust_name }
+        } else if native_tuple {
+            quote! { #inner_type::#rust_name(#(#names),*) }
         } else {
             quote! { #inner_type::#rust_name { #(#names),* } }
         };

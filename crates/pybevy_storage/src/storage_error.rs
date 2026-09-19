@@ -74,6 +74,9 @@ pub enum StorageError {
     /// resource-wide access guard (`RuntimeError`).
     AssetAccessConflict,
 
+    /// A checked borrowed path already holds conflicting native access.
+    BorrowedAccessConflict,
+
     /// List index out of range (`IndexError`)
     IndexOutOfRange,
 
@@ -143,6 +146,7 @@ impl fmt::Display for StorageError {
                  Drop the array (del it or leave the with-block that created it) \
                  before mutating or consuming the asset.",
             ),
+            StorageError::BorrowedAccessConflict => f.write_str("Conflicting access to this borrowed value is already active."),
             StorageError::AssetAccessConflict => f.write_str(
                 "Conflicting access to this Assets<T> resource is already active. Finish the current asset read or write before resolving another asset wrapper.",
             ),
@@ -180,6 +184,7 @@ impl From<StorageError> for PyErr {
             | StorageError::AssetUnavailable
             | StorageError::AssetViewsLive
             | StorageError::AssetAccessConflict
+            | StorageError::BorrowedAccessConflict
             | StorageError::VariantChanged(_) => PyRuntimeError::new_err(err.to_string()),
             StorageError::IndexOutOfRange | StorageError::EmptyList => {
                 PyIndexError::new_err(err.to_string())

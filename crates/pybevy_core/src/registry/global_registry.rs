@@ -312,7 +312,7 @@ pub fn get_asset_bridge_by_type_id(type_id: TypeId) -> Option<Arc<dyn AssetBridg
 /// Get an asset bridge by its name
 ///
 /// Returns the bridge if found, None otherwise.
-/// Used by convenience methods like `load_scene()`, `load_image()`, etc.
+/// Used by named native operations such as folder loading.
 pub fn get_asset_bridge_by_name(name: &str) -> Option<Arc<dyn AssetBridge>> {
     let registry = get_global_asset_registry();
     let guard = registry

@@ -1,16 +1,23 @@
-//! Typed, re-resolving paths into assets stored in a Bevy `Assets<A>` resource.
+//! Typed, re-resolving paths into borrowed Bevy values and assets.
 
 use std::{
     any::{Any, TypeId, type_name},
     fmt,
     marker::PhantomData,
     ops::{Deref, DerefMut},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicIsize, Ordering},
+    },
 };
 
 use bevy::asset::UntypedAssetId;
 
-use crate::{AssetResourceReadGuard, AssetResourceWriteGuard, StorageError};
+use crate::{
+    AssetResourceReadGuard, AssetResourceWriteGuard, StorageError, ValueStorage,
+    borrowed::{BorrowedMut, BorrowedRef, RevalidatingField},
+    value_storage::ValueStorageInner,
+};
 
 pub type ReadField<Parent, Field> = for<'a> fn(&'a Parent) -> &'a Field;
 pub type WriteField<Parent, Field> = for<'a> fn(&'a mut Parent) -> &'a mut Field;
@@ -322,12 +329,63 @@ impl AssetPath {
 
 pub(crate) struct ErasedResolvedRef {
     pub(crate) ptr: *const u8,
-    pub(crate) guard: AssetResourceReadGuard,
+    pub(crate) guard: SourceReadGuard,
 }
 
 pub(crate) struct ErasedResolvedMut {
     pub(crate) ptr: *mut u8,
-    pub(crate) guard: AssetResourceWriteGuard,
+    pub(crate) guard: SourceWriteGuard,
+}
+
+#[derive(Debug)]
+pub(crate) struct BorrowedPathGuard {
+    gate: Arc<AtomicIsize>,
+    write: bool,
+}
+
+impl BorrowedPathGuard {
+    fn acquire(gate: &Arc<AtomicIsize>, write: bool) -> Result<Self, StorageError> {
+        gate.fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+            if write {
+                (count == 0).then_some(-1)
+            } else {
+                (count >= 0).then(|| count.checked_add(1)).flatten()
+            }
+        })
+        .map_err(|_| StorageError::BorrowedAccessConflict)?;
+        Ok(Self {
+            gate: gate.clone(),
+            write,
+        })
+    }
+}
+
+impl Drop for BorrowedPathGuard {
+    fn drop(&mut self) {
+        if self.write {
+            self.gate.store(0, Ordering::Release);
+        } else {
+            self.gate.fetch_sub(1, Ordering::Release);
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum SourceReadGuard {
+    Asset { _guard: AssetResourceReadGuard },
+    Borrowed { _guard: BorrowedPathGuard },
+}
+
+#[derive(Debug)]
+pub(crate) enum SourceWriteGuard {
+    Asset { _guard: AssetResourceWriteGuard },
+    Borrowed { _guard: BorrowedPathGuard },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum SourceIdentity {
+    Asset(TypeId, UntypedAssetId, usize),
+    Borrowed(usize),
 }
 
 pub(crate) trait ErasedRevalidatingSource: fmt::Debug + Send + Sync {
@@ -335,14 +393,14 @@ pub(crate) trait ErasedRevalidatingSource: fmt::Debug + Send + Sync {
     fn resolve_mut(&self) -> Result<ErasedResolvedMut, StorageError>;
     fn append_step(&self, path: AssetPath) -> Arc<dyn ErasedRevalidatingSource>;
     fn clone_readonly(&self) -> Arc<dyn ErasedRevalidatingSource>;
-    fn root_identity(&self) -> (TypeId, UntypedAssetId, usize);
+    fn root_identity(&self) -> SourceIdentity;
     fn path(&self) -> &AssetPath;
 }
 
 #[derive(Debug)]
 pub struct RevalidatingRef<'a, T> {
     ptr: *const T,
-    _guard: AssetResourceReadGuard,
+    _guard: SourceReadGuard,
     _lifetime: PhantomData<&'a T>,
 }
 
@@ -350,8 +408,7 @@ impl<T> Deref for RevalidatingRef<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        // SAFETY: the source resolved this exact path while the retained read
-        // guard excludes mutable resolution of its asset resource.
+        // SAFETY: resolution checked validity; the retained guard excludes conflicting access.
         unsafe { &*self.ptr }
     }
 }
@@ -359,7 +416,7 @@ impl<T> Deref for RevalidatingRef<'_, T> {
 #[derive(Debug)]
 pub struct RevalidatingMut<'a, T> {
     ptr: *mut T,
-    _guard: AssetResourceWriteGuard,
+    _guard: SourceWriteGuard,
     _lifetime: PhantomData<&'a mut T>,
 }
 
@@ -382,6 +439,120 @@ impl<T> DerefMut for RevalidatingMut<'_, T> {
 pub struct RevalidatingSource<T> {
     inner: Arc<dyn ErasedRevalidatingSource>,
     marker: PhantomData<fn() -> T>,
+}
+
+enum BorrowedRoot<T> {
+    Read(BorrowedRef<T>),
+    Write(BorrowedMut<T>),
+    Component(RevalidatingField),
+}
+
+impl<T> BorrowedRoot<T> {
+    fn read(&self) -> Result<&T, StorageError> {
+        match self {
+            Self::Read(root) => root.get(),
+            Self::Write(root) => root.get(),
+            Self::Component(root) => root.get::<T>(),
+        }
+    }
+
+    fn write_ptr(&self) -> Result<*mut u8, StorageError> {
+        match self {
+            Self::Read(_) => Err(StorageError::ReadOnly),
+            Self::Write(root) => Ok(root.share().get_mut()? as *mut T as *mut u8),
+            Self::Component(root) => Ok(root.clone().get_mut::<T>()? as *mut T as *mut u8),
+        }
+    }
+}
+
+struct BorrowedSource<T> {
+    root: Arc<BorrowedRoot<T>>,
+    gate: Arc<AtomicIsize>,
+    path: AssetPath,
+    readonly: bool,
+}
+
+impl<T> fmt::Debug for BorrowedSource<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BorrowedSource")
+            .field("path", &self.path)
+            .finish()
+    }
+}
+
+impl<T: Send + Sync + 'static> ErasedRevalidatingSource for BorrowedSource<T> {
+    fn resolve_ref(&self) -> Result<ErasedResolvedRef, StorageError> {
+        let guard = BorrowedPathGuard::acquire(&self.gate, false)?;
+        let root = self.root.read()? as *const T as *const u8;
+        // SAFETY: the typed root checked validity and the path checks every variant.
+        let ptr = unsafe { self.path.project_ref(root)? };
+        Ok(ErasedResolvedRef {
+            ptr,
+            guard: SourceReadGuard::Borrowed { _guard: guard },
+        })
+    }
+
+    fn resolve_mut(&self) -> Result<ErasedResolvedMut, StorageError> {
+        let guard = BorrowedPathGuard::acquire(&self.gate, true)?;
+        let root = self.root.read()? as *const T as *const u8;
+        // SAFETY: validate the full path under the writer before marking any change.
+        unsafe {
+            self.path.project_ref(root)?;
+        }
+        if self.readonly {
+            return Err(StorageError::ReadOnly);
+        }
+        let root = self.root.write_ptr()?;
+        // SAFETY: write authority is checked; no callback intervenes after preflight.
+        let ptr = unsafe { self.path.project_mut(root)? };
+        Ok(ErasedResolvedMut {
+            ptr,
+            guard: SourceWriteGuard::Borrowed { _guard: guard },
+        })
+    }
+
+    fn append_step(&self, path: AssetPath) -> Arc<dyn ErasedRevalidatingSource> {
+        Arc::new(Self {
+            root: self.root.clone(),
+            gate: self.gate.clone(),
+            path,
+            readonly: self.readonly,
+        })
+    }
+
+    fn clone_readonly(&self) -> Arc<dyn ErasedRevalidatingSource> {
+        Arc::new(Self {
+            root: self.root.clone(),
+            gate: self.gate.clone(),
+            path: self.path.clone(),
+            readonly: true,
+        })
+    }
+
+    fn root_identity(&self) -> SourceIdentity {
+        SourceIdentity::Borrowed(Arc::as_ptr(&self.root) as usize)
+    }
+
+    fn path(&self) -> &AssetPath {
+        &self.path
+    }
+}
+
+impl<T: Copy + Send + Sync + 'static> RevalidatingSource<T> {
+    pub(crate) fn from_borrowed_value(storage: &ValueStorage<T>) -> Option<Self> {
+        let root = match &storage.inner {
+            ValueStorageInner::BorrowedRef(root) => BorrowedRoot::Read(root.clone()),
+            ValueStorageInner::BorrowedMut(root) => BorrowedRoot::Write(root.share()),
+            ValueStorageInner::Revalidating(root) => BorrowedRoot::Component((**root).clone()),
+            _ => return None,
+        };
+        Some(Self::new(Arc::new(BorrowedSource {
+            root: Arc::new(root),
+            gate: Arc::new(AtomicIsize::new(0)),
+            path: AssetPath::root::<T>(),
+            readonly: false,
+        })))
+    }
 }
 
 impl<T> fmt::Debug for RevalidatingSource<T> {
@@ -484,8 +655,143 @@ impl<T> RevalidatingSource<T> {
     }
 }
 
-// SAFETY: the erased source only dereferences its world cell after the
-// thread-affine validity check and while holding the matching resource guard.
+// SAFETY: erased roots check thread-affine validity and retain their matching access guard.
 unsafe impl<T> Send for RevalidatingSource<T> {}
 // SAFETY: another thread cannot pass the source's validity check.
 unsafe impl<T> Sync for RevalidatingSource<T> {}
+
+#[cfg(test)]
+mod tests {
+    use bevy::ecs::{component::Component, world::World};
+
+    use super::*;
+    use crate::{AccessMode, BorrowableStorage, ValidityFlag};
+
+    #[derive(Component, Clone, Copy)]
+    struct Holder(Option<f32>);
+
+    #[derive(Component)]
+    struct Extra;
+
+    #[test]
+    fn revalidating_payload_survives_moves_and_failed_write_does_not_mark() {
+        let mut world = World::new();
+        let entity = world.spawn(Holder(Some(1.0))).id();
+        let component = world.components().component_id::<Holder>().unwrap();
+        let flag = ValidityFlag::new_write();
+        // SAFETY: the test owns World and accesses only this live Holder through the handle.
+        let storage: ValueStorage<Holder> = unsafe {
+            ValueStorage::revalidating(
+                world.as_unsafe_world_cell(),
+                entity,
+                component,
+                0,
+                flag.with_access_mode(AccessMode::Write),
+            )
+        };
+        let source = RevalidatingSource::from_borrowed_value(&storage).unwrap();
+        let payload = source.variant("Some", |root| root.0.as_ref(), |root| root.0.as_mut());
+        world.entity_mut(entity).insert(Extra);
+        *payload.resolve_mut().unwrap() = 2.0;
+        assert_eq!(world.get::<Holder>(entity).unwrap().0, Some(2.0));
+        world.entity_mut(entity).insert(Holder(None));
+        let before = world
+            .entity(entity)
+            .get_change_ticks_by_id(component)
+            .unwrap()
+            .changed;
+        world.increment_change_tick();
+        assert!(matches!(
+            payload.resolve_mut(),
+            Err(StorageError::VariantChanged("Some"))
+        ));
+        let after = world
+            .entity(entity)
+            .get_change_ticks_by_id(component)
+            .unwrap()
+            .changed;
+        assert_eq!(before, after);
+        world.despawn(entity);
+        assert!(matches!(
+            payload.resolve_ref(),
+            Err(StorageError::EntityUnavailable)
+        ));
+        flag.set_invalid();
+    }
+
+    #[test]
+    fn borrowed_variant_checks_authority_guards_and_discriminant() {
+        let mut value = Some(1.0_f32);
+        let flag = ValidityFlag::new_write();
+        // SAFETY: value lives through all accesses on this thread under flag.
+        let mut storage = unsafe { ValueStorage::borrowed_mut(&mut value, flag.clone()) };
+        let source = RevalidatingSource::from_borrowed_value(&storage).unwrap();
+        let payload = source.variant("Some", Option::as_ref, Option::as_mut);
+        {
+            let first = payload.resolve_ref().unwrap();
+            let second = payload.resolve_ref().unwrap();
+            assert_eq!(*first, 1.0);
+            assert_eq!(*second, 1.0);
+            assert!(matches!(
+                payload.resolve_mut(),
+                Err(StorageError::BorrowedAccessConflict)
+            ));
+        }
+        {
+            let mut write = payload.resolve_mut().unwrap();
+            *write = 2.0;
+            assert!(matches!(
+                payload.resolve_ref(),
+                Err(StorageError::BorrowedAccessConflict)
+            ));
+            assert!(matches!(
+                payload.resolve_mut(),
+                Err(StorageError::BorrowedAccessConflict)
+            ));
+        }
+        assert_eq!(storage.get().unwrap(), Some(2.0));
+        let readonly = payload.clone();
+        assert!(matches!(
+            readonly.resolve_mut(),
+            Err(StorageError::ReadOnly)
+        ));
+        *storage.as_mut().unwrap() = None;
+        assert!(matches!(
+            payload.resolve_ref(),
+            Err(StorageError::VariantChanged("Some"))
+        ));
+        assert!(matches!(
+            payload.resolve_mut(),
+            Err(StorageError::VariantChanged("Some"))
+        ));
+        *storage.as_mut().unwrap() = Some(3.0);
+        assert_eq!(*payload.resolve_ref().unwrap(), 3.0);
+        flag.set_invalid();
+        assert!(matches!(
+            payload.resolve_ref(),
+            Err(StorageError::InvalidAccess)
+        ));
+        assert!(matches!(
+            payload.resolve_mut(),
+            Err(StorageError::InvalidAccess)
+        ));
+    }
+
+    #[test]
+    fn shared_borrow_payload_stays_readonly_and_owned_values_do_not_escape() {
+        let value = Some(1.0_f32);
+        let flag = ValidityFlag::new_read();
+        // SAFETY: value remains live and immutable for this validity window.
+        let storage = unsafe { ValueStorage::borrowed_ref(&value, flag.clone()) };
+        let source = RevalidatingSource::from_borrowed_value(&storage).unwrap();
+        let payload = source.variant("Some", Option::as_ref, Option::as_mut);
+        assert_eq!(*payload.resolve_ref().unwrap(), 1.0);
+        assert!(matches!(payload.resolve_mut(), Err(StorageError::ReadOnly)));
+        flag.set_invalid();
+        assert!(matches!(
+            payload.resolve_ref(),
+            Err(StorageError::InvalidAccess)
+        ));
+        assert!(RevalidatingSource::from_borrowed_value(&ValueStorage::owned(value)).is_none());
+    }
+}

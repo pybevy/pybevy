@@ -629,7 +629,8 @@ def watch_for_changes(
         reload_state: App reload state object with trigger methods
         stop_event: Threading event to signal watcher should stop
         changed_files_cache: Dict with 'files' key to store changed file paths
-        partial_mode: Whether to request partial reload (True) or full reload (False)
+        partial_mode: Initial watcher mode: partial (True) or full (False).
+            F6 can subsequently toggle the default mode.
         ignore_patterns: List of path patterns to ignore (defaults to common patterns)
         verbose: If True, print debug information
         log_prefix: Prefix for log messages (e.g., "[PyBevy]" or "[MyApp]")
@@ -657,6 +658,8 @@ def watch_for_changes(
     # Determine reload trigger method (prefers new API)
     trigger_reload: Callable[[], None]
     if hasattr(reload_state, "trigger_reload_if_needed"):
+        if hasattr(reload_state, "set_default_mode"):
+            reload_state.set_default_mode(partial=partial_mode)
         # New method: honors any reload mode already set (e.g., by F5)
         trigger_reload = reload_state.trigger_reload_if_needed  # type: ignore
         if verbose:
