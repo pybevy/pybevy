@@ -79,6 +79,11 @@ When geometry looks wrong (wrong size, shape, missing, or occluded), follow this
 
 See `guide://hot-reload` for reload modes (Full vs Partial), type re-aliasing, memory profiling, plugin delta detection, and keyboard shortcuts (F5/F6/F7). See `guide://scene-editing` for time control commands (`pause_time`, `resume_time`, `set_time_scale`) and batched schedule workflows.
 
+For Rust-owned applications loading and hot-reloading Python plugins, see
+`guide://native-plugins`.
+`PyBevyPlugin::with_plugin` supports build-time configuration; combining it with
+native hot reload is currently rejected.
+
 ## Critical Rules
 
 Integer rectangle arithmetic raises `OverflowError` for out-of-range results; `IRect` center constructors require non-negative sizes. `URect.inflate` saturates coordinates and rejects an unrepresentable negation.

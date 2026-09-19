@@ -105,7 +105,7 @@ same Python spelling, so a response replays unchanged; a Bevy field named after
 a Python keyword carries a trailing underscore, such as `global_`.
 `GlobalTransform` reports only computed world-space `translation`, `rotation`,
 and `scale`; these fields are read-only. Readable read-only fields on other
-components, such as `BackgroundGradient.gradients` and the `AccessibilityNode`
+components, such as the `AccessibilityNode`
 `role`, `label`, and `value` properties, are included on read and rejected
 with a field-named error when written. Derived enum predicates such as `is_*`
 are omitted.
