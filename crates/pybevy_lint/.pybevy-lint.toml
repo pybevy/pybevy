@@ -1008,6 +1008,7 @@ types = [
 # PyBevy type name mappings to Bevy types
 # Format: "PyBevyName" = "BevyName" or "PyBevyName" = "bevy_crate::module::BevyName"
 [bevy.type_mappings]
+PyAudioPlayerBase = "AudioPlayer"
 # When PyBevy uses different names than Bevy
 PyTransform = "Transform"
 PyVec3 = "Vec3"
@@ -1237,6 +1238,10 @@ reason = "Bevy 0.19.1 bevy_color::Laba::new defines the established Python const
 [bevy.constructor_functions."pybevy.audio.PyAudioPlayer"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_audio::AudioPlayer::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.audio.PyAudioPlayerBase"]
+function = "new"
+reason = "The public constructor preserves AudioPlayer<AudioSource>::new(source)'s parameter contract; dispatch to AudioPlayer<Pitch> uses the same single positional handle as Bevy's tuple constructor"
 
 [bevy.constructor_functions."pybevy.audio.PyGlobalVolume"]
 function = "new"
@@ -3076,26 +3081,6 @@ reason = "approved FIELD record: keyword-only normal target per audit (upstream 
 [[validation.exceptions]]
 code = "W013"
 path = "app.Stage"
-reason = "legacy plain value enum predating the pyenum convention; migration tracked by ISSUE-012"
-
-[[validation.exceptions]]
-code = "W013"
-path = "app.RunMode"
-reason = "legacy plain value enum predating the pyenum convention; migration tracked by ISSUE-012"
-
-[[validation.exceptions]]
-code = "W013"
-path = "text.FontSource"
-reason = "legacy plain value enum predating the pyenum convention; migration tracked by ISSUE-012"
-
-[[validation.exceptions]]
-code = "W013"
-path = "text.FontSize"
-reason = "legacy plain value enum predating the pyenum convention; migration tracked by ISSUE-012"
-
-[[validation.exceptions]]
-code = "W013"
-path = "input.GamepadInput"
 reason = "legacy plain value enum predating the pyenum convention; migration tracked by ISSUE-012"
 
 [[validation.exceptions]]

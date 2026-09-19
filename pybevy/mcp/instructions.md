@@ -105,6 +105,8 @@ Owned nested UI gradient values and `Isometry2d` vector fields are read-only sna
 - **Always use chained return style** - use `return (app.add_plugins(...).add_systems(...))`. Do NOT use separate `app.method(...)` calls followed by `return app`.
 - Always use `from pybevy.prelude import *` (NOT `from pybevy import *`)
 - Pass shapes directly to meshes.add(): `meshes.add(Cuboid(1,1,1))`
+- Compare enum values with constructed variants, such as `MouseButton.Left()`. Comparisons with uncalled variant classes from the same family raise `TypeError`; compact constants such as `KeyCode.KeyA` keep their existing spelling.
+- `AudioPlayer` accepts `AudioSource` and `Pitch` handles. Query procedural players with `AudioPlayer[Pitch]`; bare `AudioPlayer` queries select `AudioSource` players.
 - Use `GlobalAmbientLight` (Resource) not `AmbientLight` (Component) for global light
 - Changing `@component` or `@resource` field structure (add/remove fields, change storage mode) works with `reload` Full mode, but use `run_scene` if behavior is unexpected
 - Use `asset_server.load_image("path")` for images and `asset_server.load_audio("path")` for audio. The generic `asset_server.load(path)` requires an explicit asset type argument: `asset_server.load("path", Mesh)`.
