@@ -114,7 +114,11 @@ impl PyLightGizmoConfigGroup {
 
     #[getter]
     pub fn point_light_color(&self, py: Python<'_>) -> PyResult<Py<PyColor>> {
-        PyColor::from_color(self.as_ref()?.point_light_color, py)
+        PyColor::from_storage(
+            self.storage
+                .borrow_field(|group| &group.point_light_color)?,
+            py,
+        )
     }
 
     #[setter]
@@ -125,7 +129,10 @@ impl PyLightGizmoConfigGroup {
 
     #[getter]
     pub fn spot_light_color(&self, py: Python<'_>) -> PyResult<Py<PyColor>> {
-        PyColor::from_color(self.as_ref()?.spot_light_color, py)
+        PyColor::from_storage(
+            self.storage.borrow_field(|group| &group.spot_light_color)?,
+            py,
+        )
     }
 
     #[setter]
@@ -136,7 +143,11 @@ impl PyLightGizmoConfigGroup {
 
     #[getter]
     pub fn directional_light_color(&self, py: Python<'_>) -> PyResult<Py<PyColor>> {
-        PyColor::from_color(self.as_ref()?.directional_light_color, py)
+        PyColor::from_storage(
+            self.storage
+                .borrow_field(|group| &group.directional_light_color)?,
+            py,
+        )
     }
 
     #[setter]
@@ -147,7 +158,10 @@ impl PyLightGizmoConfigGroup {
 
     #[getter]
     pub fn rect_light_color(&self, py: Python<'_>) -> PyResult<Py<PyColor>> {
-        PyColor::from_color(self.as_ref()?.rect_light_color, py)
+        PyColor::from_storage(
+            self.storage.borrow_field(|group| &group.rect_light_color)?,
+            py,
+        )
     }
 
     #[setter]

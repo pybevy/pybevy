@@ -295,7 +295,7 @@ class GltfSkinnedMeshBoundsPolicy:
 class GltfLoaderSettings:
     """Settings for loading glTF files.
 
-    Pass these to `AssetServer.load_with_settings` to skip parts of a document,
+    Pass these to `LoadBuilder.with_settings` to skip parts of a document,
     override the image sampler, or change how glTF's coordinate system is
     converted. Plain `load` takes no settings and uses the defaults.
     """

@@ -1884,7 +1884,7 @@ class ImageNode(Component):
 
         def setup(commands: Commands, asset_server: Res[AssetServer]) -> None:
             # Load image and create UI node with image
-            texture = asset_server.load("bevy/textures/icon.png")
+            texture = asset_server.load_image("bevy/textures/icon.png")
             commands.spawn((
                 Node(),
                 ImageNode(texture),
@@ -1893,7 +1893,7 @@ class ImageNode(Component):
         # Change texture at runtime
         def update_image(query: Query[Mut[ImageNode]], asset_server: Res[AssetServer]) -> None:
             for image_node in query:
-                new_texture = asset_server.load("bevy/textures/new_icon.png")
+                new_texture = asset_server.load_image("bevy/textures/new_icon.png")
                 image_node.image = new_texture
         ```
 
