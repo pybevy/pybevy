@@ -905,13 +905,13 @@ class Text2dShadow(Component):
         >>> # Add shadow to text
         >>> commands.spawn(
         >>>     Text2d("Hello!"),
-        >>>     Text2dShadow(Vec2(4.0, -4.0), Color.BLACK),
+        >>>     Text2dShadow(offset=Vec2(4.0, -4.0), color=Color.BLACK),
         >>> )
         >>>
         >>> # Colored shadow with custom offset
         >>> commands.spawn(
         >>>     Text2d("Glowing!"),
-        >>>     Text2dShadow(Vec2(2.0, -2.0), Color.srgb(1.0, 0.0, 0.0)),
+        >>>     Text2dShadow(offset=Vec2(2.0, -2.0), color=Color.srgb(1.0, 0.0, 0.0)),
         >>> )
     """
 
@@ -1033,6 +1033,8 @@ class StrikethroughColor(Component):
     @staticmethod
     def batch(*, color: np.typing.ArrayLike | None = None) -> Batchable: ...  # type: ignore[override]
 
+    def __eq__(self, other: object) -> bool: ...
+
 class Underline(Component):
     """Marker component for underline text decoration."""
 
@@ -1047,6 +1049,8 @@ class UnderlineColor(Component):
     def __init__(self, color: Color = ...) -> None: ...
     @staticmethod
     def batch(*, color: np.typing.ArrayLike | None = None) -> Batchable: ...  # type: ignore[override]
+
+    def __eq__(self, other: object) -> bool: ...
 
 class LetterSpacing(Component):
     """Spacing between characters on a text entity.
@@ -1341,6 +1345,8 @@ class TextCursorStyle(Component):
     def selected_text_color(self) -> Color | None: ...
     @selected_text_color.setter
     def selected_text_color(self, value: Color | None) -> None: ...
+
+    def __eq__(self, other: object) -> bool: ...
 
 class TextPlugin(Plugin):
     """Plugin that adds text rendering support to the app.

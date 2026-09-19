@@ -152,6 +152,8 @@ class WindowResolution:
     def with_scale_factor_override(self, scale_factor_override: float) -> WindowResolution:
         """Return a copy of this resolution with the given scale factor override."""
 
+    def __eq__(self, other: object) -> bool: ...
+
 class VideoModeSelection:
     """Video mode selection for fullscreen windows.
 
@@ -858,6 +860,8 @@ class CursorIcon(Component):
 
     def is_system(self) -> bool:
         """Check if this is a system cursor."""
+
+    def __eq__(self, other: object) -> bool: ...
 
 
 class SystemCursorIcon:

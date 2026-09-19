@@ -2627,6 +2627,8 @@ class TouchInput(Message):
     def window(self) -> Entity:
         """The window entity this event was received on."""
 
+    def __eq__(self, other: object) -> bool: ...
+
 class AccumulatedMouseMotion(Resource):
     """Resource that accumulates mouse motion delta per frame.
 
