@@ -9,6 +9,7 @@ use bevy::{
 use pybevy_core::{
     BorrowableStorage, ComponentStorage, PyMaterializable, ResourceStorage, StorageMut, StorageRef,
     ValueStorage,
+    enum_comparison::compare_values,
     public_error::{COLOR_INPUT_TYPES, COLOR_INTERPOLATION_MISMATCH, enum_variant_changed},
 };
 use pybevy_macros::pyenum;
@@ -16,6 +17,7 @@ use pyo3::{
     Borrowed,
     exceptions::{PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
+    pyclass::CompareOp,
 };
 
 use super::{
@@ -658,12 +660,8 @@ impl PyColor {
         Ok(())
     }
 
-    pub fn __eq__(&self, other: &Self) -> PyResult<bool> {
-        self.try_eq(other)
-    }
-
-    pub fn __ne__(&self, other: &Self) -> PyResult<bool> {
-        Ok(!self.try_eq(other)?)
+    pub fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<Py<PyAny>> {
+        compare_values(self, other, op, Self::try_eq)
     }
 
     #[classattr]

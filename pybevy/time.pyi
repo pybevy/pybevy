@@ -68,6 +68,8 @@ class TimePlugin(Plugin):
 class TimeUpdateStrategy(Resource):
     """Controls how Bevy advances its real and virtual clocks each frame."""
 
+    def __hash__(self) -> int: ...
+
     class Automatic(TimeUpdateStrategy):
         """Advance from the render-world or system clock."""
         __match_args__: ClassVar[tuple[()]]
