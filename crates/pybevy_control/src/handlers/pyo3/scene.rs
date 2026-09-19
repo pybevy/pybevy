@@ -17,7 +17,9 @@ use bevy::{
     reflect::{ReflectRef, TypeInfo},
 };
 use pybevy_core::{
-    ResourceBridge, public_error,
+    ResourceBridge,
+    component_fields::declared_annotations,
+    public_error,
     registry::global_registry::{all_component_bridges, all_resource_bridges},
     source_location::SourceLocation,
 };
@@ -1684,10 +1686,7 @@ fn normalize_type_repr(s: &str) -> String {
 fn get_class_fields(py: Python<'_>, py_type: &Bound<'_, PyType>) -> serde_json::Value {
     let mut fields = serde_json::Map::new();
 
-    // Try __annotations__
-    if let Ok(annotations) = py_type.getattr("__annotations__")
-        && let Ok(dict) = annotations.cast::<PyDict>()
-    {
+    if let Ok(dict) = declared_annotations(py_type) {
         for (key, value) in dict.iter() {
             if let Ok(k) = key.extract::<String>() {
                 let v = value

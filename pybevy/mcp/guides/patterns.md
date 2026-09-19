@@ -203,6 +203,10 @@ PyBevy wraps Bevy components as Python classes:
 
 #### Custom Components
 
+Custom components store inherited annotated fields as well as their own.
+Subclass field overrides keep their base field's position. A subclass is still
+a distinct component type; querying the base does not select its subclasses.
+
 Define custom components with the `@component` decorator and `Component` base class.
 
 ```python
@@ -348,6 +352,10 @@ def print_tree(query: Query[tuple[Name, Children]]) -> None:
 ### Systems
 
 Systems are plain functions. Parameter type hints control what data is injected.
+
+On Python 3.14, dynamically generated systems can resolve annotations lazily.
+Use a factory to capture each component type separately. Each new callable
+resolves its own parameters, even when it shares a factory's code object.
 
 #### Schedule Stages
 

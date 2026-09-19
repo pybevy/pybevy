@@ -26,20 +26,19 @@ Full vs partial reload, what persists across reloads, error recovery, and diagno
 - Only reloads Update/Last system functions
 - Startup systems are NOT re-run
 - Use for iterating on game logic without resetting scene state
-- Auto-escalates to Full when Startup systems, resource definitions, observers,
-  or custom component layouts changed since the previous successful reload
-- On the first reload there is no definition baseline, so Partial conservatively
-  escalates when the scene declares Startup systems, resources, or observers;
-  later unchanged Partial reloads preserve scene state as described above
+- Auto-escalates to Full when Startup systems, observers, the set of resource
+  types, or a custom `@component`/`@resource` field layout changed since the
+  previous successful reload
+- The baseline is seeded from the definitions the entrypoint built, so the first
+  Partial reload after `run_scene` compares like any later one and keeps the
+  state accumulated since launch
 
-Partial mode does not reconstruct retained Startup-owned state. Three
+Partial mode does not reconstruct retained Startup-owned state. These
 consequences matter during iteration:
 
-- An existing `@resource` remains the same Python value object. Adding a field
-  to its class does not backfill that field onto the live instance, so updated
-  systems can raise `AttributeError` when they read it. Read it as
-  `getattr(res, "new_field", default)` while iterating, or use a Full reload to
-  clear and reconstruct custom resources from `@entrypoint` and Startup.
+- Changing annotated `@resource` fields escalates to Full and rebuilds the
+  resource. Changing only a default value keeps the current instance on Partial;
+  use Full to apply the new initial value.
 - Mesh assets and handles created by Startup survive a Partial reload. Editing
   mesh-building code has no visible effect until Startup runs again; use a Full
   reload when changing generated geometry.
@@ -96,8 +95,9 @@ shortcut changes the mode used by later file saves.
 | Changed Update system logic | Partial | Faster, keeps scene state |
 | Added new `@component`/`@resource` types | Full | Need fresh registration |
 | Changed `@component` fields or storage mode | Full | Partial reload auto-escalates before applying the new layout |
+| Changed `@resource` fields | Full | Partial reload keeps the live instance, so it auto-escalates to rebuild it |
 | Tweaking animation parameters | Partial | Preserves entity state |
-| First Partial reload in a scene with Startup, resources, or observers | Full | No definition baseline exists yet, so Partial is conservatively escalated |
+| First Partial reload after normal scene launch | Partial | Initial definitions provide the comparison baseline |
 | Added/changed observers | Full | Auto-escalated from Partial |
 | Renamed/removed a system function | `run_scene` | Stale schedule entries persist across `reload` |
 | Edited a `.wgsl` shader or other asset | none | Bevy re-loads the asset itself; the Python watcher ignores non-`.py` files |
@@ -113,13 +113,10 @@ scene**, including one no scene imports: the watcher is recursive over the
 launch directory and filters on the `.py` extension minus the ignore patterns.
 Asset files such as `.wgsl` do not.
 
-Partial or Full follows the table above. A scene with Startup systems,
-resources or observers has no fingerprint baseline on the first reload after
-`run_scene` and escalates to Full, discarding live `set_component`,
-`set_asset` and `spawn_entity` edits and changing every entity ID. Without
-those definitions it can stay Partial, provided no component layout changed
-and no failed Full reload needs recovery. Escalation is reported in reload
-status and logs, so address entities by `Name`, not a captured ID.
+The first Partial reload after `run_scene` preserves live state when definitions
+are unchanged. Escalation to Full discards live edits and changes entity IDs;
+it is reported in reload status and logs. Address entities by `Name` when they
+must survive a Full reload.
 
 ## Entity ID Stability
 
