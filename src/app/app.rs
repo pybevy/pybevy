@@ -29,9 +29,9 @@ use pybevy_core::{
     allocate_id, consume_unstored_id,
     plugin::plugin_registry,
     public_error::{
-        PLUGIN_ADDED_QUERY_TYPE, PLUGIN_GROUP_BUILD_RESULT, PLUGIN_GROUP_LIFECYCLE,
-        duplicate_plugin_identity, plugin_build_error, plugin_key_type, plugin_missing_decorator,
-        plugin_not_a_plugin,
+        NATIVE_PLUGIN_LIFECYCLE, PLUGIN_ADDED_QUERY_TYPE, PLUGIN_GROUP_BUILD_RESULT,
+        PLUGIN_GROUP_LIFECYCLE, duplicate_plugin_identity, plugin_build_error, plugin_key_type,
+        plugin_missing_decorator, plugin_not_a_plugin,
     },
     register_wrapped_reflect_types_for_new_app,
 };
@@ -258,6 +258,27 @@ pub(crate) fn drain_last_system_error(world: &mut World) {
     }
 }
 
+#[cfg(feature = "native-plugin")]
+#[derive(Default, Resource)]
+struct NativePythonRuntime;
+
+#[cfg(feature = "native-plugin")]
+impl Drop for NativePythonRuntime {
+    fn drop(&mut self) {
+        clear_system_param_cache();
+    }
+}
+
+#[cfg(feature = "native-plugin")]
+fn report_native_system_errors(sinks: Res<ObserverRuntimeSinks>) {
+    let errors = mem::take(&mut *lock_or_recover(&sinks.error_state));
+    Python::attach(|py| {
+        for error in errors {
+            error.print(py);
+        }
+    });
+}
+
 fn plugin_qualified_name(type_ptr: *const PyTypeObject, py: Python) -> Option<String> {
     // SAFETY: registered type pointers live for the interpreter lifetime.
     let py_type = unsafe { Bound::from_borrowed_ptr(py, type_ptr as *mut pyo3::ffi::PyObject) };
@@ -377,6 +398,7 @@ pub struct PyApp {
     /// by name for hot-reload resilience when Python classes get new type pointers)
     plugin_registry: RefCell<AddedPythonPlugins>,
     group_callback_depth: Cell<u32>,
+    native_configuration: bool,
 
     /// Shared error state for collecting system errors (parameter + execution)
     /// Arc allows sharing with DynamicSystem instances, Mutex for thread-safe access
@@ -441,6 +463,99 @@ pub struct PyApp {
 }
 
 impl PyApp {
+    fn from_app_id(
+        app_id: AppId,
+        system_error: Arc<Mutex<Vec<PyErr>>>,
+        system_error_buffer: SystemErrorBuffer,
+    ) -> Self {
+        Self {
+            app_id,
+            creation_thread: std::thread::current().id(),
+            plugin_registry: RefCell::new(AddedPythonPlugins::default()),
+            group_callback_depth: Cell::new(0),
+            native_configuration: false,
+            system_error,
+            system_error_buffer,
+            last_exit: Arc::new(Mutex::new(None)),
+            hot_reload_state: HotReloadState::new(),
+            is_reload_temp: Cell::new(false),
+            pending_systems: RefCell::new(Vec::new()),
+            pending_set_configs: RefCell::new(Vec::new()),
+            pending_resources: RefCell::new(Vec::new()),
+            pending_states: RefCell::new(Vec::new()),
+            pending_state_systems: RefCell::new(Vec::new()),
+            pending_messages: RefCell::new(Vec::new()),
+            pending_observers: RefCell::new(Vec::new()),
+            pending_plugins: RefCell::new(Vec::new()),
+            pending_system_names: RefCell::new(HashSet::new()),
+            initial_fingerprint: RefCell::new(InitialDefsFingerprint::default()),
+            entrypoint_set: Cell::new(false),
+        }
+    }
+
+    fn install_python_runtime(app: &mut App) -> (Arc<Mutex<Vec<PyErr>>>, SystemErrorBuffer) {
+        if let Some(sinks) = app.world().get_resource::<ObserverRuntimeSinks>() {
+            return (sinks.error_state.clone(), sinks.error_buffer.clone());
+        }
+        install_python_message_store(app);
+        let system_error = Arc::new(Mutex::new(Vec::new()));
+        let system_error_buffer = Arc::new(Mutex::new(None));
+        app.init_resource::<LastSystemError>();
+        app.insert_resource(LastErrorBuffer {
+            buffer: system_error_buffer.clone(),
+        });
+        app.insert_resource(ObserverRuntimeSinks {
+            error_state: system_error.clone(),
+            error_buffer: system_error_buffer.clone(),
+        });
+        app.add_systems(Last, drain_last_system_error);
+        app.add_systems(PreStartup, ensure_builtin_message_resources);
+        (system_error, system_error_buffer)
+    }
+
+    #[cfg(feature = "native-plugin")]
+    pub(crate) fn configure_native(
+        py: Python<'_>,
+        native: &mut App,
+        configure: impl FnOnce(&Bound<'_, Self>) -> PyResult<()>,
+    ) -> PyResult<()> {
+        let allocated = allocate_id().map_err(app_store_error)?;
+        configure_standard_schedules(native);
+        let needs_error_drain = !native.world().contains_resource::<ObserverRuntimeSinks>();
+        let (errors, buffer) = Self::install_python_runtime(native);
+        if needs_error_drain {
+            native.add_systems(Last, report_native_system_errors);
+        }
+        native.init_resource::<NativePythonRuntime>();
+        let app_id = BEVY_APPS
+            .with(|apps| apps.borrow_mut().insert_with_id(allocated, App::empty()))
+            .map_err(app_store_error)?;
+        let mut wrapper = Self::from_app_id(app_id, errors, buffer);
+        wrapper.native_configuration = true;
+        let owner = Py::new(py, wrapper)?;
+        *owner.borrow(py).plugin_registry.borrow_mut() = native
+            .world_mut()
+            .remove_resource::<AddedPythonPlugins>()
+            .unwrap_or_default();
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            let wrapper = owner.borrow(py);
+            wrapper.with_bevy_app(|_| {
+                wrapper.with_group_callback(native, || configure(owner.bind(py)))
+            })
+        }));
+        // Remove the placeholder so escaped wrappers cannot access the host later.
+        let placeholder = BEVY_APPS
+            .with(|apps| apps.borrow_mut().remove(app_id))
+            .map_err(app_store_error)?;
+        drop(placeholder);
+        let plugins = mem::take(&mut *owner.borrow(py).plugin_registry.borrow_mut());
+        native.insert_resource(plugins);
+        match result {
+            Ok(result) => result,
+            Err(payload) => resume_unwind(payload),
+        }
+    }
+
     /// Check the authoritative store lifecycle before an adapter-only operation.
     fn ensure_active(&self) -> PyResult<()> {
         if self.is_reload_temp.get() {
@@ -586,6 +701,9 @@ impl PyApp {
     }
 
     fn ensure_group_configuration(&self) -> PyResult<()> {
+        if self.native_configuration {
+            return Err(PyRuntimeError::new_err(NATIVE_PLUGIN_LIFECYCLE));
+        }
         if self.group_callback_depth.get() != 0 {
             return Err(PyRuntimeError::new_err(PLUGIN_GROUP_LIFECYCLE));
         }
@@ -609,6 +727,7 @@ impl PyApp {
             creation_thread: std::thread::current().id(),
             plugin_registry: RefCell::new(AddedPythonPlugins::default()),
             group_callback_depth: Cell::new(0),
+            native_configuration: false,
             system_error: Arc::new(Mutex::new(Vec::new())),
             system_error_buffer: Arc::new(Mutex::new(None)),
             last_exit: Arc::new(Mutex::new(None)),
@@ -787,56 +906,18 @@ impl PyApp {
         }
 
         configure_standard_schedules(&mut app);
-        install_python_message_store(&mut app);
 
         // Reflect-register all bridged bevy types so MCP/editor tooling can
         // resolve them by name even without bevy's reflect_auto_register
         register_wrapped_reflect_types_for_new_app(app.world());
 
-        // Pre-insert the MCP error resource and its off-world buffer, then register
-        // the drain that moves buffered errors into it each frame. Pre-inserting
-        // keeps the parallel error path in run_unsafe free of structural inserts.
-        let system_error_buffer: SystemErrorBuffer = Arc::new(Mutex::new(None));
-        let system_error = Arc::new(Mutex::new(Vec::new()));
-        app.insert_resource(LastSystemError::default());
-        app.insert_resource(LastErrorBuffer {
-            buffer: system_error_buffer.clone(),
-        });
-        app.insert_resource(ObserverRuntimeSinks {
-            error_state: system_error.clone(),
-            error_buffer: system_error_buffer.clone(),
-        });
-        app.add_systems(Last, drain_last_system_error);
-
-        // Fill any absent built-in message buffers after plugins have built.
-        app.add_systems(PreStartup, ensure_builtin_message_resources);
+        let (system_error, system_error_buffer) = Self::install_python_runtime(&mut app);
 
         let app_id = BEVY_APPS
             .with(|apps_cell| apps_cell.borrow_mut().insert_with_id(allocated_app_id, app))
             .map_err(app_store_error)?;
 
-        Ok(PyApp {
-            app_id,
-            creation_thread: std::thread::current().id(),
-            plugin_registry: RefCell::new(AddedPythonPlugins::default()),
-            group_callback_depth: Cell::new(0),
-            system_error,
-            system_error_buffer,
-            last_exit: Arc::new(Mutex::new(None)),
-            hot_reload_state: HotReloadState::new(),
-            is_reload_temp: Cell::new(false),
-            pending_systems: RefCell::new(Vec::new()),
-            pending_set_configs: RefCell::new(Vec::new()),
-            pending_resources: RefCell::new(Vec::new()),
-            pending_states: RefCell::new(Vec::new()),
-            pending_state_systems: RefCell::new(Vec::new()),
-            pending_messages: RefCell::new(Vec::new()),
-            pending_observers: RefCell::new(Vec::new()),
-            pending_plugins: RefCell::new(Vec::new()),
-            pending_system_names: RefCell::new(HashSet::new()),
-            initial_fingerprint: RefCell::new(InitialDefsFingerprint::default()),
-            entrypoint_set: Cell::new(false),
-        })
+        Ok(Self::from_app_id(app_id, system_error, system_error_buffer))
     }
     #[pyo3(signature = (schedule, *systems))]
     pub fn add_systems(

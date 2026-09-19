@@ -13,7 +13,10 @@
 //! fn main() {
 //!     App::new()
 //!         .add_plugins(DefaultPlugins)
-//!         .add_plugins(PyBevyPlugin::new("my_game.systems"))
+//!         .add_plugins(
+//!             PyBevyPlugin::new("my_game.systems")
+//!                 .with_update_system("rotate_cubes")
+//!         )
 //!         .run();
 //! }
 //! ```
@@ -21,16 +24,22 @@
 //! Then in your Python module (`my_game/systems.py`):
 //!
 //! ```python
-//! from pybevy import Query, Transform, Time, Mut, Quat
+//! from pybevy.ecs import Mut, Query, Res
+//! from pybevy.math import Quat
+//! from pybevy.time import Time
+//! from pybevy.transform import Transform
 //!
-//! def rotate_cubes(query: Query[Mut[Transform]], time: Time):
+//! def rotate_cubes(query: Query[Mut[Transform]], time: Res[Time]) -> None:
 //!     for transform in query:
 //!         transform.rotation *= Quat.from_rotation_y(time.delta_secs())
 //! ```
 
 #[cfg(feature = "native-hot-reload")]
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::{
+    ffi::CString,
+    sync::{Arc, Mutex, OnceLock},
+};
 
 #[cfg(feature = "native-hot-reload")]
 use bevy::prelude::{Res, Resource};
@@ -40,7 +49,9 @@ use bevy::{
     log::warn,
 };
 use pybevy_core::{
-    ComponentBridge, ensure_asset_access_registry, register_wrapped_reflect_types,
+    ComponentBridge, ensure_asset_access_registry,
+    public_error::{NATIVE_PLUGIN_EMPTY_SELECTION, native_plugin_load_error},
+    register_wrapped_reflect_types,
     registry::global_registry,
 };
 #[cfg(feature = "native-hot-reload")]
@@ -48,12 +59,17 @@ use pybevy_reload::FileWatcher;
 use pybevy_reload::{
     HotReloadGeneration, ReloadGenerationSet, SystemStage, generation_matches, startup_or_reload,
 };
-use pyo3::{exceptions::PyImportError, prelude::*, types::PyList};
+use pyo3::{
+    exceptions::PyImportError,
+    prelude::*,
+    types::{PyDict, PyList},
+};
 
 use crate::{
     _pybevy,
     app::{
         PyStage,
+        app::PyApp,
         hot_reload::{
             state::{HotReloadResource, HotReloadState},
             systems::{check_hot_reload_system, handle_f5_reload_system},
@@ -226,19 +242,18 @@ impl PySystemBuilder {
 
 /// Python source for the native plugin hot reload loader.
 ///
-/// Self-contained: no dependency on the pybevy Python package so that
-/// `cargo test` works without a matching install. Loads the scene module
-/// via `importlib.util.spec_from_file_location` so that the module is
+/// Loads the scene module via `importlib.util.spec_from_file_location` so it is
 /// registered in `sys.modules` (unlike `runpy.run_path`, which only
 /// returns a globals dict). This makes `import <stem>` work, keeps
 /// pickle round-trips functional, and preserves reload identity.
 ///
 /// Protocol (matches `perform_reload` in hot_reload.rs):
-///   1. `loader()` → re-imports module from source, returns `configurator`
-///   2. `configurator(app)` → calls `app.add_systems(stage, (func,))` for each system
+///   1. `loader()` re-imports the module from source and returns `configurator`.
+///   2. `configurator(app)` adds the selected plugins and systems.
 const NATIVE_LOADER_PY: &str = r#"
-def _make_native_loader(module_name, systems):
+def _make_native_loader(module_name, systems, plugins=()):
     import importlib, importlib.util, os, sys, sysconfig
+    from pybevy._internal.reload_modules import record_module_flush
 
     def _flush_user_modules(project_dir):
         """Remove all user project modules from sys.modules."""
@@ -259,6 +274,7 @@ def _make_native_loader(module_name, systems):
             if fpath.startswith(stdlib_prefix):
                 continue
             to_remove.append(name)
+        record_module_flush(project_dir, to_remove)
         for name in to_remove:
             del sys.modules[name]
         importlib.invalidate_caches()
@@ -304,6 +320,8 @@ def _make_native_loader(module_name, systems):
         mod_globals = module.__dict__
 
         def configurator(app):
+            for plugin_name in plugins:
+                app.add_plugins(getattr(module, plugin_name))
             for func_name, stage in systems:
                 func = mod_globals.get(func_name)
                 if func is not None:
@@ -376,6 +394,7 @@ fn poll_native_file_watcher(
 pub struct PyBevyPlugin {
     module_name: String,
     systems: Vec<PySystemBuilder>,
+    plugins: Vec<String>,
     python_paths: Vec<String>,
     component_bridges: Vec<Arc<dyn ComponentBridge>>,
     hot_reload: bool,
@@ -384,13 +403,14 @@ pub struct PyBevyPlugin {
 impl PyBevyPlugin {
     /// Create a new PyBevy plugin that will load systems from the specified Python module
     ///
-    /// If no systems are specified, the plugin looks for functions named `startup`,
-    /// `update`, and `last` and adds the ones it finds to the corresponding schedules.
-    /// Use [`Self::with_system`] to specify custom function names.
+    /// Select plugins with [`Self::with_plugin`], functions with [`Self::with_system`]
+    /// or the stage-specific methods, or opt into [`Self::with_auto_discovery`].
+    /// Installing a plugin without any selection panics before Python is initialized.
     pub fn new(module_name: impl Into<String>) -> Self {
         Self {
             module_name: module_name.into(),
             systems: Vec::new(),
+            plugins: Vec::new(),
             python_paths: Vec::new(),
             component_bridges: Vec::new(),
             hot_reload: false,
@@ -400,6 +420,8 @@ impl PyBevyPlugin {
     /// Add a directory to Python's `sys.path` for module resolution.
     ///
     /// Call this when the Python module is not in the current working directory.
+    /// Pass its containing directory, not a `.py` file; [`Self::new`] takes the
+    /// importable module name, without the `.py` extension.
     ///
     /// # Example
     ///
@@ -411,6 +433,22 @@ impl PyBevyPlugin {
     /// ```
     pub fn with_python_path(mut self, path: impl Into<String>) -> Self {
         self.python_paths.push(path.into());
+        self
+    }
+
+    /// Load a Python plugin exported by the configured module.
+    ///
+    /// The name may identify a zero-argument plugin class or a plugin instance.
+    /// Its `build(app)` configures this Rust App through the normal Python App API.
+    /// Repeated calls configure plugins in order, before explicitly selected systems.
+    /// Automatic system discovery is disabled unless explicitly requested.
+    ///
+    /// The configuration App expires when all selected plugins have built. It cannot
+    /// run, update, finish, or clean up the host App. With [`Self::with_hot_reload`],
+    /// plugin builds are collected again for each reload. Import, construction, and
+    /// build errors panic during Bevy plugin installation; earlier mutations remain.
+    pub fn with_plugin(mut self, plugin_name: impl Into<String>) -> Self {
+        self.plugins.push(plugin_name.into());
         self
     }
 
@@ -448,7 +486,9 @@ impl PyBevyPlugin {
             ("update", PyStage::Update),
             ("last", PyStage::Last),
         ] {
-            let builder = PySystemBuilder::new(self.module_name.clone(), func_name).in_stage(stage);
+            let builder = PySystemBuilder::new(self.module_name.clone(), func_name)
+                .in_stage(stage)
+                .optional();
             self.systems.push(builder);
         }
         self
@@ -515,6 +555,10 @@ impl PyBevyPlugin {
 
 impl Plugin for PyBevyPlugin {
     fn build(&self, app: &mut App) {
+        assert!(
+            !self.systems.is_empty() || !self.plugins.is_empty(),
+            "{NATIVE_PLUGIN_EMPTY_SELECTION}"
+        );
         ensure_python_initialized();
         ensure_asset_access_registry(app.world_mut());
 
@@ -562,32 +606,98 @@ impl Plugin for PyBevyPlugin {
             });
         }
 
-        // If no systems specified, try auto-discovery
-        let systems_to_add = if self.systems.is_empty() {
-            vec![
-                PySystemBuilder::new(self.module_name.clone(), "startup")
-                    .in_stage(PyStage::Startup)
-                    .optional(),
-                PySystemBuilder::new(self.module_name.clone(), "update")
-                    .in_stage(PyStage::Update)
-                    .optional(),
-                PySystemBuilder::new(self.module_name.clone(), "last")
-                    .in_stage(PyStage::Last)
-                    .optional(),
-            ]
-        } else {
-            self.systems.clone()
-        };
+        if !self.plugins.is_empty() {
+            Python::attach(|py| {
+                let result = PyApp::configure_native(py, app, |configuration| {
+                    let module = py.import(&self.module_name)?;
+                    for name in &self.plugins {
+                        let plugin = module.getattr(name)?;
+                        configuration.call_method1("add_plugins", (plugin,))?;
+                    }
+                    if self.hot_reload {
+                        for builder in &self.systems {
+                            let result = match module.getattr(&builder.function_name) {
+                                Ok(function) => configuration
+                                    .call_method1("add_systems", (builder.stage, function))
+                                    .map(|_| ())
+                                    .map_err(SystemLoadError::Failed),
+                                Err(_) => Err(SystemLoadError::MissingFunction),
+                            };
+                            if let Err(error) = result {
+                                report_system_load_error(
+                                    &builder.module_name,
+                                    &builder.function_name,
+                                    builder.optional,
+                                    error,
+                                );
+                            }
+                        }
+                        let loader = self.make_reload_loader(py, &self.systems)?;
+                        configuration.call_method1("_set_hot_reload_loader", (loader,))?;
+                    }
+                    Ok(())
+                });
+                if let Err(error) = result {
+                    error.print(py);
+                    panic!("{}", native_plugin_load_error(&self.module_name, error));
+                }
+            });
+            if self.hot_reload {
+                #[cfg(feature = "native-hot-reload")]
+                self.install_file_watcher(app);
+                return;
+            }
+        }
 
         if self.hot_reload {
-            self.build_with_hot_reload(app, &systems_to_add);
+            self.build_with_hot_reload(app, &self.systems);
         } else {
-            self.build_without_hot_reload(app, systems_to_add);
+            self.build_without_hot_reload(app, self.systems.clone());
         }
     }
 }
 
 impl PyBevyPlugin {
+    fn make_reload_loader(
+        &self,
+        py: Python<'_>,
+        systems: &[PySystemBuilder],
+    ) -> PyResult<Py<PyAny>> {
+        let locals = PyDict::new(py);
+        let code = CString::new(NATIVE_LOADER_PY).expect("loader code contains null byte");
+        py.run(&code, None, Some(&locals))?;
+        let make_loader = locals
+            .get_item("_make_native_loader")?
+            .expect("native loader factory was defined");
+        let systems: Vec<_> = systems
+            .iter()
+            .map(|builder| (builder.function_name.clone(), builder.stage))
+            .collect();
+        Ok(make_loader
+            .call1((&self.module_name, systems, &self.plugins))?
+            .unbind())
+    }
+
+    #[cfg(feature = "native-hot-reload")]
+    fn install_file_watcher(&self, app: &mut App) {
+        if self.python_paths.is_empty() {
+            return;
+        }
+        let paths = self.python_paths.iter().map(PathBuf::from).collect();
+        match FileWatcher::with_defaults(paths) {
+            Ok(watcher) => {
+                app.insert_resource(NativeFileWatcher(watcher));
+                app.add_systems(
+                    Last,
+                    poll_native_file_watcher.before(handle_f5_reload_system),
+                );
+            }
+            Err(error) => {
+                eprintln!("[Hot Reload] Warning: Failed to start file watcher: {error}");
+            }
+        }
+    }
+
     /// Build without hot reload: current behavior, systems added directly
     fn build_without_hot_reload(&self, app: &mut App, systems_to_add: Vec<PySystemBuilder>) {
         for builder in systems_to_add {
@@ -627,39 +737,11 @@ impl PyBevyPlugin {
         // Create and register the Python loader function.
         // Loads the scene module via importlib.util so it ends up in
         // sys.modules (see NATIVE_LOADER_PY for details).
-        let module_name = self.module_name.clone();
         Python::attach(|py| {
-            // Define _make_native_loader in a temporary namespace
-            let locals = pyo3::types::PyDict::new(py);
-            let code =
-                std::ffi::CString::new(NATIVE_LOADER_PY).expect("loader code contains null byte");
-            py.run(&code, None, Some(&locals))
-                .expect("Failed to define native loader Python code");
-            let make_loader = locals
-                .get_item("_make_native_loader")
-                .expect("_make_native_loader not found")
-                .expect("_make_native_loader not found");
-
-            // Build the systems list: [(func_name, PyStage), ...]
-            let systems_list: Vec<(String, Py<PyAny>)> = systems_to_add
-                .iter()
-                .map(|b| {
-                    let stage_obj: Py<PyAny> = b
-                        .stage
-                        .into_pyobject(py)
-                        .expect("Failed to convert stage")
-                        .into_any()
-                        .unbind();
-                    (b.function_name.clone(), stage_obj)
-                })
-                .collect();
-
-            // Call _make_native_loader(module_name, systems) to get the loader closure
-            let loader_py = make_loader
-                .call1((&module_name, systems_list))
-                .expect("Failed to create native loader");
-
-            reload_state.set_loader(loader_py.unbind());
+            reload_state.set_loader(
+                self.make_reload_loader(py, systems_to_add)
+                    .expect("Failed to create native loader"),
+            );
         });
 
         // Add initial systems with generation-based run conditions
@@ -692,37 +774,12 @@ impl PyBevyPlugin {
         }
 
         #[cfg(feature = "native-hot-reload")]
-        if !self.python_paths.is_empty() {
-            let paths = self.python_paths.iter().map(PathBuf::from).collect();
-            match FileWatcher::with_defaults(paths) {
-                Ok(watcher) => {
-                    eprintln!(
-                        "[Hot Reload] File watcher started for: {:?}",
-                        self.python_paths
-                    );
-                    app.insert_resource(NativeFileWatcher(watcher));
-                }
-                Err(error) => {
-                    eprintln!("[Hot Reload] Warning: Failed to start file watcher: {error}");
-                }
-            }
-        }
+        self.install_file_watcher(app);
 
         // Add F5/F6 key handler and reload check systems to Last.
-        #[cfg(not(feature = "native-hot-reload"))]
         app.add_systems(
             Last,
             (handle_f5_reload_system, check_hot_reload_system).chain(),
-        );
-        #[cfg(feature = "native-hot-reload")]
-        app.add_systems(
-            Last,
-            (
-                handle_f5_reload_system,
-                poll_native_file_watcher,
-                check_hot_reload_system,
-            )
-                .chain(),
         );
 
         eprintln!("[Hot Reload] Native plugin hot reload ready (F5=reload, F6=toggle mode)");
