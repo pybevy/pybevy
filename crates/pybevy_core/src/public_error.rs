@@ -10,6 +10,15 @@ pub fn enum_base_construction(name: &str) -> String {
     format!("{name} is an enum base; construct a nested variant")
 }
 
+pub fn enum_constructor_comparison(name: &str) -> String {
+    format!(
+        "Cannot compare an enum value with the variant constructor {name}; construct a value with {name}(...) first"
+    )
+}
+
+pub const AUDIO_PLAYER_SOURCE_TYPES: &str =
+    "AudioPlayer[...] requires AudioSource or Pitch as its source type";
+
 pub use pybevy_storage::{
     conflict_message::{
         CONDITION_READ_ONLY_GUIDANCE, CONFLICT_ASSETS, CONFLICT_ASSETS_SHARED_VIEW,

@@ -2,8 +2,10 @@ use std::borrow::Cow;
 
 use bevy::shader::Source;
 use naga::ShaderStage;
+use pybevy_macros::pyenum;
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
 
+#[pyenum(Source, manual)]
 #[pyclass(
     name = "Source",
     module = "pybevy.shader",

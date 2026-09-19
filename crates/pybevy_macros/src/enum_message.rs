@@ -257,6 +257,14 @@ fn try_expand(
         derives.push(quote! { PartialEq });
     }
 
+    let mut attributes = vec![syn::parse_quote!(#[pyclass(#(#class_attrs),*)])];
+    let comparisons = if no_eq {
+        crate::enum_comparison::identity_methods(py_type)
+    } else {
+        crate::enum_comparison::value_methods(&mut attributes, py_type)?
+    };
+    class_attrs.retain(|attr| attr.to_string() != "eq");
+
     Ok(quote! {
         #[pyo3::pyclass(
             name = #python_name,
@@ -267,6 +275,8 @@ fn try_expand(
         pub struct #py_type {
             inner: #inner_type,
         }
+
+        #comparisons
 
         #[pyo3::pymethods]
         impl #py_type {

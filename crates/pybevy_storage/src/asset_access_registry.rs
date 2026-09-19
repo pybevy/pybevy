@@ -16,6 +16,8 @@ const WRITE_GATE: usize = 1 << (usize::BITS - 1);
 const READER_MASK: usize = WRITE_GATE - 1;
 pub(crate) const MIN_VIEW_SWEEP_SIZE: usize = 64;
 const VIEW_SWEEP_GROWTH: usize = 4;
+const MIN_SCOPE_SWEEP_SIZE: usize = 64;
+const SCOPE_SWEEP_GROWTH: usize = 4;
 const VIEW_PENDING: u8 = 0;
 const VIEW_READY: u8 = 1;
 const VIEW_CLOSED: u8 = 2;
@@ -427,13 +429,48 @@ impl AssetAccessScope {
     }
 }
 
+#[derive(Debug)]
+struct ScopeRegistry {
+    entries: HashMap<u64, Weak<AssetAccessScopeInner>>,
+    sweep_at: usize,
+}
+
+impl Default for ScopeRegistry {
+    fn default() -> Self {
+        Self {
+            entries: HashMap::new(),
+            sweep_at: MIN_SCOPE_SWEEP_SIZE,
+        }
+    }
+}
+
+impl ScopeRegistry {
+    fn prune(&mut self) {
+        self.entries.retain(|_, scope| {
+            let Some(scope) = scope.upgrade() else {
+                return false;
+            };
+            if !scope.is_valid() {
+                scope.drain();
+                return false;
+            }
+            true
+        });
+        self.sweep_at = self
+            .entries
+            .len()
+            .saturating_mul(SCOPE_SWEEP_GROWTH)
+            .max(MIN_SCOPE_SWEEP_SIZE);
+    }
+}
+
 /// Persistent state shared by every access path for one native asset type.
 #[derive(Debug)]
 pub struct AssetResourceState {
     type_id: TypeId,
     asset_name: Arc<str>,
     active: AtomicUsize,
-    scopes: Mutex<HashMap<u64, Weak<AssetAccessScopeInner>>>,
+    scopes: Mutex<ScopeRegistry>,
     views: Mutex<ViewRegistry>,
     gate: AtomicUsize,
     epoch: AtomicU64,
@@ -445,7 +482,7 @@ impl AssetResourceState {
             type_id,
             asset_name,
             active: AtomicUsize::new(0),
-            scopes: Mutex::new(HashMap::new()),
+            scopes: Mutex::new(ScopeRegistry::default()),
             views: Mutex::new(ViewRegistry::default()),
             gate: AtomicUsize::new(0),
             epoch: AtomicU64::new(0),
@@ -603,9 +640,15 @@ impl AssetResourceState {
     }
 
     fn register_scope(&self, scope: &AssetAccessScope) {
-        self.scopes
+        let mut scopes = self
+            .scopes
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if scopes.entries.len() >= scopes.sweep_at {
+            scopes.prune();
+        }
+        scopes
+            .entries
             .insert(scope.inner.id, Arc::downgrade(&scope.inner));
     }
 
@@ -613,16 +656,7 @@ impl AssetResourceState {
         self.scopes
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .retain(|_, scope| {
-                let Some(scope) = scope.upgrade() else {
-                    return false;
-                };
-                if !scope.is_valid() {
-                    scope.drain();
-                    return false;
-                }
-                true
-            });
+            .prune();
     }
 
     fn first_active(&self) -> Option<ActiveAssetAccess> {
@@ -632,6 +666,7 @@ impl AssetResourceState {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         scopes
+            .entries
             .iter()
             .filter_map(|(scope_id, scope)| {
                 let scope = scope.upgrade()?;
@@ -742,11 +777,11 @@ impl AssetAccessRegistry {
         let Some(state) = states.get(&type_id) else {
             return 0;
         };
-        state.prune_scopes();
         state
             .scopes
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .entries
             .len()
     }
 }
@@ -916,11 +951,98 @@ mod tests {
     fn dead_scopes_are_pruned_without_retaining_history() {
         let registry = AssetAccessRegistry::default();
         let type_id = TypeId::of::<MeshAsset>();
-        for _ in 0..128 {
+        for _ in 0..1000 {
+            drop(registry.new_scope(type_id, "Mesh", ValidityFlag::new_write(), "request"));
+            assert_eq!(registry.active(), 0);
+            assert!(registry.scope_count(type_id) <= MIN_SCOPE_SWEEP_SIZE);
+        }
+    }
+
+    #[test]
+    fn registration_sweeps_expired_scopes_but_keeps_live_claims() {
+        let registry = AssetAccessRegistry::default();
+        let type_id = TypeId::of::<MeshAsset>();
+        let live = registry.new_scope(type_id, "Mesh", ValidityFlag::new_write(), "live");
+        let live_clone = live.clone();
+        let asset_id = test_id();
+        let token = live.acquire(asset_id).unwrap();
+        let state = live.resource_state().clone();
+        let views = state.views_for(asset_id, &live);
+        let read = views.try_prepare_read().unwrap();
+        let validity = ValidityFlag::new_write();
+        let expired = registry.new_scope(type_id, "Mesh", validity.clone(), "expired");
+        let expired_token = expired.acquire(asset_id).unwrap();
+        validity.set_invalid();
+
+        for _ in 0..1000 {
             drop(registry.new_scope(type_id, "Mesh", ValidityFlag::new_write(), "request"));
         }
 
-        assert_eq!(registry.scope_count(type_id), 0);
+        assert!(registry.scope_count(type_id) <= MIN_SCOPE_SWEEP_SIZE);
+        {
+            let scopes = state.scopes.lock().unwrap();
+            assert!(scopes.entries.contains_key(&live.inner.id));
+            assert!(!scopes.entries.contains_key(&expired.inner.id));
+        }
+        assert_eq!(registry.active(), 1);
+        assert_eq!(views.read_count(), 1);
+        assert!(state.has_views(asset_id));
+        assert_eq!(expired.acquire(asset_id), None);
+        expired.release(expired_token);
+        drop(live);
+        assert!(live_clone.acquire_existing(token));
+        assert_eq!(registry.active(), 2);
+        live_clone.release(token);
+        live_clone.release(token);
+        drop(read);
+        assert_eq!(registry.active(), 0);
+        assert!(!state.has_views(asset_id));
+    }
+
+    #[test]
+    fn scope_sweep_threshold_grows_with_live_scopes() {
+        let registry = AssetAccessRegistry::default();
+        let type_id = TypeId::of::<MeshAsset>();
+        let mut scopes = Vec::new();
+        for _ in 0..=MIN_SCOPE_SWEEP_SIZE {
+            scopes.push(registry.new_scope(type_id, "Mesh", ValidityFlag::new_write(), "live"));
+        }
+        let state = registry.state_for(type_id, "Mesh");
+        assert_eq!(registry.scope_count(type_id), MIN_SCOPE_SWEEP_SIZE + 1);
+        assert_eq!(
+            state.scopes.lock().unwrap().sweep_at,
+            MIN_SCOPE_SWEEP_SIZE * SCOPE_SWEEP_GROWTH
+        );
+        drop(scopes);
+        for _ in 0..MIN_SCOPE_SWEEP_SIZE * SCOPE_SWEEP_GROWTH {
+            drop(registry.new_scope(type_id, "Mesh", ValidityFlag::new_write(), "request"));
+        }
+        assert!(registry.scope_count(type_id) <= MIN_SCOPE_SWEEP_SIZE);
+        assert_eq!(state.scopes.lock().unwrap().sweep_at, MIN_SCOPE_SWEEP_SIZE);
+    }
+
+    #[test]
+    fn concurrent_scope_registration_keeps_dead_entries_bounded() {
+        let registry = Arc::new(AssetAccessRegistry::default());
+        let workers: Vec<_> = (0..4)
+            .map(|_| {
+                let registry = registry.clone();
+                thread::spawn(move || {
+                    for _ in 0..250 {
+                        drop(registry.new_scope(
+                            TypeId::of::<MeshAsset>(),
+                            "Mesh",
+                            ValidityFlag::new_write(),
+                            "request",
+                        ));
+                    }
+                })
+            })
+            .collect();
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        assert!(registry.scope_count(TypeId::of::<MeshAsset>()) <= MIN_SCOPE_SWEEP_SIZE);
     }
 
     #[test]

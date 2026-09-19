@@ -1,6 +1,6 @@
 use bevy::{asset::AssetPath, shader::ShaderRef};
-use pybevy_core::PyHandle;
-use pyo3::prelude::*;
+use pybevy_core::{PyHandle, enum_comparison::reject_variant_type};
+use pyo3::{prelude::*, pyclass::CompareOp};
 
 #[pyclass(
     name = "ShaderRef",
@@ -17,6 +17,20 @@ pub enum PyShaderRef {
 
 #[pymethods]
 impl PyShaderRef {
+    fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<Py<PyAny>> {
+        if matches!(op, CompareOp::Eq | CompareOp::Ne) {
+            reject_variant_type::<Self>(other)?;
+        }
+        Ok(other.py().NotImplemented())
+    }
+
+    fn __hash__(slf: &Bound<'_, Self>) -> PyResult<isize> {
+        slf.py()
+            .get_type::<PyAny>()
+            .call_method1("__hash__", (slf,))?
+            .extract()
+    }
+
     fn __repr__(&self) -> String {
         match self {
             PyShaderRef::Default() => "ShaderRef.Default".to_string(),

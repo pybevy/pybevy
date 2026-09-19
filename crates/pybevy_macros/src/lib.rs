@@ -8,6 +8,7 @@ mod component;
 mod constructor;
 mod constructor_spec;
 mod derive;
+mod enum_comparison;
 mod enum_component;
 mod enum_message;
 mod enum_spec;

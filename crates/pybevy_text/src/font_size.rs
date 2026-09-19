@@ -1,9 +1,11 @@
 use bevy::text::FontSize;
+use pybevy_macros::pyenum;
 use pyo3::{
     exceptions::{PyTypeError, PyValueError},
     prelude::*,
 };
 
+#[pyenum(FontSize, manual)]
 #[pyclass(name = "FontSize", module = "pybevy.text", frozen, eq, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PyFontSize {

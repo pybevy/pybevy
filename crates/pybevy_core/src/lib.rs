@@ -47,6 +47,7 @@ pub mod custom_resource;
 pub mod debug_snapshot;
 pub mod duration;
 pub mod entity;
+pub mod enum_comparison;
 pub mod float_live_list;
 pub mod handle;
 pub mod hierarchy;

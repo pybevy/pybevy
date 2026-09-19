@@ -3,8 +3,10 @@ use bevy::{
     text::{Font, FontSource},
 };
 use pybevy_core::{PyHandle, extract_handle_from_any};
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
+#[pyenum(FontSource, manual)]
 #[pyclass(
     name = "FontSource",
     module = "pybevy.text",
