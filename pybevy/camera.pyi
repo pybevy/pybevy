@@ -926,6 +926,8 @@ class Aabb(Component):
     def is_in_half_space_identity(self, half_space: HalfSpace) -> bool:
         """Optimized half-space test for an AABB already in world space."""
 
+    def __eq__(self, other: object) -> bool: ...
+
 class Frustum(Component):
     """A region of 3D space defined by the intersection of 6 half-spaces.
 
@@ -1020,6 +1022,8 @@ class SubCameraView:
     def size(self) -> UVec2: ...
     @size.setter
     def size(self, value: UVec2) -> None: ...
+
+    def __eq__(self, other: object) -> bool: ...
 
 class PhysicalCameraParameters:
     """Physical camera parameters for exposure calculation.
