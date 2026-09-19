@@ -582,6 +582,11 @@ def _require_entrypoint_signature(func: Callable) -> None:
     name = getattr(func, "__name__", None)
     if name is None:
         name = type(func).__name__
+    if inspect.iscoroutinefunction(func):
+        raise TypeError(
+            f"@entrypoint '{name}' must be synchronous and return an App; "
+            f"use 'def {name}(app: App) -> App', not 'async def'."
+        )
     try:
         signature = inspect.signature(func)
     except (TypeError, ValueError) as error:
@@ -648,6 +653,13 @@ def entrypoint(func: Callable) -> Callable:
 
         try:
             result = func(app)
+            if not isinstance(result, AppClass):
+                if inspect.iscoroutine(result):
+                    result.close()
+                raise TypeError(
+                    f"@entrypoint '{func.__name__}' must return an App, "
+                    f"got {type(result).__name__}; return the configured app."
+                )
         except Exception as e:
             from . import _pybevy  # type: ignore
 
