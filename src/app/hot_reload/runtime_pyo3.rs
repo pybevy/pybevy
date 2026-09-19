@@ -1,7 +1,6 @@
 use std::{
     any::TypeId,
     collections::HashSet,
-    hash::{DefaultHasher, Hash, Hasher},
     sync::{Arc, Mutex},
 };
 
@@ -20,7 +19,7 @@ use pybevy_reload::{
 use pyo3::{exceptions::PyRuntimeError, prelude::*, types::PyType};
 
 use super::{
-    cleanup, fingerprint::hash_system_code, registry::DynamicSystemRegistry,
+    cleanup, fingerprint::InitialDefsFingerprint, registry::DynamicSystemRegistry,
     util::get_python_gc_objects,
 };
 use crate::{
@@ -62,6 +61,7 @@ pub(crate) struct PendingDefinitions {
     pub observers: Vec<Py<PyAny>>,
     pub plugins: Vec<PluginIdentity>,
     pub component_layout_changes: Vec<String>,
+    pub resource_layout_changes: Vec<String>,
 }
 
 struct PreparedSystemSetConfig {
@@ -262,6 +262,7 @@ pub(crate) struct Pyo3ReloadRuntime {
     pub error_state: Arc<Mutex<Vec<PyErr>>>,
     pending_set_configs: Vec<PreparedSystemSetConfig>,
     component_layout_reload_pending: bool,
+    resource_layout_reload_pending: bool,
 }
 
 impl Pyo3ReloadRuntime {
@@ -271,6 +272,7 @@ impl Pyo3ReloadRuntime {
             error_state,
             pending_set_configs: Vec::new(),
             component_layout_reload_pending: false,
+            resource_layout_reload_pending: false,
         }
     }
 
@@ -394,12 +396,16 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
             let temp_app_py = Py::new(py, temp_app)?;
 
             let create_app_bound = self.loader_func.bind(py).call0()?;
-            let component_layout_changes = py
-                .import("pybevy.decorators")?
+            let _result_app = create_app_bound.call1((temp_app_py.clone_ref(py),))?;
+            let decorators = py.import("pybevy.decorators")?;
+            let component_layout_changes = decorators
                 .getattr("_component_layout_reload_names")?
                 .call0()?
                 .extract::<Vec<String>>()?;
-            let _result_app = create_app_bound.call1((temp_app_py.clone_ref(py),))?;
+            let resource_layout_changes = decorators
+                .getattr("_resource_layout_reload_names")?
+                .call0()?
+                .extract::<Vec<String>>()?;
 
             let temp_app_ref = temp_app_py.borrow(py);
             Ok(PendingDefinitions {
@@ -412,6 +418,7 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
                 observers: temp_app_ref.take_pending_observers(),
                 plugins: temp_app_ref.take_pending_plugins(),
                 component_layout_changes,
+                resource_layout_changes,
             })
         });
         let result = result.map_err(|e| {
@@ -421,67 +428,34 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
         });
         if let Ok(defs) = &result {
             self.component_layout_reload_pending = !defs.component_layout_changes.is_empty();
+            self.resource_layout_reload_pending = !defs.resource_layout_changes.is_empty();
         }
         result
     }
 
     fn defs_fingerprint(&self, defs: &PendingDefinitions) -> DefsFingerprint {
         Python::attach(|py| {
-            let mut startup_hasher = DefaultHasher::new();
-            let mut has_startup = false;
+            let mut builder = InitialDefsFingerprint::default();
             for (stage, systems) in &defs.systems {
-                if !stage.is_startup() || systems.is_empty() {
-                    continue;
-                }
-                has_startup = true;
-                // Both the startup stage and the registration order are part
-                // of the identity: reordering changes execution order.
-                format!("{stage:?}").hash(&mut startup_hasher);
-                for sys in systems {
-                    hash_system_code(py, sys.bind(py), &mut startup_hasher);
-                }
+                let systems: Vec<_> = systems
+                    .iter()
+                    .map(|system| system.bind(py).clone())
+                    .collect();
+                builder.record_systems(py, *stage, &systems);
             }
-
-            // Resource identity is the type, not the value: Partial reloads
-            // never re-insert resources, and re-applying initial values would
-            // be a Full-reload semantic anyway.
-            let mut resource_names: Vec<String> = defs
-                .resources
-                .iter()
-                .map(|res| {
-                    res.bind(py)
-                        .get_type()
-                        .fully_qualified_name()
-                        .map(|name| name.to_string())
-                        .unwrap_or_else(|_| "<unknown>".to_string())
-                })
-                .collect();
-            resource_names.extend(defs.states.iter().map(|state| {
-                state
-                    .state_type
-                    .bind(py)
-                    .fully_qualified_name()
-                    .map(|name| format!("State[{name}]"))
-                    .unwrap_or_else(|_| "State[<unknown>]".to_string())
-            }));
-            resource_names.sort();
-            let mut resources_hasher = DefaultHasher::new();
-            resource_names.hash(&mut resources_hasher);
-
-            let mut observer_hasher = DefaultHasher::new();
+            for resource in &defs.resources {
+                builder.record_resource(&resource.bind(py).get_type());
+            }
+            for state in &defs.states {
+                builder.record_state(state.state_type.bind(py));
+            }
             for observer in &defs.observers {
-                hash_system_code(py, observer.bind(py), &mut observer_hasher);
+                builder.record_observer(py, observer.bind(py));
             }
-
-            DefsFingerprint {
-                startup_code: startup_hasher.finish(),
-                resource_types: resources_hasher.finish(),
-                observer_code: observer_hasher.finish(),
-                component_layout_changed: !defs.component_layout_changes.is_empty(),
-                has_startup,
-                has_resources: !defs.resources.is_empty() || !defs.states.is_empty(),
-                has_observers: !defs.observers.is_empty(),
-            }
+            let mut fingerprint = builder.finish();
+            fingerprint.component_layout_changed = !defs.component_layout_changes.is_empty();
+            fingerprint.resource_layout_changed = !defs.resource_layout_changes.is_empty();
+            fingerprint
         })
     }
 
@@ -716,6 +690,19 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
                 eprintln!("Could not commit the custom component layout reload: {error}");
             } else {
                 self.component_layout_reload_pending = false;
+            }
+        }
+        if self.resource_layout_reload_pending {
+            let cleared = Python::attach(|py| {
+                py.import("pybevy.decorators")?
+                    .getattr("_commit_resource_layout_reload")?
+                    .call0()?;
+                Ok::<(), PyErr>(())
+            });
+            if let Err(error) = cleared {
+                eprintln!("Could not commit the custom resource layout reload: {error}");
+            } else {
+                self.resource_layout_reload_pending = false;
             }
         }
     }

@@ -37,6 +37,7 @@ pub mod asset_index;
 pub mod asset_path;
 pub mod component;
 pub mod component_batch;
+pub mod component_fields;
 pub mod component_layout;
 pub mod component_wrapper;
 pub mod constructor;

@@ -26,6 +26,9 @@ pub struct DefsFingerprint {
     pub observer_code: u64,
     /// A cached custom component was redefined with a different field layout.
     pub component_layout_changed: bool,
+    /// A custom resource was redefined with a different field layout. Partial
+    /// reloads keep the live instance, which no longer matches the new code.
+    pub resource_layout_changed: bool,
     pub has_startup: bool,
     pub has_resources: bool,
     pub has_observers: bool,

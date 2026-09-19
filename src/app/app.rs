@@ -57,6 +57,7 @@ use crate::{
         hot_reload::{
             bindings::{PyAppReloadState, add_hot_reload_system},
             cleanup::clear_entities_and_resources,
+            fingerprint::InitialDefsFingerprint,
             registry::DynamicSystemRegistry,
             runtime_pyo3::{annotate_registration_error, collect_system_names},
             state::HotReloadState,
@@ -429,6 +430,10 @@ pub struct PyApp {
 
     pending_system_names: RefCell<HashSet<String>>,
 
+    /// Fingerprint of the definitions this app was built from, seeded into the
+    /// escalation tracker when a hot reload loader is installed.
+    initial_fingerprint: RefCell<InitialDefsFingerprint>,
+
     /// Whether @entrypoint decorator has been applied
     /// run() requires this unless PYBEVY_TESTING env var is set
     entrypoint_set: Cell<bool>,
@@ -617,6 +622,7 @@ impl PyApp {
             pending_observers: RefCell::new(Vec::new()),
             pending_plugins: RefCell::new(Vec::new()),
             pending_system_names: RefCell::new(HashSet::new()),
+            initial_fingerprint: RefCell::new(InitialDefsFingerprint::default()),
             entrypoint_set: Cell::new(false),
         }
     }
@@ -826,6 +832,7 @@ impl PyApp {
             pending_observers: RefCell::new(Vec::new()),
             pending_plugins: RefCell::new(Vec::new()),
             pending_system_names: RefCell::new(HashSet::new()),
+            initial_fingerprint: RefCell::new(InitialDefsFingerprint::default()),
             entrypoint_set: Cell::new(false),
         })
     }
@@ -1008,6 +1015,8 @@ impl PyApp {
                 }
                 // Continue with the rest of Stage handling below...
 
+                let mut registered_systems = Vec::new();
+
                 // Add systems directly to the app with generation-based run conditions
                 pyself.with_bevy_app(|app| {
                     for system in systems {
@@ -1044,6 +1053,7 @@ impl PyApp {
                             };
 
                             add_to_schedule!(app, stage, chained);
+                            registered_systems.push(system);
                         } else {
                             // Handle regular systems (not chained)
                             let system_list: Vec<Bound<PyAny>> = match system.try_iter() {
@@ -1062,11 +1072,17 @@ impl PyApp {
                                     stage.is_startup(),
                                 )?;
                                 add_to_schedule!(app, stage, config);
+                                registered_systems.push(sys);
                             }
                         }
                     }
                     Ok(())
                 })?;
+                pyself.initial_fingerprint.borrow_mut().record_systems(
+                    py,
+                    stage,
+                    &registered_systems,
+                );
                 Ok(pyself.into())
             }
         }
@@ -1362,12 +1378,17 @@ impl PyApp {
             return Ok(pyself.into());
         }
 
+        let resource_type = resource.get_type();
         pyself.with_bevy_app(|app| {
             PyWorld::with_temporary(app.world_mut(), py, |py_world| {
                 py_world.insert_resource(py, resource)?;
                 Ok(())
             })
         })?;
+        pyself
+            .initial_fingerprint
+            .borrow_mut()
+            .record_resource(&resource_type);
         Ok(pyself.into())
     }
 
@@ -1392,12 +1413,19 @@ impl PyApp {
             return Ok(pyself.into());
         }
 
+        let resource_type = resource.extract::<Bound<'_, PyType>>().ok();
         pyself.with_bevy_app(|app| {
             PyWorld::with_temporary(app.world_mut(), py, |py_world| {
                 py_world.init_resource(py, resource)?;
                 Ok(())
             })
         })?;
+        if let Some(resource_type) = resource_type {
+            pyself
+                .initial_fingerprint
+                .borrow_mut()
+                .record_resource(&resource_type);
+        }
         Ok(pyself.into())
     }
 
@@ -1449,6 +1477,10 @@ impl PyApp {
 
             Ok(())
         })?;
+        pyself
+            .initial_fingerprint
+            .borrow_mut()
+            .record_observer(py, &observer);
         Ok(pyself.into())
     }
 
@@ -1509,6 +1541,11 @@ impl PyApp {
         // Register automatic state transition system
         pyself.ensure_state_transition_system_registered()?;
 
+        pyself
+            .initial_fingerprint
+            .borrow_mut()
+            .record_state(&state_type_clone);
+
         Ok(pyself.into())
     }
 
@@ -1550,6 +1587,11 @@ impl PyApp {
 
         // Register automatic state transition system
         pyself.ensure_state_transition_system_registered()?;
+
+        pyself
+            .initial_fingerprint
+            .borrow_mut()
+            .record_state(state_type_unbind.bind(py));
 
         Ok(pyself.into())
     }
@@ -1913,6 +1955,9 @@ impl PyApp {
         let initial_plugins: HashSet<PluginIdentity> =
             pyself.take_pending_plugins().into_iter().collect();
         let initial_systems = mem::take(&mut *pyself.pending_system_names.borrow_mut());
+        // The entrypoint has finished building the app, so this fingerprint
+        // describes the generation that is about to run.
+        let initial_fingerprint = pyself.initial_fingerprint.borrow().finish();
 
         // Add the hot reload system to the app if not already added
         pyself.with_bevy_app(|app| {
@@ -1921,6 +1966,7 @@ impl PyApp {
                 app,
                 pyself.hot_reload_state.clone(),
                 pyself.system_error.clone(),
+                Some(initial_fingerprint),
             );
             if let Some(mut tracker) = app.world_mut().get_resource_mut::<PluginTracker>() {
                 tracker.known_plugins = initial_plugins;

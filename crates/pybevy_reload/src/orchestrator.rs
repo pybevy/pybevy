@@ -183,6 +183,8 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
                 Some(previous) => {
                     if fingerprint.component_layout_changed {
                         Some("custom component layout changed")
+                    } else if fingerprint.resource_layout_changed {
+                        Some("custom resource layout changed")
                     } else if previous.startup_code != fingerprint.startup_code {
                         Some("Startup systems changed")
                     } else if previous.resource_types != fingerprint.resource_types {
@@ -197,6 +199,9 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
                 // anything only a Full reload applies.
                 None if fingerprint.component_layout_changed => {
                     Some("custom component layout changed")
+                }
+                None if fingerprint.resource_layout_changed => {
+                    Some("custom resource layout changed")
                 }
                 None => {
                     match (
@@ -1339,6 +1344,28 @@ mod tests {
         assert_eq!(
             result.escalation_reason.as_deref(),
             Some("custom component layout changed")
+        );
+        assert_eq!(
+            result.actual_mode,
+            Some(pybevy_core::ReloadRequestMode::Full)
+        );
+    }
+
+    #[test]
+    fn partial_reload_changed_resource_layout_escalates() {
+        let (mut world, gen_counter) = setup_world();
+        let state = MockState::new(gen_counter);
+        let mut runtime = FingerprintRuntime(DefsFingerprint::default());
+
+        assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Full, &state).is_ok());
+
+        runtime.0.resource_layout_changed = true;
+        assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Partial, &state).is_ok());
+        let result = world.resource::<pybevy_core::ReloadResult>();
+        assert!(result.escalated);
+        assert_eq!(
+            result.escalation_reason.as_deref(),
+            Some("custom resource layout changed")
         );
         assert_eq!(
             result.actual_mode,

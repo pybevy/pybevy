@@ -38,13 +38,14 @@ use pybevy_bytecodevm::{
 };
 use pybevy_core::{
     FieldType as StorageFieldType, PyEntity,
+    component_fields::declared_annotations,
     public_error::{RESOURCE_VIEW_DATA, VIEW_COLUMN_READ_ONLY_ASSIGNMENT},
     registry::global_registry,
 };
 use pyo3::{
     exceptions::{PyAttributeError, PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
-    types::{PyAny, PyDict, PyType},
+    types::{PyAny, PyType},
 };
 
 use crate::ecs::{
@@ -229,11 +230,7 @@ impl PyView {
             )));
         }
 
-        let has_declared_fields = component_type
-            .getattr("__annotations__")
-            .ok()
-            .and_then(|annotations| annotations.cast_into::<PyDict>().ok())
-            .is_some_and(|annotations| !annotations.is_empty());
+        let has_declared_fields = !declared_annotations(component_type)?.is_empty();
         if has_declared_fields
             && matches!(&comp_type, PyComponentType::Custom(_))
             && matches!(

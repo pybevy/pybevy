@@ -399,9 +399,17 @@ impl PyComponentType {
                         unsafe { value.deref::<Py<PyAny>>().clone_ref(py) }
                     };
                     if validity.access_mode() == pybevy_core::AccessMode::Write {
-                        Ok(Py::new(py, PyResMut::new(value.bind(py).clone()))?.into_any())
+                        Ok(Py::new(
+                            py,
+                            PyResMut::with_validity(value.bind(py).clone(), validity.flag.clone()),
+                        )?
+                        .into_any())
                     } else {
-                        Ok(Py::new(py, PyRes::new(value.bind(py).clone()))?.into_any())
+                        Ok(Py::new(
+                            py,
+                            PyRes::with_validity(value.bind(py).clone(), validity.flag.clone()),
+                        )?
+                        .into_any())
                     }
                 }
             }

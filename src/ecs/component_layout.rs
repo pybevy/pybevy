@@ -1,4 +1,5 @@
 use pybevy_bytecodevm::bytecode::FieldType;
+use pybevy_core::component_fields::declared_annotations;
 // Re-export backend-agnostic types from pybevy_core
 pub use pybevy_core::component_layout::{
     ComponentLayout, ComponentSerializationError, ComponentStorageType, PrimitiveType,
@@ -10,7 +11,7 @@ use pyo3::{
     exceptions::{PyRuntimeError, PyTypeError},
     intern,
     prelude::*,
-    types::{PyBool, PyDict, PyFloat, PyInt, PyType},
+    types::{PyBool, PyFloat, PyInt, PyType},
 };
 
 /// PyO3-specific extension methods for PrimitiveType
@@ -120,16 +121,7 @@ impl ComponentLayoutExt for ComponentLayout {
     fn from_annotations(cls: &Bound<'_, PyType>) -> PyResult<ComponentLayout> {
         let name = cls.name()?.to_string();
 
-        // Get __annotations__ dict
-        let annotations_bound =
-            cls.getattr(intern!(cls.py(), "__annotations__"))
-                .map_err(|_| {
-                    PyTypeError::new_err(format!(
-                        "Component class '{}' has no __annotations__",
-                        name
-                    ))
-                })?;
-        let annotations = annotations_bound.cast::<PyDict>()?;
+        let annotations = declared_annotations(cls)?;
 
         if annotations.is_empty() {
             return Err(PyTypeError::new_err(format!(
@@ -256,12 +248,7 @@ pub(crate) fn cached_storage_and_layout_match(
         return Ok(false);
     }
 
-    let Ok(annotations_bound) = cls.getattr(intern!(cls.py(), "__annotations__")) else {
-        return Ok(false);
-    };
-    let Ok(annotations) = annotations_bound.cast::<PyDict>() else {
-        return Ok(false);
-    };
+    let annotations = declared_annotations(cls)?;
     if annotations.len() != layout.fields.len() {
         return Ok(false);
     }
