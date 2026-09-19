@@ -53,7 +53,7 @@ def setup(
     half_x = int(map_size.x / 2.0)
     half_y = int(map_size.y / 2.0)
 
-    sprite_handle = asset_server.load_image("icon.png")
+    sprite_handle = asset_server.load("icon.png", asset_type=Image)
 
     # Spawn camera
     commands.spawn(Camera2d())

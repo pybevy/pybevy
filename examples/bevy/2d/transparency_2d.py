@@ -16,7 +16,7 @@ def setup(commands: Commands, asset_server: Res[AssetServer]) -> None:
     """Spawn camera and three overlapping sprites with different transparency."""
     commands.spawn(Camera2d())
 
-    sprite_handle = asset_server.load_image("icon.png")
+    sprite_handle = asset_server.load("icon.png", asset_type=Image)
 
     # First sprite: fully opaque
     commands.spawn(

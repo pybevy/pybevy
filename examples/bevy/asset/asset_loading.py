@@ -20,13 +20,13 @@ def setup(
     """Load various assets and spawn entities."""
     # By default AssetServer loads assets from the "assets" folder
     # For example, this loads: assets/models/cube/cube.gltf
-    cube_handle = asset_server.load_mesh(
-        GltfAssetLabel.Primitive(mesh=0, primitive=0).from_asset("bevy/models/cube/cube.gltf")
+    cube_handle = asset_server.load(
+        GltfAssetLabel.Primitive(mesh=0, primitive=0).from_asset("bevy/models/cube/cube.gltf"), asset_type=Mesh
     )
-    sphere_handle = asset_server.load_mesh(
+    sphere_handle = asset_server.load(
         GltfAssetLabel.Primitive(mesh=0, primitive=0).from_asset(
             "bevy/models/sphere/sphere.gltf"
-        )
+        ), asset_type=Mesh
     )
 
     # All assets end up in their Assets<T> collection once loaded
@@ -42,10 +42,10 @@ def setup(
     # from a folder by calling load() for each file
 
     # Load a specific asset from the torus folder
-    torus_handle = asset_server.load_mesh(
+    torus_handle = asset_server.load(
         GltfAssetLabel.Primitive(mesh=0, primitive=0).from_asset(
             "bevy/models/torus/torus.gltf"
-        )
+        ), asset_type=Mesh
     )
 
     # You can also add assets directly to their Assets<T> storage

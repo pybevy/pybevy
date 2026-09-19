@@ -62,7 +62,7 @@ def setup(
     commands.spawn(
         Mesh3d(meshes.add(Cuboid())),
         MeshMaterial3d[ScreenspaceMaterial](materials.add(ScreenspaceMaterial(  # type: ignore[misc,call-arg]
-            texture=asset_server.load_image("bevy/branding/icon.png"),
+            texture=asset_server.load("bevy/branding/icon.png", asset_type=Image),
         ))),
         Transform.from_xyz(0, 0.5, 0),
     )

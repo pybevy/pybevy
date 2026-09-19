@@ -1,18 +1,20 @@
 from collections.abc import Iterator
 from typing import ClassVar, Final, Generic, Literal, TypeVar, overload
 
+from typing_extensions import deprecated
+
 from pybevy.app import App, Plugin
 from pybevy.audio import AudioSource
 from pybevy.color import Color
 from pybevy.ecs import Message, Resource, SystemSet
-from pybevy.gltf import GltfLoaderSettings
+from pybevy.gltf import Gltf, GltfLoaderSettings
 from pybevy.image import Image, ImageLoaderSettings, ImageSaverSettings
 from pybevy.mesh import Mesh, Meshable, MeshBuilder
 from pybevy.pbr import StandardMaterial
 from pybevy.sprite import ColorMaterial
-from pybevy.world_serialization import WorldAsset
 
 A = TypeVar("A", bound=Asset)
+_LoadA = TypeVar("_LoadA", bound=Asset)
 # Handle only ever produces its asset type, never consumes it, so a
 # Handle[Image] is usable wherever a Handle[Asset] is expected. Assets[A] must
 # stay invariant: `add(self, asset: A)` consumes one.
@@ -225,46 +227,56 @@ class AssetIter(Iterator[tuple[AssetId[A], A]]):
     def __next__(self) -> tuple[AssetId[A], A]: ...
     def __iter__(self) -> AssetIter[A]: ...
 
+class LoadBuilder(Generic[A]):
+    """Created by AssetServer.load_builder(), not directly constructible.
+
+    with_settings returns a new builder holding a snapshot of its settings.
+    Builders are reusable within their originating AssetServer scope and expire
+    when that scope ends. Only settings and typed loads are currently exposed;
+    guards, untyped loading, and approval overrides are not exposed.
+    """
+    @overload
+    def with_settings(self: LoadBuilder[Asset] | LoadBuilder[Image], settings: ImageLoaderSettings) -> LoadBuilder[Image]: ...
+    @overload
+    def with_settings(self: LoadBuilder[Asset] | LoadBuilder[Gltf], settings: GltfLoaderSettings) -> LoadBuilder[Gltf]: ...
+    @overload
+    def load(self: LoadBuilder[Image], path: str | AssetPath, *, asset_type: type[Image] | None = None) -> Handle[Image]: ...
+    @overload
+    def load(self: LoadBuilder[Gltf], path: str | AssetPath, *, asset_type: type[Gltf] | None = None) -> Handle[Gltf]: ...
+    @overload
+    def load(self: LoadBuilder[Asset], path: str | AssetPath, *, asset_type: type[_LoadA]) -> Handle[_LoadA]: ...
+    def __copy__(self) -> LoadBuilder[A]: ...
+
 class AssetServer(Resource):
-    def load(self, path: str | AssetPath, asset_type: type[A]) -> Handle[A]: ...
+    def load_image(self, path: str | AssetPath) -> Handle[Image]:
+        """Load an image; equivalent to load(path, asset_type=Image)."""
+    def load_audio(self, path: str | AssetPath) -> Handle[AudioSource]:
+        """Load audio; equivalent to load(path, asset_type=AudioSource)."""
+    def load(self, path: str | AssetPath, *, asset_type: type[A]) -> Handle[A]:
+        """Load an asset of the required keyword-only asset type.
 
-    def load_world_asset(self, path: str | AssetPath) -> Handle[WorldAsset]: ...
-    def load_image(self, path: str | AssetPath) -> Handle[Image]: ...
-    def load_with_settings(self, path: str | AssetPath, asset_type: type[A], settings: ImageLoaderSettings | GltfLoaderSettings) -> Handle[A]:
-        """Load an asset with custom loader settings.
-
-        Equivalent to Bevy's `asset_server.load_with_settings::<A, S>()`.
-
-        Currently supported asset types and their settings:
-        - Image + ImageLoaderSettings (sampler mode, sRGB, format)
-        - Gltf + GltfLoaderSettings (content, validation, coordinates, bounds, and samplers)
-
-        Bevy caches by path and asset type, so later settings for a live cached
-        load are ignored. Use distinct paths for simultaneous variants.
-
-        Args:
-            path: Path to the asset file (relative to assets directory)
-            asset_type: The asset type class (e.g. Image)
-            settings: Loader settings matching the asset type
+        For example, load("texture.png", asset_type=Image) returns Handle[Image].
+        The type is required even for known suffixes, preserving static typing.
+        """
+    def load_builder(self) -> LoadBuilder[Asset]:
+        """Build a reusable load configuration bound to this AssetServer scope.
 
         Example:
-            ```python
-            from pybevy.image import Image, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor
-            from pybevy.image import ImageAddressMode
-
-            settings = ImageLoaderSettings(sampler=ImageSampler.Descriptor(
-                ImageSamplerDescriptor(
-                    address_mode_u=ImageAddressMode.Repeat,
-                    address_mode_v=ImageAddressMode.Repeat,
-                )
-            ))
-            handle = asset_server.load_with_settings("textures/grass.png", Image, settings)
-            ```
+            asset_server.load_builder().with_settings(
+                ImageLoaderSettings(is_srgb=False)
+            ).load("textures/normal.png")
         """
-    def load_image_with_settings(self, path: str | AssetPath, settings: ImageLoaderSettings) -> Handle[Image]:
-        """Convenience method: load an image with custom loader settings.
+    @overload
+    @deprecated("Use load_builder().with_settings(settings).load(path) instead")
+    def load_with_settings(self, path: str | AssetPath, settings: ImageLoaderSettings, *, asset_type: type[Image] | None = None) -> Handle[Image]: ...
+    @overload
+    @deprecated("Use load_builder().with_settings(settings).load(path) instead")
+    def load_with_settings(self, path: str | AssetPath, settings: GltfLoaderSettings, *, asset_type: type[Gltf] | None = None) -> Handle[Gltf]:
+        """Deprecated convenience method; emits DeprecationWarning.
 
-        Equivalent to `load_with_settings(path, Image, settings)`.
+        Settings establish the asset type. Explicit overrides must match.
+        Bevy caches by path and asset type; later settings for a live cached
+        load are ignored. Use distinct paths for simultaneous variants.
         """
     def save_image(
         self,
@@ -282,8 +294,6 @@ class AssetServer(Resource):
             OSError: File write failure.
             RuntimeError: No asset source or writer is registered.
         """
-    def load_mesh(self, path: str | AssetPath) -> Handle[Mesh]: ...
-    def load_audio(self, path: str | AssetPath) -> Handle[AudioSource]: ...
     def load_folder(self, path: str | AssetPath) -> Handle[LoadedFolder]:
         """Load all assets from a folder.
 
@@ -393,10 +403,10 @@ class AssetServer(Resource):
         Example:
             ```python
             # First load
-            handle1 = asset_server.load("model.gltf", WorldAsset)
+            handle1 = asset_server.load("model.glb#Scene0", asset_type=WorldAsset)
 
             # Later, retrieve the same handle without re-loading
-            handle2 = asset_server.get_handle("model.gltf", WorldAsset)
+            handle2 = asset_server.get_handle("model.glb#Scene0", WorldAsset)
             assert handle1 == handle2  # Same handle
             ```
         """

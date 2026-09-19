@@ -36,7 +36,7 @@ def setup(
     # Animation graph — Run animation (index 2)
     graph, index = AnimationGraph.from_clip(
         asset_server.load(
-            GltfAssetLabel.Animation(2).from_asset(FOX_PATH), AnimationClip
+            GltfAssetLabel.Animation(2).from_asset(FOX_PATH), asset_type=AnimationClip
         ),
     )
     graph_handle = graphs.add(graph)
@@ -45,7 +45,7 @@ def setup(
     commands.spawn(
         AnimationToPlay(graph_handle, index),
         WorldAssetRoot(asset_server.load(
-            GltfAssetLabel.Scene(0).from_asset(FOX_PATH), WorldAsset
+            GltfAssetLabel.Scene(0).from_asset(FOX_PATH), asset_type=WorldAsset
         )),
     )
 

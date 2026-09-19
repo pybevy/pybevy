@@ -46,9 +46,9 @@ class RotateToPlayer(Component):
 
 def setup(commands: Commands, assets: Res[AssetServer]) -> None:
     """Set up the game entities and camera."""
-    ship_handle = assets.load_image("bevy/textures/simplespace/ship_C.png")
-    enemy_a_handle = assets.load_image("bevy/textures/simplespace/enemy_A.png")
-    enemy_b_handle = assets.load_image("bevy/textures/simplespace/enemy_B.png")
+    ship_handle = assets.load("bevy/textures/simplespace/ship_C.png", asset_type=Image)
+    enemy_a_handle = assets.load("bevy/textures/simplespace/enemy_A.png", asset_type=Image)
+    enemy_b_handle = assets.load("bevy/textures/simplespace/enemy_B.png", asset_type=Image)
 
     # Spawn camera
     commands.spawn(Camera2d())

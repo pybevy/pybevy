@@ -21,7 +21,7 @@ def setup(
     """Set up the scene with various alpha mode examples."""
     commands.spawn(Camera2d())
 
-    texture_handle = asset_server.load_image("icon.png")
+    texture_handle = asset_server.load("icon.png", asset_type=Image)
     mesh_handle = meshes.add(Rectangle.from_size(Vec2.splat(256.0)).mesh().build())
 
     commands.spawn(

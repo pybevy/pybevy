@@ -13,7 +13,7 @@ from pybevy.prelude import *
 def setup(commands: Commands, asset_server: Res[AssetServer]) -> None:
     """Set up a camera and sprite."""
     commands.spawn(Camera2d())
-    commands.spawn(Sprite.from_image(asset_server.load_image("icon.png")))
+    commands.spawn(Sprite.from_image(asset_server.load("icon.png", asset_type=Image)))
 
 
 @entrypoint

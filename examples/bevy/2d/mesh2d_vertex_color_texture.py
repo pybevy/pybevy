@@ -19,7 +19,7 @@ def setup(
     asset_server: Res[AssetServer],
 ) -> None:
     """Set up the scene with vertex-colored meshes."""
-    texture_handle = asset_server.load_image("bevy/branding/banner.png")
+    texture_handle = asset_server.load("bevy/branding/banner.png", asset_type=Image)
 
     mesh = Rectangle().mesh().build()
 
