@@ -55,7 +55,8 @@ impl PluginBuild for PyAudioPlugin {
 pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "audio")?;
     m.add_class::<PyAudioPlugin>()?;
-    m.add_class::<audio_player::PyAudioPlayer>()?;
+    m.add_class::<audio_player::PyAudioPlayerBase>()?;
+    audio_player::register_audio_players(parent.py());
     m.add_class::<audio_sink::PyAudioSink>()?;
     m.add_class::<audio_source::PyAudioSource>()?;
     m.add_class::<pitch::PyPitch>()?;

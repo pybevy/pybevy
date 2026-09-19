@@ -6,7 +6,7 @@ use pybevy_core::{
     AssetStorage, PyAsset, PyHandle, extract_handle_from_any,
     public_error::{ANIMATION_GRAPH_NODE_MISSING, ANIMATION_GRAPH_NODE_READ_ONLY},
 };
-use pybevy_macros::pyasset;
+use pybevy_macros::{pyasset, pyenum};
 use pyo3::{
     PyTraverseError, PyVisit,
     exceptions::{PyRuntimeError, PyTypeError, PyValueError},
@@ -165,6 +165,7 @@ impl PyAnimationGraph {
     }
 }
 
+#[pyenum(AnimationNodeType, manual)]
 #[pyclass(
     name = "AnimationNodeType",
     module = "pybevy.animation",

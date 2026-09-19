@@ -4,6 +4,7 @@ use pybevy_input::{
     button_state::PyButtonState, keyboard_input::PyKeyboardInput, mouse_button::PyMouseButton,
     mouse_scroll_unit::PyMouseScrollUnit, touch_phase::PyTouchPhase,
 };
+use pybevy_macros::pyenum;
 use pybevy_math::{ivec2::PyIVec2, vec2::PyVec2};
 use pyo3::{Borrowed, IntoPyObjectExt, prelude::*};
 
@@ -83,6 +84,7 @@ impl FromPyObject<'_, '_> for KeyboardInputPayload {
     }
 }
 
+#[pyenum(WindowEvent, manual)]
 #[pyclass(
     name = "WindowEvent",
     module = "pybevy.window",

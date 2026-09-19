@@ -2772,6 +2772,8 @@ class GamepadEvent:
     Use pattern matching to handle different event types.
     """
 
+    def __hash__(self) -> int: ...
+
     class Connection(GamepadEvent):
         __match_args__: ClassVar[
             tuple[
@@ -2832,6 +2834,7 @@ class GamepadRumbleRequest(Message):
     """
 
     def __copy__(self) -> GamepadRumbleRequest: ...
+    def __hash__(self) -> int: ...
     def __deepcopy__(self, memo: dict[int, object]) -> GamepadRumbleRequest: ...
 
 
