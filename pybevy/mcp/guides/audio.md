@@ -17,6 +17,10 @@ def setup(commands: Commands, asset_server: Res[AssetServer]) -> None:
     )
 ```
 
+The equivalent general form is `asset_server.load(path, asset_type=AudioSource)`;
+import `AudioSource` from `pybevy.audio`. Both forms return `Handle[AudioSource]`
+without suffix inference. The general `load` requires the keyword-only `asset_type`.
+
 **Supported formats:** wav and ogg. This build has no mp3 or flac decoder, so
 such a file loads and then panics playback with `UnrecognizedFormat`.
 

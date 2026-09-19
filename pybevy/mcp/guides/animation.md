@@ -30,7 +30,7 @@ def setup(
     # Load animation clip - #Animation0, #Animation1, etc.
     clip = asset_server.load(
         GltfAssetLabel.Animation(0).from_asset("models/fox.glb"),
-        AnimationClip,
+        asset_type=AnimationClip,
     )
 
     # Build graph - returns (graph, node_index) tuple
@@ -40,7 +40,7 @@ def setup(
     # Spawn model with animation components
     commands.spawn(
         WorldAssetRoot(asset_server.load(
-            GltfAssetLabel.Scene(0).from_asset("models/fox.glb"), WorldAsset
+            GltfAssetLabel.Scene(0).from_asset("models/fox.glb"), asset_type=WorldAsset
         )),
         Transform.from_xyz(0.0, 0.0, 0.0),
         Name("fox"),
@@ -166,7 +166,7 @@ Load multiple clips and build a graph with all of them:
 
 ```python
 clips = [
-    asset_server.load(GltfAssetLabel.Animation(i).from_asset("model.glb"), AnimationClip)
+    asset_server.load(GltfAssetLabel.Animation(i).from_asset("model.glb"), asset_type=AnimationClip)
     for i in range(3)  # 3 animations
 ]
 graph, clip_indices = AnimationGraph.from_clips(clips)

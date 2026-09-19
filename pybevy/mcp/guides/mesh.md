@@ -313,7 +313,7 @@ my_project/
 ```
 
 ```python
-asset_server.load("models/character.glb#Scene0", WorldAsset)  # assets/models/character.glb
+asset_server.load("models/character.glb#Scene0", asset_type=WorldAsset)  # assets/models/character.glb
 asset_server.load_image("textures/ground.png")      # assets/textures/ground.png
 ```
 

@@ -274,6 +274,19 @@ set_component {
 Capture tools hide authored UI by default. Pass `hide_ui=false` when the UI is
 part of the result; internal PyBevy overlays remain hidden.
 
+Headless `capture_timeline` captures the active camera's image target after
+applying capture visibility, including for the first tile. Visibility stays
+suppressed until all scheduled screenshots complete, then is restored; a
+readback timeout also restores capture state. Callers do not need to discard
+the first tile to avoid stale UI.
+
+`capture_screenshot` and `capture_stats` accept `position` and `look_at` to
+temporarily move the scene's 3D camera. Headless image-target captures wait for
+that view to render and its screenshot to complete, including objects outside
+the original camera's view. The camera is restored afterward, including on
+timeout. `delay_frames` waits before the temporary move; it is not a substitute
+for loading scene assets.
+
 ```
 capture_screenshot                              - Standard capture (768px wide)
 capture_screenshot {"max_width": 1280}          - Larger capture width limit

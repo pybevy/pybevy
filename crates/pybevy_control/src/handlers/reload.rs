@@ -12,7 +12,7 @@ use crate::{
         CaptureResponseKind, ControlError, DebugCameraRequest, PendingReloadResponses,
         PendingScreenshots, ReloadMode,
     },
-    handlers::screenshot::GizmoEnabledRestore,
+    handlers::screenshot::{GizmoEnabledRestore, RenderFrameReadiness},
 };
 
 /// A pending reload-and-capture request.
@@ -392,7 +392,9 @@ pub fn process_pending_reload_and_capture(world: &mut World) {
                 let screenshot = crate::bridge::PendingScreenshot {
                     response_tx: rac.response_tx,
                     frames_remaining: rac.screenshot_delay_frames,
-                    required_render_epoch: None,
+                    required_render_epoch: world
+                        .get_resource::<RenderFrameReadiness>()
+                        .map(RenderFrameReadiness::request_frame),
                     with_gizmos: false,
                     gizmo_restore: GizmoEnabledRestore::new(),
                     max_width: rac
@@ -447,7 +449,7 @@ mod tests {
     use pybevy_core::{LastSystemError, PendingReloadRequest, ReloadRequestMode, ReloadResult};
 
     use super::*;
-    use crate::bridge::PendingReloadResponse;
+    use crate::{bridge::PendingReloadResponse, handlers::screenshot::process_pending_screenshots};
 
     #[test]
     fn generate_error_hint_name_error() {
@@ -950,6 +952,92 @@ mod tests {
         assert_eq!(result["error"], "AttributeError: bogus");
         assert_eq!(result["traceback"], "Traceback: scene.py:42");
         assert_eq!(result["failure_reason"], "AttributeError: bogus");
+    }
+
+    #[test]
+    fn reload_capture_requests_a_fresh_render_epoch_before_counting_capture_frames() {
+        for mode in [ReloadMode::Full, ReloadMode::Partial] {
+            let mut world = World::new();
+            world.init_resource::<Time<Virtual>>();
+            let readiness = RenderFrameReadiness::default();
+            let previous_epoch = readiness.request_frame();
+            world.insert_resource(readiness.clone());
+            let (tx, mut rx) = oneshot::channel();
+            world.insert_resource(PendingReloadAndCaptures {
+                pending: vec![PendingReloadAndCapture {
+                    response_tx: tx,
+                    mode,
+                    reload_frames_remaining: 1,
+                    awaiting_fetch: false,
+                    screenshot_delay_frames: 2,
+                    max_width: None,
+                    position: None,
+                    look_at: None,
+                    hide_ui: false,
+                }],
+            });
+
+            process_pending_reload_and_capture(&mut world);
+            assert_eq!(readiness.requested_epoch(), previous_epoch);
+            assert!(!world.contains_resource::<PendingScreenshots>());
+
+            process_pending_reload_and_capture(&mut world);
+            assert_eq!(readiness.requested_epoch(), previous_epoch + 1);
+            assert!(
+                world
+                    .resource::<PendingReloadAndCaptures>()
+                    .pending
+                    .is_empty()
+            );
+            let pending = world.resource::<PendingScreenshots>();
+            assert_eq!(pending.pending.len(), 1);
+            assert_eq!(
+                pending.pending[0].required_render_epoch,
+                Some(previous_epoch + 1)
+            );
+
+            for _ in 0..10 {
+                process_pending_screenshots(&mut world);
+                assert!(matches!(
+                    rx.try_recv(),
+                    Err(oneshot::error::TryRecvError::Empty)
+                ));
+                let pending = world.resource::<PendingScreenshots>();
+                assert_eq!(pending.pending.len(), 1);
+                assert_eq!(pending.pending[0].frames_remaining, 2);
+            }
+        }
+    }
+
+    #[test]
+    fn reload_capture_without_a_renderer_keeps_the_capture_countdown() {
+        let mut world = World::new();
+        world.init_resource::<Time<Virtual>>();
+        let (tx, _rx) = oneshot::channel();
+        world.insert_resource(PendingReloadAndCaptures {
+            pending: vec![PendingReloadAndCapture {
+                response_tx: tx,
+                mode: ReloadMode::Full,
+                reload_frames_remaining: 0,
+                awaiting_fetch: false,
+                screenshot_delay_frames: 2,
+                max_width: None,
+                position: None,
+                look_at: None,
+                hide_ui: false,
+            }],
+        });
+
+        process_pending_reload_and_capture(&mut world);
+        assert!(!world.contains_resource::<RenderFrameReadiness>());
+        let pending = world.resource::<PendingScreenshots>();
+        assert_eq!(pending.pending.len(), 1);
+        assert_eq!(pending.pending[0].required_render_epoch, None);
+        process_pending_screenshots(&mut world);
+        assert_eq!(
+            world.resource::<PendingScreenshots>().pending[0].frames_remaining,
+            1
+        );
     }
 
     #[test]

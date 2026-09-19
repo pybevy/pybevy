@@ -79,11 +79,15 @@ reset. A file-watcher request may already have run by then; an explicit Partial
 reload cannot restore state that an earlier Full reload cleared. The CLI's F6
 shortcut changes the mode used by later file saves.
 
+For CLI sessions, `pybevy dev scene.py --full` and `pybevy watch scene.py --full`
+start the watcher in Full mode; without `--full`, both start in Partial mode.
+This selects the initial mode only, so F6 still applies to later saves.
+
 ## Keyboard Shortcuts (CLI hot-reload mode)
 
 | Key | Action |
 |-----|--------|
-| **F5** | Trigger reload (uses current mode) |
+| **F5** | Trigger Full reload |
 | **F6** | Toggle between Full and Partial mode |
 | **F7** | Toggle memory overlay (RSS, GC objects, per-reload deltas) |
 
@@ -144,6 +148,11 @@ If a reload introduces a Python error:
 Failed reloads restore the previous scene and helper module registrations, so
 `run_code` can inspect the previous generation. This does not undo arbitrary
 import-time side effects, such as file writes.
+
+After successful recovery, the debug overlay clears the failure indicator and
+hides the previous error. Full reload resets the scene clocks but does not stall
+overlay or performance-statistics refreshes; errors in the new scene replace
+the displayed error even when their timestamps restart at zero.
 
 Runtime system failures are also printed to stderr once per registered system
 generation; `get_last_error` continues to expose the latest failure. SSE events
@@ -319,4 +328,10 @@ Always check `get_last_error` first. A full `run_scene` gives a guaranteed clean
 
 ### GLB textures not loaded after reload_and_capture
 
-`delay_frames` is frame-based, not asset-aware. GLB models trigger async texture/mesh loads that may not complete within the default frame delay. For scenes with GLB models, use `delay_frames=90` or higher. If textures still appear missing (e.g., `Image:4` instead of `Image:15`), use `run_scene` followed by `capture_screenshot` with a higher delay.
+`reload_and_capture` waits for a post-reload render with no queued shader
+pipelines before counting `delay_frames` (default 30). This also applies when
+`delay_frames=0`, and works with paused time. It does not wait for asynchronous
+asset loads: GLB textures and meshes may still arrive after that render. For
+scenes with GLB models, use `delay_frames=90` or higher. If textures still appear
+missing (e.g., `Image:4` instead of `Image:15`), use `run_scene` followed by
+`capture_screenshot` with a higher delay.

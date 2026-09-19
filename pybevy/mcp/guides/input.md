@@ -147,7 +147,12 @@ def scroll_system(scroll: MessageReader[MouseWheel]) -> None:
 
 ## Gamepad Input
 
-Gamepads are entity-based - each connected gamepad is an entity with a `Gamepad` component:
+Gamepads are entity-based - each connected gamepad is an entity with a `Gamepad` component.
+`MessageReader[GamepadEvent]` yields `Connection`, `Button`, or `Axis` variants.
+Each variant's `value` returns an owned event payload, preserving its gamepad
+entity and all event fields. Use the corresponding event wrapper when constructing
+a variant, such as `GamepadEvent.Axis(GamepadAxisChangedEvent(entity, axis, value))`.
+Payload reads are independent copies, not mutable views into the message.
 
 ```python
 from pybevy.input import Gamepad, GamepadButton, GamepadAxis
@@ -192,8 +197,11 @@ def simulate_jump(writer: MessageWriter[KeyboardInput]) -> None:
     )
 ```
 
-Writable: `KeyboardInput`, `MouseButtonInput`, `MouseMotion`, `MouseWheel`,
+Writable: `KeyboardInput`, `MouseButtonInput`, `MouseMotion`, `MouseWheel`, `TouchInput`,
 `GamepadButtonChangedEvent`, `GamepadButtonStateChangedEvent`,
 `GamepadAxisChangedEvent`, `GamepadConnectionEvent`, `GamepadRumbleRequest`, and
 `CursorMoved` / `RequestRedraw` from `pybevy.window`. Synthetic `MouseWheel`
 messages default to `TouchPhase.Moved` but may provide another phase.
+
+`InputPlugin` processes `TouchInput` in `PreUpdate`; write in `First` for same-frame
+`Touches` updates. A supplied `force` uses Bevy's normalized pressure variant.

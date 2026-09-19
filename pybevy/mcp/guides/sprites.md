@@ -11,11 +11,17 @@ files under their own `assets/` directory or change the paths.
 Load an image and display it:
 
 ```python
+from pybevy.prelude import *
+
 def setup(commands: Commands, asset_server: Res[AssetServer]) -> None:
     commands.spawn(Camera2d())
     image = asset_server.load_image("bevy/branding/bevy_bird_dark.png")
     commands.spawn(Sprite.from_image(image))
 ```
+
+The equivalent general form is `asset_server.load(path, asset_type=Image)`;
+import `Image` from `pybevy.image`. Both forms return `Handle[Image]` without
+suffix inference. The general `load` requires the keyword-only `asset_type`.
 
 Solid color rectangle (no image file needed):
 

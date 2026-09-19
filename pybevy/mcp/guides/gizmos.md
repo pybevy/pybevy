@@ -98,6 +98,14 @@ def toggle_light_gizmos(store: ResMut[GizmoConfigStore]) -> None:
     light_config.draw_all = True
 ```
 
+Light-group color fields follow the config's access mode and system lifetime.
+Color methods such as `rect_light_color.set_alpha(0.5)` write through when
+obtained from `config_mut()`; `config()` is read-only.
+The same applies to variant payload edits such as `color.value.red` on
+`Color.Srgba`. A payload expires with its system and rejects access after
+the parent changes color variant.
+For standalone `LightGizmoConfigGroup` values, assign the whole color field.
+
 ## Lines, Rays, and Arrows
 
 Use `line` when both endpoints are known. The second argument to `ray` is a
