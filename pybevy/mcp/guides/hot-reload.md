@@ -135,15 +135,15 @@ set_component {"entity": "sun", "component": "PointLight", "fields": {"intensity
 ## Error Recovery
 
 If a reload introduces a Python error:
-1. Import, annotation, and system-registration failures reject the candidate before
-   mutating the live scene, so the previous generation keeps running
+1. Import and entrypoint failures keep the previous world running; rejected
+   system registrations roll back the active generation
 2. Call `get_last_error` to see the traceback
 3. Fix the Python source
 4. Call `reload {"mode": "full"}` to retry
 
-A failed import can leave `run_code` without a scene namespace even while the
-previous world keeps running. Fix the source and reload successfully, or restart
-with `run_scene`.
+Failed reloads restore the previous scene and helper module registrations, so
+`run_code` can inspect the previous generation. This does not undo arbitrary
+import-time side effects, such as file writes.
 
 Runtime system failures are also printed to stderr once per registered system
 generation; `get_last_error` continues to expose the latest failure. SSE events

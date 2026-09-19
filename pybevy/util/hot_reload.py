@@ -123,6 +123,9 @@ def flush_user_modules(
 
         to_remove.append(name)
 
+    from .._internal.reload_modules import record_module_flush
+
+    record_module_flush(project_dir, to_remove)
     for name in to_remove:
         del sys.modules[name]
     importlib.invalidate_caches()

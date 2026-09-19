@@ -19,6 +19,9 @@
 After an early subprocess exit, `get_logs(lines=200)` retrieves more retained
 output than the startup error includes. Retrieve it before starting another scene.
 
+After a failed reload, `run_code` uses the restored previous scene namespace.
+Fix the source and reload again to apply the new definitions.
+
 ## API Lookup Guide
 
 | Need | Tool | Example |
