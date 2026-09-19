@@ -1,8 +1,10 @@
 use bevy::input::gamepad::GamepadInput;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 use crate::{gamepad_axis::PyGamepadAxis, gamepad_button::PyGamepadButton};
 
+#[pyenum(GamepadInput, manual)]
 #[pyclass(
     name = "GamepadInput",
     module = "pybevy.input",

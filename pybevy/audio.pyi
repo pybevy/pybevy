@@ -1,5 +1,5 @@
 from datetime import timedelta
-from typing import ClassVar, Literal
+from typing import ClassVar, Generic, Literal, TypeVar
 
 import numpy as np
 
@@ -304,10 +304,7 @@ class AudioSource(Asset):
 class Pitch(Asset):
     """Procedural audio asset that generates a sine wave at a specific frequency.
 
-    Not playable from Python: it constructs and can be added to `Assets[Pitch]`,
-    but `AudioPlayer` accepts only `Handle[AudioSource]` and `AudioSource` has no
-    Python constructor. Generate tones offline and load them with
-    `asset_server.load_audio(...)` instead.
+    Add to `Assets[Pitch]` and pass the handle to `AudioPlayer` to play it.
     """
 
     def __init__(self, frequency: float, duration: float) -> None:
@@ -334,20 +331,25 @@ class Pitch(Asset):
     def duration(self, value: float) -> None:
         """Set the duration in seconds."""
 
-class AudioPlayer(Component):
+_AudioT = TypeVar("_AudioT", AudioSource, Pitch)
+
+class AudioPlayer(Component, Generic[_AudioT]):
     """Component that plays audio from a source handle.
 
-    Add this to an entity with a Handle<AudioSource> to play audio.
+    The handle selects AudioSource or Pitch playback. Use AudioPlayer[Pitch]
+    to query procedural players; bare AudioPlayer queries select AudioSource.
+    Only AudioSource and Pitch are supported. Unlike Bevy's generic
+    AudioPlayer<Source>, arbitrary custom Decodable asset types are not exposed.
     """
 
-    def __init__(self, source: Handle) -> None: ...
+    def __init__(self, source: Handle[_AudioT]) -> None: ...
 
     @property
-    def source(self) -> Handle:
+    def source(self) -> Handle[_AudioT]:
         """Get the audio source handle."""
 
     @source.setter
-    def source(self, value: Handle) -> None:
+    def source(self, value: Handle[_AudioT]) -> None:
         """Set the audio source handle."""
 
 class AudioSink(Component):
