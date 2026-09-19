@@ -426,6 +426,62 @@ fn validate_annotated_field_value(
         return Ok(value);
     };
 
+    if let Ok(name) = value.bind(py).extract::<String>() {
+        let typing = PyModule::import(py, "typing").map_err(|error| error.to_string())?;
+        let origin = typing
+            .call_method1("get_origin", (&annotation,))
+            .map_err(|error| error.to_string())?;
+        let types = PyModule::import(py, "types").map_err(|error| error.to_string())?;
+        let is_union = origin.is(typing.getattr("Union").map_err(|error| error.to_string())?)
+            || origin.is(types
+                .getattr("UnionType")
+                .map_err(|error| error.to_string())?);
+        let mut enum_type = annotation.cast::<PyType>().ok().cloned();
+        let mut optional = false;
+        if is_union {
+            let args = typing
+                .call_method1("get_args", (&annotation,))
+                .map_err(|error| error.to_string())?
+                .cast_into::<PyTuple>()
+                .map_err(|error| error.to_string())?;
+            if args.len() == 2 {
+                for index in 0..2 {
+                    let arg = args.get_item(index).map_err(|error| error.to_string())?;
+                    if arg.is(py.None().bind(py).get_type()) {
+                        optional = true;
+                    } else {
+                        enum_type = arg.cast_into::<PyType>().ok();
+                    }
+                }
+            }
+            if !optional {
+                enum_type = None;
+            }
+        }
+        if let Some(owner) = enum_type
+            && !enum_variant_names(&owner).is_empty()
+        {
+            let converted = construct_enum_variant_for_owner(
+                py,
+                owner.as_any(),
+                &owner,
+                &name,
+                &serde_json::Value::Null,
+                VariantSource::Named,
+            )
+            .map_err(|error| {
+                if optional {
+                    public_error::mcp_optional_enum_error(&error)
+                } else {
+                    error
+                }
+            })?;
+            if let Some(converted) = converted {
+                value = converted;
+            }
+        }
+    }
+
     if annotation.is(py.get_type::<PyFloat>())
         && value.bind(py).is_instance_of::<PyInt>()
         && !value.bind(py).is_instance_of::<PyBool>()
@@ -2254,7 +2310,18 @@ fn construct_enum_variant(
     source: VariantSource,
 ) -> Result<Option<Py<PyAny>>, String> {
     let owner = enum_owner_type(current);
-    let variants = enum_variant_names(&owner);
+    construct_enum_variant_for_owner(py, current, &owner, variant_name, variant_value, source)
+}
+
+fn construct_enum_variant_for_owner(
+    py: Python<'_>,
+    current: &Bound<'_, PyAny>,
+    owner: &Bound<'_, PyType>,
+    variant_name: &str,
+    variant_value: &serde_json::Value,
+    source: VariantSource,
+) -> Result<Option<Py<PyAny>>, String> {
+    let variants = enum_variant_names(owner);
     // Payload fields are attributes too; accept only registered variant names.
     let variant = owner
         .getattr(variant_name)
@@ -2292,7 +2359,7 @@ fn construct_enum_variant(
         if let Ok(result) = variant.call0() {
             return Ok(Some(result.unbind()));
         }
-        if variant.is_instance(&owner).unwrap_or(false) {
+        if variant.is_instance(owner).unwrap_or(false) {
             return Ok(Some(variant.unbind()));
         }
         return Err(format!("variant '{variant_name}' requires a payload"));

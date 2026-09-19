@@ -10,6 +10,7 @@ use std::{
 use bevy::ecs::world::World;
 use pybevy_core::{
     ActiveSceneModule, CustomComponentInfo, CustomResourceInfo, ValidityFlag, ValidityGuard,
+    public_error,
 };
 use pyo3::{
     create_exception,
@@ -179,9 +180,7 @@ fn inject_active_scene_namespace(
     let module = modules
         .get_item(&module_name)?
         .ok_or_else(|| {
-            PyRuntimeError::new_err(format!(
-                "Active scene module `{module_name}` is not present in sys.modules"
-            ))
+            PyRuntimeError::new_err(public_error::mcp_scene_namespace_unavailable(&module_name))
         })?
         .cast_into::<PyModule>()?;
 

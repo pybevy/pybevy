@@ -16,6 +16,9 @@
 10. **Use `get_guide("scene-quality")` as a reference** - consult its lighting floors and color palette rules when refining visuals, not necessarily before writing the first line of code.
 11. **After first load with GLB models** - run `check_all_overlaps(ground_y=0)` to detect sunken models scene-wide in one pass, before any visual iteration.
 
+After an early subprocess exit, `get_logs(lines=200)` retrieves more retained
+output than the startup error includes. Retrieve it before starting another scene.
+
 ## API Lookup Guide
 
 | Need | Tool | Example |
@@ -114,6 +117,10 @@ Owned nested UI gradient values and `Isometry2d` vector fields are read-only sna
 - **Do NOT use `Text2d` in 3D scenes.** `Text2d` requires `Camera2d` and will not render with `Camera3d`. For text overlays, HUDs, or labels in 3D scenes, use UI `Text` (from `pybevy.ui`) with a `Node` component. See `guide://ui-text`.
 
 ## JSON Mutation Formats
+
+Custom component fields annotated with `Optional[Mode]` or `Mode | None`, where
+`Mode` is a Python enum, accept a variant name or JSON null, including when the
+current value is null. Invalid names report the available variants.
 
 Python field reads use `{"serialization_error": ...}` markers for cycles and nesting beyond 64 levels. Dictionary key/value pair arrays are read-only.
 
