@@ -64,7 +64,7 @@ array is a copy built with `to_contiguous_bytes()` and `numpy.frombuffer()`.
 Entity IDs are available via `batch.entities()` when using `iter_batches()`:
 
 ```python
-def batch_with_entities(view: View[Entity, Mut[Transform]], commands: Commands) -> None:
+def batch_with_entities(view: View[tuple[Entity, Mut[Transform]]], commands: Commands) -> None:
     for batch in view.iter_batches():
         entities = batch.entities()  # list[Entity] in same order as column data
         col = batch.column_mut(Transform)

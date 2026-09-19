@@ -1142,14 +1142,19 @@ key/value pairs instead; this pair form is read-only. Writes accept dictionary
 objects, keep omitted dataclass fields, and preserve array dtypes. Cycles and
 nesting beyond 64 levels return `{"serialization_error": ...}` markers.
 
-A field holding `None` carries no type to rebuild from: initialize it with
-`run_code`. Native reflected optional fields use their component schema. An
+A custom field annotated `Optional[Enum]` or `Enum | None` accepts a variant
+name even when its current value is `None`. Other custom fields holding `None`
+need initialization through `run_code`. Native reflected optional fields use
+their component schema. An
 object with neither dataclass fields nor properties reads as `{"repr": ...}` and
 rejects writes.
 
 ### Resource Flag Pattern (Cross-System Communication)
 
-When two systems need to interact but can't share mutable access to the same component (e.g., "detect hazard collision" needs `Query[Hazard, GridPos]` + reading player position, while "reset player" needs `Query[Mut[Transform], With[Player]]`), use a **resource flag** to decouple them:
+Use a resource flag to pass a request between systems, such as collision
+detection and player reset. Order the producer before the consumer when the
+request must be handled in the same frame. Separate systems may access the same
+component; Bevy schedules conflicting accesses safely.
 
 ```python
 from dataclasses import dataclass
