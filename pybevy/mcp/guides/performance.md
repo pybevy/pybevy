@@ -327,6 +327,10 @@ get_performance
 
 Use before and after changes to catch regressions.
 
+For reload memory growth, compare completed reloads, entity/asset/system counts,
+CPU allocations and per-process GPU memory after warm-up. RSS alone cannot
+distinguish a leak from retained allocator pages.
+
 `uptime_secs` is the operating-system process uptime and remains monotonic
 across full reloads. `generation_uptime_secs` is Bevy real time for the current
 app generation and resets on a full reload.

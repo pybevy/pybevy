@@ -215,16 +215,33 @@ Or per-source:
 PlaybackSettings(spatial=True, spatial_scale=SpatialScale(2.0))
 ```
 
-## Procedural Audio (Pitch): not playable yet
+## Procedural Audio (Pitch)
 
-`Pitch` constructs and can be added to `Assets[Pitch]`, but **cannot be played**:
-`AudioPlayer` accepts only `Handle[AudioSource]`, and `AudioSource` has no Python
-constructor. Generate tones offline and load them as a file instead:
+Add a `Pitch` asset and pass its handle to `AudioPlayer`. `AudioPlugin` registers
+the procedural audio asset and playback systems.
 
+PyBevy supports only `AudioSource` and `Pitch` source types, not arbitrary
+custom assets implementing Bevy's `Decodable` trait. There is no public
+`PitchPlayer` type: procedural playback uses `AudioPlayer[Pitch]`, corresponding
+to Bevy's `AudioPlayer<Pitch>`.
+
+<!-- pybevy-snippet: typecheck -->
 ```python
-handle = asset_server.load_audio("tones/a4.ogg")
-commands.spawn(AudioPlayer(handle), PlaybackSettings.ONCE)
+from pybevy.assets import Assets
+from pybevy.audio import AudioPlayer, Pitch, PlaybackSettings
+from pybevy.ecs import Commands, ResMut
+
+def play_tone(commands: Commands, pitches: ResMut[Assets[Pitch]]) -> None:
+    handle = pitches.add(Pitch(440.0, 0.5))
+    commands.spawn(AudioPlayer(handle), PlaybackSettings.ONCE)
 ```
+
+Use `Query[AudioPlayer[Pitch]]` to read procedural players and
+`Query[Mut[AudioPlayer[Pitch]]]` to change their source. The replacement handle
+must also refer to `Pitch`. `AudioPlayer[AudioSource]` selects file-based players;
+bare `Query[AudioPlayer]` retains that same meaning. The two source types are
+distinct Bevy components, so changing between them requires replacing the
+component rather than assigning a handle of a different type.
 
 ## Start Position & Duration
 

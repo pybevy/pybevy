@@ -92,6 +92,10 @@ def key_events(reader: MessageReader[KeyboardInput]) -> None:
 
 Mouse buttons use `Res[ButtonInput[MouseButton]]`, the same generic as the keyboard with a different button type. It resolves to the `MouseInput` class, which remains a valid spelling. **Note:** `MouseButton` variants are constructor calls with parentheses, unlike `KeyCode` enum values.
 
+Compare event values with `event.button == MouseButton.Left()` and
+`event.state == ButtonState.Pressed()`. Missing parentheses raise `TypeError`
+with a constructor hint; replace its `...` with any required payload arguments.
+
 ```python
 from pybevy.input import ButtonInput, MouseButton
 from pybevy.prelude import *
