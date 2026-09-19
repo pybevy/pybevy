@@ -34,7 +34,7 @@ impl PyMonitorSelection {
             PyMonitorSelection::Primary() => "MonitorSelection.Primary()".to_string(),
             PyMonitorSelection::Index { index } => format!("MonitorSelection.Index({index})"),
             PyMonitorSelection::Entity { entity } => {
-                format!("MonitorSelection.Entity({:?})", entity)
+                format!("MonitorSelection.Entity({})", entity.__repr__())
             }
         }
     }

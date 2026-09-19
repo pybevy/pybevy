@@ -35,7 +35,7 @@ impl PyCursorEntered {
     }
 
     pub fn __repr__(&self) -> String {
-        format!("CursorEntered(window={:?})", self.window)
+        format!("CursorEntered(window={})", self.window.__repr__())
     }
 }
 
@@ -70,6 +70,6 @@ impl PyCursorLeft {
     }
 
     pub fn __repr__(&self) -> String {
-        format!("CursorLeft(window={:?})", self.window)
+        format!("CursorLeft(window={})", self.window.__repr__())
     }
 }
