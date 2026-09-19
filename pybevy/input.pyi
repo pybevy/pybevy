@@ -1756,7 +1756,7 @@ class MouseInput(Resource):
 
     Example:
         ```python
-        def handle_mouse_system(mouse: MouseInput) -> None:
+        def handle_mouse_system(mouse: Res[MouseInput]) -> None:
             if mouse.just_pressed(MouseButton.Left()):
                 print("Left mouse button was just pressed!")
 
