@@ -1606,6 +1606,8 @@ class QueryIter:
     def iter_many(self, entities: Iterable[Entity]) -> list[Any]:
         """Iterate over specific entities that match the query."""
 
+    def __len__(self) -> int: ...
+
 class QueryIterator(Iterator[Any]):
     """Iterator for one fresh Query traversal."""
     def __iter__(self) -> QueryIterator: ...
@@ -2360,6 +2362,8 @@ class State(Generic[StateType], Resource):
         runtime, so generic callers need a way to ask.
         """
 
+    def __eq__(self, other: object) -> bool: ...
+
 class NextState(Generic[StateType], Resource):
     """Pending state transition resource.
 
@@ -2470,7 +2474,7 @@ class DespawnOnExit(Component, Generic[StateType]):
     """Component that marks an entity to be despawned when exiting a state.
 
     Example:
-        commands.spawn(Sprite(), DespawnOnExit(GameState.MENU))
+        commands.spawn(Transform(), DespawnOnExit(GameState.MENU))
     """
     def __init__(self, state: StateType) -> None: ...
     def state_value(self) -> StateType:
@@ -2480,7 +2484,7 @@ class DespawnOnEnter(Component, Generic[StateType]):
     """Component that marks an entity to be despawned when entering a state.
 
     Example:
-        commands.spawn(Sprite(), DespawnOnEnter(GameState.PAUSE_MENU))
+        commands.spawn(Transform(), DespawnOnEnter(GameState.PAUSE_MENU))
     """
     def __init__(self, state: StateType) -> None: ...
     def state_value(self) -> StateType:

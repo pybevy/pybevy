@@ -313,7 +313,7 @@ impl PyViewColumn {
         })
     }
 
-    /// Apply a unary f64→f64 function element-wise, returning an owned ViewColumn.
+    /// Apply a unary f64-to-f64 function element-wise, returning an owned ViewColumn.
     fn unary_op(&self, f: impl Fn(f64) -> f64) -> PyResult<Self> {
         let _operation = self.enter_operation()?;
         let ft = self.check_numeric()?;
@@ -326,7 +326,7 @@ impl PyViewColumn {
         )
     }
 
-    /// Apply a binary (col, col) → col function element-wise.
+    /// Apply a binary function to two columns element-wise.
     fn binary_op_col(&self, other: &Self, f: impl Fn(f64, f64) -> f64) -> PyResult<Self> {
         let _operations = self.enter_pair_operation(other)?;
         let ft = self.check_numeric()?;
@@ -346,7 +346,7 @@ impl PyViewColumn {
         )
     }
 
-    /// Apply a binary (col, scalar) → col function element-wise.
+    /// Apply a binary function to a column and scalar element-wise.
     fn binary_op_scalar(&self, scalar: f64, f: impl Fn(f64, f64) -> f64) -> PyResult<Self> {
         let _operation = self.enter_operation()?;
         let ft = self.check_numeric()?;
@@ -359,7 +359,7 @@ impl PyViewColumn {
         )
     }
 
-    /// Apply a binary (scalar, col) → col function element-wise.
+    /// Apply a binary function to a scalar and column element-wise.
     fn binary_op_scalar_left(&self, scalar: f64, f: impl Fn(f64, f64) -> f64) -> PyResult<Self> {
         let _operation = self.enter_operation()?;
         let ft = self.check_numeric()?;

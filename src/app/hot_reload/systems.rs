@@ -91,23 +91,28 @@ fn run_definition_reload_attempt(
     error_state: std::sync::Arc<std::sync::Mutex<Vec<PyErr>>>,
     hot_reload_state: HotReloadState,
 ) {
-    let transaction = match ModuleReloadTransaction::new() {
-        Ok(transaction) => transaction,
-        Err(error) => {
+    // Keep the transaction's Python context alive across native-host attachments.
+    Python::attach(|py| {
+        let transaction = match ModuleReloadTransaction::new() {
+            Ok(transaction) => transaction,
+            Err(error) => {
+                publish_reload_diagnostic(world, error.to_string(), None);
+                return;
+            }
+        };
+        let result = py.detach(|| {
+            let mut runtime = Pyo3ReloadRuntime::new(loader_func, error_state);
+            perform_reload(world, &mut runtime, mode, &hot_reload_state)
+        });
+        if let Err(error) = transaction.finish(result.is_ok()) {
             publish_reload_diagnostic(world, error.to_string(), None);
             return;
         }
-    };
-    let mut runtime = Pyo3ReloadRuntime::new(loader_func, error_state);
-    let result = perform_reload(world, &mut runtime, mode, &hot_reload_state);
-    if let Err(error) = transaction.finish(result.is_ok()) {
-        publish_reload_diagnostic(world, error.to_string(), None);
-        return;
-    }
-    if let Err(error) = result {
-        let traceback = error.traceback.clone();
-        publish_reload_diagnostic(world, error.message, traceback);
-    }
+        if let Err(error) = result {
+            let traceback = error.traceback.clone();
+            publish_reload_diagnostic(world, error.message, traceback);
+        }
+    });
 }
 
 /// Built-in system that checks for F5/F6 keypress and triggers reload or mode toggle

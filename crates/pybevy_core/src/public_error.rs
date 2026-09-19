@@ -275,6 +275,12 @@ pub fn plugin_missing_decorator(plugin_name: &str) -> String {
 pub const EXPECTED_ASSET_ID_OR_HANDLE: &str = "expected an AssetId or Handle";
 pub const ASSET_BRIDGE_NOT_FOUND: &str = "Asset bridge not found for type";
 pub const ASSET_ACCESS_REGISTRY_MISSING: &str = "PyBevy asset access registry is missing from the World; initialize PyBevyPlugin before running Python systems";
+pub const NATIVE_PLUGIN_EMPTY_SELECTION: &str = "PyBevyPlugin requires an explicit selection: use with_plugin(), with_system(), a stage-specific system method, or with_auto_discovery()";
+pub const NATIVE_PLUGIN_LIFECYCLE: &str =
+    "App lifecycle operations are unavailable while configuring a native App from Python plugins";
+pub fn native_plugin_load_error(module: &str, error: impl Display) -> String {
+    format!("Failed to load Python plugins from '{module}': {error}")
+}
 pub const ASSET_EVENT_TYPE_REQUIRED: &str =
     "AssetEvent requires an asset type; use AssetEvent[Image]";
 pub const ASSET_EVENT_READ_ONLY: &str =

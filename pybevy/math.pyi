@@ -1602,6 +1602,8 @@ class HalfSpace:
 
     def __init__(self, normal_d: Vec4) -> None: ...
 
+    def __eq__(self, other: object) -> bool: ...
+
 class ViewFrustum:
     """A region of 3D space defined by the intersection of 6 half-spaces.
 
@@ -2175,6 +2177,8 @@ class Aabb2d:
     def intersects_circle(self, circle: BoundingCircle) -> bool:
         """Check if this bounding box intersects with a BoundingCircle."""
 
+    def __eq__(self, other: object) -> bool: ...
+
 class BoundingCircle:
     """Bounding circle in 2D space.
 
@@ -2272,6 +2276,8 @@ class BoundingCircle:
 
     def intersects_aabb(self, aabb: Aabb2d) -> bool:
         """Check if this circle intersects with an Aabb2d."""
+
+    def __eq__(self, other: object) -> bool: ...
 
 class Isometry3d:
     """3D isometry (rotation + translation) for bounding volume transformations.
@@ -2444,6 +2450,8 @@ class Aabb3d:
             >>> aabb = Aabb3d.from_point_cloud(Isometry3d.IDENTITY, points)
         """
 
+    def __eq__(self, other: object) -> bool: ...
+
 class BoundingSphere:
     """Bounding sphere in 3D space."""
 
@@ -2538,6 +2546,8 @@ class BoundingSphere:
             >>> points = [Vec3(0.0, 0.0, 0.0), Vec3(10.0, 10.0, 10.0)]
             >>> sphere = BoundingSphere.from_point_cloud(Isometry3d.IDENTITY, points)
         """
+
+    def __eq__(self, other: object) -> bool: ...
 
 class Dir2:
     """A normalized 2D direction vector."""
@@ -3166,7 +3176,7 @@ class Triangle2d(Meshable):
     """
 
     @property
-    def vertices(self) -> tuple[Vec2, Vec2, Vec2]: ...
+    def vertices(self) -> list[Vec2]: ...
     @vertices.setter
     def vertices(self, value: tuple[Vec2, Vec2, Vec2] | list[Vec2]) -> None: ...
 
@@ -3282,7 +3292,7 @@ class Triangle3d(Meshable):
     """
 
     @property
-    def vertices(self) -> tuple[Vec3, Vec3, Vec3]: ...
+    def vertices(self) -> list[Vec3]: ...
     @vertices.setter
     def vertices(self, value: tuple[Vec3, Vec3, Vec3] | list[Vec3]) -> None: ...
 
@@ -3588,7 +3598,7 @@ class Line2d:
     Example:
         >>> from pybevy.math import Line2d, Dir2, Vec2
         >>> # Create a horizontal line
-        >>> line = Line2d(Dir2(1, 0))
+        >>> line = Line2d(direction=Dir2(1, 0))
     """
 
     direction: Dir2
@@ -3611,7 +3621,7 @@ class Line3d:
     Example:
         >>> from pybevy.math import Line3d, Dir3
         >>> # Create a line along the X axis
-        >>> line = Line3d(Dir3(1, 0, 0))
+        >>> line = Line3d(direction=Dir3(1, 0, 0))
     """
 
     direction: Dir3
@@ -3634,7 +3644,10 @@ class Segment2d:
         >>> segment = Segment2d(Vec2(0, 0), Vec2(1, 1))
     """
 
-    vertices: tuple[Vec2, Vec2]
+    @property
+    def vertices(self) -> list[Vec2]: ...
+    @vertices.setter
+    def vertices(self, value: tuple[Vec2, Vec2] | list[Vec2]) -> None: ...
 
     def __init__(
         self,
@@ -3874,11 +3887,11 @@ class Arc2d:
             The position of the left endpoint
         """
 
-    def endpoints(self) -> tuple[Vec2, Vec2]:
+    def endpoints(self) -> list[Vec2]:
         """Get both endpoints of the arc.
 
         Returns:
-            A tuple of (left_endpoint, right_endpoint)
+            A list containing the left and right endpoints
         """
 
     def midpoint(self) -> Vec2:
@@ -4418,7 +4431,7 @@ class Tetrahedron(Meshable):
     """
 
     @property
-    def vertices(self) -> tuple[Vec3, Vec3, Vec3, Vec3]: ...
+    def vertices(self) -> list[Vec3]: ...
     @vertices.setter
     def vertices(self, value: tuple[Vec3, Vec3, Vec3, Vec3] | list[Vec3]) -> None: ...
 
@@ -4451,7 +4464,7 @@ class Tetrahedron(Meshable):
     def centroid(self) -> Vec3:
         """Get the centroid (geometric center) of the tetrahedron."""
 
-    def faces(self) -> tuple[Triangle3d, Triangle3d, Triangle3d, Triangle3d]:
+    def faces(self) -> list[Triangle3d]:
         """Get the four triangular faces of the tetrahedron."""
 
     def area(self) -> float:
@@ -4702,6 +4715,8 @@ class CompassOctant:
     def is_in_direction(self, origin: Vec2, candidate: Vec2) -> bool:
         """Check if a candidate point is in this compass direction from an origin point."""
 
+    def __neg__(self) -> CompassOctant: ...
+
     def opposite(self) -> CompassOctant:
         """Get the opposite compass direction."""
 
@@ -4746,6 +4761,8 @@ class CompassQuadrant:
 
     def is_in_direction(self, origin: Vec2, candidate: Vec2) -> bool:
         """Check for a positive projection from the origin onto this direction."""
+
+    def __neg__(self) -> CompassQuadrant: ...
 
     def opposite(self) -> CompassQuadrant:
         """Get the opposite compass direction."""
