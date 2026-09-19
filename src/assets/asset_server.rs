@@ -1,37 +1,39 @@
-use std::any::TypeId;
-
 use bevy::{
     asset::{
         AssetPath, AssetServer,
         saver::{SaveAssetError, SavedAsset, save_using_saver},
     },
     ecs::world::unsafe_world_cell::UnsafeWorldCell,
-    gltf::{Gltf, GltfLoaderSettings},
-    image::{Image, ImageSaver, ImageSaverSettings, SaveImageError},
+    image::{ImageSaver, ImageSaverSettings, SaveImageError},
     tasks::IoTaskPool,
 };
+use pybevy_audio::audio_source::PyAudioSource;
 use pybevy_core::{
+    asset_load_plan::AssetLoadPlan,
     extract_asset_id_from_any,
     handle::PyHandle,
-    public_error::{ASSET_LOADING_TASK_POOL_MISSING, invalid_asset_type},
+    public_error::{
+        ASSET_LOADING_TASK_POOL_MISSING, LOAD_BUILDER_TYPE_REQUIRED, LOAD_WITH_SETTINGS_DEPRECATED,
+        LOADER_SETTINGS_BRIDGE_MISSING, asset_settings_type_mismatch, invalid_asset_type,
+        removed_asset_load_method,
+    },
     registry::global_registry,
 };
-use pybevy_gltf::loader_settings::{GltfLoaderSettingsValue, PyGltfLoaderSettings};
-use pybevy_image::{
-    image::PyImage, image_saver_settings::PyImageSaverSettings,
-    loader_settings::PyImageLoaderSettings,
-};
+use pybevy_image::{image::PyImage, image_saver_settings::PyImageSaverSettings};
 use pyo3::{
     IntoPyObjectExt,
-    exceptions::{PyOSError, PyRuntimeError, PyTypeError, PyValueError},
+    exceptions::{
+        PyAttributeError, PyDeprecationWarning, PyOSError, PyRuntimeError, PyTypeError,
+        PyValueError,
+    },
     prelude::*,
     types::{PyString, PyType},
 };
 
 use crate::{
     assets::{
-        PyAssetPath, dependency_load_state::PyDependencyLoadState, load_state::PyLoadState,
-        recursive_dependency_load_state::PyRecursiveDependencyLoadState,
+        PyAssetPath, dependency_load_state::PyDependencyLoadState, load_builder::PyLoadBuilder,
+        load_state::PyLoadState, recursive_dependency_load_state::PyRecursiveDependencyLoadState,
     },
     ecs::{helpers::validity_guard::ValidityFlag, resource::PyResource},
 };
@@ -52,8 +54,8 @@ fn extract_asset_path(path: &Bound<'_, PyAny>) -> PyResult<AssetPath<'static>> {
 }
 
 /// Python wrapper for Bevy's AssetServer
-#[pyclass(name = "AssetServer", module = "pybevy.assets", extends = PyResource)]
-#[derive(Debug)]
+#[pyclass(name = "AssetServer", module = "pybevy.assets", extends = PyResource, skip_from_py_object)]
+#[derive(Debug, Clone)]
 pub struct PyAssetServer {
     /// World cell (lifetime-erased), valid only while `validity` is active. Only
     /// ever used to read the declared `AssetServer` resource, never `&World`.
@@ -76,7 +78,7 @@ impl PyAssetServer {
     }
 
     /// Borrow the `AssetServer` resource through the cell.
-    fn asset_server(&self) -> PyResult<&AssetServer> {
+    pub(crate) fn asset_server(&self) -> PyResult<&AssetServer> {
         self.validity.check()?;
         // SAFETY: `Res`/`ResMut[AssetServer]` registers AssetServer's ComponentId in
         // DynamicSystem::initialize, so read access is declared; the executor prevents a
@@ -84,6 +86,39 @@ impl PyAssetServer {
         // methods use interior mutability, so shared access suffices for load/query.
         unsafe { self.cell.get_resource::<AssetServer>() }
             .ok_or_else(|| PyRuntimeError::new_err("AssetServer resource not found"))
+    }
+
+    pub(crate) fn load_with_plan<'py>(
+        &self,
+        py: Python<'py>,
+        path: Bound<'py, PyAny>,
+        asset_type: Option<Bound<'py, PyType>>,
+        plan: &AssetLoadPlan,
+    ) -> PyResult<Py<PyAny>> {
+        let server = self.loading_asset_server()?;
+        let path = extract_asset_path(&path)?;
+        let bridge = if let Some(asset_type) = asset_type {
+            global_registry::get_asset_bridge_by_py_type(asset_type.as_type_ptr())
+                .ok_or_else(|| PyTypeError::new_err(invalid_asset_type(&asset_type)))?
+        } else {
+            let (type_id, _) = plan
+                .asset_type()
+                .ok_or_else(|| PyTypeError::new_err(LOAD_BUILDER_TYPE_REQUIRED))?;
+            global_registry::get_asset_bridge_by_type_id(type_id)
+                .ok_or_else(|| PyTypeError::new_err(LOADER_SETTINGS_BRIDGE_MISSING))?
+        };
+        plan.validate_type(bridge.bevy_type_id(), bridge.name())
+            .map_err(|(expected, actual)| {
+                PyTypeError::new_err(asset_settings_type_mismatch(expected, actual))
+            })?;
+        if !bridge.is_loadable() {
+            return Err(PyTypeError::new_err(format!(
+                "`{}` is not a file-loadable asset type",
+                bridge.name()
+            )));
+        }
+        let handle = plan.load(server, path, bridge.bevy_type_id());
+        PyHandle::from_untyped(handle, bridge.py_type_ptr()).into_py_any(py)
     }
 
     fn loading_asset_server(&self) -> PyResult<&AssetServer> {
@@ -97,129 +132,64 @@ impl PyAssetServer {
 
 #[pymethods]
 impl PyAssetServer {
+    #[pyo3(signature = (path, *, asset_type))]
     pub fn load<'py>(
         &self,
-        py: Python,
+        py: Python<'py>,
         path: Bound<'py, PyAny>,
         asset_type: Bound<'py, PyType>,
     ) -> PyResult<Py<PyAny>> {
-        let type_ptr = asset_type.as_type_ptr();
-        let bridge = global_registry::get_asset_bridge_by_py_type(type_ptr)
-            .ok_or_else(|| PyTypeError::new_err(invalid_asset_type(&asset_type)))?;
-
-        if !bridge.is_loadable() {
-            return Err(PyTypeError::new_err(format!(
-                "`{}` is not a file-loadable asset type",
-                bridge.name()
-            )));
-        }
-
-        let asset_server = self.loading_asset_server()?;
-        let asset_path = extract_asset_path(&path)?;
-        let untyped_handle = bridge.load(asset_server, asset_path);
-        let py_handle = PyHandle::from_untyped(untyped_handle, type_ptr);
-        py_handle.into_py_any(py)
+        self.load_with_plan(py, path, Some(asset_type), &AssetLoadPlan::default())
     }
 
-    pub fn load_world_asset<'py>(
-        &self,
-        py: Python,
-        path: Bound<'py, PyAny>,
-    ) -> PyResult<Py<PyAny>> {
-        self.load_by_name(py, path, "WorldAsset")
+    pub fn load_builder(&self) -> PyResult<PyLoadBuilder> {
+        self.asset_server()?;
+        Ok(PyLoadBuilder::new(self.clone()))
     }
 
-    pub fn load_image<'py>(&self, py: Python, path: Bound<'py, PyAny>) -> PyResult<Py<PyAny>> {
-        self.load_by_name(py, path, "Image")
+    pub fn load_image<'py>(&self, py: Python<'py>, path: Bound<'py, PyAny>) -> PyResult<Py<PyAny>> {
+        self.load(py, path, py.get_type::<PyImage>())
     }
 
-    #[pyo3(signature = (path, asset_type, settings))]
+    pub fn load_audio<'py>(&self, py: Python<'py>, path: Bound<'py, PyAny>) -> PyResult<Py<PyAny>> {
+        self.load(py, path, py.get_type::<PyAudioSource>())
+    }
+
+    fn __getattr__(&self, py: Python<'_>, name: &str) -> PyResult<()> {
+        let replacement = match name {
+            "load_mesh" => "load(path, asset_type=Mesh)",
+            "load_world_asset" => "load(path, asset_type=WorldAsset)",
+            "load_image_with_settings" => "load_builder().with_settings(settings).load(path)",
+            _ => {
+                return Err(PyAttributeError::new_err(format!(
+                    "'AssetServer' object has no attribute '{name}'"
+                )));
+            }
+        };
+        let error = PyAttributeError::new_err(removed_asset_load_method(name, replacement));
+        // Explicit metadata prevents Python from suggesting an unrelated method.
+        error.value(py).setattr("name", name)?;
+        Err(error)
+    }
+
+    #[pyo3(signature = (path, settings, *, asset_type=None))]
     pub fn load_with_settings<'py>(
         &self,
-        py: Python,
+        py: Python<'py>,
         path: Bound<'py, PyAny>,
-        asset_type: Bound<'py, PyType>,
         settings: Bound<'py, PyAny>,
+        asset_type: Option<Bound<'py, PyType>>,
     ) -> PyResult<Py<PyAny>> {
-        let type_ptr = asset_type.as_type_ptr();
-        let bridge = global_registry::get_asset_bridge_by_py_type(type_ptr)
-            .ok_or_else(|| PyTypeError::new_err(invalid_asset_type(&asset_type)))?;
-
-        let asset_server = self.loading_asset_server()?;
-        let asset_path = extract_asset_path(&path)?;
-
-        let untyped_handle = if let Ok(image_settings) = settings.extract::<PyImageLoaderSettings>()
-        {
-            if bridge.bevy_type_id() != TypeId::of::<Image>() {
-                return Err(PyTypeError::new_err(format!(
-                    "ImageLoaderSettings requires asset type Image, got `{}`",
-                    bridge.name()
-                )));
-            }
-            let bevy_settings = bevy::image::ImageLoaderSettings::try_from(image_settings)?;
-            asset_server
-                .load_builder()
-                .with_settings(move |s: &mut bevy::image::ImageLoaderSettings| {
-                    *s = bevy_settings.clone();
-                })
-                .load::<Image>(asset_path)
-                .untyped()
-        } else if let Ok(gltf_settings) = settings.extract::<PyRef<'_, PyGltfLoaderSettings>>() {
-            if bridge.bevy_type_id() != TypeId::of::<Gltf>() {
-                return Err(PyTypeError::new_err(format!(
-                    "GltfLoaderSettings requires asset type Gltf, got `{}`",
-                    bridge.name()
-                )));
-            }
-            let gltf_settings = GltfLoaderSettingsValue::try_from(&*gltf_settings)?;
-            asset_server
-                .load_builder()
-                .with_settings(move |s: &mut GltfLoaderSettings| {
-                    gltf_settings.apply_to(s);
-                })
-                .load::<Gltf>(asset_path)
-                .untyped()
-        } else {
-            return Err(PyTypeError::new_err(format!(
-                "`{}` is not a supported loader settings type (supported: ImageLoaderSettings, GltfLoaderSettings)",
-                settings.get_type().name()?
-            )));
-        };
-
-        let py_handle = PyHandle::from_untyped(untyped_handle, type_ptr);
-        py_handle.into_py_any(py)
-    }
-
-    #[pyo3(signature = (path, settings))]
-    pub fn load_image_with_settings<'py>(
-        &self,
-        py: Python,
-        path: Bound<'py, PyAny>,
-        settings: PyImageLoaderSettings,
-    ) -> PyResult<Py<PyAny>> {
-        let bridge = global_registry::get_asset_bridge_by_name("Image")
-            .ok_or_else(|| PyRuntimeError::new_err("Asset bridge for 'Image' not found"))?;
-
-        let asset_server = self.loading_asset_server()?;
-        let asset_path = extract_asset_path(&path)?;
-        let bevy_settings = bevy::image::ImageLoaderSettings::try_from(settings)?;
-        let untyped_handle = asset_server
-            .load_builder()
-            .with_settings(move |s: &mut bevy::image::ImageLoaderSettings| {
-                *s = bevy_settings.clone();
-            })
-            .load::<Image>(asset_path)
-            .untyped();
-        let py_handle = PyHandle::from_untyped(untyped_handle, bridge.py_type_ptr());
-        py_handle.into_py_any(py)
-    }
-
-    pub fn load_mesh<'py>(&self, py: Python, path: Bound<'py, PyAny>) -> PyResult<Py<PyAny>> {
-        self.load_by_name(py, path, "Mesh")
-    }
-
-    pub fn load_audio<'py>(&self, py: Python, path: Bound<'py, PyAny>) -> PyResult<Py<PyAny>> {
-        self.load_by_name(py, path, "AudioSource")
+        self.asset_server()?;
+        PyErr::warn(
+            py,
+            &py.get_type::<PyDeprecationWarning>(),
+            LOAD_WITH_SETTINGS_DEPRECATED,
+            1,
+        )?;
+        self.load_builder()?
+            .with_settings(settings)?
+            .load(py, path, asset_type)
     }
 
     pub fn load_folder<'py>(&self, py: Python, path: Bound<'py, PyAny>) -> PyResult<Py<PyAny>> {
@@ -339,25 +309,5 @@ fn save_asset_error_to_py(error: SaveAssetError) -> PyErr {
                 _ => PyValueError::new_err(error.to_string()),
             }
         }
-    }
-}
-
-impl PyAssetServer {
-    /// Helper to load by bridge name (for convenience methods).
-    fn load_by_name<'py>(
-        &self,
-        py: Python,
-        path: Bound<'py, PyAny>,
-        name: &str,
-    ) -> PyResult<Py<PyAny>> {
-        let bridge = global_registry::get_asset_bridge_by_name(name).ok_or_else(|| {
-            PyRuntimeError::new_err(format!("Asset bridge for '{}' not found", name))
-        })?;
-
-        let asset_server = self.loading_asset_server()?;
-        let asset_path = extract_asset_path(&path)?;
-        let untyped_handle = bridge.load(asset_server, asset_path);
-        let py_handle = PyHandle::from_untyped(untyped_handle, bridge.py_type_ptr());
-        py_handle.into_py_any(py)
     }
 }

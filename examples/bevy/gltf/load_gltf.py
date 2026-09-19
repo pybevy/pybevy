@@ -32,7 +32,7 @@ def setup(commands: Commands, server: Res[AssetServer]) -> None:
 
     # Load and spawn the GLTF scene
     # Note: Using FlightHelmet model from assets/models/FlightHelmet/
-    scene_handle = server.load("bevy/models/FlightHelmet/FlightHelmet.gltf#Scene0", WorldAsset)
+    scene_handle = server.load("bevy/models/FlightHelmet/FlightHelmet.gltf#Scene0", asset_type=WorldAsset)
     commands.spawn(WorldAssetRoot(scene_handle))
 
 

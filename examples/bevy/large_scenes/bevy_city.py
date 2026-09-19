@@ -130,15 +130,15 @@ class CityAssets:
 
     def __init__(self, server: AssetServer, materials: Assets) -> None:
         def scene(path: str) -> Handle:
-            return server.load(f"kenney/{path}#Scene0", WorldAsset)
+            return server.load(f"kenney/{path}#Scene0", asset_type=WorldAsset)
 
         def mesh(path: str) -> Handle:
-            return server.load(f"kenney/{path}#Mesh0/Primitive0", Mesh)
+            return server.load(f"kenney/{path}#Mesh0/Primitive0", asset_type=Mesh)
 
         def kit_materials(kit: str, variations: list[str]) -> list[Handle]:
             return [
                 materials.add(StandardMaterial(
-                    base_color_texture=server.load(f"kenney/{kit}/Textures/{v}.png", Image)))
+                    base_color_texture=server.load(f"kenney/{kit}/Textures/{v}.png", asset_type=Image)))
                 for v in variations
             ]
 
@@ -164,7 +164,7 @@ class CityAssets:
 
         self.ground_mesh = mesh("city-kit-roads/tile-low.glb")
         self.ground_road_mat = server.load(
-            "kenney/city-kit-roads/tile-low.glb#DefaultMaterial/std", StandardMaterial)
+            "kenney/city-kit-roads/tile-low.glb#DefaultMaterial/std", asset_type=StandardMaterial)
         self.ground_grass_mat = materials.add(
             StandardMaterial(base_color=Color.srgb(97 / 255, 203 / 255, 139 / 255)))
 

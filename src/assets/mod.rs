@@ -6,6 +6,7 @@ pub mod asset_type;
 #[allow(clippy::module_inception)]
 pub mod assets;
 pub mod dependency_load_state;
+pub mod load_builder;
 pub mod load_state;
 pub mod loaded_folder;
 pub mod recursive_dependency_load_state;
@@ -108,6 +109,7 @@ pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     asset_event::register_asset_event_variants(&assets)?;
     assets.add_class::<asset_load_failed_event::PyAssetLoadFailedEvent>()?;
     assets.add_class::<asset_server::PyAssetServer>()?;
+    assets.add_class::<load_builder::PyLoadBuilder>()?;
     assets.add_class::<asset_type::PyAssetTypeParam>()?;
     assets.add_class::<assets::PyAssets>()?;
     assets.add_class::<assets::PyAssetIter>()?;

@@ -16,7 +16,7 @@ class MyComponent(Component):
 
 def setup(commands: Commands, asset_server: Res[AssetServer]) -> None:
     commands.spawn(Camera2d())
-    commands.spawn(Sprite.from_image(asset_server.load_image("icon.png")), MyComponent())
+    commands.spawn(Sprite.from_image(asset_server.load("icon.png", asset_type=Image)), MyComponent())
 
 
 def remove_component(

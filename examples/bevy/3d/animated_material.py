@@ -21,8 +21,8 @@ def setup(
         Camera3d(),
         Transform.from_xyz(3.0, 1.0, 3.0).looking_at(Vec3(0.0, -0.5, 0.0), Vec3.Y),
         EnvironmentMapLight(
-            diffuse_map=asset_server.load_image("bevy/environment_maps/pisa_diffuse_rgb9e5_zstd.ktx2"),
-            specular_map=asset_server.load_image("bevy/environment_maps/pisa_specular_rgb9e5_zstd.ktx2"),
+            diffuse_map=asset_server.load("bevy/environment_maps/pisa_diffuse_rgb9e5_zstd.ktx2", asset_type=Image),
+            specular_map=asset_server.load("bevy/environment_maps/pisa_specular_rgb9e5_zstd.ktx2", asset_type=Image),
             intensity=2000.0,
         ),
     )

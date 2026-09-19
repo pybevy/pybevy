@@ -37,7 +37,7 @@ def setup(commands: Commands, asset_server: Res[AssetServer]) -> None:
     # Note: Ensure models/SimpleSkin/SimpleSkin.gltf exists in your assets directory
     scene_label = GltfAssetLabel.Scene(0)
     asset_path = scene_label.from_asset("bevy/models/SimpleSkin/SimpleSkin.gltf")
-    scene_handle = asset_server.load(asset_path, WorldAsset)
+    scene_handle = asset_server.load(asset_path, asset_type=WorldAsset)
     commands.spawn(WorldAssetRoot(scene_handle))
 
 

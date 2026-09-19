@@ -33,7 +33,7 @@ def setup(
     )
 
     # Bright sprite - will glow with bloom
-    image = asset_server.load_image("bevy/branding/bevy_bird_dark.png")
+    image = asset_server.load("bevy/branding/bevy_bird_dark.png", asset_type=Image)
     sprite = Sprite.from_image(image)
     sprite.color = Color.srgb(5.0, 5.0, 5.0)  # Super bright to trigger bloom
     sprite.custom_size = Vec2(160.0, 160.0)
