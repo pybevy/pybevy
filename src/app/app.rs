@@ -40,6 +40,7 @@ use pybevy_ecs::shared::schedule::{
     schedule_build_message,
 };
 use pybevy_reload::{HotReloadGeneration, PluginTracker, SystemStage, is_verbose};
+use pybevy_render::cache_cleanup::RenderCacheCleanupPlugin;
 use pyo3::{
     IntoPyObjectExt, PyTraverseError, PyVisit,
     exceptions::{PyAttributeError, PyRuntimeError, PyTypeError, PyValueError},
@@ -770,6 +771,7 @@ impl PyApp {
 
         // Create and initialize the Bevy App immediately
         let mut app = App::new();
+        app.add_plugins(RenderCacheCleanupPlugin);
 
         // Add LogPlugin only if it hasn't been initialized yet
         // LogPlugin sets up a global logger/tracing subscriber, which can only be set once per process
