@@ -43,6 +43,18 @@ pub fn mcp_scalar_object(type_name: &str) -> String {
     format!("expected {type_name} value, got object")
 }
 
+pub fn mcp_scene_namespace_unavailable(module_name: &str) -> String {
+    format!(
+        "Active scene module `{module_name}` is unavailable; run_code cannot access its namespace. \
+         Check get_last_error for a reload failure, fix the scene and reload successfully, \
+         or restart it with run_scene."
+    )
+}
+
+pub fn mcp_optional_enum_error(error: &str) -> String {
+    format!("{error}. This optional field also accepts null")
+}
+
 pub fn resource_atomic_patch_unsupported(type_name: &str) -> String {
     format!(
         "Resource '{type_name}' cannot be patched atomically because its bridge does not support owned staging"
