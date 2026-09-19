@@ -49,10 +49,12 @@ Fix the source and reload again to apply the new definitions.
 - `query_spatial_neighborhood` - Find all entities within `radius` of a center `entity`.
 - `check_overlaps` - AABB overlap + floating/sunken detection for one `entity` against all others. Use `ground_y` to flag models sunk below a ground plane.
 - `check_all_overlaps` - Scene-wide AABB overlap + floating/sunken detection across every entity. Use `ground_y` for first-load GLB sweeps.
-- `reload_and_capture` - One round-trip: reload → error check → screenshot. Replaces 3 separate calls.
+- `reload_and_capture` - One round-trip: reload → error check → render-pipeline readiness → screenshot. The capture delay starts after readiness; asynchronous asset loads may still need more time.
 - `capture_turnaround` - Multi-viewpoint orbit capture composited into one contact sheet. Auto-fits to scene bounds.
+- `capture_timeline` - Frames over time in a contact sheet. Headless image-target captures apply UI/overlay suppression from the first tile and restore capture state after completion or timeout.
 - `capture_depth` - RGB screenshot + ray-AABB depth samples through the selected `Camera3d` projection. Returns **entity names at each sample point** (semantic segmentation), making it the primary tool for diagnosing **occlusion, visibility, and "wrong entity showing"** problems. Use it before repeated screenshots when geometry appears wrong.
 - `capture_stats` - Numeric RGB/luma summaries, grid cells, and pixel samples without returning a PNG. Captures a retained `frame_id` for later `compare_frames` calls. Pass `entity` to either `capture_stats` or `capture_screenshot` to isolate one entity subtree while retaining camera and lighting support.
+- Temporary `position`/`look_at` overrides on `capture_stats` and `capture_screenshot` render the moved 3D camera before capturing its image target, then restore camera state. No extra caller delay is needed for objects outside the original view.
 - `compare_frames` - Compare two retained captures and report pixel-difference magnitude, changed percentage, bounding box, and centroid.
 
 ## Debugging Geometry Problems
@@ -120,8 +122,8 @@ Owned nested UI gradient values and `Isometry2d` vector fields are read-only sna
 - `AudioPlayer` accepts `AudioSource` and `Pitch` handles. Query procedural players with `AudioPlayer[Pitch]`; bare `AudioPlayer` queries select `AudioSource` players.
 - Use `GlobalAmbientLight` (Resource) not `AmbientLight` (Component) for global light
 - Changing `@component` or `@resource` field structure (add/remove fields, change storage mode) works with `reload` Full mode, but use `run_scene` if behavior is unexpected
-- Use `asset_server.load_image("path")` for images and `asset_server.load_audio("path")` for audio. The generic `asset_server.load(path)` requires an explicit asset type argument: `asset_server.load("path", Mesh)`.
-- For 3D models: `from pybevy.world_serialization import WorldAssetRoot, WorldAsset` then `asset_server.load("model.glb#Scene0", WorldAsset)`. Spawn with `commands.spawn(WorldAssetRoot(handle), Transform.from_xyz(...))`. **GLB models often have origin at center** - a 1-unit-tall model spawned at Y=0 will be half-buried. Apply `y_offset = height / 2`. See `guide://3d-models`.
+- Start with `asset_server.load_image("texture.png")` or `asset_server.load_audio("sound.ogg")`. These are equivalent to `load(path, asset_type=Image)` and `load(path, asset_type=AudioSource)`; both styles preserve precise handle types. The general `load` requires a keyword-only type and supports other asset classes too. For image/glTF settings, use `asset_server.load_builder().with_settings(settings).load(path)`; settings establish the type. Builders expire with the system. `load_with_settings` is deprecated.
+- For 3D models: `from pybevy.world_serialization import WorldAssetRoot, WorldAsset` then `asset_server.load("model.glb#Scene0", asset_type=WorldAsset)`. Spawn with `commands.spawn(WorldAssetRoot(handle), Transform.from_xyz(...))`. **GLB models often have origin at center** - a 1-unit-tall model spawned at Y=0 will be half-buried. Apply `y_offset = height / 2`. See `guide://3d-models`.
 - **Do NOT use `Text2d` in 3D scenes.** `Text2d` requires `Camera2d` and will not render with `Camera3d`. For text overlays, HUDs, or labels in 3D scenes, use UI `Text` (from `pybevy.ui`) with a `Node` component. See `guide://ui-text`.
 
 ## JSON Mutation Formats

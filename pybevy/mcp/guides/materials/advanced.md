@@ -69,9 +69,9 @@ the direction (remapped `[0, 1]` to `[-1, 1]`), B multiplies
 from pybevy.image import ImageLoaderSettings
 
 # Texels are vectors, not colours: load linear.
-groove = asset_server.load_image_with_settings(
-    "textures/groove_anisotropy.png", ImageLoaderSettings(is_srgb=False)
-)
+groove = asset_server.load_builder().with_settings(
+    ImageLoaderSettings(is_srgb=False)
+).load("textures/groove_anisotropy.png")
 
 # Tangents are required by anisotropy itself, not only by the texture.
 mesh_data = Sphere(1.4).mesh().uv(64, 36)
@@ -205,8 +205,9 @@ repeat_settings = ImageLoaderSettings(sampler=ImageSampler.Descriptor(
 ))
 
 # Load textures with repeat enabled
-color_tex = asset_server.load_image_with_settings("textures/brick.png", repeat_settings)
-normal_tex = asset_server.load_image_with_settings("textures/brick_normal.png", repeat_settings)
+loader = asset_server.load_builder().with_settings(repeat_settings)
+color_tex = loader.load("textures/brick.png")
+normal_tex = loader.load("textures/brick_normal.png")
 
 # Combine with uv_transform to control tiling count
 wall_mat = materials.add(StandardMaterial(
@@ -218,8 +219,7 @@ wall_mat = materials.add(StandardMaterial(
 ```
 
 **Key points:**
-- `asset_server.load_image_with_settings(path, settings)` - convenience for images
-- `asset_server.load_with_settings(path, Image, settings)` - generic version (same result)
+- `asset_server.load_builder().with_settings(settings).load(path)` uses a settings snapshot; `ImageLoaderSettings` establishes `Handle[Image]`. Builders expire with the system.
 - Bevy caches by `(path, asset type)`, not settings. Use distinct paths for
   simultaneous variants. After every handle is dropped, wait for Bevy's asset
   tracking to process the drops before reusing the path with different settings.

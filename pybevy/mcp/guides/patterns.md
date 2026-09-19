@@ -720,12 +720,19 @@ def control_game_time(time: ResMut[Time[Virtual]]) -> None:
 def load_model(asset_server: Res[AssetServer]) -> None:
     from pybevy.world_serialization import WorldAsset
 
-    handle = asset_server.load("models/character.gltf#Scene0", WorldAsset)
+    handle = asset_server.load("models/character.gltf#Scene0", asset_type=WorldAsset)
 
     # For images and audio, use convenience methods (no asset_type needed):
     texture = asset_server.load_image("textures/my_texture.png")
     sound = asset_server.load_audio("sounds/click.ogg")
 ```
+
+`load_image(path)` is equivalent to `load(path, asset_type=Image)`, and
+`load_audio(path)` to `load(path, asset_type=AudioSource)`. Both styles preserve
+the precise handle type. Use the conveniences for common image/audio loads and
+the general form for other asset classes; its `asset_type` is required and
+keyword-only. Import `Image` from `pybevy.image` and `AudioSource` from
+`pybevy.audio` when using the general forms.
 
 #### Asset Handle Lifetime
 
@@ -905,11 +912,13 @@ Data-carrying Bevy enums are exposed as nested Python classes. Match the exact v
 only that variant's fields:
 
 ```python
+from pybevy.input import GamepadEvent
+
 match event:
-    case GamepadEvent.Axis(axis, value):
-        print(axis, value)
-    case GamepadEvent.Connection(connected=True, name=name):
-        print(f"connected: {name}")
+    case GamepadEvent.Axis(payload):
+        print(payload.entity, payload.axis, payload.value)
+    case GamepadEvent.Connection(payload):
+        print(payload.gamepad, payload.connection)
 ```
 
 `Enum.Variant(...)` values are instances of both `Enum` and `Enum.Variant`. Payload fields do not

@@ -12,7 +12,7 @@ PyBevy loads assets from `./assets/` relative to the current working directory (
 
 ```python
 # File at: ./assets/models/character.glb
-handle = asset_server.load("models/character.glb#Scene0", WorldAsset)
+handle = asset_server.load("models/character.glb#Scene0", asset_type=WorldAsset)
 ```
 
 Omit the `assets/` prefix. Absolute paths and `..` paths escaping the asset root
@@ -33,7 +33,7 @@ from pybevy.world_serialization import WorldAsset, WorldAssetRoot
 
 def setup(commands: Commands, asset_server: Res[AssetServer]) -> None:
     # Load model - note the #Scene0 suffix
-    model_handle = asset_server.load("models/rabbit.glb#Scene0", WorldAsset)
+    model_handle = asset_server.load("models/rabbit.glb#Scene0", asset_type=WorldAsset)
     commands.spawn(
         WorldAssetRoot(model_handle),
         Transform.from_xyz(0.0, 0.0, 0.0),
@@ -108,7 +108,6 @@ coordinate-conversion, or skinned-mesh bounds behavior:
 
 ```python
 from pybevy.gltf import (
-    Gltf,
     GltfConvertCoordinates,
     GltfLoaderSettings,
     GltfSkinnedMeshBoundsPolicy,
@@ -119,7 +118,7 @@ settings = GltfLoaderSettings(
     convert_coordinates=GltfConvertCoordinates(rotate_meshes=True),
     skinned_mesh_bounds_policy=GltfSkinnedMeshBoundsPolicy.Dynamic,
 )
-handle = asset_server.load_with_settings("models/character.glb", Gltf, settings)
+handle = asset_server.load_builder().with_settings(settings).load("models/character.glb")
 ```
 
 Coordinate conversion is experimental in Bevy. Keep `validate=True` unless the
@@ -160,7 +159,7 @@ AI-generated models (Ludo, Meshy, Tripo) commonly face +Z.
 | Error | Cause | Fix |
 |-------|-------|-----|
 | "expected value at line 1 column 1" | File is gzip-compressed | Run `file model.glb` to check, `gunzip` if needed |
-| "Could not find an asset loader matching" for a valid GLB loaded as `WorldAsset` | Missing scene suffix | Use `asset_server.load("model.glb#Scene0", WorldAsset)` |
+| "Could not find an asset loader matching" for a valid GLB loaded as `WorldAsset` | Missing scene suffix | Use `asset_server.load("model.glb#Scene0", asset_type=WorldAsset)` |
 | Model loads but invisible | Wrong scale, buried in ground, dark material, or a missing external texture | See troubleshooting below |
 
 The loader message is not specific to a missing scene suffix. If `#Scene0` is

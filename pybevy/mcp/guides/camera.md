@@ -272,11 +272,9 @@ must supply equivalent files under `assets/` or change the paths.
 from pybevy.light import EnvironmentMapLight, Skybox
 
 pisa_diffuse = asset_server.load_image(
-    "bevy/environment_maps/pisa_diffuse_rgb9e5_zstd.ktx2"
-)
+    "bevy/environment_maps/pisa_diffuse_rgb9e5_zstd.ktx2")
 pisa_specular = asset_server.load_image(
-    "bevy/environment_maps/pisa_specular_rgb9e5_zstd.ktx2"
-)
+    "bevy/environment_maps/pisa_specular_rgb9e5_zstd.ktx2")
 
 commands.spawn(
     Camera3d(),

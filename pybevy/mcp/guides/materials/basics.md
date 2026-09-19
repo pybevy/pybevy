@@ -88,6 +88,13 @@ Wood with a clear coat finish (varnished table) - use `clearcoat` instead. See `
 
 ## Base Color Reference
 
+Color variant payloads retain the parent field's borrowing rules. For example,
+`color.value.red` on `Color.Srgba` writes through a mutable borrowed field,
+rejects writes through read-only access, and expires with the system. Replacing
+the parent with another color variant invalidates the old payload. Owned color
+payloads remain read-only snapshots; use a color mutation method or replace the
+parent field instead.
+
 RGB values that produce natural-looking results under standard two-directional lighting:
 
 | Surface | `base_color` RGB | `metallic` | `perceptual_roughness` |
