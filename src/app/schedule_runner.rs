@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use bevy::app::{App, RunMode, ScheduleRunnerPlugin};
 use pybevy_core::{PluginBuild, PyPlugin};
-use pybevy_macros::pyplugin;
+use pybevy_macros::{pyenum, pyplugin};
 use pyo3::prelude::*;
 
 use crate::prelude::PyApp;
@@ -14,6 +14,7 @@ pub struct PyScheduleRunnerPlugin {
     run_mode: PyRunMode,
 }
 
+#[pyenum(RunMode, manual)]
 #[pyclass(name = "RunMode", module = "pybevy.app", frozen, eq, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PyRunMode {

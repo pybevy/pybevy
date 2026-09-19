@@ -38,6 +38,7 @@ pub(crate) struct BevyEnumArgs {
     no_eq: bool,
     /// Skip the Debug derive (native types without Debug).
     no_debug: bool,
+    manual_comparison: bool,
 }
 
 impl Parse for BevyEnumArgs {
@@ -57,6 +58,7 @@ impl Parse for BevyEnumArgs {
         let mut mirror = None;
         let mut no_eq = false;
         let mut no_debug = false;
+        let mut manual_comparison = false;
         while input.peek(Token![,]) {
             input.parse::<Token![,]>()?;
             let option: Ident = input.parse()?;
@@ -73,6 +75,7 @@ impl Parse for BevyEnumArgs {
                 "no_bridge" => no_bridge = true,
                 "no_eq" => no_eq = true,
                 "no_debug" => no_debug = true,
+                "manual_comparison" => manual_comparison = true,
                 "mirror" => {
                     input.parse::<Token![=]>()?;
                     mirror = Some(input.parse()?);
@@ -81,7 +84,7 @@ impl Parse for BevyEnumArgs {
                     return Err(syn::Error::new_spanned(
                         option,
                         format!(
-                            "unknown option '{}', expected: empty_tuple, unit_parens, no_repr, no_reflect, manual, message, writable, no_bridge, no_eq, no_debug, component, resource, or mirror = Type",
+                            "unknown option '{}', expected: empty_tuple, unit_parens, no_repr, no_reflect, manual, message, writable, no_bridge, no_eq, no_debug, manual_comparison, component, resource, or mirror = Type",
                             other
                         ),
                     ));
@@ -89,6 +92,12 @@ impl Parse for BevyEnumArgs {
             }
         }
 
+        if manual_comparison && !component {
+            return Err(syn::Error::new_spanned(
+                &bevy_type,
+                "manual_comparison requires component",
+            ));
+        }
         if unit_parens && !empty_tuple {
             return Err(syn::Error::new_spanned(
                 bevy_type,
@@ -144,6 +153,7 @@ impl Parse for BevyEnumArgs {
         }
 
         Ok(BevyEnumArgs {
+            manual_comparison,
             no_eq,
             no_debug,
             bevy_type,
@@ -211,14 +221,23 @@ enum VariantKind<'a> {
 
 pub fn pyenum(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as BevyEnumArgs);
-    let input = parse_macro_input!(item as Item);
+    let mut input = parse_macro_input!(item as Item);
 
-    // Complex enum adapters may need handwritten conversions, nested Python variant
-    // registration, or storage that the generated implementation cannot express. In
-    // that case the attribute remains as machine-readable contract metadata for
-    // pybevy_lint and deliberately leaves the item unchanged.
+    let comparisons = match &mut input {
+        Item::Enum(item) => crate::enum_comparison::value_methods(&mut item.attrs, &item.ident),
+        Item::Struct(item) if args.manual => {
+            crate::enum_comparison::value_methods(&mut item.attrs, &item.ident)
+        }
+        _ => Ok(proc_macro2::TokenStream::new()),
+    };
+    let comparisons = match comparisons {
+        Ok(methods) => methods,
+        Err(error) => return error.to_compile_error().into(),
+    };
+
+    // Manual adapters retain their conversions while sharing declared comparison guards.
     if args.manual {
-        return quote!(#input).into();
+        return quote!(#input #comparisons).into();
     }
 
     let Item::Enum(input) = input else {
@@ -250,7 +269,8 @@ pub fn pyenum(attr: TokenStream, item: TokenStream) -> TokenStream {
         .into();
     }
     if args.component {
-        return crate::enum_component::expand(&input, &spec, bevy_type).into();
+        return crate::enum_component::expand(&input, &spec, bevy_type, args.manual_comparison)
+            .into();
     }
     if args.resource {
         return crate::enum_component::expand_resource(&input, &spec, bevy_type, args.no_reflect)
@@ -571,6 +591,7 @@ pub fn pyenum(attr: TokenStream, item: TokenStream) -> TokenStream {
         #py_to_bevy_impl
 
         #pymethods_block
+        #comparisons
     };
 
     TokenStream::from(expanded)

@@ -147,6 +147,8 @@ class ShaderRef:
     """
 
 
+    def __hash__(self) -> int: ...
+
     class Default(ShaderRef):
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...

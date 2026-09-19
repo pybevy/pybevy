@@ -1,9 +1,9 @@
 use bevy::text::LineHeight;
-use pybevy_core::ComponentStorage;
+use pybevy_core::{ComponentStorage, enum_comparison::compare_values};
 use pybevy_macros::pyenum;
-use pyo3::prelude::*;
+use pyo3::{prelude::*, pyclass::CompareOp};
 
-#[pyenum(LineHeight, component)]
+#[pyenum(LineHeight, component, manual_comparison)]
 #[pyclass(name = "LineHeight", module = "pybevy.text")]
 pub enum PyLineHeight {
     #[py_bevy(tuple)]
@@ -20,8 +20,10 @@ pub enum PyLineHeight {
 
 #[pymethods]
 impl PyLineHeight {
-    pub fn __eq__(&self, other: &Self) -> PyResult<bool> {
-        Ok(self.as_ref()? == other.as_ref()?)
+    pub fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<Py<PyAny>> {
+        compare_values(self, other, op, |left, right| {
+            Ok(left.as_ref()? == right.as_ref()?)
+        })
     }
 
     pub fn __repr__(&self) -> PyResult<String> {

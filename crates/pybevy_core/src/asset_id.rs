@@ -8,8 +8,8 @@ use pyo3::{IntoPyObjectExt, prelude::*, types::PyType};
 use uuid::Uuid;
 
 use crate::{
-    LogicalTypeId, asset_index::PyAssetIndex, public_error::EXPECTED_ASSET_ID_OR_HANDLE,
-    registry::global_registry,
+    LogicalTypeId, asset_index::PyAssetIndex, enum_comparison::reject_variant_type,
+    public_error::EXPECTED_ASSET_ID_OR_HANDLE, registry::global_registry,
 };
 
 #[pyenum(AssetId<LoadedFolder>, manual)]
@@ -176,6 +176,12 @@ impl PyAssetId {
         op: pyo3::pyclass::CompareOp,
     ) -> PyResult<Py<PyAny>> {
         let py = other.py();
+        if matches!(
+            op,
+            pyo3::pyclass::CompareOp::Eq | pyo3::pyclass::CompareOp::Ne
+        ) {
+            reject_variant_type::<Self>(other)?;
+        }
         let Ok(other) = other.extract::<Self>() else {
             return py.NotImplemented().into_py_any(py);
         };

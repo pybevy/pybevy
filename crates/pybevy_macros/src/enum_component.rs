@@ -25,8 +25,15 @@ pub(crate) fn expand(
     input: &ItemEnum,
     spec: &EnumSpec<'_>,
     component_type: &syn::Type,
+    manual_comparison: bool,
 ) -> TokenStream {
-    match try_expand(input, spec, component_type, StorageBase::Component) {
+    match try_expand(
+        input,
+        spec,
+        component_type,
+        StorageBase::Component,
+        manual_comparison,
+    ) {
         Ok(tokens) => tokens,
         Err(error) => error.to_compile_error(),
     }
@@ -43,6 +50,7 @@ pub(crate) fn expand_resource(
         spec,
         resource_type,
         StorageBase::Resource { no_reflect },
+        false,
     ) {
         Ok(tokens) => tokens,
         Err(error) => error.to_compile_error(),
@@ -54,6 +62,7 @@ fn try_expand(
     spec: &EnumSpec<'_>,
     inner_type: &syn::Type,
     storage_base: StorageBase,
+    manual_comparison: bool,
 ) -> syn::Result<TokenStream> {
     let class = python_class_name(input)?;
     let py_type = spec.wrapper_name;
@@ -410,6 +419,8 @@ fn try_expand(
         }
     });
 
+    let comparisons =
+        (!manual_comparison).then(|| crate::enum_comparison::identity_methods(py_type));
     Ok(quote! {
         #(#unsupported_type_checks)*
 
@@ -418,6 +429,8 @@ fn try_expand(
         pub struct #py_type {
             pub(crate) storage: #storage_type<#inner_type>,
         }
+
+        #comparisons
 
         #[pyo3::pymethods]
         impl #py_type {
