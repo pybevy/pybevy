@@ -19,10 +19,10 @@ snapshot must be serialized again.
 that Bevy can access through `AppTypeRegistry` reflection. Wrapper-stored
 `@component` values are included with their qualified name, primitive field
 schema, and values. Import the matching decorated classes before loading;
-PyBevy registers them on demand in the destination World. Custom resources and
-components that store Python objects are
-skipped, and `from_world()` emits one `UserWarning` naming the skipped types
-that were present. Native ECS types without Bevy's required `ReflectComponent`
+PyBevy registers them on demand in the destination World. All custom resources
+and Python-object-stored components are skipped. `from_world()` warns about
+skipped Python values and can emit a separate warning for reflected values
+that cannot be serialized. Native ECS types without Bevy's required `ReflectComponent`
 or `ReflectResource` registration are also outside the format.
 
 `DynamicWorld.serialize()` takes a live `World` because Bevy needs a type
@@ -30,6 +30,13 @@ registry to encode the snapshot and PyBevy does not expose `TypeRegistry` as a
 Python value. The wrapper-component envelope is a PyBevy extension to Bevy's
 scene format; plain Rust Bevy can consume the engine-native reflected entries,
 while restoring Python components requires PyBevy and matching class schemas.
+
+Handles to code-created assets without a file path serialize as default handles,
+not the asset contents. Recreate those assets and reconnect their handles after
+loading, especially camera render targets. File-backed assets must remain
+available at their recorded paths. Keep a strong handle in a component, resource,
+or live Python variable while an asset is needed; an `AssetId` alone does not
+keep it loaded.
 
 These APIs require exclusive `World` access. Do not retain an injected `World`
 parameter after its callback or system finishes.

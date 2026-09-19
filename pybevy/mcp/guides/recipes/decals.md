@@ -91,6 +91,7 @@ from pybevy.assets import Assets
 from pybevy.camera import DepthPrepass
 from pybevy.ecs import Commands, ResMut
 from pybevy.image import Image
+from pybevy.material import AlphaMode
 from pybevy.math import Vec3
 from pybevy.mesh import MeshMaterial3d
 from pybevy.pbr import (
@@ -111,6 +112,7 @@ def setup_forward_decal(
     material = decal_materials.add(ForwardDecalMaterial(
         base=StandardMaterial(
             base_color_texture=texture,
+            alpha_mode=AlphaMode.Blend(),
         ),
         extension=ForwardDecalMaterialExt(depth_fade_factor=1.0),
     ))

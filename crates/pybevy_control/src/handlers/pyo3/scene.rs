@@ -1627,17 +1627,21 @@ pub fn get_component_schema(
         });
     if let Some(entry) = custom_entry {
         let schema = Python::attach(|py| {
-            let fields = entry.retained_type.as_ref().map_or_else(
-                || serde_json::json!({}),
-                |retained_type| get_class_fields(py, retained_type.bind(py)),
-            );
+            let fields = entry
+                .retained_type
+                .as_ref()
+                .map_or_else(serde_json::Map::new, |retained_type| {
+                    get_annotated_fields(retained_type.bind(py))
+                });
+            let editable =
+                !fields.is_empty() && (entry.is_pyobject_storage || entry.wrapper_layout.is_some());
 
             serde_json::json!({
                 "name": entry.name,
                 "fields": fields,
                 "registered": true,
                 "custom": true,
-                "editable": entry.is_pyobject_storage || entry.wrapper_layout.is_some(),
+                "editable": editable,
                 "type_kind": "CustomPython",
                 "storage": if entry.is_pyobject_storage { "python" } else { "wrapper" },
             })
@@ -1683,7 +1687,7 @@ fn normalize_type_repr(s: &str) -> String {
 }
 
 /// Extract field information from a Python class
-fn get_class_fields(py: Python<'_>, py_type: &Bound<'_, PyType>) -> serde_json::Value {
+fn get_annotated_fields(py_type: &Bound<'_, PyType>) -> serde_json::Map<String, serde_json::Value> {
     let mut fields = serde_json::Map::new();
 
     if let Ok(dict) = declared_annotations(py_type) {
@@ -1697,6 +1701,12 @@ fn get_class_fields(py: Python<'_>, py_type: &Bound<'_, PyType>) -> serde_json::
             }
         }
     }
+
+    fields
+}
+
+fn get_class_fields(py: Python<'_>, py_type: &Bound<'_, PyType>) -> serde_json::Value {
+    let mut fields = get_annotated_fields(py_type);
 
     // Try PyO3 getset_descriptor detection via dir()
     if fields.is_empty()

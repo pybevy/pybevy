@@ -276,7 +276,7 @@ part of the result; internal PyBevy overlays remain hidden.
 
 ```
 capture_screenshot                              - Standard capture (768px wide)
-capture_screenshot {"max_width": 1280}          - Higher resolution
+capture_screenshot {"max_width": 1280}          - Larger capture width limit
 capture_screenshot {"delay_frames": 5}          - Wait 5 frames first
 capture_screenshot {"gizmos": true}             - Include gizmos
 capture_screenshot {"entity": "Robot"}          - Isolate one entity subtree
@@ -375,6 +375,10 @@ a fixed 800x800 scale, not pixels in the returned image. Rays use the selected
 the pose while retaining that projection. `[400, 400]` is the projection center.
 Large orthographic view areas are supported; a small nonzero projection
 determinant is not treated as a singular matrix.
+
+`max_width` only downscales captures; it does not increase render resolution.
+Set the window resolution or the camera's render-target image size before
+capturing. See `guide://headless` for `Image.new_render_target` setup.
 
 `capture_stats`' `sample_points` are pixels of the resized capture and move with
 `max_width`. Convert those pixels to the normalized 800x800 scale before using

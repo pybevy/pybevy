@@ -2,6 +2,9 @@
 
 Creating 3D and 2D meshes from primitives, custom vertices, and zero-copy bounded-array access.
 
+Examples using NumPy or `.to_numpy()` require `pybevy[numpy]` in the scene's
+Python environment. Bounded-array access itself does not require NumPy.
+
 ## Primitive Meshes
 
 **Two patterns** for creating meshes:

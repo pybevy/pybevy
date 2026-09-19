@@ -68,7 +68,7 @@ if __name__ == "__main__":
 
 **Key rules:**
 - `@entrypoint` signature is `def main(app: App) -> App:` - not `def main():`
-- **MUST** end with `if __name__ == "__main__": main().run()` - without this the scene won't launch
+- End with `if __name__ == "__main__": main().run()` for direct `python scene.py` execution. The CLI and MCP loaders invoke the entrypoint themselves.
 - Register systems with `app.add_systems(Stage, fn)` - there is no `@app.system()` decorator
 - Multiple systems in one stage: `app.add_systems(Update, sys1, sys2, sys3)`
 - Extra plugins go in the entrypoint before `add_systems`
@@ -208,6 +208,10 @@ Subclass field overrides keep their base field's position. A subclass is still
 a distinct component type; querying the base does not select its subclasses.
 
 Define custom components with the `@component` decorator and `Component` base class.
+
+Declare stored fields as class-level annotations, including when writing your
+own `__init__`. Constructor parameters alone do not define stored fields or MCP
+editable fields; `@dataclass` is optional when you supply a constructor.
 
 ```python
 from dataclasses import dataclass
@@ -1232,14 +1236,15 @@ from dataclasses import dataclass
 from pybevy.prelude import *
 ```
 
-Every `@component` with data fields needs both `@dataclass` and `@component`. Marker components (no fields) only need `@component`:
+Use `@dataclass` to generate a constructor for annotated component fields, or
+write `__init__` yourself. Marker components only need `@component`:
 
 ```python
 from dataclasses import dataclass
 
 @component
 @dataclass
-class Health(Component):       # Has fields -> needs @dataclass
+class Health(Component):
     current: float = 100.0
 
 @component
