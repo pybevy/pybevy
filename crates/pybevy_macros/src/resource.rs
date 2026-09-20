@@ -321,6 +321,33 @@ pub(crate) fn generate_resource_bridge_tokens(
         }
     };
 
+    let snapshot_impl = if insert_disabled {
+        quote! {}
+    } else if default_insert {
+        quote! {
+            fn snapshot_for_commands(&self, resource: &pyo3::Bound<pyo3::PyAny>) -> pyo3::PyResult<pyo3::Py<pyo3::PyAny>> {
+                Ok(resource.clone().unbind())
+            }
+        }
+    } else {
+        let extract = if let Some(clone_with) = clone_with {
+            quote! {
+                let wrapper = resource.extract::<pyo3::PyRef<#py_type>>()?;
+                let value = #clone_with(<#py_type>::as_ref(&wrapper)?)?;
+            }
+        } else {
+            quote! { let value: #bevy_type = resource.extract::<#py_type>()?.try_into()?; }
+        };
+        let wrapped = wrap_storage(quote! { pybevy_core::ResourceStorage::owned(value) });
+        quote! {
+            fn snapshot_for_commands(&self, resource: &pyo3::Bound<pyo3::PyAny>) -> pyo3::PyResult<pyo3::Py<pyo3::PyAny>> {
+                let py = resource.py();
+                #extract
+                #wrapped
+            }
+        }
+    };
+
     let clone_owned_impl = if no_mut || (no_clone && clone_with.is_none()) {
         quote! {
             fn clone_owned(
@@ -754,6 +781,7 @@ pub(crate) fn generate_resource_bridge_tokens(
             #get_mut_impl
 
             #clone_owned_impl
+            #snapshot_impl
 
             #commit_owned_impl
 

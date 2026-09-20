@@ -86,6 +86,10 @@ pub enum StorageError {
     /// Mutation on a field extracted from an owned/temporary component (`RuntimeError`)
     OwnedFieldReadOnly,
 
+    /// A safe field accessor returned a reference outside its parent value
+    /// (`RuntimeError`).
+    InvalidFieldAccessor,
+
     /// Pop from empty list (`IndexError`)
     EmptyList,
 
@@ -156,6 +160,9 @@ impl fmt::Display for StorageError {
                  e.g. `transform.translation = Vec3(...)` instead of `transform.translation.x = 5.0`, \
                  or use a borrowed mutable parent for live nested mutation.",
             ),
+            StorageError::InvalidFieldAccessor => {
+                f.write_str("Field accessor returned a reference outside its parent value.")
+            }
             StorageError::IndexOutOfRange => f.write_str("list index out of range"),
             StorageError::KeyNotFound(key) => write!(f, "key not found: {key}"),
             StorageError::EmptyList => f.write_str("pop from empty list"),
@@ -178,6 +185,7 @@ impl From<StorageError> for PyErr {
             | StorageError::NestedExecution
             | StorageError::ReadOnly
             | StorageError::OwnedFieldReadOnly
+            | StorageError::InvalidFieldAccessor
             | StorageError::AssetConsumed
             | StorageError::AssetBorrowed
             | StorageError::AssetReadOnly

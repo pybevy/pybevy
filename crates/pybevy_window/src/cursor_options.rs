@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 
 use crate::cursor::PyCursorGrabMode;
 
-#[pycomponent(CursorOptions, bridge)]
+#[pycomponent(CursorOptions, bridge, view_fields = [visible, hit_test])]
 #[pyclass(name = "CursorOptions", module = "pybevy.window", extends = PyComponent)]
 pub struct PyCursorOptions {
     pub(crate) storage: ComponentStorage<CursorOptions>,

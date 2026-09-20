@@ -42,7 +42,7 @@ fn validate_non_negative_rect(rect: UiRect, parameter: &str) -> PyResult<UiRect>
     Ok(rect)
 }
 
-#[pycomponent(Node, bridge)]
+#[pycomponent(Node, bridge, view_fields = [scrollbar_width, flex_grow, flex_shrink])]
 #[pyclass(name = "Node", module = "pybevy.ui", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyNode {

@@ -382,8 +382,11 @@ impl PyStandardMaterial {
     }
 
     #[getter]
-    pub fn emissive(&self, py: Python) -> PyResult<Py<PyColor>> {
-        PyColor::from_snapshot(Color::from(self.as_ref()?.emissive), py)
+    pub fn emissive(&self) -> PyResult<PyLinearRgba> {
+        Ok(self.storage.borrow_field_as(
+            |material| &material.emissive,
+            |material| &mut material.emissive,
+        )?)
     }
 
     #[setter]

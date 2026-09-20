@@ -3,7 +3,7 @@ use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[pycomponent(AutoDirectionalNavigation, bridge)]
+#[pycomponent(AutoDirectionalNavigation, bridge, view_fields = [respect_tab_order])]
 #[pyclass(name = "AutoDirectionalNavigation", module = "pybevy.ui", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyAutoDirectionalNavigation {

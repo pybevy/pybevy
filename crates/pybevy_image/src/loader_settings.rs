@@ -236,6 +236,23 @@ impl PyImageSamplerDescriptorVariant {
             },
         )?)
     }
+
+    #[setter]
+    pub fn set_desc(slf: PyRefMut<'_, Self>, value: &PyImageSamplerDescriptor) -> PyResult<()> {
+        let value = ImageSamplerDescriptor::try_from(value)?;
+        let mut base = slf.into_super();
+        drop(base.as_ref()?);
+        let mut sampler = base.storage.as_mut()?;
+        match &mut *sampler {
+            ImageSampler::Descriptor(desc) => {
+                *desc = value;
+                Ok(())
+            }
+            ImageSampler::Default => Err(PyRuntimeError::new_err(enum_variant_changed(
+                "ImageSampler.Descriptor",
+            ))),
+        }
+    }
 }
 
 pub fn register_image_sampler_variants(module: &Bound<'_, PyModule>) -> PyResult<()> {

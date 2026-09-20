@@ -3,7 +3,7 @@ use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[pycomponent(IgnoreScroll, bridge)]
+#[pycomponent(IgnoreScroll, bridge, view_fields = [0.x as ignore_x, 0.y as ignore_y])]
 #[pyclass(name = "IgnoreScroll", module = "pybevy.ui", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyIgnoreScroll {
