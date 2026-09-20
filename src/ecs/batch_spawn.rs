@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use bevy::ecs::{component::ComponentId, entity::Entity, ptr::OwningPtr, world::World};
 use pybevy_core::{
@@ -9,6 +9,7 @@ use pybevy_ecs::shared::batch_spawn::{
     BatchCardinality, BatchSpawnCore, BatchSpawnPlan, BatchTypeKey, PreparedBatchInserter,
 };
 use pyo3::{
+    PyTraverseError, PyVisit,
     exceptions::{PyStopIteration, PyTypeError, PyValueError},
     ffi::PyTypeObject,
     prelude::*,
@@ -17,8 +18,11 @@ use pyo3::{
 
 use super::{
     component_layout::{ComponentStorageType, ComponentStorageTypeExt, serialize_to_wrapper},
-    component_type::PyComponentType,
+    component_type::{
+        PreparedCustomComponentRegistration, PyComponentType, register_prepared_custom_component,
+    },
     component_wrapper::*,
+    custom_batch::PyCustomComponentBatch,
     helpers::type_utils::get_python_type_name,
 };
 
@@ -107,6 +111,8 @@ pub struct SpawnBatchCommand {
     components: Vec<ComponentData>,
     explicit_count: Option<usize>,
     spawn_count: usize,
+    retained_types: Vec<Py<PyType>>,
+    registrations: Vec<Option<PreparedCustomComponentRegistration>>,
 }
 
 impl SpawnBatchCommand {
@@ -117,6 +123,8 @@ impl SpawnBatchCommand {
         count: Option<usize>,
     ) -> PyResult<Self> {
         let mut component_data = Vec::new();
+        let mut retained_types = Vec::new();
+        let mut registrations = Vec::new();
 
         for component in components.iter() {
             // Check if it's a registered batch component
@@ -124,6 +132,10 @@ impl SpawnBatchCommand {
             if let Some(bridge) = global_registry::get_batch_bridge_by_py_type(type_ptr) {
                 let component_type_ptr = bridge.component_type_ptr(py, &component)?;
                 let component_type_ptr = component_type_ptr as *const PyTypeObject;
+                // SAFETY: the live batch bridge supplies its retained component class.
+                let class =
+                    unsafe { Bound::from_borrowed_ptr(py, component_type_ptr.cast_mut().cast()) };
+                retained_types.push(class.cast_into::<PyType>()?.unbind());
                 let component_type =
                     if global_registry::get_bridge_by_py_type(component_type_ptr).is_some() {
                         PyComponentType::Dynamic(component_type_ptr)
@@ -131,15 +143,27 @@ impl SpawnBatchCommand {
                         PyComponentType::Custom(component_type_ptr)
                     };
                 let prepared = bridge.prepare(py, &component)?;
+                registrations.push(if matches!(component_type, PyComponentType::Custom(_)) {
+                    Some(
+                        component
+                            .extract::<PyRef<PyCustomComponentBatch>>()?
+                            .prepared_registration(py)?,
+                    )
+                } else {
+                    None
+                });
                 component_data.push(ComponentData::Batch {
                     name: bridge.name().to_owned(),
                     component_type,
                     prepared,
                 });
             } else {
+                retained_types.push(component.get_type().unbind());
                 // It's a uniform component - determine its type
                 let component_type = PyComponentType::try_from((&component.get_type(), py))?;
-                let (name, prepared) = prepare_uniform(py, &component, component_type)?;
+                let (name, prepared, registration) =
+                    prepare_uniform(py, &component, component_type)?;
+                registrations.push(registration);
                 component_data.push(ComponentData::Uniform {
                     name,
                     component_type,
@@ -155,7 +179,24 @@ impl SpawnBatchCommand {
             components: component_data,
             explicit_count: count,
             spawn_count,
+            retained_types,
+            registrations,
         })
+    }
+
+    pub(crate) fn traverse(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        for class in &self.retained_types {
+            visit.call(class)?;
+        }
+        for registration in self.registrations.iter().flatten() {
+            registration.traverse(visit.clone())?;
+        }
+        for component in &self.components {
+            if let ComponentData::Uniform { prepared, .. } = component {
+                prepared.traverse(visit.clone())?;
+            }
+        }
+        Ok(())
     }
 
     pub fn spawn_count(&self) -> usize {
@@ -177,6 +218,12 @@ impl SpawnBatchCommand {
         world: &mut World,
         entities: Option<Vec<Entity>>,
     ) -> PyResult<Vec<Entity>> {
+        Python::attach(|py| {
+            for registration in self.registrations.iter().flatten() {
+                registration.validate_current(py)?;
+            }
+            Ok::<(), PyErr>(())
+        })?;
         let lifecycle_types = self
             .components
             .iter()
@@ -191,30 +238,43 @@ impl SpawnBatchCommand {
         let insertions = Python::attach(|py| {
             self.components
                 .into_iter()
-                .map(|component| match component {
-                    ComponentData::Batch {
-                        name,
-                        component_type,
-                        prepared,
-                    } => Box::new(MainPreparedInserter {
-                        component_id: component_type.register_simple(world, py),
-                        component_type,
-                        name,
-                        payload: PreparedPayload::Columnar(prepared),
-                        logical_type: None,
-                    }) as Box<dyn PreparedBatchInserter>,
-                    ComponentData::Uniform {
-                        name,
-                        component_type,
-                        prepared,
-                        logical_type,
-                    } => Box::new(MainPreparedInserter {
-                        component_id: component_type.register_simple(world, py),
-                        component_type,
-                        name,
-                        payload: PreparedPayload::Uniform(prepared),
-                        logical_type,
-                    }) as Box<dyn PreparedBatchInserter>,
+                .zip(self.registrations)
+                .map(|(component, registration)| {
+                    let kind = match &component {
+                        ComponentData::Batch { component_type, .. }
+                        | ComponentData::Uniform { component_type, .. } => component_type,
+                    };
+                    let component_id = match registration {
+                        Some(registration) => {
+                            register_prepared_custom_component(world, &registration)
+                        }
+                        None => kind.register_simple(world, py),
+                    };
+                    match component {
+                        ComponentData::Batch {
+                            name,
+                            component_type,
+                            prepared,
+                        } => Box::new(MainPreparedInserter {
+                            component_id,
+                            component_type,
+                            name,
+                            payload: PreparedPayload::Columnar(prepared),
+                            logical_type: None,
+                        }) as Box<dyn PreparedBatchInserter>,
+                        ComponentData::Uniform {
+                            name,
+                            component_type,
+                            prepared,
+                            logical_type,
+                        } => Box::new(MainPreparedInserter {
+                            component_id,
+                            component_type,
+                            name,
+                            payload: PreparedPayload::Uniform(prepared),
+                            logical_type,
+                        }) as Box<dyn PreparedBatchInserter>,
+                    }
                 })
                 .collect()
         });
@@ -317,6 +377,13 @@ enum PreparedCustomUniform {
 }
 
 impl PreparedUniformComponent for PreparedCustomUniform {
+    fn traverse(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        if let Self::PyObject(value) = self {
+            visit.call(value)?;
+        }
+        Ok(())
+    }
+
     fn insert(&mut self, component_id: ComponentId, entities: &[Entity], world: &mut World) {
         match self {
             Self::Wrapper {
@@ -370,7 +437,11 @@ fn prepare_uniform(
     py: Python,
     component: &Bound<'_, PyAny>,
     component_type: PyComponentType,
-) -> PyResult<(String, Box<dyn PreparedUniformComponent>)> {
+) -> PyResult<(
+    String,
+    Box<dyn PreparedUniformComponent>,
+    Option<PreparedCustomComponentRegistration>,
+)> {
     match component_type {
         PyComponentType::Dynamic(type_ptr) => {
             let bridge = global_registry::get_bridge_by_py_type(type_ptr).ok_or_else(|| {
@@ -379,19 +450,23 @@ fn prepare_uniform(
                 ))
             })?;
             let prepared = bridge.prepare_uniform(component)?;
-            Ok((bridge.name().to_owned(), prepared))
+            Ok((bridge.name().to_owned(), prepared, None))
         }
         PyComponentType::Resource(_) => Err(PyTypeError::new_err(RESOURCE_COMPONENT_SPAWN)),
         PyComponentType::Custom(raw_type_ptr) => {
             let name = get_python_type_name(py, raw_type_ptr);
 
-            // SAFETY: decorated component classes remain alive for the interpreter
-            // lifetime, and raw_type_ptr came from the component object's exact type.
+            // SAFETY: the live component retains its exact class during preparation.
             let py_type =
                 unsafe { Bound::from_borrowed_ptr(py, raw_type_ptr as *mut pyo3::ffi::PyObject) };
             let class = py_type.cast::<PyType>()?;
             // A uniform component is prepared once and reused for every entity in the batch.
             let (storage_type, wrapper_layout) = ComponentStorageType::storage_with_layout(class)?;
+            let registration = PreparedCustomComponentRegistration::from_python_class_with_layout(
+                class,
+                storage_type,
+                wrapper_layout.clone().map(Arc::new),
+            )?;
             let prepared: Box<dyn PreparedUniformComponent> = match storage_type {
                 ComponentStorageType::Wrapper(_) => {
                     let layout = wrapper_layout
@@ -412,7 +487,7 @@ fn prepare_uniform(
                     Box::new(PreparedCustomUniform::PyObject(component.clone().unbind()))
                 }
             };
-            Ok((name, prepared))
+            Ok((name, prepared, Some(registration)))
         }
     }
 }

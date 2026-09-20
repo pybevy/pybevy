@@ -159,8 +159,9 @@ def setup(
 **Key points:**
 - `batch()` returns a `Batchable` - an opaque batch object consumed by `spawn_batch`
 - Uniform components (plain instances like `PointLight(intensity=500.0)`) are cloned to every entity
-- Works with regular system `Commands` (deferred) or `World.commands()` (immediate)
-- The NumPy/component form returns `list[Entity]` via `World.commands()` and `None` via system `Commands`
+- System `Commands` and `World.commands()` are deferred; every batch form returns `None`.
+- `World.spawn_batch(...)` is immediate and returns `list[Entity]`, supporting
+  the same batch/uniform inputs and `count=` as Commands as well as iterables.
 - Immediate `spawn_batch` performs one asset-safety check for the complete
   prepared batch. Release wrappers returned by `Assets.get()` or
   `Assets.get_mut()`, and close zero-copy views, before immediate world

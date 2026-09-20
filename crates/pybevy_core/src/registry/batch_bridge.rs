@@ -3,7 +3,7 @@ use bevy::ecs::{
     entity::Entity,
     world::World,
 };
-use pyo3::prelude::*;
+use pyo3::{PyTraverseError, PyVisit, prelude::*};
 
 /// A Python batch object converted into fully owned Rust values.
 ///
@@ -18,6 +18,10 @@ pub trait PreparedBatchComponent: Send + 'static {
 /// One value prepared for cloning across a uniform batch.
 pub trait PreparedUniformComponent: Send + 'static {
     fn insert(&mut self, component_id: ComponentId, entities: &[Entity], world: &mut World);
+
+    fn traverse(&self, _visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        Ok(())
+    }
 }
 
 /// Prepared values for an ordinary native Bevy component.

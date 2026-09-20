@@ -142,6 +142,14 @@ World. To create the first value of an otherwise unused custom class, call
 code or `run_code`. A class defined inside `run_code` must be registered in
 that same call. Decoration or reload alone does not register an unused type.
 
+`world.commands()` queues mutations. Call `world.flush()` before inspecting
+their results in the same `run_code` call, or use direct `world.spawn()` and
+`world.entity()` for immediate operations. `Commands.spawn_batch()` returns
+`None`; `World.spawn_batch()` returns entity IDs.
+World command errors also surface from immediate operations that implicitly
+flush the queue; applied mutations are not rolled back. Deferred `entity(id)`
+does not eagerly check existence, and `get_entity(id)` accepts reserved IDs.
+
 When using `set_component`, `spawn_entity`, or `set_resource`, field values are automatically converted:
 
 - **Enum fields** (Color, PlaybackMode, etc.): `{"Srgba": {"red": 1.0, "green": 0.5, "blue": 0.0, "alpha": 1.0}}` or unit variant as string: `"Manual"`

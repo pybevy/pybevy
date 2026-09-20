@@ -953,7 +953,8 @@ pub(crate) unsafe fn build_run_args<'w, 'c1, 'c2>(
                 // SAFETY: exclusive scheduling guarantees this `&mut World` is
                 // the only borrow of the world for the duration of the run.
                 let world_mut = unsafe { world.world_mut() };
-                let py_world = unsafe { PyWorld::new(world_mut, validity.clone()) };
+                let mut py_world = unsafe { PyWorld::new(world_mut, validity.clone()) };
+                py_world.parity_trace = parity_trace.clone();
                 let obj = Py::new(py, py_world).expect("Failed to create PyWorld");
                 args_buffer.push(obj.into_any());
             }
@@ -1368,7 +1369,8 @@ pub(crate) unsafe fn execute_prepared_observer(
                 }
             }
             SystemParamType::World => {
-                let py_world = unsafe { PyWorld::new(world, validity.clone()) };
+                let mut py_world = unsafe { PyWorld::new(world, validity.clone()) };
+                py_world.parity_trace = parity_trace.clone();
                 let obj = Py::new(py, py_world).expect("Failed to create PyWorld");
                 args_buffer.push(obj.into_any());
             }

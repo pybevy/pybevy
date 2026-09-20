@@ -20,6 +20,7 @@ pub mod helpers;
 pub mod kwarg_hint;
 pub mod lazy_wrapper_proxy;
 pub(crate) mod lifecycle_mutation;
+pub(crate) mod world_commands;
 
 // Re-exports from pybevy_core
 #[allow(unused_imports)]

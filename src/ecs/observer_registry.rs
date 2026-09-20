@@ -141,7 +141,7 @@ impl ObserverRegistry {
 
     /// Validate the parts of an observer that do not require World access.
     pub(crate) fn validate_observer_signature(py: Python, func: &Bound<'_, PyAny>) -> PyResult<()> {
-        let system_func = SystemFunction::new(py, func.clone())?;
+        let system_func = SystemFunction::new_uncached(py, func.clone())?;
         Self::validate_system_function(py, &system_func)?;
         Ok(())
     }

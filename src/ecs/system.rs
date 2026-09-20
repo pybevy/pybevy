@@ -237,6 +237,14 @@ impl SystemFunction {
     }
 
     pub fn new(py: Python, func: Bound<'_, PyAny>) -> PyResult<Self> {
+        Self::new_impl(py, func, true)
+    }
+
+    pub(crate) fn new_uncached(py: Python, func: Bound<'_, PyAny>) -> PyResult<Self> {
+        Self::new_impl(py, func, false)
+    }
+
+    fn new_impl(py: Python, func: Bound<'_, PyAny>, use_cache: bool) -> PyResult<Self> {
         // Check if function is async (coroutine) - not supported
         let inspect = py.import("inspect")?;
         let is_coroutine_fn = inspect.getattr("iscoroutinefunction")?;
@@ -250,71 +258,77 @@ impl SystemFunction {
             ));
         }
 
-        let func_addr = func.as_ptr() as usize;
-        let code_ptr = func
-            .getattr("__code__")
-            .map(|c| c.as_ptr() as usize)
-            .unwrap_or(0);
+        let params = if use_cache {
+            let func_addr = func.as_ptr() as usize;
+            let code_ptr = func
+                .getattr("__code__")
+                .map(|c| c.as_ptr() as usize)
+                .unwrap_or(0);
 
-        // Clone only the Rust Arc while locked. Inspecting the weakref upgrades
-        // a Python reference and must happen after unlocking.
-        let cached_entry = {
-            let mut cache_guard = SYSTEM_PARAM_CACHE.lock().unwrap();
-            cache_guard
-                .get_or_insert_with(HashMap::new)
-                .get(&func_addr)
-                .map(Arc::clone)
-        };
-
-        let cached_params = cached_entry.as_ref().and_then(|entry| {
-            if entry.code_ptr != code_ptr {
-                return None;
-            }
-            entry
-                .function
-                .bind(py)
-                .upgrade()
-                .filter(|cached_function| cached_function.is(&func))
-                .map(|_| Arc::clone(&entry.params))
-        });
-
-        // Remove only the entry we inspected: another thread may have replaced
-        // it while weakref validation ran outside the mutex. Move the stale Arc
-        // out of the map and drop it after unlocking.
-        let stale_entry = match (&cached_entry, &cached_params) {
-            (Some(cached_entry), None) => {
+            // Clone only the Rust Arc while locked. Inspecting the weakref upgrades
+            // a Python reference and must happen after unlocking.
+            let cached_entry = {
                 let mut cache_guard = SYSTEM_PARAM_CACHE.lock().unwrap();
-                let cache = cache_guard.get_or_insert_with(HashMap::new);
-                match cache.get(&func_addr) {
-                    Some(current) if Arc::ptr_eq(current, cached_entry) => cache.remove(&func_addr),
-                    _ => None,
-                }
-            }
-            _ => None,
-        };
-        drop(stale_entry);
+                cache_guard
+                    .get_or_insert_with(HashMap::new)
+                    .get(&func_addr)
+                    .map(Arc::clone)
+            };
 
-        let params = if let Some(cached_params) = cached_params {
-            cached_params.as_ref().clone()
-        } else {
-            let parsed_params = Self::parse_system_parameters(&func, py)?;
-            // Ordinary Python functions support weakrefs. Other callable
-            // objects that do not are valid systems, but are simply not cached.
-            if let Ok(function) = PyWeakrefReference::new(&func) {
-                let entry = Arc::new(SystemParamCacheEntry {
-                    code_ptr,
-                    function: function.unbind(),
-                    params: Arc::new(parsed_params.clone()),
-                });
-                let replaced_entry = {
+            let cached_params = cached_entry.as_ref().and_then(|entry| {
+                if entry.code_ptr != code_ptr {
+                    return None;
+                }
+                entry
+                    .function
+                    .bind(py)
+                    .upgrade()
+                    .filter(|cached_function| cached_function.is(&func))
+                    .map(|_| Arc::clone(&entry.params))
+            });
+
+            // Remove only the entry we inspected: another thread may have replaced
+            // it while weakref validation ran outside the mutex. Move the stale Arc
+            // out of the map and drop it after unlocking.
+            let stale_entry = match (&cached_entry, &cached_params) {
+                (Some(cached_entry), None) => {
                     let mut cache_guard = SYSTEM_PARAM_CACHE.lock().unwrap();
                     let cache = cache_guard.get_or_insert_with(HashMap::new);
-                    cache.insert(func_addr, entry)
-                };
-                drop(replaced_entry);
-            }
+                    match cache.get(&func_addr) {
+                        Some(current) if Arc::ptr_eq(current, cached_entry) => {
+                            cache.remove(&func_addr)
+                        }
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            drop(stale_entry);
 
-            parsed_params
+            if let Some(cached_params) = cached_params {
+                cached_params.as_ref().clone()
+            } else {
+                let parsed_params = Self::parse_system_parameters(&func, py)?;
+                // Ordinary Python functions support weakrefs. Other callable
+                // objects that do not are valid systems, but are simply not cached.
+                if let Ok(function) = PyWeakrefReference::new(&func) {
+                    let entry = Arc::new(SystemParamCacheEntry {
+                        code_ptr,
+                        function: function.unbind(),
+                        params: Arc::new(parsed_params.clone()),
+                    });
+                    let replaced_entry = {
+                        let mut cache_guard = SYSTEM_PARAM_CACHE.lock().unwrap();
+                        let cache = cache_guard.get_or_insert_with(HashMap::new);
+                        cache.insert(func_addr, entry)
+                    };
+                    drop(replaced_entry);
+                }
+
+                parsed_params
+            }
+        } else {
+            Self::parse_system_parameters(&func, py)?
         };
 
         // Every registration needs its own Local. `Local[T]` in an annotation is

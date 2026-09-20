@@ -44,3 +44,8 @@ commands.spawn(Mesh3d(mesh), MeshMaterial3d(mat))
 Emissive values interact with camera Bloom settings. See `guide://lighting` (Emissive Materials section) for intensity tiers and bloom pairing guidance.
 
 **For all parameters:** `get_type_definition('StandardMaterial')`
+
+`material.emissive` returns `LinearRgba`; constructor inputs and assignment accept
+`Color` or `LinearRgba`. Channel edits write through a material from
+`ResMut[Assets[StandardMaterial]].get_mut()`. Borrowed channels retain the asset's
+read/write access and system lifetime; owned material fields are read-only snapshots.

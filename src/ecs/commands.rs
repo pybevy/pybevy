@@ -1,6 +1,7 @@
 use std::{
     any::TypeId,
     hash::Hash,
+    ptr,
     sync::{Arc, Mutex, OnceLock},
 };
 
@@ -14,13 +15,15 @@ use bevy::ecs::{
     world::{CommandQueue, World},
 };
 use pybevy_core::{
-    ComponentBridge, LogicalTypeId, LogicalTypeMap, PyLogicalComponentParam,
+    ComponentBridge, LogicalTypeId, LogicalTypeMap, PreparedUniformComponent,
+    PyLogicalComponentParam,
     component_layout::ComponentLayout,
     custom_resource::validate_hierarchy_link,
     ensure_no_live_asset_access, extract_entity_from_any,
     public_error::{
-        IS_RESOURCE_COMPONENT_REMOVE, RESOURCE_COMPONENT_INSERT, RESOURCE_COMPONENT_REMOVE,
-        RESOURCE_COMPONENT_SPAWN, RESOURCE_ENTITY_DESPAWN,
+        ASSET_SERVER_MANUAL_INSERT, ASSET_SERVER_MANUAL_REMOVE, IS_RESOURCE_COMPONENT_REMOVE,
+        RESOURCE_COMPONENT_INSERT, RESOURCE_COMPONENT_REMOVE, RESOURCE_COMPONENT_SPAWN,
+        RESOURCE_ENTITY_DESPAWN,
     },
     registry::global_registry,
 };
@@ -49,6 +52,7 @@ use super::{
     resource::hierarchy_contains_resource_entity,
     resource_type::PyResourceType,
     world::PyWorld,
+    world_commands::{self, WorldCommand, WorldMutation},
     world_gc::WorldGcState,
 };
 use crate::ecs::{
@@ -80,9 +84,14 @@ pub(crate) fn trigger_event_helper(
 
     let trace_operation =
         commands.prepare_trace_op(ParityOpKind::ObserverTrigger, &event, target_entity)?;
+    if commands.is_world_queue() {
+        commands.queue_world(WorldCommand::Trigger(target_entity, event.unbind()))?;
+        commands.record_prepared_trace_op(trace_operation);
+        return Ok(());
+    }
     let event_clone = event.clone().unbind();
 
-    if commands.is_world {
+    if commands.is_immediate() {
         let mut world = commands.world_mut()?;
         ensure_no_live_asset_access(&world, "commands.trigger()")
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
@@ -286,9 +295,7 @@ impl CommandErrorSink {
 /// See docs/safety.md, "Shared-Borrow Proxies"; `pybevy_lint` W014 guards it.
 #[pyclass(name = "Commands", module = "pybevy.ecs")]
 pub struct PyCommands {
-    commands_ptr: *mut (),
-    is_world: bool, // Flag to indicate if this wraps a World instead of Commands
-    is_queue: bool,
+    source: CommandSource,
     // Keep the PyWorld alive if we're wrapping a World
     _world_ref: Option<Py<PyWorld>>,
     // Runtime validity check - prevents use after system execution
@@ -301,6 +308,14 @@ pub struct PyCommands {
     wrapper_layout_cache: OnceLock<CachedCustomComponentLayout>,
 }
 
+#[derive(Clone, Copy)]
+enum CommandSource {
+    Immediate(*mut World),
+    WorldQueue(*mut World),
+    System(*mut Commands<'static, 'static>),
+    Structural(*mut CommandQueue),
+}
+
 struct CachedCustomComponentLayout {
     type_id: usize,
     retained_type: Py<PyType>,
@@ -308,25 +323,17 @@ struct CachedCustomComponentLayout {
     layout: Option<Arc<ComponentLayout>>,
 }
 
-// SAFETY: PyCommands is Send because:
-// - The raw pointer is protected by the ValidityFlag (Arc<AtomicBool>)
-// - ValidityFlag::check() ensures the pointer is only dereferenced when valid
-// - The validity flag is set to false when the system execution completes
-// - Py<PyWorld> is Send when PyWorld is Send
+// SAFETY: pointer access checks validity, execution scope and origin thread;
+// owned World handles retain their allocation and scoped handles expire after use.
 unsafe impl Send for PyCommands {}
 
-// SAFETY: PyCommands is Sync because:
-// - Access to the underlying Commands/World is controlled by validity checking
-// - The ValidityFlag uses atomic operations for thread-safe access
-// - We only allow access when the validity flag is true (during system execution)
+// SAFETY: validity rejects cross-thread and reentrant access to each command source.
 unsafe impl Sync for PyCommands {}
 
 impl PyCommands {
     pub(crate) fn clone_for_handle(&self, py: Python<'_>) -> Self {
         Self {
-            commands_ptr: self.commands_ptr,
-            is_world: self.is_world,
-            is_queue: self.is_queue,
+            source: self.source,
             _world_ref: self._world_ref.as_ref().map(|world| world.clone_ref(py)),
             validity: self.validity.clone(),
             error_sink: self.error_sink.clone(),
@@ -356,9 +363,7 @@ impl PyCommands {
         parity_trace: Option<ParityRunHandle>,
     ) -> Self {
         Self {
-            commands_ptr: commands as *mut Commands as *mut (),
-            is_world: false,
-            is_queue: false,
+            source: CommandSource::System(ptr::from_mut(commands).cast()),
             wrapper_layout_cache: OnceLock::new(),
             _world_ref: None,
             validity,
@@ -377,18 +382,52 @@ impl PyCommands {
         world_ref: Py<PyWorld>,
         validity: ValidityFlag,
     ) -> Self {
-        let gc_state = Python::attach(|py| world_ref.borrow(py).gc_state());
+        let (gc_state, parity_trace) = Python::attach(|py| {
+            let world = world_ref.borrow(py);
+            (world.gc_state(), world.parity_trace.clone())
+        });
         Self {
-            commands_ptr: world_ptr as *mut (),
-            is_world: true,
-            is_queue: false,
+            source: CommandSource::Immediate(world_ptr),
             wrapper_layout_cache: OnceLock::new(),
             _world_ref: Some(world_ref),
             validity,
             error_sink: None,
-            parity_trace: None,
+            parity_trace,
             gc_state,
         }
+    }
+
+    pub(crate) unsafe fn from_world_queue(
+        world_ptr: *mut World,
+        world_ref: Py<PyWorld>,
+        validity: ValidityFlag,
+    ) -> Self {
+        // SAFETY: the caller supplies the retained World's live exclusive capability.
+        let mut commands = unsafe { Self::from_world(world_ptr, world_ref, validity) };
+        commands.source = CommandSource::WorldQueue(world_ptr);
+        commands
+    }
+
+    fn is_immediate(&self) -> bool {
+        matches!(self.source, CommandSource::Immediate(_))
+    }
+
+    pub(crate) fn is_world_queue(&self) -> bool {
+        matches!(self.source, CommandSource::WorldQueue(_))
+    }
+
+    pub(crate) fn error_boundary(&self) -> PyResult<world_commands::ErrorBoundary> {
+        self.check_valid()?;
+        if self.is_immediate() && self._world_ref.is_some() {
+            Ok(world_commands::ErrorBoundary::new(&*self.world_mut()?))
+        } else {
+            Ok(world_commands::ErrorBoundary::default())
+        }
+    }
+
+    pub(crate) fn queue_world(&self, command: WorldCommand) -> PyResult<()> {
+        world_commands::enqueue(&mut *self.world_mut()?, command);
+        Ok(())
     }
 
     /// Create a temporary PyCommands that wraps a World pointer without owning a PyWorld reference
@@ -403,9 +442,7 @@ impl PyCommands {
         // SAFETY: the caller supplies a live World and exclusive access to its metadata.
         let gc_state = WorldGcState::for_world(unsafe { (&*world_ptr).id() });
         Self {
-            commands_ptr: world_ptr as *mut (),
-            is_world: true,
-            is_queue: false,
+            source: CommandSource::Immediate(world_ptr),
             wrapper_layout_cache: OnceLock::new(),
             _world_ref: None,
             validity,
@@ -425,9 +462,7 @@ impl PyCommands {
         error_sink: Option<CommandErrorSink>,
     ) -> Self {
         Self {
-            commands_ptr: queue as *mut CommandQueue as *mut (),
-            is_world: false,
-            is_queue: true,
+            source: CommandSource::Structural(queue),
             _world_ref: None,
             validity,
             error_sink,
@@ -451,16 +486,21 @@ impl PyCommands {
         self.error_sink.clone()
     }
 
-    // validity-checked raw pointer access, see docs/safety.md
-    #[allow(clippy::mut_from_ref)]
-    fn commands_mut(&self) -> PyResult<&mut Commands<'_, '_>> {
+    fn with_commands<T>(&self, operation: impl FnOnce(&mut Commands) -> T) -> PyResult<T> {
         self.validity.check()?;
-        if self.is_world || self.is_queue {
-            return Err(PyRuntimeError::new_err(
-                "Cannot get Commands from World-backed PyCommands",
-            ));
+        match self.source {
+            CommandSource::System(pointer) => {
+                // SAFETY: the run validity fences the injected Commands allocation.
+                Ok(operation(unsafe { &mut *pointer }))
+            }
+            CommandSource::WorldQueue(_) => {
+                let mut world = self.world_mut()?;
+                Ok(operation(&mut world.commands()))
+            }
+            _ => Err(PyRuntimeError::new_err(
+                "This command source cannot reserve entities",
+            )),
         }
-        Ok(unsafe { &mut *(self.commands_ptr as *mut Commands) })
     }
 
     // Raw pointer access behind the validity check, see docs/safety.md.
@@ -469,19 +509,22 @@ impl PyCommands {
     // this window drain when the borrow ends, before returning to Python.
     fn world_mut(&self) -> PyResult<crate::ecs::deferred_drop::WorldMutGuard<'_>> {
         self.validity.check()?;
-        if !self.is_world {
-            return Err(PyRuntimeError::new_err(
-                "Cannot get World from Commands-backed PyCommands",
-            ));
-        }
+        let pointer = match self.source {
+            CommandSource::Immediate(pointer) | CommandSource::WorldQueue(pointer) => pointer,
+            _ => {
+                return Err(PyRuntimeError::new_err(
+                    "Cannot get World from Commands-backed PyCommands",
+                ));
+            }
+        };
         let gc = self.gc_state.as_ref().map(WorldGcState::suspend);
         // SAFETY: validity and the GC gate protect the live World mutation window.
-        let world = unsafe { &mut *(self.commands_ptr as *mut World) };
+        let world = unsafe { &mut *pointer };
         Ok(crate::ecs::deferred_drop::WorldMutGuard::with_gc(world, gc))
     }
 
     pub(crate) fn check_native_asset_access(&self, operation: &str) -> PyResult<()> {
-        if !self.is_world {
+        if !self.is_immediate() {
             return Ok(());
         }
         let world = self.world_mut()?;
@@ -494,7 +537,7 @@ impl PyCommands {
         &self,
     ) -> PyResult<Option<crate::ecs::deferred_drop::WorldMutGuard<'_>>> {
         self.validity.check()?;
-        if self.is_world {
+        if self.is_immediate() {
             self.world_mut().map(Some)
         } else {
             Ok(None)
@@ -507,17 +550,16 @@ impl PyCommands {
     where
         F: FnOnce(&mut World) + Send + 'static,
     {
-        if self.is_world {
+        if self.is_immediate() {
             let mut world = self.world_mut()?;
             operation(&mut world);
-        } else if self.is_queue {
+        } else if let CommandSource::Structural(pointer) = self.source {
             self.validity.check()?;
             // SAFETY: `from_queue_temporary` provides the only live mutable
             // access and the validity fence covers this append.
-            unsafe { &mut *(self.commands_ptr as *mut CommandQueue) }.push(operation);
+            unsafe { &mut *pointer }.push(operation);
         } else {
-            let commands = self.commands_mut()?;
-            commands.queue(operation);
+            self.with_commands(|commands| commands.queue(operation))?;
         }
         Ok(())
     }
@@ -529,14 +571,14 @@ impl PyCommands {
         FW: FnOnce(&mut World) -> T,
         FC: FnOnce(&mut Commands) -> T,
     {
-        if self.is_world {
+        if self.is_immediate() {
             Ok(world_op(&mut *self.world_mut()?))
-        } else if self.is_queue {
+        } else if matches!(self.source, CommandSource::Structural(_)) {
             Err(PyRuntimeError::new_err(
                 "This temporary command queue cannot reserve or return entities",
             ))
         } else {
-            Ok(commands_op(self.commands_mut()?))
+            self.with_commands(commands_op)
         }
     }
 
@@ -735,6 +777,159 @@ enum PreparedCustomComponentValue {
     PyObject(Py<PyAny>),
 }
 
+enum PreparedComponentValue {
+    Native {
+        value: Box<dyn PreparedUniformComponent>,
+        parent: Option<Entity>,
+        logical_type: Option<Option<LogicalTypeId>>,
+    },
+    Custom(
+        PreparedCustomComponentRegistration,
+        PreparedCustomComponentValue,
+    ),
+}
+
+pub(crate) struct PreparedInsertion {
+    types: ResolvedComponentTypes,
+    classes: Vec<Py<PyType>>,
+    values: Vec<PreparedComponentValue>,
+}
+
+impl PreparedInsertion {
+    fn new(
+        commands: &PyCommands,
+        components: &Bound<'_, PyTuple>,
+        types: ResolvedComponentTypes,
+    ) -> PyResult<Self> {
+        let mut classes = Vec::with_capacity(components.len());
+        let mut values = Vec::with_capacity(components.len());
+        for (component, kind) in components.iter().zip(&types) {
+            classes.push(component.get_type().unbind());
+            values.push(match kind {
+                PyComponentType::Dynamic(pointer) => {
+                    let bridge =
+                        global_registry::get_bridge_by_py_type(*pointer).ok_or_else(|| {
+                            PyRuntimeError::new_err("Dynamic component type not registered")
+                        })?;
+                    let parent = bridge
+                        .relationship_field()
+                        .map(|field| -> PyResult<Entity> {
+                            Ok(component.getattr(field)?.extract::<PyEntity>()?.0)
+                        })
+                        .transpose()?;
+                    PreparedComponentValue::Native {
+                        value: bridge.prepare_uniform(&component)?,
+                        parent,
+                        logical_type: component_logical_type(&component)?,
+                    }
+                }
+                PyComponentType::Custom(_) => {
+                    let (registration, value) = prepare_custom_component(commands, &component)?;
+                    PreparedComponentValue::Custom(registration, value)
+                }
+                PyComponentType::Resource(_) => {
+                    return Err(PyTypeError::new_err(RESOURCE_COMPONENT_INSERT));
+                }
+            });
+        }
+        Ok(Self {
+            types,
+            classes,
+            values,
+        })
+    }
+
+    pub(crate) fn traverse(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        for class in &self.classes {
+            visit.call(class)?;
+        }
+        for value in &self.values {
+            match value {
+                PreparedComponentValue::Native { value, .. } => value.traverse(visit.clone())?,
+                PreparedComponentValue::Custom(registration, value) => {
+                    registration.traverse(visit.clone())?;
+                    match value {
+                        PreparedCustomComponentValue::Wrapper { retained_type, .. } => {
+                            visit.call(retained_type)?
+                        }
+                        PreparedCustomComponentValue::PyObject(value) => visit.call(value)?,
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn apply(self, world: &mut World, entity: Entity) -> PyResult<()> {
+        Python::attach(|py| {
+            for value in &self.values {
+                if let PreparedComponentValue::Custom(registration, _) = value {
+                    registration.validate_current(py)?;
+                }
+            }
+            Ok::<(), PyErr>(())
+        })?;
+        ensure_entity_exists(world, entity)?;
+        let mut result = Ok(());
+        crate::ecs::lifecycle_mutation::insert_many_with(world, entity, &self.types, |world| {
+            result = Python::attach(|py| {
+                for (kind, mut value) in self.types.iter().zip(self.values) {
+                    ensure_entity_exists(world, entity)?;
+                    match &mut value {
+                        PreparedComponentValue::Native {
+                            value,
+                            parent,
+                            logical_type,
+                        } => {
+                            if let Some(parent) = parent {
+                                validate_hierarchy_link(world, entity, *parent)
+                                    .map_err(|error| PyTypeError::new_err(error.to_string()))?;
+                            }
+                            let id = kind.register_simple(world, py);
+                            value.insert(id, &[entity], world);
+                            if entity_exists(world, entity)
+                                && let (Some(logical), Some(native)) =
+                                    (logical_type, kind.type_id())
+                            {
+                                update_entity_logical_type(world, entity, native, *logical);
+                            }
+                        }
+                        PreparedComponentValue::Custom(registration, value) => {
+                            let id = register_prepared_custom_component(world, registration);
+                            match value {
+                                PreparedCustomComponentValue::Wrapper {
+                                    bytes,
+                                    wrapper_size,
+                                    ..
+                                } => {
+                                    insert_custom_wrapper_bytes(
+                                        world,
+                                        entity,
+                                        id,
+                                        *wrapper_size,
+                                        bytes,
+                                    );
+                                }
+                                PreparedCustomComponentValue::PyObject(value) => {
+                                    OwningPtr::make(value.clone_ref(py), |pointer| {
+                                        // SAFETY: prepared registration uses exactly Py<PyAny> storage.
+                                        unsafe {
+                                            world.entity_mut(entity).insert_by_id(id, pointer);
+                                        }
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(())
+            });
+            result.is_ok()
+        });
+        result
+    }
+}
+
 impl PyCommands {
     /// Reuse an unchanged class layout without weakening live-schema validation.
     fn storage_and_layout(
@@ -836,6 +1031,15 @@ pub(crate) fn insert_resolved_components_to_entity(
         Vec::new()
     };
 
+    if commands.is_world_queue() {
+        let insertion = PreparedInsertion::new(commands, components, component_types)?;
+        commands.queue_world(WorldCommand::Insert(entity_id, Box::new(insertion)))?;
+        for operation in trace_operations {
+            commands.record_prepared_trace_op(operation);
+        }
+        return Ok(());
+    }
+
     if component_types.is_empty() {
         insert_components_to_entity(commands, commands, entity_id, components, &component_types)?;
         for operation in trace_operations {
@@ -844,7 +1048,7 @@ pub(crate) fn insert_resolved_components_to_entity(
         return Ok(());
     }
 
-    if commands.is_world {
+    if commands.is_immediate() {
         commands.check_native_asset_access("entity.insert()")?;
         let validity = commands.validity.clone();
         let mut world = commands.world_mut()?;
@@ -884,6 +1088,7 @@ pub(crate) fn insert_resolved_components_to_entity(
         // scheduled system's validity window is still active. Only owned Rust
         // commands cross into the later lifecycle application closure.
         let mut structural_queue = CommandQueue::default();
+        // SAFETY: the adapter is confined to this live local queue and validity scope.
         let temporary = unsafe {
             PyCommands::from_queue_temporary(
                 &mut structural_queue,
@@ -927,7 +1132,7 @@ fn insert_components_to_entity(
     component_types: &[PyComponentType],
 ) -> PyResult<()> {
     debug_assert_eq!(components.len(), component_types.len());
-    if commands.is_world {
+    if commands.is_immediate() {
         let world = commands.world_mut()?;
         ensure_entity_exists(&world, entity_id)?;
     }
@@ -946,7 +1151,7 @@ fn insert_components_to_entity(
                 let logical_type = component_logical_type(&component)?;
                 let native_type = bridge.bevy_type_id();
 
-                if commands.is_world {
+                if commands.is_immediate() {
                     // Direct world access - insert immediately via bridge
                     let mut world = commands.world_mut()?;
                     validate_relationship_component(
@@ -1030,7 +1235,7 @@ fn insert_components_to_entity(
                 let (registration, prepared_value) =
                     prepare_custom_component(layout_cache_owner, &component)?;
 
-                if commands.is_world {
+                if commands.is_immediate() {
                     let mut world = commands.world_mut()?;
                     let component_id =
                         register_prepared_custom_component(&mut world, &registration);
@@ -1119,7 +1324,12 @@ pub(crate) fn add_child_helper(
     parent_id: Entity,
     child_id: Entity,
 ) -> PyResult<()> {
-    if commands.is_world {
+    if commands.is_world_queue() {
+        return commands.queue_world(WorldCommand::Mutation(WorldMutation::AddChild(
+            parent_id, child_id,
+        )));
+    }
+    if commands.is_immediate() {
         let mut world = commands.world_mut()?;
         ensure_entities_exist(&world, &[parent_id, child_id])?;
         validate_hierarchy_link(&world, child_id, parent_id)
@@ -1152,7 +1362,13 @@ pub(crate) fn remove_children_helper(
     parent_id: Entity,
     child_ids: &[Entity],
 ) -> PyResult<()> {
-    if commands.is_world {
+    if commands.is_world_queue() {
+        return commands.queue_world(WorldCommand::Mutation(WorldMutation::RemoveChildren(
+            parent_id,
+            child_ids.to_vec(),
+        )));
+    }
+    if commands.is_immediate() {
         let mut world = commands.world_mut()?;
         ensure_entity_exists(&world, parent_id)?;
         ensure_entities_exist(&world, child_ids)?;
@@ -1183,7 +1399,12 @@ pub(crate) fn remove_children_helper(
 
 /// Helper function to clear all children from an entity
 pub(crate) fn clear_children_helper(commands: &PyCommands, parent_id: Entity) -> PyResult<()> {
-    if commands.is_world {
+    if commands.is_world_queue() {
+        return commands.queue_world(WorldCommand::Mutation(WorldMutation::ClearChildren(
+            parent_id,
+        )));
+    }
+    if commands.is_immediate() {
         let mut world = commands.world_mut()?;
         ensure_entity_exists(&world, parent_id)?;
         ensure_no_live_asset_access(&world, "entity.clear_children()")
@@ -1205,7 +1426,12 @@ pub(crate) fn set_parent_helper(
     child_id: Entity,
     parent_id: Entity,
 ) -> PyResult<()> {
-    if commands.is_world {
+    if commands.is_world_queue() {
+        return commands.queue_world(WorldCommand::Mutation(WorldMutation::SetParent(
+            child_id, parent_id,
+        )));
+    }
+    if commands.is_immediate() {
         let mut world = commands.world_mut()?;
         ensure_entities_exist(&world, &[child_id, parent_id])?;
         validate_hierarchy_link(&world, child_id, parent_id)
@@ -1234,7 +1460,12 @@ pub(crate) fn set_parent_helper(
 
 /// Helper function to remove parent relationship from an entity
 pub(crate) fn remove_parent_helper(commands: &PyCommands, child_id: Entity) -> PyResult<()> {
-    if commands.is_world {
+    if commands.is_world_queue() {
+        return commands.queue_world(WorldCommand::Mutation(WorldMutation::RemoveParent(
+            child_id,
+        )));
+    }
+    if commands.is_immediate() {
         let mut world = commands.world_mut()?;
         ensure_entity_exists(&world, child_id)?;
         ensure_no_live_asset_access(&world, "entity.remove_parent()")
@@ -1293,7 +1524,10 @@ pub(crate) fn remove_components_from_entity_helper(
         {
             return Err(PyTypeError::new_err(IS_RESOURCE_COMPONENT_REMOVE));
         }
-        if commands.is_world {
+        if commands.is_world_queue() {
+            continue;
+        }
+        if commands.is_immediate() {
             let mut world = commands.world_mut()?;
             ensure_entity_exists(&world, entity_id)?;
             if let Some(logical_type) = logical_type
@@ -1322,6 +1556,10 @@ pub(crate) fn remove_components_from_entity_helper(
         }
     }
 
+    if commands.is_world_queue() {
+        commands.queue_world(WorldCommand::Remove(entity_id, components.clone().unbind()))?;
+    }
+
     Ok(())
 }
 
@@ -1332,39 +1570,43 @@ impl PyCommands {
     }
 
     pub fn spawn_empty(&self, _py: Python<'_>) -> PyResult<PyEntityCommands> {
-        self.check_valid()?;
-        self.check_native_asset_access("commands.spawn_empty()")?;
+        self.error_boundary()?.run(|| {
+            self.check_valid()?;
+            self.check_native_asset_access("commands.spawn_empty()")?;
 
-        let entity = self.execute_returning(
-            |world| world.spawn_empty().id(),
-            |commands| commands.spawn_empty().id(),
-        )?;
-        self.trace_spawn(entity);
+            let entity = self.execute_returning(
+                |world| world.spawn_empty().id(),
+                |commands| commands.spawn_empty().id(),
+            )?;
+            self.trace_spawn(entity);
 
-        Ok(PyEntityCommands::with_commands(entity, self, _py))
+            Ok(PyEntityCommands::with_commands(entity, self, _py))
+        })
     }
 
     #[pyo3(signature = (*components))]
     pub fn spawn(&self, py: Python, components: &Bound<'_, PyTuple>) -> PyResult<PyEntityCommands> {
-        self.check_valid()?;
-        let components_to_insert = normalize_spawn_components(components)?;
-        let component_types = resolve_spawn_bundle(py, &components_to_insert)?;
-        self.check_native_asset_access("commands.spawn()")?;
+        self.error_boundary()?.run(|| {
+            self.check_valid()?;
+            let components_to_insert = normalize_spawn_components(components)?;
+            let component_types = resolve_spawn_bundle(py, &components_to_insert)?;
+            self.check_native_asset_access("commands.spawn()")?;
 
-        let entity_id = self.execute_returning(
-            |world| world.spawn_empty().id(),
-            |commands| commands.spawn_empty().id(),
-        )?;
-        self.trace_spawn(entity_id);
+            let entity_id = self.execute_returning(
+                |world| world.spawn_empty().id(),
+                |commands| commands.spawn_empty().id(),
+            )?;
+            self.trace_spawn(entity_id);
 
-        insert_resolved_components_to_entity(
-            self,
-            entity_id,
-            &components_to_insert,
-            component_types,
-        )?;
+            insert_resolved_components_to_entity(
+                self,
+                entity_id,
+                &components_to_insert,
+                component_types,
+            )?;
 
-        Ok(PyEntityCommands::with_commands(entity_id, self, py))
+            Ok(PyEntityCommands::with_commands(entity_id, self, py))
+        })
     }
 
     #[pyo3(signature = (*components, count=None))]
@@ -1388,82 +1630,71 @@ impl PyCommands {
         let command = SpawnBatchCommand::new(py, components, count)?;
         let trace_payloads = self.prepare_uniform_batch_trace_payloads(components)?;
 
-        if self.is_world {
-            self.check_native_asset_access("commands.spawn_batch()")?;
-            let entities = command.apply(&mut *self.world_mut()?)?;
-            let entity_list: Vec<PyEntity> = entities.into_iter().map(PyEntity).collect();
-            Ok(entity_list.into_pyobject(py)?.into())
-        } else {
-            // Reserve IDs at the adapter boundary so parity tracing can assign
-            // stable spawn tokens before the flush resolves raw targets.
-            let entities = {
-                let commands = self.commands_mut()?;
-                (0..command.spawn_count())
-                    .map(|_| commands.spawn_empty().id())
-                    .collect::<Vec<_>>()
-            };
-            for &entity in &entities {
-                self.trace_spawn(entity);
-            }
-            let error_sink = self.error_sink.clone().ok_or_else(|| {
-                PyRuntimeError::new_err("Deferred spawn_batch requires an App-owned error sink")
-            })?;
-            let trace_entities = entities.clone();
-            self.commands_mut()?.queue(move |world: &mut World| {
-                if let Err(e) = command.apply_to(world, entities) {
-                    error_sink.record(e);
-                }
-            });
-            self.record_batch_inserts(&trace_entities, &trace_payloads);
-            Ok(py.None())
+        // Reserve IDs at the adapter boundary so parity tracing can assign
+        // stable spawn tokens before the flush resolves raw targets.
+        let entities = self.with_commands(|commands| {
+            (0..command.spawn_count())
+                .map(|_| commands.spawn_empty().id())
+                .collect::<Vec<_>>()
+        })?;
+        for &entity in &entities {
+            self.trace_spawn(entity);
         }
+        let trace_entities = entities.clone();
+        if self.is_world_queue() {
+            self.queue_world(WorldCommand::Batch(vec![(command, entities)]))?;
+            self.record_batch_inserts(&trace_entities, &trace_payloads);
+            return Ok(py.None());
+        }
+        let error_sink = self.error_sink.clone().ok_or_else(|| {
+            PyRuntimeError::new_err("Deferred spawn_batch requires an App-owned error sink")
+        })?;
+        self.execute_or_queue(move |world: &mut World| {
+            if let Err(e) = command.apply_to(world, entities) {
+                error_sink.record(e);
+            }
+        })?;
+        self.record_batch_inserts(&trace_entities, &trace_payloads);
+        Ok(py.None())
     }
 
     #[pyo3(name = "_spawn_batch_iter")]
     fn spawn_batch_iter(&self, py: Python, batch: &Bound<'_, PyAny>) -> PyResult<()> {
         let prepared = prepare_iter_batch(py, batch)?;
-        if self.is_world {
-            self.check_native_asset_access("commands.spawn_batch()")?;
-            let mut world = self.world_mut()?;
-            for command in prepared {
-                for entity in command.apply(&mut world)? {
-                    self.trace_spawn(entity);
-                }
-            }
-            return Ok(());
-        }
 
         let mut batches = Vec::with_capacity(prepared.len());
         for command in prepared {
-            let entities = {
-                let commands = self.commands_mut()?;
+            let entities = self.with_commands(|commands| {
                 (0..command.spawn_count())
                     .map(|_| commands.spawn_empty().id())
                     .collect::<Vec<_>>()
-            };
+            })?;
             for &entity in &entities {
                 self.trace_spawn(entity);
             }
             batches.push((command, entities));
         }
+        if self.is_world_queue() {
+            return self.queue_world(WorldCommand::Batch(batches));
+        }
         let error_sink = self.error_sink.clone().ok_or_else(|| {
             PyRuntimeError::new_err("Deferred spawn_batch requires an App-owned error sink")
         })?;
-        self.commands_mut()?.queue(move |world: &mut World| {
+        self.execute_or_queue(move |world: &mut World| {
             for (command, entities) in batches {
                 if let Err(error) = command.apply_to(world, entities) {
                     error_sink.record(error);
                     break;
                 }
             }
-        });
+        })?;
         Ok(())
     }
 
     pub fn entity(&self, py: Python<'_>, entity: &Bound<'_, PyAny>) -> PyResult<PyEntityCommands> {
         let entity = &extract_entity_from_any(entity)?;
         self.check_valid()?;
-        if self.is_world {
+        if self.is_immediate() {
             let world = self.world_mut()?;
             if world.get_entity(entity.0).is_err() {
                 return Err(PyValueError::new_err("Entity does not exist in the world"));
@@ -1480,114 +1711,154 @@ impl PyCommands {
     ) -> PyResult<Option<PyEntityCommands>> {
         let entity = &extract_entity_from_any(entity)?;
         self.check_valid()?;
-        if self.is_world {
+        if self.is_immediate() {
             let world = self.world_mut()?;
             if world.get_entity(entity.0).is_err() {
                 return Ok(None);
             }
-        } else if self.commands_mut()?.get_entity(entity.0).is_err() {
+        } else if !self.with_commands(|commands| commands.get_entity(entity.0).is_ok())? {
             return Ok(None);
         }
         Ok(Some(PyEntityCommands::with_commands(entity.0, self, py)))
     }
 
     pub fn despawn(&self, entity: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.despawn_entity(&extract_entity_from_any(entity)?)
+        self.error_boundary()?
+            .run(|| self.despawn_entity(&extract_entity_from_any(entity)?))
     }
 
     pub fn insert_resource(&self, py: Python, resource: Bound<'_, PyAny>) -> PyResult<()> {
-        self.check_valid()?;
+        self.error_boundary()?.run(|| {
+            self.check_valid()?;
 
-        let trace_operation =
-            self.prepare_trace_op(ParityOpKind::ResourceInsert, &resource, None)?;
+            let trace_operation =
+                self.prepare_trace_op(ParityOpKind::ResourceInsert, &resource, None)?;
 
-        // Get the resource type from the instance
-        let resource_type = resource.get_type();
-        let py_resource_type = PyResourceType::try_from((&resource_type, py))?;
+            // Get the resource type from the instance
+            let resource_type = resource.get_type();
+            let py_resource_type = PyResourceType::try_from((&resource_type, py))?;
 
-        // Convert the bound resource to a Py<PyAny>
-        let resource_instance: Py<PyAny> = resource.unbind();
-        self.check_native_asset_access("commands.insert_resource()")?;
-
-        if self.is_world {
-            // Direct insertion into world
-            py_resource_type.insert_into_world(&mut *self.world_mut()?, py, resource_instance)?;
-        } else {
-            // Queue a command to insert the resource later
-            // Clone resource_instance for the command closure
-            let resource_clone = resource_instance.clone_ref(py);
-            let error_sink = self.error_sink.clone();
-
-            self.execute_or_queue(move |world: &mut World| {
-                Python::attach(|py| {
-                    if let Err(e) = py_resource_type.insert_into_world(world, py, resource_clone) {
-                        report_deferred_error(
-                            &error_sink,
-                            "Failed to insert resource via Commands",
-                            e,
-                        );
+            if self.is_world_queue() {
+                let value = match &py_resource_type {
+                    PyResourceType::Dynamic(pointer) => {
+                        global_registry::get_resource_bridge_by_py_type(*pointer)
+                            .ok_or_else(|| PyRuntimeError::new_err("Resource bridge not found"))?
+                            .snapshot_for_commands(&resource)?
                     }
-                });
-            })?;
-        }
+                    PyResourceType::Custom(_) => resource.unbind(),
+                    PyResourceType::AssetServer => {
+                        return Err(PyTypeError::new_err(ASSET_SERVER_MANUAL_INSERT));
+                    }
+                };
+                self.queue_world(WorldCommand::InsertResource(value))?;
+                self.record_prepared_trace_op(trace_operation);
+                return Ok(());
+            }
 
-        self.record_prepared_trace_op(trace_operation);
+            // Convert the bound resource to a Py<PyAny>
+            let resource_instance: Py<PyAny> = resource.unbind();
+            self.check_native_asset_access("commands.insert_resource()")?;
 
-        Ok(())
+            if self.is_immediate() {
+                // Direct insertion into world
+                py_resource_type.insert_into_world(
+                    &mut *self.world_mut()?,
+                    py,
+                    resource_instance,
+                )?;
+            } else {
+                // Queue a command to insert the resource later
+                // Clone resource_instance for the command closure
+                let resource_clone = resource_instance.clone_ref(py);
+                let error_sink = self.error_sink.clone();
+
+                self.execute_or_queue(move |world: &mut World| {
+                    Python::attach(|py| {
+                        if let Err(e) =
+                            py_resource_type.insert_into_world(world, py, resource_clone)
+                        {
+                            report_deferred_error(
+                                &error_sink,
+                                "Failed to insert resource via Commands",
+                                e,
+                            );
+                        }
+                    });
+                })?;
+            }
+
+            self.record_prepared_trace_op(trace_operation);
+
+            Ok(())
+        })
     }
 
     pub fn remove_resource(&self, py: Python, resource_type: Bound<'_, PyAny>) -> PyResult<()> {
-        self.check_valid()?;
+        self.error_boundary()?.run(|| {
+            self.check_valid()?;
 
-        // Get the resource type - it should be a type object
-        let type_obj = resource_type.cast::<PyType>().map_err(|_| {
-            PyTypeError::new_err("remove_resource expects a resource type (class), not an instance")
-        })?;
-
-        let py_resource_type = PyResourceType::try_from((type_obj, py))?;
-        let trace_operation = if self.parity_trace.is_some() {
-            Some(PendingParityOp {
-                kind: ParityOpKind::ResourceRemove,
-                type_name: Some(type_obj.name()?.to_string()),
-                payload_digest: CanonValue::None.digest(),
-                target: None,
-            })
-        } else {
-            None
-        };
-        self.check_native_asset_access("commands.remove_resource()")?;
-
-        if self.is_world {
-            // Direct removal from world
-            py_resource_type.remove_from_world(&mut *self.world_mut()?, py)?;
-        } else {
-            // Queue a command to remove the resource later
-            let error_sink = self.error_sink.clone();
-            self.execute_or_queue(move |world: &mut World| {
-                Python::attach(|py| {
-                    if let Err(e) = py_resource_type.remove_from_world(world, py) {
-                        report_deferred_error(
-                            &error_sink,
-                            "Failed to remove resource via Commands",
-                            e,
-                        );
-                    }
-                });
+            // Get the resource type - it should be a type object
+            let type_obj = resource_type.cast::<PyType>().map_err(|_| {
+                PyTypeError::new_err(
+                    "remove_resource expects a resource type (class), not an instance",
+                )
             })?;
-        }
 
-        self.record_prepared_trace_op(trace_operation);
+            let py_resource_type = PyResourceType::try_from((type_obj, py))?;
+            let trace_operation = if self.parity_trace.is_some() {
+                Some(PendingParityOp {
+                    kind: ParityOpKind::ResourceRemove,
+                    type_name: Some(type_obj.name()?.to_string()),
+                    payload_digest: CanonValue::None.digest(),
+                    target: None,
+                })
+            } else {
+                None
+            };
+            if self.is_world_queue() {
+                if matches!(py_resource_type, PyResourceType::AssetServer) {
+                    return Err(PyTypeError::new_err(ASSET_SERVER_MANUAL_REMOVE));
+                }
+                self.queue_world(WorldCommand::RemoveResource(resource_type.unbind()))?;
+                self.record_prepared_trace_op(trace_operation);
+                return Ok(());
+            }
+            self.check_native_asset_access("commands.remove_resource()")?;
 
-        Ok(())
+            if self.is_immediate() {
+                // Direct removal from world
+                py_resource_type.remove_from_world(&mut *self.world_mut()?, py)?;
+            } else {
+                // Queue a command to remove the resource later
+                let error_sink = self.error_sink.clone();
+                self.execute_or_queue(move |world: &mut World| {
+                    Python::attach(|py| {
+                        if let Err(e) = py_resource_type.remove_from_world(world, py) {
+                            report_deferred_error(
+                                &error_sink,
+                                "Failed to remove resource via Commands",
+                                e,
+                            );
+                        }
+                    });
+                })?;
+            }
+
+            self.record_prepared_trace_op(trace_operation);
+
+            Ok(())
+        })
     }
 
     pub fn trigger(&self, py: Python, event: Bound<'_, PyAny>) -> PyResult<()> {
-        let target_entity = if event.hasattr("entity")? {
-            Some(event.getattr("entity")?.extract::<PyEntity>()?.0)
-        } else {
-            None
-        };
-        trigger_event_helper(self, py, event, target_entity)
+        self.error_boundary()?.run(|| {
+            let target_entity = if event.hasattr("entity")? {
+                Some(event.getattr("entity")?.extract::<PyEntity>()?.0)
+            } else {
+                None
+            };
+            trigger_event_helper(self, py, event, target_entity)
+        })
     }
 }
 
@@ -1598,7 +1869,11 @@ impl PyCommands {
         let entity_id = entity.0;
         self.trace_target_op(ParityOpKind::Despawn, entity_id);
 
-        if self.is_world {
+        if self.is_world_queue() {
+            return self.queue_world(WorldCommand::Mutation(WorldMutation::Despawn(entity_id)));
+        }
+
+        if self.is_immediate() {
             let mut world = self.world_mut()?;
             if hierarchy_contains_resource_entity(&world, entity_id) {
                 return Err(PyTypeError::new_err(RESOURCE_ENTITY_DESPAWN));

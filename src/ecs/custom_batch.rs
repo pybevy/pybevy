@@ -16,8 +16,10 @@ use pyo3::{
 };
 
 use super::{
-    component_layout::{ComponentLayout, ComponentLayoutExt, PrimitiveType, PrimitiveTypeExt},
-    component_type::register_custom_component,
+    component_layout::{
+        ComponentLayout, ComponentLayoutExt, ComponentStorageType, PrimitiveType, PrimitiveTypeExt,
+    },
+    component_type::{PreparedCustomComponentRegistration, register_prepared_custom_component},
     component_wrapper::*,
 };
 
@@ -39,6 +41,21 @@ pub struct PyCustomComponentBatch {
     /// Qualified name for the component (retained for debugging)
     #[allow(dead_code)]
     qualified_name: String,
+}
+
+impl PyCustomComponentBatch {
+    pub(crate) fn prepared_registration(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<PreparedCustomComponentRegistration> {
+        let registration = PreparedCustomComponentRegistration::from_python_class_with_layout(
+            self.component_cls.bind(py),
+            ComponentStorageType::Wrapper(self.layout.wrapper_size),
+            Some(Arc::new(self.layout.clone())),
+        )?;
+        registration.validate_current(py)?;
+        Ok(registration)
+    }
 }
 
 #[pymethods]
@@ -395,9 +412,9 @@ impl BatchComponent for CustomComponentBatchBridge {
         world: &mut World,
     ) -> PyResult<()> {
         let batch = batch.extract::<PyRef<PyCustomComponentBatch>>()?;
-        let type_ptr = batch.component_cls.bind(py).as_type_ptr();
-        let component_id = register_custom_component(world, type_ptr, py);
+        let registration = batch.prepared_registration(py)?;
         let mut prepared = prepare_custom_batch(py, &batch)?;
+        let component_id = register_prepared_custom_component(world, &registration);
         prepared.insert(component_id, entities, world);
 
         Ok(())

@@ -454,6 +454,13 @@ pub unsafe trait SystemInterpreter: Send + Sync + 'static {
         policy: StoredErrorPolicy,
     );
 
+    fn take_world_command_failure(
+        &self,
+        _world: &mut World,
+    ) -> Option<InterpreterFailure<Self::ExceptionToken>> {
+        None
+    }
+
     fn retire(&self, retained: &SystemHandle<Self>);
 }
 
@@ -806,6 +813,14 @@ where
         let duration = started.elapsed();
 
         self.command_queue.append(&mut local_queue);
+        let command_failure = if self.flags.needs_exclusive {
+            // SAFETY: the exclusive flag grants whole-World access after arguments expire.
+            let world = unsafe { world.world_mut() };
+            world.flush();
+            self.interpreter.take_world_command_failure(world)
+        } else {
+            None
+        };
         if let Some(trace_run) = trace_run {
             self.pending_trace_runs.push(trace_run);
         }
@@ -817,6 +832,10 @@ where
                 O::skipped()
             }
         };
+
+        if let Some(failure) = command_failure {
+            self.store_failure(failure, StoredErrorPolicy::RaiseAfterUpdate);
+        }
 
         if let Some(profiler) = &self.profiler {
             // SAFETY: initialize declares the Time read whenever a profiler is
@@ -1027,6 +1046,7 @@ pub unsafe fn execute_observer<B: SystemInterpreter>(
                 .unwrap_or_else(|error| panic!("{error}"))
         });
     local_queue.apply(world);
+    let command_failure = interpreter.take_world_command_failure(world);
     if let (Some(sink), Some(trace), Some(resolved)) =
         (trace_sink.as_ref(), trace_run.as_ref(), resolved.as_ref())
     {
@@ -1034,8 +1054,21 @@ pub unsafe fn execute_observer<B: SystemInterpreter>(
             .unwrap_or_else(|error| panic!("{error}"));
     }
     match call_result {
-        Ok(_) => Ok(()),
+        Ok(_) => match command_failure {
+            Some(failure) => {
+                finish_observer_failure(interpreter, failure_sink, metadata, policy, failure)
+            }
+            None => Ok(()),
+        },
         Err(failure) => {
+            if let Some(command_failure) = command_failure {
+                interpreter.store_failure(
+                    failure_sink,
+                    command_failure,
+                    metadata,
+                    StoredErrorPolicy::ReportAndContinue,
+                );
+            }
             finish_observer_failure(interpreter, failure_sink, metadata, policy, failure)
         }
     }
@@ -1155,6 +1188,7 @@ mod tests {
         fail: bool,
         panic: bool,
         queue_counter: bool,
+        queue_world_counter: bool,
         recurse_observer: bool,
         condition_valid: bool,
     }
@@ -1165,6 +1199,7 @@ mod tests {
                 fail: false,
                 panic: false,
                 queue_counter: false,
+                queue_world_counter: false,
                 recurse_observer: false,
                 condition_valid: true,
             }
@@ -1312,6 +1347,16 @@ mod tests {
                 .lock()
                 .unwrap_or_else(|poison| poison.into_inner()) = Some(ctx.ticks);
             state.runs += 1;
+            if params.queue_world_counter {
+                let validity = ctx.validity.clone();
+                // SAFETY: the fixture declares exclusive World access for this plan.
+                unsafe { ctx.world.world_mut() }
+                    .commands()
+                    .queue(move |world: &mut World| {
+                        assert!(validity.check().is_err());
+                        world.resource_mut::<Counter>().0 += 10;
+                    });
+            }
             if params.queue_counter {
                 ctx.commands.push(|world: &mut World| {
                     world.resource_mut::<Counter>().0 += 1;
@@ -1486,6 +1531,32 @@ mod tests {
         assert!(!access.combined_access().has_any_read());
         assert!(!access.combined_access().has_any_write());
         assert!(system.flags().contains(SystemStateFlags::EXCLUSIVE));
+    }
+
+    #[test]
+    fn exclusive_world_queue_flushes_after_invalidation_and_before_system_queue() {
+        for fail in [false, true] {
+            let mut world = World::new();
+            world.insert_resource(Counter(0));
+            let mut fixture = fixture(
+                FakeCall::Unit,
+                FakePlan {
+                    queue_counter: true,
+                    queue_world_counter: true,
+                    fail,
+                    ..Default::default()
+                },
+                InvocationKind::System,
+            );
+            fixture.prepared.flags.needs_exclusive = true;
+            let mut system = DynamicSystemCore::<_, UnitOutput>::new(fixture.prepared);
+            system.initialize(&mut world);
+            // SAFETY: the test owns the World exclusively and initialized this system.
+            unsafe { system.run_unsafe((), world.as_unsafe_world_cell()) }.unwrap();
+            assert_eq!(world.resource::<Counter>().0, 10);
+            system.apply_deferred(&mut world);
+            assert_eq!(world.resource::<Counter>().0, 11);
+        }
     }
 
     #[test]
