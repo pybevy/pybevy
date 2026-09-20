@@ -82,6 +82,10 @@ pub struct MethodDef {
     pub is_class_method: bool,
     /// Self mutability
     pub self_mutability: SelfMutability,
+    /// Explicit Python self/cls annotation, retained separately from arguments.
+    pub receiver_type: Option<String>,
+    /// Concrete iterator protocol resolved from native wrapper definitions.
+    pub iterator_return_type: Option<String>,
     /// Source location
     pub location: Option<SourceLocation>,
     /// Original signature string for display
@@ -255,6 +259,8 @@ pub struct PropertyDef {
     pub name: String,
     /// Property type
     pub property_type: Option<String>,
+    /// Type spelling resolved through unambiguous native Python class names.
+    pub declared_property_type: Option<String>,
     /// Has getter
     pub has_getter: bool,
     /// Has setter
@@ -305,6 +311,8 @@ pub struct EnumVariantDef {
     pub kind: EnumVariantKind,
     /// Explicit constructor declared by a nested Python variant class.
     pub constructor: Option<MethodDef>,
+    /// Payload fields declared writable by the nested Python variant class.
+    pub writable_fields: Vec<String>,
 }
 
 /// Enum variant kind

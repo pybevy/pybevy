@@ -296,7 +296,7 @@ fn main() -> ExitCode {
             }
         }
         Err(e) => {
-            eprintln!("{}: {}", "error".red().bold(), e);
+            eprintln!("{}: {e:#}", "error".red().bold());
             ExitCode::FAILURE
         }
     }
@@ -616,6 +616,19 @@ fn run_validate(
             type_filter.iter().any(|filter| {
                 c.python_name.eq_ignore_ascii_case(filter)
                     || c.rust_name.eq_ignore_ascii_case(filter)
+                    || config
+                        .validation
+                        .specialized_receivers
+                        .iter()
+                        .any(|mapping| {
+                            mapping.rust_type == c.rust_name
+                                && mapping
+                                    .path
+                                    .split('[')
+                                    .next()
+                                    .and_then(|owner| owner.rsplit('.').next())
+                                    .is_some_and(|owner| owner.eq_ignore_ascii_case(filter))
+                        })
             })
         });
         if args.verbose {

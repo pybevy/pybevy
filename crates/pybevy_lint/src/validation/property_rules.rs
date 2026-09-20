@@ -23,7 +23,13 @@ pub fn validate_properties(
                 // Check type compatibility
                 if let (Some(rust_ty), Some(py_ty)) =
                     (&rust_prop.property_type, &py_prop.property_type)
-                    && !crate::python_parser::types::types_compatible(rust_ty, py_ty)
+                    && !crate::python_parser::types::types_compatible(
+                        rust_prop
+                            .declared_property_type
+                            .as_deref()
+                            .unwrap_or(rust_ty),
+                        py_ty,
+                    )
                 {
                     let mut diag = Diagnostic::warning(
                         DiagnosticCode::E006,

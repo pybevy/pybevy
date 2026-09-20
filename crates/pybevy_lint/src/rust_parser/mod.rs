@@ -1,4 +1,7 @@
+mod cfg_classes;
 mod conversions;
+mod declared_property_types;
+mod iterator_returns;
 mod macros;
 mod manual_enum;
 mod pyclass;
@@ -62,6 +65,8 @@ pub fn parse_directory(path: &Path) -> Result<Vec<PyClassDef>> {
         classes.extend(file_classes);
     }
 
+    iterator_returns::annotate_classes(&mut classes);
+    declared_property_types::annotate_classes(&mut classes);
     Ok(classes)
 }
 
@@ -120,6 +125,7 @@ pub fn parse_file(path: &Path) -> Result<Vec<PyClassDef>> {
     let syntax = syn::parse_file(&content)?;
 
     let mut classes = Vec::new();
+    let mut declarations = Vec::new();
 
     // First pass: collect all pyclass definitions (structs and enums)
     for item in &syntax.items {
@@ -127,11 +133,13 @@ pub fn parse_file(path: &Path) -> Result<Vec<PyClassDef>> {
             syn::Item::Struct(item_struct) => {
                 if let Some(class) = pyclass::parse_struct(item_struct, path) {
                     classes.push(class);
+                    declarations.push(item_struct.attrs.as_slice());
                 }
             }
             syn::Item::Enum(item_enum) => {
                 if let Some(class) = pyclass::parse_enum(item_enum, path) {
                     classes.push(class);
+                    declarations.push(item_enum.attrs.as_slice());
                 }
             }
             _ => {}
@@ -141,7 +149,8 @@ pub fn parse_file(path: &Path) -> Result<Vec<PyClassDef>> {
     // Second pass: collect pymethods for each class
     for item in &syntax.items {
         if let syn::Item::Impl(item_impl) = item {
-            if let Some(index) = item_impl
+            let expanded;
+            let methods = if let Some(index) = item_impl
                 .attrs
                 .iter()
                 .position(|a| constructor_spec::has_name(a, "pyconstructor"))
@@ -152,19 +161,27 @@ pub fn parse_file(path: &Path) -> Result<Vec<PyClassDef>> {
                 {
                     anyhow::bail!("pyconstructor must precede pymethods in {}", path.display());
                 }
-                let mut expanded = item_impl.clone();
-                let attr = expanded.attrs.remove(index);
-                let expanded =
-                    constructor::expand(attr.parse_args()?, expanded, &quote::quote!(pybevy_core))
+                let mut input = item_impl.clone();
+                let attr = input.attrs.remove(index);
+                expanded =
+                    constructor::expand(attr.parse_args()?, input, &quote::quote!(pybevy_core))
                         .with_context(|| format!("Invalid pyconstructor in {}", path.display()))?;
-                pymethods::process_impl_block(&expanded, &mut classes, path);
+                &expanded
             } else {
-                pymethods::process_impl_block(item_impl, &mut classes, path);
+                item_impl
+            };
+            let matching = cfg_classes::matching_classes(item_impl, &classes, &declarations)
+                .with_context(|| format!("Invalid cfg class routing in {}", path.display()))?;
+            for index in matching {
+                let class = std::slice::from_mut(&mut classes[index]);
+                pymethods::process_impl_block(methods, class, path);
+                conversions::process_conversion_impl(item_impl, class, path);
             }
-            conversions::process_conversion_impl(item_impl, &mut classes, path);
         }
     }
 
     manual_enum::extract(&syntax, &mut classes);
+    iterator_returns::annotate_classes(&mut classes);
+    declared_property_types::annotate_classes(&mut classes);
     Ok(classes)
 }

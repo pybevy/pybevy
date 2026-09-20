@@ -134,6 +134,7 @@ pub fn parse_enum(item: &ItemEnum, file_path: &Path) -> Option<PyClassDef> {
                 name,
                 kind,
                 constructor,
+                writable_fields: Vec::new(),
             }
         })
         .collect();
@@ -292,6 +293,7 @@ fn parse_struct_field_properties(fields: &Fields, file_path: &Path) -> Vec<Prope
             let prop_name = custom_name.unwrap_or_else(|| field_name.to_string());
 
             properties.push(PropertyDef {
+                declared_property_type: None,
                 name: prop_name,
                 property_type: Some(type_to_string(&field.ty)),
                 has_getter,
