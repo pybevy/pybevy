@@ -868,6 +868,11 @@ fn validate_method_return(
     };
     let rust_return = rust.return_type.as_deref().unwrap_or("()");
     let mut native = normalize_rust_type(&resolve_self(rust_return, &class.python_name));
+    if python_return.trim().starts_with("Iterator[")
+        && let Some(iterator) = &rust.iterator_return_type
+    {
+        native = iterator.clone();
+    }
     if rust.name == "__next__" || rust.name == "__anext__" {
         native = native
             .strip_suffix(" | None")

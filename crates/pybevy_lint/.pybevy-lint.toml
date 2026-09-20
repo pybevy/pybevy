@@ -14,6 +14,16 @@ reason = "with_children holds the receiver borrow across the user callback, whic
 path = "ecs.RelatedSpawnerCommands"
 reason = "its &self spawn methods hold the receiver borrow across component conversion, which is arbitrary Python and receives the spawner"
 
+[[validation.specialized_receivers]]
+path = "time.Time[Virtual]"
+rust_type = "PyTimeVirtual"
+reason = "PyTime.__class_getitem__ returns PyTimeVirtual for Virtual"
+
+[[validation.specialized_receivers]]
+path = "time.Time[Fixed]"
+rust_type = "PyTimeFixed"
+reason = "PyTime.__class_getitem__ returns PyTimeFixed for Fixed"
+
 [bevy]
 # Path to Bevy source (relative to project root or absolute)
 # Can be overridden with --bevy-path CLI option
@@ -2991,12 +3001,115 @@ reason = "materialize() is implemented in the main pybevy crate because it depen
 [[validation.exceptions]]
 code = "E006"
 path = "array.Array"
-reason = "the dtype class is deliberately named lowercase to mirror numpy, so the PyDType wrapper name never matches"
+message = "method 'Array::__dlpack_device__' return type mismatch: Rust='(i32 , i32)' vs Python='tuple[Literal[1], Literal[0]]'"
+reason = "the native method returns the constant (1, 0), pinned by tests/array/test_dlpack.py; signature-only comparison cannot prove Literal values"
 
 [[validation.exceptions]]
 code = "W009"
 path = "window.Window"
 reason = "constructor coverage exposes 19 additional platform-policy booleans; that does not make these low-frequency controls a reviewed columnar API, so retain the established decorations/resizable/transparent View lanes pending separate review"
+
+[[validation.exceptions]]
+code = "E006"
+path = "assets.AssetLoadFailedEvent"
+message = "property 'AssetLoadFailedEvent::id' type mismatch: Rust='MaterializedPyAssetId' vs Python='AssetId[A_co]'"
+reason = "the runtime materializer restores the concrete asset type into AssetId; the native adapter cannot name the stub specialization selected by AssetLoadFailedEvent[A]"
+
+[[validation.exceptions]]
+code = "E006"
+path = "assets.Assets"
+message = "method 'Assets::__iter__' return type mismatch: Rust='PyResult < PyAssetIter >' vs Python='Iterator[tuple[AssetId[A], A]]'"
+reason = "the private iterator materializes the logical asset type retained by Assets[A] and structurally implements this generic iterator contract"
+
+[[validation.exceptions]]
+code = "E006"
+path = "ecs.World"
+message = "method 'World::query' return type mismatch: Rust='PyResult < PyQueryIter >' vs Python='_WorldQueryT'"
+reason = "the private runtime iterator reconstructs the result selected by the Query marker; its recursive generic row mapping exists only in the stub contract"
+
+[[validation.exceptions]]
+code = "E006"
+path = "ecs.View"
+message = "method 'View::column' return type mismatch: Rust='PyResult < Py < PyViewCol > >' vs Python='TransformViewColumn'"
+reason = "the runtime column resolves fields dynamically while the overload exposes Transform's reviewed static facade"
+
+[[validation.exceptions]]
+code = "E006"
+path = "ecs.View"
+message = "method 'View::column_mut' return type mismatch: Rust='PyResult < Py < PyViewColMut > >' vs Python='TransformViewColumn'"
+reason = "the runtime mutable column resolves fields dynamically while the overload exposes Transform's reviewed static facade"
+
+[[validation.exceptions]]
+code = "E006"
+path = "ecs.View"
+message = "method 'View::column' return type mismatch: Rust='PyResult < Py < PyViewCol > >' vs Python='PointLightViewColumn'"
+reason = "the runtime column resolves fields dynamically while the overload exposes PointLight's reviewed static facade"
+
+[[validation.exceptions]]
+code = "E006"
+path = "ecs.View"
+message = "method 'View::column_mut' return type mismatch: Rust='PyResult < Py < PyViewColMut > >' vs Python='PointLightViewColumn'"
+reason = "the runtime mutable column resolves fields dynamically while the overload exposes PointLight's reviewed static facade"
+
+[[validation.exceptions]]
+code = "E006"
+path = "ecs.View"
+message = "method 'View::column' return type mismatch: Rust='PyResult < Py < PyViewCol > >' vs Python='ViewColumn'"
+reason = "the fallback stub return is the public structural column facade for the private dynamically resolved runtime column"
+
+[[validation.exceptions]]
+code = "E006"
+path = "ecs.View"
+message = "method 'View::column_mut' return type mismatch: Rust='PyResult < Py < PyViewColMut > >' vs Python='ViewColumn'"
+reason = "the fallback stub return is the public structural column facade for the private dynamically resolved mutable runtime column"
+
+[[validation.exceptions]]
+code = "E006"
+path = "ecs.Batch"
+message = "method 'Batch::column' return type mismatch: Rust='PyResult < Py < PyViewColumn > >' vs Python='TransformViewColumn[ViewColumn]'"
+reason = "the runtime buffer column resolves fields dynamically while the overload exposes Transform's reviewed typed facade"
+
+[[validation.exceptions]]
+code = "E006"
+path = "ecs.Batch"
+message = "method 'Batch::column_mut' return type mismatch: Rust='PyResult < Py < PyViewColumn > >' vs Python='TransformViewColumn[ViewColumn]'"
+reason = "the runtime mutable buffer column resolves fields dynamically while the overload exposes Transform's reviewed typed facade"
+
+[[validation.exceptions]]
+code = "E006"
+path = "ecs.Batch"
+message = "method 'Batch::column' return type mismatch: Rust='PyResult < Py < PyViewColumn > >' vs Python='PointLightViewColumn[ViewColumn]'"
+reason = "the runtime buffer column resolves fields dynamically while the overload exposes PointLight's reviewed typed facade"
+
+[[validation.exceptions]]
+code = "E006"
+path = "ecs.Batch"
+message = "method 'Batch::column_mut' return type mismatch: Rust='PyResult < Py < PyViewColumn > >' vs Python='PointLightViewColumn[ViewColumn]'"
+reason = "the runtime mutable buffer column resolves fields dynamically while the overload exposes PointLight's reviewed typed facade"
+
+[[validation.exceptions]]
+code = "E006"
+path = "ecs.MessageReader"
+message = "method 'MessageReader::read' return type mismatch: Rust='PyResult < PyMessageReaderIter >' vs Python='Iterator[M]'"
+reason = "the private iterator materializes the channel type retained by MessageReader[M] and structurally implements Iterator[M]"
+
+[[validation.exceptions]]
+code = "E006"
+path = "ecs.MessageReader"
+message = "method 'MessageReader::__iter__' return type mismatch: Rust='PyResult < PyMessageReaderIter >' vs Python='Iterator[M]'"
+reason = "the private iterator materializes the channel type retained by MessageReader[M] and structurally implements Iterator[M]"
+
+[[validation.exceptions]]
+code = "E006"
+path = "ecs.MessageMutator"
+message = "method 'MessageMutator::read' return type mismatch: Rust='PyResult < PyMessageReaderIter >' vs Python='Iterator[M]'"
+reason = "the private iterator materializes the channel type retained by MessageMutator[M] and structurally implements Iterator[M]"
+
+[[validation.exceptions]]
+code = "E006"
+path = "ecs.MessageMutator"
+message = "method 'MessageMutator::__iter__' return type mismatch: Rust='PyResult < PyMessageReaderIter >' vs Python='Iterator[M]'"
+reason = "the private iterator materializes the channel type retained by MessageMutator[M] and structurally implements Iterator[M]"
 
 [[validation.exceptions]]
 code = "E013"

@@ -186,6 +186,8 @@ fn process_method(method: &syn::ImplItemFn, class: &mut PyClassDef, file_path: &
         is_static: is_staticmethod,
         is_class_method: is_classmethod,
         self_mutability,
+        receiver_type: None,
+        iterator_return_type: None,
         location: Some(location.clone()),
         signature_str: signature_info.map(|s| s.raw),
         has_varargs: false,
@@ -212,6 +214,7 @@ fn process_method(method: &syn::ImplItemFn, class: &mut PyClassDef, file_path: &
             class.properties.push(PropertyDef {
                 name: prop_name,
                 property_type: method_def.return_type,
+                declared_property_type: None,
                 has_getter: true,
                 has_setter: false,
                 getter_mutability: self_mutability,
@@ -234,6 +237,7 @@ fn process_method(method: &syn::ImplItemFn, class: &mut PyClassDef, file_path: &
             class.properties.push(PropertyDef {
                 name: prop_name,
                 property_type: setter_type,
+                declared_property_type: None,
                 has_getter: false,
                 has_setter: true,
                 getter_mutability: SelfMutability::None,

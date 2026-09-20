@@ -99,6 +99,17 @@ pub struct ValidationConfig {
     pub disabled: Vec<DisabledDiagnostic>,
     #[serde(default)]
     pub shared_borrow_types: Vec<SharedBorrowType>,
+    #[serde(default)]
+    pub specialized_receivers: Vec<SpecializedReceiver>,
+}
+
+/// Reviewed routing from a public specialized receiver to its native wrapper.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpecializedReceiver {
+    pub path: String,
+    pub rust_type: String,
+    pub reason: String,
 }
 
 /// A diagnostic code turned off wholesale, with a durable reason.

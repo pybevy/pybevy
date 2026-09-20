@@ -159,6 +159,7 @@ fn parse_variant_def(
 
     let body = node.child_by_field_name("body")?;
     let mut fields = Vec::new();
+    let mut writable_fields = Vec::new();
     let mut constructor = None;
     let mut cursor = body.walk();
     for child in body.children(&mut cursor) {
@@ -166,6 +167,12 @@ fn parse_variant_def(
             let mut parsed = PyClassDef::default();
             parse_decorated_definition(&child, source, path, &mut parsed);
             for property in parsed.properties {
+                if property.has_setter
+                    && !property.name.starts_with('_')
+                    && !writable_fields.contains(&property.name)
+                {
+                    writable_fields.push(property.name.clone());
+                }
                 if property.has_getter
                     && !property.name.starts_with('_')
                     && !fields.iter().any(|(name, _)| name == &property.name)
@@ -210,18 +217,28 @@ fn parse_variant_def(
         name,
         kind,
         constructor,
+        writable_fields,
     })
 }
 
-/// Extract the first base class name
+/// Prefer concrete inheritance to typing's generic parameter declaration.
 fn extract_first_base_class(superclasses: &Node, source: &str) -> Option<String> {
     let mut cursor = superclasses.walk();
+    let mut generic = None;
     for child in superclasses.children(&mut cursor) {
         if let Some(base) = extract_base_class_name(&child, source) {
+            if matches!(
+                base.as_str(),
+                "Generic" | "typing.Generic" | "typing_extensions.Generic"
+            ) {
+                generic.get_or_insert(base);
+                continue;
+            }
             return Some(base);
         }
     }
-    None
+    // Generic alone must not hide a missing native base from validation.
+    generic
 }
 
 fn extract_base_class_name(node: &Node<'_>, source: &str) -> Option<String> {

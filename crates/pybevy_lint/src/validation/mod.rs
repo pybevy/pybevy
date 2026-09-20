@@ -4,6 +4,7 @@ pub mod method_rules;
 pub mod origin;
 pub mod property_rules;
 mod protocol_rules;
+mod specialized_receivers;
 pub mod style_rules;
 
 use std::collections::{HashMap, HashSet};
@@ -64,6 +65,7 @@ pub fn validate_with_bevy(
     };
 
     if check_stale_exceptions {
+        diagnostics.extend(specialized_receivers::audit_mappings(rust_classes, config));
         diagnostics.extend(origin::audit_constructor_mappings(
             rust_classes,
             &config.bevy,
@@ -388,10 +390,11 @@ fn validate_all_impl_with_consumed(
                 }
 
                 // Validate methods
-                class_diagnostics.extend(method_rules::validate_methods_with_config(
+                class_diagnostics.extend(specialized_receivers::validate_methods(
                     rust_class,
                     py_class,
-                    config.map(|config| &config.bevy),
+                    rust_classes,
+                    config,
                 ));
 
                 class_diagnostics.extend(protocol_rules::validate_protocols(
@@ -447,6 +450,7 @@ fn validate_all_impl_with_consumed(
     }
 
     if let Some(config) = config.filter(|_| check_stale_exceptions) {
+        diagnostics.extend(specialized_receivers::audit_mappings(rust_classes, config));
         for (exception, consumed) in config
             .validation
             .exceptions
@@ -705,6 +709,7 @@ fn enum_variant_as_class(parent: &PyClassDef, variant: &EnumVariantDef) -> PyCla
     let properties = fields
         .into_iter()
         .map(|(name, property_type)| PropertyDef {
+            has_setter: variant.writable_fields.contains(&name),
             name,
             property_type: Some(property_type),
             has_getter: true,

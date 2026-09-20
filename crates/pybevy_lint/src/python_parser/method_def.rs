@@ -36,6 +36,10 @@ pub fn parse_function_def(
         SelfMutability::None
     };
 
+    let receiver_type = parameters
+        .first()
+        .filter(|p| p.name == "self" || p.name == "cls")
+        .and_then(|p| p.param_type.clone());
     let parameters: Vec<_> = parameters
         .into_iter()
         .filter(|p| p.name != "self" && p.name != "cls")
@@ -49,6 +53,8 @@ pub fn parse_function_def(
         is_static,
         is_class_method: decorators.iter().any(|d| d.contains("@classmethod")),
         self_mutability,
+        receiver_type,
+        iterator_return_type: None,
         location: Some(SourceLocation {
             file: path.to_path_buf(),
             line: node.start_position().row + 1,

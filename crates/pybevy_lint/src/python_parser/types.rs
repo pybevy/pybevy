@@ -101,7 +101,7 @@ pub fn types_compatible(rust_type: &str, python_type: &str) -> bool {
     }
 
     // Compare container arguments before any base-name fallback.
-    for container in ["tuple", "list", "dict", "set", "frozenset"] {
+    for container in ["tuple", "list", "dict", "set", "frozenset", "Iterator"] {
         let prefix = format!("{container}[");
         if let (Some(rust), Some(python)) = (
             rust_normalized

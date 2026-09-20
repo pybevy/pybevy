@@ -110,7 +110,7 @@ pub fn validate_bridge_batch(rust_class: &PyClassDef, py_class: &PyClassDef) -> 
 }
 
 /// Eligible constructor parameter types for view_fields (zero-copy View API access)
-const VIEW_ELIGIBLE_TYPES: &[&str] = &["f32", "f64", "bool", "i32", "u32", "i64", "u64"];
+const VIEW_ELIGIBLE_TYPES: &[&str] = &["f32", "bool", "i32", "u32"];
 
 /// Eligible constructor parameter types for batch_only_fields (batch only, not View)
 const BATCH_ONLY_ELIGIBLE_TYPES: &[&str] = &["PyColor", "Color"];
