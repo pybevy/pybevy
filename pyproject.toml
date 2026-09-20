@@ -1,6 +1,6 @@
 [project]
 name = "pybevy"
-version = "0.3.0"
+version = "0.3.0rc1"
 description = "PyBevy: A Python Real-Time Engine Built on Bevy"
 requires-python = ">=3.12,<4.0"
 dependencies = ["typing-extensions >= 4.12; python_version < '3.13'"]

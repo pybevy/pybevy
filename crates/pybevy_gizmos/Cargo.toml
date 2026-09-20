@@ -1,6 +1,6 @@
 [package]
 name = "pybevy_gizmos"
-version = "0.3.0"
+version = "0.3.0-rc.1"
 edition = "2024"
 description = "Gizmo plugin for PyBevy"
 license = "MIT OR Apache-2.0"

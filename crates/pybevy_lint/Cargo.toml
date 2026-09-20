@@ -1,6 +1,6 @@
 [package]
 name = "pybevy_lint"
-version = "0.3.0"
+version = "0.3.0-rc.1"
 edition = "2024"
 description = "Linter for PyBevy: validates Rust PyO3 bindings against Python type stubs"
 publish = false
