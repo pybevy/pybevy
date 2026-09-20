@@ -63,6 +63,7 @@ use super::{
     query::query_runtime::{CachedQuery, PyQueryIter},
     system::{SystemFunction, SystemParam, SystemParamType},
     view::cached_view::CachedPyView,
+    world_commands,
 };
 
 fn condition_rejection_reason(rejection: ConditionRejection) -> &'static str {
@@ -1115,5 +1116,13 @@ unsafe impl SystemInterpreter for MainInterpreter {
 
     fn retire(&self, retained: &SystemHandle<Self>) {
         retire_main_handle(retained);
+    }
+
+    fn take_world_command_failure(&self, world: &mut World) -> Option<InterpreterFailure<PyErr>> {
+        Python::attach(|py| {
+            world_commands::raise_errors(world, py)
+                .err()
+                .map(|error| Self::failure(py, error))
+        })
     }
 }

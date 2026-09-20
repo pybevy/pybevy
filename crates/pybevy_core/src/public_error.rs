@@ -12,6 +12,15 @@ use std::{
 pub const LOAD_BUILDER_TYPE_REQUIRED: &str = "LoadBuilder.load() requires keyword-only asset_type when no settings establish the type; use load(path, asset_type=Image)";
 pub const LOAD_WITH_SETTINGS_DEPRECATED: &CStr = c"AssetServer.load_with_settings() is deprecated; use load_builder().with_settings(settings).load(path) instead";
 pub const LOADER_SETTINGS_BRIDGE_MISSING: &str = "Loader settings asset bridge is not registered";
+pub const WORLD_COMMAND_ERRORS: &str = "World command errors";
+pub const WORLD_CALLBACK_COMMAND_ERRORS: &str = "World callback and command errors";
+pub const WORLD_OPERATION_COMMAND_ERRORS: &str = "World operation and command errors";
+pub const WORLD_BATCH_ARGUMENTS: &str =
+    "spawn_batch() cannot combine batch= with positional components or count=";
+
+pub fn queued_component_layout_changed(name: &str) -> String {
+    format!("Component '{name}' changed storage or layout after command preparation")
+}
 
 pub fn asset_settings_type_mismatch(expected: &str, actual: &str) -> String {
     format!("Loader settings require asset type {expected}, got `{actual}`")

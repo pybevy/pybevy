@@ -146,13 +146,34 @@ PyBevy uses Bevy's Entity Component System (ECS). Entities are IDs, components a
 
 Entities are spawned via `Commands` and identified by an `Entity` handle.
 
+`World.commands()` is deferred too: spawning reserves an ID, but queries do not
+see its components until `world.flush()` or a native implicit flush boundary.
+All handles from the same World share
+Bevy's native command queue. Exclusive World systems and `app.world(callback)`
+flush on exit, even when the callback raises; MCP `run_code` does the same.
+Explicit flush raises queued application errors. An immediate World or entity
+operation that implicitly flushes also raises any command errors it applies;
+successful mutations are not rolled back. Callback and command failures are
+grouped with the callback failure first.
+`world.commands().entity(id)` does not check existence eagerly;
+`get_entity(id)` accepts reserved IDs and returns `None` for invalid IDs.
+Use `world.spawn(...)`, `world.entity(...)`, and direct
+World resource methods when immediate mutation is required.
+
+Enqueueing copies borrowed native component/resource values while they are
+valid. Custom Python-storage objects retain their identity. Queueing does not
+extend the lifetime of World/Commands handles or borrowed fields. Flush may run
+observers; captured outer handles are suspended during those callbacks.
+Do not change a custom component's storage hint or field schema while its
+prepared insertions are pending: application rejects that mismatch.
+
 Fluent EntityCommands and RelatedSpawnerCommands handles retain their producer's
 backing allocation, so temporary chains such as
 `world.commands().entity(entity).remove(Transform)` are safe. Handles obtained
 inside a system still expire with that system. Keep an `Entity` ID for later
 systems and obtain a fresh handle from their injected Commands or World.
 
-Owned `World()` instances expose their retained Python component/resource values
+Owned `World()` instances expose pending command payloads, retained Python component/resource values
 and registered classes to cyclic GC. Discarded namespaces can therefore release
 those Worlds even when their stored Python values refer back to the namespace.
 GC inspection remains safe during native field writes and asset operations.

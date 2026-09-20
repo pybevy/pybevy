@@ -14,7 +14,7 @@ use bevy::ecs::{
     entity::Entity,
     world::{EntityRef, World, unsafe_world_cell::UnsafeWorldCell},
 };
-use pyo3::{ffi::PyTypeObject, prelude::*, types::PyType};
+use pyo3::{exceptions::PyNotImplementedError, ffi::PyTypeObject, prelude::*, types::PyType};
 
 use crate::{FilteredEntityAccess, ValidityFlagWithMode};
 
@@ -149,6 +149,14 @@ pub trait ResourceBridge: Send + Sync + 'static {
 
     /// Insert resource into world
     fn insert(&self, world: &mut World, resource: &Bound<PyAny>) -> PyResult<()>;
+
+    /// Snapshot a Python resource before its borrowed authority can expire.
+    fn snapshot_for_commands(&self, _resource: &Bound<PyAny>) -> PyResult<Py<PyAny>> {
+        Err(PyNotImplementedError::new_err(format!(
+            "{} cannot be inserted from Python",
+            self.name()
+        )))
+    }
 
     /// Remove resource from world
     fn remove(&self, world: &mut World);

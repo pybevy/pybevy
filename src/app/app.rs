@@ -86,6 +86,7 @@ use crate::{
         },
         system_interpreter::ObserverRuntimeSinks,
         world::PyWorld,
+        world_commands,
     },
 };
 
@@ -494,6 +495,7 @@ impl PyApp {
     }
 
     fn install_python_runtime(app: &mut App) -> (Arc<Mutex<Vec<PyErr>>>, SystemErrorBuffer) {
+        world_commands::initialize(app.world_mut());
         if let Some(sinks) = app.world().get_resource::<ObserverRuntimeSinks>() {
             return (sinks.error_state.clone(), sinks.error_buffer.clone());
         }

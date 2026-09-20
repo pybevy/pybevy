@@ -25,12 +25,13 @@ use pybevy_core::{
     ensure_no_live_asset_access, extract_entity_from_any,
     public_error::{
         COMPONENT_BRIDGE_NOT_FOUND, RESOURCE_BRIDGE_NOT_FOUND, RESOURCE_ENTITY_DESPAWN,
-        unregistered_message_write,
+        WORLD_BATCH_ARGUMENTS, WORLD_CALLBACK_COMMAND_ERRORS, unregistered_message_write,
     },
     registry::global_registry,
     resource_initializer,
 };
 use pybevy_ecs::shared::{
+    parity_trace::ParityRunHandle,
     schedule::{StateScheduleLabel, TransitionScheduleLabel},
     system_runtime::ErrorPolicy,
 };
@@ -48,12 +49,14 @@ use crate::{
     assets::{asset_type::PyAssetTypeParam, assets::PyAssets},
     ecs::{
         PyEntity,
+        batch_spawn::{SpawnBatchCommand, prepare_iter_batch},
         commands::PyCommands,
-        component::PyComponentId,
+        component::{PyComponent, PyComponentId},
         component_layout::{ComponentLayoutExt, ComponentStorageType, ComponentStorageTypeExt},
         component_type::{
             ComponentRegistry, PyComponentType, drop_py_object, register_custom_component,
         },
+        custom_batch::PyCustomComponentBatch,
         custom_component::PyCustomComponent,
         deferred_drop,
         dynamic_system::lock_or_recover,
@@ -76,6 +79,7 @@ use crate::{
             canonicalize_state_schedule_label, canonicalize_transition_schedule_label,
         },
         system_interpreter::new_main_one_shot_system,
+        world_commands::{self, WorldCommandState},
         world_gc::WorldGcState,
     },
 };
@@ -100,6 +104,7 @@ enum EitherStateSchedule {
 #[pyclass(name = "World", module = "pybevy.ecs")]
 pub struct PyWorld {
     storage: WorldStorage,
+    pub(crate) parity_trace: Option<ParityRunHandle>,
     // Runtime validity check - prevents use after the underlying World goes away.
     // For borrowed worlds (system params) this is the system flag, invalidated on
     // system exit. For owned worlds (created from Python) it is a flag that starts
@@ -190,6 +195,7 @@ impl PyWorld {
         Self {
             gc_state: WorldGcState::for_world(world.id()),
             storage: WorldStorage::Borrowed(world as *mut World),
+            parity_trace: None,
             validity: Some(validity),
             asset_borrow_counters: Arc::new(Mutex::new(HashMap::new())),
             _deferred_flush: deferred_drop::MutationFlushGuard,
@@ -199,10 +205,12 @@ impl PyWorld {
     /// Create a new PyWorld that owns its World
     pub(crate) fn new_owned(mut world: World) -> Self {
         ensure_asset_access_registry(&mut world);
+        world_commands::initialize(&mut world);
         let validity = ValidityFlag::new_owned_world(world.id());
         let gc_state = WorldGcState::new(world.id());
         Self {
             storage: WorldStorage::Owned(Box::new(UnsafeCell::new(world))),
+            parity_trace: None,
             // Starts valid (Write mode); Drop invalidates it so any proxy/handle that
             // outlives `del world` errors instead of dereferencing the freed World.
             validity: Some(validity),
@@ -262,6 +270,7 @@ impl PyWorld {
                 WorldStorage::Borrowed(ptr) => WorldStorage::Borrowed(*ptr),
             },
             validity: self.validity.clone(),
+            parity_trace: self.parity_trace.clone(),
             asset_borrow_counters: self.asset_borrow_counters.clone(),
             gc_state: self.gc_state.clone(),
             _deferred_flush: deferred_drop::MutationFlushGuard,
@@ -331,14 +340,34 @@ impl PyWorld {
     ///     py_world.init_resource(py, resource_type)
     /// })?;
     /// ```
-    pub(crate) fn with_temporary<F, R>(world: &mut World, _py: Python, f: F) -> PyResult<R>
+    pub(crate) fn with_temporary<F, R>(world: &mut World, py: Python, f: F) -> PyResult<R>
     where
         F: FnOnce(&PyWorld) -> PyResult<R>,
     {
+        let _flush = deferred_drop::MutationFlushGuard;
         let validity = ValidityFlag::new();
-        let _guard = ValidityGuard::for_world(validity.clone(), world.id());
+        let guard = ValidityGuard::for_world(validity.clone(), world.id());
+        // SAFETY: the exclusive callback borrow outlives its guarded adapter.
         let py_world = unsafe { PyWorld::new(world, validity) };
-        f(&py_world)
+        let result = f(&py_world);
+        drop(py_world);
+        drop(guard);
+        world.flush();
+        let commands = world_commands::raise_errors(world, py);
+        match result {
+            Ok(value) => commands.map(|()| value),
+            Err(error) => match commands {
+                Ok(()) => Err(error),
+                Err(command_error) => {
+                    let errors = vec![error.into_value(py), command_error.into_value(py)];
+                    let group = py
+                        .import("builtins")?
+                        .getattr("BaseExceptionGroup")?
+                        .call1((WORLD_CALLBACK_COMMAND_ERRORS, errors))?;
+                    Err(PyErr::from_value(group))
+                }
+            },
+        }
     }
 
     /// Internal helper to get Assets resource for a specific asset type.
@@ -568,6 +597,10 @@ impl PyWorld {
         };
         // SAFETY: the gate preserves the allocation; this reference only constructs a cell.
         let world = unsafe { (&*storage.get()).as_unsafe_world_cell_readonly() };
+        // SAFETY: the mutation gate excludes changes to the pending command owner.
+        if let Some(commands) = unsafe { world.get_resource::<WorldCommandState>() } {
+            commands.traverse(visit.clone())?;
+        }
         // SAFETY: the gate excludes registration writes to this resource.
         if let Some(info) = unsafe { world.get_resource::<pybevy_core::CustomComponentInfo>() } {
             let mut owners = HashSet::new();
@@ -616,11 +649,13 @@ impl PyWorld {
     }
 
     pub fn spawn_empty(pyself: PyRef<'_, Self>, _py: Python<'_>) -> PyResult<PyEntityCommands> {
-        pyself.check_native_asset_access("world.spawn_empty()")?;
-        let mut world = pyself.world_mut()?;
-        let entity = world.spawn_empty().id();
-        drop(world);
-        Ok(PyEntityCommands::with_world(entity, pyself))
+        world_commands::ErrorBoundary::new(pyself.world_ref()?).run(|| {
+            pyself.check_native_asset_access("world.spawn_empty()")?;
+            let mut world = pyself.world_mut()?;
+            let entity = world.spawn_empty().id();
+            drop(world);
+            Ok(PyEntityCommands::with_world(entity, pyself))
+        })
     }
 
     #[pyo3(signature = (*components))]
@@ -629,46 +664,50 @@ impl PyWorld {
         py: Python,
         components: &Bound<'_, PyTuple>,
     ) -> PyResult<PyEntityCommands> {
-        pyself.check_valid()?;
-        let components = crate::ecs::commands::normalize_spawn_components(components)?;
-        let component_types = crate::ecs::commands::resolve_spawn_bundle(py, &components)?;
-        pyself.check_native_asset_access("world.spawn()")?;
+        world_commands::ErrorBoundary::new(pyself.world_ref()?).run(|| {
+            pyself.check_valid()?;
+            let components = crate::ecs::commands::normalize_spawn_components(components)?;
+            let component_types = crate::ecs::commands::resolve_spawn_bundle(py, &components)?;
+            pyself.check_native_asset_access("world.spawn()")?;
 
-        let entity_id = pyself.world_mut()?.spawn_empty().id();
+            let entity_id = pyself.world_mut()?.spawn_empty().id();
 
-        // Create a temporary PyCommands wrapper around this world to reuse component insertion logic
-        let world_ptr = pyself.world_ptr();
-        let validity = pyself.validity.clone().unwrap_or_default();
+            // Create a temporary PyCommands wrapper around this world to reuse component insertion logic
+            let world_ptr = pyself.world_ptr();
+            let validity = pyself.validity.clone().unwrap_or_default();
 
-        // SAFETY: We're creating a temporary PyCommands that will be used immediately
-        // and dropped before returning, so the world pointer remains valid
-        let temp_commands = unsafe { PyCommands::from_world_temporary(world_ptr, validity) };
+            // SAFETY: We're creating a temporary PyCommands that will be used immediately
+            // and dropped before returning, so the world pointer remains valid
+            let temp_commands = unsafe { PyCommands::from_world_temporary(world_ptr, validity) };
 
-        // The shared insertion helper owns Discard -> mutation -> Add ->
-        // Insert ordering for both spawn and later insert paths.
-        crate::ecs::commands::insert_resolved_components_to_entity(
-            &temp_commands,
-            entity_id,
-            &components,
-            component_types,
-        )?;
+            // The shared insertion helper owns Discard -> mutation -> Add ->
+            // Insert ordering for both spawn and later insert paths.
+            crate::ecs::commands::insert_resolved_components_to_entity(
+                &temp_commands,
+                entity_id,
+                &components,
+                component_types,
+            )?;
 
-        Ok(PyEntityCommands::with_world(entity_id, pyself))
+            Ok(PyEntityCommands::with_world(entity_id, pyself))
+        })
     }
 
     /// Despawn an entity
     pub fn despawn(&self, entity: &Bound<'_, PyAny>) -> PyResult<bool> {
-        let entity = &extract_entity_from_any(entity)?;
-        self.check_valid()?;
-        let mut world = self.world_mut()?;
-        if hierarchy_contains_resource_entity(&world, entity.0) {
-            return Err(PyTypeError::new_err(RESOURCE_ENTITY_DESPAWN));
-        }
-        ensure_no_live_asset_access(&world, "world.despawn()")
-            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-        Ok(crate::ecs::lifecycle_mutation::despawn_recursive(
-            &mut world, entity.0,
-        ))
+        world_commands::ErrorBoundary::new(self.world_ref()?).run(|| {
+            let entity = &extract_entity_from_any(entity)?;
+            self.check_valid()?;
+            let mut world = self.world_mut()?;
+            if hierarchy_contains_resource_entity(&world, entity.0) {
+                return Err(PyTypeError::new_err(RESOURCE_ENTITY_DESPAWN));
+            }
+            ensure_no_live_asset_access(&world, "world.despawn()")
+                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+            Ok(crate::ecs::lifecycle_mutation::despawn_recursive(
+                &mut world, entity.0,
+            ))
+        })
     }
 
     /// Get resource from the world
@@ -703,18 +742,20 @@ impl PyWorld {
     }
 
     pub fn insert_resource(&self, py: Python, resource: Bound<'_, PyAny>) -> PyResult<()> {
-        self.check_valid()?;
-        // Get the resource type from the instance
-        let resource_type = resource.get_type();
-        let py_resource_type = PyResourceType::try_from((&resource_type, py))?;
+        world_commands::ErrorBoundary::new(self.world_ref()?).run(|| {
+            self.check_valid()?;
+            // Get the resource type from the instance
+            let resource_type = resource.get_type();
+            let py_resource_type = PyResourceType::try_from((&resource_type, py))?;
 
-        // Convert the bound resource to a Py<PyAny>
-        let resource_instance: Py<PyAny> = resource.unbind();
-        self.check_native_asset_access("world.insert_resource()")?;
+            // Convert the bound resource to a Py<PyAny>
+            let resource_instance: Py<PyAny> = resource.unbind();
+            self.check_native_asset_access("world.insert_resource()")?;
 
-        // Insert the resource into the world
-        let mut world = self.world_mut()?;
-        py_resource_type.insert_into_world(&mut world, py, resource_instance)
+            // Insert the resource into the world
+            let mut world = self.world_mut()?;
+            py_resource_type.insert_into_world(&mut world, py, resource_instance)
+        })
     }
 
     pub fn remove_resource(
@@ -722,49 +763,55 @@ impl PyWorld {
         py: Python,
         resource_type: Bound<'_, PyAny>,
     ) -> PyResult<Option<Py<PyAny>>> {
-        self.check_valid()?;
-        let type_obj = resource_type.cast::<PyType>().map_err(|_| {
-            PyTypeError::new_err("remove_resource expects a resource type (class), not an instance")
-        })?;
-        let resource = PyResourceType::try_from((type_obj, py))?;
-        self.check_native_asset_access("world.remove_resource()")?;
-        resource.take_from_world(&mut *self.world_mut()?, py)
+        world_commands::ErrorBoundary::new(self.world_ref()?).run(|| {
+            self.check_valid()?;
+            let type_obj = resource_type.cast::<PyType>().map_err(|_| {
+                PyTypeError::new_err(
+                    "remove_resource expects a resource type (class), not an instance",
+                )
+            })?;
+            let resource = PyResourceType::try_from((type_obj, py))?;
+            self.check_native_asset_access("world.remove_resource()")?;
+            resource.take_from_world(&mut *self.world_mut()?, py)
+        })
     }
 
     pub fn register_resource(&self, py: Python, resource: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        self.check_valid()?;
+        world_commands::ErrorBoundary::new(self.world_ref()?).run(|| {
+            self.check_valid()?;
 
-        // Extract the resource type
-        let type_obj: Bound<'_, PyType> = resource.extract()?;
-        let py_resource_type = PyResourceType::try_from((&type_obj, py))?;
+            // Extract the resource type
+            let type_obj: Bound<'_, PyType> = resource.extract()?;
+            let py_resource_type = PyResourceType::try_from((&type_obj, py))?;
 
-        // Register the resource type and get its ComponentId
-        let component_id = match py_resource_type {
-            // Built-in Bevy resources are already registered by their respective plugins
-            // Calling register_resource on them is not supported - use init_resource or insert_resource instead
-            PyResourceType::AssetServer => {
-                return Err(PyRuntimeError::new_err(format!(
-                    "Cannot register built-in resource type {}. Built-in resources are automatically registered by Bevy plugins. Use insert_resource() or init_resource() instead.",
-                    type_obj.name()?
-                )));
-            }
-            PyResourceType::Custom(type_ptr) => {
-                self.check_native_asset_access("world.register_resource()")?;
-                // Register the custom resource
-                register_custom_resource(&mut *self.world_mut()?, type_ptr, py)
-            }
-            PyResourceType::Dynamic(_) => {
-                // Dynamic resources are registered via their bridges
-                return Err(PyRuntimeError::new_err(format!(
-                    "Cannot register dynamic resource type {}. Dynamic resources are automatically registered by their bridges. Use insert_resource() instead.",
-                    type_obj.name()?
-                )));
-            }
-        };
+            // Register the resource type and get its ComponentId
+            let component_id = match py_resource_type {
+                // Built-in Bevy resources are already registered by their respective plugins
+                // Calling register_resource on them is not supported - use init_resource or insert_resource instead
+                PyResourceType::AssetServer => {
+                    return Err(PyRuntimeError::new_err(format!(
+                        "Cannot register built-in resource type {}. Built-in resources are automatically registered by Bevy plugins. Use insert_resource() or init_resource() instead.",
+                        type_obj.name()?
+                    )));
+                }
+                PyResourceType::Custom(type_ptr) => {
+                    self.check_native_asset_access("world.register_resource()")?;
+                    // Register the custom resource
+                    register_custom_resource(&mut *self.world_mut()?, type_ptr, py)
+                }
+                PyResourceType::Dynamic(_) => {
+                    // Dynamic resources are registered via their bridges
+                    return Err(PyRuntimeError::new_err(format!(
+                        "Cannot register dynamic resource type {}. Dynamic resources are automatically registered by their bridges. Use insert_resource() instead.",
+                        type_obj.name()?
+                    )));
+                }
+            };
 
-        // Return the ComponentId
-        let py_component_id = Py::new(py, PyComponentId(component_id))?;
-        Ok(py_component_id.into_any())
+            // Return the ComponentId
+            let py_component_id = Py::new(py, PyComponentId(component_id))?;
+            Ok(py_component_id.into_any())
+        })
     }
 
     pub fn init_resource(&self, py: Python, resource: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
@@ -926,20 +973,62 @@ impl PyWorld {
         let world_ptr = pyself.borrow(py).world_ptr();
         let validity = pyself.borrow(py).validity.clone().unwrap_or_default();
 
-        let py_commands = unsafe { PyCommands::from_world(world_ptr, pyself, validity) };
+        // SAFETY: Commands retains this World and its checked exclusive validity.
+        let py_commands = unsafe { PyCommands::from_world_queue(world_ptr, pyself, validity) };
         Ok(py_commands)
     }
 
-    pub fn spawn_batch(&self, py: Python, batch: Bound<'_, PyAny>) -> PyResult<Vec<PyEntity>> {
-        self.check_valid()?;
-        let prepared = crate::ecs::batch_spawn::prepare_iter_batch(py, &batch)?;
-        self.check_native_asset_access("world.spawn_batch()")?;
-        let mut entities = Vec::new();
+    pub fn flush(&self, py: Python<'_>) -> PyResult<()> {
+        self.check_native_asset_access("world.flush()")?;
         let mut world = self.world_mut()?;
-        for command in prepared {
-            entities.extend(command.apply(&mut world)?.into_iter().map(PyEntity));
-        }
-        Ok(entities)
+        let _suspension = self
+            .validity
+            .as_ref()
+            .map(ValidityFlag::suspend)
+            .transpose()?;
+        world.flush();
+        world_commands::raise_errors(&world, py)
+    }
+
+    #[pyo3(signature = (*components, count=None, batch=None))]
+    pub fn spawn_batch(
+        &self,
+        py: Python,
+        components: &Bound<'_, PyTuple>,
+        count: Option<usize>,
+        batch: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Vec<PyEntity>> {
+        world_commands::ErrorBoundary::new(self.world_ref()?).run(|| {
+            self.check_valid()?;
+            let prepared = if let Some(batch) = batch {
+                if !components.is_empty() || count.is_some() {
+                    return Err(PyTypeError::new_err(WORLD_BATCH_ARGUMENTS));
+                }
+                prepare_iter_batch(py, batch)?
+            } else if components.len() == 1
+                && count.is_none()
+                && !components.get_item(0)?.is_instance_of::<PyComponent>()
+                && !components
+                    .get_item(0)?
+                    .is_instance_of::<PyCustomComponentBatch>()
+                && global_registry::get_batch_bridge_by_py_type(
+                    components.get_item(0)?.get_type().as_type_ptr(),
+                )
+                .is_none()
+                && components.get_item(0)?.hasattr("__iter__")?
+            {
+                prepare_iter_batch(py, &components.get_item(0)?)?
+            } else {
+                vec![SpawnBatchCommand::new(py, components, count)?]
+            };
+            self.check_native_asset_access("world.spawn_batch()")?;
+            let mut entities = Vec::new();
+            let mut world = self.world_mut()?;
+            for command in prepared {
+                entities.extend(command.apply(&mut world)?.into_iter().map(PyEntity));
+            }
+            Ok(entities)
+        })
     }
 
     pub fn register_component(
@@ -947,22 +1036,26 @@ impl PyWorld {
         py: Python,
         component: Bound<'_, PyAny>,
     ) -> PyResult<PyComponentId> {
-        self.check_valid()?;
-        let type_obj: Bound<'_, PyType> = component.extract()?;
-        let component_type = PyComponentType::try_from((&type_obj, py))?;
-        let mut world = self.world_mut()?;
-        let id = match component_type {
-            PyComponentType::Custom(type_ptr) => {
-                register_custom_component(&mut world, type_ptr, py)
-            }
-            PyComponentType::Dynamic(type_ptr) => global_registry::get_bridge_by_py_type(type_ptr)
-                .ok_or_else(|| PyTypeError::new_err(COMPONENT_BRIDGE_NOT_FOUND))?
-                .register(&mut world),
-            PyComponentType::Resource(_) => PyResourceType::try_from((&type_obj, py))?
-                .register_component_id(&mut world, py)
-                .ok_or_else(|| PyTypeError::new_err(RESOURCE_BRIDGE_NOT_FOUND))?,
-        };
-        Ok(PyComponentId(id))
+        world_commands::ErrorBoundary::new(self.world_ref()?).run(|| {
+            self.check_valid()?;
+            let type_obj: Bound<'_, PyType> = component.extract()?;
+            let component_type = PyComponentType::try_from((&type_obj, py))?;
+            let mut world = self.world_mut()?;
+            let id = match component_type {
+                PyComponentType::Custom(type_ptr) => {
+                    register_custom_component(&mut world, type_ptr, py)
+                }
+                PyComponentType::Dynamic(type_ptr) => {
+                    global_registry::get_bridge_by_py_type(type_ptr)
+                        .ok_or_else(|| PyTypeError::new_err(COMPONENT_BRIDGE_NOT_FOUND))?
+                        .register(&mut world)
+                }
+                PyComponentType::Resource(_) => PyResourceType::try_from((&type_obj, py))?
+                    .register_component_id(&mut world, py)
+                    .ok_or_else(|| PyTypeError::new_err(RESOURCE_BRIDGE_NOT_FOUND))?,
+            };
+            Ok(PyComponentId(id))
+        })
     }
 
     pub fn component_id(
@@ -1014,119 +1107,127 @@ impl PyWorld {
     }
 
     pub fn trigger(&self, py: Python, event: Bound<'_, PyAny>) -> PyResult<()> {
-        self.check_valid()?;
+        world_commands::ErrorBoundary::new(self.world_ref()?).run(|| {
+            self.check_valid()?;
 
-        // Verify the event is a subclass of Event
-        let event_type = event.get_type();
-        if !event_type.is_subclass_of::<PyEvent>()? {
-            return Err(PyRuntimeError::new_err(
-                "trigger() requires an Event subclass instance",
-            ));
-        }
-
-        // Check if this is an entity-targeted event (has 'entity' field)
-        let target_entity = if event.hasattr("entity")? {
-            let entity_attr = event.getattr("entity")?;
-            Some(entity_attr.extract::<PyEntity>()?.0)
-        } else {
-            None
-        };
-        self.check_native_asset_access("world.trigger()")?;
-
-        let mut world = self.world_mut()?;
-        let observers = world
-            .get_resource::<ObserverRegistry>()
-            .map(|registry| registry.snapshot_user_event(&event, target_entity))
-            .unwrap_or_default();
-
-        for observer_entry in observers {
-            if !ObserverRegistry::matches_user_filter(&observer_entry, &world, target_entity) {
-                continue;
+            // Verify the event is a subclass of Event
+            let event_type = event.get_type();
+            if !event_type.is_subclass_of::<PyEvent>()? {
+                return Err(PyRuntimeError::new_err(
+                    "trigger() requires an Event subclass instance",
+                ));
             }
 
-            let on_param = Py::new(
-                py,
-                PyOn {
-                    event_data: event.clone().unbind(),
-                    entity: target_entity,
-                },
-            )?;
+            // Check if this is an entity-targeted event (has 'entity' field)
+            let target_entity = if event.hasattr("entity")? {
+                let entity_attr = event.getattr("entity")?;
+                Some(entity_attr.extract::<PyEntity>()?.0)
+            } else {
+                None
+            };
+            self.check_native_asset_access("world.trigger()")?;
 
-            ObserverRegistry::invoke(
-                &observer_entry,
-                &mut world,
-                &on_param,
-                target_entity,
-                ErrorPolicy::PropagateToCaller,
-            )?;
-        }
+            let mut world = self.world_mut()?;
+            let observers = world
+                .get_resource::<ObserverRegistry>()
+                .map(|registry| registry.snapshot_user_event(&event, target_entity))
+                .unwrap_or_default();
 
-        Ok(())
+            for observer_entry in observers {
+                if !ObserverRegistry::matches_user_filter(&observer_entry, &world, target_entity) {
+                    continue;
+                }
+
+                let on_param = Py::new(
+                    py,
+                    PyOn {
+                        event_data: event.clone().unbind(),
+                        entity: target_entity,
+                    },
+                )?;
+
+                ObserverRegistry::invoke(
+                    &observer_entry,
+                    &mut world,
+                    &on_param,
+                    target_entity,
+                    ErrorPolicy::PropagateToCaller,
+                )?;
+            }
+
+            Ok(())
+        })
     }
 
     pub fn write_message(&self, py: Python, message: Py<PyAny>) -> PyResult<Option<PyMessageId>> {
-        self.check_valid()?;
+        world_commands::ErrorBoundary::new(self.world_ref()?).run(|| {
+            self.check_valid()?;
 
-        let message_type = PyMessageType::from_message_type(&message.bind(py).get_type())?.0;
-        let validity = self.validity.clone().unwrap_or_default();
-        let mut world = self.world_mut()?;
-        if let MessageType::Custom(message_class) = &message_type {
-            let type_ptr = message_class.bind(py).as_type_ptr();
-            if !python_message_is_registered(&world, type_ptr) {
-                eprintln!(
-                    "{}",
-                    unregistered_message_write(message_class.bind(py).name()?)
-                );
-                return Ok(None);
+            let message_type = PyMessageType::from_message_type(&message.bind(py).get_type())?.0;
+            let validity = self.validity.clone().unwrap_or_default();
+            let mut world = self.world_mut()?;
+            if let MessageType::Custom(message_class) = &message_type {
+                let type_ptr = message_class.bind(py).as_type_ptr();
+                if !python_message_is_registered(&world, type_ptr) {
+                    eprintln!(
+                        "{}",
+                        unregistered_message_write(message_class.bind(py).name()?)
+                    );
+                    return Ok(None);
+                }
+                let resolved = resolve_from_world(&world, type_ptr)?;
+                return PyMessageWriter::python(message_type, resolved, validity, None)
+                    .write(py, message)
+                    .map(Some);
             }
-            let resolved = resolve_from_world(&world, type_ptr)?;
-            return PyMessageWriter::python(message_type, resolved, validity, None)
+
+            if let MessageType::Dynamic(type_ptr) = &message_type {
+                let bridge =
+                    global_registry::get_message_bridge_by_py_type(*type_ptr).ok_or_else(|| {
+                        PyTypeError::new_err("Message type not registered in global registry")
+                    })?;
+                if !bridge.is_read_only()
+                    && !bridge
+                        .resource_id(&world)
+                        .is_some_and(|resource_id| world.get_resource_by_id(resource_id).is_some())
+                {
+                    eprintln!("{}", unregistered_message_write(bridge.name()));
+                    return Ok(None);
+                }
+            }
+
+            let cell = world.as_unsafe_world_cell();
+            // SAFETY: World is an exclusive system parameter and the writer is used
+            // synchronously before this method returns. The shared validity flag
+            // fences the lifetime-erased cell exactly as it does for system writers.
+            let message_world = unsafe { MessageWorld::new(cell, validity) };
+            PyMessageWriter::native(message_type, message_world, None)
                 .write(py, message)
-                .map(Some);
-        }
-
-        if let MessageType::Dynamic(type_ptr) = &message_type {
-            let bridge =
-                global_registry::get_message_bridge_by_py_type(*type_ptr).ok_or_else(|| {
-                    PyTypeError::new_err("Message type not registered in global registry")
-                })?;
-            if !bridge.is_read_only()
-                && !bridge
-                    .resource_id(&world)
-                    .is_some_and(|resource_id| world.get_resource_by_id(resource_id).is_some())
-            {
-                eprintln!("{}", unregistered_message_write(bridge.name()));
-                return Ok(None);
-            }
-        }
-
-        let cell = world.as_unsafe_world_cell();
-        // SAFETY: World is an exclusive system parameter and the writer is used
-        // synchronously before this method returns. The shared validity flag
-        // fences the lifetime-erased cell exactly as it does for system writers.
-        let message_world = unsafe { MessageWorld::new(cell, validity) };
-        PyMessageWriter::native(message_type, message_world, None)
-            .write(py, message)
-            .map(Some)
+                .map(Some)
+        })
     }
 
     pub fn add_observer(&self, py: Python, observer: Bound<'_, PyAny>) -> PyResult<Py<PyEntity>> {
-        self.check_valid()?;
-        self.check_native_asset_access("world.add_observer()")?;
-        let mut world = self.world_mut()?;
-        let observer_entity = ObserverRegistry::register_observer(py, &observer, &mut world)?;
+        world_commands::ErrorBoundary::new(self.world_ref()?).run(|| {
+            self.check_valid()?;
+            self.check_native_asset_access("world.add_observer()")?;
+            let mut world = self.world_mut()?;
+            let observer_entity = ObserverRegistry::register_observer(py, &observer, &mut world)?;
 
-        Py::new(py, PyEntity(observer_entity))
+            Py::new(py, PyEntity(observer_entity))
+        })
     }
 
     pub fn despawn_observer(&self, observer_entity: &Bound<'_, PyAny>) -> PyResult<()> {
-        let observer_entity = &extract_entity_from_any(observer_entity)?;
-        self.check_valid()?;
-        self.check_native_asset_access("world.despawn_observer()")?;
-        let mut world = self.world_mut()?;
-        ObserverRegistry::despawn_observer(observer_entity.0, &mut world)?;
+        world_commands::ErrorBoundary::new(self.world_ref()?).run(|| {
+            let observer_entity = &extract_entity_from_any(observer_entity)?;
+            self.check_valid()?;
+            self.check_native_asset_access("world.despawn_observer()")?;
+            let mut world = self.world_mut()?;
+            ObserverRegistry::despawn_observer(observer_entity.0, &mut world)?;
 
-        Ok(())
+            Ok(())
+        })
     }
 
     pub fn get(
@@ -1148,80 +1249,82 @@ impl PyWorld {
     }
 
     pub fn run_schedule(&self, py: Python, label: Bound<'_, PyAny>) -> PyResult<()> {
-        self.check_valid()?;
+        world_commands::ErrorBoundary::new(self.world_ref()?).run(|| {
+            self.check_valid()?;
 
-        // Try PyStage first (SimTick, Update, etc.)
-        if let Ok(stage) = label.extract::<PyStage>() {
-            self.check_native_asset_access("world.run_schedule()")?;
-            // Cast to usize to cross the GIL boundary (raw pointers aren't Ungil).
-            // SAFETY: we have exclusive World access (SystemStateFlags::EXCLUSIVE)
-            // and the pointer is valid for the system's lifetime (ValidityFlag).
+            // Try PyStage first (SimTick, Update, etc.)
+            if let Ok(stage) = label.extract::<PyStage>() {
+                self.check_native_asset_access("world.run_schedule()")?;
+                // Cast to usize to cross the GIL boundary (raw pointers aren't Ungil).
+                // SAFETY: we have exclusive World access (SystemStateFlags::EXCLUSIVE)
+                // and the pointer is valid for the system's lifetime (ValidityFlag).
+                let mut world = self.world_mut()?;
+                let world_addr = &mut *world as *mut World as usize;
+                let _suspension = self
+                    .validity
+                    .as_ref()
+                    .map(ValidityFlag::suspend)
+                    .transpose()?;
+
+                // Release GIL before running the schedule to avoid deadlock:
+                // this exclusive system holds the GIL, but inner Python systems
+                // spawned by run_schedule() need to acquire it.
+                py.detach(move || {
+                    // SAFETY: the retained mutation guard excludes traversal until execution ends.
+                    let world = unsafe { &mut *(world_addr as *mut World) };
+                    stage.run_on_world(world);
+                    Ok::<(), PyErr>(())
+                })?;
+
+                return Ok(());
+            }
+
+            // State-based schedule labels (OnEnter, OnExit, OnTransition)
             let mut world = self.world_mut()?;
-            let world_addr = &mut *world as *mut World as usize;
+
             let _suspension = self
                 .validity
                 .as_ref()
                 .map(ValidityFlag::suspend)
                 .transpose()?;
 
-            // Release GIL before running the schedule to avoid deadlock:
-            // this exclusive system holds the GIL, but inner Python systems
-            // spawned by run_schedule() need to acquire it.
+            let schedule = if let Ok(on_enter) = label.cast::<PyOnEnterSchedule>() {
+                EitherStateSchedule::State(canonicalize_state_schedule_label(
+                    &world,
+                    on_enter.borrow().to_bevy_label(py)?,
+                ))
+            } else if let Ok(on_exit) = label.cast::<PyOnExitSchedule>() {
+                EitherStateSchedule::State(canonicalize_state_schedule_label(
+                    &world,
+                    on_exit.borrow().to_bevy_label(py)?,
+                ))
+            } else if let Ok(on_transition) = label.cast::<PyOnTransitionSchedule>() {
+                EitherStateSchedule::Transition(canonicalize_transition_schedule_label(
+                    &world,
+                    on_transition.borrow().to_bevy_label(py)?,
+                ))
+            } else {
+                return Err(PyTypeError::new_err(
+                    "run_schedule() requires a Stage, OnEnter, OnExit, or OnTransition schedule label",
+                ));
+            };
+
+            ensure_no_live_asset_access(&world, "world.run_schedule()")
+                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+            let world_addr = &mut *world as *mut World as usize;
             py.detach(move || {
-                // SAFETY: the retained mutation guard excludes traversal until execution ends.
                 let world = unsafe { &mut *(world_addr as *mut World) };
-                stage.run_on_world(world);
-                Ok::<(), PyErr>(())
+                let result = match schedule {
+                    EitherStateSchedule::State(label) => world.try_run_schedule(label),
+                    EitherStateSchedule::Transition(label) => world.try_run_schedule(label),
+                };
+                result.map_err(|error| {
+                    PyRuntimeError::new_err(format!("Failed to run state schedule: {error}"))
+                })
             })?;
 
-            return Ok(());
-        }
-
-        // State-based schedule labels (OnEnter, OnExit, OnTransition)
-        let mut world = self.world_mut()?;
-
-        let _suspension = self
-            .validity
-            .as_ref()
-            .map(ValidityFlag::suspend)
-            .transpose()?;
-
-        let schedule = if let Ok(on_enter) = label.cast::<PyOnEnterSchedule>() {
-            EitherStateSchedule::State(canonicalize_state_schedule_label(
-                &world,
-                on_enter.borrow().to_bevy_label(py)?,
-            ))
-        } else if let Ok(on_exit) = label.cast::<PyOnExitSchedule>() {
-            EitherStateSchedule::State(canonicalize_state_schedule_label(
-                &world,
-                on_exit.borrow().to_bevy_label(py)?,
-            ))
-        } else if let Ok(on_transition) = label.cast::<PyOnTransitionSchedule>() {
-            EitherStateSchedule::Transition(canonicalize_transition_schedule_label(
-                &world,
-                on_transition.borrow().to_bevy_label(py)?,
-            ))
-        } else {
-            return Err(PyTypeError::new_err(
-                "run_schedule() requires a Stage, OnEnter, OnExit, or OnTransition schedule label",
-            ));
-        };
-
-        ensure_no_live_asset_access(&world, "world.run_schedule()")
-            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-        let world_addr = &mut *world as *mut World as usize;
-        py.detach(move || {
-            let world = unsafe { &mut *(world_addr as *mut World) };
-            let result = match schedule {
-                EitherStateSchedule::State(label) => world.try_run_schedule(label),
-                EitherStateSchedule::Transition(label) => world.try_run_schedule(label),
-            };
-            result.map_err(|error| {
-                PyRuntimeError::new_err(format!("Failed to run state schedule: {error}"))
-            })
-        })?;
-
-        Ok(())
+            Ok(())
+        })
     }
 
     /// Run a system function once immediately on this world.
@@ -1244,6 +1347,7 @@ impl PyWorld {
     /// ```
     pub fn run_system_once(&self, func: Bound<'_, PyAny>) -> PyResult<()> {
         self.check_valid()?;
+        let py = func.py();
 
         // Create shared error state for the system
         let error_state: Arc<Mutex<Vec<PyErr>>> = Arc::new(Mutex::new(Vec::new()));
@@ -1284,6 +1388,7 @@ impl PyWorld {
         world.flush();
 
         // Initialize the system (registers components, etc.)
+        world_commands::raise_errors(&world, py)?;
         let _ = system.initialize(&mut world);
 
         // Create an UnsafeWorldCell for run_unsafe
@@ -1301,10 +1406,9 @@ impl PyWorld {
         world.flush();
 
         // Check for any errors that occurred during system execution
-        let error = lock_or_recover(&error_state).pop();
-        if let Some(err) = error {
-            return Err(err);
-        }
+        lock_or_recover(&error_state).extend(world_commands::take_errors(&world, py));
+        let errors = std::mem::take(&mut *lock_or_recover(&error_state));
+        world_commands::raise_collected(py, errors, WORLD_CALLBACK_COMMAND_ERRORS)?;
 
         // Check for system execution errors
         if let Err(e) = result {

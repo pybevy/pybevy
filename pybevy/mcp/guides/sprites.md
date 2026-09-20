@@ -242,6 +242,9 @@ if image is not None:
     image.sampler.desc.mag_filter = ImageFilterMode.Nearest
 ```
 
+Assign a new `ImageSamplerDescriptor` to `image.sampler.desc` to replace the
+complete descriptor while retaining the `Descriptor` variant.
+
 Then use it like any other sprite sheet:
 
 ```python

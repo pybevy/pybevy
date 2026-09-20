@@ -131,10 +131,10 @@ def test_batch_spawn_with_full_transform_data(benchmark: BenchmarkFixture) -> No
         batch = Transform.batch(
             translation=positions, rotation=rotations, scale=scales
         )
-        entities = world.commands().spawn_batch(batch, Marker())
+        entities = world.spawn_batch(batch, Marker())
         assert len(entities) == count
 
-    def bench():
+    def bench() -> None:
         app = App()
         app.add_plugins(ScheduleRunnerPlugin.run_once())
         app.add_systems(Startup, setup)

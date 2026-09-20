@@ -42,7 +42,7 @@ def spawn_entities(world: World) -> None:
 
     positions = np.stack([x, y, z], axis=1)
     batch = Transform.batch(translation=positions)
-    entities = world.commands().spawn_batch(batch, Marker())
+    entities = world.spawn_batch(batch, Marker())
     print(f"Spawned {len(entities):,} entities.")
 
 

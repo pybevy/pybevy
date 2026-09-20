@@ -15,11 +15,18 @@ use pybevy_core::{
     custom_component::{
         PythonObjectDescriptor, RegisterOutcome, register_custom_component_guarded,
     },
-    public_error::{RESOURCE_COMPONENT_INSERT, RESOURCE_COMPONENT_REMOVE},
+    public_error::{
+        RESOURCE_COMPONENT_INSERT, RESOURCE_COMPONENT_REMOVE, queued_component_layout_changed,
+    },
     registry::global_registry,
 };
 use pyo3::{
-    PyTypeInfo, exceptions::PyTypeError, ffi::PyTypeObject, intern, prelude::*, types::PyType,
+    PyTraverseError, PyTypeInfo, PyVisit,
+    exceptions::{PyTypeError, PyValueError},
+    ffi::PyTypeObject,
+    intern,
+    prelude::*,
+    types::PyType,
 };
 use smallvec::SmallVec;
 
@@ -600,6 +607,31 @@ pub(crate) fn storage_and_shared_layout(
 }
 
 impl PreparedCustomComponentRegistration {
+    pub(crate) fn validate_current(&self, py: Python<'_>) -> PyResult<()> {
+        let class = self
+            .retained_type
+            .as_ref()
+            .expect("prepared class is retained")
+            .bind(py);
+        let (storage, layout) = storage_and_shared_layout(class)?;
+        if storage != self.storage_type
+            || layout.as_deref().map(ComponentLayout::schema)
+                != self.wrapper_layout.as_deref().map(ComponentLayout::schema)
+        {
+            return Err(PyValueError::new_err(queued_component_layout_changed(
+                &self.name,
+            )));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn traverse(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        if let Some(class) = &self.retained_type {
+            visit.call(class.as_ref())?;
+        }
+        Ok(())
+    }
+
     /// Reuse the layout already validated for this component class.
     pub(crate) fn from_python_class_with_layout(
         cls: &Bound<'_, PyType>,

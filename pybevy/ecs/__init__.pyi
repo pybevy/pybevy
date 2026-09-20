@@ -498,8 +498,8 @@ class Commands:
     @overload
     def spawn_batch(
         self, *components: Component | Batchable, count: int | None = None
-    ) -> list[Entity]:
-        """Spawn entities from batch/uniform components (numpy fast path)."""
+    ) -> None:
+        """Queue entities from batch/uniform components until command flush."""
     @overload
     def spawn_batch(self, iterable: Iterable[tuple[Component, ...]], /) -> None:
         """Spawn entities from an iterable of component tuples."""
@@ -1321,6 +1321,18 @@ class World:
     def __init__(self) -> None: ...
     def spawn_empty(self) -> EntityCommands:
         """Spawn an entity without components and return fluent commands."""
+    @overload
+    def spawn_batch(
+        self,
+        *components: Component | Batchable,
+        count: int | None = None,
+        batch: None = None,
+    ) -> list[Entity]:
+        """Immediately spawn batch/uniform components and return entity handles.
+
+        Uniform-only inputs require count, including components that are iterable.
+        """
+    @overload
     def spawn_batch(
         self, batch: Iterable[Component | tuple[Component, ...]]
     ) -> list[Entity]:
@@ -1330,7 +1342,14 @@ class World:
         """Spawn components and return fluent commands; call `.id()` for the entity."""
     @overload
     def spawn(self, components: tuple[Component, ...]) -> EntityCommands: ...
-    def commands(self) -> Commands: ...
+    def commands(self) -> Commands:
+        """Queue deferred operations on this World; spawned IDs are reserved now."""
+    def flush(self) -> None:
+        """Apply pending World commands and raise their application errors.
+
+        Exclusive systems and App.world callbacks also flush on exit, including
+        error exits. Direct World mutations remain immediate.
+        """
     def resource(self, resource: type[ResourceType]) -> ResourceType: ...
     def register_resource(self, resource: type[ResourceType]) -> ComponentId: ...
     def init_resource(self, resource: type[ResourceType]) -> ComponentId: ...

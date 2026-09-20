@@ -214,6 +214,17 @@ pub fn execute_python(world: &mut World, code: String) -> Result<serde_json::Val
     execute_python_with_limit(world, code, RUN_CODE_EXECUTION_LIMIT)
 }
 
+fn flush_world_commands(world: &mut World, py: Python<'_>) -> PyResult<()> {
+    if WORLD_WRAPPER_HOOK.get().is_none() {
+        world.flush();
+        return Ok(());
+    }
+    let validity = ValidityFlag::new();
+    let _guard = ValidityGuard::for_world(validity.clone(), world.id());
+    create_world_wrapper(world, validity, py)?.call_method0(py, "flush")?;
+    Ok(())
+}
+
 fn execute_python_with_limit(
     world: &mut World,
     code: String,
@@ -222,7 +233,7 @@ fn execute_python_with_limit(
     Python::attach(|py| {
         // Create validity flag and guard for borrowed world access
         let validity = ValidityFlag::new();
-        let _guard = ValidityGuard::new(validity.clone());
+        let guard = ValidityGuard::for_world(validity.clone(), world.id());
 
         // Build the globals dict from __main__ and inject world
         let globals = py
@@ -340,6 +351,19 @@ fn execute_python_with_limit(
             } else {
                 execution
             };
+
+        drop(guard);
+        let flushed = flush_world_commands(world, py);
+        let execution = match (execution, flushed) {
+            (Ok(()), result) | (result, Ok(())) => result,
+            (Err(callback), Err(command)) => py.import("builtins").and_then(|builtins| {
+                let errors = vec![callback.into_value(py), command.into_value(py)];
+                let group = builtins
+                    .getattr("BaseExceptionGroup")?
+                    .call1((public_error::WORLD_CALLBACK_COMMAND_ERRORS, errors))?;
+                Err(PyErr::from_value(group))
+            }),
+        };
 
         let stdout = stdout_capture
             .call_method0("getvalue")

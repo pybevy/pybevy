@@ -59,6 +59,18 @@ impl BatchableField for bool {
     }
 }
 
+impl BatchableField for i32 {
+    const ELEMENT_COUNT: usize = 1;
+    const NUMPY_DTYPE: &'static str = "float32";
+    const NUMPY_COLUMNS: usize = 1;
+    const VIEW_FIELD_TYPE: FieldType = FieldType::I32;
+
+    #[inline(always)]
+    fn from_numpy_f32_slice(data: &[f32], index: usize) -> Self {
+        data[index] as i32
+    }
+}
+
 impl BatchableField for u32 {
     const ELEMENT_COUNT: usize = 1;
     const NUMPY_DTYPE: &'static str = "float32";
@@ -190,7 +202,9 @@ mod tests {
         // These scalar channels are selected by existing component view fields.
         assert_eq!(f32::VIEW_FIELD_TYPE, FieldType::F32);
         assert_eq!(bool::VIEW_FIELD_TYPE, FieldType::Bool);
+        assert_eq!(i32::VIEW_FIELD_TYPE, FieldType::I32);
         assert_eq!(u32::VIEW_FIELD_TYPE, FieldType::U32);
+        assert_eq!(field_type_of::<i32>(&0), FieldType::I32);
         assert_eq!(field_type_of::<u32>(&0), FieldType::U32);
     }
 
@@ -267,6 +281,21 @@ mod tests {
         assert_eq!(u32::from_numpy_f32_slice(&data, 0), 7);
         assert_eq!(u32::from_numpy_f32_slice(&data, 1), 0);
         assert_eq!(u32::from_numpy_f32_slice(&data, 2), 255);
+    }
+
+    #[test]
+    fn i32_from_numpy() {
+        let data = [-7.9f32, 0.0, 255.5];
+        assert_eq!(i32::from_numpy_f32_slice(&data, 0), -7);
+        assert_eq!(i32::from_numpy_f32_slice(&data, 1), 0);
+        assert_eq!(i32::from_numpy_f32_slice(&data, 2), 255);
+    }
+
+    #[test]
+    fn i32_metadata() {
+        assert_eq!(i32::ELEMENT_COUNT, 1);
+        assert_eq!(i32::NUMPY_COLUMNS, 1);
+        assert_eq!(i32::VIEW_FIELD_TYPE, FieldType::I32);
     }
 
     #[test]
