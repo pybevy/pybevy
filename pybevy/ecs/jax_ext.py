@@ -1,12 +1,12 @@
 """
 JAX extension for ViewColumn interop.
 
-This module teaches JAX how to consume ViewColumn handles via the
-__jax_array__ protocol, and provides write-back via from_jax().
+This module teaches JAX how to consume ViewColumn handles as registered
+pytrees, and provides write-back via from_jax().
 
 Importing this module activates JAX support:
   - ViewColumn gains .to_jax() and .from_jax() methods
-  - ViewColumn implements __jax_array__ for transparent @jax.jit input conversion
+  - ViewColumn registers as a JAX pytree
   - Vec3ViewColumn and QuatViewColumn are registered as JAX pytrees
 
 Vec3 and Quat trees unflatten to private registered SimpleNamespace
