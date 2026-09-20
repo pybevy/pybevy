@@ -4,7 +4,12 @@ use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[pycomponent(TextCursorStyle, bridge, no_reflect)]
+#[pycomponent(
+    TextCursorStyle,
+    bridge,
+    no_reflect,
+    batch_only_fields = [color, selection_color, unfocused_selection_color]
+)]
 #[pyclass(name = "TextCursorStyle", module = "pybevy.text", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyTextCursorStyle {

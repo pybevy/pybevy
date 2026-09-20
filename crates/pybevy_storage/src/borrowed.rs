@@ -22,6 +22,29 @@ use crate::{
     validity_guard::{AccessMode, ValidityFlag, ValidityFlagWithMode},
 };
 
+/// Return the byte offset of `field` only when its complete object lies inside
+/// `base`. A safe accessor can ignore its argument and return an external
+/// reference, so its signature alone does not prove field provenance.
+#[inline]
+pub(crate) fn checked_field_offset<T, F>(
+    base: *const T,
+    field: *const F,
+) -> Result<usize, StorageError> {
+    let base_addr = base.addr();
+    let field_addr = field.addr();
+    let base_end = base_addr
+        .checked_add(size_of::<T>())
+        .ok_or(StorageError::InvalidFieldAccessor)?;
+    let field_end = field_addr
+        .checked_add(size_of::<F>())
+        .ok_or(StorageError::InvalidFieldAccessor)?;
+
+    if field_addr < base_addr || field_end > base_end {
+        return Err(StorageError::InvalidFieldAccessor);
+    }
+    Ok(field_addr - base_addr)
+}
+
 /// Read-only borrow into parent storage (component, resource, or another borrow).
 ///
 /// Holds a `*const T`; `as_mut` is impossible because this type has no mutable
@@ -103,8 +126,12 @@ impl<T> BorrowedRef<T> {
     {
         self.validity.check_read()?;
         // SAFETY: validity checked above; ptr is stable during system execution.
-        let field_ptr = field_accessor(unsafe { &*self.ptr }) as *const F;
-        // SAFETY: field_ptr derives from the checked parent ptr and shares its flag
+        let field_ref = field_accessor(unsafe { &*self.ptr });
+        let offset = checked_field_offset(self.ptr, field_ref)?;
+        // SAFETY: containment was checked above, so the pointer retains the
+        // parent's provenance and shares its validity flag.
+        let field_ptr = unsafe { self.ptr.cast::<u8>().add(offset).cast::<F>() };
+        // SAFETY: field_ptr addresses a checked sub-field of the valid parent.
         Ok(unsafe { S::borrowed_ref(field_ptr, self.validity.clone()) })
     }
 
@@ -120,8 +147,11 @@ impl<T> BorrowedRef<T> {
         // SAFETY: validity checked above; ptr is stable during system execution.
         match field_accessor(unsafe { &*self.ptr }) {
             Some(field_ref) => {
-                let field_ptr = field_ref as *const F;
-                // SAFETY: field_ptr derives from the checked parent ptr and shares its flag
+                let offset = checked_field_offset(self.ptr, field_ref)?;
+                // SAFETY: containment was checked above, so the pointer retains
+                // the parent's provenance and shares its validity flag.
+                let field_ptr = unsafe { self.ptr.cast::<u8>().add(offset).cast::<F>() };
+                // SAFETY: field_ptr addresses a checked sub-field of the valid parent.
                 Ok(Some(unsafe {
                     S::borrowed_ref(field_ptr, self.validity.clone())
                 }))
@@ -245,20 +275,19 @@ impl<T> BorrowedMut<T> {
             None => self.ptr,
         };
         // SAFETY: validity checked above; base points to the current parent value.
-        let offset =
-            unsafe { (field_accessor(&*base) as *const F).byte_offset_from(base as *const u8) };
-        // SAFETY: offset locates the selected field within the live parent value.
-        let field_ptr = unsafe { (base as *mut u8).offset(offset) as *mut F };
+        let field_ref = field_accessor(unsafe { &*base });
+        let offset = checked_field_offset(base, field_ref)?;
+        // SAFETY: containment was checked above, so the pointer retains the
+        // mutable parent's provenance.
+        let field_ptr = unsafe { (base as *mut u8).add(offset) as *mut F };
         // SAFETY: the untracked arm inherits the parent's mutable provenance. In
         // the tracked arm, every mutable access re-resolves through the context's
         // mutable component access before dereferencing this cached pointer.
         Ok(unsafe {
             match self.component_write {
-                Some(context) => S::borrowed_mut_tracked(
-                    field_ptr,
-                    self.validity.clone(),
-                    context.child(offset as usize),
-                ),
+                Some(context) => {
+                    S::borrowed_mut_tracked(field_ptr, self.validity.clone(), context.child(offset))
+                }
                 None => S::borrowed_mut(field_ptr, self.validity.clone()),
             }
         })
@@ -280,24 +309,20 @@ impl<T> BorrowedMut<T> {
         // SAFETY: validity was checked and base points to the current parent value.
         let parent = unsafe { &*base };
         let offset = match field_accessor(parent) {
-            // SAFETY: field_ref points inside *base.
-            Some(field_ref) => unsafe {
-                (field_ref as *const F).byte_offset_from(base as *const u8)
-            },
+            Some(field_ref) => checked_field_offset(base, field_ref)?,
             None => return Ok(None),
         };
-        // SAFETY: offset locates the selected field within the live parent value.
-        let field_ptr = unsafe { (base as *mut u8).offset(offset) as *mut F };
+        // SAFETY: containment was checked above, so the pointer retains the
+        // mutable parent's provenance.
+        let field_ptr = unsafe { (base as *mut u8).add(offset) as *mut F };
         // SAFETY: the untracked arm inherits the parent's mutable provenance. In
         // the tracked arm, every mutable access re-resolves through the context's
         // mutable component access before dereferencing this cached pointer.
         Ok(Some(unsafe {
             match self.component_write {
-                Some(context) => S::borrowed_mut_tracked(
-                    field_ptr,
-                    self.validity.clone(),
-                    context.child(offset as usize),
-                ),
+                Some(context) => {
+                    S::borrowed_mut_tracked(field_ptr, self.validity.clone(), context.child(offset))
+                }
                 None => S::borrowed_mut(field_ptr, self.validity.clone()),
             }
         }))
@@ -463,8 +488,11 @@ impl RevalidatingField {
         let base = self.resolve()?;
         // SAFETY: validity checked; base re-resolved to the live value of type T
         let value_ref: &T = unsafe { &*(base as *const T) };
-        let inner = field_accessor(value_ref) as *const F as usize;
-        let child_offset = self.offset + inner.wrapping_sub(base as usize);
+        let relative = checked_field_offset(base.cast::<T>(), field_accessor(value_ref))?;
+        let child_offset = self
+            .offset
+            .checked_add(relative)
+            .ok_or(StorageError::InvalidFieldAccessor)?;
         // SAFETY: the sub-field lives at `child_offset` within the same component,
         // re-resolved per access exactly like this handle
         Ok(unsafe {
@@ -493,8 +521,11 @@ impl RevalidatingField {
         let value_ref: &T = unsafe { &*(base as *const T) };
         match field_accessor(value_ref) {
             Some(field_ref) => {
-                let inner = field_ref as *const F as usize;
-                let child_offset = self.offset + inner.wrapping_sub(base as usize);
+                let relative = checked_field_offset(base.cast::<T>(), field_ref)?;
+                let child_offset = self
+                    .offset
+                    .checked_add(relative)
+                    .ok_or(StorageError::InvalidFieldAccessor)?;
                 // SAFETY: the contained field lives at `child_offset` within the component
                 Ok(Some(unsafe {
                     S::revalidating_field(
@@ -522,8 +553,16 @@ impl RevalidatingField {
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
+    use bevy::ecs::{component::Component, world::World};
+
     use super::*;
     use crate::value_storage::ValueStorage;
+
+    static EXTERNAL_FIELD: u32 = 91;
+    static EXTERNAL_OPTION: Option<u32> = Some(92);
+
+    #[derive(Component)]
+    struct FieldOwner(u32);
 
     /// get_mut requires the flag to be in Write state, even though mutability
     /// is otherwise encoded in the type: a master flag downgraded to Read
@@ -611,6 +650,19 @@ mod tests {
         let borrow = unsafe { BorrowedRef::new(&opt, flag) };
         let field: Option<ValueStorage<u32>> = borrow.borrow_optional_field(|o| o).unwrap();
         assert!(field.is_none());
+    }
+
+    #[test]
+    fn borrowed_ref_rejects_external_field_accessors() {
+        let owner = FieldOwner(1);
+        // SAFETY: owner outlives the borrow within this test scope.
+        let borrow = unsafe { BorrowedRef::new(&owner, ValidityFlag::new_read()) };
+
+        let field: Result<ValueStorage<u32>, _> = borrow.borrow_field(|_| &EXTERNAL_FIELD);
+        assert!(matches!(field, Err(StorageError::InvalidFieldAccessor)));
+        let optional: Result<Option<ValueStorage<u32>>, _> =
+            borrow.borrow_optional_field(|_| &EXTERNAL_OPTION);
+        assert!(matches!(optional, Err(StorageError::InvalidFieldAccessor)));
     }
 
     #[test]
@@ -718,5 +770,44 @@ mod tests {
         let borrow = unsafe { BorrowedMut::new(&mut opt, flag) };
         let field: Option<ValueStorage<u32>> = borrow.borrow_optional_field(|o| o).unwrap();
         assert!(field.is_none());
+    }
+
+    #[test]
+    fn borrowed_mut_rejects_external_field_accessors() {
+        let mut owner = FieldOwner(1);
+        // SAFETY: owner outlives the exclusive borrow within this test scope.
+        let borrow = unsafe { BorrowedMut::new(&mut owner, ValidityFlag::new_write()) };
+
+        let field: Result<ValueStorage<u32>, _> = borrow.borrow_field(|_| &EXTERNAL_FIELD);
+        assert!(matches!(field, Err(StorageError::InvalidFieldAccessor)));
+        let optional: Result<Option<ValueStorage<u32>>, _> =
+            borrow.borrow_optional_field(|_| &EXTERNAL_OPTION);
+        assert!(matches!(optional, Err(StorageError::InvalidFieldAccessor)));
+    }
+
+    #[test]
+    fn revalidating_field_rejects_external_field_accessors() {
+        let mut world = World::new();
+        let component_id = world.register_component::<FieldOwner>();
+        let entity = world.spawn(FieldOwner(1)).id();
+        let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
+        // SAFETY: the world, entity, and component remain live through this test.
+        let field = unsafe {
+            RevalidatingField::new(
+                world.as_unsafe_world_cell(),
+                entity,
+                component_id,
+                0,
+                validity,
+            )
+        };
+
+        let child: Result<ValueStorage<u32>, _> =
+            field.child_of::<FieldOwner, u32, _>(|_| &EXTERNAL_FIELD);
+        assert!(matches!(child, Err(StorageError::InvalidFieldAccessor)));
+        let optional: Result<Option<ValueStorage<u32>>, _> =
+            field.child_of_optional::<FieldOwner, u32, _>(|_| &EXTERNAL_OPTION);
+        assert!(matches!(optional, Err(StorageError::InvalidFieldAccessor)));
+        assert_eq!(world.entity(entity).get::<FieldOwner>().unwrap().0, 1);
     }
 }

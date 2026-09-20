@@ -1346,6 +1346,14 @@ class TextCursorStyle(Component):
     @selected_text_color.setter
     def selected_text_color(self, value: Color | None) -> None: ...
 
+    @staticmethod
+    def batch(  # type: ignore[override]
+        *,
+        color: np.typing.ArrayLike | None = None,
+        selection_color: np.typing.ArrayLike | None = None,
+        unfocused_selection_color: np.typing.ArrayLike | None = None,
+    ) -> Batchable: ...
+
     def __eq__(self, other: object) -> bool: ...
 
 class TextPlugin(Plugin):

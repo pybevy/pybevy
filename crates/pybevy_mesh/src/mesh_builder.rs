@@ -1,4 +1,7 @@
 use pyo3::{exceptions::PyNotImplementedError, prelude::*};
+
+use crate::mesh::PyMesh;
+
 #[pyclass(
     name = "MeshBuilder",
     module = "pybevy.mesh",
@@ -11,7 +14,7 @@ pub struct PyMeshBuilder;
 
 #[pymethods]
 impl PyMeshBuilder {
-    pub fn build(pyself: Bound<'_, Self>) -> PyResult<()> {
+    pub fn build(pyself: Bound<'_, Self>) -> PyResult<Py<PyMesh>> {
         Err(PyNotImplementedError::new_err(format!(
             "MeshBuilder.build() not implemented for {}",
             pyself.get_type().name()?

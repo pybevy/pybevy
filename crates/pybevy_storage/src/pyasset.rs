@@ -51,7 +51,7 @@ use crate::{
     RevalidatingSource, StorageMut, StorageRef, ValidityFlag, ValidityFlagWithMode, ViewCounters,
     WriteField,
     asset_path::{SourceIdentity, SourceReadGuard, SourceWriteGuard},
-    borrowed::{BorrowedMut, BorrowedRef},
+    borrowed::{BorrowedMut, BorrowedRef, checked_field_offset},
     storage_error::StorageError,
 };
 
@@ -906,12 +906,15 @@ impl<T: Asset> AssetStorage<T> {
                 Ok(AssetStorage::owned_readonly(read(asset).clone()))
             }
             AssetStorageInner::BorrowedRef { borrow, id } => {
-                let field = read(borrow.get()?);
-                // SAFETY: the field pointer is inside the checked parent borrow
-                // and inherits its validity and read-only authority.
+                let base = borrow.get()?;
+                let offset = checked_field_offset(base as *const T, read(base))?;
+                // SAFETY: containment was checked above, so the pointer retains
+                // the parent's provenance and read-only authority.
+                let field_ptr = unsafe { borrow.as_ptr().cast::<u8>().add(offset).cast::<F>() };
+                // SAFETY: field_ptr addresses a checked sub-field of the valid parent.
                 Ok(unsafe {
                     AssetStorage::borrowed_readonly(
-                        field as *const F,
+                        field_ptr,
                         borrow
                             .validity()
                             .clone()
@@ -922,10 +925,9 @@ impl<T: Asset> AssetStorage<T> {
             }
             AssetStorageInner::BorrowedMut { borrow, id } => {
                 let base = borrow.get()?;
-                let field = read(base);
-                let offset = (field as *const F as usize).wrapping_sub(base as *const T as usize);
-                // SAFETY: `offset` was measured from a field reference inside
-                // the same live parent allocation.
+                let offset = checked_field_offset(base as *const T, read(base))?;
+                // SAFETY: containment was checked above, so the pointer retains
+                // the parent's mutable provenance.
                 let field_ptr = unsafe { (borrow.as_ptr() as *mut u8).add(offset).cast::<F>() };
                 // SAFETY: the field pointer derives from the parent's mutable
                 // provenance and inherits its validity window.
@@ -1885,6 +1887,55 @@ mod tests {
     }
 
     #[test]
+    fn borrow_asset_field_rejects_external_field_accessors() {
+        let mut container = AssetContainer {
+            nested: NestedAsset { value: 1 },
+        };
+        let read_flag = ValidityFlag::new_read();
+        let _read_guard = ValidityGuard::new(read_flag.clone());
+        // SAFETY: the container outlives the borrow within this test scope.
+        let read_only = unsafe {
+            AssetStorage::borrowed_readonly(
+                &container,
+                read_flag.with_access_mode(AccessMode::Read),
+                test_id(),
+            )
+        };
+        let inline = read_only
+            .borrow_asset_field(|asset| &asset.nested, |asset| &mut asset.nested)
+            .expect("inline nested field");
+        assert_eq!(inline.as_ref().expect("inline read").value, 1);
+        let rejected: Result<AssetStorage<NestedAsset>, _> =
+            read_only.borrow_asset_field(|_| &EXTERNAL_NESTED, |asset| &mut asset.nested);
+        assert!(matches!(rejected, Err(StorageError::InvalidFieldAccessor)));
+        drop(inline);
+        drop(read_only);
+
+        let write_flag = ValidityFlag::new_write();
+        let _write_guard = ValidityGuard::new(write_flag.clone());
+        // SAFETY: the container outlives the exclusive borrow and no other
+        // reference aliases it while the borrow is live.
+        let mutable = unsafe {
+            AssetStorage::borrowed_mut(
+                &mut container as *mut AssetContainer,
+                write_flag.with_access_mode(AccessMode::Write),
+                test_id(),
+            )
+        };
+        let mut inline = mutable
+            .borrow_asset_field(|asset| &asset.nested, |asset| &mut asset.nested)
+            .expect("inline nested field");
+        inline.as_mut().expect("inline write").value = 7;
+        let rejected: Result<AssetStorage<NestedAsset>, _> =
+            mutable.borrow_asset_field(|_| &EXTERNAL_NESTED, |asset| &mut asset.nested);
+        assert!(matches!(rejected, Err(StorageError::InvalidFieldAccessor)));
+        drop(inline);
+        drop(mutable);
+        assert_eq!(container.nested.value, 7);
+        assert_eq!(EXTERNAL_NESTED.value, 91);
+    }
+
+    #[test]
     fn owned_nested_asset_storage_is_a_read_only_snapshot() {
         let storage = AssetStorage::owned(AssetContainer {
             nested: NestedAsset { value: 3 },
@@ -2259,6 +2310,8 @@ mod tests {
     }
 
     impl Asset for AssetContainer {}
+
+    static EXTERNAL_NESTED: NestedAsset = NestedAsset { value: 91 };
 
     /// Create a test asset ID for use in tests.
     fn test_id() -> UntypedAssetId {

@@ -825,6 +825,13 @@ class CursorOptions(Component):
     def hit_test(self, hit_test: bool) -> None:
         """Set whether cursor events are captured by the window."""
 
+    @staticmethod
+    def batch(  # type: ignore[override]
+        *,
+        visible: np.typing.ArrayLike | None = None,
+        hit_test: np.typing.ArrayLike | None = None,
+    ) -> Batchable: ...
+
 class CursorIcon(Component):
     """
     Cursor icon component for window cursor appearance.

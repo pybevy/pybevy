@@ -1170,6 +1170,14 @@ class Node(Component):
         grid_column: GridPlacement = ...
     ) -> None: ...
 
+    @staticmethod
+    def batch(  # type: ignore[override]
+        *,
+        scrollbar_width: np.typing.ArrayLike | None = None,
+        flex_grow: np.typing.ArrayLike | None = None,
+        flex_shrink: np.typing.ArrayLike | None = None,
+    ) -> Batchable: ...
+
     @property
     def position_type(self) -> PositionType:
         """Whether positioning is relative or absolute."""
@@ -1813,6 +1821,9 @@ class ZIndex(Component):
     @value.setter
     def value(self, value: int) -> None: ...
 
+    @staticmethod
+    def batch(*, value: np.typing.ArrayLike | None = None) -> Batchable: ...  # type: ignore[override]
+
     def __eq__(self, other: object) -> bool: ...
 
 
@@ -2210,6 +2221,8 @@ class AutoDirectionalNavigation(Component):
     def respect_tab_order(self) -> bool: ...
     @respect_tab_order.setter
     def respect_tab_order(self, value: bool) -> None: ...
+    @staticmethod
+    def batch(*, respect_tab_order: np.typing.ArrayLike | None = None) -> Batchable: ...  # type: ignore[override]
     def __eq__(self, other: object) -> bool: ...
 
 
@@ -2225,6 +2238,12 @@ class IgnoreScroll(Component):
     def ignore_y(self) -> bool: ...
     @ignore_y.setter
     def ignore_y(self, value: bool) -> None: ...
+    @staticmethod
+    def batch(  # type: ignore[override]
+        *,
+        ignore_x: np.typing.ArrayLike | None = None,
+        ignore_y: np.typing.ArrayLike | None = None,
+    ) -> Batchable: ...
     def __eq__(self, other: object) -> bool: ...
 
 
@@ -2330,6 +2349,9 @@ class GlobalZIndex(Component):
 
     @value.setter
     def value(self, value: int) -> None: ...
+
+    @staticmethod
+    def batch(*, value: np.typing.ArrayLike | None = None) -> Batchable: ...  # type: ignore[override]
 
     def __eq__(self, other: object) -> bool: ...
 

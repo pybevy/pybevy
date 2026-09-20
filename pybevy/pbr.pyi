@@ -108,7 +108,10 @@ class StandardMaterial(Material):
     base_color: Color
     base_color_texture: Handle[Image] | None
     base_color_channel: UvChannel
-    emissive: Color | LinearRgba
+    @property
+    def emissive(self) -> LinearRgba: ...
+    @emissive.setter
+    def emissive(self, value: Color | LinearRgba) -> None: ...
     emissive_exposure_weight: float
     emissive_channel: UvChannel
     emissive_texture: Handle[Image] | None

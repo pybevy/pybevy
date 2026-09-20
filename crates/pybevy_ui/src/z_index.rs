@@ -3,7 +3,7 @@ use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[pycomponent(ZIndex, bridge)]
+#[pycomponent(ZIndex, bridge, view_fields = [0 as value])]
 #[pyclass(name = "ZIndex", module = "pybevy.ui", extends = PyComponent, skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyZIndex {
@@ -38,7 +38,7 @@ impl PyZIndex {
     }
 }
 
-#[pycomponent(GlobalZIndex, bridge)]
+#[pycomponent(GlobalZIndex, bridge, view_fields = [0 as value])]
 #[pyclass(name = "GlobalZIndex", module = "pybevy.ui", extends = PyComponent, skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyGlobalZIndex {
