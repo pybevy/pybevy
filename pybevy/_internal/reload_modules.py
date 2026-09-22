@@ -14,8 +14,8 @@ from typing import Protocol, cast
 
 _ResourceAssignmentAliases = Mapping[str, tuple[weakref.ReferenceType[type], ...]]
 _HintFreezer = Callable[[], None]
-_resource_hint_freezers: tuple[tuple[str, weakref.WeakMethod[_HintFreezer]], ...] = ()
-_resource_hint_freezers_lock = threading.Lock()
+_annotation_hint_freezers: tuple[tuple[str, weakref.WeakMethod[_HintFreezer]], ...] = ()
+_annotation_hint_freezers_lock = threading.Lock()
 
 
 class _ResourceValidation(Protocol):
@@ -28,29 +28,31 @@ _active: ContextVar[ModuleReloadTransaction | None] = ContextVar(
 _MISSING = object()
 
 
-def _register_resource_assignment_hint_freezer(
+def _register_annotation_hint_freezer(
     module_name: str,
     freeze: _HintFreezer,
 ) -> None:
-    global _resource_hint_freezers
+    global _annotation_hint_freezers
     reference = weakref.WeakMethod(freeze)
-    with _resource_hint_freezers_lock:
-        live = tuple(item for item in _resource_hint_freezers if item[1]() is not None)
-        _resource_hint_freezers = (*live, (module_name, reference))
+    with _annotation_hint_freezers_lock:
+        live = tuple(
+            item for item in _annotation_hint_freezers if item[1]() is not None
+        )
+        _annotation_hint_freezers = (*live, (module_name, reference))
 
 
-def _freeze_resource_assignment_hints(module_names: list[str]) -> None:
-    global _resource_hint_freezers
+def _freeze_annotation_hints(module_names: list[str]) -> None:
+    global _annotation_hint_freezers
     names = frozenset(module_names)
-    with _resource_hint_freezers_lock:
-        snapshot = _resource_hint_freezers
+    with _annotation_hint_freezers_lock:
+        snapshot = _annotation_hint_freezers
     for module_name, reference in snapshot:
         freeze = reference()
         if freeze is not None and module_name in names:
             freeze()
-    with _resource_hint_freezers_lock:
-        _resource_hint_freezers = tuple(
-            item for item in _resource_hint_freezers if item[1]() is not None
+    with _annotation_hint_freezers_lock:
+        _annotation_hint_freezers = tuple(
+            item for item in _annotation_hint_freezers if item[1]() is not None
         )
 
 
@@ -94,6 +96,7 @@ class ModuleReloadTransaction:
             ]
         ] = []
         self._resource_aliases: dict[object, _ResourceAssignmentAliases] = {}
+        self._component_annotations: dict[type, dict[str, object]] = {}
         self._token = _active.set(self)
 
     def stage_resource_assignment_alias(
@@ -110,6 +113,11 @@ class ModuleReloadTransaction:
             self._resource_aliases[validation] = prepare(
                 self._resource_aliases.get(validation)
             )
+
+    def stage_component_annotations(
+        self, component_type: type, annotations: Mapping[str, object]
+    ) -> None:
+        self._component_annotations[component_type] = dict(annotations)
 
     def record_flush(self, project_dir: str, names: list[str]) -> None:
         root = os.path.realpath(project_dir) + os.sep
@@ -132,6 +140,8 @@ class ModuleReloadTransaction:
             if success:
                 for validation, aliases in self._resource_aliases.items():
                     cast(_ResourceValidation, validation).publish(aliases)
+                for component_type, annotations in self._component_annotations.items():
+                    type.__setattr__(component_type, "__annotations__", annotations)
             else:
                 for name, module in list(sys.modules.items()):
                     if (
@@ -163,12 +173,13 @@ class ModuleReloadTransaction:
             self._roots.clear()
             self._resource_alias_preparers.clear()
             self._resource_aliases.clear()
+            self._component_annotations.clear()
 
 
 def record_module_flush(project_dir: str, names: list[str]) -> None:
     transaction = _active.get()
     if transaction is not None:
-        _freeze_resource_assignment_hints(names)
+        _freeze_annotation_hints(names)
         transaction.record_flush(project_dir, names)
 
 
@@ -197,3 +208,14 @@ def resource_assignment_aliases(
     if transaction is None:
         return None
     return transaction._resource_aliases.get(validation)
+
+
+def stage_component_annotations(
+    component_type: type, annotations: Mapping[str, object]
+) -> None:
+    """Publish resolved cached-component annotations with the reload transaction."""
+    transaction = _active.get()
+    if transaction is None:
+        type.__setattr__(component_type, "__annotations__", dict(annotations))
+        return
+    transaction.stage_component_annotations(component_type, annotations)

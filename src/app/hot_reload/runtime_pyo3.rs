@@ -32,7 +32,7 @@ use crate::{
     ecs::{
         conditional_system::PyConditionalSystem,
         dynamic_system::{DynamicSystemHandle, LastErrorBuffer, SystemErrorBuffer},
-        observer_registry::ObserverRegistry,
+        observer_registry::{ObserverRegistry, PreparedObserverRegistration},
         python_message::{
             clear_python_messages, prune_python_message_aliases, register_python_message,
         },
@@ -308,6 +308,7 @@ pub(crate) struct Pyo3ReloadRuntime {
     pending_set_configs: Vec<PreparedSystemSetConfig>,
     component_layout_reload_pending: bool,
     resource_layout_reload_pending: bool,
+    pending_observers: Vec<PreparedObserverRegistration>,
 }
 
 impl Pyo3ReloadRuntime {
@@ -318,6 +319,7 @@ impl Pyo3ReloadRuntime {
             pending_set_configs: Vec::new(),
             component_layout_reload_pending: false,
             resource_layout_reload_pending: false,
+            pending_observers: Vec::new(),
         }
     }
 
@@ -868,41 +870,67 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
         .map_err(|error| reload_error_from_py(&error, "", false))
     }
 
+    fn prepare_observers(
+        &mut self,
+        world: &mut World,
+        defs: &PendingDefinitions,
+        mode: ReloadMode,
+    ) -> Result<(), ReloadError> {
+        self.pending_observers.clear();
+        let prepared = Python::attach(|py| -> PyResult<Vec<PreparedObserverRegistration>> {
+            let mut prepared = Vec::with_capacity(defs.observers.len());
+            for observer_func in &defs.observers {
+                let func_bound = observer_func.bind(py);
+                prepared.push(ObserverRegistry::prepare_definition_observer(
+                    py, func_bound, world,
+                )?);
+            }
+            Ok(prepared)
+        });
+        let prepared = match prepared {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                if mode == ReloadMode::Full {
+                    ObserverRegistry::replace_definition_observers(Vec::new(), true, world);
+                }
+                return Err(reload_error_from_py(&error, "", false));
+            }
+        };
+        self.pending_observers = prepared;
+        Ok(())
+    }
+
+    fn discard_prepared_observers(&mut self) {
+        self.pending_observers.clear();
+    }
+
     fn register_observers(
         &mut self,
         world: &mut World,
         defs: &PendingDefinitions,
     ) -> Result<(), ReloadError> {
-        Python::attach(|py| -> PyResult<()> {
-            // Runtime observers are absent from definitions but must retire on full reload.
-            let old_entries = world
-                .get_resource_mut::<ObserverRegistry>()
-                .map(|mut registry| registry.clear_all());
+        let count = self.pending_observers.len();
+        ObserverRegistry::replace_definition_observers(
+            std::mem::take(&mut self.pending_observers),
+            true,
+            world,
+        );
 
-            if let Some(old_entries) = old_entries {
-                for entry in &old_entries {
-                    if world.get_entity(entry.observer_entity).is_ok() {
-                        world.despawn(entry.observer_entity);
-                    }
-                }
-                // Prepared Python handles drop only after the registry borrow
-                // and observer-entity despawns have both completed.
-                drop(old_entries);
-            }
+        if is_verbose() {
+            eprintln!("   → Re-registered {} observers", defs.observers.len());
+        }
 
-            // Register new observers
-            for observer_func in &defs.observers {
-                let func_bound = observer_func.bind(py);
-                ObserverRegistry::register_observer(py, func_bound, world)?;
-            }
+        debug_assert_eq!(count, defs.observers.len());
+        Ok(())
+    }
 
-            if is_verbose() {
-                eprintln!("   → Re-registered {} observers", defs.observers.len());
-            }
-
-            Ok(())
-        })
-        .map_err(|error| reload_error_from_py(&error, "", false))
+    fn commit_partial_observers(&mut self, world: &mut World) -> Result<(), ReloadError> {
+        ObserverRegistry::replace_definition_observers(
+            std::mem::take(&mut self.pending_observers),
+            false,
+            world,
+        );
+        Ok(())
     }
 
     fn register_handles(
