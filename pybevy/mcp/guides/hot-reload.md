@@ -39,6 +39,11 @@ consequences matter during iteration:
 - Changing annotated `@resource` fields escalates to Full and rebuilds the
   resource. Changing only a default value keeps the current instance on Partial;
   use Full to apply the new initial value.
+- When the field layout is compatible, the preserved resource accepts nested
+  class and enum values declared by the successfully loaded generation. Existing
+  field objects are not migrated: an old enum value remains an old enum value
+  until scene code assigns a current-generation replacement. Rejected reloads do
+  not approve their candidate types for later assignment.
 - Mesh assets and handles created by Startup survive a Partial reload. Editing
   mesh-building code has no visible effect until Startup runs again; use a Full
   reload when changing generated geometry.
