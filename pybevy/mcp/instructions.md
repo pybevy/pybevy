@@ -18,6 +18,11 @@
 
 After an early subprocess exit, `get_logs(lines=200)` retrieves more retained
 output than the startup error includes. Retrieve it before starting another scene.
+The `lines` value caps the complete rendered response, including headings,
+warnings, truncation text, and the subprocess-exit notice. With
+`errors_only=true`, the current live Python failure has priority; remaining
+space shows the newest matching stderr lines in their original order, then
+distinct warnings that fit.
 
 After a failed reload, `run_code` uses the restored previous scene namespace.
 Fix the source and reload again to apply the new definitions.
