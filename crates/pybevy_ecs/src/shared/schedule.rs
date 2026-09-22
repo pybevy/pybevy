@@ -34,6 +34,7 @@ pub fn schedule_build_message(payload: &(dyn Any + Send)) -> Option<String> {
 /// Each leaf is lowered independently so backends preserve its exact scheduler
 /// access and parameter plan instead of forcing all predicates through one
 /// callable signature.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ConditionExpr<T> {
     Leaf(T),
     And(Box<Self>, Box<Self>),

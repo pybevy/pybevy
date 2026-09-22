@@ -37,6 +37,7 @@ use super::{
     parity_trace::{ParityOpSink, ParityRunHandle, ParityTraceResource},
     run_ticks::RunTicks,
     system_flags::compute_system_flags,
+    system_ticks::SystemRunHistory,
 };
 
 /// Sized adapter around an erased read-only condition.
@@ -604,6 +605,7 @@ pub struct DynamicSystemCore<
     stage: SystemStage,
     expected_generation: Option<u32>,
     last_run: Tick,
+    history: SystemRunHistory,
     command_queue: CommandQueue,
     validation: Option<SystemParamValidationError>,
     failure_sink: Option<B::FailureSink>,
@@ -633,6 +635,7 @@ where
             stage: prepared.stage,
             expected_generation: prepared.expected_generation,
             last_run: Tick::new(0),
+            history: SystemRunHistory::default(),
             command_queue: CommandQueue::default(),
             validation: None,
             failure_sink: None,
@@ -648,6 +651,10 @@ where
 
     pub fn handle(&self) -> &SystemHandle<B> {
         &self.retained
+    }
+
+    pub fn history(&self) -> SystemRunHistory {
+        self.history.clone()
     }
 
     /// Update the profiling stage before this system is inserted into a schedule.
@@ -847,6 +854,7 @@ where
         }
 
         self.last_run = this_run;
+        self.history.record(this_run);
         Ok(output)
     }
 
@@ -879,6 +887,9 @@ where
         self.parity_trace = parity_trace_sink(world);
 
         let initialized = self.interpreter.initialize_scheduled(&self.params, world);
+        self.last_run = self
+            .history
+            .initialize(world.id(), &initialized.access, self.last_run);
         self.state = Some(initialized.state);
         self.failure_sink = Some(initialized.failure_sink);
         self.validation = initialized.validation;
@@ -900,6 +911,7 @@ where
 
     fn check_change_tick(&mut self, check: CheckChangeTicks) {
         self.last_run.check_tick(check);
+        self.history.record(self.last_run);
     }
 
     fn get_last_run(&self) -> Tick {
@@ -908,12 +920,17 @@ where
 
     fn set_last_run(&mut self, last_run: Tick) {
         self.last_run = last_run;
+        self.history.record(last_run);
     }
 }
 
 pub struct DynamicConditionCore<B: SystemInterpreter>(DynamicSystemCore<B, BoolOutput>);
 
 impl<B: SystemInterpreter> DynamicConditionCore<B> {
+    pub fn history(&self) -> SystemRunHistory {
+        self.0.history()
+    }
+
     pub fn new(prepared: PreparedSystem<B>) -> Result<Self, String> {
         prepared.interpreter.validate_condition(&prepared.params)?;
         Ok(Self(DynamicSystemCore::new(prepared)))
@@ -1630,6 +1647,32 @@ mod tests {
         assert_ne!(after, before);
         assert_eq!(captured.this_run, after);
         assert_eq!(system.get_last_run(), after);
+    }
+
+    #[test]
+    fn replacement_uses_predecessor_run_tick_without_sharing_future_updates() {
+        let mut world = World::new();
+        let old = fixture(FakeCall::Unit, FakePlan::default(), InvocationKind::System);
+        let mut old = DynamicSystemCore::<_, UnitOutput>::new(old.prepared);
+        old.initialize(&mut world);
+        old.run((), &mut world).unwrap();
+        let previous_tick = old.get_last_run();
+        let replacement = fixture(FakeCall::Unit, FakePlan::default(), InvocationKind::System);
+        let observed = replacement.ticks.clone();
+        let mut replacement = DynamicSystemCore::<_, UnitOutput>::new(replacement.prepared);
+        replacement.history().inherit_from(&old.history());
+        replacement.initialize(&mut world);
+        replacement.run((), &mut world).unwrap();
+        assert_eq!(observed.lock().unwrap().unwrap().last_run, previous_tick);
+        assert_eq!(old.get_last_run(), previous_tick);
+        assert_ne!(replacement.get_last_run(), previous_tick);
+
+        old.set_last_run(Tick::new(u32::MAX - 2));
+        let third = fixture(FakeCall::Unit, FakePlan::default(), InvocationKind::System);
+        let mut third = DynamicSystemCore::<_, UnitOutput>::new(third.prepared);
+        third.history().inherit_from(&old.history());
+        third.initialize(&mut world);
+        assert_eq!(third.get_last_run(), Tick::new(u32::MAX - 2));
     }
 
     #[test]

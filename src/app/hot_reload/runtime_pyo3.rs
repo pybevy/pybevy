@@ -6,11 +6,12 @@ use std::{
 
 use bevy::ecs::{
     schedule::{
-        Chain, InternedSystemSet, Schedule, ScheduleConfigs, Schedules, SingleThreadedExecutor,
+        Chain, InternedSystemSet, Schedule, ScheduleConfigs, ScheduleLabel, Schedules,
+        SingleThreadedExecutor,
     },
     world::World,
 };
-use pybevy_core::PluginIdentity;
+use pybevy_core::{PluginIdentity, ReloadRequestMode, ReloadResult};
 use pybevy_ecs::shared::schedule::{StateScheduleLabel, TransitionScheduleLabel};
 use pybevy_reload::{
     DefsFingerprint, KEEP_ALIVE_GENERATIONS, ReloadError, ReloadMode, ReloadRuntime, SystemStage,
@@ -182,8 +183,10 @@ enum ReloadStateSchedule {
 #[allow(clippy::too_many_arguments)]
 fn add_systems_to_schedule(
     schedule: &mut Schedule,
+    world: &mut World,
     systems: Vec<Py<PyAny>>,
     generation: u32,
+    previous: Option<u32>,
     error_state: &Arc<Mutex<Vec<PyErr>>>,
     error_buffer: &SystemErrorBuffer,
     system_stage: SystemStage,
@@ -201,7 +204,7 @@ fn add_systems_to_schedule(
                 let mut configs = Vec::new();
 
                 for sys in systems_tuple.iter() {
-                    let (config, handles) = build_scheduled_system(
+                    let (config, handles, ticks) = build_scheduled_system(
                         &sys,
                         generation,
                         error_state.clone(),
@@ -211,6 +214,9 @@ fn add_systems_to_schedule(
                     )
                     .map_err(|error| annotate_registration_error(py, &sys, error))?;
                     system_handles.extend(handles);
+                    world
+                        .get_resource_or_insert_with(DynamicSystemRegistry::default)
+                        .register_ticks(generation, previous, stage.intern_label(), ticks);
                     configs.push(config);
                 }
 
@@ -226,7 +232,7 @@ fn add_systems_to_schedule(
 
                 schedule.add_systems(chained);
             } else {
-                let (config, handles) = build_scheduled_system(
+                let (config, handles, ticks) = build_scheduled_system(
                     system_bound,
                     generation,
                     error_state.clone(),
@@ -236,6 +242,9 @@ fn add_systems_to_schedule(
                 )
                 .map_err(|error| annotate_registration_error(py, system_bound, error))?;
                 system_handles.extend(handles);
+                world
+                    .get_resource_or_insert_with(DynamicSystemRegistry::default)
+                    .register_ticks(generation, previous, stage.intern_label(), ticks);
                 schedule.add_systems(config);
             }
             Ok(())
@@ -532,6 +541,13 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
         generation: u32,
     ) -> Result<Vec<DynamicSystemHandle>, ReloadError> {
         let mut system_handles: Vec<DynamicSystemHandle> = Vec::new();
+        let previous = world
+            .get_resource::<ReloadResult>()
+            .filter(|result| result.actual_mode == Some(ReloadRequestMode::Partial))
+            .and_then(|_| generation.checked_sub(1));
+        world
+            .get_resource_or_insert_with(DynamicSystemRegistry::default)
+            .begin_tick_reload(generation);
         self.pending_set_configs.clear();
         self.prepare_set_configs(world, defs.set_configs, generation)?;
 
@@ -591,11 +607,13 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
                 }
             }
 
-            world.schedule_scope(label, |_world, schedule| {
+            world.schedule_scope(label, |world, schedule| {
                 add_systems_to_schedule(
                     schedule,
+                    world,
                     systems,
                     generation,
+                    previous,
                     &self.error_state,
                     &error_buffer,
                     system_stage,
@@ -655,7 +673,7 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
                             .resource_mut::<Schedules>()
                             .insert(Schedule::new(label.clone()));
                     }
-                    world.schedule_scope(label, |_world, schedule| {
+                    world.schedule_scope(label.clone(), |world, schedule| {
                         schedule.set_executor(SingleThreadedExecutor::new());
                         for system in pending.systems {
                             let result = Python::attach(|py| {
@@ -669,8 +687,16 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
                                 )
                             });
                             match result {
-                                Ok((config, handles)) => {
+                                Ok((config, handles, ticks)) => {
                                     system_handles.extend(handles);
+                                    world
+                                        .get_resource_or_insert_with(DynamicSystemRegistry::default)
+                                        .register_ticks(
+                                            generation,
+                                            previous,
+                                            label.intern(),
+                                            ticks,
+                                        );
                                     schedule.add_systems(config);
                                 }
                                 Err(error) => {

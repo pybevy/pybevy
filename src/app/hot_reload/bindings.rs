@@ -183,9 +183,9 @@ pub fn add_hot_reload_system(
     app.insert_resource(HotReloadGeneration::new(generation_counter));
 
     // Insert the DynamicSystem registry for tracking system handles by generation
-    let mut system_registry = DynamicSystemRegistry::default();
-    system_registry.track_generation(state.current_generation());
-    app.insert_resource(system_registry);
+    app.world_mut()
+        .get_resource_or_insert_with(DynamicSystemRegistry::default)
+        .track_generation(state.current_generation());
     app.insert_resource(PendingScheduleCompaction::default());
 
     // Initialize system monitor

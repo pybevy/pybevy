@@ -21,6 +21,9 @@ Full vs partial reload, what persists across reloads, error recovery, and diagno
 
 ### Partial Reload
 - Preserves all entities and resources (including custom ones)
+- Preserves `Added`/`Changed` history for matching system registrations, including
+  conditions and individual pipe stages. Reload alone does not make unchanged
+  components appear new; changes since a skipped system last ran remain visible.
 - Does NOT preserve `Local[T]`: reloading a system constructs its locals
   again, so keep surviving state in a `@resource`
 - Only reloads Update/Last system functions
@@ -32,6 +35,14 @@ Full vs partial reload, what persists across reloads, error recovery, and diagno
 - The baseline is seeded from the definitions the entrypoint built, so the first
   Partial reload after `run_scene` compares like any later one and keeps the
   state accumulated since launch
+
+History matches the schedule, qualified callable names, pipe/condition structure,
+ordering configuration, and occurrence within otherwise identical registrations.
+Keep duplicate registrations in the same declaration order, or distinguish them
+with separate system sets. New or renamed registrations, changed configuration or
+declared access, and full reloads start with fresh history. Changing a function's
+body alone preserves history. A rejected candidate does not consume the previous
+generation's history. `Local[T]` and message-reader cursors are not transferred.
 
 Partial mode does not reconstruct retained Startup-owned state. These
 consequences matter during iteration:

@@ -1,6 +1,12 @@
 use std::collections::{HashMap, HashSet};
 
-use bevy::prelude::Resource;
+use bevy::{ecs::schedule::InternedScheduleLabel, prelude::Resource};
+use pybevy_ecs::shared::system_ticks::{
+    SystemRegistrationIdentity, SystemRunHistory, SystemTickRegistration,
+};
+
+type TickRegistrations =
+    HashMap<(InternedScheduleLabel, SystemRegistrationIdentity), Vec<Vec<SystemRunHistory>>>;
 
 /// Backend-neutral bookkeeping for reloadable system handles.
 ///
@@ -11,6 +17,7 @@ use bevy::prelude::Resource;
 pub struct SystemGenerationRegistry<H: Send + Sync + 'static> {
     generations: HashMap<u32, Vec<H>>,
     known_systems: HashSet<String>,
+    ticks: HashMap<u32, TickRegistrations>,
 }
 
 impl<H: Send + Sync + 'static> Default for SystemGenerationRegistry<H> {
@@ -18,11 +25,51 @@ impl<H: Send + Sync + 'static> Default for SystemGenerationRegistry<H> {
         Self {
             generations: HashMap::new(),
             known_systems: HashSet::new(),
+            ticks: HashMap::new(),
         }
     }
 }
 
 impl<H: Send + Sync + 'static> SystemGenerationRegistry<H> {
+    /// Begin a fresh candidate without changing the committed generation's history.
+    pub fn begin_tick_reload(&mut self, generation: u32) {
+        self.ticks
+            .retain(|old, _| *old >= generation.saturating_sub(2) && *old != generation);
+    }
+
+    pub fn register_ticks(
+        &mut self,
+        generation: u32,
+        previous: Option<u32>,
+        schedule: InternedScheduleLabel,
+        registration: SystemTickRegistration,
+    ) {
+        let key = (schedule, registration.identity);
+        let occurrence = self
+            .ticks
+            .get(&generation)
+            .and_then(|entries| entries.get(&key))
+            .map_or(0, Vec::len);
+        if let Some(previous) = previous
+            && let Some(previous) = self
+                .ticks
+                .get(&previous)
+                .and_then(|entries| entries.get(&key))
+                .and_then(|occurrences| occurrences.get(occurrence))
+            && previous.len() == registration.leaves.len()
+        {
+            for (new, old) in registration.leaves.iter().zip(previous) {
+                new.inherit_from(old);
+            }
+        }
+        self.ticks
+            .entry(generation)
+            .or_default()
+            .entry(key)
+            .or_default()
+            .push(registration.leaves);
+    }
+
     pub fn track_generation(&mut self, generation: u32) {
         self.generations.entry(generation).or_default();
     }
@@ -50,6 +97,7 @@ impl<H: Send + Sync + 'static> SystemGenerationRegistry<H> {
             .collect();
 
         for &generation in &old_generations {
+            self.ticks.remove(&generation);
             if let Some(handles) = self.generations.remove(&generation) {
                 for handle in &handles {
                     retire(handle);
@@ -83,6 +131,12 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
     };
 
+    use bevy::{
+        app::{Last, Update},
+        ecs::schedule::ScheduleLabel,
+    };
+    use pybevy_ecs::shared::schedule::ConditionExpr;
+
     use super::*;
 
     #[derive(Clone)]
@@ -113,6 +167,64 @@ mod tests {
         let registry = SystemGenerationRegistry::<TestHandle>::default();
         assert!(registry.generations.is_empty());
         assert!(registry.known_systems.is_empty());
+    }
+
+    #[test]
+    fn tick_registrations_are_scoped_by_schedule_structure_and_occurrence() {
+        let mut registry = SystemGenerationRegistry::<()>::default();
+        let identity = SystemRegistrationIdentity {
+            callable: "scene.observe".to_owned(),
+            ..Default::default()
+        };
+        for schedule in [Update.intern(), Update.intern(), Last.intern()] {
+            registry.register_ticks(
+                0,
+                None,
+                schedule,
+                SystemTickRegistration {
+                    identity: identity.clone(),
+                    leaves: vec![SystemRunHistory::default()],
+                },
+            );
+        }
+        assert_eq!(
+            registry.ticks[&0][&(Update.intern(), identity.clone())].len(),
+            2
+        );
+        assert_eq!(
+            registry.ticks[&0][&(Last.intern(), identity.clone())].len(),
+            1
+        );
+        let separate = SystemRegistrationIdentity {
+            conditions: vec![
+                ConditionExpr::Leaf("scene.a".to_owned()),
+                ConditionExpr::Leaf("scene.b".to_owned()),
+            ],
+            ..identity.clone()
+        };
+        let combined = SystemRegistrationIdentity {
+            conditions: vec![ConditionExpr::And(
+                Box::new(ConditionExpr::Leaf("scene.a".to_owned())),
+                Box::new(ConditionExpr::Leaf("scene.b".to_owned())),
+            )],
+            ..identity.clone()
+        };
+        assert_ne!(separate, combined);
+        registry.begin_tick_reload(1);
+        registry.register_ticks(
+            1,
+            Some(0),
+            Update.intern(),
+            SystemTickRegistration {
+                identity: identity.clone(),
+                leaves: vec![SystemRunHistory::default()],
+            },
+        );
+        registry.begin_tick_reload(1);
+        assert!(!registry.ticks.contains_key(&1));
+        assert_eq!(registry.ticks[&0][&(Update.intern(), identity)].len(), 2);
+        registry.begin_tick_reload(4);
+        assert!(registry.ticks.is_empty());
     }
 
     #[test]

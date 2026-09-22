@@ -18,6 +18,7 @@ use bevy::{
 use pybevy_ecs::shared::{
     schedule::{ConditionExpr, DynamicSetLabel, ScheduleOrdering, SystemSetTarget},
     system_runtime::{ErasedConditionSystem, ErasedSystem},
+    system_ticks::{SystemRegistrationIdentity, SystemTickRegistration},
 };
 use pybevy_reload::{ReloadGenerationSet, SystemStage, generation_matches, startup_or_reload};
 use pyo3::{
@@ -416,7 +417,11 @@ pub(crate) fn build_scheduled_system(
     error_buffer: SystemErrorBuffer,
     system_stage: SystemStage,
     is_startup: bool,
-) -> PyResult<(ScheduleConfigs<ScheduleSystem>, Vec<DynamicSystemHandle>)> {
+) -> PyResult<(
+    ScheduleConfigs<ScheduleSystem>,
+    Vec<DynamicSystemHandle>,
+    SystemTickRegistration,
+)> {
     let py = value.py();
     let (callable, pipe_stages, ordering, conditions, combined_condition) =
         if let Ok(config) = value.extract::<PySystemConfig>() {
@@ -446,6 +451,14 @@ pub(crate) fn build_scheduled_system(
         };
 
     let identity = callable_set(callable.bind(py))?;
+    let mut ticks = SystemTickRegistration {
+        identity: SystemRegistrationIdentity {
+            callable: identity.qualified_name().to_owned(),
+            ordering: ordering.clone(),
+            ..Default::default()
+        },
+        leaves: Vec::new(),
+    };
     let pipe_identities = pipe_stages
         .iter()
         .map(|stage| callable_set(stage.bind(py)))
@@ -459,6 +472,7 @@ pub(crate) fn build_scheduled_system(
             system_stage,
         )?;
         let handle = dynamic_system.handle().clone();
+        ticks.leaves.push(dynamic_system.history());
         (Box::new(dynamic_system) as ScheduleSystem, vec![handle])
     } else {
         build_pipe_system(
@@ -469,6 +483,7 @@ pub(crate) fn build_scheduled_system(
             error_buffer,
             system_stage,
             py,
+            &mut ticks,
         )?
     };
     let mut config = if is_startup {
@@ -479,17 +494,32 @@ pub(crate) fn build_scheduled_system(
     .in_set(ReloadGenerationSet(generation));
 
     for condition in conditions {
+        let expression = extract_condition_expr(condition)?;
+        ticks
+            .identity
+            .conditions
+            .push(condition_identity(&expression)?);
         let condition = build_condition_expr(
-            extract_condition_expr(condition)?,
+            expression,
             generation,
             error_state.clone(),
             system_stage,
+            &mut ticks,
         )?;
         config.run_if_dyn(condition);
     }
     if let Some(condition) = combined_condition {
-        let condition =
-            build_condition_expr(condition, generation, error_state.clone(), system_stage)?;
+        ticks
+            .identity
+            .conditions
+            .push(condition_identity(&condition)?);
+        let condition = build_condition_expr(
+            condition,
+            generation,
+            error_state.clone(),
+            system_stage,
+            &mut ticks,
+        )?;
         config.run_if_dyn(condition);
     }
 
@@ -500,7 +530,7 @@ pub(crate) fn build_scheduled_system(
         config = config.in_set(pipe_identity);
     }
 
-    Ok((config, handles))
+    Ok((config, handles, ticks))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -512,11 +542,13 @@ fn build_pipe_system(
     error_buffer: SystemErrorBuffer,
     system_stage: SystemStage,
     py: Python<'_>,
+    ticks: &mut SystemTickRegistration,
 ) -> PyResult<(ScheduleSystem, Vec<DynamicSystemHandle>)> {
     let mut names = vec![qualified_name(source.bind(py), "system callable")?];
     for target in &targets {
         names.push(qualified_name(target.bind(py), "system callable")?);
     }
+    ticks.identity.pipeline.clone_from(&names);
     let debug_name = || DebugName::owned(names.join(" |> "));
 
     let source = new_main_value_source(
@@ -527,6 +559,7 @@ fn build_pipe_system(
         system_stage,
     )?;
     let mut handles = vec![source.handle().clone()];
+    ticks.leaves.push(source.history());
     let mut pipeline: BoxedSystem<(), Option<Py<PyAny>>> = Box::new(source);
     let mut targets = targets.into_iter().peekable();
 
@@ -540,6 +573,7 @@ fn build_pipe_system(
                 system_stage,
             )?;
             handles.push(target.handle().clone());
+            ticks.leaves.push(target.history());
             pipeline = Box::new(PipeSystem::new(
                 ErasedSystem::new(pipeline),
                 target,
@@ -549,6 +583,7 @@ fn build_pipe_system(
             let target =
                 new_main_unit_target(target, generation, error_state, error_buffer, system_stage)?;
             handles.push(target.handle().clone());
+            ticks.leaves.push(target.history());
             let pipeline = Box::new(PipeSystem::new(
                 ErasedSystem::new(pipeline),
                 target,
@@ -561,36 +596,59 @@ fn build_pipe_system(
     unreachable!("pipe construction requires at least one target")
 }
 
+fn condition_identity(expression: &ConditionExpr<Py<PyAny>>) -> PyResult<ConditionExpr<String>> {
+    Ok(match expression {
+        ConditionExpr::Leaf(condition) => ConditionExpr::Leaf(Python::attach(|py| {
+            let value = condition.bind(py);
+            qualified_name(value, "system callable")
+                .or_else(|_| qualified_name(value.get_type().as_any(), "condition"))
+        })?),
+        ConditionExpr::And(left, right) => ConditionExpr::And(
+            Box::new(condition_identity(left)?),
+            Box::new(condition_identity(right)?),
+        ),
+        ConditionExpr::Or(left, right) => ConditionExpr::Or(
+            Box::new(condition_identity(left)?),
+            Box::new(condition_identity(right)?),
+        ),
+        ConditionExpr::Not(condition) => {
+            ConditionExpr::Not(Box::new(condition_identity(condition)?))
+        }
+    })
+}
+
 fn build_condition_expr(
     expression: ConditionExpr<Py<PyAny>>,
     generation: u32,
     error_state: Arc<Mutex<Vec<PyErr>>>,
     system_stage: SystemStage,
+    ticks: &mut SystemTickRegistration,
 ) -> PyResult<BoxedCondition> {
     match expression {
-        ConditionExpr::Leaf(condition) => Ok(Box::new(new_main_condition(
-            condition,
-            generation,
-            error_state,
-            system_stage,
-        )?)),
+        ConditionExpr::Leaf(condition) => {
+            let condition = new_main_condition(condition, generation, error_state, system_stage)?;
+            ticks.leaves.push(condition.history());
+            Ok(Box::new(condition))
+        }
         ConditionExpr::And(left, right) => {
-            let left = build_condition_expr(*left, generation, error_state.clone(), system_stage)?;
-            let right = build_condition_expr(*right, generation, error_state, system_stage)?;
+            let left =
+                build_condition_expr(*left, generation, error_state.clone(), system_stage, ticks)?;
+            let right = build_condition_expr(*right, generation, error_state, system_stage, ticks)?;
             Ok(Box::new(
                 ErasedConditionSystem::new(left).and_then(ErasedConditionSystem::new(right)),
             ))
         }
         ConditionExpr::Or(left, right) => {
-            let left = build_condition_expr(*left, generation, error_state.clone(), system_stage)?;
-            let right = build_condition_expr(*right, generation, error_state, system_stage)?;
+            let left =
+                build_condition_expr(*left, generation, error_state.clone(), system_stage, ticks)?;
+            let right = build_condition_expr(*right, generation, error_state, system_stage, ticks)?;
             Ok(Box::new(
                 ErasedConditionSystem::new(left).or_else(ErasedConditionSystem::new(right)),
             ))
         }
         ConditionExpr::Not(condition) => {
             let condition =
-                build_condition_expr(*condition, generation, error_state, system_stage)?;
+                build_condition_expr(*condition, generation, error_state, system_stage, ticks)?;
             Ok(Box::new(not(ErasedConditionSystem::new(condition))))
         }
     }

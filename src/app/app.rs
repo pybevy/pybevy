@@ -15,7 +15,7 @@ use bevy::{
     ecs::{
         message::MessageWriter,
         resource::Resource,
-        schedule::{Chain, ScheduleConfigs, Schedules, SingleThreadedExecutor},
+        schedule::{Chain, ScheduleConfigs, ScheduleLabel, Schedules, SingleThreadedExecutor},
         system::{Local, Res},
         world::World,
     },
@@ -1037,7 +1037,7 @@ impl PyApp {
 
                     // Add each system to the schedule.
                     for system in systems.iter() {
-                        let (config, _) = build_scheduled_system(
+                        let (config, _, ticks) = build_scheduled_system(
                             &system,
                             current_generation,
                             error_state.clone(),
@@ -1046,6 +1046,14 @@ impl PyApp {
                             false,
                         )?;
 
+                        let label = match &schedule_type {
+                            ScheduleType::OnEnter(lbl) | ScheduleType::OnExit(lbl) => lbl.intern(),
+                            ScheduleType::OnTransition(lbl) => lbl.intern(),
+                            _ => unreachable!(),
+                        };
+                        app.world_mut()
+                            .get_resource_or_insert_with(DynamicSystemRegistry::default)
+                            .register_ticks(current_generation, None, label, ticks);
                         match &schedule_type {
                             ScheduleType::OnEnter(lbl) => app.add_systems(lbl.clone(), config),
                             ScheduleType::OnExit(lbl) => app.add_systems(lbl.clone(), config),
@@ -1114,9 +1122,10 @@ impl PyApp {
                             let py = system.py();
                             let systems_tuple = chained.systems.bind(py);
                             let mut configs = Vec::new();
+                            let mut registrations = Vec::new();
 
                             for sys in systems_tuple.iter() {
-                                let (config, _) = build_scheduled_system(
+                                let (config, _, ticks) = build_scheduled_system(
                                     &sys,
                                     current_generation,
                                     error_state.clone(),
@@ -1125,6 +1134,7 @@ impl PyApp {
                                     stage.is_startup(),
                                 )?;
                                 configs.push(config);
+                                registrations.push(ticks);
                             }
 
                             if configs.is_empty() {
@@ -1138,6 +1148,17 @@ impl PyApp {
                             };
 
                             add_to_schedule!(app, stage, chained);
+                            let mut registry = app
+                                .world_mut()
+                                .get_resource_or_insert_with(DynamicSystemRegistry::default);
+                            for ticks in registrations {
+                                registry.register_ticks(
+                                    current_generation,
+                                    None,
+                                    stage.intern_label(),
+                                    ticks,
+                                );
+                            }
                             registered_systems.push(system);
                         } else {
                             // Handle regular systems (not chained)
@@ -1148,7 +1169,7 @@ impl PyApp {
 
                             for sys in system_list {
                                 let system_stage = Self::get_system_stage(stage);
-                                let (config, _) = build_scheduled_system(
+                                let (config, _, ticks) = build_scheduled_system(
                                     &sys,
                                     current_generation,
                                     error_state.clone(),
@@ -1156,6 +1177,14 @@ impl PyApp {
                                     system_stage,
                                     stage.is_startup(),
                                 )?;
+                                app.world_mut()
+                                    .get_resource_or_insert_with(DynamicSystemRegistry::default)
+                                    .register_ticks(
+                                        current_generation,
+                                        None,
+                                        stage.intern_label(),
+                                        ticks,
+                                    );
                                 add_to_schedule!(app, stage, config);
                                 registered_systems.push(sys);
                             }
