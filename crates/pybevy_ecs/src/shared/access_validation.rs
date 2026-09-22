@@ -74,7 +74,8 @@ pub enum ParamAccess<K> {
     },
     /// Assets access (Res\<Assets\<T\>\> / ResMut\<Assets\<T\>\>)
     Assets {
-        key: String,
+        key: K,
+        marker: K,
         name: String,
         mutable: bool,
     },
@@ -145,7 +146,7 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
     let mut component_access: HashMap<K, ComponentAccessList<K>> = HashMap::new();
 
     // Track assets access (for Res<Assets<T>> / ResMut<Assets<T>> conflicts)
-    let mut assets_access: HashMap<String, (usize, bool, String)> = HashMap::new();
+    let mut assets_access: HashMap<K, (usize, bool, String)> = HashMap::new();
 
     // Track buffered message channels (reader=shared, writer=mutable).
     let mut message_access: HashMap<String, (usize, bool, String)> = HashMap::new();
@@ -280,7 +281,12 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
                 }
             }
 
-            ParamAccess::Assets { key, name, mutable } => {
+            ParamAccess::Assets {
+                key,
+                marker,
+                name,
+                mutable,
+            } => {
                 if let Some((existing_idx, existing_mut, existing_name)) = assets_access.get(key) {
                     if *mutable || *existing_mut {
                         return Err(ComponentAccessConflict {
@@ -302,6 +308,41 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
                 } else {
                     assets_access.insert(key.clone(), (param_idx, *mutable, name.clone()));
                 }
+
+                let resource_filters = QueryFilters {
+                    with: HashSet::from([marker.clone()]),
+                    without: HashSet::new(),
+                };
+                if let Some(existing_accesses) = component_access.get(key) {
+                    for existing in existing_accesses {
+                        if (*mutable || existing.exclusive)
+                            && !resource_filters.is_disjoint_from(&existing.filters)
+                        {
+                            return Err(ComponentAccessConflict {
+                                param_idx,
+                                mutable: *mutable,
+                                comp_name: format!("Assets<{name}>"),
+                                existing_idx: existing.idx,
+                                existing_mut: existing.mutable,
+                                existing_name: existing.name.clone(),
+                                kind: ConflictKind::ResourceQuery,
+                                category: ConflictCategory::Component,
+                                exclusive_read: existing.exclusive && !existing.mutable,
+                            });
+                        }
+                    }
+                }
+                component_access
+                    .entry(key.clone())
+                    .or_default()
+                    .push(Recorded {
+                        idx: param_idx,
+                        exclusive: *mutable,
+                        mutable: *mutable,
+                        name: format!("Assets<{name}>"),
+                        filters: resource_filters,
+                        is_query: false,
+                    });
 
                 // Check for World conflict
                 if let Some(world_idx) = world_param_idx {
@@ -478,6 +519,7 @@ mod tests {
     fn assets(key: &str, mutable: bool) -> ParamAccess<String> {
         ParamAccess::Assets {
             key: key.to_string(),
+            marker: "resource marker".to_string(),
             name: key.to_string(),
             mutable,
         }

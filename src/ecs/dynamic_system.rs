@@ -15,11 +15,10 @@ use bevy::{
     prelude::*,
 };
 use pybevy_core::{
-    AssetAccessRegistry, AssetBorrowCounter, BorrowableStorage, FieldStorage,
-    ensure_asset_access_registry,
+    AssetAccessRegistry, BorrowableStorage, FieldStorage, ensure_asset_access_registry,
     public_error::{
-        ASSET_ACCESS_REGISTRY_MISSING, GIZMOS_PLUGIN_REQUIRED, pipe_input_must_be_first,
-        pipe_input_outside_pipe, pipe_target_requires_input, system_resource_not_found,
+        GIZMOS_PLUGIN_REQUIRED, pipe_input_must_be_first, pipe_input_outside_pipe,
+        pipe_target_requires_input, system_resource_not_found,
     },
     registry::global_registry,
     resource_initializer,
@@ -29,9 +28,9 @@ use pybevy_ecs::shared::{
     command_queue_helpers::create_commands_from_queue,
     message_store::{MessageRegistryCore, MessageTypeKey},
     param_spec::{
-        BackendKeys, ComponentSpec, FilterSpec, KeyResolver, ParamSpec, QuerySpec, ResolvedAsset,
-        ResolvedMessage, ResolvedResource, SchedulerAccess, conflict_error_message,
-        to_param_accesses,
+        AssetComponentSpec, BackendKeys, ComponentSpec, FilterSpec, KeyResolver, ParamSpec,
+        QuerySpec, ResolvedAsset, ResolvedMessage, ResolvedResource, SchedulerAccess,
+        conflict_error_message, to_param_accesses,
     },
     parity_trace::ParityRunHandle,
 };
@@ -83,28 +82,6 @@ pub(crate) fn lock_or_recover<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, 
         bevy::log::warn!("Recovered from poisoned DynamicSystemInner mutex");
         poisoned.into_inner()
     })
-}
-
-/// Build one validity-bound asset scope from the world-owned native-type
-/// registry declared by system initialization.
-unsafe fn asset_borrow_counter_from_cell(
-    world: UnsafeWorldCell<'_>,
-    type_ptr: *const PyTypeObject,
-    validity: &ValidityFlag,
-    origin: impl Into<Arc<str>>,
-) -> PyResult<AssetBorrowCounter> {
-    let bridge = global_registry::get_asset_bridge_by_py_type(type_ptr)
-        .expect("Assets[T] requires a registered asset bridge");
-    // SAFETY: initialization declares a shared read of AssetAccessRegistry for
-    // every Assets parameter, and the resource uses interior synchronization.
-    let registry = unsafe { world.get_resource::<AssetAccessRegistry>() }
-        .ok_or_else(|| PyRuntimeError::new_err(ASSET_ACCESS_REGISTRY_MISSING))?;
-    Ok(AssetBorrowCounter::from_scope(registry.new_scope(
-        bridge.bevy_type_id(),
-        bridge.name(),
-        validity.clone(),
-        origin,
-    )))
 }
 
 /// # Safety
@@ -238,6 +215,13 @@ pub(crate) fn resource_validation_identity(resource_type: &Py<PyType>) -> Valida
         })
 }
 
+pub(crate) fn asset_validation_identity(asset_type: &AssetTypePtr) -> ValidationIdentity {
+    global_registry::get_asset_bridge_by_py_type(asset_type.0).map_or(
+        ValidationIdentity::Python(asset_type.0 as usize),
+        |bridge| ValidationIdentity::Native(bridge.assets_type_id()),
+    )
+}
+
 pub(crate) fn resource_marker_validation_identity() -> ValidationIdentity {
     ValidationIdentity::Native(TypeId::of::<IsResource>())
 }
@@ -342,6 +326,18 @@ pub(crate) fn lower_param_type(ty: &SystemParamType, py: Python<'_>) -> ParamSpe
                                 .push(component_spec(&item.ty, item.mutable, true, py));
                         }
                     }
+                    QueryData::AssetResource {
+                        type_ptr,
+                        name,
+                        mutable,
+                        optional,
+                        ..
+                    } => spec.asset_components.push(AssetComponentSpec {
+                        key: AssetTypePtr(*type_ptr),
+                        name: name.clone(),
+                        mutable: *mutable,
+                        optional: *optional,
+                    }),
                     QueryData::Entity => {}
                 }
             }
@@ -563,6 +559,7 @@ fn validate_system_params_with_input(
         &specs,
         PyComponentType::validation_identity,
         resource_validation_identity,
+        asset_validation_identity,
         resource_marker_validation_identity(),
         MessageType::validation_identity,
     );
@@ -1111,8 +1108,10 @@ pub(crate) unsafe fn build_run_args<'w, 'c1, 'c2>(
                         continue;
                     }
                 }
+                // SAFETY: initialization declares the registry and Assets<T>
+                // accesses used by this run-scoped wrapper.
                 let borrow_counter = match unsafe {
-                    asset_borrow_counter_from_cell(
+                    PyAssets::borrow_counter_from_cell(
                         world,
                         type_ptr.0,
                         validity,
@@ -1391,8 +1390,10 @@ pub(crate) unsafe fn execute_prepared_observer(
                         continue;
                     }
                 }
+                // SAFETY: observer dispatch owns the World and the prepared
+                // parameter declaration includes this asset registry access.
                 let borrow_counter = unsafe {
-                    asset_borrow_counter_from_cell(
+                    PyAssets::borrow_counter_from_cell(
                         world.as_unsafe_world_cell(),
                         type_ptr.0,
                         validity,

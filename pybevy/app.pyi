@@ -463,7 +463,11 @@ class App:
     def _mark_entrypoint(self) -> None: ...
     def world(self, callback: Callable[..., None]) -> None: ...
     def run_system_once(self, func: SystemFn) -> None:
-        """Run a system function once immediately on this app's world."""
+        """Run a system function once immediately on this app's world.
+
+        A required Single parameter with zero or multiple matches raises
+        RuntimeError; scheduled systems preserve Bevy's silent skip instead.
+        """
     def _run_systems_once(self, *funcs: SystemFn) -> None:
         """Run multiple system functions once immediately (PyBevy-specific)."""
     def init_resource(self, resource: type[ResourceType]) -> App: ...

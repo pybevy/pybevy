@@ -27,6 +27,13 @@ pub(crate) enum ParamType {
         optional: bool,
         logical_type_id: Option<LogicalTypeId>,
     },
+    AssetResource {
+        param: Py<crate::assets::asset_type::PyAssetTypeParam>,
+        type_ptr: *const pyo3::ffi::PyTypeObject,
+        name: String,
+        mutable: bool,
+        optional: bool,
+    },
     Has(PyHas),
     AnyOf(SmallVec<[query_param::AnyOfItem; 4]>),
     Filter(QueryFilter),

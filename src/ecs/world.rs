@@ -17,7 +17,11 @@ use std::{
 };
 
 use bevy::{
-    ecs::{ptr::OwningPtr, system::System, world::World},
+    ecs::{
+        ptr::OwningPtr,
+        system::{RunSystemError, System},
+        world::World,
+    },
     prelude::*,
 };
 use pybevy_core::{
@@ -25,7 +29,8 @@ use pybevy_core::{
     ensure_no_live_asset_access, extract_entity_from_any,
     public_error::{
         COMPONENT_BRIDGE_NOT_FOUND, RESOURCE_BRIDGE_NOT_FOUND, RESOURCE_ENTITY_DESPAWN,
-        WORLD_BATCH_ARGUMENTS, WORLD_CALLBACK_COMMAND_ERRORS, unregistered_message_write,
+        WORLD_BATCH_ARGUMENTS, WORLD_CALLBACK_COMMAND_ERRORS, one_shot_parameter_validation_skip,
+        unregistered_message_write,
     },
     registry::global_registry,
     resource_initializer,
@@ -850,6 +855,7 @@ impl PyWorld {
 
         if resource.get_type().is(PyAssetTypeParam::type_object(py)) {
             let asset_param = resource.extract::<PyAssetTypeParam>()?;
+            // SAFETY: `check_valid` above fences this momentary shared access.
             let world = unsafe { &*self.world_ptr() };
             let Some(bridge) = global_registry::get_asset_bridge_by_py_type(asset_param.type_ptr())
             else {
@@ -894,6 +900,20 @@ impl PyWorld {
         resource: Bound<'_, PyAny>,
     ) -> PyResult<Option<PyEntity>> {
         self.check_valid()?;
+
+        if resource.get_type().is(PyAssetTypeParam::type_object(py)) {
+            let asset_param = resource.extract::<PyAssetTypeParam>()?;
+            // SAFETY: `check_valid` above fences this momentary shared access.
+            let world = unsafe { &*self.world_ptr() };
+            let Some(bridge) = global_registry::get_asset_bridge_by_py_type(asset_param.type_ptr())
+            else {
+                return Ok(None);
+            };
+            return Ok(bridge
+                .resource_id(world)
+                .and_then(|component_id| world.resource_entities().get(component_id))
+                .map(PyEntity));
+        }
 
         let type_obj: Bound<'_, PyType> = resource.extract()?;
         let resource_type = PyResourceType::try_from((&type_obj, py))?;
@@ -1064,6 +1084,16 @@ impl PyWorld {
         component: Bound<'_, PyAny>,
     ) -> PyResult<Option<PyComponentId>> {
         self.check_valid()?;
+
+        if component.get_type().is(PyAssetTypeParam::type_object(py)) {
+            let asset_param = component.extract::<PyAssetTypeParam>()?;
+            let Some(bridge) = global_registry::get_asset_bridge_by_py_type(asset_param.type_ptr())
+            else {
+                return Ok(None);
+            };
+            let mut world = self.world_mut()?;
+            return Ok(Some(PyComponentId(bridge.register_resource_id(&mut world))));
+        }
 
         let type_obj: Bound<'_, PyType> = component.extract()?;
 
@@ -1397,7 +1427,14 @@ impl PyWorld {
 
         // Run the system
         // SAFETY: We have exclusive world access and the system was just initialized
-        let result = unsafe { system.run_unsafe((), world_cell) };
+        let result = match unsafe { system.run_unsafe((), world_cell) } {
+            Err(RunSystemError::Skipped(error)) => {
+                return Err(PyRuntimeError::new_err(one_shot_parameter_validation_skip(
+                    error.message,
+                )));
+            }
+            result => result,
+        };
 
         // Apply any deferred commands from the system
         system.apply_deferred(&mut world);

@@ -1,6 +1,10 @@
 use pybevy_core::{
     LogicalTypeId, PyLogicalComponentParam,
-    public_error::{ANY_OF_EMPTY, ANY_OF_TUPLE_REQUIRED, OR_IS_FILTER, query_data_required},
+    public_error::{
+        ANY_OF_EMPTY, ANY_OF_TUPLE_REQUIRED, OR_IS_FILTER, parenthesized_filter_tuple,
+        query_data_required, variadic_filters,
+    },
+    registry::global_registry,
 };
 use pybevy_ecs::shared::query_runtime::QueryRowShape;
 use pyo3::{
@@ -11,19 +15,75 @@ use pyo3::{
 };
 use smallvec::{SmallVec, smallvec};
 
-use crate::ecs::{
-    PyEntity,
-    component_type::PyComponentType,
-    filter::{
-        QueryFilter,
-        filters::{PyAdded, PyAnyOf, PyChanged, PyHas, PyOr, PyWith, PyWithout},
-    },
-    mutable::PyMut,
-    query::{
-        ParamType,
-        query_param::{AnyOfItem, PyQueryParam, QueryData},
+use crate::{
+    assets::asset_type::PyAssetTypeParam,
+    ecs::{
+        PyEntity,
+        component_type::PyComponentType,
+        filter::{
+            QueryFilter,
+            filters::{PyAdded, PyAnyOf, PyChanged, PyHas, PyOr, PyWith, PyWithout},
+        },
+        mutable::PyMut,
+        query::{
+            ParamType,
+            query_param::{AnyOfItem, PyQueryParam, QueryData},
+        },
     },
 };
+
+type ExtractedAssetResource = (
+    bool,
+    Py<PyAssetTypeParam>,
+    *const pyo3::ffi::PyTypeObject,
+    String,
+);
+
+fn extract_asset_resource(
+    py: Python<'_>,
+    key: &Bound<'_, PyAny>,
+) -> PyResult<Option<ExtractedAssetResource>> {
+    let (mutable, type_key) = if let Ok(origin) = key.getattr("__origin__")
+        && origin.is(PyMut::type_object(py))
+    {
+        (true, key.getattr("__args__")?.get_item(0)?)
+    } else {
+        (false, key.clone())
+    };
+    if !type_key.get_type().is(PyAssetTypeParam::type_object(py)) {
+        return Ok(None);
+    }
+    let retained = type_key.clone().cast_into::<PyAssetTypeParam>()?.unbind();
+    let param = retained.borrow(py);
+    let type_ptr = param.type_ptr();
+    let name = param
+        .logical_type_name()
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            global_registry::get_asset_bridge_by_py_type(type_ptr)
+                .map_or_else(|| "asset".to_owned(), |bridge| bridge.name().to_owned())
+        });
+    drop(param);
+    Ok(Some((mutable, retained, type_ptr, name)))
+}
+
+fn asset_param_type(
+    py: Python<'_>,
+    key: &Bound<'_, PyAny>,
+    optional: bool,
+) -> PyResult<Option<ParamType>> {
+    Ok(
+        extract_asset_resource(py, key)?.map(|(mutable, param, type_ptr, name)| {
+            ParamType::AssetResource {
+                param,
+                type_ptr,
+                name,
+                mutable,
+                optional,
+            }
+        }),
+    )
+}
 
 pub(crate) fn extract_param_type_from_query_param(
     py: Python,
@@ -38,6 +98,9 @@ pub(crate) fn extract_param_type_from_query_param(
             ));
         }
 
+        if let Some(asset) = asset_param_type(py, &inner, true)? {
+            return ok_single(asset);
+        }
         let (mutable, component_type, logical_type_id) =
             extract_component_with_mutability(py, &inner)?;
         return ok_single(ParamType::Component {
@@ -53,6 +116,9 @@ pub(crate) fn extract_param_type_from_query_param(
     if let Ok(origin) = key.getattr("__origin__")
         && origin.is(PyMut::type_object(py))
     {
+        if let Some(asset) = asset_param_type(py, key, false)? {
+            return ok_single(asset);
+        }
         // This is Mut[Component] - extract with mutability
         let (mutable, component_type, logical_type_id) =
             extract_component_with_mutability(py, key)?;
@@ -109,6 +175,9 @@ pub(crate) fn extract_param_type_from_query_param(
     } else if key.is(PyEntity::type_object(py)) {
         ok_single(ParamType::Entity)
     } else {
+        if let Some(asset) = asset_param_type(py, key, false)? {
+            return ok_single(asset);
+        }
         // Plain component type (not wrapped in Mut[])
         let (mutable, component_type, logical_type_id) =
             extract_component_with_mutability(py, key)?;
@@ -297,6 +366,36 @@ pub(crate) fn construct_query_class_item_with_options(
 ) -> PyResult<Py<PyAny>> {
     let py = cls.py();
 
+    if let Ok(items) = key.cast::<PyTuple>() {
+        if items
+            .iter()
+            .skip(1)
+            .any(|item| is_parenthesized_filter_tuple(&item))
+        {
+            return Err(PyTypeError::new_err(parenthesized_filter_tuple(
+                if single_entity_enforced {
+                    "Single"
+                } else {
+                    "Query"
+                },
+            )));
+        }
+        if items.len() > 2
+            && items
+                .iter()
+                .skip(1)
+                .all(|item| is_filter_position_argument(py, &item))
+        {
+            return Err(PyTypeError::new_err(variadic_filters(
+                if single_entity_enforced {
+                    "Single"
+                } else {
+                    "Query"
+                },
+            )));
+        }
+    }
+
     let row_shape = if let Ok(items) = key.cast::<PyTuple>() {
         let shapes = items
             .iter()
@@ -328,45 +427,8 @@ pub(crate) fn construct_query_class_item_with_options(
 
                 count += 1;
 
-                let is_filter = item.is_instance_of::<PyWith>()
-                    || item.is_instance_of::<PyWithout>()
-                    || item.is_instance_of::<PyChanged>()
-                    || item.is_instance_of::<PyAdded>()
-                    || item.is_instance_of::<PyOr>();
-
-                // Check if this is a tuple of filters
-                let is_filter_tuple = if item.is_instance_of::<PyGenericAlias>() {
-                    // Check if it's tuple[...] by looking at __origin__
-                    if let Ok(origin) = item.getattr("__origin__") {
-                        if origin.is(py.get_type::<pyo3::types::PyTuple>()) {
-                            // It's a tuple - check if all elements are filters
-                            if let Ok(args) = item.getattr("__args__") {
-                                if let Ok(tuple_args) = args.cast::<PyTuple>() {
-                                    // An empty tuple alias is an explicit empty
-                                    // data tuple, not a filter tuple.
-                                    !tuple_args.is_empty()
-                                        && tuple_args.iter().all(|arg| {
-                                            arg.is_instance_of::<PyWith>()
-                                                || arg.is_instance_of::<PyWithout>()
-                                                || arg.is_instance_of::<PyChanged>()
-                                                || arg.is_instance_of::<PyAdded>()
-                                                || arg.is_instance_of::<PyOr>()
-                                        })
-                                } else {
-                                    false
-                                }
-                            } else {
-                                false
-                            }
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
+                let is_filter = is_query_filter(&item);
+                let is_filter_tuple = is_filter_tuple_alias(py, &item);
 
                 // Only set single=false for component tuples, not filter tuples
                 // Filter tuples don't affect the return type (still single component)
@@ -391,40 +453,74 @@ pub(crate) fn construct_query_class_item_with_options(
         }
     };
 
-    let data: SmallVec<[QueryData; 16]> = param_types
-        .iter()
-        .filter_map(|param| match param {
-            ParamType::Entity => Some(QueryData::Entity),
+    let mut data = SmallVec::<[QueryData; 16]>::new();
+    let mut filters = SmallVec::<[QueryFilter; 4]>::new();
+    let mut retained_asset_params = SmallVec::new();
+    for param in param_types {
+        match param {
+            ParamType::Entity => data.push(QueryData::Entity),
             ParamType::Component {
                 ty: comp_type,
                 mutable,
                 optional,
                 logical_type_id,
-            } => Some(QueryData::Component {
-                ty: *comp_type,
-                mutable: *mutable,
-                optional: *optional,
-                logical_type_id: *logical_type_id,
+            } => data.push(QueryData::Component {
+                ty: comp_type,
+                mutable,
+                optional,
+                logical_type_id,
             }),
-            ParamType::Has(has) => Some(QueryData::Has {
+            ParamType::AssetResource {
+                param,
+                type_ptr,
+                name,
+                mutable,
+                optional,
+            } => {
+                let retained_param_index = retained_asset_params.len();
+                retained_asset_params.push(param);
+                data.push(QueryData::AssetResource {
+                    type_ptr,
+                    retained_param_index,
+                    name,
+                    mutable,
+                    optional,
+                });
+            }
+            ParamType::Has(has) => data.push(QueryData::Has {
                 ty: has.component_type,
             }),
-            ParamType::AnyOf(items) => Some(QueryData::AnyOf {
-                items: items.clone(),
-            }),
-            ParamType::Filter(_) => None,
-        })
-        .collect();
-    let filters: SmallVec<[QueryFilter; 4]> = param_types
-        .into_iter()
-        .filter_map(|param| match param {
-            ParamType::Filter(filter) => Some(filter),
-            ParamType::Entity
-            | ParamType::Component { .. }
-            | ParamType::Has(_)
-            | ParamType::AnyOf(_) => None,
-        })
-        .collect();
+            ParamType::AnyOf(items) => data.push(QueryData::AnyOf { items }),
+            ParamType::Filter(filter) => filters.push(filter),
+        }
+    }
+
+    for (index, asset) in data.iter().enumerate() {
+        let QueryData::AssetResource {
+            type_ptr,
+            mutable,
+            name,
+            ..
+        } = asset
+        else {
+            continue;
+        };
+        if let Some((previous, previous_mutable)) = data[..index].iter().find_map(|item| match item
+        {
+            QueryData::AssetResource {
+                type_ptr: previous,
+                name,
+                mutable,
+                ..
+            } if previous == type_ptr => Some((name, *mutable)),
+            _ => None,
+        }) && (*mutable || previous_mutable)
+        {
+            return Err(PyTypeError::new_err(format!(
+                "Query requests aliased mutable access to Assets[{name}] and Assets[{previous}]"
+            )));
+        }
+    }
 
     let single = single && (!single_entity_enforced || !data.is_empty());
 
@@ -441,6 +537,7 @@ pub(crate) fn construct_query_class_item_with_options(
 
     PyQueryParam {
         retained_types: PyQueryParam::retain_custom_types(py, &data, &filters),
+        retained_asset_params,
         data,
         row_shape,
         filters,
@@ -449,6 +546,44 @@ pub(crate) fn construct_query_class_item_with_options(
         optional_single: false,
     }
     .into_py_any(py)
+}
+
+fn is_query_filter(item: &Bound<'_, PyAny>) -> bool {
+    item.is_instance_of::<PyWith>()
+        || item.is_instance_of::<PyWithout>()
+        || item.is_instance_of::<PyChanged>()
+        || item.is_instance_of::<PyAdded>()
+        || item.is_instance_of::<PyOr>()
+}
+
+fn is_filter_tuple_alias(py: Python<'_>, item: &Bound<'_, PyAny>) -> bool {
+    if !item.is_instance_of::<PyGenericAlias>() {
+        return false;
+    }
+    let Ok(origin) = item.getattr("__origin__") else {
+        return false;
+    };
+    if !origin.is(py.get_type::<PyTuple>()) {
+        return false;
+    }
+    let Ok(args) = item.getattr("__args__") else {
+        return false;
+    };
+    let Ok(tuple_args) = args.cast::<PyTuple>() else {
+        return false;
+    };
+    !tuple_args.is_empty() && tuple_args.iter().all(|arg| is_query_filter(&arg))
+}
+
+fn is_filter_position_argument(py: Python<'_>, item: &Bound<'_, PyAny>) -> bool {
+    is_query_filter(item) || is_filter_tuple_alias(py, item)
+}
+
+pub(crate) fn is_parenthesized_filter_tuple(item: &Bound<'_, PyAny>) -> bool {
+    let Ok(items) = item.cast::<PyTuple>() else {
+        return false;
+    };
+    !items.is_empty() && items.iter().all(|item| is_query_filter(&item))
 }
 
 /// Names a query filter in the spelling users write, for error text.

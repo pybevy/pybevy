@@ -1,13 +1,22 @@
 use pybevy_core::public_error::{
     ANY_OF_VIEW_UNSUPPORTED, OR_VIEW_UNSUPPORTED, RESOURCE_VIEW_DATA, RESOURCE_VIEW_FILTER,
+    parenthesized_filter_tuple,
 };
-use pyo3::{IntoPyObjectExt, exceptions::PyRuntimeError, prelude::*, types::PyType};
+use pyo3::{
+    IntoPyObjectExt,
+    exceptions::{PyRuntimeError, PyTypeError},
+    prelude::*,
+    types::{PyTuple, PyType},
+};
 use smallvec::SmallVec;
 
 use crate::ecs::{
     component_type::PyComponentType,
     filter::QueryFilter,
-    query::{ParamType, query_helpers::extract_param_type_from_query_param},
+    query::{
+        ParamType,
+        query_helpers::{extract_param_type_from_query_param, is_parenthesized_filter_tuple},
+    },
 };
 
 pub mod cached_view;
@@ -32,6 +41,15 @@ pub(crate) fn construct_view_class_item(
     key: &Bound<'_, PyAny>,
 ) -> PyResult<Py<PyAny>> {
     let py = cls.py();
+
+    if let Ok(items) = key.cast::<PyTuple>()
+        && items
+            .iter()
+            .skip(1)
+            .any(|item| is_parenthesized_filter_tuple(&item))
+    {
+        return Err(PyTypeError::new_err(parenthesized_filter_tuple("View")));
+    }
 
     let param_types = match key.try_iter() {
         Ok(iter) => {
@@ -127,6 +145,9 @@ pub(crate) fn construct_view_class_item(
             }
             ParamType::AnyOf(_) => {
                 return Err(PyRuntimeError::new_err(ANY_OF_VIEW_UNSUPPORTED));
+            }
+            ParamType::AssetResource { .. } => {
+                return Err(PyRuntimeError::new_err(RESOURCE_VIEW_DATA));
             }
             ParamType::Entity => {
                 has_entity = true;

@@ -9,10 +9,13 @@ use pyo3::{
 };
 use smallvec::SmallVec;
 
-use crate::ecs::{
-    component_type::{PyComponentType, clone_retained_classes, retain_custom_classes},
-    filter::QueryFilter,
-    query::single::PySingle,
+use crate::{
+    assets::asset_type::PyAssetTypeParam,
+    ecs::{
+        component_type::{PyComponentType, clone_retained_classes, retain_custom_classes},
+        filter::QueryFilter,
+        query::single::PySingle,
+    },
 };
 
 /// Query parameters for ECS queries.
@@ -45,6 +48,8 @@ pub struct PyQueryParam {
         reason = "held purely to keep the type pointers above valid"
     )]
     pub(crate) retained_types: SmallVec<[Arc<Py<PyType>>; 4]>,
+    /// Independently retained `Assets[T]` parameters used by asset-resource data.
+    pub(crate) retained_asset_params: SmallVec<[Py<PyAssetTypeParam>; 2]>,
 }
 
 impl PyQueryParam {
@@ -77,6 +82,7 @@ impl PyQueryParam {
             single_entity_enforced: self.single_entity_enforced,
             optional_single: self.optional_single,
             retained_types: SmallVec::new(),
+            retained_asset_params: SmallVec::new(),
         }
     }
 }
@@ -91,6 +97,11 @@ impl Clone for PyQueryParam {
             single_entity_enforced: self.single_entity_enforced,
             optional_single: self.optional_single,
             retained_types: clone_retained_classes(py, &self.retained_types),
+            retained_asset_params: self
+                .retained_asset_params
+                .iter()
+                .map(|param| param.clone_ref(py))
+                .collect(),
         })
     }
 }
@@ -164,6 +175,9 @@ impl PyQueryParam {
         for class in &self.retained_types {
             visit.call(class.as_ref())?;
         }
+        for param in &self.retained_asset_params {
+            visit.call(param)?;
+        }
         Ok(())
     }
 
@@ -188,12 +202,26 @@ pub(crate) enum QueryData {
         /// Optional Python-level identity when several types share this native component.
         logical_type_id: Option<LogicalTypeId>,
     },
+    /// A parameterized `Assets<T>` resource stored on its Bevy resource entity.
+    AssetResource {
+        type_ptr: *const pyo3::ffi::PyTypeObject,
+        retained_param_index: usize,
+        name: String,
+        mutable: bool,
+        optional: bool,
+    },
     /// Whether the entity has a component, without accessing its value.
     Has { ty: PyComponentType },
     /// Bevy `AnyOf` query data. Every item is fetched optionally, while the
     /// query matches only entities for which at least one item is present.
     AnyOf { items: SmallVec<[AnyOfItem; 4]> },
 }
+
+// SAFETY: native asset class pointers are stable registry keys, and every
+// logical Python class is strongly retained by `PyQueryParam`.
+unsafe impl Send for QueryData {}
+// SAFETY: QueryData never dereferences its type pointer without the GIL.
+unsafe impl Sync for QueryData {}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct AnyOfItem {
@@ -207,7 +235,7 @@ impl QueryData {
         match self {
             Self::Component { ty, .. } | Self::Has { ty } => smallvec::smallvec![*ty],
             Self::AnyOf { items } => items.iter().map(|item| item.ty).collect(),
-            Self::Entity => SmallVec::new(),
+            Self::Entity | Self::AssetResource { .. } => SmallVec::new(),
         }
     }
 
@@ -224,6 +252,23 @@ impl QueryData {
                     format!("Mut[{}]", ty.display_name(py))
                 } else {
                     ty.display_name(py)
+                };
+                if *optional {
+                    format!("Optional[{inner}]")
+                } else {
+                    inner
+                }
+            }
+            QueryData::AssetResource {
+                name,
+                mutable,
+                optional,
+                ..
+            } => {
+                let inner = if *mutable {
+                    format!("Mut[Assets[{name}]]")
+                } else {
+                    format!("Assets[{name}]")
                 };
                 if *optional {
                     format!("Optional[{inner}]")

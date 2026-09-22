@@ -135,6 +135,50 @@ impl PyRes {
     }
 }
 
+#[pyclass(name = "_ResourceIterator", module = "pybevy.ecs")]
+pub struct PyResourceIterator {
+    iterator: Py<PyAny>,
+    validity: Option<ValidityFlag>,
+}
+
+impl PyResourceIterator {
+    fn new(py: Python<'_>, value: &Py<PyAny>, validity: Option<ValidityFlag>) -> PyResult<Self> {
+        if let Some(validity) = &validity {
+            validity.check()?;
+        }
+        Ok(Self {
+            iterator: value.bind(py).try_iter()?.into_any().unbind(),
+            validity,
+        })
+    }
+
+    fn check_valid(&self) -> PyResult<()> {
+        if let Some(validity) = &self.validity {
+            validity.check()?;
+        }
+        Ok(())
+    }
+}
+
+#[pymethods]
+impl PyResourceIterator {
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.iterator)
+    }
+
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.check_valid()?;
+        self.iterator
+            .bind(py)
+            .call_method0("__next__")
+            .map(Bound::unbind)
+    }
+}
+
 #[pymethods]
 impl PyRes {
     /// Report held Python objects to the cyclic GC; see docs/safety.md.
@@ -178,6 +222,15 @@ impl PyRes {
             "Cannot set attribute '{}' on read-only Res - use ResMut instead",
             name
         )))
+    }
+
+    pub fn __len__(&self, py: Python<'_>) -> PyResult<usize> {
+        self.check_valid()?;
+        self.value.bind(py).len()
+    }
+
+    pub fn __iter__(&self, py: Python<'_>) -> PyResult<PyResourceIterator> {
+        PyResourceIterator::new(py, &self.value, self.validity.clone())
     }
 
     pub fn __copy__(&self, py: Python) -> PyResult<Py<PyAny>> {
@@ -328,6 +381,15 @@ impl PyResMut {
     pub fn __setattr__(&mut self, py: Python, name: &str, value: Bound<'_, PyAny>) -> PyResult<()> {
         self.check_valid()?;
         self.value.bind(py).setattr(name, value)
+    }
+
+    pub fn __len__(&self, py: Python<'_>) -> PyResult<usize> {
+        self.check_valid()?;
+        self.value.bind(py).len()
+    }
+
+    pub fn __iter__(&self, py: Python<'_>) -> PyResult<PyResourceIterator> {
+        PyResourceIterator::new(py, &self.value, self.validity.clone())
     }
 
     pub fn __copy__(&self, py: Python) -> PyResult<Py<PyAny>> {

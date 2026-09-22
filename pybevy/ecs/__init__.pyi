@@ -1355,10 +1355,12 @@ class World:
     def init_resource(self, resource: type[ResourceType]) -> ComponentId: ...
     def insert_resource(self, resource: Resource) -> None: ...
     def remove_resource(self, resource_type: type[ResourceType]) -> ResourceType | None: ...
-    def component_id(self, component: type[Component]) -> ComponentId | None: ...
-    def contains_resource(self, resource: type[ResourceType]) -> bool: ...
+    def component_id(self, component: type[Component]) -> ComponentId | None:
+        """Return or register a component ID, including parameterized ``Assets[T]``."""
+    def contains_resource(self, resource: type[ResourceType]) -> bool:
+        """Test resource presence, including parameterized ``Assets[T]`` collections."""
     def resource_entity(self, resource: type[ResourceType]) -> Entity | None:
-        """Return the stable entity allocated for a resource, if one exists."""
+        """Return a resource's stable entity, including ``Assets[T]``, if present."""
     def resource_entities(self) -> Iterator[tuple[ComponentId, Entity]]:
         """Iterate over resource component IDs with allocated Bevy entities."""
     def _get_last_error(self) -> tuple[str, str | None] | None:
@@ -1374,6 +1376,9 @@ class World:
         Outer World/Commands handles and borrowed children raise RuntimeError
         during the call. Use the inner system's injected parameters. Outer access
         resumes after the inner call returns, including when it raises.
+
+        A required Single parameter with zero or multiple matches raises
+        RuntimeError; scheduled systems preserve Bevy's silent skip instead.
         """
     def trigger(self, event: Event) -> None:
         """Trigger an event immediately.
@@ -1594,6 +1599,8 @@ class Mut(Generic[T]):
     def inner_type(self) -> type[T]: ...
     @property
     def value(self) -> T: ...
+    def __len__(self) -> int: ...
+    def __iter__(self) -> Iterator[object]: ...
     def unwrap(self) -> T: ...
 
 # Type variables for tuple unwrapping
@@ -1648,6 +1655,8 @@ class Query(Generic[QueryParam_T, *Qs]):
 
     Use Query[data, filters], with optional filters in the second position.
     Group multiple data items or filters with tuple[...], not parentheses.
+    Extra Query filter type arguments raise TypeError and show the canonical
+    Query[Data, tuple[With[A], Without[B]]] form.
     Nested data tuples preserve their nesting in every returned row, matching
     Bevy's recursive tuple QueryData semantics.
     For nested Mut/Has/AnyOf markers, use typing.cast on the returned row when
@@ -2088,6 +2097,7 @@ class Single(Generic[QueryParam_T, *Qs]):
     Optional[Single[T]], using typing.Optional re-exported by this module,
     instead injects None for invalid cardinality and runs the system with
     unchanged scheduler access. Single[T] | None is also supported.
+    Group multiple filters in the second position with tuple[...], as for Query.
 
     Examples:
         Single[Player] - single Player entity (read-only)
