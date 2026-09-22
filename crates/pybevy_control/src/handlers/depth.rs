@@ -1,14 +1,30 @@
 use bevy::{
-    camera::Projection,
+    camera::{Projection, RenderTarget},
     ecs::{entity::Entity, name::Name, world::World},
-    math::{Ray3d, Vec3},
+    math::{Ray3d, UVec2, Vec3},
     prelude::*,
+    window::PrimaryWindow,
 };
 
 use super::{screenshot::select_capture_camera_3d, spatial::compute_world_aabb};
 use crate::bridge::ControlError;
 
 const EXPLICIT_SAMPLE_EXTENT: i64 = 800;
+
+#[derive(Debug)]
+pub struct PendingDepthAnalysis {
+    pub camera_entity: Entity,
+    pub position: Option<[f32; 3]>,
+    pub look_at: Option<[f32; 3]>,
+    pub sample_points: Option<Vec<[i64; 2]>>,
+    pub grid_density: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct CaptureViewport {
+    pub physical_position: UVec2,
+    pub physical_size: UVec2,
+}
 
 fn camera_transform(position: Vec3, target: Vec3) -> Result<GlobalTransform, ControlError> {
     let forward = (target - position).normalize_or_zero();
@@ -77,6 +93,22 @@ fn validate_sample_points(sample_points: &[[i64; 2]]) -> Result<Vec<[u32; 2]>, C
         .collect()
 }
 
+pub fn validate_depth_sampling(
+    sample_points: &Option<Vec<[i64; 2]>>,
+    grid_density: &Option<u32>,
+) -> Result<(), ControlError> {
+    if matches!(grid_density, Some(0)) {
+        return Err(ControlError::invalid_params(
+            "grid_density must be at least 1",
+        ));
+    }
+    sample_points
+        .as_deref()
+        .map(validate_sample_points)
+        .transpose()?;
+    Ok(())
+}
+
 /// Compute depth samples by casting rays from a camera position through sample points
 /// against all entity world AABBs.
 ///
@@ -89,19 +121,111 @@ pub fn compute_depth_samples(
     sample_points: &Option<Vec<[i64; 2]>>,
     grid_density: &Option<u32>,
 ) -> Result<serde_json::Value, ControlError> {
-    if matches!(grid_density, Some(0)) {
+    validate_depth_sampling(sample_points, grid_density)?;
+    let camera_entity = select_capture_camera_3d(world)
+        .ok_or_else(|| ControlError::not_found("No Camera3d found for capture_depth projection"))?;
+    compute_depth_samples_for_camera(
+        world,
+        camera_entity,
+        position,
+        look_at,
+        sample_points,
+        grid_density,
+    )
+}
+
+pub fn prepare_depth_capture(
+    world: &mut World,
+    request: &PendingDepthAnalysis,
+) -> Result<(RenderTarget, Option<CaptureViewport>, serde_json::Value), ControlError> {
+    validate_depth_capture_camera(world, request.camera_entity)?;
+    let entity = world.get_entity(request.camera_entity).map_err(|_| {
+        ControlError::not_found("Selected capture_depth camera was despawned before capture")
+    })?;
+    let camera = entity.get::<Camera>().expect("camera validated above");
+    let target = entity.get::<RenderTarget>().cloned().ok_or_else(|| {
+        ControlError::not_found(
+            "Selected capture_depth camera lost its RenderTarget component before capture",
+        )
+    })?;
+    if matches!(target, RenderTarget::None { .. }) {
         return Err(ControlError::invalid_params(
-            "grid_density must be at least 1",
+            "Selected capture_depth camera uses RenderTarget.None and cannot produce an RGB capture",
         ));
     }
+    let viewport = camera.viewport.as_ref().map(|viewport| CaptureViewport {
+        physical_position: viewport.physical_position,
+        physical_size: viewport.physical_size,
+    });
+    let depth = compute_depth_samples_for_camera(
+        world,
+        request.camera_entity,
+        &None,
+        &None,
+        &request.sample_points,
+        &request.grid_density,
+    )?;
+    Ok((target, viewport, depth))
+}
 
+pub fn validate_depth_capture_camera(
+    world: &World,
+    camera_entity: Entity,
+) -> Result<(), ControlError> {
+    let entity = world.get_entity(camera_entity).map_err(|_| {
+        ControlError::not_found("Selected capture_depth camera was despawned before capture")
+    })?;
+    if !entity.contains::<Camera3d>() {
+        return Err(ControlError::not_found(
+            "Selected capture_depth camera lost its Camera3d component before capture",
+        ));
+    }
+    let camera = entity.get::<Camera>().ok_or_else(|| {
+        ControlError::not_found(
+            "Selected capture_depth camera lost its Camera component before capture",
+        )
+    })?;
+    if !camera.is_active {
+        return Err(ControlError::invalid_params(
+            "Selected capture_depth camera became inactive before capture",
+        ));
+    }
+    if !entity.contains::<Projection>() {
+        return Err(ControlError::not_found(
+            "Selected capture_depth camera lost its Projection component before capture",
+        ));
+    }
+    if !entity.contains::<Transform>() {
+        return Err(ControlError::not_found(
+            "Selected capture_depth camera lost its Transform component before capture",
+        ));
+    }
+    if !entity.contains::<GlobalTransform>() {
+        return Err(ControlError::not_found(
+            "Selected capture_depth camera lost its GlobalTransform component before capture",
+        ));
+    }
+    if !entity.contains::<RenderTarget>() {
+        return Err(ControlError::not_found(
+            "Selected capture_depth camera lost its RenderTarget component before capture",
+        ));
+    }
+    Ok(())
+}
+
+pub fn compute_depth_samples_for_camera(
+    world: &mut World,
+    camera_entity: Entity,
+    position: &Option<[f32; 3]>,
+    look_at: &Option<[f32; 3]>,
+    sample_points: &Option<Vec<[i64; 2]>>,
+    grid_density: &Option<u32>,
+) -> Result<serde_json::Value, ControlError> {
+    validate_depth_sampling(sample_points, grid_density)?;
     let explicit_points = sample_points
         .as_deref()
         .map(validate_sample_points)
         .transpose()?;
-
-    let camera_entity = select_capture_camera_3d(world)
-        .ok_or_else(|| ControlError::not_found("No Camera3d found for capture_depth projection"))?;
     let projection = world
         .get::<Projection>(camera_entity)
         .cloned()
@@ -199,10 +323,69 @@ pub fn compute_depth_samples(
 
     let hit_count = samples.iter().filter(|s| s["hit"] == true).count();
 
+    let primary_window = world
+        .query_filtered::<Entity, With<PrimaryWindow>>()
+        .iter(world)
+        .next();
+    let camera = world
+        .get::<Camera>(camera_entity)
+        .ok_or_else(|| ControlError::not_found("Selected Camera3d has no Camera component"))?;
+    let target = world
+        .get::<RenderTarget>(camera_entity)
+        .cloned()
+        .ok_or_else(|| {
+            ControlError::not_found("Selected Camera3d has no RenderTarget component")
+        })?;
+    let normalized_target = target.normalize(primary_window);
+    let camera_order = camera.order;
+    let camera_name = world
+        .get::<Name>(camera_entity)
+        .map(|name| name.as_str().to_string());
+    let viewport = camera.viewport.as_ref().map(|viewport| {
+        serde_json::json!({
+            "physical_position": [viewport.physical_position.x, viewport.physical_position.y],
+            "physical_size": [viewport.physical_size.x, viewport.physical_size.y],
+        })
+    });
+    let mut pass_query = world.query::<(Entity, &Camera, &RenderTarget, Option<&Name>)>();
+    let mut target_camera_passes = pass_query
+        .iter(world)
+        .filter(|(entity, pass_camera, pass_target, _)| {
+            pass_camera.is_active
+                && normalized_target
+                    .as_ref()
+                    .map_or(*entity == camera_entity, |selected| {
+                        pass_target.normalize(primary_window).as_ref() == Some(selected)
+                    })
+        })
+        .map(|(entity, pass_camera, _, name)| {
+            (
+                pass_camera.order,
+                entity.to_bits(),
+                serde_json::json!({
+                    "camera_entity_id": entity.to_bits(),
+                    "camera_name": name.map(|name| name.as_str()),
+                    "camera_order": pass_camera.order,
+                    "is_selected": entity == camera_entity,
+                }),
+            )
+        })
+        .collect::<Vec<_>>();
+    target_camera_passes.sort_by_key(|(order, entity, _)| (*order, *entity));
+    let target_camera_passes = target_camera_passes
+        .into_iter()
+        .map(|(_, _, pass)| pass)
+        .collect::<Vec<_>>();
+
     Ok(serde_json::json!({
         "sample_count": samples.len(),
         "hit_count": hit_count,
+        "camera_entity_id": camera_entity.to_bits(),
+        "camera_name": camera_name,
+        "camera_order": camera_order,
         "camera_position": [cam_pos.x, cam_pos.y, cam_pos.z],
+        "viewport": viewport,
+        "target_camera_passes": target_camera_passes,
         "coordinate_space": if explicit_sampling { "normalized_800x800" } else { "grid_indices" },
         "samples": samples,
     }))
@@ -239,10 +422,12 @@ fn ray_aabb_intersection(ray: &Ray3d, aabb: &super::spatial::WorldAabb) -> Optio
 #[cfg(test)]
 mod tests {
     use bevy::{
+        asset::Assets,
         camera::{
             Camera3d, OrthographicProjection, PerspectiveProjection, Projection, primitives::Aabb,
         },
         ecs::entity::Entity,
+        image::Image,
         math::Vec3A,
         transform::components::Transform,
     };
@@ -377,6 +562,117 @@ mod tests {
 
         assert_eq!(result["sample_count"], 4); // 2x2 grid
         assert_eq!(result["hit_count"], 0);
+    }
+
+    #[test]
+    fn depth_provenance_lists_ordered_active_passes_on_the_selected_target() {
+        let mut world = World::new();
+        let mut images = Assets::<Image>::default();
+        let target = images.add(Image::default());
+        world.insert_resource(images);
+        world.spawn((
+            Camera3d::default(),
+            Camera::default(),
+            Projection::Perspective(PerspectiveProjection::default()),
+            GlobalTransform::from(Transform::from_xyz(0.0, 0.0, 10.0)),
+            RenderTarget::Image(target.clone().into()),
+            Name::new("base"),
+        ));
+        let selected = world
+            .spawn((
+                Camera3d::default(),
+                Camera {
+                    order: 5,
+                    ..default()
+                },
+                Projection::Perspective(PerspectiveProjection::default()),
+                GlobalTransform::from(Transform::from_xyz(10.0, 0.0, 0.0)),
+                RenderTarget::Image(target.into()),
+                Name::new("selected"),
+            ))
+            .id();
+
+        let result = compute_depth_samples(&mut world, &None, &None, &None, &Some(1)).unwrap();
+
+        assert_eq!(result["camera_entity_id"], selected.to_bits());
+        assert_eq!(result["camera_name"], "selected");
+        assert_eq!(result["camera_order"], 5);
+        assert_eq!(result["target_camera_passes"][0]["camera_name"], "base");
+        assert_eq!(result["target_camera_passes"][0]["camera_order"], 0);
+        assert_eq!(result["target_camera_passes"][0]["is_selected"], false);
+        assert_eq!(result["target_camera_passes"][1]["camera_name"], "selected");
+        assert_eq!(result["target_camera_passes"][1]["camera_order"], 5);
+        assert_eq!(result["target_camera_passes"][1]["is_selected"], true);
+    }
+
+    fn spawn_complete_capture_camera(world: &mut World) -> Entity {
+        world
+            .spawn((
+                Camera3d::default(),
+                Camera::default(),
+                Projection::default(),
+                Transform::default(),
+                GlobalTransform::default(),
+                RenderTarget::default(),
+            ))
+            .id()
+    }
+
+    #[test]
+    fn delayed_depth_camera_validation_reports_identity_breaks() {
+        let cases: &[(fn(&mut World, Entity), &str)] = &[
+            (
+                |world, entity| {
+                    world.despawn(entity);
+                },
+                "Selected capture_depth camera was despawned before capture",
+            ),
+            (
+                |world, entity| {
+                    world.entity_mut(entity).remove::<Camera3d>();
+                },
+                "Selected capture_depth camera lost its Camera3d component before capture",
+            ),
+            (
+                |world, entity| {
+                    world.entity_mut(entity).remove::<Projection>();
+                },
+                "Selected capture_depth camera lost its Projection component before capture",
+            ),
+            (
+                |world, entity| {
+                    world.entity_mut(entity).remove::<Transform>();
+                },
+                "Selected capture_depth camera lost its Transform component before capture",
+            ),
+            (
+                |world, entity| {
+                    world.entity_mut(entity).remove::<GlobalTransform>();
+                },
+                "Selected capture_depth camera lost its GlobalTransform component before capture",
+            ),
+            (
+                |world, entity| {
+                    world.entity_mut(entity).remove::<RenderTarget>();
+                },
+                "Selected capture_depth camera lost its RenderTarget component before capture",
+            ),
+            (
+                |world, entity| {
+                    world.get_mut::<Camera>(entity).unwrap().is_active = false;
+                },
+                "Selected capture_depth camera became inactive before capture",
+            ),
+        ];
+
+        for (break_identity, expected) in cases {
+            let mut world = World::new();
+            let entity = spawn_complete_capture_camera(&mut world);
+            break_identity(&mut world, entity);
+
+            let error = validate_depth_capture_camera(&world, entity).unwrap_err();
+            assert_eq!(&error.message, expected);
+        }
     }
 
     #[test]

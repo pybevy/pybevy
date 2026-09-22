@@ -284,8 +284,15 @@ the first tile to avoid stale UI.
 temporarily move the scene's 3D camera. Headless image-target captures wait for
 that view to render and its screenshot to complete, including objects outside
 the original camera's view. The camera is restored afterward, including on
-timeout. `delay_frames` waits before the temporary move; it is not a substitute
-for loading scene assets.
+timeout. In a windowed scene with no cameras, the override creates a `Camera3d`;
+headless capture still needs an authored image-target `Camera3d`, and a
+Camera2d-only scene rejects a 3D pose override. `delay_frames` waits before the
+temporary move; it is not a substitute for loading scene assets.
+
+Without a pose override, capture checks camera eligibility after
+`delay_frames`. A missing camera, only inactive cameras, or no capturable target
+is reported directly. A readback deadline means that an eligible camera and
+target existed but did not deliver a fresh frame.
 
 ```
 capture_screenshot                              - Standard capture (768px wide)
@@ -388,6 +395,17 @@ a fixed 800x800 scale, not pixels in the returned image. Rays use the selected
 the pose while retaining that projection. `[400, 400]` is the projection center.
 Large orthographic view areas are supported; a small nonzero projection
 determinant is not treated as a singular matrix.
+
+The default camera is the active `Camera3d` with the highest `Camera.order`;
+the lowest entity ID breaks a tie. `capture_depth` retains that entity across
+`delay_frames` and uses its current projection, transform, target, viewport,
+and active state when capture begins. It fails if that camera is despawned,
+deactivated, or loses a required capture component instead of choosing another
+camera. With `include_rgb=true`, the PNG is captured from the same render target
+and cropped to that camera's viewport before `max_width` is applied. Inspect
+`camera_entity_id`, `camera_name`, `camera_order`, `viewport`, and
+`target_camera_passes` in `depth_samples` to identify the selected camera and
+the active passes composited on its target.
 
 `max_width` only downscales captures; it does not increase render resolution.
 Set the window resolution or the camera's render-target image size before

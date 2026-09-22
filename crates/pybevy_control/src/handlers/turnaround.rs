@@ -597,6 +597,7 @@ fn hsv_to_rgb(h: f64, s: f64, v: f64) -> Rgb<u8> {
 #[cfg(test)]
 mod tests {
     use bevy::camera::primitives::Aabb;
+    use pybevy_core::public_error::TURNAROUND_CAMERA3D_REQUIRED;
 
     use super::*;
 
@@ -905,7 +906,7 @@ mod tests {
         process_pending_turnarounds(&mut world);
 
         let error = rx.try_recv().unwrap().unwrap_err();
-        assert!(error.message.contains("require a Camera3d"));
+        assert_eq!(error.message, TURNAROUND_CAMERA3D_REQUIRED);
         assert!(world.resource::<PendingTurnarounds>().active.is_empty());
         assert!(world.get::<Camera>(camera).unwrap().is_active);
         assert_eq!(world.resource::<crate::bridge::OverlaySuppression>().0, 0);

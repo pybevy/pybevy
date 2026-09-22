@@ -403,7 +403,8 @@ pub fn process_pending_reload_and_capture(world: &mut World) {
                     debug_camera,
                     hide_ui: rac.hide_ui,
                     entity: None,
-                    response_kind: CaptureResponseKind::Screenshot,
+                    depth_analysis: None,
+                    response_kind: CaptureResponseKind::ReloadAndCapture,
                     extra_response: Some(serde_json::json!({
                         "reload": reload_response,
                         "errors": null,
@@ -1033,6 +1034,10 @@ mod tests {
         let pending = world.resource::<PendingScreenshots>();
         assert_eq!(pending.pending.len(), 1);
         assert_eq!(pending.pending[0].required_render_epoch, None);
+        assert!(matches!(
+            &pending.pending[0].response_kind,
+            CaptureResponseKind::ReloadAndCapture
+        ));
         process_pending_screenshots(&mut world);
         assert_eq!(
             world.resource::<PendingScreenshots>().pending[0].frames_remaining,
