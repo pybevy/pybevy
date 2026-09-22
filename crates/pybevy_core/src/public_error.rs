@@ -82,6 +82,7 @@ pub const SINGLE_NOT_ITERABLE: &str =
 pub const SINGLE_NOT_SUBSCRIPTABLE: &str =
     "Single is not subscriptable; use single.into_inner() before indexing the row";
 pub const QUERY_ROW_SHAPE_MISMATCH: &str = "Query row shape did not match its data";
+pub const ENTITY_ARGUMENT_INT: &str = "expected an Entity, not an int. Convert a packed ID from an MCP response or Entity.to_bits() with Entity.from_bits(id). The integer shown in Entity(<index>v<generation>) is an EntityIndex value, not a packed identity.";
 
 pub const COLOR_INPUT_TYPES: &str =
     "expected Color, Srgba, LinearRgba, Hsla, Hsva, Hwba, Laba, Lcha, Oklaba, Oklcha, or Xyza";
@@ -95,6 +96,12 @@ pub fn mcp_scene_namespace_unavailable(module_name: &str) -> String {
         "Active scene module `{module_name}` is unavailable; run_code cannot access its namespace. \
          Check get_last_error for a reload failure, fix the scene and reload successfully, \
          or restart it with run_scene."
+    )
+}
+
+pub fn mcp_entity_not_found(id: u64) -> String {
+    format!(
+        "Entity {id} not found. Numeric MCP/HTTP entity IDs are packed Entity.to_bits() values, not Entity.index() or the index shown in Entity(<index>v<generation>). Use an ID returned by query_entities or another MCP response; in Python, convert with Entity.from_bits(id) and produce one with entity.to_bits()."
     )
 }
 
@@ -114,6 +121,12 @@ pub const MCP_ENUM_WRAPPED_ARRAY_PAYLOAD: &str =
     "expected an object with the payload's fields, not an array";
 pub const MCP_CUSTOM_COMPONENT_BOOTSTRAP: &str = "If this is a custom @component class, call world.register_component(Type) in scene code or run_code, or insert an instance first; defining or reloading an unused class does not register it.";
 pub const MCP_CUSTOM_RESOURCE_BOOTSTRAP: &str = "If this is a custom @resource class, call world.register_resource(Type) in scene code or run_code, or insert an instance first; defining or reloading an unused class does not register it.";
+
+pub fn mcp_native_resource_control_name(requested: &str, registered: &str) -> String {
+    format!(
+        "Resource '{requested}' is a native engine resource registered for control access as '{registered}'. Use get_resource with that exact name; get_registry.resource_names lists every addressable resource name."
+    )
+}
 
 pub fn mcp_schedule_non_public_tool(index: usize, tool: &str) -> String {
     format!("action[{index}]: tool '{tool}' is not a public schedulable tool")

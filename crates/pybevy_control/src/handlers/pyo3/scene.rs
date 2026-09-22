@@ -1279,11 +1279,12 @@ pub fn get_resource(
     world: &mut World,
     resource_type: String,
 ) -> Result<serde_json::Value, ControlError> {
-    if let Some(bridge) = all_resource_bridges()
-        .into_iter()
+    let resource_bridges = all_resource_bridges();
+    if let Some(bridge) = resource_bridges
+        .iter()
         .find(|bridge| bridge.name() == resource_type)
     {
-        return Ok(bridge_resource_entry(world, &bridge));
+        return Ok(bridge_resource_entry(world, bridge));
     }
 
     let custom = world
@@ -1297,10 +1298,43 @@ pub fn get_resource(
         return Ok(custom_resource_entry(world, component_id, name));
     }
 
+    if let Some(bridge) = native_resource_control_name(&resource_type, &resource_bridges) {
+        return Err(ControlError::not_found(
+            public_error::mcp_native_resource_control_name(&resource_type, bridge.name()),
+        ));
+    }
+
     Err(ControlError::not_found(format!(
         "Resource '{resource_type}' not found in registry. {}",
         public_error::MCP_CUSTOM_RESOURCE_BOOTSTRAP
     )))
+}
+
+fn native_resource_control_name<'a>(
+    requested: &str,
+    resource_bridges: &'a [Arc<dyn ResourceBridge>],
+) -> Option<&'a Arc<dyn ResourceBridge>> {
+    // Generic input spellings resolve to distinct bridge-backed Python classes.
+    let explicit_name = match requested {
+        "ButtonInput[KeyCode]" => Some("ButtonInput"),
+        "ButtonInput[MouseButton]" => Some("MouseInput"),
+        _ => None,
+    };
+    if let Some(name) = explicit_name {
+        return resource_bridges.iter().find(|bridge| bridge.name() == name);
+    }
+
+    let normalized_requested = normalized_resource_control_name(requested);
+    resource_bridges
+        .iter()
+        .find(|bridge| normalized_resource_control_name(bridge.name()) == normalized_requested)
+}
+
+fn normalized_resource_control_name(name: &str) -> String {
+    name.chars()
+        .filter(char::is_ascii_alphanumeric)
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 fn bridge_resource_entry(world: &World, bridge: &Arc<dyn ResourceBridge>) -> serde_json::Value {

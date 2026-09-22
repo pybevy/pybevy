@@ -8,7 +8,10 @@ use pyo3::{
     prelude::*,
 };
 
-use crate::public_error::invalid_entity_bits;
+use crate::{
+    PyEntityIndex,
+    public_error::{ENTITY_ARGUMENT_INT, invalid_entity_bits},
+};
 
 #[pyclass(
     name = "Entity",
@@ -40,6 +43,11 @@ impl PyEntity {
         Entity::from_raw_u32(raw).map(PyEntity)
     }
 
+    /// Return the transient entity index shown in repr diagnostics.
+    pub fn index(&self) -> PyEntityIndex {
+        self.0.index().into()
+    }
+
     /// Convert Entity to u64 bits representation
     pub fn to_bits(&self) -> u64 {
         self.0.to_bits()
@@ -64,10 +72,7 @@ pub fn extract_entity_from_any(value: &Bound<'_, PyAny>) -> PyResult<PyEntity> {
         return Ok(entity);
     }
     if value.extract::<u64>().is_ok() {
-        return Err(PyTypeError::new_err(
-            "expected an Entity, not an int. An id from an MCP response or a repr \
-             is a to_bits() value: convert it with Entity.from_bits(id).",
-        ));
+        return Err(PyTypeError::new_err(ENTITY_ARGUMENT_INT));
     }
     Err(PyTypeError::new_err(format!(
         "expected an Entity, got {}",
@@ -91,6 +96,19 @@ mod tests {
         let bits = py_entity.to_bits();
         let restored = PyEntity::from_bits(bits).unwrap();
         assert_eq!(py_entity, restored);
+    }
+
+    #[test]
+    fn index_matches_bevy_and_repr_while_bits_preserve_generation() {
+        let entity = Entity::from_raw_u32(7).unwrap();
+        let py_entity = PyEntity::from(entity);
+        assert_eq!(py_entity.index().index().unwrap(), entity.index().index());
+        assert_eq!(py_entity.index().index().unwrap(), 7);
+        assert_eq!(py_entity.__repr__(), "Entity(7v0)");
+        assert_ne!(
+            u64::from(py_entity.index().index().unwrap()),
+            py_entity.to_bits()
+        );
     }
 
     #[test]

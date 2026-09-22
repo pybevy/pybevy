@@ -43,7 +43,8 @@ pub struct InternalOverlayUi;
 #[derive(Resource, Default)]
 pub struct OverlaySuppression(pub u32);
 
-/// Entity can be addressed by numeric ID or Name string
+/// Entity reference by packed `Entity::to_bits()` ID or Name string.
+/// A Python `Entity.index()` and the index in its repr are not numeric IDs.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum EntityRef {
@@ -86,7 +87,7 @@ const fn default_query_entity_limit() -> usize {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GetComponentParams {
-    /// Entity ID or Name
+    /// Packed entity ID from an MCP response, or Name
     pub entity: EntityRef,
     /// Component name (e.g. 'Transform', 'PointLight')
     pub component: String,
@@ -95,7 +96,7 @@ pub struct GetComponentParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GetResourceParams {
-    /// Resource type name (e.g. 'ClearColor', 'State[game.Phase]')
+    /// Exact resource name from get_registry.resource_names (e.g. 'ClearColor', '_TimeVirtual', 'State[game.Phase]')
     pub resource_type: String,
 }
 
@@ -122,7 +123,7 @@ fn json_object_array_schema(_: &mut schemars::SchemaGenerator) -> schemars::Sche
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SetComponentParams {
-    /// Entity ID or Name
+    /// Packed entity ID from an MCP response, or Name
     pub entity: EntityRef,
     /// Component name
     pub component: String,
@@ -134,7 +135,7 @@ pub struct SetComponentParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RemoveComponentParams {
-    /// Entity ID or Name
+    /// Packed entity ID from an MCP response, or Name
     pub entity: EntityRef,
     /// Component to remove
     pub component: String,
@@ -163,7 +164,7 @@ pub struct SeekTimeParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CaptureScreenshotParams {
-    /// Optional entity name or numeric ID to isolate, including its descendants.
+    /// Optional entity Name or packed ID from an MCP response to isolate, including its descendants.
     pub entity: Option<EntityRef>,
     /// Frames to wait before capture (default 2)
     #[serde(default = "default_2")]
@@ -185,7 +186,7 @@ pub struct CaptureScreenshotParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CaptureStatsParams {
-    /// Optional entity name or numeric ID to isolate, including its descendants.
+    /// Optional entity Name or packed ID from an MCP response to isolate, including its descendants.
     pub entity: Option<EntityRef>,
     /// Divide the region into an NxN grid (default 1, max 16). Payload grows
     /// quadratically: about 4 KB at 4 and 57 KB at 16.
@@ -352,16 +353,16 @@ pub struct ReloadAndCaptureParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct QuerySpatialParams {
-    /// First entity (ID or Name)
+    /// First entity (packed ID from an MCP response, or Name)
     pub entity_a: EntityRef,
-    /// Second entity (ID or Name)
+    /// Second entity (packed ID from an MCP response, or Name)
     pub entity_b: EntityRef,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct QuerySpatialNeighborhoodParams {
-    /// Center entity
+    /// Center entity (packed ID from an MCP response, or Name)
     pub entity: EntityRef,
     /// Search radius
     #[schemars(range(min = 0.0))]
@@ -378,7 +379,7 @@ pub(crate) fn default_max_float_gap() -> f32 {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CheckOverlapsParams {
-    /// Entity to check
+    /// Entity to check (packed ID from an MCP response, or Name)
     pub entity: EntityRef,
     /// Include siblings under same parent (default false, since parented parts overlap by design)
     #[serde(default)]
@@ -417,7 +418,7 @@ pub struct CheckAllOverlapsParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SetAssetParams {
-    /// Entity ID or Name
+    /// Packed entity ID from an MCP response, or Name
     pub entity: EntityRef,
     /// Handle component: MeshMaterial3d, Mesh3d, MeshMaterial2d, AudioPlayer
     pub component: String,
@@ -441,7 +442,7 @@ pub enum ControlOperation {
     /// Get details for a single entity.
     #[schemars(extend("x-hidden" = true))]
     GetEntity {
-        /// Entity ID or Name
+        /// Packed entity ID from an MCP response, or Name
         entity: EntityRef,
     },
     /// List all resources in the world.
@@ -469,10 +470,10 @@ pub enum ControlOperation {
     GetSceneSummary,
     /// Get the axis-aligned bounding box (AABB) of an entity, both local and world-space. Requires entity to have a mesh.
     GetBoundingBox {
-        /// Entity ID or Name
+        /// Packed entity ID from an MCP response, or Name
         entity: EntityRef,
     },
-    /// Show bridge registry state, entity count, and component detection status.
+    /// Show bridge registry state, exact addressable resource names, entity count, and component detection status.
     GetRegistry,
 
     /// Capture a screenshot. Default 768px wide. UI elements are hidden by default. Use position/look_at to temporarily re-pose a 3D camera; its authored state is restored after capture.
@@ -517,7 +518,7 @@ pub enum ControlOperation {
     /// Remove an entity by ID or Name.
     #[schemars(extend("x-feature-gate" = "manipulation"))]
     DespawnEntity {
-        /// Entity ID or Name
+        /// Packed entity ID from an MCP response, or Name
         entity: EntityRef,
     },
     /// Update specific fields on a World-registered component without replacing it.
@@ -538,7 +539,7 @@ pub enum ControlOperation {
     /// Execute multiple mutation operations in a single round-trip. Each operation runs independently - failures don't abort the batch. Actions: set_component, spawn, despawn, remove_component. Returns `total` and the three counts that partition it: `succeeded`, `failed` (the op was rejected outright), and `partial` (the op applied some fields and reported the rest in its own `errors` array).
     #[schemars(extend("x-feature-gate" = "manipulation"))]
     Batch {
-        /// Array of flat operation objects. Exact shapes: set_component uses {action, entity, component, fields}; spawn uses {action, components}; despawn uses {action, entity}; remove_component uses {action, entity, component}. Entity accepts an integer ID or string Name. Unsupported keys are errors.
+        /// Array of flat operation objects. Exact shapes: set_component uses {action, entity, component, fields}; spawn uses {action, components}; despawn uses {action, entity}; remove_component uses {action, entity, component}. Entity accepts a packed integer ID returned by MCP or a string Name; a Python Entity.index() is not an ID. Unsupported keys are errors.
         #[schemars(schema_with = "json_object_array_schema")]
         operations: Vec<serde_json::Value>,
     },
