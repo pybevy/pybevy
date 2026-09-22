@@ -96,8 +96,26 @@ def check_start_game(
             next_state.set(GamePhase.PLAYING)
 ```
 
+`set()` is unconditional, matching Bevy: setting the current member runs that
+identity transition's `OnExit`, `OnTransition`, and `OnEnter` schedules. Use
+`set_if_neq()` for a per-frame driver that should skip same-state exit and
+enter work:
+
+```python
+def drive_phase(next_state: ResMut[NextState[GamePhase]]) -> None:
+    next_state.set_if_neq(GamePhase.PLAYING)
+```
+
+Bevy still runs `OnTransition(current, current)` for that conditional identity
+transition. Multiple requests before the transition pass follow call order,
+except an equal unconditional request from `set()` is not weakened by a later
+`set_if_neq()` call.
+
 Bare `ResMut[NextState]` remains compatible when an App has exactly one state
 machine. It is ambiguous and raises `TypeError` when multiple machines are registered.
+If the App already has multiple machines, `add_systems()` rejects the system.
+If another machine is installed later, the same check runs before the system
+body on its next attempted execution.
 
 ## Reading Current State
 
@@ -109,6 +127,8 @@ def show_hud(current: Res[State[GamePhase]]) -> None:
 
 Bare `Res[State]` is a one-machine compatibility shorthand. Prefer the typed
 form, especially in reusable systems and Apps with multiple state machines.
+Known ambiguity is rejected by `add_systems()`; topology introduced afterward
+is checked when the system runs.
 
 ## Conditional Systems with run_if
 
@@ -191,6 +211,11 @@ set_resource {"resource_type": "NextState[game.Phase]", "value": {"variant": "PL
 The bare `NextState` name works when exactly one machine is registered, matching
 the system-parameter rule above. An unknown member is rejected rather than
 silently queuing nothing.
+
+Control-plane `set_resource` requests retain unconditional `set()` semantics.
+Repeatedly writing the current member therefore runs the full identity
+transition; `set_if_neq()` is available through Python systems and World
+resource access when conditional lifecycle behavior is required.
 
 Transitions stay deferred: the value is queued and applied by the transition
 system on a later frame, so read `State[T]` back rather than assuming the change

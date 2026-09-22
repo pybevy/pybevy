@@ -56,7 +56,8 @@ use super::{
         SystemErrorBuffer, SystemErrorReport, SystemErrorReportState, asset_validation_identity,
         build_run_args, execute_prepared_observer, lock_or_recover, lower_param_type, lower_params,
         print_reported_system_error_once, resource_marker_validation_identity,
-        resource_validation_identity, validate_pipe_target_params, validate_system_params,
+        resource_validation_identity, validate_pipe_target_params,
+        validate_registered_state_topology, validate_system_params,
     },
     helpers::validity_guard::ValidityFlag,
     messages::{CursorStorage, MessageType},
@@ -167,6 +168,7 @@ fn prepare_callable(
     kind: InvocationKind,
     retain_exception: bool,
     pipe_target: bool,
+    state_machine_count: Option<usize>,
 ) -> PyResult<PreparedSystem<MainInterpreter>> {
     let (system_func, module_name, function_name) = Python::attach(|py| {
         let func_bound = func.bind(py);
@@ -195,7 +197,13 @@ fn prepare_callable(
             validate_pipe_target_params(&system_func.params, &function_name, py)
         } else {
             validate_system_params(&system_func.params, &function_name, py)
-        }
+        }?;
+        validate_registered_state_topology(
+            &system_func.params,
+            &function_name,
+            py,
+            state_machine_count,
+        )
     })?;
     let message_reader_count = system_func
         .params
@@ -245,6 +253,7 @@ pub(crate) fn new_main_system(
     error_state: Arc<Mutex<Vec<PyErr>>>,
     error_buffer: SystemErrorBuffer,
     stage: pybevy_reload::SystemStage,
+    state_machine_count: Option<usize>,
 ) -> PyResult<MainDynamicSystem> {
     Ok(MainDynamicSystem::new(prepare_callable(
         func,
@@ -255,6 +264,7 @@ pub(crate) fn new_main_system(
         InvocationKind::System,
         false,
         false,
+        state_machine_count,
     )?))
 }
 
@@ -264,6 +274,7 @@ pub(crate) fn new_main_value_source(
     error_state: Arc<Mutex<Vec<PyErr>>>,
     error_buffer: SystemErrorBuffer,
     stage: pybevy_reload::SystemStage,
+    state_machine_count: Option<usize>,
 ) -> PyResult<MainDynamicValueSource> {
     Ok(MainDynamicValueSource::new(prepare_callable(
         func,
@@ -274,6 +285,7 @@ pub(crate) fn new_main_value_source(
         InvocationKind::System,
         false,
         false,
+        state_machine_count,
     )?))
 }
 
@@ -283,6 +295,7 @@ pub(crate) fn new_main_value_target(
     error_state: Arc<Mutex<Vec<PyErr>>>,
     error_buffer: SystemErrorBuffer,
     stage: pybevy_reload::SystemStage,
+    state_machine_count: Option<usize>,
 ) -> PyResult<MainDynamicValueTarget> {
     Ok(MainDynamicValueTarget::new(prepare_callable(
         func,
@@ -293,6 +306,7 @@ pub(crate) fn new_main_value_target(
         InvocationKind::System,
         false,
         true,
+        state_machine_count,
     )?))
 }
 
@@ -302,6 +316,7 @@ pub(crate) fn new_main_unit_target(
     error_state: Arc<Mutex<Vec<PyErr>>>,
     error_buffer: SystemErrorBuffer,
     stage: pybevy_reload::SystemStage,
+    state_machine_count: Option<usize>,
 ) -> PyResult<MainDynamicUnitTarget> {
     Ok(MainDynamicUnitTarget::new(prepare_callable(
         func,
@@ -312,6 +327,7 @@ pub(crate) fn new_main_unit_target(
         InvocationKind::System,
         false,
         true,
+        state_machine_count,
     )?))
 }
 
@@ -331,6 +347,7 @@ pub(crate) fn new_main_one_shot_system(
         InvocationKind::System,
         true,
         false,
+        None,
     )?))
 }
 
@@ -339,6 +356,7 @@ pub(crate) fn new_main_condition(
     generation: u32,
     error_state: Arc<Mutex<Vec<PyErr>>>,
     stage: pybevy_reload::SystemStage,
+    state_machine_count: Option<usize>,
 ) -> PyResult<MainDynamicCondition> {
     let prepared = prepare_callable(
         func,
@@ -349,6 +367,7 @@ pub(crate) fn new_main_condition(
         InvocationKind::Condition,
         false,
         false,
+        state_machine_count,
     )?;
     MainDynamicCondition::new(prepared).map_err(PyRuntimeError::new_err)
 }
@@ -364,6 +383,7 @@ pub(crate) fn new_main_persistent_condition(
     generation: u32,
     error_state: Arc<Mutex<Vec<PyErr>>>,
     stage: pybevy_reload::SystemStage,
+    state_machine_count: Option<usize>,
 ) -> PyResult<MainDynamicCondition> {
     let mut prepared = prepare_callable(
         func,
@@ -374,6 +394,7 @@ pub(crate) fn new_main_persistent_condition(
         InvocationKind::Condition,
         false,
         false,
+        state_machine_count,
     )?;
     prepared.expected_generation = None;
     MainDynamicCondition::new(prepared).map_err(PyRuntimeError::new_err)

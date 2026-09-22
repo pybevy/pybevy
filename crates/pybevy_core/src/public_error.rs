@@ -91,6 +91,17 @@ pub fn one_shot_parameter_validation_skip(reason: impl Display) -> String {
     format!("One-shot system did not run because parameter validation failed: {reason}")
 }
 
+pub fn ambiguous_bare_state_resource(resource: &str) -> String {
+    format!("untyped {resource} resource is ambiguous; use {resource}[YourState]")
+}
+
+pub fn system_ambiguous_bare_state_resource(system: &str, resource: &str) -> String {
+    format!(
+        "System `{system}`: {}",
+        ambiguous_bare_state_resource(resource)
+    )
+}
+
 pub const COLOR_INPUT_TYPES: &str =
     "expected Color, Srgba, LinearRgba, Hsla, Hsva, Hwba, Laba, Lcha, Oklaba, Oklcha, or Xyza";
 

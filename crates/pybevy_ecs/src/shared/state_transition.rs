@@ -7,11 +7,12 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-/// The two transition shapes supported by Bevy-style states.
+/// Transition shapes supported by Bevy-style states.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StateTransitionKind {
     InitialEnter,
     Change,
+    ConditionalIdentity,
 }
 
 /// One observable step in a state transition.
@@ -39,6 +40,8 @@ const CHANGE_STEPS: &[StateTransitionStep] = &[
     StateTransitionStep::CleanupEntered,
 ];
 
+const CONDITIONAL_IDENTITY_STEPS: &[StateTransitionStep] = &[StateTransitionStep::RunTransition];
+
 /// A backend-neutral, immutable transition execution plan.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StateTransitionPlan {
@@ -58,6 +61,12 @@ impl StateTransitionPlan {
         }
     }
 
+    pub const fn conditional_identity() -> Self {
+        Self {
+            kind: StateTransitionKind::ConditionalIdentity,
+        }
+    }
+
     pub const fn kind(self) -> StateTransitionKind {
         self.kind
     }
@@ -66,6 +75,7 @@ impl StateTransitionPlan {
         match self.kind {
             StateTransitionKind::InitialEnter => INITIAL_ENTER_STEPS,
             StateTransitionKind::Change => CHANGE_STEPS,
+            StateTransitionKind::ConditionalIdentity => CONDITIONAL_IDENTITY_STEPS,
         }
     }
 
@@ -133,6 +143,10 @@ mod tests {
                 StateTransitionStep::RunEnter,
                 StateTransitionStep::CleanupEntered,
             ]
+        );
+        assert_eq!(
+            StateTransitionPlan::conditional_identity().steps(),
+            [StateTransitionStep::RunTransition]
         );
     }
 

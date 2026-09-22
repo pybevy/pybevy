@@ -1123,6 +1123,75 @@ fn test_pending_transition_before_first_update_supersedes_initial_enter() {
 }
 
 #[test]
+fn test_conditional_identity_runs_only_transition_and_supersedes_initial_enter() {
+    //! BEHAVIOR: `PendingIfNeq(current)` replaces the initial-enter event and
+    //! emits an identity transition, but only `OnTransition` runs. Exit and
+    //! enter schedules are suppressed when same-state transitions are denied.
+
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, StatesPlugin))
+        .init_state::<TransitionContractState>()
+        .insert_resource(TransitionContractTrace::default())
+        .add_systems(OnExit(TransitionContractState::Alpha), record_contract_exit)
+        .add_systems(
+            OnTransition {
+                exited: TransitionContractState::Alpha,
+                entered: TransitionContractState::Alpha,
+            },
+            record_contract_transition,
+        )
+        .add_systems(
+            OnEnter(TransitionContractState::Alpha),
+            record_contract_enter,
+        );
+    let mut next = app
+        .world_mut()
+        .resource_mut::<NextState<TransitionContractState>>();
+    NextState::set_if_neq(&mut next, TransitionContractState::Alpha);
+    drop(next);
+
+    app.update();
+
+    assert_eq!(
+        app.world().resource::<TransitionContractTrace>().0,
+        [("transition", TransitionContractState::Alpha)]
+    );
+}
+
+#[test]
+fn test_set_if_neq_preserves_only_an_equal_unconditional_pending_request() {
+    //! BEHAVIOR: An equal `Pending` survives a later conditional request. All
+    //! other calls replace the pending value and conditionality in call order.
+
+    let mut next = NextState::<TransitionContractState>::default();
+    next.set(TransitionContractState::Alpha);
+    next.set_if_neq(TransitionContractState::Alpha);
+    assert!(matches!(
+        next,
+        NextState::Pending(TransitionContractState::Alpha)
+    ));
+
+    next.set(TransitionContractState::Beta);
+    next.set_if_neq(TransitionContractState::Alpha);
+    assert!(matches!(
+        next,
+        NextState::PendingIfNeq(TransitionContractState::Alpha)
+    ));
+
+    next.set_if_neq(TransitionContractState::Beta);
+    assert!(matches!(
+        next,
+        NextState::PendingIfNeq(TransitionContractState::Beta)
+    ));
+
+    next.set(TransitionContractState::Gamma);
+    assert!(matches!(
+        next,
+        NextState::Pending(TransitionContractState::Gamma)
+    ));
+}
+
+#[test]
 fn test_state_schedule_can_run_nested_from_transition_callback() {
     //! BEHAVIOR: A state callback may synchronously run a different state
     //! schedule. The nested schedule observes the already-committed state and

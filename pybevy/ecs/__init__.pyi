@@ -2449,7 +2449,14 @@ class NextState(Generic[StateType], Resource):
         Calling ``NextState[T](...)`` raises TypeError.
     """
     def set(self, state: StateType) -> None:
-        """Queue a state transition."""
+        """Queue a transition, including full same-state lifecycle schedules."""
+
+    def set_if_neq(self, state: StateType) -> None:
+        """Queue a transition that skips same-state exit and enter schedules.
+
+        A same-state ``OnTransition`` schedule still runs. An equal transition
+        already queued by ``set()`` remains unconditional.
+        """
 
     def state_type(self) -> type[StateType]:
         """The @state enum this machine is for.

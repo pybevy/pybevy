@@ -41,6 +41,7 @@ use crate::{
             PyOnEnterSchedule, PyOnExitSchedule, PyOnTransitionSchedule,
             canonicalize_state_schedule_label, canonicalize_transition_schedule_label,
             ensure_state_transition_system_registered, register_reloaded_state_machine,
+            registered_state_machine_count,
         },
         system_config::{
             InstalledSystemSetConfigs, PySystemConfig, SystemSetConfigIdentity,
@@ -194,6 +195,7 @@ fn add_systems_to_schedule(
     system_handles: &mut Vec<DynamicSystemHandle>,
 ) {
     let is_startup = stage.is_startup();
+    let state_machine_count = Some(registered_state_machine_count(world));
 
     for system_func in systems {
         let result = Python::attach(|py| -> PyResult<()> {
@@ -211,6 +213,7 @@ fn add_systems_to_schedule(
                         error_buffer.clone(),
                         system_stage,
                         is_startup,
+                        state_machine_count,
                     )
                     .map_err(|error| annotate_registration_error(py, &sys, error))?;
                     system_handles.extend(handles);
@@ -239,6 +242,7 @@ fn add_systems_to_schedule(
                     error_buffer.clone(),
                     system_stage,
                     is_startup,
+                    state_machine_count,
                 )
                 .map_err(|error| annotate_registration_error(py, system_bound, error))?;
                 system_handles.extend(handles);
@@ -678,6 +682,7 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
                     }
                     world.schedule_scope(label.clone(), |world, schedule| {
                         schedule.set_executor(SingleThreadedExecutor::new());
+                        let state_machine_count = Some(registered_state_machine_count(world));
                         for system in pending.systems {
                             let result = Python::attach(|py| {
                                 build_scheduled_system(
@@ -687,6 +692,7 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
                                     error_buffer.clone(),
                                     SystemStage::UpdateOrLast,
                                     false,
+                                    state_machine_count,
                                 )
                             });
                             match result {

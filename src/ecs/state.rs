@@ -34,7 +34,7 @@ use pybevy_core::{
 use pybevy_ecs::shared::{
     schedule::{StateMachineId, StateScheduleKind, StateScheduleLabel, TransitionScheduleLabel},
     state_machine_registry::{
-        StateMachineIdentityRegistry, StateMachineRegisterOutcome, StateTypeKey,
+        StateMachineIdentityRegistry, StateMachineRegisterOutcome, StateResourceKind, StateTypeKey,
     },
     state_transition::{
         StateTransitionGate, StateTransitionPassGuard, StateTransitionPlan, StateTransitionStep,
@@ -231,8 +231,8 @@ impl PyState {
 /// Use ResMut[NextState[GameState]] to queue transitions
 #[pyclass(name = "NextState", module = "pybevy.ecs", frozen, extends = PyResource)]
 pub struct PyNextState {
-    /// Internal state: Unchanged or Pending(value)
-    inner: Arc<Mutex<NextStateInner>>,
+    /// Internal state and revision for atomic conditional replacement.
+    inner: Arc<Mutex<NextStateSlot>>,
     /// Type of the state enum
     state_type: Mutex<Py<PyType>>,
     /// Whether the initial OnEnter for the starting state still needs to fire.
@@ -244,6 +244,12 @@ pub struct PyNextState {
 enum NextStateInner {
     Unchanged,
     Pending(Py<PyAny>),
+    PendingIfNeq(Py<PyAny>),
+}
+
+struct NextStateSlot {
+    request: NextStateInner,
+    revision: u64,
 }
 
 #[pymethods]
@@ -265,25 +271,47 @@ impl PyNextState {
     ///
     /// The transition will be applied during the StateTransition schedule
     fn set(&self, py: Python, state: Py<PyAny>) -> PyResult<()> {
-        // Validate state type matches
-        let state_bound = state.bind(py);
-        let provided_type = state_member_type(py, state_bound)?;
-
-        let state_type = lock_or_recover(&self.state_type).clone_ref(py);
-        if !provided_type.bind(py).is(state_type.bind(py)) {
-            return Err(PyTypeError::new_err(format!(
-                "State type mismatch: expected {}, got {}",
-                state_type.bind(py).name()?,
-                provided_type.bind(py).name()?
-            )));
-        }
-
-        let old_state = {
-            let mut inner = lock_or_recover(&self.inner);
-            std::mem::replace(&mut *inner, NextStateInner::Pending(state))
-        };
-        drop(old_state);
+        self.validate_pending_state(py, &state)?;
+        self.replace_request(NextStateInner::Pending(state));
         Ok(())
+    }
+
+    /// Queue a state transition that skips same-state exit and enter schedules.
+    ///
+    /// A same-state `OnTransition` schedule still runs, matching Bevy. If an
+    /// equal unconditional `set()` request is already pending, it is preserved.
+    fn set_if_neq(&self, py: Python, state: Py<PyAny>) -> PyResult<()> {
+        self.validate_pending_state(py, &state)?;
+
+        loop {
+            let (revision, pending) = {
+                let slot = lock_or_recover(&self.inner);
+                let pending = match &slot.request {
+                    NextStateInner::Pending(value) => Some(value.clone_ref(py)),
+                    NextStateInner::Unchanged | NextStateInner::PendingIfNeq(_) => None,
+                };
+                (slot.revision, pending)
+            };
+            let preserve_unconditional = pending
+                .as_ref()
+                .map(|value| state_values_match(value.bind(py), state.bind(py)))
+                .transpose()?
+                .unwrap_or(false);
+
+            let old_request = {
+                let mut slot = lock_or_recover(&self.inner);
+                if slot.revision != revision {
+                    continue;
+                }
+                if preserve_unconditional {
+                    return Ok(());
+                }
+                slot.revision = slot.revision.wrapping_add(1);
+                std::mem::replace(&mut slot.request, NextStateInner::PendingIfNeq(state))
+            };
+            drop(old_request);
+            return Ok(());
+        }
     }
 
     /// The `@state` enum this machine is for.
@@ -296,36 +324,38 @@ impl PyNextState {
 
     /// Cancel any pending transition
     fn reset(&self) -> PyResult<()> {
-        let old_state = {
-            let mut inner = lock_or_recover(&self.inner);
-            std::mem::replace(&mut *inner, NextStateInner::Unchanged)
-        };
-        drop(old_state);
+        self.replace_request(NextStateInner::Unchanged);
         Ok(())
     }
 
     /// Check if a transition is pending
     fn is_pending(&self) -> bool {
-        matches!(*lock_or_recover(&self.inner), NextStateInner::Pending(_))
+        !matches!(
+            lock_or_recover(&self.inner).request,
+            NextStateInner::Unchanged
+        )
     }
 
     /// Get the pending state without consuming it (for inspection)
     fn peek_pending(&self, py: Python) -> Option<Py<PyAny>> {
-        match &*lock_or_recover(&self.inner) {
-            NextStateInner::Pending(state) => Some(state.clone_ref(py)),
+        match &lock_or_recover(&self.inner).request {
+            NextStateInner::Pending(state) | NextStateInner::PendingIfNeq(state) => {
+                Some(state.clone_ref(py))
+            }
             NextStateInner::Unchanged => None,
         }
     }
 
     fn __repr__(&self, py: Python) -> PyResult<String> {
-        let pending = match &*lock_or_recover(&self.inner) {
-            NextStateInner::Pending(state) => Some(state.clone_ref(py)),
+        let pending = match &lock_or_recover(&self.inner).request {
+            NextStateInner::Pending(state) => Some(("Pending", state.clone_ref(py))),
+            NextStateInner::PendingIfNeq(state) => Some(("PendingIfNeq", state.clone_ref(py))),
             NextStateInner::Unchanged => None,
         };
         match pending {
-            Some(state) => {
+            Some((kind, state)) => {
                 let state_str = state.bind(py).repr()?.to_string();
-                Ok(format!("NextState(Pending({}))", state_str))
+                Ok(format!("NextState({kind}({state_str}))"))
             }
             None => Ok("NextState(Unchanged)".to_string()),
         }
@@ -349,6 +379,28 @@ pub(crate) fn state_member_type(py: Python<'_>, state: &Bound<'_, PyAny>) -> PyR
 }
 
 impl PyNextState {
+    fn validate_pending_state(&self, py: Python<'_>, state: &Py<PyAny>) -> PyResult<()> {
+        let provided_type = state_member_type(py, state.bind(py))?;
+        let state_type = lock_or_recover(&self.state_type).clone_ref(py);
+        if !provided_type.bind(py).is(state_type.bind(py)) {
+            return Err(PyTypeError::new_err(format!(
+                "State type mismatch: expected {}, got {}",
+                state_type.bind(py).name()?,
+                provided_type.bind(py).name()?
+            )));
+        }
+        Ok(())
+    }
+
+    fn replace_request(&self, request: NextStateInner) {
+        let old_request = {
+            let mut slot = lock_or_recover(&self.inner);
+            slot.revision = slot.revision.wrapping_add(1);
+            std::mem::replace(&mut slot.request, request)
+        };
+        drop(old_request);
+    }
+
     /// Create a new NextState resource (starts as Unchanged)
     pub fn new(py: Python, state_type: Py<PyType>) -> PyResult<Py<Self>> {
         PyState::validate_state_type(py, &state_type)?;
@@ -356,7 +408,10 @@ impl PyNextState {
         Py::new(
             py,
             resource_initializer(PyNextState {
-                inner: Arc::new(Mutex::new(NextStateInner::Unchanged)),
+                inner: Arc::new(Mutex::new(NextStateSlot {
+                    request: NextStateInner::Unchanged,
+                    revision: 0,
+                })),
                 state_type: Mutex::new(state_type),
                 initial_enter_pending: Arc::new(Mutex::new(true)),
             }),
@@ -364,10 +419,15 @@ impl PyNextState {
     }
 
     /// Take the pending state if any (used internally during transitions)
-    pub fn take_pending(&self) -> Option<Py<PyAny>> {
-        let mut inner = lock_or_recover(&self.inner);
-        match std::mem::replace(&mut *inner, NextStateInner::Unchanged) {
-            NextStateInner::Pending(state) => Some(state),
+    pub fn take_pending(&self) -> Option<(Py<PyAny>, bool)> {
+        let request = {
+            let mut slot = lock_or_recover(&self.inner);
+            slot.revision = slot.revision.wrapping_add(1);
+            std::mem::replace(&mut slot.request, NextStateInner::Unchanged)
+        };
+        match request {
+            NextStateInner::Pending(state) => Some((state, true)),
+            NextStateInner::PendingIfNeq(state) => Some((state, false)),
             NextStateInner::Unchanged => None,
         }
     }
@@ -385,12 +445,16 @@ impl PyNextState {
     }
 
     fn migrate_state_type(&self, py: Python<'_>, state_type: Py<PyType>) -> PyResult<()> {
-        let pending = match &*lock_or_recover(&self.inner) {
-            NextStateInner::Pending(value) => Some(value.clone_ref(py)),
+        let pending = match &lock_or_recover(&self.inner).request {
+            NextStateInner::Pending(value) => Some((value.clone_ref(py), true)),
+            NextStateInner::PendingIfNeq(value) => Some((value.clone_ref(py), false)),
             NextStateInner::Unchanged => None,
         };
         let migrated = pending
-            .map(|value| remap_state_value(py, &value, state_type.bind(py)))
+            .map(|(value, allow_same)| {
+                remap_state_value(py, &value, state_type.bind(py))
+                    .map(|migrated| (migrated, allow_same))
+            })
             .transpose()?;
 
         let old_state_type = {
@@ -398,29 +462,15 @@ impl PyNextState {
             std::mem::replace(&mut *current_type, state_type)
         };
         drop(old_state_type);
-        if let Some(value) = migrated {
-            let old_state = {
-                let mut inner = lock_or_recover(&self.inner);
-                std::mem::replace(&mut *inner, NextStateInner::Pending(value))
+        if let Some((value, allow_same)) = migrated {
+            let request = if allow_same {
+                NextStateInner::Pending(value)
+            } else {
+                NextStateInner::PendingIfNeq(value)
             };
-            drop(old_state);
+            self.replace_request(request);
         }
         Ok(())
-    }
-}
-
-#[derive(Clone, Copy, PartialEq)]
-enum StateResourceKind {
-    Current,
-    Next,
-}
-
-impl StateResourceKind {
-    const fn name(self) -> &'static str {
-        match self {
-            Self::Current => "State",
-            Self::Next => "NextState",
-        }
     }
 }
 
@@ -539,12 +589,8 @@ pub(crate) struct PyStateMachineRegistry {
 }
 
 impl PyStateMachineRegistry {
-    fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.entries.len()
-    }
-
-    pub(crate) fn is_ambiguous(&self) -> bool {
-        self.len() > 1
     }
 
     fn snapshots(&self, py: Python<'_>) -> Vec<(StateMachineId, Py<PyState>, Py<PyNextState>)> {
@@ -569,6 +615,12 @@ impl PyStateMachineRegistry {
     fn begin_transition_pass(&self) -> Option<StateTransitionPassGuard> {
         self.transition_gate.try_enter()
     }
+}
+
+pub(crate) fn registered_state_machine_count(world: &World) -> usize {
+    world
+        .get_resource::<PyStateMachineRegistry>()
+        .map_or(0, PyStateMachineRegistry::len)
 }
 
 fn remap_state_value(
@@ -596,14 +648,14 @@ fn state_values_match(left: &Bound<'_, PyAny>, right: &Bound<'_, PyAny>) -> PyRe
     Ok(left_name == right_name)
 }
 
-pub(crate) fn untyped_state_resource_name(
+pub(crate) fn untyped_state_resource_kind(
     resource_type: &Bound<'_, PyType>,
-) -> Option<&'static str> {
+) -> Option<StateResourceKind> {
     let py = resource_type.py();
     if resource_type.is(PyState::type_object(py)) {
-        Some("State")
+        Some(StateResourceKind::Current)
     } else if resource_type.is(PyNextState::type_object(py)) {
-        Some("NextState")
+        Some(StateResourceKind::Next)
     } else {
         None
     }
@@ -1192,8 +1244,8 @@ fn apply_transition_for_state(
         return Ok(true);
     }
 
-    let pending_transition = match pending_transition {
-        Some(new_state) => new_state,
+    let (pending_transition, allow_same_state_transitions) = match pending_transition {
+        Some(request) => request,
         None => return Ok(false), // No pending transition
     };
 
@@ -1205,8 +1257,15 @@ fn apply_transition_for_state(
     // Get hash values for schedule lookup
     let old_hash = current_state.bind(py).hash()? as u64;
     let new_hash = pending_transition.bind(py).hash()? as u64;
+    let conditional_identity = !allow_same_state_transitions
+        && state_values_match(current_state.bind(py), pending_transition.bind(py))?;
+    let plan = if conditional_identity {
+        StateTransitionPlan::conditional_identity()
+    } else {
+        StateTransitionPlan::change()
+    };
 
-    StateTransitionPlan::change().run(|step| {
+    plan.run(|step| {
         match step {
             StateTransitionStep::CommitNew => {
                 let state = state_py.bind(py).borrow();
