@@ -19,6 +19,20 @@ use crate::{
     vec3a::{PyVec3A, extract_vec3a_from_any},
 };
 
+/// Correct Bevy's translated-sphere projection until its implementation uses
+/// the center-relative direction (still present at bevyengine/bevy@70c2b021).
+fn bounding_sphere_closest_point(sphere: &BoundingSphere, point: Vec3A) -> Vec3A {
+    let offset = point - sphere.center;
+    let distance_squared = offset.length_squared();
+    let radius = sphere.radius();
+
+    if distance_squared <= radius * radius {
+        point
+    } else {
+        sphere.center + radius * (offset / distance_squared.sqrt())
+    }
+}
+
 #[pyvalue]
 #[pyclass(name = "BoundingSphere", module = "pybevy.math", skip_from_py_object)]
 #[derive(Debug, Clone)]
@@ -85,8 +99,9 @@ impl PyBoundingSphere {
 
     pub fn closest_point(&self, point: &Bound<'_, PyAny>) -> PyResult<PyVec3> {
         let point = extract_vec3a_from_any(point)?;
+        let sphere = self.as_ref()?;
         Ok(PyVec3::from_vec3(
-            self.as_ref()?.closest_point(point).into(),
+            bounding_sphere_closest_point(&sphere, point).into(),
         ))
     }
 

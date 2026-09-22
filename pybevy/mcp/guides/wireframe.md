@@ -85,6 +85,15 @@ commands.spawn(
 triangles); `Triangles` shows every triangle edge. Both topology values are
 components and can override the global default per entity.
 
+**Wide-line clipping limitation:** Bevy 0.19's wide-wireframe shader can fill
+a triangle that crosses the camera plane, with vertices both in front of and
+behind the camera, instead of drawing only its visible edges. Widths above
+`1.0` select this shader, as does `WireframeTopology.Quads` at any width. For
+large ground planes or other geometry that can cross behind the camera, use
+`WireframeTopology.Triangles` with width `1.0`, or split and bound the mesh so
+every triangle remains in front of the camera. PyBevy preserves the native
+Bevy behavior.
+
 ## Visual Tips
 
 Wireframe lines are thin and hard to see with bright lighting. For best visibility:

@@ -880,7 +880,7 @@ class Image(Asset):
             size: New dimensions (must have same pixel count)
 
         Raises:
-            RuntimeError: If new size has different pixel count
+            ValueError: If new size has different pixel count
         """
 
     def reinterpret_stacked_2d_as_array(self, layers: int) -> None:
@@ -893,7 +893,7 @@ class Image(Asset):
             layers: Number of layers to split the texture into
 
         Raises:
-            RuntimeError: If layer count is incompatible with texture height
+            ValueError: If layer count is incompatible with texture height
         """
 
     def clear(
@@ -910,16 +910,22 @@ class Image(Asset):
         """
 
     def convert(self, new_format: TextureFormat) -> Image | None:
-        """Convert the image to a different texture format.
+        """Convert through Bevy 0.19's limited image conversion bridge.
+
+        Supported source formats are ``R8Unorm``, ``Rg8Unorm``,
+        ``Rgba8UnormSrgb``, ``Bgra8UnormSrgb``, and ``Bgra8Unorm``. The only
+        accepted requested targets are ``R8Unorm``, ``Rg8Unorm``, and
+        ``Rgba8UnormSrgb``.
+
+        Bevy expands requested ``R8Unorm`` and ``Rg8Unorm`` conversions back
+        to ``Rgba8Unorm``, with four bytes per pixel. The returned format can
+        therefore differ from ``new_format``.
 
         Args:
-            new_format: Target texture format
+            new_format: Requested target texture format.
 
         Returns:
-            New Image with converted format, or None if conversion is not supported
-
-        Raises:
-            RuntimeError: If conversion fails
+            A converted Image, or None for an unsupported source or target format.
         """
 
     def save_to_buffer(

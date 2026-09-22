@@ -977,6 +977,13 @@ speed = math.tau / 8.0
 transform.rotation = Quat.from_euler(EulerRot.XYZ, 0.0, speed * time.elapsed_secs(), 0.0)
 ```
 
+### Sampling an interval by point count
+
+`Interval.spaced_points(points=N)` returns exactly `N` evenly spaced values,
+including both endpoints when `N >= 2`. Zero returns an empty list and one
+returns only the start endpoint. The argument is a point count, not a maximum
+spacing.
+
 ### Query Iteration with `enumerate()`
 
 Queries are standard Python iterables. Use `enumerate()` when you need a per-entity index (e.g., for phase offsets in animations):

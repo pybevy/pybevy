@@ -12,6 +12,16 @@ use pyo3::prelude::*;
 use super::circle::PyCircle;
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyAnnulusMeshBuilder};
 
+/// Correct Bevy's exact-center annulus projection until it avoids normalizing
+/// the zero vector (still present at bevyengine/bevy@68f21a37).
+fn annulus_closest_point(annulus: &Annulus, point: Vec2) -> Vec2 {
+    if point == Vec2::ZERO && annulus.inner_circle.radius > 0.0 {
+        Vec2::X * annulus.inner_circle.radius
+    } else {
+        annulus.closest_point(point)
+    }
+}
+
 #[pyclass(name = "Annulus", module = "pybevy.math", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyAnnulus(pub(crate) Annulus);
@@ -95,7 +105,9 @@ impl PyAnnulus {
 
     pub fn closest_point(&self, point: PyVec2) -> PyResult<PyVec2> {
         let bevy_point: Vec2 = point.try_into()?;
-        Ok(PyVec2::from_vec2(self.0.closest_point(bevy_point)))
+        Ok(PyVec2::from_vec2(annulus_closest_point(
+            &self.0, bevy_point,
+        )))
     }
 
     pub fn mesh(&self, py: Python) -> PyResult<Py<PyAnnulusMeshBuilder>> {

@@ -104,9 +104,9 @@ impl PyInterval {
         Ok(self.to_bevy()?.clamp(value))
     }
 
-    pub fn spaced_points(&self, max_spacing: usize) -> PyResult<Vec<f32>> {
+    pub fn spaced_points(&self, points: usize) -> PyResult<Vec<f32>> {
         self.to_bevy()?
-            .spaced_points(max_spacing)
+            .spaced_points(points)
             .map(|points| points.collect())
             .map_err(|e| PyValueError::new_err(format!("{e}")))
     }

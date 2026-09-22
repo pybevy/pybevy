@@ -15,6 +15,17 @@ use crate::{
     vec3::PyVec3, vec3a::PyVec3A,
 };
 
+/// Correct Bevy's rotated-plane projection until it subtracts the world-space
+/// normal (still present at bevyengine/bevy@70c2b021).
+fn infinite_plane_project_point(
+    plane: &InfinitePlane3d,
+    isometry: Isometry3d,
+    point: Vec3,
+) -> Vec3 {
+    let world_normal = isometry * plane.normal;
+    point - world_normal * plane.signed_distance(isometry, point)
+}
+
 /// Accepts an Isometry3d, Vec3, Vec3A, or Quat, matching bevy's `impl Into<Isometry3d>`.
 fn extract_isometry3d_from_any(obj: &Bound<'_, PyAny>) -> PyResult<Isometry3d> {
     if let Ok(iso) = obj.extract::<PyIsometry3d>() {
@@ -79,7 +90,8 @@ impl PyInfinitePlane3d {
 
     pub fn project_point(&self, isometry: &Bound<'_, PyAny>, point: PyVec3) -> PyResult<PyVec3> {
         let iso = extract_isometry3d_from_any(isometry)?;
-        Ok(self.as_ref()?.project_point(iso, point.try_into()?).into())
+        let plane = self.as_ref()?;
+        Ok(infinite_plane_project_point(&plane, iso, point.try_into()?).into())
     }
 
     pub fn isometry_into_xy(&self, origin: PyVec3) -> PyResult<PyIsometry3d> {

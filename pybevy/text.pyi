@@ -1238,6 +1238,8 @@ class EditableText(Component):
     """An editable text input field.
 
     Use `queue_edit` to apply `TextEdit` commands through Bevy's text systems.
+    Cursor, selection, and deletion edits require the UI text-layout systems
+    included in `DefaultPlugins`; `TextPlugin` alone does not provide them.
     """
 
     def __init__(
@@ -1260,7 +1262,10 @@ class EditableText(Component):
         """Clear the text buffer and any pending edits."""
 
     def queue_edit(self, edit: TextEdit) -> None:
-        """Queue a text edit command; applied by the text systems next frame."""
+        """Queue an edit for `PostUpdate`.
+
+        Cursor-aware edits require the UI stack included in `DefaultPlugins`.
+        """
 
     def is_composing(self) -> bool:
         """True while the IME is composing text for this input."""
@@ -1361,7 +1366,11 @@ class TextPlugin(Plugin):
 
     This plugin is included by default in DefaultPlugins. You only need to
     add it manually if you're building a custom plugin group or headless app
-    that needs text support.
+    that needs font assets or non-UI text support. `EditableText` cursor,
+    selection, and deletion edits also need the UI layout systems included in
+    `DefaultPlugins`; adding `TextPlugin` alone is insufficient for those edits.
+    PyBevy does not expose Bevy's `UiPlugin` as a standalone plugin, so
+    `DefaultPlugins` is the supported setup for editable UI text.
 
     The plugin automatically:
     - Registers Font asset loader
