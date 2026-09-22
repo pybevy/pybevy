@@ -133,7 +133,10 @@ GET_LOGS_TOOL: JsonDict = {
         "Get recent captured Bevy subprocess stdout and stderr. With errors_only=true, "
         "combine the live Python system error with matching stderr errors; add "
         "include_warnings=true to also list WARN lines, which is how startup "
-        "degradations such as a missing audio device surface. "
+        "degradations such as a missing audio device surface. The lines limit "
+        "applies to the complete rendered response, including headings and notices. "
+        "If filtering exceeds it, the current live failure has priority, followed by "
+        "the newest matching stderr lines; distinct warnings use remaining space. "
         "Use get_last_error as the primary Python check after reload."
     ),
     "inputSchema": {
@@ -142,7 +145,7 @@ GET_LOGS_TOOL: JsonDict = {
         "properties": {
             "lines": {
                 "type": "integer",
-                "description": f"Number of recent combined output lines to return (default 50, max {_MAX_CAPTURED_OUTPUT_LINES})",
+                "description": f"Maximum rendered response lines, including headings, truncation and process-exit notices (default 50, max {_MAX_CAPTURED_OUTPUT_LINES})",
                 "default": 50,
                 "minimum": 1,
                 "maximum": _MAX_CAPTURED_OUTPUT_LINES,
@@ -1145,6 +1148,7 @@ class McpBridge:
             lines = int(arguments.get("lines", 50))  # type: ignore[call-overload]
         except (TypeError, ValueError):
             return self._error(req_id, -32602, "get_logs 'lines' must be an integer")
+        line_limit = max(1, min(lines, _MAX_CAPTURED_OUTPUT_LINES))
         errors_only = bool(arguments.get("errors_only", False))
         include_warnings = bool(arguments.get("include_warnings", False))
 
@@ -1154,12 +1158,10 @@ class McpBridge:
             )
 
         if errors_only:
-            sections: list[str] = []
+            sections: list[tuple[str | None, str]] = []
             system_error, lookup_error = self._get_last_system_error()
             if system_error:
-                sections.append(
-                    f"Python system error (get_last_error):\n{system_error}"
-                )
+                sections.append(("Python system error (get_last_error):", system_error))
 
             stderr_errors = self._check_stderr_for_errors()
             # The block keeps raw lines; the live error arrives plain.
@@ -1171,40 +1173,129 @@ class McpBridge:
                     and system_error not in stderr_plain
                 )
             ):
-                sections.append(f"Matching subprocess stderr:\n{stderr_errors}")
+                sections.append(("Matching subprocess stderr:", stderr_errors))
 
-            if sections:
-                output = "\n\n".join(sections)
-            elif lookup_error:
-                output = (
-                    "No matching errors in captured stderr. The live Python system-error "
-                    f"channel could not be checked: {lookup_error}"
-                )
-            else:
-                output = "No Python system errors or matching stderr errors detected."
+            if not sections:
+                if lookup_error:
+                    sections.append(
+                        (
+                            None,
+                            "No matching errors in captured stderr. The live Python "
+                            f"system-error channel could not be checked: {lookup_error}",
+                        )
+                    )
+                else:
+                    sections.append(
+                        (
+                            None,
+                            "No Python system errors or matching stderr errors detected.",
+                        )
+                    )
 
             if include_warnings:
                 warnings = self._collect_stderr_warnings()
-                output += (
-                    f"\n\nCaptured warnings (WARN):\n{warnings}"
-                    if warnings
-                    else "\n\nNo WARN lines in captured stderr."
+                sections.append(
+                    (
+                        "Captured warnings (WARN):" if warnings else None,
+                        warnings or "No WARN lines in captured stderr.",
+                    )
                 )
         else:
-            line_limit = max(1, min(lines, _MAX_CAPTURED_OUTPUT_LINES))
             output = self._get_recent_process_output(max_lines=line_limit)
             if not output:
                 output = "(no output captured yet)"
+            sections = [(None, output)]
 
         # A dead subprocess still serves its buffered output; say so, otherwise
         # stale logs make the scene look alive.
+        exit_notice = None
         if self._subprocess is not None and self._subprocess.poll() is not None:
-            output += (
-                f"\n\n(note: scene subprocess has exited with code "
+            exit_notice = (
+                f"(note: scene subprocess has exited with code "
                 f"{self._subprocess.returncode}; logs above are its final output)"
             )
 
+        output = self._render_bounded_log_sections(
+            sections,
+            line_limit,
+            footer=exit_notice,
+        )
+
         return self._success(req_id, {"content": [{"type": "text", "text": output}]})
+
+    @staticmethod
+    def _render_bounded_log_sections(
+        sections: list[tuple[str | None, str]],
+        line_limit: int,
+        *,
+        footer: str | None = None,
+    ) -> str:
+        def render_section(heading: str | None, body: str) -> str:
+            return f"{heading}\n{body}" if heading else body
+
+        rendered = [render_section(heading, body) for heading, body in sections]
+        if footer:
+            rendered.append(footer)
+        full_output = "\n\n".join(rendered)
+        if len(full_output.splitlines()) <= line_limit:
+            return full_output
+
+        first_body_lines = sections[0][1].splitlines() if sections else []
+        current_detail = next(
+            (line for line in reversed(first_body_lines) if line.strip()),
+            "recent diagnostics omitted",
+        )
+        if line_limit == 1:
+            exit_detail = f" {footer}" if footer else ""
+            return f"(output truncated to 1 line) {current_detail}{exit_detail}"
+
+        notice = (
+            f"(output truncated to {line_limit} lines; showing the current failure "
+            "and newest matching diagnostics)"
+        )
+        if footer and line_limit == 2:
+            return f"{notice}\n{current_detail} {footer}"
+        remaining = line_limit - 1
+
+        footer_lines = footer.splitlines() if footer else []
+        footer_cost = 0
+        if footer_lines and remaining >= len(footer_lines) + 1:
+            footer_cost = len(footer_lines)
+            remaining -= footer_cost
+
+        selected_sections: list[list[str]] = []
+        for heading, body in sections:
+            separator_cost = 1 if selected_sections else 0
+            if remaining <= separator_cost:
+                break
+            section_budget = remaining - separator_cost
+            body_lines = body.splitlines()
+            while body_lines and not body_lines[0].strip():
+                body_lines.pop(0)
+            while body_lines and not body_lines[-1].strip():
+                body_lines.pop()
+            full_section = ([heading] if heading else []) + body_lines
+            if len(full_section) <= section_budget:
+                selected = full_section
+            elif heading and section_budget >= 2:
+                selected = [heading, *body_lines[-(section_budget - 1) :]]
+            else:
+                selected = body_lines[-section_budget:]
+            while selected and not selected[0].strip():
+                selected.pop(0)
+            if not selected:
+                continue
+            selected_sections.append(selected)
+            remaining -= separator_cost + len(selected)
+
+        output_lines = [notice]
+        for selected in selected_sections:
+            if len(output_lines) > 1:
+                output_lines.append("")
+            output_lines.extend(selected)
+        if footer_cost:
+            output_lines.extend(footer_lines)
+        return "\n".join(output_lines[:line_limit])
 
     def _get_last_system_error(self, timeout: float = 2.0) -> tuple[str, str | None]:
         """Read the engine's live LastSystemError slot for error-only logs."""
