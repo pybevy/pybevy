@@ -1029,13 +1029,17 @@ fn generate_bridge_tokens(
             .map(|field| {
                 let name_str = field.python_name.to_string();
                 let array_var = quote::format_ident!("{}_array", field.python_name);
+                let values_var = quote::format_ident!("{}_values", field.python_name);
                 let slice_var = quote::format_ident!("{}_slice", field.python_name);
                 quote! {
                     let #array_var: Option<numpy::PyReadonlyArray2<f32>> = batch
                         .get_field_array(py, #name_str)
                         .map(|a| -> pyo3::PyResult<_> { Ok(a.extract()?) })
                         .transpose()?;
-                    let #slice_var = #array_var.as_ref().and_then(|a| a.as_slice().ok());
+                    let #values_var = batch.get_field_values(#name_str);
+                    let #slice_var = #values_var.or_else(|| {
+                        #array_var.as_ref().and_then(|a| a.as_slice().ok())
+                    });
                 }
             })
             .collect();
@@ -1071,7 +1075,19 @@ fn generate_bridge_tokens(
                 .iter()
                 .map(BatchFieldConstraint::tokens)
                 .collect();
-            let value_validation = if constraints.is_empty() {
+            let portable_value_validation = if constraints.is_empty() {
+                quote! {}
+            } else {
+                quote! {
+                    pybevy_core::batch_columns::validate_f32_values(
+                        #name_str,
+                        &portable_values,
+                        &[#(#constraints),*],
+                    )
+                    .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+                }
+            };
+            let numpy_value_validation = if constraints.is_empty() {
                 quote! {}
             } else {
                 quote! {
@@ -1087,24 +1103,45 @@ fn generate_bridge_tokens(
             };
             quote! {
                 if let Some(arr) = kwargs.get_item(#name_str)? {
-                    let np = py.import("numpy")?;
-                    // Accept real NumPy, the bounded `pybevy.array` array (via its
-                    // `__array__`), and (nested) lists/tuples of numbers.
-                    let arr = np.call_method1("asarray", (arr,))?;
-                    let arr_bound = &arr;
-                    let ndim: usize = arr_bound.getattr("ndim")?.extract()?;
-                    let shape: Vec<usize> = arr_bound.getattr("shape")?.extract()?;
-                    // Neutral shape validation -> row count (shared error strings).
-                    let rows = pybevy_core::batch_columns::plan_column(#name_str, #cols_var, ndim, &shape)
+                    if let Some((shape, portable_values)) =
+                        pybevy_core::portable_f32_batch_column(&arr)?
+                    {
+                        let ndim = shape.len();
+                        let rows = pybevy_core::batch_columns::plan_column(
+                            #name_str,
+                            #cols_var,
+                            ndim,
+                            &shape,
+                        )
                         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-                    // Data work: normalize to a contiguous float32 `(rows, cols)` array.
-                    let reshaped = arr_bound.call_method1("reshape", ((rows, #cols_var),))?;
-                    let contiguous = np.call_method1("ascontiguousarray", (&reshaped,))?;
-                    let normalized = contiguous.call_method1("astype", (np.getattr("float32")?,))?;
-                    #value_validation
-                    count_agreement.observe(#name_str, rows)
+                        #portable_value_validation
+                        count_agreement.observe(#name_str, rows)
+                            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+                        field_values.insert(#name_str.to_string(), portable_values);
+                    } else {
+                        let np = py.import("numpy")?;
+                        let arr = np.call_method1("asarray", (arr,))?;
+                        let arr_bound = &arr;
+                        let ndim: usize = arr_bound.getattr("ndim")?.extract()?;
+                        let shape: Vec<usize> = arr_bound.getattr("shape")?.extract()?;
+                        let rows = pybevy_core::batch_columns::plan_column(
+                            #name_str,
+                            #cols_var,
+                            ndim,
+                            &shape,
+                        )
                         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-                    field_arrays.insert(#name_str.to_string(), normalized.unbind());
+                        let reshaped = arr_bound.call_method1("reshape", ((rows, #cols_var),))?;
+                        let contiguous = np.call_method1("ascontiguousarray", (&reshaped,))?;
+                        let normalized = contiguous.call_method1(
+                            "astype",
+                            (np.getattr("float32")?,),
+                        )?;
+                        #numpy_value_validation
+                        count_agreement.observe(#name_str, rows)
+                            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+                        field_arrays.insert(#name_str.to_string(), normalized.unbind());
+                    }
                 }
             }
         }).collect();
@@ -1175,6 +1212,7 @@ fn generate_bridge_tokens(
                 #(#field_validations)*
 
                 let mut field_arrays = std::collections::HashMap::new();
+                let mut field_values = std::collections::HashMap::new();
                 let mut count_agreement = pybevy_core::batch_columns::CountAgreement::default();
 
                 #(#field_normalize_stmts)*
@@ -1193,6 +1231,7 @@ fn generate_bridge_tokens(
                 let batch = pybevy_core::PyRustComponentBatch {
                     component_type_ptr: type_ptr,
                     field_arrays,
+                    field_values,
                     count,
                     component_name: #component_name.to_string(),
                 };

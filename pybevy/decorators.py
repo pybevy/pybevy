@@ -446,6 +446,29 @@ _PRIMITIVE_TYPES = (int, float, bool)
 _WRAPPER_TYPES = (int, float, bool, Vec3, Vec2)
 
 
+def _has_undeclared_component_state(
+    cls: type[Component], field_hints: dict[str, object]
+) -> bool:
+    if field_hints:
+        return False
+    if "__new__" in cls.__dict__ or bool(cls.__dict__.get("__slots__")):
+        return True
+    initializer = cls.__dict__.get("__init__")
+    if initializer is None:
+        return False
+    code = getattr(initializer, "__code__", None)
+    # The generated empty dataclass initializer is a state-free self-only function.
+    return not (
+        dataclasses.is_dataclass(cls)
+        and code is not None
+        and code.co_argcount == 1
+        and code.co_kwonlyargcount == 0
+        and not code.co_names
+        and not code.co_freevars
+        and not code.co_cellvars
+    )
+
+
 def _register_component(cls: type[CT], *, storage: str | None = None) -> type[CT]:
     """Internal implementation for the @component decorator."""
     from typing import get_type_hints
@@ -509,8 +532,9 @@ def _register_component(cls: type[CT], *, storage: str | None = None) -> type[CT
         field_hints = get_type_hints(cls)
     except Exception:
         field_hints = getattr(cls, "__annotations__", {})
+    has_undeclared_instance_state = _has_undeclared_component_state(cls, field_hints)
     layout_signature = (
-        "python" if storage == "python" else "wrapper",
+        "python" if storage == "python" or has_undeclared_instance_state else "wrapper",
         tuple(
             (name, _component_annotation_identity(annotation))
             for name, annotation in field_hints.items()

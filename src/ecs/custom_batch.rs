@@ -17,7 +17,8 @@ use pyo3::{
 
 use super::{
     component_layout::{
-        ComponentLayout, ComponentLayoutExt, ComponentStorageType, PrimitiveType, PrimitiveTypeExt,
+        ComponentLayout, ComponentStorageType, ComponentStorageTypeExt, PrimitiveType,
+        PrimitiveTypeExt,
     },
     component_type::{PreparedCustomComponentRegistration, register_prepared_custom_component},
     component_wrapper::*,
@@ -96,21 +97,13 @@ impl PyCustomComponentBatch {
             }));
         }
 
-        // Validate: must not be PyObject storage
-        let has_pyobject_storage = cls
-            .getattr("__pybevy_storage__")
-            .ok()
-            .and_then(|attr| attr.extract::<String>().ok())
-            .map(|s| s == "pyobject")
-            .unwrap_or(false);
-        if has_pyobject_storage {
+        let (storage, layout) = ComponentStorageType::storage_with_layout(cls)?;
+        if storage == ComponentStorageType::PyObject {
             return Err(custom_batch_err(CustomColumnError::PyObjectStorage {
                 class_name: cls.name()?.to_string(),
             }));
         }
-
-        // Compute layout
-        let layout = ComponentLayout::from_annotations(cls)?;
+        let layout = layout.expect("wrapper storage carries a component layout");
 
         let kwargs = match kwargs {
             Some(kwargs) if !kwargs.is_empty() => kwargs,

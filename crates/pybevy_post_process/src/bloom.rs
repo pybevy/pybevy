@@ -20,6 +20,12 @@ fn validate_max_mip_dimension(dimension: u32) -> PyResult<()> {
 }
 
 fn validate_bloom_batch(py: Python<'_>, batch: &PyRustComponentBatch) -> PyResult<()> {
+    if let Some(values) = batch.get_field_values("max_mip_dimension") {
+        for &dimension in values {
+            validate_max_mip_dimension(dimension as u32)?;
+        }
+        return Ok(());
+    }
     if let Some(array) = batch.get_field_array(py, "max_mip_dimension") {
         let array: PyReadonlyArray2<f32> = array.extract()?;
         for &dimension in array.as_slice()? {

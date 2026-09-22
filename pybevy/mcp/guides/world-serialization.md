@@ -18,12 +18,15 @@ snapshot must be serialized again.
 `DynamicWorld.from_world()` extracts all entities, components, and resources
 that Bevy can access through `AppTypeRegistry` reflection. Wrapper-stored
 `@component` values are included with their qualified name, primitive field
-schema, and values. Import the matching decorated classes before loading;
-PyBevy registers them on demand in the destination World. All custom resources
-and Python-object-stored components are skipped. `from_world()` warns about
-skipped Python values and can emit a separate warning for reflected values
-that cannot be serialized. Native ECS types without Bevy's required `ReflectComponent`
-or `ReflectResource` registration are also outside the format.
+schema, and values. Fieldless automatic-storage components are included as
+markers with an empty schema. Import the matching decorated classes before
+loading; PyBevy registers them on demand in the destination World. All custom
+resources and components using Python-object storage are skipped, including
+fieldless markers explicitly declared with `storage="python"`.
+`from_world()` warns about skipped Python values and can emit a separate warning
+for reflected values that cannot be serialized. Native ECS types without Bevy's
+required `ReflectComponent` or `ReflectResource` registration are also outside
+the format.
 
 `DynamicWorld.serialize()` takes a live `World` because Bevy needs a type
 registry to encode the snapshot and PyBevy does not expose `TypeRegistry` as a

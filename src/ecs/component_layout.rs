@@ -123,13 +123,6 @@ impl ComponentLayoutExt for ComponentLayout {
 
         let annotations = declared_annotations(cls)?;
 
-        if annotations.is_empty() {
-            return Err(PyTypeError::new_err(format!(
-                "Component class '{}' has no fields",
-                name
-            )));
-        }
-
         // Parse each field annotation
         let mut field_types = Vec::new();
 
@@ -181,6 +174,38 @@ pub trait ComponentStorageTypeExt {
     ) -> PyResult<(ComponentStorageType, Option<ComponentLayout>)>;
 }
 
+fn empty_layout_has_undeclared_instance_state(cls: &Bound<'_, PyType>) -> PyResult<bool> {
+    if !declared_annotations(cls)?.is_empty() {
+        return Ok(false);
+    }
+    let class_dict = cls.getattr("__dict__")?;
+    if class_dict.contains("__new__")? {
+        return Ok(true);
+    }
+    if class_dict.contains("__slots__")? && class_dict.get_item("__slots__")?.is_truthy()? {
+        return Ok(true);
+    }
+    if !class_dict.contains("__init__")? {
+        return Ok(false);
+    }
+    if !cls.hasattr("__dataclass_fields__")? {
+        return Ok(true);
+    }
+    let initializer = class_dict.get_item("__init__")?;
+    let generated_by_dataclass = (|| -> PyResult<bool> {
+        let Some(code) = initializer.getattr_opt("__code__")? else {
+            return Ok(false);
+        };
+        Ok(code.getattr("co_argcount")?.extract::<usize>()? == 1
+            && code.getattr("co_kwonlyargcount")?.extract::<usize>()? == 0
+            && code.getattr("co_names")?.len()? == 0
+            && code.getattr("co_freevars")?.len()? == 0
+            && code.getattr("co_cellvars")?.len()? == 0)
+    })()
+    .unwrap_or(false);
+    Ok(!generated_by_dataclass)
+}
+
 impl ComponentStorageTypeExt for ComponentStorageType {
     fn from_python_class(cls: &Bound<'_, PyType>) -> PyResult<ComponentStorageType> {
         Self::storage_with_layout(cls).map(|(storage, _)| storage)
@@ -189,6 +214,7 @@ impl ComponentStorageTypeExt for ComponentStorageType {
     fn storage_with_layout(
         cls: &Bound<'_, PyType>,
     ) -> PyResult<(ComponentStorageType, Option<ComponentLayout>)> {
+        let mut force_wrapper = false;
         // Check for explicit storage mode in class attributes
         if let Ok(Some(storage_attr)) = cls.getattr_opt(intern!(cls.py(), "__pybevy_storage__")) {
             let storage_str_bound = storage_attr.str()?;
@@ -196,7 +222,7 @@ impl ComponentStorageTypeExt for ComponentStorageType {
             match storage_str {
                 "pyobject" => return Ok((ComponentStorageType::PyObject, None)),
                 "wrapper" => {
-                    // Continue to layout analysis
+                    force_wrapper = true;
                 }
                 _ => {
                     return Err(PyTypeError::new_err(format!(
@@ -205,6 +231,10 @@ impl ComponentStorageTypeExt for ComponentStorageType {
                     )));
                 }
             }
+        }
+
+        if !force_wrapper && empty_layout_has_undeclared_instance_state(cls)? {
+            return Ok((ComponentStorageType::PyObject, None));
         }
 
         // Try to compute layout - if successful, use wrapper storage
@@ -227,11 +257,12 @@ pub(crate) fn cached_storage_and_layout_match(
     storage: ComponentStorageType,
     layout: Option<&ComponentLayout>,
 ) -> PyResult<bool> {
+    let mut force_wrapper = false;
     if let Ok(Some(storage_attr)) = cls.getattr_opt(intern!(cls.py(), "__pybevy_storage__")) {
         let storage_str_bound = storage_attr.str()?;
         match storage_str_bound.to_str()? {
             "pyobject" => return Ok(storage == ComponentStorageType::PyObject),
-            "wrapper" => {}
+            "wrapper" => force_wrapper = true,
             other => {
                 return Err(PyTypeError::new_err(format!(
                     "Invalid storage type '{}'. Use 'wrapper' or 'pyobject'.",
@@ -239,6 +270,10 @@ pub(crate) fn cached_storage_and_layout_match(
                 )));
             }
         }
+    }
+
+    if !force_wrapper && empty_layout_has_undeclared_instance_state(cls)? {
+        return Ok(storage == ComponentStorageType::PyObject && layout.is_none());
     }
 
     let Some(layout) = layout else {

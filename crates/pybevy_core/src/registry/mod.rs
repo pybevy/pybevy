@@ -29,4 +29,4 @@ pub use global_registry::{ComponentBatchInsertFn, ComponentBatchMeta, ComponentB
 pub use message_bridge::MessageBridge;
 pub use registries::PluginConfigs;
 pub use resource_bridge::ResourceBridge;
-pub use rust_batch::PyRustComponentBatch;
+pub use rust_batch::{PyRustComponentBatch, portable_f32_batch_column};
