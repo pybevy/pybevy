@@ -1053,6 +1053,9 @@ pub fn integer_vector_coordinate_out_of_range(
     format!("{type_name} coordinate must be between {minimum} and {maximum}, got {received}")
 }
 
+pub const COMPONENT_FLOAT_REQUIRED: &str =
+    "expected a number; null is only valid for optional fields";
+pub const COMPONENT_FLOAT_EXPECTED_NUMBER: &str = "expected a number";
 pub const COMPONENT_FLOAT_NON_FINITE: &str = "float must be finite";
 
 pub fn direction_argument_type(param: &str) -> String {

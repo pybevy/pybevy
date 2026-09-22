@@ -466,7 +466,7 @@ pub enum ControlOperation {
     GetResource(GetResourceParams),
     /// Query entities by registered With/Without component filters. Returns at most 100 records by default; use limit up to 1000 and inspect total_count/truncated.
     QueryEntities(QueryEntitiesParams),
-    /// Get a grouped entity inventory: counts by type (e.g. '30 Bubble, 6 Fish, 1 Camera3d'). Faster than query_entities for understanding scene composition.
+    /// Get a grouped entity inventory with counts and a packed representative entity ID for every group. Custom-component labels prefer the least prevalent live scene component, then lexical order. Faster than query_entities for understanding scene composition.
     GetSceneSummary,
     /// Get the axis-aligned bounding box (AABB) of an entity, both local and world-space. Requires entity to have a mesh.
     GetBoundingBox {
@@ -561,9 +561,9 @@ pub enum ControlOperation {
     /// Jump virtual time to a specific moment. Absolute-time systems observe the new elapsed time; delta-accumulated state is not replayed. Seeking backwards resets virtual time (preserves speed). Pauses by default.
     SeekTime(SeekTimeParams),
 
-    /// Spatial query between two entities: distance, direction, AABB overlap. For finding all entities within a radius, use query_spatial_neighborhood instead.
+    /// Spatial query between two entities: distance, direction, AABB overlap. Direction words are world-axis labels (-Z forward, +Z behind), not either entity's local orientation. For finding all entities within a radius, use query_spatial_neighborhood instead.
     QuerySpatial(QuerySpatialParams),
-    /// Find all entities within radius of a center entity.
+    /// Find all entities within radius of a center entity. Direction words are world-axis labels (-Z forward, +Z behind), not the center entity's local orientation.
     QuerySpatialNeighborhood(QuerySpatialNeighborhoodParams),
     /// Detect AABB overlaps for a single entity against all others.
     CheckOverlaps(CheckOverlapsParams),

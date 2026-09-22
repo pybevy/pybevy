@@ -50,8 +50,8 @@ Fix the source and reload again to apply the new definitions.
 
 ## Spatial Intelligence Tools
 
-- `query_spatial` - Pairwise distance/direction/overlap between two entities (`entity_a`, `entity_b`).
-- `query_spatial_neighborhood` - Find all entities within `radius` of a center `entity`.
+- `query_spatial` - Pairwise distance/direction/overlap between two entities (`entity_a`, `entity_b`). Direction words label world axes: −Z is forward and +Z is behind. They do not describe either entity's local orientation.
+- `query_spatial_neighborhood` - Find all entities within `radius` of a center `entity`. Its direction words use the same world-axis convention, not the center's local orientation.
 - `check_overlaps` - AABB overlap + floating/sunken detection for one `entity` against all others. Use `ground_y` to flag models sunk below a ground plane.
 - `check_all_overlaps` - Scene-wide AABB overlap + floating/sunken detection across every entity. Use `ground_y` for first-load GLB sweeps.
 - `reload_and_capture` - One round-trip: reload → error check → render-pipeline readiness → screenshot. The capture delay starts after readiness; asynchronous asset loads may still need more time.
@@ -69,7 +69,7 @@ When geometry looks wrong (wrong size, shape, missing, or occluded), follow this
 
 1. **`check_all_overlaps(ground_y=0)`** - run scene-wide first. Catches: interpenetrating entities, models sunken below ground, floating objects. If this returns problems, fix them before anything else. This is the single highest-value diagnostic call. For follow-up on one entity, use `check_overlaps(entity=...)`.
 2. **`get_bounding_box`** on suspect entities - compare actual dimensions vs intended. A "table" with height 0.01 is a plane, not a table. A "wall" with equal X/Y/Z is a cube, not a wall. Mismatched dimensions are the #1 cause of "it doesn't look right."
-3. **`query_spatial`** between entity pairs - check distance and direction. "The chair should face the desk" becomes: is the direction vector from chair to desk aligned with the chair's forward? Answers relative positioning questions without visual ambiguity. Use `query_spatial_neighborhood(entity=..., radius=...)` when you need every nearby entity.
+3. **`query_spatial`** between entity pairs - check distance and world-axis direction. It reports −Z as forward and +Z as behind regardless of either entity's rotation. To ask whether a chair faces a desk, compare this world displacement with the chair's world-space direction from `GlobalTransform.forward()` separately. Use `query_spatial_neighborhood(entity=..., radius=...)` when you need every nearby entity.
 4. **`capture_depth`** - when you suspect occlusion or visibility issues. Returns entity names at normalized sample points cast through the same selected `Camera3d` context as its RGB image. If you expect to see `lamp_1` at screen center but depth reports `wall_east`, the lamp is occluded. Diagnoses "wrong entity showing" without guessing from pixels.
 5. **`capture_stats`** - quantify brightness, clipping, flat output, or a deterministic before/after change without transferring an image.
 6. **`capture_screenshot`** - last, for visual polish only. Colors, lighting, bloom, material appearance. By this point, structural issues should already be resolved.

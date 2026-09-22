@@ -1,7 +1,7 @@
 use std::{
     alloc::Layout,
     any::TypeId,
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     sync::Arc,
 };
 
@@ -59,6 +59,22 @@ fn get_custom_component_names(world: &World, entity: Entity) -> Vec<String> {
         }
     }
     names
+}
+
+/// Pick the least prevalent custom component, then the lexical first on ties.
+fn custom_component_group_label<'a>(
+    names: &'a [String],
+    prevalence: &HashMap<String, usize>,
+) -> Option<&'a str> {
+    names
+        .iter()
+        .min_by(|left, right| {
+            prevalence
+                .get(*left)
+                .cmp(&prevalence.get(*right))
+                .then_with(|| left.cmp(right))
+        })
+        .map(String::as_str)
 }
 
 /// Compute archetype/Bevy-internal component counts for an entity.
@@ -1657,16 +1673,21 @@ pub fn get_component_schema(
         .and_then(|info| {
             info.iter()
                 .find(|(_, entry)| entry.name == name)
-                .map(|(_, entry)| entry.clone())
+                .map(|(component_id, entry)| (component_id, entry.clone()))
         });
-    if let Some(entry) = custom_entry {
+    if let Some((component_id, entry)) = custom_entry {
         let schema = Python::attach(|py| {
-            let fields = entry
+            let annotated_fields = entry
                 .retained_type
                 .as_ref()
                 .map_or_else(serde_json::Map::new, |retained_type| {
                     get_annotated_fields(retained_type.bind(py))
                 });
+            let fields = if annotated_fields.is_empty() && entry.is_pyobject_storage {
+                get_live_custom_component_fields(py, world, component_id)
+            } else {
+                annotated_fields
+            };
             let editable =
                 !fields.is_empty() && (entry.is_pyobject_storage || entry.wrapper_layout.is_some());
 
@@ -1737,6 +1758,93 @@ fn get_annotated_fields(py_type: &Bound<'_, PyType>) -> serde_json::Map<String, 
     }
 
     fields
+}
+
+fn get_live_custom_component_fields(
+    py: Python<'_>,
+    world: &World,
+    component_id: ComponentId,
+) -> serde_json::Map<String, serde_json::Value> {
+    let is_pyobject_descriptor = world
+        .components()
+        .get_info(component_id)
+        .is_some_and(|info| {
+            info.type_id().is_none()
+                && info.mutable()
+                && info.layout() == Layout::new::<Py<PyAny>>()
+        });
+    if !is_pyobject_descriptor {
+        return serde_json::Map::new();
+    }
+
+    let instances = world
+        .iter_entities()
+        .filter_map(|entity_ref| {
+            let ptr = entity_ref.get_by_id(component_id).ok()?;
+            // SAFETY: the descriptor check above proves this component stores
+            // a live Py<PyAny>. The incref occurs while EntityRef keeps the
+            // component pointer valid; only the owned clone escapes the guard.
+            let instance = unsafe { &*(ptr.as_ptr() as *const Py<PyAny>) };
+            Some(instance.clone_ref(py))
+        })
+        .collect::<Vec<_>>();
+
+    let mut common = None::<BTreeMap<String, BTreeSet<String>>>;
+    for instance in &instances {
+        let fields = live_instance_field_types(instance.bind(py));
+        match &mut common {
+            None => {
+                common = Some(
+                    fields
+                        .into_iter()
+                        .map(|(name, type_name)| (name, BTreeSet::from([type_name])))
+                        .collect(),
+                );
+            }
+            Some(common) => {
+                common.retain(|name, type_names| {
+                    let Some(type_name) = fields.get(name) else {
+                        return false;
+                    };
+                    type_names.insert(type_name.clone());
+                    true
+                });
+            }
+        }
+    }
+
+    common
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(name, type_names)| {
+            let type_name = if type_names.len() == 1 {
+                type_names.into_iter().next().unwrap()
+            } else {
+                "unknown".to_string()
+            };
+            (name, serde_json::Value::String(type_name))
+        })
+        .collect()
+}
+
+fn live_instance_field_types(instance: &Bound<'_, PyAny>) -> BTreeMap<String, String> {
+    let Ok(dict) = instance.getattr("__dict__") else {
+        return BTreeMap::new();
+    };
+    let Ok(dict) = dict.cast_into::<PyDict>() else {
+        return BTreeMap::new();
+    };
+
+    dict.iter()
+        .filter_map(|(key, value)| {
+            let name = key.extract::<String>().ok()?;
+            if name.starts_with('_') {
+                return None;
+            }
+            let type_name = value.get_type().name().ok()?.to_string();
+            Some((name, type_name))
+        })
+        .collect()
 }
 
 fn get_class_fields(py: Python<'_>, py_type: &Bound<'_, PyType>) -> serde_json::Value {
@@ -1893,7 +2001,7 @@ pub fn get_bounding_box(
 /// Scene summary: group entities by type for a quick inventory.
 ///
 /// Grouping priority per entity:
-/// 1. Custom Python component name (most descriptive)
+/// 1. Custom Python component name (least prevalent in the scene, then lexical)
 /// 2. Name component text (grouped by identical/prefix)
 /// 3. Characteristic built-in component (Camera3d > PointLight > Mesh3d etc.)
 /// 4. Fallback: "other"
@@ -1919,7 +2027,7 @@ pub fn scene_summary(world: &mut World) -> Result<serde_json::Value, ControlErro
     struct GroupInfo {
         count: u64,
         source: &'static str,
-        representative_id: Option<u64>,
+        representative_id: u64,
         // True only if every entity in the group has a Name equal to the label.
         all_names_match: bool,
         // The first member's real Name, for the singleton case below.
@@ -1940,13 +2048,32 @@ pub fn scene_summary(world: &mut World) -> Result<serde_json::Value, ControlErro
         let entry = groups.entry(label).or_insert(GroupInfo {
             count: 0,
             source,
-            representative_id: Some(entity.to_bits()),
+            representative_id: entity.to_bits(),
             all_names_match: name_matches_label,
             first_name,
         });
         entry.count += 1;
+        entry.representative_id = entry.representative_id.min(entity.to_bits());
         if !name_matches_label {
             entry.all_names_match = false;
+        }
+    }
+
+    // Cache sorted, deduplicated names and scene prevalence before assigning a
+    // label. The canonical scene list excludes resource backing entities.
+    let custom_names_by_entity: HashMap<Entity, Vec<String>> = entity_list
+        .iter()
+        .map(|entity| {
+            let mut names = get_custom_component_names(world, *entity);
+            names.sort_unstable();
+            names.dedup();
+            (*entity, names)
+        })
+        .collect();
+    let mut custom_prevalence: HashMap<String, usize> = HashMap::new();
+    for names in custom_names_by_entity.values() {
+        for name in names {
+            *custom_prevalence.entry(name.clone()).or_default() += 1;
         }
     }
 
@@ -1964,11 +2091,14 @@ pub fn scene_summary(world: &mut World) -> Result<serde_json::Value, ControlErro
         };
 
         // Priority 1: Custom Python component name
-        let custom_names = get_custom_component_names(world, *entity);
-        if let Some(first_custom) = custom_names.first() {
+        let custom_names = custom_names_by_entity
+            .get(entity)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        if let Some(custom_label) = custom_component_group_label(custom_names, &custom_prevalence) {
             add(
                 &mut groups,
-                first_custom.clone(),
+                custom_label.to_string(),
                 "custom_component",
                 *entity,
                 false,
@@ -2057,12 +2187,7 @@ pub fn scene_summary(world: &mut World) -> Result<serde_json::Value, ControlErro
                 "count": info.count,
                 "source": source,
             });
-            // Only include representative_id when it is a useful handle.
-            if info.count > 1 {
-                obj["representative_id"] = serde_json::json!(info.representative_id);
-            } else {
-                obj["representative_id"] = serde_json::Value::Null;
-            }
+            obj["representative_id"] = serde_json::json!(info.representative_id);
             obj
         })
         .collect();
@@ -2112,18 +2237,19 @@ mod tests {
         camera::primitives::Aabb,
         color::Color,
         ecs::{
-            component::ComponentId,
+            component::{Component, ComponentId},
             hierarchy::ChildOf,
             name::Name,
             schedule::{IntoScheduleConfigs, Schedule, ScheduleLabel},
         },
         math::Vec3,
-        prelude::{GlobalTransform, Transform},
+        prelude::{Camera3d, GlobalTransform, Transform},
     };
     use pybevy_color::color::PyColor;
     use pyo3::types::{PyAnyMethods, PyDict, PyList, PyTuple};
 
-    // Force linker to include pybevy_transform (its inventory entries register Transform bridge)
+    // Force linker to include inventory entries needed by these handler tests.
+    extern crate pybevy_camera;
     extern crate pybevy_transform;
 
     use super::*;
@@ -2144,6 +2270,42 @@ mod tests {
     struct ProbeCopyValue {
         #[pyo3(get)]
         value: f32,
+    }
+
+    #[derive(Component)]
+    struct CustomRole;
+
+    #[derive(Component)]
+    struct Chaser;
+
+    #[derive(Component)]
+    struct Prey;
+
+    #[derive(Component)]
+    struct GridMover;
+
+    #[derive(Component)]
+    struct AlphaTag;
+
+    #[derive(Component)]
+    struct ZetaTag;
+
+    fn register_custom_component<T: Component>(
+        world: &mut World,
+        info: &mut pybevy_core::CustomComponentInfo,
+        name: &str,
+    ) {
+        let component_id = world.register_component::<T>();
+        info.insert(
+            component_id,
+            pybevy_core::CustomComponentEntry {
+                type_ptr: ptr::null(),
+                retained_type: None,
+                name: name.to_string(),
+                is_pyobject_storage: false,
+                wrapper_layout: None,
+            },
+        );
     }
 
     #[pymethods]
@@ -2528,13 +2690,13 @@ mod tests {
     #[test]
     fn get_scene_summary_single_name_uses_name_source() {
         let mut world = World::new();
-        world.spawn(Name::new("hero"));
+        let hero = world.spawn(Name::new("hero")).id();
         let result = scene_summary(&mut world).unwrap();
         let groups = result["groups"].as_array().unwrap();
         let g = groups.iter().find(|g| g["label"] == "hero").unwrap();
         assert_eq!(g["count"], 1);
         assert_eq!(g["source"], "name");
-        assert!(g["representative_id"].is_null());
+        assert_eq!(g["representative_id"], hero.to_bits());
     }
 
     #[test]
@@ -2547,8 +2709,7 @@ mod tests {
         let g = groups.iter().find(|g| g["label"] == "goblin").unwrap();
         assert_eq!(g["count"], 2);
         assert_eq!(g["source"], "name");
-        let rep = g["representative_id"].as_u64().unwrap();
-        assert!(rep == a.to_bits() || rep == b.to_bits());
+        assert_eq!(g["representative_id"], a.to_bits().min(b.to_bits()));
     }
 
     #[test]
@@ -2561,8 +2722,7 @@ mod tests {
         let g = groups.iter().find(|g| g["label"] == "rep_p").unwrap();
         assert_eq!(g["count"], 2);
         assert_eq!(g["source"], "name_prefix");
-        let rep = g["representative_id"].as_u64().unwrap();
-        assert!(rep == a.to_bits() || rep == b.to_bits());
+        assert_eq!(g["representative_id"], a.to_bits().min(b.to_bits()));
     }
 
     #[test]
@@ -2582,15 +2742,101 @@ mod tests {
     }
 
     #[test]
-    fn get_scene_summary_representative_id_omitted_for_singletons() {
+    fn get_scene_summary_representative_id_present_for_singletons() {
         let mut world = World::new();
-        world.spawn(Name::new("solo"));
+        let solo = world.spawn(Name::new("solo")).id();
         let result = scene_summary(&mut world).unwrap();
         let groups = result["groups"].as_array().unwrap();
         let g = groups.iter().find(|g| g["label"] == "solo").unwrap();
         assert_eq!(g["count"], 1);
-        // Pinned: singletons emit null representative_id.
-        assert!(g["representative_id"].is_null());
+        assert_eq!(g["representative_id"], solo.to_bits());
+    }
+
+    #[test]
+    fn scene_summary_singleton_representatives_cover_every_source() {
+        setup();
+        let mut world = World::new();
+        let mut info = pybevy_core::CustomComponentInfo::default();
+        register_custom_component::<CustomRole>(&mut world, &mut info, "CustomRole");
+        world.insert_resource(info);
+
+        let named = world.spawn(Name::new("named")).id();
+        let custom = world.spawn(CustomRole).id();
+        let builtin = world.spawn(Camera3d::default()).id();
+        let fallback = world.spawn_empty().id();
+
+        let result = scene_summary(&mut world).unwrap();
+        let groups = result["groups"].as_array().unwrap();
+        for (label, source, entity) in [
+            ("named", "name", named),
+            ("CustomRole", "custom_component", custom),
+            ("Camera3d", "component", builtin),
+            ("other", "fallback", fallback),
+        ] {
+            let group = groups.iter().find(|group| group["label"] == label).unwrap();
+            assert_eq!(group["count"], 1);
+            assert_eq!(group["source"], source);
+            assert_eq!(group["representative_id"], entity.to_bits());
+            assert!(world.get_entity(entity).is_ok());
+        }
+    }
+
+    fn custom_specificity_groups(reverse_registration: bool) -> serde_json::Value {
+        let mut world = World::new();
+        let mut info = pybevy_core::CustomComponentInfo::default();
+        if reverse_registration {
+            register_custom_component::<ZetaTag>(&mut world, &mut info, "ZetaTag");
+            register_custom_component::<AlphaTag>(&mut world, &mut info, "AlphaTag");
+            register_custom_component::<Prey>(&mut world, &mut info, "Prey");
+            register_custom_component::<Chaser>(&mut world, &mut info, "Chaser");
+            register_custom_component::<GridMover>(&mut world, &mut info, "GridMover");
+        } else {
+            register_custom_component::<GridMover>(&mut world, &mut info, "GridMover");
+            register_custom_component::<Chaser>(&mut world, &mut info, "Chaser");
+            register_custom_component::<Prey>(&mut world, &mut info, "Prey");
+            register_custom_component::<AlphaTag>(&mut world, &mut info, "AlphaTag");
+            register_custom_component::<ZetaTag>(&mut world, &mut info, "ZetaTag");
+        }
+        world.insert_resource(info);
+
+        if reverse_registration {
+            world.spawn((GridMover, Chaser));
+            world.spawn((Prey, GridMover));
+            world.spawn((GridMover, Prey));
+            world.spawn((ZetaTag, AlphaTag));
+        } else {
+            world.spawn((Chaser, GridMover));
+            world.spawn((GridMover, Prey));
+            world.spawn((Prey, GridMover));
+            world.spawn((AlphaTag, ZetaTag));
+        }
+        scene_summary(&mut world).unwrap()
+    }
+
+    #[test]
+    fn scene_summary_custom_labels_use_specificity_then_lexical_order() {
+        for reverse_registration in [false, true] {
+            let result = custom_specificity_groups(reverse_registration);
+            let groups = result["groups"].as_array().unwrap();
+            let labels_and_counts: Vec<(&str, u64)> = groups
+                .iter()
+                .map(|group| {
+                    (
+                        group["label"].as_str().unwrap(),
+                        group["count"].as_u64().unwrap(),
+                    )
+                })
+                .collect();
+            assert_eq!(
+                labels_and_counts,
+                [("Prey", 2), ("AlphaTag", 1), ("Chaser", 1)]
+            );
+            assert!(
+                groups
+                    .iter()
+                    .all(|group| group["source"] == "custom_component")
+            );
+        }
     }
     #[test]
     fn debug_registry_returns_valid_shape() {

@@ -45,6 +45,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 uuid = { workspace = true }
 
 [dev-dependencies]
+pybevy_camera = { workspace = true }
 pybevy_color = { workspace = true }
 tower = { version = "0.5", features = ["util"] }
 

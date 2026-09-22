@@ -64,6 +64,14 @@ get_component_schema {"name": "PointLight"}
 → Shows all fields, types, defaults, and a spawn JSON example
 ```
 
+Custom Python component annotations define their schema even before an instance
+exists. If such a class has no annotations, the schema instead reports public
+attributes common to every live instance. Conflicting live types are `unknown`,
+attributes missing from any instance are omitted, and no live instance means an
+empty, non-editable schema. These inferred fields can be patched on existing
+instances; they do not promise that an absent component can be constructed from
+the same field object. Constructor parameters are never treated as fields.
+
 MCP addresses custom components and resources after the active World knows
 their type. A system/query declaration or an inserted instance normally does
 that registration. To let MCP create the first value of an otherwise unused
@@ -99,6 +107,8 @@ preserve them. Enum payload fields accept component vector shorthand.
 Non-finite float fields are reported as the JSON strings `"NaN"`,
 `"Infinity"`, and `"-Infinity"` for diagnostics. Numeric mutation inputs must
 be finite; a rejected value names its field and leaves the component unchanged.
+These diagnostic strings are not writable float values. JSON `null` is valid
+only for an `Option<T>` field; a required float field needs a JSON number.
 Finite fields returned by `get_component` can be replayed with `set_component`
 for editable components. `set_component` echoes each written field under that
 same Python spelling, so a response replays unchanged; a Bevy field named after
@@ -250,6 +260,12 @@ check_overlaps {"entity": "lamp"}
 check_all_overlaps {}
 → Scene-wide overlap scan: find all clipping pairs + floating entities
 ```
+
+Spatial direction words describe world-axis displacement. They label −Z as
+forward and +Z as behind, independent of either entity's rotation. To determine
+whether one entity faces another, compare the displacement with that entity's
+world-space direction from `GlobalTransform.forward()` separately. A parented
+entity's `Transform.forward()` is only local to its parent.
 
 **Note on hierarchies:** By default (`include_siblings=false`), overlapping entities that share a common root ancestor (e.g., mesh children within the same GLB model) are excluded from results. Set `include_siblings=true` to include intra-model overlaps.
 
@@ -638,6 +654,17 @@ resources/read scene://entity/MainCamera
 set_component {"entity": "sun", "component": "PointLight", "fields": {"intensity": 2000}}
 spawn_entity {"components": {"Transform": {"translation": [0, 1, 0]}, "Name": "player"}}
 ```
+
+`get_scene_summary` groups each entity by custom component, Name or Name
+prefix, characteristic built-in component, then `other`, in that priority.
+Every nonempty group includes `representative_id`, the lowest packed entity ID
+among its members; pass that ID to entity inspection tools. When an entity has
+several custom components, the summary chooses the component present on the
+fewest live scene entities, counting each entity once per name, and breaks ties
+lexically. This favors specific role tags such as `Chaser` and `Prey` over a
+shared `GridMover` component and is independent of component registration and
+insertion order. Resource backing entities are excluded from both prevalence
+and group counts.
 
 ## run_code Tips
 
