@@ -241,6 +241,10 @@ pub fn polyline_mesh_too_short(type_name: &str) -> String {
     format!("{type_name} requires at least 2 vertices to build a mesh")
 }
 
+pub fn segment_direction_failed(error: impl Display) -> String {
+    format!("Failed to compute the direction of a line segment: {error}")
+}
+
 pub fn mesh_attribute_missing(name: &str) -> String {
     // `{:?}` quotes and escapes the user-controlled name so the message stays one line.
     format!(

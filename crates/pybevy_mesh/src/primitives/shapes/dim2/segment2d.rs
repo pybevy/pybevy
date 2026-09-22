@@ -2,9 +2,13 @@ use bevy::{
     math::{InvalidDirectionError, Isometry2d, Ray2d, Rot2, primitives::Segment2d},
     mesh::Meshable,
 };
+use pybevy_core::public_error;
 use pybevy_macros::pyconstructor;
 use pybevy_math::{bounding::PyIsometry2d, dir2::PyDir2, ray::PyRay2d, rot2::PyRot2, vec2::PyVec2};
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pyo3::{
+    exceptions::{PyRuntimeError, PyValueError},
+    prelude::*,
+};
 
 use crate::{
     mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PySegment2dMeshBuilder,
@@ -133,7 +137,10 @@ impl PySegment2d {
     }
 
     pub fn direction(&self) -> PyResult<PyDir2> {
-        Ok(PyDir2::from_dir2(self.0.direction()))
+        self.0
+            .try_direction()
+            .map(PyDir2::from_dir2)
+            .map_err(|error| PyRuntimeError::new_err(public_error::segment_direction_failed(error)))
     }
 
     pub fn try_direction(&self) -> PyResult<PyDir2> {
