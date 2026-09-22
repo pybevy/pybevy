@@ -48,6 +48,7 @@ pub mod custom_resource;
 pub mod debug_snapshot;
 pub mod duration;
 pub mod entity;
+pub mod entity_index;
 pub mod enum_comparison;
 pub mod float_live_list;
 pub mod handle;
@@ -470,6 +471,7 @@ pub use duration::{
     try_finite_positive_frequency, try_positive_duration_from_secs_f64, try_relative_speed,
 };
 pub use entity::{PyEntity, extract_entity_from_any};
+pub use entity_index::PyEntityIndex;
 pub use handle::{PyHandle, ensure_asset_type, extract_handle_from_any};
 pub use hierarchy::{PyChildOf, PyChildren, PyChildrenIterator};
 pub use materializable::PyMaterializable;

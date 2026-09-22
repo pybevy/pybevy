@@ -88,6 +88,14 @@ native hot reload is currently rejected.
 
 ## Critical Rules
 
+Numeric entity arguments use the packed generation-bearing IDs returned by MCP
+responses, which are the same values as Python `Entity.to_bits()`. Never pass
+the `EntityIndex` returned by `Entity.index()` or its raw `.index()` integer;
+indices can be reused after despawn. Inside Python, use `Entity.from_bits(id)`
+to convert an MCP ID. `Entity.from_raw(index)` instead creates a generation-zero
+identity and does not recover an arbitrary live entity. Names remain valid
+entity references and are often more stable across full reloads.
+
 Integer rectangle arithmetic raises `OverflowError` for out-of-range results; `IRect` center constructors require non-negative sizes. `URect.inflate` saturates coordinates and rejects an unrepresentable negation.
 
 Owned nested UI gradient values and `Isometry2d` vector fields are read-only snapshots; replace the whole parent field to change them. Live accumulated-mouse and `ComputedNode` vector fields write through only with mutable resource/component access and expire at system exit.
@@ -141,6 +149,13 @@ World. To create the first value of an otherwise unused custom class, call
 `world.register_component(Type)` or `world.register_resource(Type)` in scene
 code or `run_code`. A class defined inside `run_code` must be registered in
 that same call. Decoration or reload alone does not register an unused type.
+
+For native and custom resource reads, call `get_registry` and pass an entry
+from `resource_names` unchanged to `get_resource`. Control names are exact and
+may differ from Python generic spellings: `Time[Real]`, `Time[Virtual]`, and
+`Time[Fixed]` are `_TimeReal`, `_TimeVirtual`, and `_TimeFixed`; keyboard
+`ButtonInput[KeyCode]` is `ButtonInput`, while mouse
+`ButtonInput[MouseButton]` is `MouseInput`. `Time` keeps the name `Time`.
 
 `world.commands()` queues mutations. Call `world.flush()` before inspecting
 their results in the same `run_code` call, or use direct `world.spawn()` and

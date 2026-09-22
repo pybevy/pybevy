@@ -1161,12 +1161,45 @@ class Batch:
     def __len__(self) -> int:
         """Get the number of entities in this batch (Python len() support)."""
 
+class EntityIndex:
+    """The transient index portion of a Bevy entity identity.
+
+    An index is unique only among currently active entities and can be reused
+    after despawn. It is not an MCP/HTTP entity ID.
+    """
+
+    def __copy__(self) -> EntityIndex: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> EntityIndex: ...
+
+    @staticmethod
+    def from_raw(raw: int) -> EntityIndex | None:
+        """Construct an index, or return ``None`` for ``2**32 - 1``."""
+    def index(self) -> int:
+        """Return the raw integer index used in entity diagnostics."""
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
+
 class Entity:
+    """A generation-bearing Bevy entity identity.
+
+    ``index()`` returns the typed transient index shown in ``repr(entity)``. It
+    is useful for correlating diagnostics, but is not an MCP/HTTP entity ID.
+    Use the packed ``to_bits()`` value at wire boundaries.
+    """
     @staticmethod
-    def from_raw(raw: int) -> Entity | None: ...
-    def to_bits(self) -> int: ...
+    def from_raw(raw: int) -> Entity | None:
+        """Construct a generation-zero identity from an index.
+
+        This does not recover an arbitrary live entity that currently uses the
+        index. Use ``from_bits()`` for a packed identity returned by MCP.
+        """
+    def index(self) -> EntityIndex:
+        """Return the typed transient index shown in the entity repr."""
+    def to_bits(self) -> int:
+        """Return the packed generation-safe identity used by MCP and HTTP."""
     @staticmethod
-    def from_bits(bits: int) -> Entity: ...
+    def from_bits(bits: int) -> Entity:
+        """Reconstruct a packed identity previously returned by ``to_bits()``."""
     def __eq__(self, other: object) -> bool: ...
     def __hash__(self) -> int: ...
 

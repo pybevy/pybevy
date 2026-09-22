@@ -44,6 +44,38 @@ fn batch_response(results: Vec<serde_json::Value>) -> serde_json::Value {
     })
 }
 
+fn registry_with_resource_names(
+    world: &mut World,
+    runtime: &mut dyn ControlRuntime,
+) -> Result<serde_json::Value, ControlError> {
+    let mut registry = runtime.debug_registry(world)?;
+    let resource_listing = runtime.list_resources(world)?;
+    let mut resource_names: Vec<String> = resource_listing
+        .get("resources")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| ControlError::internal("Resource listing did not contain an array"))?
+        .iter()
+        .map(|resource| {
+            resource
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+                .ok_or_else(|| ControlError::internal("Resource listing entry had no name"))
+        })
+        .collect::<Result<_, _>>()?;
+    resource_names.sort_unstable();
+    resource_names.dedup();
+
+    registry
+        .as_object_mut()
+        .ok_or_else(|| ControlError::internal("Registry response was not an object"))?
+        .insert(
+            "resource_names".to_string(),
+            serde_json::json!(resource_names),
+        );
+    Ok(registry)
+}
+
 /// Dispatch an MCP operation to the appropriate handler.
 ///
 /// Runtime-dependent operations are routed through the `ControlRuntime` trait.
@@ -67,7 +99,7 @@ pub fn dispatch(
         ControlOperation::GetResource(p) => runtime.get_resource(world, p),
         ControlOperation::GetSceneSummary => runtime.scene_summary(world),
         ControlOperation::GetBoundingBox { entity } => runtime.get_bounding_box(world, entity),
-        ControlOperation::GetRegistry => runtime.debug_registry(world),
+        ControlOperation::GetRegistry => registry_with_resource_names(world, runtime),
         ControlOperation::SpawnEntity { components } => {
             guard_structural_request(world, "spawn_entity")?;
             runtime.spawn_entity(world, components)
@@ -265,6 +297,12 @@ mod tests {
         let mut world = World::new();
         let result = dispatch(&mut world, ControlOperation::GetRegistry, &mut runtime()).unwrap();
         assert!(result["component_bridge_count"].is_number());
+        let resource_names = result["resource_names"].as_array().unwrap();
+        assert!(
+            resource_names
+                .windows(2)
+                .all(|pair| { pair[0].as_str().unwrap() < pair[1].as_str().unwrap() })
+        );
     }
 
     #[test]

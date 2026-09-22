@@ -714,8 +714,8 @@ pub fn despawn_entity(
             "entity_id": entity_id,
         }))
     } else {
-        Err(ControlError::not_found(format!(
-            "Entity {entity_id} could not be despawned"
+        Err(ControlError::not_found(public_error::mcp_entity_not_found(
+            entity_id,
         )))
     }
 }
@@ -792,8 +792,8 @@ pub fn set_component(
                         );
                     }
                     Err(ReflectError::ComponentNotOnEntity) => {
-                        return Err(ControlError::not_found(format!(
-                            "Entity {entity_id} not found"
+                        return Err(ControlError::not_found(public_error::mcp_entity_not_found(
+                            entity_id,
                         )));
                     }
                 }
@@ -840,9 +840,9 @@ fn set_component_python(
     if bridge.relationship_field().is_some() {
         // insert_component_python reaches entity_mut, which panics on a stale id.
         if world.get_entity(entity).is_err() {
-            return Err(ControlError::invalid_params(format!(
-                "Entity {entity_id} not found"
-            )));
+            return Err(ControlError::invalid_params(
+                public_error::mcp_entity_not_found(entity_id),
+            ));
         }
         return insert_component_python(world, entity, entity_id, component, field_obj, bridge);
     }
@@ -882,7 +882,9 @@ fn set_component_python(
                         "Failed to read '{component}' before mutation: {error}"
                     ))
                 })?
-                .ok_or_else(|| ControlError::not_found(format!("Entity {entity_id} not found")))?;
+                .ok_or_else(|| {
+                    ControlError::not_found(public_error::mcp_entity_not_found(entity_id))
+                })?;
             let current = extracted.bind(py);
             let result = if let Some(serde_json::Value::String(variant_name)) =
                 field_obj.get("variant")
@@ -1224,7 +1226,7 @@ fn set_custom_component(
     // Check entity has this component
     let eref = world
         .get_entity(entity)
-        .map_err(|_| ControlError::not_found(format!("Entity {entity_id} not found")))?;
+        .map_err(|_| ControlError::not_found(public_error::mcp_entity_not_found(entity_id)))?;
 
     let has_component = eref.get_by_id(comp_id).is_ok();
 
@@ -1295,9 +1297,9 @@ fn set_custom_component(
         }
         let mut new_values = serde_json::Map::new();
         if !values.is_empty() {
-            let mut entity_mut = world
-                .get_entity_mut(entity)
-                .map_err(|_| ControlError::not_found(format!("Entity {entity_id} not found")))?;
+            let mut entity_mut = world.get_entity_mut(entity).map_err(|_| {
+                ControlError::not_found(public_error::mcp_entity_not_found(entity_id))
+            })?;
             let mut untyped = entity_mut.get_mut_by_id(comp_id).map_err(|_| {
                 ControlError::not_found(format!(
                     "Component '{component}' not found on entity {entity_id}"
@@ -1347,7 +1349,7 @@ fn set_custom_component(
     // Component exists - get mutable pointer for in-place mutation
     let ptr = world
         .get_entity(entity)
-        .map_err(|_| ControlError::not_found(format!("Entity {entity_id} not found")))?
+        .map_err(|_| ControlError::not_found(public_error::mcp_entity_not_found(entity_id)))?
         .get_by_id(comp_id)
         .map_err(|_| {
             ControlError::not_found(format!(
@@ -1466,7 +1468,7 @@ fn insert_custom_component(
         }
         let ptr = world
             .get_entity(entity)
-            .map_err(|_| ControlError::not_found(format!("Entity {entity_id} not found")))?
+            .map_err(|_| ControlError::not_found(public_error::mcp_entity_not_found(entity_id)))?
             .get_by_id(comp_id)
             .map_err(|_| {
                 ControlError::internal(format!(
@@ -1661,8 +1663,8 @@ pub fn remove_component(
                 }
                 return Ok(build_response(&component, &warning));
             } else {
-                return Err(ControlError::not_found(format!(
-                    "Entity {entity_id} not found"
+                return Err(ControlError::not_found(public_error::mcp_entity_not_found(
+                    entity_id,
                 )));
             }
         }
@@ -1691,8 +1693,8 @@ pub fn remove_component(
             }
             return Ok(build_response(&component, &warning));
         } else {
-            return Err(ControlError::not_found(format!(
-                "Entity {entity_id} not found"
+            return Err(ControlError::not_found(public_error::mcp_entity_not_found(
+                entity_id,
             )));
         }
     }

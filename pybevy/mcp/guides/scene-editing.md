@@ -144,6 +144,24 @@ conversion rules apply to component, resource, and asset writes.
 
 ## Modifying Resources
 
+Use `get_registry.resource_names` to discover the exact names accepted by
+`get_resource`. Pass those strings unchanged. Python's generic spellings map
+to distinct control names:
+
+| Python resource | Control name |
+|---|---|
+| `Time` | `Time` |
+| `Time[Real]` | `_TimeReal` |
+| `Time[Virtual]` | `_TimeVirtual` |
+| `Time[Fixed]` | `_TimeFixed` |
+| `ButtonInput[KeyCode]` | `ButtonInput` |
+| `ButtonInput[MouseButton]` / `MouseInput` | `MouseInput` |
+
+An absent entry can still be addressable: `get_resource` reports its
+`present` field as `false`. Explicit `world.register_resource(Type)` is only
+for an otherwise unused custom `@resource` class, not a native resource under
+a different control name.
+
 `set_resource` patches only the supplied fields of an existing resource;
 omitted fields keep their current values. Native-resource patches validate
 field names, conversions, and setters on a detached value before committing.
@@ -627,11 +645,21 @@ run_code {"code": "import scene_layers; print(dir(scene_layers))"}
 ```
 The scene's module is importable by its filename stem, not via `__main__`.
 
-`entity_id` from `query_entities` (and other MCP responses) is a raw `u64`. To use it inside `run_code`, convert with `Entity.from_bits` first:
+`entity_id` from `query_entities` (and other MCP responses) is the packed,
+generation-bearing `u64` returned by `Entity.to_bits()`. Pass that packed value
+to MCP/HTTP entity parameters. To use it inside `run_code`, convert with
+`Entity.from_bits` first:
 ```
 run_code {"code": "from pybevy.prelude import Entity\ne = Entity.from_bits(123456)\nprint(world.entity(e))"}
 ```
-`world.entity(int)` is intentionally rejected to mirror Bevy's typed API: raw bits encode generation+index, and silent acceptance risks aliasing recycled entities.
+`Entity.index()` returns a typed `EntityIndex` for the transient index shown in
+`Entity(<index>v<generation>)`. Use `entity.index().index()` only when you need
+that diagnostic integer. Neither form is an MCP/HTTP ID, and indices can be
+reused after despawn. Likewise, `Entity.from_raw(index)` constructs a
+generation-zero identity; it does not recover the live entity that may
+currently use that index. `world.entity(int)` is intentionally rejected to
+mirror Bevy's typed API: packed bits encode both generation and index, and
+silent index acceptance could target a replacement entity.
 
 Use `world.query(Query[...])` for ad-hoc access to live component data. It
 supports the same tuple, `Mut`, and filter syntax as a system query. Prior MCP
@@ -641,7 +669,9 @@ mutations are flushed before `run_code`, so the query sees the current world.
 
 ## Troubleshooting
 
-- **Entity not found**: IDs change after full reload. Use `Name` or re-query.
+- **Entity not found**: Numeric IDs must be packed values from an MCP response
+  or `Entity.to_bits()`, not a repr/index value. IDs also change after full
+  reload. Use `Name` or re-query, and use `Entity.from_bits(id)` inside Python.
 - **Component not on entity**: Use `scene://entity/{id}` to see what components exist.
 - **Field update fails**: Check the field name, type, and `editable` flag with
   `get_component_schema`. Components marked `editable: false` require a

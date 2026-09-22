@@ -24,7 +24,7 @@ pub(crate) mod world_commands;
 
 // Re-exports from pybevy_core
 #[allow(unused_imports)]
-pub use pybevy_core::{PyChildOf, PyChildren, PyChildrenIterator, PyEntity};
+pub use pybevy_core::{PyChildOf, PyChildren, PyChildrenIterator, PyEntity, PyEntityIndex};
 #[allow(unused_imports)]
 pub use pybevy_core::{PyFloatLiveList, field_storage::FieldStorage, value_storage::ValueStorage};
 pub mod local;
@@ -83,6 +83,7 @@ pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     ecs.add_function(wrap_pyfunction!(system_config::system_set, m)?)?;
     ecs.add_class::<lazy_wrapper_proxy::PyLazyWrapperProxy>()?;
     ecs.add_class::<PyFloatLiveList>()?;
+    ecs.add_class::<PyEntityIndex>()?;
     ecs.add_class::<PyEntity>()?;
     ecs.add_class::<entity_commands::PyEntityCommands>()?;
     ecs.add_class::<entity_commands::PyRelatedSpawnerCommands>()?;

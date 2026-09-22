@@ -71,7 +71,7 @@ pub fn mutate_asset(
             .ok()
             .flatten()
         } else {
-            errors.push(format!("Entity {entity_id} not found"));
+            errors.push(pybevy_core::public_error::mcp_entity_not_found(entity_id));
             validity_flag.set_invalid();
             return;
         };
