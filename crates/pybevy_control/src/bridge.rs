@@ -10,6 +10,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::handlers::{
     self,
+    depth::{PendingDepthAnalysis, validate_depth_sampling},
     frame_analysis::{DEFAULT_COMPARE_EPSILON, FrameStatsOptions, validate_frame_stats_options},
     reload::{PendingReloadAndCapture, PendingReloadAndCaptures},
     schedule::{
@@ -169,7 +170,7 @@ pub struct CaptureScreenshotParams {
     pub delay_frames: u32,
     /// Max image width in pixels (default 768). Use 1280 for detail.
     pub max_width: Option<u32>,
-    /// Camera position [x, y, z]. If set, spawns a temporary debug camera instead of using the scene camera.
+    /// Camera position [x, y, z]. If set, temporarily re-poses a Camera3d and restores it after capture; creates one only when the scene has no cameras.
     pub position: Option<[f32; 3]>,
     /// Point the camera looks at [x, y, z]. Defaults to [0, 0, 0] if position is set.
     pub look_at: Option<[f32; 3]>,
@@ -285,12 +286,12 @@ pub struct CaptureTurnaroundParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CaptureDepthParams {
-    /// Camera position [x, y, z]
+    /// Override position for the selected active Camera3d [x, y, z].
     pub position: Option<[f32; 3]>,
-    /// Camera look-at [x, y, z]
+    /// Override look-at point for the selected active Camera3d [x, y, z].
     pub look_at: Option<[f32; 3]>,
     /// Normalized ray-cast coordinates on a fixed 800x800 scale, using the
-    /// selected Camera3d projection. Grid if omitted.
+    /// selected Camera3d projection and viewport. Grid if omitted.
     pub sample_points: Option<Vec<[i64; 2]>>,
     /// Auto-generate NxN sample grid (default 8 if no sample_points)
     #[schemars(extend("default" = 8))]
@@ -474,7 +475,7 @@ pub enum ControlOperation {
     /// Show bridge registry state, entity count, and component detection status.
     GetRegistry,
 
-    /// Capture a screenshot. Default 768px wide. UI elements are hidden by default. Use position/look_at to capture from an arbitrary viewpoint without affecting the scene camera.
+    /// Capture a screenshot. Default 768px wide. UI elements are hidden by default. Use position/look_at to temporarily re-pose a 3D camera; its authored state is restored after capture.
     #[schemars(extend("x-feature-gate" = "screenshot"))]
     CaptureScreenshot(CaptureScreenshotParams),
     /// Capture numeric RGB/luma statistics, grid cells, and optional sampled pixels without returning a PNG.
@@ -492,7 +493,7 @@ pub enum ControlOperation {
     /// Capture multiple viewpoints orbiting around a target, composited into one contact sheet. Auto-fits distance to scene bounds if not specified.
     #[schemars(extend("x-feature-gate" = "screenshot"))]
     CaptureTurnaround(CaptureTurnaroundParams),
-    /// Capture RGB screenshot + ray-AABB depth samples. Casts rays from camera through sample points (or auto-grid) against entity bounding boxes. Returns structured depth data with hit entity, distance, and world position.
+    /// Capture RGB and ray-AABB depth samples from one camera context. Selects the highest-order active Camera3d, retains its identity across the delay, and reports its viewport and exact-target pass provenance.
     #[schemars(extend("x-feature-gate" = "screenshot"))]
     CaptureDepth(CaptureDepthParams),
 
@@ -753,6 +754,8 @@ pub struct PendingScreenshot {
     pub debug_camera: Option<DebugCameraRequest>,
     pub hide_ui: bool,
     pub entity: Option<EntityRef>,
+    /// Deferred depth analysis tied to one selected camera identity.
+    pub depth_analysis: Option<PendingDepthAnalysis>,
     pub response_kind: CaptureResponseKind,
     /// Extra JSON fields to merge into the screenshot response.
     /// Used by `capture_depth` and `reload_and_capture` to avoid spawning
@@ -763,8 +766,20 @@ pub struct PendingScreenshot {
 #[derive(Debug)]
 pub enum CaptureResponseKind {
     Screenshot,
+    ReloadAndCapture,
     UnretainedScreenshot,
     Stats(FrameStatsOptions),
+}
+
+impl CaptureResponseKind {
+    pub(crate) fn operation_name(&self) -> &'static str {
+        match self {
+            Self::Screenshot => "capture_screenshot",
+            Self::ReloadAndCapture => "reload_and_capture",
+            Self::UnretainedScreenshot => "capture_depth",
+            Self::Stats(_) => "capture_stats",
+        }
+    }
 }
 
 /// Bevy resource for pending reload responses (deferred until reload completes)
@@ -857,6 +872,7 @@ pub fn push_pending_screenshot(
         debug_camera,
         hide_ui: params.hide_ui,
         entity: params.entity,
+        depth_analysis: None,
         response_kind: CaptureResponseKind::Screenshot,
         extra_response: None,
     });
@@ -896,6 +912,7 @@ pub fn push_pending_stats(
         debug_camera,
         hide_ui: params.hide_ui,
         entity: params.entity,
+        depth_analysis: None,
         response_kind: CaptureResponseKind::Stats(options),
         extra_response: None,
     });
@@ -1099,32 +1116,43 @@ pub fn push_pending_depth(
     deferred: &mut Vec<PendingScreenshot>,
     world: &mut World,
 ) {
-    let depth_result = crate::handlers::depth::compute_depth_samples(
-        world,
-        &params.position,
-        &params.look_at,
-        &params.sample_points,
-        &params.grid_density,
-    );
-
-    let want_rgb = params.include_rgb.unwrap_or(true);
-    let df = params.delay_frames.unwrap_or(2);
-    let mw = Some(params.max_width.unwrap_or(DEFAULT_SCREENSHOT_MAX_WIDTH));
-    let hu = params.hide_ui.unwrap_or(true);
-    let dc = params.position.as_ref().map(|pos| DebugCameraRequest {
+    if let Err(error) = validate_depth_sampling(&params.sample_points, &params.grid_density) {
+        let _ = response_tx.send(Err(error));
+        return;
+    }
+    let Some(camera_entity) = crate::handlers::screenshot::select_capture_camera_3d(world) else {
+        let _ = response_tx.send(Err(ControlError::not_found(
+            "No active Camera3d found for capture_depth projection",
+        )));
+        return;
+    };
+    let CaptureDepthParams {
+        position,
+        look_at,
+        sample_points,
+        grid_density,
+        include_rgb,
+        delay_frames,
+        hide_ui,
+        max_width,
+    } = params;
+    let want_rgb = include_rgb.unwrap_or(true);
+    let df = delay_frames.unwrap_or(2);
+    let mw = Some(max_width.unwrap_or(DEFAULT_SCREENSHOT_MAX_WIDTH));
+    let hu = hide_ui.unwrap_or(true);
+    let dc = position.as_ref().map(|pos| DebugCameraRequest {
         position: *pos,
-        look_at: params.look_at.unwrap_or([0.0, 0.0, 0.0]),
+        look_at: look_at.unwrap_or([0.0, 0.0, 0.0]),
     });
+    let depth_analysis = PendingDepthAnalysis {
+        camera_entity,
+        position,
+        look_at,
+        sample_points,
+        grid_density,
+    };
 
     if want_rgb {
-        let depth = match depth_result {
-            Ok(d) => d,
-            Err(e) => {
-                let _ = response_tx.send(Err(e));
-                return;
-            }
-        };
-
         deferred.push(PendingScreenshot {
             response_tx,
             frames_remaining: df,
@@ -1135,11 +1163,20 @@ pub fn push_pending_depth(
             debug_camera: dc,
             hide_ui: hu,
             entity: None,
+            depth_analysis: Some(depth_analysis),
             response_kind: CaptureResponseKind::UnretainedScreenshot,
-            extra_response: Some(serde_json::json!({ "depth_samples": depth })),
+            extra_response: None,
         });
     } else {
-        let result = depth_result.map(|depth| {
+        let result = crate::handlers::depth::compute_depth_samples_for_camera(
+            world,
+            depth_analysis.camera_entity,
+            &depth_analysis.position,
+            &depth_analysis.look_at,
+            &depth_analysis.sample_points,
+            &depth_analysis.grid_density,
+        )
+        .map(|depth| {
             serde_json::json!({
                 "screenshot": null,
                 "depth_samples": depth,

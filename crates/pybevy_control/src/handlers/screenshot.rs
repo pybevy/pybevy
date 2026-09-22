@@ -1,5 +1,6 @@
 use std::{
     any::TypeId,
+    cmp::Reverse,
     collections::{HashMap, HashSet, VecDeque},
     io::Cursor,
     mem,
@@ -20,9 +21,13 @@ use bevy::{
     light::cluster::ClusterVisibilityClass,
     prelude::*,
     render::view::window::screenshot::{Screenshot, ScreenshotCaptured},
-    window::PrimaryWindow,
+    window::{PrimaryWindow, Window, WindowRef},
 };
 use image::{ImageFormat, Rgb, RgbImage};
+use pybevy_core::public_error::{
+    SCREENSHOT_CAMERA3D_REQUIRED, TURNAROUND_CAMERA3D_REQUIRED, capture_inactive_cameras,
+    capture_no_camera, capture_no_target,
+};
 use pybevy_ecs::shared::system_runtime::HotReloadGeneration;
 use tokio::sync::oneshot;
 
@@ -32,6 +37,10 @@ use crate::{
         OverlaySuppression, PendingScreenshot, PendingScreenshots,
     },
     handlers::{
+        depth::{
+            CaptureViewport, PendingDepthAnalysis, prepare_depth_capture,
+            validate_depth_capture_camera,
+        },
         entity::resolve_entity,
         frame_analysis::{
             CapturedFrameMetadata, CapturedFrames, analyze_frame, resize_rgb_image_linear,
@@ -242,6 +251,7 @@ pub struct ScreenshotResponder {
     pub gizmo_restore: GizmoEnabledRestore,
     /// Extra JSON fields to merge into the screenshot response.
     pub extra_response: Option<serde_json::Value>,
+    pub(crate) capture_viewport: Option<CaptureViewport>,
     pub response_kind: CaptureResponseKind,
     pub frames_waited: u32,
 }
@@ -267,6 +277,7 @@ struct StagedScreenshot {
     debug_cleanup: Option<DebugCameraCleanup>,
     ui_restore: Option<Vec<(Entity, Visibility)>>,
     entity_isolation: Option<EntityCaptureIsolation>,
+    depth_analysis: Option<PendingDepthAnalysis>,
     extra_response: Option<serde_json::Value>,
     response_kind: CaptureResponseKind,
     baseline_headless_sequence: Option<u64>,
@@ -348,6 +359,48 @@ fn another_capture_is_active(world: &World) -> bool {
             .is_some_and(|turnarounds| !turnarounds.active.is_empty())
 }
 
+fn validate_capture_camera(
+    world: &mut World,
+    response_kind: &CaptureResponseKind,
+) -> Result<(), ControlError> {
+    let operation = response_kind.operation_name();
+    let primary_window = world
+        .query_filtered::<Entity, (With<PrimaryWindow>, With<Window>)>()
+        .iter(world)
+        .next();
+    let cameras = world
+        .query::<(&Camera, Option<&RenderTarget>)>()
+        .iter(world)
+        .map(|(camera, target)| (camera.is_active, target.cloned()))
+        .collect::<Vec<_>>();
+
+    if cameras.is_empty() {
+        return Err(ControlError::invalid_params(capture_no_camera(operation)));
+    }
+
+    let active = cameras
+        .iter()
+        .filter(|(is_active, _)| *is_active)
+        .collect::<Vec<_>>();
+    if active.is_empty() {
+        return Err(ControlError::invalid_params(capture_inactive_cameras(
+            operation,
+        )));
+    }
+
+    let has_capturable_target = active.iter().any(|(_, target)| match target {
+        Some(RenderTarget::Window(WindowRef::Primary)) => primary_window.is_some(),
+        Some(RenderTarget::Window(WindowRef::Entity(entity))) => primary_window == Some(*entity),
+        Some(RenderTarget::Image(_)) => true,
+        Some(RenderTarget::None { .. } | RenderTarget::TextureView(_)) | None => false,
+    });
+    if !has_capturable_target {
+        return Err(ControlError::invalid_params(capture_no_target(operation)));
+    }
+
+    Ok(())
+}
+
 /// Process pending screenshot requests (called each frame in Last schedule).
 ///
 /// Flow:
@@ -407,8 +460,28 @@ pub fn process_pending_screenshots(world: &mut World) {
             continue;
         }
 
+        let selected_depth_camera = screenshot
+            .depth_analysis
+            .as_ref()
+            .map(|analysis| analysis.camera_entity);
+        if let Some(camera_entity) = selected_depth_camera
+            && let Err(error) = validate_depth_capture_camera(world, camera_entity)
+        {
+            let _ = screenshot.response_tx.send(Err(error));
+            restore_gizmos_enabled(world, screenshot.gizmo_restore);
+            continue;
+        }
+        if selected_depth_camera.is_none()
+            && screenshot.debug_camera.is_none()
+            && let Err(error) = validate_capture_camera(world, &screenshot.response_kind)
+        {
+            let _ = screenshot.response_tx.send(Err(error));
+            restore_gizmos_enabled(world, screenshot.gizmo_restore);
+            continue;
+        }
+
         let debug_cleanup = if let Some(debug_req) = screenshot.debug_camera.take() {
-            match setup_debug_camera(world, &debug_req) {
+            match setup_debug_camera_for_entity(world, &debug_req, selected_depth_camera) {
                 Ok(cleanup) => cleanup,
                 Err(error) => {
                     let _ = screenshot.response_tx.send(Err(error));
@@ -461,6 +534,7 @@ pub fn process_pending_screenshots(world: &mut World) {
                 debug_cleanup,
                 ui_restore,
                 entity_isolation,
+                depth_analysis: screenshot.depth_analysis.take(),
                 extra_response: screenshot.extra_response,
                 response_kind: screenshot.response_kind,
                 baseline_headless_sequence,
@@ -481,7 +555,28 @@ pub fn process_pending_screenshots(world: &mut World) {
                     gizmo_restore = set_gizmos_enabled(world, false);
                 }
 
-                let entity = world.spawn(Screenshot::primary_window()).id();
+                let (target, capture_viewport) =
+                    if let Some(depth_analysis) = screenshot.depth_analysis.as_ref() {
+                        match prepare_depth_capture(world, depth_analysis) {
+                            Ok((target, viewport, depth)) => {
+                                screenshot.extra_response =
+                                    Some(serde_json::json!({ "depth_samples": depth }));
+                                (Screenshot(target), viewport)
+                            }
+                            Err(error) => {
+                                let _ = screenshot.response_tx.send(Err(error));
+                                release_internal_overlay(world);
+                                if let Some(restore) = ui_restore {
+                                    restore_ui_nodes(world, restore);
+                                }
+                                restore_gizmos_enabled(world, gizmo_restore);
+                                continue;
+                            }
+                        }
+                    } else {
+                        (Screenshot::primary_window(), None)
+                    };
+                let entity = world.spawn(target).id();
 
                 let mut responders =
                     world.get_resource_or_insert_with(PendingScreenshotResponders::default);
@@ -495,6 +590,7 @@ pub fn process_pending_screenshots(world: &mut World) {
                         entity_isolation,
                         gizmo_restore,
                         extra_response: screenshot.extra_response,
+                        capture_viewport,
                         response_kind: screenshot.response_kind,
                         frames_waited: 0,
                     },
@@ -515,6 +611,7 @@ pub fn process_pending_screenshots(world: &mut World) {
                     debug_cleanup: None,
                     ui_restore,
                     entity_isolation,
+                    depth_analysis: screenshot.depth_analysis.take(),
                     extra_response: screenshot.extra_response,
                     response_kind: screenshot.response_kind,
                     baseline_headless_sequence,
@@ -534,13 +631,38 @@ pub fn process_pending_screenshots(world: &mut World) {
                 still_waiting.push(s);
             } else {
                 // Debug camera has rendered - capture now
+                if s.depth_analysis.is_none()
+                    && let Err(error) = validate_capture_camera(world, &s.response_kind)
+                {
+                    fail_staged_screenshot_with_error(world, s, error);
+                    continue;
+                }
                 let has_window = world
                     .query_filtered::<Entity, With<PrimaryWindow>>()
                     .iter(world)
                     .next()
                     .is_some();
 
-                let screenshot_target = if has_window {
+                let (capture_target, capture_viewport) = if let Some(depth_analysis) =
+                    s.depth_analysis.as_ref()
+                {
+                    match prepare_depth_capture(world, depth_analysis) {
+                        Ok((target, viewport, depth)) => {
+                            s.extra_response = Some(serde_json::json!({ "depth_samples": depth }));
+                            (Some(target), viewport)
+                        }
+                        Err(error) => {
+                            fail_staged_screenshot_with_error(world, s, error);
+                            continue;
+                        }
+                    }
+                } else {
+                    (None, None)
+                };
+
+                let screenshot_target = if let Some(target) = capture_target.as_ref() {
+                    Some(Screenshot(target.clone()))
+                } else if has_window {
                     Some(Screenshot::primary_window())
                 } else {
                     s.debug_cleanup.as_ref().and_then(|cleanup| {
@@ -588,6 +710,7 @@ pub fn process_pending_screenshots(world: &mut World) {
                             entity_isolation: s.entity_isolation,
                             gizmo_restore,
                             extra_response: s.extra_response,
+                            capture_viewport,
                             response_kind: s.response_kind,
                             frames_waited: 0,
                         },
@@ -624,9 +747,15 @@ pub(crate) fn headless_frame_sequence(world: &World) -> Option<u64> {
 }
 
 fn fail_staged_screenshot(world: &mut World, staged: StagedScreenshot, message: &str) {
-    let _ = staged
-        .response_tx
-        .send(Err(ControlError::internal(message.to_string())));
+    fail_staged_screenshot_with_error(world, staged, ControlError::internal(message.to_string()));
+}
+
+fn fail_staged_screenshot_with_error(
+    world: &mut World,
+    staged: StagedScreenshot,
+    error: ControlError,
+) {
+    let _ = staged.response_tx.send(Err(error));
     if let Some(cleanup) = staged.debug_cleanup {
         cleanup_debug_camera_world(cleanup, world);
     }
@@ -1072,13 +1201,37 @@ pub(crate) fn setup_debug_camera(
     world: &mut World,
     req: &DebugCameraRequest,
 ) -> Result<DebugCameraCleanup, ControlError> {
-    setup_debug_camera_with_up(world, req, Vec3::Y)
+    setup_debug_camera_with_up_for_entity(world, req, Vec3::Y, None, SCREENSHOT_CAMERA3D_REQUIRED)
 }
 
 pub(crate) fn setup_debug_camera_with_up(
     world: &mut World,
     req: &DebugCameraRequest,
     up: Vec3,
+) -> Result<DebugCameraCleanup, ControlError> {
+    setup_debug_camera_with_up_for_entity(world, req, up, None, TURNAROUND_CAMERA3D_REQUIRED)
+}
+
+fn setup_debug_camera_for_entity(
+    world: &mut World,
+    req: &DebugCameraRequest,
+    preferred_entity: Option<Entity>,
+) -> Result<DebugCameraCleanup, ControlError> {
+    setup_debug_camera_with_up_for_entity(
+        world,
+        req,
+        Vec3::Y,
+        preferred_entity,
+        SCREENSHOT_CAMERA3D_REQUIRED,
+    )
+}
+
+fn setup_debug_camera_with_up_for_entity(
+    world: &mut World,
+    req: &DebugCameraRequest,
+    up: Vec3,
+    preferred_entity: Option<Entity>,
+    camera2d_only_error: &'static str,
 ) -> Result<DebugCameraCleanup, ControlError> {
     let position = Vec3::from_array(req.position);
     let look_at = Vec3::from_array(req.look_at);
@@ -1091,7 +1244,9 @@ pub(crate) fn setup_debug_camera_with_up(
     };
 
     // Find an existing Camera3d to reuse (prefer an active one)
-    let reuse_entity = select_capture_camera_3d(world);
+    let reuse_entity = preferred_entity
+        .or_else(|| select_capture_camera_3d(world))
+        .or_else(|| select_any_camera_3d(world));
 
     if let Some(reuse) = reuse_entity {
         let original_transform = world.get::<Transform>(reuse).copied().unwrap_or_default();
@@ -1146,9 +1301,7 @@ pub(crate) fn setup_debug_camera_with_up(
             .next()
             .is_some();
         if has_camera2d {
-            return Err(ControlError::invalid_params(
-                "position/look_at screenshot overrides require a Camera3d; omit them when capturing a Camera2d scene",
-            ));
+            return Err(ControlError::invalid_params(camera2d_only_error));
         }
 
         // No Camera3d exists - spawn a new one.
@@ -1178,15 +1331,19 @@ pub(crate) fn setup_debug_camera_with_up(
 
 pub(crate) fn select_capture_camera_3d(world: &mut World) -> Option<Entity> {
     let mut query = world.query_filtered::<(Entity, &Camera), With<Camera3d>>();
-    let cameras = query
+    query
         .iter(world)
-        .map(|(entity, camera)| (entity, camera.is_active))
-        .collect::<Vec<_>>();
-    cameras
-        .iter()
-        .find(|(_, active)| *active)
-        .or(cameras.first())
-        .map(|(entity, _)| *entity)
+        .filter(|(_, camera)| camera.is_active)
+        .min_by_key(|(entity, camera)| (Reverse(camera.order), entity.to_bits()))
+        .map(|(entity, _)| entity)
+}
+
+fn select_any_camera_3d(world: &mut World) -> Option<Entity> {
+    let mut query = world.query_filtered::<(Entity, &Camera), With<Camera3d>>();
+    query
+        .iter(world)
+        .min_by_key(|(entity, camera)| (Reverse(camera.order), entity.to_bits()))
+        .map(|(entity, _)| entity)
 }
 
 pub(crate) fn cleanup_debug_camera_world(cleanup: DebugCameraCleanup, world: &mut World) {
@@ -1344,6 +1501,7 @@ pub fn screenshot_captured_observer(
     let result = complete_screenshot_capture(
         img,
         responder.max_width,
+        responder.capture_viewport,
         responder.response_kind,
         &mut captured_frames,
         hot_reload_generation.map(|generation| generation.current),
@@ -1564,6 +1722,7 @@ fn encode_screenshot(
 fn complete_screenshot_capture(
     img: bevy::image::Image,
     max_width: Option<u32>,
+    capture_viewport: Option<CaptureViewport>,
     response_kind: CaptureResponseKind,
     captured_frames: &mut CapturedFrames,
     hot_reload_generation: Option<u32>,
@@ -1571,13 +1730,56 @@ fn complete_screenshot_capture(
     let dyn_img = img.try_into_dynamic().map_err(|error| {
         ControlError::internal(format!("Failed to convert screenshot image: {error:?}"))
     })?;
+    let rgb = crop_capture_viewport(dyn_img.to_rgb8(), capture_viewport)?;
     complete_rgb_capture(
-        dyn_img.to_rgb8(),
+        rgb,
         max_width,
         response_kind,
         captured_frames,
         hot_reload_generation,
     )
+}
+
+fn crop_capture_viewport(
+    rgb: RgbImage,
+    capture_viewport: Option<CaptureViewport>,
+) -> Result<RgbImage, ControlError> {
+    let Some(viewport) = capture_viewport else {
+        return Ok(rgb);
+    };
+    let end_x = viewport
+        .physical_position
+        .x
+        .checked_add(viewport.physical_size.x)
+        .ok_or_else(|| ControlError::internal("Selected camera viewport exceeds its target"))?;
+    let end_y = viewport
+        .physical_position
+        .y
+        .checked_add(viewport.physical_size.y)
+        .ok_or_else(|| ControlError::internal("Selected camera viewport exceeds its target"))?;
+    if viewport.physical_size.x == 0
+        || viewport.physical_size.y == 0
+        || end_x > rgb.width()
+        || end_y > rgb.height()
+    {
+        return Err(ControlError::internal(format!(
+            "Selected camera viewport [{}, {}] + [{}, {}] exceeds captured target {}x{}",
+            viewport.physical_position.x,
+            viewport.physical_position.y,
+            viewport.physical_size.x,
+            viewport.physical_size.y,
+            rgb.width(),
+            rgb.height(),
+        )));
+    }
+    Ok(image::imageops::crop_imm(
+        &rgb,
+        viewport.physical_position.x,
+        viewport.physical_position.y,
+        viewport.physical_size.x,
+        viewport.physical_size.y,
+    )
+    .to_image())
 }
 
 fn complete_rgb_capture(
@@ -1589,7 +1791,9 @@ fn complete_rgb_capture(
 ) -> Result<serde_json::Value, ControlError> {
     let rgb = Arc::new(resize_rgb_image_linear(rgb, max_width));
     let (mut result, kind) = match response_kind {
-        CaptureResponseKind::Screenshot => (encode_rgb_screenshot(&rgb)?, "screenshot"),
+        CaptureResponseKind::Screenshot | CaptureResponseKind::ReloadAndCapture => {
+            (encode_rgb_screenshot(&rgb)?, "screenshot")
+        }
         CaptureResponseKind::UnretainedScreenshot => return encode_rgb_screenshot(&rgb),
         CaptureResponseKind::Stats(options) => (analyze_frame(&rgb, &options)?, "stats"),
     };
@@ -1688,6 +1892,7 @@ fn capture_headless_frame(
 mod tests {
     use bevy::{
         asset::RenderAssetUsages,
+        camera::Viewport,
         gizmos::config::DefaultGizmoConfigGroup,
         image::Image,
         light::gizmos::LightGizmoConfigGroup,
@@ -1700,12 +1905,20 @@ mod tests {
 
     use super::*;
     use crate::{
-        bridge::PendingScreenshot,
+        bridge::{CaptureDepthParams, PendingScreenshot, push_pending_depth},
         handlers::{
             frame_analysis::FrameStatsOptions,
             turnaround::{PendingTurnarounds, TurnaroundCaptures},
         },
     };
+
+    fn spawn_structurally_valid_headless_camera(world: &mut World) -> Entity {
+        let mut images = Assets::<Image>::default();
+        let target = images.add(make_test_image(1, 1));
+        world
+            .spawn((Camera::default(), RenderTarget::Image(target.into())))
+            .id()
+    }
 
     #[test]
     fn compute_schedule_even_distribution() {
@@ -1716,6 +1929,75 @@ mod tests {
         assert_eq!(schedule[1], 20);
         assert_eq!(schedule[2], 20);
         assert_eq!(schedule[3], 20);
+    }
+
+    #[test]
+    fn capture_camera_validation_distinguishes_missing_inactive_and_target_errors() {
+        let mut no_camera = World::new();
+        let error =
+            validate_capture_camera(&mut no_camera, &CaptureResponseKind::Screenshot).unwrap_err();
+        assert!(error.message.starts_with("capture_screenshot requires"));
+        assert!(error.message.contains("no Camera entities"));
+
+        let mut inactive = World::new();
+        inactive.spawn((
+            Camera {
+                is_active: false,
+                ..default()
+            },
+            RenderTarget::None {
+                size: UVec2::new(1, 1),
+            },
+        ));
+        let error =
+            validate_capture_camera(&mut inactive, &CaptureResponseKind::Screenshot).unwrap_err();
+        assert!(error.message.starts_with("capture_screenshot requires"));
+        assert!(error.message.contains("all Camera entities are inactive"));
+
+        let mut missing_target = World::new();
+        missing_target.spawn(Camera::default());
+        let error = validate_capture_camera(&mut missing_target, &CaptureResponseKind::Screenshot)
+            .unwrap_err();
+        assert!(error.message.contains("capturable RenderTarget"));
+        assert!(!error.message.contains("renderer"));
+
+        let mut none_target = World::new();
+        none_target.spawn((
+            Camera::default(),
+            RenderTarget::None {
+                size: UVec2::new(1, 1),
+            },
+        ));
+        let error = validate_capture_camera(&mut none_target, &CaptureResponseKind::Screenshot)
+            .unwrap_err();
+        assert!(error.message.contains("RenderTarget.None"));
+    }
+
+    #[test]
+    fn capture_camera_validation_accepts_unmaterialized_image_target() {
+        let mut world = World::new();
+        spawn_structurally_valid_headless_camera(&mut world);
+
+        validate_capture_camera(&mut world, &CaptureResponseKind::Screenshot).unwrap();
+        assert!(world.get_resource::<Assets<Image>>().is_none());
+    }
+
+    #[test]
+    fn capture_camera_validation_rejects_unresolved_primary_window_target() {
+        let mut world = World::new();
+        world.spawn((Camera::default(), RenderTarget::Window(WindowRef::Primary)));
+
+        let error = validate_capture_camera(
+            &mut world,
+            &CaptureResponseKind::Stats(FrameStatsOptions {
+                grid: 1,
+                region: None,
+                sample_points: None,
+            }),
+        )
+        .unwrap_err();
+        assert!(error.message.starts_with("capture_stats requires"));
+        assert!(error.message.contains("unavailable window target"));
     }
 
     #[test]
@@ -1771,6 +2053,288 @@ mod tests {
             (current.translation.x - 10.0).abs() < 0.01,
             "Camera should be at debug position"
         );
+    }
+
+    #[test]
+    fn capture_camera_selection_uses_highest_active_order_then_lowest_entity() {
+        let mut world = World::new();
+        let low = world
+            .spawn((Camera3d::default(), Camera::default(), Name::new("low")))
+            .id();
+        let first_high = world
+            .spawn((
+                Camera3d::default(),
+                Camera {
+                    order: 5,
+                    ..default()
+                },
+                Name::new("first-high"),
+            ))
+            .id();
+        let second_high = world
+            .spawn((
+                Camera3d::default(),
+                Camera {
+                    order: 5,
+                    ..default()
+                },
+                Name::new("second-high"),
+            ))
+            .id();
+        world.spawn((
+            Camera3d::default(),
+            Camera {
+                order: 100,
+                is_active: false,
+                ..default()
+            },
+            Name::new("inactive"),
+        ));
+
+        assert_ne!(low, first_high);
+        let expected = [first_high, second_high]
+            .into_iter()
+            .min_by_key(|entity| entity.to_bits());
+        assert_eq!(select_capture_camera_3d(&mut world), expected);
+    }
+
+    #[test]
+    fn delayed_depth_capture_does_not_reselect_another_active_camera() {
+        let mut world = world_with_gizmos();
+        let mut images = Assets::<Image>::default();
+        let selected_target = images.add(make_test_image(3, 2));
+        world.insert_resource(images);
+        world.spawn((
+            Camera3d::default(),
+            Camera::default(),
+            Projection::default(),
+            GlobalTransform::default(),
+            Name::new("fallback"),
+        ));
+        let selected = world
+            .spawn((
+                Camera3d::default(),
+                Camera {
+                    order: 10,
+                    ..default()
+                },
+                Projection::default(),
+                Transform::default(),
+                GlobalTransform::default(),
+                RenderTarget::Image(selected_target.into()),
+                Name::new("selected"),
+            ))
+            .id();
+        let params: CaptureDepthParams = serde_json::from_str(r#"{"delay_frames": 0}"#).unwrap();
+        let (tx, mut rx) = oneshot::channel();
+        let mut deferred = Vec::new();
+        push_pending_depth(params, tx, &mut deferred, &mut world);
+        assert_eq!(
+            deferred[0].depth_analysis.as_ref().unwrap().camera_entity,
+            selected
+        );
+        world.insert_resource(PendingScreenshots { pending: deferred });
+
+        process_pending_screenshots(&mut world);
+        assert_eq!(world.resource::<StagedScreenshots>().pending.len(), 1);
+        world.get_mut::<Camera>(selected).unwrap().is_active = false;
+        process_pending_screenshots(&mut world);
+        process_pending_screenshots(&mut world);
+
+        let error = rx.try_recv().unwrap().unwrap_err();
+        assert_eq!(
+            error.message,
+            "Selected capture_depth camera became inactive before capture"
+        );
+        assert!(world.query::<&Screenshot>().iter(&world).next().is_none());
+    }
+
+    #[test]
+    fn depth_capture_spawns_screenshot_for_the_selected_camera_target() {
+        let mut world = world_with_gizmos();
+        let mut images = Assets::<Image>::default();
+        let first_target = images.add(make_test_image(2, 1));
+        let selected_target = images.add(make_test_image(3, 2));
+        world.spawn((
+            Camera3d::default(),
+            Camera::default(),
+            Projection::default(),
+            GlobalTransform::default(),
+            RenderTarget::Image(bevy::camera::ImageRenderTarget::from(first_target)),
+            Name::new("first"),
+        ));
+        let selected = world
+            .spawn((
+                Camera3d::default(),
+                Camera {
+                    order: 10,
+                    ..default()
+                },
+                Projection::default(),
+                Transform::default(),
+                GlobalTransform::default(),
+                RenderTarget::Image(bevy::camera::ImageRenderTarget::from(
+                    selected_target.clone(),
+                )),
+                Name::new("selected"),
+            ))
+            .id();
+        world.insert_resource(images);
+        let params: CaptureDepthParams = serde_json::from_str(r#"{"delay_frames": 0}"#).unwrap();
+        let (tx, mut rx) = oneshot::channel();
+        let mut deferred = Vec::new();
+        push_pending_depth(params, tx, &mut deferred, &mut world);
+        assert_eq!(
+            deferred[0].depth_analysis.as_ref().unwrap().camera_entity,
+            selected
+        );
+        world.insert_resource(PendingScreenshots { pending: deferred });
+
+        process_pending_screenshots(&mut world);
+        process_pending_screenshots(&mut world);
+        process_pending_screenshots(&mut world);
+
+        assert!(
+            rx.try_recv().is_err(),
+            "response waits for ScreenshotCaptured"
+        );
+        let mut screenshots = world.query::<&Screenshot>();
+        let screenshot = screenshots.single(&world).unwrap();
+        let RenderTarget::Image(target) = &screenshot.0 else {
+            panic!("depth RGB must capture the selected image target");
+        };
+        assert_eq!(target.handle, selected_target);
+        assert_eq!(world.resource::<PendingScreenshotResponders>().map.len(), 1);
+    }
+
+    #[test]
+    fn staged_depth_capture_uses_camera_context_at_screenshot_spawn() {
+        let mut world = world_with_gizmos();
+        let mut images = Assets::<Image>::default();
+        let initial_target = images.add(make_test_image(4, 3));
+        let ready_target = images.add(make_test_image(8, 6));
+        world.insert_resource(images);
+        world.spawn((
+            bevy::camera::primitives::Aabb::from_min_max(
+                Vec3::new(-100.0, -100.0, -1.0),
+                Vec3::new(100.0, 100.0, 1.0),
+            ),
+            GlobalTransform::default(),
+            Name::new("depth-plane"),
+        ));
+        let initial_transform = Transform::from_xyz(0.0, 0.0, 10.0);
+        let selected = world
+            .spawn((
+                Camera3d::default(),
+                Camera {
+                    order: 10,
+                    ..default()
+                },
+                Projection::Perspective(PerspectiveProjection {
+                    fov: 0.2,
+                    aspect_ratio: 1.0,
+                    ..default()
+                }),
+                initial_transform,
+                GlobalTransform::from(initial_transform),
+                RenderTarget::Image(initial_target.into()),
+                Name::new("selected"),
+            ))
+            .id();
+        let params: CaptureDepthParams =
+            serde_json::from_str(r#"{"delay_frames":0,"sample_points":[[600,400]]}"#).unwrap();
+        let (tx, _rx) = oneshot::channel();
+        let mut deferred = Vec::new();
+        push_pending_depth(params, tx, &mut deferred, &mut world);
+        world.insert_resource(PendingScreenshots { pending: deferred });
+
+        process_pending_screenshots(&mut world);
+        assert_eq!(world.resource::<StagedScreenshots>().pending.len(), 1);
+
+        let ready_transform = Transform::from_xyz(0.0, 0.0, 20.0);
+        world.entity_mut(selected).insert((
+            Camera {
+                viewport: Some(Viewport {
+                    physical_position: UVec2::new(1, 1),
+                    physical_size: UVec2::new(6, 4),
+                    ..default()
+                }),
+                order: 12,
+                ..default()
+            },
+            Projection::Perspective(PerspectiveProjection {
+                fov: 2.0,
+                aspect_ratio: 1.0,
+                ..default()
+            }),
+            ready_transform,
+            GlobalTransform::from(ready_transform),
+            RenderTarget::Image(ready_target.clone().into()),
+        ));
+
+        process_pending_screenshots(&mut world);
+        process_pending_screenshots(&mut world);
+
+        let mut screenshots = world.query::<(Entity, &Screenshot)>();
+        let (screenshot_entity, screenshot) = screenshots.single(&world).unwrap();
+        let RenderTarget::Image(target) = &screenshot.0 else {
+            panic!("depth RGB must capture the ready-time image target");
+        };
+        assert_eq!(target.handle, ready_target);
+        let responders = world.resource::<PendingScreenshotResponders>();
+        let responder = responders.map.get(&screenshot_entity).unwrap();
+        assert_eq!(
+            responder.capture_viewport.unwrap().physical_size,
+            UVec2::new(6, 4)
+        );
+        let depth = &responder.extra_response.as_ref().unwrap()["depth_samples"];
+        assert_eq!(
+            depth["camera_position"],
+            serde_json::json!([0.0, 0.0, 20.0])
+        );
+        assert_eq!(depth["camera_order"], 12);
+        assert_eq!(
+            depth["viewport"],
+            serde_json::json!({
+                "physical_position": [1, 1],
+                "physical_size": [6, 4],
+            })
+        );
+        assert!(
+            depth["samples"][0]["world_position"][0].as_f64().unwrap() > 10.0,
+            "the ready-time wide projection must determine the depth ray"
+        );
+    }
+
+    #[test]
+    fn explicit_depth_pose_reuses_the_preserved_camera_entity() {
+        let mut world = World::new();
+        let first = world.spawn((Camera3d::default(), Camera::default())).id();
+        let selected = world
+            .spawn((
+                Camera3d::default(),
+                Camera {
+                    order: 5,
+                    ..default()
+                },
+            ))
+            .id();
+        let request = DebugCameraRequest {
+            position: [8.0, 3.0, 1.0],
+            look_at: [0.0, 0.0, 0.0],
+        };
+
+        let cleanup = setup_debug_camera_for_entity(&mut world, &request, Some(selected)).unwrap();
+
+        assert_eq!(cleanup.debug_entity, selected);
+        assert!(!world.get::<Camera>(first).unwrap().is_active);
+        assert_eq!(
+            world.get::<Transform>(selected).unwrap().translation,
+            Vec3::new(8.0, 3.0, 1.0)
+        );
+        cleanup_debug_camera_world(cleanup, &mut world);
+        assert!(world.get::<Camera>(first).unwrap().is_active);
+        assert!(world.get::<Camera>(selected).unwrap().is_active);
     }
 
     #[test]
@@ -1873,6 +2437,7 @@ mod tests {
                 }),
                 hide_ui: true,
                 entity: None,
+                depth_analysis: None,
                 extra_response: None,
                 response_kind: CaptureResponseKind::Screenshot,
             }],
@@ -1933,6 +2498,56 @@ mod tests {
     }
 
     #[test]
+    fn setup_debug_camera_reuses_deterministic_inactive_camera() {
+        let mut world = World::new();
+        world.spawn((
+            Camera3d::default(),
+            Camera {
+                order: 1,
+                is_active: false,
+                ..default()
+            },
+            Transform::default(),
+        ));
+        let preferred = world
+            .spawn((
+                Camera3d::default(),
+                Camera {
+                    order: 5,
+                    is_active: false,
+                    ..default()
+                },
+                Transform::default(),
+            ))
+            .id();
+        let camera_count = world
+            .query_filtered::<Entity, With<Camera3d>>()
+            .iter(&world)
+            .count();
+
+        let cleanup = setup_debug_camera(
+            &mut world,
+            &DebugCameraRequest {
+                position: [10.0, 5.0, 0.0],
+                look_at: [0.0, 0.0, 0.0],
+            },
+        )
+        .unwrap();
+
+        assert_eq!(cleanup.debug_entity, preferred);
+        assert!(cleanup.reused_state.is_some());
+        assert_eq!(
+            world
+                .query_filtered::<Entity, With<Camera3d>>()
+                .iter(&world)
+                .count(),
+            camera_count
+        );
+        cleanup_debug_camera_world(cleanup, &mut world);
+        assert!(!world.get::<Camera>(preferred).unwrap().is_active);
+    }
+
+    #[test]
     fn setup_debug_camera_cleanup_restores_reused_camera() {
         let mut world = World::new();
         let original_transform = Transform::from_xyz(1.0, 2.0, 3.0);
@@ -1982,6 +2597,7 @@ mod tests {
                 debug_cleanup: Some(cleanup),
                 ui_restore: None,
                 entity_isolation: None,
+                depth_analysis: None,
                 extra_response: None,
                 response_kind: CaptureResponseKind::Screenshot,
                 baseline_headless_sequence: None,
@@ -2064,6 +2680,7 @@ mod tests {
                 debug_cleanup: Some(cleanup),
                 ui_restore: None,
                 entity_isolation: None,
+                depth_analysis: None,
                 extra_response: None,
                 response_kind: CaptureResponseKind::Screenshot,
                 baseline_headless_sequence: Some(5),
@@ -2252,7 +2869,8 @@ mod tests {
     ) {
         let mut world = world_with_gizmos();
         // Spawn a PrimaryWindow entity so the windowed screenshot path is taken
-        world.spawn(PrimaryWindow);
+        world.spawn((Window::default(), PrimaryWindow));
+        world.spawn((Camera::default(), RenderTarget::Window(WindowRef::Primary)));
         let (tx, rx) = oneshot::channel();
         world.insert_resource(PendingScreenshots {
             pending: vec![PendingScreenshot {
@@ -2265,6 +2883,7 @@ mod tests {
                 debug_camera: None,
                 hide_ui: false,
                 entity: None,
+                depth_analysis: None,
                 extra_response: None,
                 response_kind: CaptureResponseKind::Screenshot,
             }],
@@ -2308,7 +2927,8 @@ mod tests {
     #[test]
     fn windowed_entity_capture_stages_before_spawning_the_screenshot() {
         let mut world = world_with_gizmos();
-        world.spawn(PrimaryWindow);
+        world.spawn((Window::default(), PrimaryWindow));
+        world.spawn((Camera::default(), RenderTarget::Window(WindowRef::Primary)));
         world.spawn(Name::new("Target"));
         let (tx, _rx) = oneshot::channel();
         world.insert_resource(PendingScreenshots {
@@ -2322,6 +2942,7 @@ mod tests {
                 debug_camera: None,
                 hide_ui: false,
                 entity: Some(EntityRef::Name("Target".to_string())),
+                depth_analysis: None,
                 extra_response: None,
                 response_kind: CaptureResponseKind::Screenshot,
             }],
@@ -2380,6 +3001,7 @@ mod tests {
                 debug_camera: None,
                 hide_ui: false,
                 entity: None,
+                depth_analysis: None,
                 extra_response: None,
                 response_kind: CaptureResponseKind::Screenshot,
             }],
@@ -2421,6 +3043,7 @@ mod tests {
                 debug_camera: None,
                 hide_ui: false,
                 entity: None,
+                depth_analysis: None,
                 extra_response: None,
                 response_kind: CaptureResponseKind::Screenshot,
             }],
@@ -2443,6 +3066,7 @@ mod tests {
     #[test]
     fn headless_ui_capture_waits_for_hidden_frame() {
         let mut world = world_with_gizmos();
+        spawn_structurally_valid_headless_camera(&mut world);
         let ui = world.spawn((Visibility::Visible, Node::default())).id();
         let (response_tx, _response_rx) = oneshot::channel();
         world.insert_resource(PendingScreenshots {
@@ -2456,6 +3080,7 @@ mod tests {
                 debug_camera: None,
                 hide_ui: true,
                 entity: None,
+                depth_analysis: None,
                 extra_response: None,
                 response_kind: CaptureResponseKind::Screenshot,
             }],
@@ -2492,6 +3117,7 @@ mod tests {
                 }),
                 hide_ui: false,
                 entity: None,
+                depth_analysis: None,
                 extra_response: None,
                 response_kind: CaptureResponseKind::Screenshot,
             }],
@@ -2516,7 +3142,7 @@ mod tests {
     fn process_staged_debug_screenshot_toggles_gizmos_on_capture() {
         let mut world = world_with_gizmos();
         // Spawn a PrimaryWindow entity so the windowed screenshot path is taken
-        world.spawn(PrimaryWindow);
+        world.spawn((Window::default(), PrimaryWindow));
 
         // Directly insert a staged screenshot (simulating debug camera already set up)
         let (tx, _rx) = oneshot::channel();
@@ -2537,6 +3163,7 @@ mod tests {
                 debug_cleanup: Some(cleanup),
                 ui_restore: None,
                 entity_isolation: None,
+                depth_analysis: None,
                 extra_response: None,
                 response_kind: CaptureResponseKind::Screenshot,
                 baseline_headless_sequence: None,
@@ -3060,6 +3687,7 @@ mod tests {
                 entity_isolation: None,
                 gizmo_restore: default_group_restore(true),
                 extra_response: None,
+                capture_viewport: None,
                 response_kind: CaptureResponseKind::Screenshot,
                 frames_waited: MAX_CAPTURE_WAIT_FRAMES,
             },
@@ -3104,6 +3732,7 @@ mod tests {
                 entity_isolation: None,
                 gizmo_restore: GizmoEnabledRestore::new(),
                 extra_response: None,
+                capture_viewport: None,
                 response_kind: CaptureResponseKind::Screenshot,
                 frames_waited: 0,
             },
@@ -3121,6 +3750,7 @@ mod tests {
     #[test]
     fn stale_headless_frame_fails_instead_of_becoming_a_capture() {
         let mut world = world_with_gizmos();
+        spawn_structurally_valid_headless_camera(&mut world);
         world.insert_resource(HeadlessFrameBuffer {
             latest: Some((vec![255, 0, 0, 255], 1, 1)),
             sequence: 5,
@@ -3138,6 +3768,7 @@ mod tests {
                 debug_cleanup: None,
                 ui_restore: None,
                 entity_isolation: None,
+                depth_analysis: None,
                 extra_response: None,
                 response_kind: CaptureResponseKind::Screenshot,
                 baseline_headless_sequence: Some(5),
@@ -3156,6 +3787,7 @@ mod tests {
     #[test]
     fn newer_headless_frame_completes_the_staged_capture() {
         let mut world = world_with_gizmos();
+        spawn_structurally_valid_headless_camera(&mut world);
         world.insert_resource(HeadlessFrameBuffer {
             latest: Some((vec![0, 255, 0, 255], 1, 1)),
             sequence: 6,
@@ -3173,6 +3805,7 @@ mod tests {
                 debug_cleanup: None,
                 ui_restore: None,
                 entity_isolation: None,
+                depth_analysis: None,
                 extra_response: None,
                 response_kind: CaptureResponseKind::Screenshot,
                 baseline_headless_sequence: Some(5),
@@ -3396,6 +4029,7 @@ mod tests {
         let result = complete_screenshot_capture(
             image,
             None,
+            None,
             CaptureResponseKind::Stats(FrameStatsOptions {
                 grid: 1,
                 region: None,
@@ -3422,6 +4056,7 @@ mod tests {
         let result = complete_screenshot_capture(
             image,
             None,
+            None,
             CaptureResponseKind::UnretainedScreenshot,
             &mut frames,
             None,
@@ -3434,6 +4069,45 @@ mod tests {
                 .compare("f_0000000000000000", "f_0000000000000000", 0.0)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn reload_and_capture_completion_still_enters_frame_retention() {
+        let image = make_test_image(1, 1);
+        let mut frames = CapturedFrames::default();
+        let result = complete_screenshot_capture(
+            image,
+            None,
+            None,
+            CaptureResponseKind::ReloadAndCapture,
+            &mut frames,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(result["retained"], true);
+        assert!(result["frame_id"].as_str().is_some());
+    }
+
+    #[test]
+    fn depth_rgb_completion_crops_to_the_selected_camera_viewport() {
+        let image = make_test_image(4, 3);
+        let mut frames = CapturedFrames::default();
+        let result = complete_screenshot_capture(
+            image,
+            None,
+            Some(CaptureViewport {
+                physical_position: UVec2::new(1, 1),
+                physical_size: UVec2::new(2, 1),
+            }),
+            CaptureResponseKind::UnretainedScreenshot,
+            &mut frames,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(result["width"], 2);
+        assert_eq!(result["height"], 1);
     }
 
     #[test]

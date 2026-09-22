@@ -5,20 +5,37 @@ Rendering text overlays, HUDs, and UI elements using Bevy's flexbox-based UI sys
 ## Text2d camera setup
 
 `Text2d` renders through `Camera2d`. For an overlay above a base camera with
-order 0, copy its `RenderTarget` component and match its viewport:
+order 0, copy its `RenderTarget` component, match its viewport and color-buffer
+configuration, render later without clearing, and do not tone-map the already
+rendered base pass again. This example assumes the base camera also uses
+`Hdr()` and `Msaa.Off`:
 
 ```python
 from copy import copy
 
 from pybevy.camera import Camera, Camera2d, ClearColorConfig
+from pybevy.core_pipeline import Tonemapping
+from pybevy.render import Hdr, Msaa
 
 commands.spawn(
     Camera2d(),
     copy(base_render_target),
+    Hdr(),
+    Msaa.Off,
+    Tonemapping.None_,
     Camera(order=1, clear_color=ClearColorConfig.None_(),
            viewport=base_camera.viewport),
 )
 ```
+
+`Hdr` presence must match the base camera because it selects the intermediate
+color format. Mirror the base camera's `Msaa` value as well; if sample counts
+differ, preservation depends on `Camera.msaa_writeback` remaining `Auto`.
+For an LDR base camera, omit `Hdr` from both cameras. Keep
+`Tonemapping.None_` on the overlay even when both cameras use `Hdr`, otherwise
+the base camera's output is tone-mapped a second time. A shared target and
+`ClearColorConfig.None_()` are not sufficient when the intermediate buffers
+are incompatible.
 
 For HUDs use UI `Text` + `Node`; world-anchored labels require projecting
 world positions into the viewport.

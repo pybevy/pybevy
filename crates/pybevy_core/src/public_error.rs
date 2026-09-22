@@ -17,6 +17,23 @@ pub const WORLD_CALLBACK_COMMAND_ERRORS: &str = "World callback and command erro
 pub const WORLD_OPERATION_COMMAND_ERRORS: &str = "World operation and command errors";
 pub const WORLD_BATCH_ARGUMENTS: &str =
     "spawn_batch() cannot combine batch= with positional components or count=";
+pub const SCREENSHOT_CAMERA3D_REQUIRED: &str = "position/look_at screenshot overrides require a Camera3d; omit them when capturing a Camera2d scene";
+pub const TURNAROUND_CAMERA3D_REQUIRED: &str =
+    "capture_turnaround requires a Camera3d; Camera2d-only scenes cannot produce orbit views";
+
+pub fn capture_no_camera(operation: &str) -> String {
+    format!("{operation} requires an active Camera, but the scene has no Camera entities")
+}
+
+pub fn capture_inactive_cameras(operation: &str) -> String {
+    format!("{operation} requires an active Camera, but all Camera entities are inactive")
+}
+
+pub fn capture_no_target(operation: &str) -> String {
+    format!(
+        "{operation} requires an active Camera with a capturable RenderTarget; active cameras have a missing component, RenderTarget.None, an unsupported TextureView, or an unavailable window target"
+    )
+}
 
 pub fn queued_component_layout_changed(name: &str) -> String {
     format!("Component '{name}' changed storage or layout after command preparation")

@@ -156,11 +156,26 @@ All MCP tools work in headless mode:
 - `set_component`, `spawn_entity`, `query_entities` work normally
 - `reload`, `reload_and_capture` work normally
 
+With multiple offscreen cameras, `capture_depth` selects the active `Camera3d`
+with the highest render order and captures that camera's image target directly.
+The returned depth rays, viewport-cropped RGB dimensions, and
+`target_camera_passes` therefore describe the same ready-time render context.
+
 ## Troubleshooting
 
 - **"No display server" error**: Make sure `WinitPlugin` is disabled and `headless=True` is passed to `run_scene`
 - **Black screenshots**: Ensure the camera has `RenderTarget.Image(ImageRenderTarget(handle=handle))` - without it, the camera targets a non-existent window
-- **No frames captured**: Increase `delay_frames` in `capture_screenshot` - headless rendering may need more warmup frames
+- **A `Text2d` overlay hides the 3D pass**: A shared image target and
+  `ClearColorConfig.None_()` are not enough. Match the base camera's viewport,
+  `Hdr` presence, and `Msaa`, and use `Tonemapping.None_` on the overlay. See
+  `guide://ui-text` for the complete camera setup.
+- **Camera capture error**: Add or activate a camera with a capturable target.
+  Missing cameras, all-inactive cameras, `RenderTarget.None`, missing targets,
+  unsupported texture-view targets, and window targets without a live primary
+  window are reported before GPU readback.
+- **Readback deadline**: The camera and target were eligible, but the renderer
+  produced no fresh frame. Increase `delay_frames` when the pipeline or assets
+  need more warmup time, then inspect renderer diagnostics if it persists.
 - **UI is missing**: Add `IsDefaultUiCamera()` to the offscreen camera. MCP
   captures hide authored UI by default, so also pass `hide_ui=false` to
   `capture_screenshot`, `capture_stats`, `capture_turnaround`, or
