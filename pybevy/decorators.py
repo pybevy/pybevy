@@ -2,13 +2,15 @@ import dataclasses
 import inspect
 import os
 import sys
+import threading
 import types
 import weakref
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from functools import wraps
 from typing import Any, TypeVar, Union, get_args, get_origin, get_type_hints
 from weakref import WeakValueDictionary
 
+from ._internal.reload_modules import _register_resource_assignment_hint_freezer
 from .app import Plugin
 from .ecs import Component, Event, Message, Resource
 from .material import material as material
@@ -110,28 +112,143 @@ def _validated_resource_value(annotation: object, value: object) -> tuple[bool, 
     return True, value
 
 
-def _install_resource_assignment_validation(cls: type[RT]) -> None:
-    original_setattr = cls.__setattr__
-    resolved_hints: dict[str, object] | None = None
+_ResourceAssignmentAliases = Mapping[str, tuple[weakref.ReferenceType[type], ...]]
+_RESOURCE_ASSIGNMENT_VALIDATION_ATTR = "__pybevy_resource_assignment_validation__"
 
-    def checked_setattr(instance: RT, name: str, value: object) -> None:
-        nonlocal resolved_hints
-        if resolved_hints is None:
-            try:
-                resolved_hints = get_type_hints(type(instance))
-            except (NameError, TypeError):
-                resolved_hints = dict(getattr(type(instance), "__annotations__", {}))
 
-        annotation = resolved_hints.get(name)
+def _runtime_validation_types(annotation: object) -> tuple[type, ...]:
+    origin = get_origin(annotation)
+    if origin in (types.UnionType, Union):
+        return tuple(
+            candidate
+            for member in get_args(annotation)
+            for candidate in _runtime_validation_types(member)
+        )
+    if isinstance(origin, type):
+        return (origin,)
+    if isinstance(annotation, type):
+        return (annotation,)
+    return ()
+
+
+def _resolved_resource_hints(cls: type) -> dict[str, object] | None:
+    try:
+        return get_type_hints(cls)
+    except (NameError, TypeError):
+        return None
+
+
+class _ResourceAssignmentValidation[RT]:
+    def __init__(
+        self,
+        cls: type[RT],
+        original_setattr: Callable[[RT, str, object], None],
+    ) -> None:
+        self._cls = weakref.ref(cls)
+        self._original_setattr = original_setattr
+        self._raw_hints = dict(getattr(cls, "__annotations__", {}))
+        self._resolved_hints = _resolved_resource_hints(cls)
+        self._hints_frozen = self._resolved_hints is not None
+        self._hints_lock = threading.Lock()
+        self._committed: _ResourceAssignmentAliases = types.MappingProxyType({})
+        self._publish_lock = threading.Lock()
+
+    def freeze_hints(self) -> None:
+        with self._hints_lock:
+            if self._resolved_hints is None and not self._hints_frozen:
+                cls = self._cls()
+                if cls is not None:
+                    self._resolved_hints = _resolved_resource_hints(cls)
+            self._hints_frozen = True
+
+    def _hints(self) -> dict[str, object]:
+        with self._hints_lock:
+            if self._resolved_hints is None and not self._hints_frozen:
+                cls = self._cls()
+                if cls is not None:
+                    self._resolved_hints = _resolved_resource_hints(cls)
+        return self._resolved_hints or self._raw_hints
+
+    def prepare(
+        self,
+        fresh_cls: type[RT],
+        previous: _ResourceAssignmentAliases | None = None,
+    ) -> _ResourceAssignmentAliases:
+        fresh_hints = _resolved_resource_hints(fresh_cls) or dict(
+            getattr(fresh_cls, "__annotations__", {})
+        )
+        source = self._committed if previous is None else previous
+        prepared: dict[str, tuple[weakref.ReferenceType[type], ...]] = {
+            name: tuple(
+                reference for reference in references if reference() is not None
+            )
+            for name, references in source.items()
+        }
+        with self._hints_lock:
+            baseline = self._resolved_hints or self._raw_hints
+        for name, annotation in fresh_hints.items():
+            references = list(prepared.get(name, ()))
+            known = {
+                candidate
+                for reference in references
+                if (candidate := reference()) is not None
+            }
+            known.update(_runtime_validation_types(baseline.get(name)))
+            for candidate in _runtime_validation_types(annotation):
+                if candidate not in known:
+                    references.append(weakref.ref(candidate))
+                    known.add(candidate)
+            prepared[name] = tuple(references)
+        return types.MappingProxyType(prepared)
+
+    def publish(self, aliases: _ResourceAssignmentAliases) -> None:
+        with self._publish_lock:
+            self._committed = aliases
+
+    def set_value(self, instance: RT, name: str, value: object) -> None:
+        cls = self._cls()
+        instance_type = type(instance)
+        instance_validation = vars(instance_type).get(
+            _RESOURCE_ASSIGNMENT_VALIDATION_ATTR
+        )
+        if cls is not instance_type and instance_validation is not self:
+            if instance_validation is not None:
+                self._original_setattr(instance, name, value)
+                return
+            hints = _resolved_resource_hints(instance_type) or dict(
+                getattr(instance_type, "__annotations__", {})
+            )
+        else:
+            hints = self._hints()
+
+        annotation = hints.get(name)
         if annotation is not None:
             valid, value = _validated_resource_value(annotation, value)
+            if not valid:
+                from ._internal.reload_modules import resource_assignment_aliases
+
+                aliases = resource_assignment_aliases(self) or self._committed
+                valid = any(
+                    isinstance(value, candidate)
+                    for reference in aliases.get(name, ())
+                    if (candidate := reference()) is not None
+                )
             if not valid:
                 raise TypeError(
                     f"{name}: expected {_annotation_name(annotation)}, "
                     f"got {type(value).__name__}"
                 )
-        original_setattr(instance, name, value)
+        self._original_setattr(instance, name, value)
 
+
+def _install_resource_assignment_validation(cls: type[RT]) -> None:
+    validation = _ResourceAssignmentValidation(cls, cls.__setattr__)
+    _register_resource_assignment_hint_freezer(cls.__module__, validation.freeze_hints)
+
+    def checked_setattr(instance: RT, name: str, value: object) -> None:
+        validation.set_value(instance, name, value)
+
+    cls.__pybevy_resource_assignment_validation__ = validation  # type: ignore[attr-defined]
     cls.__setattr__ = checked_setattr  # type: ignore[method-assign,assignment]
 
 
@@ -160,7 +277,17 @@ def resource(cls: type[RT]) -> type[RT]:
     if previous_signature is not None and previous_signature != layout_signature:
         _resource_layout_reload_required.add(key)
     elif _component_cache_enabled and key in _resource_cache:
-        return _resource_cache[key]  # type: ignore[return-value]
+        cached = _resource_cache[key]
+        from ._internal.reload_modules import stage_resource_assignment_alias
+
+        validation: _ResourceAssignmentValidation[RT] = (
+            cached.__pybevy_resource_assignment_validation__  # type: ignore[attr-defined]
+        )
+        stage_resource_assignment_alias(
+            validation,
+            lambda previous: validation.prepare(cls, previous),
+        )
+        return cached  # type: ignore[return-value]
 
     if not dataclasses.is_dataclass(cls) and cls.__init__ is object.__init__:
         original_new = cls.__new__

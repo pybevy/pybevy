@@ -432,6 +432,9 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
             let temp_app_py = Py::new(py, temp_app)?;
 
             let create_app_bound = self.loader_func.bind(py).call0()?;
+            py.import("pybevy._internal.reload_modules")?
+                .getattr("prepare_resource_assignment_aliases")?
+                .call0()?;
             let _result_app = create_app_bound.call1((temp_app_py.clone_ref(py),))?;
             let decorators = py.import("pybevy.decorators")?;
             let component_layout_changes = decorators
