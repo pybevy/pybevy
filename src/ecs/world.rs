@@ -1513,7 +1513,7 @@ impl PyWorld {
         self.check_valid()?;
         let world = self.world_mut()?;
 
-        if !world.entities().contains(entity.0) {
+        if world.entities().get_spawned(entity.0).is_err() {
             return Ok(None);
         }
 
@@ -1567,7 +1567,7 @@ impl PyWorld {
         self.check_valid()?;
         let world = self.world_mut()?;
 
-        if !world.entities().contains(entity.0) {
+        if world.entities().get_spawned(entity.0).is_err() {
             return Ok(None);
         }
 

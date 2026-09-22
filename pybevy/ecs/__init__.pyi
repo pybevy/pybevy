@@ -1446,6 +1446,9 @@ class World:
         """Get a read-only reference to a component on an entity.
 
         Returns None if the entity doesn't have the component or doesn't exist.
+        An entity ID reserved by deferred Commands is not spawned yet, so this
+        also returns None until the commands are flushed. This method does not
+        flush them.
 
         Example:
             transform = world.get(entity, Transform)
@@ -1456,6 +1459,9 @@ class World:
         """Get a mutable reference to a component on an entity.
 
         Returns None if the entity doesn't have the component or doesn't exist.
+        An entity ID reserved by deferred Commands is not spawned yet, so this
+        also returns None until the commands are flushed. This method does not
+        flush them.
         The returned component reference can be modified and changes persist to the ECS.
 
         Example:
