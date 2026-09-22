@@ -497,7 +497,7 @@ pub use registry::{
     ComponentBatchPrepareFn, ComponentBridge, ExtractFn, MessageBridge, PluginConfigs,
     PreparedBatchComponent, PreparedNativeBatch, PreparedNativeUniform, PreparedNativeUniformWith,
     PreparedUniformComponent, PreparedUniformFn, PyRustComponentBatch, ResourceBridge,
-    batch_field_meta_for, field_type_of, set_field_from_numpy,
+    batch_field_meta_for, field_type_of, portable_f32_batch_column, set_field_from_numpy,
 };
 pub use reload_request::{
     CustomComponentEntry, CustomComponentInfo, CustomResourceEntry, CustomResourceInfo,
