@@ -172,6 +172,12 @@ selection, and clipboard are handled by the engine; click the field to focus it.
 There is no built-in submit event: read `.value` from a system, then call
 `.clear()` through a mutable query to reset the field.
 
+Use `DefaultPlugins` for editable UI text. Adding `TextPlugin` alone installs
+the queued-edit application system, but not the UI layout systems that shape the
+editor before cursor, selection, and deletion commands run. PyBevy does not
+expose Bevy's `UiPlugin` separately, so the supported public setup is
+`DefaultPlugins` with `EditableText` on a UI `Node`.
+
 ```python
 from pybevy.text import EditableText
 

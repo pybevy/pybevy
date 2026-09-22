@@ -322,7 +322,7 @@ escaping the root are rejected, with no public approval override. Loading still
 returns a handle; check `get_logs(errors_only=true)` for rejection errors and
 move the file under `assets/`.
 
-Mesh attribute input accepts any Python sequence, bounded arrays, and supported NumPy arrays. NumPy arrays must be C-contiguous; use `numpy.ascontiguousarray(values)` when needed. A vertex format mismatch raises `ValueError`.
+Mesh attribute input accepts any Python sequence, bounded arrays, and supported NumPy arrays. `set_positions()` and `set_normals()` accept nested lists, tuples, and numeric `pybevy.array.Array` values without NumPy; NumPy is needed only when you choose to pass a NumPy array. NumPy arrays passed to `insert_attribute()` must be C-contiguous; use `numpy.ascontiguousarray(values)` when needed. A vertex format mismatch raises `ValueError`.
 
 `set_positions()`, `set_normals()`, and `insert_attribute()` validate the lane count and accept differing per-vertex row counts, with a Bevy warning for mismatches. Reads return each attribute's full stored rows. The effective vertex count, returned by `count_vertices()`, is the shortest attribute's row count. The packed vertex buffer, its size, and rendering use that many rows from each attribute. Keep per-vertex row counts equal and indices below the effective vertex count. The index buffer may reference any subset of vertices.
 

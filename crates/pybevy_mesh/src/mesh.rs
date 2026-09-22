@@ -10,7 +10,8 @@ use bevy::{
 };
 use numpy::{PyReadonlyArray2, PyUntypedArrayMethods};
 use pybevy_array::{
-    BorrowProbe, PyArray, borrowed_read_only_f32, borrowed_read_only_u16, borrowed_read_only_u32,
+    ArrayDType, BorrowProbe, PyArray, borrowed_read_only_f32, borrowed_read_only_u16,
+    borrowed_read_only_u32,
 };
 use pybevy_core::{
     AssetInputConverter, AssetStorage, PyAsset,
@@ -27,7 +28,7 @@ use pyo3::{
     PyTraverseError, PyVisit,
     exceptions::{PyRuntimeError, PyValueError},
     prelude::*,
-    types::{PyBytes, PyList},
+    types::{PyBytes, PyList, PyTuple},
 };
 
 use crate::{
@@ -176,9 +177,7 @@ macro_rules! mesh_with_mut {
     }};
 }
 
-/// Normalize a positions/normals argument to a contiguous `(N, 3)` f32 array:
-/// accepts real NumPy, the bounded `pybevy.array` array (via `__array__`), and
-/// (nested) lists, matching `insert_indices`' portable input surface.
+/// Normalize the external-array fallback to a contiguous `(N, 3)` f32 array.
 fn asarray_2d_f32<'py>(
     py: Python<'py>,
     obj: &Bound<'py, PyAny>,
@@ -187,6 +186,43 @@ fn asarray_2d_f32<'py>(
     let arr = np.call_method1("asarray", (obj,))?;
     let arr = arr.call_method1("astype", (np.getattr("float32")?,))?;
     Ok(arr.extract::<PyReadonlyArray2<f32>>()?)
+}
+
+fn portable_f32x3(
+    obj: &Bound<'_, PyAny>,
+    shape_error: &'static str,
+) -> PyResult<Option<Vec<[f32; 3]>>> {
+    if obj.is_instance_of::<PyList>() || obj.is_instance_of::<PyTuple>() {
+        return match PyVertexAttributeValues::new(obj)?.0 {
+            VertexAttributeValues::Float32x3(values) => Ok(Some(values)),
+            _ => Err(PyValueError::new_err(shape_error)),
+        };
+    }
+
+    let Ok(array) = obj.extract::<PyRef<PyArray>>() else {
+        return Ok(None);
+    };
+    let shape = array.core.shape();
+    if shape.len() != 2 || shape[1] != 3 {
+        return Err(PyValueError::new_err(shape_error));
+    }
+    let values = array
+        .core
+        .astype(ArrayDType::Float32)
+        .and_then(|cast| cast.to_scalars())
+        .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+    Ok(Some(
+        values
+            .chunks_exact(3)
+            .map(|row| {
+                [
+                    row[0].to_f64() as f32,
+                    row[1].to_f64() as f32,
+                    row[2].to_f64() as f32,
+                ]
+            })
+            .collect(),
+    ))
 }
 
 fn mesh_payload_hash(mesh: &Mesh) -> PyResult<String> {
@@ -822,16 +858,21 @@ impl PyMesh {
     }
 
     pub fn set_positions(&mut self, py: Python<'_>, positions: &Bound<'_, PyAny>) -> PyResult<()> {
-        let positions = asarray_2d_f32(py, positions)?;
-        let shape = positions.shape();
-        if shape.len() != 2 || shape[1] != 3 {
-            return Err(PyValueError::new_err("Positions must have shape (N, 3)"));
-        }
-        let data = positions.as_slice()?;
-        let values: Vec<[f32; 3]> = data
-            .chunks_exact(3)
-            .map(|row| [row[0], row[1], row[2]])
-            .collect();
+        let values =
+            if let Some(values) = portable_f32x3(positions, "Positions must have shape (N, 3)")? {
+                values
+            } else {
+                let positions = asarray_2d_f32(py, positions)?;
+                let shape = positions.shape();
+                if shape.len() != 2 || shape[1] != 3 {
+                    return Err(PyValueError::new_err("Positions must have shape (N, 3)"));
+                }
+                positions
+                    .as_slice()?
+                    .chunks_exact(3)
+                    .map(|row| [row[0], row[1], row[2]])
+                    .collect()
+            };
         mesh_with_mut!(self, |mesh: &mut Mesh| {
             mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, values);
         });
@@ -839,16 +880,21 @@ impl PyMesh {
     }
 
     pub fn set_normals(&mut self, py: Python<'_>, normals: &Bound<'_, PyAny>) -> PyResult<()> {
-        let normals = asarray_2d_f32(py, normals)?;
-        let shape = normals.shape();
-        if shape.len() != 2 || shape[1] != 3 {
-            return Err(PyValueError::new_err("Normals must have shape (N, 3)"));
-        }
-        let data = normals.as_slice()?;
-        let values: Vec<[f32; 3]> = data
-            .chunks_exact(3)
-            .map(|row| [row[0], row[1], row[2]])
-            .collect();
+        let values =
+            if let Some(values) = portable_f32x3(normals, "Normals must have shape (N, 3)")? {
+                values
+            } else {
+                let normals = asarray_2d_f32(py, normals)?;
+                let shape = normals.shape();
+                if shape.len() != 2 || shape[1] != 3 {
+                    return Err(PyValueError::new_err("Normals must have shape (N, 3)"));
+                }
+                normals
+                    .as_slice()?
+                    .chunks_exact(3)
+                    .map(|row| [row[0], row[1], row[2]])
+                    .collect()
+            };
         mesh_with_mut!(self, |mesh: &mut Mesh| {
             mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, values);
         });

@@ -42,10 +42,10 @@ class Volume:
         """Get volume as decibels value."""
 
     def increase_by_percentage(self, percentage: float) -> Volume:
-        """Increase volume by percentage (e.g., 0.1 for 10% increase)."""
+        """Increase linear volume by a percentage (e.g., 10.0 means 10%)."""
 
     def decrease_by_percentage(self, percentage: float) -> Volume:
-        """Decrease volume by percentage (e.g., 0.1 for 10% decrease)."""
+        """Decrease linear volume by a percentage (e.g., 10.0 means 10%)."""
 
     def fade_towards(self, target: Volume, factor: float) -> Volume:
         """Fade towards target volume by factor (0.0 to 1.0).

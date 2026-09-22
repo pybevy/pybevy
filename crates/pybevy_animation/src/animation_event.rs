@@ -65,7 +65,7 @@ impl PyAnimationEventData {
         Python::attach(|py| {
             let event_repr = self.event.borrow(py).__repr__();
             format!(
-                "AnimationEventData(time={:.1}, event={})",
+                "AnimationEventData(time={:?}, event={})",
                 self.time, event_repr
             )
         })

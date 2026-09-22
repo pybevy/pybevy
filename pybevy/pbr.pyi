@@ -474,7 +474,14 @@ class NoWireframe(Component):
     def __eq__(self, other: object) -> bool: ...
 
 class WireframeTopology(Component):
-    """Controls whether wireframe edges follow triangle or quad topology."""
+    """Controls whether wireframe edges follow triangle or quad topology.
+
+    ``Quads`` uses Bevy's wide-wireframe shader even at a one-pixel line width.
+    In Bevy 0.19, that shader can fill a triangle that crosses the camera
+    plane, with vertices both in front of and behind the camera. Use
+    ``Triangles`` with a line width of 1.0 for geometry that can cross behind
+    the camera.
+    """
 
     Triangles: ClassVar[WireframeTopology]
     Quads: ClassVar[WireframeTopology]
@@ -483,7 +490,14 @@ class WireframeTopology(Component):
     def __eq__(self, other: object) -> bool: ...
 
 class WireframeLineWidth(Component):
-    """Per-entity wireframe line width in screen-space pixels."""
+    """Per-entity wireframe line width in screen-space pixels.
+
+    Widths above 1.0 use Bevy's wide-wireframe shader. In Bevy 0.19, that
+    shader can fill a triangle that crosses the camera plane, with vertices
+    both in front of and behind the camera. Keep the width at 1.0 for such
+    geometry, or split and bound the mesh so every triangle remains in front
+    of the camera.
+    """
 
     def __init__(self, *, width: float = 1.0) -> None: ...
     @property
@@ -534,7 +548,11 @@ class WireframeConfig(Resource):
 
     @property
     def default_line_width(self) -> float:
-        """Default wireframe line width in pixels."""
+        """Default wireframe line width in pixels.
+
+        Values above 1.0 have Bevy's wide-wireframe clipping limitation; see
+        ``WireframeLineWidth``.
+        """
     @default_line_width.setter
     def default_line_width(self, value: float) -> None: ...
 
@@ -562,7 +580,12 @@ class WireframeMaterial(Asset):
     @color.setter
     def color(self, value: Color) -> None: ...
     @property
-    def line_width(self) -> float: ...
+    def line_width(self) -> float:
+        """Line width in pixels.
+
+        Values above 1.0 have Bevy's wide-wireframe clipping limitation; see
+        ``WireframeLineWidth``.
+        """
     @line_width.setter
     def line_width(self, value: float) -> None: ...
     @property

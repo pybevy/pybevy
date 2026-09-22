@@ -1010,8 +1010,14 @@ class Interval:
     def clamp(self, value: float) -> float:
         """Clamp a value to the interval."""
 
-    def spaced_points(self, max_spacing: int) -> list[float]:
-        """Get evenly spaced points within the interval."""
+    def spaced_points(self, points: int) -> list[float]:
+        """Get exactly `points` evenly spaced values, including both endpoints.
+
+        Zero returns an empty list and one returns only the start endpoint.
+
+        Raises:
+            ValueError: if the interval is unbounded.
+        """
 
     def __eq__(self, other: object) -> bool: ...
     def __ne__(self, other: object) -> bool: ...
@@ -1571,8 +1577,8 @@ class InfinitePlane3d:
     def project_point(self, isometry: Isometry3d | Vec3 | Vec3A | Quat, point: Vec3) -> Vec3:
         """Project a point onto the plane.
 
-        Bevy subtracts the plane's local normal rather than the rotated one, so
-        under a rotating isometry the result stays off the plane.
+        Projection follows the plane's isometry-rotated world normal, including
+        when the isometry also translates the plane.
         """
     def isometry_into_xy(self, origin: Vec3) -> Isometry3d:
         """Isometry mapping this plane onto the XY plane."""
@@ -2477,9 +2483,8 @@ class BoundingSphere:
     def closest_point(self, point: Vec3A | Vec3) -> Vec3:
         """Find the closest point on the sphere to the given point.
 
-        For an exterior point Bevy normalises the point itself instead of its
-        offset from the center, so a sphere away from the origin returns a
-        point that is not on its surface.
+        Exterior points are projected onto the surface along the direction from
+        the sphere's center. Interior and boundary points are returned unchanged.
         """
 
     def contains(self, other: BoundingSphere) -> bool:
@@ -3540,6 +3545,9 @@ class Annulus(Meshable):
 
     def closest_point(self, point: Vec2) -> Vec2:
         """Find the point on the annulus that is closest to the given point.
+
+        The exact center maps deterministically to the positive-X point on the
+        inner boundary when the inner radius is positive.
 
         Args:
             point: The point to find the closest point to
