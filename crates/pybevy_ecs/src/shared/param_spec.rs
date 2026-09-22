@@ -99,6 +99,8 @@ pub struct FilterSpec<K: BackendKeys> {
 /// Access-relevant shape of a Query or View parameter.
 pub struct QuerySpec<K: BackendKeys> {
     pub components: Vec<ComponentSpec<K>>,
+    /// Parameterized `Assets<T>` resources queried on their Bevy resource entity.
+    pub asset_components: Vec<AssetComponentSpec<K>>,
     pub with: Vec<FilterSpec<K>>,
     pub without: Vec<FilterSpec<K>>,
     pub changed: Vec<FilterSpec<K>>,
@@ -113,6 +115,7 @@ impl<K: BackendKeys> Default for QuerySpec<K> {
     fn default() -> Self {
         Self {
             components: Vec::new(),
+            asset_components: Vec::new(),
             with: Vec::new(),
             without: Vec::new(),
             changed: Vec::new(),
@@ -120,6 +123,14 @@ impl<K: BackendKeys> Default for QuerySpec<K> {
             resolve_only: Vec::new(),
         }
     }
+}
+
+/// One parameterized asset-resource entry inside a Query parameter.
+pub struct AssetComponentSpec<K: BackendKeys> {
+    pub key: K::AssetKey,
+    pub name: String,
+    pub mutable: bool,
+    pub optional: bool,
 }
 
 /// Backend-neutral shape of one system parameter.
@@ -309,6 +320,20 @@ pub fn build_declared_access<K: BackendKeys>(
                         (false, true) => access.optional_reads.push(id),
                     }
                 }
+                for asset in &spec.asset_components {
+                    let resolved = resolver.asset_ids(world, &asset.key);
+                    if let Some(id) = resolved.primary {
+                        match (asset.mutable, asset.optional) {
+                            (true, false) => access.writes.push(id),
+                            (false, false) => access.reads.push(id),
+                            (true, true) => access.optional_writes.push(id),
+                            (false, true) => access.optional_reads.push(id),
+                        }
+                    }
+                    for id in resolved.aux_reads {
+                        push_unique(&mut resources_to_read, id);
+                    }
+                }
                 for f in &spec.with {
                     if let Some(id) = resolver.component_id(world, &f.key) {
                         access.with.push(id);
@@ -440,6 +465,8 @@ pub fn build_declared_access<K: BackendKeys>(
 /// pointer), or the resolved `ComponentId` when a `World` is available.
 /// `resource_marker_vkey` is the canonical identity of Bevy's `IsResource`
 /// marker and must not be derived from a display name.
+/// `asset_vkey` maps both asset parameters and asset-resource Query data to the
+/// physical `Assets<T>` identity.
 /// `message_vkey` supplies the corresponding channel identity and display name.
 ///
 /// Disjointness filters include an implicit `With` for every queried
@@ -450,6 +477,7 @@ pub fn to_param_accesses<K: BackendKeys, VK: Hash + Eq + Clone>(
     params: &[ParamSpec<K>],
     mut component_vkey: impl FnMut(&K::ComponentKey) -> VK,
     mut resource_vkey: impl FnMut(&K::ResourceKey) -> VK,
+    mut asset_vkey: impl FnMut(&K::AssetKey) -> VK,
     resource_marker_vkey: VK,
     mut message_vkey: impl FnMut(&K::MessageKey) -> (String, String),
 ) -> Vec<ParamAccess<VK>> {
@@ -457,7 +485,7 @@ pub fn to_param_accesses<K: BackendKeys, VK: Hash + Eq + Clone>(
         .iter()
         .map(|param| match param {
             ParamSpec::Query(spec) | ParamSpec::View(spec) => {
-                let accesses = spec
+                let mut accesses = spec
                     .components
                     .iter()
                     .map(|c| ComponentAccess {
@@ -466,12 +494,23 @@ pub fn to_param_accesses<K: BackendKeys, VK: Hash + Eq + Clone>(
                         exclusive: c.scheduler_access.is_exclusive(),
                         mutable: c.mutable,
                     })
-                    .collect();
+                    .collect::<Vec<_>>();
+                accesses.extend(spec.asset_components.iter().map(|asset| ComponentAccess {
+                    key: asset_vkey(&asset.key),
+                    name: format!("Assets[{}]", asset.name),
+                    exclusive: asset.mutable,
+                    mutable: asset.mutable,
+                }));
 
                 let mut filters = QueryFilters::default();
                 for c in &spec.components {
                     if !c.optional {
                         filters.with.insert(component_vkey(&c.key));
+                    }
+                }
+                for asset in &spec.asset_components {
+                    if !asset.optional {
+                        filters.with.insert(asset_vkey(&asset.key));
                     }
                 }
                 for f in &spec.with {
@@ -502,12 +541,14 @@ pub fn to_param_accesses<K: BackendKeys, VK: Hash + Eq + Clone>(
             },
             ParamSpec::Res { vkey: None, .. } => ParamAccess::None,
             ParamSpec::Assets {
-                vkey,
+                key,
+                vkey: _,
                 name,
                 mutable,
                 ..
             } => ParamAccess::Assets {
-                key: vkey.clone(),
+                key: asset_vkey(key),
+                marker: resource_marker_vkey.clone(),
                 name: name.clone(),
                 mutable: *mutable,
             },
@@ -625,7 +666,10 @@ pub fn condition_param_rejection<K: BackendKeys>(
             ..
         } => Some(ConditionRejection::OpaqueResource),
         ParamSpec::Assets { mutable: true, .. } => Some(ConditionRejection::MutableAssets),
-        ParamSpec::Query(spec) if spec.components.iter().any(|c| c.mutable) => {
+        ParamSpec::Query(spec)
+            if spec.components.iter().any(|c| c.mutable)
+                || spec.asset_components.iter().any(|asset| asset.mutable) =>
+        {
             Some(ConditionRejection::MutableQuery)
         }
         ParamSpec::Query(spec)
@@ -753,7 +797,7 @@ pub const LOWERING_CORPUS_GOLDEN: &[&str] = &[
 ];
 
 fn describe_query_spec<K: BackendKeys>(kind: &str, spec: &QuerySpec<K>) -> String {
-    let comps: Vec<String> = spec
+    let mut comps: Vec<String> = spec
         .components
         .iter()
         .map(|c| {
@@ -771,6 +815,14 @@ fn describe_query_spec<K: BackendKeys>(kind: &str, spec: &QuerySpec<K>) -> Strin
             )
         })
         .collect();
+    comps.extend(spec.asset_components.iter().map(|asset| {
+        format!(
+            "Assets[{}]({}{})",
+            asset.name,
+            if asset.mutable { "mut" } else { "read" },
+            if asset.optional { ",opt" } else { "" }
+        )
+    }));
     format!(
         "{} components=[{}] with={} without={} changed={} added={} resolve_only={}",
         kind,
@@ -1213,6 +1265,33 @@ mod tests {
     }
 
     #[test]
+    fn query_assets_route_through_the_physical_resource_id() {
+        let (mut world, mut resolver) = setup();
+        let mesh = world.register_component::<R1>();
+        let registry = world.register_component::<R2>();
+        resolver.assets.insert(
+            "Mesh",
+            ResolvedAsset {
+                primary: Some(mesh),
+                aux_reads: vec![registry],
+            },
+        );
+        let params = [ParamSpec::<MockKeys>::Query(QuerySpec {
+            asset_components: vec![AssetComponentSpec {
+                key: "Mesh",
+                name: "Mesh".to_string(),
+                mutable: false,
+                optional: false,
+            }],
+            ..Default::default()
+        })];
+
+        let declared = build_declared_access(&mut world, &params, &mut resolver);
+        assert!(declared.set.combined_access().has_read(mesh));
+        assert!(declared.set.combined_access().has_read(registry));
+    }
+
+    #[test]
     fn message_reader_and_writer_merge_and_dedupe() {
         let (mut world, mut resolver) = setup();
         let queue = world.register_component::<R1>();
@@ -1469,10 +1548,91 @@ mod tests {
             &params,
             |k| *k,
             |k| *k,
+            |k| *k,
             "resource marker",
             |k| ((*k).to_string(), (*k).to_string()),
         );
         assert!(validate_access(&accesses).is_err());
+    }
+
+    fn asset_query(key: &'static str, name: &str, mutable: bool) -> ParamSpec<MockKeys> {
+        ParamSpec::Query(QuerySpec {
+            asset_components: vec![AssetComponentSpec {
+                key,
+                name: name.to_string(),
+                mutable,
+                optional: false,
+            }],
+            ..Default::default()
+        })
+    }
+
+    fn assets_param(key: &'static str, name: &str, mutable: bool) -> ParamSpec<MockKeys> {
+        ParamSpec::Assets {
+            key,
+            vkey: name.to_string(),
+            name: name.to_string(),
+            mutable,
+        }
+    }
+
+    fn validate_test_params(params: &[ParamSpec<MockKeys>]) -> Result<(), ComponentAccessConflict> {
+        let accesses = to_param_accesses(
+            params,
+            |key| *key,
+            |key| *key,
+            |key| *key,
+            "resource marker",
+            |key| ((*key).to_string(), (*key).to_string()),
+        );
+        validate_access(&accesses)
+    }
+
+    #[test]
+    fn validation_asset_query_conflicts_with_mutable_assets_in_both_orders() {
+        assert!(
+            validate_test_params(&[
+                asset_query("physical", "Logical", false),
+                assets_param("physical", "Native", true),
+            ])
+            .is_err()
+        );
+        assert!(
+            validate_test_params(&[
+                assets_param("physical", "Native", true),
+                asset_query("physical", "Logical", false),
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn validation_mutable_asset_query_conflicts_with_read_assets_in_both_orders() {
+        assert!(
+            validate_test_params(&[
+                asset_query("physical", "Logical", true),
+                assets_param("physical", "Native", false),
+            ])
+            .is_err()
+        );
+        assert!(
+            validate_test_params(&[
+                assets_param("physical", "Native", false),
+                asset_query("physical", "Logical", true),
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn validation_shared_asset_query_and_assets_are_compatible() {
+        assert!(
+            validate_test_params(&[
+                asset_query("physical", "Logical", false),
+                assets_param("physical", "Native", false),
+            ])
+            .is_ok()
+        );
     }
 
     #[test]
@@ -1495,6 +1655,7 @@ mod tests {
         ];
         let accesses = to_param_accesses(
             &params,
+            |k| *k,
             |k| *k,
             |k| *k,
             "resource marker",
@@ -1520,6 +1681,7 @@ mod tests {
         ];
         let accesses = to_param_accesses(
             &params,
+            |k| *k,
             |k| *k,
             |k| *k,
             "resource marker",
@@ -1553,6 +1715,7 @@ mod tests {
             &params,
             |k| *k,
             |k| *k,
+            |k| *k,
             "resource marker",
             |k| ((*k).to_string(), (*k).to_string()),
         );
@@ -1575,6 +1738,7 @@ mod tests {
             &params,
             |k| *k,
             |k| *k,
+            |k| *k,
             "resource marker",
             |k| ((*k).to_string(), (*k).to_string()),
         );
@@ -1590,6 +1754,7 @@ mod tests {
         ];
         let accesses = to_param_accesses(
             &params,
+            |k| *k,
             |k| *k,
             |k| *k,
             "resource marker",

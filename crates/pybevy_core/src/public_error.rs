@@ -81,8 +81,15 @@ pub const SINGLE_NOT_ITERABLE: &str =
     "Single is not iterable; use single.into_inner() before unpacking or iterating the row";
 pub const SINGLE_NOT_SUBSCRIPTABLE: &str =
     "Single is not subscriptable; use single.into_inner() before indexing the row";
+pub const REQUIRED_SINGLE_NO_MATCHES: &str = "Required Single parameter matched no entities";
+pub const REQUIRED_SINGLE_MULTIPLE_MATCHES: &str =
+    "Required Single parameter matched multiple entities";
 pub const QUERY_ROW_SHAPE_MISMATCH: &str = "Query row shape did not match its data";
 pub const ENTITY_ARGUMENT_INT: &str = "expected an Entity, not an int. Convert a packed ID from an MCP response or Entity.to_bits() with Entity.from_bits(id). The integer shown in Entity(<index>v<generation>) is an EntityIndex value, not a packed identity.";
+
+pub fn one_shot_parameter_validation_skip(reason: impl Display) -> String {
+    format!("One-shot system did not run because parameter validation failed: {reason}")
+}
 
 pub const COLOR_INPUT_TYPES: &str =
     "expected Color, Srgba, LinearRgba, Hsla, Hsva, Hwba, Laba, Lcha, Oklaba, Oklcha, or Xyza";
@@ -378,6 +385,18 @@ pub const OR_IS_FILTER: &str = "Or[...] is a query filter, not query data; place
 pub const ANY_OF_VIEW_UNSUPPORTED: &str = "AnyOf[...] query data is not supported in View. Use Query for optional per-entity component values.";
 pub const OR_VIEW_UNSUPPORTED: &str =
     "Or[...] is not supported in View. Use Query for disjunctive filters.";
+pub fn parenthesized_filter_tuple(kind: &str) -> String {
+    format!(
+        "{kind} filter groups must use tuple[...] rather than parentheses: {kind}[Data, tuple[With[A], Without[B]]]"
+    )
+}
+
+pub fn variadic_filters(kind: &str) -> String {
+    format!(
+        "Multiple {kind} filters must be grouped in tuple[...] as the second type argument: {kind}[Data, tuple[With[A], Without[B]]]"
+    )
+}
+
 pub fn query_data_required(kind: &str, shape: &str, filters: &[String]) -> String {
     let note = if filters.is_empty() {
         String::new()

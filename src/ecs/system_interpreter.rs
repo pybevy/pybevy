@@ -21,7 +21,8 @@ use pybevy_core::public_error::{
     CONDITION_MESSAGE_READER, CONDITION_MESSAGE_WRITER, CONDITION_MUTABLE_ASSETS,
     CONDITION_MUTABLE_QUERY, CONDITION_MUTABLE_VIEW, CONDITION_OPAQUE_MESSAGE_READER,
     CONDITION_OPAQUE_QUERY, CONDITION_OPAQUE_RESOURCE, CONDITION_OPAQUE_VIEW, CONDITION_RES_MUT,
-    CONDITION_RETURNED_CALLABLE, CONDITION_WORLD, pipe_input_type_mismatch,
+    CONDITION_RETURNED_CALLABLE, CONDITION_WORLD, REQUIRED_SINGLE_MULTIPLE_MATCHES,
+    REQUIRED_SINGLE_NO_MATCHES, pipe_input_type_mismatch,
 };
 #[cfg(debug_assertions)]
 use pybevy_ecs::shared::access_audit::assert_query_access_declared;
@@ -52,15 +53,18 @@ use super::{
     commands::CommandErrorSink,
     dynamic_system::{
         BufferedSystemError, DynamicSystemHandle, DynamicSystemInner, MainResolver,
-        SystemErrorBuffer, SystemErrorReport, SystemErrorReportState, build_run_args,
-        execute_prepared_observer, lock_or_recover, lower_param_type, lower_params,
+        SystemErrorBuffer, SystemErrorReport, SystemErrorReportState, asset_validation_identity,
+        build_run_args, execute_prepared_observer, lock_or_recover, lower_param_type, lower_params,
         print_reported_system_error_once, resource_marker_validation_identity,
         resource_validation_identity, validate_pipe_target_params, validate_system_params,
     },
     helpers::validity_guard::ValidityFlag,
     messages::{CursorStorage, MessageType},
     observer::PyOn,
-    query::query_runtime::{CachedQuery, PyQueryIter},
+    query::{
+        query_runtime::{CachedQuery, PyQueryIter},
+        single_runtime::PySingleQuery,
+    },
     system::{SystemFunction, SystemParam, SystemParamType},
     view::cached_view::CachedPyView,
     world_commands,
@@ -648,6 +652,7 @@ unsafe impl SystemInterpreter for MainInterpreter {
                 &specs,
                 super::component_type::PyComponentType::validation_identity,
                 resource_validation_identity,
+                asset_validation_identity,
                 resource_marker_validation_identity(),
                 MessageType::validation_identity,
             );
@@ -767,8 +772,18 @@ unsafe impl SystemInterpreter for MainInterpreter {
                 )
             })?;
             drop(query);
-            if count != 1 {
-                return Ok(false);
+            match count {
+                0 => {
+                    return Err(SystemParamValidationError::skipped::<PySingleQuery>(
+                        REQUIRED_SINGLE_NO_MATCHES,
+                    ));
+                }
+                1 => {}
+                _ => {
+                    return Err(SystemParamValidationError::skipped::<PySingleQuery>(
+                        REQUIRED_SINGLE_MULTIPLE_MATCHES,
+                    ));
+                }
             }
         }
         Ok(true)

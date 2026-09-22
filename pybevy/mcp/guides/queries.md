@@ -113,6 +113,17 @@ def inspect_time(query: Query[tuple[Entity, Time]]) -> None:
 This mirrors Bevy 0.19's `Query<(Entity, &Time)>` behavior for resource
 entities.
 
+Parameterized asset collections use the same resource-entity path. Query them
+read-only with `Query[Assets[Mesh]]` or mutably with
+`Query[Mut[Assets[Mesh]]]`; the row exists only after the matching asset
+resource has been initialized. `world.component_id(Assets[Mesh])` registers its
+native component identity without inserting the resource, and
+`world.resource_entity(Assets[Mesh])` returns `None` until the resource exists.
+These queries conflict with `ResMut[Assets[Mesh]]` and `Res[Assets[Mesh]]` just
+like other resource queries. Decorated material parameters keep their logical
+collection filtering even when several material classes share one native
+`Assets[ShaderMaterial]` resource.
+
 Prefer `Res[T]` and `ResMut[T]` for ordinary singleton access. They share the
 same scheduler access as resource queries, so `Res[T]` correctly conflicts
 with `Query[Mut[T]]` unless the query excludes resource entities with
@@ -125,6 +136,11 @@ just like `Res[T]` and `ResMut[T]`; later reads or writes raise `RuntimeError`.
 matches. This is checked on each run, including when the body never accesses
 the parameter. `Query.single()` is an explicit lookup inside a running system
 and raises `RuntimeError` for zero or multiple matches.
+
+The silent skip applies to scheduled systems. An explicit
+`world.run_system_once()` or `app.run_system_once()` call raises `RuntimeError`
+when a required `Single[T]` has zero or multiple matches, so the caller can tell
+that the requested body and its deferred commands did not run.
 
 Use `Optional[Single[T]]` with `from pybevy.ecs import Optional`, matching
 Bevy's `Option<Single<...>>`. This is the standard `typing.Optional` re-exported

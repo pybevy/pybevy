@@ -24,11 +24,11 @@ use std::{any::TypeId, collections::VecDeque, sync::Arc};
 
 use bevy::{ecs::world::unsafe_world_cell::UnsafeWorldCell, prelude::World};
 use pybevy_core::{
-    AssetBorrowCounter, AssetRuntimeCore, AssetRuntimeError, LogicalTypeId, PyAssetId,
-    extract_asset_id_from_any,
+    AssetAccessRegistry, AssetBorrowCounter, AssetRuntimeCore, AssetRuntimeError, LogicalTypeId,
+    PyAssetId, ValidityFlagWithMode, extract_asset_id_from_any,
     handle::PyHandle,
     materialize_asset_id,
-    public_error::ASSET_BRIDGE_NOT_FOUND,
+    public_error::{ASSET_ACCESS_REGISTRY_MISSING, ASSET_BRIDGE_NOT_FOUND},
     registry::{AssetBridge, global_registry},
 };
 use pyo3::{
@@ -84,6 +84,32 @@ unsafe impl Send for PyAssets {}
 unsafe impl Sync for PyAssets {}
 
 impl PyAssets {
+    /// Build one validity-bound borrow scope from the world-owned registry.
+    ///
+    /// # Safety
+    /// The caller must hold exclusive world authority or declare shared access
+    /// to `AssetAccessRegistry` and compatible access to the matching
+    /// `Assets<T>` resource for the supplied cell.
+    pub(crate) unsafe fn borrow_counter_from_cell(
+        cell: UnsafeWorldCell<'_>,
+        type_ptr: *const PyTypeObject,
+        validity: &ValidityFlag,
+        origin: impl Into<Arc<str>>,
+    ) -> PyResult<AssetBorrowCounter> {
+        let bridge = global_registry::get_asset_bridge_by_py_type(type_ptr)
+            .expect("Assets[T] requires a registered asset bridge");
+        // SAFETY: the caller declares this registry read; its scopes use
+        // interior synchronization.
+        let registry = unsafe { cell.get_resource::<AssetAccessRegistry>() }
+            .ok_or_else(|| PyRuntimeError::new_err(ASSET_ACCESS_REGISTRY_MISSING))?;
+        Ok(AssetBorrowCounter::from_scope(registry.new_scope(
+            bridge.bevy_type_id(),
+            bridge.name(),
+            validity.clone(),
+            origin,
+        )))
+    }
+
     /// Create a new PyAssets wrapper
     ///
     /// # Safety
@@ -451,6 +477,7 @@ impl PyAssets {
         }
 
         Ok(PyAssetIter {
+            validity: self.runtime.validity().clone(),
             values: values.into(),
         })
     }
@@ -459,6 +486,7 @@ impl PyAssets {
 #[pyclass(name = "AssetIter", module = "pybevy.assets")]
 #[derive(Debug)]
 pub struct PyAssetIter {
+    validity: ValidityFlagWithMode,
     values: VecDeque<(PyAssetId, Py<PyAny>)>,
 }
 
@@ -476,6 +504,9 @@ impl PyAssetIter {
     }
 
     fn __next__<'a>(&'a mut self, py: Python<'a>) -> PyResult<Py<PyAny>> {
+        self.validity
+            .check_read()
+            .map_err(|error| asset_runtime_py_error(AssetRuntimeError::Access(error)))?;
         if let Some((id, value)) = self.values.pop_front() {
             PyTuple::new(py, [materialize_asset_id(py, id)?.into_any(), value])?.into_py_any(py)
         } else {

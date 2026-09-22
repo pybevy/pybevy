@@ -670,6 +670,11 @@ Query[AnyOf[tuple[Transform, Visibility]]]
 Query[Entity, Or[tuple[With[Sprite], With[Mesh3d]]]]
 ```
 
+Multiple Query filters belong in one second-position `tuple[...]`.
+`Query[Transform, (With[Player], Without[Dead])]` and
+`Query[Transform, With[Player], Without[Dead]]` raise `TypeError` and show the
+canonical spelling above.
+
 `Optional` is `typing.Optional` re-exported by `pybevy.ecs`, so it can be
 imported beside `Query`, `Mut`, and the filters used above.
 
@@ -803,6 +808,19 @@ def setup(commands: Commands) -> None:
 Custom resources from `World.resource(T)` are shallow read-only handles that
 expire after the World scope. Use `World.get_mut(resource_entity, T)` for field
 writes, or `copy.copy` / `copy.deepcopy` while valid to keep an owned value.
+
+When a custom resource defines `__len__` or `__iter__`, those protocols work
+through both `Res[T]` and `ResMut[T]`. The iterator expires with the system.
+`Res[T]` still rejects direct field assignment, while values yielded by a
+custom resource retain the same shallow live-alias behavior as its other nested
+Python values. Merely choosing iteration does not change the existing custom
+resource tick policy: `Res[T]` does not mark, and `ResMut[T]` remains
+conservatively marked when the parameter is materialized.
+
+Both `Res[Assets[T]]` and `ResMut[Assets[T]]` also support `len()` and
+iteration. Iteration yields read-only asset wrappers in either mode; use
+`get_mut(handle)` for writable access. The iterator and yielded wrappers expire
+with the system.
 
 ### Messages
 

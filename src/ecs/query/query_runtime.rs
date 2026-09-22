@@ -15,7 +15,8 @@ use bevy::{
 };
 use pybevy_core::{
     ComponentWriteContext, ExtractFn, FilteredEntityAccess, LogicalTypeId, LogicalTypeMap,
-    extract_entity_from_any, public_error::QUERY_ROW_SHAPE_MISMATCH, registry::global_registry,
+    ensure_asset_access_registry, extract_entity_from_any, public_error::QUERY_ROW_SHAPE_MISMATCH,
+    registry::global_registry, resource_initializer,
 };
 use pybevy_ecs::shared::{
     cached_query::CachedQueryCore,
@@ -34,19 +35,22 @@ use pyo3::{
 };
 use smallvec::SmallVec;
 
-use crate::ecs::{
-    PyEntity,
-    commands::entity_logical_type_matches,
-    component_layout::{ComponentLayoutExt, ComponentStorageType, ComponentStorageTypeExt},
-    component_type::{PyComponentType, register_component_id},
-    filter::QueryFilter,
-    helpers::validity_guard::{AccessMode, ValidityFlag},
-    lazy_wrapper_proxy::{ProxyKind, PyLazyWrapperProxy},
-    query::{
-        query_helpers::filter_only_error_message,
-        query_param::{PyQueryParam, QueryData},
+use crate::{
+    assets::{asset_type::PyAssetTypeParam, assets::PyAssets},
+    ecs::{
+        PyEntity,
+        commands::entity_logical_type_matches,
+        component_layout::{ComponentLayoutExt, ComponentStorageType, ComponentStorageTypeExt},
+        component_type::{PyComponentType, register_component_id},
+        filter::QueryFilter,
+        helpers::validity_guard::{AccessMode, ValidityFlag},
+        lazy_wrapper_proxy::{ProxyKind, PyLazyWrapperProxy},
+        query::{
+            query_helpers::filter_only_error_message,
+            query_param::{PyQueryParam, QueryData},
+        },
+        world::PyWorld,
     },
-    world::PyWorld,
 };
 
 type LayoutCacheEntry = (
@@ -137,6 +141,9 @@ pub struct CachedQuery {
     /// Extraction function pointers for dynamic components, keyed by Python type.
     extract_fns: HashMap<PyComponentType, ExtractFn>,
 
+    /// Physical `Assets<T>` resource IDs keyed by the native asset class.
+    asset_component_ids: HashMap<*const PyTypeObject, ComponentId>,
+
     /// Declared read access for logical type value matching, when needed.
     logical_type_map_component_id: Option<ComponentId>,
 
@@ -168,6 +175,14 @@ impl CachedQuery {
         // Collect and register all component IDs (tracking optional and mutable status)
         let mut component_ids = Vec::new();
         let mut anyof_groups = Vec::new();
+        let mut asset_component_ids = HashMap::new();
+        if param
+            .data
+            .iter()
+            .any(|data| matches!(data, QueryData::AssetResource { .. }))
+        {
+            ensure_asset_access_registry(world);
+        }
         for param_type in &param.data {
             match param_type {
                 QueryData::Component {
@@ -196,6 +211,22 @@ impl CachedQuery {
                     }
                     anyof_groups.push(group);
                 }
+                QueryData::AssetResource {
+                    type_ptr,
+                    optional,
+                    mutable,
+                    ..
+                } => {
+                    let bridge = global_registry::get_asset_bridge_by_py_type(*type_ptr)
+                        .expect("Assets[T] requires a registered asset bridge");
+                    let id = bridge.register_resource_id(world);
+                    asset_component_ids.insert(*type_ptr, id);
+                    component_ids.push(QueryComponent {
+                        id,
+                        optional: *optional,
+                        mutable: *mutable,
+                    });
+                }
                 QueryData::Entity | QueryData::Has { .. } => {}
             }
         }
@@ -209,7 +240,9 @@ impl CachedQuery {
                 QueryData::AnyOf { items } => {
                     items.iter().any(|item| item.logical_type_id.is_some())
                 }
-                QueryData::Entity | QueryData::Has { .. } => false,
+                QueryData::Entity | QueryData::Has { .. } | QueryData::AssetResource { .. } => {
+                    false
+                }
             })
             .then(|| {
                 let id = world.register_component::<LogicalTypeMap>();
@@ -312,6 +345,7 @@ impl CachedQuery {
             component_id_cache,
             custom_component_ids,
             extract_fns,
+            asset_component_ids,
             logical_type_map_component_id,
             single_entity_enforced,
             optional_single,
@@ -620,6 +654,76 @@ impl PyQueryIter {
         self.cached.is_owned()
     }
 
+    /// Return the one holder that owns this asset parameter's Python edge.
+    fn retained_asset_param(&self, index: usize) -> PyResult<&Py<PyAssetTypeParam>> {
+        let holder = if self.is_ad_hoc() {
+            &self.param
+        } else {
+            &self.cached().param
+        };
+        holder
+            .retained_asset_params
+            .get(index)
+            .ok_or_else(|| PyRuntimeError::new_err("Query asset parameter retention is missing"))
+    }
+
+    fn asset_component_id(&self, type_ptr: *const PyTypeObject) -> ComponentId {
+        *self
+            .cached()
+            .asset_component_ids
+            .get(&type_ptr)
+            .expect("Assets<T> component ID should be cached")
+    }
+
+    fn materialize_asset_resource(
+        &self,
+        retained_param_index: usize,
+        type_ptr: *const PyTypeObject,
+        mutable: bool,
+        py: Python<'_>,
+    ) -> PyResult<Py<PyAny>> {
+        let param = self.retained_asset_param(retained_param_index)?.borrow(py);
+        debug_assert_eq!(param.type_ptr(), type_ptr);
+        let wrapper_class = param.wrapper_class(py);
+        let logical_type_id = param.logical_type_id();
+        let logical_type_name = param.logical_type_name().map(str::to_owned);
+        drop(param);
+
+        let validity = self.runtime.validity().clone();
+        // SAFETY: scheduled queries declare access to AssetAccessRegistry and the
+        // matching Assets<T>; ad-hoc queries retain exclusive world authority.
+        let cell = unsafe { self.runtime.world_cell() }.map_err(query_runtime_error_to_py)?;
+        // SAFETY: the same declared or exclusive authority permits the registry
+        // read used to create a validity-bound scope for this physical asset type.
+        let borrow_counter = unsafe {
+            PyAssets::borrow_counter_from_cell(
+                cell,
+                type_ptr,
+                &validity,
+                if self.is_ad_hoc() {
+                    "World.query()"
+                } else {
+                    "query"
+                },
+            )
+        }?;
+        // SAFETY: `cell` is fenced by the query runtime validity, and query
+        // validation grants exactly the requested read or write authority.
+        let assets = unsafe {
+            PyAssets::new(
+                type_ptr,
+                wrapper_class,
+                logical_type_id,
+                logical_type_name,
+                cell,
+                validity,
+                mutable,
+                borrow_counter,
+            )
+        };
+        Ok(Py::new(py, resource_initializer(assets))?.into_any())
+    }
+
     fn snapshot_entity_ids(&self) -> PyResult<Vec<Entity>> {
         let mut token = self
             .runtime
@@ -750,6 +854,35 @@ impl PyQueryIter {
                             ));
                         }
                     }
+                }
+                QueryData::AssetResource {
+                    type_ptr,
+                    retained_param_index,
+                    mutable,
+                    optional,
+                    ..
+                } => {
+                    let component_id = self.asset_component_id(*type_ptr);
+                    // SAFETY: the runtime validity fence protects this shared World access.
+                    let world_ref = unsafe { &*world_ptr };
+                    let present = world_ref
+                        .get_entity(entity)
+                        .is_ok_and(|entity_ref| entity_ref.contains_id(component_id));
+                    if !present {
+                        if *optional {
+                            values_buffer.push(py.None());
+                            continue;
+                        }
+                        return Err(PyRuntimeError::new_err(
+                            "Query component was removed before row materialization",
+                        ));
+                    }
+                    values_buffer.push(self.materialize_asset_resource(
+                        *retained_param_index,
+                        *type_ptr,
+                        *mutable,
+                        py,
+                    )?);
                 }
             }
         }
@@ -1145,6 +1278,32 @@ impl PyQueryIter {
                         }
                     }
                 }
+                QueryData::AssetResource {
+                    type_ptr,
+                    retained_param_index,
+                    mutable,
+                    optional,
+                    ..
+                } => {
+                    let present = entity
+                        .get_by_id(self.asset_component_id(*type_ptr))
+                        .is_some();
+                    if !present {
+                        if *optional {
+                            values_buffer.push(py.None());
+                            continue;
+                        }
+                        return Err(PyRuntimeError::new_err(
+                            "Query component was removed before row materialization",
+                        ));
+                    }
+                    values_buffer.push(self.materialize_asset_resource(
+                        *retained_param_index,
+                        *type_ptr,
+                        *mutable,
+                        py,
+                    )?);
+                }
             }
         }
 
@@ -1262,6 +1421,9 @@ impl PyQueryIter {
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
         for class in &self.param.retained_types {
             visit.call(class.as_ref())?;
+        }
+        for param in &self.param.retained_asset_params {
+            visit.call(param)?;
         }
         let Ok(values) = self.values_buffer.try_borrow() else {
             return Ok(());

@@ -60,6 +60,14 @@ impl PyMut {
         self.value.bind(py).setattr(name, value)
     }
 
+    pub fn __len__(&self, py: Python<'_>) -> PyResult<usize> {
+        self.value.bind(py).len()
+    }
+
+    pub fn __iter__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        Ok(self.value.bind(py).try_iter()?.into_any().unbind())
+    }
+
     /// Return the underlying value without shadowing wrapped `get` methods.
     pub fn unwrap(&self, py: Python) -> PyResult<Py<PyAny>> {
         Ok(self.value.clone_ref(py))
