@@ -148,6 +148,8 @@ Entities are spawned via `Commands` and identified by an `Entity` handle.
 
 `World.commands()` is deferred too: spawning reserves an ID, but queries do not
 see its components until `world.flush()` or a native implicit flush boundary.
+`world.get(reserved, T)` and `world.get_mut(reserved, T)` return `None` until
+that flush; neither read method applies pending commands.
 All handles from the same World share
 Bevy's native command queue. Exclusive World systems and `app.world(callback)`
 flush on exit, even when the callback raises; MCP `run_code` does the same.
