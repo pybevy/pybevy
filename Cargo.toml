@@ -12,6 +12,12 @@ categories = ["game-engines", "graphics", "rendering", "game-development"]
 include = [
     "src/**/*",
     "pybevy/**/*",
+    "!pybevy/**/__pycache__/**",
+    "!pybevy/**/*.pyc",
+    "!pybevy/**/*.pyo",
+    "!pybevy/_pybevy*.so",
+    "!pybevy/_pybevy*.pyd",
+    "!pybevy/.gitignore",
     "Cargo.toml",
     "README.md",
     "LICENSE-MIT",
@@ -41,6 +47,10 @@ exclude = ["examples/rust/*", "crates/pybevy_browser", "crates/pybevy_replicon"]
 
 [workspace.lints.clippy]
 undocumented_unsafe_blocks = "warn"
+
+[workspace.lints.rust]
+# cargo-llvm-cov sets this cfg on nightly, enabling #[coverage(off)] on test code.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage_nightly)"] }
 
 [lints]
 workspace = true
