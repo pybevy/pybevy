@@ -375,7 +375,12 @@ fn build_tool_request(
                 copy_if_present(
                     arguments,
                     &mut body,
-                    &["include_siblings", "max_float_gap", "ground_y"],
+                    &[
+                        "include_siblings",
+                        "max_float_gap",
+                        "ground_y",
+                        "min_penetration",
+                    ],
                 );
                 RequestSpec::json(
                     Method::Post,
@@ -1019,11 +1024,21 @@ mod tests {
             ),
             (
                 "check_overlaps",
-                json!({"entity": "Cube", "include_siblings": true, "ground_y": 0.0}),
+                json!({
+                    "entity": "Cube",
+                    "include_siblings": true,
+                    "ground_y": 0.0,
+                    "min_penetration": 0.0,
+                }),
                 RequestSpec::json(
                     Method::Post,
                     "/api/v1/spatial/overlaps",
-                    json!({"entity": "Cube", "include_siblings": true, "ground_y": 0.0}),
+                    json!({
+                        "entity": "Cube",
+                        "include_siblings": true,
+                        "ground_y": 0.0,
+                        "min_penetration": 0.0,
+                    }),
                 ),
             ),
             (
