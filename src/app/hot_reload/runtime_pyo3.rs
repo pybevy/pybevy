@@ -6,13 +6,15 @@ use std::{
 
 use bevy::ecs::{
     schedule::{
-        Chain, InternedSystemSet, Schedule, ScheduleConfigs, ScheduleLabel, Schedules,
-        SingleThreadedExecutor,
+        Chain, InternedScheduleLabel, InternedSystemSet, Schedule, ScheduleConfigs, ScheduleLabel,
+        Schedules, SingleThreadedExecutor,
     },
     world::World,
 };
 use pybevy_core::{PluginIdentity, ReloadRequestMode, ReloadResult};
-use pybevy_ecs::shared::schedule::{StateScheduleLabel, TransitionScheduleLabel};
+use pybevy_ecs::shared::schedule::{
+    ScheduleDisplayNameRegistry, StateScheduleLabel, TransitionScheduleLabel,
+};
 use pybevy_reload::{
     DefsFingerprint, KEEP_ALIVE_GENERATIONS, ReloadError, ReloadMode, ReloadRuntime, SystemStage,
     is_verbose, lock_or_recover,
@@ -175,8 +177,8 @@ fn print_and_drop_loader_error(error: PyErr) {
 }
 
 enum ReloadStateSchedule {
-    State(StateScheduleLabel),
-    Transition(TransitionScheduleLabel),
+    State(StateScheduleLabel, String),
+    Transition(TransitionScheduleLabel, String),
 }
 
 /// Add a batch of Python system functions to a Bevy schedule.
@@ -313,6 +315,7 @@ pub(crate) struct Pyo3ReloadRuntime {
     component_layout_reload_pending: bool,
     resource_layout_reload_pending: bool,
     pending_observers: Vec<PreparedObserverRegistration>,
+    pending_schedule_display_names: Vec<(InternedScheduleLabel, String)>,
 }
 
 impl Pyo3ReloadRuntime {
@@ -324,6 +327,7 @@ impl Pyo3ReloadRuntime {
             component_layout_reload_pending: false,
             resource_layout_reload_pending: false,
             pending_observers: Vec::new(),
+            pending_schedule_display_names: Vec::new(),
         }
     }
 
@@ -558,6 +562,7 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
             .get_resource_or_insert_with(DynamicSystemRegistry::default)
             .begin_tick_reload(generation);
         self.pending_set_configs.clear();
+        self.pending_schedule_display_names.clear();
         self.prepare_set_configs(world, defs.set_configs, generation)?;
 
         // Drain any errors left over from a previous reload attempt. The error
@@ -645,27 +650,27 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
             let label = Python::attach(|py| -> PyResult<ReloadStateSchedule> {
                 let schedule = pending.schedule.bind(py);
                 if let Ok(on_enter) = schedule.cast::<PyOnEnterSchedule>() {
+                    let on_enter = on_enter.borrow();
                     return Ok(ReloadStateSchedule::State(
-                        canonicalize_state_schedule_label(
-                            world,
-                            on_enter.borrow().to_bevy_label(py)?,
-                        ),
+                        canonicalize_state_schedule_label(world, on_enter.to_bevy_label(py)?),
+                        on_enter.display_name(py)?,
                     ));
                 }
                 if let Ok(on_exit) = schedule.cast::<PyOnExitSchedule>() {
+                    let on_exit = on_exit.borrow();
                     return Ok(ReloadStateSchedule::State(
-                        canonicalize_state_schedule_label(
-                            world,
-                            on_exit.borrow().to_bevy_label(py)?,
-                        ),
+                        canonicalize_state_schedule_label(world, on_exit.to_bevy_label(py)?),
+                        on_exit.display_name(py)?,
                     ));
                 }
                 if let Ok(on_transition) = schedule.cast::<PyOnTransitionSchedule>() {
+                    let on_transition = on_transition.borrow();
                     return Ok(ReloadStateSchedule::Transition(
                         canonicalize_transition_schedule_label(
                             world,
-                            on_transition.borrow().to_bevy_label(py)?,
+                            on_transition.to_bevy_label(py)?,
                         ),
+                        on_transition.display_name(py)?,
                     ));
                 }
                 Err(PyRuntimeError::new_err(
@@ -721,8 +726,16 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
             }
 
             match label {
-                ReloadStateSchedule::State(label) => register_state_systems!(label),
-                ReloadStateSchedule::Transition(label) => register_state_systems!(label),
+                ReloadStateSchedule::State(label, name) => {
+                    self.pending_schedule_display_names
+                        .push((label.intern(), name));
+                    register_state_systems!(label)
+                }
+                ReloadStateSchedule::Transition(label, name) => {
+                    self.pending_schedule_display_names
+                        .push((label.intern(), name));
+                    register_state_systems!(label)
+                }
             }
 
             let error = lock_or_recover(&self.error_state).pop();
@@ -736,6 +749,13 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
     }
 
     fn commit_schedule_configs(&mut self, world: &mut World) {
+        if !self.pending_schedule_display_names.is_empty() {
+            let mut registry =
+                world.get_resource_or_insert_with(ScheduleDisplayNameRegistry::default);
+            for (label, name) in self.pending_schedule_display_names.drain(..) {
+                registry.insert(label, name);
+            }
+        }
         for prepared in self.pending_set_configs.drain(..) {
             let label = prepared.schedule.intern_label();
             if !world.resource::<Schedules>().contains(label) {
@@ -948,6 +968,7 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
         let keep_after = generation.saturating_sub(KEEP_ALIVE_GENERATIONS);
         let retired_generations = match world.get_resource_mut::<DynamicSystemRegistry>() {
             Some(mut registry) => {
+                registry.track_generation(generation);
                 for handle in handles {
                     registry.register(generation, handle);
                 }

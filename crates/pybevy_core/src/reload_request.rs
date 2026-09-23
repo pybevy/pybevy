@@ -225,11 +225,14 @@ pub struct ReloadResult {
     pub failure_traceback: Option<String>,
     /// Whether the app is running code from a previous generation after a failure
     pub running_previous_generation: bool,
-    /// Plugin names added since last reload (restart may be required)
+    /// Plugin names added by the last successful reload (restart may be required)
     pub plugins_added: Option<Vec<String>>,
-    /// Plugin names removed since last reload (restart required to take effect)
+    /// Plugin names removed by the last successful reload (restart required to take effect)
     pub plugins_removed: Option<Vec<String>>,
-    /// System names removed or renamed since last reload (load_scene required to clear stale schedule entries)
+    /// Distinct system names removed or renamed by this successful reload.
+    ///
+    /// Their disabled schedule nodes remain for one rollback generation, then
+    /// the normal post-Last compaction removes them.
     pub systems_removed: Option<Vec<String>>,
     /// Whether the current reload attempt is still fetching definition files
     /// asynchronously; a reload response must not be built while this is set.

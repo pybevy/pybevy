@@ -240,67 +240,10 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
             }
         }
     }
-    // Plugin delta detection
-    {
-        let plugin_names = runtime.plugin_names(&defs);
-        let new_plugin_set: HashSet<PluginIdentity> = plugin_names.into_iter().collect();
-
-        let (mut added, mut removed) = {
-            if let Some(mut tracker) = world.get_resource_mut::<PluginTracker>() {
-                if !tracker.baseline_initialized {
-                    tracker.known_plugins = new_plugin_set;
-                    tracker.baseline_initialized = true;
-                    (Vec::new(), Vec::new())
-                } else {
-                    let added = new_plugin_set
-                        .difference(&tracker.known_plugins)
-                        .cloned()
-                        .collect();
-                    let removed = tracker
-                        .known_plugins
-                        .difference(&new_plugin_set)
-                        .cloned()
-                        .collect();
-                    (added, removed)
-                }
-            } else {
-                (Vec::new(), Vec::new())
-            }
-        };
-        added.sort();
-        removed.sort();
-
-        if !added.is_empty() || !removed.is_empty() {
-            let added: Vec<String> = added
-                .into_iter()
-                .map(|plugin| plugin.report_name())
-                .collect();
-            let removed: Vec<String> = removed
-                .into_iter()
-                .map(|plugin| plugin.report_name())
-                .collect();
-            if !added.is_empty() {
-                eprintln!(
-                    "⚠️ [Hot Reload] New plugins detected (restart may be required): {:?}",
-                    added
-                );
-            }
-            if !removed.is_empty() {
-                eprintln!(
-                    "⚠️ [Hot Reload] Plugins removed (restart required to take effect): {:?}",
-                    removed
-                );
-            }
-            if let Some(mut result) = world.get_resource_mut::<pybevy_core::ReloadResult>() {
-                if !added.is_empty() {
-                    result.plugins_added = Some(added);
-                }
-                if !removed.is_empty() {
-                    result.plugins_removed = Some(removed);
-                }
-            }
-        }
-    }
+    // Snapshot declarations now, but publish and advance the baseline only
+    // after every fallible candidate-commit step succeeds.
+    let candidate_plugins: HashSet<PluginIdentity> =
+        runtime.plugin_names(&defs).into_iter().collect();
 
     emit_reload_progress(
         world,
@@ -339,27 +282,8 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
         return Err(e);
     }
 
-    // System delta detection
-    {
-        let new_system_names = runtime.system_names(&defs);
-        let no_reloadable_systems = new_system_names.is_empty();
-        let removed = runtime.detect_system_delta(world, new_system_names);
-        if !removed.is_empty() {
-            if mode == ReloadMode::Partial && no_reloadable_systems {
-                eprintln!(
-                    "⚠️ [Hot Reload] Partial reload removed the last reloadable Python system; scene logic is now idle"
-                );
-            } else {
-                eprintln!(
-                    "⚠️ [Hot Reload] Systems removed/renamed (stale schedule entries remain, use run_scene to clear): {:?}",
-                    removed
-                );
-            }
-            if let Some(mut result) = world.get_resource_mut::<pybevy_core::ReloadResult>() {
-                result.systems_removed = Some(removed);
-            }
-        }
-    }
+    // Snapshot names now, but publish the delta only after the candidate commits.
+    let new_system_names = runtime.system_names(&defs);
 
     // Register systems
     runtime.clear_param_cache();
@@ -589,6 +513,66 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
 
     runtime.commit_schedule_configs(world);
 
+    // Plugin deltas describe this committed generation exactly once. Native
+    // plugin removal can still require a restart even though the declaration
+    // baseline advances for diagnostics.
+    {
+        let (added, removed) = world
+            .get_resource_mut::<PluginTracker>()
+            .map(|mut tracker| tracker.commit(candidate_plugins))
+            .unwrap_or_default();
+        let added: Vec<String> = added
+            .into_iter()
+            .map(|plugin| plugin.report_name())
+            .collect();
+        let removed: Vec<String> = removed
+            .into_iter()
+            .map(|plugin| plugin.report_name())
+            .collect();
+        if !added.is_empty() {
+            eprintln!(
+                "⚠️ [Hot Reload] New plugins detected (restart may be required): {:?}",
+                added
+            );
+        }
+        if !removed.is_empty() {
+            eprintln!(
+                "⚠️ [Hot Reload] Plugins removed (restart required to take effect): {:?}",
+                removed
+            );
+        }
+        if let Some(mut result) = world.get_resource_mut::<pybevy_core::ReloadResult>() {
+            if !added.is_empty() {
+                result.plugins_added = Some(added);
+            }
+            if !removed.is_empty() {
+                result.plugins_removed = Some(removed);
+            }
+        }
+    }
+
+    // System delta detection is committed with the candidate. A failed
+    // registration or Startup must not advance the comparison baseline.
+    {
+        let no_reloadable_systems = new_system_names.is_empty();
+        let removed = runtime.detect_system_delta(world, new_system_names);
+        if !removed.is_empty() {
+            if mode == ReloadMode::Partial && no_reloadable_systems {
+                eprintln!(
+                    "⚠️ [Hot Reload] Partial reload removed the last reloadable Python system; scene logic is now idle"
+                );
+            } else {
+                eprintln!(
+                    "⚠️ [Hot Reload] Systems removed/renamed (retired schedule entries remain for one rollback generation): {:?}",
+                    removed
+                );
+            }
+            if let Some(mut result) = world.get_resource_mut::<pybevy_core::ReloadResult>() {
+                result.systems_removed = Some(removed);
+            }
+        }
+    }
+
     {
         let gen_res = world.resource::<HotReloadGeneration>();
         gen_res.retain_startup_runs_since(new_generation.saturating_sub(2));
@@ -596,9 +580,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
 
     // Register handles and gut old-generation systems
     let current_generation_systems = system_handles.len();
-    if !system_handles.is_empty() {
-        runtime.register_handles(world, new_generation, system_handles);
-    }
+    runtime.register_handles(world, new_generation, system_handles);
 
     runtime.prune_messages(world, new_generation);
     runtime.prune_requests(world, (mode == ReloadMode::Full).then_some(old_generation));
@@ -2071,9 +2053,11 @@ mod tests {
         system_set: Option<HashSet<String>>,
         known_systems: Option<HashSet<String>>,
         commit_calls: Option<Arc<AtomicUsize>>,
+        handle_generations: Option<Arc<Mutex<Vec<u32>>>>,
         prune_generations: Option<Arc<Mutex<Vec<u32>>>>,
         printed: Option<Arc<AtomicUsize>>,
         inject_startup_error: bool,
+        register_systems_error: bool,
     }
 
     impl ReloadRuntime for TestRuntime {
@@ -2110,6 +2094,13 @@ mod tests {
             _defs: (),
             _gen: u32,
         ) -> Result<Vec<()>, ReloadError> {
+            if self.register_systems_error {
+                return Err(ReloadError {
+                    message: "synthetic registration failure".to_string(),
+                    traceback: None,
+                    is_load_failure: false,
+                });
+            }
             if self.inject_startup_error {
                 let mut schedules = world.resource_mut::<Schedules>();
                 if let Some(startup) = schedules.get_mut(Startup) {
@@ -2145,7 +2136,11 @@ mod tests {
         ) -> Result<(), ReloadError> {
             Ok(())
         }
-        fn register_handles(&mut self, _world: &mut World, _gen: u32, _handles: Vec<()>) {}
+        fn register_handles(&mut self, _world: &mut World, generation: u32, _handles: Vec<()>) {
+            if let Some(generations) = &self.handle_generations {
+                generations.lock().unwrap().push(generation);
+            }
+        }
         fn prune_messages(&mut self, _world: &mut World, generation: u32) {
             if let Some(gens) = &self.prune_generations {
                 gens.lock().unwrap().push(generation);
@@ -2388,9 +2383,9 @@ mod tests {
         assert_eq!(plain_result.actual_mode, Some(ReloadRequestMode::Partial));
     }
 
-    /// Plugin deltas measure against the app-start baseline until a restart.
+    /// Plugin deltas advance only when a candidate generation commits.
     #[test]
-    fn plugin_delta_recorded_from_second_reload() {
+    fn plugin_delta_is_reported_once_and_failed_candidates_do_not_advance_it() {
         let (mut world, gen_counter) = setup_world();
         let state = MockState::new(gen_counter);
 
@@ -2438,33 +2433,66 @@ mod tests {
         );
 
         let mut runtime = TestRuntime {
-            plugin_set: Some(changed),
+            plugin_set: Some(changed.clone()),
             ..Default::default()
         };
         assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Partial, &state).is_ok());
         let third = world.resource::<ReloadResult>();
+        assert_eq!(third.plugins_added, None);
+        assert_eq!(third.plugins_removed, None);
+
+        let rejected: HashSet<PluginIdentity> = [
+            PluginIdentity::new("pybevy.core.DefaultPlugins", None),
+            PluginIdentity::new("pybevy.gizmos.GizmoPlugin", None),
+        ]
+        .into_iter()
+        .collect();
+        let mut runtime = TestRuntime {
+            plugin_set: Some(rejected.clone()),
+            register_systems_error: true,
+            ..Default::default()
+        };
+        assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Partial, &state).is_err());
+        let fourth = world.resource::<ReloadResult>();
+        assert_eq!(fourth.plugins_added, None);
+        assert_eq!(fourth.plugins_removed, None);
+        assert_eq!(world.resource::<PluginTracker>().known_plugins, changed);
+
+        let mut runtime = TestRuntime {
+            plugin_set: Some(rejected.clone()),
+            ..Default::default()
+        };
+        assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Partial, &state).is_ok());
+        let fifth = world.resource::<ReloadResult>();
+        assert_eq!(fifth.plugins_added, None);
         assert_eq!(
-            third.plugins_added,
-            Some(vec![
-                "GizmoPlugin".to_string(),
-                "MaterialPlugin[\"m\"]".to_string()
-            ]),
-            "the delta stays measured against the app-start baseline"
-        );
-        assert_eq!(
-            third.plugins_removed,
-            Some(vec!["AudioPlugin[\"a\"]".to_string()])
+            fifth.plugins_removed,
+            Some(vec!["MaterialPlugin[\"m\"]".to_string()])
         );
 
-        // A set equal to the app-start baseline reports nothing.
+        let mut runtime = TestRuntime {
+            plugin_set: Some(rejected),
+            ..Default::default()
+        };
+        assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Partial, &state).is_ok());
+        let sixth = world.resource::<ReloadResult>();
+        assert_eq!(sixth.plugins_added, None);
+        assert_eq!(sixth.plugins_removed, None);
+
         let mut runtime = TestRuntime {
             plugin_set: Some(initial),
             ..Default::default()
         };
         assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Partial, &state).is_ok());
-        let fourth = world.resource::<ReloadResult>();
-        assert_eq!(fourth.plugins_added, None);
-        assert_eq!(fourth.plugins_removed, None);
+        let seventh = world.resource::<ReloadResult>();
+        assert_eq!(
+            seventh.plugins_added,
+            Some(vec!["AudioPlugin[\"a\"]".to_string()])
+        );
+        assert_eq!(
+            seventh.plugins_removed,
+            Some(vec!["GizmoPlugin".to_string()])
+        );
     }
 
     /// The runtime's removed-system delta is recorded on the result, cleared when empty.
@@ -2506,6 +2534,70 @@ mod tests {
         assert!(!result.failed);
         assert!(!result.escalated);
         assert_eq!(result.actual_mode, Some(ReloadRequestMode::Partial));
+    }
+
+    #[test]
+    fn failed_candidate_does_not_advance_system_delta_baseline() {
+        let (mut world, gen_counter) = setup_world();
+        let state = MockState::new(gen_counter);
+        let original = HashSet::from(["old_system".to_string()]);
+        let replacement = HashSet::from(["new_system".to_string()]);
+        let mut runtime = TestRuntime {
+            system_set: Some(original.clone()),
+            ..Default::default()
+        };
+
+        assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Partial, &state).is_ok());
+        assert_eq!(runtime.known_systems, Some(original));
+
+        runtime.system_set = Some(replacement.clone());
+        runtime.register_systems_error = true;
+        assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Partial, &state).is_err());
+        assert_eq!(
+            runtime.known_systems,
+            Some(HashSet::from(["old_system".to_string()]))
+        );
+
+        runtime.register_systems_error = false;
+        assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Partial, &state).is_ok());
+        assert_eq!(runtime.known_systems, Some(replacement));
+        assert_eq!(
+            world.resource::<ReloadResult>().systems_removed,
+            Some(vec!["old_system".to_string()])
+        );
+    }
+
+    #[test]
+    fn startup_failure_does_not_advance_or_publish_system_delta() {
+        let (mut world, gen_counter) = setup_world();
+        let state = MockState::new(gen_counter);
+        let original = HashSet::from(["old_system".to_string()]);
+        let mut runtime = TestRuntime {
+            system_set: Some(original.clone()),
+            ..Default::default()
+        };
+
+        assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Partial, &state).is_ok());
+        runtime.system_set = Some(HashSet::from(["new_system".to_string()]));
+        runtime.inject_startup_error = true;
+
+        assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Full, &state).is_err());
+        assert_eq!(runtime.known_systems, Some(original));
+        assert_eq!(world.resource::<ReloadResult>().systems_removed, None);
+    }
+
+    #[test]
+    fn successful_empty_generation_still_registers_handle_generation() {
+        let (mut world, gen_counter) = setup_world();
+        let state = MockState::new(gen_counter);
+        let generations = Arc::new(Mutex::new(Vec::new()));
+        let mut runtime = TestRuntime {
+            handle_generations: Some(generations.clone()),
+            ..Default::default()
+        };
+
+        assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Partial, &state).is_ok());
+        assert_eq!(*generations.lock().unwrap(), vec![1]);
     }
 
     /// Schedule configs commit once after a successful Startup; failures never commit or prune.

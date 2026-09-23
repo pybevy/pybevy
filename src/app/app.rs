@@ -36,8 +36,8 @@ use pybevy_core::{
     register_wrapped_reflect_types_for_new_app,
 };
 use pybevy_ecs::shared::schedule::{
-    StateScheduleLabel, TransitionScheduleLabel, configure_standard_schedules,
-    schedule_build_message,
+    ScheduleDisplayNameRegistry, StateScheduleLabel, TransitionScheduleLabel,
+    configure_standard_schedules, schedule_build_message,
 };
 use pybevy_reload::{HotReloadGeneration, PluginTracker, SystemStage, is_verbose};
 use pybevy_render::cache_cleanup::RenderCacheCleanupPlugin;
@@ -942,22 +942,25 @@ impl PyApp {
         // Parse schedule parameter - can be either PyStage or state schedule label
         enum ScheduleType {
             Stage(PyStage),
-            OnEnter(StateScheduleLabel),
-            OnExit(StateScheduleLabel),
-            OnTransition(TransitionScheduleLabel),
+            OnEnter(StateScheduleLabel, String),
+            OnExit(StateScheduleLabel, String),
+            OnTransition(TransitionScheduleLabel, String),
         }
 
         let schedule_type = if let Ok(stage) = schedule.extract::<PyStage>() {
             ScheduleType::Stage(stage)
         } else if let Ok(on_enter) = schedule.cast::<PyOnEnterSchedule>() {
-            let label = on_enter.borrow().to_bevy_label(py)?;
-            ScheduleType::OnEnter(label)
+            let on_enter = on_enter.borrow();
+            ScheduleType::OnEnter(on_enter.to_bevy_label(py)?, on_enter.display_name(py)?)
         } else if let Ok(on_exit) = schedule.cast::<PyOnExitSchedule>() {
-            let label = on_exit.borrow().to_bevy_label(py)?;
-            ScheduleType::OnExit(label)
+            let on_exit = on_exit.borrow();
+            ScheduleType::OnExit(on_exit.to_bevy_label(py)?, on_exit.display_name(py)?)
         } else if let Ok(on_transition) = schedule.cast::<PyOnTransitionSchedule>() {
-            let label = on_transition.borrow().to_bevy_label(py)?;
-            ScheduleType::OnTransition(label)
+            let on_transition = on_transition.borrow();
+            ScheduleType::OnTransition(
+                on_transition.to_bevy_label(py)?,
+                on_transition.display_name(py)?,
+            )
         } else {
             return Err(PyTypeError::new_err(
                 pybevy_core::public_error::ADD_SYSTEMS_SCHEDULE_TYPE,
@@ -970,7 +973,9 @@ impl PyApp {
 
         // Handle state schedules separately (OnEnter/OnExit/OnTransition)
         match schedule_type {
-            ScheduleType::OnEnter(_) | ScheduleType::OnExit(_) | ScheduleType::OnTransition(_) => {
+            ScheduleType::OnEnter(_, _)
+            | ScheduleType::OnExit(_, _)
+            | ScheduleType::OnTransition(_, _) => {
                 if pyself.is_reload_temp.get() {
                     for system in systems.iter() {
                         let _ = build_scheduled_system(
@@ -998,14 +1003,17 @@ impl PyApp {
                 pyself.with_bevy_app(|app| {
                     let state_machine_count = Some(registered_state_machine_count(app.world()));
                     let schedule_type = match schedule_type {
-                        ScheduleType::OnEnter(label) => ScheduleType::OnEnter(
+                        ScheduleType::OnEnter(label, name) => ScheduleType::OnEnter(
                             canonicalize_state_schedule_label(app.world(), label),
+                            name,
                         ),
-                        ScheduleType::OnExit(label) => ScheduleType::OnExit(
+                        ScheduleType::OnExit(label, name) => ScheduleType::OnExit(
                             canonicalize_state_schedule_label(app.world(), label),
+                            name,
                         ),
-                        ScheduleType::OnTransition(label) => ScheduleType::OnTransition(
+                        ScheduleType::OnTransition(label, name) => ScheduleType::OnTransition(
                             canonicalize_transition_schedule_label(app.world(), label),
+                            name,
                         ),
                         ScheduleType::Stage(stage) => ScheduleType::Stage(stage),
                     };
@@ -1033,11 +1041,22 @@ impl PyApp {
                     }
 
                     match &schedule_type {
-                        ScheduleType::OnEnter(lbl) => init_state_schedule!(app, lbl),
-                        ScheduleType::OnExit(lbl) => init_state_schedule!(app, lbl),
-                        ScheduleType::OnTransition(lbl) => init_state_schedule!(app, lbl),
+                        ScheduleType::OnEnter(lbl, _) => init_state_schedule!(app, lbl),
+                        ScheduleType::OnExit(lbl, _) => init_state_schedule!(app, lbl),
+                        ScheduleType::OnTransition(lbl, _) => init_state_schedule!(app, lbl),
                         _ => unreachable!(),
                     }
+
+                    let (label, name) = match &schedule_type {
+                        ScheduleType::OnEnter(label, name) | ScheduleType::OnExit(label, name) => {
+                            (label.intern(), name.clone())
+                        }
+                        ScheduleType::OnTransition(label, name) => (label.intern(), name.clone()),
+                        _ => unreachable!(),
+                    };
+                    app.world_mut()
+                        .get_resource_or_insert_with(ScheduleDisplayNameRegistry::default)
+                        .insert(label, name);
 
                     // Add each system to the schedule.
                     for system in systems.iter() {
@@ -1052,17 +1071,21 @@ impl PyApp {
                         )?;
 
                         let label = match &schedule_type {
-                            ScheduleType::OnEnter(lbl) | ScheduleType::OnExit(lbl) => lbl.intern(),
-                            ScheduleType::OnTransition(lbl) => lbl.intern(),
+                            ScheduleType::OnEnter(lbl, _) | ScheduleType::OnExit(lbl, _) => {
+                                lbl.intern()
+                            }
+                            ScheduleType::OnTransition(lbl, _) => lbl.intern(),
                             _ => unreachable!(),
                         };
                         app.world_mut()
                             .get_resource_or_insert_with(DynamicSystemRegistry::default)
                             .register_ticks(current_generation, None, label, ticks);
                         match &schedule_type {
-                            ScheduleType::OnEnter(lbl) => app.add_systems(lbl.clone(), config),
-                            ScheduleType::OnExit(lbl) => app.add_systems(lbl.clone(), config),
-                            ScheduleType::OnTransition(lbl) => app.add_systems(lbl.clone(), config),
+                            ScheduleType::OnEnter(lbl, _) => app.add_systems(lbl.clone(), config),
+                            ScheduleType::OnExit(lbl, _) => app.add_systems(lbl.clone(), config),
+                            ScheduleType::OnTransition(lbl, _) => {
+                                app.add_systems(lbl.clone(), config)
+                            }
                             _ => unreachable!(),
                         };
                     }
