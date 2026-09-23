@@ -5,15 +5,20 @@ use std::{
 
 use bevy::{
     app::{App, Last, MainScheduleOrder, PreStartup, Update},
-    ecs::schedule::{IntoScheduleConfigs, ScheduleLabel, Schedules},
+    ecs::{
+        schedule::{IntoScheduleConfigs, ScheduleLabel, Schedules},
+        system::{Res, ResMut},
+    },
+    time::{Real, Time},
 };
 use pybevy_core::{PyPlugin, ensure_asset_access_registry, resource_initializer};
 use pybevy_ecs::shared::system_runtime::RunProfileSinkResource;
 use pybevy_reload::{
-    DefsFingerprint, EscalationTracker, HotReloadGeneration, HotReloadStats, MemoryOverlayVisible,
-    MemoryProfile, PluginTracker, ReloadMode, ReloadStartupScheduleOrder, StartPaused,
-    SystemMonitor, SystemProfiler, is_verbose, parse_resolution, render_hot_reload_overlay,
-    spawn_hot_reload_overlay_system, update_system_stats,
+    DefsFingerprint, EscalationTracker, HotReloadGeneration, HotReloadStats,
+    InterpreterDiagnostics, MemoryOverlayVisible, MemoryProfile, PluginTracker, ReloadMode,
+    ReloadStartupScheduleOrder, StartPaused, SystemMonitor, SystemProfiler, is_verbose,
+    parse_resolution, render_hot_reload_overlay, spawn_hot_reload_overlay_system,
+    update_system_stats,
 };
 use pyo3::prelude::*;
 
@@ -24,7 +29,7 @@ use super::{
         PendingScheduleCompaction, check_hot_reload_system, compact_retired_generation_systems,
         handle_f5_reload_system,
     },
-    util::detect_gil_status,
+    util::{detect_gil_status, get_python_gc_objects},
 };
 use crate::{
     app::app::{PyApp, drain_last_system_error},
@@ -35,6 +40,19 @@ use crate::{
 #[pyclass(name = "AppReloadState", module = "pybevy.app")]
 pub struct PyAppReloadState {
     state: HotReloadState,
+}
+
+fn refresh_interpreter_diagnostics(
+    real_time: Option<Res<Time<Real>>>,
+    time: Option<Res<Time>>,
+    mut diagnostics: ResMut<InterpreterDiagnostics>,
+) {
+    let now_secs = real_time
+        .as_ref()
+        .map(|time| time.elapsed_secs_f64())
+        .or_else(|| time.as_ref().map(|time| time.elapsed_secs_f64()))
+        .unwrap_or(0.0);
+    diagnostics.refresh_gc_objects_if_due(now_secs, get_python_gc_objects);
 }
 
 impl PyAppReloadState {
@@ -302,6 +320,7 @@ pub fn add_hot_reload_system(
 
     // Insert the memory profiling resource for per-reload tracking
     app.insert_resource(MemoryProfile::default());
+    app.insert_resource(InterpreterDiagnostics::default());
     app.insert_resource(MemoryOverlayVisible(false));
     if verbose {
         eprintln!("   → Memory profiler enabled (F7 to toggle overlay)");
@@ -392,6 +411,7 @@ pub fn add_hot_reload_system(
         Last,
         (
             handle_f5_reload_system,
+            refresh_interpreter_diagnostics,
             update_system_stats,
             render_hot_reload_overlay,
         )

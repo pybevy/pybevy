@@ -10,6 +10,40 @@ pub use pybevy_ecs::shared::system_runtime::SystemStage;
 
 use crate::{state::ReloadMode, util::lock_or_recover};
 
+/// Latest interpreter-owned diagnostics sampled by a backend adapter.
+///
+/// The shared reload layer stores only scalar values. Each interpreter adapter
+/// is responsible for refreshing these values before
+/// [`pybevy_core::DebugSnapshot`] publication.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
+pub struct InterpreterDiagnostics {
+    /// Objects currently tracked by the interpreter's cyclic collector.
+    pub gc_objects: usize,
+    last_gc_update_secs: Option<f64>,
+}
+
+impl InterpreterDiagnostics {
+    const UPDATE_INTERVAL_SECS: f64 = 1.0;
+
+    /// Refresh the GC count on the first call, once per interval, or after a
+    /// clock reset. Returns whether the measurement closure ran.
+    pub fn refresh_gc_objects_if_due(
+        &mut self,
+        now_secs: f64,
+        measure: impl FnOnce() -> usize,
+    ) -> bool {
+        let due = self.last_gc_update_secs.is_none_or(|last_update| {
+            now_secs < last_update || now_secs - last_update >= Self::UPDATE_INTERVAL_SECS
+        });
+        if !due {
+            return false;
+        }
+        self.gc_objects = measure();
+        self.last_gc_update_secs = Some(now_secs);
+        true
+    }
+}
+
 /// Statistics about hot reload events for the overlay
 #[derive(Resource, Clone)]
 pub struct HotReloadStats {
@@ -265,7 +299,7 @@ pub struct ReloadMemorySnapshot {
     pub rss_mb: f64,
     /// Delta from previous snapshot (MB)
     pub delta_mb: f64,
-    /// Python GC tracked objects (sum of gc.get_count())
+    /// Objects tracked by Python's cyclic collector.
     pub gc_objects: usize,
     /// Total systems across all schedules (includes engine infrastructure and
     /// inert prior-generation "zombie" systems that no longer run).
@@ -377,6 +411,27 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+
+    #[test]
+    fn interpreter_diagnostics_refresh_on_first_interval_and_clock_reset() {
+        let mut diagnostics = InterpreterDiagnostics::default();
+        let mut measurements = 0;
+        let mut measure = || {
+            measurements += 1;
+            1_000 + measurements
+        };
+
+        assert!(diagnostics.refresh_gc_objects_if_due(10.0, &mut measure));
+        assert_eq!(diagnostics.gc_objects, 1_001);
+        assert!(!diagnostics.refresh_gc_objects_if_due(10.999, &mut measure));
+        assert_eq!(diagnostics.gc_objects, 1_001);
+        assert!(diagnostics.refresh_gc_objects_if_due(11.0, &mut measure));
+        assert_eq!(diagnostics.gc_objects, 1_002);
+        assert!(diagnostics.refresh_gc_objects_if_due(0.25, &mut measure));
+        assert_eq!(diagnostics.gc_objects, 1_003);
+        drop(measure);
+        assert_eq!(measurements, 3);
+    }
 
     #[test]
     fn test_system_profiler_new() {

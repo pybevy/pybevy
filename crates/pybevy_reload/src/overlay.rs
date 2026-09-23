@@ -29,9 +29,11 @@ use pybevy_core::{
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate};
 
 use crate::{
-    profiling::{HotReloadStats, MemoryProfile, SystemMonitor, SystemProfiler},
-    state::ReloadMode,
-    util::is_verbose,
+    profiling::{
+        HotReloadStats, InterpreterDiagnostics, MemoryProfile, SystemMonitor, SystemProfiler,
+    },
+    state::{HotReloadGeneration, ReloadMode},
+    util::{count_generation_schedule_systems, count_schedule_systems, is_verbose},
 };
 
 /// Whether the app started in paused mode (--pause flag)
@@ -334,16 +336,18 @@ pub fn update_system_stats(world: &mut World) {
         .collect();
     asset_counts.sort_by(|a, b| a.0.cmp(&b.0));
 
-    // Extract memory profiling data
-    let (
-        total_schedule_systems,
-        current_generation_systems,
-        python_gc_objects,
-        memory_growth_mb,
-        memory_peak_mb,
-        memory_warning,
-        reload_memory_snapshots,
-    ) = world
+    let total_schedule_systems = count_schedule_systems(world);
+    let current_generation = world
+        .get_resource::<HotReloadGeneration>()
+        .map_or(0, |generation| generation.current);
+    let current_generation_systems = count_generation_schedule_systems(world, current_generation);
+    let python_gc_objects = world
+        .get_resource::<InterpreterDiagnostics>()
+        .map_or(0, |diagnostics| diagnostics.gc_objects);
+
+    // Historical reload samples remain event snapshots; live counts above do
+    // not create a synthetic entry before the first reload.
+    let (memory_growth_mb, memory_peak_mb, memory_warning, reload_memory_snapshots) = world
         .get_resource::<MemoryProfile>()
         .map(|profile| {
             let current_rss = stats.memory_mb;
@@ -360,17 +364,6 @@ pub fn update_system_stats(world: &mut World) {
                 })
                 .collect();
             (
-                profile
-                    .snapshots
-                    .last()
-                    .map(|s| s.schedule_systems)
-                    .unwrap_or(0),
-                profile
-                    .snapshots
-                    .last()
-                    .map(|s| s.current_generation_systems)
-                    .unwrap_or(0),
-                profile.snapshots.last().map(|s| s.gc_objects).unwrap_or(0),
                 profile.growth_mb(current_rss),
                 profile.peak_rss_mb,
                 profile.is_warning(current_rss),
@@ -767,13 +760,18 @@ mod error_line_tests {
 mod stats_gate_tests {
     use std::{
         collections::{HashMap, VecDeque},
+        sync::{Arc, atomic::AtomicU32},
         time::Duration,
     };
 
-    use bevy::ecs::system::RunSystemOnce;
+    use bevy::ecs::{
+        schedule::{IntoScheduleConfigs, Schedule, ScheduleLabel, Schedules},
+        system::RunSystemOnce,
+    };
     use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
 
     use super::*;
+    use crate::ReloadGenerationSet;
 
     fn stats_world(virtual_elapsed: f64, real_elapsed: f64, last_update: f64) -> World {
         let mut world = World::new();
@@ -813,6 +811,79 @@ mod stats_gate_tests {
             last_reload_frame: 0,
         });
         world
+    }
+
+    #[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
+    struct LiveCountSchedule;
+
+    fn current_scene_system() {}
+
+    fn previous_scene_system() {}
+
+    fn engine_system() {}
+
+    fn install_counted_schedule(world: &mut World, generation: u32) {
+        let mut schedules = Schedules::default();
+        let mut schedule = Schedule::new(LiveCountSchedule);
+        schedule.add_systems((
+            current_scene_system.in_set(ReloadGenerationSet(generation)),
+            engine_system,
+        ));
+        if generation > 0 {
+            schedule.add_systems(previous_scene_system.in_set(ReloadGenerationSet(generation - 1)));
+        }
+        schedule.initialize(world).unwrap();
+        schedules.insert(schedule);
+        world.insert_resource(schedules);
+        world.insert_resource(HotReloadGeneration::new(Arc::new(AtomicU32::new(
+            generation,
+        ))));
+    }
+
+    #[test]
+    fn debug_snapshot_uses_live_counts_without_reload_snapshots() {
+        let mut world = stats_world(0.25, 0.25, -1.0);
+        install_counted_schedule(&mut world, 0);
+        world.insert_resource(MemoryProfile::default());
+        let mut interpreter = InterpreterDiagnostics::default();
+        interpreter.gc_objects = 4_321;
+        world.insert_resource(interpreter);
+
+        update_system_stats(&mut world);
+
+        let snapshot = world.resource::<DebugSnapshot>();
+        assert_eq!(snapshot.reload_count, 0);
+        assert_eq!(snapshot.last_reload_mode, None);
+        assert_eq!(snapshot.total_schedule_systems, 2);
+        assert_eq!(snapshot.current_generation_systems, 1);
+        assert_eq!(snapshot.python_gc_objects, 4_321);
+        assert!(snapshot.reload_memory_snapshots.is_empty());
+    }
+
+    #[test]
+    fn debug_snapshot_keeps_reload_history_separate_from_live_counts() {
+        let mut world = stats_world(1.25, 1.25, 1.0);
+        install_counted_schedule(&mut world, 1);
+        world.resource_mut::<HotReloadStats>().reload_count = 1;
+        world.resource_mut::<HotReloadStats>().last_mode = Some(ReloadMode::Full);
+        let mut profile = MemoryProfile::default();
+        profile.capture_snapshot(1, 120.0, 3_000, 99, 8);
+        world.insert_resource(profile);
+        let mut interpreter = InterpreterDiagnostics::default();
+        interpreter.gc_objects = 4_500;
+        world.insert_resource(interpreter);
+
+        update_system_stats(&mut world);
+
+        let snapshot = world.resource::<DebugSnapshot>();
+        assert_eq!(snapshot.total_schedule_systems, 3);
+        assert_eq!(snapshot.current_generation_systems, 1);
+        assert_eq!(snapshot.python_gc_objects, 4_500);
+        assert_eq!(snapshot.reload_memory_snapshots.len(), 1);
+        let historical = &snapshot.reload_memory_snapshots[0];
+        assert_eq!(historical.schedule_systems, 99);
+        assert_eq!(historical.current_generation_systems, 8);
+        assert_eq!(historical.gc_objects, 3_000);
     }
 
     /// Regression: a full reload resets the virtual clock to zero, which used

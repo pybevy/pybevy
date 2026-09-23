@@ -49,7 +49,8 @@ pub use overlay::{
     update_system_stats,
 };
 pub use profiling::{
-    HotReloadStats, MemoryProfile, ReloadMemorySnapshot, SystemMonitor, SystemProfiler, SystemStage,
+    HotReloadStats, InterpreterDiagnostics, MemoryProfile, ReloadMemorySnapshot, SystemMonitor,
+    SystemProfiler, SystemStage,
 };
 pub use progress::{
     ReloadProgress, ReloadProgressPhase, ReloadProgressReporter, ReloadProgressSink,
@@ -63,6 +64,7 @@ pub use state::{
 pub use system_registry::SystemGenerationRegistry;
 pub use tracker::{KEEP_ALIVE_GENERATIONS, PluginTracker};
 pub use util::{
-    count_schedule_systems, get_current_rss_mb, is_verbose, lock_or_recover, parse_resolution,
+    count_generation_schedule_systems, count_schedule_systems, get_current_rss_mb, is_verbose,
+    lock_or_recover, parse_resolution,
 };
 pub use watcher::{DEFAULT_IGNORE_PATTERNS, FileWatcher, WatchBatch, WatchError};
