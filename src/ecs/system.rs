@@ -245,7 +245,6 @@ impl SystemFunction {
     }
 
     fn new_impl(py: Python, func: Bound<'_, PyAny>, use_cache: bool) -> PyResult<Self> {
-        // Check if function is async (coroutine) - not supported
         let inspect = py.import("inspect")?;
         let is_coroutine_fn = inspect.getattr("iscoroutinefunction")?;
         let is_async = is_coroutine_fn.call1((&func,))?.extract::<bool>()?;
@@ -256,6 +255,21 @@ impl SystemFunction {
                 Use synchronous 'def' instead of 'async def'. \
                 Async functions would break PyBevy's safety guarantees (ValidityFlag becomes invalid when function suspends).",
             ));
+        }
+
+        for (predicate, kind) in [
+            ("isgeneratorfunction", "generator"),
+            ("isasyncgenfunction", "async generator"),
+        ] {
+            if inspect
+                .getattr(predicate)?
+                .call1((&func,))?
+                .extract::<bool>()?
+            {
+                return Err(PyTypeError::new_err(format!(
+                    "{kind} functions cannot be systems or observers; use a synchronous function without yield"
+                )));
+            }
         }
 
         let params = if use_cache {
@@ -411,6 +425,7 @@ impl SystemFunction {
 
         // No annotation falls back to `inspect.Parameter.empty`; `x: None` resolves to `NoneType`.
         let empty_annotation = sig_module.getattr("Parameter")?.getattr("empty")?;
+        let keyword_only = sig_module.getattr("Parameter")?.getattr("KEYWORD_ONLY")?;
         let none_type = py.None().bind(py).get_type();
 
         let mut result = SmallVec::new();
@@ -418,6 +433,12 @@ impl SystemFunction {
         for param in params.try_iter()? {
             let param = param?;
             let field_name = param.getattr("name")?.to_string();
+
+            if param.getattr("kind")?.is(&keyword_only) {
+                return Err(PyTypeError::new_err(format!(
+                    "System function `{name}` parameter `{field_name}` is keyword-only; system parameters must be positional"
+                )));
+            }
 
             // Try to get the resolved type hint first, fall back to raw annotation
             let raw_annotation = type_hints

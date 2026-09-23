@@ -69,7 +69,11 @@ if __name__ == "__main__":
 **Key rules:**
 - `@entrypoint` requires a synchronous `def main(app: App) -> App:` that returns the configured App.
 - End with `if __name__ == "__main__": main().run()` for direct `python scene.py` execution. The CLI and MCP loaders invoke the entrypoint themselves.
+- `App.run()` returns `AppExit.Success()` or `AppExit.Error(code)`. The `pybevy run`
+  and `pybevy dev` commands use an error code as their process status. A direct
+  Python script must call `sys.exit(result.code)` itself if it needs that status.
 - Register systems with `app.add_systems(Stage, fn)` - there is no `@app.system()` decorator
+- Systems and observers must be synchronous functions with positional injected parameters; generator functions and keyword-only injected parameters are rejected at registration.
 - Multiple systems in one stage: `app.add_systems(Update, sys1, sys2, sys3)`
 - Extra plugins go in the entrypoint before `add_systems`
 - Custom plugins require the `@plugin` decorator AND `Plugin` inheritance:
@@ -82,8 +86,10 @@ if __name__ == "__main__":
 - A plugin class is normally installed once. If one class intentionally supports
   multiple instances, define an optional `__pybevy_plugin_key__` property that
   returns a stable string. PyBevy then identifies each instance by
-  `(module.qualname, instance_key)`. Reusing a key raises `RuntimeError`, and a
-  present hook that does not return `str` raises `TypeError` from `add_plugins()`.
+  `(module.qualname, instance_key)`. Re-adding an unkeyed custom Python plugin
+  or reusing a key raises `RuntimeError` instead of silently discarding a new
+  configuration. A present hook that does not return `str` raises `TypeError`
+  from `add_plugins()`.
 - Custom `Plugin.build()` works with hot reload - systems and resources registered inside build() are re-captured on reload
 
 **WASM App rule:** one browser runtime may own one graphical `DefaultPlugins`/winit App. Additional
@@ -101,9 +107,9 @@ with other Apps. Custom and minimal builders skip already installed members;
 repeating a native DefaultPlugins seed on the same App can raise `RuntimeError`.
 Python `PluginGroup` subclasses implement `build(self) -> PluginGroupBuilder`.
 Start an empty custom group with `PluginGroupBuilder.start(MyGroup)` and add its
-members with `.add(...)`. Groups have no installation identity. Existing members
-are skipped by native type or Python qualified name, preserving the hot-reload
-dedup policy; MinimalPlugins installs only missing members. `App.is_plugin_added()`
+members with `.add(...)`. Groups have no installation identity. Already-installed
+native members are skipped by native type; a duplicate custom Python member
+raises `RuntimeError`. MinimalPlugins installs only missing native members. `App.is_plugin_added()`
 accepts plugin classes.
 
 <!-- pybevy-snippet: typecheck -->
@@ -933,6 +939,8 @@ app.add_observer(on_transform_added)
 The `On` parameter supports filtering: `On[EventType, ComponentType]` only
 triggers for events targeting that component. `On[EventType, tuple[A, B]]`
 observes events targeting either component in the tuple.
+Tuple component filters are for custom entity events; lifecycle observers
+such as `On[Add, Transform]` require a single component type.
 
 Lifecycle emissions follow Bevy 0.19 ordering. A first insertion emits `Add`
 then `Insert`; replacement emits `Discard` then `Insert`; explicit removal

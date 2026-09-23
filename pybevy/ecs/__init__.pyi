@@ -265,7 +265,7 @@ class On(Generic[Unpack[OnTypes]]):
     Use with type parameters to specify event type and optional bundle filter:
     - On[EventType] - Observe any event of this type
     - On[EventType, ComponentType] - Only trigger if entity has single component
-    - On[EventType, tuple[CompA, CompB, ...]] - Only trigger if entity has all components in tuple
+    - On[EventType, tuple[CompA, CompB, ...]] - Observe a custom entity event targeting any listed component
     - On[Add, ComponentType] - Observe component addition lifecycle events
     - On[Insert, ComponentType] - Observe component insertion lifecycle events
     - On[Remove, ComponentType] - Observe component removal lifecycle events
@@ -282,7 +282,7 @@ class On(Generic[Unpack[OnTypes]]):
             print(f"Transform added to {entity}")
 
         def on_damage_with_bundle(trigger: On[DamageEvent, tuple[Transform, Health]]) -> None:
-            # Only triggers for entities that have BOTH Transform AND Health components
+            # Triggers when the event targets Transform OR Health
             event = trigger.event()
             entity = trigger.entity()
     """

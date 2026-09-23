@@ -459,7 +459,10 @@ class App:
     def initialize(self) -> None: ...
     def finish(self) -> None: ...
     def update(self) -> None: ...
-    def run(self) -> None: ...
+    def run(self) -> AppExit:
+        """Run until exit and return the exact AppExit variant. A plain Python
+        script must pass Error.code to sys.exit() to set its process status.
+        """
     def _mark_entrypoint(self) -> None: ...
     def world(self, callback: Callable[..., None]) -> None: ...
     def run_system_once(self, func: SystemFn) -> None:
@@ -503,7 +506,15 @@ class App:
         """
     def add_plugins(
         self, *plugins: Plugin | PluginGroup | type[Plugin] | type[PluginGroup] | tuple[Plugin | PluginGroup | type[Plugin] | type[PluginGroup], ...]
-    ) -> App: ...
+    ) -> App:
+        """Install plugins or groups and return this App.
+
+        Re-adding an unkeyed custom Python plugin raises RuntimeError instead
+        of discarding the new instance's configuration. Distinct string
+        ``__pybevy_plugin_key__`` values allow multiple custom instances;
+        reusing a key raises. Already-installed native plugins are normally
+        skipped, while repeating a full DefaultPlugins seed can raise.
+        """
     def add_message(self, message_type: type[MessageTypeVar]) -> App: ...
     def add_observer(self, observer: SystemFn) -> App:
         """Register an observer for an event type.
