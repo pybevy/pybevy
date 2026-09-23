@@ -17,8 +17,9 @@ use bevy::{
 use pybevy_core::{
     AssetAccessRegistry, BorrowableStorage, FieldStorage, ensure_asset_access_registry,
     public_error::{
-        GIZMOS_PLUGIN_REQUIRED, pipe_input_must_be_first, pipe_input_outside_pipe,
-        pipe_target_requires_input, system_resource_not_found,
+        GIZMOS_PLUGIN_REQUIRED, ambiguous_bare_state_resource, pipe_input_must_be_first,
+        pipe_input_outside_pipe, pipe_target_requires_input, system_ambiguous_bare_state_resource,
+        system_resource_not_found,
     },
     registry::global_registry,
     resource_initializer,
@@ -33,6 +34,7 @@ use pybevy_ecs::shared::{
         conflict_error_message, to_param_accesses,
     },
     parity_trace::ParityRunHandle,
+    state_machine_registry::validate_bare_state_resource_topology,
 };
 use pybevy_gizmos::{config::PyGizmoConfigStore, gizmos::PyGizmos};
 use pybevy_reload::{HotReloadGeneration, SystemProfiler};
@@ -69,7 +71,7 @@ use crate::{
             single_runtime::PySingleQuery,
         },
         resource_type::{PyResourceType, ResourceRegistry},
-        state::{PyStateMachineRegistry, is_typed_state_resource, untyped_state_resource_name},
+        state::{PyStateMachineRegistry, is_typed_state_resource, untyped_state_resource_kind},
         system::{AssetTypePtr, SystemFunction, SystemParam, SystemParamType},
         view::{cached_view::CachedPyView, view::PyView, view_param::ViewParamType},
         world::PyWorld,
@@ -265,7 +267,7 @@ fn component_uses_python_storage(comp_type: &PyComponentType, py: Python<'_>) ->
 }
 
 fn resource_uses_python_storage(resource_type: &Bound<'_, PyType>) -> bool {
-    if untyped_state_resource_name(resource_type).is_some()
+    if untyped_state_resource_kind(resource_type).is_some()
         || is_typed_state_resource(resource_type)
     {
         return false;
@@ -523,6 +525,33 @@ pub(crate) fn validate_system_params(
     validate_system_params_with_input(params, func_name, py, false)
 }
 
+/// Reject a bare state resource only when the live App topology already proves
+/// it ambiguous. Runtime materialization repeats this check for machines added
+/// after registration.
+pub(crate) fn validate_registered_state_topology(
+    params: &[SystemParam],
+    func_name: &str,
+    py: Python<'_>,
+    machine_count: Option<usize>,
+) -> PyResult<()> {
+    let Some(machine_count) = machine_count else {
+        return Ok(());
+    };
+    for param in params {
+        let SystemParamType::Resource { type_obj, .. } = &param.ty else {
+            continue;
+        };
+        let kind = untyped_state_resource_kind(type_obj.bind(py));
+        if let Err(kind) = validate_bare_state_resource_topology(kind, machine_count) {
+            return Err(PyTypeError::new_err(system_ambiguous_bare_state_resource(
+                func_name,
+                kind.name(),
+            )));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_pipe_target_params(
     params: &[SystemParam],
     func_name: &str,
@@ -622,7 +651,7 @@ impl KeyResolver<MainKeys> for MainResolver<'_, '_> {
     fn resource_ids(&mut self, world: &mut World, key: &Py<PyType>) -> ResolvedResource {
         let type_bound = key.bind(self.py);
         let resource_type = PyResourceType::try_from((type_bound, self.py)).ok();
-        let untyped_state = untyped_state_resource_name(type_bound).is_some();
+        let untyped_state = untyped_state_resource_kind(type_bound).is_some();
         let Some(rt) = resource_type else {
             return ResolvedResource::default();
         };
@@ -819,14 +848,17 @@ pub(crate) unsafe fn build_run_args<'w, 'c1, 'c2>(
             } => {
                 // Fetch resource from world using PyResourceType
                 let type_bound = type_obj.bind(py);
-                if let Some(state_name) = untyped_state_resource_name(type_bound) {
+                if let Some(state_kind) = untyped_state_resource_kind(type_bound) {
                     // SAFETY: initialize declared a read of PyStateMachineRegistry
                     // for untyped State/NextState parameters.
-                    let ambiguous = unsafe { world.get_resource::<PyStateMachineRegistry>() }
-                        .is_some_and(|registry| registry.is_ambiguous());
-                    if ambiguous {
-                        return Some(PyTypeError::new_err(format!(
-                            "System `{func_name}`: untyped {state_name} resource is ambiguous; use {state_name}[YourState]",
+                    let machine_count = unsafe { world.get_resource::<PyStateMachineRegistry>() }
+                        .map_or(0, PyStateMachineRegistry::len);
+                    if let Err(kind) =
+                        validate_bare_state_resource_topology(Some(state_kind), machine_count)
+                    {
+                        return Some(PyTypeError::new_err(system_ambiguous_bare_state_resource(
+                            func_name,
+                            kind.name(),
                         )));
                     }
                 }
@@ -1316,14 +1348,17 @@ pub(crate) unsafe fn execute_prepared_observer(
                 optional,
             } => {
                 let type_bound = type_obj.bind(py);
-                if let Some(state_name) = untyped_state_resource_name(type_bound)
-                    && world
+                if let Some(state_kind) = untyped_state_resource_kind(type_bound) {
+                    let machine_count = world
                         .get_resource::<PyStateMachineRegistry>()
-                        .is_some_and(|registry| registry.is_ambiguous())
-                {
-                    return Err(PyTypeError::new_err(format!(
-                        "untyped {state_name} resource is ambiguous; use {state_name}[YourState]",
-                    )));
+                        .map_or(0, PyStateMachineRegistry::len);
+                    if let Err(kind) =
+                        validate_bare_state_resource_topology(Some(state_kind), machine_count)
+                    {
+                        return Err(PyTypeError::new_err(ambiguous_bare_state_resource(
+                            kind.name(),
+                        )));
+                    }
                 }
                 let resource_type = PyResourceType::try_from((type_bound, py))?;
                 if *optional {

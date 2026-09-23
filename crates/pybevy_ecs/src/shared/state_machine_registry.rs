@@ -9,6 +9,38 @@ use super::schedule::StateMachineId;
 /// Adapters supply a stable integer identity for each state class.
 pub type StateTypeKey = usize;
 
+/// The two resource channels exposed by one state machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StateResourceKind {
+    Current,
+    Next,
+}
+
+impl StateResourceKind {
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Current => "State",
+            Self::Next => "NextState",
+        }
+    }
+}
+
+/// Validate the one-machine compatibility spelling for a state resource.
+///
+/// A missing or single machine is not ambiguous. Adapters must keep checking
+/// at materialization time because another machine can be registered after the
+/// system itself.
+pub const fn validate_bare_state_resource_topology(
+    kind: Option<StateResourceKind>,
+    machine_count: usize,
+) -> Result<(), StateResourceKind> {
+    match (kind, machine_count > 1) {
+        (Some(kind), true) => Err(kind),
+        _ => Ok(()),
+    }
+}
+
 /// Result of registering a state class identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StateMachineRegisterOutcome {
@@ -109,5 +141,32 @@ mod tests {
 
         assert!(matches!(second, StateMachineRegisterOutcome::Registered(_)));
         assert_ne!(first.machine_id(), second.machine_id());
+    }
+
+    #[test]
+    fn bare_resource_is_ambiguous_only_with_multiple_machines() {
+        for machine_count in [0, 1] {
+            assert_eq!(
+                validate_bare_state_resource_topology(
+                    Some(StateResourceKind::Current),
+                    machine_count,
+                ),
+                Ok(())
+            );
+            assert_eq!(
+                validate_bare_state_resource_topology(Some(StateResourceKind::Next), machine_count),
+                Ok(())
+            );
+        }
+
+        assert_eq!(
+            validate_bare_state_resource_topology(Some(StateResourceKind::Current), 2),
+            Err(StateResourceKind::Current)
+        );
+        assert_eq!(
+            validate_bare_state_resource_topology(Some(StateResourceKind::Next), 3),
+            Err(StateResourceKind::Next)
+        );
+        assert_eq!(validate_bare_state_resource_topology(None, 2), Ok(()));
     }
 }

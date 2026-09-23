@@ -417,6 +417,7 @@ pub(crate) fn build_scheduled_system(
     error_buffer: SystemErrorBuffer,
     system_stage: SystemStage,
     is_startup: bool,
+    state_machine_count: Option<usize>,
 ) -> PyResult<(
     ScheduleConfigs<ScheduleSystem>,
     Vec<DynamicSystemHandle>,
@@ -470,6 +471,7 @@ pub(crate) fn build_scheduled_system(
             error_state.clone(),
             error_buffer,
             system_stage,
+            state_machine_count,
         )?;
         let handle = dynamic_system.handle().clone();
         ticks.leaves.push(dynamic_system.history());
@@ -484,6 +486,7 @@ pub(crate) fn build_scheduled_system(
             system_stage,
             py,
             &mut ticks,
+            state_machine_count,
         )?
     };
     let mut config = if is_startup {
@@ -505,6 +508,7 @@ pub(crate) fn build_scheduled_system(
             error_state.clone(),
             system_stage,
             &mut ticks,
+            state_machine_count,
         )?;
         config.run_if_dyn(condition);
     }
@@ -519,6 +523,7 @@ pub(crate) fn build_scheduled_system(
             error_state.clone(),
             system_stage,
             &mut ticks,
+            state_machine_count,
         )?;
         config.run_if_dyn(condition);
     }
@@ -543,6 +548,7 @@ fn build_pipe_system(
     system_stage: SystemStage,
     py: Python<'_>,
     ticks: &mut SystemTickRegistration,
+    state_machine_count: Option<usize>,
 ) -> PyResult<(ScheduleSystem, Vec<DynamicSystemHandle>)> {
     let mut names = vec![qualified_name(source.bind(py), "system callable")?];
     for target in &targets {
@@ -557,6 +563,7 @@ fn build_pipe_system(
         error_state.clone(),
         error_buffer.clone(),
         system_stage,
+        state_machine_count,
     )?;
     let mut handles = vec![source.handle().clone()];
     ticks.leaves.push(source.history());
@@ -571,6 +578,7 @@ fn build_pipe_system(
                 error_state.clone(),
                 error_buffer.clone(),
                 system_stage,
+                state_machine_count,
             )?;
             handles.push(target.handle().clone());
             ticks.leaves.push(target.history());
@@ -580,8 +588,14 @@ fn build_pipe_system(
                 debug_name(),
             ));
         } else {
-            let target =
-                new_main_unit_target(target, generation, error_state, error_buffer, system_stage)?;
+            let target = new_main_unit_target(
+                target,
+                generation,
+                error_state,
+                error_buffer,
+                system_stage,
+                state_machine_count,
+            )?;
             handles.push(target.handle().clone());
             ticks.leaves.push(target.history());
             let pipeline = Box::new(PipeSystem::new(
@@ -623,32 +637,71 @@ fn build_condition_expr(
     error_state: Arc<Mutex<Vec<PyErr>>>,
     system_stage: SystemStage,
     ticks: &mut SystemTickRegistration,
+    state_machine_count: Option<usize>,
 ) -> PyResult<BoxedCondition> {
     match expression {
         ConditionExpr::Leaf(condition) => {
-            let condition = new_main_condition(condition, generation, error_state, system_stage)?;
+            let condition = new_main_condition(
+                condition,
+                generation,
+                error_state,
+                system_stage,
+                state_machine_count,
+            )?;
             ticks.leaves.push(condition.history());
             Ok(Box::new(condition))
         }
         ConditionExpr::And(left, right) => {
-            let left =
-                build_condition_expr(*left, generation, error_state.clone(), system_stage, ticks)?;
-            let right = build_condition_expr(*right, generation, error_state, system_stage, ticks)?;
+            let left = build_condition_expr(
+                *left,
+                generation,
+                error_state.clone(),
+                system_stage,
+                ticks,
+                state_machine_count,
+            )?;
+            let right = build_condition_expr(
+                *right,
+                generation,
+                error_state,
+                system_stage,
+                ticks,
+                state_machine_count,
+            )?;
             Ok(Box::new(
                 ErasedConditionSystem::new(left).and_then(ErasedConditionSystem::new(right)),
             ))
         }
         ConditionExpr::Or(left, right) => {
-            let left =
-                build_condition_expr(*left, generation, error_state.clone(), system_stage, ticks)?;
-            let right = build_condition_expr(*right, generation, error_state, system_stage, ticks)?;
+            let left = build_condition_expr(
+                *left,
+                generation,
+                error_state.clone(),
+                system_stage,
+                ticks,
+                state_machine_count,
+            )?;
+            let right = build_condition_expr(
+                *right,
+                generation,
+                error_state,
+                system_stage,
+                ticks,
+                state_machine_count,
+            )?;
             Ok(Box::new(
                 ErasedConditionSystem::new(left).or_else(ErasedConditionSystem::new(right)),
             ))
         }
         ConditionExpr::Not(condition) => {
-            let condition =
-                build_condition_expr(*condition, generation, error_state, system_stage, ticks)?;
+            let condition = build_condition_expr(
+                *condition,
+                generation,
+                error_state,
+                system_stage,
+                ticks,
+                state_machine_count,
+            )?;
             Ok(Box::new(not(ErasedConditionSystem::new(condition))))
         }
     }
@@ -666,6 +719,7 @@ fn build_persistent_condition_expr(
             generation,
             error_state,
             system_stage,
+            None,
         )?)),
         ConditionExpr::And(left, right) => {
             let left = build_persistent_condition_expr(

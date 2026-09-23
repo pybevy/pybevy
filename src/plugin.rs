@@ -232,6 +232,7 @@ impl PySystemBuilder {
                 error_state,
                 Arc::new(Mutex::new(None)),
                 system_stage,
+                None,
             )
             .map_err(SystemLoadError::Failed)?;
 

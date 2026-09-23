@@ -78,7 +78,7 @@ use crate::{
             PyNextState, PyOnEnterSchedule, PyOnExitSchedule, PyOnTransitionSchedule, PyState,
             canonicalize_state_schedule_label, canonicalize_transition_schedule_label,
             ensure_state_transition_system_registered, insert_state_machine_resources,
-            state_member_type,
+            registered_state_machine_count, state_member_type,
         },
         system_config::{
             InstalledSystemSetConfigs, build_scheduled_system, build_set_config,
@@ -602,6 +602,7 @@ impl PyApp {
                     error_buffer.clone(),
                     system_stage,
                     is_startup,
+                    None,
                 )
                 .map_err(|error| annotate_registration_error(py, &item, error))?;
             }
@@ -613,6 +614,7 @@ impl PyApp {
                 error_buffer.clone(),
                 system_stage,
                 is_startup,
+                None,
             )
             .map_err(|error| annotate_registration_error(py, system, error))?;
         }
@@ -978,6 +980,7 @@ impl PyApp {
                             error_buffer.clone(),
                             SystemStage::UpdateOrLast,
                             false,
+                            None,
                         )
                         .map_err(|error| annotate_registration_error(py, &system, error))?;
                     }
@@ -993,6 +996,7 @@ impl PyApp {
                 }
 
                 pyself.with_bevy_app(|app| {
+                    let state_machine_count = Some(registered_state_machine_count(app.world()));
                     let schedule_type = match schedule_type {
                         ScheduleType::OnEnter(label) => ScheduleType::OnEnter(
                             canonicalize_state_schedule_label(app.world(), label),
@@ -1044,6 +1048,7 @@ impl PyApp {
                             error_buffer.clone(),
                             SystemStage::UpdateOrLast, // State systems treated like Update
                             false,
+                            state_machine_count,
                         )?;
 
                         let label = match &schedule_type {
@@ -1112,6 +1117,7 @@ impl PyApp {
 
                 // Add systems directly to the app with generation-based run conditions
                 pyself.with_bevy_app(|app| {
+                    let state_machine_count = Some(registered_state_machine_count(app.world()));
                     for system in systems {
                         // Check if this is a ChainedSystems object
                         if let Ok(chained) = system.extract::<PyChainedSystems>() {
@@ -1132,6 +1138,7 @@ impl PyApp {
                                     error_buffer.clone(),
                                     system_stage,
                                     stage.is_startup(),
+                                    state_machine_count,
                                 )?;
                                 configs.push(config);
                                 registrations.push(ticks);
@@ -1176,6 +1183,7 @@ impl PyApp {
                                     error_buffer.clone(),
                                     system_stage,
                                     stage.is_startup(),
+                                    state_machine_count,
                                 )?;
                                 app.world_mut()
                                     .get_resource_or_insert_with(DynamicSystemRegistry::default)
