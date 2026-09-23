@@ -213,6 +213,10 @@ pub fn missing_group_plugin(name: impl Display) -> String {
 pub fn duplicate_plugin_identity(qualified_name: impl Display, key: impl Display) -> String {
     format!("plugin {qualified_name} with __pybevy_plugin_key__='{key}' was added more than once")
 }
+
+pub fn duplicate_unkeyed_plugin_identity(qualified_name: impl Display) -> String {
+    format!("plugin {qualified_name} was added more than once; the second instance was not built")
+}
 pub const ANISOTROPY_TEXTURE_UNAVAILABLE: &str = "anisotropy_texture is unavailable on macOS and iOS: Metal's 16-sampler-per-stage \
      limit is exceeded. anisotropy_strength and anisotropy_rotation still work.";
 pub const MULTI_LAYER_MATERIAL_TEXTURES_UNAVAILABLE: &str = "clearcoat textures are unavailable on macOS and iOS: Metal's 16-sampler-per-stage \

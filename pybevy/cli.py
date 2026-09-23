@@ -16,12 +16,13 @@ from .util.hot_reload import (
 )
 
 if TYPE_CHECKING:
-    from .app import App
+    from .app import App, AppExit
 else:
     try:
-        from .app import App
+        from .app import App, AppExit
     except ImportError:
         App = object
+        AppExit = object
 
 
 class _CreateAppFunction(Protocol):
@@ -684,7 +685,7 @@ def _run_script(
 
         _echo("Watcher thread exiting.")
 
-    def run_app_with_error_handling(app: App, reload_state: object | None) -> None:
+    def run_app_with_error_handling(app: App, reload_state: object | None) -> AppExit:
         """Run the app with proper error handling and reporting"""
         try:
             # Set up hot reload loader if hot reload is enabled
@@ -721,7 +722,7 @@ def _run_script(
 
                 app._set_hot_reload_loader(loader)
 
-            app.run()
+            return app.run()
         except KeyboardInterrupt:
             # This should not happen, since pybevy catches the keyboard interrupts
             _echo("\nApplication interrupted by user")
@@ -777,7 +778,10 @@ def _run_script(
 
         if reload_state is None:
             _echo("App does not have _state attribute. Hot-reload not available.")
-            run_app_with_error_handling(app, None)
+            exit_status = run_app_with_error_handling(app, None)
+            if isinstance(exit_status, AppExit.Error):
+                _echo(f"Application exited with code {exit_status.code}")
+                sys.exit(exit_status.code)
             return
 
         stop_event = threading.Event()
@@ -792,7 +796,7 @@ def _run_script(
         _echo("Hot-reload ready! App running in main thread...")
 
         try:
-            run_app_with_error_handling(app, reload_state)
+            exit_status = run_app_with_error_handling(app, reload_state)
         finally:
             if stop_event and watcher:
                 _echo("\nApplication exited. Stopping watcher thread...")
@@ -802,15 +806,21 @@ def _run_script(
                     _echo("Watcher thread did not stop in time.")
                 else:
                     _echo("Watcher thread stopped.")
+        if isinstance(exit_status, AppExit.Error):
+            _echo(f"Application exited with code {exit_status.code}")
+            sys.exit(exit_status.code)
 
     else:
         _echo(f"Loading and running {script_path}...")
         try:
             app = load_full_app(script_path)
-            run_app_with_error_handling(app, None)
+            exit_status = run_app_with_error_handling(app, None)
             del app
             gc.collect()
 
+            if isinstance(exit_status, AppExit.Error):
+                _echo(f"Application exited with code {exit_status.code}")
+                sys.exit(exit_status.code)
             _echo("Application exited normally")
         except Exception as e:
             _echo(f"Failed to load app: {e}")

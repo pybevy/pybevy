@@ -30,8 +30,8 @@ use pybevy_core::{
     plugin::plugin_registry,
     public_error::{
         NATIVE_PLUGIN_LIFECYCLE, PLUGIN_ADDED_QUERY_TYPE, PLUGIN_GROUP_BUILD_RESULT,
-        PLUGIN_GROUP_LIFECYCLE, duplicate_plugin_identity, plugin_build_error, plugin_key_type,
-        plugin_missing_decorator, plugin_not_a_plugin,
+        PLUGIN_GROUP_LIFECYCLE, duplicate_plugin_identity, duplicate_unkeyed_plugin_identity,
+        plugin_build_error, plugin_key_type, plugin_missing_decorator, plugin_not_a_plugin,
     },
     register_wrapped_reflect_types_for_new_app,
 };
@@ -1370,6 +1370,17 @@ impl PyApp {
                         key,
                     )));
                 }
+                if python_already_added
+                    && bridge.is_none()
+                    && plugin_type
+                        .getattr("__pybevy_plugin_decorated__")
+                        .and_then(|marker| marker.is_truthy())
+                        .unwrap_or(false)
+                {
+                    return Err(PyRuntimeError::new_err(duplicate_unkeyed_plugin_identity(
+                        identity.qualified_name(),
+                    )));
+                }
                 // A present Bevy plugin does not prove the wrapper's PyBevy-side
                 // wiring ran: it can arrive through DefaultPlugins instead.
                 if let Some(bridge) = bridge.as_ref()
@@ -1901,7 +1912,7 @@ impl PyApp {
         Ok(())
     }
 
-    fn run(&self, py: Python) -> PyResult<()> {
+    fn run(&self, py: Python) -> PyResult<Py<PyAny>> {
         self.ensure_group_configuration()?;
         // Require @entrypoint decorator unless running in test mode
         if !self.entrypoint_set.get() {
@@ -1967,7 +1978,7 @@ impl PyApp {
         // Release GIL before running to avoid deadlock with Python systems.
         let run_result = py.detach(|| {
             let mut guard = begin_main_app_operation(app_id, AppOperation::Run)?;
-            {
+            let exit = {
                 let app = guard.app_mut();
                 if let Some(max_frames) = max_frames {
                     app.insert_resource(MaxFrames(max_frames));
@@ -1981,14 +1992,15 @@ impl PyApp {
                     app.add_systems(Last, check_system_errors_and_exit);
                 }
                 let exit = catch_schedule_build_failure(|| app.run())?;
-                *lock_or_recover(&last_exit) = Some(exit);
-            }
+                *lock_or_recover(&last_exit) = Some(exit.clone());
+                exit
+            };
             guard.finish_consumed();
 
             // Clear the system parameter cache after the app finishes
             // to prevent stale entries when function objects are recycled
             clear_system_param_cache();
-            Ok::<(), PyErr>(())
+            Ok::<AppExit, PyErr>(exit)
         });
 
         if let Some(previous) = previous_sigint {
@@ -2002,7 +2014,7 @@ impl PyApp {
             }
         }
 
-        run_result?;
+        let exit = run_result?;
 
         // The frame loop retired Python values into the deferred queue; drain
         // them now that no native mutation is in flight.
@@ -2011,7 +2023,7 @@ impl PyApp {
         // After the event loop exits, check for system errors and raise them
         raise_collected_errors(py, &error_state)?;
 
-        Ok(())
+        materialize_app_exit(py, &exit)
     }
 
     /// Check if a plugin of a given type has been added to the app
