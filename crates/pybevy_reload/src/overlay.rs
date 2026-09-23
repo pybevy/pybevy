@@ -486,10 +486,17 @@ pub fn render_hot_reload_overlay(
 
     let is_paused = start_paused.as_ref().is_some_and(|p| p.0);
     let reload_failed = reload_result.as_ref().is_some_and(|r| r.failed);
+    let previous_scene_preserved = reload_result
+        .as_ref()
+        .is_some_and(|r| r.failed && r.running_previous_generation);
 
     for mut text in query.iter_mut() {
         let last_mode_str = if reload_failed {
-            "FAILED (prev gen)"
+            if previous_scene_preserved {
+                "FAILED (prev scene)"
+            } else {
+                "FAILED (scene not restored)"
+            }
         } else {
             match stats.last_mode {
                 Some(ReloadMode::Full) => "Full",
@@ -965,6 +972,27 @@ mod stats_gate_tests {
     }
 
     #[test]
+    fn overlay_failure_label_tracks_scene_preservation() {
+        for (preserved, expected) in [
+            (true, "FAILED (prev scene)"),
+            (false, "FAILED (scene not restored)"),
+        ] {
+            let mut world = stats_world(120.0, 120.0, 119.0);
+            let status = world.spawn((Text::default(), HotReloadOverlayText)).id();
+            world.insert_resource(ReloadResult {
+                failed: true,
+                running_previous_generation: preserved,
+                ..default()
+            });
+
+            world.run_system_once(render_hot_reload_overlay).unwrap();
+
+            let text = &world.get::<Text>(status).unwrap().0;
+            assert!(text.contains(expected), "{text}");
+        }
+    }
+
+    #[test]
     fn overlay_clears_failed_reload_after_clock_reset() {
         for has_real_time in [true, false] {
             let mut world = stats_world(120.0, 120.0, 119.0);
@@ -990,7 +1018,7 @@ mod stats_gate_tests {
                     .get::<Text>(status)
                     .unwrap()
                     .0
-                    .contains("FAILED (prev gen)")
+                    .contains("FAILED (scene not restored)")
             );
             assert_eq!(world.get::<Text>(error).unwrap().0, "Error: old failure");
             assert_eq!(

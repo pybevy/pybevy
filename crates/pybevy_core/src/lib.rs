@@ -504,6 +504,8 @@ pub use registry::{
 pub use reload_request::{
     CustomComponentEntry, CustomComponentInfo, CustomResourceEntry, CustomResourceInfo,
     LastSystemError, PendingReloadRequest, PyResourceStorage, ReloadRequestMode, ReloadResult,
+    publish_last_system_error, publish_last_system_error_at, publish_reload_failure,
+    publish_reload_failure_at,
 };
 pub use resource::{PyResource, resource_initializer};
 pub use uuid;

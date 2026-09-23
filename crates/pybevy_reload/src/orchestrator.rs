@@ -7,7 +7,9 @@ use bevy::{
     prelude::Without,
     time::{Real, Time},
 };
-use pybevy_core::PluginIdentity;
+use pybevy_core::{
+    PluginIdentity, publish_last_system_error, publish_reload_failure, publish_reload_failure_at,
+};
 
 use crate::{
     BaseEntitySet, ReloadStartupScheduleOrder,
@@ -77,11 +79,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
                 stats.last_reload_time = current_time;
                 stats.last_reload_frame = current_frame;
             }
-            let mut result = world.get_resource_or_insert_with(pybevy_core::ReloadResult::default);
-            result.failed = true;
-            result.failure_reason = Some(e.message.clone());
-            result.failure_traceback = e.traceback.clone();
-            result.running_previous_generation = true;
+            publish_reload_failure(world, e.message.clone(), e.traceback.clone(), true);
 
             return Err(e);
         }
@@ -156,6 +154,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
         result.failed = false;
         result.failure_reason = None;
         result.failure_traceback = None;
+        result.failure_sequence = 0;
         result.running_previous_generation = false;
         result.plugins_added = None;
         result.plugins_removed = None;
@@ -300,7 +299,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
     if let Some(error) = runtime.take_pending_system_error(world)
         && is_verbose()
     {
-        eprintln!("   → Replacing scene after system error: {error}");
+        eprintln!("   → Replacing scene after system error: {}", error.message);
     }
 
     // Snapshot both before Startup: on the first reload Time has not ticked, so both are 0.0.
@@ -391,10 +390,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
             }
 
             let error_msg = format!("Startup panicked: {}", panic_msg);
-            let mut result = world.get_resource_or_insert_with(pybevy_core::ReloadResult::default);
-            result.failed = true;
-            result.failure_reason = Some(error_msg.clone());
-            result.running_previous_generation = true;
+            publish_reload_failure(world, error_msg.clone(), None, false);
 
             runtime.clear_param_cache();
             runtime.retire_handles(&system_handles);
@@ -430,13 +426,19 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
 
     // Roll back on Python Startup exceptions too, so the broken generation stops updating.
     if startup_had_error && mode == ReloadMode::Full {
-        let error_msg = pending_system_error
+        let (error_msg, failure_traceback) = pending_system_error
+            .map(|error| (error.message, error.traceback))
             .or_else(|| {
                 world
                     .get_resource::<pybevy_core::LastSystemError>()
-                    .and_then(|e| e.error.clone())
+                    .and_then(|error| {
+                        error
+                            .error
+                            .clone()
+                            .map(|message| (message, error.traceback.clone()))
+                    })
             })
-            .unwrap_or_else(|| "Startup system error".to_string());
+            .unwrap_or_else(|| ("Startup system error".to_string(), None));
 
         eprintln!(
             "⚠️ [Hot Reload] Startup system error - rolling back to generation {}",
@@ -475,14 +477,23 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
             gen_res.forget_startup_run(new_generation);
         }
 
-        let failure_traceback = world
-            .get_resource::<pybevy_core::LastSystemError>()
-            .and_then(|error| error.traceback.clone());
-        let mut result = world.get_resource_or_insert_with(pybevy_core::ReloadResult::default);
-        result.failed = true;
-        result.failure_reason = Some(error_msg.clone());
-        result.failure_traceback = failure_traceback.clone();
-        result.running_previous_generation = true;
+        let timestamp = world
+            .get_resource::<Time<Real>>()
+            .map(|time| time.elapsed_secs_f64())
+            .unwrap_or(0.0);
+        let sequence = publish_last_system_error(
+            world,
+            error_msg.clone(),
+            failure_traceback.clone(),
+            timestamp,
+        );
+        publish_reload_failure_at(
+            world,
+            error_msg.clone(),
+            failure_traceback.clone(),
+            false,
+            sequence,
+        );
 
         runtime.clear_param_cache();
         runtime.retire_handles(&system_handles);
@@ -665,11 +676,12 @@ fn fail_registration<S: HotReloadStateAccess>(
     hot_reload_state.set_generation(old_generation);
     world.resource_mut::<HotReloadGeneration>().update();
 
-    let mut result = world.get_resource_or_insert_with(pybevy_core::ReloadResult::default);
-    result.failed = true;
-    result.failure_reason = Some(error.message.clone());
-    result.failure_traceback = error.traceback.clone();
-    result.running_previous_generation = true;
+    publish_reload_failure(
+        world,
+        error.message.clone(),
+        error.traceback.clone(),
+        mode == ReloadMode::Partial,
+    );
 
     if mode == ReloadMode::Full {
         require_full_recovery(world);
@@ -707,7 +719,7 @@ mod tests {
     use super::*;
     use crate::{
         profiling::{HotReloadStats, MemoryProfile, SystemProfiler},
-        runtime::{DefsFingerprint, ReloadError, ReloadRuntime},
+        runtime::{DefsFingerprint, PendingSystemError, ReloadError, ReloadRuntime},
     };
 
     /// Minimal mock runtime that succeeds immediately with no systems.
@@ -822,7 +834,7 @@ mod tests {
     struct StartupErrorRuntime {
         retired: Arc<AtomicBool>,
         inject_startup_error: bool,
-        pending_errors: VecDeque<Option<String>>,
+        pending_errors: VecDeque<Option<PendingSystemError>>,
         take_pending_calls: usize,
         fingerprint: DefsFingerprint,
     }
@@ -946,7 +958,7 @@ mod tests {
         }
         fn clear_param_cache(&mut self) {}
         fn trigger_gc(&mut self) {}
-        fn take_pending_system_error(&mut self, _world: &mut World) -> Option<String> {
+        fn take_pending_system_error(&mut self, _world: &mut World) -> Option<PendingSystemError> {
             self.take_pending_calls += 1;
             self.pending_errors.pop_front().flatten()
         }
@@ -1408,9 +1420,20 @@ mod tests {
         let reload_result = world.resource::<pybevy_core::ReloadResult>();
         assert!(reload_result.failed, "ReloadResult.failed should be true");
         assert!(
-            reload_result.running_previous_generation,
-            "should be running previous generation"
+            !reload_result.running_previous_generation,
+            "destructive Full cleanup leaves no intact previous scene"
         );
+        assert_eq!(
+            reload_result.failure_traceback.as_deref(),
+            Some("File \"main.py\", line 5\n  NameError")
+        );
+        let last_error = world.resource::<pybevy_core::LastSystemError>();
+        assert_eq!(
+            last_error.error.as_deref(),
+            Some("NameError: name 'foo' is not defined")
+        );
+        assert_eq!(last_error.traceback, reload_result.failure_traceback);
+        assert_eq!(last_error.sequence, reload_result.failure_sequence);
         assert!(
             retired.load(Ordering::SeqCst),
             "systems from the rejected generation must be retired"
@@ -1430,7 +1453,10 @@ mod tests {
             retired: retired.clone(),
             inject_startup_error: false,
             pending_errors: VecDeque::from([
-                Some("ValueError: outgoing scene failed".to_string()),
+                Some(PendingSystemError {
+                    message: "ValueError: outgoing scene failed".to_string(),
+                    traceback: Some("outgoing traceback".to_string()),
+                }),
                 None,
             ]),
             take_pending_calls: 0,
@@ -1821,8 +1847,8 @@ mod tests {
             Some("File \"scene.py\", line 12, in broken"),
         );
         assert!(
-            reload_result.running_previous_generation,
-            "running_previous_generation should be true",
+            !reload_result.running_previous_generation,
+            "a Full registration failure happens after destructive cleanup",
         );
         assert_eq!(
             state.current_generation(),
@@ -1833,6 +1859,20 @@ mod tests {
         assert!(
             runtime.observers_discarded,
             "failed system registration must release its prepared observer batch"
+        );
+    }
+
+    #[test]
+    fn partial_registration_failure_preserves_previous_scene_status() {
+        let (mut world, gen_counter) = setup_world();
+        let state = MockState::new(gen_counter);
+        let mut runtime = RegisterSystemsErrorRuntime::default();
+
+        assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Partial, &state).is_err());
+
+        assert!(
+            world.resource::<ReloadResult>().running_previous_generation,
+            "a non-escalated Partial failure does not clear the previous scene"
         );
     }
 

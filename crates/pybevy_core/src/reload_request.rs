@@ -9,7 +9,10 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use bevy::{ecs::component::ComponentId, prelude::Resource};
+use bevy::{
+    ecs::{component::ComponentId, world::World},
+    prelude::Resource,
+};
 use pyo3::{Py, PyAny, Python, ffi::PyTypeObject, types::PyType};
 
 /// The mode of reload to perform
@@ -33,6 +36,51 @@ pub struct LastSystemError {
     /// Full Python traceback with file paths and line numbers.
     pub traceback: Option<String>,
     pub timestamp_secs: f64,
+    /// Monotonic App-local publication order used when timestamps reset or tie.
+    pub sequence: u64,
+}
+
+/// Monotonic App-local ordering for reload and live system diagnostics.
+#[derive(Resource, Default)]
+struct ErrorChannelSequence(u64);
+
+fn next_error_sequence(world: &mut World) -> u64 {
+    let mut sequence = world.get_resource_or_insert_with(ErrorChannelSequence::default);
+    sequence.0 = sequence.0.saturating_add(1);
+    sequence.0
+}
+
+fn observe_error_sequence(world: &mut World, observed: u64) {
+    let mut sequence = world.get_resource_or_insert_with(ErrorChannelSequence::default);
+    sequence.0 = sequence.0.max(observed);
+}
+
+/// Publish a new live system diagnostic and return its App-local sequence.
+pub fn publish_last_system_error(
+    world: &mut World,
+    error: String,
+    traceback: Option<String>,
+    timestamp_secs: f64,
+) -> u64 {
+    let sequence = next_error_sequence(world);
+    publish_last_system_error_at(world, error, traceback, timestamp_secs, sequence);
+    sequence
+}
+
+/// Mirror a diagnostic already ordered by another error channel.
+pub fn publish_last_system_error_at(
+    world: &mut World,
+    error: String,
+    traceback: Option<String>,
+    timestamp_secs: f64,
+    sequence: u64,
+) {
+    observe_error_sequence(world, sequence);
+    let mut last_error = world.get_resource_or_insert_with(LastSystemError::default);
+    last_error.error = Some(error);
+    last_error.traceback = traceback;
+    last_error.timestamp_secs = timestamp_secs;
+    last_error.sequence = sequence;
 }
 
 /// Metadata for a registered custom Python component.
@@ -223,7 +271,12 @@ pub struct ReloadResult {
     pub failure_reason: Option<String>,
     /// Python traceback or callable source location for the failure.
     pub failure_traceback: Option<String>,
-    /// Whether the app is running code from a previous generation after a failure
+    /// Monotonic App-local publication order for the failed attempt.
+    pub failure_sequence: u64,
+    /// Whether the previous generation is running with its scene World intact.
+    ///
+    /// A destructive Full failure may reactivate old generation-gated systems
+    /// against an emptied World; that is reported as `false`.
     pub running_previous_generation: bool,
     /// Plugin names added by the last successful reload (restart may be required)
     pub plugins_added: Option<Vec<String>>,
@@ -237,6 +290,41 @@ pub struct ReloadResult {
     /// Whether the current reload attempt is still fetching definition files
     /// asynchronously; a reload response must not be built while this is set.
     pub definition_fetch_in_progress: bool,
+}
+
+/// Publish a failed reload attempt and return its App-local sequence.
+pub fn publish_reload_failure(
+    world: &mut World,
+    message: String,
+    traceback: Option<String>,
+    running_previous_generation: bool,
+) -> u64 {
+    let sequence = next_error_sequence(world);
+    publish_reload_failure_at(
+        world,
+        message,
+        traceback,
+        running_previous_generation,
+        sequence,
+    );
+    sequence
+}
+
+/// Publish a failed reload correlated with an existing diagnostic sequence.
+pub fn publish_reload_failure_at(
+    world: &mut World,
+    message: String,
+    traceback: Option<String>,
+    running_previous_generation: bool,
+    sequence: u64,
+) {
+    observe_error_sequence(world, sequence);
+    let mut result = world.get_resource_or_insert_with(ReloadResult::default);
+    result.failed = true;
+    result.failure_reason = Some(message);
+    result.failure_traceback = traceback;
+    result.failure_sequence = sequence;
+    result.running_previous_generation = running_previous_generation;
 }
 
 /// Storage for custom Python resource values.
@@ -420,6 +508,7 @@ mod tests {
         assert!(r.actual_mode.is_none());
         assert!(r.escalation_reason.is_none());
         assert!(r.failure_reason.is_none());
+        assert_eq!(r.failure_sequence, 0);
         assert!(!r.running_previous_generation);
         assert!(r.plugins_added.is_none());
         assert!(r.plugins_removed.is_none());
@@ -432,5 +521,17 @@ mod tests {
         assert!(e.error.is_none());
         assert!(e.traceback.is_none());
         assert_eq!(e.timestamp_secs, 0.0);
+        assert_eq!(e.sequence, 0);
+    }
+
+    #[test]
+    fn mirrored_error_sequence_advances_next_publication() {
+        let mut world = World::new();
+        publish_last_system_error_at(&mut world, "mirrored".into(), None, 0.0, 40);
+
+        let next = publish_reload_failure(&mut world, "new".into(), None, true);
+
+        assert_eq!(next, 41);
+        assert_eq!(world.resource::<ReloadResult>().failure_sequence, 41);
     }
 }

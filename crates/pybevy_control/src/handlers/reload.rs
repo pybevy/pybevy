@@ -165,19 +165,33 @@ pub fn get_reload_status(world: &mut World) -> Result<serde_json::Value, Control
 
 /// Get the last Python system error
 pub fn get_last_error(world: &mut World) -> Result<serde_json::Value, ControlError> {
-    if let Some(reload_result) = world.get_resource::<ReloadResult>()
-        && reload_result.failed
-        && let Some(failure_reason) = &reload_result.failure_reason
+    let reload_failure = world
+        .get_resource::<ReloadResult>()
+        .filter(|result| result.failed && result.failure_reason.is_some());
+    let live_error = world
+        .get_resource::<pybevy_core::LastSystemError>()
+        .filter(|error| error.error.is_some());
+
+    if let Some(last_error) = live_error
+        && reload_failure.is_none_or(|reload| last_error.sequence > reload.failure_sequence)
     {
         return Ok(serde_json::json!({
-            "error": failure_reason,
+            "error": last_error.error,
+            "traceback": last_error.traceback,
+            "timestamp_secs": last_error.timestamp_secs,
+        }));
+    }
+
+    if let Some(reload_result) = reload_failure {
+        return Ok(serde_json::json!({
+            "error": reload_result.failure_reason,
             "traceback": reload_result.failure_traceback,
             "reload_failed": true,
             "running_previous_generation": reload_result.running_previous_generation,
         }));
     }
 
-    match world.get_resource::<pybevy_core::LastSystemError>() {
+    match live_error {
         Some(last_error) => match &last_error.error {
             Some(error) => Ok(serde_json::json!({
                 "error": error,
@@ -491,6 +505,7 @@ mod tests {
             failed: false,
             failure_reason: None,
             failure_traceback: None,
+            failure_sequence: 0,
             running_previous_generation: false,
             plugins_added: None,
             plugins_removed: None,
@@ -513,6 +528,7 @@ mod tests {
             failed: false,
             failure_reason: None,
             failure_traceback: None,
+            failure_sequence: 0,
             running_previous_generation: false,
             plugins_added: None,
             plugins_removed: None,
@@ -551,6 +567,7 @@ mod tests {
             error: None,
             traceback: None,
             timestamp_secs: 0.0,
+            ..LastSystemError::default()
         });
         let result = get_last_error(&mut world).unwrap();
         assert!(result["error"].is_null());
@@ -563,6 +580,7 @@ mod tests {
             error: Some("boom".to_string()),
             traceback: Some("at line 1".to_string()),
             timestamp_secs: 42.0,
+            ..LastSystemError::default()
         });
         let result = get_last_error(&mut world).unwrap();
         assert_eq!(result["error"], "boom");
@@ -573,18 +591,18 @@ mod tests {
     #[test]
     fn get_last_error_prioritizes_reload_failure() {
         let mut world = World::new();
-        world.insert_resource(LastSystemError {
-            error: Some("downstream error from the previous generation".to_string()),
-            traceback: Some("stale traceback".to_string()),
-            timestamp_secs: 42.0,
-        });
-        world.insert_resource(ReloadResult {
-            failed: true,
-            failure_reason: Some("conflicting component access".to_string()),
-            failure_traceback: Some("  File \"scene.py\", line 17, in broken_system".to_string()),
-            running_previous_generation: true,
-            ..ReloadResult::default()
-        });
+        pybevy_core::publish_last_system_error(
+            &mut world,
+            "downstream error from the previous generation".to_string(),
+            Some("stale traceback".to_string()),
+            42.0,
+        );
+        pybevy_core::publish_reload_failure(
+            &mut world,
+            "conflicting component access".to_string(),
+            Some("  File \"scene.py\", line 17, in broken_system".to_string()),
+            true,
+        );
 
         let result = get_last_error(&mut world).unwrap();
 
@@ -598,12 +616,36 @@ mod tests {
     }
 
     #[test]
+    fn get_last_error_prioritizes_newer_live_system_error() {
+        let mut world = World::new();
+        pybevy_core::publish_reload_failure(
+            &mut world,
+            "Startup failed".to_string(),
+            Some("startup traceback".to_string()),
+            false,
+        );
+        pybevy_core::publish_last_system_error(
+            &mut world,
+            "runtime failed".to_string(),
+            Some("runtime traceback".to_string()),
+            0.0,
+        );
+
+        let result = get_last_error(&mut world).unwrap();
+
+        assert_eq!(result["error"], "runtime failed");
+        assert_eq!(result["traceback"], "runtime traceback");
+        assert!(result.get("reload_failed").is_none());
+    }
+
+    #[test]
     fn get_last_error_uses_system_error_after_successful_reload() {
         let mut world = World::new();
         world.insert_resource(LastSystemError {
             error: Some("current system error".to_string()),
             traceback: None,
             timestamp_secs: 1.0,
+            ..LastSystemError::default()
         });
         world.insert_resource(ReloadResult {
             failed: false,
@@ -697,6 +739,7 @@ mod tests {
             error: Some("old error".into()),
             traceback: Some("old trace".into()),
             timestamp_secs: 1.0,
+            ..Default::default()
         });
         trigger_reload(&mut world, ReloadMode::Full, false, None).unwrap();
         let err = world
@@ -861,6 +904,7 @@ mod tests {
             ),
             traceback: Some("line 42".into()),
             timestamp_secs: 5.0,
+            ..Default::default()
         });
         let (tx, mut rx) = tokio::sync::oneshot::channel();
         world.insert_resource(PendingReloadResponses {
@@ -892,6 +936,7 @@ mod tests {
             ),
             traceback: Some("stale traceback".into()),
             timestamp_secs: 5.0,
+            ..Default::default()
         });
         world.insert_resource(ReloadResult {
             failed: true,
@@ -1025,6 +1070,7 @@ mod tests {
             ),
             traceback: Some("stale traceback".into()),
             timestamp_secs: 5.0,
+            ..Default::default()
         });
         world.insert_resource(ReloadResult {
             failed: true,
@@ -1078,6 +1124,7 @@ mod tests {
             error: Some("old error".into()),
             traceback: None,
             timestamp_secs: 0.5,
+            ..Default::default()
         });
 
         trigger_reload(&mut world, ReloadMode::Full, false, None).unwrap();
@@ -1114,6 +1161,7 @@ mod tests {
             error: Some("old error".into()),
             traceback: None,
             timestamp_secs: 9.0,
+            ..Default::default()
         });
         trigger_reload(&mut world, ReloadMode::Full, false, None).unwrap();
 

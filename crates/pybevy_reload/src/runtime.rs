@@ -51,6 +51,13 @@ pub struct ReloadError {
     pub is_load_failure: bool,
 }
 
+/// Owned system failure drained before the regular `Last` publisher runs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingSystemError {
+    pub message: String,
+    pub traceback: Option<String>,
+}
+
 impl std::fmt::Display for ReloadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.message)
@@ -233,7 +240,7 @@ pub trait ReloadRuntime {
     fn trigger_gc(&mut self);
 
     /// Consume a runtime error buffered before the Last schedule can publish it.
-    fn take_pending_system_error(&mut self, _world: &mut World) -> Option<String> {
+    fn take_pending_system_error(&mut self, _world: &mut World) -> Option<PendingSystemError> {
         None
     }
 

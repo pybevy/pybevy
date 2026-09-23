@@ -171,24 +171,36 @@ set_component {"entity": "sun", "component": "PointLight", "fields": {"intensity
 ## Error Recovery
 
 If a reload introduces a Python error:
-1. Import and entrypoint failures keep the previous world running; rejected
-   system registrations roll back the active generation
+1. Import and entrypoint failures keep the previous world running. A
+   non-escalated Partial registration failure does too. Full reload clears the
+   scene before registration and Startup, so failures after that point roll
+   back the active code generation but cannot restore the previous world. In
+   that case old generation-gated systems can run against the emptied World,
+   while `running_previous_generation` is false because the prior scene is not
+   intact.
 2. Call `get_last_error` to see the traceback
 3. Fix the Python source
 4. Call `reload {"mode": "full"}` to retry
 
-Failed reloads restore the previous scene and helper module registrations, so
-`run_code` can inspect the previous generation. This does not undo arbitrary
-import-time side effects, such as file writes.
+Failed reloads restore the previous scene namespace and helper module
+registrations, so `run_code` can inspect the previous generation's definitions.
+The previous world survives only when failure occurs before Full cleanup or on
+a non-escalated Partial reload. This does not undo arbitrary import-time side
+effects, such as file writes.
+
+`running_previous_generation` means the previous generation is running with
+its scene World intact. It is not merely a code-generation check.
 
 After successful recovery, the debug overlay clears the failure indicator and
 hides the previous error. Full reload resets the scene clocks but does not stall
 overlay or performance-statistics refreshes; errors in the new scene replace
 the displayed error even when their timestamps restart at zero.
 
-Runtime system failures are also printed to stderr once per registered system
-generation; `get_last_error` continues to expose the latest failure. SSE events
-(`/mcp/v1/sse`) broadcast errors in real-time.
+Each distinct runtime system error is printed to stderr at most once per
+registered system generation. Successful calls between repeats do not reset
+this suppression. `get_last_error` exposes the latest failure even after a
+failed reload, while `get_reload_status` retains that reload attempt's result.
+SSE events (`/mcp/v1/sse`) broadcast errors in real-time.
 
 ## Type Re-aliasing (`@component` / `@resource`)
 
@@ -373,8 +385,9 @@ The entity count is unreliable in both directions, so never use it to judge whet
 | Reload failed while | Entities |
 |---|---|
 | importing the module | previous run's entities still there |
-| resolving or registering systems | previous run's entities still there |
-| running a Startup system | scene emptied - entities are cleared *before* Startup re-runs |
+| registering a non-escalated Partial reload | previous run's entities still there |
+| registering a Full reload | scene emptied - entities were already cleared |
+| running a Full-reload Startup system | scene emptied - entities are cleared *before* Startup re-runs |
 
 Always check `get_last_error` first. A full `run_scene` gives a guaranteed clean state.
 
