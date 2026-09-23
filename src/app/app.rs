@@ -1595,7 +1595,7 @@ impl PyApp {
         pyself.with_bevy_app(|app| {
             let world_mut = app.world_mut();
 
-            ObserverRegistry::register_observer(py, &observer, world_mut)?;
+            ObserverRegistry::register_definition_observer(py, &observer, world_mut)?;
 
             Ok(())
         })?;

@@ -156,12 +156,33 @@ pub trait ReloadRuntime {
         generation: u32,
     ) -> Result<(), ReloadError>;
 
+    /// Prepare every entrypoint observer before any live observer is retired.
+    ///
+    /// Backends without interpreter-defined observers use the default no-op.
+    fn prepare_observers(
+        &mut self,
+        _world: &mut World,
+        _defs: &Self::Defs,
+        _mode: ReloadMode,
+    ) -> Result<(), ReloadError> {
+        Ok(())
+    }
+
+    /// Discard a prepared observer batch after later candidate validation fails.
+    fn discard_prepared_observers(&mut self) {}
+
     /// Clear unconditionally on Full reload; runtime registrations never appear in `defs`.
     fn register_observers(
         &mut self,
         world: &mut World,
         defs: &Self::Defs,
     ) -> Result<(), ReloadError>;
+
+    /// Publish the prepared entrypoint observer batch after a Partial reload's
+    /// other fallible registration work has succeeded.
+    fn commit_partial_observers(&mut self, _world: &mut World) -> Result<(), ReloadError> {
+        Ok(())
+    }
 
     /// Register system handles for a generation and gut old-generation systems.
     /// Called by the orchestrator after register_systems succeeds.

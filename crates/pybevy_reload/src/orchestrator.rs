@@ -327,6 +327,11 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
         return Err(e);
     }
 
+    if let Err(e) = runtime.prepare_observers(world, &defs, mode) {
+        fail_registration(world, hot_reload_state, old_generation, mode, &e);
+        return Err(e);
+    }
+
     if mode == ReloadMode::Full
         && let Err(e) = runtime.register_observers(world, &defs)
     {
@@ -361,6 +366,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
     let system_handles = match runtime.register_systems(world, defs, new_generation) {
         Ok(handles) => handles,
         Err(e) => {
+            runtime.discard_prepared_observers();
             fail_registration(world, hot_reload_state, old_generation, mode, &e);
             return Err(e);
         }
@@ -570,6 +576,15 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
     {
         last_error.error = None;
         last_error.traceback = None;
+    }
+
+    if mode == ReloadMode::Partial
+        && let Err(e) = runtime.commit_partial_observers(world)
+    {
+        runtime.discard_prepared_observers();
+        runtime.retire_handles(&system_handles);
+        fail_registration(world, hot_reload_state, old_generation, mode, &e);
+        return Err(e);
     }
 
     runtime.commit_schedule_configs(world);
@@ -1627,7 +1642,11 @@ mod tests {
     }
 
     /// Runtime that returns Err from register_systems.
-    struct RegisterSystemsErrorRuntime;
+    #[derive(Default)]
+    struct RegisterSystemsErrorRuntime {
+        observers_prepared: bool,
+        observers_discarded: bool,
+    }
 
     impl ReloadRuntime for RegisterSystemsErrorRuntime {
         type Defs = ();
@@ -1670,6 +1689,19 @@ mod tests {
             _gen: u32,
         ) -> Result<(), ReloadError> {
             Ok(())
+        }
+        fn prepare_observers(
+            &mut self,
+            _world: &mut World,
+            _defs: &(),
+            _mode: ReloadMode,
+        ) -> Result<(), ReloadError> {
+            self.observers_prepared = true;
+            Ok(())
+        }
+        fn discard_prepared_observers(&mut self) {
+            assert!(self.observers_prepared);
+            self.observers_discarded = true;
         }
         fn register_observers(
             &mut self,
@@ -1785,13 +1817,9 @@ mod tests {
     fn register_systems_error_flags_reload_result() {
         let (mut world, gen_counter) = setup_world();
         let state = MockState::new(gen_counter);
+        let mut runtime = RegisterSystemsErrorRuntime::default();
 
-        let result = perform_reload(
-            &mut world,
-            &mut RegisterSystemsErrorRuntime,
-            ReloadMode::Full,
-            &state,
-        );
+        let result = perform_reload(&mut world, &mut runtime, ReloadMode::Full, &state);
 
         assert!(
             result.is_err(),
@@ -1820,6 +1848,10 @@ mod tests {
             "generation must roll back so the previous generation's gated systems keep running",
         );
         assert_eq!(world.resource::<HotReloadGeneration>().current, 0);
+        assert!(
+            runtime.observers_discarded,
+            "failed system registration must release its prepared observer batch"
+        );
     }
 
     /// register_resources Err must flag ReloadResult.failed and failure_reason.

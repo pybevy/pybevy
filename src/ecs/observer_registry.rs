@@ -14,7 +14,7 @@ use pybevy_core::{
 use pybevy_ecs::shared::{
     observer_registry::{
         LifecycleKind, ObserverEntry as CoreObserverEntry, ObserverEventKey, ObserverFilter,
-        ObserverRegistryCore, ObserverTypeKey, ResolvedObserverComponent,
+        ObserverOrigin, ObserverRegistryCore, ObserverTypeKey, ResolvedObserverComponent,
     },
     system_runtime::{ErrorPolicy, execute_observer},
 };
@@ -54,6 +54,18 @@ impl fmt::Debug for ObserverPayload {
 
 pub type ObserverEntry = CoreObserverEntry<ObserverPayload>;
 
+/// A fully validated observer without a registry entity.
+///
+/// Reload prepares the whole definition batch before selectively retiring the
+/// previous batch, so a bad candidate cannot leave the live scene unobserved.
+pub(crate) struct PreparedObserverRegistration {
+    prepared: Arc<ObserverPayload>,
+    event: ObserverEventKey,
+    filter: ObserverFilter,
+    target: Option<Entity>,
+    origin: ObserverOrigin,
+}
+
 /// PyO3 adapter around the interpreter-neutral observer registry.
 #[derive(Debug, Default, Resource)]
 pub struct ObserverRegistry {
@@ -67,7 +79,16 @@ impl ObserverRegistry {
         func: &Bound<'_, PyAny>,
         world: &mut World,
     ) -> PyResult<Entity> {
-        Self::register(py, func, None, world)
+        Self::register(py, func, None, ObserverOrigin::Runtime, world)
+    }
+
+    /// Register an observer declared by `App.add_observer`.
+    pub fn register_definition_observer(
+        py: Python,
+        func: &Bound<'_, PyAny>,
+        world: &mut World,
+    ) -> PyResult<Entity> {
+        Self::register(py, func, None, ObserverOrigin::AppDefinition, world)
     }
 
     /// Register an observer scoped to one target entity.
@@ -77,15 +98,35 @@ impl ObserverRegistry {
         entity: Entity,
         world: &mut World,
     ) -> PyResult<Entity> {
-        Self::register(py, func, Some(entity), world)
+        Self::register(py, func, Some(entity), ObserverOrigin::Runtime, world)
     }
 
     fn register(
         py: Python,
         func: &Bound<'_, PyAny>,
         target: Option<Entity>,
+        origin: ObserverOrigin,
         world: &mut World,
     ) -> PyResult<Entity> {
+        let prepared = Self::prepare(py, func, target, origin, world)?;
+        Ok(Self::commit_prepared(prepared, world))
+    }
+
+    pub(crate) fn prepare_definition_observer(
+        py: Python,
+        func: &Bound<'_, PyAny>,
+        world: &mut World,
+    ) -> PyResult<PreparedObserverRegistration> {
+        Self::prepare(py, func, None, ObserverOrigin::AppDefinition, world)
+    }
+
+    fn prepare(
+        py: Python,
+        func: &Bound<'_, PyAny>,
+        target: Option<Entity>,
+        origin: ObserverOrigin,
+        world: &mut World,
+    ) -> PyResult<PreparedObserverRegistration> {
         let system_func = SystemFunction::new(py, func.clone())?;
         let (event_type, bundle_filter) = Self::validate_system_function(py, &system_func)?;
 
@@ -95,11 +136,6 @@ impl ObserverRegistry {
         let (event, filter, retained_types) =
             lower_registration(py, world, &event_type, bundle_filter.as_deref())?;
 
-        if !world.contains_resource::<ObserverRegistry>() {
-            world.insert_resource(ObserverRegistry::default());
-        }
-
-        let observer_entity = world.spawn_empty().id();
         let generation = world
             .get_resource::<pybevy_reload::HotReloadGeneration>()
             .map(|generation| generation.current)
@@ -117,8 +153,7 @@ impl ObserverRegistry {
             sinks.error_state,
             sinks.error_buffer,
         );
-        let entry = ObserverEntry {
-            observer_entity,
+        Ok(PreparedObserverRegistration {
             prepared: Arc::new(ObserverPayload {
                 prepared,
                 _retained_types: retained_types,
@@ -126,17 +161,72 @@ impl ObserverRegistry {
             event,
             filter,
             target,
+            origin,
+        })
+    }
+
+    fn commit_prepared(prepared: PreparedObserverRegistration, world: &mut World) -> Entity {
+        if !world.contains_resource::<ObserverRegistry>() {
+            world.insert_resource(ObserverRegistry::default());
+        }
+
+        let observer_entity = world.spawn_empty().id();
+        let entry = ObserverEntry {
+            observer_entity,
+            prepared: prepared.prepared,
+            event: prepared.event,
+            filter: prepared.filter,
+            target: prepared.target,
+            origin: prepared.origin,
         };
 
         let insert_result = world.resource_mut::<ObserverRegistry>().core.insert(entry);
-        if let Err(error) = insert_result {
-            // A freshly spawned entity cannot already be registered. Fail
-            // closed if registry invariants are ever violated.
-            world.despawn(observer_entity);
-            return Err(PyRuntimeError::new_err(error.to_string()));
+        insert_result.expect("a freshly spawned observer entity is unique");
+
+        observer_entity
+    }
+
+    /// Commit a prevalidated entrypoint observer batch.
+    ///
+    /// Full reload preserves its existing all-observer reset. Partial reload
+    /// replaces only App definitions and leaves World/entity observers intact.
+    pub(crate) fn replace_definition_observers(
+        prepared: Vec<PreparedObserverRegistration>,
+        clear_runtime: bool,
+        world: &mut World,
+    ) {
+        let old_entries = world
+            .get_resource_mut::<ObserverRegistry>()
+            .map(|mut registry| registry.clear_all())
+            .unwrap_or_default();
+        let (retired_entries, runtime_entries): (Vec<_>, Vec<_>) = old_entries
+            .into_iter()
+            .partition(|entry| clear_runtime || entry.origin == ObserverOrigin::AppDefinition);
+
+        for entry in &retired_entries {
+            if world.get_entity(entry.observer_entity).is_ok() {
+                world.despawn(entry.observer_entity);
+            }
         }
 
-        Ok(observer_entity)
+        for registration in prepared {
+            Self::commit_prepared(registration, world);
+        }
+
+        if !runtime_entries.is_empty() && !world.contains_resource::<ObserverRegistry>() {
+            world.insert_resource(ObserverRegistry::default());
+        }
+        for entry in runtime_entries {
+            world
+                .resource_mut::<ObserverRegistry>()
+                .core
+                .insert(entry)
+                .expect("a retained runtime observer entity stays unique");
+        }
+
+        // Prepared Python handles drop only after registry borrows and entity
+        // mutations have ended, so finalizers may safely re-enter.
+        drop(retired_entries);
     }
 
     /// Validate the parts of an observer that do not require World access.

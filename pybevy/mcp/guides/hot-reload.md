@@ -191,7 +191,7 @@ Where an observer is registered decides how a reload treats it:
 
 | Registration | In the reload fingerprint? | Full reload | Partial reload |
 |--------------|---------------------------|-------------|----------------|
-| `app.add_observer(fn)` in `@entrypoint` | Yes (escalates Partial to Full when added or changed) | Cleared, then re-registered from the new definitions | Kept as-is |
+| `app.add_observer(fn)` in `@entrypoint` | Yes (escalates Partial to Full when added or changed) | Cleared, then re-registered from the new definitions | Re-registered from the successfully committed definitions |
 | `world.add_observer(fn)` in a system | No | Cleared, then re-created when Startup re-runs | Kept as-is |
 | `entity.observe(fn)` | No | Removed with its target entity, re-created when Startup re-spawns it | Kept as-is |
 
@@ -208,10 +208,11 @@ a `world.add_observer` registration is replaced rather than duplicated. Entity
 observers are removed with their targets and must be registered again when
 Startup creates the replacement entities.
 
-Partial reload preserves observers exactly as it preserves entities and
-resources. A user-event observer registered before the reload keeps matching the
-event class it captured at registration time; re-run `run_scene` if a Partial
-reload leaves an observer bound to a redefined event class.
+Partial reload replaces only observers declared by `app.add_observer` in the
+entrypoint. Their callable and custom-event class therefore follow the committed
+scene generation without duplicate registrations. Observers registered later by
+`world.add_observer` or `entity.observe` remain attached to their existing event
+class and target, just as their runtime entities remain in the World.
 
 ## Plugin Delta Detection
 

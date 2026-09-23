@@ -48,6 +48,16 @@ pub enum ObserverEventKey {
     Lifecycle(LifecycleKind),
 }
 
+/// How an observer entered the registry.
+///
+/// App definitions are replaced from a successfully loaded entrypoint during a
+/// Partial reload. Runtime World and entity registrations remain live.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ObserverOrigin {
+    AppDefinition,
+    Runtime,
+}
+
 /// One component filter resolved in both interpreter and ECS identity spaces.
 ///
 /// Keeping the pair in one value prevents independently-built type-key and
@@ -130,6 +140,7 @@ pub struct ObserverEntry<H> {
     pub event: ObserverEventKey,
     pub filter: ObserverFilter,
     pub target: Option<Entity>,
+    pub origin: ObserverOrigin,
 }
 
 impl<H> Clone for ObserverEntry<H> {
@@ -140,6 +151,7 @@ impl<H> Clone for ObserverEntry<H> {
             event: self.event,
             filter: self.filter.clone(),
             target: self.target,
+            origin: self.origin,
         }
     }
 }
@@ -317,6 +329,24 @@ impl<H> ObserverRegistryCore<H> {
             .flat_map(|(_, entries)| entries)
             .collect()
     }
+
+    /// Remove every entry with one registration origin.
+    ///
+    /// Returned handles must be retired after the caller releases the registry
+    /// resource borrow.
+    pub fn drain_origin(&mut self, origin: ObserverOrigin) -> Vec<ObserverEntry<H>> {
+        let observers = self
+            .by_event
+            .values()
+            .flat_map(|entries| entries.iter())
+            .filter(|entry| entry.origin == origin)
+            .map(|entry| entry.observer_entity)
+            .collect::<Vec<_>>();
+        observers
+            .into_iter()
+            .filter_map(|observer| self.remove(observer))
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -349,6 +379,7 @@ mod tests {
             event,
             filter,
             target,
+            origin: ObserverOrigin::Runtime,
         }
     }
 
@@ -571,6 +602,26 @@ mod tests {
         assert_eq!(snapshot.len(), 1);
         assert_eq!(snapshot[0].prepared.as_str(), "old");
         assert_eq!(registry.snapshot(event, None)[0].prepared.as_str(), "new");
+    }
+
+    #[test]
+    fn drain_origin_removes_only_app_definitions() {
+        let event = ObserverEventKey::User(ObserverTypeKey::new(1));
+        let mut registry = ObserverRegistryCore::default();
+        let mut definition = entry(1, "definition", event, ObserverFilter::default(), None);
+        definition.origin = ObserverOrigin::AppDefinition;
+        registry.insert(definition).unwrap();
+        registry
+            .insert(entry(2, "runtime", event, ObserverFilter::default(), None))
+            .unwrap();
+
+        let removed = registry.drain_origin(ObserverOrigin::AppDefinition);
+
+        assert_eq!(removed.len(), 1);
+        assert_eq!(removed[0].prepared.as_str(), "definition");
+        let remaining = registry.snapshot(event, None);
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].prepared.as_str(), "runtime");
     }
 
     #[test]

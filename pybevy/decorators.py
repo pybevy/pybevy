@@ -10,7 +10,7 @@ from functools import wraps
 from typing import Any, TypeVar, Union, get_args, get_origin, get_type_hints
 from weakref import WeakValueDictionary
 
-from ._internal.reload_modules import _register_resource_assignment_hint_freezer
+from ._internal.reload_modules import _register_annotation_hint_freezer
 from .app import Plugin
 from .ecs import Component, Event, Message, Resource
 from .material import material as material
@@ -243,7 +243,7 @@ class _ResourceAssignmentValidation[RT]:
 
 def _install_resource_assignment_validation(cls: type[RT]) -> None:
     validation = _ResourceAssignmentValidation(cls, cls.__setattr__)
-    _register_resource_assignment_hint_freezer(cls.__module__, validation.freeze_hints)
+    _register_annotation_hint_freezer(cls.__module__, validation.freeze_hints)
 
     def checked_setattr(instance: RT, name: str, value: object) -> None:
         validation.set_value(instance, name, value)
@@ -335,6 +335,21 @@ def _resource_layout_signature(cls: type) -> tuple[object, ...]:
 
 
 CT = TypeVar("CT", bound=Component)
+
+
+class _ComponentAnnotationState:
+    def __init__(self, cls: type[Component]) -> None:
+        self._cls = weakref.ref(cls)
+
+    def freeze_hints(self) -> None:
+        cls = self._cls()
+        if cls is None:
+            return
+        try:
+            hints = get_type_hints(cls)
+        except (NameError, TypeError):
+            hints = dict(getattr(cls, "__annotations__", {}))
+        type.__setattr__(cls, "__annotations__", hints)
 
 
 def clear_component_cache(verbose: bool = False) -> None:
@@ -556,7 +571,13 @@ def _register_component(cls: type[CT], *, storage: str | None = None) -> type[CT
     elif _component_cache_enabled and key in _component_cache:
         if verbose:
             print(f"Using CACHED component: {key}")
-        return _component_cache[key]  # type: ignore
+        cached = _component_cache[key]
+        from ._internal.reload_modules import stage_component_annotations
+
+        # The Bevy component class and its instances keep their stable identity,
+        # while field annotations follow only a successfully committed module.
+        stage_component_annotations(cached, field_hints)
+        return cached  # type: ignore
 
     # Mark the component as properly decorated
     cls.__pybevy_component_decorated__ = True  # type: ignore[attr-defined]
@@ -596,6 +617,9 @@ def _register_component(cls: type[CT], *, storage: str | None = None) -> type[CT
     if _component_cache_enabled:
         if verbose:
             print(f"Caching NEW component: {key}")
+        annotation_state = _ComponentAnnotationState(cls)
+        cls.__pybevy_component_annotation_state__ = annotation_state  # type: ignore[attr-defined]
+        _register_annotation_hint_freezer(cls.__module__, annotation_state.freeze_hints)
         _component_cache[key] = cls
     else:
         if verbose:
