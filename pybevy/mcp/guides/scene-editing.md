@@ -430,7 +430,8 @@ the pose while retaining that projection. `[400, 400]` is the projection center.
 Large orthographic view areas are supported; a small nonzero projection
 determinant is not treated as a singular matrix.
 
-The default camera is the active `Camera3d` with the highest `Camera.order`;
+The default camera for screenshot, stats, and depth captures is the active
+`Camera3d` with the highest `Camera.order`;
 the lowest entity ID breaks a tie. `capture_depth` retains that entity across
 `delay_frames` and uses its current projection, transform, target, viewport,
 and active state when capture begins. It fails if that camera is despawned,
@@ -440,6 +441,10 @@ and cropped to that camera's viewport before `max_width` is applied. Inspect
 `camera_entity_id`, `camera_name`, `camera_order`, `viewport`, and
 `target_camera_passes` in `depth_samples` to identify the selected camera and
 the active passes composited on its target.
+Screenshot and stats also use this camera's target and viewport at capture
+time. If that target cannot be captured, they fail instead of silently using
+another camera's headless readback. Without a `Camera3d`, the existing 2D
+headless screenshot and stats fallback remains available.
 
 `max_width` only downscales captures; it does not increase render resolution.
 Set the window resolution or the camera's render-target image size before

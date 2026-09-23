@@ -524,6 +524,25 @@ fn image_copy_driver(
     }
 }
 
+fn readback_map_ready(
+    result: Result<(), String>,
+    enabled: &AtomicBool,
+    source_entity: Option<Entity>,
+) -> bool {
+    match result {
+        Ok(()) => true,
+        Err(err) => {
+            if enabled.swap(false, Ordering::AcqRel) {
+                error!(
+                    "[receive_image_from_buffer] GPU readback disabled for camera {:?}: buffer mapping failed: {err}",
+                    source_entity
+                );
+            }
+            false
+        }
+    }
+}
+
 /// System that runs after rendering to read pixels and send via channel
 fn receive_image_from_buffer(image_copiers: Res<ImageCopiers>, render_device: Res<RenderDevice>) {
     debug!(
@@ -544,18 +563,18 @@ fn receive_image_from_buffer(image_copiers: Res<ImageCopiers>, render_device: Re
         let (s, r) = crossbeam_channel::bounded(1);
 
         // Map buffer asynchronously
-        buffer_slice.map_async(MapMode::Read, move |result| match result {
-            Ok(r) => s.send(r).expect("Failed to send map update"),
-            Err(err) => panic!("Failed to map buffer: {err}"),
+        buffer_slice.map_async(MapMode::Read, move |result| {
+            let _ = s.send(result.map_err(|err| err.to_string()));
         });
 
         // Poll device to complete the mapping (blocks on native, non-blocking on Web)
-        render_device
-            .poll(PollType::wait_indefinitely())
-            .expect("Failed to poll device for map_async");
-
-        // Wait for mapping to complete
-        r.recv().expect("Failed to receive map_async message");
+        let result = match render_device.poll(PollType::wait_indefinitely()) {
+            Ok(_) => r.recv().unwrap_or_else(|err| Err(err.to_string())),
+            Err(err) => Err(err.to_string()),
+        };
+        if !readback_map_ready(result, &image_copier.enabled, image_copier.source_entity) {
+            continue;
+        }
 
         // Send pixel data to this copier's specific channel
         // Ignore errors (can happen during app shutdown)
