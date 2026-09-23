@@ -65,23 +65,43 @@ pub(crate) fn compact_retired_generation_systems(world: &mut World) {
     }
 }
 
-fn publish_reload_diagnostic(world: &mut World, message: String, traceback: Option<String>) {
-    let timestamp = world
+fn diagnostic_timestamp(world: &World) -> f64 {
+    world
         .get_resource::<Time<Real>>()
         .map(|time| time.elapsed_secs_f64())
-        .unwrap_or(0.0);
-    {
-        let mut last_error =
-            world.get_resource_or_insert_with(pybevy_core::LastSystemError::default);
-        last_error.error = Some(message.clone());
-        last_error.traceback = traceback.clone();
-        last_error.timestamp_secs = timestamp;
+        .unwrap_or(0.0)
+}
+
+fn publish_reload_diagnostic(
+    world: &mut World,
+    message: String,
+    traceback: Option<String>,
+    running_previous_generation: bool,
+) {
+    let timestamp = diagnostic_timestamp(world);
+    let sequence = pybevy_core::publish_reload_failure(
+        world,
+        message.clone(),
+        traceback.clone(),
+        running_previous_generation,
+    );
+    pybevy_core::publish_last_system_error_at(world, message, traceback, timestamp, sequence);
+}
+
+fn mirror_reload_diagnostic(world: &mut World, message: String, traceback: Option<String>) {
+    let failure_sequence = world
+        .get_resource::<pybevy_core::ReloadResult>()
+        .filter(|result| result.failed)
+        .map(|result| result.failure_sequence);
+    match failure_sequence {
+        Some(sequence) => {
+            let timestamp = diagnostic_timestamp(world);
+            pybevy_core::publish_last_system_error_at(
+                world, message, traceback, timestamp, sequence,
+            );
+        }
+        None => publish_reload_diagnostic(world, message, traceback, true),
     }
-    let mut result = world.get_resource_or_insert_with(pybevy_core::ReloadResult::default);
-    result.failed = true;
-    result.failure_reason = Some(message);
-    result.failure_traceback = traceback;
-    result.running_previous_generation = true;
 }
 
 fn run_definition_reload_attempt(
@@ -96,7 +116,7 @@ fn run_definition_reload_attempt(
         let transaction = match ModuleReloadTransaction::new() {
             Ok(transaction) => transaction,
             Err(error) => {
-                publish_reload_diagnostic(world, error.to_string(), None);
+                publish_reload_diagnostic(world, error.to_string(), None, true);
                 return;
             }
         };
@@ -104,13 +124,22 @@ fn run_definition_reload_attempt(
             let mut runtime = Pyo3ReloadRuntime::new(loader_func, error_state);
             perform_reload(world, &mut runtime, mode, &hot_reload_state)
         });
-        if let Err(error) = transaction.finish(result.is_ok()) {
-            publish_reload_diagnostic(world, error.to_string(), None);
+        let result_succeeded = result.is_ok();
+        let failure_preserved_scene = world
+            .get_resource::<pybevy_core::ReloadResult>()
+            .is_some_and(|reload| reload.failed && reload.running_previous_generation);
+        if let Err(error) = transaction.finish(result_succeeded) {
+            publish_reload_diagnostic(
+                world,
+                error.to_string(),
+                None,
+                !result_succeeded && failure_preserved_scene,
+            );
             return;
         }
         if let Err(error) = result {
             let traceback = error.traceback.clone();
-            publish_reload_diagnostic(world, error.message, traceback);
+            mirror_reload_diagnostic(world, error.message, traceback);
         }
     });
 }

@@ -13,7 +13,7 @@ pub struct DebugSnapshot {
 
     pub reload_count: u32,
     pub last_reload_mode: Option<String>,
-    /// Whether the last reload attempt failed (app running previous generation)
+    /// Whether the last reload attempt failed.
     pub reload_failed: bool,
     /// Reason for reload failure, if any
     pub reload_failure_reason: Option<String>,

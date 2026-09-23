@@ -55,7 +55,9 @@ pub use progress::{
     ReloadProgress, ReloadProgressPhase, ReloadProgressReporter, ReloadProgressSink,
     emit_reload_progress,
 };
-pub use runtime::{DefsFingerprint, EscalationTracker, ReloadError, ReloadRuntime};
+pub use runtime::{
+    DefsFingerprint, EscalationTracker, PendingSystemError, ReloadError, ReloadRuntime,
+};
 pub use state::{
     HotReloadGeneration, ReloadGenerationSet, ReloadMode, ReloadRequestState, generation_matches,
     startup_or_reload,

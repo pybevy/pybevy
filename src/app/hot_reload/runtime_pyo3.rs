@@ -14,8 +14,8 @@ use bevy::ecs::{
 use pybevy_core::{PluginIdentity, ReloadRequestMode, ReloadResult};
 use pybevy_ecs::shared::schedule::{StateScheduleLabel, TransitionScheduleLabel};
 use pybevy_reload::{
-    DefsFingerprint, KEEP_ALIVE_GENERATIONS, ReloadError, ReloadMode, ReloadRuntime, SystemStage,
-    is_verbose, lock_or_recover,
+    DefsFingerprint, KEEP_ALIVE_GENERATIONS, PendingSystemError, ReloadError, ReloadMode,
+    ReloadRuntime, SystemStage, is_verbose, lock_or_recover,
 };
 use pyo3::{exceptions::PyRuntimeError, prelude::*, types::PyType};
 
@@ -971,14 +971,12 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
         }
     }
 
-    fn take_pending_system_error(&mut self, world: &mut World) -> Option<String> {
+    fn take_pending_system_error(&mut self, world: &mut World) -> Option<PendingSystemError> {
         let buffer = world.get_resource::<LastErrorBuffer>()?.buffer.clone();
         let error = lock_or_recover(&buffer).take()?;
-        Some(match error.traceback {
-            Some(traceback) if !traceback.is_empty() => {
-                format!("{}\n{}", error.error, traceback)
-            }
-            _ => error.error,
+        Some(PendingSystemError {
+            message: error.error,
+            traceback: error.traceback.filter(|traceback| !traceback.is_empty()),
         })
     }
 

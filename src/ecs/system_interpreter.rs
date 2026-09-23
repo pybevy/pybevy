@@ -1049,9 +1049,6 @@ unsafe impl SystemInterpreter for MainInterpreter {
             // Run-scoped wrappers must drop while Python is attached and
             // before the neutral core invalidates `ctx.validity`.
             state.args.clear();
-            if result.is_ok() {
-                lock_or_recover(&self.error_report).clear();
-            }
             result
         })
     }
@@ -1105,9 +1102,6 @@ unsafe impl SystemInterpreter for MainInterpreter {
             let result = result
                 .map(|()| CallOutcome::Unit)
                 .map_err(|error| Self::failure(py, error));
-            if result.is_ok() {
-                lock_or_recover(&self.error_report).clear();
-            }
             result
         })
     }

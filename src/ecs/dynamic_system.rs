@@ -119,9 +119,8 @@ pub(crate) struct BufferedSystemError {
 
 /// Per-system state for stderr error deduplication.
 ///
-/// Callable resolution updates the generation before a system can fail. A
-/// successful invocation clears the remembered errors, allowing a later
-/// regression to be reported again.
+/// Callable resolution updates the generation before a system can fail. Each
+/// exact error is reported once until the registered generation changes.
 #[derive(Default)]
 pub(crate) struct SystemErrorReportState {
     generation: u32,
@@ -138,10 +137,6 @@ impl SystemErrorReportState {
 
     fn should_report(&mut self, error: &str) -> bool {
         self.reported_errors.insert(error.to_owned())
-    }
-
-    pub(crate) fn clear(&mut self) {
-        self.reported_errors.clear();
     }
 }
 

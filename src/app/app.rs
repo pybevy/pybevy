@@ -252,11 +252,7 @@ pub(crate) fn drain_last_system_error(world: &mut World) {
         .get_resource::<Time<Real>>()
         .map(|t| t.elapsed_secs_f64())
         .unwrap_or(0.0);
-    if let Some(mut last_error) = world.get_resource_mut::<LastSystemError>() {
-        last_error.error = Some(err.error);
-        last_error.traceback = err.traceback;
-        last_error.timestamp_secs = timestamp;
-    }
+    pybevy_core::publish_last_system_error(world, err.error, err.traceback, timestamp);
 }
 
 #[cfg(feature = "native-plugin")]
