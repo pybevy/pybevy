@@ -3,7 +3,9 @@ use bevy::{
     prelude::Resource,
     time::{Time, Virtual},
 };
-use pybevy_core::{PendingReloadRequest, ReloadRequestMode, ReloadResult};
+use pybevy_core::{
+    PendingReloadRequest, ReloadRequestMode, ReloadResult, public_error::reload_error_hint,
+};
 use pybevy_ecs::shared::system_runtime::HotReloadGeneration;
 use tokio::sync::oneshot;
 
@@ -202,6 +204,17 @@ fn definition_fetch_in_progress(world: &World) -> bool {
         .is_some_and(|result| result.definition_fetch_in_progress)
 }
 
+fn add_error_hint(response: &mut serde_json::Value) {
+    let Some(hint) = response
+        .get("error")
+        .and_then(serde_json::Value::as_str)
+        .and_then(reload_error_hint)
+    else {
+        return;
+    };
+    response["hint"] = serde_json::json!(hint);
+}
+
 /// Process pending reload responses (called each frame in Last schedule).
 /// Counts down frames, holds while a definition fetch is still running, then
 /// checks for errors/escalation and sends the deferred response.
@@ -287,6 +300,8 @@ pub fn process_pending_reloads(world: &mut World) {
                 response["error"] = serde_json::json!(null);
             }
 
+            add_error_hint(&mut response);
+
             let _ = reload.response_tx.send(Ok(response));
         }
     }
@@ -339,11 +354,6 @@ pub fn process_pending_reload_and_capture(world: &mut World) {
                 reload_response["status"] = serde_json::json!("error");
                 reload_response["error"] = serde_json::json!(error_msg);
                 reload_response["traceback"] = serde_json::json!(last_error.traceback);
-
-                // Pattern-match error for hints
-                if let Some(h) = generate_error_hint(error_msg) {
-                    reload_response["hint"] = serde_json::json!(h);
-                }
                 has_error = true;
             }
 
@@ -367,6 +377,8 @@ pub fn process_pending_reload_and_capture(world: &mut World) {
                     reload_response["escalation_reason"] = serde_json::json!(reason);
                 }
             }
+
+            add_error_hint(&mut reload_response);
 
             if has_error {
                 // Error during reload - respond immediately without screenshot
@@ -428,76 +440,19 @@ pub fn process_pending_reload_and_capture(world: &mut World) {
     world.insert_resource(pending);
 }
 
-/// Generate error hints from common error patterns.
-fn generate_error_hint(error: &str) -> Option<String> {
-    if error.contains("NameError") {
-        Some("NameError: A variable or import is missing. Check if you need to add an import (e.g., `from pybevy.prelude import *`) or if a variable name is misspelled.".to_string())
-    } else if error.contains("AttributeError") {
-        Some("AttributeError: A method or property doesn't exist on the object. Check the type definition with get_type_definition() or search_api().".to_string())
-    } else if error.contains("TypeError") {
-        Some("TypeError: Wrong argument types or count. Check the constructor signature with get_type_definition().".to_string())
-    } else if error.contains("ImportError") || error.contains("ModuleNotFoundError") {
-        Some("ImportError: A module or name couldn't be imported. Check if the import path is correct.".to_string())
-    } else {
-        None
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, atomic::AtomicU32};
 
-    use pybevy_core::{LastSystemError, PendingReloadRequest, ReloadRequestMode, ReloadResult};
+    use pybevy_core::{
+        LastSystemError, PendingReloadRequest, ReloadRequestMode, ReloadResult,
+        public_error::{
+            RELOAD_ATTRIBUTE_ERROR_HINT, RELOAD_CONSTRUCTOR_TYPE_ERROR_HINT, RELOAD_QUERY_ROW_HINT,
+        },
+    };
 
     use super::*;
     use crate::{bridge::PendingReloadResponse, handlers::screenshot::process_pending_screenshots};
-
-    #[test]
-    fn generate_error_hint_name_error() {
-        let hint = generate_error_hint("NameError: name 'foo' is not defined");
-        assert!(hint.is_some());
-        assert!(hint.unwrap().contains("NameError"));
-    }
-
-    #[test]
-    fn generate_error_hint_attribute_error() {
-        let hint = generate_error_hint("AttributeError: object has no attribute 'bar'");
-        assert!(hint.is_some());
-        assert!(hint.unwrap().contains("AttributeError"));
-    }
-
-    #[test]
-    fn generate_error_hint_type_error() {
-        let hint = generate_error_hint("TypeError: expected 2 arguments, got 3");
-        assert!(hint.is_some());
-        assert!(hint.unwrap().contains("TypeError"));
-    }
-
-    #[test]
-    fn generate_error_hint_import_error() {
-        let hint = generate_error_hint("ImportError: cannot import name 'Xyz'");
-        assert!(hint.is_some());
-        assert!(hint.unwrap().contains("ImportError"));
-    }
-
-    #[test]
-    fn generate_error_hint_module_not_found() {
-        let hint = generate_error_hint("ModuleNotFoundError: No module named 'nonexistent'");
-        assert!(hint.is_some());
-        assert!(hint.unwrap().contains("ImportError"));
-    }
-
-    #[test]
-    fn generate_error_hint_no_match() {
-        let hint = generate_error_hint("something random");
-        assert!(hint.is_none());
-    }
-
-    #[test]
-    fn generate_error_hint_empty_string() {
-        let hint = generate_error_hint("");
-        assert!(hint.is_none());
-    }
 
     #[test]
     fn get_reload_status_empty_world() {
@@ -901,7 +856,9 @@ mod tests {
         world.init_resource::<Time<Virtual>>();
         // Insert an error that happened AFTER the reload was triggered
         world.insert_resource(pybevy_core::LastSystemError {
-            error: Some("runtime crash".into()),
+            error: Some(
+                "TypeError: cannot unpack non-iterable pybevy.transform.Transform object".into(),
+            ),
             traceback: Some("line 42".into()),
             timestamp_secs: 5.0,
         });
@@ -917,8 +874,12 @@ mod tests {
         });
         process_pending_reloads(&mut world);
         let result = rx.try_recv().unwrap().unwrap();
-        assert_eq!(result["error"], "runtime crash");
-        assert!(result.get("traceback").is_some());
+        assert_eq!(
+            result["error"],
+            "TypeError: cannot unpack non-iterable pybevy.transform.Transform object"
+        );
+        assert_eq!(result["traceback"], "line 42");
+        assert_eq!(result["hint"], RELOAD_QUERY_ROW_HINT);
     }
 
     #[test]
@@ -926,13 +887,15 @@ mod tests {
         let mut world = World::new();
         world.init_resource::<Time<Virtual>>();
         world.insert_resource(pybevy_core::LastSystemError {
-            error: Some("unrelated downstream error".into()),
+            error: Some(
+                "TypeError: cannot unpack non-iterable pybevy.transform.Transform object".into(),
+            ),
             traceback: Some("stale traceback".into()),
             timestamp_secs: 5.0,
         });
         world.insert_resource(ReloadResult {
             failed: true,
-            failure_reason: Some("AttributeError: bogus".into()),
+            failure_reason: Some("AttributeError: 'Foo' object has no attribute 'bar'".into()),
             failure_traceback: Some("Traceback: scene.py:42".into()),
             running_previous_generation: true,
             ..ReloadResult::default()
@@ -950,9 +913,16 @@ mod tests {
         process_pending_reloads(&mut world);
         let result = rx.try_recv().unwrap().unwrap();
         assert_eq!(result["status"], "reload_failed");
-        assert_eq!(result["error"], "AttributeError: bogus");
+        assert_eq!(
+            result["error"],
+            "AttributeError: 'Foo' object has no attribute 'bar'"
+        );
         assert_eq!(result["traceback"], "Traceback: scene.py:42");
-        assert_eq!(result["failure_reason"], "AttributeError: bogus");
+        assert_eq!(
+            result["failure_reason"],
+            "AttributeError: 'Foo' object has no attribute 'bar'"
+        );
+        assert_eq!(result["hint"], RELOAD_ATTRIBUTE_ERROR_HINT);
     }
 
     #[test]
@@ -1050,13 +1020,19 @@ mod tests {
         let mut world = World::new();
         world.init_resource::<Time<Virtual>>();
         world.insert_resource(pybevy_core::LastSystemError {
-            error: Some("unrelated downstream error".into()),
+            error: Some(
+                "TypeError: cannot unpack non-iterable pybevy.transform.Transform object".into(),
+            ),
             traceback: Some("stale traceback".into()),
             timestamp_secs: 5.0,
         });
         world.insert_resource(ReloadResult {
             failed: true,
-            failure_reason: Some("conflicting component access".into()),
+            failure_reason: Some(
+                "TypeError: Transform.__new__() takes 0 positional arguments but 1 was given"
+                    .into(),
+            ),
+            failure_traceback: Some("registration traceback".into()),
             running_previous_generation: true,
             ..ReloadResult::default()
         });
@@ -1078,9 +1054,16 @@ mod tests {
         process_pending_reload_and_capture(&mut world);
         let result = rx.try_recv().unwrap().unwrap();
         assert_eq!(result["reload"]["status"], "reload_failed");
-        assert_eq!(result["reload"]["error"], "conflicting component access");
-        assert!(result["reload"]["traceback"].is_null());
-        assert_eq!(result["errors"], "conflicting component access");
+        assert_eq!(
+            result["reload"]["error"],
+            "TypeError: Transform.__new__() takes 0 positional arguments but 1 was given"
+        );
+        assert_eq!(result["reload"]["traceback"], "registration traceback");
+        assert_eq!(result["reload"]["hint"], RELOAD_CONSTRUCTOR_TYPE_ERROR_HINT);
+        assert_eq!(
+            result["errors"],
+            "TypeError: Transform.__new__() takes 0 positional arguments but 1 was given"
+        );
         assert!(result["screenshot"].is_null());
     }
 

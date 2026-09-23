@@ -392,6 +392,8 @@ reload_and_capture {"mode": "full", "pause": true}
 → Returns: {reload: {status, errors}, screenshot: <base64>, entity_count}
 ```
 This replaces the 3-step `reload` → `get_last_error` → `capture_screenshot` workflow.
+On failure, `reload` contains the paired `error` and `traceback` and may contain
+an advisory `hint` for a recognized message. Unknown errors omit `hint`.
 
 ### Multi-Angle Inspection
 

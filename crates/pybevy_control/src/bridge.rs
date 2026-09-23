@@ -498,9 +498,9 @@ pub enum ControlOperation {
     #[schemars(extend("x-feature-gate" = "screenshot"))]
     CaptureDepth(CaptureDepthParams),
 
-    /// Hot-reload the scene (full or partial). Waits for reload to complete before responding - response includes any errors or warnings.
+    /// Hot-reload the scene (full or partial). Waits for reload to complete before responding. Errors include a traceback and may include an advisory, message-specific hint.
     Reload(ReloadParams),
-    /// Primary iteration tool. Reload and capture in one round-trip. Hot-reloads the scene, waits for completion, checks for errors, then captures a screenshot.
+    /// Primary iteration tool. Reload and capture in one round-trip. Hot-reloads the scene, waits for completion, checks for errors, then captures a screenshot. Errors include a traceback and may include an advisory, message-specific hint.
     #[schemars(extend("x-feature-gate" = "screenshot"))]
     ReloadAndCapture(ReloadAndCaptureParams),
     /// Get current reload generation, mode, and enabled state.
