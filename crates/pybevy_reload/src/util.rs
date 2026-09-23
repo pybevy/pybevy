@@ -3,10 +3,13 @@ use std::{
     sync::{Mutex, MutexGuard},
 };
 
-use bevy::ecs::{schedule::Schedules, world::World};
+use bevy::ecs::{
+    schedule::{IntoSystemSet, Schedules, SystemSet},
+    world::World,
+};
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate};
 
-use crate::profiling::SystemMonitor;
+use crate::{profiling::SystemMonitor, state::ReloadGenerationSet};
 
 /// Helper to lock a mutex, recovering from poison if a thread panicked while holding it.
 pub fn lock_or_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -59,10 +62,24 @@ pub fn count_schedule_systems(world: &World) -> usize {
     schedules.iter().map(|(_, s)| s.systems_len()).sum()
 }
 
+/// Count systems assigned to one hot-reload generation across all schedules.
+pub fn count_generation_schedule_systems(world: &World, generation: u32) -> usize {
+    let Some(schedules) = world.get_resource::<Schedules>() else {
+        return 0;
+    };
+    let generation_set = ReloadGenerationSet(generation).into_system_set().intern();
+    schedules
+        .iter()
+        .filter_map(|(_, schedule)| schedule.graph().systems_in_set(generation_set).ok())
+        .map(|systems| systems.len())
+        .sum()
+}
+
 #[cfg(test)]
 mod tests {
     use std::{collections::VecDeque, sync::Arc};
 
+    use bevy::ecs::schedule::{IntoScheduleConfigs, Schedule, ScheduleLabel};
     use sysinfo::{System, get_current_pid};
 
     use super::*;
@@ -111,5 +128,34 @@ mod tests {
         assert_eq!(parse_resolution("1024x768x"), None);
         assert_eq!(parse_resolution("1024xabc"), None);
         assert_eq!(parse_resolution(""), None);
+    }
+
+    #[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
+    struct TestSchedule;
+
+    fn generation_zero_system() {}
+
+    fn generation_one_system() {}
+
+    fn infrastructure_system() {}
+
+    #[test]
+    fn schedule_counts_distinguish_total_and_generation_membership() {
+        let mut world = World::new();
+        let mut schedules = Schedules::default();
+        let mut schedule = Schedule::new(TestSchedule);
+        schedule.add_systems((
+            generation_zero_system.in_set(ReloadGenerationSet(0)),
+            generation_one_system.in_set(ReloadGenerationSet(1)),
+            infrastructure_system,
+        ));
+        schedule.initialize(&mut world).unwrap();
+        schedules.insert(schedule);
+        world.insert_resource(schedules);
+
+        assert_eq!(count_schedule_systems(&world), 3);
+        assert_eq!(count_generation_schedule_systems(&world, 0), 1);
+        assert_eq!(count_generation_schedule_systems(&world, 1), 1);
+        assert_eq!(count_generation_schedule_systems(&world, 2), 0);
     }
 }

@@ -49,7 +49,7 @@ pub struct DebugSnapshot {
     /// systems). Stays flat across reloads while `total_schedule_systems` rises,
     /// which is expected generation accumulation, not a leak.
     pub current_generation_systems: usize,
-    /// Python GC tracked objects (gen0 + gen1 + gen2)
+    /// Objects currently tracked by Python's cyclic collector.
     pub python_gc_objects: usize,
     /// Memory growth since baseline (MB)
     pub memory_growth_mb: f64,
