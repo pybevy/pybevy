@@ -16,7 +16,7 @@ use pyo3::{
 
 use super::{
     convert,
-    dtype::{PyDType, parse_dtype},
+    dtype::{PyDType, check_integer_range, parse_dtype},
     hint,
     kernels::{self, CmpKind, OperandRef, Reduce, extract_operand, gather_scalars, map_array_err},
     lens::ArrayLens,
@@ -435,9 +435,9 @@ impl PyArray {
     fn reshape(&self, shape: &Bound<'_, PyTuple>) -> PyResult<PyArray> {
         // Accept reshape(2, 3) and reshape((2, 3)).
         let new_shape = if shape.len() == 1 {
-            convert::parse_shape(&shape.get_item(0)?)?
+            convert::parse_reshape_shape(&shape.get_item(0)?, self.core.size())?
         } else {
-            convert::parse_shape(shape.as_any())?
+            convert::parse_reshape_shape(shape.as_any(), self.core.size())?
         };
         Ok(PyArray::wrap(
             self.core.reshape(&new_shape).map_err(map_array_err)?,
@@ -625,9 +625,13 @@ impl PyArray {
         }
         if let Some((mask, mask_shape)) = as_bool_mask(index)? {
             let count = mask.iter().filter(|&&m| m).count();
+            let dtype = slf.borrow().core.dtype();
             let values: Vec<Scalar> = {
                 let operand = extract_operand(value)?;
                 let operand = operand.as_kernel();
+                if let OperandRef::Scalar(Scalar::I64(integer)) = operand {
+                    check_integer_range(integer, dtype)?;
+                }
                 match operand {
                     OperandRef::Scalar(v) => vec![v],
                     OperandRef::Array(_) => gather_scalars(operand, &[count])?,
@@ -641,9 +645,13 @@ impl PyArray {
         }
         let ops = parse_index(index)?;
         let plan = slf.borrow().core.plan(&ops).map_err(map_array_err)?;
+        let dtype = slf.borrow().core.dtype();
         let target_shape = plan.shape.clone();
         let values = {
             let operand = extract_operand(value)?;
+            if let OperandRef::Scalar(Scalar::I64(integer)) = operand.as_kernel() {
+                check_integer_range(integer, dtype)?;
+            }
             gather_scalars(operand.as_kernel(), &target_shape)?
         };
         let destination = slf.borrow_mut();
