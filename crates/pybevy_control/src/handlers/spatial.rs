@@ -178,7 +178,7 @@ pub fn compute_penetration(a: &WorldAabb, b: &WorldAabb) -> (f32, &'static str) 
     }
 }
 
-/// Human-readable direction description.
+/// Human-readable world-axis direction description.
 /// Threshold: ignore axes < 15% of dominant axis magnitude.
 pub fn describe_direction(dir: Vec3) -> String {
     if !dir.is_finite() {
@@ -212,9 +212,9 @@ pub fn describe_direction(dir: Vec3) -> String {
     }
     if abs_z > threshold {
         if dir.z > 0.0 {
-            parts.push("+Z (forward)");
+            parts.push("+Z (behind)");
         } else {
-            parts.push("-Z (behind)");
+            parts.push("-Z (forward)");
         }
     }
 
@@ -1750,16 +1750,23 @@ mod tests {
 
     #[test]
     fn describe_direction_negative_z() {
-        let result = describe_direction(Vec3::new(0.0, 0.0, -5.0));
-        assert!(result.contains("-Z (behind)"));
+        assert_eq!(
+            describe_direction(Vec3::new(0.0, 0.0, -5.0)),
+            "-Z (forward)"
+        );
+    }
+
+    #[test]
+    fn describe_direction_positive_z() {
+        assert_eq!(describe_direction(Vec3::new(0.0, 0.0, 5.0)), "+Z (behind)");
     }
 
     #[test]
     fn describe_direction_all_three_axes() {
-        let result = describe_direction(Vec3::new(5.0, 5.0, 5.0));
-        assert!(result.contains("+X (right)"));
-        assert!(result.contains("+Y (above)"));
-        assert!(result.contains("+Z (forward)"));
+        assert_eq!(
+            describe_direction(Vec3::new(5.0, 5.0, -5.0)),
+            "+X (right) and +Y (above) and -Z (forward)"
+        );
     }
 
     #[test]

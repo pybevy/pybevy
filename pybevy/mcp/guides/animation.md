@@ -15,10 +15,15 @@ from pybevy.animation import (
 from pybevy.world_serialization import WorldAsset, WorldAssetRoot, WorldInstanceReady
 from pybevy.gltf import GltfAssetLabel
 
-@component
+@component(storage="python")
 class AnimationToPlay(Component):
     """Stores animation info to apply when the scene is ready."""
-    def __init__(self, graph_handle: Handle[AnimationGraph], index: AnimationNodeIndex):
+    graph_handle: Handle[AnimationGraph]
+    index: AnimationNodeIndex
+
+    def __init__(
+        self, graph_handle: Handle[AnimationGraph], index: AnimationNodeIndex
+    ) -> None:
         self.graph_handle = graph_handle
         self.index = index
 

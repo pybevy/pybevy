@@ -4,7 +4,10 @@ use bevy::{
     ecs::ptr::Ptr,
     math::{Vec2, Vec3},
 };
-use pybevy_core::component_layout::{ComponentLayout, PrimitiveType, PrimitiveValue};
+use pybevy_core::{
+    component_layout::{ComponentLayout, PrimitiveType, PrimitiveValue},
+    public_error,
+};
 
 use crate::handlers::json_float::{float_to_json, nonfinite_float_from_json, require_finite_float};
 
@@ -129,7 +132,14 @@ fn json_f64(value: &serde_json::Value) -> Result<f64, String> {
     value
         .as_f64()
         .or_else(|| nonfinite_float_from_json(value))
-        .ok_or_else(|| "expected a number or non-finite float spelling".to_string())
+        .ok_or_else(|| {
+            if value.is_null() {
+                public_error::COMPONENT_FLOAT_REQUIRED
+            } else {
+                public_error::COMPONENT_FLOAT_EXPECTED_NUMBER
+            }
+            .to_string()
+        })
         .and_then(require_finite_float)
 }
 

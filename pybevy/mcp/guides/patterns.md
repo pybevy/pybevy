@@ -233,8 +233,14 @@ a distinct component type; querying the base does not select its subclasses.
 Define custom components with the `@component` decorator and `Component` base class.
 
 Declare stored fields as class-level annotations, including when writing your
-own `__init__`. Constructor parameters alone do not define stored fields or MCP
-editable fields; `@dataclass` is optional when you supply a constructor.
+own `__init__`, for a stable schema before any instance exists. Constructor
+parameters alone never define fields. For an unannotated Python-storage class,
+`get_component_schema` falls back to public attributes common to every live
+instance. A field with different live types reports `unknown`; an attribute
+missing from any instance is omitted. With no live instance, the schema stays
+empty and non-editable. Inferred fields support editing existing instances but
+do not promise that the class constructor can create an absent component from
+the same field object. `@dataclass` is optional when you supply a constructor.
 
 ```python
 from dataclasses import dataclass
