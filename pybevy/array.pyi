@@ -37,6 +37,9 @@ class Array:
     the reshaping methods, and raise ``TypeError`` naming ``astype`` for
     anything that computes a value. ``arange`` defaults to ``int64``, so
     ``arange(5).astype(float64).sum()`` is the whole-array total.
+    ``reshape`` infers one ``-1`` dimension. Assigning an out-of-range Python
+    integer to a narrow integer array raises ``OverflowError``; float and
+    array casts through ``astype`` can still wrap, so clamp pixel values first.
     """
 
     def __dlpack_device__(self) -> tuple[Literal[1], Literal[0]]: ...

@@ -300,6 +300,9 @@ fn array_from_numpy_scalar(obj: &Bound<'_, PyAny>) -> PyResult<Option<DenseArray
 
 /// Parse a shape argument: an int or a sequence of ints.
 pub fn parse_shape(obj: &Bound<'_, PyAny>) -> PyResult<Vec<usize>> {
+    if obj.is_instance_of::<PyInt>() && obj.lt(0)? {
+        return Err(PyValueError::new_err("negative dimensions are not allowed"));
+    }
     if let Ok(n) = obj.extract::<usize>() {
         return Ok(vec![n]);
     }
@@ -313,7 +316,11 @@ pub fn parse_shape(obj: &Bound<'_, PyAny>) -> PyResult<Vec<usize>> {
         }
         let mut shape = Vec::with_capacity(len);
         for i in 0..len {
-            shape.push(seq.get_item(i)?.extract::<usize>()?);
+            let dimension = seq.get_item(i)?;
+            if dimension.is_instance_of::<PyInt>() && dimension.lt(0)? {
+                return Err(PyValueError::new_err("negative dimensions are not allowed"));
+            }
+            shape.push(dimension.extract::<usize>()?);
         }
         checked_num_elements(&shape).map_err(map_array_err)?;
         return Ok(shape);
@@ -321,6 +328,55 @@ pub fn parse_shape(obj: &Bound<'_, PyAny>) -> PyResult<Vec<usize>> {
     Err(PyTypeError::new_err(
         "shape must be an int or a sequence of ints",
     ))
+}
+
+/// Parse reshape dimensions, inferring exactly one `-1` from the element count.
+pub fn parse_reshape_shape(obj: &Bound<'_, PyAny>, size: usize) -> PyResult<Vec<usize>> {
+    if !is_sequence(obj) {
+        if obj.is_instance_of::<PyInt>() && obj.eq(-1)? {
+            return Ok(vec![size]);
+        }
+        return parse_shape(obj);
+    }
+    let seq = obj.cast::<PySequence>()?;
+    let len = seq.len()?;
+    if len > MAX_NDIM {
+        return Err(PyValueError::new_err(format!(
+            "maximum supported array dimensionality is {MAX_NDIM}, got {len}"
+        )));
+    }
+    let mut shape = Vec::with_capacity(len);
+    let mut inferred = None;
+    for i in 0..len {
+        let dimension = seq.get_item(i)?;
+        if dimension.is_instance_of::<PyInt>() && dimension.eq(-1)? {
+            if inferred.replace(i).is_some() {
+                return Err(PyValueError::new_err(
+                    "can only specify one unknown dimension",
+                ));
+            }
+            shape.push(1);
+        } else if dimension.is_instance_of::<PyInt>() && dimension.lt(0)? {
+            return Err(PyValueError::new_err("negative dimensions are not allowed"));
+        } else {
+            shape.push(dimension.extract::<usize>()?);
+        }
+    }
+    let known_elements = checked_num_elements(&shape).map_err(map_array_err)?;
+    if let Some(index) = inferred {
+        if known_elements == 0 {
+            return Err(PyValueError::new_err(
+                "cannot infer reshape dimension when other dimensions multiply to zero",
+            ));
+        }
+        if size % known_elements != 0 {
+            return Err(PyValueError::new_err(format!(
+                "cannot reshape array of size {size} with inferred dimension"
+            )));
+        }
+        shape[index] = size / known_elements;
+    }
+    Ok(shape)
 }
 
 fn nested(

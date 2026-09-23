@@ -225,6 +225,10 @@ mat = StandardMaterial(base_color_texture=images.add(texture))
 ```
 `data` takes the natural `(height, width, bytes_per_pixel)` uint8 shape;
 `format` defaults to `Rgba8UnormSrgb`.
+The bounded `pybevy.array` also accepts one `-1` in `reshape`. Direct
+out-of-range Python integer writes to a `uint8` array raise `OverflowError`;
+float-to-`uint8` `astype` can wrap instead, so clamp brightness calculations
+to `[0, 255]` before casting.
 
 `Image.new_fill(Extent3d(width=64, height=64, depth_or_array_layers=1), [255, 0, 0, 255])` repeats a *single* pixel
 across the whole texture: solid colours only.
