@@ -490,6 +490,13 @@ fn state_type_qualified_name(state_type: &Bound<'_, PyType>) -> PyResult<String>
     })
 }
 
+fn state_member_qualified_name(state: &Bound<'_, PyAny>) -> PyResult<String> {
+    let state_type = state_member_type(state.py(), state)?;
+    let qualified_type = state_type_qualified_name(state_type.bind(state.py()))?;
+    let member = state.getattr("name")?.extract::<String>()?;
+    Ok(format!("{qualified_type}.{member}"))
+}
+
 /// Drop the generated `State[T]` / `NextState[T]` descriptors on full reload.
 ///
 /// The cache is a dict on the module-level `State`/`NextState` types, keyed by
@@ -961,6 +968,13 @@ impl PyOnEnterSchedule {
         let hash = state_value.hash()? as u64;
         Ok(StateScheduleLabel::on_enter(machine_id, hash))
     }
+
+    pub(crate) fn display_name(&self, py: Python<'_>) -> PyResult<String> {
+        Ok(format!(
+            "OnEnter({})",
+            state_member_qualified_name(self.state_value.bind(py))?
+        ))
+    }
 }
 
 impl PyOnExitSchedule {
@@ -969,6 +983,13 @@ impl PyOnExitSchedule {
         let machine_id = state_machine_id(&state_value.get_type());
         let hash = state_value.hash()? as u64;
         Ok(StateScheduleLabel::on_exit(machine_id, hash))
+    }
+
+    pub(crate) fn display_name(&self, py: Python<'_>) -> PyResult<String> {
+        Ok(format!(
+            "OnExit({})",
+            state_member_qualified_name(self.state_value.bind(py))?
+        ))
     }
 }
 
@@ -980,6 +1001,14 @@ impl PyOnTransitionSchedule {
         let enter_hash = self.entered.bind(py).hash()? as u64;
         Ok(TransitionScheduleLabel::new(
             machine_id, exit_hash, enter_hash,
+        ))
+    }
+
+    pub(crate) fn display_name(&self, py: Python<'_>) -> PyResult<String> {
+        Ok(format!(
+            "OnTransition({} -> {})",
+            state_member_qualified_name(self.exited.bind(py))?,
+            state_member_qualified_name(self.entered.bind(py))?
         ))
     }
 }

@@ -225,6 +225,11 @@ When plugins are added or removed across reloads, the reload system detects the 
 - **Removed plugins**: Reported as `plugins_removed` (restart may be required)
 - Core Bevy plugins (DefaultPlugins, etc.) cannot be hot-removed - a restart is needed
 
+The delta compares with the last successfully committed generation, starting
+with the initial App declarations, and is reported once. An unchanged reload
+reports neither field, and a failed candidate does not publish or advance the
+comparison baseline.
+
 New bridge-backed Rust plugins cannot be installed into an App that has already
 started. If `plugins_added` includes one, use `run_scene` before relying on its
 resources or systems. For custom materials, install `ShaderMaterialPlugin()` on
@@ -300,17 +305,31 @@ allocator and driver caching can still keep reported memory above its startup le
 
 ## System Rename/Removal Detection
 
-When systems are renamed or removed across reloads, the reload system detects the delta:
+After a successful reload, removed or renamed callable names are logged and
+reported by `get_reload_status` as `systems_removed`. Failed candidates do not
+change this comparison baseline. The field is a distinct-name delta for that
+successful reload, so registering the same callable more than once does
+not repeat its name.
 
-- **Removed/renamed systems**: Logged as a warning and reported in `get_reload_status` as `systems_removed`
-- Stale schedule entries from old systems remain in Bevy's schedule graph (Bevy does not support removing individual systems)
-- Old systems are disabled via generation guards and will not execute, but may appear in schedule conflict error messages
-- **Use `run_scene`** (not `reload`) to fully clear stale system registrations
+Bevy schedule nodes are retained for one rollback generation, then physically
+compacted after `Last` when the next generation commits. This applies even when
+the new generation registers no systems. Generation guards keep predecessor
+nodes from executing. During that bounded window, `get_system_list()` reports:
 
-Call `get_system_list()` for scene-owned systems and their active, retained, or
-retired reload state. Pass `include_internal=True` only when diagnosing the
-full Bevy scheduler, including PyBevy and engine-internal systems. Resource
-clients can read `scene://systems` or `scene://systems/all`, respectively.
+- `active`: a current-generation node;
+- `rollback_retained`: a predecessor occurrence with a matching current
+  schedule-local name occurrence;
+- `retired`: an unmatched predecessor occurrence, such as a removed or renamed
+  system, waiting for compaction.
+
+After compaction, retired entries no longer appear. Use `run_scene` when you
+need an immediate fresh process rather than the bounded reload window. Pass
+`include_internal=True` only when diagnosing the full Bevy scheduler, including
+PyBevy and engine-internal systems. Resource clients can read
+`scene://systems` or `scene://systems/all`, respectively.
+State schedules use stable qualified names such as `OnEnter(game.Phase.READY)`,
+`OnExit(game.Phase.READY)`, and
+`OnTransition(game.Phase.READY -> game.Phase.RUNNING)`.
 
 ## Time Continuity
 

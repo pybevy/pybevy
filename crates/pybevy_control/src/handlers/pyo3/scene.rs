@@ -23,7 +23,10 @@ use pybevy_core::{
     registry::global_registry::{all_component_bridges, all_resource_bridges},
     source_location::SourceLocation,
 };
-use pybevy_ecs::shared::system_runtime::{HotReloadGeneration, ReloadGenerationSet};
+use pybevy_ecs::shared::{
+    schedule::ScheduleDisplayNameRegistry,
+    system_runtime::{HotReloadGeneration, ReloadGenerationSet},
+};
 use pybevy_transform::global_transform::PyGlobalTransform;
 #[cfg(test)]
 use pyo3::ffi;
@@ -1420,6 +1423,7 @@ pub fn list_systems(
         .get_resource::<HotReloadGeneration>()
         .map(|generation| generation.current);
     let effective_current_generation = current_generation.unwrap_or(0);
+    let display_names = world.get_resource::<ScheduleDisplayNameRegistry>();
 
     if let Some(schedules) = world.get_resource::<Schedules>() {
         for (label, schedule) in schedules.iter() {
@@ -1444,68 +1448,113 @@ pub fn list_systems(
                     .systems_in_set(ReloadGenerationSet(previous).into_system_set().intern())
                     .ok()
             });
-            let retired_initial_systems = current_generation
-                .filter(|generation| *generation > 1)
-                .and_then(|_| {
-                    schedule
-                        .graph()
-                        .systems_in_set(ReloadGenerationSet(0).into_system_set().intern())
-                        .ok()
-                });
+            let retired_generation_systems = current_generation
+                .map(|generation| {
+                    (0..generation.saturating_sub(1))
+                        .flat_map(|retired_generation| {
+                            schedule
+                                .graph()
+                                .systems_in_set(
+                                    ReloadGenerationSet(retired_generation)
+                                        .into_system_set()
+                                        .intern(),
+                                )
+                                .ok()
+                                .into_iter()
+                                .flat_map(move |systems| {
+                                    systems.iter().map(move |key| (*key, retired_generation))
+                                })
+                        })
+                        .collect::<HashMap<_, _>>()
+                })
+                .unwrap_or_default();
             let mut active_system_count = 0;
             let mut retained_system_count = 0;
             let mut retired_system_count = 0;
             let mut stage_scene_system_count = 0;
             let mut stage_internal_system_count = 0;
             // Graph may be uninitialized; degrade to empty list rather than failing.
-            let systems: Vec<serde_json::Value> = match schedule.systems() {
-                Ok(iter) => iter
-                    .filter_map(|(key, system)| {
-                        let in_current_generation = current_generation_systems
-                            .is_some_and(|systems| systems.contains(&key));
-                        let in_retained_generation = retained_generation_systems
-                            .is_some_and(|systems| systems.contains(&key));
-                        let in_retired_initial_generation =
-                            retired_initial_systems.is_some_and(|systems| systems.contains(&key));
-                        let scene_owned = in_current_generation
-                            || in_retained_generation
-                            || in_retired_initial_generation;
-                        if scene_owned {
-                            stage_scene_system_count += 1;
-                        } else {
-                            stage_internal_system_count += 1;
+            let schedule_systems = schedule.systems().map(|iter| {
+                iter.map(|(key, system)| (key, system.name().to_string()))
+                    .collect::<Vec<_>>()
+            });
+            let systems: Vec<serde_json::Value> = match schedule_systems {
+                Ok(schedule_systems) => {
+                    let mut current_name_counts = HashMap::<String, usize>::new();
+                    for (key, name) in &schedule_systems {
+                        if current_generation_systems.is_some_and(|systems| systems.contains(key)) {
+                            *current_name_counts.entry(name.clone()).or_default() += 1;
                         }
+                    }
 
-                        if !include_internal && !scene_owned {
-                            return None;
-                        }
+                    schedule_systems
+                        .into_iter()
+                        .filter_map(|(key, system_name)| {
+                            let in_current_generation = current_generation_systems
+                                .is_some_and(|systems| systems.contains(&key));
+                            let in_retained_generation = retained_generation_systems
+                                .is_some_and(|systems| systems.contains(&key));
+                            let retired_generation = retired_generation_systems.get(&key).copied();
+                            let scene_owned = in_current_generation
+                                || in_retained_generation
+                                || retired_generation.is_some();
+                            if scene_owned {
+                                stage_scene_system_count += 1;
+                            } else {
+                                stage_internal_system_count += 1;
+                            }
 
-                        let (active, reload_generation, reload_state) = if in_current_generation {
-                            active_system_count += 1;
-                            (true, Some(effective_current_generation), "active")
-                        } else if in_retained_generation {
-                            retained_system_count += 1;
-                            (
-                                false,
-                                retained_generation.map(|(_, previous)| previous),
-                                "rollback_retained",
-                            )
-                        } else if in_retired_initial_generation {
-                            retired_system_count += 1;
-                            (false, Some(0), "retired")
-                        } else {
-                            active_system_count += 1;
-                            (true, None, "active")
-                        };
-                        Some(serde_json::json!({
-                            "name": system.name().to_string(),
-                            "origin": if scene_owned { "scene" } else { "internal" },
-                            "active": active,
-                            "reload_generation": reload_generation,
-                            "reload_state": reload_state,
-                        }))
-                    })
-                    .collect(),
+                            if !include_internal && !scene_owned {
+                                return None;
+                            }
+
+                            let (active, reload_generation, reload_state) = if in_current_generation
+                            {
+                                active_system_count += 1;
+                                (true, Some(effective_current_generation), "active")
+                            } else if in_retained_generation {
+                                let has_current_successor = current_name_counts
+                                    .get_mut(&system_name)
+                                    .is_some_and(|remaining| {
+                                        if *remaining == 0 {
+                                            false
+                                        } else {
+                                            *remaining -= 1;
+                                            true
+                                        }
+                                    });
+                                if has_current_successor {
+                                    retained_system_count += 1;
+                                    (
+                                        false,
+                                        retained_generation.map(|(_, previous)| previous),
+                                        "rollback_retained",
+                                    )
+                                } else {
+                                    retired_system_count += 1;
+                                    (
+                                        false,
+                                        retained_generation.map(|(_, previous)| previous),
+                                        "retired",
+                                    )
+                                }
+                            } else if let Some(retired_generation) = retired_generation {
+                                retired_system_count += 1;
+                                (false, Some(retired_generation), "retired")
+                            } else {
+                                active_system_count += 1;
+                                (true, None, "active")
+                            };
+                            Some(serde_json::json!({
+                                "name": system_name,
+                                "origin": if scene_owned { "scene" } else { "internal" },
+                                "active": active,
+                                "reload_generation": reload_generation,
+                                "reload_state": reload_state,
+                            }))
+                        })
+                        .collect()
+                }
                 Err(_) => Vec::new(),
             };
 
@@ -1519,7 +1568,9 @@ pub fn list_systems(
             }
 
             stages.insert(
-                format!("{label:?}"),
+                display_names
+                    .and_then(|registry| registry.get_by_label(label))
+                    .map_or_else(|| format!("{label:?}"), str::to_owned),
                 serde_json::json!({
                     "system_count": stage_visible_system_count,
                     "total_system_count": stage_total_system_count,
@@ -2246,6 +2297,9 @@ mod tests {
         prelude::{Camera3d, GlobalTransform, Transform},
     };
     use pybevy_color::color::PyColor;
+    use pybevy_ecs::shared::schedule::{
+        StateMachineId, StateScheduleLabel, TransitionScheduleLabel,
+    };
     use pyo3::types::{PyAnyMethods, PyDict, PyList, PyTuple};
 
     // Force linker to include inventory entries needed by these handler tests.
@@ -4025,6 +4079,51 @@ mod tests {
     }
 
     #[test]
+    fn list_systems_uses_registered_state_schedule_names() {
+        let mut world = World::new();
+        let first_enter = StateScheduleLabel::on_enter(StateMachineId::new(1), 7);
+        let second_exit = StateScheduleLabel::on_exit(StateMachineId::new(2), 7);
+        let transition = TransitionScheduleLabel::new(StateMachineId::new(1), 7, 8);
+        let mut schedules = Schedules::default();
+        for label in [
+            first_enter.intern(),
+            second_exit.intern(),
+            transition.intern(),
+        ] {
+            let mut schedule = Schedule::new(label);
+            schedule.add_systems(sys_alpha);
+            schedule.initialize(&mut world).unwrap();
+            schedules.insert(schedule);
+        }
+        let mut ordinary = Schedule::new(TestStage);
+        ordinary.add_systems(sys_beta);
+        ordinary.initialize(&mut world).unwrap();
+        schedules.insert(ordinary);
+        world.insert_resource(schedules);
+
+        let mut names = ScheduleDisplayNameRegistry::default();
+        names.insert(first_enter.intern(), "OnEnter(game.First.READY)");
+        names.insert(second_exit.intern(), "OnExit(game.Second.READY)");
+        names.insert(
+            transition.intern(),
+            "OnTransition(game.First.READY -> game.First.RUNNING)",
+        );
+        world.insert_resource(names);
+
+        let value = list_systems(&mut world, true).unwrap();
+        let stages = value["stages"].as_object().unwrap();
+        assert!(stages.contains_key("OnEnter(game.First.READY)"));
+        assert!(stages.contains_key("OnExit(game.Second.READY)"));
+        assert!(stages.contains_key("OnTransition(game.First.READY -> game.First.RUNNING)"));
+        assert!(stages.contains_key("TestStage"));
+        assert!(
+            stages
+                .keys()
+                .all(|name| !name.contains("StateMachineId") && !name.contains("state_hash"))
+        );
+    }
+
+    #[test]
     fn list_systems_recognizes_generation_zero_without_reload_resource() {
         let mut world = World::new();
         let mut schedules = Schedules::default();
@@ -4056,6 +4155,7 @@ mod tests {
         schedule.add_systems(sys_alpha);
         schedule.add_systems(sys_delta.in_set(ReloadGenerationSet(0)));
         schedule.add_systems(sys_beta.in_set(ReloadGenerationSet(1)));
+        schedule.add_systems(sys_beta.in_set(ReloadGenerationSet(2)));
         schedule.add_systems(sys_gamma.in_set(ReloadGenerationSet(2)));
         schedule.initialize(&mut world).unwrap();
         schedules.insert(schedule);
@@ -4063,16 +4163,16 @@ mod tests {
 
         let val = list_systems(&mut world, false).unwrap();
         let stage = &val["stages"]["TestStage"];
-        assert_eq!(stage["system_count"], 3);
-        assert_eq!(stage["total_system_count"], 4);
-        assert_eq!(stage["scene_system_count"], 3);
+        assert_eq!(stage["system_count"], 4);
+        assert_eq!(stage["total_system_count"], 5);
+        assert_eq!(stage["scene_system_count"], 4);
         assert_eq!(stage["internal_system_count"], 1);
-        assert_eq!(stage["active_system_count"], 1);
+        assert_eq!(stage["active_system_count"], 2);
         assert_eq!(stage["rollback_retained_system_count"], 1);
         assert_eq!(stage["retired_system_count"], 1);
-        assert_eq!(val["system_count"], 3);
-        assert_eq!(val["total_system_count"], 4);
-        assert_eq!(val["scene_system_count"], 3);
+        assert_eq!(val["system_count"], 4);
+        assert_eq!(val["total_system_count"], 5);
+        assert_eq!(val["scene_system_count"], 4);
         assert_eq!(val["internal_system_count"], 1);
 
         let systems = stage["systems"].as_array().unwrap();
@@ -4084,7 +4184,10 @@ mod tests {
         );
         let retained = systems
             .iter()
-            .find(|system| system["name"].as_str().unwrap().contains("sys_beta"))
+            .find(|system| {
+                system["name"].as_str().unwrap().contains("sys_beta")
+                    && system["reload_state"] == "rollback_retained"
+            })
             .unwrap();
         assert_eq!(retained["active"], false);
         assert_eq!(retained["reload_generation"], 1);
@@ -4115,7 +4218,58 @@ mod tests {
             .find(|system| system["name"].as_str().unwrap().contains("sys_alpha"))
             .unwrap();
         assert_eq!(internal["origin"], "internal");
-        assert_eq!(with_internal["system_count"], 4);
+        assert_eq!(with_internal["system_count"], 5);
+    }
+
+    #[test]
+    fn list_systems_matches_retained_occurrences_one_for_one() {
+        let mut world = World::new();
+        world.insert_resource(HotReloadGeneration::new(Arc::new(AtomicU32::new(1))));
+
+        let mut schedules = Schedules::default();
+        let mut schedule = Schedule::new(TestStage);
+        schedule.add_systems(sys_beta.in_set(ReloadGenerationSet(0)));
+        schedule.add_systems(sys_beta.in_set(ReloadGenerationSet(0)));
+        schedule.add_systems(sys_beta.in_set(ReloadGenerationSet(1)));
+        schedule.initialize(&mut world).unwrap();
+        schedules.insert(schedule);
+        world.insert_resource(schedules);
+
+        let val = list_systems(&mut world, false).unwrap();
+        let stage = &val["stages"]["TestStage"];
+        assert_eq!(stage["active_system_count"], 1);
+        assert_eq!(stage["rollback_retained_system_count"], 1);
+        assert_eq!(stage["retired_system_count"], 1);
+        assert_eq!(stage["scene_system_count"], 3);
+    }
+
+    #[test]
+    fn list_systems_classifies_nonzero_older_generation_as_retired() {
+        let mut world = World::new();
+        world.insert_resource(HotReloadGeneration::new(Arc::new(AtomicU32::new(3))));
+
+        let mut schedules = Schedules::default();
+        let mut schedule = Schedule::new(TestStage);
+        schedule.add_systems(sys_delta.in_set(ReloadGenerationSet(1)));
+        schedule.add_systems(sys_beta.in_set(ReloadGenerationSet(2)));
+        schedule.add_systems(sys_beta.in_set(ReloadGenerationSet(3)));
+        schedule.initialize(&mut world).unwrap();
+        schedules.insert(schedule);
+        world.insert_resource(schedules);
+
+        let val = list_systems(&mut world, false).unwrap();
+        let stage = &val["stages"]["TestStage"];
+        assert_eq!(stage["active_system_count"], 1);
+        assert_eq!(stage["rollback_retained_system_count"], 1);
+        assert_eq!(stage["retired_system_count"], 1);
+        let retired = stage["systems"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|system| system["reload_state"] == "retired")
+            .unwrap();
+        assert!(retired["name"].as_str().unwrap().contains("sys_delta"));
+        assert_eq!(retired["reload_generation"], 1);
     }
 
     #[test]

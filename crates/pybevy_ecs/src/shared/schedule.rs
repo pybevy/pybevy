@@ -1,4 +1,4 @@
-use std::{any::Any, fmt};
+use std::{any::Any, collections::HashMap, fmt};
 
 use bevy::{
     app::{
@@ -312,6 +312,35 @@ impl TransitionScheduleLabel {
     }
 }
 
+/// App-local public names for schedules whose exact identity is not readable.
+///
+/// Backend adapters lower interpreter metadata into owned strings and register
+/// it against the already-interned Bevy label. The registry does not influence
+/// schedule identity or retain interpreter objects.
+#[derive(Resource, Default)]
+pub struct ScheduleDisplayNameRegistry {
+    names: HashMap<InternedScheduleLabel, String>,
+}
+
+impl ScheduleDisplayNameRegistry {
+    pub fn insert(&mut self, label: InternedScheduleLabel, name: impl Into<String>) {
+        self.names.insert(label, name.into());
+    }
+
+    #[must_use]
+    pub fn get(&self, label: InternedScheduleLabel) -> Option<&str> {
+        self.names.get(&label).map(String::as_str)
+    }
+
+    /// Look up the exact interned label exposed by [`Schedules::iter`].
+    #[must_use]
+    pub fn get_by_label(&self, label: &dyn ScheduleLabel) -> Option<&str> {
+        self.names.iter().find_map(|(registered, name)| {
+            std::ptr::eq::<dyn ScheduleLabel>(registered.0, label).then_some(name.as_str())
+        })
+    }
+}
+
 /// Custom PyBevy schedule that runs between `PreUpdate` and `Update`.
 #[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SimTick;
@@ -587,5 +616,25 @@ mod tests {
             TransitionScheduleLabel::new(first, 10, 20),
             TransitionScheduleLabel::new(first, 10, 30)
         );
+    }
+
+    #[test]
+    fn schedule_display_names_use_exact_labels_and_owned_values() {
+        let first = StateScheduleLabel::on_enter(StateMachineId::new(1), 42).intern();
+        let second = StateScheduleLabel::on_enter(StateMachineId::new(2), 42).intern();
+        let mut registry = ScheduleDisplayNameRegistry::default();
+        let mut name = String::from("OnEnter(game.First.READY)");
+
+        registry.insert(first, name.clone());
+        name.clear();
+        registry.insert(second, "OnEnter(game.Second.READY)");
+
+        assert_eq!(registry.get(first), Some("OnEnter(game.First.READY)"));
+        assert_eq!(registry.get(second), Some("OnEnter(game.Second.READY)"));
+        assert_eq!(
+            registry.get_by_label(first.0),
+            Some("OnEnter(game.First.READY)")
+        );
+        assert_eq!(registry.get(Update.intern()), None);
     }
 }
