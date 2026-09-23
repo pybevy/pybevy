@@ -91,6 +91,10 @@ unused class does not change that. After registration, `spawn_entity`,
 
 `get_component` returns readable component properties. `GlobalTransform` reports translation, rotation, and scale in world space, including parent transforms.
 
+For custom Python-storage components with declared fields, field names must
+match that declaration. An unknown field rejects the whole `set_component`
+operation, so valid fields in the same request are not changed.
+
 Partial updates - only specify fields to change:
 ```
 set_component {
@@ -302,6 +306,10 @@ set_component {
     "fields": {"translation": [10, 8, 10]}
 }
 ```
+
+Unfiltered discovery omits entities with `Disabled`, as Bevy's default queries
+do. Use `query_entities {"with": ["Disabled"]}` to find them; name-based
+component access can still address a disabled entity to remove `Disabled`.
 
 ## Screenshots
 
