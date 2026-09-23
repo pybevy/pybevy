@@ -10,7 +10,10 @@ import weakref
 from collections.abc import Callable, Mapping
 from contextvars import ContextVar
 from types import ModuleType
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
+
+if TYPE_CHECKING:
+    from ..util.import_graph import ImportGraph
 
 _ResourceAssignmentAliases = Mapping[str, tuple[weakref.ReferenceType[type], ...]]
 _HintFreezer = Callable[[], None]
@@ -97,6 +100,7 @@ class ModuleReloadTransaction:
         ] = []
         self._resource_aliases: dict[object, _ResourceAssignmentAliases] = {}
         self._component_annotations: dict[type, dict[str, object]] = {}
+        self._import_graph_updates: dict[int, tuple[ImportGraph, ImportGraph]] = {}
         self._token = _active.set(self)
 
     def stage_resource_assignment_alias(
@@ -142,6 +146,8 @@ class ModuleReloadTransaction:
                     cast(_ResourceValidation, validation).publish(aliases)
                 for component_type, annotations in self._component_annotations.items():
                     type.__setattr__(component_type, "__annotations__", annotations)
+                for graph, candidate in self._import_graph_updates.values():
+                    graph.publish(candidate)
             else:
                 for name, module in list(sys.modules.items()):
                     if (
@@ -174,6 +180,11 @@ class ModuleReloadTransaction:
             self._resource_alias_preparers.clear()
             self._resource_aliases.clear()
             self._component_annotations.clear()
+            self._import_graph_updates.clear()
+
+    def stage_import_graph(self, graph: ImportGraph, candidate: ImportGraph) -> None:
+        """Publish a candidate dependency graph only if this reload commits."""
+        self._import_graph_updates[id(graph)] = (graph, candidate)
 
 
 def record_module_flush(project_dir: str, names: list[str]) -> None:
@@ -219,3 +230,11 @@ def stage_component_annotations(
         type.__setattr__(component_type, "__annotations__", dict(annotations))
         return
     transaction.stage_component_annotations(component_type, annotations)
+
+
+def stage_import_graph_update(graph: ImportGraph, candidate: ImportGraph) -> None:
+    transaction = _active.get()
+    if transaction is None:
+        graph.publish(candidate)
+    else:
+        transaction.stage_import_graph(graph, candidate)

@@ -14,12 +14,13 @@ Key features:
 - File watching with automatic reload triggering
 """
 
+from __future__ import annotations
+
 import importlib.machinery
 import os
 import runpy
 import sys
 import threading
-import time
 from collections.abc import Callable
 from contextvars import ContextVar
 from types import CodeType
@@ -27,6 +28,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..app import App
+    from .import_graph import ImportGraph
 
 
 _EXECUTING_SCENE_MODULE: ContextVar[bool] = ContextVar(
@@ -44,6 +46,7 @@ def flush_user_modules(
     verbose: bool = False,
     graph: object | None = None,
     changed_files: set[str] | None = None,
+    graph_changed_files: set[str] | None = None,
 ) -> list[str]:
     """
     Remove user project modules from sys.modules.
@@ -66,6 +69,8 @@ def flush_user_modules(
         verbose: If True, print each flushed module name.
         graph: Optional ``ImportGraph`` instance for selective flushing.
         changed_files: Optional set of changed file paths (used with *graph*).
+        graph_changed_files: Raw watcher batch used to stage graph updates when
+            a Full reload intentionally passes ``changed_files=None``.
 
     Returns:
         List of module names that were flushed.
@@ -78,17 +83,23 @@ def flush_user_modules(
 
     # Selective flush: use import graph to compute affected files
     affected_files: set[str] | None = None
-    if graph is not None and changed_files is not None and changed_files:
+    candidate_changes = (
+        changed_files if changed_files is not None else graph_changed_files
+    )
+    if graph is not None and candidate_changes:
         from .import_graph import ImportGraph
 
         if isinstance(graph, ImportGraph):
-            # Update the graph for changed files first
-            for f in changed_files:
-                graph.update_file(f)
-            affected_files = graph.expand_changed_files(changed_files)
+            candidate = graph.updated_copy(candidate_changes)
+            if changed_files is not None:
+                affected_files = candidate.expand_changed_files(changed_files)
+            from .._internal.reload_modules import stage_import_graph_update
+
+            stage_import_graph_update(graph, candidate)
             if verbose:
                 print(
-                    f"   → Import graph: {len(changed_files)} changed → {len(affected_files)} affected"
+                    f"   → Import graph: {len(candidate_changes)} changed → "
+                    f"{len(affected_files) if affected_files is not None else 'full flush'} affected"
                 )
 
     to_remove: list[str] = []
@@ -499,7 +510,7 @@ def create_hot_reload_loader(
     verbose: bool = False,
     entrypoint_wrapper: Callable[[Callable], Callable] | None = None,
     project_dir: str | None = None,
-) -> Callable[[], Callable[[], "App"]]:
+) -> Callable[[], Callable[[], App]]:
     """
     Create a hot reload loader function for use with app._set_hot_reload_loader().
 
@@ -551,7 +562,7 @@ def create_hot_reload_loader(
         )
     """
 
-    def loader() -> Callable[[], "App"]:
+    def loader() -> Callable[[], App]:
         """Loader function called by PyBevy during hot reload."""
         try:
             if verbose:
@@ -616,6 +627,7 @@ def watch_for_changes(
     ignore_patterns: list[str] | None = None,
     verbose: bool = False,
     log_prefix: str = "[PyBevy]",
+    import_graph: ImportGraph | None = None,
 ) -> None:
     """
     Background thread that watches for file changes and triggers hot reload.
@@ -634,6 +646,8 @@ def watch_for_changes(
         ignore_patterns: List of path patterns to ignore (defaults to common patterns)
         verbose: If True, print debug information
         log_prefix: Prefix for log messages (e.g., "[PyBevy]" or "[MyApp]")
+        import_graph: Optional entry-rooted graph used to ignore changes that
+            cannot affect the running scene.
 
     Example:
         stop_event = threading.Event()
@@ -711,10 +725,18 @@ def watch_for_changes(
                 if verbose:
                     print(f"{log_prefix} Detected {len(changed)} Python file changes")
 
-                # Give editors time to finish atomic replacement sequences.
-                time.sleep(0.01)
                 changed_paths = {os.path.abspath(path) for path in changed}
-                changed_files_cache["files"] = changed_paths
+                if import_graph is not None:
+                    changed_paths = import_graph.relevant_changed_files(changed_paths)
+                    if not changed_paths:
+                        if verbose:
+                            print(f"{log_prefix} Ignoring unrelated Python changes")
+                        continue
+                pending = changed_files_cache.get("files")
+                if pending is None:
+                    pending = set()
+                    changed_files_cache["files"] = pending
+                pending.update(changed_paths)
 
                 if verbose:
                     print(
