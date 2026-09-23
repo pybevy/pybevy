@@ -127,6 +127,75 @@ pub fn mcp_optional_enum_error(error: &str) -> String {
     format!("{error}. This optional field also accepts null")
 }
 
+pub const RELOAD_NAME_ERROR_HINT: &str = "NameError: A variable or import is missing. Check if you need to add an import (e.g., `from pybevy.prelude import *`) or if a variable name is misspelled.";
+pub const RELOAD_ATTRIBUTE_ERROR_HINT: &str = "AttributeError: A method or property doesn't exist on the object. Check the type definition with get_type_definition() or search_api().";
+pub const RELOAD_CONSTRUCTOR_TYPE_ERROR_HINT: &str = "TypeError: Wrong argument types or count. Check the constructor signature with get_type_definition().";
+pub const RELOAD_QUERY_ROW_HINT: &str = "TypeError: If this came from a Query row, its data shape does not match the loop target. Use `Query[tuple[A, B]]` for multiple components.";
+pub const RELOAD_IMPORT_ERROR_HINT: &str =
+    "ImportError: A module or name couldn't be imported. Check if the import path is correct.";
+
+fn is_constructor_signature_error(message: &str) -> bool {
+    let Some(call_end) = message.find("()") else {
+        return false;
+    };
+    let callable = &message[..call_end];
+    if !(callable.ends_with(".__new__") || callable.ends_with(".__init__")) {
+        return false;
+    }
+
+    let detail = &message[call_end + 2..];
+    detail.contains("unexpected keyword argument")
+        || detail.contains("required positional argument")
+        || detail.contains("required keyword-only argument")
+        || detail.contains("positional arguments but")
+        || detail.contains("got multiple values for argument")
+        || detail.contains("positional-only arguments passed as keyword arguments")
+}
+
+fn is_unpack_or_iteration_error(message: &str) -> bool {
+    message.starts_with("cannot unpack non-iterable ")
+        || message.starts_with("not enough values to unpack")
+        || message.starts_with("too many values to unpack")
+        || (message.starts_with('\'') && message.ends_with(" object is not iterable"))
+}
+
+fn is_missing_attribute_error(message: &str) -> bool {
+    message.contains(" object has no attribute ")
+        || (message.starts_with("module '") && message.contains("' has no attribute "))
+        || (message.starts_with("type object '") && message.contains("' has no attribute "))
+}
+
+/// Return an advisory hint only when the surfaced exception message provides
+/// enough evidence for a specific remedy.
+pub fn reload_error_hint(error: &str) -> Option<&'static str> {
+    let (exception, message) = error.split_once(": ")?;
+    let message = message.lines().next().unwrap_or(message);
+
+    match exception {
+        "NameError" if message.starts_with("name ") && message.ends_with(" is not defined") => {
+            Some(RELOAD_NAME_ERROR_HINT)
+        }
+        "AttributeError" if is_missing_attribute_error(message) => {
+            Some(RELOAD_ATTRIBUTE_ERROR_HINT)
+        }
+        "TypeError" if is_unpack_or_iteration_error(message) => Some(RELOAD_QUERY_ROW_HINT),
+        "TypeError" if is_constructor_signature_error(message) => {
+            Some(RELOAD_CONSTRUCTOR_TYPE_ERROR_HINT)
+        }
+        "ImportError"
+            if message.starts_with("cannot import name ")
+                || message == "attempted relative import with no known parent package"
+                || message == "attempted relative import beyond top-level package" =>
+        {
+            Some(RELOAD_IMPORT_ERROR_HINT)
+        }
+        "ModuleNotFoundError" if message.starts_with("No module named ") => {
+            Some(RELOAD_IMPORT_ERROR_HINT)
+        }
+        _ => None,
+    }
+}
+
 pub fn resource_atomic_patch_unsupported(type_name: &str) -> String {
     format!(
         "Resource '{type_name}' cannot be patched atomically because its bridge does not support owned staging"
@@ -1419,6 +1488,79 @@ mod tests {
             ),
             "Assets<ShaderMaterial> resource not found. Add ShaderMaterialPlugin() to your app to create this collection."
         );
+    }
+
+    #[test]
+    fn reload_error_hints_require_message_evidence() {
+        let cases = [
+            (
+                "NameError: name 'Transform' is not defined",
+                Some(RELOAD_NAME_ERROR_HINT),
+            ),
+            (
+                "AttributeError: 'Transform' object has no attribute 'rotate_x'",
+                Some(RELOAD_ATTRIBUTE_ERROR_HINT),
+            ),
+            (
+                "AttributeError: module 'pybevy.prelude' has no attribute 'Transfrom'",
+                Some(RELOAD_ATTRIBUTE_ERROR_HINT),
+            ),
+            (
+                "AttributeError: type object 'Transform' has no attribute 'from_xyzz'",
+                Some(RELOAD_ATTRIBUTE_ERROR_HINT),
+            ),
+            (
+                "TypeError: Transform.__new__() takes 0 positional arguments but 1 was given",
+                Some(RELOAD_CONSTRUCTOR_TYPE_ERROR_HINT),
+            ),
+            (
+                "TypeError: Transform.__new__() got an unexpected keyword argument 'x'",
+                Some(RELOAD_CONSTRUCTOR_TYPE_ERROR_HINT),
+            ),
+            (
+                "TypeError: cannot unpack non-iterable pybevy.transform.Transform object",
+                Some(RELOAD_QUERY_ROW_HINT),
+            ),
+            (
+                "TypeError: not enough values to unpack (expected 2, got 1)",
+                Some(RELOAD_QUERY_ROW_HINT),
+            ),
+            (
+                "TypeError: too many values to unpack (expected 2)",
+                Some(RELOAD_QUERY_ROW_HINT),
+            ),
+            (
+                "TypeError: 'pybevy.transform.Transform' object is not iterable",
+                Some(RELOAD_QUERY_ROW_HINT),
+            ),
+            (
+                "ImportError: cannot import name 'Missing' from 'pybevy.prelude'",
+                Some(RELOAD_IMPORT_ERROR_HINT),
+            ),
+            (
+                "ImportError: attempted relative import with no known parent package",
+                Some(RELOAD_IMPORT_ERROR_HINT),
+            ),
+            (
+                "ModuleNotFoundError: No module named 'missing_package'",
+                Some(RELOAD_IMPORT_ERROR_HINT),
+            ),
+            ("NameError: scene lookup failed", None),
+            ("AttributeError: property 'x' has no setter", None),
+            ("TypeError: expected 2 arguments, got 3", None),
+            ("TypeError: unsupported operand type(s) for +", None),
+            ("ImportError: custom loader rejected the scene", None),
+            (
+                "RuntimeError: TypeError: cannot unpack non-iterable Transform object",
+                None,
+            ),
+            ("ValueError: NameError: name 'x' is not defined", None),
+            ("", None),
+        ];
+
+        for (error, expected) in cases {
+            assert_eq!(reload_error_hint(error), expected, "{error}");
+        }
     }
 
     const REJECTION_KINDS: [SystemParamRejection; 9] = [

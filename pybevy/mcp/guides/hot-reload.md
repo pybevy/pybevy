@@ -80,6 +80,19 @@ get_reload_status                  - Check if reload is pending/complete
 get_last_error                     - Get Python error traceback if reload failed
 ```
 
+Error responses from `reload` and `reload_and_capture` can include an advisory
+`hint` when the surfaced exception has a recognized message. The field is
+omitted when the message does not provide enough evidence. In particular, an
+unpack error may suggest `Query[tuple[A, B]]` conditionally because ordinary
+Python code can produce the same error outside a query. Treat hints as a next
+check, and use the paired `error` and `traceback` as the source of truth.
+
+`get_logs` retains up to 500 captured stdout and stderr entries for the current
+scene subprocess. Watcher reloads, `reload`, and `reload_and_capture` all keep
+that history, with consecutive duplicate lines summarized by a repeat count.
+Calling `run_scene` stops or replaces the subprocess and starts a fresh log
+history.
+
 ## Workflow: Edit and Reload
 
 Scenes launched through `run_scene` are watched. Saving a Python file queues a

@@ -202,6 +202,9 @@ class McpBridge:
         self._subprocess_port: int | None = None
         self._stderr_lines: list[str] = []
         self._stderr_repeat_counts: list[int] = []
+        self._stderr_first_sequences: list[int] = []
+        self._stderr_last_sequences: list[int] = []
+        self._stderr_sequence = 0
         self._output_lines: list[tuple[str, str]] = []
         self._output_repeat_counts: list[int] = []
         self._output_lock = threading.Lock()
@@ -634,13 +637,6 @@ class McpBridge:
         if tool_name == "get_type_definition":
             return self._handle_get_type_definition(req_id, arguments)
 
-        if tool_name in ("reload", "reload_and_capture"):
-            with self._output_lock:
-                self._stderr_lines.clear()
-                self._stderr_repeat_counts.clear()
-                self._output_lines.clear()
-                self._output_repeat_counts.clear()
-
         if tool_name == "schedule_actions":
             # Validate that no action uses a bridge-local tool
             _bridge_local = {
@@ -678,6 +674,11 @@ class McpBridge:
         """Forward a tool call to the engine's REST API."""
 
         coerced = self._coerce_arguments(tool_name, arguments)
+        stderr_cursor: int | None = None
+        if tool_name in ("reload_and_capture", "reload"):
+            with self._output_lock:
+                self._normalize_stderr_capture_locked()
+                stderr_cursor = self._stderr_sequence
 
         try:
             result = self._call_rest_api(tool_name, coerced, timeout)
@@ -703,7 +704,7 @@ class McpBridge:
             # captured by LastSystemError.
             if tool_name in ("reload_and_capture", "reload"):
                 time.sleep(0.1)  # Let stderr reader thread catch up
-                engine_errors = self._check_stderr_for_errors()
+                engine_errors = self._check_stderr_for_errors(since=stderr_cursor)
                 if engine_errors:
                     content.insert(
                         0,
@@ -1401,6 +1402,9 @@ class McpBridge:
             self._control_listening = False
             self._stderr_lines.clear()
             self._stderr_repeat_counts.clear()
+            self._stderr_first_sequences.clear()
+            self._stderr_last_sequences.clear()
+            self._stderr_sequence = 0
             self._output_lines.clear()
             self._output_repeat_counts.clear()
 
@@ -1460,6 +1464,9 @@ class McpBridge:
                 self._control_listening = False
                 self._stderr_lines.clear()
                 self._stderr_repeat_counts.clear()
+                self._stderr_first_sequences.clear()
+                self._stderr_last_sequences.clear()
+                self._stderr_sequence = 0
                 self._output_lines.clear()
                 self._output_repeat_counts.clear()
             _log(f"[MCP Bridge] Stopped subprocess (pid={pid})")
@@ -1502,11 +1509,7 @@ class McpBridge:
             line = raw_line.decode("utf-8", errors="replace").rstrip()
             _log(f"[Bevy stderr] {line}")
             with self._output_lock:
-                self._append_captured_line_locked(
-                    self._stderr_lines,
-                    self._stderr_repeat_counts,
-                    line,
-                )
+                self._append_stderr_line_locked(line)
                 self._append_process_output_locked("stderr", line)
 
     def _append_process_output(self, stream: str, line: str) -> None:
@@ -1523,6 +1526,33 @@ class McpBridge:
             self._output_repeat_counts,
             (stream, line),
         )
+
+    def _normalize_stderr_capture_locked(self) -> None:
+        if len(self._stderr_repeat_counts) != len(self._stderr_lines):
+            self._stderr_repeat_counts = [1] * len(self._stderr_lines)
+        if len(self._stderr_first_sequences) != len(self._stderr_lines) or len(
+            self._stderr_last_sequences
+        ) != len(self._stderr_lines):
+            self._stderr_first_sequences = [0] * len(self._stderr_lines)
+            self._stderr_last_sequences = [0] * len(self._stderr_lines)
+
+    def _append_stderr_line_locked(self, line: str) -> None:
+        self._normalize_stderr_capture_locked()
+        self._stderr_sequence += 1
+        sequence = self._stderr_sequence
+        if self._stderr_lines and self._stderr_lines[-1] == line:
+            self._stderr_repeat_counts[-1] += 1
+            self._stderr_last_sequences[-1] = sequence
+            return
+        self._stderr_lines.append(line)
+        self._stderr_repeat_counts.append(1)
+        self._stderr_first_sequences.append(sequence)
+        self._stderr_last_sequences.append(sequence)
+        if len(self._stderr_lines) > _MAX_CAPTURED_OUTPUT_LINES:
+            del self._stderr_lines[:-_MAX_CAPTURED_OUTPUT_LINES]
+            del self._stderr_repeat_counts[:-_MAX_CAPTURED_OUTPUT_LINES]
+            del self._stderr_first_sequences[:-_MAX_CAPTURED_OUTPUT_LINES]
+            del self._stderr_last_sequences[:-_MAX_CAPTURED_OUTPUT_LINES]
 
     @staticmethod
     def _append_captured_line_locked(
@@ -1593,18 +1623,30 @@ class McpBridge:
 
         return "\n".join(warnings)
 
-    def _check_stderr_for_errors(self) -> str:
+    def _check_stderr_for_errors(self, *, since: int | None = None) -> str:
         with self._output_lock:
-            if len(self._stderr_repeat_counts) != len(self._stderr_lines):
-                self._stderr_repeat_counts = [1] * len(self._stderr_lines)
-            lines = [
-                self._format_captured_line(line, repeat_count)
-                for line, repeat_count in zip(
-                    self._stderr_lines,
-                    self._stderr_repeat_counts,
-                    strict=True,
-                )
-            ]
+            self._normalize_stderr_capture_locked()
+            captured = zip(
+                self._stderr_lines,
+                self._stderr_repeat_counts,
+                self._stderr_first_sequences,
+                self._stderr_last_sequences,
+                strict=True,
+            )
+            if since is None:
+                lines = [
+                    self._format_captured_line(line, repeat_count)
+                    for line, repeat_count, _, _ in captured
+                ]
+            else:
+                lines = [
+                    self._format_captured_line(
+                        line,
+                        last_sequence - max(first_sequence, since + 1) + 1,
+                    )
+                    for line, _, first_sequence, last_sequence in captured
+                    if last_sequence > since
+                ]
 
         blocks: list[list[str]] = []
         current_block: list[str] = []
