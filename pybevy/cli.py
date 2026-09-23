@@ -486,7 +486,10 @@ def _run_script(
     sys.argv = [script_path]
 
     def load_create_app_function(
-        script_path: str, changed_files: set | None = None, project_dir: str | None = None
+        script_path: str,
+        changed_files: set | None = None,
+        project_dir: str | None = None,
+        graph_changed_files: set[str] | None = None,
     ) -> _CreateAppFunction:
         """Load just the create_app function without executing it
 
@@ -540,6 +543,7 @@ def _run_script(
                     verbose=verbose,
                     graph=import_graph_holder.get("graph"),
                     changed_files=changed_files,
+                    graph_changed_files=graph_changed_files,
                 )
                 if verbose:
                     _echo(f"   → Flushed {len(flushed)} user modules from sys.modules")
@@ -591,6 +595,7 @@ def _run_script(
                     verbose=verbose,
                     graph=import_graph_holder.get("graph"),
                     changed_files=changed_files,
+                    graph_changed_files=graph_changed_files,
                 )
 
                 # Match `python script.py` semantics: ensure the script's
@@ -669,17 +674,18 @@ def _run_script(
         partial_mode: bool = False,
     ) -> None:
         """Background thread that watches for file changes and *requests* a reload"""
-        _echo("Watching for changes in current directory...")
+        _echo(f"Watching for changes in {reload_root}...")
 
         # Use shared file watcher from PyBevy utilities
         watch_for_changes(
-            watch_path=".",
+            watch_path=reload_root,
             reload_state=reload_state,
             stop_event=stop_event,
             changed_files_cache=changed_files_cache,  # type: ignore[arg-type]
             partial_mode=partial_mode,
             verbose=False,  # CLI already has its own output formatting
             log_prefix="",  # CLI writes watcher output directly
+            import_graph=import_graph_holder.get("graph"),  # type: ignore[arg-type]
         )
 
         _echo("Watcher thread exiting.")
@@ -717,6 +723,7 @@ def _run_script(
                         script_path,
                         resolve_changed_files(is_partial, files),
                         project_dir=reload_root,
+                        graph_changed_files=files if isinstance(files, set) else None,
                     )
 
                 app._set_hot_reload_loader(loader)

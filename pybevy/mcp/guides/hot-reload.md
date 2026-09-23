@@ -128,10 +128,13 @@ updates the running scene with no `reload` call. Asset paths resolve against the
 directory the scene process was launched from, not the scene file's own directory,
 so editing a same-named file next to the scene changes nothing.
 
-**Any non-ignored `.py` file under the watched directory reloads the running
-scene**, including one no scene imports: the watcher is recursive over the
-launch directory and filters on the `.py` extension minus the ignore patterns.
-Asset files such as `.wgsl` do not.
+The Python watcher uses the same project root as module flushing. For a scene
+inside the launch directory that root is the launch directory; for an absolute
+scene outside it, the root is the scene's directory. An edit reloads the scene
+only when it changes the scene itself or a statically imported dependency.
+Unrelated Python files under the root are ignored. Scenes that use dynamic
+imports reload conservatively for Python edits under the root. Asset files such
+as `.wgsl` remain owned by Bevy's asset watcher.
 
 The first Partial reload after `run_scene` preserves live state when definitions
 are unchanged. Escalation to Full discards live edits and changes entity IDs;
