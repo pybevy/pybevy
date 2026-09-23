@@ -401,6 +401,44 @@ fn validate_capture_camera(
     Ok(())
 }
 
+fn selected_camera_screenshot_target(
+    world: &mut World,
+    response_kind: &CaptureResponseKind,
+) -> Result<Option<(RenderTarget, Option<CaptureViewport>)>, ControlError> {
+    let Some(entity) = select_capture_camera_3d(world) else {
+        return Ok(None);
+    };
+    let operation = response_kind.operation_name();
+    let camera = world
+        .get::<Camera>(entity)
+        .expect("selected Camera3d has Camera");
+    let viewport = camera.viewport.as_ref().map(|viewport| CaptureViewport {
+        physical_position: viewport.physical_position,
+        physical_size: viewport.physical_size,
+    });
+    let target = world.get::<RenderTarget>(entity).cloned().ok_or_else(|| {
+        ControlError::invalid_params(format!(
+            "{operation} selected highest-order Camera3d has no RenderTarget"
+        ))
+    })?;
+    let capturable = match &target {
+        RenderTarget::Image(_) => true,
+        RenderTarget::Window(WindowRef::Primary) => world
+            .query_filtered::<Entity, (With<PrimaryWindow>, With<Window>)>()
+            .iter(world)
+            .next()
+            .is_some(),
+        RenderTarget::Window(WindowRef::Entity(window)) => world.get::<Window>(*window).is_some(),
+        RenderTarget::None { .. } | RenderTarget::TextureView(_) => false,
+    };
+    if !capturable {
+        return Err(ControlError::invalid_params(format!(
+            "{operation} selected highest-order Camera3d has no capturable target"
+        )));
+    }
+    Ok(Some((target, viewport)))
+}
+
 /// Process pending screenshot requests (called each frame in Last schedule).
 ///
 /// Flow:
@@ -657,7 +695,14 @@ pub fn process_pending_screenshots(world: &mut World) {
                         }
                     }
                 } else {
-                    (None, None)
+                    match selected_camera_screenshot_target(world, &s.response_kind) {
+                        Ok(Some((target, viewport))) => (Some(target), viewport),
+                        Ok(None) => (None, None),
+                        Err(error) => {
+                            fail_staged_screenshot_with_error(world, s, error);
+                            continue;
+                        }
+                    }
                 };
 
                 let screenshot_target = if let Some(target) = capture_target.as_ref() {
@@ -2096,6 +2141,72 @@ mod tests {
             .into_iter()
             .min_by_key(|entity| entity.to_bits());
         assert_eq!(select_capture_camera_3d(&mut world), expected);
+    }
+
+    #[test]
+    fn screenshot_target_uses_selected_camera_image_and_viewport() {
+        let mut world = World::new();
+        let mut images = Assets::<Image>::default();
+        let lower = images.add(make_test_image(64, 48));
+        let selected = images.add(make_test_image(128, 96));
+        world.insert_resource(images);
+        world.spawn((
+            Camera3d::default(),
+            Camera {
+                order: -1,
+                ..default()
+            },
+            RenderTarget::Image(lower.into()),
+        ));
+        world.spawn((
+            Camera3d::default(),
+            Camera {
+                order: 5,
+                viewport: Some(Viewport {
+                    physical_position: UVec2::new(16, 16),
+                    physical_size: UVec2::new(96, 64),
+                    ..default()
+                }),
+                ..default()
+            },
+            RenderTarget::Image(selected.clone().into()),
+        ));
+
+        let (target, viewport) =
+            selected_camera_screenshot_target(&mut world, &CaptureResponseKind::Screenshot)
+                .unwrap()
+                .unwrap();
+        let RenderTarget::Image(image_target) = target else {
+            panic!("selected camera should use its image target");
+        };
+        assert_eq!(image_target.handle.id(), selected.id());
+        assert_eq!(viewport.unwrap().physical_size, UVec2::new(96, 64));
+    }
+
+    #[test]
+    fn screenshot_target_rejects_uncapturable_selected_camera_without_fallback() {
+        let mut world = World::new();
+        let mut images = Assets::<Image>::default();
+        let lower = images.add(make_test_image(64, 48));
+        world.insert_resource(images);
+        world.spawn((Camera3d::default(), RenderTarget::Image(lower.into())));
+        world.spawn((
+            Camera3d::default(),
+            Camera {
+                order: 5,
+                ..default()
+            },
+            RenderTarget::None {
+                size: UVec2::new(64, 48),
+            },
+        ));
+
+        let error = selected_camera_screenshot_target(&mut world, &CaptureResponseKind::Screenshot)
+            .unwrap_err();
+        assert_eq!(
+            error.message,
+            "capture_screenshot selected highest-order Camera3d has no capturable target"
+        );
     }
 
     #[test]

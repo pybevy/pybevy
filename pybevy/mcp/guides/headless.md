@@ -156,10 +156,13 @@ All MCP tools work in headless mode:
 - `set_component`, `spawn_entity`, `query_entities` work normally
 - `reload`, `reload_and_capture` work normally
 
-With multiple offscreen cameras, `capture_depth` selects the active `Camera3d`
-with the highest render order and captures that camera's image target directly.
-The returned depth rays, viewport-cropped RGB dimensions, and
-`target_camera_passes` therefore describe the same ready-time render context.
+With multiple offscreen cameras, `capture_screenshot`, `capture_stats`, and
+`capture_depth` capture the active `Camera3d` with the highest render order
+(lowest entity ID on a tie). They use that camera's target and crop to its
+viewport. If the selected camera has no capturable target, the request fails
+instead of returning another camera's image. Scenes without a `Camera3d`
+retain the existing 2D headless capture fallback. `capture_depth` also reports
+the selected identity and target passes with its depth rays.
 
 ## Troubleshooting
 
@@ -184,3 +187,7 @@ The returned depth rays, viewport-cropped RGB dimensions, and
 - **Low resolution**: The render target size (`width`, `height` in `Image.new_render_target`) determines output resolution, not window size
 
 Image readback returns one `width * height` frame at the size the readback was requested with. For an array-texture source it copies layer zero only and logs a warning once; additional layers are not concatenated into the frame. If the render target is later resized, the copy stays inside the frame that was requested instead of overrunning it.
+
+If the GPU rejects a render target or its readback buffer, PyBevy logs the
+mapping error and disables readback for that camera. Capture may then time out;
+use a target within the device's supported dimensions and restart the scene.
