@@ -1360,10 +1360,24 @@ fn set_custom_component(
     let mut new_values = serde_json::Map::new();
     let mut errors = Vec::new();
 
-    Python::attach(|py| {
+    Python::attach(|py| -> Result<(), ControlError> {
         // SAFETY: We checked is_pyobject_storage above - raw data is a Py<PyAny>
         let py_obj: &pyo3::Py<PyAny> = unsafe { &*(ptr.as_ptr() as *const pyo3::Py<PyAny>) };
         let bound = py_obj.bind(py);
+        let class = bound.get_type();
+        let unknown = field_obj
+            .keys()
+            .filter(|name| match class_declares_component_field(&class, name) {
+                Some(declared) => !declared,
+                None => bound.getattr(name.as_str()).is_err(),
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if !unknown.is_empty() {
+            return Err(ControlError::invalid_params(component_unknown_field_error(
+                component, &unknown, bound,
+            )));
+        }
 
         let mut converted = Vec::with_capacity(field_obj.len());
         for (field_name, field_value) in field_obj {
@@ -1385,7 +1399,8 @@ fn set_custom_component(
             }
             new_values = read_back_fields(bound, written);
         }
-    });
+        Ok(())
+    })?;
 
     // Nothing was written: report the failure rather than a 200 the caller
     // would read as success.

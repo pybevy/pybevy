@@ -9,7 +9,10 @@
 //! and drifting - as `reload_and_capture` once did by reporting the raw
 //! `world.entities().len()` (which over-counts by the resource-backing entities).
 
-use bevy::ecs::{entity::Entity, prelude::Without, resource::IsResource, world::World};
+use bevy::ecs::{
+    entity::Entity, entity_disabling::Disabled, prelude::Without, query::Allow,
+    resource::IsResource, world::World,
+};
 
 use crate::bridge::InternalOverlayUi;
 
@@ -21,6 +24,18 @@ use crate::bridge::InternalOverlayUi;
 pub(crate) fn scene_entities(world: &mut World) -> Vec<Entity> {
     world
         .query_filtered::<Entity, (Without<IsResource>, Without<InternalOverlayUi>)>()
+        .iter(world)
+        .collect()
+}
+
+/// Scene entities for an explicit Disabled-filtered discovery query.
+pub(crate) fn scene_entities_including_disabled(world: &mut World) -> Vec<Entity> {
+    world
+        .query_filtered::<Entity, (
+            Without<IsResource>,
+            Without<InternalOverlayUi>,
+            Allow<Disabled>,
+        )>()
         .iter(world)
         .collect()
 }
@@ -85,6 +100,22 @@ mod tests {
         assert_eq!(scene_entities(&mut world), vec![scene_entity]);
         assert_eq!(scene_entity_count(&mut world), 1);
         assert!(world.get_entity(overlay_entity).is_ok());
+    }
+
+    #[test]
+    fn explicit_discovery_includes_disabled_but_not_infrastructure() {
+        let mut world = World::new();
+        world.register_disabling_component::<Disabled>();
+        let enabled = world.spawn_empty().id();
+        let disabled = world.spawn(Disabled).id();
+        world.spawn(InternalOverlayUi);
+        world.insert_resource(Marker(7));
+
+        assert_eq!(scene_entities(&mut world), vec![enabled]);
+        assert_eq!(
+            scene_entities_including_disabled(&mut world),
+            vec![enabled, disabled]
+        );
     }
 
     #[derive(bevy::prelude::Resource)]

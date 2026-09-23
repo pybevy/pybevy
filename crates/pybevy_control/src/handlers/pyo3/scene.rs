@@ -1102,7 +1102,11 @@ pub fn query_entities(
         )));
     }
 
-    let all_entities = crate::handlers::entity_count::scene_entities(world);
+    let all_entities = if with_filters.iter().any(|name| name == "Disabled") {
+        crate::handlers::entity_count::scene_entities_including_disabled(world)
+    } else {
+        crate::handlers::entity_count::scene_entities(world)
+    };
 
     let occurrences = crate::handlers::spatial::NameOccurrences::collect(world);
     let mut matching = Vec::new();

@@ -1,4 +1,7 @@
-use bevy::ecs::{entity::Entity, hierarchy::ChildOf, name::Name, world::World};
+use bevy::ecs::{
+    entity::Entity, entity_disabling::Disabled, hierarchy::ChildOf, name::Name, query::Allow,
+    world::World,
+};
 use pybevy_core::public_error;
 
 use crate::bridge::{ControlError, EntityRef};
@@ -37,7 +40,7 @@ pub fn resolve_entity(world: &mut World, entity_ref: &EntityRef) -> Result<Entit
         EntityRef::Name(name) => {
             let mut roots = Vec::new();
             let mut children = Vec::new();
-            let mut query = world.query::<(Entity, &Name)>();
+            let mut query = world.query_filtered::<(Entity, &Name), Allow<Disabled>>();
             for (entity, entity_name) in query.iter(world) {
                 if entity_name.as_str() != name {
                     continue;
@@ -91,6 +94,18 @@ mod tests {
         assert_eq!(
             resolve_entity(&mut world, &EntityRef::Name("Beacon".into())).unwrap(),
             root
+        );
+    }
+
+    #[test]
+    fn disabled_entity_resolves_by_name() {
+        let mut world = World::new();
+        world.register_disabling_component::<Disabled>();
+        let disabled = world.spawn((Name::new("Hidden"), Disabled)).id();
+
+        assert_eq!(
+            resolve_entity(&mut world, &EntityRef::Name("Hidden".into())).unwrap(),
+            disabled
         );
     }
 
