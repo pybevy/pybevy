@@ -157,7 +157,9 @@ class WinitPlugin(Plugin):
 
     Examples:
         ```python
-        from pybevy import DefaultPlugins, WinitPlugin, WinitSettings
+        from datetime import timedelta
+        from pybevy.app import DefaultPlugins
+        from pybevy.winit import UpdateMode, WinitPlugin, WinitSettings
 
         # Default (game mode)
         app.add_plugins(DefaultPlugins())

@@ -82,7 +82,7 @@ class SpriteImageMode:
 
         auto = SpriteImageMode.Auto()
         scaled = SpriteImageMode.Scale(SpriteScalingMode.FitCenter)
-        sliced = SpriteImageMode.Sliced(TextureSlicer(BorderRect.all(10.0)))
+        sliced = SpriteImageMode.Sliced(TextureSlicer(border=BorderRect.all(10.0)))
         tiled = SpriteImageMode.Tiled(tile_y=False, stretch_value=2.0)
 
         match scaled:
@@ -135,7 +135,7 @@ class SpriteImageMode:
             ```python
             assert not SpriteImageMode.Auto().uses_slices()
 
-            sliced = SpriteImageMode.Sliced(TextureSlicer(BorderRect.all(10.0)))
+            sliced = SpriteImageMode.Sliced(TextureSlicer(border=BorderRect.all(10.0)))
             assert sliced.uses_slices()
 
             tiled = SpriteImageMode.Tiled()
@@ -453,7 +453,7 @@ class TextureSlicer:
 
         # Simple button with 10px borders, stretch all regions
         border = BorderRect.all(10.0)
-        slicer = TextureSlicer(border)
+        slicer = TextureSlicer(border=border)
         sprite.image_mode = SpriteImageMode.Sliced(slicer)
 
         # Panel with tiled center for patterned background
@@ -464,7 +464,7 @@ class TextureSlicer:
 
         # Ornate frame with tiled edges
         slicer = TextureSlicer(
-            border=BorderRect(12.0, 12.0, 16.0, 16.0),
+            border=BorderRect.axes(horizontal=12.0, vertical=16.0),
             sides_scale_mode=SliceScaleMode.Tile()
         )
 
@@ -749,9 +749,13 @@ class Sprite(Component):
 
         Examples:
             ```python
+            from pybevy.math import Vec2
+            from pybevy.sprite import Sprite
+            from pybevy.transform import Transform
+
             # Create a 64x64 sprite (image will be scaled to fit)
             commands.spawn(
-                Sprite.sized((64.0, 64.0)),
+                Sprite.sized(Vec2(64.0, 64.0)),
                 Transform.from_xyz(0.0, 0.0, 0.0),
             )
             ```
