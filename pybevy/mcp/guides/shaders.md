@@ -1,6 +1,10 @@
 # Custom Shaders with `@material`
 
 `@material` generates WGSL bindings, packs GPU data, and integrates Python materials with Bevy PBR.
+Uniform and texture field names and the material class name become WGSL
+identifiers. WGSL keywords and reserved words such as `loop`, `module`, and
+`static` are rejected when the class is decorated; use a trailing underscore
+such as `loop_`. Bool fields become shader definitions rather than WGSL fields.
 
 ## Quick Start
 
@@ -44,6 +48,8 @@ if __name__ == "__main__":
 
 **Shader paths** are relative to the `assets/` directory (Bevy's default asset root).
 For a file at `assets/shaders/glow.wgsl`, use `fragment_shader="shaders/glow.wgsl"`.
+Malformed paths, such as a trailing `#` with no label, raise `ValueError` when
+the material is converted to `ShaderMaterial`.
 
 ## Base Material Properties
 

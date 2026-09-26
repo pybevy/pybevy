@@ -221,6 +221,14 @@ impl From<PyHandle> for UntypedAssetId {
 
 #[pymethods]
 impl PyHandle {
+    fn __copy__(&self) -> Self {
+        self.clone()
+    }
+
+    fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> Self {
+        self.clone()
+    }
+
     #[classmethod]
     #[pyo3(signature = (key, /))]
     pub fn __class_getitem__(

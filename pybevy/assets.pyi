@@ -174,6 +174,9 @@ class Handle(Generic[A_co]):
     reclaims the asset on a later asset-tracking pass.
     """
 
+    def __copy__(self) -> Handle[A_co]: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> Handle[A_co]: ...
+
     @staticmethod
     def uuid_from_u128(value: int, asset_type: type[A_co]) -> Handle[A_co]:
         """Create a non-owning Bevy UUID handle.
@@ -234,6 +237,8 @@ class LoadBuilder(Generic[A]):
     Builders are reusable within their originating AssetServer scope and expire
     when that scope ends. Only settings and typed loads are currently exposed;
     guards, untyped loading, and approval overrides are not exposed.
+    On a labelled path, explicit asset_type may name a sub-asset produced by
+    the settings' file loader rather than its root asset type.
     """
     @overload
     def with_settings(self: LoadBuilder[Asset] | LoadBuilder[Image], settings: ImageLoaderSettings) -> LoadBuilder[Image]: ...
@@ -244,7 +249,7 @@ class LoadBuilder(Generic[A]):
     @overload
     def load(self: LoadBuilder[Gltf], path: str | AssetPath, *, asset_type: type[Gltf] | None = None) -> Handle[Gltf]: ...
     @overload
-    def load(self: LoadBuilder[Asset], path: str | AssetPath, *, asset_type: type[_LoadA]) -> Handle[_LoadA]: ...
+    def load(self: LoadBuilder[Asset] | LoadBuilder[Image] | LoadBuilder[Gltf], path: str | AssetPath, *, asset_type: type[_LoadA]) -> Handle[_LoadA]: ...
     def __copy__(self) -> LoadBuilder[A]: ...
 
 class AssetServer(Resource):
@@ -274,10 +279,14 @@ class AssetServer(Resource):
     def load_with_settings(self, path: str | AssetPath, settings: GltfLoaderSettings, *, asset_type: type[Gltf] | None = None) -> Handle[Gltf]:
         """Deprecated convenience method; emits DeprecationWarning.
 
-        Settings establish the asset type. Explicit overrides must match.
+        Settings establish the root asset type. An explicit output type may
+        differ only for a labelled sub-asset of the settings' source loader.
         Bevy caches by path and asset type; later settings for a live cached
         load are ignored. Use distinct paths for simultaneous variants.
         """
+    @overload
+    @deprecated("Use load_builder().with_settings(settings).load(path) instead")
+    def load_with_settings(self, path: str | AssetPath, settings: ImageLoaderSettings | GltfLoaderSettings, *, asset_type: type[_LoadA]) -> Handle[_LoadA]: ...
     def save_image(
         self,
         image: Image,

@@ -273,6 +273,8 @@ class Image(Asset):
         - TextureAtlas: For sprite sheet rendering
         - ImagePlugin: Required plugin for image loading
     """
+    def __copy__(self) -> Image: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> Image: ...
     def __init__(
         self,
         size: Extent3d = Extent3d(width=1, height=1, depth_or_array_layers=1),
@@ -1012,6 +1014,9 @@ class TextureAtlasLayout(Asset):
     that define individual sprites or tiles within a larger texture image.
     Used with TextureAtlas components for sprite sheet rendering.
     """
+
+    def __copy__(self) -> TextureAtlasLayout: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> TextureAtlasLayout: ...
 
     def __init__(
         self,

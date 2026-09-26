@@ -777,6 +777,9 @@ class ScatteringMedium(Asset):
         >>> custom = ScatteringMedium(terms=[ScatteringTerm()])
     """
 
+    def __copy__(self) -> ScatteringMedium: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> ScatteringMedium: ...
+
     def __init__(
         self,
         falloff_resolution: int = 256,

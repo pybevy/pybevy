@@ -16,6 +16,8 @@ class ColorMaterialPlugin(Plugin):
 
 class ColorMaterial(Asset):
     """Simple 2D material with color and optional texture."""
+    def __copy__(self) -> ColorMaterial: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> ColorMaterial: ...
     def __init__(
         self,
         *,

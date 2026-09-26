@@ -39,6 +39,8 @@ class MeshBoundedContextMut:
         """Exit the context: close the array and release the write-lock."""
 
 class Mesh(Asset):
+    def __copy__(self) -> Mesh: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> Mesh: ...
     ATTRIBUTE_POSITION: ClassVar[MeshVertexAttribute]
     ATTRIBUTE_NORMAL: ClassVar[MeshVertexAttribute]
     ATTRIBUTE_UV_0: ClassVar[MeshVertexAttribute]

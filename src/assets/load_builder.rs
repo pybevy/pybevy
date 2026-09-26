@@ -1,6 +1,6 @@
 use bevy::{
     gltf::{Gltf, GltfLoaderSettings},
-    image::{Image, ImageLoaderSettings},
+    image::{Image, ImageLoader, ImageLoaderSettings},
 };
 use pybevy_core::{
     asset_load_plan::AssetLoadPlan,
@@ -49,16 +49,18 @@ impl PyLoadBuilder {
         self.server.asset_server()?;
         let plan = if let Ok(settings) = settings.extract::<PyRef<'_, PyImageLoaderSettings>>() {
             let settings = ImageLoaderSettings::try_from(&*settings)?;
-            self.plan
-                .with_settings::<Image, ImageLoaderSettings>("Image", move |target| {
-                    *target = settings.clone()
-                })
+            self.plan.with_settings::<Image, ImageLoaderSettings>(
+                "Image",
+                ImageLoader::SUPPORTED_FILE_EXTENSIONS,
+                move |target| *target = settings.clone(),
+            )
         } else if let Ok(settings) = settings.extract::<PyRef<'_, PyGltfLoaderSettings>>() {
             let settings = GltfLoaderSettingsValue::try_from(&*settings)?;
-            self.plan
-                .with_settings::<Gltf, GltfLoaderSettings>("Gltf", move |target| {
-                    settings.apply_to(target)
-                })
+            self.plan.with_settings::<Gltf, GltfLoaderSettings>(
+                "Gltf",
+                &["gltf", "glb"],
+                move |target| settings.apply_to(target),
+            )
         } else {
             return Err(PyTypeError::new_err(unsupported_loader_settings(
                 settings.get_type().name()?.to_str()?,

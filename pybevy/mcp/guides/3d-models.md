@@ -108,18 +108,30 @@ coordinate-conversion, or skinned-mesh bounds behavior:
 
 ```python
 from pybevy.gltf import (
+    GltfAssetLabel,
     GltfConvertCoordinates,
     GltfLoaderSettings,
     GltfSkinnedMeshBoundsPolicy,
 )
+from pybevy.world_serialization import WorldAsset, WorldAssetRoot
 
 settings = GltfLoaderSettings(
     load_cameras=False,
     convert_coordinates=GltfConvertCoordinates(rotate_meshes=True),
     skinned_mesh_bounds_policy=GltfSkinnedMeshBoundsPolicy.Dynamic,
 )
-handle = asset_server.load_builder().with_settings(settings).load("models/character.glb")
+scene_path = GltfAssetLabel.Scene(0).from_asset("models/character.glb")
+scene_handle = asset_server.load_builder().with_settings(settings).load(
+    scene_path, asset_type=WorldAsset
+)
+commands.spawn(WorldAssetRoot(scene_handle))
 ```
+
+Settings belong to the glTF file loader, not to the returned handle type.
+For a labelled `#Scene0` path, request `WorldAsset`; `#Mesh0/Primitive0`
+requests `Mesh`, and `#Animation0` requests `AnimationClip`. The label must
+exist in the file. Unlabelled glTF loads still return `Gltf` when settings
+establish the type.
 
 Coordinate conversion is experimental in Bevy. Keep `validate=True` unless the
 asset must bypass glTF validation deliberately.

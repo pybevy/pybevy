@@ -39,6 +39,8 @@ class Material(Asset):
     """
 
 class StandardMaterial(Material):
+    def __copy__(self) -> StandardMaterial: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> StandardMaterial: ...
     def __init__(
         self,
         *,
@@ -568,6 +570,9 @@ class WireframeMaterial(Asset):
     A specialized material used for rendering meshes in wireframe mode.
     """
 
+    def __copy__(self) -> WireframeMaterial: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> WireframeMaterial: ...
+
     def __init__(
         self,
         *,
@@ -981,6 +986,9 @@ class ShaderMaterial(Material):
         ```
     """
 
+    def __copy__(self) -> ShaderMaterial: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> ShaderMaterial: ...
+
     def __init__(
         self,
         base: StandardMaterial,
@@ -1031,6 +1039,9 @@ class ForwardDecalMaterialExt:
 
 class ForwardDecalMaterial(Material):
     """StandardMaterial extended for use by ForwardDecal."""
+
+    def __copy__(self) -> ForwardDecalMaterial: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> ForwardDecalMaterial: ...
 
     def __init__(
         self,

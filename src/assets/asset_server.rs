@@ -10,6 +10,7 @@ use bevy::{
 use pybevy_audio::audio_source::PyAudioSource;
 use pybevy_core::{
     asset_load_plan::AssetLoadPlan,
+    asset_path::parse_asset_path,
     extract_asset_id_from_any,
     handle::PyHandle,
     public_error::{
@@ -41,7 +42,7 @@ use crate::{
 /// Extract an AssetPath from a Python object (str or AssetPath).
 fn extract_asset_path(path: &Bound<'_, PyAny>) -> PyResult<AssetPath<'static>> {
     if path.is_instance_of::<PyString>() {
-        Ok(AssetPath::from(path.extract::<String>()?))
+        parse_asset_path(&path.extract::<String>()?)
     } else if path.is_instance_of::<PyAssetPath>() {
         let py_path = path.extract::<PyAssetPath>()?;
         Ok(AssetPath::from(&py_path))
@@ -107,7 +108,7 @@ impl PyAssetServer {
             global_registry::get_asset_bridge_by_type_id(type_id)
                 .ok_or_else(|| PyTypeError::new_err(LOADER_SETTINGS_BRIDGE_MISSING))?
         };
-        plan.validate_type(bridge.bevy_type_id(), bridge.name())
+        plan.validate_load_type(&path, bridge.bevy_type_id(), bridge.name())
             .map_err(|(expected, actual)| {
                 PyTypeError::new_err(asset_settings_type_mismatch(expected, actual))
             })?;

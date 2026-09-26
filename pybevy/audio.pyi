@@ -294,6 +294,9 @@ class AudioSource(Asset):
     panics Bevy's playback system with `UnrecognizedFormat`.
     """
 
+    def __copy__(self) -> AudioSource: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> AudioSource: ...
+
     @property
     def bytes(self) -> bytes:
         """Raw audio data bytes."""
@@ -306,6 +309,9 @@ class Pitch(Asset):
 
     Add to `Assets[Pitch]` and pass the handle to `AudioPlayer` to play it.
     """
+
+    def __copy__(self) -> Pitch: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> Pitch: ...
 
     def __init__(self, frequency: float, duration: float) -> None:
         """Create a new Pitch asset.
