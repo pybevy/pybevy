@@ -392,9 +392,13 @@ Pause deterministic scenes for A/B captures. Animation, temporal antialiasing,
 auto exposure, particles, and dithering may produce legitimate differences;
 use a nonzero `epsilon` when those effects cannot be disabled.
 
-### One-Shot Edit-and-Verify
+### Forced Reload and Verify
 
-Use `reload_and_capture` to reload + check errors + screenshot in a single round-trip:
+For a deliberate Full reload, use `reload_and_capture` to reload, check errors,
+and capture a screenshot in one round-trip. Ordinary saved Python edits already
+reload through the watcher; after those edits, use `get_reload_status` and
+`capture_screenshot` without requesting another reload.
+
 ```
 reload_and_capture {"mode": "full", "pause": true}
 → Returns: {reload: {status, errors}, screenshot: <base64>, entity_count}

@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import json
 import sys
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -23,8 +24,9 @@ class SessionRecorder:
 
     def __init__(self, base_dir: str = ".pybevy/logs") -> None:
         ts = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%S")
-        self._dir = Path(base_dir) / ts
-        self._dir.mkdir(parents=True, exist_ok=True)
+        base_path = Path(base_dir)
+        base_path.mkdir(parents=True, exist_ok=True)
+        self._dir = Path(tempfile.mkdtemp(prefix=f"{ts}-", dir=base_path))
         self._log_path = self._dir / "calls.jsonl"
         self._log_file = open(self._log_path, "a")  # noqa: SIM115
         self._image_counter = 0
@@ -43,7 +45,8 @@ class SessionRecorder:
     ) -> None:
         """Append one request/response record to the JSONL log."""
         method = str(request.get("method", ""))
-        params: JsonDict = request.get("params") or {}
+        raw_params = request.get("params")
+        params: JsonDict = raw_params if isinstance(raw_params, dict) else {}
 
         entry: JsonDict = {
             "ts": datetime.now(UTC).isoformat(),
