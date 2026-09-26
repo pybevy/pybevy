@@ -168,6 +168,23 @@ class FontAtlasSet(Resource):
     def __len__(self) -> int:
         """Return the total number of font atlas entries."""
 
+class RemSize(Resource):
+    """Base size, in logical pixels, for ``FontSize.Rem`` and ``LetterSpacing.Rem``.
+
+    ``TextPlugin`` inserts the Bevy default of 20. Change the live resource
+    through ``ResMut[RemSize]`` or insert a replacement to rescale rem text.
+    """
+
+    def __init__(self, value: float = 20.0) -> None: ...
+
+    @property
+    def value(self) -> float: ...
+
+    @value.setter
+    def value(self, value: float) -> None: ...
+
+    def __repr__(self) -> str: ...
+
 class LineHeight(Component):
     """Line height specification for text.
 
@@ -554,10 +571,10 @@ class TextBounds(Component):
     UNBOUNDED: ClassVar[TextBounds]
 
     width: float | None
-    """Maximum width in logical pixels (None = unbounded)"""
+    """Maximum width in logical pixels (None = unbounded); NaN is rejected."""
 
     height: float | None
-    """Maximum height in logical pixels (None = unbounded)"""
+    """Maximum height in logical pixels (None = unbounded); NaN is rejected."""
 
     def __init__(self, width: float | None = None, height: float | None = None) -> None:
         """Create text bounds with optional width/height constraints."""

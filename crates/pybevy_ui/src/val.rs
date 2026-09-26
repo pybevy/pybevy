@@ -62,15 +62,29 @@ impl PyVal {
     }
 }
 
+pub(crate) fn validate_finite_val(value: Val, parameter: &str) -> PyResult<Val> {
+    let magnitude = match value {
+        Val::Auto => return Ok(value),
+        Val::Px(v) | Val::Percent(v) | Val::Vw(v) | Val::Vh(v) | Val::VMin(v) | Val::VMax(v) => v,
+    };
+    if !magnitude.is_finite() {
+        return Err(PyValueError::new_err(format!(
+            "{parameter} must be finite (got {magnitude})"
+        )));
+    }
+    Ok(value)
+}
+
 /// Bare numbers are PyBevy's documented pixel-value convenience.
-pub fn extract_val_from_any(value: &Bound<'_, PyAny>) -> PyResult<Val> {
-    if let Ok(value) = value.extract::<PyVal>() {
-        return Ok(value.into());
-    }
-    if let Ok(value) = value.extract::<f32>() {
-        return Ok(Val::Px(value));
-    }
-    Err(PyTypeError::new_err("expected Val or float"))
+pub fn extract_val_from_any(value: &Bound<'_, PyAny>, parameter: &str) -> PyResult<Val> {
+    let val = if let Ok(value) = value.extract::<PyVal>() {
+        value.into()
+    } else if let Ok(value) = value.extract::<f32>() {
+        Val::Px(value)
+    } else {
+        return Err(PyTypeError::new_err("expected Val or float"));
+    };
+    validate_finite_val(val, parameter)
 }
 
 #[pymethods]

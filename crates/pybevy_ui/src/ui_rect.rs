@@ -3,7 +3,7 @@ use pybevy_core::{FromBorrowedStorage, ValueStorage};
 use pybevy_macros::pyvalue;
 use pyo3::prelude::*;
 
-use crate::val::PyVal;
+use crate::val::{PyVal, validate_finite_val};
 
 #[pyvalue]
 #[pyclass(name = "UiRect", module = "pybevy.ui", eq, from_py_object)]
@@ -153,7 +153,8 @@ impl PyUiRect {
     }
 
     pub fn set_left(&mut self, value: PyVal) -> PyResult<()> {
-        self.as_mut()?.left = value.into();
+        let value = validate_finite_val(value.into(), "UiRect.left")?;
+        self.as_mut()?.left = value;
         Ok(())
     }
 
@@ -162,7 +163,8 @@ impl PyUiRect {
     }
 
     pub fn set_right(&mut self, value: PyVal) -> PyResult<()> {
-        self.as_mut()?.right = value.into();
+        let value = validate_finite_val(value.into(), "UiRect.right")?;
+        self.as_mut()?.right = value;
         Ok(())
     }
 
@@ -171,7 +173,8 @@ impl PyUiRect {
     }
 
     pub fn set_top(&mut self, value: PyVal) -> PyResult<()> {
-        self.as_mut()?.top = value.into();
+        let value = validate_finite_val(value.into(), "UiRect.top")?;
+        self.as_mut()?.top = value;
         Ok(())
     }
 
@@ -180,7 +183,8 @@ impl PyUiRect {
     }
 
     pub fn set_bottom(&mut self, value: PyVal) -> PyResult<()> {
-        self.as_mut()?.bottom = value.into();
+        let value = validate_finite_val(value.into(), "UiRect.bottom")?;
+        self.as_mut()?.bottom = value;
         Ok(())
     }
 

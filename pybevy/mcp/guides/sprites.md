@@ -86,6 +86,44 @@ def setup(
 )
 ```
 
+To pack separate images instead of slicing an existing sheet, use
+`TextureAtlasBuilder`. Pass each source handle to `add_texture` so the returned
+`TextureAtlasSources` can resolve its index. The builder snapshots source
+pixels; later edits to a source image do not change an already built atlas.
+The `Assets[TextureAtlasLayout]` collection needs `SpritePlugin` (included in
+`DefaultPlugins`).
+
+<!-- pybevy-snippet: typecheck -->
+```python
+from pybevy.assets import Assets, Handle
+from pybevy.ecs import ResMut
+from pybevy.image import Image, TextureAtlas, TextureAtlasBuilder, TextureAtlasLayout
+from pybevy.math import UVec2
+from pybevy.render import Extent3d
+
+
+def pack_source(
+    images: ResMut[Assets[Image]],
+    layouts: ResMut[Assets[TextureAtlasLayout]],
+) -> tuple[Handle[Image], TextureAtlas]:
+    source_handle = images.add(
+        Image.new_fill(Extent3d(width=16, height=16, depth_or_array_layers=1),
+                       [255, 0, 0, 255])
+    )
+    source = images.get(source_handle)
+    assert source is not None
+    builder = TextureAtlasBuilder().initial_size(UVec2(16, 16)).max_size(UVec2(16, 16))
+    builder.add_texture(source_handle, source)
+    del source
+
+    layout, sources, atlas_image = builder.build()
+    layout_handle = layouts.add(layout)
+    atlas_handle = images.add(atlas_image)
+    atlas = sources.handle(layout_handle, source_handle)
+    assert atlas is not None
+    return atlas_handle, atlas
+```
+
 For a layout already stored in `Assets[TextureAtlasLayout]`, obtain it with
 `get_mut()` before editing individual rectangles. Indexed rectangles are live
 views into the layout:

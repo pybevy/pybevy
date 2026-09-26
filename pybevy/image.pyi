@@ -1185,11 +1185,36 @@ class TextureAtlas:
             ```
         """
 
+class TextureAtlasBuilder:
+    """Pack source images into an atlas using Bevy's static atlas builder.
+
+    ``add_texture`` snapshots each image at call time. Supply its source handle
+    as ``image_id`` to populate ``TextureAtlasSources`` lookups.
+    """
+
+    def __init__(self) -> None: ...
+    def initial_size(self, size: UVec2) -> TextureAtlasBuilder: ...
+    def max_size(self, size: UVec2) -> TextureAtlasBuilder: ...
+    def format(self, format: TextureFormat) -> TextureAtlasBuilder: ...
+    def auto_format_conversion(
+        self, auto_format_conversion: bool
+    ) -> TextureAtlasBuilder: ...
+    def padding(self, padding: UVec2) -> TextureAtlasBuilder: ...
+    def add_texture(
+        self, image_id: Handle[Image] | None, texture: Image
+    ) -> TextureAtlasBuilder: ...
+    def build(self) -> tuple[TextureAtlasLayout, TextureAtlasSources, Image]:
+        """Return the packed layout, source-handle map, and atlas image.
+
+        Raises ``ValueError`` when Bevy reports a packing, format, or texture
+        access error. The builder can be reused after a successful build.
+        """
+
 class TextureAtlasSources:
     """Maps from image handles to their index in the texture atlas.
 
-    This is typically created by TextureAtlasBuilder and is used to look up
-    which section of the atlas corresponds to a particular source image.
+    A populated map is created by TextureAtlasBuilder and looks up which
+    section of the atlas corresponds to a particular source image.
     """
 
     def __init__(self) -> None:

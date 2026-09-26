@@ -1686,6 +1686,7 @@ reason = "Bevy 0.19.1 bevy_audio::SpatialListener::new defines the gap prefix fo
 "pybevy.sprite.PyAnchor" = "Bevy 0.19.1 bevy_sprite::Anchor is a tuple struct/newtype; Python construction preserves its positional payload contract"
 "pybevy.text.PyFontWeight" = "Bevy 0.19.1 bevy_text::FontWeight is a tuple struct/newtype; Python construction preserves its positional payload contract"
 "pybevy.text.PyFontWidth" = "Bevy 0.19.1 bevy_text::FontWidth is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.text.PyRemSize" = "Bevy 0.19.1 bevy_text::RemSize is a tuple struct/newtype; Python construction preserves its positional payload contract"
 "pybevy.text.PyStrikethroughColor" = "Bevy 0.19.1 bevy_text::StrikethroughColor is a tuple struct/newtype; Python construction preserves its positional payload contract"
 "pybevy.text.PyTextBackgroundColor" = "Bevy 0.19.1 bevy_text::TextBackgroundColor is a tuple struct/newtype; Python construction preserves its positional payload contract"
 "pybevy.text.PyTextColor" = "Bevy 0.19.1 bevy_text::TextColor is a tuple struct/newtype; Python construction preserves its positional payload contract"

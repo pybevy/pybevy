@@ -32,7 +32,8 @@ class Val:
     """An immutable UI unit value, with native Bevy float arithmetic.
 
     Construct a nested variant or use module px/percent/vw/vh/vmin/vmax helpers.
-    Nonfinite values follow Bevy behavior. Bare numeric Node fields mean pixels.
+    Val arithmetic follows Bevy float behavior, but Node layout fields reject
+    non-finite values. Bare numeric Node fields mean pixels.
     """
 
     def __copy__(self) -> Val: ...
@@ -1077,6 +1078,7 @@ class Node(Component):
 
     Node is the core component for Bevy's flexbox-based UI layout system.
     All UI elements require a Node component to participate in layout.
+    Val-valued fields and margin, padding, and border reject NaN and infinity.
 
     Example:
         ```python
@@ -2393,6 +2395,7 @@ class GridTrack:
 
     Used to define the size of individual grid tracks or as part
     of RepeatedGridTrack definitions.
+    Numeric factories reject NaN and infinity with ValueError.
 
     Example:
         ```python
@@ -2562,6 +2565,7 @@ class RepeatedGridTrack:
 
     Used to define multiple repeated tracks in grid_template_rows
     or grid_template_columns.
+    Numeric factories reject NaN and infinity with ValueError.
 
     Example:
         ```python

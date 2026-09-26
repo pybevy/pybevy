@@ -16,6 +16,7 @@ pub mod letter_spacing;
 pub mod line_break;
 pub mod line_height;
 pub mod plugin;
+pub mod rem_size;
 pub mod text2d;
 pub mod text2d_shadow;
 pub mod text_background_color;
@@ -58,6 +59,7 @@ pub mod prelude {
 pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "text")?;
     m.add_class::<plugin::PyTextPlugin>()?;
+    m.add_class::<rem_size::PyRemSize>()?;
 
     m.add_class::<text2d::PyText2d>()?;
     m.add_class::<text2d_shadow::PyText2dShadow>()?;

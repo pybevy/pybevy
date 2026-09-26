@@ -14,17 +14,17 @@ use crate::{
     overflow_clip_margin::PyOverflowClipMargin,
     repeated_grid_track::PyRepeatedGridTrack,
     ui_rect::PyUiRect,
-    val::{PyVal, extract_val_from_any},
+    val::{PyVal, extract_val_from_any, validate_finite_val},
 };
 
-fn validate_non_negative_rect(rect: UiRect, parameter: &str) -> PyResult<UiRect> {
+fn validate_rect(rect: UiRect, parameter: &str, non_negative: bool) -> PyResult<UiRect> {
     for (side, value) in [
         ("left", rect.left),
         ("right", rect.right),
         ("top", rect.top),
         ("bottom", rect.bottom),
     ] {
-        let magnitude = match value {
+        let magnitude = match validate_finite_val(value, &format!("{parameter}.{side}"))? {
             Val::Auto => continue,
             Val::Px(v)
             | Val::Percent(v)
@@ -33,7 +33,7 @@ fn validate_non_negative_rect(rect: UiRect, parameter: &str) -> PyResult<UiRect>
             | Val::VMin(v)
             | Val::VMax(v) => v,
         };
-        if magnitude < 0.0 {
+        if non_negative && magnitude < 0.0 {
             return Err(PyValueError::new_err(format!(
                 "{parameter}.{side} must be non-negative (got {magnitude})"
             )));
@@ -142,8 +142,8 @@ impl PyNode {
         grid_row: PyGridPlacement,
         grid_column: PyGridPlacement,
     ) -> PyResult<PyClassInitializer<Self>> {
-        let val = |value: Option<&Bound<'_, PyAny>>, default: Val| {
-            value.map_or(Ok(default), extract_val_from_any)
+        let val = |value: Option<&Bound<'_, PyAny>>, default: Val, name: &str| {
+            value.map_or(Ok(default), |value| extract_val_from_any(value, name))
         };
         Ok(Self::from_owned(Node {
             display: display.into(),
@@ -152,16 +152,16 @@ impl PyNode {
             overflow: overflow.try_into()?,
             scrollbar_width,
             overflow_clip_margin: overflow_clip_margin.into(),
-            left: val(left, Val::Auto)?,
-            right: val(right, Val::Auto)?,
-            top: val(top, Val::Auto)?,
-            bottom: val(bottom, Val::Auto)?,
-            width: val(width, Val::Auto)?,
-            height: val(height, Val::Auto)?,
-            min_width: val(min_width, Val::Auto)?,
-            min_height: val(min_height, Val::Auto)?,
-            max_width: val(max_width, Val::Auto)?,
-            max_height: val(max_height, Val::Auto)?,
+            left: val(left, Val::Auto, "left")?,
+            right: val(right, Val::Auto, "right")?,
+            top: val(top, Val::Auto, "top")?,
+            bottom: val(bottom, Val::Auto, "bottom")?,
+            width: val(width, Val::Auto, "width")?,
+            height: val(height, Val::Auto, "height")?,
+            min_width: val(min_width, Val::Auto, "min_width")?,
+            min_height: val(min_height, Val::Auto, "min_height")?,
+            max_width: val(max_width, Val::Auto, "max_width")?,
+            max_height: val(max_height, Val::Auto, "max_height")?,
             aspect_ratio,
             align_items: align_items.into(),
             justify_items: justify_items.into(),
@@ -170,17 +170,17 @@ impl PyNode {
             align_content: align_content.into(),
             justify_content: justify_content.into(),
             direction: direction.into(),
-            margin: margin.try_into()?,
-            padding: validate_non_negative_rect(padding.try_into()?, "padding")?,
-            border: validate_non_negative_rect(border.try_into()?, "border")?,
+            margin: validate_rect(margin.try_into()?, "margin", false)?,
+            padding: validate_rect(padding.try_into()?, "padding", true)?,
+            border: validate_rect(border.try_into()?, "border", true)?,
             border_radius: border_radius.into(),
             flex_direction: flex_direction.into(),
             flex_wrap: flex_wrap.into(),
             flex_grow,
             flex_shrink,
-            flex_basis: val(flex_basis, Val::Auto)?,
-            row_gap: val(row_gap, Val::ZERO)?,
-            column_gap: val(column_gap, Val::ZERO)?,
+            flex_basis: val(flex_basis, Val::Auto, "flex_basis")?,
+            row_gap: val(row_gap, Val::ZERO, "row_gap")?,
+            column_gap: val(column_gap, Val::ZERO, "column_gap")?,
             grid_auto_flow: grid_auto_flow.into(),
             grid_template_rows: grid_template_rows.into_iter().map(Into::into).collect(),
             grid_template_columns: grid_template_columns.into_iter().map(Into::into).collect(),
@@ -210,7 +210,8 @@ impl PyNode {
 
     #[setter]
     pub fn set_top(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.as_mut()?.top = extract_val_from_any(value)?;
+        let value = extract_val_from_any(value, "top")?;
+        self.as_mut()?.top = value;
         Ok(())
     }
 
@@ -221,7 +222,8 @@ impl PyNode {
 
     #[setter]
     pub fn set_left(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.as_mut()?.left = extract_val_from_any(value)?;
+        let value = extract_val_from_any(value, "left")?;
+        self.as_mut()?.left = value;
         Ok(())
     }
 
@@ -232,7 +234,8 @@ impl PyNode {
 
     #[setter]
     pub fn set_width(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.as_mut()?.width = extract_val_from_any(value)?;
+        let value = extract_val_from_any(value, "width")?;
+        self.as_mut()?.width = value;
         Ok(())
     }
 
@@ -243,7 +246,8 @@ impl PyNode {
 
     #[setter]
     pub fn set_height(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.as_mut()?.height = extract_val_from_any(value)?;
+        let value = extract_val_from_any(value, "height")?;
+        self.as_mut()?.height = value;
         Ok(())
     }
 
@@ -254,7 +258,8 @@ impl PyNode {
 
     #[setter]
     pub fn set_right(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.as_mut()?.right = extract_val_from_any(value)?;
+        let value = extract_val_from_any(value, "right")?;
+        self.as_mut()?.right = value;
         Ok(())
     }
 
@@ -265,7 +270,8 @@ impl PyNode {
 
     #[setter]
     pub fn set_bottom(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.as_mut()?.bottom = extract_val_from_any(value)?;
+        let value = extract_val_from_any(value, "bottom")?;
+        self.as_mut()?.bottom = value;
         Ok(())
     }
 
@@ -276,7 +282,8 @@ impl PyNode {
 
     #[setter]
     pub fn set_min_width(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.as_mut()?.min_width = extract_val_from_any(value)?;
+        let value = extract_val_from_any(value, "min_width")?;
+        self.as_mut()?.min_width = value;
         Ok(())
     }
 
@@ -287,7 +294,8 @@ impl PyNode {
 
     #[setter]
     pub fn set_max_width(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.as_mut()?.max_width = extract_val_from_any(value)?;
+        let value = extract_val_from_any(value, "max_width")?;
+        self.as_mut()?.max_width = value;
         Ok(())
     }
 
@@ -298,7 +306,8 @@ impl PyNode {
 
     #[setter]
     pub fn set_min_height(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.as_mut()?.min_height = extract_val_from_any(value)?;
+        let value = extract_val_from_any(value, "min_height")?;
+        self.as_mut()?.min_height = value;
         Ok(())
     }
 
@@ -309,7 +318,8 @@ impl PyNode {
 
     #[setter]
     pub fn set_max_height(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.as_mut()?.max_height = extract_val_from_any(value)?;
+        let value = extract_val_from_any(value, "max_height")?;
+        self.as_mut()?.max_height = value;
         Ok(())
     }
 
@@ -452,7 +462,7 @@ impl PyNode {
 
     #[setter]
     pub fn set_margin(&mut self, value: PyUiRect) -> PyResult<()> {
-        let value = value.try_into()?;
+        let value = validate_rect(value.try_into()?, "margin", false)?;
         self.as_mut()?.margin = value;
         Ok(())
     }
@@ -464,7 +474,7 @@ impl PyNode {
 
     #[setter]
     pub fn set_padding(&mut self, value: PyUiRect) -> PyResult<()> {
-        let value = validate_non_negative_rect(value.try_into()?, "padding")?;
+        let value = validate_rect(value.try_into()?, "padding", true)?;
         self.as_mut()?.padding = value;
         Ok(())
     }
@@ -476,7 +486,7 @@ impl PyNode {
 
     #[setter]
     pub fn set_border(&mut self, value: PyUiRect) -> PyResult<()> {
-        let value = validate_non_negative_rect(value.try_into()?, "border")?;
+        let value = validate_rect(value.try_into()?, "border", true)?;
         self.as_mut()?.border = value;
         Ok(())
     }
@@ -510,7 +520,8 @@ impl PyNode {
 
     #[setter]
     pub fn set_flex_basis(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.as_mut()?.flex_basis = extract_val_from_any(value)?;
+        let value = extract_val_from_any(value, "flex_basis")?;
+        self.as_mut()?.flex_basis = value;
         Ok(())
     }
 
@@ -521,7 +532,8 @@ impl PyNode {
 
     #[setter]
     pub fn set_row_gap(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.as_mut()?.row_gap = extract_val_from_any(value)?;
+        let value = extract_val_from_any(value, "row_gap")?;
+        self.as_mut()?.row_gap = value;
         Ok(())
     }
 
@@ -532,7 +544,8 @@ impl PyNode {
 
     #[setter]
     pub fn set_column_gap(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.as_mut()?.column_gap = extract_val_from_any(value)?;
+        let value = extract_val_from_any(value, "column_gap")?;
+        self.as_mut()?.column_gap = value;
         Ok(())
     }
 

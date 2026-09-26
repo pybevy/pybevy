@@ -146,6 +146,7 @@ from .image import (
     Image,
     ImagePlugin,
     TextureAtlas,
+    TextureAtlasBuilder,
     TextureAtlasLayout,
     TextureAtlasSources,
 )
@@ -507,6 +508,7 @@ __all__ = [
     "Image",
     "ImagePlugin",
     "TextureAtlas",
+    "TextureAtlasBuilder",
     "TextureAtlasLayout",
     "TextureAtlasSources",
     # Input

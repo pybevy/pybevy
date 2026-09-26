@@ -40,6 +40,9 @@ are incompatible.
 For HUDs use UI `Text` + `Node`; world-anchored labels require projecting
 world positions into the viewport.
 
+`TextBounds` for world-space text rejects NaN width and height values before
+they reach layout. Use `None` for an unbounded dimension.
+
 ## UI Text vs World Text
 
 PyBevy has two text systems:
@@ -83,6 +86,10 @@ from pybevy.text import FontSize
 TextFont(font_size=FontSize.Rem(1.5))          # relative to root font size (Px/Vw/Vh/VMin/VMax/Rem)
 TextFont(font=asset_server.load_font("fonts/FiraMono-Medium.ttf"), font_size=24.0)
 ```
+
+`TextPlugin` inserts `RemSize(20.0)` as the root size for `Rem` units. Change
+`ResMut[RemSize].value` or insert a new `RemSize` resource to rescale rem-based
+font sizes and letter spacing without changing each text component.
 
 ### Letter Spacing
 

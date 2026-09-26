@@ -100,8 +100,8 @@ impl PyColorMaterial {
     }
 
     #[getter]
-    pub fn alpha_mode(&self, py: Python) -> PyResult<Py<PyAlphaMode2d>> {
-        Py::new(py, PyAlphaMode2d::from(self.as_ref()?.alpha_mode))
+    pub fn alpha_mode(&self) -> PyResult<PyAlphaMode2d> {
+        Ok(self.as_ref()?.alpha_mode.into())
     }
 
     #[setter]
@@ -129,7 +129,7 @@ impl PyColorMaterial {
         let mat = self.as_ref()?;
         Ok(format!(
             "ColorMaterial(color={}, alpha_mode={}, uv_transform={}, texture={})",
-            PyColor::from(Color::from(mat.color)).__repr__()?,
+            PyColor::from(mat.color).__repr__()?,
             PyAlphaMode2d::from(mat.alpha_mode).__repr__(),
             PyAffine2::from_affine2(mat.uv_transform).__repr__()?,
             if mat.texture.is_some() {
