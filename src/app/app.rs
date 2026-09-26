@@ -30,8 +30,9 @@ use pybevy_core::{
     plugin::plugin_registry,
     public_error::{
         NATIVE_PLUGIN_LIFECYCLE, PLUGIN_ADDED_QUERY_TYPE, PLUGIN_GROUP_BUILD_RESULT,
-        PLUGIN_GROUP_LIFECYCLE, duplicate_plugin_identity, duplicate_unkeyed_plugin_identity,
-        plugin_build_error, plugin_key_type, plugin_missing_decorator, plugin_not_a_plugin,
+        PLUGIN_GROUP_LIFECYCLE, duplicate_native_plugin, duplicate_plugin_identity,
+        duplicate_unkeyed_plugin_identity, plugin_build_error, plugin_key_type,
+        plugin_missing_decorator, plugin_not_a_plugin,
     },
     register_wrapped_reflect_types_for_new_app,
 };
@@ -1389,6 +1390,11 @@ impl PyApp {
                         key,
                     )));
                 }
+                if bridge.is_some() {
+                    return Err(PyRuntimeError::new_err(duplicate_native_plugin(
+                        &short_name,
+                    )));
+                }
                 if python_already_added
                     && bridge.is_none()
                     && plugin_type
@@ -1399,17 +1405,6 @@ impl PyApp {
                     return Err(PyRuntimeError::new_err(duplicate_unkeyed_plugin_identity(
                         identity.qualified_name(),
                     )));
-                }
-                // A present Bevy plugin does not prove the wrapper's PyBevy-side
-                // wiring ran: it can arrive through DefaultPlugins instead.
-                if let Some(bridge) = bridge.as_ref()
-                    && !is_reload
-                {
-                    pyself
-                        .borrow(py)
-                        .with_bevy_app_operation(AppOperation::BridgeBuild, |bevy_app| {
-                            bridge.wire(&plugin_instance, bevy_app)
-                        })?;
                 }
                 // Skip this plugin - it was already added in a previous generation
                 // This prevents "RecreationAttempt" errors with winit and other singleton plugins

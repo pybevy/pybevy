@@ -15,12 +15,13 @@ pub mod unapproved_path_mode;
 // Re-export from pybevy_core
 use std::{env::current_dir, path::PathBuf};
 
-use bevy::{asset::AssetPlugin, log::warn};
+use bevy::{app::App, asset::AssetPlugin, log::warn};
 #[allow(unused_imports)]
 pub use pybevy_core::{NativeAsset, PyAsset, PyAssetPath};
-use pybevy_core::{PyPlugin, plugin::add_plugin_if_missing};
+use pybevy_core::{PluginBuild, PyPlugin, public_error::duplicate_native_plugin};
 use pybevy_image::image::PyRenderAssetUsages;
-use pyo3::prelude::*;
+use pybevy_macros::pyplugin;
+use pyo3::{exceptions::PyRuntimeError, prelude::*};
 
 use crate::app::app::PyApp;
 
@@ -72,6 +73,7 @@ pub(crate) fn hot_reload_enabled() -> bool {
     std::env::var("PYBEVY_HOT_RELOAD").is_ok_and(|value| value == "1")
 }
 
+#[pyplugin(AssetPlugin)]
 #[pyclass(name = "AssetPlugin", module = "pybevy.assets", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyAssetPlugin;
@@ -85,7 +87,12 @@ impl PyAssetPlugin {
 
     pub fn build(&self, app: Bound<'_, PyApp>) -> PyResult<()> {
         app.borrow().with_bevy_app(|bevy_app| {
-            add_plugin_if_missing(bevy_app, configured_asset_plugin());
+            if bevy_app.is_plugin_added::<AssetPlugin>() {
+                return Err(PyRuntimeError::new_err(duplicate_native_plugin(
+                    "AssetPlugin",
+                )));
+            }
+            bevy_app.add_plugins(configured_asset_plugin());
             Ok(())
         })
     }
@@ -94,6 +101,13 @@ impl PyAssetPlugin {
     #[getter]
     pub fn watch_for_changes_override(&self) -> Option<bool> {
         configured_asset_plugin().watch_for_changes_override
+    }
+}
+
+impl PluginBuild for PyAssetPlugin {
+    fn build(_py_plugin: &Bound<'_, PyAny>, app: &mut App) -> PyResult<()> {
+        app.add_plugins(configured_asset_plugin());
+        Ok(())
     }
 }
 

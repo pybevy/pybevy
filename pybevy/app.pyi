@@ -270,7 +270,7 @@ class MinimalPlugins(PluginGroup):
     def build(self) -> PluginGroupBuilder:
         """Return a configurable builder containing the minimal group members."""
     def finish(self, app: App) -> None:
-        """Apply minimal plugins, skipping members already installed on the App."""
+        """Apply minimal plugins, raising RuntimeError for duplicate native members."""
 
 class TaskPoolThreadAssignmentPolicy:
     """Bevy's per-pool thread assignment policy.

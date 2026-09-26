@@ -85,6 +85,7 @@ pub const REQUIRED_SINGLE_NO_MATCHES: &str = "Required Single parameter matched 
 pub const REQUIRED_SINGLE_MULTIPLE_MATCHES: &str =
     "Required Single parameter matched multiple entities";
 pub const QUERY_ROW_SHAPE_MISMATCH: &str = "Query row shape did not match its data";
+pub const SYSTEM_CALLABLE_ROUTINE_REQUIRED: &str = "functools.partial and callable objects are not supported as systems, conditions, or observers; use a regular function, bound method, or closure";
 pub const ENTITY_ARGUMENT_INT: &str = "expected an Entity, not an int. Convert a packed ID from an MCP response or Entity.to_bits() with Entity.from_bits(id). The integer shown in Entity(<index>v<generation>) is an EntityIndex value, not a packed identity.";
 
 pub fn one_shot_parameter_validation_skip(reason: impl Display) -> String {
@@ -286,6 +287,12 @@ pub fn duplicate_plugin_identity(qualified_name: impl Display, key: impl Display
 pub fn duplicate_unkeyed_plugin_identity(qualified_name: impl Display) -> String {
     format!("plugin {qualified_name} was added more than once; the second instance was not built")
 }
+
+pub fn duplicate_native_plugin(name: impl Display) -> String {
+    format!(
+        "native plugin {name} was already added; configure a group member with .set(...) before adding the group"
+    )
+}
 pub const ANISOTROPY_TEXTURE_UNAVAILABLE: &str = "anisotropy_texture is unavailable on macOS and iOS: Metal's 16-sampler-per-stage \
      limit is exceeded. anisotropy_strength and anisotropy_rotation still work.";
 pub const MULTI_LAYER_MATERIAL_TEXTURES_UNAVAILABLE: &str = "clearcoat textures are unavailable on macOS and iOS: Metal's 16-sampler-per-stage \
@@ -309,6 +316,7 @@ pub const RESOURCE_COMPONENT_REMOVE: &str =
     "resources cannot be removed as ordinary entity components";
 pub const RESOURCE_COMPONENT_SPAWN: &str =
     "resources cannot be spawned as ordinary entity components";
+pub const BORROWED_COMPONENT_INSERT: &str = "cannot insert a borrowed custom component proxy; construct a new component instance from its fields before passing it to spawn() or insert()";
 pub const RESOURCE_ENTITY_DESPAWN: &str =
     "resource entities cannot be despawned; use remove_resource() to remove the resource";
 pub const RESOURCE_ENTITY_REPARENT: &str = "resource entities cannot take part in a parent-child relationship; despawning the parent \

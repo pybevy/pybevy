@@ -6,8 +6,9 @@ use std::{
 use pybevy_core::{
     LogicalTypeId, PyAsset, PyComponent, PyMessage,
     public_error::{
-        SystemParamRejection, SystemParamWrapper, pipe_input_must_be_first,
-        pipe_target_requires_input, system_annotations_unresolved, system_param_rejection_message,
+        SYSTEM_CALLABLE_ROUTINE_REQUIRED, SystemParamRejection, SystemParamWrapper,
+        pipe_input_must_be_first, pipe_target_requires_input, system_annotations_unresolved,
+        system_param_rejection_message,
     },
 };
 use pybevy_gizmos::gizmos::PyGizmos;
@@ -79,6 +80,23 @@ impl Clone for SystemFunction {
             params: self.params.clone(),
         })
     }
+}
+
+pub(crate) fn require_routine_callable(func: &Bound<'_, PyAny>) -> PyResult<()> {
+    if !func.is_callable() {
+        return Err(PyTypeError::new_err("system or observer must be callable"));
+    }
+    let inspect = func.py().import("inspect")?;
+    for predicate in ["isfunction", "ismethod", "isbuiltin"] {
+        if inspect
+            .getattr(predicate)?
+            .call1((func,))?
+            .extract::<bool>()?
+        {
+            return Ok(());
+        }
+    }
+    Err(PyTypeError::new_err(SYSTEM_CALLABLE_ROUTINE_REQUIRED))
 }
 
 /// The annotated class, or `None` for a generic alias or any other non-class
@@ -245,6 +263,7 @@ impl SystemFunction {
     }
 
     fn new_impl(py: Python, func: Bound<'_, PyAny>, use_cache: bool) -> PyResult<Self> {
+        require_routine_callable(&func)?;
         let inspect = py.import("inspect")?;
         let is_coroutine_fn = inspect.getattr("iscoroutinefunction")?;
         let is_async = is_coroutine_fn.call1((&func,))?.extract::<bool>()?;
@@ -323,8 +342,7 @@ impl SystemFunction {
                 cached_params.as_ref().clone()
             } else {
                 let parsed_params = Self::parse_system_parameters(&func, py)?;
-                // Ordinary Python functions support weakrefs. Other callable
-                // objects that do not are valid systems, but are simply not cached.
+                // A routine without weakref support remains valid but is not cached.
                 if let Ok(function) = PyWeakrefReference::new(&func) {
                     let entry = Arc::new(SystemParamCacheEntry {
                         code_ptr,

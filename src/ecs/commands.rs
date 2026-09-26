@@ -21,9 +21,9 @@ use pybevy_core::{
     custom_resource::validate_hierarchy_link,
     ensure_no_live_asset_access, extract_entity_from_any,
     public_error::{
-        ASSET_SERVER_MANUAL_INSERT, ASSET_SERVER_MANUAL_REMOVE, IS_RESOURCE_COMPONENT_REMOVE,
-        RESOURCE_COMPONENT_INSERT, RESOURCE_COMPONENT_REMOVE, RESOURCE_COMPONENT_SPAWN,
-        RESOURCE_ENTITY_DESPAWN,
+        ASSET_SERVER_MANUAL_INSERT, ASSET_SERVER_MANUAL_REMOVE, BORROWED_COMPONENT_INSERT,
+        IS_RESOURCE_COMPONENT_REMOVE, RESOURCE_COMPONENT_INSERT, RESOURCE_COMPONENT_REMOVE,
+        RESOURCE_COMPONENT_SPAWN, RESOURCE_ENTITY_DESPAWN,
     },
     registry::global_registry,
 };
@@ -49,6 +49,7 @@ use super::{
     },
     entity_commands::PyEntityCommands,
     helpers::validity_guard::ValidityFlag,
+    lazy_wrapper_proxy::PyLazyWrapperProxy,
     resource::hierarchy_contains_resource_entity,
     resource_type::PyResourceType,
     world::PyWorld,
@@ -195,6 +196,9 @@ fn resolve_component_bundle(
     let mut component_types = ResolvedComponentTypes::with_capacity(components.len());
     let mut identities = SmallVec::<[ValidationIdentity; 8]>::with_capacity(components.len());
     for component in components.iter() {
+        if component.is_instance_of::<PyLazyWrapperProxy>() {
+            return Err(PyTypeError::new_err(BORROWED_COMPONENT_INSERT));
+        }
         let (component_type, identity) =
             PyComponentType::resolve_with_identity(&component.get_type(), py)?;
         if reject_resources && matches!(component_type, PyComponentType::Resource(_)) {
@@ -1170,9 +1174,13 @@ fn insert_components_to_entity(
                         );
                     }
                 } else {
-                    // Commands - need to queue the operation
-                    // Clone data needed for the deferred operation
-                    let py_obj = component.clone().unbind();
+                    let mut prepared = bridge.prepare_uniform(&component)?;
+                    let parent = bridge
+                        .relationship_field()
+                        .map(|field| -> PyResult<Entity> {
+                            Ok(component.getattr(field)?.extract::<PyEntity>()?.0)
+                        })
+                        .transpose()?;
                     let bridge_name = bridge.name();
                     let error_sink = commands.error_sink.clone();
 
@@ -1180,51 +1188,21 @@ fn insert_components_to_entity(
                         if !entity_exists(world, entity_id) {
                             return;
                         }
-
-                        // Re-acquire GIL and re-bind the component
-                        Python::attach(|py| {
-                            let component_bound = py_obj.bind(py);
-                            let type_obj = component_bound.get_type();
-                            let type_ptr = type_obj.as_type_ptr();
-
-                            // Get the bridge again (it's registered globally)
-                            if let Some(bridge) = global_registry::get_bridge_by_py_type(type_ptr) {
-                                if let Err(error) = validate_relationship_component(
-                                    world,
-                                    entity_id,
-                                    component_bound,
-                                    bridge.as_ref(),
-                                ) {
-                                    match &error_sink {
-                                        Some(sink) => sink.record(error),
-                                        None => eprintln!(
-                                            "Failed to validate dynamic component '{}': relationship is invalid",
-                                            bridge_name
-                                        ),
-                                    }
-                                    return;
-                                }
-                                match bridge.insert(world, entity_id, component_bound) {
-                                    Ok(()) => {
-                                        if let Some(logical_type) = logical_type {
-                                            update_entity_logical_type(
-                                                world,
-                                                entity_id,
-                                                native_type,
-                                                logical_type,
-                                            );
-                                        }
-                                    }
-                                    Err(error) => report_deferred_error(
-                                        &error_sink,
-                                        &format!(
-                                            "Failed to insert component '{bridge_name}' via Commands"
-                                        ),
-                                        error,
-                                    ),
-                                }
-                            }
-                        });
+                        if let Some(parent) = parent
+                            && let Err(error) = validate_hierarchy_link(world, entity_id, parent)
+                        {
+                            report_deferred_error(
+                                &error_sink,
+                                &format!("Failed to validate component '{bridge_name}'"),
+                                PyTypeError::new_err(error.to_string()),
+                            );
+                            return;
+                        }
+                        let component_id = bridge.register(world);
+                        prepared.insert(component_id, &[entity_id], world);
+                        if let Some(logical_type) = logical_type {
+                            update_entity_logical_type(world, entity_id, native_type, logical_type);
+                        }
                     })?;
                 }
             }

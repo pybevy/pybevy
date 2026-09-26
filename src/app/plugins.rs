@@ -27,7 +27,7 @@ use pybevy_core::{
     public_error::{
         PLUGIN_CLASS_REQUIRED, PLUGIN_GROUP_BUILD_RESULT, PLUGIN_GROUP_REQUIRED,
         PLUGIN_GROUP_START_TYPE, PLUGIN_GROUP_TARGET_MISSING, PLUGIN_INSTANCE_REQUIRED,
-        missing_group_plugin, plugin_build_error,
+        duplicate_native_plugin, missing_group_plugin, plugin_build_error,
     },
 };
 use pybevy_render::wgpu_error_handler::WgpuErrorHandlerPlugin;
@@ -373,6 +373,16 @@ impl PyPluginGroupBuilder {
                 if !pending.is_empty() {
                     builder = place_members(builder, None, &app, pending, failure.clone())?;
                 }
+                for member in self.members.members() {
+                    if member.enabled
+                        && let MemberValue::DefaultNative(slot) = &member.value
+                        && slot.is_added(native)
+                    {
+                        return Err(PyRuntimeError::new_err(duplicate_native_plugin(
+                            slot.order_name(),
+                        )));
+                    }
+                }
                 let result = catch_unwind(AssertUnwindSafe(|| {
                     native.add_plugins(builder);
                 }));
@@ -411,6 +421,11 @@ fn execute_members(app: &Bound<'_, PyApp>, members: Vec<MemberValue>) -> PyResul
             {
                 finish_plugin_group(slot.order_name(), || {
                     app.borrow().with_bevy_app(|native| {
+                        if slot.is_added(native) {
+                            return Err(PyRuntimeError::new_err(duplicate_native_plugin(
+                                slot.order_name(),
+                            )));
+                        }
                         slot.build(native);
                         Ok(())
                     })

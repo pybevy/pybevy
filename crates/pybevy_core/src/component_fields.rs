@@ -25,7 +25,28 @@ pub fn declared_annotations<'py>(cls: &Bound<'py, PyType>) -> PyResult<Bound<'py
         }
     }
 
-    Ok(merged)
+    let dataclasses = cls.py().import("dataclasses")?;
+    if !dataclasses
+        .call_method1("is_dataclass", (cls,))?
+        .is_truthy()?
+    {
+        return Ok(merged);
+    }
+
+    let fields = PyDict::new(cls.py());
+    for field in dataclasses.call_method1("fields", (cls,))?.try_iter()? {
+        let name = field?.getattr("name")?;
+        if let Some(annotation) = merged.get_item(&name)? {
+            fields.set_item(name, annotation)?;
+        }
+    }
+    let dataclass_fields = cls.getattr("__dataclass_fields__")?;
+    for (name, annotation) in merged.iter() {
+        if !dataclass_fields.contains(&name)? {
+            fields.set_item(name, annotation)?;
+        }
+    }
+    Ok(fields)
 }
 
 #[cfg(test)]
@@ -34,15 +55,19 @@ mod tests {
 
     use pyo3::{
         prelude::*,
-        types::{PyDict, PyType},
+        types::{PyDict, PyFloat, PyType},
     };
 
     use super::declared_annotations;
 
     fn class<'py>(py: Python<'py>, source: &str, name: &str) -> Bound<'py, PyType> {
         let namespace = PyDict::new(py);
-        py.run(&CString::new(source).unwrap(), None, Some(&namespace))
-            .unwrap();
+        py.run(
+            &CString::new(source).unwrap(),
+            Some(&namespace),
+            Some(&namespace),
+        )
+        .unwrap();
         namespace
             .get_item(name)
             .unwrap()
@@ -96,6 +121,36 @@ mod tests {
         Python::attach(|py| {
             let plain = class(py, "class Plain:\n    pass\n", "Plain");
             assert!(declared_annotations(&plain).unwrap().is_empty());
+        });
+    }
+
+    #[test]
+    fn dataclass_pseudo_fields_are_excluded_but_later_annotation_edits_are_seen() {
+        Python::attach(|py| {
+            let component = class(
+                py,
+                r#"from dataclasses import InitVar, dataclass
+from typing import ClassVar
+
+@dataclass
+class Component:
+    limit: ClassVar[int] = 10
+    value: int = 1
+    scale: InitVar[int] = 2
+"#,
+                "Component",
+            );
+            assert_eq!(names(&declared_annotations(&component).unwrap()), ["value"]);
+
+            component
+                .getattr("__annotations__")
+                .unwrap()
+                .set_item("extra", py.get_type::<PyFloat>())
+                .unwrap();
+            assert_eq!(
+                names(&declared_annotations(&component).unwrap()),
+                ["value", "extra"]
+            );
         });
     }
 }
