@@ -111,7 +111,8 @@ preserve them. Enum payload fields accept component vector shorthand.
 Non-finite float fields are reported as the JSON strings `"NaN"`,
 `"Infinity"`, and `"-Infinity"` for diagnostics. Numeric mutation inputs must
 be finite; a rejected value names its field and leaves the component unchanged.
-These diagnostic strings are not writable float values. JSON `null` is valid
+The exception is a `Range` endpoint: `"Infinity"` and `"-Infinity"` replay
+there, but `"NaN"` remains invalid. JSON `null` is valid
 only for an `Option<T>` field; a required float field needs a JSON number.
 Finite fields returned by `get_component` can be replayed with `set_component`
 for editable components. `set_component` echoes each written field under that
@@ -303,6 +304,12 @@ also accepted for `LinearRgba` and is the canonical stored representation.
 so every entity spawned with that same handle changes too, while the response
 reports just the entity you named. Give an entity its own `materials.add(...)`
 handle to tweak it alone.
+
+`VisibilityRange.end_margin` uses infinity for its default no-far-limit range.
+Its readback and schema spelling, `{"start": "Infinity", "end": "Infinity"}`,
+can be sent back through `set_component` or `spawn_entity`. The same `Range`
+conversion applies to `start_margin` and future `Range`-valued fields. Other
+component floats still require finite values.
 
 ## Camera Control
 
