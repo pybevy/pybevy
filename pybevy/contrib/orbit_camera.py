@@ -12,7 +12,14 @@ from dataclasses import dataclass
 from ..app import App, Plugin, Update
 from ..decorators import component, plugin, resource
 from ..ecs import Component, MessageReader, Mut, Query, Res, Resource
-from ..input import ButtonInput, KeyCode, MouseButton, MouseMotion, MouseWheel
+from ..input import (
+    ButtonInput,
+    KeyCode,
+    MouseButton,
+    MouseMotion,
+    MouseScrollUnit,
+    MouseWheel,
+)
 from ..math import Vec3
 from ..transform import Transform
 
@@ -29,7 +36,7 @@ class OrbitCamera(Component):
         target: Point to orbit around
         rotate_sensitivity: Mouse rotation sensitivity (default: 0.003)
         pan_sensitivity: Mouse pan sensitivity multiplier (default: 0.001)
-        zoom_sensitivity: Mouse wheel zoom sensitivity (default: 0.1)
+        zoom_sensitivity: Zoom fraction per scroll line (default: 0.1)
         min_distance: Minimum zoom distance (default: 5.0)
         max_distance: Maximum zoom distance (default: 1000.0)
     """
@@ -98,9 +105,10 @@ def orbit_camera_control_system(
                         -math.pi / 2 + 0.1, min(math.pi / 2 - 0.1, camera.pitch)
                     )
 
-        # Mouse wheel to zoom
+        # Bevy reports pixel scrolling at approximately 100 pixels per line.
         for wheel in wheels:
-            camera.distance -= wheel.y * camera.distance * camera.zoom_sensitivity
+            lines = wheel.y / 100.0 if wheel.unit == MouseScrollUnit.Pixel else wheel.y
+            camera.distance -= lines * camera.distance * camera.zoom_sensitivity
             # Clamp distance to reasonable values
             camera.distance = max(
                 camera.min_distance, min(camera.max_distance, camera.distance)

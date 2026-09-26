@@ -1,10 +1,14 @@
+use std::collections::HashSet;
+
 use bevy::animation::{
     graph::{AnimationGraph, AnimationGraphNode, AnimationNodeType},
     prelude::AnimationNodeIndex,
 };
 use pybevy_core::{
     AssetStorage, PyAsset, PyHandle, extract_handle_from_any,
-    public_error::{ANIMATION_GRAPH_NODE_MISSING, ANIMATION_GRAPH_NODE_READ_ONLY},
+    public_error::{
+        ANIMATION_GRAPH_CYCLE, ANIMATION_GRAPH_NODE_MISSING, ANIMATION_GRAPH_NODE_READ_ONLY,
+    },
 };
 use pybevy_macros::{pyasset, pyenum};
 use pyo3::{
@@ -17,6 +21,31 @@ use pyo3::{
 use crate::{animation_node_index::PyAnimationNodeIndex, validate::validate_finite};
 
 const CLIP_CANNOT_BE_NONE: &str = "clip cannot be None";
+
+fn validate_node(graph: &AnimationGraph, index: AnimationNodeIndex) -> PyResult<()> {
+    if graph.get(index).is_none() {
+        return Err(PyValueError::new_err(ANIMATION_GRAPH_NODE_MISSING));
+    }
+    Ok(())
+}
+
+fn edge_would_cycle(
+    graph: &AnimationGraph,
+    from: AnimationNodeIndex,
+    to: AnimationNodeIndex,
+) -> bool {
+    let mut pending = vec![to];
+    let mut visited = HashSet::new();
+    while let Some(node) = pending.pop() {
+        if node == from {
+            return true;
+        }
+        if visited.insert(node) {
+            pending.extend(graph.graph.neighbors(node));
+        }
+    }
+    false
+}
 
 #[pyasset(AnimationGraph, bridge)]
 #[pyclass(name = "AnimationGraph", module = "pybevy.animation", extends = PyAsset, skip_from_py_object)]
@@ -99,6 +128,10 @@ impl PyAnimationGraph {
         parent: &PyAnimationNodeIndex,
     ) -> PyResult<PyAnimationNodeIndex> {
         let weight = validate_finite(weight, "weight")?;
+        {
+            let graph = self.as_ref()?;
+            validate_node(&graph, parent.0)?;
+        }
         Ok(PyAnimationNodeIndex(
             self.as_mut()?.add_blend(weight, parent.0),
         ))
@@ -116,6 +149,10 @@ impl PyAnimationGraph {
         let handle = extract_handle_from_any(clip)?;
         let handle = (&handle).try_into()?;
         let weight = validate_finite(weight, "weight")?;
+        {
+            let graph = self.as_ref()?;
+            validate_node(&graph, parent.0)?;
+        }
         Ok(PyAnimationNodeIndex(
             self.as_mut()?.add_clip(handle, weight, parent.0),
         ))
@@ -127,6 +164,14 @@ impl PyAnimationGraph {
         from_: &PyAnimationNodeIndex,
         to: &PyAnimationNodeIndex,
     ) -> PyResult<()> {
+        {
+            let graph = self.as_ref()?;
+            validate_node(&graph, from_.0)?;
+            validate_node(&graph, to.0)?;
+            if edge_would_cycle(&graph, from_.0, to.0) {
+                return Err(PyValueError::new_err(ANIMATION_GRAPH_CYCLE));
+            }
+        }
         self.as_mut()?.add_edge(from_.0, to.0);
         Ok(())
     }

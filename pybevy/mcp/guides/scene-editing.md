@@ -591,7 +591,8 @@ Why this matters:
 
 ## Animation Verification
 
-Use `schedule_actions` to seek to an exact time and inspect deterministically:
+For systems that recompute their output from `Time.elapsed_secs()` each frame,
+use `schedule_actions` to seek to an exact virtual time and inspect deterministically:
 
 ```
 schedule_actions {"actions": [
@@ -608,7 +609,8 @@ Read the `stdout` field in the `run_code` action result returned by
 the MCP `get_logs` tool, but `run_code` captures its own stdout and returns it
 inline.
 
-**Multi-time comparison** - seek to different times and capture each:
+**Multi-time comparison for elapsed-time-driven systems** - seek to different
+virtual times and capture each:
 
 ```
 schedule_actions {"actions": [
@@ -623,10 +625,17 @@ schedule_actions {"actions": [
 ]}
 ```
 
-This lets you confirm animations produce correct values at specific moments without timing drift between tool calls.
-`seek_time` changes absolute virtual elapsed time; it does not simulate the
-intervening frames. Systems that build state by accumulating `delta_secs()` do
-not jump to the requested moment.
+These recipes only verify systems whose output is calculated directly from
+absolute virtual time. `seek_time` does not simulate intervening frames, replay
+systems that accumulate `delta_secs()`, or seek Bevy `AnimationPlayer` clips
+loaded from glTF/AnimationGraph. A clip's pose can remain unchanged even though
+`Time.elapsed_secs()` reports the requested value.
+
+To inspect a clip at an exact time, find its `AnimationPlayer` on the scene
+child and use its graph's `AnimationNodeIndex`. Call `player.animation_mut(index)`;
+if the animation is active, pause it and call `seek_to(seconds)` on the returned
+value. Advance one frame before reading the pose or capturing an image. See
+`guide://animation` for the player and graph setup.
 
 ## Field Value Formats (MCP JSON)
 

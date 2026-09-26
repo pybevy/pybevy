@@ -185,6 +185,8 @@ def animate_sprite(
 
 `Timer.tick()` returns the same timer, so `timer.tick(delta).just_finished()`
 can be chained. `Stopwatch.tick()` likewise returns the same stopwatch.
+`times_finished_this_tick()` saturates at 4294967295 for very large repeating
+counts and zero-duration timers; cap it before using the count in a loop.
 
 Register it:
 

@@ -764,15 +764,24 @@ pub(crate) fn generate_resource_bridge_tokens(
                 validity: pybevy_core::ValidityFlagWithMode,
                 py: pyo3::Python,
             ) -> pyo3::PyResult<pyo3::Py<pyo3::PyAny>> {
-                let resource = world.get_resource::<#bevy_type>().ok_or_else(|| {
+                if world.get_resource::<#bevy_type>().is_none() {
+                    return Err(pyo3::exceptions::PyRuntimeError::new_err(concat!(#resource_name, " resource not found")));
+                }
+                let component_id = world.components().component_id::<#bevy_type>().ok_or_else(|| {
                     pyo3::exceptions::PyRuntimeError::new_err(concat!(#resource_name, " resource not found"))
                 })?;
-
-                let ptr = resource as *const #bevy_type;
-                // SAFETY: ptr is from a valid shared Bevy resource borrow; the validity
-                // flag invalidates storage when that borrow expires.
+                let entity = world.resource_entities().get(component_id).ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err(concat!(#resource_name, " resource not found"))
+                })?;
+                // SAFETY: the read-only cell is valid while the World validity flag is
+                // active. Storage re-resolves component presence before every read.
                 let storage = unsafe {
-                    pybevy_core::ResourceStorage::borrowed_ref(ptr, validity.flag)
+                    pybevy_core::ResourceStorage::revalidating(
+                        world.as_unsafe_world_cell_readonly(),
+                        entity,
+                        component_id,
+                        validity.flag.with_access_mode(pybevy_core::AccessMode::Read),
+                    )
                 };
 
                 #get_wrapped

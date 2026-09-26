@@ -133,6 +133,19 @@ unfinished; `replay()` resets it. Seeking changes `seek_time` without changing
 not clamped until a later continuing-playback update, so out-of-range values can
 be observed and a non-looping overshoot can persist.
 
+For a deterministic pose check, obtain a writable `AnimationPlayer` from the
+scene child and use the `AnimationNodeIndex` returned when building its graph:
+
+```python
+active = player.animation_mut(index)
+if active is not None:
+    active.pause().seek_to(0.5)
+```
+
+Advance one frame before inspecting the animated transform or capturing an
+image. MCP `seek_time` changes virtual elapsed time, not this clip's seek
+position, so it cannot replace `ActiveAnimation.seek_to()` for glTF animation.
+
 Also on `ActiveAnimation`: `completions`, `just_completed`, `last_seek_time`,
 `set_seek_time`, `repeat`, `repeat_mode`, `replay`, `weight`,
 `is_playback_reversed`.
@@ -181,6 +194,10 @@ graph, clip_indices = AnimationGraph.from_clips(clips)
 `AnimationNodeIndex` per clip in order, not the root. The root is `graph.root`.
 Treating the second element as one index later fails as
 `TypeError: index expected at least 1 argument, got 0`, from `list.index`.
+
+`AnimationGraph` edges must form a directed acyclic graph. `add_edge()` raises
+`ValueError` if the new edge would create a cycle; `add_edge()`, `add_blend()`,
+and `add_clip()` also reject node indices not present in the graph.
 
 ## AnimationPlayer Methods
 
