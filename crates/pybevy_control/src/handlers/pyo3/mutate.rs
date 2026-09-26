@@ -10,6 +10,7 @@ use bevy::{
     reflect::{TypeInfo, enums::VariantInfo},
     time::{Fixed, Real, Time, Virtual},
 };
+use pybevy_color::linear_rgba::PyLinearRgba;
 use pybevy_core::{
     ComponentBridge, CustomComponentInfo, CustomResourceInfo, PyEntity, ValidityFlag,
     ValidityGuard,
@@ -19,6 +20,7 @@ use pybevy_core::{
     },
     public_error,
 };
+use pybevy_math::vec3::PyVec3;
 use pyo3::{
     ffi::{PyObject, PyTypeObject},
     prelude::*,
@@ -48,10 +50,12 @@ pub fn register_lifecycle_mutation_hooks(
 use crate::{
     bridge::{ControlError, EntityRef},
     handlers::{
+        LINEAR_RGBA_CHANNELS,
         entity::resolve_entity,
         json_float::{nonfinite_float_from_json, require_finite_float},
         pyo3::{custom_wrapper, execute::create_world_wrapper, state_resource},
         reflect_mutate::{self, ReflectError},
+        value_conversion,
     },
 };
 
@@ -2591,7 +2595,7 @@ fn math_readback_array(
     let type_name = current.get_type().name().ok()?;
     let coordinates: &[&str] = match type_name.to_string_lossy().as_ref() {
         "Vec2" | "UVec2" | "IVec2" => &["x", "y"],
-        "Vec3" | "UVec3" => &["x", "y", "z"],
+        "UVec3" => &["x", "y", "z"],
         "Vec4" | "Quat" => &["x", "y", "z", "w"],
         _ => return None,
     };
@@ -3298,6 +3302,64 @@ fn json_kind_name(value: &serde_json::Value) -> &'static str {
     }
 }
 
+fn linear_rgba_from_json(
+    py: Python<'_>,
+    current: &Bound<'_, PyAny>,
+    value: &serde_json::Value,
+) -> Result<Py<PyAny>, String> {
+    let class = current.get_type();
+    match value {
+        serde_json::Value::Array(values) => {
+            if values.len() != LINEAR_RGBA_CHANNELS.len() {
+                return Err(public_error::mcp_linear_rgba_input(format!(
+                    "LinearRgba requires exactly 4 channels, got {} elements",
+                    values.len()
+                )));
+            }
+            let channels = LINEAR_RGBA_CHANNELS
+                .iter()
+                .zip(values)
+                .map(|(name, value)| {
+                    json_number_to_f32(value).map_err(|error| {
+                        public_error::mcp_linear_rgba_input(format!("LinearRgba.{name}: {error}"))
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            class
+                .call1((channels[0], channels[1], channels[2], channels[3]))
+                .map(Bound::unbind)
+                .map_err(|error| error.to_string())
+        }
+        serde_json::Value::Object(fields) => {
+            if fields.is_empty() {
+                return Ok(current.clone().unbind());
+            }
+            let kwargs = PyDict::new(py);
+            for (name, value) in fields {
+                if !LINEAR_RGBA_CHANNELS.contains(&name.as_str()) {
+                    return Err(public_error::mcp_linear_rgba_input(format!(
+                        "LinearRgba has no field '{name}'"
+                    )));
+                }
+                let channel = json_number_to_f32(value).map_err(|error| {
+                    public_error::mcp_linear_rgba_input(format!("LinearRgba.{name}: {error}"))
+                })?;
+                kwargs
+                    .set_item(name, channel)
+                    .map_err(|error| error.to_string())?;
+            }
+            class
+                .call((), Some(&kwargs))
+                .map(Bound::unbind)
+                .map_err(|error| error.to_string())
+        }
+        _ => Err(public_error::mcp_linear_rgba_input(format!(
+            "LinearRgba got {}",
+            json_kind_name(value)
+        ))),
+    }
+}
+
 pub(crate) fn convert_field_value(
     py: Python<'_>,
     component: &Bound<'_, PyAny>,
@@ -3332,6 +3394,19 @@ fn convert_field_value_typed(
             .name()
             .map(|n| n.to_string())
             .unwrap_or_default();
+        if current.cast::<PyLinearRgba>().is_ok() {
+            return linear_rgba_from_json(py, &current, field_value);
+        }
+        if current.cast_exact::<PyVec3>().is_ok() {
+            let value = value_conversion::vec3_from_json(field_value)?;
+            return Py::new(py, PyVec3::from_vec3(value))
+                .map(Py::into_any)
+                .map_err(|error| error.to_string());
+        }
+        let owner = enum_owner_type(&current);
+        let is_color = owner
+            .name()
+            .is_ok_and(|name| name.to_string_lossy() == "Color");
         if current.is_instance_of::<PyFloat>()
             && (field_value.is_number() || nonfinite_float_from_json(field_value).is_some())
         {
@@ -3340,13 +3415,9 @@ fn convert_field_value_typed(
                 .map(|value| value.into_any().unbind())
                 .map_err(|error| error.to_string());
         }
-        let owner = enum_owner_type(&current);
-        let is_color = owner
-            .name()
-            .is_ok_and(|name| name.to_string_lossy() == "Color");
         let expected_math_shape = match type_name.as_str() {
             "Vec2" | "UVec2" | "IVec2" => Some("[x, y]"),
-            "Vec3" | "UVec3" => Some("[x, y, z]"),
+            "UVec3" => Some("[x, y, z]"),
             "Vec4" | "Quat" => Some("[x, y, z, w]"),
             _ => None,
         };
@@ -3571,7 +3642,7 @@ fn convert_field_value_typed(
             }
             let expected_shape = match type_name.as_str() {
                 "Vec2" | "UVec2" | "IVec2" => Some(("[x, y]", 2)),
-                "Vec3" | "UVec3" => Some(("[x, y, z]", 3)),
+                "UVec3" => Some(("[x, y, z]", 3)),
                 "Vec4" | "Quat" => Some(("[x, y, z, w]", 4)),
                 _ => None,
             };
@@ -3584,7 +3655,9 @@ fn convert_field_value_typed(
                 ));
             }
 
-            if let Some(result) = math_value_from_json(py, &type_name, arr) {
+            if type_name != "Vec3"
+                && let Some(result) = math_value_from_json(py, &type_name, arr)
+            {
                 return result;
             }
         }
@@ -3776,6 +3849,7 @@ mod tests {
             name::Name,
             resource::IsResource,
         },
+        math::Vec3,
         prelude::{ChildOf, Children, With},
         ptr::OwningPtr,
     };
@@ -3975,6 +4049,118 @@ holder = Holder()
     }
 
     #[test]
+    fn convert_field_value_linear_rgba_accepts_array_and_object_forms() {
+        setup_python();
+        Python::attach(|py| {
+            let holder = PyModule::from_code(
+                py,
+                c"class Holder: pass\nholder = Holder()\n",
+                c"linear_rgba_holder.py",
+                c"linear_rgba_holder",
+            )
+            .unwrap()
+            .getattr("holder")
+            .unwrap();
+            holder
+                .setattr(
+                    "emissive",
+                    Py::new(py, PyLinearRgba::new(0.0, 0.0, 0.0, 1.0)).unwrap(),
+                )
+                .unwrap();
+
+            for (input, expected) in [
+                (
+                    serde_json::json!([6.5, 3.0, 1.0, 1.0]),
+                    [6.5, 3.0, 1.0, 1.0],
+                ),
+                (
+                    serde_json::json!({
+                        "red": 0.25,
+                        "green": 0.5,
+                        "blue": 0.75,
+                        "alpha": 0.9,
+                    }),
+                    [0.25, 0.5, 0.75, 0.9],
+                ),
+            ] {
+                let converted = convert_field_value(py, &holder, "emissive", &input).unwrap();
+                let value: PyRef<'_, PyLinearRgba> = converted.bind(py).extract().unwrap();
+                assert_eq!(value.to_f32_array().unwrap(), expected);
+            }
+        });
+    }
+
+    #[test]
+    fn convert_field_value_linear_rgba_reports_accepted_forms() {
+        setup_python();
+        Python::attach(|py| {
+            let holder = PyModule::from_code(
+                py,
+                c"class Holder: pass\nholder = Holder()\n",
+                c"linear_rgba_errors.py",
+                c"linear_rgba_errors",
+            )
+            .unwrap()
+            .getattr("holder")
+            .unwrap();
+            holder
+                .setattr(
+                    "emissive",
+                    Py::new(py, PyLinearRgba::new(0.0, 0.0, 0.0, 1.0)).unwrap(),
+                )
+                .unwrap();
+
+            for (input, detail) in [
+                (serde_json::json!([1.0, 2.0, 3.0]), "got 3 elements"),
+                (
+                    serde_json::json!([1.0, "green", 3.0, 1.0]),
+                    "LinearRgba.green",
+                ),
+                (serde_json::json!("WHITE"), "LinearRgba got string"),
+                (
+                    serde_json::json!({"LinearRgba": {"red": 1.0}}),
+                    "LinearRgba has no field 'LinearRgba'",
+                ),
+            ] {
+                let error = convert_field_value(py, &holder, "emissive", &input).unwrap_err();
+                assert!(error.contains(detail), "unexpected error: {error}");
+                assert!(error.contains(public_error::MCP_LINEAR_RGBA_INPUT_FORMS));
+                assert!(!error.contains("Valid variants"));
+                assert!(!error.contains("BLACK"));
+            }
+        });
+    }
+
+    #[test]
+    fn convert_field_value_unrelated_linear_rgba_class_falls_through() {
+        setup_python();
+        Python::attach(|py| {
+            let holder = PyModule::from_code(
+                py,
+                c"class LinearRgba:\n    pass\nclass Holder:\n    emissive = LinearRgba()\nholder = Holder()\n",
+                c"custom_linear_rgba.py",
+                c"custom_linear_rgba",
+            )
+            .unwrap()
+            .getattr("holder")
+            .unwrap();
+
+            let converted = convert_field_value(
+                py,
+                &holder,
+                "emissive",
+                &serde_json::json!([1.0, 2.0, 3.0, 4.0]),
+            )
+            .unwrap();
+
+            assert_eq!(
+                converted.bind(py).extract::<Vec<f64>>().unwrap(),
+                vec![1.0, 2.0, 3.0, 4.0]
+            );
+        });
+    }
+
+    #[test]
     fn convert_field_value_non_color_falls_through() {
         setup_python();
         Python::attach(|py| {
@@ -4157,31 +4343,95 @@ holder = Holder()
     fn convert_field_value_vec3_string_reports_expected_shape() {
         setup_python();
         Python::attach(|py| {
-            let code = CString::new(
-                r#"
-class Vec3:
-    pass
-
-Vec3.ZERO = Vec3()
-
-class Holder:
-    def __init__(self):
-        self.translation = Vec3()
-
-holder = Holder()
-"#,
+            let holder = PyModule::from_code(
+                py,
+                c"class Holder: pass\nholder = Holder()\n",
+                c"vec3_holder.py",
+                c"vec3_holder",
             )
+            .unwrap()
+            .getattr("holder")
             .unwrap();
-
-            let globals = PyDict::new(py);
-            py.run(&code, Some(&globals), None).unwrap();
-            let holder = globals.get_item("holder").unwrap().unwrap();
+            holder
+                .setattr(
+                    "translation",
+                    Py::new(py, PyVec3::from_vec3(Vec3::ZERO)).unwrap(),
+                )
+                .unwrap();
 
             let error =
                 convert_field_value(py, &holder, "translation", &serde_json::json!("not_a_vec3"))
                     .unwrap_err();
 
-            assert_eq!(error, "Vec3 expects [x, y, z], got string");
+            assert_eq!(
+                error,
+                "Vec3 got string; accepted forms: [x, y, z] or {\"x\": x, \"y\": y, \"z\": z}, with finite numeric coordinates"
+            );
+        });
+    }
+
+    #[test]
+    fn convert_field_value_native_vec3_accepts_array_and_object_forms() {
+        setup_python();
+        Python::attach(|py| {
+            let holder = PyModule::from_code(
+                py,
+                c"class Holder: pass\nholder = Holder()\n",
+                c"vec3_holder.py",
+                c"vec3_holder",
+            )
+            .unwrap()
+            .getattr("holder")
+            .unwrap();
+            holder
+                .setattr(
+                    "vector",
+                    Py::new(py, PyVec3::from_vec3(Vec3::ZERO)).unwrap(),
+                )
+                .unwrap();
+
+            for input in [
+                serde_json::json!([1.25, -2.5, 3.75]),
+                serde_json::json!({"x": 1.25, "y": -2.5, "z": 3.75}),
+            ] {
+                let converted = convert_field_value(py, &holder, "vector", &input).unwrap();
+                let wrapped = converted.bind(py).extract::<PyVec3>().unwrap();
+                assert_eq!(
+                    Vec3::try_from(wrapped).unwrap(),
+                    Vec3::new(1.25, -2.5, 3.75)
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn convert_field_value_unrelated_vec3_class_keeps_generic_conversion() {
+        setup_python();
+        Python::attach(|py| {
+            let holder = PyModule::from_code(
+                py,
+                c"import dataclasses\n@dataclasses.dataclass\nclass Vec3:\n    x: float = 0.0\n    y: float = 0.0\n    z: float = 0.0\nclass Holder:\n    vector = Vec3()\nholder = Holder()\n",
+                c"custom_vec3.py",
+                c"custom_vec3",
+            )
+            .unwrap()
+            .getattr("holder")
+            .unwrap();
+
+            let converted = convert_field_value(
+                py,
+                &holder,
+                "vector",
+                &serde_json::json!({"x": 4.0, "y": 5.0, "z": 6.0}),
+            )
+            .unwrap();
+            let value = converted.bind(py);
+
+            assert!(value.cast_exact::<PyVec3>().is_err());
+            assert_eq!(value.get_type().module().unwrap(), "custom_vec3");
+            assert_eq!(value.getattr("x").unwrap().extract::<f64>().unwrap(), 4.0);
+            assert_eq!(value.getattr("y").unwrap().extract::<f64>().unwrap(), 5.0);
+            assert_eq!(value.getattr("z").unwrap().extract::<f64>().unwrap(), 6.0);
         });
     }
 

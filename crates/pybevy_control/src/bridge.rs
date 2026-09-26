@@ -127,7 +127,7 @@ pub struct SetComponentParams {
     pub entity: EntityRef,
     /// Component name
     pub component: String,
-    /// Fields to update
+    /// Fields to update. Vec3 accepts [x, y, z] or {x, y, z}; coordinate objects require all three finite numeric fields.
     #[schemars(schema_with = "json_object_schema")]
     pub fields: serde_json::Value,
 }
@@ -424,7 +424,7 @@ pub struct SetAssetParams {
     pub component: String,
     /// Asset type: StandardMaterial, Mesh, ColorMaterial, AudioSource
     pub asset_type: String,
-    /// Fields to update on the asset
+    /// Fields to update on the asset. Color and LinearRgba fields accept [r, g, b, a]; LinearRgba also accepts {red, green, blue, alpha}.
     #[schemars(schema_with = "json_object_schema")]
     pub fields: serde_json::Value,
 }
@@ -543,7 +543,7 @@ pub enum ControlOperation {
         #[schemars(schema_with = "json_object_array_schema")]
         operations: Vec<serde_json::Value>,
     },
-    /// Update asset properties (material color, mesh settings) live without code reload. The entity only selects the asset through its handle, so every entity sharing that handle changes with it.
+    /// Update asset properties (material color, mesh settings) live without code reload. The entity only selects the asset through its handle, so every entity sharing that handle changes with it. Color and LinearRgba fields accept [r, g, b, a]; LinearRgba arrays are linear and may contain HDR values above 1.
     #[schemars(extend("x-feature-gate" = "manipulation"))]
     SetAsset(SetAssetParams),
 

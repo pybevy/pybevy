@@ -110,6 +110,19 @@ pub fn mcp_scalar_object(type_name: &str) -> String {
     format!("expected {type_name} value, got object")
 }
 
+pub const MCP_LINEAR_RGBA_INPUT_FORMS: &str = "accepted forms: [r, g, b, a] or {\"red\": r, \"green\": g, \"blue\": b, \"alpha\": a}, with finite numeric channels";
+
+pub fn mcp_linear_rgba_input(detail: impl Display) -> String {
+    format!("{detail}; {MCP_LINEAR_RGBA_INPUT_FORMS}")
+}
+
+pub const MCP_VEC3_INPUT_FORMS: &str =
+    "accepted forms: [x, y, z] or {\"x\": x, \"y\": y, \"z\": z}, with finite numeric coordinates";
+
+pub fn mcp_vec3_input(detail: impl Display) -> String {
+    format!("{detail}; {MCP_VEC3_INPUT_FORMS}")
+}
+
 pub fn mcp_scene_namespace_unavailable(module_name: &str) -> String {
     format!(
         "Active scene module `{module_name}` is unavailable; run_code cannot access its namespace. \

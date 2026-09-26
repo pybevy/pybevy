@@ -286,7 +286,15 @@ Use `get_type_definition(type_name="StandardMaterial")` to see all available fie
 ```
 set_asset {"entity": "table", "component": "MeshMaterial3d",
     "asset_type": "StandardMaterial", "fields": {"base_color": [1,0,0,1]}}
+
+set_asset {"entity": "table", "component": "MeshMaterial3d",
+    "asset_type": "StandardMaterial", "fields": {"emissive": [6.5,3,1,1]}}
 ```
+
+`base_color` is `Color`, so its array shorthand is sRGBA. `emissive` is
+`LinearRgba`, so its array channels are linear and may exceed 1 for HDR. The
+complete object form `{"red": 6.5, "green": 3, "blue": 1, "alpha": 1}` is
+also accepted for `LinearRgba` and is the canonical stored representation.
 
 **Note on shared assets:** the entity only selects the asset through its handle,
 so every entity spawned with that same handle changes too, while the response
@@ -623,10 +631,11 @@ Integer vector coordinates must be JSON integers; floats and booleans are reject
 | Type | JSON Format | Example |
 |------|-------------|---------|
 | Vec2 | `[x, y]` | `[1.0, 2.0]` |
-| Vec3 | `[x, y, z]` | `[0, 5, 0]` |
+| Vec3 | `[x, y, z]` or `{"x": x, "y": y, "z": z}` | `[0, 5, 0]` |
 | Vec4 | `[x, y, z, w]` | `[1, 0, 0, 1]` |
 | Quat | `[x, y, z, w]` | `[0, 0, 0, 1]` |
 | Color | `[r, g, b, a]` | `[1.0, 0.5, 0.0, 1.0]` |
+| LinearRgba | `[r, g, b, a]` or `{"red": r, "green": g, "blue": b, "alpha": a}` | `[6.5, 3.0, 1.0, 1.0]` |
 | UVec2/IVec2 | `[x, y]` | `[700, 0]` |
 | UVec3 | `[x, y, z]` | `[8, 12, 16]` |
 | float | number | `500.0` |
@@ -635,6 +644,10 @@ Integer vector coordinates must be JSON integers; floats and booleans are reject
 | str | string | `"player"` |
 | Option<T> | value or `null` | `[1, 0, 0]` or `null` |
 | Vec<f32> | array | `[1.0, 0.5, 0.0, 0.25]` |
+
+The Vec3 coordinate-object form requires exactly `x`, `y`, and `z`, each a
+finite JSON number. Reads and mutation echoes use the canonical array form, so
+their output can be replayed unchanged. The array form remains valid.
 
 ### Common Payload Examples
 
@@ -657,7 +670,9 @@ set_component {"entity": "my_camera", "component": "Camera",
 set_component {"entity": "my_camera", "component": "Camera", "fields": {"viewport": null}}
 ```
 
-**Note:** `Name` is passed as a bare string, not `{"name": "..."}`. Color is `[r, g, b, a]`.
+**Note:** `Name` is passed as a bare string, not `{"name": "..."}`. `Color`
+and `LinearRgba` both accept `[r, g, b, a]`; the former is sRGBA and the latter
+is linear.
 
 ## MCP Integration
 

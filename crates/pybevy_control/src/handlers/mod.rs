@@ -12,6 +12,9 @@ pub mod screenshot;
 pub mod spatial;
 pub mod time_control;
 pub mod turnaround;
+mod value_conversion;
+
+pub(crate) const LINEAR_RGBA_CHANNELS: [&str; 4] = ["red", "green", "blue", "alpha"];
 
 use bevy::ecs::world::World;
 use pybevy_core::ensure_no_live_asset_access;

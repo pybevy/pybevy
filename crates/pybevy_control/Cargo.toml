@@ -29,6 +29,8 @@ bevy = { workspace = true, default-features = false, features = [
     "png",
 ] }
 pybevy_core = { workspace = true }
+pybevy_color = { workspace = true }
+pybevy_math = { workspace = true }
 pybevy_ecs = { workspace = true }
 pybevy_macros = { workspace = true }
 
@@ -46,7 +48,6 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 pybevy_camera = { workspace = true }
-pybevy_color = { workspace = true }
 tower = { version = "0.5", features = ["util"] }
 
 [lints]
