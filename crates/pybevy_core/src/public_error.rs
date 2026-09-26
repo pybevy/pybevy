@@ -297,6 +297,7 @@ pub const TRANSMISSION_TEXTURES_UNAVAILABLE: &str = "transmission textures are u
 pub const ANIMATION_GRAPH_NODE_READ_ONLY: &str =
     "Cannot modify a node obtained from AnimationGraph.get(); use get_mut() instead";
 pub const ANIMATION_GRAPH_NODE_MISSING: &str = "the node is no longer in the animation graph";
+pub const ANIMATION_GRAPH_CYCLE: &str = "AnimationGraph.add_edge would create a cycle";
 pub const ANIMATION_PLAYER_ANIMATION_MISSING: &str = "Animation not found for node index";
 
 pub fn animation_parameter_must_be_finite(parameter: &str, value: f32) -> String {

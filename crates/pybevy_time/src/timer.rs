@@ -36,6 +36,7 @@ impl PyTimerMode {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyTimer {
     pub(crate) timer: Timer,
+    count_overflowed: bool,
 }
 
 #[pymethods]
@@ -49,6 +50,7 @@ impl PyTimer {
         };
         Ok(Self {
             timer: Timer::new(dur, mode.into()),
+            count_overflowed: false,
         })
     }
 
@@ -56,6 +58,7 @@ impl PyTimer {
     pub fn from_seconds(duration: f32, mode: PyTimerMode) -> PyResult<Self> {
         Ok(Self {
             timer: Timer::new(duration_from_secs_f64(duration.into())?, mode.into()),
+            count_overflowed: false,
         })
     }
 
@@ -63,7 +66,9 @@ impl PyTimer {
         mut slf: PyRefMut<'py, Self>,
         delta: &Bound<'_, PyAny>,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        slf.timer.tick(duration_from_py(delta)?);
+        let delta = duration_from_py(delta)?;
+        slf.count_overflowed = slf.would_overflow_finishes(delta);
+        slf.timer.tick(delta);
         Ok(slf)
     }
 
@@ -94,6 +99,7 @@ impl PyTimer {
 
     pub fn reset(&mut self) {
         self.timer.reset();
+        self.count_overflowed = false;
     }
 
     pub fn pause(&mut self) {
@@ -129,7 +135,11 @@ impl PyTimer {
     }
 
     pub fn times_finished_this_tick(&self) -> u32 {
-        self.timer.times_finished_this_tick()
+        if self.count_overflowed {
+            u32::MAX
+        } else {
+            self.timer.times_finished_this_tick()
+        }
     }
 
     pub fn elapsed_secs(&self) -> f32 {
@@ -155,14 +165,25 @@ impl PyTimer {
 
     pub fn finish(&mut self) {
         self.timer.finish();
+        self.count_overflowed = false;
     }
 
     pub fn almost_finish(&mut self) {
         self.timer.almost_finish();
+        self.count_overflowed = false;
     }
 }
 
 impl PyTimer {
+    fn would_overflow_finishes(&self, delta: Duration) -> bool {
+        if self.timer.mode() != TimerMode::Repeating || self.timer.is_paused() {
+            return false;
+        }
+        let period = self.timer.duration().as_nanos();
+        period != 0
+            && self.timer.elapsed().saturating_add(delta).as_nanos() / period > u32::MAX as u128
+    }
+
     // set_elapsed() accepts any value, and Bevy's Duration subtraction panics past the duration.
     fn checked_remaining(&self) -> PyResult<Duration> {
         self.timer

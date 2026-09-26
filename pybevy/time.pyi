@@ -187,6 +187,7 @@ class Time(Resource, Generic[_TimeContext]):
 
         The wrap period prevents f32 precision loss by wrapping elapsed time
         back to zero after the specified duration. Default is 1 hour.
+        A zero duration raises TypeError.
 
         Args:
             wrap_period: Duration after which elapsed_wrapped() wraps to zero
@@ -368,7 +369,7 @@ class Time(Resource, Generic[_TimeContext]):
         """Set the maximum delta time allowed in a single update.
 
         This prevents large time jumps after events such as tab switching or
-        suspend. The default is 250 ms.
+        suspend. The default is 250 ms. A zero duration raises TypeError.
         """
 
     # Time[Fixed]-only API
@@ -756,7 +757,8 @@ class Timer:
         For repeating timers ticked with a large delta, this can be > 1.
         For non-repeating timers, this is always 0 or 1. A repeating timer
         whose duration is zero finished infinitely often, reported as
-        4294967295, so bound the count before using it as a loop length.
+        4294967295. Counts larger than that also saturate at 4294967295,
+        so bound the result before using it as a loop length.
 
         Returns:
             Number of times timer finished in this tick

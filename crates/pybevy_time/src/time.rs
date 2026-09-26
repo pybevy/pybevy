@@ -57,6 +57,7 @@ impl PyTime {
     }
 
     pub fn set_wrap_period(&mut self, wrap_period: Duration) -> PyResult<()> {
+        let wrap_period = require_positive_duration(wrap_period)?;
         self.as_mut()?.set_wrap_period(wrap_period);
         Ok(())
     }
@@ -236,6 +237,7 @@ impl PyTimeFixed {
     }
 
     pub fn set_wrap_period(&mut self, wrap_period: Duration) -> PyResult<()> {
+        let wrap_period = require_positive_duration(wrap_period)?;
         self.as_mut()?.set_wrap_period(wrap_period);
         Ok(())
     }
@@ -331,6 +333,7 @@ impl PyTimeVirtual {
     }
 
     pub fn set_max_delta(&mut self, max_delta: Duration) -> PyResult<()> {
+        let max_delta = require_positive_duration(max_delta)?;
         let time = self.as_mut()?;
         // Revalidate the stored speed against the new bound.
         relative_speed(time.relative_speed_f64(), max_delta)?;
@@ -377,6 +380,7 @@ impl PyTimeVirtual {
     }
 
     pub fn set_wrap_period(&mut self, wrap_period: Duration) -> PyResult<()> {
+        let wrap_period = require_positive_duration(wrap_period)?;
         self.as_mut()?.set_wrap_period(wrap_period);
         Ok(())
     }
@@ -459,6 +463,7 @@ impl PyTimeReal {
     }
 
     pub fn set_wrap_period(&mut self, wrap_period: Duration) -> PyResult<()> {
+        let wrap_period = require_positive_duration(wrap_period)?;
         self.as_mut()?.set_wrap_period(wrap_period);
         Ok(())
     }

@@ -767,6 +767,9 @@ def load_model(asset_server: Res[AssetServer]) -> None:
     sound = asset_server.load_audio("sounds/click.ogg")
 ```
 
+`Time[Virtual].set_max_delta()` and every `Time.set_wrap_period()` require a
+positive duration; zero raises `TypeError` before changing the clock.
+
 `load_image(path)` is equivalent to `load(path, asset_type=Image)`, and
 `load_audio(path)` to `load(path, asset_type=AudioSource)`. Both styles preserve
 the precise handle type. Use the conveniences for common image/audio loads and
@@ -820,6 +823,9 @@ def setup(commands: Commands) -> None:
 Custom resources from `World.resource(T)` are shallow read-only handles that
 expire after the World scope. Use `World.get_mut(resource_entity, T)` for field
 writes, or `copy.copy` / `copy.deepcopy` while valid to keep an owned value.
+Native resource wrappers from `World.resource(T)` also become unreadable while
+the resource is absent, including nested borrowed fields; fetch a fresh wrapper
+after reinserting the resource.
 
 When a custom resource defines `__len__` or `__iter__`, those protocols work
 through both `Res[T]` and `ResMut[T]`. The iterator expires with the system.
