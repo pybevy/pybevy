@@ -3,6 +3,41 @@ use pybevy_core::public_error;
 
 use crate::handlers::json_float::{nonfinite_float_from_json, require_finite_float};
 
+pub(crate) enum EnumPayload {
+    Unit,
+    Single(serde_json::Value),
+    Named(serde_json::Map<String, serde_json::Value>),
+    Tuple(Vec<serde_json::Value>),
+}
+
+/// Build the one enum representation shared by reflected and Python values.
+///
+/// Named payloads keep their native field names beside `variant`; a single
+/// tuple payload uses `value`, and larger tuples use their reflected indexes.
+pub(crate) fn enum_to_json(variant: impl Into<String>, payload: EnumPayload) -> serde_json::Value {
+    let mut fields = serde_json::Map::new();
+    fields.insert(
+        "variant".to_string(),
+        serde_json::Value::String(variant.into()),
+    );
+    match payload {
+        EnumPayload::Unit => {}
+        EnumPayload::Single(value) => {
+            fields.insert("value".to_string(), value);
+        }
+        EnumPayload::Named(values) => fields.extend(values),
+        EnumPayload::Tuple(values) => {
+            fields.extend(
+                values
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, value)| (index.to_string(), value)),
+            );
+        }
+    }
+    serde_json::Value::Object(fields)
+}
+
 pub(crate) fn vec3_from_json(value: &serde_json::Value) -> Result<Vec3, String> {
     const COORDINATES: [&str; 3] = ["x", "y", "z"];
 
@@ -85,5 +120,39 @@ fn json_kind_name(value: &serde_json::Value) -> &'static str {
         serde_json::Value::String(_) => "string",
         serde_json::Value::Array(_) => "array",
         serde_json::Value::Object(_) => "object",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{EnumPayload, enum_to_json};
+
+    #[test]
+    fn enum_json_uses_one_shape_for_every_payload_kind() {
+        assert_eq!(
+            enum_to_json("Hidden", EnumPayload::Unit),
+            serde_json::json!({"variant": "Hidden"})
+        );
+        assert_eq!(
+            enum_to_json("Px", EnumPayload::Single(serde_json::json!(12.0))),
+            serde_json::json!({"variant": "Px", "value": 12.0})
+        );
+        assert_eq!(
+            enum_to_json(
+                "Linear",
+                EnumPayload::Named(serde_json::Map::from_iter([
+                    ("start".to_string(), serde_json::json!(1.0)),
+                    ("end".to_string(), serde_json::json!(4.0)),
+                ])),
+            ),
+            serde_json::json!({"variant": "Linear", "start": 1.0, "end": 4.0})
+        );
+        assert_eq!(
+            enum_to_json(
+                "Pair",
+                EnumPayload::Tuple(vec![serde_json::json!(1), serde_json::json!(2)]),
+            ),
+            serde_json::json!({"variant": "Pair", "0": 1, "1": 2})
+        );
     }
 }

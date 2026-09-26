@@ -182,6 +182,7 @@ impl Plugin for ControlBevyPlugin {
         app.insert_resource(crate::handlers::schedule::SharedScheduleRegistryResource(
             schedule_registry,
         ));
+        app.init_resource::<crate::asset_reference::AssetReferenceSession>();
         app.insert_resource(ControlConfig {
             port: config.port,
             host: config.host.clone(),

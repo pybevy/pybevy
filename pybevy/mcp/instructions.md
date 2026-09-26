@@ -181,6 +181,7 @@ When using `set_component`, `spawn_entity`, `set_resource`, or `set_asset`, fiel
 - **Vec2/Vec3/Vec4**: `[x, y]`, `[x, y, z]`, `[x, y, z, w]`; Vec3 also accepts the complete coordinate object `{"x": x, "y": y, "z": z}`
 - **Option fields**: `null` for None, value directly for Some
 - **Nested structs**: `{"x": 1.0, "y": 2.0, "z": 3.0}`; a Vec3 coordinate object requires exactly `x`, `y`, and `z` with finite numeric values
+- **Existing asset handles**: read a live handle component such as `Mesh3d` or `MeshMaterial3d`, then replay its complete `fields.handle.asset_ref` object through `set_component` or `spawn_entity`. This engine-issued reference is typed and session-scoped; raw asset IDs and indexes are not accepted.
 - **Resources**: `set_resource` patches existing fields - only provided fields are updated, others preserved. Native-resource patches validate all conversions and setters on a detached value; failure leaves the resource unchanged. Types that cannot safely stage a copy reject patches without mutation. Its response returns `resource` with the type name and `inserted: true` for a newly created value or `inserted: false` for a patch.
 
 ## Available Guides

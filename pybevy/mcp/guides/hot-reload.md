@@ -62,6 +62,10 @@ consequences matter during iteration:
   field objects are not migrated: an old enum value remains an old enum value
   until scene code assigns a current-generation replacement. Rejected reloads do
   not approve their candidate types for later assignment.
+- Preserved custom-component fields follow the same no-migration rule. An MCP
+  component update that names an enum member constructs the replacement from the
+  successfully committed generation, even while the field still stores an old
+  enum value.
 - Mesh assets and handles created by Startup survive a Partial reload. Editing
   mesh-building code has no visible effect until Startup runs again; use a Full
   reload when changing generated geometry.

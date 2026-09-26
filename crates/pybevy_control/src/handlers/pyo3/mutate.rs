@@ -108,6 +108,15 @@ fn read_back_fields<'a>(
         .collect()
 }
 
+fn canonical_enum_fields(
+    instance: &Bound<'_, PyAny>,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let serde_json::Value::Object(fields) = super::scene::py_value_to_json(instance) else {
+        return None;
+    };
+    fields.contains_key("variant").then_some(fields)
+}
+
 /// Check if a tool result contains embedded field-level errors.
 /// Used by batch and schedule to detect partial failures.
 pub fn has_embedded_errors(value: &serde_json::Value) -> bool {
@@ -157,6 +166,7 @@ pub fn spawn_entity(
     let entity_id = entity.to_bits();
 
     let mut added_components = Vec::new();
+    let mut component_values = serde_json::Map::new();
     let mut errors = Vec::new();
 
     for ((comp_name, comp_fields), component) in obj.iter().zip(resolved) {
@@ -192,6 +202,18 @@ pub fn spawn_entity(
         }
 
         let fields = comp_fields.as_object().cloned().unwrap_or_default();
+        if super::asset_reference::contains_reference_field(&fields) {
+            match super::asset_reference::spawn_from_reference(
+                world, entity, comp_name, &fields, &bridge,
+            ) {
+                Ok(value) => {
+                    added_components.push(comp_name.clone());
+                    component_values.insert(comp_name.clone(), value);
+                }
+                Err(error) => errors.push(format!("{comp_name}: {}", error.message)),
+            }
+            continue;
+        }
         let type_id = bridge.bevy_type_id();
 
         // Try reflection first
@@ -240,10 +262,17 @@ pub fn spawn_entity(
         )));
     }
 
-    Ok(serde_json::json!({
+    let mut result = serde_json::json!({
         "entity_id": entity_id,
         "components_added": added_components,
-    }))
+    });
+    if !component_values.is_empty() {
+        result.as_object_mut().unwrap().insert(
+            "component_values".into(),
+            serde_json::Value::Object(component_values),
+        );
+    }
+    Ok(result)
 }
 
 /// Construct a registered Python-defined component from JSON and insert it
@@ -420,6 +449,78 @@ fn annotation_name(annotation: &Bound<'_, PyAny>) -> String {
         .unwrap_or_else(|_| annotation.to_string())
 }
 
+fn annotation_enum_type<'py>(
+    py: Python<'py>,
+    annotation: &Bound<'py, PyAny>,
+) -> Result<Option<(Bound<'py, PyType>, bool)>, String> {
+    let typing = PyModule::import(py, "typing").map_err(|error| error.to_string())?;
+    let origin = typing
+        .call_method1("get_origin", (annotation,))
+        .map_err(|error| error.to_string())?;
+    let types = PyModule::import(py, "types").map_err(|error| error.to_string())?;
+    let is_union = origin.is(typing.getattr("Union").map_err(|error| error.to_string())?)
+        || origin.is(types
+            .getattr("UnionType")
+            .map_err(|error| error.to_string())?);
+    let mut enum_type = annotation.cast::<PyType>().ok().cloned();
+    let mut optional = false;
+    if is_union {
+        let args = typing
+            .call_method1("get_args", (annotation,))
+            .map_err(|error| error.to_string())?
+            .cast_into::<PyTuple>()
+            .map_err(|error| error.to_string())?;
+        if args.len() == 2 {
+            for index in 0..2 {
+                let arg = args.get_item(index).map_err(|error| error.to_string())?;
+                if arg.is(py.None().bind(py).get_type()) {
+                    optional = true;
+                } else {
+                    enum_type = arg.cast_into::<PyType>().ok();
+                }
+            }
+        }
+        if !optional {
+            enum_type = None;
+        }
+    }
+    Ok(enum_type
+        .filter(|owner| !enum_variant_names(owner).is_empty())
+        .map(|owner| (owner, optional)))
+}
+
+fn convert_declared_enum_field_value(
+    py: Python<'_>,
+    class: &Bound<'_, PyType>,
+    field_name: &str,
+    field_value: &serde_json::Value,
+) -> Result<Option<Py<PyAny>>, String> {
+    let Some(name) = field_value.as_str() else {
+        return Ok(None);
+    };
+    let Some(annotation) = resolved_field_annotation(py, class, field_name) else {
+        return Ok(None);
+    };
+    let Some((owner, optional)) = annotation_enum_type(py, &annotation)? else {
+        return Ok(None);
+    };
+    construct_enum_variant_for_owner(
+        py,
+        owner.as_any(),
+        &owner,
+        name,
+        &serde_json::Value::Null,
+        VariantSource::Named,
+    )
+    .map_err(|error| {
+        if optional {
+            public_error::mcp_optional_enum_error(&error)
+        } else {
+            error
+        }
+    })
+}
+
 fn validate_annotated_field_value(
     py: Python<'_>,
     class: &Bound<'_, PyType>,
@@ -430,59 +531,26 @@ fn validate_annotated_field_value(
         return Ok(value);
     };
 
-    if let Ok(name) = value.bind(py).extract::<String>() {
-        let typing = PyModule::import(py, "typing").map_err(|error| error.to_string())?;
-        let origin = typing
-            .call_method1("get_origin", (&annotation,))
-            .map_err(|error| error.to_string())?;
-        let types = PyModule::import(py, "types").map_err(|error| error.to_string())?;
-        let is_union = origin.is(typing.getattr("Union").map_err(|error| error.to_string())?)
-            || origin.is(types
-                .getattr("UnionType")
-                .map_err(|error| error.to_string())?);
-        let mut enum_type = annotation.cast::<PyType>().ok().cloned();
-        let mut optional = false;
-        if is_union {
-            let args = typing
-                .call_method1("get_args", (&annotation,))
-                .map_err(|error| error.to_string())?
-                .cast_into::<PyTuple>()
-                .map_err(|error| error.to_string())?;
-            if args.len() == 2 {
-                for index in 0..2 {
-                    let arg = args.get_item(index).map_err(|error| error.to_string())?;
-                    if arg.is(py.None().bind(py).get_type()) {
-                        optional = true;
-                    } else {
-                        enum_type = arg.cast_into::<PyType>().ok();
-                    }
-                }
+    if let Ok(name) = value.bind(py).extract::<String>()
+        && let Some((owner, optional)) = annotation_enum_type(py, &annotation)?
+    {
+        let converted = construct_enum_variant_for_owner(
+            py,
+            owner.as_any(),
+            &owner,
+            &name,
+            &serde_json::Value::Null,
+            VariantSource::Named,
+        )
+        .map_err(|error| {
+            if optional {
+                public_error::mcp_optional_enum_error(&error)
+            } else {
+                error
             }
-            if !optional {
-                enum_type = None;
-            }
-        }
-        if let Some(owner) = enum_type
-            && !enum_variant_names(&owner).is_empty()
-        {
-            let converted = construct_enum_variant_for_owner(
-                py,
-                owner.as_any(),
-                &owner,
-                &name,
-                &serde_json::Value::Null,
-                VariantSource::Named,
-            )
-            .map_err(|error| {
-                if optional {
-                    public_error::mcp_optional_enum_error(&error)
-                } else {
-                    error
-                }
-            })?;
-            if let Some(converted) = converted {
-                value = converted;
-            }
+        })?;
+        if let Some(converted) = converted {
+            value = converted;
         }
     }
 
@@ -543,6 +611,11 @@ fn convert_annotated_field_value(
     field_name: &str,
     field_value: &serde_json::Value,
 ) -> Result<Py<PyAny>, String> {
+    if let Some(value) =
+        convert_declared_enum_field_value(py, &instance.get_type(), field_name, field_value)?
+    {
+        return Ok(value);
+    }
     let value = convert_field_value(py, instance, field_name, field_value)?;
     validate_annotated_field_value(py, &instance.get_type(), field_name, value)
 }
@@ -743,6 +816,32 @@ pub fn set_component(
     if let Some(bridge) = find_bridge(&component) {
         let type_id = bridge.bevy_type_id();
 
+        if super::asset_reference::contains_reference_field(field_obj) {
+            let inserted = world
+                .get_entity(entity)
+                .is_ok_and(|entity_ref| !bridge.entity_contains(&entity_ref));
+            if !bridge.can_insert() {
+                return Err(ControlError::invalid_params(format!(
+                    "Component '{component}' cannot be set from Python"
+                )));
+            }
+            let new_values = super::asset_reference::set_from_reference(
+                world, entity, &component, field_obj, &bridge,
+            )?;
+            let mut result = serde_json::json!({
+                "entity_id": entity_id,
+                "component": component,
+                "new_values": new_values,
+            });
+            if inserted {
+                result
+                    .as_object_mut()
+                    .unwrap()
+                    .insert("inserted".into(), serde_json::json!(true));
+            }
+            return Ok(result);
+        }
+
         // Try reflection first
         match reflect_mutate::reflect_set_component(world, entity, type_id, field_obj) {
             Ok(new_values) => {
@@ -890,32 +989,19 @@ fn set_component_python(
                     ControlError::not_found(public_error::mcp_entity_not_found(entity_id))
                 })?;
             let current = extracted.bind(py);
-            let result = if let Some(serde_json::Value::String(variant_name)) =
-                field_obj.get("variant")
-            {
-                let mut payload = field_obj.clone();
-                payload.remove("variant");
-                let payload = if payload.is_empty() {
-                    serde_json::Value::Null
-                } else if payload.len() == 1 {
-                    payload
-                        .remove("value")
-                        .unwrap_or(serde_json::Value::Object(payload))
-                } else {
-                    serde_json::Value::Object(payload)
-                };
+            let result = if let Some(request) = enum_component_variant_request(current, field_obj) {
                 let replacement = construct_enum_variant(
                     py,
                     current,
-                    variant_name,
-                    &payload,
-                    VariantSource::Named,
+                    &request.name,
+                    &request.payload,
+                    request.source,
                 )
                 .map_err(|error| {
                     ControlError::invalid_params(format!("Failed to set '{component}': {error}"))
                 })?;
                 match replacement {
-                    Some(replacement) => Ok((replacement, Some(variant_name.clone()))),
+                    Some(replacement) => Ok((replacement, Some(request.name))),
                     None => current
                         .call_method0("__copy__")
                         .map(|copy| (copy.unbind(), None))
@@ -956,11 +1042,10 @@ fn set_component_python(
                         "Failed to replace component '{component}': {error}"
                     ))
                 })?;
-                let mut post = read_back_fields(instance, field_obj.keys());
-                post.insert(
-                    "variant".to_string(),
-                    serde_json::Value::String(variant_name),
-                );
+                let mut post = canonical_enum_fields(instance)
+                    .unwrap_or_else(|| read_back_fields(instance, field_obj.keys()));
+                post.entry("variant".to_string())
+                    .or_insert(serde_json::Value::String(variant_name));
                 return Ok(post);
             }
 
@@ -2286,6 +2371,46 @@ fn enum_field_prototype<'py>(
 enum VariantSource {
     Named,
     ObjectKey,
+}
+
+struct EnumVariantRequest {
+    name: String,
+    payload: serde_json::Value,
+    source: VariantSource,
+}
+
+fn enum_component_variant_request(
+    current: &Bound<'_, PyAny>,
+    fields: &serde_json::Map<String, serde_json::Value>,
+) -> Option<EnumVariantRequest> {
+    if let Some(serde_json::Value::String(name)) = fields.get("variant") {
+        let mut payload = fields.clone();
+        payload.remove("variant");
+        let payload = if payload.is_empty() {
+            serde_json::Value::Null
+        } else if payload.len() == 1 {
+            payload
+                .remove("value")
+                .unwrap_or(serde_json::Value::Object(payload))
+        } else {
+            serde_json::Value::Object(payload)
+        };
+        return Some(EnumVariantRequest {
+            name: name.clone(),
+            payload,
+            source: VariantSource::Named,
+        });
+    }
+
+    let (name, payload) = fields.iter().next().filter(|_| fields.len() == 1)?;
+    enum_variant_names(&enum_owner_type(current))
+        .iter()
+        .any(|variant| variant == name)
+        .then(|| EnumVariantRequest {
+            name: name.clone(),
+            payload: payload.clone(),
+            source: VariantSource::ObjectKey,
+        })
 }
 
 fn construct_wrapped_variant_payload<'py>(

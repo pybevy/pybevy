@@ -1256,6 +1256,12 @@ key/value pairs instead; this pair form is read-only. Writes accept dictionary
 objects, keep omitted dataclass fields, and preserve array dtypes. Cycles and
 nesting beyond 64 levels return `{"serialization_error": ...}` markers.
 
+Enums use one tagged JSON shape across reads and mutation echoes. Every enum
+object has `variant`; named payload fields keep their native names, one tuple
+payload uses `value`, larger tuples use numeric string keys, and unit variants
+have no payload fields. The returned object is valid mutation input unchanged.
+Class constants are values and are not reported as variants.
+
 A custom field annotated `Optional[Enum]` or `Enum | None` accepts a variant
 name even when its current value is `None`. Other custom fields holding `None`
 need initialization through `run_code`. Native reflected optional fields use

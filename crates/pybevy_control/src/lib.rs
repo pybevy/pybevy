@@ -1,4 +1,5 @@
 pub mod api_index;
+pub mod asset_reference;
 pub mod bridge;
 pub mod client;
 mod client_pyo3;
