@@ -33,6 +33,7 @@ use crate::{
     ecs::{
         conditional_system::{PyConditionalSystem, extract_condition_expr},
         dynamic_system::{DynamicSystemHandle, SystemErrorBuffer},
+        system::require_routine_callable,
         system_interpreter::{
             new_main_condition, new_main_persistent_condition, new_main_system,
             new_main_unit_target, new_main_value_source, new_main_value_target,
@@ -398,6 +399,7 @@ pub(crate) fn register_native_system_sets(root: &Bound<'_, PyModule>) -> PyResul
 }
 
 pub(crate) fn callable_set(callable: &Bound<'_, PyAny>) -> PyResult<DynamicSetLabel> {
+    require_routine_callable(callable)?;
     Ok(DynamicSetLabel::callable(qualified_name(
         callable,
         "system callable",

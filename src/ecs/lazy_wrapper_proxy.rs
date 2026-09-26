@@ -30,9 +30,9 @@ use pybevy_ecs::shared::run_ticks::RunTicks;
 use pybevy_math::{vec2::PyVec2, vec3::PyVec3};
 use pyo3::{
     PyTraverseError, PyVisit,
-    exceptions::{PyAttributeError, PyRuntimeError},
+    exceptions::{PyAttributeError, PyRuntimeError, PyTypeError},
     prelude::*,
-    types::PyType,
+    types::{PyDict, PyType},
 };
 
 use super::{
@@ -185,6 +185,41 @@ impl PyLazyWrapperProxy {
     #[inline]
     fn check_valid(&self) -> PyResult<()> {
         Ok(self.validity.check()?)
+    }
+
+    fn class_attribute<'py>(&self, py: Python<'py>, name: &str) -> PyResult<Bound<'py, PyAny>> {
+        let py_type = self
+            .py_type
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("Invalid component type"))?
+            .bind(py);
+        py.import("inspect")?
+            .call_method1("getattr_static", (py_type, name))
+    }
+
+    fn bound_class_attribute<'py>(
+        &self,
+        proxy: &Bound<'py, Self>,
+        name: &str,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let attribute = self.class_attribute(proxy.py(), name)?;
+        self.bind_class_attribute(proxy, attribute)
+    }
+
+    fn bind_class_attribute<'py>(
+        &self,
+        proxy: &Bound<'py, Self>,
+        attribute: Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let Some(getter) = attribute.getattr_opt("__get__")? else {
+            return Ok(attribute);
+        };
+        let py_type = self
+            .py_type
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("Invalid component type"))?
+            .bind(proxy.py());
+        getter.call1((proxy, py_type))
     }
 
     /// Effective base pointer for the component's data bytes.
@@ -407,15 +442,22 @@ impl PyLazyWrapperProxy {
         visit.call(&self.py_type)
     }
 
-    /// Get a field value (lazy deserialization), falling back to Python type methods.
+    /// Get a field value (lazy deserialization), falling back to Python descriptors.
     ///
-    /// Priority: ECS field → Python class attribute (methods, properties, etc.)
-    /// For methods, binds them to `self` so `self.field` works in the method body.
+    /// Priority: ECS field → Python class descriptor.
     fn __getattr__(self_: &Bound<'_, Self>, py: Python, name: &str) -> PyResult<Py<PyAny>> {
         let this = self_.borrow();
 
         // Check validity first: stale proxies must always error
         this.check_valid()?;
+
+        if name == "__dict__" {
+            let values = PyDict::new(py);
+            for field in &this.layout.fields {
+                values.set_item(&field.name, this.deserialize_field(py, &field.name)?)?;
+            }
+            return Ok(values.into_any().unbind());
+        }
 
         // Try ECS field first: deserialize_field does its own field lookup
         match this.deserialize_field(py, name) {
@@ -429,36 +471,29 @@ impl PyLazyWrapperProxy {
             }
         }
 
-        // Fall back to Python type attributes (methods, class variables, etc.)
-        let py_type = this
-            .py_type
-            .as_ref()
-            .ok_or_else(|| PyRuntimeError::new_err("Invalid component type"))?
-            .bind(py);
-
-        // Look up the attribute on the Python type
-        let attr = py_type.getattr(name).map_err(|_| {
+        let attribute = this.class_attribute(py, name).map_err(|error| {
+            if !error.is_instance_of::<PyAttributeError>(py) {
+                return error;
+            }
             let available: Vec<&str> = this.layout.fields.iter().map(|f| f.name.as_str()).collect();
-            pyo3::exceptions::PyAttributeError::new_err(format!(
+            PyAttributeError::new_err(format!(
                 "Component has no field or method '{}' (fields: {})",
                 name,
                 available.join(", ")
             ))
         })?;
-
-        // If it's callable, bind it to self so self.field works inside the method
-        if attr.is_callable() {
-            let types_module = py.import("types")?;
-            let method_type = types_module.getattr("MethodType")?;
-            let bound_method = method_type.call1((&attr, self_))?;
-            Ok(bound_method.unbind())
-        } else {
-            Ok(attr.unbind())
-        }
+        Ok(this.bind_class_attribute(self_, attribute)?.unbind())
     }
 
     /// Set a field value (immediate writeback)
-    fn __setattr__(&self, py: Python, name: &str, value: Bound<'_, PyAny>) -> PyResult<()> {
+    fn __setattr__(
+        self_: &Bound<'_, Self>,
+        py: Python,
+        name: &str,
+        value: Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        let this = self_.borrow();
+        this.check_valid()?;
         // Don't intercept special Python attributes
         if name.starts_with("__") && name.ends_with("__") {
             return Err(PyAttributeError::new_err(format!(
@@ -467,18 +502,41 @@ impl PyLazyWrapperProxy {
             )));
         }
 
-        // Serialize and write back immediately
-        self.serialize_field(py, name, &value)?;
+        if !this.mutable {
+            return Err(PyRuntimeError::new_err(
+                "Cannot mutate read-only component (use Mut[T] in query)",
+            ));
+        }
+
+        if this.layout.fields.iter().any(|field| field.name == name) {
+            this.serialize_field(py, name, &value)?;
+        } else {
+            let descriptor = this.class_attribute(py, name).map_err(|error| {
+                if error.is_instance_of::<PyAttributeError>(py) {
+                    PyAttributeError::new_err(format!("Component has no field '{}'", name))
+                } else {
+                    error
+                }
+            })?;
+            let Some(setter) = descriptor.getattr_opt("__set__")? else {
+                return Err(PyAttributeError::new_err(format!(
+                    "Component has no field '{}'",
+                    name
+                )));
+            };
+            setter.call1((self_, value))?;
+            this.check_valid()?;
+        }
 
         // Mark component as changed using stored entity context.
         // SAFETY: world_ptr is valid (protected by ValidityFlag on LazyWrapperProxy),
         // entity was extracted from a live query during system execution.
         unsafe {
             pybevy_ecs::shared::change_tracking::mark_component_changed_explicit(
-                self.entity,
-                self.world_cell,
-                self.component_id,
-                self.run_ticks,
+                this.entity,
+                this.world_cell,
+                this.component_id,
+                this.run_ticks,
             );
         }
 
@@ -510,5 +568,56 @@ impl PyLazyWrapperProxy {
         }
 
         Ok(format!("{}({})", type_name_str, field_strs.join(", ")))
+    }
+
+    fn __str__(self_: &Bound<'_, Self>) -> PyResult<String> {
+        let this = self_.borrow();
+        this.check_valid()?;
+        match this.bound_class_attribute(self_, "__str__") {
+            Ok(method) => method.call0()?.extract(),
+            Err(error) if error.is_instance_of::<PyAttributeError>(self_.py()) => {
+                this.__repr__(self_.py())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn __len__(self_: &Bound<'_, Self>) -> PyResult<usize> {
+        let this = self_.borrow();
+        this.check_valid()?;
+        let method = this
+            .bound_class_attribute(self_, "__len__")
+            .map_err(|error| {
+                if error.is_instance_of::<PyAttributeError>(self_.py()) {
+                    PyTypeError::new_err("component does not define __len__")
+                } else {
+                    error
+                }
+            })?;
+        method.call0()?.extract()
+    }
+
+    fn __iter__(self_: &Bound<'_, Self>) -> PyResult<Py<PyAny>> {
+        let this = self_.borrow();
+        this.check_valid()?;
+        let method = this
+            .bound_class_attribute(self_, "__iter__")
+            .map_err(|error| {
+                if error.is_instance_of::<PyAttributeError>(self_.py()) {
+                    PyTypeError::new_err("component does not define __iter__")
+                } else {
+                    error
+                }
+            })?;
+        Ok(method.call0()?.unbind())
+    }
+
+    fn __lt__(self_: &Bound<'_, Self>, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let this = self_.borrow();
+        this.check_valid()?;
+        Ok(this
+            .bound_class_attribute(self_, "__lt__")?
+            .call1((other,))?
+            .unbind())
     }
 }

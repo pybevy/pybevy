@@ -35,13 +35,12 @@ from pybevy.mesh import MeshPlugin
 from pybevy.render import RenderPlugin
 
 app.add_plugins(
-    MinimalPlugins,
+    MinimalPlugins().set(ScheduleRunnerPlugin.run_loop(16)),
     AssetPlugin,
     RenderPlugin,  # Includes TexturePlugin and creates the headless RenderApp.
     ImagePlugin,
     MeshPlugin,    # Satisfies RenderPlugin's mesh extraction systems.
     CameraPlugin,  # Provides ClearColor for RenderPlugin's view systems.
-    ScheduleRunnerPlugin.run_loop(16),
 )
 ```
 

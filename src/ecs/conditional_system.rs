@@ -1,7 +1,7 @@
 use pybevy_ecs::shared::schedule::ConditionExpr;
 use pyo3::{
     PyTraverseError, PyVisit,
-    exceptions::{PyAttributeError, PyValueError},
+    exceptions::{PyAttributeError, PyTypeError, PyValueError},
     prelude::*,
 };
 
@@ -111,6 +111,11 @@ impl PyConditionalSystem {
 
     #[new]
     pub fn new(system: Py<PyAny>, condition: Py<PyAny>) -> PyResult<Self> {
+        if Python::attach(|py| system.bind(py).is_instance_of::<PyConditionalSystem>()) {
+            return Err(PyTypeError::new_err(
+                "run_if() cannot wrap a ConditionalSystem; use .and_(condition)",
+            ));
+        }
         Ok(Self {
             system,
             condition: extract_condition_expr(condition)?,

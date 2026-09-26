@@ -7,7 +7,7 @@ import types
 import weakref
 from collections.abc import Callable, Mapping
 from functools import wraps
-from typing import Any, TypeVar, Union, get_args, get_origin, get_type_hints
+from typing import Any, ClassVar, TypeVar, Union, get_args, get_origin, get_type_hints
 from weakref import WeakValueDictionary
 
 from ._internal.reload_modules import _register_annotation_hint_freezer
@@ -18,6 +18,7 @@ from .material import material as material
 RT = TypeVar("RT", bound=Resource)
 MT = TypeVar("MT", bound=Message)
 ET = TypeVar("ET", bound=Event)
+DT = TypeVar("DT")
 
 _component_cache: dict[str, type[Component]] = {}
 _component_layout_signatures: dict[str, tuple[object, ...]] = {}
@@ -43,6 +44,30 @@ def _component_class_by_name(qualified_name: str) -> type[Component] | None:
     return _component_classes_by_name.get(qualified_name)
 
 
+def _guard_missing_constructor(cls: type[DT], decorator_name: str) -> None:
+    if dataclasses.is_dataclass(cls) or cls.__init__ is not object.__init__:
+        return
+
+    original_new = cls.__new__
+
+    def guarded_new(value_type: type[DT], *args: object, **kwargs: object) -> DT:
+        if (
+            (args or kwargs)
+            and not dataclasses.is_dataclass(value_type)
+            and value_type.__init__ is object.__init__
+        ):
+            fields = getattr(value_type, "__annotations__", {})
+            field_hint = f" for its data fields ({', '.join(fields)})" if fields else ""
+            raise TypeError(
+                f"{value_type.__name__} does not define a constructor{field_hint}. "
+                f"Add @dataclass below {decorator_name}, or define __init__ before "
+                "passing constructor arguments."
+            )
+        return original_new(value_type)
+
+    cls.__new__ = staticmethod(guarded_new)  # type: ignore[method-assign]
+
+
 def message(cls: type[MT]) -> type[MT]:
     """Validate and mark a custom buffered-message class.
 
@@ -52,6 +77,7 @@ def message(cls: type[MT]) -> type[MT]:
     """
     if not issubclass(cls, Message):
         raise TypeError(f"{cls.__name__} must inherit from Message.")
+    _guard_missing_constructor(cls, "@message")
     cls.__pybevy_message_decorated__ = True
     return cls
 
@@ -64,6 +90,7 @@ def event(cls: type[ET]) -> type[ET]:
     """
     if not issubclass(cls, Event):
         raise TypeError(f"{cls.__name__} must inherit from Event.")
+    _guard_missing_constructor(cls, "@event")
     cls.__pybevy_event_decorated__ = True
     return cls
 
@@ -289,27 +316,7 @@ def resource(cls: type[RT]) -> type[RT]:
         )
         return cached  # type: ignore[return-value]
 
-    if not dataclasses.is_dataclass(cls) and cls.__init__ is object.__init__:
-        original_new = cls.__new__
-
-        def guarded_new(resource_type: type[RT], *args: object, **kwargs: object) -> RT:
-            if (
-                (args or kwargs)
-                and not dataclasses.is_dataclass(resource_type)
-                and resource_type.__init__ is object.__init__
-            ):
-                fields = getattr(resource_type, "__annotations__", {})
-                field_hint = (
-                    f" for its data fields ({', '.join(fields)})" if fields else ""
-                )
-                raise TypeError(
-                    f"{resource_type.__name__} does not define a constructor{field_hint}. "
-                    "Add @dataclass below @resource, or define __init__ before passing "
-                    "constructor arguments."
-                )
-            return original_new(resource_type)
-
-        cls.__new__ = staticmethod(guarded_new)  # type: ignore[method-assign]
+    _guard_missing_constructor(cls, "@resource")
 
     # Mark the resource as properly decorated
     # This allows us to detect resources missing the @resource decorator
@@ -484,10 +491,31 @@ def _has_undeclared_component_state(
     )
 
 
+def _component_hints(cls: type[Component]) -> dict[str, object]:
+    try:
+        return get_type_hints(cls)
+    except Exception:
+        return dict(getattr(cls, "__annotations__", {}))
+
+
+def _component_field_hints(cls: type[Component]) -> dict[str, object]:
+    hints = _component_hints(cls)
+    if dataclasses.is_dataclass(cls):
+        return {
+            field.name: hints[field.name]
+            for field in dataclasses.fields(cls)
+            if field.name in hints
+        }
+    return {
+        name: hint
+        for name, hint in hints.items()
+        if get_origin(hint) is not ClassVar
+        and not isinstance(hint, dataclasses.InitVar)
+    }
+
+
 def _register_component(cls: type[CT], *, storage: str | None = None) -> type[CT]:
     """Internal implementation for the @component decorator."""
-    from typing import get_type_hints
-
     if not issubclass(cls, Component):
         raise TypeError(
             f"{cls.__name__} must inherit from Component. Ensure that it has `class {cls.__name__}(Component):` syntax with the @component decorator."
@@ -513,21 +541,24 @@ def _register_component(cls: type[CT], *, storage: str | None = None) -> type[CT
             f"or omit for automatic wrapper storage."
         )
 
+    if storage != "python" and dataclasses.is_dataclass(cls):
+        params = getattr(cls, "__dataclass_params__", None)
+        if params is not None and params.frozen:
+            raise TypeError(
+                f"Component '{cls.__name__}' is a frozen dataclass; "
+                'use @component(storage="python") or remove frozen=True'
+            )
+
     # Set explicit storage hint for the Rust side
     if storage == "python":
         cls.__pybevy_storage__ = "pyobject"  # type: ignore[attr-defined]
     else:
         # Check if non-primitive fields would force PyObject fallback.
         # Raise an error so the user explicitly opts in with storage="python".
-        try:
-            hints = get_type_hints(cls)
-        except Exception:
-            hints = getattr(cls, "__annotations__", {})
+        hints = _component_field_hints(cls)
 
         non_primitive_fields = [
-            (name, hint)
-            for name, hint in hints.items()
-            if not name.startswith("_") and hint not in _WRAPPER_TYPES
+            (name, hint) for name, hint in hints.items() if hint not in _WRAPPER_TYPES
         ]
 
         if non_primitive_fields:
@@ -543,10 +574,7 @@ def _register_component(cls: type[CT], *, storage: str | None = None) -> type[CT
 
     # Generate cache key from fully qualified name
     key = f"{cls.__module__}.{cls.__qualname__}"
-    try:
-        field_hints = get_type_hints(cls)
-    except Exception:
-        field_hints = getattr(cls, "__annotations__", {})
+    field_hints = _component_field_hints(cls)
     has_undeclared_instance_state = _has_undeclared_component_state(cls, field_hints)
     layout_signature = (
         "python" if storage == "python" or has_undeclared_instance_state else "wrapper",
@@ -576,7 +604,7 @@ def _register_component(cls: type[CT], *, storage: str | None = None) -> type[CT
 
         # The Bevy component class and its instances keep their stable identity,
         # while field annotations follow only a successfully committed module.
-        stage_component_annotations(cached, field_hints)
+        stage_component_annotations(cached, _component_hints(cls))
         return cached  # type: ignore
 
     # Mark the component as properly decorated
@@ -653,18 +681,14 @@ def _create_view_column_proxy(cls: type[Component]) -> None:
 
     The proxy is stored as cls.__view_column_type__ for runtime access.
     """
-    from typing import get_type_hints
-
-    # Get field annotations
-    try:
-        hints = get_type_hints(cls)
-    except Exception:
-        # If type hints fail (e.g., forward references), fall back to __annotations__
-        hints = getattr(cls, "__annotations__", {})
+    hints = _component_field_hints(cls)
 
     # Create ViewColumn proxy class dynamically
     proxy_name = f"{cls.__name__}ViewColumn"
-    proxy_attrs = {"__doc__": f"Auto-generated ViewColumn proxy for {cls.__name__}."}
+    proxy_attrs: dict[str, object] = {
+        "__doc__": f"Auto-generated ViewColumn proxy for {cls.__name__}."
+    }
+    proxy_annotations: dict[str, str] = {}
 
     # Map each field to appropriate proxy type
     for field_name, field_type in hints.items():
@@ -673,8 +697,9 @@ def _create_view_column_proxy(cls: type[Component]) -> None:
 
         # Determine proxy type based on field type
         proxy_type = _get_proxy_type_for_field(field_type)
-        proxy_attrs["__annotations__"] = proxy_attrs.get("__annotations__", {})
-        proxy_attrs["__annotations__"][field_name] = proxy_type
+        proxy_annotations[field_name] = proxy_type
+
+    proxy_attrs["__annotations__"] = proxy_annotations
 
     # Create the proxy class
     proxy_class = type(proxy_name, (), proxy_attrs)
@@ -682,16 +707,8 @@ def _create_view_column_proxy(cls: type[Component]) -> None:
     # Store on the component class for runtime access
     cls.__view_column_type__ = proxy_class
 
-    # Also set it as a module-level attribute for imports (if possible)
-    try:
-        module = sys.modules.get(cls.__module__)
-        if module:
-            setattr(module, proxy_name, proxy_class)
-    except Exception:
-        pass  # Ignore if we can't set module attribute
 
-
-def _get_proxy_type_for_field(field_type: type) -> str:
+def _get_proxy_type_for_field(field_type: object) -> str:
     """Determine the appropriate ViewColumn proxy type for a field.
 
     Returns:
@@ -744,6 +761,8 @@ def plugin(cls: type[PL]) -> type[PL]:
     """
     if not issubclass(cls, Plugin):
         raise TypeError(f"{cls.__name__} must inherit from Plugin.")
+
+    _guard_missing_constructor(cls, "@plugin")
 
     # Mark the plugin as properly decorated
     # This allows us to detect plugins missing the @plugin decorator

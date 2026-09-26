@@ -83,6 +83,9 @@ if __name__ == "__main__":
       def build(self, app: App) -> None:
           app.add_systems(Update, my_system)
   ```
+- Plugins, custom messages, and observer events that take constructor arguments
+  need `@dataclass` or an explicit `__init__`; otherwise passing arguments raises
+  `TypeError` at construction.
 - A plugin class is normally installed once. If one class intentionally supports
   multiple instances, define an optional `__pybevy_plugin_key__` property that
   returns a stable string. PyBevy then identifies each instance by
@@ -97,19 +100,19 @@ headless or manually updated Apps may coexist, but do not call `run()` to start 
 event loop. For multiple canvases or views, prefer windows, cameras, and render targets inside the
 one graphical App.
 
-Native plugin build failures in `app.add_plugins(...)` raise `RuntimeError` with the plugin name and failure detail. After a failed native build, discard the App and construct a fresh one with dependencies ordered first: Bevy retains partial state and its added-plugin marker, so re-adding skips the build. Rust panic text is still printed to stderr before the RuntimeError is caught. Python plugin exceptions keep their original type and failed Python plugins remain retryable. Asset loading requires an initialized IoTaskPool; add `TaskPoolPlugin` before loading assets.
+Native plugin build failures in `app.add_plugins(...)` raise `RuntimeError` with the plugin name and failure detail. After a failed native build, discard the App and construct a fresh one with dependencies ordered first: Bevy retains partial state and its added-plugin marker, so re-adding now raises a duplicate error. Rust panic text is still printed to stderr before the RuntimeError is caught. Python plugin exceptions keep their original type and failed Python plugins remain retryable. Asset loading requires an initialized IoTaskPool; add `TaskPoolPlugin` before loading assets.
 
 `PluginGroup.build()` returns a `PluginGroupBuilder`; calling `build()` on a builder
 returns that same builder. Apply groups with `app.add_plugins(group)` or
 `app.add_plugins(builder)`, or call `builder.finish(app)`. Public `finish(app)`
 is also available on `DefaultPlugins` and `MinimalPlugins`. A builder remains reusable
-with other Apps. Custom and minimal builders skip already installed members;
-repeating a native DefaultPlugins seed on the same App can raise `RuntimeError`.
+with other Apps. Repeating any native member on the same App raises `RuntimeError`.
 Python `PluginGroup` subclasses implement `build(self) -> PluginGroupBuilder`.
 Start an empty custom group with `PluginGroupBuilder.start(MyGroup)` and add its
 members with `.add(...)`. Groups have no installation identity. Already-installed
-native members are skipped by native type; a duplicate custom Python member
-raises `RuntimeError`. MinimalPlugins installs only missing native members. `App.is_plugin_added()`
+native members raise `RuntimeError`; a duplicate custom Python member also
+raises `RuntimeError`. Configure a member before installation with `.set(...)`.
+`App.is_plugin_added()`
 accepts plugin classes.
 
 <!-- pybevy-snippet: typecheck -->
@@ -169,7 +172,11 @@ Use `world.spawn(...)`, `world.entity(...)`, and direct
 World resource methods when immediate mutation is required.
 
 Enqueueing copies borrowed native component/resource values while they are
-valid. Custom Python-storage objects retain their identity. Queueing does not
+valid, including native components passed directly from a Query to
+`commands.spawn()` or `commands.entity(id).insert()`. A custom wrapper-storage
+query proxy is not itself an insertable component; construct a new instance
+from its field values before passing it to either method. Custom Python-storage
+objects retain their identity. Queueing does not
 extend the lifetime of World/Commands handles or borrowed fields. Flush may run
 observers; captured outer handles are suspended during those callbacks.
 Do not change a custom component's storage hint or field schema while its
@@ -274,7 +281,14 @@ def damage_players(query: Query[Mut[Player]]) -> None:
 
 **Storage modes:**
 - **Default (wrapper)**: `int`, `float`, `bool`, `Vec3`, `Vec2` - fast, supports View batch execution and Numba JIT
-- **Python storage**: `str`, `list`, `dict`, custom classes - use `@component(storage="python")`. Slower (no View/Numba), but supports any Python type.
+- **Python storage**: `str`, `list`, `dict`, custom classes - use `@component(storage="python")`. This includes private data fields beginning with `_`. Slower (no View/Numba), but supports any Python type.
+
+Wrapper-storage components support properties, property setters (with `Mut[T]`),
+static/class methods, and common special methods through Query and World access.
+`vars(query_item)` is a snapshot of stored fields, not a live writable dictionary;
+`cached_property` values are recomputed on later accesses. Dataclass `ClassVar`
+and `InitVar` annotations are not stored or exposed as View columns. Use
+`@component(storage="python")` for frozen dataclasses.
 
 ```python
 from dataclasses import dataclass, field
@@ -504,6 +518,10 @@ a condition parameter; use a wrapper-storage component flag as above,
 itself. Native read-only resources such as `Res[Time]`, `Res[ButtonInput[KeyCode]]`
 and `Res[State[GamePhase]]` are supported. Combine conditions with `.and_(other)`,
 `.or_(other)` and `.not_()` on the value `run_if(...)` returns.
+To combine two conditions, use `run_if(system, first).and_(second)`, not
+`run_if(run_if(system, first), second)`. Systems, conditions, and observers must
+be ordinary functions, bound methods, or closures; `functools.partial` and
+callable instances are not supported.
 
 #### System Sets and Fine-Grained Ordering
 

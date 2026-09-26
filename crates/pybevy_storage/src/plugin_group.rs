@@ -381,6 +381,9 @@ impl NativePluginSlot {
             (self.build)(app);
         }
     }
+    pub fn is_added(self, app: &App) -> bool {
+        (self.is_added)(app)
+    }
     pub fn place(
         self,
         builder: PluginGroupBuilder,
