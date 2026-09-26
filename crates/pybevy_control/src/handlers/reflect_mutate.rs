@@ -19,7 +19,10 @@ use bevy::{
 use pybevy_core::{ReflectTypeRegistration, inventory};
 use serde_json::{Map, Value};
 
-use super::json_float::{float_to_json, nonfinite_float_from_json, require_finite_float};
+use super::{
+    json_float::{float_to_json, nonfinite_float_from_json, require_finite_float},
+    value_conversion::{EnumPayload, enum_to_json},
+};
 
 /// Errors from reflection-based mutation
 #[derive(Debug)]
@@ -64,20 +67,30 @@ pub fn reflect_set_component(
 
     let type_info = registration.type_info();
     if matches!(type_info, TypeInfo::Enum(_)) {
-        let replacement = enum_component_replacement(fields, type_id, type_info, &type_registry)?;
-
         let entity_ref = world
             .get_entity(entity)
             .map_err(|_| ReflectError::ComponentNotOnEntity)?;
-        let mut candidate = reflect_component
+        let current = reflect_component
             .reflect(entity_ref)
-            .ok_or(ReflectError::ComponentNotOnEntity)?
-            .reflect_clone()
-            .map_err(|error| {
-                ReflectError::FieldError(format!(
-                    "variant: component cannot be cloned for an atomic update: {error}"
-                ))
-            })?;
+            .ok_or(ReflectError::ComponentNotOnEntity)?;
+
+        if fields.len() == 1
+            && fields
+                .get("variant")
+                .and_then(Value::as_str)
+                .is_some_and(|variant| {
+                    matches!(current.reflect_ref(), ReflectRef::Enum(value) if value.variant_name() == variant)
+                })
+        {
+            return enum_component_fields(current);
+        }
+
+        let replacement = enum_component_replacement(fields, type_id, type_info, &type_registry)?;
+        let mut candidate = current.reflect_clone().map_err(|error| {
+            ReflectError::FieldError(format!(
+                "variant: component cannot be cloned for an atomic update: {error}"
+            ))
+        })?;
 
         // A reflected enum may accept an incomplete dynamic variant while a
         // concrete enum rejects it. Validate against a detached concrete clone
@@ -87,20 +100,19 @@ pub fn reflect_set_component(
             .try_apply(replacement.as_ref())
             .map_err(|error| ReflectError::FieldError(format!("variant: {error}")))?;
 
-        let post = match candidate.reflect_ref() {
-            ReflectRef::Enum(value) => Value::String(value.variant_name().to_string()),
-            _ => Value::Null,
-        };
-
         drop(type_registry);
         let entity_mut = world
             .get_entity_mut(entity)
             .map_err(|_| ReflectError::ComponentNotOnEntity)?;
         reflect_component.apply(entity_mut, candidate.as_partial_reflect());
 
-        // get_component reports `variant` as a bare name, and set_component
-        // accepts that same form, so the post-state has to use it too.
-        return Ok(Map::from_iter([("variant".to_string(), post)]));
+        let entity_ref = world
+            .get_entity(entity)
+            .map_err(|_| ReflectError::ComponentNotOnEntity)?;
+        let stored = reflect_component
+            .reflect(entity_ref)
+            .ok_or(ReflectError::ComponentNotOnEntity)?;
+        return enum_component_fields(stored);
     }
 
     let struct_info = match type_info {
@@ -183,6 +195,15 @@ pub fn reflect_set_component(
         .collect();
 
     Ok(updated)
+}
+
+fn enum_component_fields(value: &dyn PartialReflect) -> Result<Map<String, Value>, ReflectError> {
+    match reflect_to_json(value) {
+        Value::Object(fields) => Ok(fields),
+        _ => Err(ReflectError::FieldError(
+            "variant: stored enum could not be serialized".to_string(),
+        )),
+    }
 }
 
 /// Component-shaped math types that `scene::vector_to_json` renders as arrays.
@@ -372,17 +393,19 @@ pub fn reflect_to_json(value: &dyn PartialReflect) -> Value {
             if variant_name == "Some" && e.field_len() == 1 {
                 return e.field_at(0).map(reflect_to_json).unwrap_or(Value::Null);
             }
-            let inner = match e.variant_type() {
-                VariantType::Unit => Value::Null,
+            let payload = match e.variant_type() {
+                VariantType::Unit => EnumPayload::Unit,
                 VariantType::Tuple => {
                     if e.field_len() == 1 {
-                        e.field_at(0).map(reflect_to_json).unwrap_or(Value::Null)
+                        EnumPayload::Single(
+                            e.field_at(0).map(reflect_to_json).unwrap_or(Value::Null),
+                        )
                     } else {
                         let mut arr = Vec::with_capacity(e.field_len());
                         for i in 0..e.field_len() {
                             arr.push(e.field_at(i).map(reflect_to_json).unwrap_or(Value::Null));
                         }
-                        Value::Array(arr)
+                        EnumPayload::Tuple(arr)
                     }
                 }
                 VariantType::Struct => {
@@ -392,12 +415,10 @@ pub fn reflect_to_json(value: &dyn PartialReflect) -> Value {
                         let v = e.field_at(i).map(reflect_to_json).unwrap_or(Value::Null);
                         map.insert(name, v);
                     }
-                    Value::Object(map)
+                    EnumPayload::Named(map)
                 }
             };
-            let mut obj = Map::new();
-            obj.insert(variant_name, inner);
-            Value::Object(obj)
+            enum_to_json(variant_name, payload)
         }
         _ => Value::Null,
     }
@@ -1606,6 +1627,20 @@ mod tests {
         Second(TestEnumPayload),
     }
 
+    #[derive(Reflect, Default)]
+    #[reflect(Default)]
+    struct TestPartialEnumPayload {
+        updated: u32,
+        retained: u32,
+    }
+
+    #[derive(Component, Reflect)]
+    #[reflect(Component)]
+    enum TestPartialPayloadEnumComponent {
+        First(TestPartialEnumPayload),
+        Second(TestPartialEnumPayload),
+    }
+
     #[derive(Reflect)]
     struct TestIncompleteEnumPayload {
         retained: u32,
@@ -1688,7 +1723,10 @@ mod tests {
 
         assert_eq!(
             result.unwrap(),
-            Map::from_iter([("variant".to_string(), serde_json::json!("Second"))])
+            Map::from_iter([
+                ("variant".to_string(), serde_json::json!("Second")),
+                ("value".to_string(), serde_json::json!({"value": 42}),),
+            ])
         );
         let Some(TestPayloadEnumComponent::Second(payload)) =
             world.get::<TestPayloadEnumComponent>(entity)
@@ -1696,6 +1734,106 @@ mod tests {
             panic!("payload enum variant was not replaced");
         };
         assert_eq!(payload.value, 42);
+    }
+
+    #[test]
+    fn reflect_set_same_enum_variant_preserves_and_echoes_omitted_payload_fields() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.register_type::<TestPartialEnumPayload>();
+        app.register_type::<TestPartialPayloadEnumComponent>();
+        app.update();
+
+        let world = app.world_mut();
+        let entity = world
+            .spawn(TestPartialPayloadEnumComponent::First(
+                TestPartialEnumPayload {
+                    updated: 1,
+                    retained: 17,
+                },
+            ))
+            .id();
+        let expected = Map::from_iter([
+            ("variant".to_string(), serde_json::json!("First")),
+            (
+                "value".to_string(),
+                serde_json::json!({"updated": 42, "retained": 17}),
+            ),
+        ]);
+
+        for fields in [
+            Map::from_iter([
+                ("variant".to_string(), serde_json::json!("First")),
+                ("value".to_string(), serde_json::json!({"updated": 42})),
+            ]),
+            Map::from_iter([("First".to_string(), serde_json::json!({"updated": 42}))]),
+        ] {
+            let result = reflect_set_component(
+                world,
+                entity,
+                TypeId::of::<TestPartialPayloadEnumComponent>(),
+                &fields,
+            );
+            assert_eq!(result.unwrap(), expected);
+        }
+
+        let replay = reflect_set_component(
+            world,
+            entity,
+            TypeId::of::<TestPartialPayloadEnumComponent>(),
+            &expected,
+        );
+        assert_eq!(replay.unwrap(), expected);
+        let Some(TestPartialPayloadEnumComponent::First(payload)) =
+            world.get::<TestPartialPayloadEnumComponent>(entity)
+        else {
+            panic!("same-variant update changed the variant");
+        };
+        assert_eq!((payload.updated, payload.retained), (42, 17));
+    }
+
+    #[test]
+    fn reflect_set_same_enum_variant_without_payload_preserves_current_payload() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.register_type::<TestPartialEnumPayload>();
+        app.register_type::<TestPartialPayloadEnumComponent>();
+        app.update();
+
+        let world = app.world_mut();
+        let entity = world
+            .spawn(TestPartialPayloadEnumComponent::Second(
+                TestPartialEnumPayload {
+                    updated: 3,
+                    retained: 19,
+                },
+            ))
+            .id();
+        let fields = Map::from_iter([("variant".to_string(), serde_json::json!("Second"))]);
+
+        let result = reflect_set_component(
+            world,
+            entity,
+            TypeId::of::<TestPartialPayloadEnumComponent>(),
+            &fields,
+        );
+
+        assert_eq!(
+            result.unwrap(),
+            Map::from_iter([
+                ("variant".to_string(), serde_json::json!("Second")),
+                (
+                    "value".to_string(),
+                    serde_json::json!({"updated": 3, "retained": 19}),
+                ),
+            ])
+        );
+        let Some(TestPartialPayloadEnumComponent::Second(payload)) =
+            world.get::<TestPartialPayloadEnumComponent>(entity)
+        else {
+            panic!("variant-only update changed the variant");
+        };
+        assert_eq!((payload.updated, payload.retained), (3, 19));
     }
 
     #[test]
@@ -2233,8 +2371,33 @@ mod tests {
         let value = GlobalVariantEnum::Section { global: 0.5 };
         assert_eq!(
             reflect_to_json(&value),
-            serde_json::json!({"Section": {"global_": 0.5}})
+            serde_json::json!({"variant": "Section", "global_": 0.5})
         );
+    }
+
+    #[derive(Reflect)]
+    enum PairVariantEnum {
+        Pair(i32, i32),
+    }
+
+    #[test]
+    fn reflected_multi_tuple_enum_canonical_json_replays() {
+        let value = PairVariantEnum::Pair(2, 7);
+        let json = reflect_to_json(&value);
+        assert_eq!(json, serde_json::json!({"variant": "Pair", "0": 2, "1": 7}));
+
+        let mut registry = TypeRegistry::new();
+        registry.register::<PairVariantEnum>();
+        let registration = registry.get(TypeId::of::<PairVariantEnum>()).unwrap();
+        let replayed = json_to_reflect(
+            &json,
+            TypeId::of::<PairVariantEnum>(),
+            Some(registration.type_info()),
+            &registry,
+        )
+        .unwrap();
+
+        assert_eq!(reflect_to_json(replayed.as_ref()), json);
     }
 
     #[test]

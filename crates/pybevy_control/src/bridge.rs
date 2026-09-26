@@ -127,7 +127,7 @@ pub struct SetComponentParams {
     pub entity: EntityRef,
     /// Component name
     pub component: String,
-    /// Fields to update. Vec3 accepts [x, y, z] or {x, y, z}; coordinate objects require all three finite numeric fields.
+    /// Fields to update. Enum values use {variant: name, ...}; named payload fields keep their native names and a single tuple payload uses value. A one-key {Variant: payload} shorthand may switch the active variant. Top-level enum component new_values contain the complete stored payload, and writing only the active variant preserves it. Read and new_values objects can be replayed unchanged. Vec3 accepts [x, y, z] or {x, y, z}; coordinate objects require all three finite numeric fields. Asset-handle components accept only the engine-issued fields.handle.asset_ref object returned by get_component; references are typed, app-session scoped, and valid while the named source still owns the same live asset handle.
     #[schemars(schema_with = "json_object_schema")]
     pub fields: serde_json::Value,
 }
@@ -146,7 +146,7 @@ pub struct RemoveComponentParams {
 pub struct SetResourceParams {
     /// Resource type name
     pub resource_type: String,
-    /// Fields to update as JSON. Custom resources must declare annotated fields, typically with `@resource` above `@dataclass`; attributes created only in `__init__` are not editable here.
+    /// Fields to update as JSON. Enum values use {variant: name, ...}; named payload fields keep their native names and a single tuple payload uses value. Read and new_values enum objects can be replayed unchanged. Custom resources must declare annotated fields, typically with `@resource` above `@dataclass`; attributes created only in `__init__` are not editable here.
     #[schemars(schema_with = "json_object_schema")]
     pub value: serde_json::Value,
 }
@@ -424,7 +424,7 @@ pub struct SetAssetParams {
     pub component: String,
     /// Asset type: StandardMaterial, Mesh, ColorMaterial, AudioSource
     pub asset_type: String,
-    /// Fields to update on the asset. Color and LinearRgba fields accept [r, g, b, a]; LinearRgba also accepts {red, green, blue, alpha}.
+    /// Fields to update on the asset. Enum values use {variant: name, ...}; named payload fields keep their native names and a single tuple payload uses value. Color and LinearRgba fields accept [r, g, b, a]; LinearRgba also accepts {red, green, blue, alpha}.
     #[schemars(schema_with = "json_object_schema")]
     pub fields: serde_json::Value,
 }
@@ -511,7 +511,7 @@ pub enum ControlOperation {
     /// Spawn a new entity with World-registered components specified as JSON.
     #[schemars(extend("x-feature-gate" = "manipulation"))]
     SpawnEntity {
-        /// Component name -> field values (e.g. {"Transform": {"translation": [0, 5, 0]}})
+        /// Component name -> field values (e.g. {"Transform": {"translation": [0, 5, 0]}}). Enum values use {variant: name, ...}; named payload fields keep their native names and a single tuple payload uses value. To copy an existing asset handle, replay a live component's engine-issued fields.handle.asset_ref object; raw asset IDs are not accepted.
         #[schemars(schema_with = "json_object_schema")]
         components: serde_json::Value,
     },

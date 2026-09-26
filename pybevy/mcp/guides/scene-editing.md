@@ -117,6 +117,9 @@ Finite fields returned by `get_component` can be replayed with `set_component`
 for editable components. `set_component` echoes each written field under that
 same Python spelling, so a response replays unchanged; a Bevy field named after
 a Python keyword carries a trailing underscore, such as `global_`.
+For a top-level enum component, `new_values` is the complete stored enum value,
+including payload fields omitted from a partial request. Writing only the
+already-active `variant` keeps its existing payload rather than resetting it.
 `GlobalTransform` reports only computed world-space `translation`, `rotation`,
 and `scale`; these fields are read-only. In Python they return independent
 computed values, so editing the returned vector or quaternion does not change
@@ -149,6 +152,19 @@ set_component {
 }
 ```
 
+All enum values use this tagged form in reads and mutation `new_values` echoes.
+Named payload fields sit beside `variant`, for example
+`{"variant": "Linear", "start": 5.0, "end": 20.0}`. A single tuple payload
+uses `value`, for example `{"variant": "Px", "value": 24.0}`. A unit variant
+is only `{"variant": "Auto"}`. These objects can be replayed unchanged through
+`set_component`, `set_resource`, `set_asset`, and spawn fields. Documented bare
+unit names and one-key objects remain accepted input shorthands, but responses
+always use the tagged form. A one-key object may switch an enum component's
+active variant, for example `{"Orthographic": {"scale": 0.03}}`; omitted
+fields use the target payload's defaults, while a partial write to the current
+variant preserves its omitted fields. Enum constants are ordinary values, not
+variants.
+
 An unknown field on an enum component reports this synthetic input and the
 accepted variant names. `set_resource` reports the resource type under
 `resource`; its boolean `inserted` field is `true` when the resource was absent
@@ -158,6 +174,43 @@ Scalar fields require scalar values: an object such as `{}` is rejected for a
 float, integer, boolean, or string. An empty object applied to a structured
 value, such as `Transform.translation`, leaves that value unchanged. The same
 conversion rules apply to component, resource, and asset writes.
+
+### Reusing Existing Asset Handles
+
+Asset-handle components such as `Mesh3d`, `MeshMaterial3d`, and
+`MeshMaterial2d` can reuse an asset already present in the active World. Read
+the source component, then pass its complete `fields` object to
+`set_component` or under the same component name in `spawn_entity`:
+
+```
+get_component {"entity": "source", "component": "Mesh3d"}
+→ {"fields": {"handle": {"asset_ref": {
+    "session": "...", "token": "...", "entity": 4294967297,
+    "component": "Mesh3d", "asset_type": "Mesh"
+}}}}
+
+set_component {
+    "entity": "target",
+    "component": "Mesh3d",
+    "fields": {"handle": {"asset_ref": {
+        "session": "...", "token": "...", "entity": 4294967297,
+        "component": "Mesh3d", "asset_type": "Mesh"
+    }}}
+}
+```
+
+The envelope is exact: copy every field unchanged and do not add keys. Its
+token is opaque and binds the source entity, source component, asset type, and
+current strong handle. It is rejected if the source is removed or replaced,
+the asset no longer exists, the target expects another asset type, or the
+reference comes from another app session. Raw asset IDs, entity indexes, and
+integer handles are not accepted.
+
+Successful mutation echoes a fresh reference anchored to the target component.
+Replay that echo after removing the original source. `spawn_entity` provides
+these self-anchored values in `component_values`. Partial reload and a rejected
+Full reload preserve live references; a successful Full reload invalidates all
+references issued by the previous session.
 
 ## Modifying Resources
 

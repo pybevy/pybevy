@@ -1024,6 +1024,15 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
         }
     }
 
+    fn prune_requests(&mut self, world: &mut World, outgoing_generation: Option<u32>) {
+        #[cfg(feature = "mcp")]
+        if outgoing_generation.is_some() {
+            pybevy_control::asset_reference::rotate_asset_reference_session(world);
+        }
+        #[cfg(not(feature = "mcp"))]
+        let _ = (world, outgoing_generation);
+    }
+
     fn clear_custom_resources(&mut self, world: &mut World, verbose: bool) {
         clear_python_messages(world);
         cleanup::clear_custom_resources(world, verbose);

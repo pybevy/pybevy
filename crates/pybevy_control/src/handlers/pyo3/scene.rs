@@ -16,7 +16,7 @@ use bevy::{
     },
     reflect::{ReflectRef, TypeInfo},
 };
-use pybevy_color::linear_rgba::PyLinearRgba;
+use pybevy_color::{color::PyColor, linear_rgba::PyLinearRgba};
 use pybevy_core::{
     ResourceBridge,
     component_fields::declared_annotations,
@@ -33,7 +33,7 @@ use pybevy_transform::global_transform::PyGlobalTransform;
 use pyo3::ffi;
 use pyo3::{
     prelude::*,
-    types::{PyDict, PyFloat, PyInt, PyType},
+    types::{PyDict, PyFloat, PyInt, PyModule, PyType},
 };
 
 use crate::{
@@ -42,6 +42,7 @@ use crate::{
         entity::resolve_entity,
         json_float::float_to_json,
         pyo3::{custom_wrapper, state_resource},
+        value_conversion::{EnumPayload, enum_to_json},
     },
 };
 
@@ -236,7 +237,7 @@ fn serialize_python_value(
     if let Ok(s) = value.extract::<String>() {
         return serde_json::Value::String(s);
     }
-    if let Some(color) = color_to_json(value) {
+    if let Some(color) = color_to_json(value, context) {
         return color;
     }
     if let Some(linear_rgba) = linear_rgba_to_json(value) {
@@ -248,8 +249,8 @@ fn serialize_python_value(
     if let Some(entity) = entity_to_json(value) {
         return entity;
     }
-    if let Some(val) = val_to_json(value) {
-        return val;
+    if let Some(member) = python_enum_to_json(value) {
+        return member;
     }
     if pyo3_complex_enum_variant_name(&value.get_type()).is_some() {
         return serde_json::Value::Object(extract_bridge_fields_with_context(value, context));
@@ -317,6 +318,22 @@ fn linear_rgba_to_json(value: &Bound<'_, PyAny>) -> Option<serde_json::Value> {
     Some(serde_json::Value::Object(fields))
 }
 
+fn color_to_json(
+    value: &Bound<'_, PyAny>,
+    context: &mut SerializationContext,
+) -> Option<serde_json::Value> {
+    value.cast::<PyColor>().ok()?;
+    let variant = value.get_type().name().ok()?.to_string_lossy().into_owned();
+    if variant == "Color" {
+        return None;
+    }
+    let payload = value.getattr("value").ok()?;
+    Some(enum_to_json(
+        variant,
+        EnumPayload::Single(py_value_to_json_inner(&payload, context)),
+    ))
+}
+
 /// JSON object key for a Python mapping key. `str` passes through, `int`,
 /// `bool` and `float` use their Python `str()`, anything else has no key form.
 fn json_object_key(key: &Bound<'_, PyAny>) -> Option<String> {
@@ -325,37 +342,6 @@ fn json_object_key(key: &Bound<'_, PyAny>) -> Option<String> {
     }
     if key.is_instance_of::<PyInt>() || key.is_instance_of::<PyFloat>() {
         return key.str().ok().map(|s| s.to_string());
-    }
-    None
-}
-
-fn val_to_json(value: &Bound<'_, PyAny>) -> Option<serde_json::Value> {
-    if value.get_type().name().ok()?.to_str().ok()? != "Val" {
-        return None;
-    }
-    let repr = value.repr().ok()?.to_string_lossy().into_owned();
-    if repr == "Val.auto()" {
-        return Some(serde_json::json!({"Auto": null}));
-    }
-    for (method, variant) in [
-        ("px", "Px"),
-        ("percent", "Percent"),
-        ("vw", "Vw"),
-        ("vh", "Vh"),
-        ("vmin", "VMin"),
-        ("vmax", "VMax"),
-    ] {
-        let prefix = format!("Val.{method}(");
-        if let Some(value) = repr
-            .strip_prefix(&prefix)
-            .and_then(|value| value.strip_suffix(')'))
-            .and_then(|value| value.parse::<f64>().ok())
-        {
-            return Some(serde_json::Value::Object(serde_json::Map::from_iter([(
-                variant.to_string(),
-                serde_json::json!(value),
-            )])));
-        }
     }
     None
 }
@@ -370,30 +356,16 @@ fn entity_to_json(value: &Bound<'_, PyAny>) -> Option<serde_json::Value> {
     Some(serde_json::json!(bits))
 }
 
-fn color_to_json(value: &Bound<'_, PyAny>) -> Option<serde_json::Value> {
-    let py_type = value.get_type();
-    let direct = py_type.name().ok()?.to_str().ok()? == "Color";
-    let variant = py_type
-        .getattr("__bases__")
-        .ok()
-        .and_then(|bases| bases.get_item(0).ok())
-        .and_then(|base| base.cast_into::<PyType>().ok())
-        .and_then(|base| base.name().ok().map(|name| name == "Color"))
-        .unwrap_or(false);
-    if !direct && !variant {
+fn python_enum_to_json(value: &Bound<'_, PyAny>) -> Option<serde_json::Value> {
+    let enum_base = PyModule::import(value.py(), "enum")
+        .ok()?
+        .getattr("Enum")
+        .ok()?;
+    if !value.is_instance(&enum_base).ok()? {
         return None;
     }
-
-    let srgba = value.call_method0("to_srgba").ok()?;
-    let mut channels = serde_json::Map::new();
-    for channel in ["red", "green", "blue", "alpha"] {
-        let value = srgba.getattr(channel).ok()?.extract::<f64>().ok()?;
-        channels.insert(channel.to_string(), float_to_json(value));
-    }
-
-    let mut color = serde_json::Map::new();
-    color.insert("Srgba".to_string(), serde_json::Value::Object(channels));
-    Some(serde_json::Value::Object(color))
+    let variant = value.getattr("name").ok()?.extract::<String>().ok()?;
+    Some(enum_to_json(variant, EnumPayload::Unit))
 }
 
 fn vector_to_json(value: &Bound<'_, PyAny>) -> Option<serde_json::Value> {
@@ -458,12 +430,17 @@ fn extract_bridge_fields_with_context(
         }
     }
 
-    // Preserve the identity of PyO3 complex-enum variants whose field layouts
-    // collide by finding the variant class on its parent enum.
-    if let Some(variant) = pyo3_complex_enum_variant_name(&py_type)
-        && !map.contains_key("variant")
-    {
-        map.insert("variant".to_string(), serde_json::Value::String(variant));
+    // Preserve exact variant identity and use the same canonical enum shape as
+    // reflected values and mutation responses.
+    if let Some(variant) = pyo3_complex_enum_variant_name(&py_type) {
+        let payload = if map.is_empty() {
+            EnumPayload::Unit
+        } else if map.len() == 1 && map.contains_key("value") {
+            EnumPayload::Single(map.remove("value").unwrap())
+        } else {
+            EnumPayload::Named(map)
+        };
+        return enum_to_json(variant, payload).as_object().unwrap().clone();
     }
 
     // Collection components expose their contents by iteration, not by
@@ -487,7 +464,10 @@ fn extract_bridge_fields_with_context(
         && let Ok(repr_str) = repr.extract::<String>()
     {
         if let Some(variant) = parse_variant_from_repr(&repr_str) {
-            map.insert("variant".to_string(), serde_json::Value::String(variant));
+            return enum_to_json(variant, EnumPayload::Unit)
+                .as_object()
+                .unwrap()
+                .clone();
         } else {
             map.insert("repr".to_string(), serde_json::Value::String(repr_str));
         }
@@ -873,6 +853,11 @@ pub fn get_entity(
                 .flatten()
                 .map(|py_obj| {
                     let bound = py_obj.bind(py);
+                    if let Some(fields) = super::asset_reference::reference_fields_for_value(
+                        world, entity, &name, bound,
+                    ) {
+                        return fields;
+                    }
                     let mut fields = extract_bridge_fields(py, bound, reflected_enum);
                     if let Some(variant) = reflected_variant {
                         if bound.call_method0("__copy__").is_err() {
@@ -1015,6 +1000,11 @@ pub fn get_component(
             .flatten()
             .map(|py_obj| {
                 let bound = py_obj.bind(py);
+                if let Some(fields) = super::asset_reference::reference_fields_for_value(
+                    world, entity, &component, bound,
+                ) {
+                    return fields.as_object().cloned().unwrap_or_default();
+                }
                 let mut fields = extract_bridge_fields(py, bound, reflected_enum);
                 if let Some(variant) = reflected_variant {
                     if bound.call_method0("__copy__").is_err() {
@@ -1681,7 +1671,14 @@ pub fn get_component_schema(
                     .name()
                     .map(|n| n.to_string())
                     .unwrap_or_else(|_| name.clone());
-                let fields = get_class_fields(py, &py_type);
+                let mut fields = get_class_fields(py, &py_type);
+                let is_asset_handle = super::asset_reference::type_has_handle_property(&py_type);
+                if is_asset_handle {
+                    fields.as_object_mut().unwrap().insert(
+                        crate::asset_reference::ASSET_REFERENCE_FIELD.to_string(),
+                        serde_json::json!("AssetReference"),
+                    );
+                }
 
                 let mut result = serde_json::json!({
                     "name": &type_name,
@@ -1693,7 +1690,8 @@ pub fn get_component_schema(
                     .as_ref()
                     .is_some_and(|(editable, _, _)| *editable);
                 let effective_editable = bridge.can_insert()
-                    && (bridge.relationship_field().is_some()
+                    && (is_asset_handle
+                        || bridge.relationship_field().is_some()
                         || reflected_editable
                         || has_writable_properties(py, &py_type));
                 result
@@ -1718,7 +1716,29 @@ pub fn get_component_schema(
                     }
                 }
 
+                if is_asset_handle {
+                    let obj = result.as_object_mut().unwrap();
+                    obj.insert(
+                        "asset_reference".into(),
+                        serde_json::json!({
+                            "read": "Call get_component on a live entity with this component and replay fields.handle unchanged.",
+                            "write_shape": {
+                                "handle": {
+                                    "asset_ref": {
+                                        "session": "<engine-issued session>",
+                                        "token": "<engine-issued token>",
+                                        "entity": "<packed source entity id>",
+                                        "component": &type_name,
+                                        "asset_type": "<registered asset type>"
+                                    }
+                                }
+                            }
+                        }),
+                    );
+                }
+
                 if effective_editable
+                    && !is_asset_handle
                     && let Some(defaults) = default_component_fields(&py_type, &result["fields"])
                 {
                     let spawn_example = serde_json::json!({
@@ -2316,7 +2336,6 @@ mod tests {
         math::Vec3,
         prelude::{Camera3d, GlobalTransform, Transform},
     };
-    use pybevy_color::color::PyColor;
     use pybevy_ecs::shared::schedule::{
         StateMachineId, StateScheduleLabel, TransitionScheduleLabel,
     };
@@ -3532,6 +3551,28 @@ mod tests {
     }
 
     #[test]
+    fn py_value_to_json_python_enum_member_uses_canonical_unit_shape() {
+        setup();
+        Python::attach(|py| {
+            let globals = PyDict::new(py);
+            py.run(
+                ffi::c_str!(
+                    "from enum import Enum\nclass _Choice(Enum):\n    READY = 3\nvalue = _Choice.READY\n"
+                ),
+                Some(&globals),
+                None,
+            )
+            .unwrap();
+            let value = globals.get_item("value").unwrap().unwrap();
+
+            assert_eq!(
+                py_value_to_json(&value),
+                serde_json::json!({"variant": "READY"})
+            );
+        });
+    }
+
+    #[test]
     fn py_value_to_json_opaque_object_keeps_repr() {
         setup();
         Python::attach(|py| {
@@ -3553,14 +3594,15 @@ mod tests {
     }
 
     #[test]
-    fn py_value_to_json_color_uses_mutation_shape() {
+    fn py_value_to_json_color_uses_canonical_enum_shape() {
         setup();
         Python::attach(|py| {
             let color = PyColor::from_color(Color::srgba(0.2, 1.0, 0.45, 1.0), py).unwrap();
 
             let result = py_value_to_json(color.bind(py));
 
-            let srgba = result["Srgba"].as_object().unwrap();
+            assert_eq!(result["variant"], "Srgba");
+            let srgba = result["value"].as_object().unwrap();
             assert!((srgba["red"].as_f64().unwrap() - 0.2).abs() < 1.0e-6);
             assert!((srgba["green"].as_f64().unwrap() - 1.0).abs() < 1.0e-6);
             assert!((srgba["blue"].as_f64().unwrap() - 0.45).abs() < 1.0e-6);

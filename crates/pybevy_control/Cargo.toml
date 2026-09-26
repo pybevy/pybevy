@@ -42,6 +42,7 @@ base64 = "0.22"
 schemars = "1.2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+sha2 = { workspace = true }
 ureq = { version = "3.4", default-features = false }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 uuid = { workspace = true }
