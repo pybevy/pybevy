@@ -427,6 +427,11 @@ impl RevalidatingField {
         &self.validity.flag
     }
 
+    /// Check write authority without resolving mutable storage or marking a change.
+    pub fn check_write_access(&self) -> Result<(), StorageError> {
+        self.validity.check_write()
+    }
+
     pub(crate) fn clone_as_ref(&self) -> Self {
         Self {
             world: self.world,

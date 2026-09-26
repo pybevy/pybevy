@@ -75,7 +75,7 @@ impl PyIsometry3d {
         )))
     }
 
-    #[classattr]
+    #[staticmethod]
     #[pyo3(name = "IDENTITY")]
     fn identity() -> Self {
         PyIsometry3d::from_owned(Isometry3d::IDENTITY)

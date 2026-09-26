@@ -291,10 +291,13 @@ impl From<Isometry2d> for PyIsometry2d {
 
 #[pymethods]
 impl PyIsometry2d {
-    #[classattr]
-    const IDENTITY: PyIsometry2d = PyIsometry2d {
-        inner: Isometry2d::IDENTITY,
-    };
+    #[staticmethod]
+    #[pyo3(name = "IDENTITY")]
+    fn identity() -> Self {
+        Self {
+            inner: Isometry2d::IDENTITY,
+        }
+    }
 
     #[new]
     #[pyo3(signature = (translation = PyVec2::ZERO, rotation = None))]

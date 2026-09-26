@@ -980,6 +980,9 @@ Mirror both the Bevy Rust item kind and spelling. Enum variants use PascalCase, 
 `Face::Front` -> `Face.Front`; genuine associated constants keep their declared spelling, for
 example `Vec3::ZERO` -> `Vec3.ZERO`. Do not use uppercase aliases such as `Face.FRONT` for enum
 variants.
+Mutable math constants, including `Vec3A.ZERO`, `Isometry3d.IDENTITY`, and
+`Vec2/Vec3/Vec4.AXES`, produce fresh values on each access. Mutating a value
+obtained from one of them does not change later accesses.
 
 Data-carrying Bevy enums are exposed as nested Python classes. Match the exact variant and bind
 only that variant's fields:

@@ -139,6 +139,10 @@ CascadeShadowConfig(bounds=[15.0, 50.0])
 ```
 
 Bevy renders at most four cascades (one on WebGL2); extra bounds warn and are truncated.
+At least one bound is required. Assign a nonempty list to `config.bounds`; in a
+`Query[Mut[CascadeShadowConfig]]`, live `bounds` edits write through, but `pop()`,
+`clear()`, or deletion cannot remove the final bound and raise `ValueError`.
+Outside a mutable query, `bounds` is read-only.
 
 ## Shadow Markers
 

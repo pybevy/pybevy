@@ -162,7 +162,7 @@ impl PyVec2 {
     pub fn neg_y() -> Self {
         Self::vec2(Vec2::NEG_Y)
     }
-    #[classattr]
+    #[staticmethod]
     #[pyo3(name = "AXES")]
     pub fn axes() -> (Self, Self) {
         (Self::vec2(Vec2::X), Self::vec2(Vec2::Y))
