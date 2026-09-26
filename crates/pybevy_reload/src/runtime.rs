@@ -106,6 +106,12 @@ pub trait ReloadRuntime {
     /// decide whether a Partial reload must escalate to Full.
     fn defs_fingerprint(&self, defs: &Self::Defs) -> DefsFingerprint;
 
+    /// Whether retained state values cannot be mapped to candidate state classes.
+    /// A Full reload rebuilds those machines from their entrypoint declarations.
+    fn state_requires_full_reload(&self, _world: &World, _defs: &Self::Defs) -> bool {
+        false
+    }
+
     /// Extract stable plugin identities from pending definitions for delta detection.
     fn plugin_names(&self, defs: &Self::Defs) -> Vec<PluginIdentity>;
 

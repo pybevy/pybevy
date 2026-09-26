@@ -553,7 +553,6 @@ def _register_component(cls: type[CT], *, storage: str | None = None) -> type[CT
         tuple(
             (name, _component_annotation_identity(annotation))
             for name, annotation in field_hints.items()
-            if not name.startswith("_")
         ),
     )
 

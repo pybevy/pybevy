@@ -43,7 +43,7 @@ use crate::{
             PyOnEnterSchedule, PyOnExitSchedule, PyOnTransitionSchedule,
             canonicalize_state_schedule_label, canonicalize_transition_schedule_label,
             ensure_state_transition_system_registered, register_reloaded_state_machine,
-            registered_state_machine_count,
+            registered_state_machine_count, retained_state_member_missing,
         },
         system_config::{
             InstalledSystemSetConfigs, PySystemConfig, SystemSetConfigIdentity,
@@ -514,6 +514,14 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
             fingerprint.component_layout_changed = !defs.component_layout_changes.is_empty();
             fingerprint.resource_layout_changed = !defs.resource_layout_changes.is_empty();
             fingerprint
+        })
+    }
+
+    fn state_requires_full_reload(&self, world: &World, defs: &PendingDefinitions) -> bool {
+        Python::attach(|py| {
+            defs.states.iter().any(|state| {
+                retained_state_member_missing(py, world, state.state_type.bind(py)).unwrap_or(true)
+            })
         })
     }
 

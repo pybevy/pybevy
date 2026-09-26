@@ -30,8 +30,9 @@ Full vs partial reload, what persists across reloads, error recovery, and diagno
 - Startup systems are NOT re-run
 - Use for iterating on game logic without resetting scene state
 - Auto-escalates to Full when Startup systems, observers, the set of resource
-  types, or a custom `@component`/`@resource` field layout changed since the
-  previous successful reload
+  types, a custom `@component`/`@resource` field layout, or the active or
+  pending `@state` member changed since the previous successful reload.
+  Component layout includes private (`_`-prefixed) stored fields
 - The baseline is seeded from the definitions the entrypoint built, so the first
   Partial reload after `run_scene` compares like any later one and keeps the
   state accumulated since launch
@@ -120,6 +121,33 @@ This selects the initial mode only, so F6 still applies to later saves.
 | **F6** | Toggle between Full and Partial mode |
 | **F7** | Toggle memory overlay (RSS, GC objects, per-reload deltas) |
 
+`HotReloadControl.request_full_reload()` and `request_partial_reload()` also
+queue a reload immediately; they do not wait for a file edit. Call them on an
+edge such as `just_pressed`, not unconditionally every frame. A reload
+reconstructs `Local` values, module globals, and function attributes, so a
+"once" guard kept in those places can request another reload forever. If a
+system needs both keyboard state and `HotReloadControl`, take `World` as its
+only parameter and read both resources from it. `World` cannot be combined
+with a separate `Res` parameter in the same system.
+
+<!-- pybevy-snippet: typecheck -->
+```python
+from pybevy.app import App, DefaultPlugins, HotReloadControl, Update
+from pybevy.decorators import entrypoint
+from pybevy.ecs import World
+from pybevy.input import ButtonInput, KeyCode
+
+
+def handle_f5(world: World) -> None:
+    if world.resource(ButtonInput[KeyCode]).just_pressed(KeyCode.F5):
+        world.resource(HotReloadControl).request_full_reload()
+
+
+@entrypoint
+def main(app: App) -> App:
+    return app.add_plugins(DefaultPlugins).add_systems(Update, handle_f5)
+```
+
 ## When to Use Each Mode
 
 | Scenario | Mode | Why |
@@ -129,6 +157,7 @@ This selects the initial mode only, so F6 still applies to later saves.
 | Added new `@component`/`@resource` types | Full | Need fresh registration |
 | Changed `@component` fields or storage mode | Full | Partial reload auto-escalates before applying the new layout |
 | Changed `@resource` fields | Full | Partial reload keeps the live instance, so it auto-escalates to rebuild it |
+| Removed or renamed the active `@state` member | Full | Partial reload auto-escalates and reinitializes that state from the entrypoint |
 | Tweaking animation parameters | Partial | Preserves entity state |
 | First Partial reload after normal scene launch | Partial | Initial definitions provide the comparison baseline |
 | Added/changed observers | Full | Auto-escalated from Partial |
@@ -241,6 +270,10 @@ entrypoint. Their callable and custom-event class therefore follow the committed
 scene generation without duplicate registrations. Observers registered later by
 `world.add_observer` or `entity.observe` remain attached to their existing event
 class and target, just as their runtime entities remain in the World.
+
+Entity-targeted dispatch indexes observers by event and target, so unrelated
+entity observers are not scanned for each trigger. Global observers still run
+alongside matching entity observers in registration order.
 
 ## Plugin Delta Detection
 
