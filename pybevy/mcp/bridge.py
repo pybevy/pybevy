@@ -98,7 +98,9 @@ LOAD_SCENE_TOOL: JsonDict = {
     "description": (
         "Start a PyBevy scene. Launches (or restarts) the Bevy app subprocess "
         "with hot-reload. For ordinary code changes, call this once, then edit "
-        "the .py file and use reload or reload_and_capture. Call it again when "
+        "and save the .py file; the watcher reloads it automatically. Check "
+        "get_reload_status before capturing. Use reload or reload_and_capture "
+        "only when intentionally forcing a reload. Call run_scene again when "
         "switching scenes, adding or removing bridge-backed plugins, changing "
         "core plugin composition, or requiring a clean restart."
     ),
@@ -152,7 +154,7 @@ GET_LOGS_TOOL: JsonDict = {
             },
             "errors_only": {
                 "type": "boolean",
-                "description": "Only return Python errors/tracebacks (default false)",
+                "description": "Return the live Python error and distinct matching subprocess stderr errors (default false)",
                 "default": False,
             },
             "include_warnings": {
@@ -258,13 +260,20 @@ class McpBridge:
                     self._stop_subprocess()
                 elif startup_error:
                     _log(f"[MCP Bridge] Scene system failed during initial load: {startup_error}")
-            for line in sys.stdin:
+            for raw_line in getattr(sys.stdin, "buffer", sys.stdin):
+                try:
+                    line = raw_line.decode("utf-8") if isinstance(raw_line, bytes) else raw_line
+                except UnicodeDecodeError as error:
+                    self._write_response(
+                        self._error(None, -32700, f"Parse error: {error}")
+                    )
+                    continue
                 line = line.strip()
                 if not line:
                     continue
 
                 try:
-                    request: JsonDict = json.loads(line)
+                    request: object = json.loads(line)
                 except json.JSONDecodeError as e:
                     self._write_response(
                         {
@@ -273,6 +282,10 @@ class McpBridge:
                             "error": {"code": -32700, "message": f"Parse error: {e}"},
                         }
                     )
+                    continue
+
+                if not isinstance(request, dict):
+                    self._write_response(self._error(None, -32600, "Invalid Request"))
                     continue
 
                 response = self._dispatch(request)
@@ -315,7 +328,10 @@ class McpBridge:
     def _dispatch_inner(self, request: JsonDict) -> JsonDict | None:
         method = str(request.get("method", ""))
         req_id: JsonId = request.get("id")  # type: ignore[assignment]
-        params: JsonDict = request.get("params") or {}  # type: ignore[assignment]
+        raw_params = request.get("params")
+        if raw_params is not None and not isinstance(raw_params, dict):
+            return self._error(req_id, -32602, "params must be an object")
+        params: JsonDict = raw_params or {}
 
         if method == "initialize":
             return self._handle_initialize(req_id)
@@ -1018,7 +1034,7 @@ class McpBridge:
             f"Scene loaded: {display_path}",
             "PyBevy app starting with hot-reload enabled.",
             "Hot-reload is active for ordinary code changes. Restart with run_scene after bridge-backed plugin or core plugin-composition changes.",
-            "Workflow: edit the .py file -> reload or reload_and_capture -> verify screenshot -> iterate.",
+            "Workflow: edit and save the .py file -> check the watcher result with get_reload_status -> capture -> iterate. Call reload only to force a reload mode.",
         ]
 
         stderr_errors = self._check_stderr_for_errors()
@@ -1164,16 +1180,10 @@ class McpBridge:
             if system_error:
                 sections.append(("Python system error (get_last_error):", system_error))
 
-            stderr_errors = self._check_stderr_for_errors()
-            # The block keeps raw lines; the live error arrives plain.
-            stderr_plain = _strip_ansi(stderr_errors)
-            if stderr_errors and (
-                not system_error
-                or (
-                    stderr_plain not in system_error
-                    and system_error not in stderr_plain
-                )
-            ):
+            stderr_errors = self._check_stderr_for_errors(
+                exclude_error=system_error or None
+            )
+            if stderr_errors:
                 sections.append(("Matching subprocess stderr:", stderr_errors))
 
             if not sections:
@@ -1623,7 +1633,9 @@ class McpBridge:
 
         return "\n".join(warnings)
 
-    def _check_stderr_for_errors(self, *, since: int | None = None) -> str:
+    def _check_stderr_for_errors(
+        self, *, since: int | None = None, exclude_error: str | None = None
+    ) -> str:
         with self._output_lock:
             self._normalize_stderr_capture_locked()
             captured = zip(
@@ -1704,7 +1716,14 @@ class McpBridge:
         if current_block:
             blocks.append(current_block)
 
-        return "\n\n".join("\n".join(b) for b in blocks)
+        rendered_blocks: list[str] = []
+        for block in blocks:
+            rendered = "\n".join(block)
+            plain = _strip_ansi(rendered)
+            if exclude_error and (plain in exclude_error or exclude_error in plain):
+                continue
+            rendered_blocks.append(rendered)
+        return "\n\n".join(rendered_blocks)
 
     def _success(self, req_id: JsonId, result: object) -> JsonDict:
         return {"jsonrpc": "2.0", "id": req_id, "result": result}

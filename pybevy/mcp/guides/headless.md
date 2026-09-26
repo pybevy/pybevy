@@ -159,9 +159,11 @@ With multiple offscreen cameras, `capture_screenshot`, `capture_stats`, and
 `capture_depth` capture the active `Camera3d` with the highest render order
 (lowest entity ID on a tie). They use that camera's target and crop to its
 viewport. If the selected camera has no capturable target, the request fails
-instead of returning another camera's image. Scenes without a `Camera3d`
-retain the existing 2D headless capture fallback. `capture_depth` also reports
-the selected identity and target passes with its depth rays.
+instead of returning another camera's image. When no active `Camera3d` exists,
+screenshots and stats select the highest-order active `Camera2d` by the same
+rule, rather than returning an unrelated or stale readback frame. `capture_depth`
+still requires a `Camera3d` and reports its selected identity and target passes
+with its depth rays.
 
 ## Troubleshooting
 

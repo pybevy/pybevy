@@ -82,7 +82,12 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Run a pybevy script in-process.",
         allow_abbrev=False,
     )
-    run_parser.add_argument("script_path", metavar="SCRIPT_PATH", type=_existing_path)
+    run_parser.add_argument(
+        "script_path",
+        metavar="SCRIPT_PATH",
+        type=_existing_path,
+        help="Scene script; pass its arguments after --.",
+    )
     run_parser.add_argument(
         "--hot-reload",
         action="store_true",
@@ -101,7 +106,12 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Run a pybevy script in development mode with hot reload.",
         allow_abbrev=False,
     )
-    dev_parser.add_argument("script_path", metavar="SCRIPT_PATH", type=_existing_path)
+    dev_parser.add_argument(
+        "script_path",
+        metavar="SCRIPT_PATH",
+        type=_existing_path,
+        help="Scene script; pass its arguments after --.",
+    )
     _add_reload_options(dev_parser)
     dev_parser.set_defaults(handler=dev, command_parser=dev_parser)
 
@@ -111,23 +121,14 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Watch and run a pybevy script with hot reload (alias for dev).",
         allow_abbrev=False,
     )
-    watch_parser.add_argument("script_path", metavar="SCRIPT_PATH", type=_existing_path)
+    watch_parser.add_argument(
+        "script_path",
+        metavar="SCRIPT_PATH",
+        type=_existing_path,
+        help="Scene script; pass its arguments after --.",
+    )
     _add_reload_options(watch_parser)
     watch_parser.set_defaults(handler=watch_command, command_parser=watch_parser)
-
-    eject_parser = commands.add_parser(
-        "mcp-eject",
-        help="Eject MCP definitions to editable files.",
-        description="Eject MCP definitions to editable files for customization.",
-        allow_abbrev=False,
-    )
-    eject_parser.add_argument(
-        "--output",
-        "-o",
-        default=".pybevy/mcp",
-        help="Output directory for ejected definitions",
-    )
-    eject_parser.set_defaults(handler=mcp_eject, command_parser=eject_parser)
 
     mcp_parser = commands.add_parser(
         "mcp",
@@ -171,28 +172,46 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> None:
     """Run the PyBevy command-line interface."""
     parser = _build_parser()
-    namespace = parser.parse_args(argv)
+    command_argv = list(sys.argv[1:] if argv is None else argv)
+    script_args: list[str] = []
+    if command_argv and command_argv[0] in {"run", "dev", "watch"} and "--" in command_argv:
+        separator = command_argv.index("--")
+        script_args = command_argv[separator + 1 :]
+        command_argv = command_argv[:separator]
+    namespace = parser.parse_args(command_argv)
     values = vars(namespace)
     handler = values.pop("handler")
     command_parser = values.pop("command_parser")
     values.pop("command")
+    if script_args:
+        values["script_args"] = script_args
     try:
         handler(**values)
     except CliUsageError as error:
         command_parser.error(str(error))
 
 
-def run(script_path: str, hot_reload: bool, verbose: bool) -> None:
+def run(
+    script_path: str,
+    hot_reload: bool,
+    verbose: bool,
+    script_args: Sequence[str] = (),
+) -> None:
     """
     Run a pybevy script in-process.
 
     SCRIPT_PATH: The path to the Python script to run.
     """
-    _run_script(script_path, hot_reload, verbose=verbose)
+    _run_script(script_path, hot_reload, verbose=verbose, script_args=script_args)
 
 
 def dev(
-    script_path: str, full: bool, pause: bool, resolution: str | None, verbose: bool
+    script_path: str,
+    full: bool,
+    pause: bool,
+    resolution: str | None,
+    verbose: bool,
+    script_args: Sequence[str] = (),
 ) -> None:
     """
     Run a pybevy script in development mode with hot-reload enabled.
@@ -215,11 +234,17 @@ def dev(
         pause=pause,
         resolution=resolution,
         verbose=verbose,
+        script_args=script_args,
     )
 
 
 def watch_command(
-    script_path: str, full: bool, pause: bool, resolution: str | None, verbose: bool
+    script_path: str,
+    full: bool,
+    pause: bool,
+    resolution: str | None,
+    verbose: bool,
+    script_args: Sequence[str] = (),
 ) -> None:
     """
     Watch and run a pybevy script with hot-reload (alias for dev command).
@@ -241,119 +266,8 @@ def watch_command(
         pause=pause,
         resolution=resolution,
         verbose=verbose,
+        script_args=script_args,
     )
-
-
-def mcp_eject(output: str) -> None:
-    """Eject MCP definitions to editable files for customization.
-
-    Creates a pack.toml with all tool descriptions commented out for patching,
-    and prompts as editable Markdown files. Edit pack.toml to steer LLM behavior
-    by uncommenting and modifying tool description overrides.
-    """
-    from pathlib import Path
-
-    from .mcp import ApiIndex
-    from .mcp.definitions import builtin_prompts, builtin_tools
-
-    output_dir = Path(output)
-    if output_dir.exists():
-        _echo(
-            f"Error: Output directory '{output}' already exists. Remove it first or use --output."
-        )
-        raise SystemExit(1)
-
-    # Get built-in definitions from Python definitions + Rust ApiIndex
-    tools = builtin_tools()
-    api_index = ApiIndex()
-    instructions = api_index.get_instructions() or ""
-    prompts_list = builtin_prompts(instructions)
-
-    # Create output directory
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Build [overrides.tools] section with all tools commented out showing current descriptions
-    override_lines = [
-        "# Patch tool descriptions to steer LLM behavior.",
-        "# Text is appended as [PACK INSTRUCTIONS] to the built-in description.",
-        "# Uncomment and edit to customize.",
-        "[overrides.tools]",
-    ]
-    for tool in tools:
-        name = tool["name"]
-        desc = tool.get("description", "").replace('"', '\\"')
-        override_lines.append(f'# {name} = "{desc}"')
-
-    pack_toml = (
-        '[pack]\nname = "my-mcp-pack"\nversion = "0.1.0"\n'
-        'description = "Custom MCP capability pack"\n\n'
-        '[compatibility]\n# pybevy = ">=0.1.0"\n\n'
-        "[tools]\nexclude = []\n\n" + "\n".join(override_lines) + "\n"
-    )
-    (output_dir / "pack.toml").write_text(pack_toml)
-
-    # Write instructions.md (auto-injected into LLM context on MCP connect)
-    pack_customization_note = f"""
-
-## MCP Pack Customization
-
-This project has an editable MCP pack at `{output}/`.
-
-- `pack.toml`: uncomment `[overrides.tools]` lines to patch tool descriptions
-- `instructions.md`: edit these instructions (auto-injected into LLM context on connect)
-- `prompts.md`: on-demand prompts (loaded via prompts/get)
-- `guides/*.md`: add or override guides (`*.default.md` are read-only reference copies)
-
-When a tool description is misleading or missing context for this project,
-suggest editing `{output}/pack.toml` to the user.
-"""
-    (output_dir / "instructions.md").write_text(instructions + pack_customization_note)
-
-    # Write prompts as a single Markdown file (on-demand, loaded via prompts/get)
-    if prompts_list:
-        parts = []
-        for prompt in prompts_list:
-            name = prompt["name"]
-            description = prompt.get("description", "")
-            content = prompt.get("content", "")
-            parts.append(
-                f"---\nname: {name}\ndescription: {description}\n---\n{content}"
-            )
-        (output_dir / "prompts.md").write_text("\n".join(parts) + "\n")
-
-    # Copy built-in guides as *.default.md (reference only, not loaded)
-    guide_count = 0
-    try:
-        import pybevy as _pybevy_pkg
-
-        pybevy_pkg_dir = Path(_pybevy_pkg.__path__[0])
-        guides_src = pybevy_pkg_dir / "mcp" / "guides"
-        if guides_src.is_dir():
-            guides_dir = output_dir / "guides"
-            guides_dir.mkdir(exist_ok=True)
-            for md_file in sorted(guides_src.rglob("*.md")):
-                rel = md_file.relative_to(guides_src)
-                # Preserve subdirectory structure: recipes/indoor.md -> recipes/indoor.default.md
-                dest = guides_dir / rel.parent / f"{rel.stem}.default.md"
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                dest.write_text(md_file.read_text())
-                guide_count += 1
-    except Exception as e:
-        _echo(f"  (could not copy guides: {e})")
-
-    _echo(f"Ejected MCP definitions to '{output}/':")
-    _echo("  instructions.md (auto-injected into LLM context on connect)")
-    _echo(f"  pack.toml with {len(tools)} tool overrides (commented out)")
-    if prompts_list:
-        _echo(f"  prompts.md with {len(prompts_list)} prompt(s)")
-    if guide_count:
-        _echo(f"  {guide_count} guide(s) as *.default.md reference files")
-    _echo("")
-    _echo("To customize:")
-    _echo("  - Edit instructions.md to change what the LLM sees on connect")
-    _echo("  - Edit pack.toml to patch tool descriptions")
-    _echo("  - Copy guides/foo.default.md -> guides/foo.md to override a guide")
-    _echo("  - Add new guides/foo.md or guides/subdir/foo.md for custom guides")
 
 
 def mcp_command(
@@ -385,14 +299,15 @@ def mcp_command(
 
 
 def _bind_lifetime_to_parent() -> None:
-    """Die with the parent process when running under the test suite.
+    """Die with the parent process for test and MCP-owned scenes.
 
-    pytest-timeout's thread method ends the runner with os._exit, which skips
-    every finally block: a spawned scene would outlive the run and spin at
-    full CPU. PR_SET_PDEATHSIG delivers SIGTERM to this process when its
-    parent dies, whatever the cause.
+    Test runners and MCP hosts can exit without executing scene cleanup.
+    PR_SET_PDEATHSIG delivers SIGTERM when the parent dies, whatever the cause.
     """
-    if os.environ.get("PYBEVY_TESTING") != "1" or sys.platform != "linux":
+    managed_child = os.environ.get("PYBEVY_TESTING") == "1" or os.environ.get(
+        "PYBEVY_MCP"
+    ) == "1"
+    if not managed_child or sys.platform != "linux":
         return
     pr_set_pdeathsig = 1
     try:
@@ -413,6 +328,7 @@ def _run_script(
     pause: bool = False,
     resolution: str | None = None,
     verbose: bool = False,
+    script_args: Sequence[str] = (),
 ) -> None:
     """
     Internal function to run a pybevy script with optional hot-reload.
@@ -425,6 +341,7 @@ def _run_script(
             loaded until Space is pressed).
         resolution: Window resolution as "WIDTHxHEIGHT" (e.g. "1920x1080").
         verbose: If True, enable verbose debug output for hot reload operations.
+        script_args: Scene arguments supplied after the CLI's `--` separator.
     """
     _bind_lifetime_to_parent()
 
@@ -482,9 +399,8 @@ def _run_script(
     else:
         os.environ.pop("PYBEVY_WINDOW_RESOLUTION", None)
 
-    # Strip CLI arguments so user scripts see only their own script path in sys.argv.
-    # Without this, scripts using argparse would fail on unrecognized args like "watch".
-    sys.argv = [script_path]
+    scene_argv = [script_path, *script_args]
+    sys.argv = scene_argv.copy()
 
     def load_create_app_function(
         script_path: str,
@@ -500,6 +416,7 @@ def _run_script(
             project_dir: Flush root (launch dir or the script's own dir). Falls
                 back to the script's own directory when not given.
         """
+        sys.argv = scene_argv.copy()
         try:
             # Try to convert file path to module name for relative imports
             abs_path = os.path.abspath(script_path)

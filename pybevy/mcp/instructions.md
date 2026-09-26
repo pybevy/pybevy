@@ -9,7 +9,7 @@
 3. **Run scene before scene tools** - `run_scene` must be called before any scene tool (get_component_schema, capture_screenshot, query_entities, etc.). It waits for the scene's control server and first-frame system-error reporting, up to 60 seconds. Startup readiness does not imply asynchronous assets have loaded or a GPU readback frame is available; observe those separately.
 4. **Read topic guides before API lookups** - Before using `search_api` or `get_type_definition`, call `get_guide("index")` and check for a relevant curated guide. Guides are faster and more reliable than raw API exploration. Only fall back to API lookups for specifics not covered in guides.
 5. **Use API lookup tools for specifics** - If you know the class name, use `get_type_definition('ClassName')` directly for the full definition. Ambiguous short names return qualified candidates; retry with one such as `get_type_definition('image.Image')`. If you don't know the name, use `search_api('keyword')` first, then `get_type_definition` on the results. API lookup covers public stubs and explicitly re-exported pure-Python modules; implementation-only modules are intentionally absent. Search also excludes private class/function bodies and helper-reference lines while preserving original source line numbers.
-6. **Reuse the running scene for ordinary edits** - after the first `run_scene`, edit the .py file and call `reload`. Call `run_scene` again when switching scene files, adding or removing bridge-backed plugins, changing core plugin composition, or requiring a clean restart.
+6. **Reuse the running scene for ordinary edits** - after the first `run_scene`, edit and save the .py file; its watcher reloads the scene automatically. Check `get_reload_status` for the watcher result (new generation or error), then inspect or capture. Use `reload` or `reload_and_capture` only when intentionally forcing a reload or mode. Call `run_scene` again when switching scene files, adding or removing bridge-backed plugins, changing core plugin composition, or requiring a clean restart.
 7. **After reload** - call `get_last_error` to check the live Python system-error channel. `reload.error` is sampled once before the response and may miss errors reported on a later frame. Use `get_logs(errors_only=true)` as a secondary check for Bevy, asset, render, and subprocess errors.
 8. **Scene style defaults (3D)** - new 3D scenes MUST include: Bloom on the camera, DistanceFog for atmospheric depth, a warm key directional light (shadows) + cool fill directional light (no shadows, ~40% intensity), ClearColor matching fog color, and lighting above the minimum floors (see Scene Generation below). For 2D scenes, see `guide://2d`. Start bright, dim later.
 9. **Interior camera placement** - for enclosed scenes, use `get_bounding_box` on walls/objects to calculate safe debug camera positions instead of guessing coordinates.
@@ -22,7 +22,8 @@ The `lines` value caps the complete rendered response, including headings,
 warnings, truncation text, and the subprocess-exit notice. With
 `errors_only=true`, the current live Python failure has priority; remaining
 space shows the newest matching stderr lines in their original order, then
-distinct warnings that fit.
+distinct warnings that fit. A duplicate stderr traceback is omitted without
+hiding independent Bevy, asset, or render errors from the same capture.
 
 After a failed reload, `run_code` uses the restored previous scene namespace.
 Fix the source and reload again to apply the new definitions.
@@ -45,7 +46,7 @@ Fix the source and reload again to apply the new definitions.
 - **Resources** are global singletons (Time, AssetServer, etc.)
 - **Single** uses `into_inner()` for typed component access and tuple unpacking. Use `Mut[T]` for writes.
 - **Systems** are functions that run each frame, organized by Stage (Startup, Update, Last, etc.)
-- **Messages** are App-local buffered channels registered with `app.add_message(T)`. Ordered readers can observe same-pass writes. A system may have multiple readers for one channel, but cannot combine a writer with another reader or writer for that same channel.
+- **Messages** are App-local buffered channels registered with `app.add_message(T)`. Ordered readers can observe same-pass writes. Two native `MessageReader[T]` parameters may coexist in one system; two readers of one custom Python message channel conflict and need separate systems. A writer or mutator cannot share its channel with another reader, writer, or mutator in one system.
 - **Coordinate system** - Bevy is right-handed, Y-up. Camera default forward is −Z. When a camera on the −Z side looks toward +Z, the X-axis appears mirrored on screen (world +X = screen left). Plan grid layouts accordingly.
 
 ## Spatial Intelligence Tools
@@ -191,7 +192,7 @@ Call `get_guide("index")` for the full list of available guides with description
 **Never write the entire scene in one shot.** Large scenes (500+ lines) will exceed the output token limit and fail. Instead:
 
 1. **Start small** - Write a ~150-250 line initial scene with: camera, lighting, fog, ground, and the 2-3 most important entities. Load it with `run_scene`.
-2. **Screenshot and verify** - Use `reload_and_capture` to confirm the foundation works and looks correct.
+2. **Screenshot and verify** - Use `capture_screenshot` after the initial `run_scene` to confirm the foundation works and looks correct; it does not trigger an extra reload.
 3. **Add detail iteratively** - Edit the file to add more entities, materials,
    and animations. The file watcher reloads saved Python changes; use an explicit
    Full reload only when a clean reset is needed.

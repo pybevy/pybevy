@@ -95,7 +95,6 @@ Save this as `main.py` and run with hot reload. Edit the code. The engine hot re
 pybevy watch main.py
 ```
 
-
 ### Integrate with Rust-based Bevy
 
 If you already have a Rust Bevy application, you can embed Python systems into it with `PyBevyPlugin`. Prototype in Python, ship critical paths in Rust.

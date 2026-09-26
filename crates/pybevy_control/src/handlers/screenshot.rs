@@ -405,20 +405,23 @@ fn selected_camera_screenshot_target(
     world: &mut World,
     response_kind: &CaptureResponseKind,
 ) -> Result<Option<(RenderTarget, Option<CaptureViewport>)>, ControlError> {
-    let Some(entity) = select_capture_camera_3d(world) else {
+    let selected = select_capture_camera_3d(world)
+        .map(|entity| (entity, "Camera3d"))
+        .or_else(|| select_capture_camera_2d(world).map(|entity| (entity, "Camera2d")));
+    let Some((entity, camera_kind)) = selected else {
         return Ok(None);
     };
     let operation = response_kind.operation_name();
     let camera = world
         .get::<Camera>(entity)
-        .expect("selected Camera3d has Camera");
+        .expect("selected capture camera has Camera");
     let viewport = camera.viewport.as_ref().map(|viewport| CaptureViewport {
         physical_position: viewport.physical_position,
         physical_size: viewport.physical_size,
     });
     let target = world.get::<RenderTarget>(entity).cloned().ok_or_else(|| {
         ControlError::invalid_params(format!(
-            "{operation} selected highest-order Camera3d has no RenderTarget"
+            "{operation} selected highest-order {camera_kind} has no RenderTarget"
         ))
     })?;
     let capturable = match &target {
@@ -433,7 +436,7 @@ fn selected_camera_screenshot_target(
     };
     if !capturable {
         return Err(ControlError::invalid_params(format!(
-            "{operation} selected highest-order Camera3d has no capturable target"
+            "{operation} selected highest-order {camera_kind} has no capturable target"
         )));
     }
     Ok(Some((target, viewport)))
@@ -1383,6 +1386,15 @@ pub(crate) fn select_capture_camera_3d(world: &mut World) -> Option<Entity> {
         .map(|(entity, _)| entity)
 }
 
+fn select_capture_camera_2d(world: &mut World) -> Option<Entity> {
+    let mut query = world.query_filtered::<(Entity, &Camera), With<Camera2d>>();
+    query
+        .iter(world)
+        .filter(|(_, camera)| camera.is_active)
+        .min_by_key(|(entity, camera)| (Reverse(camera.order), entity.to_bits()))
+        .map(|(entity, _)| entity)
+}
+
 fn select_any_camera_3d(world: &mut World) -> Option<Entity> {
     let mut query = world.query_filtered::<(Entity, &Camera), With<Camera3d>>();
     query
@@ -2141,6 +2153,53 @@ mod tests {
             .into_iter()
             .min_by_key(|entity| entity.to_bits());
         assert_eq!(select_capture_camera_3d(&mut world), expected);
+    }
+
+    #[test]
+    fn screenshot_target_selects_highest_order_active_2d_camera() {
+        let mut world = World::new();
+        let mut images = Assets::<Image>::default();
+        let lower_target = images.add(make_test_image(64, 48));
+        let lower_id = lower_target.id();
+        let higher_target = images.add(make_test_image(128, 96));
+        world.insert_resource(images);
+        world.spawn((
+            Camera2d,
+            Camera {
+                order: -1,
+                ..default()
+            },
+            RenderTarget::Image(lower_target.into()),
+        ));
+        let higher = world
+            .spawn((
+                Camera2d,
+                Camera {
+                    order: 5,
+                    ..default()
+                },
+                RenderTarget::Image(higher_target.clone().into()),
+            ))
+            .id();
+
+        let (target, _) =
+            selected_camera_screenshot_target(&mut world, &CaptureResponseKind::Screenshot)
+                .unwrap()
+                .unwrap();
+        let RenderTarget::Image(image_target) = target else {
+            panic!("selected Camera2d should use its image target");
+        };
+        assert_eq!(image_target.handle.id(), higher_target.id());
+
+        world.get_mut::<Camera>(higher).unwrap().is_active = false;
+        let (target, _) =
+            selected_camera_screenshot_target(&mut world, &CaptureResponseKind::Screenshot)
+                .unwrap()
+                .unwrap();
+        let RenderTarget::Image(image_target) = target else {
+            panic!("active Camera2d should use its image target");
+        };
+        assert_eq!(image_target.handle.id(), lower_id);
     }
 
     #[test]

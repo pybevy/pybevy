@@ -107,10 +107,11 @@ Partial reload by default, so do not call `reload` after every edit. Structural
 changes may automatically escalate that request to Full.
 
 1. Edit and save the Python source file
-2. Check `get_reload_status` or call a capture tool to inspect the updated scene
+2. Check `get_reload_status` for a new generation or error, then use a capture tool to inspect a successful update
 3. If errors occur, use `get_last_error` for the Python traceback
 
-Use `reload {"mode": "full"}` after saving when you specifically need a clean
+Do not use `reload_and_capture` just to inspect an edit the watcher has already
+loaded; it also requests another reload. Use `reload {"mode": "full"}` after saving when you specifically need a clean
 reset. A file-watcher request may already have run by then; an explicit Partial
 reload cannot restore state that an earlier Full reload cleared. The CLI's F6
 shortcut changes the mode used by later file saves.
@@ -118,6 +119,9 @@ shortcut changes the mode used by later file saves.
 For CLI sessions, `pybevy dev scene.py --full` and `pybevy watch scene.py --full`
 start the watcher in Full mode; without `--full`, both start in Partial mode.
 This selects the initial mode only, so F6 still applies to later saves.
+Pass scene arguments after `--`, for example
+`pybevy dev scene.py --full -- --level 3`; the scene receives them in `sys.argv`
+on initial load and subsequent reloads. Keep PyBevy options before `--`.
 
 ## Keyboard Shortcuts (CLI hot-reload mode)
 
