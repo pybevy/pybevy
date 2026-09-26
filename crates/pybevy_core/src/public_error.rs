@@ -358,6 +358,19 @@ pub fn mesh_operation_failed(operation: impl Display, error: impl Display) -> St
     format!("Mesh.{operation}() failed: {error}")
 }
 
+pub fn mesh_merge_missing_attribute(side: &str, name: &str) -> String {
+    format!("Mesh.merge() requires matching vertex attributes; {side} mesh is missing {name}")
+}
+
+pub fn mesh_merge_vertex_count(side: &str, name: &str, actual: usize, expected: usize) -> String {
+    format!(
+        "Mesh.merge() requires equal vertex counts within each mesh; {side} mesh attribute {name} has {actual} vertices, expected {expected}"
+    )
+}
+
+pub const MESH_MERGE_INDEX_MODE: &str =
+    "Mesh.merge() requires both meshes to be indexed or both to be non-indexed";
+
 pub fn polyline_mesh_too_short(type_name: &str) -> String {
     format!("{type_name} requires at least 2 vertices to build a mesh")
 }

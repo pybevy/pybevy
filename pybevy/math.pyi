@@ -219,8 +219,16 @@ class Vec3:
     def element_product(self) -> float: ...
     def angle_between(self, other: Vec3) -> float: ...
     def any_orthogonal_vector(self) -> Vec3: ...
-    def any_orthonormal_vector(self) -> Vec3: ...
-    def any_orthonormal_pair(self) -> tuple[Vec3, Vec3]: ...
+    def any_orthonormal_vector(self) -> Vec3:
+        """Return one perpendicular unit vector; self must be normalized.
+
+        Raises ValueError for a non-unit or non-finite input.
+        """
+    def any_orthonormal_pair(self) -> tuple[Vec3, Vec3]:
+        """Return two perpendicular unit vectors; self must be normalized.
+
+        Raises ValueError for a non-unit or non-finite input.
+        """
     def length_recip(self) -> float:
         """Returns the reciprocal (inverse) of the vector's length."""
     def slerp(self, rhs: Vec3, s: float) -> Vec3:
@@ -243,11 +251,13 @@ class Vec3:
         """Projects this vector onto a normalized vector.
 
         More efficient than project_onto when rhs is already normalized.
+        Raises ValueError if rhs is not unit length or is non-finite.
         """
     def reject_from_normalized(self, rhs: Vec3) -> Vec3:
         """Rejects this vector from a normalized vector.
 
         More efficient than reject_from when rhs is already normalized.
+        Raises ValueError if rhs is not unit length or is non-finite.
         """
     @staticmethod
     def select(mask: tuple[bool, bool, bool], if_true: Vec3, if_false: Vec3) -> Vec3:
@@ -425,8 +435,10 @@ class Vec2:
     def midpoint(self, rhs: Vec2) -> Vec2: ...
     def project_onto(self, rhs: Vec2) -> Vec2: ...
     def reject_from(self, rhs: Vec2) -> Vec2: ...
-    def project_onto_normalized(self, rhs: Vec2) -> Vec2: ...
-    def reject_from_normalized(self, rhs: Vec2) -> Vec2: ...
+    def project_onto_normalized(self, rhs: Vec2) -> Vec2:
+        """Project onto a unit rhs; raises ValueError for a non-unit rhs."""
+    def reject_from_normalized(self, rhs: Vec2) -> Vec2:
+        """Reject from a unit rhs; raises ValueError for a non-unit rhs."""
     def is_finite(self) -> bool: ...
     def is_nan(self) -> bool: ...
     def cmpeq(self, rhs: Vec2) -> tuple[bool, bool]: ...
@@ -1557,6 +1569,10 @@ class Plane3d(Meshable):
         Raises ValueError when a valid normal cannot be computed.
         """
     @property
+    def normal(self) -> Dir3: ...
+    @normal.setter
+    def normal(self, value: Dir3) -> None: ...
+    @property
     def half_size(self) -> Vec2: ...
     @half_size.setter
     def half_size(self, value: Vec2) -> None: ...
@@ -1762,8 +1778,10 @@ class Vec4:
     def midpoint(self, rhs: Vec4) -> Vec4: ...
     def project_onto(self, rhs: Vec4) -> Vec4: ...
     def reject_from(self, rhs: Vec4) -> Vec4: ...
-    def project_onto_normalized(self, rhs: Vec4) -> Vec4: ...
-    def reject_from_normalized(self, rhs: Vec4) -> Vec4: ...
+    def project_onto_normalized(self, rhs: Vec4) -> Vec4:
+        """Project onto a unit rhs; raises ValueError for a non-unit rhs."""
+    def reject_from_normalized(self, rhs: Vec4) -> Vec4:
+        """Reject from a unit rhs; raises ValueError for a non-unit rhs."""
     def normalize_or_zero(self) -> Vec4: ...
     def try_normalize(self) -> Vec4 | None: ...
     def distance(self, rhs: Vec4) -> float: ...
@@ -1973,9 +1991,11 @@ class Mat4:
     @staticmethod
     def look_at_rh(eye: Vec3, center: Vec3, up: Vec3) -> Mat4: ...
     @staticmethod
-    def look_to_lh(eye: Vec3, dir: Vec3, up: Vec3) -> Mat4: ...
+    def look_to_lh(eye: Vec3, dir: Vec3, up: Vec3) -> Mat4:
+        """Build a left-handed view; dir and up must be unit vectors or ValueError is raised."""
     @staticmethod
-    def look_to_rh(eye: Vec3, dir: Vec3, up: Vec3) -> Mat4: ...
+    def look_to_rh(eye: Vec3, dir: Vec3, up: Vec3) -> Mat4:
+        """Build a right-handed view; dir and up must be unit vectors or ValueError is raised."""
 
     def col(self, index: int) -> Vec4:
         """The matrix's column at `index`, counting from the end if negative.
@@ -2877,8 +2897,8 @@ class EaseFunction:
         >>> # Ease in-out with cubic curve (slow start and end)
         >>> eased = EaseFunction.CubicInOut.ease(0.5)  # Returns 0.5
         >>> 
-        >>> # Elastic easing with custom amplitude
-        >>> eased = EaseFunction.Elastic(2.0).ease(0.8)
+        >>> # Elastic easing with visible oscillation
+        >>> eased = EaseFunction.Elastic(omega=12.0).ease(0.8)  # Greater than 1.0
         >>> 
         >>> # Stepped easing
         >>> from pybevy.math import JumpAt
@@ -2930,11 +2950,11 @@ class EaseFunction:
     ExponentialInOut: ClassVar[EaseFunction]
     """Exponential ease-in-out"""
     ElasticIn: ClassVar[EaseFunction]
-    """Elastic ease-in with default amplitude"""
+    """Elastic ease-in"""
     ElasticOut: ClassVar[EaseFunction]
-    """Elastic ease-out with default amplitude"""
+    """Elastic ease-out"""
     ElasticInOut: ClassVar[EaseFunction]
-    """Elastic ease-in-out with default amplitude"""
+    """Elastic ease-in-out"""
     BackIn: ClassVar[EaseFunction]
     """Back ease-in (overshoots then returns)"""
     BackOut: ClassVar[EaseFunction]
@@ -2961,11 +2981,11 @@ class EaseFunction:
     """Smoother step ease-out"""
     
     @staticmethod
-    def Elastic(amplitude: float) -> EaseFunction:
-        """Create an elastic easing function with custom amplitude.
+    def Elastic(omega: float) -> EaseFunction:
+        """Create an elastic easing function with custom angular frequency.
         
         Args:
-            amplitude: The amplitude of the elastic effect
+            omega: Angular frequency of the oscillation in radians per unit input
             
         Returns:
             An elastic easing function

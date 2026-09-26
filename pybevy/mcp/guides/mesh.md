@@ -67,6 +67,16 @@ Torus(0.3, 1.0).mesh().minor_resolution(24).major_resolution(48).build()
 Capsule3d(0.5, 2.0).mesh().rings(4).longitudes(32).latitudes(16).build()
 ```
 
+Mesh-builder counts must meet their minimum usable resolution. Capsule3d needs
+at least 4 latitudes and 1 longitude; Capsule2d needs resolution 2; Annulus
+needs resolution 1; Ellipse needs resolution 3; CircularSector and
+CircularSegment need resolution 2. Smaller values raise `ValueError` before
+Bevy builds the mesh.
+
+`ConicalFrustum.mesh()` requires `resolution(3)` or higher and `segments(1)`
+or higher. Its builder raises `ValueError` before building a mesh with more
+than one million vertices; lower the resolution or segment count for large meshes.
+
 ## Custom Meshes from Vertices
 
 Create meshes directly from vertex data using NumPy arrays or lists:

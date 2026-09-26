@@ -1,4 +1,4 @@
-use std::{fmt::Display, sync::Arc};
+use std::{collections::BTreeMap, fmt::Display, sync::Arc};
 
 use bevy::{
     asset::RenderAssetUsages,
@@ -44,6 +44,67 @@ use crate::{
 };
 fn mesh_operation_error(operation: &str, error: impl Display) -> PyErr {
     PyRuntimeError::new_err(public_error::mesh_operation_failed(operation, error))
+}
+
+enum MeshMergeInputError {
+    Access(String),
+    Invalid(String),
+}
+
+fn merge_attribute_layout(
+    mesh: &Mesh,
+    side: &str,
+) -> Result<BTreeMap<u64, &'static str>, MeshMergeInputError> {
+    let attributes = mesh
+        .try_attributes()
+        .map_err(|error| MeshMergeInputError::Access(error.to_string()))?;
+    let mut layout = BTreeMap::new();
+    let mut expected_count = None;
+    for (attribute, values) in attributes {
+        if let Some(expected) = expected_count
+            && values.len() != expected
+        {
+            return Err(MeshMergeInputError::Invalid(
+                public_error::mesh_merge_vertex_count(side, attribute.name, values.len(), expected),
+            ));
+        }
+        expected_count = Some(values.len());
+        layout.insert(attribute_id(attribute), attribute.name);
+    }
+    Ok(layout)
+}
+
+fn validate_merge_inputs(left: &Mesh, right: &Mesh) -> Result<(), MeshMergeInputError> {
+    let left_layout = merge_attribute_layout(left, "left")?;
+    let right_layout = merge_attribute_layout(right, "right")?;
+    for (id, name) in &left_layout {
+        if !right_layout.contains_key(id) {
+            return Err(MeshMergeInputError::Invalid(
+                public_error::mesh_merge_missing_attribute("right", name),
+            ));
+        }
+    }
+    for (id, name) in &right_layout {
+        if !left_layout.contains_key(id) {
+            return Err(MeshMergeInputError::Invalid(
+                public_error::mesh_merge_missing_attribute("left", name),
+            ));
+        }
+    }
+    let left_indexed = left
+        .try_indices_option()
+        .map_err(|error| MeshMergeInputError::Access(error.to_string()))?
+        .is_some();
+    let right_indexed = right
+        .try_indices_option()
+        .map_err(|error| MeshMergeInputError::Access(error.to_string()))?
+        .is_some();
+    if left_indexed != right_indexed {
+        return Err(MeshMergeInputError::Invalid(
+            public_error::MESH_MERGE_INDEX_MODE.to_string(),
+        ));
+    }
+    Ok(())
 }
 
 #[pyasset(Mesh, bridge, input_converter)]
@@ -717,6 +778,10 @@ impl PyMesh {
     pub fn merge(&mut self, other: &PyMesh) -> PyResult<()> {
         let other = other.storage.as_ref()?.clone();
         let mut candidate = mesh_with!(self, |mesh: &Mesh| mesh.clone());
+        validate_merge_inputs(&candidate, &other).map_err(|error| match error {
+            MeshMergeInputError::Access(message) => mesh_operation_error("merge", message),
+            MeshMergeInputError::Invalid(message) => PyValueError::new_err(message),
+        })?;
         candidate
             .merge(&other)
             .map_err(|error| mesh_operation_error("merge", error))?;

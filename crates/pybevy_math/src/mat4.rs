@@ -1,4 +1,4 @@
-use bevy::math::{Mat4, Vec4};
+use bevy::math::{Mat4, Vec3, Vec4};
 use pybevy_core::{
     FromBorrowedStorage, StorageRef, ValueStorage,
     public_error::{MAT4_PERSPECTIVE_INFINITE_REVERSE_RH_NEAR, UNSUPPORTED_COMPARISON},
@@ -279,20 +279,30 @@ impl PyMat4 {
 
     #[staticmethod]
     pub fn look_to_lh(eye: &PyVec3, dir: &PyVec3, up: &PyVec3) -> PyResult<Self> {
-        Ok(PyMat4::mat4(Mat4::look_to_lh(
-            eye.try_into()?,
-            dir.try_into()?,
-            up.try_into()?,
-        )))
+        let eye: Vec3 = eye.try_into()?;
+        let dir: Vec3 = dir.try_into()?;
+        let up: Vec3 = up.try_into()?;
+        if !dir.is_normalized() {
+            return Err(PyValueError::new_err("direction must be normalized"));
+        }
+        if !up.is_normalized() {
+            return Err(PyValueError::new_err("up must be normalized"));
+        }
+        Ok(PyMat4::mat4(Mat4::look_to_lh(eye, dir, up)))
     }
 
     #[staticmethod]
     pub fn look_to_rh(eye: &PyVec3, dir: &PyVec3, up: &PyVec3) -> PyResult<Self> {
-        Ok(PyMat4::mat4(Mat4::look_to_rh(
-            eye.try_into()?,
-            dir.try_into()?,
-            up.try_into()?,
-        )))
+        let eye: Vec3 = eye.try_into()?;
+        let dir: Vec3 = dir.try_into()?;
+        let up: Vec3 = up.try_into()?;
+        if !dir.is_normalized() {
+            return Err(PyValueError::new_err("direction must be normalized"));
+        }
+        if !up.is_normalized() {
+            return Err(PyValueError::new_err("up must be normalized"));
+        }
+        Ok(PyMat4::mat4(Mat4::look_to_rh(eye, dir, up)))
     }
 
     pub fn col(&self, index: isize) -> PyResult<PyVec4> {
