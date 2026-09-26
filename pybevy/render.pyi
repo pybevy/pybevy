@@ -309,7 +309,8 @@ class RenderPlugin(Plugin):
 
     Examples:
         ```python
-        from pybevy import DefaultPlugins, RenderPlugin, PowerPreference
+        from pybevy.app import DefaultPlugins
+        from pybevy.render import RenderPlugin, PowerPreference
 
         # Low power GPU
         app.add_plugins(

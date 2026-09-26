@@ -43,7 +43,12 @@ def component(  # type: ignore[misc]
 
     Example:
         ```python
+        from dataclasses import dataclass
+        from pybevy.decorators import component
+        from pybevy.ecs import Component
+
         @component
+        @dataclass
         class Velocity(Component):
             x: float = 0.0
             y: float = 0.0

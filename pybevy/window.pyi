@@ -1113,19 +1113,22 @@ class ScreenEdge:
 class AppLifecycle:
     """Application lifecycle state.
 
-    Represents the current state of the application's lifecycle,
-    useful for handling pause/resume events on mobile platforms.
+    Represents a lifecycle state such as a mobile pause or resume. Read changes
+    through `MessageReader[WindowEvent]` and its `AppLifecycle` variant; this
+    value itself is neither a Resource nor a Message.
 
     Example:
         ```python
-        from pybevy.window import AppLifecycle
-        from pybevy.ecs import Res
+        from pybevy.ecs import MessageReader
+        from pybevy.window import AppLifecycle, WindowEvent
 
-        def check_lifecycle(lifecycle: Res[AppLifecycle]) -> None:
-            if lifecycle == AppLifecycle.Suspended:
-                print("App is suspended (e.g., user switched away)")
-            if lifecycle.is_active():
-                print("App is active and can update")
+        def check_lifecycle(events: MessageReader[WindowEvent]) -> None:
+            for event in events:
+                if isinstance(event, WindowEvent.AppLifecycle):
+                    if event.lifecycle == AppLifecycle.Suspended:
+                        print("App is suspended")
+                    if event.lifecycle.is_active():
+                        print("App is active and can update")
         ```
     """
 
@@ -1162,17 +1165,17 @@ class MonitorSelection:
 
     Example:
         ```python
-        from pybevy.window import Window, MonitorSelection
+        from pybevy.window import Window, MonitorSelection, WindowPosition
 
         # Place window on the current monitor
         window = Window()
-        window.monitor_selection = MonitorSelection.Current()
+        window.position = WindowPosition.Centered(MonitorSelection.Current())
 
         # Place window on the primary monitor
-        window.monitor_selection = MonitorSelection.Primary()
+        window.position = WindowPosition.Centered(MonitorSelection.Primary())
 
         # Place window on a specific monitor by index
-        window.monitor_selection = MonitorSelection.Index(1)
+        window.position = WindowPosition.Centered(MonitorSelection.Index(1))
         ```
     """
 

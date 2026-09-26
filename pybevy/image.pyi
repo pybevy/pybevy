@@ -550,10 +550,11 @@ class Image(Asset):
             ```python
             from pybevy.image import Image
             from pybevy.render import Extent3d
+            from pybevy.array import float32
             img = Image.new_fill(Extent3d(width=64, height=64, depth_or_array_layers=1), [255, 0, 0, 255])
 
             with img.data() as pixels:
-                mean_value = pixels.mean()
+                mean_value = pixels.astype(float32).mean()
                 print(f"Mean pixel value: {mean_value}")
             ```
 
@@ -672,7 +673,7 @@ class Image(Asset):
             from pybevy.render import Extent3d, TextureFormat
             from pybevy.math import UVec3
 
-            img = Image.new_fill(Extent3d(width=64, height=64, depth_or_array_layers=1), TextureFormat.Rgba8UnormSrgb, bytes([0, 0, 0, 255]))
+            img = Image.new_fill(Extent3d(width=64, height=64, depth_or_array_layers=1), bytes([0, 0, 0, 255]), TextureFormat.Rgba8UnormSrgb)
 
             # Modify single pixel
             with img.pixel_bytes_mut(UVec3(10, 20, 0)) as pixel:
@@ -703,13 +704,14 @@ class Image(Asset):
             ```python
             from pybevy.image import Image
             from pybevy.render import Extent3d
+            from pybevy.array import float32
 
             img = Image(Extent3d(width=64, height=64, depth_or_array_layers=1))
 
             # Get owned copy
             pixels = img.data_copy()
             # Can use pixels anywhere, even after img is dropped
-            mean = pixels.mean()
+            mean = pixels.astype(float32).mean()
 
             # Modify copy (doesn't affect original)
             pixels[0] = 100
@@ -1166,7 +1168,11 @@ class TextureAtlas:
 
         Example:
             ```python
-            atlas = TextureAtlas(layout, 0).with_index(5)
+            from pybevy.assets import Handle
+            from pybevy.image import TextureAtlas, TextureAtlasLayout
+
+            layout = Handle[TextureAtlasLayout].uuid_from_u128(1, TextureAtlasLayout)
+            atlas = TextureAtlas(layout=layout, index=0).with_index(5)
             ```
         """
 
@@ -1181,7 +1187,12 @@ class TextureAtlas:
 
         Example:
             ```python
-            atlas = TextureAtlas(layout1, 0).with_layout(layout2)
+            from pybevy.assets import Handle
+            from pybevy.image import TextureAtlas, TextureAtlasLayout
+
+            layout1 = Handle[TextureAtlasLayout].uuid_from_u128(1, TextureAtlasLayout)
+            layout2 = Handle[TextureAtlasLayout].uuid_from_u128(2, TextureAtlasLayout)
+            atlas = TextureAtlas(layout=layout1, index=0).with_layout(layout2)
             ```
         """
 

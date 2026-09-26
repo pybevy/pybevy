@@ -555,14 +555,15 @@ class App:
 
         Example:
             ```python
+            from pybevy.app import App, AppExit, Update
+            from pybevy.ecs import MessageWriter
+
             def check_quit(app_exit_writer: MessageWriter[AppExit]) -> None:
-                # Request exit after some condition
                 app_exit_writer.write(AppExit.Success())
 
-            def verify_exit(app: Res[App]) -> None:
-                exit_status = app.should_exit()
-                if isinstance(exit_status, AppExit.Success):
-                    print("App is exiting successfully")
+            app = App().add_message(AppExit).add_systems(Update, check_quit)
+            app.update()
+            assert app.should_exit() == AppExit.Success()
             ```
         """
 

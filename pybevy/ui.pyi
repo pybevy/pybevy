@@ -1844,7 +1844,7 @@ class NodeImageMode:
         stretch_mode = NodeImageMode.Stretch()
 
         # 9-slice for UI panels
-        slicer = TextureSlicer(BorderRect.all(16.0))
+        slicer = TextureSlicer(border=BorderRect.all(16.0))
         sliced_mode = NodeImageMode.Sliced(slicer)
 
         # Tiled background
@@ -2648,15 +2648,18 @@ class UiTargetCamera(Component):
 
     Example:
         ```python
+        from pybevy.camera import Camera2d
         from pybevy.ui import Node, UiTargetCamera
-        from pybevy.ecs import Entity
+        from pybevy.ecs import Commands
 
-        def setup(commands: Commands, camera_entity: Entity) -> None:
+        def setup(commands: Commands) -> None:
+            camera_entity = commands.spawn(Camera2d()).id()
+            assert camera_entity is not None
             # Create UI that renders to a specific camera
-            commands.spawn((
+            commands.spawn(
                 Node(),
                 UiTargetCamera(camera_entity),
-            ))
+            )
         ```
     """
     def __init__(self, entity: Entity) -> None: ...
@@ -2777,19 +2780,19 @@ class ScrollPosition(Component):
     """Scroll position component for scrollable UI nodes.
 
     Tracks the current scroll offset of a scrollable container.
-    Used with Overflow.scroll() to create scrollable UI regions.
+    Used with a Node whose overflow is scrollable.
 
     Example:
         ```python
         from pybevy.ui import Node, ScrollPosition, Overflow
-        from pybevy.ecs import Query, Mut
+        from pybevy.ecs import Commands, Query, Mut
 
         # Create a scrollable container
-        commands.spawn((
-            Node(),
-            Overflow.scroll(),
-            ScrollPosition(0.0, 0.0),
-        ))
+        def setup(commands: Commands) -> None:
+            commands.spawn(
+                Node(overflow=Overflow.scroll_y()),
+                ScrollPosition(0.0, 0.0),
+            )
 
         # Read/modify scroll position
         def scroll_system(query: Query[Mut[ScrollPosition]]) -> None:
@@ -3606,7 +3609,8 @@ class BoxShadow(Component):
     Example:
         ```python
         from pybevy.ui import BoxShadow, ShadowStyle, Val, Node
-        from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
+        from pybevy.color import Color
+        from pybevy.ecs import Commands
 
         def setup(commands: Commands) -> None:
             # Single shadow using convenience method
@@ -3618,21 +3622,22 @@ class BoxShadow(Component):
                 blur_radius=Val.Px(8.0),
             )
 
-            commands.spawn((Node(), shadow))
+            commands.spawn(Node(), shadow)
 
             # Or with multiple shadows
             multi_shadow = BoxShadow([
                 ShadowStyle(
-                    Color.srgba(1.0, 0.0, 0.0, 0.3),
-                    Val.Px(-2.0), Val.Px(-2.0),
-                    Val.Px(0.0), Val.Px(4.0),
+                    color=Color.srgba(1.0, 0.0, 0.0, 0.3),
+                    x_offset=Val.Px(-2.0), y_offset=Val.Px(-2.0),
+                    spread_radius=Val.Px(0.0), blur_radius=Val.Px(4.0),
                 ),
                 ShadowStyle(
-                    Color.srgba(0.0, 0.0, 1.0, 0.3),
-                    Val.Px(2.0), Val.Px(2.0),
-                    Val.Px(0.0), Val.Px(4.0),
+                    color=Color.srgba(0.0, 0.0, 1.0, 0.3),
+                    x_offset=Val.Px(2.0), y_offset=Val.Px(2.0),
+                    spread_radius=Val.Px(0.0), blur_radius=Val.Px(4.0),
                 ),
             ])
+            commands.spawn(Node(), multi_shadow)
         ```
     """
 

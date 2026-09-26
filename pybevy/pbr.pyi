@@ -963,9 +963,13 @@ class ShaderMaterial(Material):
 
     Example:
         ```python
+        from pybevy.color import Color
+        from pybevy.decorators import material
+        from pybevy.pbr import Material, ShaderMaterial, StandardMaterial
+
         # Prefer using @material decorator instead of this directly:
         @material(fragment_shader="shaders/hologram.wgsl")
-        class HologramMaterial:
+        class HologramMaterial(Material):
             energy: float = 1.0
 
         # Direct use:
