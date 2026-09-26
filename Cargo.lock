@@ -4946,6 +4946,7 @@ dependencies = [
  "pybevy_core",
  "pybevy_ecs",
  "pybevy_macros",
+ "pybevy_math",
  "pybevy_transform",
  "pyo3",
  "schemars",

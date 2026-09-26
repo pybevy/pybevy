@@ -1,15 +1,15 @@
 use std::alloc::Layout;
 
-use bevy::{
-    ecs::ptr::Ptr,
-    math::{Vec2, Vec3},
-};
+use bevy::{ecs::ptr::Ptr, math::Vec2};
 use pybevy_core::{
     component_layout::{ComponentLayout, PrimitiveType, PrimitiveValue},
     public_error,
 };
 
-use crate::handlers::json_float::{float_to_json, nonfinite_float_from_json, require_finite_float};
+use crate::handlers::{
+    json_float::{float_to_json, nonfinite_float_from_json, require_finite_float},
+    value_conversion,
+};
 
 pub(crate) fn descriptor_matches(layout: &ComponentLayout, descriptor: Layout) -> bool {
     layout.schema().wrapper_size.mem_layout() == descriptor
@@ -117,10 +117,7 @@ fn primitive_from_json(
                 .as_bool()
                 .ok_or_else(|| "expected a boolean".to_string())?,
         ),
-        PrimitiveType::Vec3 => {
-            let values = json_vector(value, 3)?;
-            PrimitiveValue::Vec3(Vec3::new(values[0], values[1], values[2]))
-        }
+        PrimitiveType::Vec3 => PrimitiveValue::Vec3(value_conversion::vec3_from_json(value)?),
         PrimitiveType::Vec2 => {
             let values = json_vector(value, 2)?;
             PrimitiveValue::Vec2(Vec2::new(values[0], values[1]))
@@ -178,6 +175,7 @@ fn json_vector(value: &serde_json::Value, expected_len: usize) -> Result<Vec<f32
 mod tests {
     use std::ptr;
 
+    use bevy::math::Vec3;
     use pybevy_core::component_layout::ComponentLayout;
 
     use super::*;
@@ -190,6 +188,7 @@ mod tests {
                 ("speed".to_string(), PrimitiveType::F64),
                 ("count".to_string(), PrimitiveType::I64),
                 ("direction".to_string(), PrimitiveType::Vec2),
+                ("offset".to_string(), PrimitiveType::Vec3),
             ],
         )
         .unwrap()
@@ -222,5 +221,67 @@ mod tests {
             assert!(primitive_from_json(PrimitiveType::F64, &json).is_err());
             assert!(primitive_from_json(PrimitiveType::F32, &json).is_err());
         }
+    }
+
+    #[test]
+    fn vec3_values_accept_array_and_coordinate_object_forms() {
+        for input in [
+            serde_json::json!([1.25, -2.5, 3.75]),
+            serde_json::json!({"x": 1.25, "y": -2.5, "z": 3.75}),
+        ] {
+            assert_eq!(
+                primitive_from_json(PrimitiveType::Vec3, &input).unwrap(),
+                PrimitiveValue::Vec3(Vec3::new(1.25, -2.5, 3.75))
+            );
+        }
+    }
+
+    #[test]
+    fn vec3_object_errors_name_coordinate_and_accepted_forms() {
+        for (input, detail) in [
+            (
+                serde_json::json!({"x": 1.0, "y": 2.0}),
+                "Vec3 object is missing coordinate 'z'",
+            ),
+            (
+                serde_json::json!({"x": 1.0, "y": 2.0, "z": 3.0, "w": 4.0}),
+                "Vec3 object has unknown coordinate 'w'",
+            ),
+            (
+                serde_json::json!({"x": 1.0, "y": "two", "z": 3.0}),
+                "Vec3.y: expected a number",
+            ),
+            (
+                serde_json::json!({"x": 1.0, "y": 2.0, "z": "NaN"}),
+                "Vec3.z: float must be finite",
+            ),
+        ] {
+            let error = primitive_from_json(PrimitiveType::Vec3, &input).unwrap_err();
+            assert!(error.contains(detail), "unexpected error: {error}");
+            assert!(error.contains(public_error::MCP_VEC3_INPUT_FORMS));
+        }
+    }
+
+    #[test]
+    fn vec3_object_duplicate_coordinates_are_unrepresentable_at_typed_seam() {
+        let mut fields = serde_json::Map::new();
+        assert!(
+            fields
+                .insert("x".to_string(), serde_json::json!(1.0))
+                .is_none()
+        );
+        assert!(
+            fields
+                .insert("x".to_string(), serde_json::json!(4.0))
+                .is_some()
+        );
+        fields.insert("y".to_string(), serde_json::json!(2.0));
+        fields.insert("z".to_string(), serde_json::json!(3.0));
+
+        assert_eq!(fields.len(), 3);
+        assert_eq!(
+            primitive_from_json(PrimitiveType::Vec3, &serde_json::Value::Object(fields)).unwrap(),
+            PrimitiveValue::Vec3(Vec3::new(4.0, 2.0, 3.0))
+        );
     }
 }

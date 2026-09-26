@@ -16,6 +16,7 @@ use bevy::{
     },
     reflect::{ReflectRef, TypeInfo},
 };
+use pybevy_color::linear_rgba::PyLinearRgba;
 use pybevy_core::{
     ResourceBridge,
     component_fields::declared_annotations,
@@ -238,6 +239,9 @@ fn serialize_python_value(
     if let Some(color) = color_to_json(value) {
         return color;
     }
+    if let Some(linear_rgba) = linear_rgba_to_json(value) {
+        return linear_rgba;
+    }
     if let Some(vector) = vector_to_json(value) {
         return vector;
     }
@@ -299,6 +303,18 @@ fn serialize_python_value(
         .repr()
         .map(|r| serde_json::Value::String(r.to_string()))
         .unwrap_or_else(|_| serde_json::Value::String("<opaque>".to_string()))
+}
+
+fn linear_rgba_to_json(value: &Bound<'_, PyAny>) -> Option<serde_json::Value> {
+    value.cast::<PyLinearRgba>().ok()?;
+    let fields = crate::handlers::LINEAR_RGBA_CHANNELS
+        .into_iter()
+        .map(|name| {
+            let channel = value.getattr(name).ok()?.extract::<f64>().ok()?;
+            Some((name.to_string(), float_to_json(channel)))
+        })
+        .collect::<Option<serde_json::Map<_, _>>>()?;
+    Some(serde_json::Value::Object(fields))
 }
 
 /// JSON object key for a Python mapping key. `str` passes through, `int`,
@@ -3550,6 +3566,46 @@ mod tests {
             assert!((srgba["blue"].as_f64().unwrap() - 0.45).abs() < 1.0e-6);
             assert!((srgba["alpha"].as_f64().unwrap() - 1.0).abs() < 1.0e-6);
             assert!(result.get("repr").is_none());
+        });
+    }
+
+    #[test]
+    fn py_value_to_json_linear_rgba_uses_complete_object_form() {
+        setup();
+        Python::attach(|py| {
+            let color = Py::new(py, PyLinearRgba::new(6.5, 3.0, 1.0, 0.75)).unwrap();
+
+            assert_eq!(
+                py_value_to_json(color.bind(py)),
+                serde_json::json!({
+                    "red": 6.5,
+                    "green": 3.0,
+                    "blue": 1.0,
+                    "alpha": 0.75,
+                })
+            );
+        });
+    }
+
+    #[test]
+    fn py_value_to_json_unrelated_linear_rgba_class_falls_through() {
+        setup();
+        Python::attach(|py| {
+            let globals = PyDict::new(py);
+            py.run(
+                ffi::c_str!(
+                    "class LinearRgba:\n    def __init__(self):\n        self.red = 1.0\n        self.green = 2.0\n        self.blue = 3.0\n        self.alpha = 4.0\n    def __repr__(self):\n        return 'custom LinearRgba'\nvalue = LinearRgba()\n"
+                ),
+                Some(&globals),
+                None,
+            )
+            .unwrap();
+            let value = globals.get_item("value").unwrap().unwrap();
+
+            assert_eq!(
+                py_value_to_json(&value),
+                serde_json::json!({"repr": "custom LinearRgba"})
+            );
         });
     }
 

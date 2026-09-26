@@ -171,13 +171,14 @@ World command errors also surface from immediate operations that implicitly
 flush the queue; applied mutations are not rolled back. Deferred `entity(id)`
 does not eagerly check existence, and `get_entity(id)` accepts reserved IDs.
 
-When using `set_component`, `spawn_entity`, or `set_resource`, field values are automatically converted:
+When using `set_component`, `spawn_entity`, `set_resource`, or `set_asset`, field values are automatically converted:
 
 - **Enum fields** (Color, PlaybackMode, etc.): `{"Srgba": {"red": 1.0, "green": 0.5, "blue": 0.0, "alpha": 1.0}}` or unit variant as string: `"Manual"`
-- **Color shorthand**: `[1.0, 0.5, 0.0, 1.0]` (RGBA array, Python fallback path)
-- **Vec2/Vec3/Vec4**: `[x, y]`, `[x, y, z]`, `[x, y, z, w]`
+- **Color shorthand**: `[1.0, 0.5, 0.0, 1.0]` means sRGBA for `Color`
+- **LinearRgba**: `[r, g, b, a]` is linear and accepts HDR channels above 1; the canonical object form is `{"red": r, "green": g, "blue": b, "alpha": a}`
+- **Vec2/Vec3/Vec4**: `[x, y]`, `[x, y, z]`, `[x, y, z, w]`; Vec3 also accepts the complete coordinate object `{"x": x, "y": y, "z": z}`
 - **Option fields**: `null` for None, value directly for Some
-- **Nested structs**: `{"x": 1.0, "y": 2.0, "z": 3.0}`
+- **Nested structs**: `{"x": 1.0, "y": 2.0, "z": 3.0}`; a Vec3 coordinate object requires exactly `x`, `y`, and `z` with finite numeric values
 - **Resources**: `set_resource` patches existing fields - only provided fields are updated, others preserved. Native-resource patches validate all conversions and setters on a detached value; failure leaves the resource unchanged. Types that cannot safely stage a copy reject patches without mutation. Its response returns `resource` with the type name and `inserted: true` for a newly created value or `inserted: false` for a patch.
 
 ## Available Guides
