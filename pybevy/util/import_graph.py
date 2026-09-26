@@ -11,8 +11,35 @@ from __future__ import annotations
 
 import ast
 import os
+import sys
 import threading
 from collections import defaultdict
+
+_DYNAMIC_IMPORT_CALLS = frozenset(
+    {
+        "__import__",
+        "import_module",
+        "run_path",
+        "run_module",
+        "spec_from_file_location",
+        "exec",
+        "compile",
+    }
+)
+
+_IGNORED_DIRS = frozenset(
+    {
+        ".git",
+        "__pycache__",
+        ".pytest_cache",
+        ".venv",
+        "venv",
+        "node_modules",
+        "target",
+        ".mypy_cache",
+        ".ruff_cache",
+    }
+)
 
 
 class ImportGraph:
@@ -48,9 +75,7 @@ class ImportGraph:
         for dirpath, _dirnames, filenames in os.walk(self._watch_root):
             # Skip common non-project directories
             basename = os.path.basename(dirpath)
-            if basename in (".git", "__pycache__", ".pytest_cache", ".venv",
-                            "venv", "node_modules", "target", ".mypy_cache",
-                            ".ruff_cache"):
+            if basename in _IGNORED_DIRS:
                 _dirnames.clear()  # Don't descend
                 continue
 
@@ -59,8 +84,16 @@ class ImportGraph:
                     filepath = os.path.realpath(os.path.join(dirpath, filename))
                     self._all_files.add(filepath)
 
-        for filepath in self._all_files:
+        parsed = set(self._all_files)
+        for filepath in parsed:
             self._parse_file(filepath)
+
+        discovered = self._all_files - parsed
+        while discovered:
+            filepath = discovered.pop()
+            self._parse_file(filepath)
+            parsed.add(filepath)
+            discovered.update(self._all_files - parsed)
 
     def update_file(self, filepath: str) -> None:
         """Re-parse a single file after it changes (incremental update)."""
@@ -72,6 +105,7 @@ class ImportGraph:
             self._update_files_locked(filepaths)
 
     def _update_files_locked(self, filepaths: set[str]) -> None:
+        known_before = set(self._all_files)
         normalized = {os.path.realpath(filepath) for filepath in filepaths}
         self._all_files.update(
             filepath for filepath in normalized if os.path.exists(filepath)
@@ -87,9 +121,18 @@ class ImportGraph:
                 # Keep inbound edges so importers of a deleted file are flushed.
                 self._all_files.discard(filepath)
 
+        parsed: set[str] = set()
         for filepath in normalized:
             if os.path.exists(filepath):
                 self._parse_file(filepath)
+                parsed.add(filepath)
+
+        discovered = self._all_files - known_before - parsed
+        while discovered:
+            filepath = discovered.pop()
+            self._parse_file(filepath)
+            parsed.add(filepath)
+            discovered.update(self._all_files - known_before - parsed)
 
     def updated_copy(self, filepaths: set[str]) -> ImportGraph:
         """Build a candidate graph without publishing it to concurrent readers."""
@@ -202,6 +245,13 @@ class ImportGraph:
         file_dir = os.path.dirname(filepath)
         imports: set[str] = set()
 
+        package_dir = file_dir
+        while package_dir.startswith(self._watch_root + os.sep):
+            initializer = os.path.join(package_dir, "__init__.py")
+            if initializer != filepath and initializer in self._all_files:
+                imports.add(initializer)
+            package_dir = os.path.dirname(package_dir)
+
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
@@ -236,13 +286,12 @@ class ImportGraph:
 
             elif isinstance(node, ast.Call):
                 function = node.func
-                if (
-                    isinstance(function, ast.Name)
-                    and function.id == "__import__"
-                ) or (
-                    isinstance(function, ast.Attribute)
-                    and function.attr == "import_module"
-                ):
+                call_name = (
+                    function.id
+                    if isinstance(function, ast.Name)
+                    else function.attr if isinstance(function, ast.Attribute) else None
+                )
+                if call_name in _DYNAMIC_IMPORT_CALLS:
                     self._dynamic_importers.add(filepath)
 
         self._forward[filepath] = imports
@@ -252,22 +301,42 @@ class ImportGraph:
     def _resolve_module(self, module_name: str, from_dir: str) -> str | None:
         """Resolve a dotted module name to a file path under watch_root."""
         parts = module_name.split(".")
-        # Try resolving as a path relative to watch_root
-        candidate = os.path.join(self._watch_root, *parts) + ".py"
-        if os.path.realpath(candidate) in self._all_files:
-            return os.path.realpath(candidate)
-
-        # Try as package __init__.py
-        candidate = os.path.join(self._watch_root, *parts, "__init__.py")
-        if os.path.realpath(candidate) in self._all_files:
-            return os.path.realpath(candidate)
-
-        # Try relative to the importing file's directory
-        candidate = os.path.join(from_dir, *parts) + ".py"
-        if os.path.realpath(candidate) in self._all_files:
-            return os.path.realpath(candidate)
+        search_roots = [os.path.realpath(path or os.curdir) for path in sys.path]
+        search_roots.extend((self._watch_root, from_dir))
+        root_prefix = self._watch_root + os.sep
+        seen: set[str] = set()
+        for root in search_roots:
+            if root in seen or (root != self._watch_root and not root.startswith(root_prefix)):
+                continue
+            seen.add(root)
+            for candidate in (
+                os.path.join(root, *parts) + ".py",
+                os.path.join(root, *parts, "__init__.py"),
+            ):
+                if resolved := self._resolve_candidate(candidate):
+                    return resolved
 
         return None  # External module (stdlib, site-packages)
+
+    def _resolve_candidate(self, candidate: str) -> str | None:
+        path = os.path.realpath(candidate)
+        if path in self._all_files:
+            return path
+        if not os.path.isfile(path):
+            return None
+        try:
+            if os.path.commonpath((self._watch_root, path)) != self._watch_root:
+                return None
+        except ValueError:
+            return None
+        self._all_files.add(path)
+        parent = os.path.dirname(path)
+        while parent.startswith(self._watch_root + os.sep):
+            initializer = os.path.join(parent, "__init__.py")
+            if os.path.isfile(initializer):
+                self._all_files.add(initializer)
+            parent = os.path.dirname(parent)
+        return path
 
     def _resolve_import_from(
         self,
@@ -285,13 +354,13 @@ class ImportGraph:
 
             parts = module_name.split(".") if module_name else []
             candidate = os.path.join(base_dir, *parts) + ".py"
-            if os.path.realpath(candidate) in self._all_files:
-                return os.path.realpath(candidate)
+            if resolved := self._resolve_candidate(candidate):
+                return resolved
 
             # Package __init__.py
             candidate = os.path.join(base_dir, *parts, "__init__.py")
-            if os.path.realpath(candidate) in self._all_files:
-                return os.path.realpath(candidate)
+            if resolved := self._resolve_candidate(candidate):
+                return resolved
 
             return None
         # Absolute import

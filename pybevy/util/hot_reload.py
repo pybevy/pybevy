@@ -21,9 +21,9 @@ import os
 import runpy
 import sys
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextvars import ContextVar
-from types import CodeType
+from types import CodeType, ModuleType
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -103,6 +103,7 @@ def flush_user_modules(
                 )
 
     to_remove: list[str] = []
+    source_paths: dict[str, str] = {}
 
     for name, mod in list(sys.modules.items()):
         if name in ("pybevy", "_pybevy", "__main__") or name.startswith(
@@ -133,10 +134,13 @@ def flush_user_modules(
             continue
 
         to_remove.append(name)
+        if fpath.endswith(".py"):
+            source_paths[name] = fpath
 
     from .._internal.reload_modules import record_module_flush
 
     record_module_flush(project_dir, to_remove)
+    _FRESH_SOURCE_FINDER.register(source_paths)
     for name in to_remove:
         del sys.modules[name]
     importlib.invalidate_caches()
@@ -149,18 +153,83 @@ def flush_user_modules(
 
 
 class _SourceOnlyLoader(importlib.machinery.SourceFileLoader):
-    """Compile the scene from source, never trusting or writing __pycache__.
+    """Compile a scene or flushed helper from source without using __pycache__.
 
     Bytecode caches validate on (size, whole-second mtime): an edit that keeps
     the file size and lands within the same second as the previous import
     revalidates the stale cache, and every reload keeps executing it.
     """
 
+    def __init__(
+        self,
+        fullname: str,
+        path: str,
+        on_success: Callable[[], None] | None = None,
+    ) -> None:
+        super().__init__(fullname, path)
+        self._on_success = on_success
+
     def get_code(self, fullname: str) -> CodeType:
         source = self.get_source(fullname)
         if source is None:
             raise ImportError(f"no source for scene module {fullname!r}", name=fullname)
         return self.source_to_code(source, self.path)
+
+    def exec_module(self, module: ModuleType) -> None:
+        super().exec_module(module)
+        if self._on_success is not None:
+            self._on_success()
+
+
+class _FreshSourceFinder:
+    """Use source once for each project module evicted by a reload."""
+
+    def __init__(self) -> None:
+        self._pending: dict[str, str] = {}
+        self._lock = threading.Lock()
+
+    def register(self, source_paths: dict[str, str]) -> None:
+        if not source_paths:
+            return
+        with self._lock:
+            if self not in sys.meta_path:
+                sys.meta_path.insert(0, self)
+            self._pending.update(source_paths)
+
+    def _consume(self, fullname: str, expected: str) -> None:
+        with self._lock:
+            if self._pending.get(fullname) == expected:
+                del self._pending[fullname]
+
+    def find_spec(
+        self,
+        fullname: str,
+        path: Sequence[str] | None = None,
+        target: ModuleType | None = None,
+    ) -> importlib.machinery.ModuleSpec | None:
+        with self._lock:
+            expected = self._pending.get(fullname)
+        if expected is None:
+            return None
+
+        spec = importlib.machinery.PathFinder.find_spec(fullname, path, target)
+        if (
+            spec is None
+            or not isinstance(spec.origin, str)
+            or not isinstance(spec.loader, importlib.machinery.SourceFileLoader)
+            or os.path.realpath(spec.origin) != expected
+        ):
+            return None
+
+        spec.loader = _SourceOnlyLoader(
+            fullname,
+            spec.origin,
+            on_success=lambda: self._consume(fullname, expected),
+        )
+        return spec
+
+
+_FRESH_SOURCE_FINDER = _FreshSourceFinder()
 
 
 def exec_scene_module(
@@ -369,8 +438,9 @@ def find_entrypoint(module_globals: dict) -> Callable:
     """
     Find the @entrypoint decorated function in module globals.
 
-    Searches for common function names first (main, create_app, app, run),
-    then falls back to scanning all callables for @entrypoint decorator.
+    Prefers entrypoints defined in the scene module. Within that set, searches
+    common names first (main, create_app, app, run), then other public callables.
+    Imported entrypoints are considered only when the scene defines none.
 
     Args:
         module_globals: Dictionary of module globals (from runpy.run_path or similar)
@@ -389,20 +459,23 @@ def find_entrypoint(module_globals: dict) -> Callable:
 
     from .._internal.entrypoint import is_entrypoint
 
-    # Try common names first
+    scene_module = module_globals.get("__name__")
     app_function_names = ["main", "create_app", "app", "run"]
-    for name in app_function_names:
-        if name in module_globals:
-            obj = module_globals[name]
-            if is_entrypoint(obj):
+    for local_only in (True, False):
+        for name in app_function_names:
+            obj = module_globals.get(name)
+            if is_entrypoint(obj) and (
+                not local_only or getattr(obj, "__module__", None) == scene_module
+            ):
                 return obj  # type: ignore
 
-    # Fallback: scan all callables for @entrypoint pattern
-    for name, obj in module_globals.items():
-        if name.startswith("_"):
-            continue  # Skip private functions
-        if is_entrypoint(obj):
-            return obj  # type: ignore
+        for name, obj in module_globals.items():
+            if name.startswith("_"):
+                continue
+            if is_entrypoint(obj) and (
+                not local_only or getattr(obj, "__module__", None) == scene_module
+            ):
+                return obj  # type: ignore
 
     raise RuntimeError(
         "No @entrypoint function found. PyBevy looks for a function decorated with "
