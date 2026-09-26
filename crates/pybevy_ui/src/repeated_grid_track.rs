@@ -1,7 +1,9 @@
 use bevy::ui::RepeatedGridTrack;
 use pyo3::prelude::*;
 
-use crate::grid_track_repetition::extract_grid_track_repetition_from_any;
+use crate::{
+    grid_track::finite_grid_value, grid_track_repetition::extract_grid_track_repetition_from_any,
+};
 
 #[pyclass(
     name = "RepeatedGridTrack",
@@ -47,7 +49,7 @@ impl PyRepeatedGridTrack {
         Ok(PyRepeatedGridTrack {
             inner: RepeatedGridTrack::px(
                 extract_grid_track_repetition_from_any(repetition)?,
-                value,
+                finite_grid_value(value, "px")?,
             ),
         })
     }
@@ -57,23 +59,23 @@ impl PyRepeatedGridTrack {
         Ok(PyRepeatedGridTrack {
             inner: RepeatedGridTrack::percent(
                 extract_grid_track_repetition_from_any(repetition)?,
-                value,
+                finite_grid_value(value, "percent")?,
             ),
         })
     }
 
     #[staticmethod]
-    pub fn fr(repetition: u16, value: f32) -> Self {
-        PyRepeatedGridTrack {
-            inner: RepeatedGridTrack::fr(repetition, value),
-        }
+    pub fn fr(repetition: u16, value: f32) -> PyResult<Self> {
+        Ok(PyRepeatedGridTrack {
+            inner: RepeatedGridTrack::fr(repetition, finite_grid_value(value, "fr")?),
+        })
     }
 
     #[staticmethod]
-    pub fn flex(repetition: u16, value: f32) -> Self {
-        PyRepeatedGridTrack {
-            inner: RepeatedGridTrack::flex(repetition, value),
-        }
+    pub fn flex(repetition: u16, value: f32) -> PyResult<Self> {
+        Ok(PyRepeatedGridTrack {
+            inner: RepeatedGridTrack::flex(repetition, finite_grid_value(value, "flex")?),
+        })
     }
 
     #[staticmethod]
@@ -98,17 +100,23 @@ impl PyRepeatedGridTrack {
     }
 
     #[staticmethod]
-    pub fn fit_content_px(repetition: u16, limit: f32) -> Self {
-        PyRepeatedGridTrack {
-            inner: RepeatedGridTrack::fit_content_px(repetition, limit),
-        }
+    pub fn fit_content_px(repetition: u16, limit: f32) -> PyResult<Self> {
+        Ok(PyRepeatedGridTrack {
+            inner: RepeatedGridTrack::fit_content_px(
+                repetition,
+                finite_grid_value(limit, "fit_content_px")?,
+            ),
+        })
     }
 
     #[staticmethod]
-    pub fn fit_content_percent(repetition: u16, limit: f32) -> Self {
-        PyRepeatedGridTrack {
-            inner: RepeatedGridTrack::fit_content_percent(repetition, limit),
-        }
+    pub fn fit_content_percent(repetition: u16, limit: f32) -> PyResult<Self> {
+        Ok(PyRepeatedGridTrack {
+            inner: RepeatedGridTrack::fit_content_percent(
+                repetition,
+                finite_grid_value(limit, "fit_content_percent")?,
+            ),
+        })
     }
 
     pub fn __repr__(&self) -> String {

@@ -14,6 +14,7 @@ pub mod plugin;
 pub mod sampler_descriptor;
 pub mod save_image_format_setting;
 pub mod texture_atlas;
+pub mod texture_atlas_builder;
 pub mod texture_atlas_layout;
 pub mod texture_atlas_rects;
 pub mod texture_atlas_sources;
@@ -26,6 +27,7 @@ pub mod prelude {
         image_format::PyImageFormat,
         plugin::PyImagePlugin,
         texture_atlas::PyTextureAtlas,
+        texture_atlas_builder::PyTextureAtlasBuilder,
         texture_atlas_layout::PyTextureAtlasLayout,
         texture_atlas_sources::PyTextureAtlasSources,
     };
@@ -51,6 +53,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<image_filter_mode::PyImageFilterMode>()?;
     m.add_class::<image_array_layout::PyImageArrayLayout>()?;
     m.add_class::<texture_atlas::PyTextureAtlas>()?;
+    m.add_class::<texture_atlas_builder::PyTextureAtlasBuilder>()?;
     m.add_class::<texture_atlas_layout::PyTextureAtlasLayout>()?;
     m.add_class::<texture_atlas_rects::PyTextureAtlasRects>()?;
     m.add_class::<texture_atlas_sources::PyTextureAtlasSources>()?;

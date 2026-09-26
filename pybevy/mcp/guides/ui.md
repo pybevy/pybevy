@@ -11,14 +11,18 @@ Use `px(value)`, `percent(value)`, `vw(value)`, `vh(value)`, `vmin(value)` and
 field to change its value. Read numeric payloads with `.value` after matching
 the variant; use `isinstance(value, Val.Auto)` or `value == Val.Auto()` for Auto.
 Bare numeric Node fields mean pixels.
+Node layout assignments, including margin, padding, border and live rect-side
+writes, reject NaN and infinity before they reach Bevy's layout. Standalone
+`Val` and `UiRect` values can still carry non-finite data until assigned to a
+Node. Grid-track numeric factories require finite values at construction.
 
 Scalar multiplication, division and negation preserve the unit. `try_add` and
 `try_sub` return a value for matching numeric units and raise `ValueError` for
 incompatible units, including two `Auto` values. Zero values from different
 units compare equal in Bevy but still have incompatible arithmetic units.
-Unit inputs and arithmetic follow Bevy float behavior, including infinities and
-NaNs; zero division produces float infinity/NaN, and scalar arithmetic preserves
-`Auto`.
+Val arithmetic follows Bevy float behavior, including infinities and NaNs;
+zero division produces float infinity/NaN, and scalar arithmetic preserves
+`Auto`. A non-finite result cannot be assigned to a Node layout field.
 
 ## Borders, Outlines, and Shadows
 
