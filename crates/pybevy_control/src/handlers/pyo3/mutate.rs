@@ -20,7 +20,7 @@ use pybevy_core::{
     },
     public_error,
 };
-use pybevy_math::vec3::PyVec3;
+use pybevy_math::{range::PyRange, vec3::PyVec3};
 use pyo3::{
     ffi::{PyObject, PyTypeObject},
     prelude::*,
@@ -3514,6 +3514,9 @@ fn convert_field_value_typed(
         {
             return Ok(value);
         }
+        if let Ok(range) = current.cast_exact::<PyRange>() {
+            return range_from_json(py, range, field_value);
+        }
         let type_name = current
             .get_type()
             .name()
@@ -3839,6 +3842,41 @@ fn convert_field_value_typed(
 
     // Default: generic JSON → Python conversion
     json_to_py(py, field_value)
+}
+
+fn range_from_json(
+    py: Python<'_>,
+    current: &Bound<'_, PyRange>,
+    value: &serde_json::Value,
+) -> Result<Py<PyAny>, String> {
+    let fields = value
+        .as_object()
+        .ok_or_else(|| "Range expects an object with start and end".to_string())?;
+    let mut start = current
+        .getattr("start")
+        .and_then(|value| value.extract::<f32>())
+        .map_err(|error| error.to_string())?;
+    let mut end = current
+        .getattr("end")
+        .and_then(|value| value.extract::<f32>())
+        .map_err(|error| error.to_string())?;
+    for (name, value) in fields {
+        let endpoint = match name.as_str() {
+            "start" => &mut start,
+            "end" => &mut end,
+            _ => return Err(format!("Range has no field '{name}'")),
+        };
+        *endpoint = if let Some(nonfinite) = nonfinite_float_from_json(value)
+            && nonfinite.is_infinite()
+        {
+            nonfinite as f32
+        } else {
+            json_number_to_f32(value).map_err(|error| format!("{name}: {error}"))?
+        };
+    }
+    Py::new(py, PyRange::from_range(start, end))
+        .map(Py::into_any)
+        .map_err(|error| error.to_string())
 }
 
 fn integer_vector_coordinate_to_py(
