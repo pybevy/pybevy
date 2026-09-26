@@ -27,6 +27,8 @@ class Expr:
     the computation. This tree is then passed to Rust and compiled to bytecode.
     """
 
+    __slots__ = ("args", "op")
+
     def __init__(self, op: str, args: list[Any]) -> None:
         """
         Create an expression node.
@@ -365,6 +367,8 @@ class FieldExpr(Expr):
     that will be loaded from component memory during execution.
     """
 
+    __slots__ = ("_parent_proxy", "component_id", "field_name", "field_type", "offset")
+
     def __init__(self, component_id: int, field_name: str, offset: int, field_type: str = "F32") -> None:
         """
         Create a field proxy.
@@ -446,6 +450,8 @@ class Vec3Expression:
         transform.translation = transform.translation + velocity
     """
 
+    __slots__ = ("x", "y", "z")
+
     def __init__(
         self,
         x_expr: Expr | float | int,
@@ -523,6 +529,8 @@ class Vec3Expr:
     Also supports Vec3 arithmetic operations for bulk assignment:
         transform.translation = transform.translation + velocity
     """
+
+    __slots__ = ("_parent_proxy", "base_field_name", "base_offset", "component_id")
 
     def __init__(
         self, component_id: int, base_field_name: str, base_offset: int
@@ -659,6 +667,8 @@ class Vec2Expr:
     Then `.x` / `.y` return FieldExpr instances for the individual components.
     """
 
+    __slots__ = ("_parent_proxy", "base_field_name", "base_offset", "component_id")
+
     def __init__(
         self, component_id: int, base_field_name: str, base_offset: int
     ) -> None:
@@ -716,6 +726,8 @@ class QuatExpr:
     When you access `transform.rotation`, you get a QuatExpr.
     Then `rotation.x` returns a FieldExpr for the x component.
     """
+
+    __slots__ = ("_parent_proxy", "base_field_name", "base_offset", "component_id")
 
     def __init__(
         self, component_id: int, base_field_name: str, base_offset: int

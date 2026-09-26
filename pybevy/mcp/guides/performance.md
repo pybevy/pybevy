@@ -171,7 +171,10 @@ def setup(
   Transform translation, rotation, and scale arrays also reject NaN and infinity.
 - `Transform.batch()` accepts `translation` (Nx3), `rotation` (Nx4), `scale` (Nx3) - all optional
 - Any Rust component with `view_fields` supports `batch()` (e.g., `PointLight.batch(intensity=arr)`)
-- Custom `@component` classes with wrapper storage also support `batch()`
+- Custom `@component` classes with wrapper storage also support `batch()`.
+  Their columns can be plain lists or tuples, `pybevy.array` arrays, or NumPy
+  arrays when NumPy is installed. Batch creation copies column values, so later
+  changes to the inputs do not alter a queued spawn.
 - Use View API afterwards for bulk per-entity updates (see below)
 - To keep one shared material while varying a small shader-side integer, batch
   `MeshTag.batch(value=...)`; see `guide://shaders`.
@@ -212,6 +215,10 @@ For 1000+ entities, View avoids Python's per-entity loop overhead. The
 conditional benchmark below is 6.7x faster than Query; pure column-wide math
 can reach roughly 20–25x. Measure your own workload.
 
+View expression parallelism uses Bevy's compute task pool and follows the
+thread limits in `TaskPoolOptions`. If no compute pool is initialized, the
+expression runs serially.
+
 ```python
 from pybevy.prelude import View, Mut, With
 from pybevy import expr
@@ -229,6 +236,9 @@ def batch_update(
 ```
 
 Key View rules:
+- Vector subfields accept only their declared coordinates (`x`/`y` for Vec2,
+  `x`/`y`/`z` for Vec3, and `x`/`y`/`z`/`w` for Quat); a typo raises
+  `AttributeError` instead of silently skipping the update.
 - `column_mut(T)` for mutable, `column(T)` for read-only
 - Read-only `column(T)` rejects writes: `col.a = value` and `col.a.set(value)`
   raise a `RuntimeError` pointing at `column_mut()`
@@ -241,7 +251,10 @@ Key View rules:
 - Numeric expressions follow Python array conventions: `%` uses the divisor's
   sign, `round()` uses ties-to-even, and `min()`/`max()` propagate NaN.
 - `clamp(min, max)` propagates NaN and returns `max` when the bounds are
-  reversed. `fract()` is the signed fractional part (`x - trunc(x)`).
+  reversed. `fract()` is the signed fractional part (`x - trunc(x)`), so it
+  differs from floor-based `mod(x, 1.0)` for negative non-integers. Native
+  `Vec2`/`Vec3`/`Vec4.round()` instead round ties away from zero; retain that
+  difference when moving calculations between a Query loop and a View.
 - Expressions nest at most 32 levels deep; a deeper tree raises `ValueError`.
   Assign an intermediate result to a column and build on that column instead.
 
