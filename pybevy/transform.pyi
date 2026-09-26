@@ -36,12 +36,13 @@ class GlobalTransform(Component):
 
     @property
     def translation(self) -> Vec3:
-        """Get the world-space translation as a Vec3."""
+        """Get an independent Vec3 value; edits do not change this component."""
 
     @property
     def rotation(self) -> Quat:
         """Get the world-space rotation as a Quat.
 
+        This is an independent value; edits do not change this component.
         Note: This is computed using to_scale_rotation_translation().
         If you also need translation or scale, use to_scale_rotation_translation() instead.
         """
@@ -50,6 +51,7 @@ class GlobalTransform(Component):
     def scale(self) -> Vec3:
         """Get the world-space scale as a Vec3.
 
+        This is an independent value; edits do not change this component.
         Note: Some computations overlap with to_scale_rotation_translation().
         If you also need rotation, use to_scale_rotation_translation() instead.
         """

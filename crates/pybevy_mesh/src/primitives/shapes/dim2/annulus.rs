@@ -56,10 +56,12 @@ impl PyAnnulus {
         Ok((
             Self(Annulus {
                 inner_circle: inner_circle
-                    .map(|circle| circle.0)
+                    .map(|circle| circle.try_get())
+                    .transpose()?
                     .unwrap_or_else(|| Circle::new(inner_radius)),
                 outer_circle: outer_circle
-                    .map(|circle| circle.0)
+                    .map(|circle| circle.try_get())
+                    .transpose()?
                     .unwrap_or_else(|| Circle::new(outer_radius)),
             }),
             PyMeshable,
@@ -69,22 +71,30 @@ impl PyAnnulus {
 
     #[getter]
     pub fn inner_circle(&self, py: Python<'_>) -> PyResult<Py<PyCircle>> {
-        Py::new(py, (self.0.inner_circle.into(), PyMeshable))
+        Py::new(
+            py,
+            (PyCircle::from_read_only(&self.0.inner_circle), PyMeshable),
+        )
     }
 
     #[setter]
-    pub fn set_inner_circle(&mut self, value: &PyCircle) {
-        self.0.inner_circle = Circle::new(value.radius());
+    pub fn set_inner_circle(&mut self, value: &PyCircle) -> PyResult<()> {
+        self.0.inner_circle = value.try_get()?;
+        Ok(())
     }
 
     #[getter]
     pub fn outer_circle(&self, py: Python<'_>) -> PyResult<Py<PyCircle>> {
-        Py::new(py, (self.0.outer_circle.into(), PyMeshable))
+        Py::new(
+            py,
+            (PyCircle::from_read_only(&self.0.outer_circle), PyMeshable),
+        )
     }
 
     #[setter]
-    pub fn set_outer_circle(&mut self, value: &PyCircle) {
-        self.0.outer_circle = Circle::new(value.radius());
+    pub fn set_outer_circle(&mut self, value: &PyCircle) -> PyResult<()> {
+        self.0.outer_circle = value.try_get()?;
+        Ok(())
     }
 
     pub fn diameter(&self) -> f32 {

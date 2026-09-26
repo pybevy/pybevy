@@ -1,5 +1,5 @@
 use bevy::ui::UiGlobalTransform;
-use pybevy_core::{ComponentStorage, PyComponent, computed_owned};
+use pybevy_core::{ComponentStorage, FromBorrowedStorage, PyComponent, ValueStorage};
 use pybevy_macros::pycomponent;
 use pybevy_math::{
     affine2::{PyAffine2, PyMat2},
@@ -74,12 +74,16 @@ impl PyUiGlobalTransform {
 
     #[getter]
     pub fn matrix2(&self) -> PyResult<PyMat2> {
-        Ok(computed_owned(self.as_ref()?.matrix2.into()))
+        Ok(PyMat2::from_borrowed(ValueStorage::read_only_snapshot(
+            self.as_ref()?.matrix2,
+        )))
     }
 
     #[getter]
     pub fn translation(&self) -> PyResult<PyVec2> {
-        Ok(computed_owned(self.as_ref()?.translation.into()))
+        Ok(PyVec2::from_borrowed(ValueStorage::read_only_snapshot(
+            self.as_ref()?.translation,
+        )))
     }
 
     pub fn try_inverse(&self) -> PyResult<Option<PyAffine2>> {

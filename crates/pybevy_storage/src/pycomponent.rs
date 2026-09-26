@@ -73,27 +73,8 @@ impl<T: Component> Drop for ComponentStorage<T> {
 
 impl<T: Component + PartialEq> PartialEq for ComponentStorage<T> {
     fn eq(&self, other: &Self) -> bool {
-        match (&self.inner, &other.inner) {
-            (
-                ComponentStorageInner::Owned { data: a, .. },
-                ComponentStorageInner::Owned { data: b, .. },
-            ) => a.get() == b.get(),
-            (
-                ComponentStorageInner::OwnedReadOnly { data: a, .. },
-                ComponentStorageInner::OwnedReadOnly { data: b, .. },
-            ) => a.get() == b.get(),
-            (ComponentStorageInner::BorrowedRef(a), ComponentStorageInner::BorrowedRef(b)) => {
-                a.as_ptr() == b.as_ptr()
-            }
-            (ComponentStorageInner::BorrowedMut(a), ComponentStorageInner::BorrowedMut(b)) => {
-                a.as_ptr() == b.as_ptr()
-            }
-            (ComponentStorageInner::Revalidating(a), ComponentStorageInner::Revalidating(b)) => {
-                a.same_identity(b)
-            }
-            (ComponentStorageInner::Source(a), ComponentStorageInner::Source(b)) => {
-                a.same_identity(b)
-            }
+        match (self.as_ref(), other.as_ref()) {
+            (Ok(left), Ok(right)) => left.reborrow() == right.reborrow(),
             _ => false,
         }
     }
@@ -532,6 +513,30 @@ mod tests {
         let mut storage = ComponentStorage::owned(TestComponent { value: 42 });
         storage.as_mut().unwrap().value = 100;
         assert_eq!(storage.as_ref().unwrap().value, 100);
+    }
+
+    #[test]
+    fn equality_compares_live_values_and_never_reads_expired_borrows() {
+        let component = TestComponent { value: 42 };
+        let validity = ValidityFlag::new_read();
+        // SAFETY: component stays alive while the borrow is valid.
+        let borrowed = unsafe {
+            ComponentStorage::borrowed_ref(&component as *const TestComponent, validity.clone())
+        };
+        let equal_owned = ComponentStorage::owned(TestComponent { value: 42 });
+        let unequal_owned = ComponentStorage::owned(TestComponent { value: 7 });
+
+        {
+            let _guard = ValidityGuard::new(validity.clone());
+            assert_eq!(borrowed, equal_owned);
+            assert_eq!(equal_owned, borrowed);
+            assert_ne!(borrowed, unequal_owned);
+            std::thread::scope(|scope| {
+                assert!(!scope.spawn(|| borrowed == equal_owned).join().unwrap());
+            });
+        }
+
+        assert_ne!(borrowed, equal_owned);
     }
 
     #[test]

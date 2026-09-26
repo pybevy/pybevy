@@ -245,6 +245,8 @@ Texture flags belong to `pybevy.render.TextureUsages`; asset world flags belong 
 `Image.texture_descriptor.usage` and `CameraMainTextureUsages.value` borrow their parent's access
 mode and lifetime. Nested writes persist through mutable asset/query access.
 Owned parents return read-only snapshots; copy and replace the parent field.
+The same rule applies to nested math and shape fields such as `Affine2.matrix2`
+and `Annulus.inner_circle`; a mutable asset's nested UV matrix axis writes through.
 Use `copy.copy()` for independent mutable flags. The same rules apply to
 `Image.asset_usage`, `Mesh.asset_usage`, `ImageLoaderSettings.asset_usage`,
 and `GltfLoaderSettings.load_meshes`/`load_materials`.

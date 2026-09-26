@@ -2021,19 +2021,6 @@ notes = """
 - nlerp/slerp: end renamed to rhs for consistency
 - sin_cos: tuple return formatting diff"""
 
-# Matrix types - complex internal structure
-[bevy.type_ignores.Mat2]
-intentional_readonly_properties = ["x_axis", "y_axis"]
-notes = "Matrix columns - use from_cols or matrix operations to modify"
-
-[bevy.type_ignores.Mat3A]
-intentional_readonly_properties = ["x_axis", "y_axis", "z_axis"]
-notes = "Matrix columns - use from_cols or matrix operations to modify"
-
-[bevy.type_ignores.Affine3A]
-intentional_readonly_properties = ["matrix3", "translation"]
-notes = "Affine transform components - use from_* constructors to modify"
-
 # Half-space - computed/geometric
 [bevy.type_ignores.HalfSpace]
 intentional_readonly_properties = ["normal", "d", "normal_d"]
@@ -2253,10 +2240,6 @@ notes = """
 [bevy.type_ignores.ComputedNode]
 intentional_readonly_properties = ["outlined_node_size"]
 notes = "outlined_node_size is a computed method, not a stored field"
-
-[bevy.type_ignores.RegularPolygon]
-intentional_readonly_properties = ["circumcircle"]
-notes = "Returns Circle object - use constructor to change"
 
 # Transform: PyBevy-specific numpy integration
 [bevy.type_ignores.Transform]

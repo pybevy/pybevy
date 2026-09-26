@@ -38,7 +38,7 @@ impl PyCircularSector {
         #[expected("Arc2d")] arc: Option<PyArc2d>,
     ) -> PyResult<PyClassInitializer<Self>> {
         if let Some(a) = arc {
-            return Ok((Self(CircularSector { arc: a.into() }), PyMeshable).into());
+            return Ok((Self(CircularSector { arc: a.try_into()? }), PyMeshable).into());
         }
         Ok((Self(CircularSector::new(radius, half_angle)), PyMeshable).into())
     }
@@ -78,12 +78,13 @@ impl PyCircularSector {
 
     #[getter]
     pub fn arc(&self) -> PyArc2d {
-        self.0.arc.into()
+        PyArc2d::from_read_only(&self.0.arc)
     }
 
     #[setter]
-    pub fn set_arc(&mut self, value: PyArc2d) {
-        self.0.arc = value.into();
+    pub fn set_arc(&mut self, value: PyArc2d) -> PyResult<()> {
+        self.0.arc = value.try_into()?;
+        Ok(())
     }
 
     pub fn radius(&self) -> f32 {

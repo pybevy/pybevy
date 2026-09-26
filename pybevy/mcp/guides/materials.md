@@ -49,3 +49,9 @@ Emissive values interact with camera Bloom settings. See `guide://lighting` (Emi
 `Color` or `LinearRgba`. Channel edits write through a material from
 `ResMut[Assets[StandardMaterial]].get_mut()`. Borrowed channels retain the asset's
 read/write access and system lifetime; owned material fields are read-only snapshots.
+The same applies to `uv_transform.matrix2.x_axis` and `y_axis`: nested axis
+writes persist on a mutable asset, while owned material snapshots reject them.
+
+To keep a borrowed color after that system, take `copy.copy(material.base_color)`
+while the asset borrow is valid. Saving `material.base_color` itself retains an
+expiring view, not the color value.
