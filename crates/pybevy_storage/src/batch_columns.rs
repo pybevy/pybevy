@@ -36,6 +36,58 @@ pub enum ColumnData {
 }
 
 impl ColumnData {
+    /// Decode an owned contiguous column in the shared little-endian format.
+    pub fn from_le_bytes(dtype: ColumnDType, bytes: &[u8]) -> Option<Self> {
+        let width = match dtype {
+            ColumnDType::F32 | ColumnDType::I32 | ColumnDType::U32 => 4,
+            ColumnDType::F64 | ColumnDType::I64 | ColumnDType::U64 => 8,
+            ColumnDType::Bool => 1,
+        };
+        if !bytes.len().is_multiple_of(width) {
+            return None;
+        }
+
+        Some(match dtype {
+            ColumnDType::F32 => ColumnData::F32(
+                bytes
+                    .chunks_exact(4)
+                    .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap()))
+                    .collect(),
+            ),
+            ColumnDType::F64 => ColumnData::F64(
+                bytes
+                    .chunks_exact(8)
+                    .map(|chunk| f64::from_le_bytes(chunk.try_into().unwrap()))
+                    .collect(),
+            ),
+            ColumnDType::I32 => ColumnData::I32(
+                bytes
+                    .chunks_exact(4)
+                    .map(|chunk| i32::from_le_bytes(chunk.try_into().unwrap()))
+                    .collect(),
+            ),
+            ColumnDType::I64 => ColumnData::I64(
+                bytes
+                    .chunks_exact(8)
+                    .map(|chunk| i64::from_le_bytes(chunk.try_into().unwrap()))
+                    .collect(),
+            ),
+            ColumnDType::U32 => ColumnData::U32(
+                bytes
+                    .chunks_exact(4)
+                    .map(|chunk| u32::from_le_bytes(chunk.try_into().unwrap()))
+                    .collect(),
+            ),
+            ColumnDType::U64 => ColumnData::U64(
+                bytes
+                    .chunks_exact(8)
+                    .map(|chunk| u64::from_le_bytes(chunk.try_into().unwrap()))
+                    .collect(),
+            ),
+            ColumnDType::Bool => ColumnData::Bool(bytes.to_vec()),
+        })
+    }
+
     /// Element count (flat, before dividing by `cols`).
     pub fn len(&self) -> usize {
         match self {
@@ -561,6 +613,23 @@ impl CustomCountAgreement {
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn owned_column_decodes_little_endian_values() {
+        assert_eq!(
+            ColumnData::from_le_bytes(ColumnDType::F32, &1.5f32.to_le_bytes()),
+            Some(ColumnData::F32(vec![1.5]))
+        );
+        assert_eq!(
+            ColumnData::from_le_bytes(ColumnDType::I64, &(-7i64).to_le_bytes()),
+            Some(ColumnData::I64(vec![-7]))
+        );
+        assert_eq!(
+            ColumnData::from_le_bytes(ColumnDType::Bool, &[0, 1, 255]),
+            Some(ColumnData::Bool(vec![0, 1, 255]))
+        );
+        assert_eq!(ColumnData::from_le_bytes(ColumnDType::F32, &[0, 1]), None);
+    }
 
     #[test]
     fn scalar_field_accepts_1d_only() {

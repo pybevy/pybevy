@@ -14,6 +14,8 @@ use bevy_ecs::{
     storage::{Table, TableId, TableRow, Tables},
     world::{World, unsafe_world_cell::UnsafeWorldCell},
 };
+#[cfg(feature = "parallel")]
+use bevy_tasks::ComputeTaskPool;
 use nonmax::NonMaxU32;
 
 use crate::{
@@ -26,7 +28,7 @@ use crate::{
 ///
 /// # Safety
 /// Pointers are valid for the duration of batch execution and accessed
-/// using proper rayon semantics (no aliasing writes).
+/// using disjoint row ranges in scoped compute-pool tasks (no aliasing writes).
 #[derive(Clone, Copy)]
 struct SendPtr(*mut u8);
 // SAFETY: scheduling guarantees that a pointer is sent only with the live batch
@@ -661,7 +663,7 @@ fn program_uses_random(bytecode: &CompiledBytecode) -> bool {
 /// Execute bytecode assignment across all entities in all batches (fast path).
 ///
 /// When `parallel` is true (and the `parallel` feature is enabled), uses
-/// rayon chunked execution for multi-threaded processing.
+/// Bevy's compute pool for chunked execution if that pool is initialized.
 ///
 /// # Safety
 ///
@@ -778,11 +780,23 @@ pub unsafe fn execute_batch_assignment(
     };
 
     #[cfg(feature = "parallel")]
-    if parallel {
-        use rayon::prelude::*;
-        chunks
-            .par_iter()
-            .for_each(|chunk| process_chunk(chunk, &mut TiledScratch::new(), &mut VM::new()));
+    if parallel
+        && chunks.len() > 1
+        && let Some(pool) = ComputeTaskPool::try_get()
+        && pool.thread_num() > 1
+    {
+        let task_size = chunks.len().div_ceil(pool.thread_num());
+        pool.scope(|scope| {
+            for group in chunks.chunks(task_size) {
+                scope.spawn(async move {
+                    let mut scratch = TiledScratch::new();
+                    let mut vm = VM::new();
+                    for chunk in group {
+                        process_chunk(chunk, &mut scratch, &mut vm);
+                    }
+                });
+            }
+        });
         return;
     }
 
@@ -892,9 +906,21 @@ pub unsafe fn execute_filtered_assignment(
     };
 
     #[cfg(feature = "parallel")]
-    if parallel {
-        use rayon::prelude::*;
-        work_items.par_iter().for_each(process_entity);
+    if parallel
+        && work_items.len() > 1
+        && let Some(pool) = ComputeTaskPool::try_get()
+        && pool.thread_num() > 1
+    {
+        let task_size = work_items.len().div_ceil(pool.thread_num());
+        pool.scope(|scope| {
+            for group in work_items.chunks(task_size) {
+                scope.spawn(async move {
+                    for work in group {
+                        process_entity(work);
+                    }
+                });
+            }
+        });
         return;
     }
 
@@ -987,9 +1013,23 @@ pub(crate) unsafe fn evaluate_batch_program(
     };
 
     #[cfg(feature = "parallel")]
-    if parallel {
-        use rayon::prelude::*;
-        return work_items.par_iter().map(evaluate).collect();
+    if parallel
+        && work_items.len() > 1
+        && let Some(pool) = ComputeTaskPool::try_get()
+        && pool.thread_num() > 1
+    {
+        let task_size = work_items.len().div_ceil(pool.thread_num());
+        let groups = pool.scope(|scope| {
+            for (index, group) in work_items.chunks(task_size).enumerate() {
+                scope
+                    .spawn(async move { (index, group.iter().map(&evaluate).collect::<Vec<_>>()) });
+            }
+        });
+        let mut values = vec![Vec::new(); groups.len()];
+        for (index, group) in groups {
+            values[index] = group;
+        }
+        return values.into_iter().flatten().collect();
     }
 
     let _ = parallel;
@@ -1236,6 +1276,8 @@ mod tests {
     };
 
     use bevy_ecs::{component::ComponentId, prelude::Component};
+    #[cfg(feature = "parallel")]
+    use bevy_tasks::TaskPoolBuilder;
 
     use super::*;
     use crate::bytecode::{Compiler, FieldId, FieldType, Op};
@@ -1613,6 +1655,13 @@ mod tests {
 
     #[test]
     fn random_is_identical_on_every_execution_path() {
+        #[cfg(feature = "parallel")]
+        assert_eq!(
+            ComputeTaskPool::get_or_init(|| TaskPoolBuilder::new().num_threads(2).build())
+                .thread_num(),
+            2
+        );
+
         let cid = ComponentId::new(0);
         let table_id = TableId::from_u32(3);
         let strides = HashMap::from([(cid, size_of::<f64>())]);
@@ -1645,6 +1694,14 @@ mod tests {
         }];
         // SAFETY: the batch describes one live, exclusively held f64 run.
         unsafe { execute_batch_assignment(&batches, &assignment, &strides, false) };
+        #[cfg(feature = "parallel")]
+        {
+            let serial = batched.clone();
+            batched.fill(0.0);
+            // SAFETY: the same live, exclusive batch is reused after serial execution.
+            unsafe { execute_batch_assignment(&batches, &assignment, &strides, true) };
+            assert_eq!(batched, serial);
+        }
 
         let mut filtered = vec![0.0_f64; count];
         let batches = [TableBatch {
@@ -1657,6 +1714,14 @@ mod tests {
         }];
         // SAFETY: as above; the mask selects every row of the same run.
         unsafe { execute_filtered_assignment(&batches, &assignment, &strides, false) };
+        #[cfg(feature = "parallel")]
+        {
+            let serial = filtered.clone();
+            filtered.fill(0.0);
+            // SAFETY: the same live, exclusive rows are reused after serial execution.
+            unsafe { execute_filtered_assignment(&batches, &assignment, &strides, true) };
+            assert_eq!(filtered, serial);
+        }
 
         let batches = [TableBatch {
             table_id,
@@ -1669,6 +1734,12 @@ mod tests {
         // SAFETY: the read-only program declares no fields, so no pointer is
         // dereferenced for these rows.
         let evaluated = unsafe { evaluate_batch_program(&batches, &read_only, &strides, false) };
+        #[cfg(feature = "parallel")]
+        {
+            // SAFETY: the read-only program still declares no fields.
+            let parallel = unsafe { evaluate_batch_program(&batches, &read_only, &strides, true) };
+            assert_eq!(parallel, evaluated);
+        }
 
         assert_eq!(batched, filtered);
         assert_eq!(batched, evaluated);

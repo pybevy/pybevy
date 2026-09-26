@@ -24,6 +24,8 @@ class Vec3ViewColumn:
     for individual components. Supports assignment via `__setattr__`.
     """
 
+    __slots__ = ("_col",)
+
     _col: "ViewColumn"
 
     def __init__(self, view_column: "ViewColumn") -> None:
@@ -48,8 +50,10 @@ class Vec3ViewColumn:
         if name in ("x", "y", "z"):
             target: ViewColumn = getattr(self, name)
             target.set(value)
-        else:
+        elif name == "_col":
             object.__setattr__(self, name, value)  # type: ignore[assignment]
+        else:
+            raise AttributeError(f"Vec3ViewColumn has no field '{name}' (available: x, y, z)")
 
     def __getitem__(self, _index: object) -> None:
         raise TypeError(
@@ -64,6 +68,8 @@ class QuatViewColumn:
     Provides `.x`, `.y`, `.z`, `.w` properties that return ViewColumn handles
     for individual quaternion components. Supports assignment via `__setattr__`.
     """
+
+    __slots__ = ("_col",)
 
     _col: "ViewColumn"
 
@@ -94,8 +100,12 @@ class QuatViewColumn:
         if name in ("x", "y", "z", "w"):
             target: ViewColumn = getattr(self, name)
             target.set(value)
-        else:
+        elif name == "_col":
             object.__setattr__(self, name, value)  # type: ignore[assignment]
+        else:
+            raise AttributeError(
+                f"QuatViewColumn has no field '{name}' (available: x, y, z, w)"
+            )
 
     def __getitem__(self, _index: object) -> None:
         raise TypeError(
@@ -110,6 +120,8 @@ class Vec2ViewColumn:
     Provides `.x`, `.y` properties that return ViewColumn handles
     for individual components. Supports assignment via `__setattr__`.
     """
+
+    __slots__ = ("_col",)
 
     _col: "ViewColumn"
 
@@ -130,8 +142,10 @@ class Vec2ViewColumn:
         if name in ("x", "y"):
             target: ViewColumn = getattr(self, name)
             target.set(value)
-        else:
+        elif name == "_col":
             object.__setattr__(self, name, value)  # type: ignore[assignment]
+        else:
+            raise AttributeError(f"Vec2ViewColumn has no field '{name}' (available: x, y)")
 
     def __getitem__(self, _index: object) -> None:
         raise TypeError(

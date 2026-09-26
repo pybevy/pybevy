@@ -4897,6 +4897,7 @@ name = "pybevy_bytecodevm"
 version = "0.3.0-rc.1"
 dependencies = [
  "bevy_ecs",
+ "bevy_tasks",
  "criterion",
  "nonmax",
  "pybevy_storage",

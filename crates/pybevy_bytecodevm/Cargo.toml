@@ -9,11 +9,12 @@ homepage = "https://pybevy.com"
 
 [features]
 default = []
-parallel = ["dep:rayon"]
+parallel = ["dep:rayon", "dep:bevy_tasks"]
 
 [dependencies]
 pyo3.workspace = true
 bevy_ecs = { workspace = true }
+bevy_tasks = { workspace = true, optional = true, features = ["multi_threaded"] }
 nonmax.workspace = true
 smallvec = "1.0"
 rayon = { version = "1.10", optional = true }

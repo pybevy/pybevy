@@ -2,17 +2,20 @@ use std::sync::Arc;
 
 use bevy::ecs::{component::ComponentId, entity::Entity, ptr::OwningPtr, world::World};
 use numpy::{PyReadonlyArray1, PyReadonlyArray2};
+use pybevy_array::{ArrayDType, owned_contiguous_le_bytes_from_any};
 use pybevy_core::{
     BatchComponent, PreparedBatchComponent,
-    batch_columns::{ColumnShape, CustomColumnError, CustomCountAgreement},
-    component_batch::{FieldColumn, build_wrapper_rows, column_dtype_for},
+    batch_columns::{
+        ColumnDType, ColumnData, ColumnShape, CustomColumnError, CustomCountAgreement,
+    },
+    component_batch::{FieldColumn, build_wrapper_rows, column_dtype_for, field_column_for},
     registry::global_registry,
 };
 use pyo3::{
     PyTraverseError, PyVisit,
     exceptions::{PyTypeError, PyValueError},
     prelude::*,
-    types::{PyDict, PyType},
+    types::{PyDict, PyList, PyTuple, PyType},
 };
 
 use super::{
@@ -26,9 +29,9 @@ use super::{
 
 /// Batch component for custom Python @component classes.
 ///
-/// Created via `MyComponent.batch(x=xs, y=ys)` where xs, ys are numpy arrays.
-/// Stores the component layout and per-field numpy arrays, then bulk-inserts into
-/// wrapper storage during spawn_batch.
+/// Created via `MyComponent.batch(x=xs, y=ys)` where xs and ys are arrays or
+/// sequences. Stores owned portable columns or normalized NumPy arrays, then
+/// bulk-inserts into wrapper storage during spawn_batch.
 #[pyclass(name = "CustomComponentBatch")]
 pub struct PyCustomComponentBatch {
     /// Python class for type identity and registration
@@ -37,6 +40,8 @@ pub struct PyCustomComponentBatch {
     layout: ComponentLayout,
     /// (field_index, numpy array) pairs for each specified field
     field_arrays: Vec<(usize, Py<PyAny>)>,
+    /// Portable columns copied into owned storage before enqueue.
+    field_values: Vec<(usize, ColumnData)>,
     /// Number of entities to spawn
     count: usize,
     /// Qualified name for the component (retained for debugging)
@@ -111,9 +116,10 @@ impl PyCustomComponentBatch {
         };
 
         // Validate and normalize each kwarg through the shared shape rules.
-        let np = py.import("numpy")?;
         let mut field_arrays = Vec::new();
+        let mut field_values = Vec::new();
         let mut agree = CustomCountAgreement::default();
+        let array_type = py.import("pybevy.array")?.getattr("Array")?;
 
         for (key, value) in kwargs.iter() {
             let field_name: String = key.extract()?;
@@ -132,14 +138,7 @@ impl PyCustomComponentBatch {
                     })
                 })?;
 
-            // Accept real NumPy, the bounded `pybevy.array` array (via its
-            // `__array__`), and (nested) lists/tuples of numbers.
-            let value = np.call_method1("asarray", (value,))?;
-
-            // Validate array shape against the shared custom-batch rules.
-            let ndim: usize = value.getattr("ndim")?.extract()?;
-            let shape: Vec<usize> = value.getattr("shape")?.extract()?;
-            let (_, cols) = column_dtype_for(field_info.field_type);
+            let (column_dtype, cols) = column_dtype_for(field_info.field_type);
             let type_name = format!("{:?}", field_info.field_type);
             let shape_rule = if field_info.field_type.is_composite() {
                 ColumnShape::CustomComposite {
@@ -150,20 +149,46 @@ impl PyCustomComponentBatch {
             } else {
                 ColumnShape::CustomScalar { field: &field_name }
             };
-            let length = shape_rule
-                .plan(ndim, &shape)
-                .map_err(|error| PyValueError::new_err(error.to_string()))?;
-            agree
-                .observe(&field_name, length)
-                .map_err(|error| PyValueError::new_err(error.to_string()))?;
+            let is_sequence = value.is_instance_of::<PyList>() || value.is_instance_of::<PyTuple>();
+            let is_bounded_array = value.is_instance(&array_type)?;
+            if (is_sequence || is_bounded_array)
+                && let Some(target_dtype) = portable_dtype_for(column_dtype)
+            {
+                let (dtype, shape, bytes) =
+                    owned_contiguous_le_bytes_from_any(&value, Some(target_dtype))?;
+                let length = shape_rule
+                    .plan(shape.len(), &shape)
+                    .map_err(|error| PyValueError::new_err(error.to_string()))?;
+                agree
+                    .observe(&field_name, length)
+                    .map_err(|error| PyValueError::new_err(error.to_string()))?;
+                if dtype != target_dtype {
+                    return Err(PyTypeError::new_err(
+                        "custom batch column dtype changed during conversion",
+                    ));
+                }
+                let column = ColumnData::from_le_bytes(column_dtype, &bytes).ok_or_else(|| {
+                    PyValueError::new_err("custom batch column has incomplete elements")
+                })?;
+                field_values.push((field_idx, column));
+            } else {
+                let np = py.import("numpy")?;
+                let value = np.call_method1("asarray", (value,))?;
+                let ndim: usize = value.getattr("ndim")?.extract()?;
+                let shape: Vec<usize> = value.getattr("shape")?.extract()?;
+                let length = shape_rule
+                    .plan(ndim, &shape)
+                    .map_err(|error| PyValueError::new_err(error.to_string()))?;
+                agree
+                    .observe(&field_name, length)
+                    .map_err(|error| PyValueError::new_err(error.to_string()))?;
 
-            // Cast to correct numpy dtype
-            let target_dtype = field_info.field_type.to_numpy_dtype();
-            let dtype_obj = np.call_method1("dtype", (target_dtype,))?;
-            let arr = np.call_method1("ascontiguousarray", (&value,))?;
-            let arr = arr.call_method1("astype", (&dtype_obj,))?;
-
-            field_arrays.push((field_idx, arr.unbind()));
+                let target_dtype = field_info.field_type.to_numpy_dtype();
+                let dtype_obj = np.call_method1("dtype", (target_dtype,))?;
+                let arr = np.call_method1("ascontiguousarray", (&value,))?;
+                let arr = arr.call_method1("astype", (&dtype_obj,))?;
+                field_arrays.push((field_idx, arr.unbind()));
+            }
         }
 
         // kwargs is non-empty, so at least one column was observed.
@@ -186,10 +211,23 @@ impl PyCustomComponentBatch {
             component_cls: cls.clone().unbind(),
             layout,
             field_arrays,
+            field_values,
             count,
             qualified_name,
         })
     }
+}
+
+fn portable_dtype_for(dtype: ColumnDType) -> Option<ArrayDType> {
+    Some(match dtype {
+        ColumnDType::F32 => ArrayDType::Float32,
+        ColumnDType::F64 => ArrayDType::Float64,
+        ColumnDType::I32 => ArrayDType::Int32,
+        ColumnDType::I64 => ArrayDType::Int64,
+        ColumnDType::U32 => ArrayDType::Uint32,
+        ColumnDType::U64 => return None,
+        ColumnDType::Bool => ArrayDType::Uint8,
+    })
 }
 
 /// Enum to hold borrowed numpy arrays of different dtypes,
@@ -309,7 +347,8 @@ fn prepare_custom_batch(
         holders.push(holder);
     }
 
-    let mut columns: Vec<(usize, FieldColumn<'_>)> = Vec::with_capacity(holders.len());
+    let mut columns: Vec<(usize, FieldColumn<'_>)> =
+        Vec::with_capacity(holders.len() + batch.field_values.len());
     for ((field_idx, _), holder) in batch.field_arrays.iter().zip(&holders) {
         let column = match holder {
             ReadonlyArrayHolder::F32(array) => {
@@ -358,6 +397,13 @@ fn prepare_custom_batch(
                 })?)
             }
         };
+        columns.push((*field_idx, column));
+    }
+    for (field_idx, data) in &batch.field_values {
+        let column =
+            field_column_for(layout.fields[*field_idx].field_type, data).ok_or_else(|| {
+                PyTypeError::new_err("custom batch column dtype does not match field")
+            })?;
         columns.push((*field_idx, column));
     }
 
