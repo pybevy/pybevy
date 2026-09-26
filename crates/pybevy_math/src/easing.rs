@@ -227,8 +227,8 @@ impl PyEaseFunction {
 
     #[staticmethod]
     #[pyo3(name = "Elastic")]
-    fn elastic(amplitude: f32) -> Self {
-        Self::new(EaseFunction::Elastic(amplitude))
+    fn elastic(omega: f32) -> Self {
+        Self::new(EaseFunction::Elastic(omega))
     }
 
     #[staticmethod]

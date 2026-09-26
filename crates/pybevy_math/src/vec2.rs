@@ -523,15 +523,21 @@ impl PyVec2 {
     }
 
     pub fn project_onto_normalized(&self, rhs: &PyVec2) -> PyResult<PyVec2> {
-        Ok(PyVec2::from_vec2(
-            self.as_ref()?.project_onto_normalized(*rhs.as_ref()?),
-        ))
+        let value = self.as_ref()?;
+        let rhs = rhs.as_ref()?;
+        if !rhs.is_normalized() {
+            return Err(PyValueError::new_err("rhs must be normalized"));
+        }
+        Ok(PyVec2::from_vec2(value.project_onto_normalized(*rhs)))
     }
 
     pub fn reject_from_normalized(&self, rhs: &PyVec2) -> PyResult<PyVec2> {
-        Ok(PyVec2::from_vec2(
-            self.as_ref()?.reject_from_normalized(*rhs.as_ref()?),
-        ))
+        let value = self.as_ref()?;
+        let rhs = rhs.as_ref()?;
+        if !rhs.is_normalized() {
+            return Err(PyValueError::new_err("rhs must be normalized"));
+        }
+        Ok(PyVec2::from_vec2(value.reject_from_normalized(*rhs)))
     }
 
     #[staticmethod]

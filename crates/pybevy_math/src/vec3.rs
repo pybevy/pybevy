@@ -716,11 +716,19 @@ impl PyVec3 {
     }
 
     pub fn any_orthonormal_vector(&self) -> PyResult<PyVec3> {
-        Ok(self.as_ref()?.any_orthonormal_vector().into())
+        let vector = self.as_ref()?;
+        if !vector.is_normalized() {
+            return Err(PyValueError::new_err("vector must be normalized"));
+        }
+        Ok(vector.any_orthonormal_vector().into())
     }
 
     pub fn any_orthonormal_pair(&self) -> PyResult<(PyVec3, PyVec3)> {
-        let (v1, v2) = self.as_ref()?.any_orthonormal_pair();
+        let vector = self.as_ref()?;
+        if !vector.is_normalized() {
+            return Err(PyValueError::new_err("vector must be normalized"));
+        }
+        let (v1, v2) = vector.any_orthonormal_pair();
         Ok((PyVec3::from_vec3(v1), PyVec3::from_vec3(v2)))
     }
 
@@ -745,15 +753,21 @@ impl PyVec3 {
     }
 
     pub fn project_onto_normalized(&self, rhs: &PyVec3) -> PyResult<PyVec3> {
-        Ok(PyVec3::from_vec3(
-            self.as_ref()?.project_onto_normalized(*rhs.as_ref()?),
-        ))
+        let value = self.as_ref()?;
+        let rhs = rhs.as_ref()?;
+        if !rhs.is_normalized() {
+            return Err(PyValueError::new_err("rhs must be normalized"));
+        }
+        Ok(PyVec3::from_vec3(value.project_onto_normalized(*rhs)))
     }
 
     pub fn reject_from_normalized(&self, rhs: &PyVec3) -> PyResult<PyVec3> {
-        Ok(PyVec3::from_vec3(
-            self.as_ref()?.reject_from_normalized(*rhs.as_ref()?),
-        ))
+        let value = self.as_ref()?;
+        let rhs = rhs.as_ref()?;
+        if !rhs.is_normalized() {
+            return Err(PyValueError::new_err("rhs must be normalized"));
+        }
+        Ok(PyVec3::from_vec3(value.reject_from_normalized(*rhs)))
     }
 
     #[staticmethod]

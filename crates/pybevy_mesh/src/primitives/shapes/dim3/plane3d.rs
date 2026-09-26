@@ -4,7 +4,7 @@ use bevy::{
 };
 use pybevy_core::{FromBorrowedStorage, ValueStorage};
 use pybevy_macros::pyvalue;
-use pybevy_math::{vec2::PyVec2, vec3::PyVec3};
+use pybevy_math::{dir3::PyDir3, vec2::PyVec2, vec3::PyVec3};
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyPlaneMeshBuilder};
@@ -71,6 +71,17 @@ impl PyPlane3d {
     #[getter]
     pub fn half_size(&self) -> PyResult<PyVec2> {
         Ok(self.storage.borrow_field_as(|s| &s.half_size)?)
+    }
+
+    #[getter]
+    pub fn normal(&self) -> PyResult<PyDir3> {
+        Ok(self.storage.borrow_field_as(|plane| &plane.normal)?)
+    }
+
+    #[setter]
+    pub fn set_normal(&mut self, normal: PyDir3) -> PyResult<()> {
+        self.as_mut()?.normal = normal.into_dir3()?;
+        Ok(())
     }
 
     #[setter]

@@ -21,6 +21,7 @@ pub mod tetrahedron;
 pub mod torus;
 pub mod triangle2d;
 pub mod triangle3d;
+mod validation;
 
 pub mod shapes;
 
