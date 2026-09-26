@@ -4,6 +4,10 @@ Full vs partial reload, what persists across reloads, error recovery, and diagno
 
 ## Reload Modes
 
+When a scene imports another module's `@entrypoint` and defines its own, the
+launchers select the scene's own entrypoint. An imported entrypoint is used only
+if the scene defines none.
+
 ### Full Reload
 - Clears all entities and custom Python resources
 - Built-in (engine-plugin) resources survive as resources but are reset to their
@@ -35,6 +39,8 @@ Full vs partial reload, what persists across reloads, error recovery, and diagno
 - The baseline is seeded from the definitions the entrypoint built, so the first
   Partial reload after `run_scene` compares like any later one and keeps the
   state accumulated since launch
+- Flushed project helper modules are reimported from source, including when an
+  equal-size edit shares the previous import's timestamp second
 
 History matches the schedule, qualified callable names, pipe/condition structure,
 ordering configuration, and occurrence within otherwise identical registrations.
@@ -145,9 +151,13 @@ The Python watcher uses the same project root as module flushing. For a scene
 inside the launch directory that root is the launch directory; for an absolute
 scene outside it, the root is the scene's directory. An edit reloads the scene
 only when it changes the scene itself or a statically imported dependency.
+This includes a new module after the scene is edited to import it and that
+scene reload succeeds; later edits to the new module are watched normally.
 Unrelated Python files under the root are ignored. Scenes that use dynamic
-imports reload conservatively for Python edits under the root. Asset files such
-as `.wgsl` remain owned by Bevy's asset watcher.
+imports or load and execute Python files by path reload conservatively for
+Python edits under the root. This includes `runpy`, `spec_from_file_location`,
+and `exec`/`compile`; the watcher cannot infer a specific dependency from a
+runtime path. Asset files such as `.wgsl` remain owned by Bevy's asset watcher.
 
 The first Partial reload after `run_scene` preserves live state when definitions
 are unchanged. Escalation to Full discards live edits and changes entity IDs;
@@ -283,7 +293,11 @@ class MyGamePlugin(Plugin):
 Hot reload uses an AST-based import graph to minimize the modules flushed from `sys.modules`:
 
 - On startup, all `.py` files under the watch root are parsed and import dependencies are tracked
+- Imports through `sys.path` entries inside the watch root are tracked too;
+  edits to a helper in a project-local `lib/` or `src/` directory can reload the scene
 - When files change, only the changed files and their transitive dependents are flushed
+- Package initializers are dependencies of modules inside their package; editing
+  `pkg/__init__.py` flushes cached `pkg.*` modules before re-importing them
 - This makes reloads faster for large projects (unchanged modules stay cached)
 - F5 with Full mode always does a complete entity reset regardless of module flushing scope
 

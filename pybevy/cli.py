@@ -616,29 +616,34 @@ def _run_script(
                     module_name, file_path=abs_path, verbose=verbose
                 )
 
-            # Look for create_app (legacy) or any @entrypoint decorated function
-            if "create_app" in module_globals:
-                return module_globals["create_app"]  # type: ignore
-
-            # Look for functions decorated with @entrypoint
-            # Common names for @entrypoint decorated functions
-            app_function_names = ["main", "create_app", "app", "run"]
-
             from ._internal.entrypoint import is_entrypoint
+            from .util.hot_reload import find_entrypoint
 
-            for name in app_function_names:
-                if name in module_globals:
-                    obj = module_globals[name]
-                    if is_entrypoint(obj):
-                        return obj  # type: ignore
+            legacy = module_globals.get("create_app")
+            if (
+                callable(legacy)
+                and not is_entrypoint(legacy)
+                and getattr(legacy, "__module__", None)
+                == module_globals.get("__name__")
+            ):
+                return legacy
 
-            # Fallback: scan all callables for @entrypoint pattern
-            for name, obj in module_globals.items():
-                if name.startswith("_"):
-                    continue  # Skip private functions
-                if is_entrypoint(obj):
-                    _echo(f"   → Found @entrypoint decorated function: {name}")
-                    return obj  # type: ignore
+            try:
+                chosen = find_entrypoint(module_globals)
+            except RuntimeError:
+                if callable(legacy):
+                    return legacy
+            else:
+                common_names = {"main", "create_app", "app", "run"}
+                for name, obj in module_globals.items():
+                    if (
+                        obj is chosen
+                        and name not in common_names
+                        and not name.startswith("_")
+                    ):
+                        _echo(f"   → Found @entrypoint decorated function: {name}")
+                        break
+                return chosen
 
             raise RuntimeError(
                 "No create_app() function and no @entrypoint function found. PyBevy "
