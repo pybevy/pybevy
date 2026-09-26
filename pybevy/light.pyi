@@ -469,7 +469,8 @@ class CascadeShadowConfig(Component):
         """
 
     @property
-    def bounds(self) -> LiveList[float]: ...
+    def bounds(self) -> LiveList[float]:
+        """Live in mutable queries, read-only otherwise; removing the last bound raises ValueError."""
     @bounds.setter
     def bounds(self, value: list[float]) -> None: ...
     overlap_proportion: float

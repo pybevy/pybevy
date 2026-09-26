@@ -71,47 +71,89 @@ impl PyVec3A {
 
 #[pymethods]
 impl PyVec3A {
-    #[classattr]
-    pub const ZERO: PyVec3A = PyVec3A::vec3a(Vec3A::ZERO);
+    #[staticmethod]
+    #[pyo3(name = "ZERO")]
+    pub fn zero() -> Self {
+        Self::vec3a(Vec3A::ZERO)
+    }
 
-    #[classattr]
-    pub const ONE: PyVec3A = PyVec3A::vec3a(Vec3A::ONE);
+    #[staticmethod]
+    #[pyo3(name = "ONE")]
+    pub fn one() -> Self {
+        Self::vec3a(Vec3A::ONE)
+    }
 
-    #[classattr]
-    pub const NEG_ONE: PyVec3A = PyVec3A::vec3a(Vec3A::NEG_ONE);
+    #[staticmethod]
+    #[pyo3(name = "NEG_ONE")]
+    pub fn neg_one() -> Self {
+        Self::vec3a(Vec3A::NEG_ONE)
+    }
 
-    #[classattr]
-    pub const MIN: PyVec3A = PyVec3A::vec3a(Vec3A::MIN);
+    #[staticmethod]
+    #[pyo3(name = "MIN")]
+    pub fn min_constant() -> Self {
+        Self::vec3a(Vec3A::MIN)
+    }
 
-    #[classattr]
-    pub const MAX: PyVec3A = PyVec3A::vec3a(Vec3A::MAX);
+    #[staticmethod]
+    #[pyo3(name = "MAX")]
+    pub fn max_constant() -> Self {
+        Self::vec3a(Vec3A::MAX)
+    }
 
-    #[classattr]
-    pub const NAN: PyVec3A = PyVec3A::vec3a(Vec3A::NAN);
+    #[staticmethod]
+    #[pyo3(name = "NAN")]
+    pub fn nan() -> Self {
+        Self::vec3a(Vec3A::NAN)
+    }
 
-    #[classattr]
-    pub const INFINITY: PyVec3A = PyVec3A::vec3a(Vec3A::INFINITY);
+    #[staticmethod]
+    #[pyo3(name = "INFINITY")]
+    pub fn infinity() -> Self {
+        Self::vec3a(Vec3A::INFINITY)
+    }
 
-    #[classattr]
-    pub const NEG_INFINITY: PyVec3A = PyVec3A::vec3a(Vec3A::NEG_INFINITY);
+    #[staticmethod]
+    #[pyo3(name = "NEG_INFINITY")]
+    pub fn neg_infinity() -> Self {
+        Self::vec3a(Vec3A::NEG_INFINITY)
+    }
 
-    #[classattr]
-    pub const X: PyVec3A = PyVec3A::vec3a(Vec3A::X);
+    #[staticmethod]
+    #[pyo3(name = "X")]
+    pub fn unit_x() -> Self {
+        Self::vec3a(Vec3A::X)
+    }
 
-    #[classattr]
-    pub const Y: PyVec3A = PyVec3A::vec3a(Vec3A::Y);
+    #[staticmethod]
+    #[pyo3(name = "Y")]
+    pub fn unit_y() -> Self {
+        Self::vec3a(Vec3A::Y)
+    }
 
-    #[classattr]
-    pub const Z: PyVec3A = PyVec3A::vec3a(Vec3A::Z);
+    #[staticmethod]
+    #[pyo3(name = "Z")]
+    pub fn unit_z() -> Self {
+        Self::vec3a(Vec3A::Z)
+    }
 
-    #[classattr]
-    pub const NEG_X: PyVec3A = PyVec3A::vec3a(Vec3A::NEG_X);
+    #[staticmethod]
+    #[pyo3(name = "NEG_X")]
+    pub fn neg_x() -> Self {
+        Self::vec3a(Vec3A::NEG_X)
+    }
 
-    #[classattr]
-    pub const NEG_Y: PyVec3A = PyVec3A::vec3a(Vec3A::NEG_Y);
+    #[staticmethod]
+    #[pyo3(name = "NEG_Y")]
+    pub fn neg_y() -> Self {
+        Self::vec3a(Vec3A::NEG_Y)
+    }
 
-    #[classattr]
-    pub const NEG_Z: PyVec3A = PyVec3A::vec3a(Vec3A::NEG_Z);
+    #[staticmethod]
+    #[pyo3(name = "NEG_Z")]
+    pub fn neg_z() -> Self {
+        Self::vec3a(Vec3A::NEG_Z)
+    }
 
     #[new]
     pub fn new(x: f32, y: f32, z: f32) -> Self {

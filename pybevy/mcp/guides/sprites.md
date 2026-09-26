@@ -97,6 +97,10 @@ if layout is not None:
     layout.textures.append(URect(96, 0, 120, 24))
 ```
 
+`layout.textures.extend(...)` accepts any iterable of `URect`, including a
+generator or the live list itself. The latter appends a snapshot of its current
+rectangles. Live lists compare by contents with other sequences.
+
 A corner assigned this way is not normalised the way the `URect` constructor
 normalises, so pushing `min.x` past `max.x` inverts the rectangle instead of
 swapping the corners. `width()` then reads 0 and the atlas frame wraps into its

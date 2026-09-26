@@ -69,7 +69,8 @@ impl PyCascadeShadowConfig {
 
     #[getter]
     pub fn bounds(&self) -> PyResult<PyFloatLiveList> {
-        Ok(self.storage.borrow_field_as(|c| &c.bounds)?)
+        let bounds: PyFloatLiveList = self.storage.borrow_field_as(|c| &c.bounds)?;
+        Ok(bounds.with_minimum_length(1, public_error::CASCADE_BOUNDS_EMPTY))
     }
 
     #[setter]

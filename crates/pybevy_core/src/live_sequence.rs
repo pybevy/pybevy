@@ -1,4 +1,29 @@
 use pybevy_storage::StorageError;
+use pyo3::{IntoPyObjectExt, prelude::*, pyclass::CompareOp, types::PyList};
+
+pub fn compare_live_sequence(
+    py: Python<'_>,
+    items: &Bound<'_, PyList>,
+    other: &Bound<'_, PyAny>,
+    op: CompareOp,
+    same_type: bool,
+) -> PyResult<Py<PyAny>> {
+    if !matches!(op, CompareOp::Eq | CompareOp::Ne) {
+        return Ok(py.NotImplemented());
+    }
+    let sequence = py.import("collections.abc")?.getattr("Sequence")?;
+    if !same_type && !other.is_instance(&sequence)? {
+        return Ok(py.NotImplemented());
+    }
+    let other_items = PyList::new(py, other.try_iter()?.collect::<PyResult<Vec<_>>>()?)?;
+    let equal = items.eq(&other_items)?;
+    (if matches!(op, CompareOp::Eq) {
+        equal
+    } else {
+        !equal
+    })
+    .into_py_any(py)
+}
 
 /// Normalize a Python sequence index, including negative indexing.
 pub fn normalize_index(index: isize, len: usize) -> Result<usize, StorageError> {
@@ -32,7 +57,7 @@ macro_rules! impl_live_scalar_list {
     ($py_name:ident, $py_class_name:literal, $collection:ty, $elem:ty) => {
         impl $crate::FromBorrowedStorage<$crate::FieldStorage<$collection>> for $py_name {
             fn from_borrowed(storage: $crate::FieldStorage<$collection>) -> Self {
-                Self { storage }
+                Self::from_storage(storage)
             }
         }
 
@@ -56,8 +81,9 @@ macro_rules! impl_live_scalar_list {
             }
 
             fn __delitem__(&mut self, index: isize) -> PyResult<()> {
-                let index =
-                    $crate::live_sequence::normalize_index(index, self.storage.as_ref()?.len())?;
+                let len = self.storage.as_ref()?.len();
+                let index = $crate::live_sequence::normalize_index(index, len)?;
+                self.validate_length_after_removal(len - 1)?;
                 self.storage.as_mut()?.remove(index);
                 Ok(())
             }
@@ -72,9 +98,29 @@ macro_rules! impl_live_scalar_list {
                 Ok(())
             }
 
-            fn extend(&mut self, values: Vec<$elem>) -> PyResult<()> {
-                self.storage.as_mut()?.extend(values);
+            fn extend(slf: &Bound<'_, Self>, values: &Bound<'_, PyAny>) -> PyResult<()> {
+                let values = values
+                    .try_iter()?
+                    .map(|item| item?.extract::<$elem>())
+                    .collect::<PyResult<Vec<_>>>()?;
+                slf.borrow_mut().storage.as_mut()?.extend(values);
                 Ok(())
+            }
+
+            fn __richcmp__(
+                &self,
+                other: &Bound<'_, PyAny>,
+                op: pyo3::pyclass::CompareOp,
+            ) -> PyResult<Py<PyAny>> {
+                let py = other.py();
+                let items = PyList::new(py, self.to_list()?)?;
+                $crate::live_sequence::compare_live_sequence(
+                    py,
+                    &items,
+                    other,
+                    op,
+                    other.is_instance_of::<Self>(),
+                )
             }
 
             fn insert(&mut self, index: isize, value: $elem) -> PyResult<()> {
@@ -93,10 +139,13 @@ macro_rules! impl_live_scalar_list {
                     return Err($crate::StorageError::EmptyList.into());
                 }
                 let index = $crate::live_sequence::normalize_index(index, len)?;
+                self.validate_length_after_removal(len - 1)?;
                 Ok(self.storage.as_mut()?.remove(index))
             }
 
             fn clear(&mut self) -> PyResult<()> {
+                self.storage.as_ref()?;
+                self.validate_length_after_removal(0)?;
                 self.storage.as_mut()?.clear();
                 Ok(())
             }
@@ -183,13 +232,34 @@ macro_rules! impl_live_field_list {
                 Ok(())
             }
 
-            fn extend(&mut self, values: Vec<$py_elem>) -> PyResult<()> {
+            fn extend(slf: &Bound<'_, Self>, values: &Bound<'_, PyAny>) -> PyResult<()> {
                 let values = values
-                    .into_iter()
-                    .map(<$native_elem>::try_from)
+                    .try_iter()?
+                    .map(|item| <$native_elem>::try_from(item?.extract::<$py_elem>()?))
                     .collect::<PyResult<Vec<_>>>()?;
-                self.storage.as_mut()?.extend(values);
+                slf.borrow_mut().storage.as_mut()?.extend(values);
                 Ok(())
+            }
+
+            fn __richcmp__(
+                &self,
+                other: &Bound<'_, PyAny>,
+                op: pyo3::pyclass::CompareOp,
+            ) -> PyResult<Py<PyAny>> {
+                let py = other.py();
+                let items = self
+                    .to_list()?
+                    .into_iter()
+                    .map(|item| Py::new(py, item))
+                    .collect::<PyResult<Vec<_>>>()?;
+                let items = PyList::new(py, items)?;
+                $crate::live_sequence::compare_live_sequence(
+                    py,
+                    &items,
+                    other,
+                    op,
+                    other.is_instance_of::<Self>(),
+                )
             }
 
             fn insert(&mut self, index: isize, value: $py_elem) -> PyResult<()> {

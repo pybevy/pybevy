@@ -188,7 +188,7 @@ impl PyVec3 {
     pub fn neg_z() -> Self {
         Self::vec3(Vec3::NEG_Z)
     }
-    #[classattr]
+    #[staticmethod]
     #[pyo3(name = "AXES")]
     pub fn axes() -> (Self, Self, Self) {
         (

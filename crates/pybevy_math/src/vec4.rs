@@ -183,7 +183,7 @@ impl PyVec4 {
         Self::vec4(Vec4::NEG_W)
     }
 
-    #[classattr]
+    #[staticmethod]
     #[pyo3(name = "AXES")]
     pub fn axes() -> (Self, Self, Self, Self) {
         (
