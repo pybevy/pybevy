@@ -400,18 +400,26 @@ class HotReloadControl(Resource):
 
     Example:
         ```python
-        def handle_f5(input: Res[ButtonInput[KeyCode]], world: World) -> None:
-            if input.just_pressed(KeyCode.F5):
-                control = world.resource(HotReloadControl)
-                control.request_full_reload()
+        from pybevy.app import HotReloadControl
+        from pybevy.ecs import World
+        from pybevy.input import ButtonInput, KeyCode
+
+        def handle_f5(world: World) -> None:
+            if world.resource(ButtonInput[KeyCode]).just_pressed(KeyCode.F5):
+                world.resource(HotReloadControl).request_full_reload()
         ```
+
+    Register `handle_f5` in `Update`. `World` is exclusive and cannot be
+    combined with a separate `Res` system parameter.
 
     Note: This resource is only available when hot reload is enabled
     (i.e., when running with `pybevy dev` or `pybevy watch`).
     """
 
     def request_full_reload(self) -> None:
-        """Request a full reload on the next file change.
+        """Queue a full reload immediately; no file change is needed.
+
+        The reload is applied by the next hot-reload check, not synchronously.
 
         Full reload will:
         - Despawn all user-created entities
@@ -421,7 +429,9 @@ class HotReloadControl(Resource):
         """
 
     def request_partial_reload(self) -> None:
-        """Request a partial reload on the next file change (default).
+        """Queue a partial reload immediately; no file change is needed.
+
+        The reload is applied by the next hot-reload check, not synchronously.
 
         Partial reload will:
         - Keep entities and resources intact

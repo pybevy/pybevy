@@ -184,6 +184,8 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
                         Some("custom component layout changed")
                     } else if fingerprint.resource_layout_changed {
                         Some("custom resource layout changed")
+                    } else if runtime.state_requires_full_reload(world, &defs) {
+                        Some("retained state member removed")
                     } else if previous.startup_code != fingerprint.startup_code {
                         Some("Startup systems changed")
                     } else if previous.resource_types != fingerprint.resource_types {
@@ -201,6 +203,9 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
                 }
                 None if fingerprint.resource_layout_changed => {
                     Some("custom resource layout changed")
+                }
+                None if runtime.state_requires_full_reload(world, &defs) => {
+                    Some("retained state member removed")
                 }
                 None => {
                     match (

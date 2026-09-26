@@ -630,6 +630,42 @@ pub(crate) fn registered_state_machine_count(world: &World) -> usize {
         .map_or(0, PyStateMachineRegistry::len)
 }
 
+pub(crate) fn retained_state_member_missing(
+    py: Python<'_>,
+    world: &World,
+    state_type: &Bound<'_, PyType>,
+) -> PyResult<bool> {
+    let Some(registry) = world.get_resource::<PyStateMachineRegistry>() else {
+        return Ok(false);
+    };
+    let qualified_name = state_type_qualified_name(state_type)?;
+    let Some(machine_id) = registry.identities.get_by_qualified_name(&qualified_name) else {
+        return Ok(false);
+    };
+    let Some(entry) = registry.entries.get(&machine_id) else {
+        return Ok(false);
+    };
+    let current = entry.state.bind(py).borrow().current_value(py);
+    let pending = {
+        let next_state = entry.next_state.bind(py).borrow();
+        let slot = lock_or_recover(&next_state.inner);
+        match &slot.request {
+            NextStateInner::Pending(value) | NextStateInner::PendingIfNeq(value) => {
+                Some(value.clone_ref(py))
+            }
+            NextStateInner::Unchanged => None,
+        }
+    };
+    let members = state_type.getattr("__members__")?;
+    for value in [Some(current), pending].into_iter().flatten() {
+        let name = value.bind(py).getattr("name")?.extract::<String>()?;
+        if !members.contains(name)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn remap_state_value(
     py: Python<'_>,
     value: &Py<PyAny>,

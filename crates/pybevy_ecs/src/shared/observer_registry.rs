@@ -174,22 +174,32 @@ impl Error for DuplicateObserverEntity {}
 
 /// Context-free observer registry with forward and reverse indices.
 ///
-/// Entries in each event vector preserve registration order. All removal APIs
+/// Index vectors preserve registration order. All removal APIs
 /// return complete entries so interpreter handles can be destroyed only after
 /// the caller releases the World resource borrow.
+#[derive(Debug)]
+struct RegisteredObserver<H> {
+    entry: ObserverEntry<H>,
+    order: u64,
+}
+
 #[derive(Debug, Resource)]
 pub struct ObserverRegistryCore<H> {
-    by_event: HashMap<ObserverEventKey, Vec<ObserverEntry<H>>>,
-    event_for_observer: HashMap<Entity, ObserverEventKey>,
+    by_observer: HashMap<Entity, RegisteredObserver<H>>,
+    globals_by_event: HashMap<ObserverEventKey, Vec<Entity>>,
+    targeted_by_event: HashMap<(ObserverEventKey, Entity), Vec<Entity>>,
     observers_for_target: HashMap<Entity, Vec<Entity>>,
+    next_order: u64,
 }
 
 impl<H> Default for ObserverRegistryCore<H> {
     fn default() -> Self {
         Self {
-            by_event: HashMap::new(),
-            event_for_observer: HashMap::new(),
+            by_observer: HashMap::new(),
+            globals_by_event: HashMap::new(),
+            targeted_by_event: HashMap::new(),
             observers_for_target: HashMap::new(),
+            next_order: 0,
         }
     }
 }
@@ -197,12 +207,12 @@ impl<H> Default for ObserverRegistryCore<H> {
 impl<H> ObserverRegistryCore<H> {
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.event_for_observer.is_empty()
+        self.by_observer.is_empty()
     }
 
     #[must_use]
     pub fn len(&self) -> usize {
-        self.event_for_observer.len()
+        self.by_observer.len()
     }
 
     /// Insert one fully-resolved entry into every index.
@@ -212,20 +222,34 @@ impl<H> ObserverRegistryCore<H> {
     /// index.
     pub fn insert(&mut self, entry: ObserverEntry<H>) -> Result<(), DuplicateObserverEntity> {
         let observer = entry.observer_entity;
-        if self.event_for_observer.contains_key(&observer) {
+        if self.by_observer.contains_key(&observer) {
             return Err(DuplicateObserverEntity(observer));
         }
 
         let event = entry.event;
         let target = entry.target;
-        self.by_event.entry(event).or_default().push(entry);
-        self.event_for_observer.insert(observer, event);
         if let Some(target) = target {
+            self.targeted_by_event
+                .entry((event, target))
+                .or_default()
+                .push(observer);
             self.observers_for_target
                 .entry(target)
                 .or_default()
                 .push(observer);
+        } else {
+            self.globals_by_event
+                .entry(event)
+                .or_default()
+                .push(observer);
         }
+        let order = self.next_order;
+        self.next_order = self
+            .next_order
+            .checked_add(1)
+            .expect("observer registration order overflow");
+        self.by_observer
+            .insert(observer, RegisteredObserver { entry, order });
         Ok(())
     }
 
@@ -242,32 +266,58 @@ impl<H> ObserverRegistryCore<H> {
         event: ObserverEventKey,
         target: Option<Entity>,
     ) -> Vec<ObserverEntry<H>> {
-        self.by_event
+        let globals = self
+            .globals_by_event
             .get(&event)
-            .into_iter()
-            .flatten()
-            .filter(|entry| entry.target.is_none() || entry.target == target)
-            .cloned()
-            .collect()
+            .map_or(&[][..], Vec::as_slice);
+        let targeted = target
+            .and_then(|target| self.targeted_by_event.get(&(event, target)))
+            .map_or(&[][..], Vec::as_slice);
+        let mut snapshot = Vec::with_capacity(globals.len() + targeted.len());
+        let (mut global_index, mut target_index) = (0, 0);
+        while global_index < globals.len() || target_index < targeted.len() {
+            let next = match (globals.get(global_index), targeted.get(target_index)) {
+                (Some(global), Some(target)) => {
+                    if self.by_observer[global].order < self.by_observer[target].order {
+                        global_index += 1;
+                        global
+                    } else {
+                        target_index += 1;
+                        target
+                    }
+                }
+                (Some(global), None) => {
+                    global_index += 1;
+                    global
+                }
+                (None, Some(target)) => {
+                    target_index += 1;
+                    target
+                }
+                (None, None) => unreachable!(),
+            };
+            snapshot.push(self.by_observer[next].entry.clone());
+        }
+        snapshot
     }
 
     /// Remove one observer and return its complete entry.
     pub fn remove(&mut self, observer: Entity) -> Option<ObserverEntry<H>> {
-        let event = self.event_for_observer.remove(&observer)?;
-        let entries = self
-            .by_event
-            .get_mut(&event)
-            .expect("observer reverse index must reference an event bucket");
-        let position = entries
-            .iter()
-            .position(|entry| entry.observer_entity == observer)
-            .expect("observer reverse index must reference an event entry");
-        let removed = entries.remove(position);
-        if entries.is_empty() {
-            self.by_event.remove(&event);
-        }
-
+        let removed = self.by_observer.remove(&observer)?.entry;
         if let Some(target) = removed.target {
+            let key = (removed.event, target);
+            let observers = self
+                .targeted_by_event
+                .get_mut(&key)
+                .expect("targeted event index must reference an observer list");
+            let position = observers
+                .iter()
+                .position(|candidate| *candidate == observer)
+                .expect("targeted event index must reference the observer");
+            observers.remove(position);
+            if observers.is_empty() {
+                self.targeted_by_event.remove(&key);
+            }
             let observers = self
                 .observers_for_target
                 .get_mut(&target)
@@ -280,6 +330,19 @@ impl<H> ObserverRegistryCore<H> {
             if observers.is_empty() {
                 self.observers_for_target.remove(&target);
             }
+        } else {
+            let observers = self
+                .globals_by_event
+                .get_mut(&removed.event)
+                .expect("global event index must reference an observer list");
+            let position = observers
+                .iter()
+                .position(|candidate| *candidate == observer)
+                .expect("global event index must reference the observer");
+            observers.remove(position);
+            if observers.is_empty() {
+                self.globals_by_event.remove(&removed.event);
+            }
         }
 
         Some(removed)
@@ -289,30 +352,15 @@ impl<H> ObserverRegistryCore<H> {
     ///
     /// Returned entries follow their registration order for that target.
     pub fn remove_for_target(&mut self, target: Entity) -> Vec<ObserverEntry<H>> {
-        let Some(observers) = self.observers_for_target.remove(&target) else {
+        let Some(observers) = self.observers_for_target.get(&target).cloned() else {
             return Vec::new();
         };
 
         observers
             .into_iter()
             .map(|observer| {
-                let event = self
-                    .event_for_observer
-                    .remove(&observer)
-                    .expect("target index must reference a registered observer");
-                let entries = self
-                    .by_event
-                    .get_mut(&event)
-                    .expect("observer reverse index must reference an event bucket");
-                let position = entries
-                    .iter()
-                    .position(|entry| entry.observer_entity == observer)
-                    .expect("observer reverse index must reference an event entry");
-                let removed = entries.remove(position);
-                if entries.is_empty() {
-                    self.by_event.remove(&event);
-                }
-                removed
+                self.remove(observer)
+                    .expect("target index must reference a registered observer")
             })
             .collect()
     }
@@ -322,11 +370,13 @@ impl<H> ObserverRegistryCore<H> {
     /// Callers must drop/retire returned handles after releasing the registry's
     /// World resource borrow.
     pub fn clear(&mut self) -> Vec<ObserverEntry<H>> {
-        self.event_for_observer.clear();
+        self.globals_by_event.clear();
+        self.targeted_by_event.clear();
         self.observers_for_target.clear();
-        self.by_event
+        self.next_order = 0;
+        self.by_observer
             .drain()
-            .flat_map(|(_, entries)| entries)
+            .map(|(_, registered)| registered.entry)
             .collect()
     }
 
@@ -336,11 +386,10 @@ impl<H> ObserverRegistryCore<H> {
     /// resource borrow.
     pub fn drain_origin(&mut self, origin: ObserverOrigin) -> Vec<ObserverEntry<H>> {
         let observers = self
-            .by_event
+            .by_observer
             .values()
-            .flat_map(|entries| entries.iter())
-            .filter(|entry| entry.origin == origin)
-            .map(|entry| entry.observer_entity)
+            .filter(|registered| registered.entry.origin == origin)
+            .map(|registered| registered.entry.observer_entity)
             .collect::<Vec<_>>();
         observers
             .into_iter()
@@ -440,6 +489,80 @@ mod tests {
             .map(|entry| entry.prepared.as_str())
             .collect();
         assert_eq!(names, ["global-a", "global-b"]);
+    }
+
+    #[test]
+    fn snapshot_indexes_target_without_visiting_unrelated_observers() {
+        let event = ObserverEventKey::User(ObserverTypeKey::new(1));
+        let target = entity(500);
+        let mut registry = ObserverRegistryCore::default();
+        registry
+            .insert(entry(1, "global-a", event, ObserverFilter::default(), None))
+            .unwrap();
+        for index in 2..258 {
+            registry
+                .insert(entry(
+                    index,
+                    "unrelated",
+                    event,
+                    ObserverFilter::default(),
+                    Some(entity(index + 1000)),
+                ))
+                .unwrap();
+        }
+        registry
+            .insert(entry(
+                258,
+                "target-a",
+                event,
+                ObserverFilter::default(),
+                Some(target),
+            ))
+            .unwrap();
+        registry
+            .insert(entry(
+                259,
+                "global-b",
+                event,
+                ObserverFilter::default(),
+                None,
+            ))
+            .unwrap();
+        registry
+            .insert(entry(
+                260,
+                "target-b",
+                event,
+                ObserverFilter::default(),
+                Some(target),
+            ))
+            .unwrap();
+
+        assert_eq!(registry.globals_by_event[&event].len(), 2);
+        assert_eq!(registry.targeted_by_event[&(event, target)].len(), 2);
+        let snapshot = registry.snapshot(event, Some(target));
+        let names: Vec<_> = snapshot
+            .iter()
+            .map(|entry| entry.prepared.as_str())
+            .collect();
+        assert_eq!(names, ["global-a", "target-a", "global-b", "target-b"]);
+
+        registry.remove(entity(258));
+        registry
+            .insert(entry(
+                258,
+                "target-new",
+                event,
+                ObserverFilter::default(),
+                Some(target),
+            ))
+            .unwrap();
+        let snapshot = registry.snapshot(event, Some(target));
+        let names: Vec<_> = snapshot
+            .iter()
+            .map(|entry| entry.prepared.as_str())
+            .collect();
+        assert_eq!(names, ["global-a", "global-b", "target-b", "target-new"]);
     }
 
     #[test]
