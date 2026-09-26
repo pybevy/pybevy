@@ -178,7 +178,9 @@ impl PyAffine2 {
 
     #[getter]
     pub fn matrix2(&self) -> PyResult<PyMat2> {
-        Ok(self.as_ref()?.matrix2.into())
+        Ok(self
+            .storage
+            .borrow_resolved_field_as(|a| &a.matrix2, |a| &mut a.matrix2)?)
     }
 
     #[setter]
@@ -289,6 +291,12 @@ impl From<Mat2> for PyMat2 {
     }
 }
 
+impl FromBorrowedStorage<ValueStorage<Mat2>> for PyMat2 {
+    fn from_borrowed(storage: ValueStorage<Mat2>) -> Self {
+        PyMat2 { storage }
+    }
+}
+
 impl PyMat2 {
     #[inline(always)]
     pub fn from_mat2(mat: Mat2) -> Self {
@@ -310,6 +318,11 @@ impl PyMat2 {
     }
 
     #[inline(always)]
+    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Mat2>> {
+        Ok(self.storage.as_mut()?)
+    }
+
+    #[inline(always)]
     pub fn try_get(&self) -> PyResult<Mat2> {
         Ok(self.storage.get()?)
     }
@@ -318,13 +331,19 @@ impl PyMat2 {
 #[pymethods]
 impl PyMat2 {
     #[classattr]
-    pub const IDENTITY: PyMat2 = PyMat2::mat2(Mat2::IDENTITY);
+    pub const IDENTITY: PyMat2 = PyMat2 {
+        storage: ValueStorage::read_only_snapshot(Mat2::IDENTITY),
+    };
 
     #[classattr]
-    pub const ZERO: PyMat2 = PyMat2::mat2(Mat2::ZERO);
+    pub const ZERO: PyMat2 = PyMat2 {
+        storage: ValueStorage::read_only_snapshot(Mat2::ZERO),
+    };
 
     #[classattr]
-    pub const NAN: PyMat2 = PyMat2::mat2(Mat2::NAN);
+    pub const NAN: PyMat2 = PyMat2 {
+        storage: ValueStorage::read_only_snapshot(Mat2::NAN),
+    };
 
     #[new]
     #[pyo3(signature = (x_axis = None, y_axis = None))]
@@ -383,12 +402,28 @@ impl PyMat2 {
 
     #[getter]
     pub fn x_axis(&self) -> PyResult<PyVec2> {
-        Ok(self.as_ref()?.x_axis.into())
+        Ok(self
+            .storage
+            .borrow_resolved_field_as(|m| &m.x_axis, |m| &mut m.x_axis)?)
+    }
+
+    #[setter]
+    pub fn set_x_axis(&mut self, value: PyVec2) -> PyResult<()> {
+        self.as_mut()?.x_axis = value.try_into()?;
+        Ok(())
     }
 
     #[getter]
     pub fn y_axis(&self) -> PyResult<PyVec2> {
-        Ok(self.as_ref()?.y_axis.into())
+        Ok(self
+            .storage
+            .borrow_resolved_field_as(|m| &m.y_axis, |m| &mut m.y_axis)?)
+    }
+
+    #[setter]
+    pub fn set_y_axis(&mut self, value: PyVec2) -> PyResult<()> {
+        self.as_mut()?.y_axis = value.try_into()?;
+        Ok(())
     }
 
     pub fn transpose(&self) -> PyResult<PyMat2> {

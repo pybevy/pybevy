@@ -1,5 +1,5 @@
 use bevy::math::{Mat3A, Vec3, Vec3A};
-use pybevy_core::{FromBorrowedStorage, StorageRef, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 use super::{vec3::PyVec3, vec3a::PyVec3A};
@@ -63,6 +63,11 @@ impl PyMat3A {
     }
 
     #[inline(always)]
+    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Mat3A>> {
+        Ok(self.storage.as_mut()?)
+    }
+
+    #[inline(always)]
     pub fn try_get(&self) -> PyResult<Mat3A> {
         Ok(self.storage.get()?)
     }
@@ -71,13 +76,19 @@ impl PyMat3A {
 #[pymethods]
 impl PyMat3A {
     #[classattr]
-    pub const IDENTITY: PyMat3A = PyMat3A::mat3a(Mat3A::IDENTITY);
+    pub const IDENTITY: PyMat3A = PyMat3A {
+        storage: ValueStorage::read_only_snapshot(Mat3A::IDENTITY),
+    };
 
     #[classattr]
-    pub const ZERO: PyMat3A = PyMat3A::mat3a(Mat3A::ZERO);
+    pub const ZERO: PyMat3A = PyMat3A {
+        storage: ValueStorage::read_only_snapshot(Mat3A::ZERO),
+    };
 
     #[classattr]
-    pub const NAN: PyMat3A = PyMat3A::mat3a(Mat3A::NAN);
+    pub const NAN: PyMat3A = PyMat3A {
+        storage: ValueStorage::read_only_snapshot(Mat3A::NAN),
+    };
 
     #[new]
     #[allow(clippy::too_many_arguments)]
@@ -133,17 +144,41 @@ impl PyMat3A {
 
     #[getter]
     pub fn x_axis(&self) -> PyResult<PyVec3A> {
-        Ok(self.as_ref()?.x_axis.into())
+        Ok(self
+            .storage
+            .borrow_resolved_field_as(|m| &m.x_axis, |m| &mut m.x_axis)?)
+    }
+
+    #[setter]
+    pub fn set_x_axis(&mut self, value: &PyVec3A) -> PyResult<()> {
+        self.as_mut()?.x_axis = value.try_into()?;
+        Ok(())
     }
 
     #[getter]
     pub fn y_axis(&self) -> PyResult<PyVec3A> {
-        Ok(self.as_ref()?.y_axis.into())
+        Ok(self
+            .storage
+            .borrow_resolved_field_as(|m| &m.y_axis, |m| &mut m.y_axis)?)
+    }
+
+    #[setter]
+    pub fn set_y_axis(&mut self, value: &PyVec3A) -> PyResult<()> {
+        self.as_mut()?.y_axis = value.try_into()?;
+        Ok(())
     }
 
     #[getter]
     pub fn z_axis(&self) -> PyResult<PyVec3A> {
-        Ok(self.as_ref()?.z_axis.into())
+        Ok(self
+            .storage
+            .borrow_resolved_field_as(|m| &m.z_axis, |m| &mut m.z_axis)?)
+    }
+
+    #[setter]
+    pub fn set_z_axis(&mut self, value: &PyVec3A) -> PyResult<()> {
+        self.as_mut()?.z_axis = value.try_into()?;
+        Ok(())
     }
 
     pub fn col(&self, index: isize) -> PyResult<PyVec3A> {

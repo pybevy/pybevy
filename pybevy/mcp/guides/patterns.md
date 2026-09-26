@@ -646,6 +646,14 @@ def move_up(query: Query[Mut[Transform]]) -> None:
         transform.translation.y += 1.0
 ```
 
+`transform.translation` is a live borrowed `Vec3`, not an owned snapshot.
+It expires when the system finishes, including if stored in a resource,
+`Local`, message, or event for a later system. Use `copy.copy(transform.translation)`
+while the query is valid to keep a position for the next frame. This also
+applies to other borrowed nested values such as `rotation` and `scale`; see
+`guide://queries` for a complete example. Do not copy when you intend a live
+nested write through `Query[Mut[Transform]]`.
+
 #### Multiple Components
 
 Use `tuple[]` for multiple components:

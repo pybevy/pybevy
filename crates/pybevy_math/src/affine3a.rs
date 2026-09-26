@@ -1,5 +1,5 @@
 use bevy::math::{Affine3A, Mat3A, Mat4, Quat, Vec3, Vec3A};
-use pybevy_core::{FromBorrowedStorage, StorageRef, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 use super::{mat3a::PyMat3A, mat4::PyMat4, quat::PyQuat, vec3::PyVec3, vec3a::PyVec3A};
@@ -63,6 +63,11 @@ impl PyAffine3A {
     }
 
     #[inline(always)]
+    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Affine3A>> {
+        Ok(self.storage.as_mut()?)
+    }
+
+    #[inline(always)]
     pub fn try_get(&self) -> PyResult<Affine3A> {
         Ok(self.storage.get()?)
     }
@@ -71,13 +76,19 @@ impl PyAffine3A {
 #[pymethods]
 impl PyAffine3A {
     #[classattr]
-    pub const IDENTITY: PyAffine3A = PyAffine3A::affine3a(Affine3A::IDENTITY);
+    pub const IDENTITY: PyAffine3A = PyAffine3A {
+        storage: ValueStorage::read_only_snapshot(Affine3A::IDENTITY),
+    };
 
     #[classattr]
-    pub const ZERO: PyAffine3A = PyAffine3A::affine3a(Affine3A::ZERO);
+    pub const ZERO: PyAffine3A = PyAffine3A {
+        storage: ValueStorage::read_only_snapshot(Affine3A::ZERO),
+    };
 
     #[classattr]
-    pub const NAN: PyAffine3A = PyAffine3A::affine3a(Affine3A::NAN);
+    pub const NAN: PyAffine3A = PyAffine3A {
+        storage: ValueStorage::read_only_snapshot(Affine3A::NAN),
+    };
 
     #[new]
     #[pyo3(signature = (
@@ -179,12 +190,28 @@ impl PyAffine3A {
 
     #[getter]
     pub fn matrix3(&self) -> PyResult<PyMat3A> {
-        Ok(self.as_ref()?.matrix3.into())
+        Ok(self
+            .storage
+            .borrow_resolved_field_as(|a| &a.matrix3, |a| &mut a.matrix3)?)
+    }
+
+    #[setter]
+    pub fn set_matrix3(&mut self, value: &PyMat3A) -> PyResult<()> {
+        self.as_mut()?.matrix3 = value.try_into()?;
+        Ok(())
     }
 
     #[getter]
     pub fn translation(&self) -> PyResult<PyVec3A> {
-        Ok(self.as_ref()?.translation.into())
+        Ok(self
+            .storage
+            .borrow_resolved_field_as(|a| &a.translation, |a| &mut a.translation)?)
+    }
+
+    #[setter]
+    pub fn set_translation(&mut self, value: &PyVec3A) -> PyResult<()> {
+        self.as_mut()?.translation = value.try_into()?;
+        Ok(())
     }
 
     pub fn transform_point3(&self, rhs: &PyVec3) -> PyResult<PyVec3> {

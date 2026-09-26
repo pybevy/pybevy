@@ -8,6 +8,39 @@ children raise `RuntimeError` until the nested call returns. Observer callbacks
 apply the same rule on their World. This prevents a captured World from moving
 component storage while an inner Query iterator still references it.
 
+Native components with value equality compare by their current value across
+owned and borrowed wrappers. For example, a queried `Name("player")` equals a
+newly constructed `Name("player")` while its query is valid. An expired
+borrowed component does not compare equal to an owned value.
+
+Nested values read from a live native component are often borrowed views, even
+when they look like ordinary `Vec3`, `Quat`, or `Color` values. For example,
+`transform.translation` and `transform.rotation` from `Query[Transform]`
+expire with the system. The same applies to nested values from a borrowed
+asset. Do not retain these views in a resource, `Local`, message, event, or
+module variable for a later system or frame. Take an owned snapshot while the
+borrow is valid:
+
+<!-- pybevy-snippet: typecheck -->
+```python
+from copy import copy
+
+from pybevy.ecs import Query
+from pybevy.math import Vec3
+from pybevy.transform import Transform
+
+previous_positions: list[Vec3] = []
+
+def remember_positions(query: Query[Transform]) -> None:
+    for transform in query:
+        previous_positions.append(copy(transform.translation))
+```
+
+The copies remain readable after the system ends. A borrowed child remains
+live for in-system reads and, through `Query[Mut[T]]`, nested writes; copying it
+is only needed when retaining its value beyond that lifetime. Scalars and
+computed owned results already have independent lifetimes.
+
 ## MCP Query Tools
 
 ### query_entities - Filter by component presence

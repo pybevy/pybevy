@@ -37,7 +37,18 @@ impl PyRegularPolygon {
 
     #[getter]
     pub fn circumcircle(&self, py: Python<'_>) -> PyResult<Py<PyCircle>> {
-        Py::new(py, (self.0.circumcircle.into(), PyMeshable))
+        Py::new(
+            py,
+            (PyCircle::from_read_only(&self.0.circumcircle), PyMeshable),
+        )
+    }
+
+    #[setter]
+    pub fn set_circumcircle(&mut self, value: &PyCircle) -> PyResult<()> {
+        let circle = value.try_get()?;
+        validate_circumradius(circle.radius)?;
+        self.0.circumcircle = circle;
+        Ok(())
     }
 
     #[getter]

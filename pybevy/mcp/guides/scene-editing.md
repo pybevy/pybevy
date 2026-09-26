@@ -118,7 +118,10 @@ for editable components. `set_component` echoes each written field under that
 same Python spelling, so a response replays unchanged; a Bevy field named after
 a Python keyword carries a trailing underscore, such as `global_`.
 `GlobalTransform` reports only computed world-space `translation`, `rotation`,
-and `scale`; these fields are read-only. Readable read-only fields on other
+and `scale`; these fields are read-only. In Python they return independent
+computed values, so editing the returned vector or quaternion does not change
+the component. Change the local `Transform` to affect the world transform.
+Readable read-only fields on other
 components, such as the `AccessibilityNode`
 `role`, `label`, and `value` properties, are included on read and rejected
 with a field-named error when written. Derived enum predicates such as `is_*`

@@ -50,7 +50,7 @@ pub fn meshable_to_mesh(asset: &Bound<'_, PyAny>) -> PyResult<Mesh> {
     }
     // 2D primitives
     if let Ok(v) = asset.cast::<PyCircle>() {
-        return Ok(v.borrow().0.mesh().build());
+        return Ok(v.borrow().0.as_ref()?.mesh().build());
     }
     if let Ok(v) = asset.cast::<PyAnnulus>() {
         return Ok(v.borrow().0.mesh().build());
