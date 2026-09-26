@@ -13,7 +13,10 @@ use std::{
 };
 
 use bevy::{
-    asset::{Asset, AssetId, AssetLoadFailedEvent, AssetServer, Assets, Handle},
+    asset::{
+        Asset, AssetId, AssetLoadFailedEvent, AssetPath, AssetServer, Assets, Handle,
+        ParseAssetPathError,
+    },
     ecs::{
         message::MessageReader,
         system::{Local, Res, ResMut},
@@ -144,13 +147,14 @@ pub fn clear_shader_registries() {
     }
 }
 
-fn sync_shader_path(path: &str, asset_server: &AssetServer) -> u64 {
+fn sync_shader_path(path: &str, asset_server: &AssetServer) -> Result<(), ParseAssetPathError> {
+    let asset_path = AssetPath::try_parse(path)?;
     let id = hash_shader_path(path);
     if get_shader_handle(id).is_none() {
-        let handle = asset_server.load(path.to_owned());
+        let handle = asset_server.load(asset_path.into_owned());
         register_shader_handle(id, handle);
     }
-    id
+    Ok(())
 }
 
 fn stage_uses_shader(
@@ -200,8 +204,8 @@ fn validate_material_shader_import(
     shader_path: &str,
     expected: &str,
     shaders: &Assets<Shader>,
-    reported_mismatches: &HashSet<String>,
-    current_mismatches: &mut HashSet<String>,
+    reported_diagnostics: &HashSet<String>,
+    current_diagnostics: &mut HashSet<String>,
 ) {
     let Some(handle) = get_shader_handle(hash_shader_path(shader_path)) else {
         return;
@@ -219,7 +223,7 @@ fn validate_material_shader_import(
             actual,
             expected
         );
-        if current_mismatches.insert(message.clone()) && !reported_mismatches.contains(&message) {
+        if current_diagnostics.insert(message.clone()) && !reported_diagnostics.contains(&message) {
             error!("{message}");
         }
     }
@@ -394,7 +398,7 @@ pub fn sync_shader_handles(
     asset_server: Res<AssetServer>,
     mut shaders: ResMut<Assets<Shader>>,
     mut load_failures: MessageReader<AssetLoadFailedEvent<Shader>>,
-    mut reported_mismatches: Local<HashSet<String>>,
+    mut reported_diagnostics: Local<HashSet<String>>,
 ) {
     for failure in load_failures.read() {
         for stage in [ShaderStage::Fragment, ShaderStage::Vertex] {
@@ -409,13 +413,30 @@ pub fn sync_shader_handles(
         }
     }
 
-    let mut current_mismatches = HashSet::new();
+    let mut current_diagnostics = HashSet::new();
     for (_, material) in materials.iter() {
-        if let Some(path) = &material.extension.fragment_shader_path {
-            sync_shader_path(path, &asset_server);
-        }
-        if let Some(path) = &material.extension.vertex_shader_path {
-            sync_shader_path(path, &asset_server);
+        for (stage, path) in [
+            (
+                ShaderStage::Fragment,
+                &material.extension.fragment_shader_path,
+            ),
+            (ShaderStage::Vertex, &material.extension.vertex_shader_path),
+        ] {
+            if let Some(path) = path
+                && let Err(parse_error) = sync_shader_path(path, &asset_server)
+            {
+                let message = format!(
+                    "Custom {} shader path '{}' is invalid: {}",
+                    stage.label(),
+                    path,
+                    parse_error
+                );
+                if current_diagnostics.insert(message.clone())
+                    && !reported_diagnostics.contains(&message)
+                {
+                    error!("{message}");
+                }
+            }
         }
 
         // Bevy retries a missing import without logging because an asset may
@@ -441,8 +462,8 @@ pub fn sync_shader_handles(
                         path,
                         expected,
                         &shaders,
-                        &reported_mismatches,
-                        &mut current_mismatches,
+                        &reported_diagnostics,
+                        &mut current_diagnostics,
                     );
                 }
             }
@@ -466,5 +487,5 @@ pub fn sync_shader_handles(
             );
         }
     }
-    *reported_mismatches = current_mismatches;
+    *reported_diagnostics = current_diagnostics;
 }

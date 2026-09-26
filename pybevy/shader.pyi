@@ -312,6 +312,9 @@ class Shader(Asset):
         ```
     """
 
+    def __copy__(self) -> Shader: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> Shader: ...
+
     @staticmethod
     def from_wgsl(source: str, path: str) -> Shader:
         """

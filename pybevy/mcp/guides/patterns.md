@@ -783,6 +783,14 @@ components, resources, or other state that lives as long as the asset is needed.
 After the last strong handle is dropped, Bevy removes the asset during asset
 tracking on a later schedule pass, not necessarily immediately.
 
+Use `copy.copy(handle)` or `copy.deepcopy(handle)` to create another Python
+handle with the same Bevy ownership. A UUID handle remains non-owning. Copying
+a handle does not duplicate its asset. For cloneable native assets, use
+`copy.copy(asset)` or `copy.deepcopy(asset)` while a fetched asset is valid to
+make an independent owned value. You can then change that value and pass it to
+`Assets[T].add(...)`; both copy operations follow Bevy's `Clone` semantics,
+including cloning any nested handles rather than duplicating their assets.
+
 #### Custom Resources
 
 ```python

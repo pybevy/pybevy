@@ -16,6 +16,9 @@ class ShaderBuffer(Asset):
     is not a GPU readback. Use ``with_size`` to reserve GPU allocation size.
     """
 
+    def __copy__(self) -> ShaderBuffer: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> ShaderBuffer: ...
+
     def __init__(
         self, data: bytes | Array | None = None, *, copy_on_resize: bool = False
     ) -> None: ...

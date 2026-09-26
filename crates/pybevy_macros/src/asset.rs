@@ -182,6 +182,29 @@ pub fn pyasset(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
 
+    let copy_methods = if args.no_clone {
+        quote! {}
+    } else {
+        quote! {
+            #[pyo3::pymethods]
+            impl #py_type {
+                pub fn __copy__(&self, py: pyo3::Python<'_>) -> pyo3::PyResult<pyo3::Py<Self>> {
+                    let native = self.storage.as_ref()?.clone();
+                    pyo3::Py::new(py, Self::from_owned(native))
+                }
+
+                pub fn __deepcopy__(
+                    &self,
+                    py: pyo3::Python<'_>,
+                    _memo: &pyo3::Bound<'_, pyo3::PyAny>,
+                ) -> pyo3::PyResult<pyo3::Py<Self>> {
+                    let native = self.storage.as_ref()?.clone();
+                    pyo3::Py::new(py, Self::from_owned(native))
+                }
+            }
+        }
+    };
+
     let bridge_tokens = if args.bridge {
         generate_asset_bridge_tokens(
             bevy_type,
@@ -210,6 +233,8 @@ pub fn pyasset(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
 
         #clone_impl
+
+        #copy_methods
 
         impl From<#bevy_type> for #py_type {
             fn from(asset: #bevy_type) -> Self {

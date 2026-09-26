@@ -50,6 +50,9 @@ class Font(Asset):
         >>> font = Font.try_from_bytes(font_data)
     """
 
+    def __copy__(self) -> Font: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> Font: ...
+
     @staticmethod
     def try_from_bytes(font_data: bytes) -> Font:
         """Create a Font from bytes.

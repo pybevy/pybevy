@@ -21,6 +21,12 @@ pub struct PyAssetPath {
     source: Option<String>,
 }
 
+pub fn parse_asset_path(path: &str) -> PyResult<AssetPath<'static>> {
+    AssetPath::try_parse(path)
+        .map(AssetPath::into_owned)
+        .map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
 impl PyAssetPath {
     pub fn new(path: String, label: Option<String>) -> Self {
         Self {
@@ -55,10 +61,7 @@ impl PyAssetPath {
 
     #[staticmethod]
     pub fn parse(asset_path: &str) -> PyResult<Self> {
-        match AssetPath::try_parse(asset_path) {
-            Ok(asset_path) => Ok(asset_path.into()),
-            Err(err) => Err(PyValueError::new_err(err.to_string())),
-        }
+        Ok(parse_asset_path(asset_path)?.into())
     }
 
     #[new]

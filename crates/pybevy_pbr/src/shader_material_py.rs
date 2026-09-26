@@ -6,7 +6,9 @@ use bevy::{
 };
 use pybevy_core::{
     AssetInputConverter, AssetStorage, ComponentStorage, LogicalTypeId, NativeAsset, PluginBuild,
-    PyComponent, PyHandle, PyMaterial, PyPlugin, ensure_asset_type, extract_handle_from_any,
+    PyComponent, PyHandle, PyMaterial, PyPlugin,
+    asset_path::parse_asset_path,
+    ensure_asset_type, extract_handle_from_any,
     public_error::{
         SHADER_DEFS_WITHOUT_NAMES, expected_float_sequence, non_negative_argument,
         too_many_shader_def_names,
@@ -89,6 +91,12 @@ impl PyShaderMaterial {
     ) -> PyResult<PyClassInitializer<Self>> {
         let shader_def_names = shader_def_names.unwrap_or_default();
         validate_shader_defs(shader_defs, &shader_def_names)?;
+        if let Some(path) = &fragment_shader {
+            parse_asset_path(path)?;
+        }
+        if let Some(path) = &vertex_shader {
+            parse_asset_path(path)?;
+        }
         let mut params = ShaderParams::default();
 
         if let Some(data) = data {
