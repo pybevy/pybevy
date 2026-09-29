@@ -277,3 +277,6 @@ jobs:
           name: api-coverage
           path: api-coverage.json
           if-no-files-found: error
+
+      - name: Validate bindings against stubs and Bevy API drift
+        run: cargo run --locked -p pybevy_lint -- validate --deny-warnings --bevy-path .bevy
