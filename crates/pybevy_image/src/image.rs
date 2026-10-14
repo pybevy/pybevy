@@ -6,7 +6,8 @@ use bevy::{
     image::{Image, ImageSampler, TextureAccessError, TextureFormatPixelInfo},
     math::UVec3,
     render::render_resource::{
-        Extent3d, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor,
+        Extent3d, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
+        TextureViewDescriptor,
     },
 };
 use half::f16;
@@ -17,7 +18,7 @@ use image::{
 use pybevy_array::{BorrowProbe, PyArray, borrowed_read_only_u8, extract_u8_array_data, owned_u8};
 use pybevy_color::color::PyColor;
 use pybevy_core::{
-    AssetStorage, FromBorrowedStorage, PyAsset, ValueStorage,
+    AssetStorage, FromBorrowedStorage, PyAsset, StorageError, ValueStorage,
     borrowed_array_anchor::{AssetBorrowAnchor, AssetBorrowAnchorMut},
     computed_owned,
     content_hash::CanonicalContentHasher,
@@ -197,6 +198,39 @@ pub(crate) fn reject_aspect_dependent_format(format: TextureFormat) -> PyResult<
             "cannot build an Image with format {format:?}: its texel size depends on the \
              texture aspect, which Bevy's Image constructors do not support"
         )));
+    }
+    Ok(())
+}
+
+// wgpu-core unwraps the sample type of a whole-texture view when binding a multi-planar image.
+fn validate_texture_descriptor(
+    descriptor: &TextureDescriptor<'static>,
+) -> Result<(), StorageError> {
+    if descriptor.format.is_multi_planar_format() {
+        return Err(StorageError::InvalidValue(
+            public_error::image_multi_planar_format(descriptor.format),
+        ));
+    }
+    if descriptor.usage.is_empty() {
+        return Err(StorageError::InvalidValue(
+            public_error::IMAGE_TEXTURE_USAGE_EMPTY.to_string(),
+        ));
+    }
+    validate_dimension_extent(descriptor.dimension, descriptor.size)
+}
+
+fn validate_dimension_extent(
+    dimension: TextureDimension,
+    size: Extent3d,
+) -> Result<(), StorageError> {
+    if dimension == TextureDimension::D1 && (size.height != 1 || size.depth_or_array_layers != 1) {
+        return Err(StorageError::InvalidValue(
+            public_error::image_one_dimensional_extent(
+                size.width,
+                size.height,
+                size.depth_or_array_layers,
+            ),
+        ));
     }
     Ok(())
 }
@@ -1074,6 +1108,7 @@ impl PyImage {
         let dimension: TextureDimension = dimension.into();
         let format: TextureFormat = format.into();
         reject_aspect_dependent_format(format)?;
+        validate_dimension_extent(dimension, extent)?;
         let data = match data {
             Some(data) => {
                 let extracted = extract_u8_data_from_any(data)?;
@@ -1128,13 +1163,15 @@ impl PyImage {
         let pixel = extract_u8_data_from_any(pixel)?.bytes;
         let format: TextureFormat = format.unwrap_or(PyTextureFormat::Rgba8UnormSrgb).into();
         let extent: Extent3d = size.into();
+        let dimension: TextureDimension = dimension.unwrap_or(PyTextureDimension::D2).into();
+        validate_dimension_extent(dimension, extent)?;
         validate_pixel_data(&pixel, format, extent)?;
         if let Some(byte_len) = checked_image_byte_len(extent, format)? {
             ensure_allocatable(byte_len)?;
         }
         let image = Image::new_fill(
             extent,
-            dimension.unwrap_or(PyTextureDimension::D2).into(),
+            dimension,
             &pixel,
             format,
             RenderAssetUsages::default(),
@@ -1516,15 +1553,17 @@ impl PyImage {
     #[getter]
     pub fn texture_descriptor(&self) -> PyResult<PyTextureDescriptor> {
         drop(self.as_ref()?);
-        Ok(self.storage.borrow_field_as(
+        Ok(self.storage.borrow_validated_field_as(
             |image: &Image| &image.texture_descriptor,
             |image: &mut Image| &mut image.texture_descriptor,
+            validate_texture_descriptor,
         )?)
     }
 
     #[setter]
     pub fn set_texture_descriptor(&mut self, descriptor: PyTextureDescriptor) -> PyResult<()> {
         let descriptor = descriptor.try_into()?;
+        validate_texture_descriptor(&descriptor)?;
         image_with_mut!(self, |image: &mut Image| {
             image.texture_descriptor = descriptor;
             Ok(())

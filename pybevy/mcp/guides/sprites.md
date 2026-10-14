@@ -305,10 +305,10 @@ image = images.get_mut(image_handle)
 if image is not None:
     if not isinstance(image.sampler, ImageSampler.Descriptor):
         image.sampler = ImageSampler.linear()
-    image.sampler.desc.mag_filter = ImageFilterMode.Nearest
+    image.sampler.value.mag_filter = ImageFilterMode.Nearest
 ```
 
-Assign a new `ImageSamplerDescriptor` to `image.sampler.desc` to replace the
+Assign a new `ImageSamplerDescriptor` to `image.sampler.value` to replace the
 complete descriptor while retaining the `Descriptor` variant.
 
 Then use it like any other sprite sheet:

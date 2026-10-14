@@ -19,13 +19,13 @@ pub enum PySpriteImageMode {
     #[py_bevy(tuple)]
     Scale {
         #[py_type(PySpriteScalingMode)]
-        mode: SpriteScalingMode,
+        value: SpriteScalingMode,
     },
     #[py_bevy(tuple)]
     Sliced {
         #[py_type(PyTextureSlicer)]
         #[py_try_into]
-        slicer: TextureSlicer,
+        value: TextureSlicer,
     },
     #[pyo3(constructor = (*, tile_x = true, tile_y = true, stretch_value = 1.0))]
     Tiled {
@@ -43,7 +43,7 @@ impl PySpriteImageMode {
 
     pub fn scale(&self) -> Option<PySpriteScalingMode> {
         match self {
-            Self::Scale { mode } => Some(*mode),
+            Self::Scale { value: mode } => Some(*mode),
             _ => None,
         }
     }
@@ -51,12 +51,12 @@ impl PySpriteImageMode {
     pub fn __repr__(&self) -> PyResult<String> {
         Ok(match self {
             Self::Auto() => "SpriteImageMode.Auto()".to_string(),
-            Self::Scale { mode } => {
+            Self::Scale { value: mode } => {
                 let mode: PySpriteScalingMode = *mode;
-                format!("SpriteImageMode.Scale(mode={})", mode.__repr__())
+                format!("SpriteImageMode.Scale(value={})", mode.__repr__())
             }
-            Self::Sliced { slicer } => {
-                format!("SpriteImageMode.Sliced(slicer={})", slicer.__repr__()?)
+            Self::Sliced { value: slicer } => {
+                format!("SpriteImageMode.Sliced(value={})", slicer.__repr__()?)
             }
             Self::Tiled {
                 tile_x,

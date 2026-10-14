@@ -192,10 +192,17 @@ impl PyAabb3d {
     pub fn shrink(&self, amount: &Bound<'_, PyAny>) -> PyResult<PyAabb3d> {
         let amount = extract_vec3a_from_any(amount)?;
         let bounds = self.as_ref()?;
-        if !(bounds.max - amount).cmpge(bounds.min + amount).all() {
+        let (min, max) = (bounds.min + amount, bounds.max - amount);
+        if min.is_nan() || max.is_nan() || !amount.cmple(bounds.half_size()).all() {
             return Err(PyValueError::new_err(bounding_shrink("Aabb3d")));
         }
-        Ok(PyAabb3d::from_owned(bounds.shrink(amount)))
+        // Shrinking by the half size can cross by one rounding step; meet at the centre.
+        let crossed = min.cmpgt(max);
+        let center = (min + max) * 0.5;
+        Ok(PyAabb3d::from_owned(Aabb3d {
+            min: Vec3A::select(crossed, center, min),
+            max: Vec3A::select(crossed, center, max),
+        }))
     }
 
     pub fn scale_around_center(&self, scale: &Bound<'_, PyAny>) -> PyResult<PyAabb3d> {

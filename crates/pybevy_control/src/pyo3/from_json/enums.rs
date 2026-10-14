@@ -358,11 +358,10 @@ pub(crate) fn construct_enum_variant_for_owner(
         ));
     }
 
-    if variant
+    let same_variant = variant
         .cast::<PyType>()
-        .is_ok_and(|variant_type| current.is_instance(variant_type).unwrap_or(false))
-        && current.hasattr("value").unwrap_or(false)
-    {
+        .is_ok_and(|variant_type| current.is_instance(variant_type).unwrap_or(false));
+    if same_variant && current.hasattr("value").unwrap_or(false) {
         let scalar_payload = current.getattr("value").is_ok_and(|payload| {
             payload.is_instance_of::<PyBool>()
                 || payload.is_instance_of::<PyFloat>()
@@ -383,9 +382,11 @@ pub(crate) fn construct_enum_variant_for_owner(
     }
 
     if let serde_json::Value::Object(fields) = variant_value {
+        // The same variant's instance holds the live payloads opaque fields compare against.
+        let field_source = if same_variant { current } else { &variant };
         let kwargs = PyDict::new(py);
         for (name, value) in fields {
-            let value = convert_field_value(py, &variant, name, value)
+            let value = convert_field_value(py, field_source, name, value)
                 .map_err(|error| format!("{name}: {error}"))?;
             kwargs
                 .set_item(name, value)

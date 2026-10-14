@@ -1,8 +1,23 @@
-use bevy::light::AtmosphereEnvironmentMapLight;
-use pybevy_core::{ComponentStorage, PyComponent};
+use bevy::{light::AtmosphereEnvironmentMapLight, math::UVec2};
+use pybevy_core::{ComponentStorage, PyComponent, StorageError, public_error};
 use pybevy_macros::pycomponent;
 use pybevy_math::uvec2::PyUVec2;
 use pyo3::prelude::*;
+
+const MAX_ENVIRONMENT_MAP_SIZE: u32 = 8192;
+
+// Bevy rounds each side up to a power of two, then panics on a cubemap that is not square or exceeds 8192.
+fn validate_size(size: &UVec2) -> Result<(), StorageError> {
+    let side = |value: u32| value.max(1).checked_next_power_of_two();
+    match (side(size.x), side(size.y)) {
+        (Some(width), Some(height)) if width == height && width <= MAX_ENVIRONMENT_MAP_SIZE => {
+            Ok(())
+        }
+        _ => Err(StorageError::InvalidValue(
+            public_error::atmosphere_environment_map_size(size.x, size.y),
+        )),
+    }
+}
 
 #[pycomponent(AtmosphereEnvironmentMapLight, bridge, no_reflect, view_fields = [intensity, affects_lightmapped_mesh_diffuse], domains = [intensity => [finite]])]
 #[pyclass(name = "AtmosphereEnvironmentMapLight", module = "pybevy.light", extends = PyComponent)]
@@ -39,10 +54,12 @@ impl PyAtmosphereEnvironmentMapLight {
         size: PyUVec2,
     ) -> PyResult<PyClassInitializer<Self>> {
         let intensity = Self::check_intensity(intensity)?;
+        let size: UVec2 = size.try_into()?;
+        validate_size(&size)?;
         Ok(Self::from_owned(AtmosphereEnvironmentMapLight {
             intensity,
             affects_lightmapped_mesh_diffuse,
-            size: size.try_into()?,
+            size,
         })
         .into())
     }
@@ -72,12 +89,16 @@ impl PyAtmosphereEnvironmentMapLight {
 
     #[getter]
     pub fn size(&self) -> PyResult<PyUVec2> {
-        Ok(self.storage.borrow_field_as(|e| &e.size)?)
+        Ok(self
+            .storage
+            .borrow_validated_field_as(|e| &e.size, |e| &mut e.size, validate_size)?)
     }
 
     #[setter]
     pub fn set_size(&mut self, size: PyUVec2) -> PyResult<()> {
-        self.as_mut()?.size = size.try_into()?;
+        let size: UVec2 = size.try_into()?;
+        validate_size(&size)?;
+        self.as_mut()?.size = size;
         Ok(())
     }
 }

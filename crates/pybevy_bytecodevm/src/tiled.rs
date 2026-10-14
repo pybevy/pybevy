@@ -280,6 +280,7 @@ fn stack_layout(ops: &[Op]) -> Option<(usize, usize)> {
             | Op::PushConst(_)
             | Op::PushFloatConst(_)
             | Op::PushInt(_)
+            | Op::PushBool(_)
             | Op::Random(_) => (0, 1),
             Op::StoreField(_)
             | Op::Neg

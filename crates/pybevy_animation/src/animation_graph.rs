@@ -275,7 +275,7 @@ impl PyAnimationGraph {
 )]
 #[derive(Debug, Clone, PartialEq)]
 pub enum PyAnimationNodeType {
-    Clip { handle: PyHandle },
+    Clip { value: PyHandle },
     Blend(),
     Add(),
 }
@@ -284,7 +284,7 @@ impl From<&AnimationNodeType> for PyAnimationNodeType {
     fn from(node_type: &AnimationNodeType) -> Self {
         match node_type {
             AnimationNodeType::Clip(handle) => PyAnimationNodeType::Clip {
-                handle: PyHandle::from(handle),
+                value: PyHandle::from(handle),
             },
             AnimationNodeType::Blend => PyAnimationNodeType::Blend(),
             AnimationNodeType::Add => PyAnimationNodeType::Add(),
@@ -296,8 +296,8 @@ impl From<&AnimationNodeType> for PyAnimationNodeType {
 impl PyAnimationNodeType {
     pub fn __repr__(&self) -> String {
         match self {
-            PyAnimationNodeType::Clip { handle } => {
-                format!("AnimationNodeType.Clip({})", object_repr(handle.clone()))
+            PyAnimationNodeType::Clip { value } => {
+                format!("AnimationNodeType.Clip({})", object_repr(value.clone()))
             }
             PyAnimationNodeType::Blend() => "AnimationNodeType.Blend".to_string(),
             PyAnimationNodeType::Add() => "AnimationNodeType.Add".to_string(),
@@ -376,7 +376,7 @@ impl PyAnimationGraphNode {
         value: PyRef<'_, PyAnimationNodeType>,
     ) -> PyResult<()> {
         let value = match &*value {
-            PyAnimationNodeType::Clip { handle } => AnimationNodeType::Clip(handle.try_into()?),
+            PyAnimationNodeType::Clip { value } => AnimationNodeType::Clip(value.try_into()?),
             PyAnimationNodeType::Blend() => AnimationNodeType::Blend,
             PyAnimationNodeType::Add() => AnimationNodeType::Add,
         };

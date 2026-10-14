@@ -857,6 +857,16 @@ fn find_extra_methods(
             continue;
         }
 
+        // A verified manual enum publishes its unit variants as factories.
+        if pyclass.manual_enum_verified
+            && pyclass
+                .enum_variants
+                .iter()
+                .any(|variant| variant.name == name)
+        {
+            continue;
+        }
+
         if !bevy_method_names.contains(name) && !conversions.explains(owner, name) {
             extra_methods.push(ExtraMethodCoverage {
                 pybevy_name: name.to_string(),
@@ -1555,7 +1565,7 @@ pub fn enum_variant_kinds_match(
                 && bevy_fields
                     .iter()
                     .zip(pybevy_fields)
-                    .all(|(bevy, pybevy)| types_compatible(bevy, pybevy))
+                    .all(|(bevy, pybevy)| variant_payload_types_match(bevy, pybevy))
         }
         (BevyVariantKind::Tuple(bevy_fields), EnumVariantKind::Struct(pybevy_fields))
             if named_bevy_tuple =>
@@ -1596,13 +1606,18 @@ fn variant_payload_types_match(bevy: &str, py: &str) -> bool {
     if types_compatible(bevy, py) {
         return true;
     }
-    let bevy_norm = normalize_rust_type(bevy);
-    // Adapters store the owned form of a `Cow<'static, T>` payload.
-    let bevy_norm = bevy_norm
-        .strip_prefix("Cow<")
-        .and_then(|inner| inner.strip_suffix('>'))
-        .map_or(bevy_norm.clone(), normalize_rust_type);
-    let py_norm = normalize_rust_type(py);
+    // Adapters may store the owned form of a `Cow<'static, T>` or `Box<T>` payload.
+    let owned = |t: &str| {
+        let t = normalize_rust_type(t);
+        ["Cow<", "Box<"]
+            .iter()
+            .find_map(|prefix| t.replace(' ', "").strip_prefix(prefix).map(str::to_string))
+            .and_then(|inner| inner.strip_suffix('>').map(str::to_string))
+            .map(|inner| inner.trim_start_matches("'static,").to_string())
+            .map_or(t, |inner| normalize_rust_type(&inner))
+    };
+    let bevy_norm = owned(bevy);
+    let py_norm = owned(py);
     let no_spaces = |t: &str| t.replace(' ', "");
     if no_spaces(&bevy_norm) == no_spaces(&py_norm) {
         return true;

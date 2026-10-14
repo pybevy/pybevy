@@ -184,6 +184,9 @@ pub enum RustExpr {
 
     /// Python `int` literal held exactly; it adopts the other operand's lane.
     Int(i128),
+
+    /// Python `bool` literal, an operand of logical operators and bool `==`.
+    Bool(bool),
 }
 
 impl RustExpr {
@@ -254,6 +257,7 @@ impl RustExpr {
             ) => ac == bc && ao == bo && at == bt,
             (Const(a), Const(b)) | (FloatConst(a), FloatConst(b)) => a.to_bits() == b.to_bits(),
             (Int(a), Int(b)) => a == b,
+            (Bool(a), Bool(b)) => a == b,
             _ => false,
         }
     }
@@ -309,6 +313,7 @@ impl RustExpr {
             }
             Const(value) | FloatConst(value) => value.to_bits().hash(state),
             Int(value) => value.hash(state),
+            Bool(value) => value.hash(state),
         }
     }
 
@@ -318,7 +323,33 @@ impl RustExpr {
     /// - `op`: string describing the operation ("add", "mul", "field", "const", etc.)
     /// - `args`: list of arguments (child expressions or values)
     pub fn from_py_object(py: Python, obj: &Bound<'_, PyAny>) -> PyResult<Self> {
-        Self::from_py_object_at(py, obj, 0)
+        Self::from_py_object_at(py, obj, 0).map(Self::numeric)
+    }
+
+    /// A bool literal in a numeric position is the integer it equals, as in NumPy.
+    fn numeric(self) -> Self {
+        match self {
+            RustExpr::Bool(value) => RustExpr::Int(i128::from(value)),
+            other => other,
+        }
+    }
+
+    /// Whether this node yields a bool rather than a number.
+    fn is_boolean(&self) -> bool {
+        match self {
+            RustExpr::Eq(..)
+            | RustExpr::Ne(..)
+            | RustExpr::Lt(..)
+            | RustExpr::Le(..)
+            | RustExpr::Gt(..)
+            | RustExpr::Ge(..)
+            | RustExpr::And(..)
+            | RustExpr::Or(..)
+            | RustExpr::Not(..)
+            | RustExpr::Bool(_) => true,
+            RustExpr::Field { field_type, .. } => *field_type == FieldType::Bool,
+            _ => false,
+        }
     }
 
     /// Convert one node at `depth`, rejecting a tree that would drive this walk,
@@ -342,8 +373,11 @@ impl RustExpr {
             PyTypeError::new_err("Expression object must have 'args' attribute (list)")
         })?;
 
-        let child = |arg: &Bound<'_, PyAny>| -> PyResult<Box<RustExpr>> {
+        let logical_child = |arg: &Bound<'_, PyAny>| -> PyResult<Box<RustExpr>> {
             Self::from_py_object_at(py, arg, depth + 1).map(Box::new)
+        };
+        let child = |arg: &Bound<'_, PyAny>| -> PyResult<Box<RustExpr>> {
+            Self::from_py_object_at(py, arg, depth + 1).map(|expr| Box::new(expr.numeric()))
         };
         let unary = |name: &str, build: fn(Box<RustExpr>) -> RustExpr| -> PyResult<RustExpr> {
             let [value] = expect_args(name, &args)?;
@@ -354,6 +388,22 @@ impl RustExpr {
          -> PyResult<RustExpr> {
             let [left, right] = expect_args(name, &args)?;
             Ok(build(child(&left)?, child(&right)?))
+        };
+        let logical = |name: &str,
+                       build: fn(Box<RustExpr>, Box<RustExpr>) -> RustExpr|
+         -> PyResult<RustExpr> {
+            let [left, right] = expect_args(name, &args)?;
+            Ok(build(logical_child(&left)?, logical_child(&right)?))
+        };
+        let equality = |name: &str,
+                        build: fn(Box<RustExpr>, Box<RustExpr>) -> RustExpr|
+         -> PyResult<RustExpr> {
+            let [left, right] = expect_args(name, &args)?;
+            let (left, right) = (logical_child(&left)?, logical_child(&right)?);
+            if left.is_boolean() && right.is_boolean() {
+                return Ok(build(left, right));
+            }
+            Ok(build(Box::new(left.numeric()), Box::new(right.numeric())))
         };
         let ternary = |name: &str,
                        build: fn(Box<RustExpr>, Box<RustExpr>, Box<RustExpr>) -> RustExpr|
@@ -371,14 +421,14 @@ impl RustExpr {
             "pow" => binary("Pow", RustExpr::Pow),
             "min" => binary("Min", RustExpr::Min),
             "max" => binary("Max", RustExpr::Max),
-            "eq" => binary("Eq", RustExpr::Eq),
-            "ne" => binary("Ne", RustExpr::Ne),
+            "eq" => equality("Eq", RustExpr::Eq),
+            "ne" => equality("Ne", RustExpr::Ne),
             "lt" => binary("Lt", RustExpr::Lt),
             "le" => binary("Le", RustExpr::Le),
             "gt" => binary("Gt", RustExpr::Gt),
             "ge" => binary("Ge", RustExpr::Ge),
-            "and" => binary("And", RustExpr::And),
-            "or" => binary("Or", RustExpr::Or),
+            "and" => logical("And", RustExpr::And),
+            "or" => logical("Or", RustExpr::Or),
             "mod" => binary("Mod", RustExpr::Mod),
             "neg" => unary("Neg", RustExpr::Neg),
             "sin" => unary("Sin", RustExpr::Sin),
@@ -392,7 +442,10 @@ impl RustExpr {
             "floor" => unary("Floor", RustExpr::Floor),
             "ceil" => unary("Ceil", RustExpr::Ceil),
             "round" => unary("Round", RustExpr::Round),
-            "not" => unary("Not", RustExpr::Not),
+            "not" => {
+                let [value] = expect_args("Not", &args)?;
+                Ok(RustExpr::Not(logical_child(&value)?))
+            }
             "exp" => unary("Exp", RustExpr::Exp),
             "ln" => unary("Ln", RustExpr::Ln),
             "log10" => unary("Log10", RustExpr::Log10),
@@ -400,7 +453,14 @@ impl RustExpr {
             "sign" => unary("Sign", RustExpr::Sign),
             "fract" => unary("Fract", RustExpr::Fract),
             "clamp" => ternary("Clamp", RustExpr::Clamp),
-            "where" => ternary("Where", RustExpr::Where),
+            "where" => {
+                let [condition, true_value, false_value] = expect_args("Where", &args)?;
+                Ok(RustExpr::Where(
+                    logical_child(&condition)?,
+                    child(&true_value)?,
+                    child(&false_value)?,
+                ))
+            }
             "lerp" => ternary("Lerp", RustExpr::Lerp),
 
             "random" => {
@@ -473,9 +533,12 @@ impl RustExpr {
         }
     }
 
-    /// Convert a numeric Python scalar, keeping its NumPy scalar kind: an
+    /// Convert a Python scalar, keeping its NumPy scalar kind: a bool, an
     /// integer (anything with `__index__`), held exactly, or a float.
     fn literal(obj: &Bound<'_, PyAny>) -> PyResult<Option<Self>> {
+        if let Ok(value) = obj.cast::<PyBool>() {
+            return Ok(Some(RustExpr::Bool(value.is_true())));
+        }
         if !obj.is_instance_of::<PyFloat>() {
             if let Ok(value) = obj.extract::<i128>() {
                 return Ok(Some(RustExpr::Int(value)));
@@ -749,6 +812,8 @@ impl RustExpr {
                 let push = compiler.int_literal(*value);
                 compiler.emit(push);
             }
+
+            RustExpr::Bool(value) => compiler.emit(Op::PushBool(*value)),
         }
     }
 }

@@ -58,6 +58,7 @@ impl CachedPyView {
         let without_filter_types = param.without_filters.to_vec();
         let changed_filter_types = param.changed_filters.to_vec();
         let added_filter_types = param.added_filters.to_vec();
+        let allow_filter_types = param.allow_filters.to_vec();
 
         let mut component_ids = HashMap::new();
         for component_type in component_types
@@ -66,6 +67,7 @@ impl CachedPyView {
             .chain(&without_filter_types)
             .chain(&changed_filter_types)
             .chain(&added_filter_types)
+            .chain(&allow_filter_types)
         {
             if component_ids.contains_key(component_type) {
                 continue;
@@ -112,7 +114,7 @@ impl CachedPyView {
                 (component_id, stride)
             })
             .collect();
-        let filter = ViewFilter {
+        let mut filter = ViewFilter {
             component_ids: data_ids,
             with_ids: filter_types
                 .iter()
@@ -131,6 +133,11 @@ impl CachedPyView {
                 .map(|component_type| component_ids[component_type])
                 .collect(),
         };
+        let allowed_ids: Vec<ComponentId> = allow_filter_types
+            .iter()
+            .map(|component_type| component_ids[component_type])
+            .collect();
+        filter.exclude_default_disabled(world, &allowed_ids);
         // SAFETY: IDs and live strides were resolved from this exact World;
         // allowed fields come from the registered bridge/custom layout for the
         // same types. The caller binds this same `param` to scheduler access or

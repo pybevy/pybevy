@@ -11,8 +11,9 @@ use bevy_ecs::{
     change_detection::Tick,
     component::{ComponentId, StorageType},
     entity::Entity,
+    entity_disabling::DefaultQueryFilters,
     storage::{Table, TableId, TableRow, Tables},
-    world::unsafe_world_cell::UnsafeWorldCell,
+    world::{World, unsafe_world_cell::UnsafeWorldCell},
 };
 #[cfg(feature = "parallel")]
 use bevy_tasks::ComputeTaskPool;
@@ -78,6 +79,27 @@ pub struct ViewFilter {
     pub changed_ids: Vec<ComponentId>,
     /// Added-filter component IDs (must be present; per-entity tick check).
     pub added_ids: Vec<ComponentId>,
+}
+
+impl ViewFilter {
+    /// Exclude the World's disabling components that this View does not name,
+    /// as Bevy's `DefaultQueryFilters` does for every query.
+    pub fn exclude_default_disabled(&mut self, world: &World, allowed_ids: &[ComponentId]) {
+        let Some(filters) = world.get_resource::<DefaultQueryFilters>() else {
+            return;
+        };
+        for id in filters.disabling_ids() {
+            let named = self.component_ids.contains(&id)
+                || self.with_ids.contains(&id)
+                || self.without_ids.contains(&id)
+                || self.changed_ids.contains(&id)
+                || self.added_ids.contains(&id)
+                || allowed_ids.contains(&id);
+            if !named {
+                self.without_ids.push(id);
+            }
+        }
+    }
 }
 
 /// Error type for view engine operations.
@@ -964,7 +986,9 @@ mod tests {
         mem::size_of,
     };
 
-    use bevy_ecs::{component::ComponentId, prelude::Component, world::World};
+    use bevy_ecs::{
+        component::ComponentId, entity_disabling::Disabled, prelude::Component, world::World,
+    };
     #[cfg(feature = "parallel")]
     use bevy_tasks::TaskPoolBuilder;
 
@@ -2034,6 +2058,37 @@ mod tests {
             changed_ids: Vec::new(),
             added_ids: Vec::new(),
         }
+    }
+
+    fn selected_rows(world: &World, filter: &ViewFilter) -> usize {
+        matching_table_row_ranges(world, filter)
+            .iter()
+            .map(|range| range.entity_count)
+            .sum()
+    }
+
+    #[test]
+    fn default_disabled_filter_applies_unless_the_view_names_disabled() {
+        let mut world = World::new();
+        world.spawn(RowA(0.0));
+        world.spawn((RowA(1.0), Disabled));
+        let disabled_id = world.register_component::<Disabled>();
+
+        let mut filter = row_filter(&mut world, None);
+        assert_eq!(selected_rows(&world, &filter), 2);
+        filter.exclude_default_disabled(&world, &[]);
+        assert_eq!(filter.without_ids, vec![disabled_id]);
+        assert_eq!(selected_rows(&world, &filter), 1);
+
+        let mut allowed = row_filter(&mut world, None);
+        allowed.exclude_default_disabled(&world, &[disabled_id]);
+        assert_eq!(selected_rows(&world, &allowed), 2);
+
+        let mut with_disabled = row_filter(&mut world, None);
+        with_disabled.with_ids.push(disabled_id);
+        with_disabled.exclude_default_disabled(&world, &[]);
+        assert!(with_disabled.without_ids.is_empty());
+        assert_eq!(selected_rows(&world, &with_disabled), 1);
     }
 
     #[test]

@@ -13,13 +13,13 @@ use pyo3::prelude::*;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyGltfAssetLabel {
     Scene {
-        index: usize,
+        value: usize,
     },
     Node {
-        index: usize,
+        value: usize,
     },
     Mesh {
-        index: usize,
+        value: usize,
     },
     #[pyo3(constructor = (*, mesh, primitive))]
     Primitive {
@@ -27,7 +27,7 @@ pub enum PyGltfAssetLabel {
         primitive: usize,
     },
     Texture {
-        index: usize,
+        value: usize,
     },
     #[pyo3(constructor = (*, index, is_scale_inverted))]
     Material {
@@ -36,13 +36,13 @@ pub enum PyGltfAssetLabel {
     },
     DefaultMaterial(),
     Animation {
-        index: usize,
+        value: usize,
     },
     Skin {
-        index: usize,
+        value: usize,
     },
     InverseBindMatrices {
-        index: usize,
+        value: usize,
     },
 }
 
@@ -54,13 +54,13 @@ impl PyGltfAssetLabel {
 
     pub fn __str__(&self) -> String {
         match self {
-            PyGltfAssetLabel::Scene { index } => format!("Scene{index}"),
-            PyGltfAssetLabel::Node { index } => format!("Node{index}"),
-            PyGltfAssetLabel::Mesh { index } => format!("Mesh{index}"),
+            PyGltfAssetLabel::Scene { value: index } => format!("Scene{index}"),
+            PyGltfAssetLabel::Node { value: index } => format!("Node{index}"),
+            PyGltfAssetLabel::Mesh { value: index } => format!("Mesh{index}"),
             PyGltfAssetLabel::Primitive { mesh, primitive } => {
                 format!("Mesh{mesh}/Primitive{primitive}")
             }
-            PyGltfAssetLabel::Texture { index } => format!("Texture{index}"),
+            PyGltfAssetLabel::Texture { value: index } => format!("Texture{index}"),
             PyGltfAssetLabel::Material {
                 index,
                 is_scale_inverted,
@@ -72,9 +72,9 @@ impl PyGltfAssetLabel {
                 }
             }
             PyGltfAssetLabel::DefaultMaterial() => "DefaultMaterial".to_string(),
-            PyGltfAssetLabel::Animation { index } => format!("Animation{index}"),
-            PyGltfAssetLabel::Skin { index } => format!("Skin{index}"),
-            PyGltfAssetLabel::InverseBindMatrices { index } => {
+            PyGltfAssetLabel::Animation { value: index } => format!("Animation{index}"),
+            PyGltfAssetLabel::Skin { value: index } => format!("Skin{index}"),
+            PyGltfAssetLabel::InverseBindMatrices { value: index } => {
                 format!("Skin{index}/InverseBindMatrices")
             }
         }

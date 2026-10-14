@@ -4,9 +4,9 @@ use bevy::{
     camera::{Camera, RenderTarget},
     ecs::system::{Query, Res},
     image::Image,
-    log::error,
     render::render_resource::{TextureFormat, TextureSampleType},
 };
+use tracing::error;
 
 /// Whether Bevy's camera pipelines can render into `format`: float-sampled
 /// colour formats. Integer, depth, stencil and shared-exponent targets make

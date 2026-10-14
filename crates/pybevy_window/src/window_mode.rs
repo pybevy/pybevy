@@ -18,7 +18,7 @@ pub enum PyWindowMode {
     #[py_bevy(tuple)]
     BorderlessFullscreen {
         #[py_type(PyMonitorSelection)]
-        monitor: MonitorSelection,
+        value: MonitorSelection,
     },
     #[py_bevy(tuple)]
     Fullscreen {
@@ -41,7 +41,7 @@ impl PyWindowMode {
     pub fn __repr__(&self) -> PyResult<String> {
         Ok(match self {
             PyWindowMode::Windowed() => "WindowMode.Windowed()".to_string(),
-            PyWindowMode::BorderlessFullscreen { monitor } => {
+            PyWindowMode::BorderlessFullscreen { value: monitor } => {
                 format!("WindowMode.BorderlessFullscreen({})", monitor.__repr__())
             }
             PyWindowMode::Fullscreen {

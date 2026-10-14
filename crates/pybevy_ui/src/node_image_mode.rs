@@ -23,7 +23,7 @@ pub enum PyNodeImageMode {
     Sliced {
         #[py_type(PyTextureSlicer)]
         #[py_try_into]
-        slicer: TextureSlicer,
+        value: TextureSlicer,
     },
     #[pyo3(
         name = "Tiled",

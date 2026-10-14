@@ -68,8 +68,10 @@ pub(super) fn extract(file: &syn::File, classes: &mut [PyClassDef]) {
                         && !method.sig.ident.to_string().starts_with("__")
                     {
                         witnessed = true;
-                        let name = method.sig.ident.to_string();
-                        if let Some(kind) = construction(method, native, &name) {
+                        let name = parse_variant_pyo3_name(&method.attrs)
+                            .unwrap_or_else(|| method.sig.ident.to_string());
+                        if let Some(kind) = construction(method, native, name.trim_end_matches('_'))
+                        {
                             variants.push(EnumVariantDef {
                                 name,
                                 kind,

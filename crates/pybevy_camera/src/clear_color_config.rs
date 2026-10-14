@@ -17,7 +17,7 @@ pub enum PyClearColorConfig {
     #[py_bevy(tuple)]
     Custom {
         #[py_type(OwnedColorValue)]
-        color: Color,
+        value: Color,
     },
     #[pyo3(name = "None_")]
     None(),
@@ -28,7 +28,7 @@ impl PyClearColorConfig {
     fn __repr__(&self) -> PyResult<String> {
         Ok(match self {
             PyClearColorConfig::Default() => "ClearColorConfig.Default()".to_string(),
-            PyClearColorConfig::Custom { color } => {
+            PyClearColorConfig::Custom { value: color } => {
                 let color: PyColor = color.0.into();
                 format!("ClearColorConfig.Custom({})", color.__repr__()?)
             }

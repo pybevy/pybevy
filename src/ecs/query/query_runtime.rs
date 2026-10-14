@@ -114,7 +114,7 @@ fn resolve_or_branch(
             custom_component_ids,
             py,
         )),
-        QueryFilter::Or(_) => {
+        QueryFilter::Or(_) | QueryFilter::Allow(_) => {
             unreachable!("Or construction accepts only simple query filters")
         }
     }
@@ -198,6 +198,7 @@ impl CachedQuery {
         // Collect and register all component IDs (tracking optional and mutable status)
         let mut component_ids = Vec::new();
         let mut anyof_groups = Vec::new();
+        let mut archetypal_ids = Vec::new();
         let mut asset_component_ids = HashMap::new();
         if param
             .data
@@ -250,7 +251,15 @@ impl CachedQuery {
                         mutable: *mutable,
                     });
                 }
-                QueryData::Entity | QueryData::Has { .. } => {}
+                QueryData::Has { ty } => {
+                    archetypal_ids.push(register_component_id(
+                        world,
+                        ty,
+                        &custom_component_ids,
+                        py,
+                    ));
+                }
+                QueryData::Entity => {}
             }
         }
         let logical_type_map_component_id = param
@@ -316,6 +325,14 @@ impl CachedQuery {
                     );
                     added_filter_ids.push(id);
                 }
+                QueryFilter::Allow(allow) => {
+                    archetypal_ids.push(register_component_id(
+                        world,
+                        &allow.component_type,
+                        &custom_component_ids,
+                        py,
+                    ));
+                }
                 QueryFilter::Or(or) => {
                     or_filter_groups.push(
                         or.values
@@ -340,6 +357,7 @@ impl CachedQuery {
             added_filters: added_filter_ids,
             anyof_groups,
             or_filters: or_filter_groups,
+            archetypal: archetypal_ids,
         };
         let core = CachedQueryCore::build_auto(world, &spec);
 
@@ -579,6 +597,12 @@ impl PyQueryIter {
                     py,
                 ),
                 QueryFilter::Added(filter) => Self::register_ad_hoc_custom_type(
+                    world,
+                    &mut custom_component_ids,
+                    &filter.component_type,
+                    py,
+                ),
+                QueryFilter::Allow(filter) => Self::register_ad_hoc_custom_type(
                     world,
                     &mut custom_component_ids,
                     &filter.component_type,

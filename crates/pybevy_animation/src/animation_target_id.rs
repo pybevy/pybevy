@@ -12,8 +12,8 @@ pub struct PyAnimationTargetId(pub(crate) AnimationTargetId);
 #[pymethods]
 impl PyAnimationTargetId {
     #[new]
-    pub fn new(py: Python<'_>, uuid: Uuid) -> PyResult<Py<Self>> {
-        Py::new(py, Self::from_owned(AnimationTargetId(uuid)))
+    pub fn new(py: Python<'_>, value: Uuid) -> PyResult<Py<Self>> {
+        Py::new(py, Self::from_owned(AnimationTargetId(value)))
     }
 
     #[staticmethod]

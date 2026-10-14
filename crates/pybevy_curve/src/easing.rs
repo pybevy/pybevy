@@ -70,7 +70,7 @@ pub enum PyEaseFunction {
     },
     #[py_bevy(tuple)]
     Elastic {
-        omega: f32,
+        value: f32,
     },
 }
 

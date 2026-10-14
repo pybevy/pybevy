@@ -345,6 +345,8 @@ The View API supports **per-entity conditionals** via `.where()`, making it suit
 - Use `&`, `|`, `~` and `.where()`; Python truth testing and chained comparisons
   raise `ValueError`.
 - `<`, `>`, `<=`, `>=`, `==`, `!=` - comparisons that produce boolean columns
+- `True` and `False` combine with boolean columns on either side of `&` and `|`,
+  and compare with them through `==` and `!=`; in arithmetic they count as 1 and 0
 
 **Example: 5,000 bouncing balls (6.7x faster than Query)**
 

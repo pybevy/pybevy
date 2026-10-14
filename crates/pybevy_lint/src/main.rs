@@ -2360,11 +2360,17 @@ fn print_coverage_text_with_usage(
 
             // Status symbols:
             // ✓ - fully implemented (has methods or no methods expected)
-            // ◐ - partial (type exists but 0 methods implemented when Bevy has methods)
+            // ◐ - partial (no methods implemented when Bevy has methods, or the
+            //     enum's variants are missing or differ from Bevy)
             // ✗ - missing (not implemented at all)
+            let enum_differs = type_cov.enum_representation_matches == Some(false)
+                || !type_cov.missing_variants().is_empty()
+                || !type_cov.mismatched_variants().is_empty();
             let status = if type_cov.is_implemented {
-                if type_cov.bevy_method_count > 0 && type_cov.matched_method_count == 0 {
-                    "◐".yellow() // Type exists but no methods
+                if (type_cov.bevy_method_count > 0 && type_cov.matched_method_count == 0)
+                    || enum_differs
+                {
+                    "◐".yellow()
                 } else {
                     "✓".green()
                 }

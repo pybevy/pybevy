@@ -1514,10 +1514,10 @@ class ClearColorConfig:
 
     class Custom(ClearColorConfig):
         """Use a custom clear color."""
-        __match_args__: ClassVar[tuple[Literal["color"]]] = ("color",)
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
         @property
-        def color(self) -> Color: ...
-        def __init__(self, color: Color) -> None: ...
+        def value(self) -> Color: ...
+        def __init__(self, value: Color) -> None: ...
 
     class None_(ClearColorConfig):
         """Don't clear the screen (useful for layered rendering)."""
@@ -1784,6 +1784,12 @@ class VisibilityClass(Component):
 
 
 class ImageRenderTarget:
+    """An image a camera renders into.
+
+    Args:
+        handle: The target image.
+        scale_factor: Physical pixels per logical pixel, in [1/64, 64].
+    """
     def __init__(self, *, handle: Handle[ImageAsset], scale_factor: float = 1.0) -> None: ...
     @property
     def handle(self) -> Handle[ImageAsset]: ...

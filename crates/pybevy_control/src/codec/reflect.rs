@@ -685,6 +685,10 @@ pub fn reflect_to_json(value: &dyn PartialReflect) -> Value {
     if let Some(duration) = value.try_downcast_ref::<Duration>() {
         return float_to_json(duration.as_secs_f64());
     }
+    // Entity reflects as an opaque value; report the id writes accept.
+    if let Some(entity) = value.try_downcast_ref::<Entity>() {
+        return serde_json::json!(entity.to_bits());
+    }
     if let Some(range) = value.try_downcast_ref::<Range<f32>>() {
         let mut fields = Map::new();
         fields.insert("start".to_string(), float_to_json(f64::from(range.start)));
@@ -3038,6 +3042,33 @@ mod tests {
     #[derive(Reflect)]
     enum PairVariantEnum {
         Pair(i32, i32),
+    }
+
+    #[derive(Reflect)]
+    enum NestedRef {
+        Primary,
+        Entity(Entity),
+    }
+
+    #[derive(Reflect)]
+    enum NestedTarget {
+        Window(NestedRef),
+    }
+
+    #[test]
+    fn reflected_nested_enum_reports_its_entity_payload() {
+        let entity = Entity::from_raw_u32(7).unwrap();
+        assert_eq!(
+            reflect_to_json(&NestedTarget::Window(NestedRef::Entity(entity))),
+            serde_json::json!({
+                "variant": "Window",
+                "value": {"variant": "Entity", "value": entity.to_bits()},
+            })
+        );
+        assert_eq!(
+            reflect_to_json(&NestedTarget::Window(NestedRef::Primary)),
+            serde_json::json!({"variant": "Window", "value": {"variant": "Primary"}})
+        );
     }
 
     #[test]

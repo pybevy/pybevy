@@ -248,12 +248,12 @@ impl PyImageSamplerDescriptorVariant {
 
     #[classattr]
     fn __match_args__() -> (&'static str,) {
-        ("desc",)
+        ("value",)
     }
 
     #[new]
-    pub fn new(desc: &PyImageSamplerDescriptor) -> PyResult<PyClassInitializer<Self>> {
-        let desc = ImageSamplerDescriptor::try_from(desc)?;
+    pub fn new(value: &PyImageSamplerDescriptor) -> PyResult<PyClassInitializer<Self>> {
+        let desc = ImageSamplerDescriptor::try_from(value)?;
         Ok(
             PyClassInitializer::from(PyImageSampler::from(ImageSampler::Descriptor(desc)))
                 .add_subclass(Self),
@@ -261,7 +261,7 @@ impl PyImageSamplerDescriptorVariant {
     }
 
     #[getter]
-    pub fn desc(slf: PyRef<'_, Self>) -> PyResult<PyImageSamplerDescriptor> {
+    pub fn value(slf: PyRef<'_, Self>) -> PyResult<PyImageSamplerDescriptor> {
         let base = slf.into_super();
         Ok(base.storage.borrow_resolved_variant_as(
             "ImageSampler.Descriptor",
@@ -277,7 +277,7 @@ impl PyImageSamplerDescriptorVariant {
     }
 
     #[setter]
-    pub fn set_desc(slf: PyRefMut<'_, Self>, value: &PyImageSamplerDescriptor) -> PyResult<()> {
+    pub fn set_value(slf: PyRefMut<'_, Self>, value: &PyImageSamplerDescriptor) -> PyResult<()> {
         let value = ImageSamplerDescriptor::try_from(value)?;
         let mut base = slf.into_super();
         drop(base.as_ref()?);

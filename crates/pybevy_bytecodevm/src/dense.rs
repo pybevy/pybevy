@@ -270,6 +270,7 @@ fn stack_effect(op: &Op) -> Result<(&'static [StackKind], StackKind), &'static s
             unreachable!("handled before stack_effect")
         }
         Op::PushInt(_) => return Err("PushInt"),
+        Op::PushBool(_) => return Err("PushBool"),
         Op::PushField(_) => return Err("PushField"),
     })
 }

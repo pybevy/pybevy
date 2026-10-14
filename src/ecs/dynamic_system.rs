@@ -366,6 +366,7 @@ pub(crate) fn lower_param_type(ty: &SystemParamType, py: Python<'_>) -> ParamSpe
                     QueryFilter::Added(added) => {
                         spec.added.push(filter_spec(&added.component_type, py));
                     }
+                    QueryFilter::Allow(allow) => spec.resolve_only.push(allow.component_type),
                     QueryFilter::Or(or) => {
                         for branch in &or.values {
                             match branch {
@@ -389,7 +390,7 @@ pub(crate) fn lower_param_type(ty: &SystemParamType, py: Python<'_>) -> ParamSpe
                                         py,
                                     ));
                                 }
-                                QueryFilter::Or(_) => {
+                                QueryFilter::Or(_) | QueryFilter::Allow(_) => {
                                     unreachable!(
                                         "Or construction accepts only simple query filters"
                                     );
@@ -420,6 +421,8 @@ pub(crate) fn lower_param_type(ty: &SystemParamType, py: Python<'_>) -> ParamSpe
             for comp_type in &view_param.added_filters {
                 spec.added.push(filter_spec(comp_type, py));
             }
+            spec.resolve_only
+                .extend(view_param.allow_filters.iter().copied());
             ParamSpec::View(spec)
         }
         SystemParamType::Resource {
@@ -1352,6 +1355,7 @@ pub(crate) unsafe fn execute_prepared_observer(
                         &param.without_filters,
                         &param.changed_filters,
                         &param.added_filters,
+                        &param.allow_filters,
                     ]
                     .into_iter()
                     .flatten()

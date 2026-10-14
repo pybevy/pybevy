@@ -1,8 +1,9 @@
 use bevy::render::view::Msaa;
 use pybevy_core::PyComponent;
-use pybevy_macros::pywrap;
+use pybevy_macros::{pyenum, pywrap};
 use pyo3::{exceptions::PyValueError, prelude::*};
 
+#[pyenum(Msaa, manual)]
 #[pywrap(Msaa, bridge, copy)]
 #[pyclass(name = "Msaa", module = "pybevy.render", extends = PyComponent, frozen, eq, hash, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

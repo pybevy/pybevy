@@ -633,6 +633,14 @@ impl PyViewColumn {
         self.get_array()
     }
 
+    /// Numba's typing fallback; registers the ViewColumn extension on first use.
+    #[getter(_numba_type_)]
+    fn numba_type<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
+        let py = slf.py();
+        py.import("pybevy.ecs.numba_ext")?
+            .call_method1("typeof_view_column", (slf, py.None()))
+    }
+
     /// Check if this view is still valid.
     ///
     /// Returns False if the system that created this view has finished execution.

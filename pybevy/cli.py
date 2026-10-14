@@ -751,8 +751,8 @@ def _run_script(
             _echo("App does not have _state attribute. Hot-reload not available.")
             exit_status = run_app_with_error_handling(app, None)
             if isinstance(exit_status, AppExit.Error):
-                _echo(f"Application exited with code {exit_status.code}")
-                sys.exit(exit_status.code)
+                _echo(f"Application exited with code {exit_status.value}")
+                sys.exit(exit_status.value)
             return
 
         stop_event = threading.Event()
@@ -778,8 +778,8 @@ def _run_script(
                 else:
                     _echo("Watcher thread stopped.")
         if isinstance(exit_status, AppExit.Error):
-            _echo(f"Application exited with code {exit_status.code}")
-            sys.exit(exit_status.code)
+            _echo(f"Application exited with code {exit_status.value}")
+            sys.exit(exit_status.value)
 
     else:
         _echo(f"Loading and running {script_path}...")
@@ -793,8 +793,8 @@ def _run_script(
         gc.collect()
 
         if isinstance(exit_status, AppExit.Error):
-            _echo(f"Application exited with code {exit_status.code}")
-            sys.exit(exit_status.code)
+            _echo(f"Application exited with code {exit_status.value}")
+            sys.exit(exit_status.value)
         _echo("Application exited normally")
 
 

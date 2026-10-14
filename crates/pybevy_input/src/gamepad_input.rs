@@ -18,12 +18,12 @@ pub enum PyGamepadInput {
     #[py_bevy(tuple)]
     Axis {
         #[py_type(PyGamepadAxis)]
-        axis: GamepadAxis,
+        value: GamepadAxis,
     },
     #[py_bevy(tuple)]
     Button {
         #[py_type(PyGamepadButton)]
-        button: GamepadButton,
+        value: GamepadButton,
     },
 }
 
@@ -31,8 +31,10 @@ pub enum PyGamepadInput {
 impl PyGamepadInput {
     fn __repr__(&self) -> String {
         match self {
-            PyGamepadInput::Axis { axis } => format!("GamepadInput.Axis({})", axis.__repr__()),
-            PyGamepadInput::Button { button } => {
+            PyGamepadInput::Axis { value: axis } => {
+                format!("GamepadInput.Axis({})", axis.__repr__())
+            }
+            PyGamepadInput::Button { value: button } => {
                 format!("GamepadInput.Button({})", button.__repr__())
             }
         }

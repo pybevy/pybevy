@@ -84,6 +84,7 @@ from .decorators import (
 from .ecs import (
     Add,
     Added,
+    Allow,
     AnyOf,
     Changed,
     ChildOf,
@@ -521,6 +522,7 @@ __all__ = [
     "resource",
     # ECS
     "Added",
+    "Allow",
     "AnyOf",
     "Changed",
     "ChildOf",

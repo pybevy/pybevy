@@ -515,7 +515,10 @@ class Image(Asset):
 
         Nested mutations require get_mut access and update the asset. Owned images
         return a read-only snapshot; copy.copy() the descriptor, edit it, and
-        assign it back to texture_descriptor.
+        assign it back to texture_descriptor. Multi-planar formats (NV12, P010),
+        an empty usage, and a D1 dimension on an image taller than one texel or
+        deeper than one layer raise ValueError, through the setter and through
+        nested writes.
         """
 
     @texture_descriptor.setter
@@ -1470,12 +1473,12 @@ class ImageSampler:
 
     class Descriptor(ImageSampler):
         """Custom sampler descriptor variant."""
-        __match_args__: ClassVar[tuple[Literal["desc"]]] = ("desc",)
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
         @property
-        def desc(self) -> ImageSamplerDescriptor: ...
-        @desc.setter
-        def desc(self, value: ImageSamplerDescriptor) -> None: ...
-        def __init__(self, desc: ImageSamplerDescriptor) -> None: ...
+        def value(self) -> ImageSamplerDescriptor: ...
+        @value.setter
+        def value(self, value: ImageSamplerDescriptor) -> None: ...
+        def __init__(self, value: ImageSamplerDescriptor) -> None: ...
 
     @staticmethod
     def linear() -> ImageSampler.Descriptor:

@@ -1,7 +1,12 @@
 use bevy::ui::GridTrackRepetition;
-use pybevy_core::public_error;
+use pybevy_core::{
+    domain::{IntegerInput, check_for},
+    public_error,
+};
 use pybevy_macros::pyenum;
 use pyo3::{exceptions::PyTypeError, prelude::*};
+
+use crate::repeated_grid_track::PyRepeatedGridTrack;
 
 #[pyenum(GridTrackRepetition, empty_tuple)]
 #[pyclass(
@@ -34,10 +39,15 @@ pub fn extract_grid_track_repetition_from_any(
     if let Ok(repetition) = obj.extract::<PyGridTrackRepetition>() {
         return Ok(repetition.into());
     }
-    if let Ok(count) = obj.extract::<u16>() {
-        return Ok(GridTrackRepetition::Count(count));
+    if let Ok(count) = obj.extract::<IntegerInput<u16>>() {
+        return Ok(GridTrackRepetition::Count(checked_repetition_count(count)?));
     }
     Err(PyTypeError::new_err(
         public_error::ui_grid_track_repetition_type(obj.get_type().name()?),
     ))
+}
+
+/// A repetition count, checked against `u16` so an out-of-range int is a `ValueError`.
+pub fn checked_repetition_count(count: IntegerInput<u16>) -> PyResult<u16> {
+    Ok(check_for::<PyRepeatedGridTrack, _>("repetition", count, &[])?.stored())
 }

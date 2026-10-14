@@ -97,6 +97,17 @@ fn image_upload_problem(image: &Image, limits: &Limits) -> Option<String> {
             size.width, size.height, size.depth_or_array_layers
         ));
     }
+    if descriptor.usage.is_empty() {
+        return Some("its texture usage is empty".to_string());
+    }
+    if descriptor.dimension == TextureDimension::D1
+        && (size.height != 1 || size.depth_or_array_layers != 1)
+    {
+        return Some(format!(
+            "it is 1D but {}x{}x{}, not one texel tall and one layer deep",
+            size.width, size.height, size.depth_or_array_layers
+        ));
+    }
     if let Some(problem) = dimension_problem(descriptor.dimension, size, limits) {
         return Some(problem);
     }

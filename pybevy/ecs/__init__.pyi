@@ -1592,7 +1592,9 @@ class ChildrenIterator(Iterator[Entity]):
 class Disabled(Component):
     """Marker component that disables an entity.
 
-    Disabled entities are excluded from queries by default.
+    Disabled entities are excluded from every Query and View that does not
+    name ``Disabled`` in its data or filters. ``Allow[Disabled]`` and
+    ``Has[Disabled]`` include them.
     """
 
     def __init__(self) -> None: ...
@@ -1834,6 +1836,21 @@ class Added(Generic[T]):
                 player.health = player.max_health
     """
 
+class Allow(Generic[T]):
+    """Filter: Also match entities carrying the disabling component T.
+
+    Entities with a disabling component such as ``Disabled`` are excluded from
+    every Query and View that does not name it. ``Allow[Disabled]`` lifts that
+    exclusion without requiring the component, so the query matches enabled and
+    disabled entities alike. ``Has[Disabled]`` lifts it as well and reports
+    which entities carry it.
+
+    Example:
+        @system
+        def count_all_enemies(query: Query[Entity, tuple[With[Enemy], Allow[Disabled]]]) -> None:
+            print(len(query))
+    """
+
 class Has(Generic[T]):
     """Query data: Check if entities have a component without fetching it.
 
@@ -1841,6 +1858,8 @@ class Has(Generic[T]):
     for a component but don't need to access its data.
 
     Note: Unlike With/Without, Has doesn't filter - it adds a boolean to query results.
+    ``Has[Disabled]`` therefore also matches disabled entities, which every
+    other query skips.
 
     Example:
         # Check if entity has a component

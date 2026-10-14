@@ -24,7 +24,9 @@ impl PyTextureDescriptor {
 
     #[setter]
     pub fn set_mip_level_count(&mut self, mip_level_count: IntegerInput<u32>) -> PyResult<()> {
-        self.as_mut()?.mip_level_count = Self::check_mip_level_count(mip_level_count)?.stored();
+        let mip_level_count = Self::check_mip_level_count(mip_level_count)?.stored();
+        self.storage
+            .update(|descriptor| descriptor.mip_level_count = mip_level_count)?;
         Ok(())
     }
 
@@ -35,7 +37,9 @@ impl PyTextureDescriptor {
 
     #[setter]
     pub fn set_dimension(&mut self, dimension: PyTextureDimension) -> PyResult<()> {
-        self.as_mut()?.dimension = dimension.into();
+        let dimension = dimension.into();
+        self.storage
+            .update(|descriptor| descriptor.dimension = dimension)?;
         Ok(())
     }
 
@@ -46,7 +50,9 @@ impl PyTextureDescriptor {
 
     #[setter]
     pub fn set_format(&mut self, format: PyTextureFormat) -> PyResult<()> {
-        self.as_mut()?.format = format.into();
+        let format = format.into();
+        self.storage
+            .update(|descriptor| descriptor.format = format)?;
         Ok(())
     }
 
@@ -61,7 +67,7 @@ impl PyTextureDescriptor {
     #[setter]
     pub fn set_usage(&mut self, usage: PyTextureUsages) -> PyResult<()> {
         let usage = usage.try_into()?;
-        self.as_mut()?.usage = usage;
+        self.storage.update(|descriptor| descriptor.usage = usage)?;
         Ok(())
     }
 

@@ -1,8 +1,9 @@
 use bevy::render::view::DebandDither;
 use pybevy_core::PyComponent;
-use pybevy_macros::pywrap;
+use pybevy_macros::{pyenum, pywrap};
 use pyo3::prelude::*;
 
+#[pyenum(DebandDither, manual)]
 #[pywrap(DebandDither, bridge, copy)]
 #[pyclass(name = "DebandDither", module = "pybevy.render", extends = PyComponent, frozen, eq, hash, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
