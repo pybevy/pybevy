@@ -1332,22 +1332,43 @@ pub(crate) unsafe fn execute_prepared_observer(
     let mut args_buffer: Vec<Py<PyAny>> = Vec::with_capacity(params.len());
     let mut message_reader_idx = 0usize;
 
-    // Build the executor's ptr-keyed custom_component_ids cache from the neutral
-    // (usize-keyed) registry, recovering each `*const PyTypeObject` from its
-    // stored `type_ptr as usize` identity.
-    let custom_component_ids = {
-        let registry = world.get_resource::<ComponentRegistry>();
-        if let Some(reg) = registry {
-            Arc::new(
-                reg.ids_by_type()
-                    .iter()
-                    .map(|(&type_id, &id)| (type_id as *const PyTypeObject, id))
-                    .collect::<HashMap<*const PyTypeObject, ComponentId>>(),
-            )
-        } else {
-            Arc::new(HashMap::new())
+    // Resolve each live query class through the guarded registry, not retired aliases.
+    let mut custom_component_ids = HashMap::new();
+    for param in param_leaves(params) {
+        let component_types: Vec<PyComponentType> = match &param.ty {
+            SystemParamType::Query { param } => param
+                .data
+                .iter()
+                .flat_map(QueryData::component_types)
+                .chain(param.filters.iter().flat_map(QueryFilter::component_types))
+                .collect(),
+            SystemParamType::View { param } => param
+                .parameters
+                .iter()
+                .map(|ViewParamType::Component { comp_type, .. }| *comp_type)
+                .chain(
+                    [
+                        &param.with_filters,
+                        &param.without_filters,
+                        &param.changed_filters,
+                        &param.added_filters,
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .copied(),
+                )
+                .collect(),
+            _ => continue,
+        };
+        for component_type in component_types {
+            if let PyComponentType::Custom(type_ptr) = component_type {
+                custom_component_ids
+                    .entry(type_ptr)
+                    .or_insert_with(|| component_type.register_simple(world, py));
+            }
         }
-    };
+    }
+    let custom_component_ids = Arc::new(custom_component_ids);
 
     for param in params {
         if let SystemParamType::Query { param: query_param } = &param.ty {

@@ -39,6 +39,10 @@ reason = "its &self spawn methods hold the receiver borrow across component conv
 path = "ecs.ResMut"
 reason = "attribute getters and setters call arbitrary Python that can re-enter the same proxy"
 
+[[validation.shared_borrow_types]]
+path = "ecs.CustomComponent"
+reason = "attribute getters and setters call arbitrary Python that can re-enter the same proxy"
+
 [[validation.specialized_receivers]]
 path = "time.Time[Virtual]"
 rust_type = "PyTimeVirtual"

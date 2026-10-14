@@ -208,6 +208,8 @@ def setup(
 
 **Limitations:**
 - `batch()` requires wrapper storage - custom `@component` classes with `storage="python"` do not support it
+- Resolved string annotations and aliases keep wrapper batch support. Layouts
+  over 1,024 bytes raise `TypeError`; they do not silently select Python storage.
 - Python-storage query rows are O(1) shallow proxies rather than copies of the
   nested object graph. They declare exclusive scheduler access, so prefer
   wrapper storage when read parallelism or View execution matters.

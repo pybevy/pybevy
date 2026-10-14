@@ -1,7 +1,15 @@
-use std::{alloc::Layout, any::TypeId, collections::HashMap, sync::Arc};
+use std::{
+    alloc::Layout,
+    any::TypeId,
+    collections::HashMap,
+    hash::{Hash, Hasher},
+    mem::discriminant,
+    sync::Arc,
+};
 
 use bevy::ecs::{
     component::{ComponentCloneBehavior, ComponentDescriptor, ComponentId, StorageType},
+    entity::Entity,
     ptr::OwningPtr,
     world::World,
 };
@@ -12,6 +20,7 @@ use bevy::ecs::{
 /// `type_ptr as usize`; call `.get(type_ptr as usize)` to look a component up.
 pub use pybevy_core::custom_component::CustomComponentRegistry as ComponentRegistry;
 use pybevy_core::{
+    AccessMode, CustomComponentEntry, CustomComponentInfo, FilteredEntityAccess,
     custom_component::{
         PythonObjectDescriptor, RegisterOutcome, custom_component_identity_clash,
         register_custom_component_guarded,
@@ -24,8 +33,8 @@ use pybevy_core::{
 };
 use pyo3::{
     PyTraverseError, PyTypeInfo, PyVisit,
-    exceptions::{PyTypeError, PyValueError},
-    ffi::PyTypeObject,
+    exceptions::{PyRuntimeError, PyTypeError, PyValueError},
+    ffi::{PyObject as FfiPyObject, PyTypeObject},
     intern,
     prelude::*,
     types::PyType,
@@ -33,11 +42,15 @@ use pyo3::{
 use smallvec::SmallVec;
 
 use crate::ecs::{
+    commands::PyCommands,
     component::PyComponent,
     component_layout::{ComponentLayout, ComponentStorageType, ComponentStorageTypeExt},
-    helpers::type_utils::get_python_type_name,
+    deferred_drop::defer_py_drop,
+    helpers::{type_utils::get_python_type_name, validity_guard::ValidityFlagWithMode},
+    query::query_runtime::PyQueryIter,
     resource::{PyRes, PyResMut, PyResource},
     resource_type::register_custom_resource,
+    state::{PyDespawnOnEnter, PyDespawnOnExit},
     world_gc::WorldGcState,
 };
 
@@ -82,7 +95,7 @@ pub(crate) fn retain_custom_classes(
             }
             PyComponentType::Dynamic(_) | PyComponentType::Resource(_) => continue,
         };
-        let object_ptr = type_ptr.cast_mut().cast::<pyo3::ffi::PyObject>();
+        let object_ptr = type_ptr.cast_mut().cast::<FfiPyObject>();
         if retained.iter().any(|held| held.as_ptr() == object_ptr) {
             continue;
         }
@@ -132,9 +145,9 @@ impl PartialEq for PyComponentType {
 
 impl Eq for PyComponentType {}
 
-impl std::hash::Hash for PyComponentType {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        std::mem::discriminant(self).hash(state);
+impl Hash for PyComponentType {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        discriminant(self).hash(state);
         match self {
             PyComponentType::Dynamic(ptr) => ptr.hash(state),
             PyComponentType::Resource(ptr) => ptr.hash(state),
@@ -338,10 +351,10 @@ impl PyComponentType {
         );
 
         // Check for special Python-only built-in components (DespawnOnExit, DespawnOnEnter)
-        if ty.is(crate::ecs::state::PyDespawnOnExit::type_object(py)) {
+        if ty.is(PyDespawnOnExit::type_object(py)) {
             return Ok(custom);
         }
-        if ty.is(crate::ecs::state::PyDespawnOnEnter::type_object(py)) {
+        if ty.is(PyDespawnOnEnter::type_object(py)) {
             return Ok(custom);
         }
 
@@ -367,12 +380,12 @@ impl PyComponentType {
     /// For custom components: Delegates to QueryRuntime helper (handles wrapper/PyObject storage).
     pub fn extract_from_entity<'py>(
         &self,
-        entity: &mut pybevy_core::FilteredEntityAccess,
-        component_id: bevy::ecs::component::ComponentId,
-        validity: crate::ecs::helpers::validity_guard::ValidityFlagWithMode,
-        py: pyo3::Python<'py>,
-        query_iter: &crate::ecs::query::query_runtime::PyQueryIter,
-    ) -> pyo3::PyResult<pyo3::Py<pyo3::PyAny>> {
+        entity: &mut FilteredEntityAccess,
+        component_id: ComponentId,
+        validity: ValidityFlagWithMode,
+        py: Python<'py>,
+        query_iter: &PyQueryIter,
+    ) -> PyResult<Py<PyAny>> {
         match self {
             PyComponentType::Dynamic(type_ptr) => {
                 if let Some(extract_fn) = query_iter.get_extract_fn(self) {
@@ -382,7 +395,7 @@ impl PyComponentType {
                     if let Some(bridge) = global_registry::get_bridge_by_py_type(*type_ptr) {
                         bridge.extract(entity, component_id, validity, py)
                     } else {
-                        Err(pyo3::exceptions::PyRuntimeError::new_err(
+                        Err(PyRuntimeError::new_err(
                             "Dynamic component bridge not found",
                         ))
                     }
@@ -392,9 +405,9 @@ impl PyComponentType {
                 if let Some(bridge) = global_registry::get_resource_bridge_by_py_type(*type_ptr) {
                     bridge.extract(entity, component_id, validity, py)
                 } else {
-                    let value = if validity.access_mode() == pybevy_core::AccessMode::Write {
+                    let value = if validity.access_mode() == AccessMode::Write {
                         let mut value = entity.get_mut_by_id(component_id).ok_or_else(|| {
-                            pyo3::exceptions::PyRuntimeError::new_err(
+                            PyRuntimeError::new_err(
                                 "Custom resource not found on matched resource entity",
                             )
                         })?;
@@ -402,14 +415,14 @@ impl PyComponentType {
                         unsafe { value.as_mut().deref_mut::<Py<PyAny>>().clone_ref(py) }
                     } else {
                         let value = entity.get_by_id(component_id).ok_or_else(|| {
-                            pyo3::exceptions::PyRuntimeError::new_err(
+                            PyRuntimeError::new_err(
                                 "Custom resource not found on matched resource entity",
                             )
                         })?;
                         // SAFETY: custom resource IDs use Pyo3ResourceObjectDescriptor.
                         unsafe { value.deref::<Py<PyAny>>().clone_ref(py) }
                     };
-                    if validity.access_mode() == pybevy_core::AccessMode::Write {
+                    if validity.access_mode() == AccessMode::Write {
                         Ok(Py::new(
                             py,
                             PyResMut::with_validity(value.bind(py).clone(), validity.flag.clone()),
@@ -435,18 +448,16 @@ impl PyComponentType {
     #[allow(dead_code)] // used by pybevy_control
     pub fn insert_into_commands<'py>(
         &self,
-        _commands: &crate::ecs::commands::PyCommands,
-        _entity_id: bevy::ecs::entity::Entity,
-        _component: &pyo3::Bound<'py, pyo3::PyAny>,
-    ) -> pyo3::PyResult<()> {
+        _commands: &PyCommands,
+        _entity_id: Entity,
+        _component: &Bound<'py, PyAny>,
+    ) -> PyResult<()> {
         match self {
-            PyComponentType::Dynamic(_) => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            PyComponentType::Dynamic(_) => Err(PyRuntimeError::new_err(
                 "Dynamic component insert must be handled by caller with World access",
             )),
-            PyComponentType::Resource(_) => Err(pyo3::exceptions::PyTypeError::new_err(
-                RESOURCE_COMPONENT_INSERT,
-            )),
-            PyComponentType::Custom(_) => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            PyComponentType::Resource(_) => Err(PyTypeError::new_err(RESOURCE_COMPONENT_INSERT)),
+            PyComponentType::Custom(_) => Err(PyRuntimeError::new_err(
                 "Custom component insert must be handled by caller",
             )),
         }
@@ -454,19 +465,13 @@ impl PyComponentType {
 
     /// Remove component from entity via Commands API.
     #[allow(dead_code)] // used by pybevy_control
-    pub fn remove_from_commands(
-        &self,
-        _commands: &crate::ecs::commands::PyCommands,
-        _entity_id: bevy::ecs::entity::Entity,
-    ) -> pyo3::PyResult<()> {
+    pub fn remove_from_commands(&self, _commands: &PyCommands, _entity_id: Entity) -> PyResult<()> {
         match self {
-            PyComponentType::Dynamic(_) => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            PyComponentType::Dynamic(_) => Err(PyRuntimeError::new_err(
                 "Dynamic component remove must be handled by caller with World access",
             )),
-            PyComponentType::Resource(_) => Err(pyo3::exceptions::PyTypeError::new_err(
-                RESOURCE_COMPONENT_REMOVE,
-            )),
-            PyComponentType::Custom(_) => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            PyComponentType::Resource(_) => Err(PyTypeError::new_err(RESOURCE_COMPONENT_REMOVE)),
+            PyComponentType::Custom(_) => Err(PyRuntimeError::new_err(
                 "Custom component remove must be handled by caller",
             )),
         }
@@ -505,7 +510,7 @@ pub(crate) unsafe fn drop_py_object(ptr: OwningPtr<'_>) {
     // SAFETY: The pointer points to a valid Py<PyAny> stored in the ECS.
     // `read` moves the value out, leaving the retired slot free for Bevy to
     // overwrite with the replacement without a second drop.
-    crate::ecs::deferred_drop::defer_py_drop(unsafe { ptr.read::<Py<PyAny>>() });
+    defer_py_drop(unsafe { ptr.read::<Py<PyAny>>() });
 }
 
 /// Create the descriptor used by custom Python components.
@@ -574,9 +579,8 @@ impl PythonObjectDescriptor for Pyo3ResourceObjectDescriptor {
 fn get_python_qualified_name(py: Python, type_ptr: *const PyTypeObject) -> Option<String> {
     // SAFETY: the caller obtains this pointer from a live Python class and
     // retains that class before returning from registration.
-    let type_obj =
-        unsafe { pyo3::Bound::from_borrowed_ptr(py, type_ptr as *mut pyo3::ffi::PyObject) };
-    let cls = type_obj.cast::<pyo3::types::PyType>().ok()?;
+    let type_obj = unsafe { Bound::from_borrowed_ptr(py, type_ptr as *mut FfiPyObject) };
+    let cls = type_obj.cast::<PyType>().ok()?;
     let module = cls
         .getattr(intern!(py, "__module__"))
         .ok()?
@@ -740,7 +744,7 @@ pub(crate) fn check_custom_component_identity(
     let qualified_name = prepared.qualified_name.as_deref().unwrap_or(&prepared.name);
     Python::attach(|py| {
         let first = world
-            .get_resource::<pybevy_core::CustomComponentInfo>()
+            .get_resource::<CustomComponentInfo>()
             .and_then(|info| info.get(existing))
             .and_then(|entry| entry.retained_type.as_ref())
             .map_or_else(
@@ -776,8 +780,8 @@ fn register_prepared_custom_component_unchecked(
 ) -> ComponentId {
     let type_ptr = prepared.type_id as *const PyTypeObject;
 
-    if !world.contains_resource::<pybevy_core::CustomComponentInfo>() {
-        world.insert_resource(pybevy_core::CustomComponentInfo::default());
+    if !world.contains_resource::<CustomComponentInfo>() {
+        world.insert_resource(CustomComponentInfo::default());
     }
 
     let generation = current_reload_generation(world);
@@ -812,7 +816,7 @@ fn register_prepared_custom_component_unchecked(
     };
     let mut retired_entries = Vec::new();
     {
-        let mut info = world.resource_mut::<pybevy_core::CustomComponentInfo>();
+        let mut info = world.resource_mut::<CustomComponentInfo>();
         if let RegisterOutcome::Registered {
             evicted: Some(stale),
             ..
@@ -823,7 +827,7 @@ fn register_prepared_custom_component_unchecked(
         }
         if let Some(retired) = info.replace(
             outcome.id(),
-            pybevy_core::CustomComponentEntry {
+            CustomComponentEntry {
                 type_ptr,
                 retained_type,
                 name: prepared.name.clone(),
@@ -870,8 +874,7 @@ pub(crate) fn register_custom_component(
     let name = get_python_type_name(py, type_ptr);
     // SAFETY: the registration caller passes a live Python class pointer;
     // this block immediately turns it into an owned handle.
-    let py_type =
-        unsafe { pyo3::Bound::from_borrowed_ptr(py, type_ptr as *mut pyo3::ffi::PyObject) };
+    let py_type = unsafe { Bound::from_borrowed_ptr(py, type_ptr as *mut FfiPyObject) };
     let (storage_type, wrapper_layout, retained_type) = match py_type.cast::<PyType>() {
         Ok(cls) => {
             let (storage, layout) = ComponentStorageType::storage_with_layout(cls)
