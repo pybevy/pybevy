@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import ClassVar, Literal
 
 import numpy as np
@@ -31,13 +32,18 @@ class ParallaxMappingMethod:
         def max_steps(self) -> int: ...
         def __init__(self, *, max_steps: int) -> None: ...
 
+@dataclass(init=False, kw_only=True)
 class Material(Asset):
     """Python surface of Bevy's 3D `Material` trait.
 
     Native material assets that implement it inherit this, and a `@material`
     class inherits it to declare the same thing. 2D materials implement Bevy's
     separate `Material2d` trait and are not covered here.
+    The base field supplies constructor and instance typing for @material
+    classes; it is installed by the decorator, not on every native implementor.
     """
+
+    base: StandardMaterial = ...
 
 class StandardMaterial(Material):
     def __copy__(self) -> StandardMaterial: ...
@@ -1002,6 +1008,7 @@ class ShaderMaterial(Material):
         ```
     """
 
+    base: StandardMaterial
     def __copy__(self) -> ShaderMaterial: ...
     def __deepcopy__(self, memo: dict[int, object]) -> ShaderMaterial: ...
 
@@ -1060,6 +1067,7 @@ class StorageShaderMaterial(Material):
     unprepared buffer leaves the material pending. Requires ShaderMaterialPlugin.
     """
 
+    base: StandardMaterial
     def __copy__(self) -> StorageShaderMaterial: ...
     def __deepcopy__(self, memo: dict[int, object]) -> StorageShaderMaterial: ...
 

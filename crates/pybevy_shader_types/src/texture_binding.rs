@@ -30,8 +30,8 @@ impl TextureBindingLayout {
         if !["2d", "2d_array", "cube", "cube_array", "3d"].contains(&dimension) {
             return Err("Texture dimension must be 2d, 2d_array, cube, cube_array, or 3d".into());
         }
-        if !["float", "sint", "uint", "depth"].contains(&sample_type) {
-            return Err("Texture sample_type must be float, sint, uint, or depth".into());
+        if !["float", "s_int", "u_int", "depth"].contains(&sample_type) {
+            return Err("Texture sample_type must be float, s_int, u_int, or depth".into());
         }
         if !["filtering", "non_filtering", "comparison", "none"].contains(&sampler) {
             return Err(
@@ -65,6 +65,10 @@ impl TextureBindingLayout {
         }
     }
 
+    pub fn uses_white_fallback(&self) -> bool {
+        self.sample_type == "float"
+    }
+
     pub fn has_sampler(&self) -> bool {
         self.sampler != "none"
     }
@@ -79,8 +83,8 @@ impl TextureBindingLayout {
 
     fn sample(&self) -> TextureSampleType {
         match self.sample_type.as_str() {
-            "sint" => TextureSampleType::Sint,
-            "uint" => TextureSampleType::Uint,
+            "s_int" => TextureSampleType::Sint,
+            "u_int" => TextureSampleType::Uint,
             "depth" => TextureSampleType::Depth,
             _ => TextureSampleType::Float {
                 filterable: self.filterable,
@@ -101,8 +105,8 @@ impl TextureBindingLayout {
             format!("texture_depth_{}", self.dimension)
         } else {
             let scalar = match self.sample_type.as_str() {
-                "sint" => "i32",
-                "uint" => "u32",
+                "s_int" => "i32",
+                "u_int" => "u32",
                 _ => "f32",
             };
             format!("texture_{}<{scalar}>", self.dimension)

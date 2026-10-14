@@ -13,13 +13,13 @@ use bevy::{
         prelude::*,
         system::{SystemParamItem, lifetimeless::SRes},
     },
-    image::{Image, ImageSampler},
+    image::{Image, ImageSampler, ImageSamplerDescriptor},
     material::{AlphaMode, OpaqueRendererMethod},
     mesh::MeshVertexBufferLayoutRef,
     pbr::{
-        Material, MaterialBindGroupAllocators, MaterialExtension, MaterialExtensionKey,
-        MaterialExtensionPipeline, MaterialPipeline, MaterialPipelineKey, MaterialPlugin,
-        MeshMaterial3d, RenderMaterialBindings, StandardMaterial,
+        MATERIAL_BIND_GROUP_INDEX, Material, MaterialBindGroupAllocators, MaterialExtension,
+        MaterialExtensionKey, MaterialExtensionPipeline, MaterialPipeline, MaterialPipelineKey,
+        MaterialPlugin, MeshMaterial3d, RenderMaterialBindings, StandardMaterial,
     },
     reflect::Reflect,
     render::{
@@ -31,13 +31,13 @@ use bevy::{
             BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, BufferBindingType,
             BufferId, BufferInitDescriptor, BufferSize, BufferUsages,
             DefaultImageSamplerDescriptor, DownlevelFlags, OwnedBindingResource, PipelineCache,
-            PreparedBindGroup, RenderPipelineDescriptor, SamplerId, ShaderStages,
-            SpecializedMeshPipelineError, TextureViewId, UnpreparedBindGroup,
+            PreparedBindGroup, RenderPipelineDescriptor, SamplerBindingType, SamplerId,
+            ShaderStages, SpecializedMeshPipelineError, TextureViewId, UnpreparedBindGroup,
         },
         renderer::{RenderAdapter, RenderDevice},
         settings::WgpuLimits,
         storage::{GpuShaderBuffer, ShaderBuffer},
-        texture::GpuImage,
+        texture::{FallbackImage, GpuImage},
     },
     shader::ShaderRef,
 };
@@ -103,6 +103,35 @@ pub struct StorageMaterialKey {
     strides: Vec<u32>,
     textures: Vec<Option<TextureBindingLayout>>,
     samplers: Vec<MaterialSamplerKind>,
+}
+
+fn binding_field_name(extension: &ShaderMaterialExtension, binding: u32) -> String {
+    let Some(source) = extension.bindings_wgsl.as_deref() else {
+        return format!("binding {binding}");
+    };
+    let source = source
+        .lines()
+        .filter(|line| !line.trim().starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .replace(
+            "#{MATERIAL_BIND_GROUP}",
+            &MATERIAL_BIND_GROUP_INDEX.to_string(),
+        );
+    naga::front::wgsl::parse_str(&source)
+        .ok()
+        .and_then(|module| {
+            module
+                .global_variables
+                .iter()
+                .find(|(_, variable)| {
+                    variable.binding.as_ref().is_some_and(|b| {
+                        b.group == MATERIAL_BIND_GROUP_INDEX as u32 && b.binding == binding
+                    })
+                })
+                .and_then(|(_, variable)| variable.name.clone())
+        })
+        .unwrap_or_else(|| format!("binding {binding}"))
 }
 
 /// Checked before binding; an absent or invalid buffer must not produce a draw.
@@ -228,6 +257,7 @@ impl AsBindGroup for StorageShaderMaterial {
         SRes<RenderAssets<GpuImage>>,
         SRes<DefaultImageSamplerDescriptor>,
         SRes<MaterialSamplerCache>,
+        SRes<FallbackImage>,
     );
 
     fn label() -> &'static str {
@@ -312,6 +342,33 @@ impl AsBindGroup for StorageShaderMaterial {
             let Some(metadata) = metadata else {
                 continue;
             };
+            if inner.texture_slot(slot).and_then(Option::as_ref).is_none()
+                && metadata.uses_white_fallback()
+            {
+                let image = param.7.get(metadata.view_dimension());
+                textures.push((
+                    101 + slot as u32 * 2,
+                    OwnedBindingResource::TextureView(
+                        metadata.view_dimension(),
+                        image.texture_view.clone(),
+                    ),
+                ));
+                if metadata.has_sampler() {
+                    let sampler = if metadata.sampler_type() == SamplerBindingType::NonFiltering {
+                        param
+                            .6
+                            .get(&ImageSamplerDescriptor::default())
+                            .ok_or(AsBindGroupError::RetryNextUpdate)?
+                    } else {
+                        &image.sampler
+                    };
+                    textures.push((
+                        102 + slot as u32 * 2,
+                        OwnedBindingResource::Sampler(metadata.sampler_type(), sampler.clone()),
+                    ));
+                }
+                continue;
+            }
             let handle = inner
                 .texture_slot(slot)
                 .and_then(Option::as_ref)
@@ -668,6 +725,7 @@ fn refresh_storage_bindings(
     buffers: Res<RenderAssets<GpuShaderBuffer>>,
     images: Res<RenderAssets<GpuImage>>,
     default_sampler: Res<DefaultImageSamplerDescriptor>,
+    fallback: Res<FallbackImage>,
     device: Res<RenderDevice>,
     availability: Res<StorageBufferAvailability>,
     mut dependencies: ResMut<StorageMaterialDependencies>,
@@ -675,7 +733,9 @@ fn refresh_storage_bindings(
     mut bindings: ResMut<RenderMaterialBindings>,
     mut allocators: ResMut<MaterialBindGroupAllocators>,
     mut sampler_cache: ResMut<MaterialSamplerCache>,
+    mut reported_pending: Local<HashSet<String>>,
 ) {
+    let mut pending = HashSet::new();
     sampler_cache.begin_frame();
     let fresh: HashSet<_> = extracted.extracted.iter().map(|(id, _)| *id).collect();
     for (id, dependency) in &mut dependencies.0 {
@@ -691,24 +751,61 @@ fn refresh_storage_bindings(
             .extension
             .buffers
             .iter()
-            .map(|binding| {
+            .enumerate()
+            .map(|(slot, binding)| {
                 let handle = binding
                     .handle
                     .as_ref()
                     .filter(|handle| availability.live.contains(&handle.id()))?;
                 let buffer = buffers.get(handle)?;
+                if buffer.buffer.size() == 0 {
+                    return None;
+                }
                 if let Err(error) = validate_storage_element_buffer(
                     buffer.buffer.size(),
                     buffer.buffer.usage(),
                     device.limits().max_storage_buffer_binding_size,
                     binding.element.stride,
                 ) {
-                    diagnostic = Some(error);
+                    diagnostic = Some(format!(
+                        "storage field {} (binding {}): {error}",
+                        binding_field_name(&dependency.material.extension.inner, 109 + slot as u32),
+                        109 + slot
+                    ));
                     return None;
                 }
                 Some(buffer.buffer.id())
             })
             .collect();
+        for (slot, metadata) in dependency
+            .material
+            .extension
+            .texture_layouts
+            .iter()
+            .enumerate()
+        {
+            if metadata
+                .as_ref()
+                .is_some_and(|layout| !layout.uses_white_fallback())
+                && dependency
+                    .material
+                    .extension
+                    .inner
+                    .texture_slot(slot)
+                    .and_then(Option::as_ref)
+                    .is_none()
+            {
+                let extension = &dependency.material.extension.inner;
+                let label = extension
+                    .bindings_wgsl
+                    .as_deref()
+                    .and_then(crate::expected_generated_material_import)
+                    .or(extension.fragment_shader_path.as_deref())
+                    .unwrap_or("<raw material>");
+                let field = binding_field_name(extension, 101 + 2 * slot as u32);
+                pending.insert(format!("Material {label}: texture field {field} is pending; assign an Image handle matching its texture contract"));
+            }
+        }
         let textures: Option<Vec<_>> = (0..4)
             .filter_map(|slot| {
                 let metadata = dependency
@@ -727,6 +824,31 @@ fn refresh_storage_bindings(
                     return None;
                 }
                 Some((|| {
+                    if handle.is_none()
+                        && metadata.is_some_and(TextureBindingLayout::uses_white_fallback)
+                    {
+                        let metadata = metadata.unwrap();
+                        let image = fallback.get(metadata.view_dimension());
+                        let sampler = if !metadata.has_sampler() {
+                            None
+                        } else if metadata.sampler_type() == SamplerBindingType::NonFiltering {
+                            Some(
+                                sampler_cache
+                                    .prepare(
+                                        &MaterialSamplerBinding {
+                                            kind: MaterialSamplerKind::NonFiltering,
+                                            descriptor: ImageSamplerDescriptor::default(),
+                                        },
+                                        &device,
+                                    )
+                                    .ok()?
+                                    .id(),
+                            )
+                        } else {
+                            Some(image.sampler.id())
+                        };
+                        return Some((image.texture_view.id(), sampler));
+                    }
                     let handle = handle?;
                     let sampler = availability.images.get(&handle.id())?;
                     let image = images.get(handle)?;
@@ -795,7 +917,23 @@ fn refresh_storage_bindings(
         diagnostic = diagnostic.or_else(|| storage_layout_error(&device, &entries));
         if diagnostic != dependency.diagnostic {
             if let Some(error) = &diagnostic {
-                tracing::error!("Storage material {id:?}: {error}");
+                tracing::error!(
+                    "Storage material {} ({id:?}): {error}",
+                    dependency
+                        .material
+                        .extension
+                        .inner
+                        .bindings_wgsl
+                        .as_deref()
+                        .and_then(crate::expected_generated_material_import)
+                        .unwrap_or_else(|| dependency
+                            .material
+                            .extension
+                            .inner
+                            .fragment_shader_path
+                            .as_deref()
+                            .unwrap_or("<raw material>"))
+                );
             }
             dependency.diagnostic = diagnostic;
         }
@@ -810,6 +948,10 @@ fn refresh_storage_bindings(
             }
         }
     }
+    for message in pending.difference(&reported_pending) {
+        tracing::info!("{message}");
+    }
+    *reported_pending = pending;
     sampler_cache.finish_frame();
     // Bevy 0.19's direct-preparation path allocates a fresh slot without retiring
     // the previous one. Retire it once before fresh inputs (including retries)

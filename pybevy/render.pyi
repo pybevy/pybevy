@@ -1,4 +1,5 @@
 import builtins
+from collections.abc import Buffer, Iterable
 from contextlib import AbstractContextManager
 from typing import ClassVar, Literal
 
@@ -12,8 +13,9 @@ from pybevy.pbr import StandardMaterial as StandardMaterial
 class ShaderBuffer(Asset):
     """A storage-buffer asset uploaded for shader access.
 
-    Data is supplied as raw bytes or a bounded uint8 ``Array``; callers provide
-    shader layout and padding. CPU data may be consumed by render extraction;
+    Data accepts raw contiguous buffers, uint8 Array, or homogeneous typed
+    scalar/vector/@shader_type sequences. Use element=U32 for unsigned data
+    and element= for empty sequences. Raw inputs require caller-provided padding. CPU data may be consumed by render extraction;
     these accessors do not perform GPU readback. Use ``with_size`` to reserve GPU allocation size.
     """
 
@@ -21,7 +23,7 @@ class ShaderBuffer(Asset):
     def __deepcopy__(self, memo: dict[int, object]) -> ShaderBuffer: ...
 
     def __init__(
-        self, data: bytes | Array | None = None, *, copy_on_resize: bool = False
+        self, data: Buffer | Array | Iterable[object] | None = None, *, element: object = None, copy_on_resize: bool = False
     ) -> None: ...
     @staticmethod
     def with_size(size: int) -> ShaderBuffer: ...
@@ -37,8 +39,8 @@ class ShaderBuffer(Asset):
     def copy_on_resize(self) -> bool: ...
     @copy_on_resize.setter
     def copy_on_resize(self, value: bool) -> None: ...
-    def set_data(self, value: bytes | Array | None) -> None:
-        """Replace raw upload bytes, or clear CPU data with None; no shader encoding."""
+    def set_data(self, value: Buffer | Array | Iterable[object] | None, *, element: object = None) -> None:
+        """Pack typed elements or replace raw bytes atomically; None clears CPU data."""
     def resize(self, size: int) -> None: ...
     def resize_in_place(self, size: int) -> None: ...
 

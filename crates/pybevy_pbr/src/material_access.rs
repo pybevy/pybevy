@@ -63,6 +63,8 @@ fn check_packed_uniform<F: PackedUniform>(float_index: usize) -> PyResult<()> {
 }
 
 pub(crate) fn validate_shader_defs(shader_defs: u32, shader_def_names: &[String]) -> PyResult<()> {
+    pybevy_shader_types::shader_def_registry::validate_names(shader_def_names)
+        .map_err(PyValueError::new_err)?;
     let name_count = shader_def_names.len();
     if name_count > u32::BITS as usize {
         return Err(PyValueError::new_err(too_many_shader_def_names(name_count)));
@@ -176,7 +178,7 @@ pub(crate) fn set_data_float<M: ShaderMaterialData>(
         )));
     }
     let mut mat = storage.as_mut()?;
-    mat.shader_extension_mut().params.data[index / 4][index % 4] = value;
+    mat.shader_extension_mut().params.data.words[index / 4][index % 4] = value.to_bits();
     Ok(())
 }
 pub(crate) fn get_data_float<M: ShaderMaterialData>(
@@ -191,7 +193,9 @@ pub(crate) fn get_data_float<M: ShaderMaterialData>(
         )));
     }
     let mat = storage.as_ref()?;
-    Ok(mat.shader_extension().params.data[index / 4][index % 4])
+    Ok(f32::from_bits(
+        mat.shader_extension().params.data.words[index / 4][index % 4],
+    ))
 }
 pub(crate) fn set_data_floats<M: ShaderMaterialData>(
     storage: &mut AssetStorage<M>,
@@ -217,7 +221,7 @@ pub(crate) fn set_data_floats<M: ShaderMaterialData>(
     let mut mat = storage.as_mut()?;
     for (i, &val) in values.iter().enumerate() {
         let idx = start + i;
-        mat.shader_extension_mut().params.data[idx / 4][idx % 4] = val;
+        mat.shader_extension_mut().params.data.words[idx / 4][idx % 4] = val.to_bits();
     }
     Ok(())
 }
@@ -267,7 +271,32 @@ pub(crate) fn get_data_floats<M: ShaderMaterialData>(
     let mut result = Vec::with_capacity(count);
     for i in 0..count {
         let idx = start + i;
-        result.push(mat.shader_extension().params.data[idx / 4][idx % 4]);
+        result.push(f32::from_bits(
+            mat.shader_extension().params.data.words[idx / 4][idx % 4],
+        ));
     }
     Ok(result)
+}
+
+pub(crate) fn get_data_int<M: ShaderMaterialData>(
+    storage: &AssetStorage<M>,
+    index: isize,
+) -> PyResult<i32> {
+    let index = checked_index(index, "data index")?;
+    if index >= MAX_DATA_FLOATS {
+        return Err(PyIndexError::new_err("Integer uniform index out of range"));
+    }
+    Ok(storage.as_ref()?.shader_extension().params.data.words[index / 4][index % 4] as i32)
+}
+pub(crate) fn set_data_int<M: ShaderMaterialData>(
+    storage: &mut AssetStorage<M>,
+    index: isize,
+    value: i32,
+) -> PyResult<()> {
+    let index = checked_index(index, "data index")?;
+    if index >= MAX_DATA_FLOATS {
+        return Err(PyIndexError::new_err("Integer uniform index out of range"));
+    }
+    storage.as_mut()?.shader_extension_mut().params.data.words[index / 4][index % 4] = value as u32;
+    Ok(())
 }

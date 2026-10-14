@@ -1,30 +1,111 @@
-//! Shader-def field names, keyed by the `@material` class that declared them.
+//! Validation shared by raw and decorated material shader definitions.
+
+use bevy::{render::render_resource::RenderPipelineDescriptor, shader::ShaderDefVal};
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{OnceLock, RwLock},
 };
 
-static SHADER_DEF_REGISTRY: OnceLock<RwLock<HashMap<u64, Vec<String>>>> = OnceLock::new();
-
-fn def_registry() -> &'static RwLock<HashMap<u64, Vec<String>>> {
-    SHADER_DEF_REGISTRY.get_or_init(|| RwLock::new(HashMap::new()))
+#[derive(Default)]
+struct Registry {
+    next: u64,
+    ids: HashMap<Vec<String>, u64>,
+    names: HashMap<u64, Vec<String>>,
 }
-
-pub(crate) fn get_shader_def_names(material_type_id: u64) -> Option<Vec<String>> {
-    def_registry().read().ok()?.get(&material_type_id).cloned()
+static REGISTRY: OnceLock<RwLock<Registry>> = OnceLock::new();
+fn registry() -> &'static RwLock<Registry> {
+    REGISTRY.get_or_init(Default::default)
 }
-
-pub(crate) fn register_shader_def_names(material_type_id: u64, names: Vec<String>) {
-    if let Ok(mut map) = def_registry().write() {
-        map.insert(material_type_id, names);
+pub(crate) fn intern_names(names: &[String]) -> u64 {
+    let mut registry = registry().write().unwrap_or_else(|e| e.into_inner());
+    if let Some(id) = registry.ids.get(names) {
+        return *id;
     }
+    registry.next = registry
+        .next
+        .checked_add(1)
+        .expect("Shader definition identity exhausted");
+    let id = registry.next;
+    registry.ids.insert(names.to_vec(), id);
+    registry.names.insert(id, names.to_vec());
+    id
+}
+pub(crate) fn get_names(id: u64) -> Vec<String> {
+    registry()
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .names
+        .get(&id)
+        .cloned()
+        .unwrap_or_default()
+}
+pub(crate) fn clear_names() {
+    let mut registry = registry().write().unwrap_or_else(|e| e.into_inner());
+    registry.ids.clear();
+    registry.names.clear();
 }
 
-pub(crate) fn clear_shader_def_names() {
-    if let Some(reg) = SHADER_DEF_REGISTRY.get()
-        && let Ok(mut map) = reg.write()
-    {
-        map.clear();
+pub fn validate_names(names: &[String]) -> Result<(), String> {
+    let mut seen = HashSet::new();
+    for name in names {
+        let mut chars = name.chars();
+        if !chars
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            || !chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
+            return Err(format!(
+                "Shader define '{name}' must be a nonempty ASCII identifier"
+            ));
+        }
+        if !seen.insert(name) {
+            return Err(format!("Duplicate shader define '{name}'"));
+        }
+        if name.starts_with("VERTEX_")
+            || name.starts_with("PYBEVY_")
+            || matches!(
+                name.as_str(),
+                "PREPASS_PIPELINE"
+                    | "DEFERRED_PREPASS"
+                    | "DEPTH_PREPASS"
+                    | "NORMAL_PREPASS"
+                    | "MOTION_VECTOR_PREPASS"
+                    | "MESH_PIPELINE"
+                    | "MATERIAL_BIND_GROUP"
+                    | "MATERIAL_BIND_GROUP_INDEX"
+            )
+        {
+            return Err(format!(
+                "Shader define '{name}' is reserved by the rendering pipeline"
+            ));
+        }
     }
+    Ok(())
+}
+
+pub(crate) fn pipeline_collision<'a>(
+    names: &'a [String],
+    descriptor: &RenderPipelineDescriptor,
+) -> Option<&'a str> {
+    names
+        .iter()
+        .find(|name| {
+            descriptor
+                .vertex
+                .shader_defs
+                .iter()
+                .chain(
+                    descriptor
+                        .fragment
+                        .iter()
+                        .flat_map(|f| f.shader_defs.iter()),
+                )
+                .any(|definition| match definition {
+                    ShaderDefVal::Bool(existing, _)
+                    | ShaderDefVal::Int(existing, _)
+                    | ShaderDefVal::UInt(existing, _) => existing == *name,
+                })
+        })
+        .map(String::as_str)
 }

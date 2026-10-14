@@ -7,7 +7,7 @@ use pybevy_core::{
     extract_handle_from_any,
 };
 use pybevy_macros::pycomponent;
-use pyo3::{prelude::*, types::PyType};
+use pyo3::{exceptions::PyTypeError, prelude::*, types::PyType};
 
 #[pycomponent(MeshMaterial3d<StandardMaterial>, bridge)]
 #[pyclass(name = "MeshMaterial3d", module = "pybevy.pbr", extends = PyComponent, eq, skip_from_py_object)]
@@ -52,8 +52,12 @@ impl PyMeshMaterial3d {
                 .into_any()
                 .unbind());
         }
-        // Default: return MeshMaterial3d itself
-        Ok(cls.clone().into_any().unbind())
+        if key.is(cls.py().import("pybevy.pbr")?.getattr("StandardMaterial")?) {
+            return Ok(cls.clone().into_any().unbind());
+        }
+        Err(PyTypeError::new_err(format!(
+            "Unsupported MeshMaterial3d material type: {key}"
+        )))
     }
 
     #[getter]

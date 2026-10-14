@@ -150,6 +150,18 @@ from pybevy.camera import Exposure
 commands.spawn(Camera3d(), Exposure.INDOOR)  # SUNLIGHT, INDOOR, OVERCAST, BLENDER
 ```
 
+Custom `Exposure(ev100=...)` values must be finite and representable as f32.
+The same check applies to later field writes and values derived by
+`Exposure.from_physical_camera(...)`; invalid values raise `ValueError` instead
+of silently poisoning the frame. This is not a photographic range clamp: even
+finite extremes can make the derived multiplier unusable, so check the scene
+after large exposure changes.
+
+`PhysicalCameraParameters` requires positive finite aperture, shutter speed,
+ISO, and sensor height. Settings whose calculated EV100 is nonfinite also raise
+`ValueError` before `Exposure.from_physical_camera(...)` can use them. The
+camera frustum `Sphere` likewise requires a finite, non-negative radius.
+
 ### Color Grading
 
 On non-HDR cameras, only global exposure and post-saturation apply. Full color

@@ -14,7 +14,7 @@ use bevy::{
         schedule::{IntoSystemSet, Schedules, SystemSet},
         world::{EntityRef as BevyEntityRef, World},
     },
-    reflect::{ReflectRef, TypeInfo},
+    reflect::{ReflectRef, TypeInfo, enums::VariantInfo},
 };
 use pybevy_color::{color::PyColor, linear_rgba::PyLinearRgba};
 use pybevy_core::{
@@ -50,6 +50,7 @@ use crate::{
             },
             state_resource,
         },
+        reflect_mutate,
         value_conversion::{EnumPayload, enum_to_json},
     },
 };
@@ -1841,18 +1842,52 @@ pub fn get_component_schema(
                     );
             }
 
-            if effective_editable
+            let is_enum_schema = reflection_info
+                .as_ref()
+                .is_some_and(|(_, _, type_kind)| *type_kind == "Enum")
+                || super::enum_names::is_enum_type(&py_type);
+            if is_enum_schema {
+                let python_default = default_enum_component_fields(&py_type);
+                if let Some(defaults) = &python_default {
+                    result.as_object_mut().unwrap().insert(
+                        "defaults".into(),
+                        serde_json::Value::Object(defaults.clone()),
+                    );
+                }
+                if bridge.can_insert()
+                    && bridge.can_offer_hook_free_default_spawn()
+                    && let Some(registry) = world.get_resource::<AppTypeRegistry>()
+                    && let Some(spawn_fields) = reflect_mutate::replayable_enum_default_fields(
+                        &registry.read(),
+                        bridge.bevy_type_id(),
+                        python_default.as_ref(),
+                    )
+                {
+                    result.as_object_mut().unwrap().insert(
+                        "spawn_example".into(),
+                        serde_json::json!({"components": {&type_name: spawn_fields}}),
+                    );
+                }
+            } else if bridge.can_insert()
                 && !is_asset_handle
-                && let Some(defaults) = default_component_fields(&py_type, &result["fields"])
+                && (effective_editable
+                    || (bridge.can_offer_hook_free_default_spawn()
+                        && result["fields"]
+                            .as_object()
+                            .is_some_and(serde_json::Map::is_empty)))
+                && let Some((defaults, spawn_fields)) =
+                    default_component_fields(&py_type, &result["fields"])
             {
-                let spawn_example = serde_json::json!({
-                    "components": {
-                        &type_name: &defaults,
-                    },
-                });
                 let obj = result.as_object_mut().unwrap();
                 obj.insert("defaults".into(), serde_json::Value::Object(defaults));
-                obj.insert("spawn_example".into(), spawn_example);
+                if let Some(spawn_fields) = spawn_fields {
+                    let spawn_example = serde_json::json!({
+                        "components": {
+                            &type_name: &spawn_fields,
+                        },
+                    });
+                    obj.insert("spawn_example".into(), spawn_example);
+                }
             }
 
             result
@@ -2103,18 +2138,68 @@ fn get_class_fields(py: Python<'_>, py_type: &Bound<'_, PyType>) -> serde_json::
 fn default_component_fields(
     py_type: &Bound<'_, PyType>,
     fields: &serde_json::Value,
-) -> Option<serde_json::Map<String, serde_json::Value>> {
+) -> Option<(
+    serde_json::Map<String, serde_json::Value>,
+    Option<serde_json::Map<String, serde_json::Value>>,
+)> {
     let instance = py_type.call0().ok()?;
     let fields = fields.as_object()?;
     let mut defaults = serde_json::Map::new();
+    let mut spawn_fields = serde_json::Map::new();
 
     for name in fields.keys() {
         if let Ok(value) = instance.getattr(name.as_str()) {
-            defaults.insert(name.clone(), py_value_to_json(&value));
+            let serialized = py_value_to_json(&value);
+            if let Ok(probe) = py_type.call0()
+                && let Ok(converted) =
+                    super::mutate::convert_field_value(instance.py(), &probe, name, &serialized)
+                && probe.setattr(name.as_str(), converted).is_ok()
+            {
+                spawn_fields.insert(name.clone(), serialized.clone());
+            }
+            defaults.insert(name.clone(), serialized);
         }
     }
 
-    (!defaults.is_empty()).then_some(defaults)
+    let replayable_fields = py_type.call0().ok().and_then(|probe| {
+        for (name, serialized) in &spawn_fields {
+            let converted =
+                super::mutate::convert_field_value(instance.py(), &probe, name, serialized).ok()?;
+            probe.setattr(name.as_str(), converted).ok()?;
+        }
+        Some(spawn_fields)
+    });
+
+    Some((defaults, replayable_fields))
+}
+
+fn default_enum_component_fields(
+    py_type: &Bound<'_, PyType>,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let instance = py_type.call0().ok()?;
+    if let serde_json::Value::Object(fields) = py_value_to_json(&instance)
+        && fields
+            .get("variant")
+            .is_some_and(serde_json::Value::is_string)
+    {
+        return reflect_mutate::enum_example_value_is_representable(&serde_json::Value::Object(
+            fields.clone(),
+        ))
+        .then_some(fields);
+    }
+    let repr = instance.repr().ok()?.to_string();
+    let variant = parse_variant_from_repr(&repr)?;
+    let variant = super::enum_names::canonical_variant_name(py_type, &variant);
+    let owner = py_type.name().ok()?;
+    if !matches!(
+        reflect_mutate::compiled_enum_variant_info(&owner.to_string_lossy(), &variant),
+        Some(VariantInfo::Unit(_))
+    ) {
+        return None;
+    }
+    enum_to_json(variant, EnumPayload::Unit)
+        .as_object()
+        .cloned()
 }
 
 /// Resolve an EntityRef to a Bevy Entity

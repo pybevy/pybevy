@@ -45,6 +45,11 @@ pub(crate) fn generate_unit_bridge_tokens(
                 true
             }
 
+            fn can_offer_hook_free_default_spawn(&self) -> bool {
+                <#bevy_type as bevy::ecs::component::Component>::on_add().is_none()
+                    && <#bevy_type as bevy::ecs::component::Component>::on_insert().is_none()
+            }
+
             fn register(&self, world: &mut bevy::ecs::world::World) -> bevy::ecs::component::ComponentId {
                 world.register_component::<#bevy_type>()
             }

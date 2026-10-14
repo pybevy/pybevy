@@ -4,11 +4,25 @@ use std::ops::Range;
 
 use bevy::{
     color::LinearRgba,
-    math::{Vec2, Vec3, Vec4},
+    math::{UVec4, Vec2, Vec3, Vec4},
+    reflect::Reflect,
+    render::render_resource::ShaderType,
 };
 use bytemuck::Pod;
 
-pub type UniformData = [Vec4; 64];
+#[repr(C, align(16))]
+#[derive(ShaderType, Reflect, Clone, Debug)]
+pub struct UniformData {
+    pub words: [UVec4; 64],
+}
+
+impl Default for UniformData {
+    fn default() -> Self {
+        Self {
+            words: [UVec4::ZERO; 64],
+        }
+    }
+}
 
 pub const UNIFORM_FLOATS: usize = 256;
 
@@ -65,12 +79,13 @@ fn byte_range<F>(float_index: usize) -> Option<Range<usize>> {
 }
 
 pub fn uniform_ref<F: Pod>(data: &UniformData, float_index: usize) -> Option<&F> {
-    let bytes = bytemuck::cast_slice::<Vec4, u8>(data).get(byte_range::<F>(float_index)?)?;
+    let bytes =
+        bytemuck::cast_slice::<UVec4, u8>(&data.words).get(byte_range::<F>(float_index)?)?;
     bytemuck::try_from_bytes(bytes).ok()
 }
 
 pub fn uniform_mut<F: Pod>(data: &mut UniformData, float_index: usize) -> Option<&mut F> {
-    let bytes =
-        bytemuck::cast_slice_mut::<Vec4, u8>(data).get_mut(byte_range::<F>(float_index)?)?;
+    let bytes = bytemuck::cast_slice_mut::<UVec4, u8>(&mut data.words)
+        .get_mut(byte_range::<F>(float_index)?)?;
     bytemuck::try_from_bytes_mut(bytes).ok()
 }

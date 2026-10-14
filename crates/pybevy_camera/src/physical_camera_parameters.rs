@@ -1,6 +1,28 @@
 use bevy::camera::PhysicalCameraParameters;
-use pybevy_core::repr::float_repr;
-use pyo3::prelude::*;
+use pybevy_core::{public_error, repr::float_repr};
+use pyo3::{exceptions::PyValueError, prelude::*};
+
+fn validate_parameters(params: &PhysicalCameraParameters) -> PyResult<()> {
+    for (name, value) in [
+        ("aperture_f_stops", params.aperture_f_stops),
+        ("shutter_speed_s", params.shutter_speed_s),
+        ("sensitivity_iso", params.sensitivity_iso),
+        ("sensor_height", params.sensor_height),
+    ] {
+        if !value.is_finite() || value <= 0.0 {
+            return Err(PyValueError::new_err(
+                public_error::physical_camera_parameter(name, value),
+            ));
+        }
+    }
+    let ev100 = params.ev100();
+    if !ev100.is_finite() {
+        return Err(PyValueError::new_err(public_error::physical_camera_ev100(
+            ev100,
+        )));
+    }
+    Ok(())
+}
 
 #[pyclass(
     name = "PhysicalCameraParameters",
@@ -45,15 +67,15 @@ impl PyPhysicalCameraParameters {
         shutter_speed_s: f32,
         sensitivity_iso: f32,
         sensor_height: f32,
-    ) -> Self {
-        Self {
-            inner: PhysicalCameraParameters {
-                aperture_f_stops,
-                shutter_speed_s,
-                sensitivity_iso,
-                sensor_height,
-            },
-        }
+    ) -> PyResult<Self> {
+        let inner = PhysicalCameraParameters {
+            aperture_f_stops,
+            shutter_speed_s,
+            sensitivity_iso,
+            sensor_height,
+        };
+        validate_parameters(&inner)?;
+        Ok(Self { inner })
     }
 
     #[getter]
@@ -62,8 +84,12 @@ impl PyPhysicalCameraParameters {
     }
 
     #[setter]
-    pub fn set_aperture_f_stops(&mut self, value: f32) {
-        self.inner.aperture_f_stops = value;
+    pub fn set_aperture_f_stops(&mut self, value: f32) -> PyResult<()> {
+        let mut candidate = self.inner;
+        candidate.aperture_f_stops = value;
+        validate_parameters(&candidate)?;
+        self.inner = candidate;
+        Ok(())
     }
 
     #[getter]
@@ -72,8 +98,12 @@ impl PyPhysicalCameraParameters {
     }
 
     #[setter]
-    pub fn set_shutter_speed_s(&mut self, value: f32) {
-        self.inner.shutter_speed_s = value;
+    pub fn set_shutter_speed_s(&mut self, value: f32) -> PyResult<()> {
+        let mut candidate = self.inner;
+        candidate.shutter_speed_s = value;
+        validate_parameters(&candidate)?;
+        self.inner = candidate;
+        Ok(())
     }
 
     #[getter]
@@ -82,8 +112,12 @@ impl PyPhysicalCameraParameters {
     }
 
     #[setter]
-    pub fn set_sensitivity_iso(&mut self, value: f32) {
-        self.inner.sensitivity_iso = value;
+    pub fn set_sensitivity_iso(&mut self, value: f32) -> PyResult<()> {
+        let mut candidate = self.inner;
+        candidate.sensitivity_iso = value;
+        validate_parameters(&candidate)?;
+        self.inner = candidate;
+        Ok(())
     }
 
     #[getter]
@@ -92,8 +126,12 @@ impl PyPhysicalCameraParameters {
     }
 
     #[setter]
-    pub fn set_sensor_height(&mut self, value: f32) {
-        self.inner.sensor_height = value;
+    pub fn set_sensor_height(&mut self, value: f32) -> PyResult<()> {
+        let mut candidate = self.inner;
+        candidate.sensor_height = value;
+        validate_parameters(&candidate)?;
+        self.inner = candidate;
+        Ok(())
     }
 
     pub fn ev100(&self) -> f32 {

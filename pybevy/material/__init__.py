@@ -17,6 +17,8 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable
 from copy import copy
+from dataclasses import InitVar
+from inspect import signature as _signature
 from threading import Lock
 from typing import Any, Protocol, TypeVar, cast, dataclass_transform, get_type_hints
 
@@ -49,20 +51,21 @@ from ._layout import (
     _generate_wgsl,
     _validate_binding_names,
 )
+from ._scalars import U32 as U32
 from ._structs import (
-    ShaderStructField as ShaderStructField,
+    ShaderTypeField as ShaderTypeField,
 )
 from ._structs import (
-    ShaderStructLayout as ShaderStructLayout,
+    ShaderTypeLayout as ShaderTypeLayout,
 )
 from ._structs import (
-    pack_shader_structs as pack_shader_structs,
+    pack_shader_data as pack_shader_data,
 )
 from ._structs import (
-    shader_struct as shader_struct,
+    shader_type as shader_type,
 )
 from ._structs import (
-    shader_struct_layout as shader_struct_layout,
+    shader_type_layout as shader_type_layout,
 )
 
 _Material = _pybevy.pbr.Material  # type: ignore
@@ -117,17 +120,20 @@ def _logical_material_type_id(
 
 
 def _pack_value(
-    data: list[float],
+    data: list[float | int],
     float_index: int,
     value: Any,  # noqa: ANN401
     typ: type,
 ) -> None:
-    """Pack a Python value into the flat float buffer at the given index."""
+    """Pack a Python value into the flat uniform values at the given index."""
     if typ is float:
         data[float_index] = float(value)
     elif typ is int:
-        # Pack int value into the float slot - stored as f32 in the uniform buffer
-        data[float_index] = float(value)
+        if type(value) is not int:
+            raise TypeError(f"must be an int; got {type(value).__name__}")
+        if not -(2**31) <= value < 2**31:
+            raise ValueError("must fit i32")
+        data[float_index] = value
     elif typ is Vec2:
         data[float_index] = value.x
         data[float_index + 1] = value.y
@@ -148,11 +154,11 @@ def _pack_value(
 
 
 def _read_value(
-    data: list[float],
+    data: list[float | int],
     float_index: int,
     typ: type,
 ) -> Any:  # noqa: ANN401
-    """Read a Python value from the flat float buffer."""
+    """Read a Python value from the flat uniform values."""
     if typ is float:
         return data[float_index]
     if typ is int:
@@ -176,6 +182,11 @@ def _read_value(
             data[float_index + 3],
         )
     return None
+
+
+class _BaseInstance(Protocol):
+    _shader_mat: ShaderMaterial | StorageShaderMaterial | None
+    _base: StandardMaterial
 
 
 class _StorageInstance(Protocol):
@@ -226,11 +237,8 @@ def material(
     prepass_fragment_shader: str | None = None,
     deferred_vertex_shader: str | None = None,
     deferred_fragment_shader: str | None = None,
-    alpha_mode: AlphaMode | None = None,
-    double_sided: bool | None = None,
-    cull_mode: object = _SENTINEL,
-    unlit: bool | None = None,
-    depth_bias: float | None = None,
+    base: StandardMaterial | None = None,
+    **removed_settings: object,
 ) -> Callable[[type[MaterialT]], type[MaterialT]]:
     """Decorator to define a custom shader material.
 
@@ -243,17 +251,12 @@ def material(
         prepass_fragment_shader: WGSL fragment shader for those prepasses, including discard.
         deferred_vertex_shader: WGSL vertex shader for deferred rendering.
         deferred_fragment_shader: WGSL fragment shader writing the deferred G-buffer.
-        alpha_mode: Default AlphaMode for the base StandardMaterial (e.g., AlphaMode.Blend()).
-        double_sided: Whether the material renders on both sides.
-        cull_mode: Face culling mode. None = no culling, Face.Back = back-face culling (default).
-        unlit: Whether the material ignores lighting.
-        depth_bias: Depth bias to prevent z-fighting.
+        base: StandardMaterial template, copied at decoration and per instance.
 
     Example:
         @material(
             fragment_shader="shaders/hologram.wgsl",
-            alpha_mode=AlphaMode.Blend(),
-            double_sided=True,
+            base=StandardMaterial(alpha_mode=AlphaMode.Blend(), double_sided=True),
         )
         class HologramMaterial(Material):
             opacity: float = 0.5
@@ -268,18 +271,13 @@ def material(
             opacity=0.8,
         )
     """
-    # Collect base material overrides from decorator params
-    base_overrides: dict[str, Any] = {}
-    if alpha_mode is not None:
-        base_overrides["alpha_mode"] = alpha_mode
-    if double_sided is not None:
-        base_overrides["double_sided"] = double_sided
-    if cull_mode is not _SENTINEL:
-        base_overrides["cull_mode"] = cull_mode
-    if unlit is not None:
-        base_overrides["unlit"] = unlit
-    if depth_bias is not None:
-        base_overrides["depth_bias"] = depth_bias
+    for name, value in removed_settings.items():
+        if name in {"alpha_mode", "double_sided", "cull_mode", "unlit", "depth_bias"}:
+            raise TypeError(f"@material({name}=...) was removed; use base=StandardMaterial({name}={value!r})")
+        raise TypeError(f"material() got an unexpected keyword argument '{name}'")
+    if base is not None and not isinstance(base, StandardMaterial):
+        raise TypeError("Material base template must be a StandardMaterial or None")
+    base_template = copy(base) if base is not None else StandardMaterial()
 
     def decorator(cls: type[MaterialT]) -> type[MaterialT]:
         # Rejected before any mutation: the decorator rewrites the class in
@@ -304,6 +302,8 @@ def material(
 
         # Collect type hints and defaults
         hints = get_type_hints(cls, include_extras=True)
+        if "base" in hints and not isinstance(hints["base"], InitVar):
+            raise TypeError(f"Material {cls.__name__}.base is reserved for the StandardMaterial constructor argument")
         defaults: dict[str, Any] = {}
         for name, typ in hints.items():
             if hasattr(cls, name):
@@ -324,16 +324,23 @@ def material(
             for field in sampler_fields
         }
         texture_hints, texture_layouts = _partition_texture_fields(sampler_hints)
-        ordinary_hints, storage_fields = _partition_storage_fields(texture_hints)
+        try:
+            ordinary_hints, storage_fields = _partition_storage_fields(texture_hints)
+        except ValueError as error:
+            raise TypeError(f"Material {qualified_name}, fields [{', '.join(texture_hints)}]: {error}") from error
         layout, bool_fields, texture_fields = _compute_layout(ordinary_hints, defaults)
         for texture in texture_fields:
             texture.layout = texture_layouts.get(texture.name)
+        try:
+            _pybevy.pbr.ShaderMaterial._validate_shader_def_names([field.def_name for field in bool_fields])
+        except TypeError as error:
+            raise TypeError(f"Material {cls.__name__}: {error}") from error
         extended_bindings = bool(storage_fields or texture_layouts or sampler_fields)
         for field in storage_fields:
             if field.name in {
                 f"{texture.name}_sampler"
                 for texture in texture_fields
-                if texture.layout is None or texture.layout.sampler is not None
+                if texture.layout is None or texture.layout.sampler_type is not None
             }:
                 raise TypeError(
                     f"StorageBinding field '{field.name}' conflicts with a generated sampler"
@@ -349,7 +356,7 @@ def material(
         )
         native_type = StorageShaderMaterial if extended_bindings else ShaderMaterial
         layout_signature: _MaterialLayoutSignature = (
-            tuple((field.name, field.layout.kind) for field in sampler_fields),
+            tuple((field.name, field.layout.sampler_type) for field in sampler_fields),
             tuple(
                 (
                     field.name,
@@ -377,27 +384,30 @@ def material(
                 for field in storage_fields
             ),
         )
-        material_type_id = _logical_material_type_id(
-            qualified_name,
-            layout_signature,
-        )
         field_map = {f.name: f for f in layout}
         bool_field_map = {bf.name: bf for bf in bool_fields}
         texture_field_map = {tf.name: tf for tf in texture_fields}
 
         # Generate WGSL binding declarations (injected in-memory, not written to disk)
         wgsl = _generate_wgsl(cls.__name__, layout, texture_fields)
-        wgsl += "\n" + "\n".join(
-            dict.fromkeys(field.layout.declarations for field in storage_fields)
-        )
+        if storage_fields:
+            wgsl += "\n" + "\n".join(
+                dict.fromkeys(field.layout.declarations for field in storage_fields)
+            )
         for field in storage_fields:
             wgsl += (
-                f"\n@group(3) @binding({field.binding}) "
+                f"\n@group(#{{MATERIAL_BIND_GROUP}}) @binding({field.binding}) "
                 f"var<storage, read> {field.name}: array<{field.layout.wgsl_type}>;\n"
             )
 
         for slot, sampler_field in enumerate(sampler_fields):
-            wgsl += f"\n@group(3) @binding({109 + len(storage_fields) + slot}) var {sampler_field.name}: {sampler_field.layout.wgsl_type};\n"
+            wgsl += f"\n@group(#{{MATERIAL_BIND_GROUP}}) @binding({109 + len(storage_fields) + slot}) var {sampler_field.name}: {sampler_field.layout.wgsl_type};\n"
+
+        try:
+            _pybevy.pbr.ShaderMaterial._validate_bindings(wgsl)
+        except TypeError as error:
+            resources = ", ".join(field.name for field in storage_fields)
+            raise TypeError(f"Material {qualified_name}, storage fields [{resources}]: {error}") from error
 
         # Compute default shader_defs bitmask from bool defaults
         default_shader_defs: int = 0
@@ -406,6 +416,10 @@ def material(
                 default_shader_defs |= 1 << bf.bit_index
         shader_def_names = [bf.def_name for bf in bool_fields]
 
+        material_type_id = _logical_material_type_id(
+            qualified_name,
+            layout_signature,
+        )
         # Store metadata on the class
         _cls._material_binding_declarations = {
             name: (declared_types[name], declared_defaults.get(name, _SENTINEL))
@@ -424,37 +438,39 @@ def material(
         _cls._material_wgsl = wgsl
         _cls._material_shader_def_names = shader_def_names
 
-        # Capture base overrides for closure use
-        _base_overrides = base_overrides
-
         # Create the __init__ that produces a ShaderMaterial
         def __init__(
             self: Any,  # noqa: ANN401
+            *,
             base: StandardMaterial | None = None,
             **kwargs: Any,  # noqa: ANN401
         ) -> None:
+            actual = type(self)
+            if actual is not cls and "__pybevy_logical_type_id__" not in actual.__dict__:
+                raise TypeError(f"Material subclass '{actual.__name__}' must be decorated with @material")
+            if base is not None and not isinstance(base, StandardMaterial):
+                raise TypeError("Material base must be a StandardMaterial or None")
             missing = [name for name in required_bindings if name not in kwargs]
             if missing:
                 kind = "material" if any(declared_types[name] in (TextureBinding, SamplerBinding) for name in missing) else "storage"
                 raise TypeError(f"Missing required {kind} fields: {', '.join(missing)}")
-            # Auto-construct base StandardMaterial with decorator defaults if not provided
             if base is None:
-                base = (
-                    StandardMaterial(**_base_overrides)
-                    if _base_overrides
-                    else StandardMaterial()
-                )
+                base = copy(base_template)
 
             # Start with defaults, override with kwargs
-            data = [0.0] * 256
+            data: list[float | int] = [0.0] * 256
             self._shader_mat = None  # Not in borrowed mode
 
             for field in layout:
-                value = kwargs.pop(field.name, field.default)
-                if value is None:
+                fallback = 0 if field.python_type is int and field.default is None else field.default
+                value = kwargs.pop(field.name, fallback)
+                if value is None and field.python_type is not int:
                     continue
                 float_idx = field.offset // 4
-                _pack_value(data, float_idx, value, field.python_type)
+                try:
+                    _pack_value(data, float_idx, value, field.python_type)
+                except (TypeError, ValueError, AttributeError, OverflowError) as error:
+                    raise type(error)(f"Material {cls.__name__}.{field.name}: {error}") from error
 
             # Process bool fields -> shader defs bitmask
             shader_defs = default_shader_defs
@@ -503,6 +519,45 @@ def material(
             self._shader_defs = shader_defs
             self._textures = textures
 
+        def _base_getter(self: _BaseInstance) -> StandardMaterial:
+            native = self._shader_mat
+            if native is not None:
+                return native.base
+            return cast(StandardMaterial, _pybevy.pbr.ShaderMaterial._read_only_base(self._base))
+
+        def _base_setter(self: _BaseInstance, value: StandardMaterial) -> None:
+            if not isinstance(value, StandardMaterial):
+                raise TypeError("Material base must be a StandardMaterial")
+            native = self._shader_mat
+            if native is not None:
+                native.base = value
+            else:
+                object.__setattr__(self, "_base", copy(value))
+
+        public_fields = frozenset(
+            field.name for field in (*layout, *bool_fields, *texture_fields, *storage_fields, *sampler_fields)
+        ) | {"base"}
+        internal_fields = frozenset({
+            "_shader_mat", "_base", "_data", "_shader_defs", "_textures", "_storage_buffers", "_samplers",
+        })
+        base_fields = frozenset(_signature(StandardMaterial).parameters)
+
+        def __setattr__(self: object, name: str, value: object) -> None:
+            if name in public_fields or name in internal_fields:
+                object.__setattr__(self, name, value)
+                return
+            message = f"Material {type(self).__name__} has no field '{name}'"
+            if name in base_fields:
+                message += f"; '{name}' is a base setting, use mat.base.{name}"
+            else:
+                hint = _pybevy._keyword_hint(type(self).__name__, name, sorted(public_fields))
+                if hint:
+                    message += f". {hint}"
+            raise AttributeError(message)
+
+        _cls.base = property(_base_getter, _base_setter)
+        _cls.__setattr__ = __setattr__
+
         # Capture shader paths and WGSL for closure use in to_shader_material
         _frag_shader = fragment_shader
         _vert_shader = vertex_shader
@@ -510,15 +565,18 @@ def material(
 
         def to_shader_material(self: Any) -> ShaderMaterial | StorageShaderMaterial:  # noqa: ANN401
             """Convert to the underlying ShaderMaterial for adding to Assets."""
+            if self._shader_mat is not None:
+                return copy(self._shader_mat)
             tex_list = (
                 self._textures if any(t is not None for t in self._textures) else None
             )
+            integer_slots = {field.offset // 4 for field in layout if field.python_type is int}
             factory = StorageShaderMaterial if extended_bindings else ShaderMaterial
             shader_material = factory(
                 base=self._base,
                 fragment_shader=_frag_shader,
                 vertex_shader=_vert_shader,
-                data=self._data,
+                data=[0.0 if index in integer_slots else value for index, value in enumerate(self._data)],
                 shader_defs=self._shader_defs,
                 shader_def_names=shader_def_names if shader_def_names else None,
                 textures=tex_list,
@@ -531,7 +589,7 @@ def material(
                     {
                         "storage_buffers": self._storage_buffers,
                         "samplers": [
-                            (field.layout.kind, self._samplers[slot])
+                            (field.layout.sampler_type, self._samplers[slot])
                             for slot, field in enumerate(sampler_fields)
                         ],
                         "texture_layouts": [
@@ -541,7 +599,7 @@ def material(
                                 field.layout.dimension,
                                 field.layout.sample_type,
                                 field.layout.filterable,
-                                field.layout.sampler,
+                                field.layout.sampler_type,
                             )
                             for field in texture_fields
                         ],
@@ -554,6 +612,8 @@ def material(
                     else {}
                 ),
             )
+            for index in integer_slots:
+                cast(Any, shader_material)._set_data_int(index, self._data[index])
             cast(Any, shader_material)._set_logical_type_id(material_type_id)
             return shader_material
 
@@ -569,6 +629,20 @@ def material(
             inst._base = None
             inst._shader_defs = None  # read/write through shader_mat
             return inst
+
+        def __copy__(self: Any) -> Any:  # noqa: ANN401
+            if self._shader_mat is not None:
+                return _from_borrowed(type(self), copy(self._shader_mat))
+            values = {
+                field.name: getattr(self, field.name)
+                for field in (*layout, *bool_fields, *texture_fields, *storage_fields, *sampler_fields)
+            }
+            return type(self)(base=copy(self._base), **values)
+
+        def __deepcopy__(self: Any, memo: dict[int, object]) -> Any:  # noqa: ANN401
+            result = __copy__(self)
+            memo[id(self)] = result
+            return result
 
         def from_ref(
             klass: type,
@@ -603,6 +677,8 @@ def material(
                     value = _read_value(self._data, _fi, _t)
                     return _pybevy.pbr.ShaderMaterial._read_only_uniform(value)
                 if self._shader_mat is not None:
+                    if _t is int:
+                        return self._shader_mat._get_data_int(_fi)
                     floats = self._shader_mat.get_data_floats(_fi, _n)
                     return _read_value(floats, 0, _t)
                 return _read_value(self._data, _fi, _t)
@@ -613,13 +689,20 @@ def material(
                 _fi: int = _float_idx,
                 _t: type = _typ,
                 _n: int = _nf,
+                _label: str = f"{cls.__name__}.{field.name}",
             ) -> None:
-                if self._shader_mat is not None:
-                    temp = [0.0] * _n
+                temp: list[float | int] = [0.0] * _n
+                try:
                     _pack_value(temp, 0, value, _t)
-                    self._shader_mat.set_data_floats(_fi, temp)
+                except (TypeError, ValueError, AttributeError, OverflowError) as error:
+                    raise type(error)(f"Material {_label}: {error}") from error
+                if self._shader_mat is not None:
+                    if _t is int:
+                        self._shader_mat._set_data_int(_fi, temp[0])
+                    else:
+                        self._shader_mat.set_data_floats(_fi, temp)
                 else:
-                    _pack_value(self._data, _fi, value, _t)
+                    self._data[_fi:_fi + _n] = temp
 
             setattr(cls, _name, property(_getter, _setter))
 
@@ -729,6 +812,10 @@ def material(
 
             setattr(cls, sampler_field.name, property(_sampler_getter, _sampler_setter))
 
+        _cls.__copy__ = __copy__
+        _cls.__deepcopy__ = __deepcopy__
+        __init__.__qualname__ = f"{cls.__qualname__}.__init__"
+        __init__.__module__ = cls.__module__
         _cls.__init__ = __init__
         _cls.to_shader_material = to_shader_material
         _cls.from_ref = classmethod(from_ref)
@@ -744,3 +831,7 @@ def material(
         return cls
 
     return decorator
+
+
+# Rejected legacy keywords are diagnostics, not accepted API parameters.
+material.__signature__ = _signature(material).replace(parameters=[parameter for name, parameter in _signature(material).parameters.items() if name != "removed_settings"])

@@ -64,6 +64,23 @@ get_component_schema {"name": "PointLight"}
 → Shows all fields, types, defaults, and a spawn JSON example
 ```
 
+For default-constructible native struct components,
+`spawn_example.components` is a payload you can pass directly to
+`spawn_entity`. It includes only default fields
+that the spawn conversion and setter accept; readable but read-only fields remain
+in `fields` and `defaults` for inspection. A fieldless marker without native
+insertion hooks uses `{}` as its component value. `editable` describes field
+mutation, so an insertable marker can have `editable: false` and still offer a
+spawn example. Components without a safe default construction or an insertable
+bridge do not offer an example. Enum component schemas use a tagged
+`{"variant": "Name"}` value, adding `"value"` for a payload variant. Their
+`defaults` block describes a constructible Python default when its tagged
+value has no opaque fields; a `spawn_example`
+may also come from a Bevy reflected default when the Python enum base is not
+constructible. An enum without a replayable default has no example. Native
+lifecycle or plugin requirements can still make a syntactically valid spawn
+fail in a particular scene.
+
 Custom Python component annotations define their schema even before an instance
 exists. If such a class has no annotations, the schema instead reports public
 attributes common to every live instance. Conflicting live types are `unknown`,

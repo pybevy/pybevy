@@ -4,6 +4,7 @@ use crate::{
         StorageShaderMaterial, StorageShaderMaterialExtension, StorageShaderMaterialPlugin,
     },
     shader_material_py::build_shader_material,
+    standard_material::PyStandardMaterial,
 };
 use bevy::{
     app::App,
@@ -25,6 +26,7 @@ use pybevy_shader_types::{
     texture_binding::TextureBindingLayout,
 };
 use pyo3::{
+    PyTypeInfo,
     exceptions::{PyIndexError, PyTypeError, PyValueError},
     prelude::*,
     types::{PyList, PyType},
@@ -74,6 +76,21 @@ type ShaderStructLayoutTuple = (u32, u32, u32, Vec<(String, u32, u32, u32)>);
 
 #[pymethods]
 impl PyStorageShaderMaterial {
+    #[getter]
+    pub fn base(&self, py: Python<'_>) -> PyResult<Py<PyStandardMaterial>> {
+        let storage = self
+            .storage
+            .borrow_asset_field(|material| &material.base, |material| &mut material.base)?;
+        Py::new(py, PyStandardMaterial::from_borrowed(storage))
+    }
+
+    #[setter]
+    pub fn set_base(&mut self, base: PyRef<'_, PyStandardMaterial>) -> PyResult<()> {
+        let base = base.storage.as_ref()?.clone();
+        self.as_mut()?.base = base;
+        Ok(())
+    }
+
     #[staticmethod]
     fn _copy_sampler_descriptor(
         value: &PyImageSamplerDescriptor,
@@ -132,6 +149,11 @@ impl PyStorageShaderMaterial {
         .map_err(PyValueError::new_err)?
         .wgsl_types())
     }
+    #[classattr]
+    fn __pybevy_component_type__(py: Python<'_>) -> Bound<'_, PyType> {
+        PyMeshMaterial3dStorageShader::type_object(py)
+    }
+
     #[new]
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (base, fragment_shader=None, vertex_shader=None, data=None, shader_defs=0, shader_def_names=None, textures=None, bindings_wgsl=None, *, storage_buffer=None, storage_buffers=None, storage_layouts=None, texture_layouts=None, samplers=None, prepass_vertex_shader=None, prepass_fragment_shader=None, deferred_vertex_shader=None, deferred_fragment_shader=None))]
@@ -285,6 +307,13 @@ impl PyStorageShaderMaterial {
     fn clear_texture(&mut self, slot: isize) -> PyResult<()> {
         material_access::clear_texture(&mut self.storage, slot)
     }
+    fn _get_data_int(&self, index: isize) -> PyResult<i32> {
+        material_access::get_data_int(&self.storage, index)
+    }
+    fn _set_data_int(&mut self, index: isize, value: i32) -> PyResult<()> {
+        material_access::set_data_int(&mut self.storage, index, value)
+    }
+
     fn set_data_float(&mut self, index: isize, value: f32) -> PyResult<()> {
         material_access::set_data_float(&mut self.storage, index, value)
     }

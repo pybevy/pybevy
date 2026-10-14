@@ -1,7 +1,6 @@
 """Four patterned texture layers, selected per mesh with MeshTag and a shared offset."""
 
 from dataclasses import dataclass
-from typing import Annotated
 
 from pybevy.image import ImageSampler
 from pybevy.material import TextureBinding
@@ -13,7 +12,7 @@ from pybevy.render import Extent3d, TextureViewDescriptor, TextureViewDimension
 
 @material(fragment_shader="shaders/examples/array_texture.wgsl")
 class LayeredTiles(Material):
-    layers: Annotated[Handle[Image] | None, TextureBinding(dimension="2d_array")] = None
+    layers: TextureBinding = TextureBinding(dimension="2d_array")
     layer_offset: float = 0.0
 
 

@@ -9,6 +9,7 @@ use std::{
 use pybevy_bytecodevm::bytecode::Op;
 use pyo3::{
     basic::CompareOp,
+    buffer::PyBuffer,
     exceptions::{PyAttributeError, PyTypeError, PyValueError},
     prelude::*,
     types::{PyCapsule, PyList, PySlice, PyTuple},
@@ -620,6 +621,36 @@ impl PyArray {
         index: &Bound<'_, PyAny>,
         value: &Bound<'_, PyAny>,
     ) -> PyResult<()> {
+        if slf.borrow().core.dtype() == ArrayDType::Uint8
+            && index.is_instance_of::<PySlice>()
+            && let Ok(buffer) = PyBuffer::<u8>::get(value)
+        {
+            if !buffer.is_c_contiguous() {
+                return Err(PyValueError::new_err(
+                    "Byte slice assignment requires a contiguous byte buffer",
+                ));
+            }
+            let bytes = buffer.to_vec(value.py())?;
+            let ops = parse_index(index)?;
+            let plan = slf.borrow().core.plan(&ops).map_err(map_array_err)?;
+            if plan.shape.len() != 1 {
+                return Err(PyValueError::new_err(
+                    "Byte slice assignment requires a one-dimensional destination",
+                ));
+            }
+            let offsets: Vec<_> = plan.iter_offsets().collect();
+            if offsets.len() != bytes.len() {
+                return Err(PyValueError::new_err(
+                    "Byte slice assignment must preserve the slice length",
+                ));
+            }
+            let destination = slf.borrow_mut();
+            let mut storage = destination.core.write_storage().map_err(map_array_err)?;
+            for (offset, byte) in offsets.into_iter().zip(bytes) {
+                storage.set(offset, Scalar::I64(i64::from(byte)));
+            }
+            return Ok(());
+        }
         if value.is_instance_of::<PyList>() || value.is_instance_of::<PyTuple>() {
             return Err(PyTypeError::new_err(hint::unsupported_list_assign()));
         }

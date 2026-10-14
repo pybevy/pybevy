@@ -392,6 +392,95 @@ fn enum_component_fields(value: &dyn PartialReflect) -> Result<Map<String, Value
     }
 }
 
+/// Find a tagged enum default that the reflected spawn conversion can replay.
+pub(crate) fn replayable_enum_default_fields(
+    registry: &TypeRegistry,
+    type_id: TypeId,
+    preferred: Option<&Map<String, Value>>,
+) -> Option<Map<String, Value>> {
+    let registration = registry.get(type_id)?;
+    let type_info = registration.type_info();
+    if !matches!(type_info, TypeInfo::Enum(_)) || registration.data::<ReflectComponent>().is_none()
+    {
+        return None;
+    }
+    let reflect_default = registration.data::<ReflectDefault>()?;
+    let default = reflect_default.default();
+    if reflected_value_contains_asset_handle(default.as_partial_reflect()) {
+        return None;
+    }
+    let native_default = reflect_to_json(default.as_partial_reflect());
+    let native_default = native_default.as_object();
+
+    for fields in preferred.into_iter().chain(native_default) {
+        if !fields.get("variant").is_some_and(Value::is_string)
+            || !enum_example_value_is_representable(&Value::Object(fields.clone()))
+        {
+            continue;
+        }
+        let Ok(replacement) = enum_component_replacement(fields, type_id, type_info, registry)
+        else {
+            continue;
+        };
+        let mut probe = reflect_default.default();
+        if replace_apply(
+            probe.as_partial_reflect_mut(),
+            replacement.as_ref(),
+            registry,
+        )
+        .is_ok()
+        {
+            return Some(fields.clone());
+        }
+    }
+    None
+}
+
+fn reflected_value_contains_asset_handle(value: &dyn PartialReflect) -> bool {
+    if value.reflect_short_type_path().starts_with("Handle<") {
+        return true;
+    }
+    match value.reflect_ref() {
+        ReflectRef::Struct(fields) => (0..fields.field_len())
+            .filter_map(|index| fields.field_at(index))
+            .any(reflected_value_contains_asset_handle),
+        ReflectRef::TupleStruct(fields) => (0..fields.field_len())
+            .filter_map(|index| fields.field(index))
+            .any(reflected_value_contains_asset_handle),
+        ReflectRef::Tuple(fields) => (0..fields.field_len())
+            .filter_map(|index| fields.field(index))
+            .any(reflected_value_contains_asset_handle),
+        ReflectRef::List(values) => (0..values.len())
+            .filter_map(|index| values.get(index))
+            .any(reflected_value_contains_asset_handle),
+        ReflectRef::Array(values) => (0..values.len())
+            .filter_map(|index| values.get(index))
+            .any(reflected_value_contains_asset_handle),
+        ReflectRef::Enum(value) => (0..value.field_len())
+            .filter_map(|index| value.field_at(index))
+            .any(reflected_value_contains_asset_handle),
+        ReflectRef::Map(values) => values.iter().any(|(key, value)| {
+            reflected_value_contains_asset_handle(key)
+                || reflected_value_contains_asset_handle(value)
+        }),
+        ReflectRef::Set(values) => values.iter().any(reflected_value_contains_asset_handle),
+        _ => false,
+    }
+}
+
+pub(crate) fn enum_example_value_is_representable(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Array(items) => items.iter().all(enum_example_value_is_representable),
+        Value::Object(fields) => {
+            !fields.contains_key("repr")
+                && !fields.contains_key("serialization_error")
+                && fields.values().all(enum_example_value_is_representable)
+        }
+        _ => true,
+    }
+}
+
 /// Component-shaped math types that `scene::vector_to_json` renders as arrays.
 /// Keep this list in lockstep with that function so a field looks the same
 /// whether it came from get_component or from a set_component post-state.
@@ -1958,6 +2047,65 @@ mod tests {
     enum TestIncompletePayloadEnumComponent {
         First(TestIncompleteEnumPayload),
         Second(TestIncompleteEnumPayload),
+    }
+
+    #[test]
+    fn replayable_enum_default_fields_prefers_valid_tagged_python_default() {
+        let mut app = App::new();
+        app.register_type::<TestEnumComponent>();
+        let registry = app.world().resource::<AppTypeRegistry>().read();
+        let preferred = serde_json::json!({"variant": "VariantB"});
+        let preferred = preferred.as_object().unwrap();
+
+        assert_eq!(
+            replayable_enum_default_fields(
+                &registry,
+                TypeId::of::<TestEnumComponent>(),
+                Some(preferred),
+            ),
+            Some(preferred.clone()),
+        );
+    }
+
+    #[test]
+    fn replayable_enum_default_fields_falls_back_and_rejects_missing_default() {
+        let mut app = App::new();
+        app.register_type::<TestEnumComponent>();
+        app.register_type::<TestPayloadEnumComponent>();
+        let registry = app.world().resource::<AppTypeRegistry>().read();
+        let opaque = serde_json::json!({"variant": "VariantB", "value": {"repr": "opaque"}});
+        let opaque = opaque.as_object().unwrap();
+
+        assert_eq!(
+            replayable_enum_default_fields(
+                &registry,
+                TypeId::of::<TestEnumComponent>(),
+                Some(opaque),
+            ),
+            serde_json::json!({"variant": "VariantA"})
+                .as_object()
+                .cloned(),
+        );
+        assert_eq!(
+            replayable_enum_default_fields(
+                &registry,
+                TypeId::of::<TestPayloadEnumComponent>(),
+                None,
+            ),
+            None,
+        );
+    }
+
+    #[test]
+    fn enum_example_probe_rejects_asset_handles_and_opaque_json() {
+        let handle = Handle::<Image>::default();
+        assert!(reflected_value_contains_asset_handle(&handle));
+        assert!(!enum_example_value_is_representable(
+            &serde_json::json!({"variant": "Item", "value": {"repr": "opaque"}})
+        ));
+        assert!(!enum_example_value_is_representable(
+            &serde_json::json!({"variant": "Item", "value": null})
+        ));
     }
 
     #[test]

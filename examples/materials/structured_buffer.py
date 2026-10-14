@@ -1,11 +1,9 @@
 """Animate WGSL structs and a separate u32 indirection buffer on a shared material."""
 
 import math
-import struct
 from dataclasses import dataclass
-from typing import Annotated
 
-from pybevy.material import StorageBinding, pack_shader_structs, shader_struct
+from pybevy.material import U32, StorageBinding, shader_type
 from pybevy.mesh import MeshTag
 from pybevy.pbr import ShaderMaterialPlugin
 from pybevy.prelude import *
@@ -15,8 +13,7 @@ SHADER_PATH = "shaders/examples/structured_buffer.wgsl"
 RECORD_COUNT = 7
 
 
-@shader_struct
-@dataclass
+@shader_type
 class Tile:
     offset: Vec3
     scale: float
@@ -26,9 +23,7 @@ class Tile:
 @material(vertex_shader=SHADER_PATH, fragment_shader=SHADER_PATH)
 class StructuredTiles(Material):
     records: StorageBinding[Tile] = StorageBinding()
-    indices: Annotated[Handle[ShaderBuffer] | None, StorageBinding(element="u32")] = (
-        None
-    )
+    indices: StorageBinding[U32] = StorageBinding()
 
 
 @resource
@@ -38,8 +33,8 @@ class TileBuffers(Resource):
     indices: Handle[ShaderBuffer]
 
 
-def tile_bytes(seconds: float) -> bytes:
-    return pack_shader_structs(
+def tiles(seconds: float) -> list[Tile]:
+    return [
         Tile(
             offset=Vec3(0, 0, 0.25 * math.sin(seconds * 2 + index)),
             scale=0.75 + 0.2 * math.sin(seconds * 3 + index),
@@ -51,7 +46,7 @@ def tile_bytes(seconds: float) -> bytes:
             ),
         )
         for index in range(RECORD_COUNT)
-    )
+    ]
 
 
 def setup(
@@ -60,8 +55,8 @@ def setup(
     materials: ResMut[Assets[StructuredTiles]],
     buffers: ResMut[Assets[ShaderBuffer]],
 ) -> None:
-    records = buffers.add(ShaderBuffer(tile_bytes(0)))
-    indices = buffers.add(ShaderBuffer(struct.pack("<7I", *range(RECORD_COUNT))))
+    records = buffers.add(ShaderBuffer(tiles(0)))
+    indices = buffers.add(ShaderBuffer(range(RECORD_COUNT), element=U32))
     commands.insert_resource(TileBuffers(records, indices))
     surface = materials.add(StructuredTiles(records=records, indices=indices))  # type: ignore[call-arg]
     mesh = meshes.add(Cuboid(0.4, 0.4, 0.4))
@@ -85,12 +80,12 @@ def animate(
 ) -> None:
     records = buffers.get_mut(state.records)
     assert records is not None
-    records.set_data(tile_bytes(time.elapsed_secs()))
+    records.set_data(tiles(time.elapsed_secs()))
     indices = buffers.get_mut(state.indices)
     assert indices is not None
     shift = int(time.elapsed_secs()) % RECORD_COUNT
     indices.set_data(
-        struct.pack("<7I", *((i + shift) % RECORD_COUNT for i in range(RECORD_COUNT)))
+        [(i + shift) % RECORD_COUNT for i in range(RECORD_COUNT)], element=U32
     )
 
 

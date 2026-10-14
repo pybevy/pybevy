@@ -1,7 +1,6 @@
 """Reflect a procedural six-face cubemap on a sphere; rotate the sampled environment."""
 
 from dataclasses import dataclass
-from typing import Annotated
 
 from pybevy.image import ImageSampler
 from pybevy.material import TextureBinding
@@ -12,7 +11,7 @@ from pybevy.render import Extent3d, TextureViewDescriptor, TextureViewDimension
 
 @material(fragment_shader="shaders/examples/cubemap.wgsl")
 class CubeReflection(Material):
-    environment: Annotated[Handle[Image] | None, TextureBinding(dimension="cube")] = None
+    environment: TextureBinding = TextureBinding(dimension="cube")
     angle: float = 0.0
 
 
