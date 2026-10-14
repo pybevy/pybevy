@@ -2,7 +2,7 @@ use bevy::ecs::world::World;
 use pyo3::Python;
 use serde_json::Value;
 
-use super::{assets, execute, mutate, scene};
+use super::{assets, batch, components, execute, inspect, resources, schema};
 use crate::{
     engine::{channel::ControlRequest, dispatch::dispatch, runtime::ControlRuntime},
     protocol::{
@@ -45,15 +45,15 @@ impl ControlRuntime for Pyo3ControlRuntime {
     }
 
     fn list_entities(&mut self, world: &mut World) -> Result<Value, ControlError> {
-        scene::list_entities(world)
+        inspect::list_entities(world)
     }
 
     fn get_entity(&mut self, world: &mut World, entity: EntityRef) -> Result<Value, ControlError> {
-        scene::get_entity(world, entity)
+        inspect::get_entity(world, entity)
     }
 
     fn list_resources(&mut self, world: &mut World) -> Result<Value, ControlError> {
-        scene::list_resources(world)
+        resources::list_resources(world)
     }
 
     fn list_systems(
@@ -61,7 +61,7 @@ impl ControlRuntime for Pyo3ControlRuntime {
         world: &mut World,
         include_internal: bool,
     ) -> Result<Value, ControlError> {
-        scene::list_systems(world, include_internal)
+        inspect::list_systems(world, include_internal)
     }
 
     fn query_entities(
@@ -69,7 +69,7 @@ impl ControlRuntime for Pyo3ControlRuntime {
         world: &mut World,
         params: QueryEntitiesParams,
     ) -> Result<Value, ControlError> {
-        scene::query_entities(world, params.with, params.without, params.limit)
+        inspect::query_entities(world, params.with, params.without, params.limit)
     }
 
     fn get_component_schema(
@@ -77,7 +77,7 @@ impl ControlRuntime for Pyo3ControlRuntime {
         world: &mut World,
         name: String,
     ) -> Result<Value, ControlError> {
-        scene::get_component_schema(world, name)
+        schema::get_component_schema(world, name)
     }
 
     fn get_component(
@@ -85,7 +85,7 @@ impl ControlRuntime for Pyo3ControlRuntime {
         world: &mut World,
         params: GetComponentParams,
     ) -> Result<Value, ControlError> {
-        scene::get_component(world, params.entity, params.component)
+        inspect::get_component(world, params.entity, params.component)
     }
 
     fn get_resource(
@@ -93,11 +93,11 @@ impl ControlRuntime for Pyo3ControlRuntime {
         world: &mut World,
         params: GetResourceParams,
     ) -> Result<Value, ControlError> {
-        scene::get_resource(world, params.resource_type)
+        resources::get_resource(world, params.resource_type)
     }
 
     fn scene_summary(&mut self, world: &mut World) -> Result<Value, ControlError> {
-        scene::scene_summary(world)
+        inspect::scene_summary(world)
     }
 
     fn get_bounding_box(
@@ -105,11 +105,11 @@ impl ControlRuntime for Pyo3ControlRuntime {
         world: &mut World,
         entity: EntityRef,
     ) -> Result<Value, ControlError> {
-        scene::get_bounding_box(world, entity)
+        inspect::get_bounding_box(world, entity)
     }
 
     fn debug_registry(&mut self, world: &mut World) -> Result<Value, ControlError> {
-        scene::debug_registry(world)
+        inspect::debug_registry(world)
     }
 
     fn spawn_entity(
@@ -117,7 +117,7 @@ impl ControlRuntime for Pyo3ControlRuntime {
         world: &mut World,
         components: Value,
     ) -> Result<Value, ControlError> {
-        mutate::spawn_entity(world, components)
+        components::spawn_entity(world, components)
     }
 
     fn set_component(
@@ -125,7 +125,7 @@ impl ControlRuntime for Pyo3ControlRuntime {
         world: &mut World,
         params: SetComponentParams,
     ) -> Result<Value, ControlError> {
-        mutate::set_component(world, params.entity, params.component, params.fields)
+        components::set_component(world, params.entity, params.component, params.fields)
     }
 
     fn remove_component(
@@ -133,7 +133,7 @@ impl ControlRuntime for Pyo3ControlRuntime {
         world: &mut World,
         params: RemoveComponentParams,
     ) -> Result<Value, ControlError> {
-        mutate::remove_component(world, params.entity, params.component)
+        components::remove_component(world, params.entity, params.component)
     }
 
     fn insert_resource(
@@ -141,7 +141,7 @@ impl ControlRuntime for Pyo3ControlRuntime {
         world: &mut World,
         params: SetResourceParams,
     ) -> Result<Value, ControlError> {
-        mutate::insert_resource(world, params.resource_type, params.value)
+        resources::insert_resource(world, params.resource_type, params.value)
     }
 
     fn remove_resource(
@@ -149,7 +149,7 @@ impl ControlRuntime for Pyo3ControlRuntime {
         world: &mut World,
         resource_type: String,
     ) -> Result<Value, ControlError> {
-        mutate::remove_resource(world, resource_type)
+        resources::remove_resource(world, resource_type)
     }
 
     fn batch_mutate(
@@ -157,7 +157,7 @@ impl ControlRuntime for Pyo3ControlRuntime {
         world: &mut World,
         operations: Vec<Value>,
     ) -> Result<Value, ControlError> {
-        mutate::batch_mutate(world, operations)
+        batch::batch_mutate(world, operations)
     }
 
     fn mutate_asset(

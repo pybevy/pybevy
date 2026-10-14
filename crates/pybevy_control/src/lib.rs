@@ -22,7 +22,9 @@ pub use engine::runtime;
 pub use plugin::PyControlPlugin;
 #[doc(hidden)]
 pub use pyo3::runtime as runtime_pyo3;
-pub use pyo3::{execute::register_world_wrapper_hook, mutate::register_lifecycle_mutation_hooks};
+pub use pyo3::{
+    components::register_lifecycle_mutation_hooks, execute::register_world_wrapper_hook,
+};
 #[doc(hidden)]
 pub use transport::{client, server, sse};
 

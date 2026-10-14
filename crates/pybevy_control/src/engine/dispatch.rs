@@ -7,7 +7,7 @@ use crate::{
     capture::analysis,
     engine::{channel::SharedExclusiveExecution, runtime::ControlRuntime},
     protocol::{ControlError, ControlOperation},
-    pyo3::mutate::despawn_entity,
+    pyo3::components::despawn_entity,
     reload,
     scene::{diagnostics, spatial, time, transform_sync::propagate_transforms},
 };
