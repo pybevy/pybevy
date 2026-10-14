@@ -13,7 +13,7 @@ use pyo3::{exceptions::PyValueError, prelude::*};
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyPlaneMeshBuilder};
 
 fn check_half_size(value: &Vec2) -> Result<(), StorageError> {
-    dimension("Plane3d", "half_size", *value).map(drop)
+    Ok(dimension::<PyPlane3d, _>("half_size", *value).map(drop)?)
 }
 
 #[pyvalue]
@@ -44,7 +44,7 @@ impl PyPlane3d {
         Ok((
             Self::from_owned(Plane3d {
                 normal,
-                half_size: dimension("Plane3d", "half_size", half_size.try_into()?)?,
+                half_size: dimension::<Self, _>("half_size", half_size.try_into()?)?,
             }),
             PyMeshable,
         )
@@ -99,7 +99,7 @@ impl PyPlane3d {
     pub fn set_half_size(&mut self, value: PyVec2) -> PyResult<()> {
         let half_size = value.try_into()?;
         let mut shape = self.as_mut()?;
-        shape.half_size = dimension("Plane3d", "half_size", half_size)?;
+        shape.half_size = dimension::<Self, _>("half_size", half_size)?;
         Ok(())
     }
 

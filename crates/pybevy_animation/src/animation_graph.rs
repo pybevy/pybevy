@@ -6,7 +6,7 @@ use bevy::animation::{
 };
 use pybevy_core::{
     AssetStorage, PyAsset, PyHandle,
-    domain::{FINITE, FieldDomain, IntegerInput, check},
+    domain::{FINITE, IntegerInput, MASK_BIT_DOMAIN, check_for},
     extract_handle_from_any,
     public_error::{
         ANIMATION_GRAPH_CYCLE, ANIMATION_GRAPH_NODE_MISSING, ANIMATION_GRAPH_NODE_READ_ONLY,
@@ -25,13 +25,6 @@ use crate::animation_node_index::PyAnimationNodeIndex;
 
 const CLIP_CANNOT_BE_NONE: &str = "clip cannot be None";
 const MAX_REACHABLE_DEPTH: usize = 512;
-
-/// A mask group is a bit of the node's `u64` mask.
-const MASK_GROUP_DOMAIN: &[FieldDomain] = &[FieldDomain::Range { lo: 0.0, hi: 64.0 }];
-
-fn mask_group(group: IntegerInput<u32>) -> PyResult<u32> {
-    Ok(check("AnimationGraphNode", "group", group, MASK_GROUP_DOMAIN)?.stored())
-}
 
 fn validate_node(graph: &AnimationGraph, index: AnimationNodeIndex) -> PyResult<()> {
     if graph.get(index).is_none() {
@@ -173,7 +166,7 @@ impl PyAnimationGraph {
         weight: f32,
         parent: &PyAnimationNodeIndex,
     ) -> PyResult<PyAnimationNodeIndex> {
-        let weight = check("AnimationGraph", "weight", weight, FINITE)?;
+        let weight = check_for::<Self, _>("weight", weight, FINITE)?;
         {
             let graph = self.as_ref()?;
             validate_node(&graph, parent.0)?;
@@ -195,7 +188,7 @@ impl PyAnimationGraph {
         }
         let handle = extract_handle_from_any(clip)?;
         let handle = (&handle).try_into()?;
-        let weight = check("AnimationGraph", "weight", weight, FINITE)?;
+        let weight = check_for::<Self, _>("weight", weight, FINITE)?;
         {
             let graph = self.as_ref()?;
             validate_node(&graph, parent.0)?;
@@ -414,7 +407,7 @@ impl PyAnimationGraphNode {
         slf: PyRef<'py, Self>,
         group: IntegerInput<u32>,
     ) -> PyResult<PyRef<'py, Self>> {
-        let group = mask_group(group)?;
+        let group = check_for::<Self, _>("group", group, MASK_BIT_DOMAIN)?.stored();
         slf.with_node_mut(slf.py(), |node| {
             node.add_mask_group(group);
         })?;
@@ -425,7 +418,7 @@ impl PyAnimationGraphNode {
         slf: PyRef<'py, Self>,
         group: IntegerInput<u32>,
     ) -> PyResult<PyRef<'py, Self>> {
-        let group = mask_group(group)?;
+        let group = check_for::<Self, _>("group", group, MASK_BIT_DOMAIN)?.stored();
         slf.with_node_mut(slf.py(), |node| {
             node.remove_mask_group(group);
         })?;

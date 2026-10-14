@@ -1,6 +1,7 @@
 use bevy::animation::transition::AnimationTransitions;
 use pybevy_core::{
-    ComponentStorage, DURATION_DOMAIN, PyComponent, check_duration, domain::DurationInput,
+    ComponentStorage, PyComponent,
+    domain::{DurationInput, FINITE_NON_NEGATIVE, check_for},
 };
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
@@ -29,12 +30,12 @@ impl PyAnimationTransitions {
         new_animation: &PyAnimationNodeIndex,
         transition_duration: f64,
     ) -> PyResult<PyActiveAnimation> {
-        let duration = check_duration(
-            "AnimationTransitions",
+        let duration = check_for::<Self, _>(
             "transition_duration",
             DurationInput::Seconds(transition_duration),
-            DURATION_DOMAIN,
-        )?;
+            FINITE_NON_NEGATIVE,
+        )?
+        .stored();
 
         let mut bevy_player = player.as_mut()?;
 

@@ -4,7 +4,7 @@ use bevy::math::{
 };
 use pybevy_core::{
     FromBorrowedStorage, ValueStorage,
-    domain::{NON_NEGATIVE, check},
+    domain::{NON_NEGATIVE, check_for},
     public_error::{EMPTY_POINT_CLOUD, bounding_operation, bounding_shrink},
     repr::{ReprLiteral, float_repr},
 };
@@ -77,7 +77,7 @@ impl PyBoundingSphere {
 
     #[new]
     pub fn new(center: &Bound<'_, PyAny>, radius: f32) -> PyResult<Self> {
-        let radius = check("BoundingSphere", "radius", radius, NON_NEGATIVE)?;
+        let radius = check_for::<Self, _>("radius", radius, NON_NEGATIVE)?;
         Ok(PyBoundingSphere::from_owned(BoundingSphere::new(
             extract_vec3a_from_any(center)?,
             radius,
@@ -156,13 +156,13 @@ impl PyBoundingSphere {
 
     pub fn grow(&self, amount: f32) -> PyResult<PyBoundingSphere> {
         let bounds = self.as_ref()?;
-        let amount = check("BoundingSphere", "amount", amount, NON_NEGATIVE)?;
+        let amount = check_for::<Self, _>("amount", amount, NON_NEGATIVE)?;
         Ok(PyBoundingSphere::from_owned(bounds.grow(amount)))
     }
 
     pub fn shrink(&self, amount: f32) -> PyResult<PyBoundingSphere> {
         let bounds = self.as_ref()?;
-        let amount = check("BoundingSphere", "amount", amount, NON_NEGATIVE)?;
+        let amount = check_for::<Self, _>("amount", amount, NON_NEGATIVE)?;
         if bounds
             .radius()
             .partial_cmp(&amount)
@@ -175,7 +175,7 @@ impl PyBoundingSphere {
 
     pub fn scale_around_center(&self, scale: f32) -> PyResult<PyBoundingSphere> {
         let bounds = self.as_ref()?;
-        let scale = check("BoundingSphere", "scale", scale, NON_NEGATIVE)?;
+        let scale = check_for::<Self, _>("scale", scale, NON_NEGATIVE)?;
         Ok(PyBoundingSphere::from_owned(
             bounds.scale_around_center(scale),
         ))

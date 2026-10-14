@@ -1,14 +1,15 @@
 use bevy::mesh::{Capsule3dMeshBuilder, CapsuleUvProfile, MeshBuilder};
-use pybevy_core::{PyAsset, domain::IntegerInput};
+use pybevy_core::{
+    PyAsset,
+    domain::{IntegerInput, check_for},
+};
 use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 use crate::{
     mesh::PyMesh,
     mesh_builder::PyMeshBuilder,
-    primitives::validation::{
-        AT_LEAST_FOUR, AT_LEAST_ONE, minimum_count, stored_count, vertex_budget,
-    },
+    primitives::validation::{AT_LEAST_FOUR, AT_LEAST_ONE, vertex_budget},
 };
 
 #[pyenum(CapsuleUvProfile)]
@@ -45,24 +46,14 @@ impl PyCapsule3dMeshBuilder {
     }
 
     pub fn longitudes(&self, py: Python<'_>, longitudes: IntegerInput<u32>) -> PyResult<Py<Self>> {
-        let longitudes = minimum_count(
-            "Capsule3dMeshBuilder",
-            "longitudes",
-            longitudes,
-            AT_LEAST_ONE,
-        )?;
+        let longitudes = check_for::<Self, _>("longitudes", longitudes, AT_LEAST_ONE)?.stored();
         let mut builder = self.0;
         builder.longitudes = longitudes;
         Py::new(py, (Self(builder), PyMeshBuilder))
     }
 
     pub fn latitudes(&self, py: Python<'_>, latitudes: IntegerInput<u32>) -> PyResult<Py<Self>> {
-        let latitudes = minimum_count(
-            "Capsule3dMeshBuilder",
-            "latitudes",
-            latitudes,
-            AT_LEAST_FOUR,
-        )?;
+        let latitudes = check_for::<Self, _>("latitudes", latitudes, AT_LEAST_FOUR)?.stored();
         let mut builder = self.0;
         builder.latitudes = latitudes;
         Py::new(py, (Self(builder), PyMeshBuilder))
@@ -73,18 +64,8 @@ impl PyCapsule3dMeshBuilder {
     }
 
     pub fn build(&self, py: Python) -> PyResult<Py<PyMesh>> {
-        stored_count(
-            "Capsule3dMeshBuilder",
-            "longitudes",
-            self.0.longitudes,
-            AT_LEAST_ONE,
-        )?;
-        stored_count(
-            "Capsule3dMeshBuilder",
-            "latitudes",
-            self.0.latitudes,
-            AT_LEAST_FOUR,
-        )?;
+        check_for::<Self, _>("longitudes", self.0.longitudes, AT_LEAST_ONE)?;
+        check_for::<Self, _>("latitudes", self.0.latitudes, AT_LEAST_FOUR)?;
         let longitudes = u128::from(self.0.longitudes);
         let latitude_rings = 2 * u128::from(self.0.latitudes / 2);
         let vertices =

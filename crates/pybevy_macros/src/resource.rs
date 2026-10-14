@@ -7,7 +7,7 @@ use syn::{
 };
 
 use crate::{
-    domain::{DomainEntry, domain_impl_tokens, owner_name, parse_domains},
+    domain::{Domains, domain_impl_tokens, owner_name, parse_domains},
     util::reflect_registration_tokens,
 };
 
@@ -55,7 +55,7 @@ pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
         no_reflect: bool,
         materialize: Option<Path>,
         clone_with: Option<Path>,
-        domains: Vec<DomainEntry>,
+        domains: Domains,
     }
 
     impl Parse for ResourceStorageArgs {
@@ -74,7 +74,7 @@ pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
             let mut no_reflect = false;
             let mut materialize = None;
             let mut clone_with = None;
-            let mut domains = Vec::new();
+            let mut domains = Domains::default();
 
             while input.peek(Token![,]) {
                 input.parse::<Token![,]>()?;

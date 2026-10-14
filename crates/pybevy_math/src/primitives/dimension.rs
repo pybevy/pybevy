@@ -1,8 +1,6 @@
 use bevy::math::{Vec2, Vec3};
-use pybevy_core::{
-    StorageError,
-    domain::{DomainValues, FINITE, FINITE_NON_NEGATIVE, check},
-};
+use pybevy_core::domain::{DomainValues, DomainViolation, FINITE_NON_NEGATIVE, check_for};
+use pyo3::PyClass;
 
 pub trait Dimension: Copy + DomainValues {
     fn without_negative_zero(self) -> Self;
@@ -26,15 +24,11 @@ impl Dimension for Vec3 {
     }
 }
 
-/// Validate a primitive dimension: finite and non-negative, with `-0.0` stored as `0.0`.
-pub fn dimension<T: Dimension>(
-    owner: &'static str,
+/// Validate a primitive dimension of `O`: finite and non-negative, with `-0.0`
+/// stored as `0.0`.
+pub fn dimension<O: PyClass, T: Dimension>(
     name: &'static str,
     value: T,
-) -> Result<T, StorageError> {
-    Ok(check(owner, name, value, FINITE_NON_NEGATIVE)?.without_negative_zero())
-}
-
-pub fn angle(owner: &'static str, name: &'static str, value: f32) -> Result<f32, StorageError> {
-    Ok(check(owner, name, value, FINITE)?)
+) -> Result<T, DomainViolation> {
+    Ok(check_for::<O, _>(name, value, FINITE_NON_NEGATIVE)?.without_negative_zero())
 }

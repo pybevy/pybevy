@@ -34,7 +34,7 @@ use pybevy_render::{
 use pyo3::{
     PyTraverseError, PyVisit,
     buffer::PyBuffer,
-    exceptions::{PyRuntimeError, PyTypeError, PyValueError},
+    exceptions::{PyIndexError, PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
     types::{PyBytes, PyList, PyTuple},
 };
@@ -908,11 +908,18 @@ impl ImagePixelContextMut {
     }
 }
 
+/// Out-of-bounds coordinates are an `IndexError`; the image's state or
+/// format failing an access stays a `RuntimeError`.
+fn pixel_access_error(error: &TextureAccessError, message: String) -> PyErr {
+    match error {
+        TextureAccessError::OutOfBounds { .. } => PyIndexError::new_err(message),
+        _ => PyRuntimeError::new_err(message),
+    }
+}
+
 fn texture_access_error(error: TextureAccessError) -> PyErr {
-    PyRuntimeError::new_err(format!(
-        "{}: {error}",
-        public_error::IMAGE_INVALID_PIXEL_COORDINATES
-    ))
+    let message = format!("{}: {error}", public_error::IMAGE_INVALID_PIXEL_COORDINATES);
+    pixel_access_error(&error, message)
 }
 
 #[pyasset(Image, bridge)]
@@ -1262,8 +1269,11 @@ impl PyImage {
             let image = this.storage.as_ref()?;
             image
                 .pixel_bytes(bevy_coords)
-                .map_err(|_| {
-                    PyRuntimeError::new_err(public_error::IMAGE_INVALID_PIXEL_COORDINATES)
+                .map_err(|error| {
+                    pixel_access_error(
+                        &error,
+                        public_error::IMAGE_INVALID_PIXEL_COORDINATES.to_string(),
+                    )
                 })?
                 .len()
         };
@@ -1285,7 +1295,12 @@ impl PyImage {
         let current_len = transaction
             .preflight()
             .pixel_bytes(bevy_coords)
-            .map_err(|_| PyRuntimeError::new_err(public_error::IMAGE_INVALID_PIXEL_COORDINATES))?;
+            .map_err(|error| {
+                pixel_access_error(
+                    &error,
+                    public_error::IMAGE_INVALID_PIXEL_COORDINATES.to_string(),
+                )
+            })?;
         if current_len.len() != len {
             return Err(PyRuntimeError::new_err(
                 "Image pixel layout changed during view acquisition",
@@ -1401,7 +1416,7 @@ impl PyImage {
     pub fn get_color_at_1d(&self, x: u32, py: Python<'_>) -> PyResult<Py<PyColor>> {
         image_with!(self, |image: &Image| {
             let color = image.get_color_at_1d(x).map_err(|e| {
-                PyRuntimeError::new_err(format!("Failed to get color at ({x}): {e}"))
+                pixel_access_error(&e, format!("Failed to get color at ({x}): {e}"))
             })?;
             PyColor::from_color(color, py)
         })
@@ -1410,7 +1425,7 @@ impl PyImage {
     pub fn get_color_at(&self, x: u32, y: u32, py: Python<'_>) -> PyResult<Py<PyColor>> {
         image_with!(self, |image: &Image| {
             let color = image.get_color_at(x, y).map_err(|e| {
-                PyRuntimeError::new_err(format!("Failed to get color at ({x}, {y}): {e}"))
+                pixel_access_error(&e, format!("Failed to get color at ({x}, {y}): {e}"))
             })?;
             PyColor::from_color(color, py)
         })
@@ -1419,7 +1434,7 @@ impl PyImage {
     pub fn get_color_at_3d(&self, x: u32, y: u32, z: u32, py: Python<'_>) -> PyResult<Py<PyColor>> {
         image_with!(self, |image: &Image| {
             let color = image.get_color_at_3d(x, y, z).map_err(|e| {
-                PyRuntimeError::new_err(format!("Failed to get color at ({x}, {y}, {z}): {e}"))
+                pixel_access_error(&e, format!("Failed to get color at ({x}, {y}, {z}): {e}"))
             })?;
             PyColor::from_color(color, py)
         })
@@ -1428,39 +1443,39 @@ impl PyImage {
     pub fn set_color_at_1d(&mut self, x: u32, color: PyColor) -> PyResult<()> {
         let color = color.try_into()?;
         image_with!(self, |image: &Image| image.get_color_at_1d(x))
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to set color at ({x}): {e}")))?;
+            .map_err(|e| pixel_access_error(&e, format!("Failed to set color at ({x}): {e}")))?;
         image_with_mut!(self, |image: &mut Image| {
             image.set_color_at_1d(x, color)?;
             round_integer_pixel(image, UVec3::new(x, 0, 0), color)
         })
-        .map_err(|e| PyRuntimeError::new_err(format!("Failed to set color at ({x}): {e}")))?;
+        .map_err(|e| pixel_access_error(&e, format!("Failed to set color at ({x}): {e}")))?;
         Ok(())
     }
 
     pub fn set_color_at(&mut self, x: u32, y: u32, color: PyColor) -> PyResult<()> {
         let color = color.try_into()?;
         image_with!(self, |image: &Image| image.get_color_at(x, y)).map_err(|e| {
-            PyRuntimeError::new_err(format!("Failed to set color at ({x}, {y}): {e}"))
+            pixel_access_error(&e, format!("Failed to set color at ({x}, {y}): {e}"))
         })?;
         image_with_mut!(self, |image: &mut Image| {
             image.set_color_at(x, y, color)?;
             round_integer_pixel(image, UVec3::new(x, y, 0), color)
         })
-        .map_err(|e| PyRuntimeError::new_err(format!("Failed to set color at ({x}, {y}): {e}")))?;
+        .map_err(|e| pixel_access_error(&e, format!("Failed to set color at ({x}, {y}): {e}")))?;
         Ok(())
     }
 
     pub fn set_color_at_3d(&mut self, x: u32, y: u32, z: u32, color: PyColor) -> PyResult<()> {
         let color = color.try_into()?;
         image_with!(self, |image: &Image| image.get_color_at_3d(x, y, z)).map_err(|e| {
-            PyRuntimeError::new_err(format!("Failed to set color at ({x}, {y}, {z}): {e}"))
+            pixel_access_error(&e, format!("Failed to set color at ({x}, {y}, {z}): {e}"))
         })?;
         image_with_mut!(self, |image: &mut Image| {
             image.set_color_at_3d(x, y, z, color)?;
             round_integer_pixel(image, UVec3::new(x, y, z), color)
         })
         .map_err(|e| {
-            PyRuntimeError::new_err(format!("Failed to set color at ({x}, {y}, {z}): {e}"))
+            pixel_access_error(&e, format!("Failed to set color at ({x}, {y}, {z}): {e}"))
         })?;
         Ok(())
     }

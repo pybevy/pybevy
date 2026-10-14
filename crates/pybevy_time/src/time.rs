@@ -2,8 +2,8 @@ use std::time::Duration;
 
 use bevy::time::{Fixed, Real, Time, Virtual};
 use pybevy_core::{
-    POSITIVE_DURATION_DOMAIN, PyResource, ResourceStorage, check_duration,
-    domain::{DurationInput, check},
+    PyResource, ResourceStorage,
+    domain::{DurationInput, POSITIVE, check},
     public_error::TIME_CONTEXT_TYPE_REQUIRED,
     relative_speed,
     repr::float_repr,
@@ -22,16 +22,11 @@ fn positive_duration(
     field: &'static str,
     duration: Duration,
 ) -> PyResult<Duration> {
-    Ok(check(owner, field, duration, POSITIVE_DURATION_DOMAIN)?)
+    Ok(check(owner, field, duration, POSITIVE)?)
 }
 
 fn positive_seconds(owner: &'static str, field: &'static str, seconds: f64) -> PyResult<Duration> {
-    check_duration(
-        owner,
-        field,
-        DurationInput::Seconds(seconds),
-        POSITIVE_DURATION_DOMAIN,
-    )
+    Ok(check(owner, field, DurationInput::Seconds(seconds), POSITIVE)?.stored())
 }
 
 #[pyresource(Time, bridge)]
@@ -160,7 +155,7 @@ impl PyTimeFixed {
 
     #[staticmethod]
     pub fn from_hz(py: Python<'_>, hz: f64) -> PyResult<Py<PyTimeFixed>> {
-        let timestep = timestep_from_hz(FIXED, "hz", hz)?;
+        let timestep = timestep_from_hz(FIXED, hz)?;
         Py::new(
             py,
             resource_initializer(Time::<Fixed>::from_duration(timestep).into()),
@@ -193,8 +188,7 @@ impl PyTimeFixed {
     }
 
     pub fn set_timestep_hz(&mut self, hz: f64) -> PyResult<()> {
-        self.as_mut()?
-            .set_timestep(timestep_from_hz(FIXED, "hz", hz)?);
+        self.as_mut()?.set_timestep(timestep_from_hz(FIXED, hz)?);
         Ok(())
     }
 

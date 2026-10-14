@@ -7,7 +7,7 @@ use syn::{
 };
 
 use crate::{
-    domain::{DomainEntry, domain_impl_tokens, owner_name, parse_domains},
+    domain::{Domains, domain_impl_tokens, owner_name, parse_domains},
     util::reflect_registration_tokens,
 };
 
@@ -56,7 +56,7 @@ pub fn pyasset(attr: TokenStream, item: TokenStream) -> TokenStream {
         material: bool,
         input_converter: bool,
         missing_resource_hint: Option<String>,
-        domains: Vec<DomainEntry>,
+        domains: Domains,
     }
 
     impl Parse for AssetStorageArgs {
@@ -69,7 +69,7 @@ pub fn pyasset(attr: TokenStream, item: TokenStream) -> TokenStream {
             let mut input_converter = false;
             let mut material = false;
             let mut missing_resource_hint = None;
-            let mut domains = Vec::new();
+            let mut domains = Domains::default();
 
             while input.peek(Token![,]) {
                 input.parse::<Token![,]>()?;

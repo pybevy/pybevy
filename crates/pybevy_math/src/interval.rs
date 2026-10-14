@@ -1,6 +1,7 @@
 use bevy::math::curve::{Interval, interval};
 use pybevy_core::{
-    FromBorrowedStorage, ValueStorage, public_error::INVALID_INTERVAL, repr::float_repr,
+    FromBorrowedStorage, ValueStorage, domain::check_ordered_for, public_error::INVALID_INTERVAL,
+    repr::float_repr,
 };
 use pybevy_macros::pyvalue;
 use pyo3::{basic::CompareOp, exceptions::PyValueError, prelude::*};
@@ -52,6 +53,7 @@ impl PyInterval {
 
     #[new]
     pub fn new(start: f32, end: f32) -> PyResult<PyInterval> {
+        check_ordered_for::<Self, _>("start", start, "end", end, true)?;
         interval(start, end)
             .map(Into::into)
             .map_err(|_| invalid_interval_error())

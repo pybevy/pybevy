@@ -471,9 +471,7 @@ pub use component::PyComponent;
 pub use constructor::Omittable;
 pub use debug_snapshot::{DebugSnapshot, ReloadMemorySnapshotInfo, SystemProfile};
 pub use duration::{
-    DURATION_DOMAIN, DurationFromSecondsError, FREQUENCY_DOMAIN, POSITIVE_DURATION_DOMAIN,
-    RELATIVE_SPEED_DOMAIN, check_duration, relative_speed, timestep_from_hz,
-    try_duration_from_secs_f64,
+    DurationFromSecondsError, relative_speed, timestep_from_hz, try_duration_from_secs_f64,
 };
 pub use entity::{PyEntity, extract_entity_from_any};
 pub use entity_index::PyEntityIndex;

@@ -13,7 +13,7 @@ use pyo3::prelude::*;
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyCuboidMeshBuilder};
 
 fn check_half_size(value: &Vec3) -> Result<(), StorageError> {
-    dimension("Cuboid", "half_size", *value).map(drop)
+    Ok(dimension::<PyCuboid, _>("half_size", *value).map(drop)?)
 }
 
 #[pyvalue]
@@ -47,33 +47,33 @@ impl PyCuboid {
         #[expected("Vec3")] half_size: Option<PyVec3>,
     ) -> PyResult<PyClassInitializer<Self>> {
         if let Some(hs) = half_size {
-            let half_size: Vec3 = dimension("Cuboid", "half_size", hs.try_into()?)?;
+            let half_size: Vec3 = dimension::<Self, _>("half_size", hs.try_into()?)?;
             return Ok((Self::from_owned(Cuboid { half_size }), PyMeshable).into());
         }
         let cuboid = Cuboid::new(
-            dimension("Cuboid", "x_length", x_length)?,
-            dimension("Cuboid", "y_length", y_length)?,
-            dimension("Cuboid", "z_length", z_length)?,
+            dimension::<Self, _>("x_length", x_length)?,
+            dimension::<Self, _>("y_length", y_length)?,
+            dimension::<Self, _>("z_length", z_length)?,
         );
         Ok((Self::from_owned(cuboid), PyMeshable).into())
     }
 
     #[staticmethod]
     pub fn from_size(py: Python, size: PyVec3) -> PyResult<Py<Self>> {
-        let size: Vec3 = dimension("Cuboid", "size", size.try_into()?)?;
+        let size: Vec3 = dimension::<Self, _>("size", size.try_into()?)?;
         Py::new(py, (Self::from_owned(Cuboid::from_size(size)), PyMeshable))
     }
 
     #[staticmethod]
     pub fn from_corners(py: Python, point1: PyVec3, point2: PyVec3) -> PyResult<Py<Self>> {
         let cuboid = Cuboid::from_corners(point1.try_into()?, point2.try_into()?);
-        dimension("Cuboid", "half_size", cuboid.half_size)?;
+        dimension::<Self, _>("half_size", cuboid.half_size)?;
         Py::new(py, (Self::from_owned(cuboid), PyMeshable))
     }
 
     #[staticmethod]
     pub fn from_length(py: Python, length: f32) -> PyResult<Py<Self>> {
-        let cuboid = Cuboid::from_length(dimension("Cuboid", "length", length)?);
+        let cuboid = Cuboid::from_length(dimension::<Self, _>("length", length)?);
         Py::new(py, (Self::from_owned(cuboid), PyMeshable))
     }
 
@@ -90,7 +90,7 @@ impl PyCuboid {
     pub fn set_half_size(&mut self, value: PyVec3) -> PyResult<()> {
         let half_size: Vec3 = value.try_into()?;
         let mut cuboid = self.as_mut()?;
-        cuboid.half_size = dimension("Cuboid", "half_size", half_size)?;
+        cuboid.half_size = dimension::<Self, _>("half_size", half_size)?;
         Ok(())
     }
 

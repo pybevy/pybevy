@@ -13,7 +13,7 @@ use pyo3::prelude::*;
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyEllipseMeshBuilder};
 
 fn check_half_size(value: &Vec2) -> Result<(), StorageError> {
-    dimension("Ellipse", "half_size", *value).map(drop)
+    Ok(dimension::<PyEllipse, _>("half_size", *value).map(drop)?)
 }
 
 #[pyvalue]
@@ -59,7 +59,7 @@ impl PyEllipse {
     #[new]
     #[pyo3(signature = (*, half_size = PyVec2::vec2(Vec2::new(1.0, 0.5))))]
     pub fn new(half_size: PyVec2) -> PyResult<PyClassInitializer<Self>> {
-        let half_size: Vec2 = dimension("Ellipse", "half_size", half_size.try_into()?)?;
+        let half_size: Vec2 = dimension::<Self, _>("half_size", half_size.try_into()?)?;
         Ok((
             Self::from_owned(Ellipse::new(half_size.x, half_size.y)),
             PyMeshable,
@@ -80,7 +80,7 @@ impl PyEllipse {
     pub fn set_half_size(&mut self, value: PyVec2) -> PyResult<()> {
         let half_size = value.try_into()?;
         let mut shape = self.as_mut()?;
-        shape.half_size = dimension("Ellipse", "half_size", half_size)?;
+        shape.half_size = dimension::<Self, _>("half_size", half_size)?;
         Ok(())
     }
 
@@ -102,7 +102,7 @@ impl PyEllipse {
 
     #[staticmethod]
     pub fn from_size(py: Python, size: PyVec2) -> PyResult<Py<Self>> {
-        let bevy_size: Vec2 = dimension("Ellipse", "size", size.try_into()?)?;
+        let bevy_size: Vec2 = dimension::<Self, _>("size", size.try_into()?)?;
         Py::new(
             py,
             (Self::from_owned(Ellipse::from_size(bevy_size)), PyMeshable),

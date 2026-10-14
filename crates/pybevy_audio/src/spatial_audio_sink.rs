@@ -5,7 +5,8 @@ use bevy::{
     transform::components::Transform,
 };
 use pybevy_core::{
-    ComponentStorage, PyComponent, domain::check, public_error::audio_seek_failed, repr::float_repr,
+    ComponentStorage, PyComponent, domain::check_for, public_error::audio_seek_failed,
+    repr::float_repr,
 };
 use pybevy_macros::pycomponent;
 use pybevy_math::vec3::PyVec3;
@@ -51,7 +52,7 @@ impl PySpatialAudioSink {
     }
 
     pub fn set_speed(&self, speed: f32) -> PyResult<()> {
-        let speed = check("SpatialAudioSink", "speed", speed, SPEED_DOMAIN)?;
+        let speed = check_for::<Self, _>("speed", speed, SPEED_DOMAIN)?;
         self.as_ref()?.set_speed(speed);
         Ok(())
     }

@@ -2,8 +2,7 @@ use std::time::Duration;
 
 use bevy::time::{Timer, TimerMode};
 use pybevy_core::{
-    DURATION_DOMAIN, check_duration,
-    domain::{DurationInput, check},
+    domain::{DurationInput, FINITE_NON_NEGATIVE, check_for},
     public_error::TIMER_ELAPSED_PAST_DURATION,
 };
 use pybevy_macros::pyenum;
@@ -47,7 +46,7 @@ impl PyTimer {
     #[pyo3(signature = (duration = None, mode = PyTimerMode::Once))]
     pub fn new(duration: Option<DurationInput>, mode: PyTimerMode) -> PyResult<Self> {
         let dur = match duration {
-            Some(d) => check_duration("Timer", "duration", d, DURATION_DOMAIN)?,
+            Some(d) => check_for::<Self, _>("duration", d, FINITE_NON_NEGATIVE)?.stored(),
             None => Duration::ZERO,
         };
         Ok(Self {
@@ -59,13 +58,13 @@ impl PyTimer {
     #[staticmethod]
     pub fn from_seconds(duration: f32, mode: PyTimerMode) -> PyResult<Self> {
         // Checked as f32 first so the message shows the value as passed.
-        let duration = check("Timer", "duration", duration, DURATION_DOMAIN)?;
-        let duration = check_duration(
-            "Timer",
+        let duration = check_for::<Self, _>("duration", duration, FINITE_NON_NEGATIVE)?;
+        let duration = check_for::<Self, _>(
             "duration",
             DurationInput::Seconds(duration.into()),
-            DURATION_DOMAIN,
-        )?;
+            FINITE_NON_NEGATIVE,
+        )?
+        .stored();
         Ok(Self {
             timer: Timer::new(duration, mode.into()),
             count_overflowed: false,
@@ -76,7 +75,7 @@ impl PyTimer {
         mut slf: PyRefMut<'py, Self>,
         delta: DurationInput,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        let delta = check_duration("Timer", "delta", delta, DURATION_DOMAIN)?;
+        let delta = check_for::<Self, _>("delta", delta, FINITE_NON_NEGATIVE)?.stored();
         slf.count_overflowed = slf.would_overflow_finishes(delta);
         slf.timer.tick(delta);
         Ok(slf)
@@ -99,7 +98,7 @@ impl PyTimer {
     }
 
     pub fn set_duration(&mut self, duration: DurationInput) -> PyResult<()> {
-        let duration = check_duration("Timer", "duration", duration, DURATION_DOMAIN)?;
+        let duration = check_for::<Self, _>("duration", duration, FINITE_NON_NEGATIVE)?.stored();
         self.timer.set_duration(duration);
         Ok(())
     }
@@ -154,7 +153,7 @@ impl PyTimer {
     }
 
     pub fn set_elapsed(&mut self, time: DurationInput) -> PyResult<()> {
-        let time = check_duration("Timer", "elapsed", time, DURATION_DOMAIN)?;
+        let time = check_for::<Self, _>("elapsed", time, FINITE_NON_NEGATIVE)?.stored();
         self.timer.set_elapsed(time);
         Ok(())
     }

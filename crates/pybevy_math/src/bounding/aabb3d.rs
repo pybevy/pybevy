@@ -4,7 +4,7 @@ use bevy::math::{
 };
 use pybevy_core::{
     FromBorrowedStorage, ValueStorage,
-    domain::{NON_NEGATIVE, check},
+    domain::{NON_NEGATIVE, check_for},
     public_error::{
         AABB3D_MIN_MAX, EMPTY_POINT_CLOUD, bounding_operation, bounding_shrink,
         intersects_volume_type,
@@ -71,7 +71,7 @@ impl PyAabb3d {
     #[pyo3(signature = (center, half_size))]
     pub fn new(center: &Bound<'_, PyAny>, half_size: &Bound<'_, PyAny>) -> PyResult<Self> {
         let half_size = extract_vec3a_from_any(half_size)?;
-        let half_size = check("Aabb3d", "half_size", half_size, NON_NEGATIVE)?;
+        let half_size = check_for::<Self, _>("half_size", half_size, NON_NEGATIVE)?;
         Ok(PyAabb3d::from_owned(Aabb3d::new(
             extract_vec3a_from_any(center)?,
             half_size,

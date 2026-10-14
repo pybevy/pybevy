@@ -2,7 +2,7 @@ use bevy::{
     reflect::{PartialReflect, ReflectRef},
     ui::{GridTrack, GridTrackRepetition, RepeatedGridTrack},
 };
-use pybevy_core::domain::{FINITE, check};
+use pybevy_core::domain::{FINITE, check_for};
 use pyo3::prelude::*;
 
 use crate::{
@@ -95,7 +95,7 @@ impl PyRepeatedGridTrack {
         Ok(PyRepeatedGridTrack {
             inner: RepeatedGridTrack::px(
                 extract_grid_track_repetition_from_any(repetition)?,
-                check("RepeatedGridTrack", "px", value, FINITE)?,
+                check_for::<Self, _>("px", value, FINITE)?,
             ),
         })
     }
@@ -105,7 +105,7 @@ impl PyRepeatedGridTrack {
         Ok(PyRepeatedGridTrack {
             inner: RepeatedGridTrack::percent(
                 extract_grid_track_repetition_from_any(repetition)?,
-                check("RepeatedGridTrack", "percent", value, FINITE)?,
+                check_for::<Self, _>("percent", value, FINITE)?,
             ),
         })
     }
@@ -113,10 +113,7 @@ impl PyRepeatedGridTrack {
     #[staticmethod]
     pub fn fr(repetition: u16, value: f32) -> PyResult<Self> {
         Ok(PyRepeatedGridTrack {
-            inner: RepeatedGridTrack::fr(
-                repetition,
-                check("RepeatedGridTrack", "fr", value, FINITE)?,
-            ),
+            inner: RepeatedGridTrack::fr(repetition, check_for::<Self, _>("fr", value, FINITE)?),
         })
     }
 
@@ -125,7 +122,7 @@ impl PyRepeatedGridTrack {
         Ok(PyRepeatedGridTrack {
             inner: RepeatedGridTrack::flex(
                 repetition,
-                check("RepeatedGridTrack", "flex", value, FINITE)?,
+                check_for::<Self, _>("flex", value, FINITE)?,
             ),
         })
     }
@@ -156,7 +153,7 @@ impl PyRepeatedGridTrack {
         Ok(PyRepeatedGridTrack {
             inner: RepeatedGridTrack::fit_content_px(
                 repetition,
-                check("RepeatedGridTrack", "fit_content_px", limit, FINITE)?,
+                check_for::<Self, _>("fit_content_px", limit, FINITE)?,
             ),
         })
     }
@@ -166,7 +163,7 @@ impl PyRepeatedGridTrack {
         Ok(PyRepeatedGridTrack {
             inner: RepeatedGridTrack::fit_content_percent(
                 repetition,
-                check("RepeatedGridTrack", "fit_content_percent", limit, FINITE)?,
+                check_for::<Self, _>("fit_content_percent", limit, FINITE)?,
             ),
         })
     }

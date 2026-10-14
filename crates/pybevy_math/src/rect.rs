@@ -1,7 +1,7 @@
 use bevy::math::{Rect, Vec2};
 use pybevy_core::{
     FromBorrowedStorage, ValueStorage,
-    domain::{NON_NEGATIVE, check},
+    domain::{NON_NEGATIVE, check_for},
     public_error::UNSUPPORTED_COMPARISON,
     repr::float_repr,
 };
@@ -37,7 +37,7 @@ impl PyRect {
     pub fn from_center_size(origin: PyVec2, size: PyVec2) -> PyResult<Self> {
         let origin: Vec2 = origin.try_into()?;
         let size: Vec2 = size.try_into()?;
-        let size = check("Rect", "size", size, NON_NEGATIVE)?;
+        let size = check_for::<Self, _>("size", size, NON_NEGATIVE)?;
         Ok(Self::from_owned(Rect::from_center_size(origin, size)))
     }
 
@@ -45,7 +45,7 @@ impl PyRect {
     pub fn from_center_half_size(origin: PyVec2, half_size: PyVec2) -> PyResult<Self> {
         let origin: Vec2 = origin.try_into()?;
         let half_size: Vec2 = half_size.try_into()?;
-        let half_size = check("Rect", "half_size", half_size, NON_NEGATIVE)?;
+        let half_size = check_for::<Self, _>("half_size", half_size, NON_NEGATIVE)?;
         Ok(Self::from_owned(Rect::from_center_half_size(
             origin, half_size,
         )))

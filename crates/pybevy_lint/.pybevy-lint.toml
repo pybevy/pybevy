@@ -3715,3 +3715,8 @@ reason = "PyBevy's native Material with per-instance typed storage layouts and S
 code = "E013"
 path = "pbr.StorageShaderMaterialPlugin"
 reason = "PyBevy's opt-in material plugin installs native material pipelines, shader synchronization and storage dependency refresh"
+
+[[validation.exceptions]]
+code = "E018"
+path = "transform.Transform"
+reason = "Nested query writes such as transform.translation.x stay unchecked like View and Numba: validating them would move the hottest Python write path onto the staged validated borrow (field domains design, decision 1)"

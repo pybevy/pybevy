@@ -1,23 +1,13 @@
 use std::time::Duration;
 
 use pybevy_storage::domain::{
-    DomainValues, DurationInput, FINITE_NON_NEGATIVE, FieldDomain, POSITIVE, check,
+    DomainValues, DomainViolation, DurationInput, FINITE_NON_NEGATIVE, POSITIVE, check,
 };
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 use crate::public_error::{
-    DURATION_NEGATIVE, DURATION_NON_FINITE, DURATION_OVERFLOW, FREQUENCY_OUT_OF_RANGE,
-    RELATIVE_SPEED_OUT_OF_RANGE,
+    DURATION_NEGATIVE, DURATION_NON_FINITE, DURATION_OVERFLOW, RELATIVE_SPEED_OUT_OF_RANGE,
 };
-
-/// Seconds a duration parameter accepts; zero is allowed.
-pub const DURATION_DOMAIN: &[FieldDomain] = FINITE_NON_NEGATIVE;
-/// A duration that must not be zero, such as a timestep or wrap period.
-pub const POSITIVE_DURATION_DOMAIN: &[FieldDomain] = POSITIVE;
-/// A frequency in hertz.
-pub const FREQUENCY_DOMAIN: &[FieldDomain] = POSITIVE;
-/// A virtual-clock speed multiplier; zero is allowed.
-pub const RELATIVE_SPEED_DOMAIN: &[FieldDomain] = FINITE_NON_NEGATIVE;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DurationFromSecondsError {
@@ -47,24 +37,17 @@ pub fn try_duration_from_secs_f64(seconds: f64) -> Result<Duration, DurationFrom
     Duration::try_from_secs_f64(seconds).map_err(|_| DurationFromSecondsError::Overflow)
 }
 
-/// Check a duration parameter against `domains` and convert it.
-pub fn check_duration(
-    owner: &'static str,
-    field: &'static str,
-    value: DurationInput,
-    domains: &'static [FieldDomain],
-) -> PyResult<Duration> {
-    Ok(check(owner, field, value, domains)?.stored())
-}
-
-/// The fixed timestep of a frequency; `1 / hz` must be a positive,
-/// representable `Duration`.
-pub fn timestep_from_hz(owner: &'static str, field: &'static str, hz: f64) -> PyResult<Duration> {
-    let hz = check(owner, field, hz, FREQUENCY_DOMAIN)?;
-    match Duration::try_from_secs_f64(1.0 / hz) {
-        Ok(timestep) if !timestep.is_zero() => Ok(timestep),
-        _ => Err(PyValueError::new_err(FREQUENCY_OUT_OF_RANGE)),
-    }
+/// The fixed timestep of a frequency in hertz. `1 / hz` is checked as
+/// `owner.timestep`, which must be a positive, representable `Duration`.
+pub fn timestep_from_hz(owner: &'static str, hz: f64) -> Result<Duration, DomainViolation> {
+    let hz = check(owner, "hz", hz, POSITIVE)?;
+    Ok(check(
+        owner,
+        "timestep",
+        DurationInput::Seconds(1.0 / hz),
+        POSITIVE,
+    )?
+    .stored())
 }
 
 /// Check a virtual-clock speed multiplier, including that its frame delta
@@ -75,7 +58,7 @@ pub fn relative_speed<T: DomainValues + Into<f64>>(
     ratio: T,
     max_delta: Duration,
 ) -> PyResult<f64> {
-    let ratio = check(owner, field, ratio, RELATIVE_SPEED_DOMAIN)?.into();
+    let ratio = check(owner, field, ratio, FINITE_NON_NEGATIVE)?.into();
     if Duration::try_from_secs_f64(max_delta.as_secs_f64() * ratio).is_err() {
         return Err(PyValueError::new_err(RELATIVE_SPEED_OUT_OF_RANGE));
     }
@@ -116,35 +99,21 @@ mod tests {
     }
 
     #[test]
-    fn duration_parameters_convert_accepted_values() {
-        let seconds =
-            |value| check_duration("T", "d", DurationInput::Seconds(value), DURATION_DOMAIN);
-        assert_eq!(seconds(0.0).unwrap(), Duration::ZERO);
-        assert_eq!(seconds(0.000_001).unwrap(), Duration::from_micros(1));
-        assert_eq!(seconds(1e-320).unwrap(), Duration::ZERO);
-        assert!(
-            check_duration(
-                "T",
-                "d",
-                DurationInput::Seconds(1e-320),
-                POSITIVE_DURATION_DOMAIN
-            )
-            .is_err()
-        );
-    }
-
-    #[test]
     fn timesteps_from_frequency_stay_positive_and_representable() {
+        assert_eq!(timestep_from_hz("T", 0.5).unwrap(), Duration::from_secs(2));
         assert_eq!(
-            timestep_from_hz("T", "hz", 0.5).unwrap(),
-            Duration::from_secs(2)
-        );
-        assert_eq!(
-            timestep_from_hz("T", "hz", 4.0).unwrap(),
+            timestep_from_hz("T", 4.0).unwrap(),
             Duration::from_millis(250)
         );
-        for hz in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::MAX, 1e-30] {
-            assert!(timestep_from_hz("T", "hz", hz).is_err(), "{hz}");
+        for hz in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert_eq!(timestep_from_hz("T", hz).unwrap_err().details().field, "hz");
+        }
+        for hz in [f64::MAX, 1e-30, 5e-324] {
+            assert_eq!(
+                timestep_from_hz("T", hz).unwrap_err().details().field,
+                "timestep",
+                "{hz}"
+            );
         }
     }
 

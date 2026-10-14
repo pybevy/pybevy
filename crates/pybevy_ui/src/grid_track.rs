@@ -3,7 +3,7 @@ use bevy::{
     ui::{GridTrack, MaxTrackSizingFunction, MinTrackSizingFunction},
 };
 use pybevy_core::{
-    domain::{FINITE, check},
+    domain::{FINITE, check_for},
     repr::float_repr,
 };
 use pyo3::prelude::*;
@@ -96,28 +96,28 @@ impl PyGridTrack {
     #[staticmethod]
     pub fn px(value: f32) -> PyResult<Self> {
         Ok(PyGridTrack {
-            inner: GridTrack::px(check("GridTrack", "px", value, FINITE)?),
+            inner: GridTrack::px(check_for::<Self, _>("px", value, FINITE)?),
         })
     }
 
     #[staticmethod]
     pub fn percent(value: f32) -> PyResult<Self> {
         Ok(PyGridTrack {
-            inner: GridTrack::percent(check("GridTrack", "percent", value, FINITE)?),
+            inner: GridTrack::percent(check_for::<Self, _>("percent", value, FINITE)?),
         })
     }
 
     #[staticmethod]
     pub fn fr(value: f32) -> PyResult<Self> {
         Ok(PyGridTrack {
-            inner: GridTrack::fr(check("GridTrack", "fr", value, FINITE)?),
+            inner: GridTrack::fr(check_for::<Self, _>("fr", value, FINITE)?),
         })
     }
 
     #[staticmethod]
     pub fn flex(value: f32) -> PyResult<Self> {
         Ok(PyGridTrack {
-            inner: GridTrack::flex(check("GridTrack", "flex", value, FINITE)?),
+            inner: GridTrack::flex(check_for::<Self, _>("flex", value, FINITE)?),
         })
     }
 
@@ -145,15 +145,18 @@ impl PyGridTrack {
     #[staticmethod]
     pub fn fit_content_px(limit: f32) -> PyResult<Self> {
         Ok(PyGridTrack {
-            inner: GridTrack::fit_content_px(check("GridTrack", "fit_content_px", limit, FINITE)?),
+            inner: GridTrack::fit_content_px(check_for::<Self, _>(
+                "fit_content_px",
+                limit,
+                FINITE,
+            )?),
         })
     }
 
     #[staticmethod]
     pub fn fit_content_percent(limit: f32) -> PyResult<Self> {
         Ok(PyGridTrack {
-            inner: GridTrack::fit_content_percent(check(
-                "GridTrack",
+            inner: GridTrack::fit_content_percent(check_for::<Self, _>(
                 "fit_content_percent",
                 limit,
                 FINITE,
@@ -164,28 +167,28 @@ impl PyGridTrack {
     #[staticmethod]
     pub fn vw(value: f32) -> PyResult<Self> {
         Ok(PyGridTrack {
-            inner: GridTrack::vw(check("GridTrack", "vw", value, FINITE)?),
+            inner: GridTrack::vw(check_for::<Self, _>("vw", value, FINITE)?),
         })
     }
 
     #[staticmethod]
     pub fn vh(value: f32) -> PyResult<Self> {
         Ok(PyGridTrack {
-            inner: GridTrack::vh(check("GridTrack", "vh", value, FINITE)?),
+            inner: GridTrack::vh(check_for::<Self, _>("vh", value, FINITE)?),
         })
     }
 
     #[staticmethod]
     pub fn vmin(value: f32) -> PyResult<Self> {
         Ok(PyGridTrack {
-            inner: GridTrack::vmin(check("GridTrack", "vmin", value, FINITE)?),
+            inner: GridTrack::vmin(check_for::<Self, _>("vmin", value, FINITE)?),
         })
     }
 
     #[staticmethod]
     pub fn vmax(value: f32) -> PyResult<Self> {
         Ok(PyGridTrack {
-            inner: GridTrack::vmax(check("GridTrack", "vmax", value, FINITE)?),
+            inner: GridTrack::vmax(check_for::<Self, _>("vmax", value, FINITE)?),
         })
     }
 

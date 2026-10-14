@@ -673,16 +673,16 @@ impl PyViewColumn {
     }
 
     /// Helper method for debugging: peek at a single value (with safety check).
-    pub fn peek(&self, index: usize) -> PyResult<f64> {
+    pub fn peek(&self, index: isize) -> PyResult<f64> {
         let _operation = self.enter_operation()?;
         self.check_numeric()?;
-        if index >= self.len {
-            return Err(PyRuntimeError::new_err(format!(
+        let Some(position) = usize::try_from(index).ok().filter(|&i| i < self.len) else {
+            return Err(PyIndexError::new_err(format!(
                 "Index {} out of bounds (len = {})",
                 index, self.len
             )));
-        }
-        Ok(self.read_f64_at(index))
+        };
+        Ok(self.read_f64_at(position))
     }
 
     /// Helper method for debugging: convert to Python list (with copy).
