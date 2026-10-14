@@ -3,7 +3,7 @@ use pyo3::{
     types::{PyModule, PyType},
 };
 
-use crate::handlers::reflect_mutate::compiled_type_is_enum;
+use crate::handlers::reflect_mutate::{compiled_enum_variant_info, compiled_type_is_enum};
 
 pub(super) fn is_enum_type(owner: &Bound<'_, PyType>) -> bool {
     owner.hasattr("__pybevy_variant_aliases__").unwrap_or(false)
@@ -19,14 +19,43 @@ fn is_python_enum(owner: &Bound<'_, PyType>) -> bool {
 }
 
 fn is_reflected_bevy_enum(owner: &Bound<'_, PyType>) -> bool {
-    let pybevy_wrapper = owner.module().is_ok_and(|module| {
-        let module = module.to_string_lossy();
-        module == "pybevy" || module.starts_with("pybevy.")
-    });
-    pybevy_wrapper
-        && owner
-            .name()
-            .is_ok_and(|name| compiled_type_is_enum(&name.to_string_lossy()))
+    reflected_bevy_enum_name(owner).is_some()
+}
+
+fn reflected_bevy_enum_name(owner: &Bound<'_, PyType>) -> Option<String> {
+    let module = owner.module().ok()?;
+    let module = module.to_string_lossy();
+    if module != "pybevy" && !module.starts_with("pybevy.") {
+        return None;
+    }
+    let name = owner.name().ok()?.to_string_lossy().into_owned();
+    compiled_type_is_enum(&name).then_some(name)
+}
+
+/// Splits same-type class attributes into unit variants and constants.
+pub(super) fn partition_unit_variants(
+    owner: &Bound<'_, PyType>,
+    instances: Vec<String>,
+    has_variant_classes: bool,
+) -> (Vec<String>, Vec<String>) {
+    if is_python_enum(owner) {
+        return (instances, Vec::new());
+    }
+    let Some(owner_name) = reflected_bevy_enum_name(owner) else {
+        return if has_variant_classes {
+            (Vec::new(), instances)
+        } else {
+            (instances, Vec::new())
+        };
+    };
+    let aliases = variant_aliases(owner);
+    instances.into_iter().partition(|name| {
+        let native = aliases
+            .iter()
+            .find_map(|(native, python)| (python == name).then_some(native.as_str()))
+            .unwrap_or(name);
+        compiled_enum_variant_info(&owner_name, native).is_some()
+    })
 }
 
 fn variant_aliases(owner: &Bound<'_, PyType>) -> Vec<(String, String)> {

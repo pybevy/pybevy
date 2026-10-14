@@ -108,7 +108,8 @@ impl PyImageNode {
 
     #[setter]
     pub fn set_image_mode(&mut self, value: PyNodeImageMode) -> PyResult<()> {
-        self.as_mut()?.image_mode = value.into();
+        let image_mode = value.try_into()?;
+        self.as_mut()?.image_mode = image_mode;
         Ok(())
     }
 

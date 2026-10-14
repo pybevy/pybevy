@@ -4,7 +4,7 @@ use bevy::{
 };
 use pybevy_color::color::PyColor;
 use pybevy_macros::pyenum;
-use pybevy_math::vec3::PyVec3;
+use pybevy_math::vec3::SnapshotVec3;
 use pyo3::prelude::*;
 
 #[pyenum(FogFalloff, no_repr)]
@@ -19,11 +19,9 @@ pub enum PyFogFalloff {
     ExponentialSquared { density: f32 },
     #[pyo3(constructor = (*, extinction, inscattering))]
     Atmospheric {
-        #[py_type(PyVec3)]
-        #[py_try_into]
+        #[py_type(SnapshotVec3)]
         extinction: Vec3,
-        #[py_type(PyVec3)]
-        #[py_try_into]
+        #[py_type(SnapshotVec3)]
         inscattering: Vec3,
     },
 }

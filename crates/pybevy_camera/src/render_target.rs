@@ -37,6 +37,8 @@ pub enum PyRenderTarget {
     None {
         #[py_type(PyUVec2)]
         #[py_try_into]
+        #[py_borrow]
+        #[py_set]
         size: UVec2,
     },
 }

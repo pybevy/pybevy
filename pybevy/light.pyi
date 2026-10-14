@@ -30,8 +30,9 @@ class LightGizmoColor:
 
 
     class Manual(LightGizmoColor):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: Color
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> Color: ...
         def __init__(self, value: Color) -> None: ...
 
     class Varied(LightGizmoColor):

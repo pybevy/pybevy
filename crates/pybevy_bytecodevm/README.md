@@ -1,196 +1,102 @@
 # pybevy_bytecodevm
 
-A high-performance bytecode virtual machine for executing lazy mathematical expressions on ECS component fields in batch operations.
+The expression engine behind PyBevy's lazy `View` expressions and `pybevy.array`
+element-wise kernels. It compiles expression trees to a small stack bytecode and
+runs that bytecode over ECS table columns, flat buffers, or dense arrays.
 
-## Overview
+## Modules
 
-`pybevy_bytecodevm` is a stack-based bytecode compiler and interpreter designed for minimal overhead execution of mathematical expressions across large numbers of entities in the Bevy ECS. It powers PyBevy's View API, enabling 30-50x performance improvements over traditional Python Query iteration.
+| Module | Role |
+|---|---|
+| `expr` | `RustExpr`, the expression tree, and its conversion from Python `Expr` objects |
+| `bytecode` | `Compiler`, `CompiledBytecode`, the `Op` set, and the per-row stack `VM` |
+| `tiled` | Tile-at-a-time executors for float and homogeneous integer programs |
+| `columns` | Typed column capabilities that feed the tiled executors |
+| `dense` | Validated programs over dense `f32`/`f64` input slices |
+| `buffer_lens` | Validated in-place assignments over strided buffers |
+| `view_engine` | Table-row gathering and batch execution for View filters |
+| `view_runtime` | The validated View capability layer used by the backends |
 
-## Features
+Nothing is re-exported at the crate root; import from these modules.
 
-- **Stack-based VM**: Simple, cache-friendly bytecode execution (~2-5ns per operation)
-- **Expression AST**: Parse Python expressions into an optimizable intermediate representation
-- **Bytecode Compilation**: Convert expression trees to linear bytecode with constant folding
-- **Type Support**: Multiple field types (f32, f64, i32, i64, u32, u64, bool) with f64 internal precision
-- **Rich Operations**: Arithmetic, trigonometric, comparison, logical, and random operations
-- **Deterministic Random**: Entity-seeded randomness, identical on every execution path, for reproducible simulations
-- **Reduction Mode**: Evaluate expressions without storing results (for filtering/aggregation)
+## Types and semantics
 
-## Architecture
+Fields may be `f32`, `f64`, `i32`, `i64`, `u8`, `u32`, `u64`, or `bool`.
+Composite `Vec2`/`Vec3`/`Vec4` fields are expanded to `f32` lanes before
+compilation. Integer values stay exact in their own width and wrap on overflow;
+floating-point fields evaluate in f64, or in f32 when a dense program's inputs
+are all `f32`. Literals follow NumPy 2's rules for Python scalars: an `int`
+literal adopts the other operand's type and a `float` literal promotes an
+integer operand to f64. `%`, `//`, `round`, `sign`, `min`, `max`, and `clamp`
+follow NumPy's element-wise conventions.
 
-```
-Python Expression → RustExpr AST → Compiler → CompiledBytecode → VM Execution
-```
+Random draws are deterministic per row. The View engine seeds each row from its
+`Entity`, so a value does not depend on the execution path or on the table row
+the entity occupies.
 
-### Components
-
-1. **`RustExpr`** (`expr.rs`): Abstract Syntax Tree representing mathematical expressions
-2. **`Compiler`** (`bytecode.rs`): Converts AST to optimized bytecode with constant pool
-3. **`VM`** (`bytecode.rs`): Executes bytecode on entity component data
-4. **`CompiledBytecode`** (`bytecode.rs`): Compiled bytecode ready for execution
-
-## Performance
-
-The bytecode VM is optimized for:
-
-- **Cache locality**: Linear bytecode array (no tree traversal)
-- **Minimal overhead**: Simple stack operations with no recursion
-- **Parallel execution**: Read-only bytecode perfect for `par_iter_mut`
-- **Pre-resolved offsets**: Component field locations computed at compile time
-
-## Example Usage
-
-### Compiling an Expression
+## Compiling and running
 
 ```rust
-use pybevy_bytecodevm::{Compiler, RustExpr, Op};
+use pybevy_bytecodevm::{
+    bytecode::{Compiler, FieldId, FieldType, Op, VM},
+    expr::RustExpr,
+};
 
-// Expression: pos.x = pos.x + vel.x * dt
-let mut compiler = Compiler::new();
-
-// Build expression AST
-let expr = RustExpr::Add(
-    Box::new(RustExpr::Field { /* pos.x */ }),
+// x = x + v * 0.016 over a component with two f32 fields.
+let component_id = bevy_ecs::component::ComponentId::new(0);
+let field = |offset| RustExpr::Field {
+    component_id,
+    offset,
+    field_type: FieldType::F32,
+};
+let expression = RustExpr::Add(
+    Box::new(field(0)),
     Box::new(RustExpr::Mul(
-        Box::new(RustExpr::Field { /* vel.x */ }),
-        Box::new(RustExpr::Const(dt))
-    ))
+        Box::new(field(4)),
+        Box::new(RustExpr::FloatConst(0.016)),
+    )),
 );
 
-// Compile to bytecode
-expr.compile(&mut compiler);
-compiler.optimize(); // Apply peephole optimizations
+let mut compiler = Compiler::new();
+expression.compile(&mut compiler);
+let x = compiler.add_field(FieldId {
+    component_id,
+    offset: 0,
+    field_type: FieldType::F32,
+});
+compiler.emit(Op::StoreField(x));
+compiler.optimize();
 let bytecode = compiler.finalize();
-```
 
-### Executing Bytecode
-
-```rust
-use pybevy_bytecodevm::VM;
-
+let mut row = [1.0_f32, 2.0];
+let base = row.as_mut_ptr().cast::<u8>();
+let pointers = [base, unsafe { base.add(4) }];
 let mut vm = VM::new();
-
-// field_ptrs: one pointer per field registered with the compiler,
-// pointing to the field's memory for this entity.
-// entity_index: the row's random seed (see `view_engine::entity_random_seed`).
-let mut pos_x: f32 = 100.0;
-let mut vel_x: f32 = 5.0;
-let field_ptrs: &[*mut u8] = &[
-    &mut pos_x as *mut f32 as *mut u8,  // field 0: pos.x
-    &mut vel_x as *mut f32 as *mut u8,  // field 1: vel.x
-];
-let entity_index: usize = 42;
-
-unsafe {
-    vm.execute(&bytecode, field_ptrs, entity_index);
-}
-// pos_x is now updated in-place
+// SAFETY: one pointer per field, each valid for its field type.
+unsafe { vm.execute(&bytecode, &pointers, 0) };
+assert_eq!(row[0], 1.032);
 ```
 
-### Reduction Mode
-
-```rust
-// Evaluate an expression and return the result without storing.
-// Useful for filtering or aggregation.
-let mut health: f32 = 30.0;
-let field_ptrs: &[*mut u8] = &[
-    &mut health as *mut f32 as *mut u8,  // field 0: health
-];
-let entity_index: usize = 7;
-
-let result = unsafe {
-    vm.execute_and_reduce(&bytecode, field_ptrs, entity_index)
-};
-// result contains the final stack value (e.g. a boolean comparison result as 0.0/1.0)
-```
-
-## Bytecode Example
-
-Expression: `pos.x = pos.x + vel.x * dt`
-
-Bytecode:
-```
-PushField(0)      // Push pos.x
-PushField(1)      // Push vel.x
-PushConst(0)      // Push dt from constant pool
-Mul               // vel.x * dt
-Add               // pos.x + (vel.x * dt)
-StoreField(0)     // Store to pos.x
-```
-
-## Supported Operations
-
-### Arithmetic
-- Add, Sub, Mul, Div, Pow, Neg, Mod
-
-### Trigonometric
-- Sin, Cos, Tan, Asin, Acos, Atan
-
-### Numeric
-- Sqrt, Abs, Floor, Ceil, Round, Min, Max, Clamp
-- Exp, Ln, Log10, Log2, Sign, Fract, Lerp
-
-### Comparison
-- Eq, Ne, Lt, Le, Gt, Ge
-
-### Logical
-- And, Or, Not
-
-### Conditional
-- Where (ternary operator: `where(condition, true_value, false_value)`)
-
-### Random
-- Random (deterministic per-entity [0.0, 1.0))
-- RandomRange (deterministic per-entity [min, max))
-
-The seed is the caller-supplied `entity_index`. The View engine derives it from
-the row's `Entity`, so batched, tick-filtered, and read-only evaluation agree,
-and the value survives the entity moving table or row.
-
-## Optimizations
-
-The compiler applies peephole optimizations including:
-
-- **Constant folding**: `5.0 + 3.0` → `8.0` at compile time
-- **Constant deduplication**: Shared constant pool with bit-exact matching
-
-## Integration with PyBevy
-
-This crate is used internally by PyBevy's View API:
-
-```python
-# Python code
-view = View[tuple[Mut[Transform], Velocity]]
-pos = view.column_mut(Transform)
-vel = view.column(Velocity)
-
-# Compiles to bytecode and executes via VM
-pos.translation.x = pos.translation.x + vel.x * dt
-```
+`VM::execute_and_reduce` evaluates a store-free program and returns its value.
+`VM::execute_batch_multi` and the `tiled` executors run the same bytecode over
+strided runs of rows.
 
 ## Safety
 
-The VM uses `unsafe` for direct memory access to component fields. Callers must ensure:
+The execution functions take raw pointers and are `unsafe`: each field pointer
+must be valid for its `FieldType` for the whole call, and no other code may
+access the stored memory concurrently. PyBevy's backends do not call them
+directly. They go through `view_runtime`, which validates every program against
+the resolved View (declared components, real field offsets and types, write
+effects, stack shape, and integer literal ranges) before any pointer is formed,
+and checks run-scoped validity before each access.
 
-- All field pointers are valid and properly aligned
-- Field pointers remain valid for the duration of execution
-- No concurrent mutations to the same memory
-
-These safety requirements are guaranteed by Bevy's ECS query system.
-
-## Testing
-
-Run the test suite:
+## Benchmarks and tests
 
 ```bash
-cargo test -p pybevy_bytecodevm
+cargo bench -p pybevy_bytecodevm --bench view_assignment
+cargo test -p pybevy_bytecodevm --features pyo3/auto-initialize --lib
 ```
 
-The crate includes comprehensive tests for:
-- Arithmetic operations
-- Trigonometric functions
-- Comparison operators
-- Logical operators
-- Conditional selection
-- Constant folding optimization
-- Field storage and retrieval
+The unit tests start an embedded Python interpreter, hence the
+`pyo3/auto-initialize` feature.

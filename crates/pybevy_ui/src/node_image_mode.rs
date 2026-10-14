@@ -21,6 +21,7 @@ pub enum PyNodeImageMode {
     #[py_bevy(tuple)]
     Sliced {
         #[py_type(PyTextureSlicer)]
+        #[py_try_into]
         slicer: TextureSlicer,
     },
     #[pyo3(

@@ -69,7 +69,7 @@ impl<'py> IntoPyObject<'py> for OwnedColorValue {
     type Error = PyErr;
 
     fn into_pyobject(self, py: Python<'py>) -> PyResult<Self::Output> {
-        Ok(PyColor::from_color(self.0, py)?.into_bound(py))
+        Ok(PyColor::from_snapshot(self.0, py)?.into_bound(py))
     }
 }
 
@@ -97,7 +97,7 @@ impl<'py> IntoPyObject<'py> for IntoColorValue {
     type Error = PyErr;
 
     fn into_pyobject(self, py: Python<'py>) -> PyResult<Self::Output> {
-        OwnedColorValue(self.0).into_pyobject(py)
+        Ok(PyColor::from_color(self.0, py)?.into_bound(py))
     }
 }
 

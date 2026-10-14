@@ -189,6 +189,8 @@ with its depth rays.
 
 Image readback returns one `width * height` frame at the size the readback was requested with. For an array-texture source it copies layer zero only and logs a warning once; additional layers are not concatenated into the frame. If the render target is later resized, the copy stays inside the frame that was requested instead of overrunning it.
 
+A camera's first readback frame can be blank (all zeros), because Bevy does not draw a newly added camera on its first frame; judge the image from a later frame. After the camera producing headless frames is despawned, headless captures fail immediately with "no frame yet" instead of waiting for the capture deadline.
+
 If the GPU rejects a render target or its readback buffer, PyBevy logs the
 mapping error and disables readback for that camera. Capture may then time out;
 use a target within the device's supported dimensions and restart the scene.

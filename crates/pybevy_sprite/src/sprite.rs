@@ -56,6 +56,7 @@ impl PySprite {
         let rect_bevy = rect.map(TryInto::try_into).transpose()?;
 
         let color = color.try_into()?;
+        let image_mode = image_mode.try_into()?;
         Ok(Self::from_owned(Sprite {
             image: image_handle,
             color,
@@ -64,7 +65,7 @@ impl PySprite {
             custom_size: custom_size_vec,
             rect: rect_bevy,
             texture_atlas: texture_atlas_handle,
-            image_mode: image_mode.into(),
+            image_mode,
         })
         .into())
     }
@@ -184,7 +185,8 @@ impl PySprite {
 
     #[setter]
     pub fn set_image_mode(&mut self, image_mode: PySpriteImageMode) -> PyResult<()> {
-        self.as_mut()?.image_mode = SpriteImageMode::from(image_mode);
+        let image_mode = SpriteImageMode::try_from(image_mode)?;
+        self.as_mut()?.image_mode = image_mode;
         Ok(())
     }
 

@@ -958,11 +958,11 @@ mod tests {
             ),
             (
                 "set_resource",
-                json!({"resource_type": "ClearColor", "value": {"color": "WHITE"}}),
+                json!({"resource_type": "ClearColor", "value": {"color": [1.0, 1.0, 1.0, 1.0]}}),
                 RequestSpec::json(
                     Method::Put,
                     "/api/v1/resources/ClearColor",
-                    json!({"value": {"color": "WHITE"}}),
+                    json!({"value": {"color": [1.0, 1.0, 1.0, 1.0]}}),
                 ),
             ),
             (

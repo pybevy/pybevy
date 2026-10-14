@@ -111,6 +111,15 @@ pub fn expression_too_deep() -> String {
     )
 }
 
+/// Most distinct literals, and most distinct fields, one compiled expression holds.
+pub const EXPRESSION_MAX_POOL_ENTRIES: usize = 1 << 16;
+
+pub fn expression_too_large() -> String {
+    format!(
+        "an expression can reference at most {EXPRESSION_MAX_POOL_ENTRIES} distinct literals and {EXPRESSION_MAX_POOL_ENTRIES} distinct fields; split it into smaller expressions"
+    )
+}
+
 pub fn enum_variant_changed(variant: impl fmt::Display) -> String {
     format!(
         "{variant} wrapper no longer matches the value's current variant; fetch it again to observe the new variant"

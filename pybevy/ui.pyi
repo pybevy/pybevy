@@ -1865,15 +1865,19 @@ class NodeImageMode:
         def __init__(self) -> None: ...
 
     class Sliced(NodeImageMode):
-        __match_args__: ClassVar[tuple[Literal["slicer"]]]
-        slicer: TextureSlicer
+        __match_args__: ClassVar[tuple[Literal["slicer"]]] = ("slicer",)
+        @property
+        def slicer(self) -> TextureSlicer: ...
         def __init__(self, slicer: TextureSlicer) -> None: ...
 
     class Tiled(NodeImageMode):
-        __match_args__: ClassVar[tuple[Literal["tile_x"], Literal["tile_y"], Literal["stretch_value"]]]
-        tile_x: bool
-        tile_y: bool
-        stretch_value: float
+        __match_args__: ClassVar[tuple[Literal["tile_x"], Literal["tile_y"], Literal["stretch_value"]]] = ("tile_x", "tile_y", "stretch_value")
+        @property
+        def tile_x(self) -> bool: ...
+        @property
+        def tile_y(self) -> bool: ...
+        @property
+        def stretch_value(self) -> float: ...
         def __init__(
             self, *, tile_x: bool = True, tile_y: bool = True, stretch_value: float = 1.0
         ) -> None: ...

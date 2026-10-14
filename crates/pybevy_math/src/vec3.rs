@@ -65,6 +65,44 @@ impl FromBorrowedStorage<ValueStorage<Vec3>> for PyVec3 {
     }
 }
 
+/// A frozen payload `Vec3` that Python reads as a read-only snapshot.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SnapshotVec3(pub Vec3);
+
+impl From<Vec3> for SnapshotVec3 {
+    fn from(vec: Vec3) -> Self {
+        Self(vec)
+    }
+}
+
+impl From<SnapshotVec3> for Vec3 {
+    fn from(vec: SnapshotVec3) -> Self {
+        vec.0
+    }
+}
+
+impl FromPyObject<'_, '_> for SnapshotVec3 {
+    type Error = PyErr;
+
+    fn extract(obj: Borrowed<'_, '_, PyAny>) -> PyResult<Self> {
+        let vec = obj.extract::<PyRef<'_, PyVec3>>()?;
+        Ok(Self(Vec3::try_from(&*vec)?))
+    }
+}
+
+impl<'py> IntoPyObject<'py> for SnapshotVec3 {
+    type Target = PyVec3;
+    type Output = Bound<'py, PyVec3>;
+    type Error = PyErr;
+
+    fn into_pyobject(self, py: Python<'py>) -> PyResult<Self::Output> {
+        Bound::new(
+            py,
+            PyVec3::from_borrowed(ValueStorage::read_only_snapshot(self.0)),
+        )
+    }
+}
+
 impl PyVec3 {
     #[inline(always)]
     pub fn from_vec3(vec: Vec3) -> Self {

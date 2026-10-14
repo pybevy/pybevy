@@ -1268,14 +1268,16 @@ class WindowPosition:
 
     class Centered(WindowPosition):
         """Center the window on the selected monitor."""
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: MonitorSelection
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> MonitorSelection: ...
         def __init__(self, value: MonitorSelection) -> None: ...
 
     class At(WindowPosition):
         """Place the window at physical pixel coordinates."""
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: IVec2
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> IVec2: ...
         def __init__(self, value: IVec2) -> None: ...
 
 
