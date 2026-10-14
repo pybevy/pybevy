@@ -2,7 +2,8 @@ use bevy::transform::components::{GlobalTransform, Transform};
 use pybevy_core::{ComponentStorage, PyComponent, computed_owned};
 use pybevy_macros::pycomponent;
 use pybevy_math::{
-    affine3a::PyAffine3A, isometry3d::PyIsometry3d, mat4::PyMat4, quat::PyQuat, vec3::PyVec3,
+    affine3a::PyAffine3A, dir3::PyDir3, isometry3d::PyIsometry3d, mat4::PyMat4, quat::PyQuat,
+    vec3::PyVec3,
 };
 use pyo3::prelude::*;
 
@@ -87,27 +88,27 @@ impl PyGlobalTransform {
         Py::new(py, PyTransform::from_owned(transform))
     }
 
-    pub fn right(&self) -> PyResult<PyVec3> {
+    pub fn right(&self) -> PyResult<PyDir3> {
         Ok(self.as_ref()?.right().into())
     }
 
-    pub fn left(&self) -> PyResult<PyVec3> {
+    pub fn left(&self) -> PyResult<PyDir3> {
         Ok(self.as_ref()?.left().into())
     }
 
-    pub fn up(&self) -> PyResult<PyVec3> {
+    pub fn up(&self) -> PyResult<PyDir3> {
         Ok(self.as_ref()?.up().into())
     }
 
-    pub fn down(&self) -> PyResult<PyVec3> {
+    pub fn down(&self) -> PyResult<PyDir3> {
         Ok(self.as_ref()?.down().into())
     }
 
-    pub fn forward(&self) -> PyResult<PyVec3> {
+    pub fn forward(&self) -> PyResult<PyDir3> {
         Ok(self.as_ref()?.forward().into())
     }
 
-    pub fn back(&self) -> PyResult<PyVec3> {
+    pub fn back(&self) -> PyResult<PyDir3> {
         Ok(self.as_ref()?.back().into())
     }
 

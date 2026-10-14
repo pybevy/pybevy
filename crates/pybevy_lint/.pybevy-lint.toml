@@ -2081,10 +2081,13 @@ notes = "Geometric properties computed from plane equation"
 intentional_readonly_properties = ["segment_count"]
 notes = "Computed from curve segments"
 
-# Indices - derived length
-[bevy.type_ignores.Indices]
-intentional_readonly_properties = ["len"]
-notes = "Length is derived from indices data"
+[bevy.type_ignores.U16]
+intentional_readonly_properties = ["value"]
+notes = "Indices.U16.value is an independent read-only snapshot array; push() and extend() mutate the indices"
+
+[bevy.type_ignores.U32]
+intentional_readonly_properties = ["value"]
+notes = "Indices.U32.value is an independent read-only snapshot array; push() and extend() mutate the indices"
 
 # Asset system - read-only by design
 [bevy.type_ignores.AssetPath]
@@ -2270,14 +2273,12 @@ intentional_signature_diffs = [
     "configure_sets",
     { name = "init_resource", expected_params = { "resource" = "PyAny" } },
     { name = "is_plugin_added", expected_params = { "plugin_type" = "PyType" } },
-    { name = "run", expected_return = "PyResult<()>" },
     { name = "should_exit", expected_return = "Option<Py<PyAny>>" },
     { name = "world", expected_params = { "callback" = "PyAny" } },
 ]
 notes = """
 - Python needs explicit type params where Rust uses generics (add_message, init_resource, is_plugin_added)
 - world() takes a callback since Python can't return a borrowed &World reference
-- run() returns PyResult<()> (Python exception model)
 - configure_sets: leading underscore params (unused in current impl)"""
 
 # ComputedNode - computed layout values (outlined_node_size is a method, not a field)
@@ -2343,7 +2344,7 @@ notes = "custom<P> and the Custom payload require an arbitrary native CameraProj
 
 # RenderLayers: Python uses __and__/__or__/__xor__ operators
 [bevy.type_ignores.RenderLayers]
-intentional_readonly_properties = ["bits", "active_layers"]
+intentional_readonly_properties = ["bits"]
 intentional_missing_methods = ["bitand", "bitor", "bitxor"]
 intentional_signature_diffs = ["from_layers", "layer", "without"]
 notes = "bitand/bitor/bitxor implemented as __and__/__or__/__xor__, Layer type -> u8. bits exposes the private bitset as a slice; active_layers is derived iteration."
@@ -2747,7 +2748,7 @@ notes = "Derived and backend-managed resolution values; use Bevy's set, set_phys
 
 [bevy.type_ignores.CursorIcon]
 intentional_readonly_properties = ["as_system"]
-notes = "Computed optional projection of the CursorIcon enum; set_system is the native mutation API and no property assignment can represent a custom icon."
+notes = "Computed optional projection of the CursorIcon enum; write the System variant's value to change the icon in place."
 
 
 [bevy.type_ignores.Monitor]
@@ -2805,11 +2806,6 @@ notes = "Aggregate predicates over active animations, not stored writable fields
 [bevy.type_ignores.EditableText]
 intentional_readonly_properties = ["value"]
 notes = "Native value() reads the editor's private text state; queue_edit and clear preserve cursor and pending-edit coherence."
-
-
-[bevy.type_ignores.FocusPolicy]
-intentional_readonly_properties = ["is_block", "is_pass"]
-notes = "Computed enum predicates; set_block/set_pass change the variant."
 
 
 [bevy.type_ignores.UiGlobalTransform]
@@ -2988,6 +2984,11 @@ reason = "private generated indexed adapter structurally implements the public L
 
 [[validation.exceptions]]
 code = "E006"
+path = "mesh.MorphWeights"
+reason = "private fixed-length view re-resolves the component on every access and structurally implements the public LiveArray[float] protocol"
+
+[[validation.exceptions]]
+code = "E006"
 path = "image.TextureAtlasLayout"
 reason = "private generated indexed adapter structurally implements the public LiveList[URect] protocol"
 
@@ -3155,18 +3156,8 @@ reason = "The external-crate field list for glam 0.32.1 Mat4 is read from cargo-
 
 [[validation.exceptions]]
 code = "E013"
-path = "animation.AnimationEvent"
-reason = "pybevy-animation Python-defined type; no upstream Bevy constructor"
-
-[[validation.exceptions]]
-code = "E013"
 path = "animation.AnimationNodeIndex"
 reason = "constructor delegates to petgraph::NodeIndex::new through the bevy_animation::graph::AnimationNodeIndex alias; the alias itself declares no upstream constructor"
-
-[[validation.exceptions]]
-code = "E013"
-path = "animation.AnimationEventData"
-reason = "pybevy-animation Python-defined type; no upstream Bevy constructor"
 
 [[validation.exceptions]]
 code = "E013"
@@ -3408,12 +3399,6 @@ message = "pyclass 'NextState' holds Python references (state_type: Mutex<Py<PyT
 reason = "Reviewed PyNextState exception (Safety: Retained Python References, never lock in __traverse__): src/ecs/state.rs takes the state_type and queued-slot mutexes from py.detach() contexts, so a traverse would need a blocking lock that can deadlock the collector (permanently under free-threading); try_lock-and-skip is unsound while detached lockers exist. The retained state type can still reach back through its module, so this leak is accepted, not impossible"
 
 [[validation.exceptions]]
-code = "W032"
-path = "animation.AnimationEventData"
-message = "pyclass 'AnimationEventData' holds Python references (event: Py<PyAnimationEvent>) but declares no __traverse__"
-reason = "PyAnimationEvent holds only String fields (name, data); no reference path can reach back to the holder, so no GC cycle can form through this edge"
-
-[[validation.exceptions]]
 code = "W037"
 reason = "Live view into one animation of an AnimationPlayer (player storage + AnimationNodeIndex) with no standalone value; Bevy obtains it from AnimationPlayer::play/animation_mut, not Default"
 path = "animation.ActiveAnimation"
@@ -3467,100 +3452,115 @@ paths = [
 
 [[validation.exceptions]]
 code = "W037"
-reason = "Existing drift found when the parser began recording generic Default impls (impl<M> Default for MeshMaterial3d<M>, impl<S> Default for DespawnOnExit<S>, impl Default for AssetPath<'_>); triage pending"
+reason = "Bevy's Default needs S: Default, but Python erases the state type: DespawnOnExit[S] is DespawnOnExit itself, so a no-argument constructor cannot recover S or its default member"
 paths = [
-    "core.AssetPath",
     "ecs.DespawnOnEnter",
     "ecs.DespawnOnExit",
 ]
 
 [[validation.exceptions]]
 code = "W038"
-reason = "Existing drift (Python-only member) found when W038 landed; triage pending"
+reason = "PyBevy scene reset reusing hot reload's Full-mode cleanup (despawns scene entities and custom resources, keeps resource entities, assets and plugins); Bevy has no scene or reload lifecycle"
 paths = [
-    "animation.AnimationEvent.data",
-    "animation.AnimationEvent.name",
     "app.App.clear_scene",
-    "app.App.initialize",
-    "app.App.run_schedule",
-    "app.App.run_system_once",
-    "assets.AssetServer.save_image",
-    "assets.DependencyLoadState.is_not_loaded",
-    "assets.LoadState.is_not_loaded",
-    "assets.RecursiveDependencyLoadState.is_not_loaded",
-    "camera.RenderLayers.active_layers",
-    "camera.Visibility.set_hidden",
-    "camera.Visibility.set_inherited",
-    "camera.Visibility.set_visible",
+]
+
+[[validation.exceptions]]
+code = "W038"
+reason = "Python erases generic parameters at runtime; these recover the A of AssetId<A>/Handle<A> and the S of NextState<S>, which Rust carries statically in the type"
+paths = [
     "core.AssetId.asset_type_class",
-    "core.AssetId.uuid_from_u128",
-    "core.Children.entities",
-    "core.Entity.from_raw",
-    "core.EntityIndex.from_raw",
     "core.Handle.asset_type_class",
-    "core.Handle.uuid_from_u128",
-    "ecs.Commands.despawn",
-    "ecs.DespawnOnEnter.state_value",
-    "ecs.DespawnOnExit.state_value",
-    "ecs.EntityCommands.remove_parent",
-    "ecs.EntityCommands.set_parent",
+    "ecs.NextState.state_type",
+]
+
+[[validation.exceptions]]
+code = "W038"
+reason = "Stand-in for Local<T>'s Deref/DerefMut: Python cannot assign through a deref, so immutable values such as int and str are read and replaced through current"
+paths = [
     "ecs.Local.current",
-    "ecs.Local.get",
-    "ecs.Local.value_type",
-    "ecs.Messages.send",
-    "ecs.Mut.inner_type",
-    "ecs.Mut.unwrap",
-    "ecs.Mut.value",
+]
+
+[[validation.exceptions]]
+code = "W038"
+reason = "NextState is a live resource handle whose variant set, set_if_neq and reset change in place (see its W040 entry), so the Pending/PendingIfNeq payload Bevy code matches on is read through these accessors"
+paths = [
     "ecs.NextState.is_pending",
     "ecs.NextState.peek_pending",
-    "ecs.NextState.state_type",
+]
+
+[[validation.exceptions]]
+code = "W038"
+reason = "Stand-in for Bevy's Deref from On<E> to the event's entity field (lifecycle events and EntityEvent targets); PyBevy's lifecycle markers carry no fields, so the target is read from the trigger"
+paths = [
     "ecs.On.entity",
+]
+
+[[validation.exceptions]]
+code = "W038"
+reason = "QueryIter is the runtime object injected for a Query[...] parameter, Query itself being the annotation class; single, is_empty, get and iter_many are Bevy Query methods, and only the class name matches Bevy's QueryIter"
+paths = [
     "ecs.QueryIter.get",
     "ecs.QueryIter.is_empty",
     "ecs.QueryIter.iter_many",
     "ecs.QueryIter.single",
-    "ecs.Res.resource_type",
-    "ecs.ResMut.resource_type",
+]
+
+[[validation.exceptions]]
+code = "W038"
+reason = "SystemSet is a concrete named label standing in for a #[derive(SystemSet)] type, whose identity Bevy takes from the type; name reads back the qualified identity that equality, hashing and scheduling use, as SystemSetEnum.name does for members"
+paths = [
     "ecs.SystemSet.name",
-    "ecs.World.despawn_observer",
+]
+
+[[validation.exceptions]]
+code = "W038"
+reason = "Bevy's EntityWorldMut::resource_entity::<R>(), offered on World because EntityWorldMut is not bound"
+paths = [
     "ecs.World.resource_entity",
-    "input.Gamepad.get_axis",
-    "input.Gamepad.get_axis_unclamped",
-    "input.Gamepad.get_button",
-    "input.Gamepad.get_button_unclamped",
-    "mesh.Mesh.normals",
-    "mesh.Mesh.normals_mut",
-    "mesh.Mesh.positions",
-    "mesh.Mesh.positions_mut",
-    "mesh.Mesh.set_normals",
-    "mesh.Mesh.set_positions",
-    "mesh.Mesh.uvs",
-    "mesh.Mesh.uvs_mut",
-    "mesh.MeshVertexAttributeId.value",
-    "mesh.MorphWeights.get_weight",
-    "mesh.MorphWeights.set_weight",
-    "mesh.SkinnedMeshInverseBindposes.get",
-    "mesh.SkinnedMeshInverseBindposes.to_list",
-    "ui.BoxShadow.clear",
-    "ui.BoxShadow.is_empty",
-    "ui.BoxShadow.pop",
-    "ui.BoxShadow.push",
-    "ui.FocusPolicy.is_block",
-    "ui.FocusPolicy.is_pass",
-    "ui.FocusPolicy.set_block",
-    "ui.FocusPolicy.set_pass",
-    "ui.IgnoreScroll.ignore_x",
-    "ui.IgnoreScroll.ignore_y",
-    "ui.Interaction.is_hovered",
-    "ui.Interaction.is_none",
-    "ui.Interaction.is_pressed",
-    "ui.Interaction.state",
-    "ui.RelativeCursorPosition.is_cursor_over",
-    "ui.UiPosition.anchor_value",
-    "ui.UiTransform.identity",
-    "window.CursorIcon.is_system",
-    "window.CursorIcon.set_system",
-    "window.CursorIcon.system",
+]
+
+[[validation.exceptions]]
+code = "W038"
+reason = "Existing drift (Python-only member); maintainer decision: migrate to Handle.Strong/Handle.Uuid variants (follow-up branch)"
+paths = [
+    "core.Handle.uuid_from_u128",
+]
+
+[[validation.exceptions]]
+code = "W039"
+reason = "A borrowed &World cannot escape to Python while the App can still run, update or be consumed; world() lends the World to a callback for a scoped, validity-fenced borrow"
+paths = [
+    "app.App.world",
+]
+
+[[validation.exceptions]]
+code = "W039"
+reason = "EntityRef is excluded from the binding because borrowed entity views cannot outlive the World borrow; iter_entities returns the Entity ids as a snapshot list"
+paths = [
+    "ecs.World.iter_entities",
+]
+
+[[validation.exceptions]]
+code = "W039"
+reason = "EntityWorldMut is excluded from the binding; World.spawn and World.add_observer return the immediate EntityCommands handle, which carries EntityWorldMut's id, insert, remove and despawn surface"
+paths = [
+    "ecs.World.add_observer",
+    "ecs.World.spawn",
+]
+
+[[validation.exceptions]]
+code = "W040"
+reason = "NextState is a live, mutable resource handle: set, set_if_neq and reset change its Unchanged/Pending/PendingIfNeq variant in place, which frozen exact-variant objects cannot represent; repr reports the Bevy variant"
+paths = [
+    "ecs.NextState",
+]
+
+[[validation.exceptions]]
+code = "W040"
+reason = "Existing drift (Bevy enum wrapped as an ordinary class); maintainer decision: migrate to Handle.Strong/Handle.Uuid variants (follow-up branch)"
+paths = [
+    "core.Handle",
 ]
 
 [[validation.exceptions]]
@@ -3629,40 +3629,6 @@ paths = [
 ]
 
 [[validation.exceptions]]
-code = "W039"
-reason = "Existing drift (return type differs from Bevy) found when W039 landed; triage pending"
-paths = [
-    "app.App.run",
-    "app.App.world",
-    "ecs.Commands.get_entity",
-    "ecs.World.add_observer",
-    "ecs.World.iter_entities",
-    "ecs.World.spawn",
-    "mesh.Mesh.indices",
-    "transform.GlobalTransform.back",
-    "transform.GlobalTransform.down",
-    "transform.GlobalTransform.forward",
-    "transform.GlobalTransform.left",
-    "transform.GlobalTransform.right",
-    "transform.GlobalTransform.up",
-    "world_serialization.WorldInstanceSpawner.iter_instance_entities",
-]
-
-[[validation.exceptions]]
-code = "W040"
-reason = "Existing drift (Bevy enum wrapped as an ordinary class) found when W040 landed; triage pending"
-paths = [
-    "camera.Visibility",
-    "core.Handle",
-    "ecs.NextState",
-    "light.ShadowFilteringMethod",
-    "mesh.Indices",
-    "ui.FocusPolicy",
-    "ui.Interaction",
-    "window.CursorIcon",
-]
-
-[[validation.exceptions]]
 code = "W041"
 reason = "Pending: BoundingVolume::half_size on the bounding circle and sphere, and StableInterpolate::interpolate_stable on Quat, are outside the fix/math-review scope"
 paths = [
@@ -3686,9 +3652,66 @@ paths = [
     "math.RationalSegment3d.sample_unchecked",
 ]
 
+
+[[validation.exceptions]]
+code = "W038"
+reason = "BoxShadow derefs to Vec<ShadowStyle> through Deref/DerefMut; push, pop, clear and is_empty are the Vec methods Rust callers reach through it, which the drift check does not model for std collections"
+paths = [
+    "ui.BoxShadow.clear",
+    "ui.BoxShadow.is_empty",
+    "ui.BoxShadow.pop",
+    "ui.BoxShadow.push",
+]
+
+[[validation.exceptions]]
+code = "W038"
+reason = "Python cannot assign through a queried component the way Bevy writes `*visibility = Visibility::Hidden`; these methods replace the whole unit-enum value in place through Mut access and mark the change"
+paths = [
+    "camera.Visibility.set_hidden",
+    "camera.Visibility.set_inherited",
+    "camera.Visibility.set_visible",
+    "ui.FocusPolicy.set_block",
+    "ui.FocusPolicy.set_pass",
+]
+
+[[validation.exceptions]]
+code = "W038"
+reason = "Bevy's UiPosition has both a public `anchor` field and a `UiPosition::anchor(Vec2)` constructor; Python cannot bind one class attribute name to both, so the field is exposed as anchor_value"
+paths = [
+    "ui.UiPosition.anchor_value",
+]
+
+[[validation.exceptions]]
+code = "W038"
+reason = "SkinnedMeshInverseBindposes derefs to [Mat4]; get is the slice method Rust callers reach through it, which the drift check does not model for std slices"
+paths = [
+    "mesh.SkinnedMeshInverseBindposes.get",
+]
+
+[[validation.exceptions]]
+code = "W038"
+reason = "Reviewed zero-copy bounded-array API approved in the mesh review: positions/normals/uvs borrow the attribute without a copy, the _mut forms yield in-place writable arrays, and set_positions/set_normals convert float64, integer and nested-list rows to float32, which insert_attribute does not"
+paths = [
+    "mesh.Mesh.normals",
+    "mesh.Mesh.normals_mut",
+    "mesh.Mesh.positions",
+    "mesh.Mesh.positions_mut",
+    "mesh.Mesh.set_normals",
+    "mesh.Mesh.set_positions",
+    "mesh.Mesh.uvs",
+    "mesh.Mesh.uvs_mut",
+]
+
+[[validation.exceptions]]
+code = "W039"
+reason = "Mesh.indices returns a live read-only zero-copy uint16/uint32 bounded array instead of Bevy's Option<&Indices>: Indices is an owned value whose push mutates in place, so a detached copy would silently drop those writes; edited buffers go back through insert_indices"
+paths = [
+    "mesh.Mesh.indices",
+]
+
 [[validation.exceptions]]
 code = "W041"
-reason = "Existing drift (missing contract-trait method) found when W041 landed; triage pending"
+reason = "AnimatableKeyframeCurve is an uninstantiable type marker: PyBevy neither constructs nor reads its values, so the Curve methods have no receiver"
 paths = [
     "animation.AnimatableKeyframeCurve.domain",
     "animation.AnimatableKeyframeCurve.sample",

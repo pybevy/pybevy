@@ -1179,8 +1179,8 @@ impl PyDespawnOnExit {
         Ok(format!("DespawnOnExit({})", state_str))
     }
 
-    /// Get the state value this component is associated with
-    fn state_value(&self, py: Python) -> Py<PyAny> {
+    #[getter]
+    fn state(&self, py: Python) -> Py<PyAny> {
         self.state_value.clone_ref(py)
     }
 }
@@ -1225,8 +1225,8 @@ impl PyDespawnOnEnter {
         Ok(format!("DespawnOnEnter({})", state_str))
     }
 
-    /// Get the state value this component is associated with
-    fn state_value(&self, py: Python) -> Py<PyAny> {
+    #[getter]
+    fn state(&self, py: Python) -> Py<PyAny> {
         self.state_value.clone_ref(py)
     }
 }
@@ -1458,7 +1458,7 @@ fn despawn_matching_entities(
         // SAFETY: `state_scoped_component_id` confirmed PyObject storage for
         // this exact component ID, so the raw data is a `Py<PyAny>`.
         let py_obj: &Py<PyAny> = unsafe { &*(ptr.as_ptr() as *const Py<PyAny>) };
-        let state_value = py_obj.bind(py).call_method0("state_value")?;
+        let state_value = py_obj.bind(py).getattr("state")?;
         if state_values_match(&state_value, target_state.bind(py))? {
             world.despawn(entity);
         }

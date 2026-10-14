@@ -197,35 +197,6 @@ impl PyEntityCommands {
         })
     }
 
-    /// Set the parent of this entity
-    pub fn set_parent(&self, parent: &Bound<'_, PyAny>) -> PyResult<PyEntityCommands> {
-        self.error_boundary()?.run(|| {
-            let parent = extract_entity_from_any(parent)?;
-            if let Some(source) = self.get_commands()? {
-                crate::ecs::commands::set_parent_helper(source, self.id, parent.0)?;
-                Ok(self.clone())
-            } else {
-                Err(PyValueError::new_err(
-                    "Cannot set parent: EntityCommands not associated with a Commands or World object.",
-                ))
-            }
-        })
-    }
-
-    /// Remove the parent relationship from this entity
-    pub fn remove_parent(&self) -> PyResult<PyEntityCommands> {
-        self.error_boundary()?.run(|| {
-            if let Some(source) = self.get_commands()? {
-                crate::ecs::commands::remove_parent_helper(source, self.id)?;
-                Ok(self.clone())
-            } else {
-                Err(PyValueError::new_err(
-                    "Cannot remove parent: EntityCommands not associated with a Commands or World object.",
-                ))
-            }
-        })
-    }
-
     /// Remove specific children from this entity
     #[pyo3(signature = (*children))]
     pub fn remove_children(

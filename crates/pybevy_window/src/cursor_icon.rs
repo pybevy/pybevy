@@ -1,56 +1,39 @@
-use bevy::window::CursorIcon;
-use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::pycomponent;
-use pyo3::prelude::*;
+use bevy::window::{CursorIcon, SystemCursorIcon};
+use pybevy_core::{ComponentStorage, enum_comparison::compare_values};
+use pybevy_macros::pyenum;
+use pyo3::{prelude::*, pyclass::CompareOp};
 
 use crate::cursor::PySystemCursorIcon;
 
-#[pycomponent(CursorIcon, bridge)]
-#[pyclass(name = "CursorIcon", module = "pybevy.window", extends = PyComponent)]
-pub struct PyCursorIcon {
-    pub(crate) storage: ComponentStorage<CursorIcon>,
+#[pyenum(CursorIcon, component, manual_comparison)]
+#[pyclass(name = "CursorIcon", module = "pybevy.window")]
+pub enum PyCursorIcon {
+    #[py_bevy(tuple)]
+    System {
+        #[py_type(PySystemCursorIcon)]
+        #[py_set]
+        value: SystemCursorIcon,
+    },
 }
 
 #[pymethods]
 impl PyCursorIcon {
-    #[new]
-    #[pyo3(signature = (system_icon = PySystemCursorIcon::Default))]
-    pub fn new(system_icon: PySystemCursorIcon) -> PyClassInitializer<Self> {
-        Self::from_owned(CursorIcon::System(system_icon.into())).into()
-    }
-
-    #[staticmethod]
-    pub fn system(py: Python, icon: PySystemCursorIcon) -> PyResult<Py<Self>> {
-        let (instance, base) = Self::from_owned(CursorIcon::System(icon.into()));
-        Py::new(py, (instance, base))
-    }
-
     #[getter]
     pub fn as_system(&self) -> PyResult<Option<PySystemCursorIcon>> {
         Ok(self.as_ref()?.as_system().copied().map(Into::into))
     }
 
-    pub fn set_system(&mut self, icon: PySystemCursorIcon) -> PyResult<()> {
-        *self.as_mut()? = CursorIcon::System(icon.into());
-        Ok(())
-    }
-
-    pub fn is_system(&self) -> PyResult<bool> {
-        Ok(self.as_ref()?.as_system().is_some())
-    }
-
-    pub fn __eq__(&self, other: &Self) -> PyResult<bool> {
-        Ok(self.as_ref()? == other.as_ref()?)
+    pub fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<Py<PyAny>> {
+        compare_values(self, other, op, |left, right| {
+            Ok(left.as_ref()? == right.as_ref()?)
+        })
     }
 
     pub fn __repr__(&self) -> PyResult<String> {
-        let cursor = self.as_ref()?;
-        match cursor.as_system() {
-            Some(icon) => Ok(format!(
-                "CursorIcon({})",
-                PySystemCursorIcon::from(*icon).__repr__()
-            )),
-            None => Ok("CursorIcon.Custom(...)".to_string()),
-        }
+        let CursorIcon::System(icon) = &*self.as_ref()?;
+        Ok(format!(
+            "CursorIcon.System({})",
+            PySystemCursorIcon::from(*icon).__repr__()
+        ))
     }
 }

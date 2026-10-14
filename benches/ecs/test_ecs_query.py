@@ -3,6 +3,7 @@
 import pytest
 from pytest_benchmark.fixture import BenchmarkFixture
 
+from benches._helpers import initialize
 from pybevy.app import App, ScheduleRunnerPlugin, Startup, Update
 from pybevy.ecs import Commands, Entity, Mut, Query
 from pybevy.math import Quat, Vec3
@@ -27,7 +28,7 @@ def test_iteration_minimal(benchmark: BenchmarkFixture, entity_count: int) -> No
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, minimal_iteration)
-    app.initialize()
+    initialize(app)
     app.update()
 
     benchmark(app.update)
@@ -52,7 +53,7 @@ def test_iteration_count(benchmark: BenchmarkFixture, entity_count: int) -> None
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, count_iteration)
-    app.initialize()
+    initialize(app)
     app.update()
 
     benchmark(app.update)
@@ -78,7 +79,7 @@ def test_translation_read(benchmark: BenchmarkFixture, entity_count: int) -> Non
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, read_translations)
-    app.initialize()
+    initialize(app)
     app.update()
 
     benchmark(app.update)
@@ -100,7 +101,7 @@ def test_translation_write(benchmark: BenchmarkFixture, entity_count: int) -> No
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, write_translations)
-    app.initialize()
+    initialize(app)
     app.update()
 
     benchmark(app.update)
@@ -134,7 +135,7 @@ def test_rotate(
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, rotate_transforms)
-    app.initialize()
+    initialize(app)
     app.update()
 
     benchmark(app.update)
@@ -161,7 +162,7 @@ def test_mutate_transform(benchmark: BenchmarkFixture, entity_count: int) -> Non
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, query_system)
-    app.initialize()
+    initialize(app)
     app.update()
 
     benchmark(app.update)
@@ -187,7 +188,7 @@ def test_look_at_10000(benchmark: BenchmarkFixture) -> None:
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, look_at_transforms)
-    app.initialize()
+    initialize(app)
     app.update()
 
     benchmark(app.update)
@@ -219,7 +220,7 @@ def test_forward_direction_10000(benchmark: BenchmarkFixture) -> None:
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, read_directions)
-    app.initialize()
+    initialize(app)
     app.update()
 
     benchmark(app.update)
@@ -245,7 +246,7 @@ def test_transform_point_10000(benchmark: BenchmarkFixture) -> None:
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, transform_points)
-    app.initialize()
+    initialize(app)
     app.update()
 
     benchmark(app.update)
@@ -274,7 +275,7 @@ def test_mixed_operations_10000(benchmark: BenchmarkFixture) -> None:
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, mixed_operations)
-    app.initialize()
+    initialize(app)
     app.update()
 
     benchmark(app.update)
@@ -300,7 +301,7 @@ def test_multi_property_access_10000(benchmark: BenchmarkFixture) -> None:
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, access_properties)
-    app.initialize()
+    initialize(app)
     app.update()
 
     benchmark(app.update)
@@ -325,7 +326,7 @@ def test_entity_transform_query_10000(benchmark: BenchmarkFixture) -> None:
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, query_system)
-    app.initialize()
+    initialize(app)
     app.update()
 
     benchmark(app.update)

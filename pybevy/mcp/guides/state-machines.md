@@ -92,7 +92,7 @@ def check_start_game(
     interaction_query: Query[Interaction, With[PlayButton]],
 ) -> None:
     for interaction in interaction_query:
-        if interaction.is_pressed():
+        if interaction == Interaction.Pressed:
             next_state.set(GamePhase.PLAYING)
 ```
 

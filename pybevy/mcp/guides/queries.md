@@ -175,9 +175,9 @@ the parameter. `Query.single()` is an explicit lookup inside a running system
 and raises `RuntimeError` for zero or multiple matches.
 
 The silent skip applies to scheduled systems. An explicit
-`world.run_system_once()` or `app.run_system_once()` call raises `RuntimeError`
-when a required `Single[T]` has zero or multiple matches, so the caller can tell
-that the requested body and its deferred commands did not run.
+`world.run_system_once()` call, including one inside `app.world()`, raises
+`RuntimeError` when a required `Single[T]` has zero or multiple matches, so the
+caller can tell that the requested body and its deferred commands did not run.
 
 Use `Optional[Single[T]]` with `from pybevy.ecs import Optional`, matching
 Bevy's `Option<Single<...>>`. This is the standard `typing.Optional` re-exported

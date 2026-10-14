@@ -1,6 +1,7 @@
 import numpy as np
 from pytest_benchmark.fixture import BenchmarkFixture
 
+from benches._helpers import initialize
 from pybevy.app import App, MinimalPlugins, Startup, Update
 from pybevy.assets import AssetPlugin, Assets
 from pybevy.ecs import Commands, Query, ResMut
@@ -58,7 +59,7 @@ def test_mesh_system_get_primitive_topology(benchmark: BenchmarkFixture) -> None
 
     app = create_app().add_systems(Update, update_system)
 
-    app.initialize()
+    initialize(app)
     benchmark(app.update)
 
 
@@ -74,7 +75,7 @@ def test_mesh_system_get_ref_vertices(benchmark: BenchmarkFixture) -> None:
 
     app = create_app().add_systems(Update, update_system)
 
-    app.initialize()
+    initialize(app)
     benchmark(app.update)
 
 
@@ -91,7 +92,7 @@ def test_mesh_system_get_mut_vertices(benchmark: BenchmarkFixture) -> None:
 
     app = create_app().add_systems(Update, update_system)
 
-    app.initialize()
+    initialize(app)
     benchmark(app.update)
 
 

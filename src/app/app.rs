@@ -54,7 +54,7 @@ use pyo3::{
 use crate::{
     app::{
         PyStage,
-        app_exit::materialize_app_exit,
+        app_exit::{PyAppExit, materialize_app_exit},
         chained_systems::{PyChainedSystemSets, PyChainedSystems},
         hot_reload::{
             bindings::{PyAppReloadState, add_hot_reload_system},
@@ -149,9 +149,19 @@ pub(crate) fn _test_force_cleanup() {
 /// Raise collected system errors: single error preserves its type,
 /// multiple errors are wrapped in an ExceptionGroup.
 fn raise_collected_errors(py: Python<'_>, error_state: &Arc<Mutex<Vec<PyErr>>>) -> PyResult<()> {
+    raise_collected_errors_since(py, error_state, 0)
+}
+
+/// Raise the system errors collected after the first `start` entries.
+pub(crate) fn raise_collected_errors_since(
+    py: Python<'_>,
+    error_state: &Arc<Mutex<Vec<PyErr>>>,
+    start: usize,
+) -> PyResult<()> {
     let errors = {
         let mut error_guard = lock_or_recover(error_state);
-        std::mem::take(&mut *error_guard)
+        let start = start.min(error_guard.len());
+        error_guard.split_off(start)
     };
     if errors.is_empty() {
         return Ok(());
@@ -171,7 +181,7 @@ fn raise_collected_errors(py: Python<'_>, error_state: &Arc<Mutex<Vec<PyErr>>>) 
 }
 
 /// Run a schedule, reporting a schedule-graph failure as a normal Python error.
-fn catch_schedule_build_failure<T>(run: impl FnOnce() -> T) -> PyResult<T> {
+pub(crate) fn catch_schedule_build_failure<T>(run: impl FnOnce() -> T) -> PyResult<T> {
     match catch_unwind(AssertUnwindSafe(run)) {
         Ok(value) => Ok(value),
         Err(payload) => match schedule_build_message(payload.as_ref()) {
@@ -1768,25 +1778,6 @@ impl PyApp {
         })
     }
 
-    /// Run a system function once immediately on this app's world.
-    ///
-    /// This is a convenience method equivalent to:
-    ///   app.world(lambda w: w.run_system_once(func))
-    ///
-    /// Usage:
-    ///   app.run_system_once(setup)
-    pub fn run_system_once<'py>(&self, py: Python<'py>, func: Bound<'py, PyAny>) -> PyResult<()> {
-        self.ensure_group_configuration()?;
-        self.ensure_active()?;
-
-        let mut guard = self.begin_operation(AppOperation::WorldCallback)?;
-        PyWorld::with_temporary(guard.app_mut().world_mut(), py, |py_world| {
-            let world_obj = Py::new(py, py_world.duplicate())?;
-            world_obj.borrow(py).run_system_once(func)?;
-            Ok(())
-        })
-    }
-
     /// Run multiple system functions once immediately on this app's world.
     ///
     /// PyBevy-specific convenience method (not in Bevy API).
@@ -1810,24 +1801,6 @@ impl PyApp {
             }
             Ok(())
         })
-    }
-
-    /// Initialize the app by running startup systems (PyBevy-specific convenience method)
-    pub fn initialize(&self, py: Python) -> PyResult<()> {
-        self.ensure_group_configuration()?;
-        self.ensure_active()?;
-
-        let app_id = self.app_id;
-
-        // Release GIL while running initialization (required to avoid deadlock with Python systems)
-        py.detach(|| {
-            let mut guard = begin_main_app_operation(app_id, AppOperation::Finish)?;
-            guard.app_mut().finish();
-            guard.app_mut().cleanup();
-            Ok::<(), PyErr>(())
-        })?;
-
-        Ok(())
     }
 
     /// Run the app update loop once
@@ -1926,7 +1899,7 @@ impl PyApp {
         Ok(())
     }
 
-    fn run(&self, py: Python) -> PyResult<Py<PyAny>> {
+    fn run(&self, py: Python) -> PyResult<Py<PyAppExit>> {
         self.ensure_group_configuration()?;
         // Require @entrypoint decorator unless running in test mode
         if !self.entrypoint_set.get() {
@@ -2037,7 +2010,10 @@ impl PyApp {
         // After the event loop exits, check for system errors and raise them
         raise_collected_errors(py, &error_state)?;
 
-        materialize_app_exit(py, &exit)
+        Ok(materialize_app_exit(py, &exit)?
+            .into_bound(py)
+            .cast_into::<PyAppExit>()?
+            .unbind())
     }
 
     /// Check if a plugin of a given type has been added to the app
@@ -2174,40 +2150,6 @@ impl PyApp {
             Ok(())
         })?;
         Ok(pyself.into())
-    }
-
-    /// Run a specific schedule once on the app's world.
-    ///
-    /// This executes only the systems registered in the given schedule,
-    /// without running the full frame update. Useful for RL simulation
-    /// workloads where SimTick needs to run independently of rendering.
-    ///
-    /// Usage:
-    ///   app.run_schedule(SimTick)
-    pub fn run_schedule(&self, py: Python, stage: PyStage) -> PyResult<()> {
-        self.ensure_group_configuration()?;
-        self.ensure_active()?;
-
-        // Clear any previous errors before running
-        let previous_errors = {
-            let mut error_lock = lock_or_recover(&self.system_error);
-            std::mem::take(&mut *error_lock)
-        };
-        drop(previous_errors);
-
-        let app_id = self.app_id;
-
-        // Release GIL while running schedule (required to avoid deadlock with Python systems)
-        py.detach(|| {
-            let mut guard = begin_main_app_operation(app_id, AppOperation::RunSchedule)?;
-            catch_schedule_build_failure(|| stage.run_on_world(guard.app_mut().world_mut()))?;
-            Ok::<(), PyErr>(())
-        })?;
-
-        // Check if any system errors occurred and raise them
-        raise_collected_errors(py, &self.system_error)?;
-
-        Ok(())
     }
 
     /// Configure system-set hierarchy, ordering, and shared run conditions.

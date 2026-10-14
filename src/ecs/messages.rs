@@ -27,7 +27,7 @@ use pyo3::{
     types::{PyTuple, PyType},
 };
 
-use super::message::{PyMessage, PyMessageId};
+use super::message::PyMessage;
 use crate::{
     assets::asset_load_failed_event::{
         PyAssetLoadFailedEvent, materialize_asset_load_failed_record,
@@ -254,7 +254,6 @@ impl PyMessages {
 
 #[allow(dead_code)] // implemented by Wrap<T>, invoked via dyn dispatch
 trait ErasedMessages {
-    fn send(&mut self, _message: PyMessage) -> PyMessageId;
     fn clear(&mut self);
     fn is_empty(&self) -> bool;
     fn len(&self) -> usize;
@@ -264,11 +263,6 @@ trait ErasedMessages {
 struct Wrap<'a, T: Message>(pub &'a mut Messages<T>);
 
 impl<'a, T: Message> ErasedMessages for Wrap<'a, T> {
-    fn send(&mut self, _message: PyMessage) -> PyMessageId {
-        // Not reachable: PyMessages.send() raises NotImplementedError before calling this
-        unreachable!("ErasedMessages::send should not be called directly")
-    }
-
     fn clear(&mut self) {
         self.0.clear();
     }
@@ -293,10 +287,6 @@ impl<'a, T: Message> ErasedMessages for Wrap<'a, T> {
 struct EmptyMessages;
 
 impl ErasedMessages for EmptyMessages {
-    fn send(&mut self, _message: PyMessage) -> PyMessageId {
-        unreachable!("EmptyMessages::send should not be called")
-    }
-
     fn clear(&mut self) {}
 
     fn is_empty(&self) -> bool {
@@ -328,12 +318,6 @@ impl PyMessages {
         let py = cls.py();
         let ty = PyMessageType::from_annotation(key)?;
         PyMessageTypeParam(ty).into_py_any(py)
-    }
-
-    pub fn send(&self, _py: Python, _message: Bound<'_, PyMessage>) -> PyResult<PyMessageId> {
-        Err(pyo3::exceptions::PyNotImplementedError::new_err(
-            "Messages.send() is not implemented. Use MessageWriter[T] as a system parameter to send messages.",
-        ))
     }
 
     pub fn clear(&self) -> PyResult<()> {

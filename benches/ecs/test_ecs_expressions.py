@@ -11,6 +11,7 @@ This file tests the bytecode VM expression system including:
 import pytest
 from pytest_benchmark.fixture import BenchmarkFixture
 
+from benches._helpers import initialize
 from pybevy.app import ScheduleRunnerPlugin
 from pybevy.decorators import component
 from pybevy.ecs import Commands, Component, Mut, Query, View
@@ -53,7 +54,7 @@ def _setup_reduce_view(operation: str, entity_count: int) -> App:
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, reduce_system)
-    app.initialize()
+    initialize(app)
     app.update()
 
     return app
@@ -94,7 +95,7 @@ def _setup_reduce_query(operation: str, entity_count: int) -> App:
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, query_system)
-    app.initialize()
+    initialize(app)
     app.update()
 
     return app
@@ -106,7 +107,7 @@ def _bench_comparison_operator(operator_fn, setup_fn) -> App:
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup_fn)
     app.add_systems(Update, operator_fn)
-    app.initialize()
+    initialize(app)
     app.update()
     return app
 
@@ -489,7 +490,7 @@ def test_conditional_query_100000(benchmark: BenchmarkFixture) -> None:
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, query_conditional)
-    app.initialize()
+    initialize(app)
     app.update()
 
     benchmark(app.update)

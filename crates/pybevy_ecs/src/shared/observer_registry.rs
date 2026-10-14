@@ -365,6 +365,14 @@ impl<H> ObserverRegistryCore<H> {
             .collect()
     }
 
+    /// Remove everything a despawned entity retires: the observers scoped to
+    /// it and, when it is itself an observer, its own entry.
+    pub fn remove_for_despawned(&mut self, entity: Entity) -> Vec<ObserverEntry<H>> {
+        let mut removed = self.remove_for_target(entity);
+        removed.extend(self.remove(entity));
+        removed
+    }
+
     /// Drain every entry and reset every index.
     ///
     /// Callers must drop/retire returned handles after releasing the registry's
@@ -706,6 +714,36 @@ mod tests {
         assert_eq!(registry.len(), 2);
         assert_eq!(registry.snapshot(user, None).len(), 1);
         assert_eq!(registry.snapshot(user, Some(other)).len(), 2);
+    }
+
+    #[test]
+    fn remove_for_despawned_retires_the_observer_itself_and_its_scoped_observers() {
+        let event = ObserverEventKey::User(ObserverTypeKey::new(1));
+        let mut registry = ObserverRegistryCore::default();
+        registry
+            .insert(entry(1, "global", event, ObserverFilter::default(), None))
+            .unwrap();
+        registry
+            .insert(entry(
+                2,
+                "scoped",
+                event,
+                ObserverFilter::default(),
+                Some(entity(1)),
+            ))
+            .unwrap();
+        registry
+            .insert(entry(3, "kept", event, ObserverFilter::default(), None))
+            .unwrap();
+
+        let removed = registry.remove_for_despawned(entity(1));
+        let names: Vec<_> = removed
+            .iter()
+            .map(|entry| entry.prepared.as_str())
+            .collect();
+        assert_eq!(names, ["scoped", "global"]);
+        assert_eq!(registry.len(), 1);
+        assert!(registry.remove_for_despawned(entity(9)).is_empty());
     }
 
     #[test]

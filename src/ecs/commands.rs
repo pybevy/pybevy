@@ -8,7 +8,6 @@ use std::{
 use bevy::ecs::{
     component::ComponentId,
     entity::Entity,
-    hierarchy::ChildOf,
     ptr::OwningPtr,
     resource::IsResource,
     system::Commands,
@@ -1398,67 +1397,6 @@ pub(crate) fn clear_children_helper(commands: &PyCommands, parent_id: Entity) ->
     Ok(())
 }
 
-/// Helper function to set the parent of an entity
-pub(crate) fn set_parent_helper(
-    commands: &PyCommands,
-    child_id: Entity,
-    parent_id: Entity,
-) -> PyResult<()> {
-    if commands.is_world_queue() {
-        return commands.queue_world(WorldCommand::Mutation(WorldMutation::SetParent(
-            child_id, parent_id,
-        )));
-    }
-    if commands.is_immediate() {
-        let mut world = commands.world_mut()?;
-        ensure_entities_exist(&world, &[child_id, parent_id])?;
-        validate_hierarchy_link(&world, child_id, parent_id)
-            .map_err(|error| PyTypeError::new_err(error.to_string()))?;
-        ensure_no_live_asset_access(&world, "entity.set_parent()")
-            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-        world.entity_mut(child_id).insert(ChildOf(parent_id));
-    } else {
-        let error_sink = commands.error_sink.clone();
-        commands.execute_or_queue(move |world| {
-            if entity_exists(world, child_id) && entity_exists(world, parent_id) {
-                if let Err(error) = validate_hierarchy_link(world, child_id, parent_id) {
-                    let error = PyTypeError::new_err(error.to_string());
-                    match &error_sink {
-                        Some(sink) => sink.record(error),
-                        None => eprintln!("Error: Failed to set parent via Commands: {error:?}"),
-                    }
-                    return;
-                }
-                world.entity_mut(child_id).insert(ChildOf(parent_id));
-            }
-        })?;
-    }
-    Ok(())
-}
-
-/// Helper function to remove parent relationship from an entity
-pub(crate) fn remove_parent_helper(commands: &PyCommands, child_id: Entity) -> PyResult<()> {
-    if commands.is_world_queue() {
-        return commands.queue_world(WorldCommand::Mutation(WorldMutation::RemoveParent(
-            child_id,
-        )));
-    }
-    if commands.is_immediate() {
-        let mut world = commands.world_mut()?;
-        ensure_entity_exists(&world, child_id)?;
-        ensure_no_live_asset_access(&world, "entity.remove_parent()")
-            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-        world.entity_mut(child_id).remove::<ChildOf>();
-    } else {
-        commands.execute_or_queue(move |world| {
-            if entity_exists(world, child_id) {
-                world.entity_mut(child_id).remove::<ChildOf>();
-            }
-        })?;
-    }
-    Ok(())
-}
-
 /// Helper function to remove components from an entity
 pub(crate) fn remove_components_from_entity_helper(
     commands: &PyCommands,
@@ -1686,23 +1624,27 @@ impl PyCommands {
         &self,
         py: Python<'_>,
         entity: &Bound<'_, PyAny>,
-    ) -> PyResult<Option<PyEntityCommands>> {
+    ) -> PyResult<PyEntityCommands> {
         let entity = &extract_entity_from_any(entity)?;
         self.check_valid()?;
-        if self.is_immediate() {
+        let invalid = if self.is_immediate() {
             let world = self.world_mut()?;
-            if world.get_entity(entity.0).is_err() {
-                return Ok(None);
-            }
-        } else if !self.with_commands(|commands| commands.get_entity(entity.0).is_ok())? {
-            return Ok(None);
+            world
+                .get_entity(entity.0)
+                .err()
+                .map(|error| error.to_string())
+        } else {
+            self.with_commands(|commands| {
+                commands
+                    .get_entity(entity.0)
+                    .err()
+                    .map(|error| error.to_string())
+            })?
+        };
+        if let Some(message) = invalid {
+            return Err(PyValueError::new_err(message));
         }
-        Ok(Some(PyEntityCommands::with_commands(entity.0, self, py)))
-    }
-
-    pub fn despawn(&self, entity: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.error_boundary()?
-            .run(|| self.despawn_entity(&extract_entity_from_any(entity)?))
+        Ok(PyEntityCommands::with_commands(entity.0, self, py))
     }
 
     pub fn insert_resource(&self, py: Python, resource: Bound<'_, PyAny>) -> PyResult<()> {
@@ -1843,7 +1785,7 @@ impl PyCommands {
 impl PyCommands {
     pub(crate) fn despawn_entity(&self, entity: &PyEntity) -> PyResult<()> {
         self.check_valid()?;
-        self.check_native_asset_access("commands.despawn()")?;
+        self.check_native_asset_access("entity.despawn()")?;
         let entity_id = entity.0;
         self.trace_target_op(ParityOpKind::Despawn, entity_id);
 

@@ -67,7 +67,7 @@ impl PyAssetPath {
     }
 
     #[new]
-    #[pyo3(signature = (*, source=None, path, label=None))]
+    #[pyo3(signature = (*, source=None, path=String::new(), label=None))]
     pub fn py_new(source: Option<String>, path: String, label: Option<String>) -> Self {
         Self {
             path,

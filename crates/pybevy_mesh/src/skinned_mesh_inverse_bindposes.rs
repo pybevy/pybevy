@@ -1,8 +1,8 @@
 use bevy::{math::Mat4, mesh::skinning::SkinnedMeshInverseBindposes};
-use pybevy_core::{AssetStorage, PyAsset, computed_owned};
+use pybevy_core::{AssetStorage, PyAsset, computed_owned, live_sequence::normalize_index};
 use pybevy_macros::pyasset;
 use pybevy_math::mat4::PyMat4;
-use pyo3::prelude::*;
+use pyo3::{prelude::*, types::PyList};
 
 #[pyasset(SkinnedMeshInverseBindposes, no_clone, bridge, not_loadable)]
 #[pyclass(name = "SkinnedMeshInverseBindposes", module = "pybevy.mesh", extends = PyAsset)]
@@ -32,10 +32,21 @@ impl PySkinnedMeshInverseBindposes {
         ))
     }
 
-    pub fn to_list(&self) -> PyResult<Vec<PyMat4>> {
-        Ok(computed_owned(
-            self.as_ref()?.iter().map(|m| (*m).into()).collect(),
-        ))
+    pub fn __getitem__(&self, index: isize) -> PyResult<PyMat4> {
+        let bindposes = self.as_ref()?;
+        let index = normalize_index(index, bindposes.len())?;
+        Ok(computed_owned(bindposes[index].into()))
+    }
+
+    pub fn __iter__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let matrices: Vec<PyMat4> = self
+            .as_ref()?
+            .iter()
+            .map(|matrix| computed_owned((*matrix).into()))
+            .collect();
+        Ok(PyList::new(py, matrices)?
+            .call_method0("__iter__")?
+            .unbind())
     }
 
     pub fn __repr__(&self) -> PyResult<String> {

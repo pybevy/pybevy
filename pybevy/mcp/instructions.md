@@ -105,7 +105,7 @@ Numeric entity arguments use the packed generation-bearing IDs returned by MCP
 responses, which are the same values as Python `Entity.to_bits()`. Never pass
 the `EntityIndex` returned by `Entity.index()` or its raw `.index()` integer;
 indices can be reused after despawn. Inside Python, use `Entity.from_bits(id)`
-to convert an MCP ID. `Entity.from_raw(index)` instead creates a generation-zero
+to convert an MCP ID. `Entity.from_raw_u32(index)` instead creates a generation-zero
 identity and does not recover an arbitrary live entity. Names remain valid
 entity references and are often more stable across full reloads.
 

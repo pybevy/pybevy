@@ -14,7 +14,12 @@ variant. `Mesh.insert_attribute()` still accepts arrays and nested sequences
 directly. Column-major NumPy joint-index arrays must be converted with
 `numpy.ascontiguousarray()` before insertion. Exact vertex-value variants and
 `CircularMeshUvMode.Mask` support Python's shallow and deep copy protocols.
-`Indices` remains mutable and supports `push()`.
+`Indices` uses exact variants, `Indices.U16([0, 1, 2])` and
+`Indices.U32([0, 1, 70000])`, whose `.value` is an independent read-only
+array. They stay mutable through `push()` and `extend()`, but unlike Bevy they
+never change variant: adding an index of 65535 or more to `Indices.U16`
+raises `OverflowError` and leaves it unchanged, so build `Indices.U32` for
+large meshes.
 
 ## Primitive Meshes
 
@@ -122,9 +127,12 @@ builder. `PlaneMeshBuilder(normal, size)` uses a normal positional constructor;
 `from_size()` and `from_length()` remain available. `UvChannel` is selected
 through `UvChannel.Uv0` or `.Uv1`, not a base constructor. Shape dimensions
 come from `Rectangle.size()` and capsule interiors from
-`Capsule2d.to_inner_rectangle()`. `SkinnedMesh.joints` and
-`MorphWeights.weights` provide the lists formerly exposed through extra length
-or indexing helpers; invalid `MorphWeights` indices raise `IndexError`.
+`Capsule2d.to_inner_rectangle()`. `SkinnedMesh.joints` provides the list
+formerly exposed through extra length or indexing helpers.
+`MorphWeights.weights` is a fixed-length live view: `mw.weights[i] = w`
+writes through `Query[Mut[MorphWeights]]` and marks the component changed,
+invalid indices raise `IndexError`, and an owned value's view is a read-only
+snapshot, so assign the whole list there.
 
 Mesh-builder counts must meet their minimum usable resolution. Capsule3d needs
 at least 4 latitudes and 1 longitude; Capsule2d needs resolution 2; Annulus
@@ -151,7 +159,8 @@ non-default asset usage. `mesh.enable_raytracing` can be assigned; an arbitrary
 `mesh.attribute(id)` returns `None` when absent, while `positions()`,
 `normals()`, and `uvs()` require their attributes to be present.
 
-`remove_indices()` returns an independently owned `Indices` value or `None`;
+`remove_indices()` returns an independently owned exact `Indices.U16` or
+`Indices.U32` value or `None`;
 `with_removed_indices()` returns a new mesh and leaves the source unchanged.
 `merge_duplicate_vertices()` creates indices for identical vertex rows and
 requires an unindexed mesh; its `with_*` counterpart leaves the source unchanged.

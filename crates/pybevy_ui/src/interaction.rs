@@ -1,8 +1,9 @@
 use bevy::ui::Interaction;
 use pybevy_core::PyComponent;
-use pybevy_macros::pywrap;
+use pybevy_macros::{pyenum, pywrap};
 use pyo3::prelude::*;
 
+#[pyenum(Interaction, manual)]
 #[pywrap(Interaction, bridge)]
 #[pyclass(name = "Interaction", module = "pybevy.ui", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Clone, Debug, PartialEq)]
@@ -18,30 +19,6 @@ impl PyInteraction {
     #[new]
     pub fn new() -> PyClassInitializer<Self> {
         Self::from_owned(Interaction::None).into()
-    }
-
-    #[getter]
-    pub fn is_none(&self) -> bool {
-        matches!(self.0, Interaction::None)
-    }
-
-    #[getter]
-    pub fn is_hovered(&self) -> bool {
-        matches!(self.0, Interaction::Hovered)
-    }
-
-    #[getter]
-    pub fn is_pressed(&self) -> bool {
-        matches!(self.0, Interaction::Pressed)
-    }
-
-    #[getter]
-    pub fn state(&self) -> String {
-        match self.0 {
-            Interaction::None => "none".to_string(),
-            Interaction::Hovered => "hovered".to_string(),
-            Interaction::Pressed => "pressed".to_string(),
-        }
     }
 
     #[staticmethod]
@@ -70,7 +47,11 @@ impl PyInteraction {
         }
     }
 
-    pub fn __str__(&self) -> String {
-        self.state()
+    pub fn __str__(&self) -> &'static str {
+        match self.0 {
+            Interaction::None => "none",
+            Interaction::Hovered => "hovered",
+            Interaction::Pressed => "pressed",
+        }
     }
 }

@@ -545,7 +545,7 @@ fn parse_variant_constructor(attrs: &[Attribute], variant_ident: &syn::Ident) ->
     None
 }
 
-fn parse_variant_pyo3_name(attrs: &[Attribute]) -> Option<String> {
+pub(super) fn parse_variant_pyo3_name(attrs: &[Attribute]) -> Option<String> {
     for attr in attrs {
         if !attr.path().is_ident("pyo3") {
             continue;

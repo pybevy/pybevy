@@ -1,7 +1,7 @@
 use bevy::{
     asset::{
         AssetPath, AssetServer,
-        saver::{SaveAssetError, SavedAsset, save_using_saver},
+        saver::{SaveAssetError, SavedAsset, save_using_saver as bevy_save_using_saver},
     },
     ecs::world::unsafe_world_cell::UnsafeWorldCell,
     image::{ImageSaver, ImageSaverSettings, SaveImageError},
@@ -20,7 +20,9 @@ use pybevy_core::{
     },
     registry::global_registry,
 };
-use pybevy_image::{image::PyImage, image_saver_settings::PyImageSaverSettings};
+use pybevy_image::{
+    image::PyImage, image_saver::PyImageSaver, image_saver_settings::PyImageSaverSettings,
+};
 use pyo3::{
     IntoPyObjectExt,
     exceptions::{
@@ -36,7 +38,10 @@ use crate::{
         PyAssetPath, dependency_load_state::PyDependencyLoadState, load_builder::PyLoadBuilder,
         load_state::PyLoadState, recursive_dependency_load_state::PyRecursiveDependencyLoadState,
     },
-    ecs::{helpers::validity_guard::ValidityFlag, resource::PyResource},
+    ecs::{
+        helpers::validity_guard::ValidityFlag,
+        resource::{PyRes, PyResMut, PyResource},
+    },
 };
 
 /// Extract an AssetPath from a Python object (str or AssetPath).
@@ -265,35 +270,58 @@ impl PyAssetServer {
             None => Ok(None),
         }
     }
+}
 
-    #[pyo3(signature = (image, path, settings = None))]
-    pub fn save_image(
-        &self,
-        py: Python,
-        image: &PyImage,
-        path: &Bound<'_, PyAny>,
-        settings: Option<&PyImageSaverSettings>,
-    ) -> PyResult<()> {
-        let asset_server = self.asset_server()?;
-        let asset_path = extract_asset_path(path)?;
-        let image = image.storage.as_ref()?.clone();
-        let settings: ImageSaverSettings = settings
-            .map(|s| ImageSaverSettings::from(s.clone()))
-            .unwrap_or_default();
+/// Save an asset with a saver, blocking until the write completes.
+///
+/// Mirrors Bevy's `save_using_saver`, which is async; Python blocks instead.
+#[pyfunction]
+pub fn save_using_saver(
+    py: Python<'_>,
+    asset_server: &Bound<'_, PyAny>,
+    saver: &PyImageSaver,
+    path: &Bound<'_, PyAny>,
+    asset: &PyImage,
+    settings: &PyImageSaverSettings,
+) -> PyResult<()> {
+    let server = resolve_asset_server(asset_server)?
+        .borrow()
+        .asset_server()?
+        .clone();
+    let asset_path = extract_asset_path(path)?;
+    let image = asset.storage.as_ref()?.clone();
+    let saver = ImageSaver::from(saver);
+    let settings = ImageSaverSettings::from(settings.clone());
 
-        // Save path is pure file IO, never touches the World: blocking cannot deadlock
-        let result = py.detach(|| {
-            bevy::platform::future::block_on(save_using_saver(
-                asset_server.clone(),
-                &ImageSaver,
-                &asset_path,
-                SavedAsset::from_asset(&image),
-                &settings,
-            ))
-        });
-        result.map_err(save_asset_error_to_py)?;
-        Ok(())
-    }
+    // Saving is pure file IO and never touches the World, so blocking cannot deadlock.
+    let result = py.detach(|| {
+        bevy::platform::future::block_on(bevy_save_using_saver(
+            server,
+            &saver,
+            &asset_path,
+            SavedAsset::from_asset(&image),
+            &settings,
+        ))
+    });
+    result.map_err(save_asset_error_to_py)
+}
+
+/// Accept an `AssetServer` directly or through its `Res`/`ResMut` proxy.
+fn resolve_asset_server<'py>(value: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAssetServer>> {
+    let py = value.py();
+    let inner = if let Ok(res) = value.cast::<PyRes>() {
+        res.borrow().inner(py)?
+    } else if let Ok(res_mut) = value.cast::<PyResMut>() {
+        res_mut.borrow().inner(py)?
+    } else {
+        value.clone()
+    };
+    let type_name = value.get_type().name()?;
+    inner.cast_into::<PyAssetServer>().map_err(|_| {
+        PyTypeError::new_err(format!(
+            "save_using_saver() expected an AssetServer, got {type_name}"
+        ))
+    })
 }
 
 fn save_asset_error_to_py(error: SaveAssetError) -> PyErr {

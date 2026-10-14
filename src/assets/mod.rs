@@ -123,6 +123,7 @@ pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     asset_event::register_asset_event_variants(&assets)?;
     assets.add_class::<asset_load_failed_event::PyAssetLoadFailedEvent>()?;
     assets.add_class::<asset_server::PyAssetServer>()?;
+    assets.add_function(wrap_pyfunction!(asset_server::save_using_saver, &assets)?)?;
     assets.add_class::<load_builder::PyLoadBuilder>()?;
     assets.add_class::<asset_type::PyAssetTypeParam>()?;
     assets.add_class::<assets::PyAssets>()?;

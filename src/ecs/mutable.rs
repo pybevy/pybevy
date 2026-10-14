@@ -8,10 +8,7 @@ use pyo3::{
 /// Usage: Mut[Transform], Mut[Time], etc.
 #[pyclass(name = "Mut", module = "pybevy.ecs")]
 pub struct PyMut {
-    #[pyo3(get, name = "inner_type")]
     ty: Py<PyType>,
-
-    #[pyo3(get)]
     value: Py<PyAny>,
 }
 
@@ -68,8 +65,12 @@ impl PyMut {
         Ok(self.value.bind(py).try_iter()?.into_any().unbind())
     }
 
-    /// Return the underlying value without shadowing wrapped `get` methods.
-    pub fn unwrap(&self, py: Python) -> PyResult<Py<PyAny>> {
+    /// Return the underlying value, as Bevy's `Mut::into_inner` does.
+    #[allow(
+        clippy::wrong_self_convention,
+        reason = "Python extraction keeps the wrapper reusable"
+    )]
+    pub fn into_inner(&self, py: Python) -> PyResult<Py<PyAny>> {
         Ok(self.value.clone_ref(py))
     }
 }

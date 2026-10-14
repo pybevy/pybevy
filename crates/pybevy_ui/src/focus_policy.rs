@@ -1,8 +1,9 @@
 use bevy::ui::FocusPolicy;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::pycomponent;
+use pybevy_macros::{pycomponent, pyenum};
 use pyo3::prelude::*;
 
+#[pyenum(FocusPolicy, manual)]
 #[pycomponent(FocusPolicy, bridge)]
 #[pyclass(name = "FocusPolicy", module = "pybevy.ui", extends = PyComponent, skip_from_py_object)]
 #[derive(Debug)]
@@ -27,16 +28,6 @@ impl PyFocusPolicy {
     #[pyo3(name = "Pass")]
     pub fn pass(py: Python<'_>) -> PyResult<Py<Self>> {
         Py::new(py, Self::from_owned(FocusPolicy::Pass))
-    }
-
-    #[getter]
-    pub fn is_block(&self) -> PyResult<bool> {
-        Ok(matches!(*self.as_ref()?, FocusPolicy::Block))
-    }
-
-    #[getter]
-    pub fn is_pass(&self) -> PyResult<bool> {
-        Ok(matches!(*self.as_ref()?, FocusPolicy::Pass))
     }
 
     pub fn set_block(&mut self) -> PyResult<()> {

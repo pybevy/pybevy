@@ -71,6 +71,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "mesh")?;
     m.add_class::<plugin::PyMeshPlugin>()?;
     m.add_class::<indices::PyIndices>()?;
+    indices::register_indices_variants(&m)?;
     m.add_class::<indices::PyIndicesIterator>()?;
     m.add_class::<mesh::PyMesh>()?;
     m.add_class::<mesh2d::PyMesh2d>()?;
@@ -79,6 +80,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     mesh_morph_weights::register_mesh_morph_weights_variants(&m)?;
     m.add_class::<mesh_tag::PyMeshTag>()?;
     m.add_class::<morph_weights::PyMorphWeights>()?;
+    m.add_class::<morph_weights::PyMorphWeightsView>()?;
     m.add_class::<skinned_mesh::PySkinnedMesh>()?;
     m.add_class::<skinned_mesh_inverse_bindposes::PySkinnedMeshInverseBindposes>()?;
     m.add_class::<vertex_attribute::PyMeshVertexAttributeId>()?;

@@ -7,10 +7,7 @@ use bevy::{
     ecs::{component::ComponentId, entity::Entity, world::World},
     prelude::Resource,
 };
-use pybevy_core::{
-    public_error::{NOT_AN_OBSERVER_ENTITY, RESOURCE_ENTITY_DESPAWN},
-    registry::global_registry,
-};
+use pybevy_core::registry::global_registry;
 use pybevy_ecs::shared::{
     observer_registry::{
         LifecycleKind, ObserverEntry as CoreObserverEntry, ObserverEventKey, ObserverFilter,
@@ -19,7 +16,7 @@ use pybevy_ecs::shared::{
     system_runtime::{ErrorPolicy, execute_observer},
 };
 use pyo3::{
-    exceptions::{PyRuntimeError, PyTypeError, PyValueError},
+    exceptions::{PyRuntimeError, PyTypeError},
     ffi,
     prelude::*,
     types::PyType,
@@ -28,7 +25,6 @@ use pyo3::{
 use super::{
     component_type::{ComponentRegistry, PyComponentType},
     observer::EventType,
-    resource::hierarchy_contains_resource_entity,
     resource_type::ResourceRegistry,
     system::{SystemFunction, SystemParamType},
     system_interpreter::{MainPreparedObserver, ObserverRuntimeSinks, new_main_observer},
@@ -381,50 +377,17 @@ impl ObserverRegistry {
         }
     }
 
-    /// Remove one observer and return its complete entry for out-of-borrow drop.
-    pub fn remove_observer(&mut self, observer_entity: Entity) -> Option<ObserverEntry> {
-        self.core.remove(observer_entity)
-    }
-
     /// Drain all observers for hot reload.
     pub(crate) fn clear_all(&mut self) -> Vec<ObserverEntry> {
         self.core.clear()
     }
 
-    /// Remove every observer scoped to a despawning target.
-    fn remove_for_entity(&mut self, watched_entity: Entity) -> Vec<ObserverEntry> {
-        self.core.remove_for_target(watched_entity)
+    /// Remove the observers a despawning entity retires.
+    fn remove_for_entity(&mut self, entity: Entity) -> Vec<ObserverEntry> {
+        self.core.remove_for_despawned(entity)
     }
 
-    /// Despawn an observer entity and remove its prepared registration.
-    pub fn despawn_observer(observer_entity: Entity, world: &mut World) -> PyResult<()> {
-        if hierarchy_contains_resource_entity(world, observer_entity) {
-            return Err(PyTypeError::new_err(RESOURCE_ENTITY_DESPAWN));
-        }
-
-        let removed = world
-            .get_resource_mut::<ObserverRegistry>()
-            .and_then(|mut registry| registry.remove_observer(observer_entity));
-
-        if removed.is_none() {
-            // Registry membership identifies Python observer entities.
-            if world.entities().contains(observer_entity) {
-                return Err(PyValueError::new_err(NOT_AN_OBSERVER_ENTITY));
-            }
-            return Ok(());
-        }
-
-        if let Ok(entity_mut) = world.get_entity_mut(observer_entity) {
-            entity_mut.despawn();
-        }
-
-        // `removed` drops here, after the registry resource borrow and entity
-        // mutation have both ended. A Python finalizer may safely re-enter.
-        drop(removed);
-        Ok(())
-    }
-
-    /// Remove and despawn observers scoped to a despawning target entity.
+    /// Remove a despawning observer and despawn the observers scoped to the entity.
     pub fn cleanup_on_entity_despawn(watched_entity: Entity, world: &mut World) {
         let removed = world
             .get_resource_mut::<ObserverRegistry>()
@@ -432,6 +395,9 @@ impl ObserverRegistry {
             .unwrap_or_default();
 
         for entry in &removed {
+            if entry.observer_entity == watched_entity {
+                continue;
+            }
             if let Ok(entity_mut) = world.get_entity_mut(entry.observer_entity) {
                 entity_mut.despawn();
             }

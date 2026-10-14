@@ -891,7 +891,7 @@ run_code {"code": "from pybevy.prelude import Entity\ne = Entity.from_bits(12345
 `Entity.index()` returns a typed `EntityIndex` for the transient index shown in
 `Entity(<index>v<generation>)`. Use `entity.index().index()` only when you need
 that diagnostic integer. Neither form is an MCP/HTTP ID, and indices can be
-reused after despawn. Likewise, `Entity.from_raw(index)` constructs a
+reused after despawn. Likewise, `Entity.from_raw_u32(index)` constructs a
 generation-zero identity; it does not recover the live entity that may
 currently use that index. `world.entity(int)` is intentionally rejected to
 mirror Bevy's typed API: packed bits encode both generation and index, and

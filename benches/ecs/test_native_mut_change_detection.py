@@ -5,6 +5,7 @@ from collections.abc import Callable
 import pytest
 from pytest_benchmark.fixture import BenchmarkFixture
 
+from benches._helpers import initialize
 from pybevy.app import App, ScheduleRunnerPlugin, Startup, Update
 from pybevy.ecs import Commands, Mut, Query
 from pybevy.transform import Transform
@@ -23,7 +24,7 @@ def _benchmark_app(
     app = App().add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, system)
-    app.initialize()
+    initialize(app)
     app.update()
     return app
 

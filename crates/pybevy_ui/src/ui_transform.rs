@@ -39,6 +39,7 @@ impl PyUiTransform {
     }
 
     #[staticmethod]
+    #[pyo3(name = "IDENTITY")]
     pub fn identity(py: Python) -> PyResult<Py<Self>> {
         Py::new(py, Self::from_owned(UiTransform::IDENTITY))
     }

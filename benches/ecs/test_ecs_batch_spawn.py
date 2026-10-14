@@ -5,6 +5,7 @@ from collections.abc import Callable
 import numpy as np
 from pytest_benchmark.fixture import BenchmarkFixture
 
+from benches._helpers import initialize
 from pybevy.app import App, Startup
 from pybevy.camera import Visibility
 from pybevy.decorators import component
@@ -20,7 +21,7 @@ class Marker(Component):
 def _run_batch(setup_fn: Callable[..., None]) -> None:
     app = App()
     app.add_systems(Startup, setup_fn)
-    app.initialize()
+    initialize(app)
     app.update()
 
 

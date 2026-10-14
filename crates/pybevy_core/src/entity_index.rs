@@ -27,7 +27,7 @@ impl Eq for PyEntityIndex {}
 #[pymethods]
 impl PyEntityIndex {
     #[staticmethod]
-    pub fn from_raw(raw: u32) -> Option<Self> {
+    pub fn from_raw_u32(raw: u32) -> Option<Self> {
         EntityIndex::from_raw_u32(raw).map(Self::from_owned)
     }
 
@@ -99,9 +99,9 @@ mod tests {
 
     #[test]
     fn raw_index_round_trip_and_limit() {
-        let index = PyEntityIndex::from_raw(7).unwrap();
+        let index = PyEntityIndex::from_raw_u32(7).unwrap();
         assert_eq!(index.index().unwrap(), 7);
-        assert!(PyEntityIndex::from_raw(u32::MAX).is_none());
+        assert!(PyEntityIndex::from_raw_u32(u32::MAX).is_none());
     }
 
     #[test]

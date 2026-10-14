@@ -2,6 +2,7 @@
 
 from pytest_benchmark.fixture import BenchmarkFixture
 
+from benches._helpers import initialize
 from pybevy.app import App, MinimalPlugins, Update
 from pybevy.ecs import Commands, Entity, Query, Res, World
 from pybevy.time import Time
@@ -11,7 +12,7 @@ from pybevy.transform import Transform
 def test_empty_app_update(benchmark: BenchmarkFixture) -> None:
     """Benchmark minimal app update with no systems."""
     app = App().add_plugins(MinimalPlugins)
-    app.initialize()
+    initialize(app)
     benchmark(app.update)
 
 
@@ -23,7 +24,7 @@ def test_app_update(benchmark: BenchmarkFixture) -> None:
 
     app = App().add_plugins(MinimalPlugins).add_systems(Update, update_system)
 
-    app.initialize()
+    initialize(app)
     benchmark(app.update)
 
 
@@ -35,7 +36,7 @@ def test_app_update_with_time(benchmark: BenchmarkFixture) -> None:
 
     app = App().add_plugins(MinimalPlugins).add_systems(Update, time_system)
 
-    app.initialize()
+    initialize(app)
     benchmark(app.update)
 
 
@@ -128,7 +129,7 @@ def test_query_iter_100_empty_entities(benchmark: BenchmarkFixture) -> None:
 
     app.world(setup_entities)
 
-    app.initialize()
+    initialize(app)
     app.update()
 
     benchmark(app.update)
@@ -158,7 +159,7 @@ def test_query_iter_100_transforms(benchmark: BenchmarkFixture) -> None:
 
     app.world(setup_entities)
 
-    app.initialize()
+    initialize(app)
     app.update()
 
     benchmark(app.update)
@@ -179,7 +180,7 @@ def test_query_loop_100_transforms(benchmark: BenchmarkFixture) -> None:
 
     app.world(setup_entities)
 
-    app.initialize()
+    initialize(app)
     app.update()
 
     benchmark(app.update)

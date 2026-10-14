@@ -2,6 +2,7 @@
 
 import pytest
 
+from benches._helpers import initialize
 from pybevy.app import App, ScheduleRunnerPlugin, Startup, Update
 from pybevy.ecs import Add, Commands, Despawn, Insert, On, Remove, World
 from pybevy.transform import Transform
@@ -30,7 +31,7 @@ app.add_observer(on_add_{i})
             commands.spawn(Transform.from_xyz(1.0, 2.0, 3.0))
 
         app.add_systems(Update, spawn_entity)
-        app.initialize()
+        initialize(app)
         app.update()
 
     benchmark(create_and_trigger)
@@ -57,7 +58,7 @@ def test_performance_many_entities_lifecycle_events(benchmark) -> None:
                 commands.spawn(Transform.from_xyz(float(i), 0.0, 0.0))
 
         app.add_systems(Update, spawn_entities)
-        app.initialize()
+        initialize(app)
         app.update()
 
         assert len(call_count) == num_entities
@@ -84,7 +85,7 @@ def test_performance_lifecycle_event_overhead(benchmark) -> None:
                 commands.spawn(Transform.from_xyz(float(i), 0.0, 0.0))
 
         app.add_systems(Update, spawn_entities)
-        app.initialize()
+        initialize(app)
         app.update()
 
     benchmark(spawn_with_observers)
@@ -126,7 +127,7 @@ def test_performance_insert_remove_lifecycle(benchmark) -> None:
 
         app.add_systems(Startup, setup)
         app.add_systems(Update, insert_remove)
-        app.initialize()
+        initialize(app)
         app.update()
 
         assert len(insert_count) == num_operations
@@ -167,7 +168,7 @@ def test_performance_filtered_observers(benchmark) -> None:
                     commands.spawn(Transform.from_xyz(float(i), 0.0, 0.0))
 
         app.add_systems(Update, spawn_entities)
-        app.initialize()
+        initialize(app)
         app.update()
 
         assert len(filtered_count) == num_entities
@@ -204,7 +205,7 @@ def test_performance_despawn_lifecycle(benchmark) -> None:
 
         app.add_systems(Startup, spawn_entities)
         app.add_systems(Update, despawn_entities)
-        app.initialize()
+        initialize(app)
         app.update()
 
         assert len(despawn_count) == num_entities
@@ -226,7 +227,7 @@ def test_performance_no_observers_baseline(benchmark) -> None:
                 commands.spawn(Transform.from_xyz(float(i), 0.0, 0.0))
 
         app.add_systems(Update, spawn_entities)
-        app.initialize()
+        initialize(app)
         app.update()
 
     benchmark(spawn_no_observers)

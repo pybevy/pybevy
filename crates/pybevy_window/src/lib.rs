@@ -86,6 +86,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<window_theme::PyWindowTheme>()?;
 
     m.add_class::<cursor_icon::PyCursorIcon>()?;
+    cursor_icon::register_cursor_icon_variants(&m)?;
     m.add_class::<cursor_options::PyCursorOptions>()?;
     m.add_class::<monitor::PyMonitor>()?;
     m.add_class::<primary_monitor::PyPrimaryMonitor>()?;

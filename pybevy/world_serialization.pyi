@@ -141,8 +141,9 @@ class WorldInstanceSpawner(Resource):
     def instance_is_ready(self, instance_id: InstanceId) -> bool:
         """Check if a world instance is ready (has been spawned and entities are available)."""
 
-    def iter_instance_entities(self, instance_id: InstanceId) -> list[Entity] | None:
+    def iter_instance_entities(self, instance_id: InstanceId) -> list[Entity]:
         """Get the entities in an instance, once it's spawned.
 
-        Returns None if the instance hasn't been spawned yet.
+        Empty until the instance is spawned, and after it is despawned or
+        unregistered; use instance_is_ready() to tell those apart.
         """

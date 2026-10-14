@@ -1,56 +1,34 @@
-use bevy::{math::BVec2, ui::IgnoreScroll};
-use pybevy_core::{ComponentStorage, PyComponent, repr::object_repr};
+use bevy::ui::IgnoreScroll;
+use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
+use pybevy_math::bvec2::PyBVec2;
 use pyo3::prelude::*;
 
-#[pycomponent(IgnoreScroll, bridge, view_fields = [0.x as ignore_x, 0.y as ignore_y])]
+#[pycomponent(IgnoreScroll, bridge, view_fields = [0.x as x, 0.y as y])]
 #[pyclass(name = "IgnoreScroll", module = "pybevy.ui", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyIgnoreScroll {
     pub(crate) storage: ComponentStorage<IgnoreScroll>,
 }
 
-impl PyIgnoreScroll {
-    fn default_ignore_x() -> bool {
-        IgnoreScroll::default().0.x
-    }
-
-    fn default_ignore_y() -> bool {
-        IgnoreScroll::default().0.y
-    }
-}
-
 #[pymethods]
 impl PyIgnoreScroll {
     #[new]
-    #[pyo3(signature = (ignore_x = Self::default_ignore_x(), ignore_y = Self::default_ignore_y()))]
-    pub fn new(ignore_x: bool, ignore_y: bool) -> PyResult<PyClassInitializer<Self>> {
-        Ok(Self::from_owned(IgnoreScroll(BVec2 {
-            x: ignore_x,
-            y: ignore_y,
-        }))
-        .into())
+    #[pyo3(signature = (value = PyBVec2::from(IgnoreScroll::default().0)))]
+    pub fn new(value: PyBVec2) -> PyResult<PyClassInitializer<Self>> {
+        Ok(Self::from_owned(IgnoreScroll(value.try_into()?)).into())
     }
 
     #[getter]
-    pub fn ignore_x(&self) -> PyResult<bool> {
-        Ok(self.as_ref()?.0.x)
+    pub fn value(&self) -> PyResult<PyBVec2> {
+        Ok(self
+            .storage
+            .borrow_resolved_field_as(|ignore| &ignore.0, |ignore| &mut ignore.0)?)
     }
 
     #[setter]
-    pub fn set_ignore_x(&mut self, value: bool) -> PyResult<()> {
-        self.as_mut()?.0.x = value;
-        Ok(())
-    }
-
-    #[getter]
-    pub fn ignore_y(&self) -> PyResult<bool> {
-        Ok(self.as_ref()?.0.y)
-    }
-
-    #[setter]
-    pub fn set_ignore_y(&mut self, value: bool) -> PyResult<()> {
-        self.as_mut()?.0.y = value;
+    pub fn set_value(&mut self, value: PyBVec2) -> PyResult<()> {
+        self.as_mut()?.0 = value.try_into()?;
         Ok(())
     }
 
@@ -59,11 +37,9 @@ impl PyIgnoreScroll {
     }
 
     pub fn __repr__(&self) -> PyResult<String> {
-        let value = self.as_ref()?;
         Ok(format!(
-            "IgnoreScroll(ignore_x={}, ignore_y={})",
-            object_repr(value.0.x),
-            object_repr(value.0.y)
+            "IgnoreScroll({})",
+            PyBVec2::from(self.as_ref()?.0).__repr__()?
         ))
     }
 }

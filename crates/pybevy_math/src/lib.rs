@@ -1,6 +1,7 @@
 pub mod affine2;
 pub mod affine3a;
 pub mod bounding;
+pub mod bvec2;
 pub mod compass;
 pub mod cubic_splines;
 pub mod dir2;
@@ -74,6 +75,7 @@ pub(crate) fn matrix_index(
 pub mod prelude {
     #[doc(hidden)]
     pub use crate::{
+        bvec2::PyBVec2,
         cubic_splines::{
             PyCubicBSpline2d, PyCubicBSpline3d, PyCubicBezier2d, PyCubicBezier3d,
             PyCubicCardinalSpline2d, PyCubicCardinalSpline3d, PyCubicCurve2d, PyCubicCurve3d,
@@ -120,6 +122,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<vec3::PyVec3>()?;
     m.add_class::<vec3a::PyVec3A>()?;
     m.add_class::<vec4::PyVec4>()?;
+    m.add_class::<bvec2::PyBVec2>()?;
     m.add_class::<ivec2::PyIVec2>()?;
     m.add_class::<uvec2::PyUVec2>()?;
     m.add_class::<uvec3::PyUVec3>()?;

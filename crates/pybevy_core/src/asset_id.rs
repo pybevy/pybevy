@@ -126,25 +126,6 @@ impl PyAssetId {
         cls.into_py_any(cls.py())
     }
 
-    #[staticmethod]
-    pub fn uuid_from_u128(
-        py: Python<'_>,
-        value: u128,
-        asset_type: &Bound<'_, PyType>,
-    ) -> PyResult<Py<PyAssetId>> {
-        let (type_id, logical_type_id) = registered_asset_identity(asset_type)?;
-        materialize_asset_id(
-            py,
-            Self {
-                id: UntypedAssetId::Uuid {
-                    type_id,
-                    uuid: Uuid::from_u128(value),
-                },
-                logical_type_id,
-            },
-        )
-    }
-
     pub fn asset_type_class(&self, py: Python<'_>) -> PyResult<Py<PyType>> {
         global_registry::get_asset_bridge_by_type_id(self.id.type_id())
             .map(|bridge| bridge.py_type(py).unbind())

@@ -104,7 +104,6 @@ impl PyResParam {
 /// Read-only access to a Bevy resource
 #[pyclass(name = "Res")]
 pub struct PyRes {
-    #[pyo3(get, name = "resource_type")]
     ty: Py<PyType>,
 
     value: Py<PyAny>,
@@ -132,6 +131,12 @@ impl PyRes {
             validity.check()?;
         }
         Ok(())
+    }
+
+    /// The wrapped resource value, while the proxy is valid.
+    pub(crate) fn inner<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        self.check_valid()?;
+        Ok(self.value.bind(py).clone())
     }
 }
 
@@ -253,12 +258,11 @@ impl PyRes {
     pub fn __dir__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
         self.check_valid()?;
         let inner = self.value.bind(py);
-        let mut names = py
+        let names = py
             .import("builtins")?
             .getattr("dir")?
             .call1((inner,))?
             .extract::<Vec<String>>()?;
-        names.push("resource_type".into());
         PyList::new(py, names)
     }
 
@@ -293,7 +297,6 @@ impl PyRes {
 /// Mutable access to a Bevy resource
 #[pyclass(name = "ResMut")]
 pub struct PyResMut {
-    #[pyo3(get, name = "resource_type")]
     ty: Py<PyType>,
 
     value: Py<PyAny>,
@@ -321,6 +324,12 @@ impl PyResMut {
             validity.check()?;
         }
         Ok(())
+    }
+
+    /// The wrapped resource value, while the proxy is valid.
+    pub(crate) fn inner<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        self.check_valid()?;
+        Ok(self.value.bind(py).clone())
     }
 }
 
@@ -412,12 +421,11 @@ impl PyResMut {
     pub fn __dir__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
         self.check_valid()?;
         let inner = self.value.bind(py);
-        let mut names = py
+        let names = py
             .import("builtins")?
             .getattr("dir")?
             .call1((inner,))?
             .extract::<Vec<String>>()?;
-        names.push("resource_type".into());
         PyList::new(py, names)
     }
 

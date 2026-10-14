@@ -57,10 +57,6 @@ impl PyDependencyLoadState {
         self.__copy__(py)
     }
 
-    pub fn is_not_loaded(&self) -> bool {
-        matches!(self.value, DependencyLoadStateValue::NotLoaded)
-    }
-
     pub fn is_loading(&self) -> bool {
         matches!(self.value, DependencyLoadStateValue::Loading)
     }

@@ -25,7 +25,7 @@ from pybevy.color import (
 )
 from pybevy.ecs import Batchable, Component, Entity, Resource
 from pybevy.image import Image
-from pybevy.math import Affine2, Mat2, Rect, Rot2, Vec2
+from pybevy.math import Affine2, BVec2, Mat2, Rect, Rot2, Vec2
 from pybevy.sprite import TextureSlicer
 
 class Val:
@@ -910,9 +910,8 @@ class UiTransform(Component):
     ) -> None:
         """Create a UiTransform with optional translation, scale, and rotation."""
 
-    @staticmethod
-    def identity() -> UiTransform:
-        """Create the identity transform (no translation, rotation, or scale)."""
+    IDENTITY: ClassVar[UiTransform]
+    """The identity transform (no translation, rotation, or scale)."""
 
     @staticmethod
     def from_translation(translation: Val2) -> UiTransform:
@@ -2047,7 +2046,7 @@ class FocusPolicy(Component):
         # Change policy at runtime
         def update_focus(query: Query[Mut[FocusPolicy]]) -> None:
             for policy in query:
-                if policy.is_block:
+                if policy == FocusPolicy.Block:
                     policy.set_pass()  # Switch to pass mode
         ```
     """
@@ -2059,14 +2058,6 @@ class FocusPolicy(Component):
 
     Pass: ClassVar[FocusPolicy]
     """Passing focus policy that allows input through."""
-
-    @property
-    def is_block(self) -> bool:
-        """True if this policy blocks input."""
-
-    @property
-    def is_pass(self) -> bool:
-        """True if this policy passes input through."""
 
     def set_block(self) -> None:
         """Change to blocking mode."""
@@ -2098,9 +2089,9 @@ class Interaction(Component):
         # Respond to interactions
         def button_system(query: Query[tuple[Interaction, Mut[BackgroundColor]]]):
             for interaction, bg in query:
-                if interaction.is_pressed:
+                if interaction == Interaction.Pressed:
                     bg.color = Color.srgb(0.0, 1.0, 0.0)
-                elif interaction.is_hovered:
+                elif interaction == Interaction.Hovered:
                     bg.color = Color.srgb(0.8, 0.8, 0.8)
                 else:
                     bg.color = Color.srgb(0.5, 0.5, 0.5)
@@ -2121,21 +2112,7 @@ class Interaction(Component):
     Pressed: ClassVar[Interaction]
     """Pointer is pressing the node."""
 
-    @property
-    def is_none(self) -> bool:
-        """True if the UI element is not being interacted with."""
-
-    @property
-    def is_hovered(self) -> bool:
-        """True if the UI element is being hovered."""
-
-    @property
-    def is_pressed(self) -> bool:
-        """True if the UI element is being pressed."""
-
-    @property
-    def state(self) -> str:
-        """Get the interaction state as a string: 'none', 'hovered', or 'pressed'."""
+    def __eq__(self, other: object) -> bool: ...
 
 
 class Button(Component):
@@ -2162,9 +2139,9 @@ class Button(Component):
         # React to button clicks
         def button_system(query: Query[tuple[Button, Interaction, Mut[BackgroundColor]]]):
             for _button, interaction, bg in query:
-                if interaction.is_pressed:
+                if interaction == Interaction.Pressed:
                     bg.color = Color.srgb(0.1, 0.5, 0.1)
-                elif interaction.is_hovered:
+                elif interaction == Interaction.Hovered:
                     bg.color = Color.srgb(0.3, 0.3, 0.3)
                 else:
                     bg.color = Color.srgb(0.2, 0.2, 0.2)
@@ -2274,21 +2251,19 @@ class AutoDirectionalNavigation(Component):
 class IgnoreScroll(Component):
     """Ignore the parent's ScrollPosition on the given axes (keep the node fixed)."""
 
-    def __init__(self, ignore_x: bool = False, ignore_y: bool = False) -> None: ...
+    def __init__(self, value: BVec2 = BVec2.FALSE) -> None: ...
     @property
-    def ignore_x(self) -> bool: ...
-    @ignore_x.setter
-    def ignore_x(self, value: bool) -> None: ...
-    @property
-    def ignore_y(self) -> bool: ...
-    @ignore_y.setter
-    def ignore_y(self, value: bool) -> None: ...
+    def value(self) -> BVec2:
+        """The ignored axes; `value.x = True` writes through a mutable query."""
+    @value.setter
+    def value(self, value: BVec2) -> None: ...
     @staticmethod
     def batch(  # type: ignore[override]
         *,
-        ignore_x: np.typing.ArrayLike | None = None,
-        ignore_y: np.typing.ArrayLike | None = None,
-    ) -> Batchable: ...
+        x: np.typing.ArrayLike | None = None,
+        y: np.typing.ArrayLike | None = None,
+    ) -> Batchable:
+        """Batch columns `x` and `y` hold `value.x` and `value.y`, as do View columns."""
     def __eq__(self, other: object) -> bool: ...
 
 
@@ -2761,9 +2736,6 @@ class RelativeCursorPosition(Component):
 
     @normalized.setter
     def normalized(self, value: Vec2 | None) -> None: ...
-
-    def is_cursor_over(self) -> bool:
-        """Helper function to check if cursor is over the node."""
 
     def __eq__(self, other: object) -> bool: ...
 

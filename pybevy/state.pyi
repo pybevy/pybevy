@@ -160,8 +160,9 @@ class DespawnOnExit(Component, Generic[StateType]):
         commands.spawn(Transform(), DespawnOnExit(GameState.MENU))
     """
     def __init__(self, state: StateType) -> None: ...
-    def state_value(self) -> StateType:
-        """Get the state value this component is associated with."""
+    @property
+    def state(self) -> StateType:
+        """The state this component is scoped to."""
 
 class DespawnOnEnter(Component, Generic[StateType]):
     """Component that marks an entity to be despawned when entering a state.
@@ -170,5 +171,6 @@ class DespawnOnEnter(Component, Generic[StateType]):
         commands.spawn(Transform(), DespawnOnEnter(GameState.PAUSE_MENU))
     """
     def __init__(self, state: StateType) -> None: ...
-    def state_value(self) -> StateType:
-        """Get the state value this component is associated with."""
+    @property
+    def state(self) -> StateType:
+        """The state this component is scoped to."""
