@@ -17,6 +17,7 @@ use bevy::{
     },
     reflect::Reflect,
 };
+use pybevy_storage::domain::FieldDomainEntry;
 use pyo3::{ffi::PyTypeObject, prelude::*, types::PyType};
 
 use crate::{FilteredEntityAccess, PreparedUniformComponent, ValidityFlagWithMode, ViewBridge};
@@ -65,6 +66,11 @@ pub trait ComponentBridge: Send + Sync + 'static {
     /// Whether a default example can be offered without native insertion hooks.
     fn can_offer_hook_free_default_spawn(&self) -> bool {
         false
+    }
+
+    /// Value domains the wrapper declares, for write paths outside its setters.
+    fn field_domains(&self) -> &'static [FieldDomainEntry] {
+        &[]
     }
 
     /// Validate a detached reflected candidate before MCP commits a component write.

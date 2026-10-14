@@ -1,27 +1,23 @@
 use bevy::post_process::bloom::{Bloom, BloomPrefilter};
-use pybevy_core::{ComponentStorage, PyComponent, public_error};
+use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
 use pybevy_math::vec2::{IntoVec2, PyVec2};
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pyo3::prelude::*;
 
 use crate::{bloom_composite_mode::PyBloomCompositeMode, bloom_prefilter::PyBloomPrefilter};
 
-fn validate_max_mip_dimension(dimension: u32) -> PyResult<()> {
-    if dimension == 0 {
-        return Err(PyValueError::new_err(
-            public_error::BLOOM_MAX_MIP_DIMENSION_ZERO,
-        ));
-    }
-    Ok(())
-}
-
-#[pycomponent(Bloom, bridge, view_fields = [
-    intensity,
-    low_frequency_boost,
-    low_frequency_boost_curvature,
-    high_pass_frequency,
-    max_mip_dimension => [positive(public_error::BLOOM_MAX_MIP_DIMENSION_ZERO)]
-])]
+#[pycomponent(
+    Bloom,
+    bridge,
+    domains = [max_mip_dimension => [positive]],
+    view_fields = [
+        intensity,
+        low_frequency_boost,
+        low_frequency_boost_curvature,
+        high_pass_frequency,
+        max_mip_dimension
+    ]
+)]
 #[pyclass(name = "Bloom", module = "pybevy.post_process", extends = PyComponent)]
 pub struct PyBloom {
     pub(crate) storage: ComponentStorage<Bloom>,
@@ -52,7 +48,7 @@ impl PyBloom {
         max_mip_dimension: u32,
         scale: IntoVec2,
     ) -> PyResult<PyClassInitializer<Self>> {
-        validate_max_mip_dimension(max_mip_dimension)?;
+        Self::check_max_mip_dimension(max_mip_dimension)?;
 
         let bloom = Bloom {
             intensity,
@@ -165,7 +161,7 @@ impl PyBloom {
 
     #[setter]
     pub fn set_max_mip_dimension(&mut self, dimension: u32) -> PyResult<()> {
-        validate_max_mip_dimension(dimension)?;
+        Self::check_max_mip_dimension(dimension)?;
         self.as_mut()?.max_mip_dimension = dimension;
         Ok(())
     }

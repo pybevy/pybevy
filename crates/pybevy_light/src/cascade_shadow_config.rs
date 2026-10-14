@@ -6,7 +6,15 @@ use pybevy_core::{
 use pybevy_macros::pycomponent;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
-#[pycomponent(CascadeShadowConfig, bridge, view_fields = [overlap_proportion => [range(0.0, 1.0, public_error::CASCADE_OVERLAP_RANGE)], minimum_distance => [non_negative(public_error::CASCADE_MINIMUM_DISTANCE)]])]
+#[pycomponent(
+    CascadeShadowConfig,
+    bridge,
+    domains = [
+        overlap_proportion => [range(0.0, 1.0)],
+        minimum_distance => [non_negative],
+    ],
+    view_fields = [overlap_proportion, minimum_distance]
+)]
 #[pyclass(name = "CascadeShadowConfig", module = "pybevy.light", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyCascadeShadowConfig {
@@ -27,22 +35,6 @@ impl PyCascadeShadowConfig {
     }
 }
 
-fn validate_overlap_proportion(value: f32) -> PyResult<f32> {
-    if !(0.0..1.0).contains(&value) {
-        return Err(PyValueError::new_err(public_error::CASCADE_OVERLAP_RANGE));
-    }
-    Ok(value)
-}
-
-fn validate_minimum_distance(value: f32) -> PyResult<f32> {
-    if value.is_nan() || value < 0.0 {
-        return Err(PyValueError::new_err(
-            public_error::CASCADE_MINIMUM_DISTANCE,
-        ));
-    }
-    Ok(value)
-}
-
 #[pymethods]
 impl PyCascadeShadowConfig {
     #[new]
@@ -60,8 +52,8 @@ impl PyCascadeShadowConfig {
         if bounds.is_empty() {
             return Err(PyValueError::new_err(public_error::CASCADE_BOUNDS_EMPTY));
         }
-        let overlap_proportion = validate_overlap_proportion(overlap_proportion)?;
-        let minimum_distance = validate_minimum_distance(minimum_distance)?;
+        let overlap_proportion = Self::check_overlap_proportion(overlap_proportion)?;
+        let minimum_distance = Self::check_minimum_distance(minimum_distance)?;
         Ok(Self::from_owned(CascadeShadowConfig {
             bounds,
             overlap_proportion,
@@ -92,7 +84,7 @@ impl PyCascadeShadowConfig {
 
     #[setter]
     pub fn set_overlap_proportion(&mut self, value: f32) -> PyResult<()> {
-        let value = validate_overlap_proportion(value)?;
+        let value = Self::check_overlap_proportion(value)?;
         self.as_mut()?.overlap_proportion = value;
         Ok(())
     }
@@ -104,7 +96,7 @@ impl PyCascadeShadowConfig {
 
     #[setter]
     pub fn set_minimum_distance(&mut self, value: f32) -> PyResult<()> {
-        let value = validate_minimum_distance(value)?;
+        let value = Self::check_minimum_distance(value)?;
         self.as_mut()?.minimum_distance = value;
         Ok(())
     }

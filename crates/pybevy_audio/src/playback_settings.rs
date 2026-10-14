@@ -8,12 +8,14 @@ use pybevy_core::{
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-use crate::{
-    audio_sink::validate_speed, playback_mode::PyPlaybackMode, spatial_scale::PySpatialScale,
-    volume::PyVolume,
-};
+use crate::{playback_mode::PyPlaybackMode, spatial_scale::PySpatialScale, volume::PyVolume};
 
-#[pycomponent(PlaybackSettings, bridge, view_fields = [speed => [finite], paused, muted, spatial])]
+#[pycomponent(
+    PlaybackSettings,
+    bridge,
+    domains = [speed => [finite]],
+    view_fields = [speed, paused, muted, spatial]
+)]
 #[pyclass(name = "PlaybackSettings", module = "pybevy.audio", extends = PyComponent)]
 pub struct PyPlaybackSettings {
     pub(crate) storage: ComponentStorage<PlaybackSettings>,
@@ -49,7 +51,7 @@ impl PyPlaybackSettings {
         let settings = PlaybackSettings {
             mode: mode.into(),
             volume: volume.into(),
-            speed: validate_speed(speed)?,
+            speed: Self::check_speed(speed)?,
             paused,
             muted,
             spatial,
@@ -113,7 +115,8 @@ impl PyPlaybackSettings {
 
     #[setter]
     pub fn set_speed(&mut self, speed: f32) -> PyResult<()> {
-        self.as_mut()?.speed = validate_speed(speed)?;
+        let speed = Self::check_speed(speed)?;
+        self.as_mut()?.speed = speed;
         Ok(())
     }
 
@@ -191,7 +194,7 @@ impl PyPlaybackSettings {
 
     pub fn with_speed(&self, py: Python, speed: f32) -> PyResult<Py<Self>> {
         let mut settings = *self.as_ref()?;
-        settings.speed = validate_speed(speed)?;
+        settings.speed = Self::check_speed(speed)?;
         Py::new(py, Self::from_owned(settings))
     }
 

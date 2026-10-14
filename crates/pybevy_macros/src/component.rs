@@ -11,105 +11,283 @@ use crate::{
     util::{reflect_registration_tokens, to_snake_case},
 };
 
+const DOMAIN_RULES: &str = "finite, not_nan, finite_or_pos_inf, non_negative, positive, range(lo, hi), range_inclusive(lo, hi), at_least(n)";
+
+/// One rule of a `domains` entry, lowered to `pybevy_core::domain::FieldDomain`.
 #[derive(Clone)]
-enum BatchFieldConstraint {
+enum DomainRuleKind {
     Finite,
-    Range {
-        start: Box<Expr>,
-        end: Box<Expr>,
-        message: Path,
-    },
-    RangeInclusive {
-        start: Box<Expr>,
-        end: Box<Expr>,
-        message: Path,
-    },
-    NonNegative {
-        message: Path,
-    },
-    Positive {
-        message: Path,
-    },
+    NotNan,
+    FiniteOrPosInf,
+    NonNegative,
+    Positive,
+    Range(Box<Expr>, Box<Expr>),
+    RangeInclusive(Box<Expr>, Box<Expr>),
+    AtLeast(Box<Expr>),
 }
 
-impl Parse for BatchFieldConstraint {
+#[derive(Clone)]
+struct DomainRule {
+    kind: DomainRuleKind,
+    /// Explicit `view = checked` or `view = unchecked`.
+    view: Option<bool>,
+}
+
+impl Parse for DomainRule {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let ident: Ident = input.parse()?;
-        let constraint_name = ident.to_string();
-        match constraint_name.as_str() {
-            "finite" => Ok(Self::Finite),
-            "range" | "range_inclusive" => {
-                let content;
-                syn::parenthesized!(content in input);
-                let start = Box::new(content.parse()?);
-                content.parse::<Token![,]>()?;
-                let end = Box::new(content.parse()?);
-                content.parse::<Token![,]>()?;
-                let message = content.parse()?;
-                if constraint_name == "range" {
-                    Ok(Self::Range {
-                        start,
-                        end,
-                        message,
-                    })
+        let name = ident.to_string();
+        if !matches!(
+            name.as_str(),
+            "finite"
+                | "not_nan"
+                | "finite_or_pos_inf"
+                | "non_negative"
+                | "positive"
+                | "range"
+                | "range_inclusive"
+                | "at_least"
+        ) {
+            return Err(syn::Error::new_spanned(
+                &ident,
+                format!("unknown domain rule, expected one of: {DOMAIN_RULES}"),
+            ));
+        }
+        let mut args: Vec<Expr> = Vec::new();
+        let mut view = None;
+        if input.peek(syn::token::Paren) {
+            let content;
+            syn::parenthesized!(content in input);
+            while !content.is_empty() {
+                if content.peek(Ident) && content.peek2(Token![=]) {
+                    let key: Ident = content.parse()?;
+                    if key != "view" {
+                        return Err(syn::Error::new_spanned(
+                            key,
+                            "expected `view = checked` or `view = unchecked`",
+                        ));
+                    }
+                    content.parse::<Token![=]>()?;
+                    let value: Ident = content.parse()?;
+                    view = Some(match value.to_string().as_str() {
+                        "checked" => true,
+                        "unchecked" => false,
+                        _ => {
+                            return Err(syn::Error::new_spanned(
+                                value,
+                                "expected `checked` or `unchecked`",
+                            ));
+                        }
+                    });
                 } else {
-                    Ok(Self::RangeInclusive {
-                        start,
-                        end,
-                        message,
-                    })
+                    args.push(content.parse()?);
+                }
+                if !content.is_empty() {
+                    content.parse::<Token![,]>()?;
                 }
             }
-            "non_negative" => {
-                let content;
-                syn::parenthesized!(content in input);
-                Ok(Self::NonNegative {
-                    message: content.parse()?,
-                })
+        }
+        let bound = |expr: &Expr| Box::new(expr.clone());
+        let kind = match (name.as_str(), args.as_slice()) {
+            ("finite", []) => DomainRuleKind::Finite,
+            ("not_nan", []) => DomainRuleKind::NotNan,
+            ("finite_or_pos_inf", []) => DomainRuleKind::FiniteOrPosInf,
+            ("non_negative", []) => DomainRuleKind::NonNegative,
+            ("positive", []) => DomainRuleKind::Positive,
+            ("range", [lo, hi]) => DomainRuleKind::Range(bound(lo), bound(hi)),
+            ("range_inclusive", [lo, hi]) => DomainRuleKind::RangeInclusive(bound(lo), bound(hi)),
+            ("at_least", [n]) => DomainRuleKind::AtLeast(bound(n)),
+            _ => {
+                return Err(syn::Error::new_spanned(
+                    &ident,
+                    format!("wrong arguments for `{name}`, expected one of: {DOMAIN_RULES}"),
+                ));
             }
-            "positive" => {
-                let content;
-                syn::parenthesized!(content in input);
-                Ok(Self::Positive {
-                    message: content.parse()?,
-                })
+        };
+        Ok(Self { kind, view })
+    }
+}
+
+impl DomainRule {
+    fn tokens(&self) -> proc_macro2::TokenStream {
+        match &self.kind {
+            DomainRuleKind::Finite => quote! { pybevy_core::domain::FieldDomain::Finite },
+            DomainRuleKind::NotNan => quote! { pybevy_core::domain::FieldDomain::NotNan },
+            DomainRuleKind::FiniteOrPosInf => {
+                quote! { pybevy_core::domain::FieldDomain::FiniteOrPosInf }
             }
-            _ => Err(syn::Error::new_spanned(
-                ident,
-                "unknown batch field constraint, expected: finite, range, range_inclusive, non_negative, positive",
-            )),
+            DomainRuleKind::NonNegative => quote! { pybevy_core::domain::FieldDomain::NonNegative },
+            DomainRuleKind::Positive => quote! { pybevy_core::domain::FieldDomain::Positive },
+            DomainRuleKind::Range(lo, hi) => quote! {
+                pybevy_core::domain::FieldDomain::Range { lo: (#lo) as f64, hi: (#hi) as f64 }
+            },
+            DomainRuleKind::RangeInclusive(lo, hi) => quote! {
+                pybevy_core::domain::FieldDomain::RangeInclusive { lo: (#lo) as f64, hi: (#hi) as f64 }
+            },
+            DomainRuleKind::AtLeast(n) => quote! {
+                pybevy_core::domain::FieldDomain::AtLeast((#n) as i64)
+            },
+        }
+    }
+
+    /// Rules whose violations follow NumPy float semantics on View by default.
+    fn is_float_only(&self) -> bool {
+        matches!(
+            self.kind,
+            DomainRuleKind::Finite | DomainRuleKind::NotNan | DomainRuleKind::FiniteOrPosInf
+        )
+    }
+}
+
+/// A `domains = [field => [rules]]` entry.
+#[derive(Clone)]
+pub(crate) struct DomainEntry {
+    rust_accessor: proc_macro2::TokenStream,
+    python_name: Ident,
+    rules: Vec<DomainRule>,
+    view_checked: bool,
+}
+
+impl Parse for DomainEntry {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let (rust_accessor, _offset_path, python_name) = parse_field_path(input)?;
+        input.parse::<Token![=>]>()?;
+        let content;
+        syn::bracketed!(content in input);
+        let rules: Vec<DomainRule> = content
+            .parse_terminated(DomainRule::parse, Token![,])?
+            .into_iter()
+            .collect();
+        if rules.is_empty() {
+            return Err(syn::Error::new_spanned(
+                &python_name,
+                "a domains entry needs at least one rule",
+            ));
+        }
+        let explicit: Vec<bool> = rules.iter().filter_map(|rule| rule.view).collect();
+        let view_checked = match explicit.as_slice() {
+            [] => rules.iter().any(|rule| !rule.is_float_only()),
+            [first, rest @ ..] if rest.iter().all(|view| view == first) => *first,
+            _ => {
+                return Err(syn::Error::new_spanned(
+                    &python_name,
+                    "conflicting `view` settings in one domains entry",
+                ));
+            }
+        };
+        Ok(Self {
+            rust_accessor,
+            python_name,
+            rules,
+            view_checked,
+        })
+    }
+}
+
+impl DomainEntry {
+    fn const_ident(&self) -> Ident {
+        quote::format_ident!("{}_DOMAIN", self.python_name.to_string().to_uppercase())
+    }
+
+    fn check_ident(&self) -> Ident {
+        quote::format_ident!("check_{}", self.python_name)
+    }
+
+    fn validate_ident(&self) -> Ident {
+        quote::format_ident!("validate_{}", self.python_name)
+    }
+}
+
+/// Parse a field path: `intensity`, or a tuple index with an alias such as
+/// `0 as value` or `0.x as x`. Returns the accessor, the `offset_of!` path and
+/// the Python name.
+fn parse_field_path(
+    input: ParseStream,
+) -> syn::Result<(proc_macro2::TokenStream, proc_macro2::TokenStream, Ident)> {
+    if input.peek(syn::LitInt) {
+        let idx: syn::LitInt = input.parse()?;
+        let idx_val = idx.base10_parse::<usize>()?;
+        let idx_lit = syn::Index::from(idx_val);
+
+        let mut accessor_tokens = quote! { .#idx_lit };
+        let mut offset_tokens = quote! { #idx_lit };
+
+        while input.peek(Token![.]) {
+            input.parse::<Token![.]>()?;
+            let sub: Ident = input.parse()?;
+            accessor_tokens = quote! { #accessor_tokens.#sub };
+            offset_tokens = quote! { #offset_tokens.#sub };
+        }
+
+        input.parse::<Token![as]>()?;
+        let python_name: Ident = input.parse()?;
+        Ok((accessor_tokens, offset_tokens, python_name))
+    } else {
+        let ident: Ident = input.parse()?;
+        Ok((quote! { .#ident }, quote! { #ident }, ident))
+    }
+}
+
+/// Inherent items generated from `domains`: per-field rule constants and
+/// checks, and `validate_domains` over the whole native value.
+fn domain_impl_tokens(
+    bevy_type: &Type,
+    py_type: &Ident,
+    owner: &str,
+    domains: &[DomainEntry],
+) -> proc_macro2::TokenStream {
+    if domains.is_empty() {
+        return quote! {};
+    }
+    let items = domains.iter().map(|entry| {
+        let const_ident = entry.const_ident();
+        let check_ident = entry.check_ident();
+        let validate_ident = entry.validate_ident();
+        let name = entry.python_name.to_string();
+        let rules = entry.rules.iter().map(DomainRule::tokens);
+        quote! {
+            pub const #const_ident: &'static [pybevy_core::domain::FieldDomain] = &[#(#rules),*];
+
+            pub fn #check_ident<V: pybevy_core::domain::DomainValues>(
+                value: V,
+            ) -> Result<V, pybevy_core::domain::DomainViolation> {
+                pybevy_core::domain::check(#owner, #name, value, Self::#const_ident)
+            }
+
+            pub fn #validate_ident<V: pybevy_core::domain::DomainValues>(
+                value: &V,
+            ) -> Result<(), pybevy_core::StorageError> {
+                Self::#check_ident(*value).map(drop).map_err(Into::into)
+            }
+        }
+    });
+    let whole = domains.iter().map(|entry| {
+        let check_ident = entry.check_ident();
+        let accessor = &entry.rust_accessor;
+        quote! { Self::#check_ident(value #accessor)?; }
+    });
+    quote! {
+        impl #py_type {
+            #(#items)*
+
+            /// Check every declared field domain of a whole native value.
+            pub fn validate_domains(
+                value: &#bevy_type,
+            ) -> Result<(), pybevy_core::domain::DomainViolation> {
+                #(#whole)*
+                Ok(())
+            }
         }
     }
 }
 
-impl BatchFieldConstraint {
-    fn tokens(&self) -> proc_macro2::TokenStream {
-        match self {
-            Self::Range {
-                start,
-                end,
-                message,
-            } => {
-                quote! { pybevy_core::batch_columns::BatchValueConstraint::Range { start: #start, end: #end, message: #message } }
-            }
-            Self::RangeInclusive {
-                start,
-                end,
-                message,
-            } => {
-                quote! { pybevy_core::batch_columns::BatchValueConstraint::RangeInclusive { start: #start, end: #end, message: #message } }
-            }
-            Self::NonNegative { message } => {
-                quote! { pybevy_core::batch_columns::BatchValueConstraint::NonNegative { message: #message } }
-            }
-            Self::Positive { message } => {
-                quote! { pybevy_core::batch_columns::BatchValueConstraint::Positive { message: #message } }
-            }
-            Self::Finite => {
-                quote! { pybevy_core::batch_columns::BatchValueConstraint::Finite }
-            }
-        }
-    }
+/// The Python-facing owner name: the bridge name, or the wrapper name without
+/// its `Py` prefix.
+fn owner_name(py_type: &Ident, bridge_name_override: Option<&str>) -> String {
+    bridge_name_override.map(String::from).unwrap_or_else(|| {
+        let name = py_type.to_string();
+        name.strip_prefix("Py").unwrap_or(&name).to_string()
+    })
 }
 
 /// A single field in view_fields/batch_only_fields.
@@ -122,58 +300,21 @@ pub(crate) struct BridgeField {
     pub(crate) offset_path: proc_macro2::TokenStream,
     /// Python-visible name used for batch kwargs and View field names
     pub(crate) python_name: Ident,
-    /// Value-domain constraints applied by batch after normalization.
-    constraints: Vec<BatchFieldConstraint>,
 }
 
 impl Parse for BridgeField {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let (rust_accessor, offset_path, python_name) = if input.peek(syn::LitInt) {
-            // Tuple form: `0 as name` or `0.x as name`
-            let idx: syn::LitInt = input.parse()?;
-            let idx_val = idx.base10_parse::<usize>()?;
-            let idx_lit = syn::Index::from(idx_val);
-
-            let mut accessor_tokens = quote! { .#idx_lit };
-            let mut offset_tokens = quote! { #idx_lit };
-
-            // Parse optional `.ident` chain
-            while input.peek(Token![.]) {
-                input.parse::<Token![.]>()?;
-                let sub: Ident = input.parse()?;
-                accessor_tokens = quote! { #accessor_tokens.#sub };
-                offset_tokens = quote! { #offset_tokens.#sub };
-            }
-
-            // Require `as name`
-            input.parse::<Token![as]>()?;
-            let python_name: Ident = input.parse()?;
-
-            (accessor_tokens, offset_tokens, python_name)
-        } else {
-            // Named field: `intensity`
-            let ident: Ident = input.parse()?;
-            let python_name = ident.clone();
-            (quote! { .#ident }, quote! { #ident }, python_name)
-        };
-
-        let constraints = if input.peek(Token![=>]) {
-            input.parse::<Token![=>]>()?;
-            let content;
-            syn::bracketed!(content in input);
-            content
-                .parse_terminated(BatchFieldConstraint::parse, Token![,])?
-                .into_iter()
-                .collect()
-        } else {
-            Vec::new()
-        };
-
+        let (rust_accessor, offset_path, python_name) = parse_field_path(input)?;
+        if input.peek(Token![=>]) {
+            return Err(syn::Error::new(
+                input.span(),
+                "declare value rules in `domains = [field => [...]]`, not in the field list",
+            ));
+        }
         Ok(BridgeField {
             rust_accessor,
             offset_path,
             python_name,
-            constraints,
         })
     }
 }
@@ -295,6 +436,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
         clone_with: Option<Path>,
         batch_validate: Option<Path>,
         reflect_validate: Option<Path>,
+        domains: Vec<DomainEntry>,
     }
 
     impl Parse for ComponentStorageArgs {
@@ -313,6 +455,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
             let mut clone_with = None;
             let mut batch_validate = None;
             let mut reflect_validate = None;
+            let mut domains: Vec<DomainEntry> = Vec::new();
 
             while input.peek(Token![,]) {
                 input.parse::<Token![,]>()?;
@@ -370,11 +513,29 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
                         let fields = content.parse_terminated(ViewOnlyField::parse, Token![,])?;
                         view_only_fields = Some(fields.into_iter().collect());
                     }
+                    "domains" => {
+                        input.parse::<Token![=]>()?;
+                        let content;
+                        syn::bracketed!(content in input);
+                        let entries = content.parse_terminated(DomainEntry::parse, Token![,])?;
+                        for entry in entries {
+                            if domains
+                                .iter()
+                                .any(|existing| existing.python_name == entry.python_name)
+                            {
+                                return Err(syn::Error::new_spanned(
+                                    &entry.python_name,
+                                    "duplicate domains entry",
+                                ));
+                            }
+                            domains.push(entry);
+                        }
+                    }
                     other => {
                         return Err(syn::Error::new_spanned(
                             ident,
                             format!(
-                                "unknown option '{}', expected one of: no_clone, no_insert, unit, bridge, no_reflect, materialize, clone_with, batch_validate, reflect_validate, view_fields, batch_only_fields, view_only_fields",
+                                "unknown option '{}', expected one of: no_clone, no_insert, unit, bridge, no_reflect, materialize, clone_with, batch_validate, reflect_validate, view_fields, batch_only_fields, view_only_fields, domains",
                                 other
                             ),
                         ));
@@ -397,6 +558,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
                 clone_with,
                 batch_validate,
                 reflect_validate,
+                domains,
             })
         }
     }
@@ -412,6 +574,14 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     // Unit component: no storage field, just the struct + optional bridge
     if args.unit {
+        if let Some(entry) = args.domains.first() {
+            return syn::Error::new_spanned(
+                &entry.python_name,
+                "domains are not supported for unit components",
+            )
+            .to_compile_error()
+            .into();
+        }
         if args.reflect_validate.is_some() {
             return syn::Error::new_spanned(
                 py_type,
@@ -453,6 +623,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
             args.clone_with.as_ref(),
             args.batch_validate.as_ref(),
             args.reflect_validate.as_ref(),
+            &args.domains,
             true, // emit inventory registration
         )
     } else {
@@ -529,6 +700,13 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
         quote! {}
     };
 
+    let domain_tokens = domain_impl_tokens(
+        bevy_type,
+        py_type,
+        &owner_name(py_type, args.bridge_name.as_deref()),
+        &args.domains,
+    );
+
     if args.no_clone {
         // Non-Clone component: only generate borrowed access
         let expanded = quote! {
@@ -552,6 +730,8 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
 
             #clone_with_copy_methods
+
+            #domain_tokens
 
             #bridge_tokens
         };
@@ -613,6 +793,8 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
 
             #copy_methods
 
+            #domain_tokens
+
             #bridge_tokens
         };
         TokenStream::from(expanded)
@@ -636,13 +818,10 @@ fn generate_bridge_tokens(
     clone_with: Option<&Path>,
     batch_validate: Option<&Path>,
     reflect_validate: Option<&Path>,
+    domains: &[DomainEntry],
     emit_inventory: bool,
 ) -> proc_macro2::TokenStream {
-    // Derive bridge name: either from explicit string or from py_type (strip "Py" prefix)
-    let bridge_name_str = bridge_name_override.map(String::from).unwrap_or_else(|| {
-        let name = py_type.to_string();
-        name.strip_prefix("Py").unwrap_or(&name).to_string()
-    });
+    let bridge_name_str = owner_name(py_type, bridge_name_override);
     let bridge_name = quote::format_ident!("{}Bridge", bridge_name_str);
     let component_name = &bridge_name_str;
 
@@ -652,6 +831,25 @@ fn generate_bridge_tokens(
         quote! { pyo3::Py::new(py, #py_type::from_borrowed(storage))?.into_any() }
     };
     let can_insert = !no_insert;
+    let field_domains_impl = (!domains.is_empty()).then(|| {
+        let entries = domains.iter().map(|entry| {
+            let name = entry.python_name.to_string();
+            let const_ident = entry.const_ident();
+            quote! {
+                pybevy_core::domain::FieldDomainEntry {
+                    owner: #component_name,
+                    field: #name,
+                    domains: #py_type::#const_ident,
+                }
+            }
+        });
+        quote! {
+            fn field_domains(&self) -> &'static [pybevy_core::domain::FieldDomainEntry] {
+                const ENTRIES: &[pybevy_core::domain::FieldDomainEntry] = &[#(#entries),*];
+                ENTRIES
+            }
+        }
+    });
     let reflect_validate_impl = reflect_validate.map(|validate| {
         quote! {
             fn validate_reflected_candidate(
@@ -932,6 +1130,8 @@ fn generate_bridge_tokens(
 
             #reflect_validate_impl
 
+            #field_domains_impl
+
             fn register(&self, world: &mut bevy::ecs::world::World) -> bevy::ecs::component::ComponentId {
                 world.register_component::<#bevy_type>()
             }
@@ -1083,15 +1283,26 @@ fn generate_bridge_tokens(
         let batch_fn_name = quote::format_ident!("{}_batch", snake_name);
 
         // Generate field_meta entries using type-inference trick
+        let field_domain = |field: &BridgeField| {
+            domains
+                .iter()
+                .find(|entry| entry.python_name == field.python_name)
+        };
         let field_meta_entries: Vec<_> = fields
             .iter()
             .map(|field| {
                 let accessor = &field.rust_accessor;
                 let name_str = field.python_name.to_string();
-                let constraints = field.constraints.iter().map(BatchFieldConstraint::tokens);
+                let with_domains = field_domain(field).map(|entry| {
+                    let const_ident = entry.const_ident();
+                    let view_checked = entry.view_checked;
+                    quote! {
+                        .with_domains(#component_name, #py_type::#const_ident, #view_checked)
+                    }
+                });
                 quote! {
                     pybevy_core::batch_field_meta_for(&default_val #accessor, #name_str)
-                        .with_constraints(&[#(#constraints),*])
+                        #with_domains
                 }
             })
             .collect();
@@ -1143,37 +1354,30 @@ fn generate_bridge_tokens(
         let field_normalize_stmts: Vec<_> = fields.iter().map(|field| {
             let name_str = field.python_name.to_string();
             let cols_var = quote::format_ident!("{}_cols", field.python_name);
-            let constraints: Vec<_> = field
-                .constraints
-                .iter()
-                .map(BatchFieldConstraint::tokens)
-                .collect();
-            let portable_value_validation = if constraints.is_empty() {
-                quote! {}
-            } else {
-                quote! {
-                    pybevy_core::batch_columns::validate_f32_values(
-                        #name_str,
-                        &portable_values,
-                        &[#(#constraints),*],
-                    )
-                    .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-                }
+            let accessor = &field.rust_accessor;
+            let domain_check = |values: proc_macro2::TokenStream| {
+                field_domain(field).map(|entry| {
+                    let const_ident = entry.const_ident();
+                    quote! {
+                        pybevy_core::check_batch_field(
+                            &default_val #accessor,
+                            #component_name,
+                            #name_str,
+                            #values,
+                            #py_type::#const_ident,
+                        )
+                        .map_err(pyo3::PyErr::from)?;
+                    }
+                })
             };
-            let numpy_value_validation = if constraints.is_empty() {
-                quote! {}
-            } else {
+            let portable_value_validation = domain_check(quote! { &portable_values });
+            let numpy_value_validation = domain_check(quote! { normalized_values }).map(|check| {
                 quote! {
                     let normalized_array: numpy::PyReadonlyArray2<f32> = normalized.extract()?;
                     let normalized_values = normalized_array.as_slice()?;
-                    pybevy_core::batch_columns::validate_f32_values(
-                        #name_str,
-                        normalized_values,
-                        &[#(#constraints),*],
-                    )
-                    .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+                    #check
                 }
-            };
+            });
             quote! {
                 if let Some(arr) = kwargs.get_item(#name_str)? {
                     if let Some((shape, portable_values)) =

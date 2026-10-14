@@ -9,6 +9,9 @@ use std::{
     fmt::{Debug, Display},
 };
 
+/// Value-domain violations carry their canonical wording in `Display`.
+pub use pybevy_storage::domain::DomainViolation;
+
 pub const LOAD_BUILDER_TYPE_REQUIRED: &str = "LoadBuilder.load() requires keyword-only asset_type when no settings establish the type; use load(path, asset_type=Image)";
 pub const LOAD_WITH_SETTINGS_DEPRECATED: &CStr = c"AssetServer.load_with_settings() is deprecated; use load_builder().with_settings(settings).load(path) instead";
 pub const LOADER_SETTINGS_BRIDGE_MISSING: &str = "Loader settings asset bridge is not registered";
@@ -449,29 +452,12 @@ pub const FREQUENCY_NON_FINITE: &str = "Frequency must be finite";
 pub const FREQUENCY_NON_POSITIVE: &str = "Frequency must be greater than zero";
 pub const FREQUENCY_OUT_OF_RANGE: &str =
     "Frequency produces a timestep outside the supported duration range";
-pub const SPEED_NON_FINITE: &str = "Speed must be finite";
 pub const RELATIVE_SPEED_NON_FINITE: &str = "Relative speed must be finite";
 pub const RELATIVE_SPEED_NEGATIVE: &str = "Relative speed cannot be negative";
 pub const RELATIVE_SPEED_OUT_OF_RANGE: &str =
     "Relative speed produces a frame delta outside the supported duration range";
 pub const COLOR_INTERPOLATION_MISMATCH: &str =
     "cannot interpolate Color values from different color spaces";
-pub const BLOOM_MAX_MIP_DIMENSION_ZERO: &str = "Bloom.max_mip_dimension must be at least 1, got 0";
-pub const VIGNETTE_INTENSITY_FINITE: &str = "Vignette.intensity must be finite";
-pub const VIGNETTE_RADIUS_FINITE: &str = "Vignette.radius must be finite";
-pub const VIGNETTE_SMOOTHNESS_FINITE: &str = "Vignette.smoothness must be finite";
-pub const VIGNETTE_ROUNDNESS_FINITE: &str = "Vignette.roundness must be finite";
-pub const VIGNETTE_EDGE_COMPENSATION_FINITE: &str = "Vignette.edge_compensation must be finite";
-pub const VIGNETTE_CENTER_FINITE: &str = "Vignette.center coordinates must be finite";
-pub const MOTION_BLUR_SHUTTER_ANGLE_FINITE: &str = "MotionBlur.shutter_angle must be finite";
-pub const DEPTH_OF_FIELD_FOCAL_DISTANCE_FINITE: &str = "DepthOfField.focal_distance must be finite";
-pub const DEPTH_OF_FIELD_SENSOR_HEIGHT_FINITE: &str = "DepthOfField.sensor_height must be finite";
-pub const DEPTH_OF_FIELD_APERTURE_F_STOPS_FINITE: &str =
-    "DepthOfField.aperture_f_stops must be finite";
-pub const DEPTH_OF_FIELD_MAX_COC_DIAMETER_FINITE: &str =
-    "DepthOfField.max_circle_of_confusion_diameter must be finite";
-pub const DEPTH_OF_FIELD_MAX_DEPTH_NOT_NAN_OR_NEG_INF: &str =
-    "DepthOfField.max_depth must be finite or positive infinity";
 
 pub fn viewport_conversion_failed(error: impl Display) -> String {
     format!("Viewport conversion failed: {error}")
@@ -1462,7 +1448,6 @@ pub const COMPONENT_FLOAT_REQUIRED: &str =
     "expected a number; null is only valid for optional fields";
 pub const COMPONENT_FLOAT_EXPECTED_NUMBER: &str = "expected a number";
 pub const COMPONENT_FLOAT_NON_FINITE: &str = "float must be finite";
-pub const EXPOSURE_EV100_NON_FINITE: &str = "Exposure.ev100 must be finite";
 
 pub fn physical_camera_parameter(name: &str, value: f32) -> String {
     format!("PhysicalCameraParameters.{name} must be finite and positive (got {value})")
@@ -1580,13 +1565,6 @@ pub fn image_encoding_unsupported(format: impl Display, supported: &[String]) ->
 }
 
 pub const CASCADE_BOUNDS_EMPTY: &str = "bounds cannot be empty";
-
-pub const CASCADE_OVERLAP_RANGE: &str = "overlap_proportion must be in range [0.0, 1.0)";
-
-pub const FOG_VOLUME_SCATTERING_ASYMMETRY_RANGE: &str =
-    "FogVolume.scattering_asymmetry must be in range [-1.0, 1.0]";
-
-pub const CASCADE_MINIMUM_DISTANCE: &str = "minimum_distance must be non-negative";
 
 pub const CONTROL_SERIALIZATION_CYCLE: &str = "cyclic Python value";
 pub const CONTROL_SERIALIZATION_DEPTH: &str = "Python value exceeds the serialization depth limit";

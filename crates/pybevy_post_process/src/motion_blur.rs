@@ -1,25 +1,17 @@
 use bevy::post_process::motion_blur::MotionBlur;
-use pybevy_core::{ComponentStorage, PyComponent, StorageError, public_error};
+use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[pycomponent(MotionBlur, bridge, view_fields = [
-    shutter_angle => [range(f32::MIN, f32::INFINITY, public_error::MOTION_BLUR_SHUTTER_ANGLE_FINITE)],
-    samples
-])]
+#[pycomponent(
+    MotionBlur,
+    bridge,
+    domains = [shutter_angle => [finite(view = checked)]],
+    view_fields = [shutter_angle, samples]
+)]
 #[pyclass(name = "MotionBlur", module = "pybevy.post_process", extends = PyComponent)]
 pub struct PyMotionBlur {
     pub(crate) storage: ComponentStorage<MotionBlur>,
-}
-
-fn check_shutter_angle(value: f32) -> Result<f32, StorageError> {
-    if value.is_finite() {
-        Ok(value)
-    } else {
-        Err(StorageError::InvalidValue(
-            public_error::MOTION_BLUR_SHUTTER_ANGLE_FINITE.to_string(),
-        ))
-    }
 }
 
 #[pymethods]
@@ -28,7 +20,7 @@ impl PyMotionBlur {
     #[pyo3(signature = (*, shutter_angle = 0.5, samples = 1))]
     pub fn new(shutter_angle: f32, samples: u32) -> PyResult<PyClassInitializer<Self>> {
         let motion_blur = MotionBlur {
-            shutter_angle: check_shutter_angle(shutter_angle)?,
+            shutter_angle: Self::check_shutter_angle(shutter_angle)?,
             samples,
         };
         Ok(Self::from_owned(motion_blur).into())
@@ -41,7 +33,7 @@ impl PyMotionBlur {
 
     #[setter]
     pub fn set_shutter_angle(&mut self, shutter_angle: f32) -> PyResult<()> {
-        let shutter_angle = check_shutter_angle(shutter_angle)?;
+        let shutter_angle = Self::check_shutter_angle(shutter_angle)?;
         self.as_mut()?.shutter_angle = shutter_angle;
         Ok(())
     }

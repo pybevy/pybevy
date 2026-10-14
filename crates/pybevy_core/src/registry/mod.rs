@@ -22,7 +22,8 @@ pub use batch_bridge::{
     PreparedNativeUniformWith, PreparedUniformComponent, PreparedUniformFn,
 };
 pub use batchable_field::{
-    BatchFieldMeta, BatchableField, batch_field_meta_for, field_type_of, set_field_from_numpy,
+    BatchFieldMeta, BatchableField, batch_field_meta_for, check_batch_field, field_type_of,
+    set_field_from_numpy,
 };
 pub use component_bridge::{ComponentBridge, ExtractFn};
 pub use global_registry::{ComponentBatchInsertFn, ComponentBatchMeta, ComponentBatchPrepareFn};

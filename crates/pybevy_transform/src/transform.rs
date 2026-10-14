@@ -12,15 +12,27 @@ use pybevy_math::{
 };
 use pyo3::{exceptions::PyTypeError, prelude::*};
 
-#[pycomponent(Transform, bridge, view_fields = [
-    translation => [finite],
-    rotation => [finite],
-    scale => [finite]
-])]
+#[pycomponent(
+    Transform,
+    bridge,
+    domains = [
+        translation => [finite],
+        rotation => [finite],
+        scale => [finite],
+    ],
+    view_fields = [translation, rotation, scale]
+)]
 #[pyclass(name = "Transform", module = "pybevy.transform", extends = PyComponent, eq)]
 #[derive(Debug)]
 pub struct PyTransform {
     pub(crate) storage: ComponentStorage<Transform>,
+}
+
+impl PyTransform {
+    fn checked(transform: Transform) -> PyResult<(Self, PyComponent)> {
+        Self::validate_domains(&transform)?;
+        Ok((transform.into(), PyComponent))
+    }
 }
 
 impl PartialEq for PyTransform {
@@ -76,43 +88,43 @@ impl PyTransform {
             scale: scale.try_into()?,
         };
 
-        Ok((transform.into(), PyComponent).into())
+        Ok(Self::checked(transform)?.into())
     }
 
     #[staticmethod]
     pub fn from_xyz(py: Python, x: f32, y: f32, z: f32) -> PyResult<Py<Self>> {
-        Py::new(py, (Transform::from_xyz(x, y, z).into(), PyComponent))
+        Py::new(py, Self::checked(Transform::from_xyz(x, y, z))?)
     }
 
     #[staticmethod]
     pub fn from_rotation(py: Python, rotation: &PyQuat) -> PyResult<Py<Self>> {
         let transform = Transform::from_rotation(rotation.try_into()?);
-        Py::new(py, (transform.into(), PyComponent))
+        Py::new(py, Self::checked(transform)?)
     }
 
     #[staticmethod]
     pub fn from_scale(py: Python, scale: &PyVec3) -> PyResult<Py<Self>> {
         let transform = Transform::from_scale(scale.try_into()?);
-        Py::new(py, (transform.into(), PyComponent))
+        Py::new(py, Self::checked(transform)?)
     }
 
     #[staticmethod]
     pub fn from_translation(py: Python, translation: &PyVec3) -> PyResult<Py<Self>> {
         let transform = Transform::from_translation(translation.try_into()?);
-        Py::new(py, (transform.into(), PyComponent))
+        Py::new(py, Self::checked(transform)?)
     }
 
     #[staticmethod]
     pub fn from_matrix(py: Python, world_from_local: &PyMat4) -> PyResult<Py<Self>> {
         let bevy_mat: Mat4 = world_from_local.try_into()?;
         let transform = Transform::from_matrix(bevy_mat);
-        Py::new(py, (transform.into(), PyComponent))
+        Py::new(py, Self::checked(transform)?)
     }
 
     #[staticmethod]
     pub fn from_isometry(py: Python, iso: PyIsometry3d) -> PyResult<Py<Self>> {
         let transform = Transform::from_isometry(iso.try_into()?);
-        Py::new(py, (transform.into(), PyComponent))
+        Py::new(py, Self::checked(transform)?)
     }
 
     #[staticmethod]
@@ -130,7 +142,8 @@ impl PyTransform {
 
     #[setter]
     pub fn set_translation(&mut self, translation: PyVec3) -> PyResult<()> {
-        self.as_mut()?.translation = translation.try_into()?;
+        let translation = Self::check_translation(Vec3::try_from(translation)?)?;
+        self.as_mut()?.translation = translation;
         Ok(())
     }
 
@@ -143,7 +156,8 @@ impl PyTransform {
 
     #[setter]
     pub fn set_rotation(&mut self, rotation: PyQuat) -> PyResult<()> {
-        self.as_mut()?.rotation = rotation.try_into()?;
+        let rotation = Self::check_rotation(Quat::try_from(rotation)?)?;
+        self.as_mut()?.rotation = rotation;
         Ok(())
     }
 
@@ -156,7 +170,8 @@ impl PyTransform {
 
     #[setter]
     pub fn set_scale(&mut self, scale: PyVec3) -> PyResult<()> {
-        self.as_mut()?.scale = scale.try_into()?;
+        let scale = Self::check_scale(Vec3::try_from(scale)?)?;
+        self.as_mut()?.scale = scale;
         Ok(())
     }
 
@@ -238,19 +253,19 @@ impl PyTransform {
 
     pub fn with_translation(&self, py: Python<'_>, translation: &PyVec3) -> PyResult<Py<Self>> {
         let mut transform = *self.as_ref()?;
-        transform.translation = translation.try_into()?;
+        transform.translation = Self::check_translation(Vec3::try_from(translation)?)?;
         Py::new(py, (transform.into(), PyComponent))
     }
 
     pub fn with_rotation(&self, py: Python<'_>, rotation: &PyQuat) -> PyResult<Py<Self>> {
         let mut transform = *self.as_ref()?;
-        transform.rotation = rotation.try_into()?;
+        transform.rotation = Self::check_rotation(Quat::try_from(rotation)?)?;
         Py::new(py, (transform.into(), PyComponent))
     }
 
     pub fn with_scale(&self, py: Python<'_>, scale: &PyVec3) -> PyResult<Py<Self>> {
         let mut transform = *self.as_ref()?;
-        transform.scale = scale.try_into()?;
+        transform.scale = Self::check_scale(Vec3::try_from(scale)?)?;
         Py::new(py, (transform.into(), PyComponent))
     }
 

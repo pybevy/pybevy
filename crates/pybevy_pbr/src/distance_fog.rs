@@ -2,11 +2,17 @@ use bevy::{color::Color, pbr::DistanceFog};
 use pybevy_color::color::PyColor;
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pyo3::prelude::*;
 
 use crate::fog_falloff::PyFogFalloff;
 
-#[pycomponent(DistanceFog, bridge, view_fields = [directional_light_exponent => [finite]], batch_only_fields = [color, directional_light_color])]
+#[pycomponent(
+    DistanceFog,
+    bridge,
+    domains = [directional_light_exponent => [finite]],
+    view_fields = [directional_light_exponent],
+    batch_only_fields = [color, directional_light_color]
+)]
 #[pyclass(name = "DistanceFog", module = "pybevy.pbr", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyDistanceFog {
@@ -35,7 +41,7 @@ impl PyDistanceFog {
             color,
             falloff: falloff.into(),
             directional_light_color,
-            directional_light_exponent: validate_directional_light_exponent(
+            directional_light_exponent: Self::check_directional_light_exponent(
                 directional_light_exponent,
             )?,
         })
@@ -84,17 +90,8 @@ impl PyDistanceFog {
 
     #[setter]
     pub fn set_directional_light_exponent(&mut self, exponent: f32) -> PyResult<()> {
-        self.as_mut()?.directional_light_exponent = validate_directional_light_exponent(exponent)?;
+        let exponent = Self::check_directional_light_exponent(exponent)?;
+        self.as_mut()?.directional_light_exponent = exponent;
         Ok(())
-    }
-}
-
-fn validate_directional_light_exponent(exponent: f32) -> PyResult<f32> {
-    if exponent.is_finite() {
-        Ok(exponent)
-    } else {
-        Err(PyValueError::new_err(format!(
-            "directional_light_exponent must be finite (got {exponent})"
-        )))
     }
 }

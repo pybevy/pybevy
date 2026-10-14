@@ -1,11 +1,16 @@
 use bevy::camera::Exposure;
-use pybevy_core::{PyComponent, public_error, pycomponent::ComponentStorage};
+use pybevy_core::{PyComponent, pycomponent::ComponentStorage};
 use pybevy_macros::pycomponent;
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pyo3::prelude::*;
 
 use crate::physical_camera_parameters::PyPhysicalCameraParameters;
 
-#[pycomponent(Exposure, bridge, view_fields = [ev100 => [range(f32::MIN, f32::INFINITY, public_error::EXPOSURE_EV100_NON_FINITE)]])]
+#[pycomponent(
+    Exposure,
+    bridge,
+    domains = [ev100 => [finite(view = checked)]],
+    view_fields = [ev100]
+)]
 #[pyclass(name = "Exposure", module = "pybevy.camera", extends = PyComponent)]
 pub struct PyExposure {
     pub(crate) storage: ComponentStorage<Exposure>,
@@ -23,7 +28,7 @@ impl PyExposure {
     #[pyo3(signature = (*, ev100 = Exposure::EV100_BLENDER))]
     pub fn new(ev100: f32) -> PyResult<PyClassInitializer<Self>> {
         Ok(Self::from_owned(Exposure {
-            ev100: validate_ev100(ev100)?,
+            ev100: Self::check_ev100(ev100)?,
         })
         .into())
     }
@@ -71,7 +76,7 @@ impl PyExposure {
 
     #[setter]
     pub fn set_ev100(&mut self, ev100: f32) -> PyResult<()> {
-        let ev100 = validate_ev100(ev100)?;
+        let ev100 = Self::check_ev100(ev100)?;
         self.as_mut()?.ev100 = ev100;
         Ok(())
     }
@@ -86,22 +91,12 @@ impl PyExposure {
         physical_camera_parameters: &PyPhysicalCameraParameters,
     ) -> PyResult<Py<Self>> {
         let exposure = Exposure::from_physical_camera(physical_camera_parameters.into());
-        validate_ev100(exposure.ev100)?;
+        Self::validate_domains(&exposure)?;
         Py::new(py, Self::from_owned(exposure))
     }
 
     fn __repr__(&self) -> PyResult<String> {
         let ev100 = self.as_ref()?.ev100;
         Ok(format!("Exposure(ev100={:.1})", ev100))
-    }
-}
-
-fn validate_ev100(ev100: f32) -> PyResult<f32> {
-    if ev100.is_finite() {
-        Ok(ev100)
-    } else {
-        Err(PyValueError::new_err(
-            public_error::EXPOSURE_EV100_NON_FINITE,
-        ))
     }
 }

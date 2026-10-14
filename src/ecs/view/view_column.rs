@@ -23,22 +23,18 @@ use pybevy_bytecodevm::{
     view_runtime::{BatchColumn, ViewOperationGuard, validate_contiguous_field_bytes},
 };
 use pybevy_core::{
-    FieldType,
-    batch_columns::{
-        BatchValueConstraint, has_view_assignment_checks, validate_view_assignment_values,
-    },
-    public_error,
+    FieldType, batch_columns::check_view_assignment, domain::FieldDomain, public_error,
     registry::global_registry,
 };
 use pyo3::{
-    exceptions::{PyIndexError, PyRuntimeError, PyTypeError, PyValueError},
+    exceptions::{PyIndexError, PyRuntimeError, PyTypeError},
     prelude::*,
     types::{PyBytes, PyList, PySlice},
 };
 
 use crate::ecs::{
     component_type::PyComponentType,
-    view::view::{get_component_field_info, native_view_field_constraints},
+    view::view::{get_component_field_info, native_view_field_domains},
 };
 
 /// Opaque column view that can only be accessed through Numba JIT.
@@ -97,8 +93,9 @@ pub struct PyViewColumn {
     /// Built-in component type for trait-based field access (None for custom/primitive columns)
     builtin_component_type: Option<PyComponentType>,
 
-    /// Native field domain inherited by typed subcolumns.
-    validation: Option<(&'static str, &'static [BatchValueConstraint])>,
+    /// Native field domain (owner, field, rules) inherited by typed subcolumns;
+    /// `None` when View writes to the field are unchecked.
+    validation: Option<(&'static str, &'static str, &'static [FieldDomain])>,
 
     /// Owned buffer for temporary arithmetic results (None = ECS-backed pointer)
     owned_data: Option<Vec<u8>>,
@@ -106,29 +103,28 @@ pub struct PyViewColumn {
 
 impl PyViewColumn {
     fn requires_assignment_validation(&self) -> bool {
-        self.validation
-            .is_some_and(|(_, constraints)| has_view_assignment_checks(constraints))
+        self.validation.is_some()
     }
 
-    fn validate_assignment_values(&self, values: &[f64]) -> PyResult<()> {
-        if !self.requires_assignment_validation() {
+    /// Check values bound for rows starting at `first_row` before any is written.
+    fn validate_assignment_values(&self, values: &[f64], first_row: usize) -> PyResult<()> {
+        let Some((owner, field, domains)) = self.validation else {
             return Ok(());
-        }
+        };
         let field_type = self
             .field_type
             .ok_or_else(|| PyRuntimeError::new_err("Cannot validate a composite/struct column"))?;
-        let constraints = self
-            .validation
-            .map_or(&[][..], |(_, constraints)| constraints);
-        validate_view_assignment_values(values, field_type, constraints)
-            .map_err(|error| PyValueError::new_err(error.to_string()))
+        check_view_assignment(owner, field, values, field_type, domains).map_err(|violation| {
+            let row = violation.details().row.unwrap_or(0) + first_row;
+            PyErr::from(violation.at_row(row))
+        })
     }
 
     fn subcolumn_validation(
         &self,
         offset: usize,
         field_type: Option<FieldType>,
-    ) -> Option<(&'static str, &'static [BatchValueConstraint])> {
+    ) -> Option<(&'static str, &'static str, &'static [FieldDomain])> {
         if let Some(validation) = self.validation {
             return Some(validation);
         }
@@ -146,7 +142,7 @@ impl PyViewColumn {
             if offset >= field.offset
                 && end <= field.offset.checked_add(field.field_type.size_bytes())?
             {
-                return native_view_field_constraints(self.builtin_component_type.as_ref()?, name);
+                return native_view_field_domains(self.builtin_component_type.as_ref()?, name);
             }
         }
         None
@@ -869,7 +865,7 @@ impl PyViewColumn {
         self.check_writable()?;
         self.check_numeric()?;
         let idx = self.normalize_index(index)?;
-        self.validate_assignment_values(&[value])?;
+        self.validate_assignment_values(&[value], idx)?;
         self.write_f64_at(idx, value);
         Ok(())
     }
@@ -916,10 +912,7 @@ impl PyViewColumn {
         validate_contiguous_field_bytes(field_type, self.len, data)
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         let elem_size = field_type.size_bytes();
-        if self
-            .validation
-            .is_some_and(|(_, constraints)| !constraints.is_empty())
-        {
+        if self.validation.is_some() {
             let values: Vec<f64> = if matches!(
                 field_type,
                 FieldType::Vec2 | FieldType::Vec3 | FieldType::Vec4
@@ -937,7 +930,7 @@ impl PyViewColumn {
                     })
                     .collect()
             };
-            self.validate_assignment_values(&values)?;
+            self.validate_assignment_values(&values, 0)?;
         }
         for i in 0..self.len {
             let src_offset = i * elem_size;
@@ -1206,7 +1199,7 @@ impl PyViewColumn {
             }
             if self.requires_assignment_validation() {
                 let values: Vec<f64> = (0..self.len).map(|i| src.read_f64_at(i)).collect();
-                self.validate_assignment_values(&values)?;
+                self.validate_assignment_values(&values, 0)?;
             }
             for i in 0..self.len {
                 self.write_f64_at(i, src.read_f64_at(i));
@@ -1220,7 +1213,7 @@ impl PyViewColumn {
         let scalar: f64 = value.extract().map_err(|_| {
             PyRuntimeError::new_err("Cannot assign: value must be a ViewColumn or a number")
         })?;
-        self.validate_assignment_values(&[scalar])?;
+        self.validate_assignment_values(&[scalar], 0)?;
         for i in 0..self.len {
             self.write_f64_at(i, scalar);
         }
