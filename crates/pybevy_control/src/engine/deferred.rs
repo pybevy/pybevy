@@ -5,7 +5,7 @@ use bevy::{
     ecs::world::World,
     time::{Time, Virtual},
 };
-use pybevy_core::public_error::capture_no_camera;
+use pybevy_core::{gpu_validation::WgpuValidationErrorState, public_error::capture_no_camera};
 use tokio::sync::oneshot;
 
 use crate::{
@@ -107,10 +107,14 @@ impl DeferredBatch {
         if self.screenshots.is_empty() {
             return;
         }
+        let wgpu_error_baseline = world
+            .get_resource::<WgpuValidationErrorState>()
+            .map(WgpuValidationErrorState::count);
         for screenshot in &mut self.screenshots {
             if let Some(epoch) = self.render_epoch {
                 screenshot.required_render_epoch = Some(epoch);
             }
+            screenshot.wgpu_error_baseline = wgpu_error_baseline;
             prepare_pending_screenshot_gizmos(world, screenshot);
         }
         world

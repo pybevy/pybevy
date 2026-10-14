@@ -253,9 +253,9 @@ impl PyImageSamplerDescriptorVariant {
 
     #[new]
     pub fn new(value: &PyImageSamplerDescriptor) -> PyResult<PyClassInitializer<Self>> {
-        let desc = ImageSamplerDescriptor::try_from(value)?;
+        let value = ImageSamplerDescriptor::try_from(value)?;
         Ok(
-            PyClassInitializer::from(PyImageSampler::from(ImageSampler::Descriptor(desc)))
+            PyClassInitializer::from(PyImageSampler::from(ImageSampler::Descriptor(value)))
                 .add_subclass(Self),
         )
     }

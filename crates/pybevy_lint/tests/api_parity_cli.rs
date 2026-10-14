@@ -7,6 +7,8 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
+use pybevy_lint::bevy_audit::pinned_checkout_path;
+
 static NEXT_FIXTURE: AtomicUsize = AtomicUsize::new(0);
 
 struct Fixture(PathBuf);
@@ -54,7 +56,7 @@ fn pinned_bevy_source() -> PathBuf {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo = manifest.parent().and_then(Path::parent).unwrap();
     let mut candidates = vec![
-        repo.join("target/bevy-api-audit/bevy-b56fc29d3016"),
+        pinned_checkout_path(&repo.join("target/bevy-api-audit")),
         repo.join("target/bevy-api-audit/bevy-src"),
     ];
     if let Some(path) = std::env::var_os("PYBEVY_BEVY_SOURCE") {
@@ -271,14 +273,23 @@ fn enum_string_adapters_still_reject_wrong_payload_types() {
 }
 
 #[test]
-fn gamepad_input_requires_explicit_tuple_adapter_metadata() {
+fn gamepad_input_tuple_payloads_need_metadata_unless_named_value() {
     let source = include_str!("../../pybevy_input/src/gamepad_input.rs");
     let (code, summary) = enum_summary(source, "input");
     assert_eq!(code, 0, "{summary}");
     assert_eq!(summary["matched_variants"], 2);
-    let (code, summary) = enum_summary(&source.replace("#[py_bevy(tuple)]", ""), "input");
-    assert_eq!(code, 1, "{summary}");
-    assert_eq!(summary["mismatched_variants"], 2);
+    let renamed = source
+        .replace("value: GamepadAxis", "axis: GamepadAxis")
+        .replace("value: GamepadButton", "button: GamepadButton");
+    let (code, summary) = enum_summary(&renamed, "input");
+    assert_eq!(code, 0, "{summary}");
+    for untagged in [source, renamed.as_str()] {
+        let untagged = untagged.replace("#[py_bevy(tuple)]", "");
+        let (code, summary) = enum_summary(&untagged, "input");
+        let renamed = untagged.contains("axis: GamepadAxis");
+        assert_eq!(code, i32::from(renamed), "{summary}");
+        assert_eq!(summary["mismatched_variants"], if renamed { 2 } else { 0 });
+    }
 }
 
 #[test]
@@ -422,14 +433,14 @@ fn manual_enum_nested_registration_checks_payload_shape() {
             0,
         ),
         (
-            source.replace("desc: &PyImageSamplerDescriptor", "desc: u32"),
+            source.replacen("value: &PyImageSamplerDescriptor", "value: u32", 1),
             0,
             1,
         ),
         (
             source.replace(
-                "ImageSampler::Descriptor(desc)",
-                "ImageSampler::Descriptor { desc }",
+                "ImageSampler::Descriptor(value)",
+                "ImageSampler::Descriptor { desc: value }",
             ),
             0,
             1,

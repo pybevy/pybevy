@@ -4,7 +4,7 @@ use pybevy_macros::pycomponent;
 use pybevy_math::rect::PyRect;
 use pyo3::prelude::*;
 
-#[pycomponent(Lightmap, bridge, view_fields = [bicubic_sampling])]
+#[pycomponent(Lightmap, bridge, no_spawn_example, view_fields = [bicubic_sampling])]
 #[pyclass(name = "Lightmap", module = "pybevy.pbr", extends = PyComponent)]
 pub struct PyLightmap {
     pub(crate) storage: ComponentStorage<Lightmap>,

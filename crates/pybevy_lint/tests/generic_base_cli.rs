@@ -1,13 +1,15 @@
 use std::{fs, path::Path, process::Command};
 
+use pybevy_lint::bevy_audit::pinned_checkout_path;
+
 #[test]
 fn generic_bases_preserve_inheritance_diagnostics_in_full_and_scoped_validation() {
-    let bevy = Path::new(env!("CARGO_MANIFEST_DIR"))
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
         .parent()
-        .unwrap()
-        .join("target/bevy-api-audit/bevy-b56fc29d3016");
+        .unwrap();
+    let bevy = pinned_checkout_path(&root.join("target/bevy-api-audit"));
     assert!(bevy.join("Cargo.toml").exists());
     for (case, bases, enum_wrapper, expected) in [
         ("leading", "Generic[T], Resource", false, None),

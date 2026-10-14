@@ -37,6 +37,8 @@ pub struct PendingScreenshot {
     /// Used by `capture_depth` and `reload_and_capture` to avoid spawning
     /// a thread for the merge.
     pub extra_response: Option<serde_json::Value>,
+    /// wgpu validation error count when the request was queued.
+    pub wgpu_error_baseline: Option<u64>,
 }
 
 impl PendingScreenshot {
@@ -59,6 +61,7 @@ impl PendingScreenshot {
             depth_analysis: None,
             response_kind,
             extra_response: None,
+            wgpu_error_baseline: None,
         }
     }
 }

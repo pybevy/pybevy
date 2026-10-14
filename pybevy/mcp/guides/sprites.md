@@ -311,6 +311,10 @@ if image is not None:
 Assign a new `ImageSamplerDescriptor` to `image.sampler.value` to replace the
 complete descriptor while retaining the `Descriptor` variant.
 
+Pixel and sampler edits show on the sprite while the image keeps its size. To
+change the size, add the resized image with `images.add(...)` and assign the new
+handle to `sprite.image`.
+
 Then use it like any other sprite sheet:
 
 ```python

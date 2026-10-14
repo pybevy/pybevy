@@ -68,6 +68,11 @@ impl WgpuValidationErrorState {
         self.lock().count > 0
     }
 
+    /// Errors recorded since the last clear.
+    pub fn count(&self) -> u64 {
+        self.lock().count
+    }
+
     /// Forget recorded errors and the log deduplication set.
     pub fn clear(&self) {
         *self.lock() = WgpuValidationLog::default();

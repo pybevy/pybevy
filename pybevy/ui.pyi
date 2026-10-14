@@ -1738,7 +1738,7 @@ class CornerRadius:
         circular = CornerRadius.circular(px(10.0))
         elliptical = CornerRadius(px(30.0), px(20.0))
         radius = BorderRadius(top_left=circular, bottom_right=elliptical)
-        radius.top_left.x = px(12.0)
+        radius.top_left = CornerRadius(px(12.0), px(20.0))
         ```
     """
 
@@ -1800,9 +1800,12 @@ class BorderRadius:
         # Per-corner via constructor kwargs; the positional radius fills the rest
         br = BorderRadius(px(5.0), top_left=px(20.0), bottom_right=(px(30.0), px(20.0)))
 
-        # Corners are live CornerRadius values
-        br.top_left.x = px(25.0)
+        # Replace one corner; Val, (x, y) pairs and CornerRadius are accepted
+        br.top_left = px(25.0)
         print(br.top_right)  # CornerRadius(x=Val.Px(5.0), y=Val.Auto())
+
+        # A Node's corners are live through Query[Mut[Node]]:
+        # node.border_radius.top_left.x = px(25.0)
 
         # A full ellipse
         br = BorderRadius.MAX_ELLIPTICAL

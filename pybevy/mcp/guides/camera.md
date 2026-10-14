@@ -231,8 +231,11 @@ finite.
 ### Screen-Space Effects
 
 **SSAO** darkens crevices between nearby geometry. **Requires `Msaa.Off`** on
-the camera. With MSAA enabled, SSAO does not activate and Bevy logs an error
-naming the incompatible `Msaa` value. The camera's target must be at least
+the camera. Added to a multisampled camera, SSAO stays inactive and Bevy logs an
+error naming the incompatible `Msaa` value. To give a camera that runs SSAO
+multisampling, remove `ScreenSpaceAmbientOcclusion` in the same edit that sets
+`Msaa`: the running SSAO pass keeps its single-sample depth bindings and renders
+the camera black. The camera's target must be at least
 16 px on each side: SSAO's depth mip chain fails below that and renders the
 camera black with wgpu validation errors.
 
@@ -517,6 +520,32 @@ The overlap range (40–50) allows crossfade if dithering is enabled.
 `ViewVisibility` is aggregated across every active view, including shadow-map
 views. A visible value therefore does not mean the entity is on screen in a
 particular camera.
+
+### Changing a Live Camera
+
+Bevy recomputes a camera's target size and clamps its viewport when the
+camera's `Projection` changes. When a system inserts a new `RenderTarget`, or a
+new `Camera` over an existing one, write the camera's `Projection` in the same
+system so the depth texture and viewport follow the new target:
+
+```python
+@system
+def retarget(commands: Commands, cameras: Query[tuple[Entity, Mut[Projection]], With[Camera]]) -> None:
+    for entity, projection in cameras:
+        commands.entity(entity).insert(RenderTarget.Image(ImageRenderTarget(handle=new_target)))
+        projection.value.near = projection.value.near  # marks Projection changed
+```
+
+Through MCP, follow a `RenderTarget` change with a `set_component` of the
+camera's `Projection`. In-place edits such as `camera.order = 7` through
+`Query[Mut[Camera]]` need nothing extra.
+
+To switch between cameras, set `camera.is_active = False` on the old one or
+despawn it; a `Disabled` camera keeps its render view, and with a
+shadow-casting `DirectionalLight` in the scene the next camera ends the app.
+Hide a light with `Visibility.Hidden`. To turn a 2D camera into a 3D one, or the
+reverse, spawn the new camera and despawn the old one; `Camera2d` and
+`Camera3d` stay on a camera for its lifetime.
 
 ### Full Camera Setup
 

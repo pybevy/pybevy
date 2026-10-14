@@ -693,8 +693,9 @@ Load a pre-baked HDR environment map for indoor or studio lighting. The source
 checkout includes Bevy's prefiltered Pisa pair at the paths below. Wheels omit
 sample assets, so installed projects must supply equivalent files under
 `assets/` or change the paths. `EnvironmentMapLight` needs a diffuse cubemap and
-a mipmapped specular cubemap; `rgb9e5` and `zstd` only describe this sample's
-encoding and compression.
+a mipmapped specular cubemap, passed as `diffuse_map` and `specular_map`; each is
+an image with six square layers and a `Cube` view. `rgb9e5` and `zstd` only
+describe this sample's encoding and compression.
 
 ```python
 from pybevy.light import EnvironmentMapLight
@@ -758,6 +759,19 @@ The source checkout includes this sample cubemap; wheels omit sample assets.
 Runtime filtering completes asynchronously and Bevy inserts the resulting
 `EnvironmentMapLight` when it is ready.
 
+To switch such a camera to `AtmosphereEnvironmentMapLight`, for example for a
+day/night change, remove `GeneratedEnvironmentMapLight` and the derived
+`EnvironmentMapLight` in the same command, then insert the atmosphere light:
+
+```python
+from pybevy.light import AtmosphereEnvironmentMapLight, EnvironmentMapLight, GeneratedEnvironmentMapLight
+
+camera_commands = commands.entity(camera)
+camera_commands.remove(GeneratedEnvironmentMapLight)
+camera_commands.remove(EnvironmentMapLight)
+camera_commands.insert(AtmosphereEnvironmentMapLight())
+```
+
 ### 4. IrradianceVolume + LightProbe (Baked GI)
 
 For pre-baked global illumination in static scenes:
@@ -778,7 +792,8 @@ commands.spawn(
 )
 ```
 
-The `Transform` scale defines the volume the probes cover.
+The `Transform` scale defines the volume the probes cover. Pass `voxels` with a
+baked 3D irradiance image; the volume samples it as a 3D texture.
 
 ## Shadow Cost Guidance
 

@@ -4,13 +4,15 @@ use std::{
     process::Command,
 };
 
+use pybevy_lint::bevy_audit::pinned_checkout_path;
+
 fn pinned_bevy_source() -> PathBuf {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
         .parent()
         .unwrap();
-    let source = root.join("target/bevy-api-audit/bevy-b56fc29d3016");
+    let source = pinned_checkout_path(&root.join("target/bevy-api-audit"));
     assert!(
         source.join("Cargo.toml").exists(),
         "pinned audit source is required"

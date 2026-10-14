@@ -1,13 +1,15 @@
 use std::{fs, path::Path, process::Command};
 
+use pybevy_lint::bevy_audit::pinned_checkout_path;
+
 #[test]
 fn declared_property_names_preserve_type_checks_in_full_and_scoped_validation() {
-    let bevy = Path::new(env!("CARGO_MANIFEST_DIR"))
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
         .parent()
-        .unwrap()
-        .join("target/bevy-api-audit/bevy-b56fc29d3016");
+        .unwrap();
+    let bevy = pinned_checkout_path(&root.join("target/bevy-api-audit"));
     assert!(bevy.join("Cargo.toml").exists());
     for (case, rust_type, python_type, valid) in [
         ("direct", "PyToken", "token", true),
