@@ -14,7 +14,7 @@ use pybevy_core::{
     registry::global_registry,
 };
 use pyo3::{
-    PyTraverseError, PyVisit,
+    PyTraverseError, PyTypeInfo, PyVisit,
     exceptions::{PyModuleNotFoundError, PyTypeError, PyValueError},
     intern,
     prelude::*,
@@ -143,16 +143,21 @@ fn default_column(
 }
 
 /// Whether batch rows must run the class's own initializer: anything other
-/// than a dataclass-generated `__init__` without `__post_init__`.
+/// than object.__init__ or a plain dataclass-generated `__init__`.
 fn constructs_rows(cls: &Bound<'_, PyType>) -> PyResult<bool> {
+    let initializer = cls.getattr(intern!(cls.py(), "__init__"))?;
+    let object_initializer = cls
+        .py()
+        .get_type::<PyAny>()
+        .getattr(intern!(cls.py(), "__init__"))?;
+    if initializer.is(&object_initializer) {
+        return Ok(false);
+    }
     if cls.hasattr(intern!(cls.py(), "__post_init__"))? {
         return Ok(true);
     }
-    let Some(code) = cls
-        .getattr(intern!(cls.py(), "__init__"))?
-        .getattr_opt(intern!(cls.py(), "__code__"))?
-    else {
-        return Ok(false);
+    let Some(code) = initializer.getattr_opt(intern!(cls.py(), "__code__"))? else {
+        return Ok(true);
     };
     let qualname: String = code.getattr(intern!(cls.py(), "co_qualname"))?.extract()?;
     let generated = qualname == DATACLASS_INIT_QUALNAME
@@ -690,7 +695,7 @@ impl BatchComponent for CustomComponentBatchBridge {
 /// Register the CustomComponentBatch bridge so spawn_batch can detect it.
 pub fn register_custom_batch_bridge() {
     Python::attach(|py| {
-        let ptr = <PyCustomComponentBatch as pyo3::PyTypeInfo>::type_object(py).as_type_ptr();
+        let ptr = <PyCustomComponentBatch as PyTypeInfo>::type_object(py).as_type_ptr();
         global_registry::register_batch_bridge(ptr, Arc::new(CustomComponentBatchBridge));
     });
 }

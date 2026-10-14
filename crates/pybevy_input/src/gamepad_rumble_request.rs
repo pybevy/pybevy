@@ -16,7 +16,6 @@ use crate::gamepad_rumble_intensity::PyGamepadRumbleIntensity;
 #[pyenum(GamepadRumbleRequest, message, writable, no_eq, no_debug)]
 #[pyclass(module = "pybevy.input", name = "GamepadRumbleRequest")]
 pub enum PyGamepadRumbleRequest {
-    #[pyo3(constructor = (*, duration, intensity, gamepad))]
     Add {
         duration: Duration,
         #[py_type(PyGamepadRumbleIntensity)]
@@ -25,7 +24,6 @@ pub enum PyGamepadRumbleRequest {
         #[py_type(PyEntity)]
         gamepad: Entity,
     },
-    #[pyo3(constructor = (*, gamepad))]
     Stop {
         #[py_type(PyEntity)]
         gamepad: Entity,

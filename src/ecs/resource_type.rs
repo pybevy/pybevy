@@ -84,15 +84,6 @@ impl PyResourceType {
         Self::get_asset_server_cell(world.as_unsafe_world_cell_readonly(), py, validity)
     }
 
-    /// Get AssetServer resource from world (mutable)
-    fn get_asset_server_mut(
-        world: &mut World,
-        py: Python,
-        validity: ValidityFlag,
-    ) -> PyResult<Py<PyAny>> {
-        Self::get_asset_server_cell(world.as_unsafe_world_cell(), py, validity)
-    }
-
     /// Wrap the AssetServer resource from a world cell.
     fn get_asset_server_cell(
         cell: UnsafeWorldCell,
@@ -324,28 +315,16 @@ impl PyResourceType {
         py: Python,
         validity: ValidityFlag,
     ) -> PyResult<Py<PyAny>> {
-        match self {
-            PyResourceType::AssetServer => Self::get_asset_server_mut(world, py, validity),
-            PyResourceType::Dynamic(type_ptr) => {
-                let bridge = global_registry::get_resource_bridge_by_py_type(*type_ptr)
-                    .ok_or_else(|| PyTypeError::new_err(RESOURCE_BRIDGE_NOT_FOUND))?;
-                bridge.get_mut(world, validity.with_access_mode(AccessMode::Write), py)
-            }
-            PyResourceType::Custom(type_ptr) => {
-                let component_id = world
-                    .get_resource::<ResourceRegistry>()
-                    .and_then(|registry| registry.get(*type_ptr as usize))
-                    .ok_or_else(|| {
-                        let type_name = get_python_type_name(py, *type_ptr);
-                        PyTypeError::new_err(resource_type_not_found(type_name))
-                    })?;
-                let mut resource = world.get_resource_mut_by_id(component_id).ok_or_else(|| {
-                    let type_name = get_python_type_name(py, *type_ptr);
-                    PyTypeError::new_err(resource_not_present(type_name))
-                })?;
-                // SAFETY: registration uses Pyo3ResourceObjectDescriptor for this ID.
-                Ok(unsafe { resource.as_mut().deref_mut::<Py<PyAny>>().clone_ref(py) })
-            }
+        let (last_run, this_run) = (world.last_change_tick(), world.change_tick());
+        // SAFETY: `&mut World` grants exclusive access to every resource.
+        unsafe {
+            self.get_from_cell_mut(
+                world.as_unsafe_world_cell(),
+                py,
+                validity,
+                last_run,
+                this_run,
+            )
         }
     }
 

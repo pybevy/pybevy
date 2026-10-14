@@ -8,8 +8,8 @@
 use crate::{
     bytecode::{
         CompiledBytecode, FieldType, Op, numpy_floor_divide, numpy_floor_divide_f32, python_clip,
-        python_maximum, python_minimum, python_remainder, python_remainder_f32, python_round,
-        python_sign,
+        python_clip_f32, python_maximum, python_maximum_f32, python_minimum, python_minimum_f32,
+        python_remainder, python_remainder_f32, python_round, python_sign, python_sign_f32,
     },
     columns::{ColumnMut, ColumnRef, load_tile_f32, load_tile_f64, store_tile_f32, store_tile_f64},
 };
@@ -20,47 +20,6 @@ const MAX_DEPTH: usize = 32;
 /// Entities per rayon task in the parallel variants.
 #[cfg(feature = "parallel")]
 const PCHUNK: usize = 16384;
-
-/// f32 element-wise minimum that propagates NaN (returning the NaN operand), matching
-/// `python_minimum`. Rust's `f32::min` returns the non-NaN operand, which diverges from
-/// the scalar VM and NumPy.
-#[inline]
-fn min_f32_nan(a: f32, b: f32) -> f32 {
-    if a.is_nan() {
-        a
-    } else if b.is_nan() {
-        b
-    } else {
-        a.min(b)
-    }
-}
-
-#[inline]
-fn max_f32_nan(a: f32, b: f32) -> f32 {
-    if a.is_nan() {
-        a
-    } else if b.is_nan() {
-        b
-    } else {
-        a.max(b)
-    }
-}
-
-#[inline]
-fn sign_f32(value: f32) -> f32 {
-    if value > 0.0 {
-        1.0
-    } else if value < 0.0 {
-        -1.0
-    } else {
-        value
-    }
-}
-
-#[inline]
-fn clip_f32(value: f32, min: f32, max: f32) -> f32 {
-    min_f32_nan(max_f32_nan(value, min), max)
-}
 
 /// Returned when a program contains an operation the tiled executor does not support.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -239,21 +198,8 @@ fn integer_program_type(bytecode: &CompiledBytecode) -> Option<FieldType> {
                 }
                 lane_type = Some(field_type);
             }
-            Op::PushConst(index) => {
-                let value = *bytecode.constants.get(*index as usize)?;
-                let representable = match lane_type {
-                    Some(FieldType::I32) => i32::from_constant(value).is_some(),
-                    Some(FieldType::I64) => i64::from_constant(value).is_some(),
-                    Some(FieldType::U8) => u8::from_constant(value).is_some(),
-                    Some(FieldType::U32) => u32::from_constant(value).is_some(),
-                    Some(FieldType::U64) => u64::from_constant(value).is_some(),
-                    Some(_) | None => true,
-                };
-                if !representable {
-                    return None;
-                }
-            }
-            Op::Add
+            Op::PushConst(_)
+            | Op::Add
             | Op::Sub
             | Op::Mul
             | Op::Neg
@@ -446,12 +392,6 @@ pub fn map_supported(ops: &[Op]) -> bool {
     ops.iter()
         .all(|o| is_supported(o) && !matches!(o, Op::PushField(_) | Op::StoreField(_)))
         && stack_layout(ops).is_some_and(|(_, final_depth)| final_depth == 1)
-}
-
-/// Whether a MAP program can run entirely in the native-f32 tiled executor.
-#[inline]
-pub fn f32_native_eligible(ops: &[Op]) -> bool {
-    map_supported(ops)
 }
 
 #[inline]
@@ -704,11 +644,11 @@ fn apply_stack_op_f32(
                 Op::Min => a
                     .iter_mut()
                     .zip(&*b)
-                    .for_each(|(x, y)| *x = min_f32_nan(*x, *y)),
+                    .for_each(|(x, y)| *x = python_minimum_f32(*x, *y)),
                 Op::Max => a
                     .iter_mut()
                     .zip(&*b)
-                    .for_each(|(x, y)| *x = max_f32_nan(*x, *y)),
+                    .for_each(|(x, y)| *x = python_maximum_f32(*x, *y)),
                 Op::Pow => a.iter_mut().zip(&*b).for_each(|(x, y)| *x = x.powf(*y)),
                 Op::Mod => a
                     .iter_mut()
@@ -744,7 +684,7 @@ fn apply_stack_op_f32(
                 Op::Floor => a.iter_mut().for_each(|x| *x = x.floor()),
                 Op::Ceil => a.iter_mut().for_each(|x| *x = x.ceil()),
                 Op::Round => a.iter_mut().for_each(|x| *x = x.round_ties_even()),
-                Op::Sign => a.iter_mut().for_each(|x| *x = sign_f32(*x)),
+                Op::Sign => a.iter_mut().for_each(|x| *x = python_sign_f32(*x)),
                 Op::Fract => a.iter_mut().for_each(|x| *x = x.fract()),
                 Op::Sin => a.iter_mut().for_each(|x| *x = x.sin()),
                 Op::Cos => a.iter_mut().for_each(|x| *x = x.cos()),
@@ -765,7 +705,7 @@ fn apply_stack_op_f32(
             for lane in 0..len {
                 let (a, b, c) = (stack[a0 + lane], stack[b0 + lane], stack[c0 + lane]);
                 stack[a0 + lane] = match op {
-                    Op::Clamp => clip_f32(a, b, c),
+                    Op::Clamp => python_clip_f32(a, b, c),
                     Op::Lerp => a + c * (b - a),
                     _ => unreachable!(),
                 };
@@ -841,7 +781,8 @@ unsafe fn run_tiles_f32(
 /// in-place alias (see [`crate::columns::in_place_pair`]). Validity/aliasing is the
 /// adapter's obligation, checked before the call (see module and design docs).
 ///
-/// A column shorter than `count` returns `UnsupportedOp` instead of overrunning.
+/// Too few columns, or a column shorter than `count`, returns `UnsupportedOp`
+/// instead of overrunning.
 pub unsafe fn run_assignment(
     bytecode: &CompiledBytecode,
     srcs: &[ColumnRef<'_>],
@@ -849,8 +790,15 @@ pub unsafe fn run_assignment(
     count: usize,
     scratch: &mut TiledScratch,
 ) -> Result<(), UnsupportedOp> {
+    let stores = bytecode
+        .bytecode
+        .iter()
+        .filter(|op| matches!(op, Op::StoreField(_)))
+        .count();
     if !all_supported(bytecode)
         || !all_fields_float(bytecode)
+        || srcs.len() < bytecode.field_map.len()
+        || dests.len() != stores
         || !srcs.iter().all(|column| column.covers(count))
         || !dests.iter().all(|column| column.covers(count))
     {
@@ -1045,7 +993,7 @@ pub unsafe fn run_map_f32(
     count: usize,
     scratch: &mut TiledScratch,
 ) -> Result<(), UnsupportedOp> {
-    if !f32_native_eligible(ops)
+    if !map_supported(ops)
         || !srcs.iter().all(|column| column.supports_native_f32(count))
         || !out.supports_native_f32(count)
         || ops.iter().any(|op| match op {
@@ -1056,7 +1004,7 @@ pub unsafe fn run_map_f32(
     {
         return Err(UnsupportedOp);
     }
-    let (depth, _) = stack_layout(ops).expect("checked by f32_native_eligible");
+    let (depth, _) = stack_layout(ops).expect("checked by map_supported");
     scratch.ensure_depth(depth);
     // SAFETY: forwards the column-validity contract to run_tiles_map_f32.
     unsafe { run_tiles_map_f32(ops, constants, srcs, out, count, &mut scratch.stack_f32) };
@@ -1631,7 +1579,7 @@ mod tests {
         let input: Vec<f32> = (0..300).map(|index| index as f32 * 0.01 - 1.5).collect();
         let expected: Vec<f32> = input
             .iter()
-            .map(|value| clip_f32(value.sin().powf(2.0), -0.25, 0.75))
+            .map(|value| python_clip_f32(value.sin().powf(2.0), -0.25, 0.75))
             .collect();
         let mut actual = input;
         let bases = [actual.as_mut_ptr().cast::<u8>()];
@@ -1689,7 +1637,6 @@ mod tests {
     #[test]
     fn malformed_map_programs_are_rejected() {
         assert!(!map_supported(&[Op::Add]));
-        assert!(!f32_native_eligible(&[Op::Add]));
         assert!(!map_supported(&[Op::PushConst(0), Op::PushConst(0)]));
         assert!(!map_supported(&[Op::PushField(0)]));
 
@@ -1748,6 +1695,32 @@ mod tests {
         };
         assert_eq!(result, Err(UnsupportedOp));
         assert_eq!(destination, [0.0; 4], "no row may be written on rejection");
+
+        let source = [1.0_f64, 2.0];
+        let mut destination = [0.0_f64; 2];
+        // SAFETY: sound only because the column-count check rejects before any access.
+        let missing_destination = unsafe {
+            run_assignment(
+                &bytecode,
+                &[ColumnRef::from_f64_slice(&source)],
+                &[],
+                2,
+                &mut scratch,
+            )
+        };
+        assert_eq!(missing_destination, Err(UnsupportedOp));
+        // SAFETY: as above.
+        let missing_source = unsafe {
+            run_assignment(
+                &bytecode,
+                &[],
+                &[ColumnMut::from_f64_slice(&mut destination)],
+                2,
+                &mut scratch,
+            )
+        };
+        assert_eq!(missing_source, Err(UnsupportedOp));
+        assert_eq!(destination, [0.0; 2]);
     }
 
     #[test]

@@ -8,8 +8,11 @@ use syn::{
 
 use crate::{
     domain::{Domains, domain_impl_tokens, owner_name, parse_domains},
-    util::reflect_registration_tokens,
+    util::{reflect_registration_tokens, require_frozen_pyclass},
 };
+
+const PYHANDLE_REQUIRES_FROZEN: &str =
+    "pyhandle requires #[pyclass(frozen)]; its bridge extracts handle snapshots";
 
 /// Generates storage boilerplate for asset wrappers in feature crates.
 ///
@@ -1125,6 +1128,9 @@ pub fn pyhandle(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as HandleStorageArgs);
     let input = parse_macro_input!(item as ItemStruct);
     let py_type = &input.ident;
+    if let Err(error) = require_frozen_pyclass(&input, PYHANDLE_REQUIRES_FROZEN) {
+        return error.into_compile_error().into();
+    }
 
     let bridge_tokens = generate_handle_bridge_tokens(
         &args.bevy_type,

@@ -1222,12 +1222,11 @@ impl PyWorld {
                 vec![SpawnBatchCommand::new(py, components, count)?]
             };
             self.check_native_asset_access("world.spawn_batch()")?;
-            let mut entities = Vec::new();
             let mut world = self.world_mut()?;
-            for command in prepared {
-                entities.extend(command.apply(&mut world)?.into_iter().map(PyEntity));
-            }
-            Ok(entities)
+            Ok(SpawnBatchCommand::apply_many(&mut world, prepared)?
+                .into_iter()
+                .map(PyEntity)
+                .collect())
         })
     }
 

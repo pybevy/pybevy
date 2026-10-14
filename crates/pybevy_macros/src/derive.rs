@@ -4,9 +4,11 @@ use quote::quote;
 use syn::{Fields, Ident, ItemStruct, parse_macro_input};
 
 use crate::util::{
-    FieldDef, generate_field_accessors, is_primitive_type, parse_field_annotation,
+    FieldDef, generate_field_accessors, is_derive_field_type, parse_field_annotation,
     pybevy_crate_paths, to_snake_case,
 };
+
+const UNSUPPORTED_FIELD: &str = "PyComponent derive supports numeric, bool, and String fields, optionally wrapped in one Option; wrap other field types with #[pycomponent] and handwritten accessors";
 
 /// Derives a complete PyO3 component wrapper for a Bevy component.
 ///
@@ -69,6 +71,10 @@ pub fn derive_py_component(input: TokenStream) -> TokenStream {
         }
     };
 
+    if let Err(error) = check_field_types(named_fields.iter()) {
+        return error.to_compile_error().into();
+    }
+
     let mut field_defs = Vec::new();
     let mut field_names = Vec::new();
     let mut field_types = Vec::new();
@@ -87,7 +93,7 @@ pub fn derive_py_component(input: TokenStream) -> TokenStream {
         });
     }
 
-    let accessors = generate_field_accessors(&py_type, &field_defs);
+    let accessors = generate_field_accessors(&field_defs);
 
     // Generate constructor defaults from an owned snapshot. Cloning is required for
     // non-Copy fields because PyO3 evaluates these expressions without allowing a
@@ -108,20 +114,8 @@ pub fn derive_py_component(input: TokenStream) -> TokenStream {
         })
         .collect();
 
-    let field_assignments: Vec<proc_macro2::TokenStream> = field_names
-        .iter()
-        .zip(field_types.iter())
-        .map(|(name, ty)| {
-            if is_primitive_type(ty) {
-                quote! { #name }
-            } else {
-                quote! { #name: #name.into() }
-            }
-        })
-        .collect();
-
     let expanded = quote! {
-        #[#pyo3_path::pyclass(name = #py_name_str, extends = #core_path::PyComponent)]
+        #[#pyo3_path::pyclass(name = #py_name_str, module = "pybevy._pybevy", extends = #core_path::PyComponent)]
         #[derive(Debug)]
         pub struct #py_type {
             storage: #core_path::ComponentStorage<#bevy_type>,
@@ -179,7 +173,7 @@ pub fn derive_py_component(input: TokenStream) -> TokenStream {
             #[pyo3(signature = (#(#constructor_defaults),*))]
             pub fn new(#(#constructor_params),*) -> (Self, #core_path::PyComponent) {
                 Self::from_owned(#bevy_type {
-                    #(#field_assignments),*
+                    #(#field_names),*
                 })
             }
 
@@ -293,14 +287,14 @@ pub fn derive_py_component(input: TokenStream) -> TokenStream {
                 ) -> #pyo3_path::PyResult<#pyo3_path::Py<#pyo3_path::PyAny>> {
                     let storage = if validity.access_mode() == #core_path::AccessMode::Write {
                         let ptr = entity.get_mut_ptr_by_id_unchanged(component_id).ok_or_else(|| {
-                            #pyo3_path::exceptions::PyRuntimeError::new_err("Component not found")
+                            #pyo3_path::exceptions::PyRuntimeError::new_err(concat!(#bevy_type_str, " not found"))
                         })?.cast::<#bevy_type>();
                         unsafe {
                             #core_path::ComponentStorage::borrowed(ptr, validity)
                         }
                     } else {
                         let untyped = entity.get_by_id(component_id).ok_or_else(|| {
-                            #pyo3_path::exceptions::PyRuntimeError::new_err("Component not found")
+                            #pyo3_path::exceptions::PyRuntimeError::new_err(concat!(#bevy_type_str, " not found"))
                         })?;
                         let ptr = unsafe {
                             untyped.deref::<#bevy_type>() as *const #bevy_type
@@ -371,4 +365,18 @@ pub fn derive_py_component(input: TokenStream) -> TokenStream {
     };
 
     TokenStream::from(expanded)
+}
+
+/// Reject every field the generated accessors cannot convert, naming each one.
+fn check_field_types<'a>(fields: impl Iterator<Item = &'a syn::Field>) -> syn::Result<()> {
+    let mut errors = fields
+        .filter(|field| !is_derive_field_type(&field.ty))
+        .map(|field| syn::Error::new_spanned(&field.ty, UNSUPPORTED_FIELD));
+    let Some(mut first) = errors.next() else {
+        return Ok(());
+    };
+    for error in errors {
+        first.combine(error);
+    }
+    Err(first)
 }

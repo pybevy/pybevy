@@ -227,6 +227,10 @@ component names alongside the existing short-name inventory.
 their results in the same `run_code` call, or use direct `world.spawn()` and
 `world.entity()` for immediate operations. `Commands.spawn_batch()` returns
 `None`; `World.spawn_batch()` returns entity IDs.
+Batch validation rejects resource-entity hierarchy links and duplicate registered
+component aliases before insertion. Rejected deferred batches reclaim their
+empty reservations. Python lifecycle observers run after all bundles in the call
+are inserted; native hook effects during insertion are not rolled back.
 `world.query()` takes a `Query[...]` value, not a tuple or bare type: write
 `world.query(Query[tuple[A, B]])` or `world.query(Query[A])`.
 Grouped Query/Single data require builtin `tuple[...]`; `list[...]` and

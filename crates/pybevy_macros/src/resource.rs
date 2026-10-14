@@ -464,55 +464,6 @@ pub(crate) fn generate_resource_bridge_tokens(
         }
     };
 
-    // Generate get_mut method based on no_mut flag
-    let get_mut_impl = if no_mut {
-        let wrapped = wrap_storage(quote! { storage });
-        // Read-only: get_mut returns read-only access (same as get)
-        quote! {
-            fn get_mut(
-                &self,
-                world: &mut bevy::ecs::world::World,
-                validity: pybevy_core::ValidityFlagWithMode,
-                py: pyo3::Python,
-            ) -> pyo3::PyResult<pyo3::Py<pyo3::PyAny>> {
-                let resource = world.get_resource::<#bevy_type>().ok_or_else(|| {
-                    pyo3::exceptions::PyRuntimeError::new_err(concat!(#resource_name, " resource not found"))
-                })?;
-
-                let ptr = resource as *const #bevy_type;
-                // SAFETY: ptr is from a valid shared Bevy resource borrow; the validity
-                // flag invalidates storage when that borrow expires.
-                let storage = unsafe {
-                    pybevy_core::ResourceStorage::borrowed_ref(ptr, validity.flag)
-                };
-
-                #wrapped
-            }
-        }
-    } else {
-        let wrapped = wrap_storage(quote! { storage });
-        quote! {
-            fn get_mut(
-                &self,
-                world: &mut bevy::ecs::world::World,
-                validity: pybevy_core::ValidityFlagWithMode,
-                py: pyo3::Python,
-            ) -> pyo3::PyResult<pyo3::Py<pyo3::PyAny>> {
-                let resource = world.get_resource_mut::<#bevy_type>().ok_or_else(|| {
-                    pyo3::exceptions::PyRuntimeError::new_err(concat!(#resource_name, " resource not found"))
-                })?;
-
-                let ptr = resource.into_inner() as *mut #bevy_type;
-                // SAFETY: ptr is from a valid Bevy resource mutable borrow; validity flag invalidates storage when borrow expires.
-                let storage = unsafe {
-                    pybevy_core::ResourceStorage::borrowed_mut(ptr, validity.flag)
-                };
-
-                #wrapped
-            }
-        }
-    };
-
     // Cell-based read accessor: narrow access to just this resource through an
     // UnsafeWorldCell, so run_unsafe never conjures `&World`.
     let get_from_cell_wrapped = wrap_storage(quote! { storage });
@@ -823,8 +774,6 @@ pub(crate) fn generate_resource_bridge_tokens(
 
                 #get_wrapped
             }
-
-            #get_mut_impl
 
             #clone_owned_impl
             #snapshot_impl

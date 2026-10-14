@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    mem::take,
     sync::{Arc, Mutex, Weak},
 };
 
@@ -13,7 +14,10 @@ use pyo3::{PyTraverseError, PyVisit, exceptions::PyBaseException, prelude::*, ty
 use super::{
     PyEntity,
     batch_spawn::SpawnBatchCommand,
-    commands::{self, PreparedInsertion, PyCommands},
+    commands::{
+        self, PreparedInsertion, PyCommands, remove_components_from_entity_helper,
+        trigger_event_helper,
+    },
     component_type::ComponentRegistry,
     dynamic_system::lock_or_recover,
     helpers::validity_guard::{ValidityFlag, ValidityGuard},
@@ -79,12 +83,7 @@ impl WorldCommand {
                 }
             }
             Self::Insert(entity, insertion) => insertion.apply(world, entity),
-            Self::Batch(batches) => {
-                for (batch, entities) in batches {
-                    batch.apply_to(world, entities)?;
-                }
-                Ok(())
-            }
+            Self::Batch(batches) => SpawnBatchCommand::apply_many_to(world, batches),
             Self::InsertResource(value) => {
                 let kind = PyResourceType::try_from((&value.bind(py).get_type(), py))?;
                 kind.insert_into_world(world, py, value)
@@ -105,17 +104,12 @@ impl WorldCommand {
             Self::Remove(entity, classes) => {
                 // SAFETY: the temporary adapter is confined to this exclusive command application.
                 let commands = unsafe { PyCommands::from_world_temporary(world, validity) };
-                super::commands::remove_components_from_entity_helper(
-                    &commands,
-                    py,
-                    entity,
-                    classes.bind(py),
-                )
+                remove_components_from_entity_helper(&commands, py, entity, classes.bind(py))
             }
             Self::Trigger(target, event) => {
                 // SAFETY: the temporary adapter is confined to this exclusive command application.
                 let commands = unsafe { PyCommands::from_world_temporary(world, validity) };
-                super::commands::trigger_event_helper(&commands, py, event.into_bound(py), target)
+                trigger_event_helper(&commands, py, event.into_bound(py), target)
             }
         }
     }
@@ -246,7 +240,7 @@ pub(crate) fn take_errors(world: &World, py: Python<'_>) -> Vec<PyErr> {
 }
 
 fn take_stored_errors(errors: &Mutex<Vec<Py<PyBaseException>>>, py: Python<'_>) -> Vec<PyErr> {
-    let errors = std::mem::take(&mut *lock_or_recover(errors));
+    let errors = take(&mut *lock_or_recover(errors));
     errors
         .into_iter()
         .map(|error| PyErr::from_value(error.into_bound(py).into_any()))

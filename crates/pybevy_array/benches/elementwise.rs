@@ -17,7 +17,7 @@ use pybevy_bytecodevm::{
     bytecode::Op,
     columns::{ColumnMut, ColumnRef},
     dense::{DenseInput, DenseOutput, DenseProgram, execute_dense},
-    tiled::{TiledScratch, f32_native_eligible, run_map, run_map_f32},
+    tiled::{TiledScratch, map_supported, run_map, run_map_f32},
 };
 
 const N: usize = 1_000_000;
@@ -86,7 +86,7 @@ fn bench(c: &mut Criterion, name: &str, ops: &[Op]) {
         })
     });
 
-    let native_f32 = f32_native_eligible(ops);
+    let native_f32 = map_supported(ops);
     group.bench_function("tiled_f32", |b| {
         b.iter(|| {
             let sources = [

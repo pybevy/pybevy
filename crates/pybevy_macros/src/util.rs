@@ -1,7 +1,10 @@
 use proc_macro_crate::{FoundCrate, crate_name};
 use proc_macro2::Span;
 use quote::quote;
-use syn::{Attribute, Fields, GenericArgument, Ident, ItemStruct, PathArguments, Type};
+use syn::{
+    Attribute, Fields, GenericArgument, Ident, ItemStruct, Meta, PathArguments, Token, Type,
+    punctuated::Punctuated,
+};
 
 /// Resolve the path to the pybevy crate, handling both internal
 /// (within pybevy workspace) and external (user crate) usage.
@@ -50,6 +53,28 @@ pub(crate) fn reflect_registration_tokens(
             });
         }
     }
+}
+
+/// Require `#[pyclass(frozen)]` on a wrapper whose bridge hands out value
+/// snapshots, so a Python write cannot silently detach from the component.
+pub(crate) fn require_frozen_pyclass(input: &ItemStruct, message: &str) -> syn::Result<()> {
+    for attr in &input.attrs {
+        if attr
+            .path()
+            .segments
+            .last()
+            .is_some_and(|segment| segment.ident == "pyclass")
+        {
+            let options = attr.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)?;
+            if options
+                .iter()
+                .any(|option| option.path().is_ident("frozen"))
+            {
+                return Ok(());
+            }
+        }
+    }
+    Err(syn::Error::new_spanned(input, message))
 }
 
 /// Extract the inner type from a generic storage type like `AssetStorage<T>` or `ComponentStorage<T>`
@@ -103,15 +128,11 @@ pub(crate) fn find_storage_field_type<'a>(
     }
 }
 
-/// Field annotation parsed from `#[color]`, `#[borrowed]`, `#[read_only]` attributes
+/// Field annotation parsed from `#[read_only]`
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FieldAnnotation {
-    /// No special annotation - auto-detect based on type
+    /// Getter and setter
     None,
-    /// `#[color]` - Use PyColor::from_color() for getter
-    Color,
-    /// `#[borrowed]` - Use borrow_field_as() for getter
-    Borrowed,
     /// `#[read_only]` - Generate getter only, no setter
     ReadOnly,
 }
@@ -211,163 +232,43 @@ pub(crate) fn extract_option_inner(ty: &Type) -> Option<&Type> {
     None
 }
 
-/// Generate getter/setter method pairs for a list of field definitions.
+/// Whether `#[derive(PyComponent)]` can expose a field: a scalar or `String`,
+/// optionally wrapped in one `Option`.
+pub(crate) fn is_derive_field_type(ty: &Type) -> bool {
+    let inner = extract_option_inner(ty).unwrap_or(ty);
+    is_primitive_type(inner) || is_string_type(inner)
+}
+
+/// Generate getter/setter method pairs for fields accepted by [`is_derive_field_type`].
 ///
-/// `wrapper_type` is the PyO3 wrapper struct (e.g., `PyPointLight`).
 /// Returns a TokenStream of getter/setter methods (without the surrounding `impl` block).
-pub(crate) fn generate_field_accessors(
-    _wrapper_type: &Ident,
-    fields: &[FieldDef],
-) -> proc_macro2::TokenStream {
+pub(crate) fn generate_field_accessors(fields: &[FieldDef]) -> proc_macro2::TokenStream {
     let mut methods = proc_macro2::TokenStream::new();
 
     for field in fields {
         let field_name = &field.name;
         let field_ty = &field.ty;
         let setter_name = quote::format_ident!("set_{}", field_name);
+        let read = if is_primitive_type(field_ty) {
+            quote! { self.as_ref()?.#field_name }
+        } else {
+            quote! { self.as_ref()?.#field_name.clone() }
+        };
 
-        match field.annotation {
-            FieldAnnotation::Color => {
-                methods.extend(quote! {
-                    #[getter]
-                    pub fn #field_name(&self, py: pyo3::Python) -> pyo3::PyResult<pyo3::Py<#field_ty>> {
-                        #field_ty::from_color(self.as_ref()?.#field_name, py)
-                    }
-
-                    #[setter]
-                    pub fn #setter_name(&mut self, value: #field_ty) -> pyo3::PyResult<()> {
-                        let value = value.resolved_copy()?;
-                        self.as_mut()?.#field_name = value;
-                        Ok(())
-                    }
-                });
+        methods.extend(quote! {
+            #[getter]
+            pub fn #field_name(&self) -> pyo3::PyResult<#field_ty> {
+                Ok(#read)
             }
-            FieldAnnotation::Borrowed => {
-                // Borrowed field: getter uses borrow_field_as(), setter uses .into()
-                methods.extend(quote! {
-                    #[getter]
-                    pub fn #field_name(&self) -> pyo3::PyResult<#field_ty> {
-                        Ok(self.storage.borrow_field_as(|c| &c.#field_name)?)
-                    }
-
-                    #[setter]
-                    pub fn #setter_name(&mut self, value: #field_ty) -> pyo3::PyResult<()> {
-                        self.as_mut()?.#field_name = value.into();
-                        Ok(())
-                    }
-                });
-            }
-            FieldAnnotation::ReadOnly => {
-                // Read-only: getter only, no setter
-                if is_primitive_type(field_ty) {
-                    methods.extend(quote! {
-                        #[getter]
-                        pub fn #field_name(&self) -> pyo3::PyResult<#field_ty> {
-                            Ok(self.as_ref()?.#field_name)
-                        }
-                    });
-                } else if is_string_type(field_ty) {
-                    methods.extend(quote! {
-                        #[getter]
-                        pub fn #field_name(&self) -> pyo3::PyResult<String> {
-                            Ok(self.as_ref()?.#field_name.clone())
-                        }
-                    });
-                } else {
-                    methods.extend(quote! {
-                        #[getter]
-                        pub fn #field_name(&self) -> pyo3::PyResult<#field_ty> {
-                            Ok(self.as_ref()?.#field_name.into())
-                        }
-                    });
+        });
+        if field.annotation == FieldAnnotation::None {
+            methods.extend(quote! {
+                #[setter]
+                pub fn #setter_name(&mut self, value: #field_ty) -> pyo3::PyResult<()> {
+                    self.as_mut()?.#field_name = value;
+                    Ok(())
                 }
-            }
-            FieldAnnotation::None => {
-                if let Some(inner_ty) = extract_option_inner(field_ty) {
-                    // Option<T> field
-                    if is_primitive_type(inner_ty) {
-                        methods.extend(quote! {
-                            #[getter]
-                            pub fn #field_name(&self) -> pyo3::PyResult<Option<#inner_ty>> {
-                                Ok(self.as_ref()?.#field_name)
-                            }
-
-                            #[setter]
-                            pub fn #setter_name(&mut self, value: Option<#inner_ty>) -> pyo3::PyResult<()> {
-                                self.as_mut()?.#field_name = value;
-                                Ok(())
-                            }
-                        });
-                    } else if is_string_type(inner_ty) {
-                        methods.extend(quote! {
-                            #[getter]
-                            pub fn #field_name(&self) -> pyo3::PyResult<Option<String>> {
-                                Ok(self.as_ref()?.#field_name.clone())
-                            }
-
-                            #[setter]
-                            pub fn #setter_name(&mut self, value: Option<String>) -> pyo3::PyResult<()> {
-                                self.as_mut()?.#field_name = value;
-                                Ok(())
-                            }
-                        });
-                    } else {
-                        methods.extend(quote! {
-                            #[getter]
-                            pub fn #field_name(&self) -> pyo3::PyResult<Option<#inner_ty>> {
-                                Ok(self.as_ref()?.#field_name.as_ref().map(|v| v.into()))
-                            }
-
-                            #[setter]
-                            pub fn #setter_name(&mut self, value: Option<#inner_ty>) -> pyo3::PyResult<()> {
-                                self.as_mut()?.#field_name = value.map(Into::into);
-                                Ok(())
-                            }
-                        });
-                    }
-                } else if is_primitive_type(field_ty) {
-                    // Primitive: direct copy
-                    methods.extend(quote! {
-                        #[getter]
-                        pub fn #field_name(&self) -> pyo3::PyResult<#field_ty> {
-                            Ok(self.as_ref()?.#field_name)
-                        }
-
-                        #[setter]
-                        pub fn #setter_name(&mut self, value: #field_ty) -> pyo3::PyResult<()> {
-                            self.as_mut()?.#field_name = value;
-                            Ok(())
-                        }
-                    });
-                } else if is_string_type(field_ty) {
-                    methods.extend(quote! {
-                        #[getter]
-                        pub fn #field_name(&self) -> pyo3::PyResult<String> {
-                            Ok(self.as_ref()?.#field_name.clone())
-                        }
-
-                        #[setter]
-                        pub fn #setter_name(&mut self, value: String) -> pyo3::PyResult<()> {
-                            self.as_mut()?.#field_name = value;
-                            Ok(())
-                        }
-                    });
-                } else {
-                    // Non-primitive: use .into() conversions
-                    methods.extend(quote! {
-                        #[getter]
-                        pub fn #field_name(&self) -> pyo3::PyResult<#field_ty> {
-                            Ok(self.as_ref()?.#field_name.into())
-                        }
-
-                        #[setter]
-                        pub fn #setter_name(&mut self, value: #field_ty) -> pyo3::PyResult<()> {
-                            self.as_mut()?.#field_name = value.into();
-                            Ok(())
-                        }
-                    });
-                }
-            }
+            });
         }
     }
 
@@ -376,18 +277,11 @@ pub(crate) fn generate_field_accessors(
 
 /// Parse field annotations from attributes
 pub(crate) fn parse_field_annotation(attrs: &[Attribute]) -> FieldAnnotation {
-    for attr in attrs {
-        if attr.path().is_ident("color") {
-            return FieldAnnotation::Color;
-        }
-        if attr.path().is_ident("borrowed") {
-            return FieldAnnotation::Borrowed;
-        }
-        if attr.path().is_ident("read_only") {
-            return FieldAnnotation::ReadOnly;
-        }
+    if attrs.iter().any(|attr| attr.path().is_ident("read_only")) {
+        FieldAnnotation::ReadOnly
+    } else {
+        FieldAnnotation::None
     }
-    FieldAnnotation::None
 }
 
 /// Convert CamelCase to snake_case

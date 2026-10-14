@@ -946,15 +946,6 @@ mod tests {
             unreachable!()
         }
 
-        fn get_mut(
-            &self,
-            _world: &mut World,
-            _validity: ValidityFlagWithMode,
-            _py: Python,
-        ) -> PyResult<Py<PyAny>> {
-            unreachable!()
-        }
-
         fn clone_owned(&self, _world: &World, _py: Python) -> PyResult<Py<PyAny>> {
             unreachable!()
         }

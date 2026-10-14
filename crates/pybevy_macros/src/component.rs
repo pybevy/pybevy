@@ -45,10 +45,7 @@ impl Parse for BridgeField {
 
 /// A view-only field with an explicit type annotation.
 #[derive(Clone)]
-#[allow(dead_code)]
 struct ViewOnlyField {
-    /// Token stream for field access
-    rust_accessor: proc_macro2::TokenStream,
     /// Token stream for offset_of!
     offset_path: proc_macro2::TokenStream,
     /// Python-visible name
@@ -59,41 +56,32 @@ struct ViewOnlyField {
 
 impl Parse for ViewOnlyField {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let (rust_accessor, offset_path, python_name) = if input.peek(syn::LitInt) {
-            let idx: syn::LitInt = input.parse()?;
-            let idx_val = idx.base10_parse::<usize>()?;
-            let idx_lit = syn::Index::from(idx_val);
-
-            let mut accessor_tokens = quote! { .#idx_lit };
-            let mut offset_tokens = quote! { #idx_lit };
-
-            while input.peek(Token![.]) {
-                input.parse::<Token![.]>()?;
-                let sub: Ident = input.parse()?;
-                accessor_tokens = quote! { #accessor_tokens.#sub };
-                offset_tokens = quote! { #offset_tokens.#sub };
-            }
-
-            input.parse::<Token![as]>()?;
-            let python_name: Ident = input.parse()?;
-            (accessor_tokens, offset_tokens, python_name)
-        } else {
-            let ident: Ident = input.parse()?;
-            let python_name = ident.clone();
-            (quote! { .#ident }, quote! { #ident }, python_name)
-        };
+        let (_, offset_path, python_name) = parse_field_path(input)?;
 
         // Parse `: Type`
         input.parse::<Token![:]>()?;
         let field_type: Type = input.parse()?;
 
         Ok(ViewOnlyField {
-            rust_accessor,
             offset_path,
             python_name,
             field_type,
         })
     }
+}
+
+/// Field initializers defaulting every wrapper field other than `storage`.
+fn extra_field_defaults(input: &ItemStruct) -> proc_macro2::TokenStream {
+    let Fields::Named(fields) = &input.fields else {
+        return proc_macro2::TokenStream::new();
+    };
+    let inits = fields
+        .named
+        .iter()
+        .filter_map(|field| field.ident.as_ref())
+        .filter(|name| *name != "storage")
+        .map(|name| quote! { #name: Default::default() });
+    quote! { #(#inits,)* }
 }
 
 /// Generates storage boilerplate for component wrappers in feature crates.
@@ -131,19 +119,6 @@ impl Parse for ViewOnlyField {
 /// This skips the `From`, `TryFrom`, and `from_owned` implementations that require `Clone`.
 /// For a value-like component that can be reconstructed from `&T`, use
 /// `clone_with = path::to_fn` to keep Python insertion available.
-fn extra_field_defaults(input: &ItemStruct) -> proc_macro2::TokenStream {
-    let Fields::Named(fields) = &input.fields else {
-        return proc_macro2::TokenStream::new();
-    };
-    let inits = fields
-        .named
-        .iter()
-        .filter_map(|field| field.ident.as_ref())
-        .filter(|name| *name != "storage")
-        .map(|name| quote! { #name: Default::default() });
-    quote! { #(#inits,)* }
-}
-
 pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
     struct ComponentStorageArgs {
         bevy_type: Type,
@@ -152,7 +127,6 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
         unit: bool,
         bridge: bool,
         no_reflect: bool,
-        bridge_name: Option<String>,
         view_fields: Option<Vec<BridgeField>>,
         batch_only_fields: Option<Vec<BridgeField>>,
         view_only_fields: Option<Vec<ViewOnlyField>>,
@@ -172,7 +146,6 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
             let mut unit = false;
             let mut bridge = false;
             let mut no_reflect = false;
-            let bridge_name = None;
             let mut view_fields = None;
             let mut batch_only_fields = None;
             let mut view_only_fields = None;
@@ -260,7 +233,6 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
                 unit,
                 bridge,
                 no_reflect,
-                bridge_name,
                 view_fields,
                 batch_only_fields,
                 view_only_fields,
@@ -312,12 +284,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
             .into();
         }
         let bridge_tokens = if args.bridge {
-            generate_unit_bridge_tokens(
-                bevy_type,
-                py_type,
-                args.bridge_name.as_deref(),
-                args.no_reflect,
-            )
+            generate_unit_bridge_tokens(bevy_type, py_type, args.no_reflect)
         } else {
             quote! {}
         };
@@ -334,7 +301,6 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
         generate_bridge_tokens(
             bevy_type,
             py_type,
-            args.bridge_name.as_deref(),
             args.no_insert || (args.no_clone && args.clone_with.is_none()),
             args.no_reflect,
             args.view_fields.as_ref(),
@@ -425,7 +391,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
     let domain_tokens = domain_impl_tokens(
         bevy_type,
         py_type,
-        &owner_name(py_type, args.bridge_name.as_deref()),
+        &owner_name(py_type, None),
         &args.domains,
     );
 
@@ -530,7 +496,6 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
 fn generate_bridge_tokens(
     bevy_type: &Type,
     py_type: &Ident,
-    bridge_name_override: Option<&str>,
     no_insert: bool,
     no_reflect: bool,
     view_fields: Option<&Vec<BridgeField>>,
@@ -544,7 +509,7 @@ fn generate_bridge_tokens(
     domains: &[DomainEntry],
     emit_inventory: bool,
 ) -> proc_macro2::TokenStream {
-    let bridge_name_str = owner_name(py_type, bridge_name_override);
+    let bridge_name_str = owner_name(py_type, None);
     let bridge_name = quote::format_ident!("{}Bridge", bridge_name_str);
     let component_name = &bridge_name_str;
 

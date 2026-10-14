@@ -188,12 +188,12 @@ impl<'a> ColumnMut<'a> {
 /// As [`ColumnRef::strided_1d`] and [`ColumnMut::strided_1d`] over one run. This is the
 /// ONLY sanctioned way to alias a source and destination; partial or shifted overlap is
 /// forbidden.
-pub unsafe fn in_place_pair(
+pub unsafe fn in_place_pair<'a>(
     base: *mut u8,
     stride_bytes: isize,
     ftype: FieldType,
     len: usize,
-) -> (ColumnRef<'static>, ColumnMut<'static>) {
+) -> (ColumnRef<'a>, ColumnMut<'a>) {
     (
         // SAFETY: forwarded to the caller's obligation on the shared run.
         unsafe { ColumnRef::strided_1d(base as *const u8, stride_bytes, ftype, len) },

@@ -100,14 +100,6 @@ pub trait ResourceBridge: Send + Sync + 'static {
     fn get(&self, world: &World, validity: ValidityFlagWithMode, py: Python)
     -> PyResult<Py<PyAny>>;
 
-    /// Get resource from world (mutable access)
-    fn get_mut(
-        &self,
-        world: &mut World,
-        validity: ValidityFlagWithMode,
-        py: Python,
-    ) -> PyResult<Py<PyAny>>;
-
     /// Clone the current native resource into independently owned Python storage.
     ///
     /// Control-plane patching uses this to validate and apply every Python setter
