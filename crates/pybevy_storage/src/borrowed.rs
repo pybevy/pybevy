@@ -246,7 +246,8 @@ impl<T> BorrowedMut<T> {
     {
         self.validity.check_read()?;
         let base = match self.component_write {
-            Some(context) => context.resolve()? as *mut T,
+            // Only read through: tracked writes re-resolve via `resolve_mut` first.
+            Some(context) => context.resolve()?.cast_mut() as *mut T,
             None => self.ptr,
         };
         // SAFETY: validity checked above; base points to the current parent value.
@@ -281,7 +282,7 @@ pub(crate) unsafe fn revalidate_field_ptr(
     entity: Entity,
     component_id: ComponentId,
     offset: usize,
-) -> Option<*mut u8> {
+) -> Option<*const u8> {
     let entity_ref = world.get_entity(entity).ok()?;
     // SAFETY: the caller permits reading this exact component while the cell is live.
     let base = unsafe { entity_ref.get_by_id(component_id) }?.as_ptr();
@@ -383,7 +384,7 @@ impl RevalidatingField {
     }
 
     #[inline]
-    fn resolve(&self) -> Result<*mut u8, StorageError> {
+    fn resolve(&self) -> Result<*const u8, StorageError> {
         // SAFETY: forwarded from this handle's construction contract
         unsafe { revalidate_field_ptr(self.world, self.entity, self.component_id, self.offset) }
             .ok_or(StorageError::EntityUnavailable)

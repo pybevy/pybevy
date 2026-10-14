@@ -1,7 +1,7 @@
 use bevy::{
     asset::RenderAssetUsages,
-    math::primitives::Polyline3d,
     mesh::{Indices, Mesh, MeshBuilder, PrimitiveTopology},
+    shape::Polyline3d,
 };
 use pybevy_core::PyAsset;
 use pyo3::prelude::*;

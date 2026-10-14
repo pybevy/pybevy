@@ -129,7 +129,7 @@ mod tests {
         let mut world = World::new();
         world.register_disabling_component::<Disabled>();
         let scene_entity = world.spawn_empty().id();
-        let observer = world.add_observer(|_: On<Add, Disabled>| {}).id();
+        let observer = world.add_observer(|_: On<Add<Disabled>>| {}).id();
         let python_observer = world.spawn(PythonObserver).id();
 
         assert_eq!(scene_entities(&mut world), vec![scene_entity]);

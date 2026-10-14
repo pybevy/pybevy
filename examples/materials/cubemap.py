@@ -9,7 +9,7 @@ from pybevy.prelude import *
 from pybevy.render import Extent3d, TextureViewDescriptor, TextureViewDimension
 
 
-@material(fragment_shader="shaders/examples/cubemap.wgsl")
+@material(fragment_shader="shaders/examples/cubemap.wesl")
 class CubeReflection(Material):
     environment: TextureBinding = TextureBinding(dimension="cube")
     angle: float = 0.0

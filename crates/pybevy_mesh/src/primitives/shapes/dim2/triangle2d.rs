@@ -1,6 +1,6 @@
 use bevy::{
-    math::primitives::{Measured2d, Triangle2d},
     mesh::Meshable,
+    shape::{Measured2d, Triangle2d},
 };
 use pybevy_core::{
     domain::{FINITE_NON_NEGATIVE, check_for},

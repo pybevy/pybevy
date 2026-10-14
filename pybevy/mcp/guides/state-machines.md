@@ -98,11 +98,10 @@ they apply between frames, not immediately.
 @system
 def check_start_game(
     next_state: ResMut[NextState[GamePhase]],
-    interaction_query: Query[Interaction, With[PlayButton]],
+    pressed_query: Query[Entity, tuple[With[PlayButton], Added[Pressed]]],
 ) -> None:
-    for interaction in interaction_query:
-        if interaction == Interaction.Pressed:
-            next_state.set(GamePhase.PLAYING)
+    for _ in pressed_query:
+        next_state.set(GamePhase.PLAYING)
 ```
 
 `set()` is unconditional, matching Bevy: setting the current member runs that

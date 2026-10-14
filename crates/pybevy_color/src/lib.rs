@@ -5,6 +5,9 @@ pub mod hwba;
 pub mod laba;
 pub mod lcha;
 pub mod linear_rgba;
+pub mod okhsla;
+pub mod okhsva;
+pub mod okhwba;
 pub mod oklaba;
 pub mod oklcha;
 pub mod srgba;
@@ -15,8 +18,8 @@ use pyo3::prelude::*;
 pub mod prelude {
     pub use crate::{
         color::PyColor, hsla::PyHsla, hsva::PyHsva, hwba::PyHwba, laba::PyLaba, lcha::PyLcha,
-        linear_rgba::PyLinearRgba, oklaba::PyOklaba, oklcha::PyOklcha, srgba::PySrgba,
-        xyza::PyXyza,
+        linear_rgba::PyLinearRgba, okhsla::PyOkhsla, okhsva::PyOkhsva, okhwba::PyOkhwba,
+        oklaba::PyOklaba, oklcha::PyOklcha, srgba::PySrgba, xyza::PyXyza,
     };
 }
 
@@ -33,6 +36,9 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<laba::PyLaba>()?;
     m.add_class::<oklaba::PyOklaba>()?;
     m.add_class::<xyza::PyXyza>()?;
+    m.add_class::<okhsla::PyOkhsla>()?;
+    m.add_class::<okhsva::PyOkhsva>()?;
+    m.add_class::<okhwba::PyOkhwba>()?;
     color::register_color_variants(&m)?;
     parent.add_submodule(&m)
 }

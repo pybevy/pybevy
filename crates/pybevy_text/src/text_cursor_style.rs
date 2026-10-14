@@ -8,7 +8,9 @@ use pyo3::prelude::*;
     TextCursorStyle,
     bridge,
     no_reflect,
-    batch_only_fields = [color, selection_color, unfocused_selection_color]
+    view_fields = [selection_radius],
+    batch_only_fields = [color, selection_color, unfocused_selection_color],
+    domains = [selection_radius => [finite]]
 )]
 #[pyclass(name = "TextCursorStyle", module = "pybevy.text", extends = PyComponent)]
 #[derive(Debug)]
@@ -38,19 +40,22 @@ impl PyTextCursorStyle {
         color = Self::default_color(),
         selection_color = Self::default_selection_color(),
         unfocused_selection_color = Self::default_unfocused_selection_color(),
-        selected_text_color = None
+        selected_text_color = None,
+        selection_radius = 0.0
     ))]
     pub fn new(
         color: PyColor,
         selection_color: PyColor,
         unfocused_selection_color: PyColor,
         selected_text_color: Option<PyColor>,
+        selection_radius: f32,
     ) -> PyResult<PyClassInitializer<Self>> {
         let style = TextCursorStyle {
             color: color.try_into()?,
             selection_color: selection_color.try_into()?,
             unfocused_selection_color: unfocused_selection_color.try_into()?,
             selected_text_color: selected_text_color.map(Color::try_from).transpose()?,
+            selection_radius: Self::check_selection_radius(selection_radius)?,
         };
         Ok(Self::from_owned(style).into())
     }
@@ -103,6 +108,18 @@ impl PyTextCursorStyle {
     #[setter]
     pub fn set_selected_text_color(&mut self, color: Option<PyColor>) -> PyResult<()> {
         self.as_mut()?.selected_text_color = color.map(Color::try_from).transpose()?;
+        Ok(())
+    }
+
+    #[getter]
+    pub fn selection_radius(&self) -> PyResult<f32> {
+        Ok(self.as_ref()?.selection_radius)
+    }
+
+    #[setter]
+    pub fn set_selection_radius(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_selection_radius(value)?;
+        self.as_mut()?.selection_radius = value;
         Ok(())
     }
 

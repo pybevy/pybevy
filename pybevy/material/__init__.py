@@ -1,11 +1,11 @@
 """Native material types and the @material decorator.
 
 Native classes mirror ``bevy::material``. The @material decorator defines
-custom shader materials from Python, generating WGSL struct declarations and
+custom shader materials from Python, generating a WESL bindings module and
 handling std140 packing automatically.
 
 Example:
-    @material(fragment_shader="shaders/lava.wgsl")
+    @material(fragment_shader="shaders/lava.wesl")
     class LavaMaterial(Material):
         color: LinearRgba = LinearRgba(1.0, 0.3, 0.0, 1.0)
         crack_scale: float = 5.0
@@ -254,20 +254,20 @@ def material(
 ) -> Callable[[type[MaterialT]], type[MaterialT]]:
     """Decorator to define a custom shader material.
 
-    Generates WGSL struct + binding declaration and handles data packing.
+    Generates the WESL bindings module ``pybevy::gen::<Class>`` and handles data packing.
 
     Args:
         fragment_shader: Asset path to custom fragment shader (relative to assets/ directory).
         vertex_shader: Asset path to custom vertex shader (relative to assets/ directory).
-        prepass_vertex_shader: WGSL vertex shader for depth, normals, motion and shadows.
-        prepass_fragment_shader: WGSL fragment shader for those prepasses, including discard.
-        deferred_vertex_shader: WGSL vertex shader for deferred rendering.
-        deferred_fragment_shader: WGSL fragment shader writing the deferred G-buffer.
+        prepass_vertex_shader: Vertex shader for depth, normals, motion and shadows.
+        prepass_fragment_shader: Fragment shader for those prepasses, including discard.
+        deferred_vertex_shader: Vertex shader for deferred rendering.
+        deferred_fragment_shader: Fragment shader writing the deferred G-buffer.
         base: StandardMaterial template, copied at decoration and per instance.
 
     Example:
         @material(
-            fragment_shader="shaders/hologram.wgsl",
+            fragment_shader="shaders/hologram.wesl",
             base=StandardMaterial(alpha_mode=AlphaMode.Blend(), double_sided=True),
         )
         class HologramMaterial(Material):
@@ -404,7 +404,7 @@ def material(
         bool_field_map = {bf.name: bf for bf in bool_fields}
         texture_field_map = {tf.name: tf for tf in texture_fields}
 
-        # Generate WGSL binding declarations (injected in-memory, not written to disk)
+        # Generate WESL binding declarations (injected in-memory, not written to disk)
         wgsl = _generate_wgsl(cls.__name__, layout, texture_fields)
         if storage_fields:
             wgsl += "\n" + "\n".join(
@@ -412,12 +412,12 @@ def material(
             )
         for field in storage_fields:
             wgsl += (
-                f"\n@group(#{{MATERIAL_BIND_GROUP}}) @binding({field.binding}) "
+                f"\n@group(constants::MATERIAL_BIND_GROUP) @binding({field.binding}) "
                 f"var<storage, read> {field.name}: array<{field.layout.wgsl_type}>;\n"
             )
 
         for slot, sampler_field in enumerate(sampler_fields):
-            wgsl += f"\n@group(#{{MATERIAL_BIND_GROUP}}) @binding({109 + len(storage_fields) + slot}) var {sampler_field.name}: {sampler_field.layout.wgsl_type};\n"
+            wgsl += f"\n@group(constants::MATERIAL_BIND_GROUP) @binding({109 + len(storage_fields) + slot}) var {sampler_field.name}: {sampler_field.layout.wgsl_type};\n"
 
         try:
             _pybevy.pbr.ShaderMaterial._validate_bindings(wgsl)
@@ -574,7 +574,7 @@ def material(
         _cls.base = property(_base_getter, _base_setter)
         _cls.__setattr__ = __setattr__
 
-        # Capture shader paths and WGSL for closure use in to_shader_material
+        # Capture shader paths and WESL bindings for closure use in to_shader_material
         _frag_shader = fragment_shader
         _vert_shader = vertex_shader
         _wgsl = wgsl

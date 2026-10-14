@@ -1,4 +1,4 @@
-use bevy::math::primitives::Line2d;
+use bevy::shape::Line2d;
 use pybevy_core::{FromBorrowedStorage, ValueStorage};
 use pyo3::prelude::*;
 

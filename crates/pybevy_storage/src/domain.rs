@@ -284,9 +284,14 @@ impl DomainValues for DomainValue {
 fn val_magnitude(value: Val) -> Option<f32> {
     match value {
         Val::Auto => None,
-        Val::Px(v) | Val::Percent(v) | Val::Vw(v) | Val::Vh(v) | Val::VMin(v) | Val::VMax(v) => {
-            Some(v)
-        }
+        Val::Px(v)
+        | Val::Em(v)
+        | Val::Rem(v)
+        | Val::Percent(v)
+        | Val::Vw(v)
+        | Val::Vh(v)
+        | Val::VMin(v)
+        | Val::VMax(v) => Some(v),
     }
 }
 

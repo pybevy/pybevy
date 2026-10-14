@@ -1,5 +1,12 @@
-use bevy::ui::ComputedNode;
-use pybevy_core::{ComponentStorage, PyComponent, computed_owned, repr::ReprLiteral};
+use bevy::{
+    text::{EmSize, RemSize},
+    ui::ComputedNode,
+};
+use pybevy_core::{
+    ComponentStorage, PyComponent, computed_owned,
+    domain::{FINITE, check_for},
+    repr::ReprLiteral,
+};
 use pybevy_macros::pycomponent;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
@@ -95,6 +102,30 @@ impl PyComputedNode {
     pub fn set_inverse_scale_factor(&mut self, value: f32) -> PyResult<()> {
         let value = Self::check_inverse_scale_factor(value)?;
         self.as_mut()?.inverse_scale_factor = value;
+        Ok(())
+    }
+
+    #[getter]
+    pub fn em_size(&self) -> PyResult<f32> {
+        Ok(self.as_ref()?.em_size.0)
+    }
+
+    #[setter]
+    pub fn set_em_size(&mut self, value: f32) -> PyResult<()> {
+        let value = check_for::<Self, _>("em_size", value, FINITE)?;
+        self.as_mut()?.em_size = EmSize(value);
+        Ok(())
+    }
+
+    #[getter]
+    pub fn rem_size(&self) -> PyResult<f32> {
+        Ok(self.as_ref()?.rem_size.0)
+    }
+
+    #[setter]
+    pub fn set_rem_size(&mut self, value: f32) -> PyResult<()> {
+        let value = check_for::<Self, _>("rem_size", value, FINITE)?;
+        self.as_mut()?.rem_size = RemSize(value);
         Ok(())
     }
 

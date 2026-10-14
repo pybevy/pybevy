@@ -30,7 +30,18 @@ def _apply() -> None:
     from .assets import RenderAssetUsages
     from .audio import PlaybackSettings, Volume
     from .camera import Exposure, Visibility
-    from .color import Color, Hwba, Laba, LinearRgba, Oklaba, Srgba, Xyza
+    from .color import (
+        Color,
+        Hwba,
+        Laba,
+        LinearRgba,
+        Okhsla,
+        Okhsva,
+        Okhwba,
+        Oklaba,
+        Srgba,
+        Xyza,
+    )
     from .core_pipeline import Tonemapping
     from .light import ShadowFilteringMethod, SunDisk
     from .math import (
@@ -66,8 +77,8 @@ def _apply() -> None:
     from .transform import GlobalTransform, Transform
     from .ui import (
         BorderRadius,
+        CornerRadius,
         FocusPolicy,
-        Interaction,
         Overflow,
         UiPosition,
         UiRect,
@@ -84,6 +95,9 @@ def _apply() -> None:
         (Laba, ["BLACK", "WHITE"]),
         (Oklaba, ["BLACK", "WHITE"]),
         (Xyza, ["BLACK", "WHITE"]),
+        (Okhsla, ["BLACK", "WHITE"]),
+        (Okhsva, ["BLACK", "WHITE"]),
+        (Okhwba, ["BLACK", "WHITE"]),
         # camera
         (Visibility, ["Inherited", "Visible", "Hidden"]),
         (Bloom, ["NATURAL", "ANAMORPHIC", "OLD_SCHOOL", "SCREEN_BLUR"]),
@@ -93,6 +107,7 @@ def _apply() -> None:
             Tonemapping,
             [
                 "None_",
+                "Linear",
                 "Reinhard",
                 "ReinhardLuminance",
                 "AcesFitted",
@@ -115,8 +130,8 @@ def _apply() -> None:
                 "TEXTURE_BINDING",
                 "STORAGE_BINDING",
                 "RENDER_ATTACHMENT",
+                "TRANSIENT_ATTACHMENT",
                 "STORAGE_ATOMIC",
-                "TRANSIENT",
             ],
         ),
         (
@@ -300,9 +315,9 @@ def _apply() -> None:
         (GlobalTransform, ["IDENTITY"]),
         # ui
         (FocusPolicy, ["Block", "Pass"]),
-        (Interaction, ["None_", "Hovered", "Pressed"]),
         (Overflow, ["DEFAULT"]),
-        (BorderRadius, ["ZERO", "MAX"]),
+        (BorderRadius, ["ZERO", "MAX", "MAX_ELLIPTICAL"]),
+        (CornerRadius, ["MAX", "MAX_ELLIPTICAL", "ZERO"]),
         (UiTransform, ["IDENTITY"]),
         (UiPosition, ["CENTER", "TOP", "BOTTOM", "LEFT", "RIGHT", "TOP_LEFT", "TOP_RIGHT", "BOTTOM_LEFT", "BOTTOM_RIGHT"]),
         (UiRect, ["ZERO", "AUTO", "DEFAULT"]),

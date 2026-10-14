@@ -1,7 +1,5 @@
-use bevy::math::{
-    Vec2,
-    cubic_splines::{CubicCardinalSpline, CubicGenerator, CyclicCubicGenerator},
-};
+use bevy::curve::cubic_splines::{CubicCardinalSpline, CubicGenerator, CyclicCubicGenerator};
+use bevy::math::Vec2;
 use pybevy_core::repr::float_repr;
 use pyo3::{exceptions::PyValueError, prelude::*};
 

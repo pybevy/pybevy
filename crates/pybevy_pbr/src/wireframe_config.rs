@@ -24,13 +24,15 @@ impl PyWireframeConfig {
         global_ = false,
         default_color = Color::WHITE.into(),
         default_line_width = 1.0,
-        default_topology = Omittable::default()
+        default_topology = Omittable::default(),
+        xray_mode = false
     ))]
     pub fn new(
         global_: bool,
         default_color: PyColor,
         default_line_width: f32,
         default_topology: Omittable<PyRef<'_, PyWireframeTopology>>,
+        xray_mode: bool,
     ) -> PyResult<PyClassInitializer<Self>> {
         let default_line_width = Self::check_default_line_width(default_line_width)?;
         let default_color = default_color.try_into()?;
@@ -42,7 +44,19 @@ impl PyWireframeConfig {
                 .into_option()
                 .map(|topology| topology.0)
                 .unwrap_or(WireframeTopology::Triangles),
+            xray_mode,
         }))
+    }
+
+    #[getter]
+    pub fn xray_mode(&self) -> PyResult<bool> {
+        Ok(self.as_ref()?.xray_mode)
+    }
+
+    #[setter]
+    pub fn set_xray_mode(&mut self, value: bool) -> PyResult<()> {
+        self.as_mut()?.xray_mode = value;
+        Ok(())
     }
 
     #[getter]

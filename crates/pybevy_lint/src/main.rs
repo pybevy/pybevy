@@ -256,7 +256,7 @@ enum Command {
         output: Option<PathBuf>,
     },
 
-    /// Check or update the pinned Bevy 0.19 public-API inventories.
+    /// Check or update the pinned Bevy 0.20 public-API inventories.
     BevyAudit {
         /// Rewrite the reviewed inventories and generated coverage block.
         #[arg(long)]
@@ -519,12 +519,12 @@ fn run_bevy_audit(
         &pybevy_classes,
         &bevy_crates,
         &config.bevy,
-        pybevy_lint::mappings::FieldMapProvenance::pinned_bevy_019(),
+        pybevy_lint::mappings::FieldMapProvenance::pinned_bevy_020(),
     )?;
     let serialized_field_map = serde_json::to_string_pretty(&field_map)? + "\n";
     pybevy_lint::bevy_audit::check_or_write(field_map_path, &serialized_field_map, update)?;
     eprintln!(
-        "{} pinned Bevy 0.19 API audit artifacts {}",
+        "{} pinned Bevy 0.20 API audit artifacts {}",
         "success:".green().bold(),
         if update { "updated" } else { "are current" }
     );

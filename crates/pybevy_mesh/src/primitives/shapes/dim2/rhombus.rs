@@ -1,6 +1,7 @@
 use bevy::{
-    math::{Vec2, prelude::Measured2d, primitives::Rhombus},
+    math::Vec2,
     mesh::Meshable,
+    shape::{Measured2d, Rhombus},
 };
 use pybevy_core::{FromBorrowedStorage, ValueStorage, repr::ReprLiteral};
 use pybevy_macros::{pyconstructor, pyvalue};

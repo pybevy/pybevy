@@ -1,4 +1,4 @@
-use bevy::math::bounding::{BoundingCircleCast, IntersectsVolume};
+use bevy::shape::{BoundingCircleCast, IntersectsVolume};
 use pybevy_core::{
     FieldStorage, FromBorrowedStorage,
     repr::{ReprLiteral, float_repr, object_repr},

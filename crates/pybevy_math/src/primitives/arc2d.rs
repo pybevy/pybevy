@@ -1,6 +1,6 @@
 use std::f32::consts::FRAC_PI_3;
 
-use bevy::math::primitives::Arc2d;
+use bevy::shape::Arc2d;
 use pybevy_core::{
     FromBorrowedStorage, ValueStorage,
     domain::{DomainViolation, FINITE, check_for},

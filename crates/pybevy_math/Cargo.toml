@@ -14,10 +14,14 @@ pybevy_macros = { workspace = true }
 
 [dependencies.bevy]
 workspace = true
+features = ["bevy_curve"]
+
+[dependencies.glam]
+version = "0.33.2"
+default-features = false
 
 [dependencies.bevy_math]
-version = "0.19.1"
-features = ["curve"]
+version = "0.20.0"
 default-features = false
 
 [lints]

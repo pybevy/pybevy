@@ -10,7 +10,7 @@ homepage = "https://pybevy.com"
 [dependencies]
 bytemuck = "1.24"
 tracing = "0.1"
-naga = { version = "29", default-features = false, features = ["wgsl-in"] }
+naga = { version = "30", default-features = false, features = ["wgsl-in"] }
 
 [dependencies.bevy]
 workspace = true
@@ -25,4 +25,4 @@ features = [
 workspace = true
 
 [dev-dependencies]
-wgpu = { version = "29", default-features = false, features = ["noop"] }
+wgpu = { version = "30", default-features = false, features = ["noop"] }

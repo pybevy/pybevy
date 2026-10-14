@@ -9,7 +9,7 @@ use bevy::{
     shader::{Shader, ShaderImport},
 };
 
-use crate::hash_shader_path;
+use crate::{GENERATED_MODULE_HEADER, expected_generated_material_import, hash_shader_path};
 
 pub(crate) struct GeneratedBindingsShader {
     source: String,
@@ -22,59 +22,61 @@ pub(crate) fn binding_definition(id: u64) -> String {
     format!("PYBEVY_BINDINGS_{id:016X}")
 }
 
+/// The generated module is a WESL package module, importable as `pybevy::gen::<Class>`.
+pub(crate) fn generated_bindings_shader(source: String, import_path: &str) -> Shader {
+    let mut shader = Shader::from_wesl(source, import_path.to_owned());
+    shader.import_path = ShaderImport::Custom(import_path.to_owned());
+    shader
+}
+
 pub(crate) fn sync_generated_bindings<'a>(
     registry: &mut BindingsRegistry,
     shaders: &mut Assets<Shader>,
     sources: impl Iterator<Item = &'a str>,
 ) {
-    let mut modules: HashMap<ShaderImport, BTreeMap<u64, &str>> = HashMap::new();
+    let mut modules: HashMap<&str, BTreeMap<u64, &str>> = HashMap::new();
     for source in sources {
-        let id = hash_shader_path(source);
-        let shader = Shader::from_wgsl(source.to_owned(), format!("pybevy://gen/{id}"));
-        modules
-            .entry(shader.import_path)
-            .or_default()
-            .insert(id, source);
+        if let Some(import) = expected_generated_material_import(source) {
+            modules
+                .entry(import)
+                .or_default()
+                .insert(hash_shader_path(source), source);
+        }
     }
-    registry.retain(|import, _| modules.contains_key(import));
+    registry.retain(|import, _| match import {
+        ShaderImport::Custom(path) => modules.contains_key(path.as_str()),
+        ShaderImport::AssetPath(_) => false,
+    });
     for (import, variants) in modules {
         let source = if variants.len() == 1 {
             variants.values().next().unwrap().to_string()
         } else {
-            let ShaderImport::Custom(path) = &import else {
-                continue;
-            };
-            let mut source = format!("#define_import_path {path}\n");
+            let mut source = format!("{GENERATED_MODULE_HEADER}{import}\n");
             for (id, variant) in variants {
-                source.push_str(&format!("#ifdef {}\n", binding_definition(id)));
-                for line in variant.lines() {
-                    if !line.trim().starts_with("#define_import_path ") {
-                        source.push_str(line);
-                        source.push('\n');
-                    }
-                }
-                source.push_str("#endif\n");
+                source.push_str(&format!(
+                    "@if({}) {{\n{}\n}}\n",
+                    binding_definition(id),
+                    variant.trim_end()
+                ));
             }
             source
         };
+        let key = ShaderImport::Custom(import.to_owned());
         if registry
-            .get(&import)
+            .get(&key)
             .is_some_and(|entry| entry.source == source)
         {
             continue;
         }
-        let shader = Shader::from_wgsl(
-            source.clone(),
-            format!("pybevy://gen/{}", hash_shader_path(&source)),
-        );
-        if let Some(entry) = registry.get_mut(&import)
+        let shader = generated_bindings_shader(source.clone(), import);
+        if let Some(entry) = registry.get_mut(&key)
             && shaders.insert(entry.handle.id(), shader.clone()).is_ok()
         {
             entry.source = source;
             continue;
         }
         registry.insert(
-            import,
+            key,
             GeneratedBindingsShader {
                 source,
                 handle: shaders.add(shader),
@@ -87,16 +89,14 @@ pub(crate) fn sync_generated_bindings<'a>(
 mod tests {
     use bevy::{
         asset::Assets,
-        shader::{Shader, ShaderImport},
+        shader::{Shader, ShaderImport, Source},
     };
 
     use super::{BindingsRegistry, binding_definition, sync_generated_bindings};
     use crate::hash_shader_path;
 
-    const FIRST: &str =
-        "#define_import_path pybevy::gen::Surface\nstruct Surface { first: f32, }\n";
-    const SECOND: &str =
-        "#define_import_path pybevy::gen::Surface\nstruct Surface { second: vec2<f32>, }\n";
+    const FIRST: &str = "// module pybevy::gen::Surface\nstruct Surface { first: f32, }\n";
+    const SECOND: &str = "// module pybevy::gen::Surface\nstruct Surface { second: vec2<f32>, }\n";
 
     #[test]
     fn live_layouts_coexist_and_retired_layouts_are_pruned() {
@@ -105,15 +105,17 @@ mod tests {
         let import = ShaderImport::Custom("pybevy::gen::Surface".to_owned());
         sync_generated_bindings(&mut registry, &mut shaders, [FIRST].into_iter());
         let handle = registry[&import].handle.clone();
+        let published = shaders.get(&handle).unwrap();
+        assert_eq!(published.import_path, import);
+        assert!(matches!(published.source, Source::Wesl(_)));
+        assert!(published.imports.is_empty());
         sync_generated_bindings(&mut registry, &mut shaders, [SECOND, FIRST].into_iter());
         let source = shaders.get(&handle).unwrap().source.as_str();
         for variant in [FIRST, SECOND] {
-            assert!(source.contains(&format!(
-                "#ifdef {}",
-                binding_definition(hash_shader_path(variant))
-            )));
-            assert!(source.contains(variant.lines().nth(1).unwrap()));
+            let gate = binding_definition(hash_shader_path(variant));
+            assert!(source.contains(&format!("@if({gate}) {{\n{}\n}}\n", variant.trim_end())));
         }
+        assert!(source.starts_with("// module pybevy::gen::Surface\n"));
         assert_eq!(registry[&import].handle.id(), handle.id());
         let combined = source.to_string();
         sync_generated_bindings(
@@ -128,5 +130,18 @@ mod tests {
         assert_eq!(shaders.len(), 1);
         sync_generated_bindings(&mut registry, &mut shaders, [].into_iter());
         assert!(registry.is_empty());
+    }
+
+    #[test]
+    fn bindings_without_a_generated_module_header_are_not_published() {
+        let mut registry = BindingsRegistry::new();
+        let mut shaders = Assets::<Shader>::default();
+        sync_generated_bindings(
+            &mut registry,
+            &mut shaders,
+            ["struct Raw { value: f32, }\n"].into_iter(),
+        );
+        assert!(registry.is_empty());
+        assert_eq!(shaders.len(), 0);
     }
 }

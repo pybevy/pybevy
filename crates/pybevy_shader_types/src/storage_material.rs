@@ -17,22 +17,26 @@ use bevy::{
     material::{AlphaMode, OpaqueRendererMethod},
     mesh::MeshVertexBufferLayoutRef,
     pbr::{
-        MATERIAL_BIND_GROUP_INDEX, Material, MaterialBindGroupAllocators, MaterialExtension,
-        MaterialExtensionKey, MaterialExtensionPipeline, MaterialPipeline, MaterialPipelineKey,
-        MaterialPlugin, MeshMaterial3d, RenderMaterialBindings, StandardMaterial,
+        MATERIAL_BIND_GROUP_INDEX, Material, MaterialExtension, MaterialExtensionKey,
+        MaterialExtensionPipeline, MaterialPipeline, MaterialPipelineKey, MaterialPlugin,
+        MeshMaterial3d, StandardMaterial,
     },
     reflect::Reflect,
     render::{
         Extract, ExtractSchedule, Render, RenderApp, RenderSystems,
         erased_render_asset::{AssetExtractionSystems, ExtractedAssets, prepare_erased_assets},
+        material_bind_groups::{
+            FallbackBuffer, MaterialBindGroupAllocators, RenderMaterialBindings,
+        },
         render_asset::{RenderAssets, prepare_assets},
         render_resource::{
-            AsBindGroup, AsBindGroupError, BindGroupEntry, BindGroupLayout,
-            BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, BufferBindingType,
-            BufferId, BufferInitDescriptor, BufferSize, BufferUsages,
-            DefaultImageSamplerDescriptor, DownlevelFlags, OwnedBindingResource, PipelineCache,
-            PreparedBindGroup, RenderPipelineDescriptor, SamplerBindingType, SamplerId,
-            ShaderStages, SpecializedMeshPipelineError, TextureViewId, UnpreparedBindGroup,
+            AsBindGroup, AsBindGroupError, BindGroupBuilder, BindGroupEntry, BindGroupLayout,
+            BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResources, BindingType,
+            BufferBindingType, BufferId, BufferInitDescriptor, BufferSize, BufferUsages,
+            DefaultImageSamplerDescriptor, DownlevelFlags, OwnedBindingResource, OwnedData,
+            PipelineCache, PreparedBindGroup, RenderPipelineDescriptor, SamplerBindingType,
+            SamplerId, ShaderStages, SpecializedMeshPipelineError, TextureViewId,
+            UnpreparedBindingResource,
         },
         renderer::{RenderAdapter, RenderDevice},
         settings::WgpuLimits,
@@ -45,7 +49,7 @@ use bevy::{
 use crate::{
     ShaderMaterial, ShaderMaterialExtension, ShaderMaterialKey, clear_shader_registries,
     sampler_binding::{MaterialSamplerBinding, MaterialSamplerCache, MaterialSamplerKind},
-    storage_element::StorageElement,
+    storage_element::{StorageElement, generated_bindings_wgsl},
     sync_shader_handles,
     texture_binding::TextureBindingLayout,
 };
@@ -109,15 +113,7 @@ fn binding_field_name(extension: &ShaderMaterialExtension, binding: u32) -> Stri
     let Some(source) = extension.bindings_wgsl.as_deref() else {
         return format!("binding {binding}");
     };
-    let source = source
-        .lines()
-        .filter(|line| !line.trim().starts_with('#'))
-        .collect::<Vec<_>>()
-        .join("\n")
-        .replace(
-            "#{MATERIAL_BIND_GROUP}",
-            &MATERIAL_BIND_GROUP_INDEX.to_string(),
-        );
+    let source = generated_bindings_wgsl(source);
     naga::front::wgsl::parse_str(&source)
         .ok()
         .and_then(|module| {
@@ -252,7 +248,6 @@ impl AsBindGroup for StorageShaderMaterial {
     type Param = (
         <StandardMaterial as AsBindGroup>::Param,
         <ShaderMaterialExtension as AsBindGroup>::Param,
-        SRes<RenderAssets<GpuShaderBuffer>>,
         SRes<StorageBufferAvailability>,
         SRes<RenderAssets<GpuImage>>,
         SRes<DefaultImageSamplerDescriptor>,
@@ -279,13 +274,14 @@ impl AsBindGroup for StorageShaderMaterial {
         }
     }
 
-    fn unprepared_bind_group(
+    fn build_bind_group(
         &self,
         _: &BindGroupLayout,
         _: &RenderDevice,
         _: &mut SystemParamItem<Self::Param>,
         _: bool,
-    ) -> Result<UnpreparedBindGroup, AsBindGroupError> {
+        _: &mut BindGroupBuilder,
+    ) -> Result<(), AsBindGroupError> {
         Err(AsBindGroupError::CreateBindGroupDirectly)
     }
 
@@ -294,10 +290,20 @@ impl AsBindGroup for StorageShaderMaterial {
         descriptor: &BindGroupLayoutDescriptor,
         device: &RenderDevice,
         cache: &PipelineCache,
-        param: &mut SystemParamItem<Self::Param>,
+        fallback_buffer: &FallbackBuffer,
+        shader_buffers: &RenderAssets<GpuShaderBuffer>,
+        (
+            base_param,
+            extension_param,
+            availability,
+            images,
+            default_sampler,
+            sampler_cache,
+            fallback_image,
+        ): &mut SystemParamItem<Self::Param>,
     ) -> Result<PreparedBindGroup, AsBindGroupError> {
         if self.extension.texture_layouts.len() > 4
-            || (param.3.unsupported && !self.extension.buffers.is_empty())
+            || (availability.unsupported && !self.extension.buffers.is_empty())
         {
             return Err(AsBindGroupError::RetryNextUpdate);
         }
@@ -318,10 +324,9 @@ impl AsBindGroup for StorageShaderMaterial {
             let handle = binding
                 .handle
                 .as_ref()
-                .filter(|handle| param.3.live.contains(&handle.id()))
+                .filter(|handle| availability.live.contains(&handle.id()))
                 .ok_or(AsBindGroupError::RetryNextUpdate)?;
-            let buffer = param
-                .2
+            let buffer = shader_buffers
                 .get(handle)
                 .ok_or(AsBindGroupError::RetryNextUpdate)?;
             validate_storage_element_buffer(
@@ -333,7 +338,7 @@ impl AsBindGroup for StorageShaderMaterial {
             .map_err(|_| AsBindGroupError::RetryNextUpdate)?;
             storage.push((
                 STORAGE_BINDING + slot as u32,
-                OwnedBindingResource::Buffer(buffer.buffer.clone()),
+                UnpreparedBindingResource::Buffer(buffer.buffer.clone()),
             ));
         }
         let mut inner = self.extension.inner.clone();
@@ -345,18 +350,17 @@ impl AsBindGroup for StorageShaderMaterial {
             if inner.texture_slot(slot).and_then(Option::as_ref).is_none()
                 && metadata.uses_white_fallback()
             {
-                let image = param.7.get(metadata.view_dimension());
+                let image = fallback_image.get(metadata.view_dimension());
                 textures.push((
                     101 + slot as u32 * 2,
-                    OwnedBindingResource::TextureView(
+                    UnpreparedBindingResource::TextureView(
                         metadata.view_dimension(),
                         image.texture_view.clone(),
                     ),
                 ));
                 if metadata.has_sampler() {
                     let sampler = if metadata.sampler_type() == SamplerBindingType::NonFiltering {
-                        param
-                            .6
+                        sampler_cache
                             .get(&ImageSamplerDescriptor::default())
                             .ok_or(AsBindGroupError::RetryNextUpdate)?
                     } else {
@@ -364,7 +368,10 @@ impl AsBindGroup for StorageShaderMaterial {
                     };
                     textures.push((
                         102 + slot as u32 * 2,
-                        OwnedBindingResource::Sampler(metadata.sampler_type(), sampler.clone()),
+                        UnpreparedBindingResource::Sampler(
+                            metadata.sampler_type(),
+                            sampler.clone(),
+                        ),
                     ));
                 }
                 continue;
@@ -373,17 +380,15 @@ impl AsBindGroup for StorageShaderMaterial {
                 .texture_slot(slot)
                 .and_then(Option::as_ref)
                 .ok_or(AsBindGroupError::RetryNextUpdate)?;
-            let sampler = param
-                .3
+            let sampler = availability
                 .images
                 .get(&handle.id())
                 .ok_or(AsBindGroupError::RetryNextUpdate)?;
-            let image = param
-                .4
+            let image = images
                 .get(handle)
                 .ok_or(AsBindGroupError::RetryNextUpdate)?;
             let sampler = match sampler {
-                ImageSampler::Default => &param.5.0,
+                ImageSampler::Default => &default_sampler.0,
                 ImageSampler::Descriptor(value) => value,
             };
             metadata
@@ -391,7 +396,7 @@ impl AsBindGroup for StorageShaderMaterial {
                 .map_err(|_| AsBindGroupError::RetryNextUpdate)?;
             textures.push((
                 101 + slot as u32 * 2,
-                OwnedBindingResource::TextureView(
+                UnpreparedBindingResource::TextureView(
                     metadata.view_dimension(),
                     image.texture_view.clone(),
                 ),
@@ -399,7 +404,10 @@ impl AsBindGroup for StorageShaderMaterial {
             if metadata.has_sampler() {
                 textures.push((
                     102 + slot as u32 * 2,
-                    OwnedBindingResource::Sampler(metadata.sampler_type(), image.sampler.clone()),
+                    UnpreparedBindingResource::Sampler(
+                        metadata.sampler_type(),
+                        image.sampler.clone(),
+                    ),
                 ));
             }
             // The derive-generated ordinary path validates all textures as float 2D.
@@ -407,16 +415,15 @@ impl AsBindGroup for StorageShaderMaterial {
             *inner.texture_slot_mut(slot).unwrap() = None;
         }
         let layout = cache.get_bind_group_layout(&descriptor);
-        let mut bindings = self
-            .base
-            .unprepared_bind_group(&layout, device, &mut param.0, true)?
-            .bindings;
-        bindings.extend(
-            inner
-                .unprepared_bind_group(&layout, device, &mut param.1, true)?
-                .bindings
-                .0,
-        );
+        let mut builder = BindGroupBuilder::default();
+        self.base
+            .build_bind_group(&layout, device, base_param, true, &mut builder)?;
+        inner.build_bind_group(&layout, device, extension_param, true, &mut builder)?;
+        let BindGroupBuilder {
+            binding_resources,
+            data_buffer,
+        } = builder;
+        let mut bindings = binding_resources.0;
         for (index, resource) in textures {
             *bindings
                 .iter_mut()
@@ -434,22 +441,21 @@ impl AsBindGroup for StorageShaderMaterial {
             binding
                 .validate(device.features())
                 .map_err(|_| AsBindGroupError::RetryNextUpdate)?;
-            let sampler = param
-                .6
+            let sampler = sampler_cache
                 .get(&binding.descriptor)
                 .ok_or(AsBindGroupError::RetryNextUpdate)?;
             bindings.push((
                 STORAGE_BINDING + self.extension.buffers.len() as u32 + slot as u32,
-                OwnedBindingResource::Sampler(binding.kind.binding_type(), sampler.clone()),
+                UnpreparedBindingResource::Sampler(binding.kind.binding_type(), sampler.clone()),
             ));
         }
         // Direct preparation must perform the uniform packing normally done by the allocator.
         for (_, resource) in bindings.iter_mut() {
-            if let OwnedBindingResource::Data(data) = resource {
-                *resource = OwnedBindingResource::Buffer(device.create_buffer_with_data(
+            if let UnpreparedBindingResource::Data(range) = resource {
+                *resource = UnpreparedBindingResource::Buffer(device.create_buffer_with_data(
                     &BufferInitDescriptor {
                         label: Some(Self::label()),
-                        contents: &data.0,
+                        contents: &data_buffer[range.start as usize..range.end as usize],
                         usage: BufferUsages::COPY_DST | BufferUsages::UNIFORM,
                     },
                 ));
@@ -459,12 +465,35 @@ impl AsBindGroup for StorageShaderMaterial {
             .iter()
             .map(|(binding, resource)| BindGroupEntry {
                 binding: *binding,
-                resource: resource.get_binding(),
+                resource: resource.get_binding(fallback_buffer, shader_buffers),
             })
             .collect();
         let bind_group = device.create_bind_group(Self::label(), &layout, &entries);
+        let bindings = bindings
+            .into_iter()
+            .map(|(binding, resource)| {
+                let resource = match resource {
+                    UnpreparedBindingResource::Buffer(buffer) => {
+                        OwnedBindingResource::Buffer(buffer)
+                    }
+                    UnpreparedBindingResource::ShaderBuffer(handle) => {
+                        OwnedBindingResource::ShaderBuffer(handle)
+                    }
+                    UnpreparedBindingResource::TextureView(dimension, view) => {
+                        OwnedBindingResource::TextureView(dimension, view)
+                    }
+                    UnpreparedBindingResource::Sampler(kind, sampler) => {
+                        OwnedBindingResource::Sampler(kind, sampler)
+                    }
+                    UnpreparedBindingResource::Data(range) => OwnedBindingResource::Data(
+                        OwnedData(data_buffer[range.start as usize..range.end as usize].to_vec()),
+                    ),
+                };
+                (binding, resource)
+            })
+            .collect();
         Ok(PreparedBindGroup {
-            bindings,
+            bindings: BindingResources(bindings),
             bind_group,
         })
     }
@@ -942,7 +971,7 @@ fn refresh_storage_bindings(
     }
     *reported_pending = pending;
     sampler_cache.finish_frame();
-    // Bevy 0.19's direct-preparation path allocates a fresh slot without retiring
+    // Bevy's direct-preparation path allocates a fresh slot without retiring
     // the previous one. Retire it once before fresh inputs (including retries)
     // supersede the old binding; ordinary material removal still belongs to Bevy.
     for (id, _) in &extracted.extracted {
@@ -965,9 +994,26 @@ mod tests {
     };
 
     use super::{
-        storage_entries, storage_layout_error_for_limits, validate_storage_buffer,
-        validate_storage_element_buffer,
+        binding_field_name, storage_entries, storage_layout_error_for_limits,
+        validate_storage_buffer, validate_storage_element_buffer,
     };
+    use crate::ShaderMaterialExtension;
+
+    #[test]
+    fn diagnostics_name_fields_declared_by_generated_wesl() {
+        let extension = ShaderMaterialExtension {
+            bindings_wgsl: Some(
+                "// Auto-generated by @material - do not edit\n// module pybevy::gen::Surface\n\
+                 @group(constants::MATERIAL_BIND_GROUP) @binding(101) var albedo: texture_2d<f32>;\n\
+                 @group(constants::MATERIAL_BIND_GROUP) @binding(109) var<storage, read> values: array<vec4<f32>>;\n"
+                    .into(),
+            ),
+            ..Default::default()
+        };
+        assert_eq!(binding_field_name(&extension, 101), "albedo");
+        assert_eq!(binding_field_name(&extension, 109), "values");
+        assert_eq!(binding_field_name(&extension, 110), "binding 110");
+    }
 
     #[test]
     fn reduced_limits_check_group_binding_and_storage_boundaries() {

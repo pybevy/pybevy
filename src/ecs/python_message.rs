@@ -138,6 +138,7 @@ fn register_access_id(
             Layout::new::<()>(),
             None,
             true,
+            false,
             ComponentCloneBehavior::Default,
             None,
         )

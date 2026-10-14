@@ -153,6 +153,13 @@ impl PyImageNode {
         )
     }
 
+    pub fn with_visual_box(&self, py: Python, visual_box: PyVisualBox) -> PyResult<Py<Self>> {
+        Py::new(
+            py,
+            Self::from_owned(self.as_ref()?.clone().with_visual_box(visual_box.into())),
+        )
+    }
+
     pub fn __repr__(&self) -> PyResult<String> {
         Ok(format!(
             "ImageNode({})",

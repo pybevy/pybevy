@@ -74,7 +74,7 @@ impl ComponentWriteContext {
     }
 
     /// Resolve the current field address without marking the component changed.
-    pub(crate) fn resolve(self) -> Result<*mut u8, StorageError> {
+    pub(crate) fn resolve(self) -> Result<*const u8, StorageError> {
         let entity = self
             .world
             .get_entity(self.entity)

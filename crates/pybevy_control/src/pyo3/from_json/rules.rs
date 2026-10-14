@@ -231,6 +231,8 @@ fn val(cx: &FieldContext<'_, '_>) -> Converted {
         "Vh" => "vh",
         "VMin" => "vmin",
         "VMax" => "vmax",
+        "Em" => "em",
+        "Rem" => "rem",
         _ => {
             reject_enum_constant(cx.owner(), variant)?;
             return Err(format!("unknown Val variant '{variant}'"));

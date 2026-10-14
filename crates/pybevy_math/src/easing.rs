@@ -1,4 +1,4 @@
-use bevy_math::curve::{Curve, EaseFunction, easing::JumpAt};
+use bevy::curve::{Curve, EaseFunction, easing::JumpAt};
 use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 

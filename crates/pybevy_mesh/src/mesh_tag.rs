@@ -3,7 +3,7 @@ use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[pycomponent(MeshTag, bridge, view_fields = [0 as value])]
+#[pycomponent(MeshTag, bridge, view_fields = [value])]
 #[pyclass(name = "MeshTag", module = "pybevy.mesh", extends = PyComponent)]
 pub struct PyMeshTag {
     pub(crate) storage: ComponentStorage<MeshTag>,
@@ -14,25 +14,25 @@ impl PyMeshTag {
     #[new]
     #[pyo3(signature = (value = 0))]
     pub fn new(value: u32) -> PyClassInitializer<Self> {
-        Self::from_owned(MeshTag(value)).into()
+        Self::from_owned(MeshTag::new(value)).into()
     }
 
     #[getter]
     pub fn value(&self) -> PyResult<u32> {
-        Ok(self.as_ref()?.0)
+        Ok(self.as_ref()?.value)
     }
 
     #[setter]
     pub fn set_value(&mut self, value: u32) -> PyResult<()> {
-        self.as_mut()?.0 = value;
+        self.as_mut()?.value = value;
         Ok(())
     }
 
     pub fn __repr__(&self) -> PyResult<String> {
-        Ok(format!("MeshTag({})", self.as_ref()?.0))
+        Ok(format!("MeshTag({})", self.as_ref()?.value))
     }
 
     pub fn __eq__(&self, other: &Self) -> PyResult<bool> {
-        Ok(self.as_ref()?.0 == other.as_ref()?.0)
+        Ok(self.as_ref()?.value == other.as_ref()?.value)
     }
 }

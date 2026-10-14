@@ -1,6 +1,7 @@
 use bevy::{
-    math::{Dir3, Vec2, Vec3, primitives::Plane3d},
+    math::{Dir3, Vec2, Vec3},
     mesh::Meshable,
+    shape::Plane3d,
 };
 use pybevy_core::{
     FromBorrowedStorage, ValueStorage,

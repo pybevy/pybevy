@@ -1,6 +1,5 @@
 use bevy::ui::{
-    Checked, InteractionDisabled, IsDefaultUiCamera, Pressed, Selectable,
-    widget::{Button, Label},
+    Checked, InteractionDisabled, IsDefaultUiCamera, Pressed, Selectable, widget::Label,
 };
 use pybevy_core::PyComponent;
 use pybevy_macros::pycomponent;
@@ -188,43 +187,6 @@ impl PyIsDefaultUiCamera {
 
     pub fn __repr__(&self) -> &'static str {
         "IsDefaultUiCamera"
-    }
-}
-
-#[pycomponent(Button, unit, bridge)]
-#[pyclass(name = "Button", module = "pybevy.ui", extends = PyComponent, frozen, eq, skip_from_py_object)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PyButton;
-
-impl From<Button> for PyButton {
-    fn from(_: Button) -> Self {
-        PyButton
-    }
-}
-
-impl From<PyButton> for Button {
-    fn from(_: PyButton) -> Self {
-        Button
-    }
-}
-
-impl TryFrom<&Button> for PyButton {
-    type Error = PyErr;
-
-    fn try_from(_: &Button) -> PyResult<Self> {
-        Ok(PyButton)
-    }
-}
-
-#[pymethods]
-impl PyButton {
-    #[new]
-    pub fn new() -> PyClassInitializer<Self> {
-        (PyButton, PyComponent).into()
-    }
-
-    pub fn __repr__(&self) -> &'static str {
-        "Button()"
     }
 }
 

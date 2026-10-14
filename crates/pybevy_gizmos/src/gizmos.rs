@@ -1,7 +1,8 @@
 use bevy::{
     color::Color,
     gizmos::{config::GizmoConfig, prelude::gizmo},
-    math::{Affine3A, Isometry2d, Isometry3d, Mat4, Vec2, Vec3, bounding::Aabb3d},
+    math::{Affine3A, Isometry2d, Isometry3d, Mat4, Vec2, Vec3},
+    shape::Aabb3d,
 };
 use pybevy_color::color::PyColor;
 use pybevy_core::{

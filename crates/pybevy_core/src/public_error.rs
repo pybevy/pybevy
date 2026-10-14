@@ -240,8 +240,7 @@ pub fn system_ambiguous_bare_state_resource(system: &str, resource: &str) -> Str
     )
 }
 
-pub const COLOR_INPUT_TYPES: &str =
-    "expected Color, Srgba, LinearRgba, Hsla, Hsva, Hwba, Laba, Lcha, Oklaba, Oklcha, or Xyza";
+pub const COLOR_INPUT_TYPES: &str = "expected Color, Srgba, LinearRgba, Hsla, Hsva, Hwba, Laba, Lcha, Oklaba, Oklcha, Xyza, Okhsla, Okhsva, or Okhwba";
 
 pub fn mcp_scalar_object(type_name: &str) -> String {
     format!("expected {type_name} value, got object")
@@ -761,7 +760,7 @@ pub const ASSET_SERVER_MANUAL_REMOVE: &str =
     "AssetServer cannot be manually removed. It is managed by AssetPlugin.";
 pub fn shader_import_unresolved(shader: &str, import: &str) -> String {
     format!(
-        "{shader} imports `{import}`, which no loaded shader defines; load the file that declares `#define_import_path {import}` as a Shader asset and keep its handle"
+        "{shader} imports `{import}`, which no loaded shader provides; load the shader that defines module `{import}` as a Shader asset and keep its handle"
     )
 }
 pub fn fixed_timestep_too_small(seconds: f64) -> String {
@@ -1657,6 +1656,9 @@ pub fn direction_not_unit_length(operation: &str, length: f32) -> String {
     format!("{operation} must produce a unit-length direction (got length {length})")
 }
 
+pub fn shader_buffer_size_unaligned(size: u64) -> String {
+    format!("ShaderBuffer size must be a multiple of 4 bytes (got {size})")
+}
 pub fn shader_buffer_too_large(size: u64) -> String {
     format!("ShaderBuffer cannot allocate {size} bytes of CPU data")
 }

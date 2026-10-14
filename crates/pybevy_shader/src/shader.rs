@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 
 use crate::{
     shader_def_val::PyShaderDefVal, shader_import::PyShaderImport, shader_source::PySource,
-    shader_stage::PyShaderStage, validate_shader::PyValidateShader,
+    validate_shader::PyValidateShader,
 };
 
 #[pyasset(Shader, bridge)]
@@ -36,19 +36,14 @@ impl PyShader {
     }
 
     #[staticmethod]
-    pub fn from_glsl(
-        py: Python<'_>,
-        source: String,
-        stage: PyShaderStage,
-        path: String,
-    ) -> PyResult<Py<PyShader>> {
-        let shader = Shader::from_glsl(source, stage.into(), path);
+    pub fn from_spirv(py: Python<'_>, source: Vec<u8>, path: String) -> PyResult<Py<PyShader>> {
+        let shader = Shader::from_spirv(source, path);
         Py::new(py, Self::from_owned(shader))
     }
 
     #[staticmethod]
-    pub fn from_spirv(py: Python<'_>, source: Vec<u8>, path: String) -> PyResult<Py<PyShader>> {
-        let shader = Shader::from_spirv(source, path);
+    pub fn from_wesl(py: Python<'_>, source: String, path: String) -> PyResult<Py<PyShader>> {
+        let shader = Shader::from_wesl(source, path);
         Py::new(py, Self::from_owned(shader))
     }
 

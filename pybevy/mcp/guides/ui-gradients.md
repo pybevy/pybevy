@@ -193,6 +193,8 @@ commands.spawn(
 ## Recipe: Styled Button
 
 ```python
+from pybevy.ui_widgets import Button
+
 @system
 def spawn_button(commands: Commands) -> None:
     button_node = Node()

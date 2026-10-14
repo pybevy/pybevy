@@ -36,7 +36,8 @@ pub fn create_wrapper_descriptor(name: String, wrapper_size: WrapperSize) -> Com
             StorageType::Table,
             layout,
             None, // No drop function needed for Copy types
-            true, // Mutable - wrapper components can be modified
+            true,
+            false, // Mutable - wrapper components can be modified
             ComponentCloneBehavior::Default,
             None,
         )
@@ -450,6 +451,7 @@ mod tests {
                     StorageType::Table,
                     std::alloc::Layout::new::<u64>(),
                     None,
+                    false,
                     false,
                     ComponentCloneBehavior::Default,
                     None,

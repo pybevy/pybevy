@@ -1,7 +1,5 @@
-use bevy::math::{
-    Dir3, Vec2,
-    bounding::{Aabb2d, Aabb3d, BoundingCircle, BoundingSphere, RayCast2d, RayCast3d},
-};
+use bevy::math::{Dir3, Vec2};
+use bevy::shape::{Aabb2d, Aabb3d, BoundingCircle, BoundingSphere, RayCast2d, RayCast3d};
 use pybevy_core::{
     FieldStorage, FromBorrowedStorage, ValueStorage,
     repr::{ReprLiteral, float_repr},

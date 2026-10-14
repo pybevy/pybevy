@@ -1,7 +1,5 @@
-use bevy::math::{
-    Dir3,
-    bounding::{BoundingSphereCast, IntersectsVolume},
-};
+use bevy::math::Dir3;
+use bevy::shape::{BoundingSphereCast, IntersectsVolume};
 use pybevy_core::{
     FieldStorage, FromBorrowedStorage,
     repr::{ReprLiteral, float_repr, object_repr},

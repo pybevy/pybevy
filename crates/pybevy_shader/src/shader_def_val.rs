@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use bevy::shader::ShaderDefVal;
 use pybevy_core::repr::{ReprLiteral, str_repr};
 use pybevy_macros::pyenum;
@@ -14,11 +16,23 @@ use pyo3::prelude::*;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PyShaderDefVal {
     #[py_bevy(tuple)]
-    Bool { name: String, value: bool },
+    Bool {
+        #[py_type(String)]
+        name: Cow<'static, str>,
+        value: bool,
+    },
     #[py_bevy(tuple)]
-    Int { name: String, value: i32 },
+    Int {
+        #[py_type(String)]
+        name: Cow<'static, str>,
+        value: i32,
+    },
     #[py_bevy(tuple)]
-    UInt { name: String, value: u32 },
+    UInt {
+        #[py_type(String)]
+        name: Cow<'static, str>,
+        value: u32,
+    },
 }
 
 #[pymethods]

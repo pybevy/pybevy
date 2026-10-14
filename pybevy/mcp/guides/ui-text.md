@@ -81,12 +81,15 @@ commands.spawn(
 
 ### Font Sizes and Sources
 
-`font_size` accepts a float (pixels) or a `FontSize` unit. For portable scenes,
-load a font asset and pass its handle. The official PyBevy build follows Bevy's
-default feature set and does not enable system-font discovery, so family names,
-generic `FontSource` values, `weight`, and `style` do not select installed system
-fonts there. Those selectors are useful only in a custom build with Bevy's
-`system_font_discovery` feature enabled.
+`font_size` accepts a float (pixels) or a `FontSize` unit; the default is
+`FontSize.Rem(1.0)`. For portable scenes, load a font asset and pass its handle.
+`font` also accepts a CSS family list string (`"Fira Sans, sans-serif"`, stored
+as `FontSource.Families`), a `GenericFontFamily`, or a list of `FontSource`
+values tried in order. The official PyBevy build follows Bevy's default feature
+set and does not enable system-font discovery, so family names, generic
+families (`FontSource.sans_serif()`, `GenericFontFamily.Monospace`), `weight`,
+and `style` do not select installed system fonts there. Those selectors are
+useful only in a custom build with Bevy's `system_font_discovery` feature enabled.
 
 ```python
 from pybevy.text import FontSize
@@ -95,9 +98,10 @@ TextFont(font_size=FontSize.Rem(1.5))          # relative to root font size (Px/
 TextFont(font=asset_server.load_font("fonts/FiraMono-Medium.ttf"), font_size=24.0)
 ```
 
-`TextPlugin` inserts `RemSize(20.0)` as the root size for `Rem` units. Change
-`ResMut[RemSize].value` or insert a new `RemSize` resource to rescale rem-based
-font sizes and letter spacing without changing each text component.
+`TextPlugin` inserts `RemSize(20.0)` as the root size for `Rem` units. Text left
+at the default size follows it. Change `ResMut[RemSize].value` or insert a new
+`RemSize` resource to rescale rem-based font sizes and letter spacing without
+changing each text component; pass `font_size=20.0` for a fixed pixel size.
 
 ### Letter Spacing
 
@@ -198,10 +202,13 @@ def update_score_display(
         text.text = f"Score: {score.value}"
 ```
 
-## Text Input (EditableText)
+## Text Input (EditableText + TextInput)
 
-`EditableText` turns a UI node into a text input field. Typing, cursor movement,
-selection, and clipboard are handled by the engine; click the field to focus it.
+A text input field is a UI node with both `EditableText`, which holds the text
+and cursor state, and the `TextInput` widget from `pybevy.ui_widgets`, which
+handles typing, cursor movement, selection, and clipboard; click the field to
+focus it. `EditableText` without `TextInput` is display-only state that only
+changes through queued edits.
 There is no built-in submit event: read `.value` from a system, then call
 `.clear()` through a mutable query to reset the field.
 After clearing, you may queue another `TextEdit` in the same frame: the cursor
@@ -211,15 +218,17 @@ Use `DefaultPlugins` for editable UI text. Adding `TextPlugin` alone installs
 the queued-edit application system, but not the UI layout systems that shape the
 editor before cursor, selection, and deletion commands run. PyBevy does not
 expose Bevy's `UiPlugin` separately, so the supported public setup is
-`DefaultPlugins` with `EditableText` on a UI `Node`.
+`DefaultPlugins` with `EditableText` and `TextInput` on a UI `Node`.
 
 ```python
 from pybevy.text import EditableText
+from pybevy.ui_widgets import TextInput
 from pybevy.ecs import system
 
 # In setup:
 commands.spawn(
     EditableText("type here", max_characters=64),
+    TextInput(),
     Node(width=320.0, height=40.0),  # bare floats are pixels
     TextFont.from_font_size(24.0),
     BackgroundColor(Color.srgb(0.15, 0.15, 0.2)),
@@ -238,6 +247,7 @@ Options worth knowing:
 - Single-line by default; `allow_newlines=True` with `visible_lines=4.0` makes a multiline box.
 - `cursor_blink_period` accepts a `timedelta` or plain seconds (`0.5`); `cursor_width` is relative to the font size.
 - `max_characters=None` (the default) means unlimited.
+- Scroll a field with `queue_edit(TextEdit.ScrollBy(Vec2(...)))`, `TextEdit.ScrollTo(point)`, or `TextEdit.ScrollByLines(n)`; `field.viewport.offset` is the current scroll position. `cursor_margin` sets how close the caret may get to the viewport edges before typing scrolls it.
 - Focus follows clicks. Tab-navigation and auto-focus components are not wrapped yet, so make each field's node large enough to click comfortably.
 
 ## Fading Text

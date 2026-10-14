@@ -27,6 +27,12 @@ impl PyTonemapping {
     }
 
     #[staticmethod]
+    #[pyo3(name = "Linear")]
+    pub fn linear(py: Python<'_>) -> PyResult<Py<Self>> {
+        Py::new(py, Self::from_owned(Tonemapping::Linear))
+    }
+
+    #[staticmethod]
     #[pyo3(name = "Reinhard")]
     pub fn reinhard(py: Python<'_>) -> PyResult<Py<Self>> {
         Py::new(py, Self::from_owned(Tonemapping::Reinhard))
@@ -84,6 +90,7 @@ impl PyTonemapping {
     pub fn __repr__(&self) -> &'static str {
         match self.0 {
             Tonemapping::None => "Tonemapping.None_",
+            Tonemapping::Linear => "Tonemapping.Linear",
             Tonemapping::Reinhard => "Tonemapping.Reinhard",
             Tonemapping::ReinhardLuminance => "Tonemapping.ReinhardLuminance",
             Tonemapping::AcesFitted => "Tonemapping.AcesFitted",

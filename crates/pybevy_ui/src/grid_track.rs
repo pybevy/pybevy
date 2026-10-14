@@ -28,6 +28,12 @@ pub(crate) fn grid_track_factory(track: &GridTrack) -> Option<(&'static str, Opt
         (MinTrackSizingFunction::Percent(a), MaxTrackSizingFunction::Percent(b)) if a == b => {
             ("percent", value(a))
         }
+        (MinTrackSizingFunction::Em(a), MaxTrackSizingFunction::Em(b)) if a == b => {
+            ("em", value(a))
+        }
+        (MinTrackSizingFunction::Rem(a), MaxTrackSizingFunction::Rem(b)) if a == b => {
+            ("rem", value(a))
+        }
         (MinTrackSizingFunction::Auto, MaxTrackSizingFunction::Fraction(v)) => ("fr", value(v)),
         (MinTrackSizingFunction::Px(zero), MaxTrackSizingFunction::Fraction(v)) if *zero == 0.0 => {
             ("flex", value(v))
@@ -119,6 +125,20 @@ impl PyGridTrack {
     pub fn percent(value: f32) -> PyResult<Self> {
         Ok(PyGridTrack {
             inner: GridTrack::percent(check_for::<Self, _>("percent", value, FINITE)?),
+        })
+    }
+
+    #[staticmethod]
+    pub fn em(value: f32) -> PyResult<Self> {
+        Ok(PyGridTrack {
+            inner: GridTrack::em(check_for::<Self, _>("em", value, FINITE)?),
+        })
+    }
+
+    #[staticmethod]
+    pub fn rem(value: f32) -> PyResult<Self> {
+        Ok(PyGridTrack {
+            inner: GridTrack::rem(check_for::<Self, _>("rem", value, FINITE)?),
         })
     }
 

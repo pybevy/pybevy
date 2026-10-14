@@ -1702,6 +1702,7 @@ mod tests {
                 Layout::new::<u8>(),
                 None,
                 false,
+                false,
                 ComponentCloneBehavior::Default,
                 None,
             )
@@ -2004,6 +2005,7 @@ mod tests {
                 Layout::new::<u8>(),
                 None,
                 false,
+                false,
                 ComponentCloneBehavior::Default,
                 None,
             )
@@ -2070,6 +2072,7 @@ mod tests {
                 Layout::new::<u64>(),
                 None,
                 true,
+                false,
                 ComponentCloneBehavior::Default,
                 None,
             )

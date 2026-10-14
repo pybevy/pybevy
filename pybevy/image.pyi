@@ -1513,7 +1513,8 @@ class ImageLoaderSettings:
         *,
         format: ImageFormatSetting = ...,
         is_srgb: bool = True,
-        sampler: ImageSampler = ImageSampler.Default()
+        sampler: ImageSampler = ImageSampler.Default(),
+        expand_grayscale: bool = True
     ) -> None:
         """Create new image loader settings.
 
@@ -1521,6 +1522,9 @@ class ImageLoaderSettings:
             format: How the image format is chosen (default: ImageFormatSetting.FromExtension()).
             is_srgb: Whether to interpret image data as sRGB (default: True).
             sampler: Sampler to use for the loaded image (default: Default sampler).
+            expand_grayscale: Whether grayscale images expand to RGBA. When False they
+                load as R8Unorm, Rg8Unorm, R16Unorm or Rg16Unorm and is_srgb is ignored
+                (default: True).
         """
 
     @property
@@ -1554,3 +1558,10 @@ class ImageLoaderSettings:
 
     @asset_usage.setter
     def asset_usage(self, value: RenderAssetUsages) -> None: ...
+
+    @property
+    def expand_grayscale(self) -> bool:
+        """Whether grayscale images expand to RGBA when loaded."""
+
+    @expand_grayscale.setter
+    def expand_grayscale(self, value: bool) -> None: ...

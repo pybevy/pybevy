@@ -1,4 +1,4 @@
-use bevy::math::primitives::TorusKind;
+use bevy::shape::TorusKind;
 use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 

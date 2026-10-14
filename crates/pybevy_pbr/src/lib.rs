@@ -28,6 +28,7 @@ pub mod wireframe_line_width;
 pub mod wireframe_material;
 pub mod wireframe_plugin;
 pub mod wireframe_topology;
+pub mod wireframe_xray;
 
 use pyo3::prelude::*;
 
@@ -64,6 +65,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<wireframe_material::PyWireframeMaterial>()?;
     m.add_class::<mesh3d_wireframe::PyMesh3dWireframe>()?;
     m.add_class::<wireframe_topology::PyWireframeTopology>()?;
+    m.add_class::<wireframe_xray::PyWireframeXray>()?;
     m.add_class::<wireframe_plugin::PyWireframePlugin>()?;
     m.add_class::<default_opaque_renderer_method::PyDefaultOpaqueRendererMethod>()?;
     m.add_class::<lightmap::PyLightmap>()?;

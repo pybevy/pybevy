@@ -24,7 +24,6 @@ pub mod vertex_format;
 pub mod wgpu_error_handler;
 pub mod wgpu_settings;
 
-use pybevy_shader::shader_stage::PyShaderStage;
 use pyo3::prelude::*;
 
 pub mod prelude {
@@ -55,7 +54,6 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<wgpu_settings::PyWgpuSettingsPriority>()?;
     m.add_class::<wgpu_settings::PyGles3MinorVersion>()?;
     m.add_class::<face::PyFace>()?;
-    m.add_class::<PyShaderStage>()?;
     m.add_class::<unit_markers::PyNoAutomaticBatching>()?;
     m.add_class::<unit_markers::PyNoIndirectDrawing>()?;
     m.add_class::<unit_markers::PyOcclusionCulling>()?;

@@ -29,6 +29,7 @@ impl GltfLoaderSettingsValue {
             validate,
             convert_coordinates,
             skinned_mesh_bounds_policy,
+            mesh_compression,
         } = &self.0;
 
         *settings = GltfLoaderSettings {
@@ -43,6 +44,7 @@ impl GltfLoaderSettingsValue {
             validate: *validate,
             convert_coordinates: *convert_coordinates,
             skinned_mesh_bounds_policy: *skinned_mesh_bounds_policy,
+            mesh_compression: mesh_compression.clone(),
         };
     }
 }
@@ -127,6 +129,7 @@ impl PyGltfLoaderSettings {
                     .map(TryInto::try_into)
                     .transpose()?,
                 skinned_mesh_bounds_policy: skinned_mesh_bounds_policy.map(Into::into),
+                mesh_compression: None,
             },
         )))
     }

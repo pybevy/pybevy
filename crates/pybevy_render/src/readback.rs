@@ -595,9 +595,9 @@ fn receive_image_from_buffer(image_copiers: Res<ImageCopiers>, render_device: Re
 
         // Send pixel data to this copier's specific channel
         // Ignore errors (can happen during app shutdown)
-        let _ = image_copier
-            .sender
-            .send(buffer_slice.get_mapped_range().to_vec());
+        if let Ok(view) = buffer_slice.get_mapped_range() {
+            let _ = image_copier.sender.send(view.to_vec());
+        }
 
         // Unmap so buffer can be reused next frame
         image_copier.buffer.unmap();

@@ -55,12 +55,17 @@ pub enum PyAlignItems {
     #[default]
     Default = 0,
     Start = 1,
-    End = 2,
-    FlexStart = 3,
-    FlexEnd = 4,
-    Center = 5,
-    Baseline = 6,
-    Stretch = 7,
+    StartSafe = 2,
+    End = 3,
+    EndSafe = 4,
+    FlexStart = 5,
+    FlexStartSafe = 6,
+    FlexEnd = 7,
+    FlexEndSafe = 8,
+    Center = 9,
+    CenterSafe = 10,
+    Baseline = 11,
+    Stretch = 12,
 }
 
 #[pyenum(AlignSelf)]
@@ -76,12 +81,17 @@ pub enum PyAlignItems {
 pub enum PyAlignSelf {
     Auto = 0,
     Start = 1,
-    End = 2,
-    FlexStart = 3,
-    FlexEnd = 4,
-    Center = 5,
-    Baseline = 6,
-    Stretch = 7,
+    StartSafe = 2,
+    End = 3,
+    EndSafe = 4,
+    FlexStart = 5,
+    FlexStartSafe = 6,
+    FlexEnd = 7,
+    FlexEndSafe = 8,
+    Center = 9,
+    CenterSafe = 10,
+    Baseline = 11,
+    Stretch = 12,
 }
 
 #[pyenum(AlignContent)]
@@ -98,14 +108,19 @@ pub enum PyAlignContent {
     #[default]
     Default = 0,
     Start = 1,
-    End = 2,
-    FlexStart = 3,
-    FlexEnd = 4,
-    Center = 5,
-    Stretch = 6,
-    SpaceBetween = 7,
-    SpaceEvenly = 8,
-    SpaceAround = 9,
+    StartSafe = 2,
+    End = 3,
+    EndSafe = 4,
+    FlexStart = 5,
+    FlexStartSafe = 6,
+    FlexEnd = 7,
+    FlexEndSafe = 8,
+    Center = 9,
+    CenterSafe = 10,
+    Stretch = 11,
+    SpaceBetween = 12,
+    SpaceEvenly = 13,
+    SpaceAround = 14,
 }
 
 #[pyenum(JustifyContent)]
@@ -121,14 +136,19 @@ pub enum PyAlignContent {
 pub enum PyJustifyContent {
     Default = 0,
     Start = 1,
-    End = 2,
-    FlexStart = 3,
-    FlexEnd = 4,
-    Center = 5,
-    SpaceBetween = 6,
-    SpaceAround = 7,
-    SpaceEvenly = 8,
-    Stretch = 9,
+    StartSafe = 2,
+    End = 3,
+    EndSafe = 4,
+    FlexStart = 5,
+    FlexStartSafe = 6,
+    FlexEnd = 7,
+    FlexEndSafe = 8,
+    Center = 9,
+    CenterSafe = 10,
+    Stretch = 11,
+    SpaceBetween = 12,
+    SpaceEvenly = 13,
+    SpaceAround = 14,
 }
 
 #[pyenum(JustifyItems)]
@@ -144,10 +164,13 @@ pub enum PyJustifyContent {
 pub enum PyJustifyItems {
     Default = 0,
     Start = 1,
-    End = 2,
-    Center = 3,
-    Baseline = 4,
-    Stretch = 5,
+    StartSafe = 2,
+    End = 3,
+    EndSafe = 4,
+    Center = 5,
+    CenterSafe = 6,
+    Baseline = 7,
+    Stretch = 8,
 }
 
 #[pyenum(JustifySelf)]
@@ -163,10 +186,13 @@ pub enum PyJustifyItems {
 pub enum PyJustifySelf {
     Auto = 0,
     Start = 1,
-    End = 2,
-    Center = 3,
-    Baseline = 4,
-    Stretch = 5,
+    StartSafe = 2,
+    End = 3,
+    EndSafe = 4,
+    Center = 5,
+    CenterSafe = 6,
+    Baseline = 7,
+    Stretch = 8,
 }
 
 #[pyenum(PositionType)]
@@ -284,6 +310,8 @@ pub enum PyInterpolationColorSpace {
     HslaLong,
     Hsva,
     HsvaLong,
+    Okhsla,
+    OkhslaLong,
 }
 
 #[pyenum(VisualBox)]

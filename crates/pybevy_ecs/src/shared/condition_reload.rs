@@ -6,9 +6,10 @@ use std::{
 use bevy::{
     ecs::{
         change_detection::{CheckChangeTicks, Tick},
-        query::FilteredAccessSet,
         schedule::{BoxedCondition, InternedSystemSet},
-        system::{ReadOnlySystem, RunSystemError, System, SystemIn, SystemStateFlags},
+        system::{
+            ReadOnlySystem, RunSystemError, System, SystemAccess, SystemIn, SystemStateFlags,
+        },
         world::{DeferredWorld, World, WorldId, unsafe_world_cell::UnsafeWorldCell},
     },
     prelude::DebugName,
@@ -16,11 +17,11 @@ use bevy::{
 
 struct ConditionState {
     system: BoxedCondition,
-    initialized: Option<(WorldId, FilteredAccessSet)>,
+    initialized: Option<(WorldId, SystemAccess)>,
 }
 
 impl ConditionState {
-    fn initialize(&mut self, world: &mut World) -> FilteredAccessSet {
+    fn initialize(&mut self, world: &mut World) -> SystemAccess {
         if let Some((id, access)) = &self.initialized {
             assert_eq!(*id, world.id());
             return access.clone();
@@ -146,7 +147,7 @@ impl System for ReloadableCondition {
         self.handle.lock().system.queue_deferred(world);
     }
 
-    fn initialize(&mut self, world: &mut World) -> FilteredAccessSet {
+    fn initialize(&mut self, world: &mut World) -> SystemAccess {
         self.handle.lock().initialize(world)
     }
 

@@ -1,4 +1,4 @@
-use bevy::math::primitives::HalfSpace;
+use bevy::shape::HalfSpace;
 use pybevy_core::FieldStorage;
 use pyo3::{prelude::*, types::PyList};
 

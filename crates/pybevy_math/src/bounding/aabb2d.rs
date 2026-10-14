@@ -1,7 +1,5 @@
-use bevy::math::{
-    Isometry2d, Mat2, Vec2,
-    bounding::{Aabb2d, BoundingCircle, BoundingVolume, IntersectsVolume},
-};
+use bevy::math::{Isometry2d, Mat2, Vec2};
+use bevy::shape::{Aabb2d, BoundingCircle, BoundingVolume, IntersectsVolume};
 use pybevy_core::{
     FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
     domain::{NON_NEGATIVE, check_for},

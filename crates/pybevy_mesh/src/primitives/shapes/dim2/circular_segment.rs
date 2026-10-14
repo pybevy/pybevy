@@ -1,8 +1,8 @@
 use std::f32::consts::FRAC_PI_3;
 
 use bevy::{
-    math::primitives::{CircularSegment, Measured2d},
     mesh::Meshable,
+    shape::{CircularSegment, Measured2d},
 };
 use pybevy_core::repr::float_repr;
 use pybevy_macros::pyconstructor;

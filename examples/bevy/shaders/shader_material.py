@@ -1,7 +1,7 @@
 """A shader and a material that uses it.
 
 PyBevy equivalent of Bevy's ``shader_material`` example.
-Defines a custom material with uniform fields and a WGSL fragment shader.
+Defines a custom material with uniform fields and a WESL fragment shader.
 
 Bevy (Rust):
     #[derive(Asset, AsBindGroup)]
@@ -12,7 +12,7 @@ Bevy (Rust):
     impl Material for CustomMaterial { ... }
 
 PyBevy:
-    @material(fragment_shader="shaders/examples/shader_material.wgsl")
+    @material(fragment_shader="shaders/examples/shader_material.wesl")
     class CustomMaterial(Material):
         color: LinearRgba = LinearRgba(0.0, 0.0, 1.0, 1.0)
         intensity: float = 1.0
@@ -21,7 +21,7 @@ PyBevy:
 from pybevy.pbr import ShaderMaterialPlugin
 from pybevy.prelude import *
 
-SHADER_ASSET_PATH = "shaders/examples/shader_material.wgsl"
+SHADER_ASSET_PATH = "shaders/examples/shader_material.wesl"
 
 
 @material(fragment_shader=SHADER_ASSET_PATH)

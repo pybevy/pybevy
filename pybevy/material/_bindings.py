@@ -29,7 +29,7 @@ from ..image import Image, ImageSamplerDescriptor
 from ..math import Vec2, Vec3, Vec4
 from ..pbr import StorageShaderMaterial
 from ..render import ShaderBuffer
-from ._layout import _is_texture_annotation, _validate_wgsl_identifier
+from ._layout import _is_texture_annotation, _validate_binding_identifier
 from ._scalars import U32
 from ._structs import shader_type_layout
 
@@ -226,7 +226,7 @@ def _partition_storage_fields(
                     raise TypeError(
                         f"StorageBinding field '{name}' needs Annotated[Handle[ShaderBuffer] | None, StorageBinding()]"
                     )
-                _validate_wgsl_identifier(name, "storage field")
+                _validate_binding_identifier(name, "storage field")
                 if name == "material":
                     raise TypeError(
                         "StorageBinding field 'material' conflicts with the generated uniform binding"
@@ -449,7 +449,7 @@ def _partition_sampler_fields(
                     raise TypeError(
                         f"SamplerBinding field '{name}' needs Annotated[ImageSamplerDescriptor, SamplerBinding()]"
                     )
-                _validate_wgsl_identifier(name, "sampler field")
+                _validate_binding_identifier(name, "sampler field")
                 samplers.append(_SamplerField(name, markers[0]))
                 continue
         ordinary[name] = annotation

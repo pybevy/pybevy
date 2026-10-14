@@ -21,16 +21,16 @@ Bevy (Rust):
     }
 
 PyBevy:
-    @material(fragment_shader="shaders/examples/shader_defs.wgsl")
+    @material(fragment_shader="shaders/examples/shader_defs.wesl")
     class CustomMaterial(Material):
         color: LinearRgba = LinearRgba(0.0, 0.0, 1.0, 1.0)
-        is_red: bool = False  # automatically becomes #ifdef IS_RED
+        is_red: bool = False  # automatically enables @if(IS_RED)
 """
 
 from pybevy.pbr import ShaderMaterialPlugin
 from pybevy.prelude import *
 
-SHADER_ASSET_PATH = "shaders/examples/shader_defs.wgsl"
+SHADER_ASSET_PATH = "shaders/examples/shader_defs.wesl"
 
 
 @material(fragment_shader=SHADER_ASSET_PATH)

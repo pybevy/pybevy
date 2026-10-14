@@ -34,7 +34,7 @@ pub enum PyGamepadButton {
     DPadRight(),
     #[py_bevy(tuple)]
     Other {
-        value: u8,
+        value: u32,
     },
 }
 

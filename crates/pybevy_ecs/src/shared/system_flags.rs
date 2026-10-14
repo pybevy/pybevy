@@ -6,24 +6,19 @@ use bevy::ecs::system::SystemStateFlags;
 /// - `needs_commands`: system has a Commands parameter (requires deferred sync points)
 /// - `needs_main_thread`: system has a `NonSendMarker` parameter
 ///
-/// Exclusive systems are NON_SEND | EXCLUSIVE, exactly like Bevy's
-/// ExclusiveFunctionSystem. A Send exclusive system is a state vanilla Bevy
-/// cannot construct, and MultiThreadedExecutor's local-thread accounting
-/// assumes the pairing: exclusive spawn sets `local_thread_running`
-/// unconditionally but only non-Send completion clears it, so a bare
-/// EXCLUSIVE system leaks the flag and permanently blocks every non-Send
-/// system still in the queue (`ready_systems.is_clear()` assertion at scope
-/// end).
+/// Exclusivity itself is declared by `initialize` returning
+/// `SystemAccess::Exclusive`. An exclusive system is NON_SEND without DEFERRED,
+/// exactly as Bevy's `&mut World` parameter sets it.
 ///
-/// A main-thread system is NON_SEND without EXCLUSIVE, as Bevy's
-/// `NonSendMarker::init_access` sets it; it may also be DEFERRED.
+/// A main-thread system is NON_SEND, as Bevy's `NonSendMarker::init_access`
+/// sets it; it may also be DEFERRED.
 pub fn compute_system_flags(
     needs_exclusive: bool,
     needs_commands: bool,
     needs_main_thread: bool,
 ) -> SystemStateFlags {
     if needs_exclusive {
-        return SystemStateFlags::NON_SEND | SystemStateFlags::EXCLUSIVE;
+        return SystemStateFlags::NON_SEND;
     }
     let mut flags = SystemStateFlags::empty();
     if needs_main_thread {
@@ -42,22 +37,19 @@ mod tests {
     #[test]
     fn exclusive_takes_priority_over_commands() {
         let flags = compute_system_flags(true, true, false);
-        assert!(flags.contains(SystemStateFlags::EXCLUSIVE));
-        assert!(flags.contains(SystemStateFlags::NON_SEND));
+        assert!(flags == SystemStateFlags::NON_SEND);
     }
 
     #[test]
     fn exclusive_without_commands() {
         let flags = compute_system_flags(true, false, false);
-        assert!(flags.contains(SystemStateFlags::EXCLUSIVE));
-        assert!(flags.contains(SystemStateFlags::NON_SEND));
+        assert!(flags == SystemStateFlags::NON_SEND);
     }
 
     #[test]
     fn commands_only() {
         let flags = compute_system_flags(false, true, false);
-        assert!(flags.contains(SystemStateFlags::DEFERRED));
-        assert!(!flags.contains(SystemStateFlags::EXCLUSIVE));
+        assert!(flags == SystemStateFlags::DEFERRED);
     }
 
     #[test]

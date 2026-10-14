@@ -1,4 +1,4 @@
-use bevy::math::curve::{Interval, interval};
+use bevy::curve::{Interval, interval};
 use pybevy_core::{
     FromBorrowedStorage, ValueStorage,
     domain::{FieldDomain, IntegerInput, check_for, check_ordered_for},

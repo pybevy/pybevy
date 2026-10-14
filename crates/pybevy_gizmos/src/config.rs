@@ -221,7 +221,7 @@ impl PyGizmoLineStyle {
     }
 }
 
-#[pyfield(GizmoLineConfig, domains = [width => [finite, non_negative]])]
+#[pyfield(GizmoLineConfig, domains = [width => [finite, non_negative], animation_offset => [finite]])]
 #[pyclass(name = "GizmoLineConfig", module = "pybevy.gizmos", from_py_object)]
 #[derive(Debug)]
 pub struct PyGizmoLineConfig {
@@ -242,19 +242,22 @@ impl PyGizmoLineConfig {
         width = 2.0,
         perspective = false,
         style = PyGizmoLineStyle::Solid(),
-        joints = PyGizmoLineJoint::None()
+        joints = PyGizmoLineJoint::None(),
+        animation_offset = 0.0
     ))]
     pub fn new(
         width: f32,
         perspective: bool,
         style: PyGizmoLineStyle,
         joints: PyGizmoLineJoint,
+        animation_offset: f32,
     ) -> PyResult<Self> {
         Ok(Self::from_owned(GizmoLineConfig {
             width: Self::check_width(width)?,
             perspective,
             style: check_style(style)?,
             joints: check_joints(joints)?,
+            animation_offset: Self::check_animation_offset(animation_offset)?,
         }))
     }
 
@@ -301,6 +304,18 @@ impl PyGizmoLineConfig {
     #[setter]
     pub fn set_joints(&mut self, joints: PyGizmoLineJoint) -> PyResult<()> {
         self.as_mut()?.joints = check_joints(joints)?;
+        Ok(())
+    }
+
+    #[getter]
+    pub fn animation_offset(&self) -> PyResult<f32> {
+        Ok(self.as_ref()?.animation_offset)
+    }
+
+    #[setter]
+    pub fn set_animation_offset(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_animation_offset(value)?;
+        self.as_mut()?.animation_offset = value;
         Ok(())
     }
 }

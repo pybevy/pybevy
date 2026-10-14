@@ -1,4 +1,4 @@
-use bevy::math::primitives::WindingOrder;
+use bevy::shape::WindingOrder;
 use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 

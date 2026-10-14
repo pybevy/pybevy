@@ -3,7 +3,7 @@ use bevy::{
     color::Color,
     image::Image,
     math::Vec2,
-    sprite::{Sprite, SpriteImageMode},
+    sprite::{Sprite, SpriteAlphaMode, SpriteImageMode},
 };
 use pybevy_color::color::PyColor;
 use pybevy_core::{
@@ -15,7 +15,10 @@ use pybevy_macros::pycomponent;
 use pybevy_math::{rect::PyRect, vec2::PyVec2};
 use pyo3::prelude::*;
 
-use crate::sprite_image_mode::PySpriteImageMode;
+use crate::{
+    sprite_alpha_mode::{PySpriteAlphaMode, checked_sprite_alpha_mode},
+    sprite_image_mode::PySpriteImageMode,
+};
 
 // Bevy tiles an infinite draw size without end when slicing or tiling.
 #[pycomponent(
@@ -44,7 +47,8 @@ impl PySprite {
         flip_y = false,
         custom_size = None,
         rect = None,
-        image_mode = PySpriteImageMode::default()
+        image_mode = PySpriteImageMode::default(),
+        alpha_mode = PySpriteAlphaMode::default()
     ))]
     pub fn new(
         image: HandleArg,
@@ -55,6 +59,7 @@ impl PySprite {
         custom_size: Option<PyVec2>,
         rect: Option<PyRect>,
         image_mode: PySpriteImageMode,
+        alpha_mode: PySpriteAlphaMode,
     ) -> PyResult<PyClassInitializer<Self>> {
         let image_handle = image.into_handle()?;
         let texture_atlas_handle = texture_atlas.map(|ta| ta.try_into()).transpose()?;
@@ -73,6 +78,7 @@ impl PySprite {
             rect: rect_bevy,
             texture_atlas: texture_atlas_handle,
             image_mode,
+            alpha_mode: checked_sprite_alpha_mode(alpha_mode)?,
         })
         .into())
     }
@@ -93,6 +99,7 @@ impl PySprite {
                     rect: None,
                     texture_atlas: None,
                     image_mode: SpriteImageMode::Auto,
+                    alpha_mode: SpriteAlphaMode::default(),
                 }),
             )
         })
@@ -115,6 +122,7 @@ impl PySprite {
                     rect: None,
                     texture_atlas: Some(atlas_handle),
                     image_mode: SpriteImageMode::Auto,
+                    alpha_mode: SpriteAlphaMode::default(),
                 }),
             )
         })
@@ -136,6 +144,7 @@ impl PySprite {
                     rect: None,
                     texture_atlas: None,
                     image_mode: SpriteImageMode::Auto,
+                    alpha_mode: SpriteAlphaMode::default(),
                 }),
             )
         })
@@ -156,6 +165,7 @@ impl PySprite {
                     rect: None,
                     texture_atlas: None,
                     image_mode: SpriteImageMode::Auto,
+                    alpha_mode: SpriteAlphaMode::default(),
                 }),
             )
         })
@@ -194,6 +204,18 @@ impl PySprite {
     pub fn set_image_mode(&mut self, image_mode: PySpriteImageMode) -> PyResult<()> {
         let image_mode = SpriteImageMode::try_from(image_mode)?;
         self.as_mut()?.image_mode = image_mode;
+        Ok(())
+    }
+
+    #[getter]
+    pub fn alpha_mode(&self) -> PyResult<PySpriteAlphaMode> {
+        Ok(PySpriteAlphaMode::from(self.as_ref()?.alpha_mode))
+    }
+
+    #[setter]
+    pub fn set_alpha_mode(&mut self, alpha_mode: PySpriteAlphaMode) -> PyResult<()> {
+        let alpha_mode = checked_sprite_alpha_mode(alpha_mode)?;
+        self.as_mut()?.alpha_mode = alpha_mode;
         Ok(())
     }
 

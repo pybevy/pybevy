@@ -2244,30 +2244,28 @@ notes = "Morph weights first mesh reference is fixed"
 
 # Shader: generic params specialized to String
 [bevy.type_ignores.Shader]
-intentional_signature_diffs = ["from_glsl", "from_wgsl_with_defs"]
-notes = """
-- from_glsl: naga::ShaderStage -> pybevy.render.ShaderStage (wrapper naming), and
-  impl Into<Cow<str>>/impl Into<String> specialized to str
-- from_wgsl_with_defs: Vec<ShaderDefVal> -> Vec<PyShaderDefVal> (wrapper naming)"""
+intentional_signature_diffs = ["from_wgsl_with_defs"]
+notes = "from_wgsl_with_defs: Vec<ShaderDefVal> -> Vec<PyShaderDefVal> (wrapper naming)"
 
 [bevy.type_ignores.ShaderBuffer]
 intentional_signature_diffs = ["with_size"]
-intentional_missing_fields = ["asset_usage", "buffer_description"]
-intentional_extra_methods = ["data_mut", "data_copy", "data_len"]
+intentional_missing_fields = ["asset_usage", "label", "buffer_usage"]
+intentional_extra_methods = ["data_mut", "data_copy", "data_len", "set_data"]
 notes = """
 - with_size/asset_usage: the current RenderAssetUsages wrapper is owned by
   pybevy_image, which already depends on pybevy_render; its Python module is
   pybevy.assets, but Rust ownership still prevents importing it here, so this
   wrapper supplies Bevy's default without creating a dependency cycle
-- buffer_description: wgpu BufferDescriptor is not exposed; resize methods are
-  the supported size mutation boundary
+- label/buffer_usage: debugger label and wgpu usages are not exposed; resize
+  methods are the supported size mutation boundary
 - copy_on_resize is an independent keyword-only field override after Bevy's
   mapped new() prefix
 - data is exposed through guarded CPU byte contexts, not a detached property;
   data_copy is an explicit snapshot and data_len reports optional CPU length
-- set_data accepts already encoded bytes or uint8 Array instead of Bevy's
-  ShaderType serialization; None clears the optional CPU payload
-- no CPU accessor claims to report live GPU allocation size"""
+- set_data replaces the CPU payload with already encoded bytes or a uint8
+  Array (Bevy 0.20 has no set_data; new/extend take typed Rust values);
+  None keeps the buffer size and drops the CPU payload
+- buffer_size reports the configured GPU size, not a live allocation"""
 
 [bevy.type_ignores.ShaderDefVal]
 intentional_readonly_properties = ["name"]
@@ -2419,6 +2417,10 @@ intentional_missing_fields = ["source"]
 notes = "Loaded from files, not user-constructed. source requires gltf::Gltf from external crate."
 
 # GltfMesh: Mesh asset from glTF file
+[bevy.type_ignores.GltfLoaderSettings]
+intentional_missing_fields = ["mesh_compression"]
+notes = "MeshCompressionArgs (attribute quantization and compression flags) is not wrapped yet; Python-built settings use Bevy's None, which defers to GltfPlugin's global default"
+
 [bevy.type_ignores.GltfMesh]
 ignore_constructor_warnings = true
 intentional_missing_methods = ["new"]
@@ -2504,16 +2506,6 @@ intentional_signature_diffs = [
     { name = "module_name", expected_return = "String" },
 ]
 notes = "Returns String instead of Cow<String> (Python doesn't have Cow)"
-
-# Source: Glsl(source, stage) split into GlslVertex/GlslFragment/GlslCompute
-[bevy.type_ignores.Source]
-intentional_missing_variants = ["Glsl"]
-intentional_extra_variants = [
-    "GlslVertex", "GlslTask", "GlslMesh", "GlslRayGeneration", "GlslMiss",
-    "GlslAnyHit", "GlslClosestHit", "GlslFragment", "GlslCompute",
-]
-notes = "Bevy's Glsl(source, stage) 2-tuple split into one variant per naga::ShaderStage for Python clarity"
-
 
 # Srgba: hex() takes &str in Python (Bevy uses generic T: AsRef<[u8]>)
 [bevy.type_ignores.Srgba]

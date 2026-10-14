@@ -1,4 +1,5 @@
-use bevy::math::{Mat4, Vec3, primitives::ViewFrustum};
+use bevy::math::{Mat4, Vec3};
+use bevy::shape::ViewFrustum;
 use pybevy_core::{FromBorrowedStorage, ValueStorage};
 use pybevy_macros::pyvalue;
 use pyo3::{exceptions::PyValueError, prelude::*};

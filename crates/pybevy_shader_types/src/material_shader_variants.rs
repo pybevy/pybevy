@@ -3,12 +3,13 @@ use std::collections::{HashMap, HashSet};
 
 use bevy::{
     asset::{AssetId, Assets, Handle, UntypedAssetId, uuid::Uuid},
-    shader::{Shader, ShaderDefVal, ShaderImport},
+    shader::{Shader, ShaderDefVal, ShaderImport, Source},
 };
 
 use crate::{
-    ShaderMaterialExtension, ShaderStage, expected_generated_material_import, get_shader_handle,
-    hash_shader_path, registered_path_id,
+    GENERATED_MATERIAL_IMPORT_PREFIX, ShaderMaterialExtension, ShaderStage,
+    expected_generated_material_import, generated_bindings::generated_bindings_shader,
+    get_shader_handle, hash_shader_path, registered_path_id,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -113,7 +114,65 @@ fn replace_import(source: &str, original: &str, replacement: &str) -> String {
     result
 }
 
+/// Keeps the material's module name so `import pybevy::gen::Class;` still binds `Class`.
+fn versioned_material_import(import: &str, binding_id: u64) -> String {
+    let class = import
+        .strip_prefix(GENERATED_MATERIAL_IMPORT_PREFIX)
+        .unwrap_or(import);
+    format!("pybevy::gen_{binding_id:016x}::{class}")
+}
+
+/// A sibling module path, so the variant's `super::` imports resolve like the original's.
+fn variant_module_path(original: &Shader, binding_id: u64) -> String {
+    match &original.import_path {
+        ShaderImport::AssetPath(path) => format!(
+            "{}_pybevy_{binding_id:016x}.wesl",
+            path.trim_start_matches('/')
+        ),
+        ShaderImport::Custom(path) => format!(
+            "embedded://{}_pybevy_{binding_id:016x}.wesl",
+            path.replace("::", "/")
+        ),
+    }
+}
+
+fn variant_source(original: &Shader, import: &str, binding_id: u64) -> String {
+    match &original.source {
+        Source::Wesl(source) => replace_import(
+            source,
+            import,
+            &versioned_material_import(import, binding_id),
+        ),
+        source => source.as_str().to_owned(),
+    }
+}
+
+fn material_shader_variant(original: &Shader, source: String, binding_id: u64) -> Shader {
+    let mut variant = match &original.source {
+        Source::Wesl(_) => Shader::from_wesl(source, variant_module_path(original, binding_id)),
+        _ => {
+            let mut variant = original.clone();
+            variant.import_path = ShaderImport::AssetPath(format!(
+                "pybevy://material/{binding_id:016x}/{}",
+                original.path
+            ));
+            variant
+        }
+    };
+    variant.path = original.path.clone();
+    variant.shader_defs = original.shader_defs.clone();
+    variant.file_dependencies = original.file_dependencies.clone();
+    variant.validate_shader = original.validate_shader.clone();
+    variant
+}
+
 impl MaterialShaderVariants {
+    fn is_current(&self, handle: &Handle<Shader>, source: &str, defs: &[ShaderDefVal]) -> bool {
+        self.entries
+            .get(&handle.id())
+            .is_some_and(|(current, current_defs)| current == source && current_defs == defs)
+    }
+
     fn publish(&mut self, shaders: &mut Assets<Shader>, handle: &Handle<Shader>, shader: Shader) {
         let state = (
             shader.source.as_str().to_string(),
@@ -151,15 +210,14 @@ impl MaterialShaderVariants {
                 continue;
             };
             let binding_id = hash_shader_path(bindings);
-            let versioned_import = format!("{import}_PYBEVY_{binding_id:016X}");
             let binding_handle = stable_handle(0x5059424556595642, binding_id);
             if live.insert(binding_handle.id()) {
                 self.publish(
                     shaders,
                     &binding_handle,
-                    Shader::from_wgsl(
-                        replace_import(bindings, import, &versioned_import),
-                        format!("pybevy://bindings/{import}/{binding_id:016X}"),
+                    generated_bindings_shader(
+                        bindings.to_owned(),
+                        &versioned_material_import(import, binding_id),
                     ),
                 );
             }
@@ -172,22 +230,16 @@ impl MaterialShaderVariants {
                 if !live.insert(variant_handle.id()) {
                     continue;
                 }
-                let Some(original) = get_shader_handle(path_id)
-                    .and_then(|handle| shaders.get(&handle))
-                    .cloned()
+                let Some(original) =
+                    get_shader_handle(path_id).and_then(|handle| shaders.get(&handle))
                 else {
                     continue;
                 };
-                let variant_path = format!("pybevy://material/{import}/{path}/{binding_id:016X}");
-                let mut variant = Shader::from_wgsl(
-                    replace_import(original.source.as_str(), import, &versioned_import),
-                    original.path.clone(),
-                );
-                variant.import_path = ShaderImport::AssetPath(variant_path);
-                variant.shader_defs = original.shader_defs;
-                variant.additional_imports = original.additional_imports;
-                variant.file_dependencies = original.file_dependencies;
-                variant.validate_shader = original.validate_shader;
+                let source = variant_source(original, import, binding_id);
+                if self.is_current(&variant_handle, &source, &original.shader_defs) {
+                    continue;
+                }
+                let variant = material_shader_variant(original, source, binding_id);
                 self.publish(shaders, &variant_handle, variant);
             }
         }
@@ -203,28 +255,89 @@ impl MaterialShaderVariants {
 }
 
 #[cfg(test)]
+mod composition_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ShaderMaterial, StorageShaderMaterial};
+    use crate::{ShaderMaterial, StorageShaderMaterial, register_shader_handle};
+
+    #[test]
+    fn stage_variants_import_their_layout_and_follow_source_edits() {
+        let path = "shaders/variant_sync_probe.wesl";
+        let mut shaders = Assets::<Shader>::default();
+        let original = shaders.add(Shader::from_wesl(
+            "import pybevy::gen::Probe as params;\n@fragment fn fragment() -> @location(0) vec4<f32> { return params::material.color; }\n",
+            path,
+        ));
+        register_shader_handle(hash_shader_path(path), original.clone());
+        let bindings = "// module pybevy::gen::Probe\nstruct Probe { color: vec4<f32>, }\n";
+        let extension = ShaderMaterialExtension {
+            fragment_shader_path: Some(path.into()),
+            bindings_wgsl: Some(bindings.into()),
+            ..Default::default()
+        };
+        let sources = MaterialShaderSources::from(&extension);
+        let binding_id = hash_shader_path(bindings);
+        let handle = material_shader_handle(hash_shader_path(path), Some(binding_id)).unwrap();
+        let mut variants = MaterialShaderVariants::default();
+        variants.sync(&mut shaders, &[&sources]);
+        let variant = shaders.get(&handle).unwrap();
+        let versioned = format!("pybevy::gen_{binding_id:016x}::Probe");
+        assert!(matches!(variant.source, Source::Wesl(_)));
+        assert_eq!(variant.path, path);
+        assert_eq!(
+            variant.import_path,
+            ShaderImport::AssetPath(format!(
+                "/shaders/variant_sync_probe_pybevy_{binding_id:016x}"
+            ))
+        );
+        assert_eq!(
+            variant.imports,
+            vec![
+                ShaderImport::Custom(format!("pybevy::gen_{binding_id:016x}")),
+                ShaderImport::Custom(versioned.clone()),
+            ]
+        );
+        let layout = stable_handle(0x5059424556595642, binding_id);
+        assert_eq!(
+            shaders.get(&layout).unwrap().import_path,
+            ShaderImport::Custom(versioned)
+        );
+        shaders.insert(original.id(), Shader::from_wesl(
+            "import pybevy::gen::Probe as params;\n@fragment fn fragment() -> @location(0) vec4<f32> { return params::material.color * 2.0; }\n",
+            path,
+        )).unwrap();
+        variants.sync(&mut shaders, &[&sources]);
+        assert!(
+            shaders
+                .get(&handle)
+                .unwrap()
+                .source
+                .as_str()
+                .contains("* 2.0")
+        );
+    }
+
     #[test]
     fn import_replacement_preserves_prefix_neighbors() {
-        let source = "#import pybevy::gen::Surface as p\n#import pybevy::gen::SurfaceExtra as q\np::x; pybevy::gen::Surface::value;";
+        let source = "import pybevy::gen::Surface as p;\nimport pybevy::gen::SurfaceExtra as q;\nimport x::pybevy::gen::Surface;\np::x; pybevy::gen::Surface::value;";
         assert_eq!(
-            replace_import(source, "pybevy::gen::Surface", "private::version"),
-            "#import private::version as p\n#import pybevy::gen::SurfaceExtra as q\np::x; private::version::value;"
+            replace_import(source, "pybevy::gen::Surface", "pybevy::gen_0a::Surface"),
+            "import pybevy::gen_0a::Surface as p;\nimport pybevy::gen::SurfaceExtra as q;\nimport x::pybevy::gen::Surface;\np::x; pybevy::gen_0a::Surface::value;"
         );
     }
     #[test]
     fn layout_variants_are_distinct_and_retired_assets_are_removed() {
         let first = ShaderMaterialExtension {
             bindings_wgsl: Some(
-                "#define_import_path pybevy::gen::Surface\nstruct Data { tint: f32, }".into(),
+                "// module pybevy::gen::Surface\nstruct Data { tint: f32, }".into(),
             ),
             ..Default::default()
         };
         let second = ShaderMaterialExtension {
             bindings_wgsl: Some(
-                "#define_import_path pybevy::gen::Surface\nstruct Data { tint: vec4<f32>, }".into(),
+                "// module pybevy::gen::Surface\nstruct Data { tint: vec4<f32>, }".into(),
             ),
             ..Default::default()
         };
@@ -254,13 +367,13 @@ mod tests {
         let b = extended.add(StorageShaderMaterial::default());
         let first = ShaderMaterialExtension {
             bindings_wgsl: Some(
-                "#define_import_path pybevy::gen::Retained\nstruct Data { value: f32, }".into(),
+                "// module pybevy::gen::Retained\nstruct Data { value: f32, }".into(),
             ),
             ..Default::default()
         };
         let mut second = first.clone();
         second.bindings_wgsl =
-            Some("#define_import_path pybevy::gen::Retained\nstruct Data { value: i32, }".into());
+            Some("// module pybevy::gen::Retained\nstruct Data { value: i32, }".into());
         let mut lifetimes = MaterialShaderLifetimes::default();
         lifetimes.observe(a.id().untyped(), &first);
         lifetimes.observe(b.id().untyped(), &first);
