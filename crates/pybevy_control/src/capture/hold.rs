@@ -2,6 +2,11 @@ use std::{any::TypeId, collections::HashSet};
 
 use bevy::{ecs::world::World, gizmos::config::GizmoConfigStore, prelude::*};
 
+use super::{
+    camera::{DebugCameraCleanup, cleanup_debug_camera_world},
+    isolation::EntityCaptureIsolation,
+    lease::{return_capture_lease, take_capture_lease},
+};
 use crate::capture::queue::PendingScreenshot;
 
 /// Marker component for internal overlay UI that should always be hidden in screenshots.
@@ -139,25 +144,74 @@ pub(crate) fn suppress_internal_overlay(world: &mut World) {
     }
 }
 
-pub(crate) fn prepare_capture_visibility(
-    world: &mut World,
-    hide_ui: bool,
-    with_gizmos: bool,
-) -> (Option<Vec<(Entity, Visibility)>>, GizmoEnabledRestore) {
-    suppress_internal_overlay(world);
-    let ui_restore = hide_ui.then(|| hide_ui_nodes(world, None));
-    let gizmo_restore = if with_gizmos {
-        GizmoEnabledRestore::new()
-    } else {
-        set_gizmos_enabled(world, false)
-    };
-    (ui_restore, gizmo_restore)
-}
-
 /// Release one `suppress_internal_overlay` hold.
 pub(crate) fn release_internal_overlay(world: &mut World) {
     if let Some(mut suppression) = world.get_resource_mut::<OverlaySuppression>() {
         suppression.0 = suppression.0.saturating_sub(1);
+    }
+}
+
+/// World state a capture changes while it runs, restored when it ends: the
+/// capture lease with its internal overlay suppression, hidden UI, disabled
+/// gizmos, entity isolation and posed camera.
+#[derive(Default)]
+pub struct CaptureHold {
+    pub(super) leased: bool,
+    pub(super) ui_restore: Option<Vec<(Entity, Visibility)>>,
+    pub(super) gizmo_restore: GizmoEnabledRestore,
+    pub(super) entity_isolation: Option<EntityCaptureIsolation>,
+    pub(super) debug_cleanup: Option<DebugCameraCleanup>,
+}
+
+impl CaptureHold {
+    pub(crate) fn with_gizmo_restore(gizmo_restore: GizmoEnabledRestore) -> Self {
+        Self {
+            gizmo_restore,
+            ..Self::default()
+        }
+    }
+
+    /// Suppresses the overlay, hides UI when asked, and hides gizmos unless
+    /// the capture wants them.
+    pub(super) fn begin(world: &mut World, hide_ui: bool, with_gizmos: bool) -> Self {
+        let mut hold = Self::default();
+        hold.begin_capture(world);
+        hold.ui_restore = hide_ui.then(|| hide_ui_nodes(world, None));
+        if !with_gizmos {
+            hold.gizmo_restore = set_gizmos_enabled(world, false);
+        }
+        hold
+    }
+
+    /// Takes the capture lease and hides the internal overlay.
+    pub(super) fn begin_capture(&mut self, world: &mut World) {
+        if !self.leased {
+            take_capture_lease(world);
+            suppress_internal_overlay(world);
+            self.leased = true;
+        }
+    }
+
+    pub(crate) fn release(self, world: &mut World) {
+        if self.leased {
+            release_internal_overlay(world);
+            return_capture_lease(world);
+        }
+        if let Some(restore) = self.ui_restore {
+            restore_ui_nodes(world, restore);
+        }
+        restore_gizmos_enabled(world, self.gizmo_restore);
+        if let Some(isolation) = self.entity_isolation {
+            isolation.restore_world(world);
+        }
+        if let Some(cleanup) = self.debug_cleanup {
+            cleanup_debug_camera_world(cleanup, world);
+        }
+    }
+
+    /// Releases from an observer, where only `Commands` reach the world.
+    pub(super) fn queue_release(self, commands: &mut Commands) {
+        commands.queue(move |world: &mut World| self.release(world));
     }
 }
 
@@ -354,10 +408,12 @@ mod tests {
             ScreenshotResponder {
                 response_tx: tx,
                 max_width: None,
-                debug_cleanup: None,
-                ui_restore: Some(vec![(ui, Visibility::Visible)]),
-                entity_isolation: None,
-                gizmo_restore: default_group_restore(true),
+                hold: CaptureHold {
+                    leased: true,
+                    ui_restore: Some(vec![(ui, Visibility::Visible)]),
+                    gizmo_restore: default_group_restore(true),
+                    ..Default::default()
+                },
                 extra_response: None,
                 capture_viewport: None,
                 response_kind: CaptureResponseKind::Screenshot,
@@ -401,10 +457,12 @@ mod tests {
             ScreenshotResponder {
                 response_tx: tx,
                 max_width: None,
-                debug_cleanup: None,
-                ui_restore: Some(vec![(ui, Visibility::Visible)]),
-                entity_isolation: None,
-                gizmo_restore: default_group_restore(true),
+                hold: CaptureHold {
+                    leased: true,
+                    ui_restore: Some(vec![(ui, Visibility::Visible)]),
+                    gizmo_restore: default_group_restore(true),
+                    ..Default::default()
+                },
                 extra_response: None,
                 capture_viewport: None,
                 response_kind: CaptureResponseKind::Screenshot,
@@ -439,16 +497,18 @@ mod tests {
                 response_tx: Some(tx),
                 max_width: None,
                 columns: 2,
-                debug_cleanup: None,
+                hold: Some(CaptureHold {
+                    leased: true,
+                    ui_restore: Some(vec![(ui, Visibility::Visible)]),
+                    gizmo_restore: default_group_restore(true),
+                    ..Default::default()
+                }),
                 schedule: VecDeque::new(),
                 total_captures: 2,
                 next_capture_index: 2,
                 collected: vec![],
-                overlay_suppressed: true,
                 hide_ui: true,
                 with_gizmos: false,
-                ui_restore: Some(vec![(ui, Visibility::Visible)]),
-                gizmo_restore: default_group_restore(true),
                 headless_sequence: None,
                 stall_frames: MAX_CAPTURE_WAIT_FRAMES,
             },

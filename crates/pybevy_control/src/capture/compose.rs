@@ -1,45 +1,95 @@
 use std::io::Cursor;
 
 use base64::Engine;
-use bevy::prelude::*;
 use image::{ImageFormat, Rgb, RgbImage};
 
 use super::timeline::ActiveTimeline;
 use crate::protocol::ControlError;
 
-/// Composite timeline captures into a contact sheet grid image.
-pub(super) fn composite_contact_sheet(
-    timeline: &mut ActiveTimeline,
-) -> Result<serde_json::Value, ControlError> {
-    // Sort by capture index
-    timeline.collected.sort_by_key(|(idx, _)| *idx);
+/// How a contact sheet chooses its column count.
+pub(super) enum ColumnPolicy {
+    /// Exactly the requested columns.
+    Exact,
+    /// At most the requested columns, shrunk to a divisor of the frame count
+    /// when one exists so the last row is full; never below two columns.
+    FillRows,
+}
 
-    let cols = timeline.columns.max(1) as usize;
-    let count = timeline.collected.len();
+/// Layout and colors of a contact sheet.
+pub(super) struct SheetStyle {
+    pub(super) name: &'static str,
+    pub(super) empty_error: &'static str,
+    pub(super) bar_height: u32,
+    pub(super) background: Rgb<u8>,
+    pub(super) bar_saturation: f64,
+    pub(super) bar_value: f64,
+    pub(super) columns: ColumnPolicy,
+}
+
+pub(super) const TIMELINE_SHEET: SheetStyle = SheetStyle {
+    name: "timeline",
+    empty_error: "No captures collected",
+    bar_height: 4,
+    background: Rgb([40, 40, 40]),
+    bar_saturation: 0.8,
+    bar_value: 0.9,
+    columns: ColumnPolicy::Exact,
+};
+
+pub(super) const TURNAROUND_SHEET: SheetStyle = SheetStyle {
+    name: "turnaround",
+    empty_error: "No turnaround captures collected",
+    bar_height: 20,
+    background: Rgb([30, 30, 30]),
+    bar_saturation: 0.7,
+    bar_value: 0.85,
+    columns: ColumnPolicy::FillRows,
+};
+
+/// A composed contact sheet as a base64 PNG.
+pub(super) struct ContactSheet {
+    pub(super) image: String,
+    pub(super) width: u32,
+    pub(super) height: u32,
+    pub(super) frame_count: usize,
+}
+
+/// Composes frames, sorted by their index, into a grid with a hue-cycled bar
+/// under each frame, scaled down to `max_width`.
+pub(super) fn compose_contact_sheet<K: Ord + Copy>(
+    frames: &mut [(K, RgbImage)],
+    style: &SheetStyle,
+    columns: u32,
+    max_width: Option<u32>,
+) -> Result<ContactSheet, ControlError> {
+    frames.sort_by_key(|(index, _)| *index);
+    let count = frames.len();
+    if count == 0 {
+        return Err(ControlError::internal(style.empty_error));
+    }
+    let cols = match style.columns {
+        ColumnPolicy::Exact => columns.max(1) as usize,
+        ColumnPolicy::FillRows => {
+            let preferred = (columns.max(1) as usize).min(count);
+            (preferred.min(2)..=preferred)
+                .rev()
+                .find(|&cols| count.is_multiple_of(cols))
+                .unwrap_or(preferred)
+        }
+    };
     let rows = count.div_ceil(cols);
 
-    if count == 0 {
-        return Err(ControlError::internal("No captures collected"));
-    }
-
-    // Use the first image's dimensions as cell size
-    let cell_w = timeline.collected[0].1.width();
-    let cell_h = timeline.collected[0].1.height();
-    let bar_height = 4u32;
-
+    let cell_w = frames[0].1.width();
+    let cell_h = frames[0].1.height();
+    let bar_height = style.bar_height;
     let canvas_w = cell_w * cols as u32;
     let canvas_h = (cell_h + bar_height) * rows as u32;
+    let mut canvas = RgbImage::from_pixel(canvas_w, canvas_h, style.background);
 
-    // Dark background
-    let mut canvas = RgbImage::from_pixel(canvas_w, canvas_h, Rgb([40, 40, 40]));
+    for (i, (_, frame)) in frames.iter().enumerate() {
+        let x = (i % cols) as u32 * cell_w;
+        let y = (i / cols) as u32 * (cell_h + bar_height);
 
-    for (i, (_, frame)) in timeline.collected.iter().enumerate() {
-        let col = (i % cols) as u32;
-        let row = (i / cols) as u32;
-        let x = col * cell_w;
-        let y = row * (cell_h + bar_height);
-
-        // Resize frame to cell size if needed
         let resized;
         let src = if frame.width() != cell_w || frame.height() != cell_h {
             resized = image::imageops::resize(
@@ -52,12 +102,10 @@ pub(super) fn composite_contact_sheet(
         } else {
             frame
         };
-
         image::imageops::overlay(&mut canvas, src, x as i64, y as i64);
 
-        // Colored bar at bottom (hue cycling for visual ordering)
-        let hue = (i as f64 / count.max(1) as f64) * 300.0; // 0..300 degrees
-        let color = hsv_to_rgb(hue, 0.8, 0.9);
+        let hue = (i as f64 / count as f64) * 300.0;
+        let color = hsv_to_rgb(hue, style.bar_saturation, style.bar_value);
         let bar_y = y + cell_h;
         for bx in x..x + cell_w {
             for by in bar_y..bar_y + bar_height {
@@ -68,8 +116,7 @@ pub(super) fn composite_contact_sheet(
         }
     }
 
-    // Resize if max_width set
-    if let Some(max_w) = timeline.max_width
+    if let Some(max_w) = max_width
         && canvas.width() > max_w
     {
         let scale = max_w as f64 / canvas.width() as f64;
@@ -82,20 +129,32 @@ pub(super) fn composite_contact_sheet(
         );
     }
 
-    let width = canvas.width();
-    let height = canvas.height();
-
     let mut buf = Vec::new();
     canvas
         .write_to(&mut Cursor::new(&mut buf), ImageFormat::Png)
-        .map_err(|e| ControlError::internal(format!("Failed to encode timeline PNG: {e}")))?;
+        .map_err(|e| ControlError::internal(format!("Failed to encode {} PNG: {e}", style.name)))?;
+    Ok(ContactSheet {
+        image: base64::engine::general_purpose::STANDARD.encode(&buf),
+        width: canvas.width(),
+        height: canvas.height(),
+        frame_count: count,
+    })
+}
 
-    let b64 = base64::engine::general_purpose::STANDARD.encode(&buf);
-
+/// Composite timeline captures into a contact sheet grid image.
+pub(super) fn composite_contact_sheet(
+    timeline: &mut ActiveTimeline,
+) -> Result<serde_json::Value, ControlError> {
+    let sheet = compose_contact_sheet(
+        &mut timeline.collected,
+        &TIMELINE_SHEET,
+        timeline.columns,
+        timeline.max_width,
+    )?;
     Ok(serde_json::json!({
-        "image": b64,
-        "width": width,
-        "height": height,
+        "image": sheet.image,
+        "width": sheet.width,
+        "height": sheet.height,
         "format": "png",
         "encoding": "base64"
     }))
@@ -134,7 +193,6 @@ mod tests {
     use tokio::sync::oneshot;
 
     use super::*;
-    use crate::capture::hold::GizmoEnabledRestore;
 
     #[test]
     fn hsv_to_rgb_red() {
@@ -197,16 +255,13 @@ mod tests {
             response_tx: Some(tx),
             max_width: None,
             columns: 3,
-            debug_cleanup: None,
+            hold: None,
             schedule: VecDeque::new(),
             total_captures: 1,
             next_capture_index: 0,
             collected: vec![(0, img)],
-            overlay_suppressed: false,
             hide_ui: true,
             with_gizmos: false,
-            ui_restore: None,
-            gizmo_restore: GizmoEnabledRestore::new(),
             headless_sequence: None,
             stall_frames: 0,
         };
@@ -233,16 +288,13 @@ mod tests {
             response_tx: Some(tx),
             max_width: None,
             columns: 2,
-            debug_cleanup: None,
+            hold: None,
             schedule: VecDeque::new(),
             total_captures: 4,
             next_capture_index: 0,
             collected,
-            overlay_suppressed: false,
             hide_ui: true,
             with_gizmos: false,
-            ui_restore: None,
-            gizmo_restore: GizmoEnabledRestore::new(),
             headless_sequence: None,
             stall_frames: 0,
         };
@@ -262,16 +314,13 @@ mod tests {
             response_tx: Some(tx),
             max_width: None,
             columns: 3,
-            debug_cleanup: None,
+            hold: None,
             schedule: VecDeque::new(),
             total_captures: 0,
             next_capture_index: 0,
             collected: vec![],
-            overlay_suppressed: false,
             hide_ui: true,
             with_gizmos: false,
-            ui_restore: None,
-            gizmo_restore: GizmoEnabledRestore::new(),
             headless_sequence: None,
             stall_frames: 0,
         };
@@ -289,16 +338,13 @@ mod tests {
             response_tx: Some(tx),
             max_width: Some(50),
             columns: 3,
-            debug_cleanup: None,
+            hold: None,
             schedule: VecDeque::new(),
             total_captures: 1,
             next_capture_index: 0,
             collected: vec![(0, img)],
-            overlay_suppressed: false,
             hide_ui: true,
             with_gizmos: false,
-            ui_restore: None,
-            gizmo_restore: GizmoEnabledRestore::new(),
             headless_sequence: None,
             stall_frames: 0,
         };

@@ -5,6 +5,7 @@ use bevy::{
     prelude::*,
     window::PrimaryWindow,
 };
+use tokio::sync::oneshot;
 
 use super::camera::select_capture_camera_3d;
 use crate::{
@@ -392,6 +393,57 @@ pub fn compute_depth_samples_for_camera(
         "coordinate_space": if explicit_sampling { "normalized_800x800" } else { "grid_indices" },
         "samples": samples,
     }))
+}
+
+/// A `capture_depth` without RGB, sampled once its delay has elapsed.
+pub struct PendingDepthSample {
+    pub response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
+    pub frames_remaining: u32,
+    pub analysis: PendingDepthAnalysis,
+}
+
+#[derive(Resource, Default)]
+pub struct PendingDepthSamples {
+    pub pending: Vec<PendingDepthSample>,
+}
+
+/// Counts down depth-only captures and answers each from its retained camera.
+pub fn process_pending_depth_samples(world: &mut World) {
+    let Some(mut queue) = world.remove_resource::<PendingDepthSamples>() else {
+        return;
+    };
+    let mut still_waiting = Vec::new();
+    for mut sample in queue.pending.drain(..) {
+        if sample.response_tx.is_closed() {
+            continue;
+        }
+        if sample.frames_remaining > 0 {
+            sample.frames_remaining -= 1;
+            still_waiting.push(sample);
+            continue;
+        }
+        let analysis = &sample.analysis;
+        let result = validate_depth_capture_camera(world, analysis.camera_entity)
+            .and_then(|()| {
+                compute_depth_samples_for_camera(
+                    world,
+                    analysis.camera_entity,
+                    &analysis.position,
+                    &analysis.look_at,
+                    &analysis.sample_points,
+                    &analysis.grid_density,
+                )
+            })
+            .map(|depth| {
+                serde_json::json!({
+                    "screenshot": null,
+                    "depth_samples": depth,
+                })
+            });
+        let _ = sample.response_tx.send(result);
+    }
+    queue.pending = still_waiting;
+    world.insert_resource(queue);
 }
 
 /// Ray-AABB intersection using the slab method.
@@ -1002,5 +1054,69 @@ mod tests {
             error.message,
             "position and look_at must be distinct finite points"
         );
+    }
+
+    fn queued_depth_sample(
+        world: &mut World,
+        frames_remaining: u32,
+    ) -> oneshot::Receiver<Result<serde_json::Value, ControlError>> {
+        let camera_entity = spawn_complete_capture_camera(world);
+        let (response_tx, response_rx) = oneshot::channel();
+        world.insert_resource(PendingDepthSamples {
+            pending: vec![PendingDepthSample {
+                response_tx,
+                frames_remaining,
+                analysis: PendingDepthAnalysis {
+                    camera_entity,
+                    position: None,
+                    look_at: None,
+                    sample_points: None,
+                    grid_density: Some(1),
+                },
+            }],
+        });
+        response_rx
+    }
+
+    #[test]
+    fn depth_only_capture_answers_after_its_delay() {
+        let mut world = World::new();
+        let mut response = queued_depth_sample(&mut world, 2);
+
+        for _ in 0..2 {
+            process_pending_depth_samples(&mut world);
+            assert!(response.try_recv().is_err(), "answered before its delay");
+        }
+        process_pending_depth_samples(&mut world);
+        let result = response.try_recv().unwrap().unwrap();
+        assert!(result["screenshot"].is_null());
+        assert_eq!(result["depth_samples"]["sample_count"], 1);
+        assert!(world.resource::<PendingDepthSamples>().pending.is_empty());
+    }
+
+    #[test]
+    fn depth_only_capture_fails_when_its_camera_changes_during_the_delay() {
+        let mut world = World::new();
+        let mut response = queued_depth_sample(&mut world, 1);
+        let camera = world.resource::<PendingDepthSamples>().pending[0]
+            .analysis
+            .camera_entity;
+
+        process_pending_depth_samples(&mut world);
+        world.get_mut::<Camera>(camera).unwrap().is_active = false;
+        process_pending_depth_samples(&mut world);
+        let error = response.try_recv().unwrap().unwrap_err();
+        assert_eq!(
+            error.message,
+            "Selected capture_depth camera became inactive before capture"
+        );
+    }
+
+    #[test]
+    fn depth_only_capture_drops_a_closed_responder() {
+        let mut world = World::new();
+        drop(queued_depth_sample(&mut world, 0));
+        process_pending_depth_samples(&mut world);
+        assert!(world.resource::<PendingDepthSamples>().pending.is_empty());
     }
 }

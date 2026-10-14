@@ -347,7 +347,6 @@ pub(crate) fn cleanup_debug_camera_world(cleanup: DebugCameraCleanup, world: &mu
 
 #[cfg(test)]
 mod tests {
-
     use bevy::{
         asset::RenderAssetUsages,
         camera::{RenderTarget, Viewport},
@@ -361,7 +360,7 @@ mod tests {
     use super::*;
     use crate::{
         capture::{
-            hold::GizmoEnabledRestore,
+            hold::CaptureHold,
             queue::{CaptureResponseKind, DebugCameraRequest, PendingScreenshots},
             screenshot::{StagedScreenshot, StagedScreenshots, process_pending_screenshots},
         },
@@ -901,11 +900,12 @@ mod tests {
                 response_tx,
                 frames_remaining: 0,
                 with_gizmos: false,
-                gizmo_restore: GizmoEnabledRestore::new(),
+                hold: CaptureHold {
+                    leased: true,
+                    debug_cleanup: Some(cleanup),
+                    ..Default::default()
+                },
                 max_width: None,
-                debug_cleanup: Some(cleanup),
-                ui_restore: None,
-                entity_isolation: None,
                 depth_analysis: None,
                 extra_response: None,
                 response_kind: CaptureResponseKind::Screenshot,

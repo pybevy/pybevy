@@ -211,6 +211,7 @@ impl Plugin for ControlBevyPlugin {
                 crate::capture::timeline::process_pending_timelines,
                 crate::reload::process_pending_reloads,
                 crate::capture::turnaround::process_pending_turnarounds,
+                crate::capture::depth::process_pending_depth_samples,
             ),
         );
 

@@ -1,17 +1,16 @@
-use std::{collections::HashMap, io::Cursor};
+use std::collections::HashMap;
 
-use base64::Engine;
 use bevy::{
     ecs::world::World, math::Vec3A, prelude::*, render::view::window::screenshot::Screenshot,
 };
-use image::{ImageFormat, Rgb, RgbImage};
+use image::RgbImage;
 use tokio::sync::oneshot;
 
 use super::{
     camera::{DebugCameraCleanup, cleanup_debug_camera_world, setup_debug_camera_with_up},
-    compose::hsv_to_rgb,
+    compose::{TURNAROUND_SHEET, compose_contact_sheet},
     headless::{headless_frame_sequence, read_headless_frame},
-    hold::{release_internal_overlay, restore_ui_nodes, suppress_internal_overlay},
+    hold::CaptureHold,
     isolation::EntityCaptureIsolationActive,
     lease::capture_in_progress,
     screenshot::{
@@ -20,9 +19,7 @@ use super::{
     },
 };
 use crate::{
-    capture::{hold::InternalOverlayUi, queue::DebugCameraRequest},
-    protocol::ControlError,
-    scene::spatial::compute_world_aabb,
+    capture::queue::DebugCameraRequest, protocol::ControlError, scene::spatial::compute_world_aabb,
 };
 
 pub const MAX_TURNAROUND_VIEWS: u32 = 20;
@@ -53,10 +50,9 @@ pub struct ActiveTurnaround {
     /// Whether the current viewpoint is configured and waiting for capture.
     pub view_staged: bool,
     pub hide_ui: bool,
-    pub ui_restore: Option<Vec<(Entity, Visibility)>>,
-    /// Whether this turnaround holds an `OverlaySuppression` refcount
-    /// (taken at the first viewpoint, released on completion).
-    pub overlay_suppressed: bool,
+    /// The capture state taken at the first viewpoint, released on completion.
+    pub hold: Option<CaptureHold>,
+    /// The current viewpoint's camera pose.
     pub debug_cleanup: Option<DebugCameraCleanup>,
     pub look_at: [f32; 3],
     /// Entity of pending Screenshot component, if any
@@ -69,7 +65,7 @@ pub struct ActiveTurnaround {
 
 impl ActiveTurnaround {
     pub(crate) fn is_started(&self) -> bool {
-        self.overlay_suppressed && self.response_tx.is_some()
+        self.hold.is_some() && self.response_tx.is_some()
     }
 }
 
@@ -156,23 +152,6 @@ pub fn compute_scene_bounds(world: &mut World) -> Option<(Vec3A, Vec3A)> {
     }
 }
 
-/// Hide all UI Node entities by setting their visibility to Hidden.
-/// Returns a list of (entity, original_visibility) for restoration.
-fn hide_ui_nodes(world: &mut World) -> Vec<(Entity, Visibility)> {
-    let mut ui_entities: Vec<(Entity, Visibility)> = Vec::new();
-    let mut query = world
-        .query_filtered::<(Entity, &Visibility, &bevy::ui::Node), Without<InternalOverlayUi>>();
-    for (entity, vis, _) in query.iter(world) {
-        ui_entities.push((entity, *vis));
-    }
-    for (entity, _) in &ui_entities {
-        if let Some(mut vis) = world.get_mut::<Visibility>(*entity) {
-            *vis = Visibility::Hidden;
-        }
-    }
-    ui_entities
-}
-
 /// Fail an active turnaround, restoring the capture state it held.
 fn fail_turnaround(world: &mut World, mut turnaround: ActiveTurnaround, message: String) {
     if let Some(entity) = turnaround.pending_screenshot_entity.take() {
@@ -186,11 +165,8 @@ fn fail_turnaround(world: &mut World, mut turnaround: ActiveTurnaround, message:
     if let Some(cleanup) = turnaround.debug_cleanup.take() {
         cleanup_debug_camera_world(cleanup, world);
     }
-    if let Some(restore) = turnaround.ui_restore.take() {
-        restore_ui_nodes(world, restore);
-    }
-    if turnaround.overlay_suppressed {
-        release_internal_overlay(world);
+    if let Some(hold) = turnaround.hold.take() {
+        hold.release(world);
     }
     if let Some(tx) = turnaround.response_tx.take() {
         let _ = tx.send(Err(ControlError::internal(message)));
@@ -263,19 +239,8 @@ pub fn process_pending_turnarounds(world: &mut World) {
 
         // Are we done?
         if turnaround.current_index >= turnaround.viewpoints.len() {
-            // Restore UI
-            if let Some(restore) = turnaround.ui_restore.take() {
-                for (ui_entity, original_vis) in restore {
-                    if let Some(mut vis) = world.get_mut::<Visibility>(ui_entity) {
-                        *vis = original_vis;
-                    }
-                }
-            }
-
-            // Release the overlay suppression held by this turnaround
-            if turnaround.overlay_suppressed {
-                turnaround.overlay_suppressed = false;
-                release_internal_overlay(world);
+            if let Some(hold) = turnaround.hold.take() {
+                hold.release(world);
             }
 
             // Composite and send response
@@ -286,16 +251,9 @@ pub fn process_pending_turnarounds(world: &mut World) {
             continue;
         }
 
-        // Suppress the internal overlay for the duration of the turnaround
-        // (the overlay is capture noise regardless of hide_ui)
-        if turnaround.current_index == 0 && !turnaround.overlay_suppressed {
-            suppress_internal_overlay(world);
-            turnaround.overlay_suppressed = true;
-        }
-
-        // Hide authored UI on first viewpoint
-        if turnaround.current_index == 0 && turnaround.hide_ui && turnaround.ui_restore.is_none() {
-            turnaround.ui_restore = Some(hide_ui_nodes(world));
+        // Turnarounds leave gizmos as authored.
+        if turnaround.current_index == 0 && turnaround.hold.is_none() {
+            turnaround.hold = Some(CaptureHold::begin(world, turnaround.hide_ui, true));
         }
 
         // Set up debug camera for current viewpoint
@@ -308,15 +266,8 @@ pub fn process_pending_turnarounds(world: &mut World) {
         {
             Ok(cleanup) => cleanup,
             Err(error) => {
-                if let Some(restore) = turnaround.ui_restore.take() {
-                    for (ui_entity, original_vis) in restore {
-                        if let Some(mut vis) = world.get_mut::<Visibility>(ui_entity) {
-                            *vis = original_vis;
-                        }
-                    }
-                }
-                if turnaround.overlay_suppressed {
-                    release_internal_overlay(world);
+                if let Some(hold) = turnaround.hold.take() {
+                    hold.release(world);
                 }
                 if let Some(tx) = turnaround.response_tx.take() {
                     let _ = tx.send(Err(error));
@@ -451,104 +402,16 @@ pub fn handle_turnaround_capture(
     true
 }
 
-/// Composite turnaround captures into a contact sheet with angle labels.
+/// Composite turnaround captures into a contact sheet, one colored bar per view.
 fn composite_turnaround(
     turnaround: &mut ActiveTurnaround,
 ) -> Result<serde_json::Value, ControlError> {
-    turnaround.captures.sort_by_key(|(idx, _)| *idx);
-
-    let count = turnaround.captures.len();
-    if count == 0 {
-        return Err(ControlError::internal("No turnaround captures collected"));
-    }
-
-    // Treat user-supplied columns as a max; shrink to a divisor of count when possible
-    // to avoid trailing empty cells. Multi-column requests never collapse to one column.
-    let preferred = (turnaround.columns.max(1) as usize).min(count);
-    let min_cols = preferred.min(2);
-    let cols = (min_cols..=preferred)
-        .rev()
-        .find(|&c| count.is_multiple_of(c))
-        .unwrap_or(preferred);
-    let rows = count.div_ceil(cols);
-
-    let cell_w = turnaround.captures[0].1.width();
-    let cell_h = turnaround.captures[0].1.height();
-    let label_height = 20u32;
-
-    let canvas_w = cell_w * cols as u32;
-    let canvas_h = (cell_h + label_height) * rows as u32;
-
-    let mut canvas = RgbImage::from_pixel(canvas_w, canvas_h, Rgb([30, 30, 30]));
-
-    for (i, (capture_idx, frame)) in turnaround.captures.iter().enumerate() {
-        let col = (i % cols) as u32;
-        let row = (i / cols) as u32;
-        let x = col * cell_w;
-        let y = row * (cell_h + label_height);
-
-        // Resize frame to cell size if needed
-        let resized;
-        let src = if frame.width() != cell_w || frame.height() != cell_h {
-            resized = image::imageops::resize(
-                frame,
-                cell_w,
-                cell_h,
-                image::imageops::FilterType::Triangle,
-            );
-            &resized
-        } else {
-            frame
-        };
-
-        image::imageops::overlay(&mut canvas, src, x as i64, y as i64);
-
-        // Draw label bar
-        let label = if *capture_idx < turnaround.viewpoints.len() {
-            &turnaround.viewpoints[*capture_idx].label
-        } else {
-            "?"
-        };
-
-        // Simple label: colored bar with hue cycling
-        let hue = (i as f64 / count.max(1) as f64) * 300.0;
-        let color = hsv_to_rgb(hue, 0.7, 0.85);
-        let bar_y = y + cell_h;
-        for bx in x..x + cell_w {
-            for by in bar_y..bar_y + label_height {
-                if bx < canvas_w && by < canvas_h {
-                    canvas.put_pixel(bx, by, color);
-                }
-            }
-        }
-        let _ = label; // Label text rendering would require a font; the color bar provides ordering
-    }
-
-    // Resize if max_width set
-    if let Some(max_w) = turnaround.max_width
-        && canvas.width() > max_w
-    {
-        let scale = max_w as f64 / canvas.width() as f64;
-        let new_height = (canvas.height() as f64 * scale).round() as u32;
-        canvas = image::imageops::resize(
-            &canvas,
-            max_w,
-            new_height,
-            image::imageops::FilterType::Triangle,
-        );
-    }
-
-    let width = canvas.width();
-    let height = canvas.height();
-
-    let mut buf = Vec::new();
-    canvas
-        .write_to(&mut Cursor::new(&mut buf), ImageFormat::Png)
-        .map_err(|e| ControlError::internal(format!("Failed to encode turnaround PNG: {e}")))?;
-
-    let b64 = base64::engine::general_purpose::STANDARD.encode(&buf);
-
-    // Build view metadata
+    let sheet = compose_contact_sheet(
+        &mut turnaround.captures,
+        &TURNAROUND_SHEET,
+        turnaround.columns,
+        turnaround.max_width,
+    )?;
     let views: Vec<serde_json::Value> = turnaround
         .viewpoints
         .iter()
@@ -563,12 +426,12 @@ fn composite_turnaround(
         .collect();
 
     Ok(serde_json::json!({
-        "image": b64,
-        "width": width,
-        "height": height,
+        "image": sheet.image,
+        "width": sheet.width,
+        "height": sheet.height,
         "format": "png",
         "encoding": "base64",
-        "view_count": count,
+        "view_count": sheet.frame_count,
         "views": views,
     }))
 }
@@ -576,6 +439,7 @@ fn composite_turnaround(
 #[cfg(test)]
 mod tests {
     use bevy::camera::primitives::Aabb;
+    use image::Rgb;
     use pybevy_core::public_error::TURNAROUND_CAMERA3D_REQUIRED;
 
     use super::*;
@@ -760,8 +624,7 @@ mod tests {
             frames_remaining: 0,
             view_staged: false,
             hide_ui: false,
-            ui_restore: None,
-            overlay_suppressed: false,
+            hold: None,
             debug_cleanup: None,
             look_at: [0.0, 0.0, 0.0],
             pending_screenshot_entity: None,
@@ -979,8 +842,11 @@ mod tests {
         let mut turnaround = make_turnaround(make_viewpoints(2), Vec::new(), 2, None);
         turnaround.response_tx = Some(tx);
         turnaround.pending_screenshot_entity = Some(screenshot_entity);
-        turnaround.overlay_suppressed = true;
-        turnaround.ui_restore = Some(vec![(ui, Visibility::Visible)]);
+        turnaround.hold = Some(CaptureHold {
+            leased: true,
+            ui_restore: Some(vec![(ui, Visibility::Visible)]),
+            ..Default::default()
+        });
         turnaround.stall_frames = MAX_CAPTURE_WAIT_FRAMES;
         world.insert_resource(PendingTurnarounds {
             active: vec![turnaround],
@@ -1175,5 +1041,38 @@ mod tests {
         assert_eq!(val["width"], 30);
         // rows = 2, height = 2 * 30 = 60.
         assert_eq!(val["height"], 60);
+    }
+
+    #[test]
+    fn turnaround_hides_ui_from_the_frame_it_starts() {
+        let mut world = World::new();
+        world.spawn((
+            Camera3d::default(),
+            Camera::default(),
+            Transform::default(),
+            GlobalTransform::default(),
+        ));
+        let ui = world
+            .spawn((
+                bevy::ui::Node::default(),
+                Visibility::Visible,
+                InheritedVisibility::VISIBLE,
+            ))
+            .id();
+        let (tx, _rx) = oneshot::channel();
+        let mut turnaround = make_turnaround(make_viewpoints(1), Vec::new(), 1, None);
+        turnaround.response_tx = Some(tx);
+        turnaround.hide_ui = true;
+        world.insert_resource(PendingTurnarounds {
+            active: vec![turnaround],
+        });
+
+        process_pending_turnarounds(&mut world);
+
+        assert_eq!(*world.get::<Visibility>(ui).unwrap(), Visibility::Hidden);
+        assert_eq!(
+            *world.get::<InheritedVisibility>(ui).unwrap(),
+            InheritedVisibility::HIDDEN
+        );
     }
 }
