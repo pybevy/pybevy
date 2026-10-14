@@ -23,7 +23,7 @@ pub struct ComparisonResult {
 /// e.g., "crates.pybevy_render.src" -> "render"
 /// e.g., "crates.pybevy_pbr.src" -> "pbr"
 /// e.g., "src.app" -> "app"
-fn extract_pybevy_module(module_path: &str) -> Option<String> {
+pub fn extract_pybevy_module(module_path: &str) -> Option<String> {
     for segment in module_path.split('.') {
         if let Some(stripped) = segment.strip_prefix("pybevy_") {
             return Some(stripped.to_string());
@@ -1197,7 +1197,7 @@ fn compare_variants(
     )
 }
 
-fn enum_variant_kinds_match(
+pub fn enum_variant_kinds_match(
     bevy: &crate::bevy_parser::BevyVariantKind,
     pybevy: &crate::model::EnumVariantKind,
     named_bevy_tuple: bool,
@@ -1220,13 +1220,14 @@ fn enum_variant_kinds_match(
                 && bevy_fields
                     .iter()
                     .zip(pybevy_fields)
-                    .all(|(bevy, (_, pybevy))| types_compatible(bevy, pybevy))
+                    .all(|(bevy, (_, pybevy))| variant_payload_types_match(bevy, pybevy))
         }
         // PyBevy gives Bevy's unnamed one-field tuple payload the public name `value`.
         (BevyVariantKind::Tuple(bevy_fields), EnumVariantKind::Struct(pybevy_fields))
             if bevy_fields.len() == 1 && pybevy_fields.len() == 1 =>
         {
-            pybevy_fields[0].0 == "value" && types_compatible(&bevy_fields[0], &pybevy_fields[0].1)
+            pybevy_fields[0].0 == "value"
+                && variant_payload_types_match(&bevy_fields[0], &pybevy_fields[0].1)
         }
         (BevyVariantKind::Struct(bevy_fields), EnumVariantKind::Struct(pybevy_fields)) => {
             bevy_fields.len() == pybevy_fields.len()
@@ -1238,6 +1239,45 @@ fn enum_variant_kinds_match(
         }
         _ => false,
     }
+}
+
+/// Type comparison for tuple-payload adapter fields. The Bevy inventory
+/// records fully qualified types while adapter fields use local spellings,
+/// newtype payload wrappers (`KeyboardInputPayload`), and owned forms
+/// (`String` for `Cow<'static, str>`, plain `str` for a borrowed
+/// `AssetPath` that the adapter converts at the boundary). The fast path is
+/// the shared type comparison, then both sides are normalized as Rust types
+/// so the generic arguments still have to match.
+fn variant_payload_types_match(bevy: &str, py: &str) -> bool {
+    if types_compatible(bevy, py) {
+        return true;
+    }
+    let bevy_norm = normalize_rust_type(bevy);
+    // Adapters store the owned form of a `Cow<'static, T>` payload.
+    let bevy_norm = bevy_norm
+        .strip_prefix("Cow<")
+        .and_then(|inner| inner.strip_suffix('>'))
+        .map_or(bevy_norm.clone(), normalize_rust_type);
+    let py_norm = normalize_rust_type(py);
+    let no_spaces = |t: &str| t.replace(' ', "");
+    if no_spaces(&bevy_norm) == no_spaces(&py_norm) {
+        return true;
+    }
+    let base = |t: &str| {
+        let t = t.split('<').next().unwrap_or(t);
+        t.rsplit("::").next().unwrap_or(t).trim().to_string()
+    };
+    let bevy_base = base(&bevy_norm);
+    let py_base = base(&py_norm);
+    // Normalized vocabulary: the Rust normalizer maps String -> str and both
+    // `[u8]` and `Vec<u8>` -> bytes, which the equality above already covers.
+    let owned_forms = |a: &str, b: &str| a == "str" && b == "AssetPath";
+    py_base
+        .strip_suffix("Payload")
+        .is_some_and(|p| p == bevy_base)
+        || py_base.strip_prefix("Py").is_some_and(|p| p == bevy_base)
+        || owned_forms(&bevy_base, &py_base)
+        || owned_forms(&py_base, &bevy_base)
 }
 
 /// Extract types from a method signature that PyBevy doesn't have yet

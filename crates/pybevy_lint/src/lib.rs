@@ -58,6 +58,12 @@ pub fn parse_rust_files(path: &Path) -> Result<Vec<PyClassDef>> {
     rust_parser::parse_directory(path)
 }
 
+/// Collect the names of every type declared in the project's Rust sources,
+/// distinguishing PyBevy-internal types from claimed upstream Bevy types.
+pub fn collect_declared_type_names(path: &Path) -> Vec<String> {
+    rust_parser::collect_declared_type_names(path)
+}
+
 /// Parse all Python stub files in the given directory
 pub fn parse_python_stubs(path: &Path) -> Result<Vec<PyClassDef>> {
     python_parser::parse_directory(path)
@@ -101,6 +107,7 @@ pub fn validate_with_bevy(
     bevy_crates: &HashMap<String, BevyCrate>,
     bevy_path: Option<&Path>,
     check_stale_exceptions: bool,
+    internal_type_names: &HashSet<String>,
 ) -> Vec<Diagnostic> {
     validation::validate_with_bevy(
         rust_classes,
@@ -109,6 +116,7 @@ pub fn validate_with_bevy(
         bevy_crates,
         bevy_path,
         check_stale_exceptions,
+        internal_type_names,
     )
 }
 

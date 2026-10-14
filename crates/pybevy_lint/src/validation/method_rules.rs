@@ -9,6 +9,7 @@ use crate::{
     output::{Diagnostic, DiagnosticCode, Suggestion},
     python_parser::types::{resolve_self, types_compatible},
     rust_parser::types::normalize_rust_type,
+    validation::class_rules::{is_dynamic_python_type, stub_none_accepting},
 };
 
 /// Check if two parameter names are equivalent
@@ -688,6 +689,167 @@ pub fn validate_constructor(rust: &PyClassDef, python: &PyClassDef) -> Vec<Diagn
     diagnostics
 }
 
+/// W034: where both sides are mechanically comparable, the stub
+/// constructor defaults must agree with the Rust `#[new]` defaults.
+/// Compares booleans, numeric and string literals, `None`, and
+/// `Type::Member` references after reviewed renames; opaque expressions,
+/// the stub's `...` marker, and Omittable computed defaults are out of scope.
+pub fn validate_constructor_default_parity(
+    rust: &PyClassDef,
+    python: &PyClassDef,
+    bevy_config: Option<&BevyConfig>,
+) -> Vec<Diagnostic> {
+    let (Some(rust_ctor), Some(py_ctor)) = (&rust.constructor, &python.constructor) else {
+        return Vec::new();
+    };
+    if py_ctor.has_varargs {
+        return Vec::new();
+    }
+    let mut diagnostics = Vec::new();
+    for (rust_param, py_param) in rust_ctor.parameters.iter().zip(py_ctor.parameters.iter()) {
+        if !param_names_match(&rust_param.name, &py_param.name) {
+            continue;
+        }
+        let rust_default = normalize_default(rust_param.default_value.as_deref());
+        let stub_default = normalize_default(py_param.default_value.as_deref());
+        if defaults_agree(&rust_default, &stub_default, bevy_config) {
+            continue;
+        }
+        let mut diagnostic = Diagnostic::warning(
+            DiagnosticCode::W034,
+            format!(
+                "stub default for '{}.{}' is '{}', but the Rust #[new] default is '{}'",
+                rust.python_name,
+                rust_param.name,
+                display_default(&stub_default),
+                display_default(&rust_default),
+            ),
+        );
+        if let Some(ref location) = rust_ctor.location {
+            diagnostic = diagnostic.with_location(location.clone());
+        }
+        diagnostics.push(diagnostic);
+    }
+    diagnostics
+}
+
+fn normalize_default(value: Option<&str>) -> String {
+    value.unwrap_or("").replace(' ', "").trim().to_string()
+}
+
+fn display_default(value: &str) -> String {
+    if value.is_empty() {
+        "<none>".to_string()
+    } else {
+        value.to_string()
+    }
+}
+
+fn is_default_number(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .trim_start_matches(['+', '-'])
+            .replace('_', "")
+            .parse::<f64>()
+            .is_ok()
+}
+
+/// The content of a quoted literal, tolerating Rust owned-string spellings
+/// (`.to_string()`, `.to_owned()`, `.into()`, `String::from(...)`) and
+/// either Python quote style.
+fn default_string_literal(value: &str) -> Option<&str> {
+    let value = value
+        .strip_prefix("String::from(")
+        .and_then(|inner| inner.strip_suffix(')'))
+        .unwrap_or(value);
+    let value = [".to_string()", ".to_owned()", ".into()"]
+        .iter()
+        .find_map(|suffix| value.strip_suffix(suffix))
+        .unwrap_or(value);
+    ['"', '\'']
+        .iter()
+        .find_map(|quote| value.strip_prefix(*quote)?.strip_suffix(*quote))
+}
+
+/// An exact `Type::Member` reference (`::` on the Rust side, `.` on the
+/// stub side), with any `Py` prefix stripped.
+fn default_type_member(value: &str) -> Option<(String, String)> {
+    let value = value.strip_prefix("Py").unwrap_or(value);
+    let (type_name, member) = value.split_once("::").or_else(|| value.split_once('.'))?;
+    let identifier = |part: &str| {
+        !part.is_empty() && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    };
+    // Members of enum variants and associated constants are uppercase-start
+    // on both sides; this keeps `9.7` and method-like spellings out of the
+    // reference class.
+    let member_is_member = member
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_uppercase() || c == '_');
+    (identifier(type_name) && identifier(member) && member_is_member)
+        .then(|| (type_name.to_string(), member.to_string()))
+}
+
+fn defaults_agree(
+    rust_default: &str,
+    stub_default: &str,
+    bevy_config: Option<&BevyConfig>,
+) -> bool {
+    if rust_default == stub_default || stub_default == "..." {
+        return true;
+    }
+    // Omittable/HandleArg defaults compute the value when omitted; the stub
+    // legitimately spells the computed default.
+    if rust_default.contains("RawArg::Missing") || rust_default.contains("Omittable") {
+        return true;
+    }
+    if rust_default.is_empty() || stub_default.is_empty() {
+        return false;
+    }
+    if (rust_default == "true" || rust_default == "false")
+        && (stub_default == "True" || stub_default == "False")
+    {
+        return (rust_default == "true") == (stub_default == "True");
+    }
+    if is_default_number(rust_default) && is_default_number(stub_default) {
+        let parse = |value: &str| value.replace('_', "").parse::<f64>().unwrap();
+        return parse(rust_default) == parse(stub_default);
+    }
+    if let (Some(rust_literal), Some(stub_literal)) = (
+        default_string_literal(rust_default),
+        default_string_literal(stub_default),
+    ) {
+        return rust_literal == stub_literal;
+    }
+    if rust_default == "None" || stub_default == "None" {
+        return rust_default == "None" && stub_default == "None";
+    }
+    if let (Some((rust_type, rust_member)), Some((stub_type, stub_member))) = (
+        default_type_member(rust_default),
+        default_type_member(stub_default),
+    ) {
+        if rust_type != stub_type || rust_member == stub_member {
+            return rust_type == stub_type;
+        }
+        // Reviewed renames (upstream -> alias, e.g. `None` -> `None_`) apply
+        // in either direction.
+        return bevy_config
+            .and_then(|config| config.get_type_ignores(&stub_type))
+            .map(|ignores| {
+                ignores
+                    .renames
+                    .get(&rust_member)
+                    .is_some_and(|alias| alias == &stub_member)
+                    || ignores
+                        .renames
+                        .get(&stub_member)
+                        .is_some_and(|alias| alias == &rust_member)
+            })
+            .unwrap_or(false);
+    }
+    true
+}
+
 /// Check if a method is a context manager protocol method
 fn is_context_manager_method(name: &str) -> bool {
     name == "__enter__" || name == "__exit__"
@@ -1331,4 +1493,60 @@ fn returns_self(method: &crate::model::MethodDef) -> bool {
         ret.split(|c: char| !c.is_alphanumeric() && c != '_')
             .any(|t| t == "Self")
     })
+}
+
+/// W036 constructor arm: a Rust `#[new]` parameter typed `Option<T>` means
+/// the Python API accepts an explicit `None` (PyO3 defaults only apply to
+/// the omitted case, so both value options and `Option<&Bound<...>>`
+/// extraction options accept it), which the stub must spell (`T | None`,
+/// `Optional[T]`, or a `None` default). A stub that advertises `None`
+/// acceptance for a non-`Option` parameter is advertising either a runtime
+/// rejection or an unreviewed default.
+pub fn validate_constructor_none_parity(rust: &PyClassDef, python: &PyClassDef) -> Vec<Diagnostic> {
+    let Some(rust_ctor) = &rust.constructor else {
+        return Vec::new();
+    };
+    let Some(python_ctor) = &python.constructor else {
+        return Vec::new();
+    };
+    let mut diagnostics = Vec::new();
+    for rparam in &rust_ctor.parameters {
+        let Some(pparam) = python_ctor
+            .parameters
+            .iter()
+            .find(|parameter| param_names_match(&rparam.name, &parameter.name))
+        else {
+            continue;
+        };
+        let (Some(rust_type), Some(stub_type)) = (&rparam.param_type, &pparam.param_type) else {
+            continue;
+        };
+        let rust_optional = rust_type.replace(' ', "").starts_with("Option<");
+        // A dynamic extraction (`&Bound<PyAny>`) may accept None by inspection.
+        if !rust_optional && is_dynamic_python_type(rust_type) {
+            continue;
+        }
+        let stub_optional =
+            stub_none_accepting(stub_type) || pparam.default_value.as_deref() == Some("None");
+        if rust_optional == stub_optional {
+            continue;
+        }
+        let expected = if rust_optional {
+            "the Rust constructor accepts None, so the stub must spell `| None` (or a None default)"
+        } else {
+            "the Rust constructor does not accept None, so the stub must not advertise it"
+        };
+        let mut diagnostic = Diagnostic::warning(
+            DiagnosticCode::W036,
+            format!(
+                "constructor parameter '{}.__init__.{}' (Rust '{}', stub '{}'): {}",
+                rust.python_name, rparam.name, rust_type, stub_type, expected
+            ),
+        );
+        if let Some(location) = &python_ctor.location {
+            diagnostic = diagnostic.with_location(location.clone());
+        }
+        diagnostics.push(diagnostic);
+    }
+    diagnostics
 }

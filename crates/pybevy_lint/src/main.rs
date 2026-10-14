@@ -600,6 +600,11 @@ fn run_validate(
     bevy_path_override: Option<PathBuf>,
     bevy_cache: Option<PathBuf>,
 ) -> Result<bool> {
+    // Internal type names decide which unresolved claims are genuine
+    // upstream misses (W025) and which are PyBevy's own plumbing.
+    let internal_names: HashSet<String> = pybevy_lint::collect_declared_type_names(&args.rust_path)
+        .into_iter()
+        .collect();
     if args.verbose {
         eprintln!(
             "{} Parsing Rust files from {}...",
@@ -769,6 +774,7 @@ fn run_validate(
                 bevy_crates,
                 resolved_bevy_path.as_deref(),
                 true,
+                &internal_names,
             )
         } else {
             pybevy_lint::validate_with_bevy(
@@ -778,6 +784,7 @@ fn run_validate(
                 bevy_crates,
                 resolved_bevy_path.as_deref(),
                 false,
+                &internal_names,
             )
         }
     } else if type_filter.is_empty() {

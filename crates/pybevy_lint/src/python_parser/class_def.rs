@@ -161,6 +161,7 @@ fn parse_variant_def(
     let mut fields = Vec::new();
     let mut writable_fields = Vec::new();
     let mut constructor = None;
+    let mut match_args = None;
     let mut cursor = body.walk();
     for child in body.children(&mut cursor) {
         if child.kind() == "decorated_definition" {
@@ -197,6 +198,10 @@ fn parse_variant_def(
         let Some((field_name, field_type)) = parse_property_annotation(&child, source) else {
             continue;
         };
+        if field_name == "__match_args__" {
+            match_args = parse_match_args(&field_type);
+            continue;
+        }
         if field_name.starts_with('_')
             || field_type.starts_with("ClassVar")
             || field_type.starts_with("Final")
@@ -219,7 +224,36 @@ fn parse_variant_def(
         constructor,
         writable_fields,
         payload_fields: Vec::new(),
+        match_args,
     })
+}
+
+/// `ClassVar[tuple[Literal["a"], Literal["b"]]]` -> `["a", "b"]` in order.
+fn parse_match_args(annotation: &str) -> Option<Vec<String>> {
+    let inner = annotation
+        .strip_prefix("ClassVar")?
+        .trim_start()
+        .strip_prefix('[')?
+        .trim_end()
+        .strip_suffix(']')?
+        .trim();
+    let tuple_inner = inner.strip_prefix("tuple[")?.strip_suffix(']')?.trim();
+    if tuple_inner == "()" {
+        return Some(Vec::new());
+    }
+    let parts: Vec<&str> = tuple_inner.split(',').map(str::trim).collect();
+    let names = parts
+        .iter()
+        .map(|part| {
+            part.strip_prefix("Literal[")?
+                .strip_suffix(']')?
+                .trim()
+                .strip_prefix('"')
+                .and_then(|value| value.strip_suffix('"'))
+                .map(str::to_string)
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(names)
 }
 
 /// Prefer concrete inheritance to typing's generic parameter declaration.

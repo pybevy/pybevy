@@ -251,6 +251,12 @@ pub struct BevyConfig {
     #[serde(default)]
     pub type_mappings: HashMap<String, String>,
 
+    /// Explicit crate-qualified rewrites for ambiguous upstream claims
+    /// (raw claim name -> qualified claim name), e.g. a generic alias that
+    /// exists in several Bevy crates.
+    #[serde(default)]
+    pub claim_overrides: HashMap<String, String>,
+
     /// Reviewed associated-function mappings, keyed by public Python module and Rust
     /// wrapper name (`pybevy.math.PyVec2`).
     #[serde(default)]

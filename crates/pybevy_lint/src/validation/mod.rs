@@ -2,16 +2,21 @@ pub mod bridge_rules;
 pub mod class_rules;
 pub mod method_rules;
 pub mod origin;
+pub mod prelude_rules;
 pub mod property_rules;
 mod protocol_rules;
 mod specialized_receivers;
 pub mod style_rules;
 pub mod wrapper_types;
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 
 use crate::{
-    bevy_parser::types::BevyCrate,
+    bevy_parser::types::{BevyCrate, BevyItem},
+    comparison::pybevy_bevy_name,
     config::Config,
     model::{
         ConstructorOrigin, EnumVariantDef, EnumVariantKind, MacroInfo, MethodDef, ParameterDef,
@@ -49,6 +54,7 @@ pub fn validate_with_bevy(
     bevy_crates: &HashMap<String, BevyCrate>,
     bevy_path: Option<&std::path::Path>,
     check_stale_exceptions: bool,
+    internal_type_names: &HashSet<String>,
 ) -> Vec<Diagnostic> {
     let mut consumed_exceptions = config
         .map(|config| vec![false; config.validation.exceptions.len()])
@@ -80,6 +86,16 @@ pub fn validate_with_bevy(
         &config.bevy,
         bevy_crates,
     );
+    let wrapper_rust_names: HashSet<String> = rust_classes
+        .iter()
+        .filter(|class| {
+            class
+                .python_module_path
+                .as_deref()
+                .is_some_and(|module| module.starts_with("pybevy"))
+        })
+        .map(|class| class.rust_name.clone())
+        .collect();
     for rust_class in rust_classes {
         if rust_class.python_name.starts_with('_') {
             continue;
@@ -105,6 +121,34 @@ pub fn validate_with_bevy(
             .as_ref()
             .map(|origin| origin::check_constructor_policy(origin, rust_class))
             .unwrap_or_default();
+
+        // Explicit upstream claims (macro/bridge bevy type or a configured
+        // type mapping) resolve strictly and report W025 on failure; the
+        // implicit Py-strip fallback keeps the legacy silent-skip behavior.
+        let claimed_bevy_name: Option<String> = rust_class
+            .macro_info
+            .as_ref()
+            .map(|MacroInfo::BevyEnum { bevy_type, .. }| bevy_type.clone())
+            .or_else(|| rust_class.bridge_info.as_ref().map(|b| b.bevy_type.clone()))
+            .or_else(|| {
+                config
+                    .bevy
+                    .type_mappings
+                    .get(&rust_class.rust_name)
+                    .cloned()
+            });
+        let fallback_bevy_name = pybevy_bevy_name(rust_class, &config.bevy);
+        let (resolved_bevy, mut resolution_diagnostics) = match &claimed_bevy_name {
+            Some(name) => resolve_claimed_bevy_item(
+                rust_class,
+                bevy_crates,
+                name,
+                &config.bevy.claim_overrides,
+                internal_type_names,
+            ),
+            None => (find_bevy_item(bevy_crates, &fallback_bevy_name), Vec::new()),
+        };
+        policy_diagnostics.append(&mut resolution_diagnostics);
 
         if let Some(origin) = &origin
             && let Some(upstream_type) = origin.upstream_type().map(str::to_string).or_else(|| {
@@ -143,21 +187,134 @@ pub fn validate_with_bevy(
             ));
         }
 
-        if let Some((_, bevy_item)) = find_bevy_item(
-            bevy_crates,
-            &crate::comparison::pybevy_bevy_name(rust_class, &config.bevy),
-        ) && origin::source_struct_is_generic(&bevy_item.full_path, bevy_path) == Some(false)
+        if let Some((_, bevy_item)) = resolved_bevy
+            && origin::source_struct_is_generic(&bevy_item.full_path, bevy_path) == Some(false)
         {
             policy_diagnostics.extend(wrapper_types::check_hand_mirrored_value(
                 rust_class, bevy_item,
             ));
         }
 
-        if let Some(MacroInfo::BevyEnum { bevy_type, .. }) = &rust_class.macro_info
-            && let Some((_, bevy_item)) = find_bevy_item(bevy_crates, bevy_type)
+        if let Some(MacroInfo::BevyEnum { .. }) = &rust_class.macro_info
+            && let Some((_, bevy_item)) = resolved_bevy
         {
             policy_diagnostics.extend(class_rules::validate_enum_hashability(
                 rust_class, bevy_item,
+            ));
+        }
+
+        // W021: extra-hash parity for both pyenum and plain classes with a
+        // resolved upstream item; mutually exclusive with W015.
+        if let Some((_, bevy_item)) = resolved_bevy {
+            policy_diagnostics.extend(class_rules::validate_extra_hash(rust_class, bevy_item));
+        }
+
+        // W022: the stub must not promise writability the runtime rejects.
+        if let Some(python_class) = find_matching_python_class(rust_class, python_classes) {
+            policy_diagnostics.extend(property_rules::validate_stub_writability(
+                rust_class,
+                python_class,
+            ));
+        }
+
+        // W022 (payload arm): writable stub variant payload over a
+        // non-borrowed storage field is a detached write.
+        policy_diagnostics.extend(property_rules::validate_nested_variant_payload_writability(
+            rust_class,
+            python_classes,
+        ));
+
+        // W023: nested wrapper fields must not use plain field getters.
+        policy_diagnostics.extend(class_rules::validate_nested_wrapper_getters(
+            rust_class,
+            &wrapper_rust_names,
+        ));
+
+        // W024: non-Copy upstream constants need factory exposure.
+        if let Some(python_class) = find_matching_python_class(rust_class, python_classes)
+            && let Some((_, bevy_item)) = resolved_bevy
+        {
+            policy_diagnostics.extend(class_rules::validate_constant_typing(
+                rust_class,
+                python_class,
+                bevy_item,
+            ));
+        }
+
+        // W026: upstream tuple-payload variants must stay positional.
+        if let Some((_, bevy_item)) = resolved_bevy
+            && rust_class.is_enum
+        {
+            policy_diagnostics.extend(class_rules::validate_tuple_variant_exposure(
+                rust_class, bevy_item,
+            ));
+        }
+
+        // W031: exposed variant names must exist in the resolved upstream
+        // enum (renamed/misspelled variant detection).
+        if let Some((_, bevy_item)) = resolved_bevy
+            && rust_class.is_enum
+        {
+            policy_diagnostics.extend(class_rules::validate_variant_name_parity(
+                rust_class,
+                bevy_item,
+                &config.bevy,
+            ));
+        }
+
+        // W031 (struct-spelling arm): a struct wrapper mirroring upstream
+        // enum variants as classattrs/builder methods must spell them with
+        // the upstream names.
+        if let Some((_, bevy_item)) = resolved_bevy
+            && !rust_class.is_enum
+        {
+            policy_diagnostics.extend(class_rules::validate_struct_variant_spelling(
+                rust_class,
+                bevy_item,
+                &config.bevy,
+            ));
+        }
+
+        // W033: stub `__match_args__` must match the variant payload fields.
+        if rust_class.is_enum
+            && let Some(python_class) = find_matching_python_class(rust_class, python_classes)
+        {
+            policy_diagnostics.extend(class_rules::validate_match_args_conformance(
+                rust_class,
+                python_class,
+            ));
+        }
+
+        // W029: the Python registration module must match the canonical
+        // Bevy placement for the resolved upstream item.
+        if let Some((crate_key, bevy_item)) = resolved_bevy {
+            policy_diagnostics.extend(class_rules::validate_module_placement(
+                rust_class,
+                crate_key,
+                bevy_item,
+                &config.bevy,
+            ));
+        }
+
+        // W035: stub `Handle[T]` annotations must name the upstream asset
+        // type of the field they document.
+        if let Some((_, bevy_item)) = resolved_bevy
+            && let Some(python_class) = find_matching_python_class(rust_class, python_classes)
+        {
+            policy_diagnostics.extend(class_rules::validate_handle_argument_parity(
+                rust_class,
+                python_class,
+                bevy_item,
+                bevy_path,
+            ));
+
+            // W036 property arm: the stub's `None` acceptance for a readable
+            // property must match the upstream field's `Option` status.
+            policy_diagnostics.extend(class_rules::validate_property_optionality_parity(
+                rust_class,
+                python_class,
+                bevy_item,
+                bevy_path,
             ));
         }
 
@@ -240,6 +397,26 @@ pub fn validate_with_bevy(
             }
             diagnostics.push(diagnostic);
         }
+    }
+
+    // W030: the curated prelude must mirror the pinned Bevy prelude for
+    // every name PyBevy implements.
+    let prelude_path = "pybevy.prelude".to_string();
+    for diagnostic in
+        prelude_rules::check_prelude_parity(rust_classes, bevy_path, Path::new("pybevy/prelude.py"))
+    {
+        if is_disabled_code(Some(config), diagnostic.code.as_str()) {
+            continue;
+        }
+        if consume_exception(
+            Some(config),
+            &mut consumed_exceptions,
+            &prelude_path,
+            &diagnostic,
+        ) {
+            continue;
+        }
+        diagnostics.push(diagnostic);
     }
 
     // Exactly-once consumption across the standard and constructor-policy
@@ -369,22 +546,148 @@ fn upstream_slots(
     wrapper_types::UpstreamSlots { fields, variants }
 }
 
-/// Find one item by short name across the parsed crates.
-fn find_bevy_item<'a>(
+/// Collect upstream Bevy items carrying the given short name across all
+/// parsed crates; a qualified `crate::Name` claim is reduced to its short
+/// name so legacy resolution semantics are preserved.
+fn collect_bevy_matches<'a>(
     bevy_crates: &'a HashMap<String, BevyCrate>,
     bevy_name: &str,
-) -> Option<(&'a str, &'a crate::bevy_parser::types::BevyItem)> {
-    let short_name = bevy_name.rsplit("::").next().unwrap_or(bevy_name);
-    let mut matches: Vec<(&str, &crate::bevy_parser::types::BevyItem)> = Vec::new();
+) -> Vec<(&'a str, &'a BevyItem)> {
+    let short_name = claim_short_name(bevy_name);
+    let mut matches = Vec::new();
     for (crate_name, bevy_crate) in bevy_crates {
         if let Some(item) = bevy_crate.items.get(short_name) {
             matches.push((crate_name.as_str(), item));
         }
     }
-    match matches.len() {
-        1 => Some(matches[0]),
-        _ => None,
+    matches
+}
+
+/// Find one item by short name across the parsed crates.
+fn find_bevy_item<'a>(
+    bevy_crates: &'a HashMap<String, BevyCrate>,
+    bevy_name: &str,
+) -> Option<(&'a str, &'a BevyItem)> {
+    let matches = collect_bevy_matches(bevy_crates, bevy_name);
+    (matches.len() == 1).then(|| matches[0])
+}
+
+/// Reduce a claim to its inventory lookup key: the last `::` segment with
+/// any generic arguments stripped (`bevy::asset::AssetEvent<Image>` ->
+/// `AssetEvent`).
+fn claim_short_name(bevy_name: &str) -> &str {
+    bevy_name
+        .rsplit("::")
+        .next()
+        .unwrap_or(bevy_name)
+        .split('<')
+        .next()
+        .unwrap_or(bevy_name)
+        .trim()
+}
+
+/// Crate candidates implied by a qualified claim path: the
+/// `bevy::gltf::X` segments yield `bevy` then `bevy_gltf`.
+fn path_crate_candidates(bevy_name: &str) -> Vec<String> {
+    let segments: Vec<&str> = bevy_name.split("::").collect();
+    (1..segments.len())
+        .map(|k| segments[..k].join("_"))
+        .collect()
+}
+
+fn crate_key_matches(key: &str, candidate: &str) -> bool {
+    key.replace('-', "_")
+        .eq_ignore_ascii_case(&candidate.replace('-', "_"))
+}
+
+/// Resolve the upstream item for a wrapper that explicitly claims a Bevy
+/// type. Configured claim overrides rewrite an ambiguous raw claim to its
+/// crate-qualified form before matching. Short-name ambiguity is decided by
+/// the crate implied by the claim path, then by module affinity (a wrapper in
+/// `crates/pybevy_X` prefers `bevy_X`); whatever remains unresolved reports
+/// W025 so broken or ambiguous claims cannot stay silent. Claims for types
+/// declared by PyBevy itself are internal wrappers, not upstream claims.
+fn resolve_claimed_bevy_item<'a>(
+    rust_class: &PyClassDef,
+    bevy_crates: &'a HashMap<String, BevyCrate>,
+    bevy_name: &str,
+    claim_overrides: &HashMap<String, String>,
+    internal_type_names: &HashSet<String>,
+) -> (Option<(&'a str, &'a BevyItem)>, Vec<Diagnostic>) {
+    let effective_name = claim_overrides
+        .get(bevy_name)
+        .map(String::as_str)
+        .unwrap_or(bevy_name);
+    let short_name = claim_short_name(effective_name);
+    if internal_type_names.contains(short_name) {
+        return (None, Vec::new());
     }
+
+    let matches = collect_bevy_matches(bevy_crates, effective_name);
+    if matches.len() == 1 {
+        return (Some(matches[0]), Vec::new());
+    }
+
+    let with_location = |diagnostic: Diagnostic, rust_class: &PyClassDef| -> Diagnostic {
+        match &rust_class.location {
+            Some(location) => diagnostic.with_location(location.clone()),
+            None => diagnostic,
+        }
+    };
+
+    if matches.len() > 1 {
+        for candidate in path_crate_candidates(effective_name) {
+            let winners: Vec<(&str, &BevyItem)> = matches
+                .iter()
+                .filter(|(crate_name, _)| crate_key_matches(crate_name, &candidate))
+                .map(|(crate_name, item)| (*crate_name, *item))
+                .collect();
+            if winners.len() == 1 {
+                return (Some(winners[0]), Vec::new());
+            }
+        }
+
+        if let Some(module) = rust_class.module_path.as_deref() {
+            let short = module
+                .split('.')
+                .find_map(|segment| segment.strip_prefix("pybevy_"))
+                .unwrap_or(module);
+            let preferred = format!("bevy_{short}");
+            let winners: Vec<(&str, &BevyItem)> = matches
+                .iter()
+                .filter(|(crate_name, _)| crate_key_matches(crate_name, &preferred))
+                .map(|(crate_name, item)| (*crate_name, *item))
+                .collect();
+            if winners.len() == 1 {
+                return (Some(winners[0]), Vec::new());
+            }
+        }
+
+        let candidates: Vec<&str> = matches.iter().map(|(crate_name, _)| *crate_name).collect();
+        let diagnostic = Diagnostic::warning(
+            DiagnosticCode::W025,
+            format!(
+                "upstream Bevy item '{}' for wrapper '{}' is ambiguous among {}; add an explicit crate-qualified type mapping or a reviewed exception",
+                bevy_name, rust_class.python_name, candidates.join(", ")
+            ),
+        )
+        .with_note(
+            "unresolved upstream items skip every Bevy-referencing validation for this wrapper",
+        );
+        return (None, vec![with_location(diagnostic, rust_class)]);
+    }
+
+    let diagnostic = Diagnostic::warning(
+        DiagnosticCode::W025,
+        format!(
+            "claimed upstream Bevy item '{}' for wrapper '{}' not found in the pinned Bevy",
+            bevy_name, rust_class.python_name
+        ),
+    )
+    .with_note(
+        "check the pinned revision, crate feature gates in the API inventory, or record a reviewed exception",
+    );
+    (None, vec![with_location(diagnostic, rust_class)])
 }
 
 fn validate_all_impl(
@@ -436,6 +739,22 @@ fn validate_all_impl_with_consumed(
         }
     }
 
+    // W032 is a safety invariant, not an API-surface check: it runs ahead of
+    // the `_`-prefix and in_scope skips because any GC-visible pyclass can
+    // hold Python references (context managers included).
+    for rust_class in rust_classes {
+        let path = class_path(rust_class);
+        for diagnostic in class_rules::validate_traverse_presence(rust_class) {
+            if is_disabled_code(config, diagnostic.code.as_str()) {
+                continue;
+            }
+            if consume_exception(config, consumed_exceptions, &path, &diagnostic) {
+                continue;
+            }
+            diagnostics.push(diagnostic);
+        }
+    }
+
     for rust_class in rust_classes {
         if rust_class.python_name.starts_with('_') {
             continue;
@@ -473,6 +792,14 @@ fn validate_all_impl_with_consumed(
                 if !is_manual_enum_base(rust_class, py_class) {
                     class_diagnostics
                         .extend(method_rules::validate_constructor(rust_class, py_class));
+                    class_diagnostics.extend(method_rules::validate_constructor_default_parity(
+                        rust_class,
+                        py_class,
+                        config.map(|config| &config.bevy),
+                    ));
+                    class_diagnostics.extend(method_rules::validate_constructor_none_parity(
+                        rust_class, py_class,
+                    ));
                 }
 
                 // Validate methods

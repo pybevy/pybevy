@@ -151,6 +151,7 @@ pub fn parse_enum(item: &ItemEnum, file_path: &Path) -> Option<PyClassDef> {
                 constructor,
                 writable_fields: Vec::new(),
                 payload_fields: parse_payload_fields(&v.fields, file_path),
+                match_args: None,
             }
         })
         .collect();

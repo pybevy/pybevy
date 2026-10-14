@@ -2458,7 +2458,7 @@ class Isometry3d:
     translation: Vec3A
     rotation: Quat
 
-    def __init__(self, translation: Vec3A | Vec3 = ..., rotation: Quat = ...) -> None:
+    def __init__(self, translation: Vec3A | Vec3 | None = ..., rotation: Quat = ...) -> None:
         """Create a new Isometry3d.
 
         Args:
