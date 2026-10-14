@@ -85,7 +85,12 @@ pub fn encode_contiguous_le_bytes(
         .try_reserve_exact(byte_len)
         .map_err(|_| ArrayError::AllocationFailed { dtype, elements })?;
     let storage = array.read_storage()?;
-    storage.append_le_bytes(array.layout().iter_offsets(), &mut bytes);
+    if array.is_c_contiguous() {
+        let start = array.layout().offset;
+        storage.append_le_bytes(start..start + elements, &mut bytes);
+    } else {
+        storage.append_le_bytes(array.layout().iter_offsets(), &mut bytes);
+    }
     debug_assert_eq!(bytes.len(), byte_len);
     Ok((dtype, array.shape().to_vec(), bytes))
 }

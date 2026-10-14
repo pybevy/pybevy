@@ -9,18 +9,9 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
-    feature_gate::authorize,
-    handlers::{
-        self,
+    capture::{
+        analysis::{DEFAULT_COMPARE_EPSILON, FrameStatsOptions, validate_frame_stats_options},
         depth::{PendingDepthAnalysis, validate_depth_sampling},
-        frame_analysis::{
-            DEFAULT_COMPARE_EPSILON, FrameStatsOptions, validate_frame_stats_options,
-        },
-        reload::{PendingReloadAndCapture, PendingReloadAndCaptures},
-        schedule::{
-            ActiveSchedule, ActiveSchedules, ScheduleMode, ScheduleRequest,
-            SharedScheduleRegistryResource, SharedScheduleState,
-        },
         screenshot::{
             ActiveTimeline, GizmoEnabledRestore, MAX_CAPTURE_DELAY_FRAMES, MAX_TIMELINE_CAPTURES,
             MAX_TIMELINE_FRAMES, PendingTimelines, compute_schedule, validate_capture_delay,
@@ -30,7 +21,13 @@ use crate::{
             compute_viewpoints,
         },
     },
+    catalog::feature_gate::authorize,
     plugin::ControlConfig,
+    reload::{self, PendingReloadAndCapture, PendingReloadAndCaptures},
+    schedule::{
+        ActiveSchedule, ActiveSchedules, ScheduleMode, ScheduleRequest,
+        SharedScheduleRegistryResource, SharedScheduleState,
+    },
 };
 
 /// Maximum requests processed per frame to prevent frame spikes
@@ -1019,9 +1016,7 @@ pub fn push_pending_reload(
     // Surface validation errors (e.g. an out-of-range time_scale) directly.
     // Otherwise the caller would silently drop the bad param and still receive
     // a false "reload_completed" from the deferred response waiter below.
-    if let Err(e) =
-        handlers::reload::trigger_reload(world, params.mode, params.pause, params.time_scale)
-    {
+    if let Err(e) = reload::trigger_reload(world, params.mode, params.pause, params.time_scale) {
         let _ = response_tx.send(Err(e));
         return;
     }
@@ -1043,9 +1038,9 @@ pub fn push_pending_reload_and_capture(
 ) {
     // Surface validation errors (e.g. an out-of-range time_scale) directly
     // instead of dropping the bad param and reporting a false success later.
-    if let Err(e) = validate_capture_delay(params.delay_frames.unwrap_or(30)).and_then(|()| {
-        handlers::reload::trigger_reload(world, params.mode, params.pause, params.time_scale)
-    }) {
+    if let Err(e) = validate_capture_delay(params.delay_frames.unwrap_or(30))
+        .and_then(|()| reload::trigger_reload(world, params.mode, params.pause, params.time_scale))
+    {
         let _ = response_tx.send(Err(e));
         return;
     }
@@ -1141,7 +1136,7 @@ pub fn push_pending_depth(
         let _ = response_tx.send(Err(error));
         return;
     }
-    let Some(camera_entity) = crate::handlers::screenshot::select_capture_camera_3d(world) else {
+    let Some(camera_entity) = crate::capture::screenshot::select_capture_camera_3d(world) else {
         let _ = response_tx.send(Err(ControlError::not_found(
             "No active Camera3d found for capture_depth projection",
         )));
@@ -1189,7 +1184,7 @@ pub fn push_pending_depth(
             extra_response: None,
         });
     } else {
-        let result = crate::handlers::depth::compute_depth_samples_for_camera(
+        let result = crate::capture::depth::compute_depth_samples_for_camera(
             world,
             depth_analysis.camera_entity,
             &depth_analysis.position,
@@ -1354,7 +1349,7 @@ pub fn control_poll_system(world: &mut World) {
     // scope as appropriate for the backend.
     if !sync_requests.is_empty() {
         let mut runtime = world
-            .remove_non_send::<Box<dyn crate::runtime::ControlRuntime>>()
+            .remove_non_send::<Box<dyn crate::engine::runtime::ControlRuntime>>()
             .expect("ControlRuntime resource missing");
 
         runtime.dispatch_batch(world, sync_requests);
@@ -1365,7 +1360,7 @@ pub fn control_poll_system(world: &mut World) {
     // Store deferred screenshots
     if !deferred_screenshots.is_empty() {
         for screenshot in &mut deferred_screenshots {
-            crate::handlers::screenshot::prepare_pending_screenshot_gizmos(world, screenshot);
+            crate::capture::screenshot::prepare_pending_screenshot_gizmos(world, screenshot);
         }
         let mut pending = world.get_resource_or_insert_with(PendingScreenshots::default);
         pending.pending.extend(deferred_screenshots);
@@ -1411,7 +1406,9 @@ mod tests {
     use pyo3::Python;
 
     use super::*;
-    use crate::{protocol::SseEvent, runtime::ControlRuntime, runtime_pyo3::Pyo3ControlRuntime};
+    use crate::{
+        engine::runtime::ControlRuntime, protocol::SseEvent, pyo3::runtime::Pyo3ControlRuntime,
+    };
 
     fn all_features_enabled() -> ControlConfig {
         ControlConfig {
@@ -1788,7 +1785,7 @@ mod tests {
         assert_eq!(timeline.schedule.front(), Some(&1));
         assert!(!world.contains_resource::<OverlaySuppression>());
 
-        crate::handlers::screenshot::process_pending_timelines(&mut world);
+        crate::capture::screenshot::process_pending_timelines(&mut world);
         let timeline = world
             .resource::<PendingTimelines>()
             .active
@@ -1813,7 +1810,7 @@ mod tests {
             rx.try_recv().is_err(),
             "the pose is applied when the timeline starts"
         );
-        crate::handlers::screenshot::process_pending_timelines(&mut world);
+        crate::capture::screenshot::process_pending_timelines(&mut world);
 
         let error = rx.try_recv().unwrap().unwrap_err();
         assert!(error.message.contains("require a Camera3d"));

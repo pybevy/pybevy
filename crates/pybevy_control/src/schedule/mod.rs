@@ -4,12 +4,8 @@ use std::{
 };
 
 use bevy::{
-    ecs::{
-        entity::Entity,
-        hierarchy::{ChildOf, Children},
-        world::World,
-    },
-    prelude::{GlobalTransform, Resource, Transform, Without},
+    ecs::world::World,
+    prelude::Resource,
     time::{Time, Virtual},
 };
 use pybevy_core::public_error;
@@ -23,7 +19,8 @@ use crate::{
         push_pending_screenshot, push_pending_stats, push_pending_timeline,
         push_pending_turnaround,
     },
-    handlers,
+    engine::dispatch::dispatch,
+    scene::transform_sync::propagate_transforms,
 };
 
 /// sync (default): block until all actions complete. async: return schedule_id immediately.
@@ -366,47 +363,6 @@ fn is_render_mutation_tool(name: &str) -> bool {
     )
 }
 
-/// Propagate transforms through the full hierarchy after mutations.
-/// Updates GlobalTransform for root entities first, then recursively for children.
-/// This ensures spatial queries see up-to-date world positions within the same frame.
-pub(crate) fn propagate_transforms(world: &mut World) {
-    // Update root entities (no ChildOf)
-    let mut root_query = world.query_filtered::<(Entity, &Transform), Without<ChildOf>>();
-    let roots: Vec<(Entity, GlobalTransform)> = root_query
-        .iter(world)
-        .map(|(e, t)| (e, GlobalTransform::from(*t)))
-        .collect();
-    for (entity, gt) in &roots {
-        if let Some(mut gt_mut) = world.get_mut::<GlobalTransform>(*entity) {
-            *gt_mut = *gt;
-        }
-    }
-
-    // Propagate to children (breadth-first)
-    let mut queue: Vec<(Entity, GlobalTransform)> = roots;
-    while !queue.is_empty() {
-        let mut next_queue = Vec::new();
-        for (parent_entity, parent_gt) in &queue {
-            // Get children of this entity
-            let child_entities: Vec<Entity> =
-                if let Some(children) = world.get::<Children>(*parent_entity) {
-                    children.iter().copied().collect()
-                } else {
-                    continue;
-                };
-            for child in child_entities {
-                if let Some(child_transform) = world.get::<Transform>(child) {
-                    let child_gt = parent_gt.mul_transform(*child_transform);
-                    if let Some(mut gt_mut) = world.get_mut::<GlobalTransform>(child) {
-                        *gt_mut = child_gt;
-                    }
-                    next_queue.push((child, child_gt));
-                }
-            }
-        }
-        queue = next_queue;
-    }
-}
 pub fn validate_schedule(request: &ScheduleRequest) -> Result<(), String> {
     if request.actions.is_empty() {
         return Err("actions must not be empty".to_string());
@@ -427,7 +383,7 @@ pub fn validate_schedule(request: &ScheduleRequest) -> Result<(), String> {
                 i, action.tool
             ));
         }
-        if !crate::tools::is_public_tool_name(&action.tool) {
+        if !crate::catalog::tools::is_public_tool_name(&action.tool) {
             return Err(public_error::mcp_schedule_non_public_tool(i, &action.tool));
         }
 
@@ -613,7 +569,7 @@ pub fn process_active_schedules(world: &mut World) {
 
     // Remove runtime from World to use for dispatch (same scope as old Python::attach)
     let mut runtime = world
-        .remove_non_send::<Box<dyn crate::runtime::ControlRuntime>>()
+        .remove_non_send::<Box<dyn crate::engine::runtime::ControlRuntime>>()
         .expect("ControlRuntime resource missing");
 
     {
@@ -659,7 +615,7 @@ pub fn process_active_schedules(world: &mut World) {
 fn process_single_schedule(
     world: &mut World,
     schedule: &mut ActiveSchedule,
-    runtime: &mut dyn crate::runtime::ControlRuntime,
+    runtime: &mut dyn crate::engine::runtime::ControlRuntime,
 ) {
     loop {
         match schedule.state {
@@ -678,8 +634,7 @@ fn process_single_schedule(
 
                         match result {
                             Ok(value) => {
-                                let has_errors =
-                                    crate::handlers::pyo3::mutate::has_embedded_errors(&value);
+                                let has_errors = crate::pyo3::mutate::has_embedded_errors(&value);
                                 let has_run_code_failure = value
                                     .get("success")
                                     .and_then(|v| v.as_bool())
@@ -913,12 +868,12 @@ fn process_single_schedule(
                     // Sync tool - execute immediately via dispatch
                     match tool_to_operation(&tool_name, &tool_args) {
                         Ok(op) => {
-                            let result = handlers::dispatch(world, op, runtime);
+                            let result = dispatch(world, op, runtime);
                             match result {
                                 Ok(value) => {
                                     seeked_clock = tool_name == "seek_time";
                                     let has_errors =
-                                        crate::handlers::pyo3::mutate::has_embedded_errors(&value);
+                                        crate::pyo3::mutate::has_embedded_errors(&value);
                                     let has_run_code_failure = value
                                         .get("success")
                                         .and_then(|v| v.as_bool())
@@ -991,7 +946,7 @@ fn process_single_schedule(
                                     }
                                     if is_render_mutation
                                         && let Some(readiness) = world.get_resource::<
-                                            crate::handlers::screenshot::RenderFrameReadiness,
+                                            crate::capture::screenshot::RenderFrameReadiness,
                                         >() {
                                             readiness.request_frame();
                                         }
@@ -1078,7 +1033,7 @@ fn setup_deferred_action(
 
     if !screenshots.is_empty() {
         if let Some(required_epoch) = world
-            .get_resource::<crate::handlers::screenshot::RenderFrameReadiness>()
+            .get_resource::<crate::capture::screenshot::RenderFrameReadiness>()
             .map(|readiness| readiness.requested_epoch())
         {
             for screenshot in &mut screenshots {
@@ -1086,7 +1041,7 @@ fn setup_deferred_action(
             }
         }
         for screenshot in &mut screenshots {
-            crate::handlers::screenshot::prepare_pending_screenshot_gizmos(world, screenshot);
+            crate::capture::screenshot::prepare_pending_screenshot_gizmos(world, screenshot);
         }
         let mut pending = world.get_resource_or_insert_with(PendingScreenshots::default);
         pending.pending.extend(screenshots);
@@ -1181,8 +1136,6 @@ fn finalize_schedule(schedule: ActiveSchedule) {
 }
 #[cfg(test)]
 mod tests {
-    use bevy::math::Vec3;
-
     use super::*;
     use crate::{
         bridge::{
@@ -1190,7 +1143,7 @@ mod tests {
             GetComponentParams, QueryEntitiesParams, ReloadMode, ReloadParams, SeekTimeParams,
             SetComponentParams,
         },
-        handlers::pyo3::mutate::has_embedded_errors,
+        pyo3::mutate::has_embedded_errors,
     };
 
     #[test]
@@ -1274,7 +1227,7 @@ mod tests {
 
     #[test]
     fn test_public_tool_schema_matches_schedule_name_validation() {
-        for tool in crate::tools::list_tools() {
+        for tool in crate::catalog::tools::list_tools() {
             let name = tool["name"].as_str().unwrap();
             let req = ScheduleRequest {
                 actions: vec![ScheduleAction {
@@ -1988,31 +1941,6 @@ mod tests {
     }
 
     #[test]
-    fn propagate_transforms_updates_root() {
-        let mut world = World::new();
-        let entity = world
-            .spawn((
-                Transform::from_xyz(0.0, 0.0, 0.0),
-                GlobalTransform::default(),
-            ))
-            .id();
-
-        // Modify Transform without running propagation
-        world.get_mut::<Transform>(entity).unwrap().translation = Vec3::new(10.0, 20.0, 30.0);
-
-        // GlobalTransform should still be at origin
-        let gt = world.get::<GlobalTransform>(entity).unwrap();
-        assert_eq!(gt.translation(), Vec3::ZERO);
-
-        // Propagate
-        propagate_transforms(&mut world);
-
-        // Now GlobalTransform should match
-        let gt = world.get::<GlobalTransform>(entity).unwrap();
-        assert_eq!(gt.translation(), Vec3::new(10.0, 20.0, 30.0));
-    }
-
-    #[test]
     fn schedule_actions_run_code_failure_status() {
         // Simulate what happens when run_code returns {"success": false, "error": "..."}
         let value = serde_json::json!({"success": false, "error": "NameError: x is not defined"});
@@ -2250,7 +2178,7 @@ mod tests {
     #[test]
     fn scheduled_capture_inherits_the_latest_render_epoch() {
         let mut world = World::new();
-        let readiness = crate::handlers::screenshot::RenderFrameReadiness::default();
+        let readiness = crate::capture::screenshot::RenderFrameReadiness::default();
         let required_epoch = readiness.request_frame();
         world.insert_resource(readiness);
 
@@ -2751,79 +2679,6 @@ mod tests {
             stop_on_error: false,
         };
         assert!(validate_schedule(&req).is_ok());
-    }
-
-    #[test]
-    fn propagate_transforms_updates_children() {
-        let mut world = World::new();
-
-        // Parent at x=100
-        let parent = world
-            .spawn((
-                Transform::from_xyz(100.0, 0.0, 0.0),
-                GlobalTransform::default(),
-            ))
-            .id();
-
-        // Child at local x=40
-        let child = world
-            .spawn((
-                Transform::from_xyz(40.0, 0.0, 0.0),
-                GlobalTransform::default(),
-            ))
-            .id();
-
-        // Establish hierarchy
-        world.entity_mut(parent).add_children(&[child]);
-
-        // Move parent to x=140
-        world.get_mut::<Transform>(parent).unwrap().translation.x = 140.0;
-
-        // Before propagation, child GlobalTransform is stale
-        let gt = world.get::<GlobalTransform>(child).unwrap();
-        assert_eq!(gt.translation().x, 0.0);
-
-        // Propagate
-        propagate_transforms(&mut world);
-
-        // Parent should be at x=140
-        let gt = world.get::<GlobalTransform>(parent).unwrap();
-        assert_eq!(gt.translation().x, 140.0);
-
-        // Child should be at x=140+40=180
-        let gt = world.get::<GlobalTransform>(child).unwrap();
-        assert_eq!(gt.translation().x, 180.0);
-    }
-
-    #[test]
-    fn propagate_transforms_follows_a_detach() {
-        let mut world = World::new();
-        let parent = world
-            .spawn((
-                Transform::from_xyz(100.0, 0.0, 0.0),
-                GlobalTransform::default(),
-            ))
-            .id();
-        let child = world
-            .spawn((
-                Transform::from_xyz(40.0, 0.0, 0.0),
-                GlobalTransform::default(),
-            ))
-            .id();
-        world.entity_mut(parent).add_children(&[child]);
-        propagate_transforms(&mut world);
-        assert_eq!(
-            world.get::<GlobalTransform>(child).unwrap().translation().x,
-            140.0
-        );
-
-        world.entity_mut(child).remove::<ChildOf>();
-        propagate_transforms(&mut world);
-
-        assert_eq!(
-            world.get::<GlobalTransform>(child).unwrap().translation().x,
-            40.0
-        );
     }
 
     #[test]

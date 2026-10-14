@@ -1,6 +1,6 @@
-use bevy::ecs::{entity::Entity, prelude::Without, resource::IsResource, world::World};
+use bevy::ecs::world::World;
 use pybevy_core::CustomResourceInfo;
-use pybevy_reload::is_verbose;
+use pybevy_reload::{cleanup::scene_entities_to_despawn, is_verbose};
 use pyo3::prelude::*;
 
 use super::bindings::PyHotReloadControl;
@@ -57,20 +57,10 @@ pub(crate) fn clear_custom_resources(world: &mut World, verbose: bool) {
 /// Similar to hot reload's Full mode entity/resource clearing but without
 /// the system reloading logic. Used by `App.clear_scene()` to reset state.
 ///
-/// Clears:
-/// - All entities (clears everything not in base set)
-/// - Custom Python resource value components
-///
-/// Preserves:
-/// - Built-in Bevy resources (Time, AssetServer, etc.)
-/// - RenderDevice and render infrastructure
-/// - Plugin state
+/// Despawns the same entities as a full reload (see
+/// `scene_entities_to_despawn`) and clears custom Python resource values.
 pub fn clear_entities_and_resources(world: &mut World) {
-    // Despawn ALL scene entities (complete clean slate)
-    let all_entities: Vec<Entity> = world
-        .query_filtered::<Entity, Without<IsResource>>()
-        .iter(world)
-        .collect();
+    let all_entities = scene_entities_to_despawn(world);
 
     if is_verbose() {
         eprintln!("[clear_scene] Despawning {} entities", all_entities.len());

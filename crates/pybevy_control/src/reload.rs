@@ -16,7 +16,7 @@ use crate::{
         CaptureResponseKind, ControlError, DebugCameraRequest, PendingReloadResponses,
         PendingScreenshots, ReloadMode,
     },
-    handlers::screenshot::{GizmoEnabledRestore, RenderFrameReadiness},
+    capture::screenshot::{GizmoEnabledRestore, RenderFrameReadiness},
 };
 
 /// A pending reload-and-capture request.
@@ -56,7 +56,7 @@ pub fn trigger_reload(
     // Validate first: set_relative_speed panics on <= 0.0 / non-finite and
     // spirals the fixed-timestep loop on very large values.
     if let Some(scale) = time_scale {
-        crate::handlers::time_control::validate_time_scale(scale)?;
+        crate::scene::time::validate_time_scale(scale)?;
         let mut time = world.resource_mut::<Time<Virtual>>();
         time.set_relative_speed(scale);
     }
@@ -421,8 +421,7 @@ pub fn process_pending_reload_and_capture(world: &mut World) {
 
             if has_error {
                 // Error during reload - respond immediately without screenshot
-                let entity_count =
-                    crate::handlers::entity_count::scene_entity_count(world) as usize;
+                let entity_count = crate::scene::entity_count::scene_entity_count(world) as usize;
                 let response = serde_json::json!({
                     "reload": reload_response,
                     "errors": reload_response.get("error"),
@@ -432,8 +431,7 @@ pub fn process_pending_reload_and_capture(world: &mut World) {
                 let _ = rac.response_tx.send(Ok(response));
             } else {
                 // Success - queue screenshot with extra reload data
-                let entity_count =
-                    crate::handlers::entity_count::scene_entity_count(world) as usize;
+                let entity_count = crate::scene::entity_count::scene_entity_count(world) as usize;
 
                 let debug_camera = rac.position.map(|pos| DebugCameraRequest {
                     position: pos,
@@ -464,7 +462,7 @@ pub fn process_pending_reload_and_capture(world: &mut World) {
                 };
 
                 let mut screenshot = screenshot;
-                crate::handlers::screenshot::prepare_pending_screenshot_gizmos(
+                crate::capture::screenshot::prepare_pending_screenshot_gizmos(
                     world,
                     &mut screenshot,
                 );
@@ -491,7 +489,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::{bridge::PendingReloadResponse, handlers::screenshot::process_pending_screenshots};
+    use crate::{bridge::PendingReloadResponse, capture::screenshot::process_pending_screenshots};
 
     #[test]
     fn get_reload_status_empty_world() {

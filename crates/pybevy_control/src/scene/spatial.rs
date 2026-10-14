@@ -17,12 +17,6 @@ pub fn round6(v: f32) -> f32 {
     (v * 1_000_000.0).round() / 1_000_000.0
 }
 
-/// Round an f64 to 6 decimal places for cleaner JSON output.
-#[allow(dead_code)]
-pub fn round6_f64(v: f64) -> f64 {
-    (v * 1_000_000.0).round() / 1_000_000.0
-}
-
 /// World-space axis-aligned bounding box.
 #[derive(Debug)]
 pub struct WorldAabb {
@@ -2313,11 +2307,6 @@ mod tests {
         assert_eq!(super::round6(std::f32::consts::PI), 3.141593);
         assert_eq!(super::round6(0.0), 0.0);
         assert_eq!(super::round6(-1.2345679), -1.234568);
-    }
-
-    #[test]
-    fn round6_f64_basic() {
-        assert_eq!(super::round6_f64(0.0024348448496311903), 0.002435);
     }
 
     #[test]

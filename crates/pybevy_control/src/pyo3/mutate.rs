@@ -52,22 +52,20 @@ pub fn register_lifecycle_mutation_hooks(
 
 use crate::{
     bridge::{ControlError, EntityRef},
-    handlers::{
-        LINEAR_RGBA_CHANNELS,
-        entity::resolve_entity,
+    codec::{
         json_float::{nonfinite_float_from_json, reject_narrowed_nonfinite, require_finite_float},
-        pyo3::{
-            custom_wrapper,
-            dataclass_fields::dataclass_field_names,
-            execute::create_world_wrapper,
-            name_resolution::{
-                ComponentTarget, ResourceTarget, resolve_component, resolve_resource,
-            },
-            state_resource,
-        },
-        reflect_mutate::{self, ReflectError},
-        value_conversion,
+        reflect::{self as reflect_mutate, ReflectError},
+        value::{self as value_conversion, json_kind_name},
     },
+    engine::dispatch::{LINEAR_RGBA_CHANNELS, batch_response},
+    pyo3::{
+        custom as custom_wrapper,
+        dataclass_fields::dataclass_field_names,
+        execute::create_world_wrapper,
+        names::{ComponentTarget, ResourceTarget, resolve_component, resolve_resource},
+        state_resource,
+    },
+    scene::entity::resolve_entity,
 };
 
 /// Read written fields back off a live Python object for the `new_values`
@@ -210,7 +208,7 @@ pub fn spawn_entity(
 
         let fields = comp_fields.as_object().cloned().unwrap_or_default();
         if super::asset_reference::contains_reference_field(&fields) {
-            match super::asset_reference::spawn_from_reference(
+            match super::asset_reference::set_from_reference(
                 world,
                 entity,
                 bridge.name(),
@@ -1501,8 +1499,7 @@ fn set_custom_component(
         }
 
         // An unknown field name fails the whole update before anything is
-        // written, matching set_resource's unknown-field contract. Value
-        // conversion failures below stay per-field, like PyObject storage.
+        // written, matching set_resource's unknown-field contract.
         let unknown = field_obj
             .keys()
             .filter(|name| layout.get_field(name).is_none())
@@ -1568,18 +1565,11 @@ fn set_custom_component(
             }
         }
 
-        let mut result = serde_json::json!({
+        return Ok(serde_json::json!({
             "entity_id": entity_id,
             "component": component,
             "new_values": new_values,
-        });
-        if !errors.is_empty() {
-            result
-                .as_object_mut()
-                .unwrap()
-                .insert("errors".into(), serde_json::json!(errors));
-        }
-        return Ok(result);
+        }));
     }
 
     let ptr = world
@@ -2340,7 +2330,7 @@ pub fn batch_mutate(
         }
     }
 
-    Ok(super::super::batch_response(results))
+    Ok(batch_response(results))
 }
 
 fn validate_batch_operation(
@@ -3754,17 +3744,6 @@ fn math_value_from_json(
             .map(Bound::unbind)
             .map_err(|error| error.to_string())
     })())
-}
-
-fn json_kind_name(value: &serde_json::Value) -> &'static str {
-    match value {
-        serde_json::Value::Null => "null",
-        serde_json::Value::Bool(_) => "boolean",
-        serde_json::Value::Number(_) => "number",
-        serde_json::Value::String(_) => "string",
-        serde_json::Value::Array(_) => "array",
-        serde_json::Value::Object(_) => "object",
-    }
 }
 
 fn linear_rgba_from_json(
@@ -6581,7 +6560,7 @@ track_holder = TrackHolder()
             serde_json::json!({"speed": 3.5, "count": 9})
         );
 
-        let result = crate::handlers::pyo3::scene::get_component(
+        let result = crate::pyo3::scene::get_component(
             &mut world,
             EntityRef::Id(entity.to_bits()),
             "WrapperComp".to_string(),

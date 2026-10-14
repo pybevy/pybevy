@@ -10,7 +10,7 @@ use pyo3::prelude::*;
 use super::mutate::convert_field_value;
 use crate::{
     bridge::{ControlError, EntityRef},
-    handlers::entity::resolve_entity,
+    scene::entity::resolve_entity,
 };
 
 fn validate_asset_handle_type(

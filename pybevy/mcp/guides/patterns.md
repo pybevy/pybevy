@@ -940,8 +940,29 @@ def setup(commands: Commands) -> None:
 `Commands.remove_resource(T)` queues removal and returns nothing.
 
 Custom resources from `World.resource(T)` are shallow read-only handles that
-expire after the World scope. Use `World.get_mut(resource_entity, T)` for field
-writes, or `copy.copy` / `copy.deepcopy` while valid to keep an owned value.
+expire after the World scope. Use `World.resource_mut(T)` for field writes in
+exclusive systems, `app.world(...)` callbacks, and `run_code`, or `copy.copy` /
+`copy.deepcopy` while valid to keep an owned value. Pass the type itself:
+`world.resource(ResMut[T])` raises `TypeError`.
+
+<!-- pybevy-snippet: typecheck -->
+```python
+from pybevy.prelude import Resource, World, resource, system
+
+
+@resource
+class Score(Resource):
+    def __init__(self) -> None:
+        self.value = 0
+
+
+@system
+def award(world: World) -> None:
+    world.resource_mut(Score).value += 10
+```
+
+Like a `ResMut[T]` parameter, `resource_mut` marks a custom resource changed
+when fetched; native resources such as `Time` are marked on their first write.
 Native resource wrappers from `World.resource(T)` also become unreadable while
 the resource is absent, including nested borrowed fields; fetch a fresh wrapper
 after reinserting the resource.

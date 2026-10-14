@@ -2,52 +2,14 @@ use std::time::Duration;
 
 use bevy::{
     ecs::world::World,
-    prelude::{ChildOf, Children, Entity, GlobalTransform, Transform, Without},
     time::{Time, Virtual},
 };
 use pybevy_core::try_duration_from_secs_f64;
 
-use crate::bridge::{ControlError, SeekTimeParams};
-
-/// Propagate transforms through the full hierarchy after time manipulation.
-/// Updates GlobalTransform for root entities first, then recursively for children.
-fn propagate_transforms(world: &mut World) {
-    // Update root entities (no ChildOf)
-    let mut root_query = world.query_filtered::<(Entity, &Transform), Without<ChildOf>>();
-    let roots: Vec<(Entity, GlobalTransform)> = root_query
-        .iter(world)
-        .map(|(e, t)| (e, GlobalTransform::from(*t)))
-        .collect();
-    for (entity, gt) in &roots {
-        if let Some(mut gt_mut) = world.get_mut::<GlobalTransform>(*entity) {
-            *gt_mut = *gt;
-        }
-    }
-
-    // Propagate to children (breadth-first)
-    let mut queue: Vec<(Entity, GlobalTransform)> = roots;
-    while !queue.is_empty() {
-        let mut next_queue = Vec::new();
-        for (parent_entity, parent_gt) in &queue {
-            let child_entities: Vec<Entity> =
-                if let Some(children) = world.get::<Children>(*parent_entity) {
-                    children.iter().copied().collect()
-                } else {
-                    continue;
-                };
-            for child in child_entities {
-                if let Some(child_transform) = world.get::<Transform>(child) {
-                    let child_gt = parent_gt.mul_transform(*child_transform);
-                    if let Some(mut gt_mut) = world.get_mut::<GlobalTransform>(child) {
-                        *gt_mut = child_gt;
-                    }
-                    next_queue.push((child, child_gt));
-                }
-            }
-        }
-        queue = next_queue;
-    }
-}
+use crate::{
+    bridge::{ControlError, SeekTimeParams},
+    scene::transform_sync::propagate_transforms,
+};
 
 pub fn pause_time(world: &mut World) -> Result<serde_json::Value, ControlError> {
     let mut time = world.resource_mut::<Time<Virtual>>();
@@ -159,6 +121,8 @@ pub fn seek_time(
 
 #[cfg(test)]
 mod tests {
+    use bevy::prelude::{GlobalTransform, Transform};
+
     use super::*;
     use crate::bridge::ErrorCode;
 

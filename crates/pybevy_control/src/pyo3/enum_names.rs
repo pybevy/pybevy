@@ -3,7 +3,7 @@ use pyo3::{
     types::{PyModule, PyType},
 };
 
-use crate::handlers::reflect_mutate::{compiled_enum_variant_info, compiled_type_is_enum};
+use crate::codec::reflect::{compiled_enum_variant_info, compiled_type_is_enum};
 
 pub(super) fn is_enum_type(owner: &Bound<'_, PyType>) -> bool {
     owner.hasattr("__pybevy_variant_aliases__").unwrap_or(false)

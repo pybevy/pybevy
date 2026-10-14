@@ -15,7 +15,6 @@ use tokio::sync::oneshot;
 use tokio_stream::StreamExt;
 
 use crate::{
-    api_index::ApiIndex,
     bridge::{
         CaptureDepthParams, CaptureScreenshotParams, CaptureStatsParams, CaptureTimelineParams,
         CaptureTurnaroundParams, CheckAllOverlapsParams, CheckOverlapsParams, CompareFramesParams,
@@ -25,13 +24,12 @@ use crate::{
         SetAssetParams, SetComponentParams, SetResourceParams, SseEventBroadcaster,
         default_max_float_gap,
     },
-    handlers::schedule::{
-        ScheduleMode, ScheduleRequest, SharedScheduleRegistry, validate_schedule,
-    },
-    image_preview::{
+    discovery::ApiIndex,
+    plugin::ControlConfig,
+    schedule::{ScheduleMode, ScheduleRequest, SharedScheduleRegistry, validate_schedule},
+    transport::image_preview::{
         MCP_IMAGE_DELIVERY_HEADER, MCP_IMAGE_DELIVERY_VALUE, prepare_mcp_response_images,
     },
-    plugin::ControlConfig,
 };
 
 /// Shared state for the Axum server
@@ -992,7 +990,6 @@ async fn submit_schedule(
         return error_response(StatusCode::BAD_REQUEST, &e);
     }
 
-    // For sync mode, compute a dynamic timeout from max `at` value
     let is_async = body.mode == ScheduleMode::Async;
 
     match send_operation(&state.sender, ControlOperation::ScheduleActions(body)).await {
@@ -1203,7 +1200,7 @@ async fn get_instructions(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 async fn list_tools() -> Json<Vec<serde_json::Value>> {
-    Json(crate::tools::list_tools())
+    Json(crate::catalog::tools::list_tools())
 }
 
 pub fn start_server(host: String, port: u16, state: AppState) {

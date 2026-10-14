@@ -36,16 +36,14 @@ use crate::{
         CaptureResponseKind, ControlError, DebugCameraRequest, EntityRef, InternalOverlayUi,
         OverlaySuppression, PendingScreenshot, PendingScreenshots,
     },
-    handlers::{
+    capture::{
+        analysis::{CapturedFrameMetadata, CapturedFrames, analyze_frame, resize_rgb_image_linear},
         depth::{
             CaptureViewport, PendingDepthAnalysis, prepare_depth_capture,
             validate_depth_capture_camera,
         },
-        entity::resolve_entity,
-        frame_analysis::{
-            CapturedFrameMetadata, CapturedFrames, analyze_frame, resize_rgb_image_linear,
-        },
     },
+    scene::entity::resolve_entity,
 };
 
 const ENTITY_CAPTURE_LAYER: usize = 63;
@@ -1789,7 +1787,7 @@ fn composite_contact_sheet(
 }
 
 /// Convert HSV (h: 0..360, s: 0..1, v: 0..1) to RGB.
-fn hsv_to_rgb(h: f64, s: f64, v: f64) -> Rgb<u8> {
+pub(super) fn hsv_to_rgb(h: f64, s: f64, v: f64) -> Rgb<u8> {
     let c = v * s;
     let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
     let m = v - c;
@@ -3466,6 +3464,25 @@ mod tests {
     #[test]
     fn hsv_to_rgb_black() {
         assert_eq!(hsv_to_rgb(0.0, 0.0, 0.0), Rgb([0, 0, 0]));
+    }
+
+    #[test]
+    fn hsv_to_rgb_yellow() {
+        assert_eq!(hsv_to_rgb(60.0, 1.0, 1.0), Rgb([255, 255, 0]));
+    }
+
+    #[test]
+    fn hsv_to_rgb_cyan() {
+        assert_eq!(hsv_to_rgb(180.0, 1.0, 1.0), Rgb([0, 255, 255]));
+    }
+
+    #[test]
+    fn hsv_to_rgb_gray() {
+        let result = hsv_to_rgb(0.0, 0.0, 0.5);
+        // 0.5 * 255 = 127.5, rounds to 128
+        assert!((result.0[0] as i32 - 128).abs() <= 1);
+        assert!((result.0[1] as i32 - 128).abs() <= 1);
+        assert!((result.0[2] as i32 - 128).abs() <= 1);
     }
 
     #[test]

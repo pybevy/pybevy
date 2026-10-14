@@ -638,18 +638,16 @@ impl PyArray {
                     "Byte slice assignment requires a one-dimensional destination",
                 ));
             }
-            let offsets: Vec<_> = plan.iter_offsets().collect();
-            if offsets.len() != bytes.len() {
+            if plan.num_elements() != bytes.len() {
                 return Err(PyValueError::new_err(
                     "Byte slice assignment must preserve the slice length",
                 ));
             }
-            let destination = slf.borrow_mut();
-            let mut storage = destination.core.write_storage().map_err(map_array_err)?;
-            for (offset, byte) in offsets.into_iter().zip(bytes) {
-                storage.set(offset, Scalar::I64(i64::from(byte)));
-            }
-            return Ok(());
+            return slf
+                .borrow_mut()
+                .core
+                .assign_u8_bytes(&plan, &bytes)
+                .map_err(map_array_err);
         }
         if value.is_instance_of::<PyList>() || value.is_instance_of::<PyTuple>() {
             return Err(PyTypeError::new_err(hint::unsupported_list_assign()));

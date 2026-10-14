@@ -27,7 +27,7 @@ use serde_json::{Map, Value};
 
 use super::{
     json_float::{float_to_json, nonfinite_float_from_json, require_finite_float},
-    value_conversion::{EnumPayload, enum_to_json, unit_quat_from_json},
+    value::{EnumPayload, enum_to_json, unit_quat_from_json},
 };
 
 /// Errors from reflection-based mutation

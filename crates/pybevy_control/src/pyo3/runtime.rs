@@ -2,14 +2,14 @@ use bevy::ecs::world::World;
 use pyo3::Python;
 use serde_json::Value;
 
+use super::{assets, execute, mutate, scene};
 use crate::{
     bridge::{
         ControlError, ControlRequest, EntityRef, GetComponentParams, GetResourceParams,
         QueryEntitiesParams, RemoveComponentParams, SetAssetParams, SetComponentParams,
         SetResourceParams,
     },
-    handlers,
-    runtime::ControlRuntime,
+    engine::{dispatch::dispatch, runtime::ControlRuntime},
 };
 
 /// PyO3-based implementation of `ControlRuntime`.
@@ -22,7 +22,7 @@ impl ControlRuntime for Pyo3ControlRuntime {
     fn dispatch_batch(&mut self, world: &mut World, requests: Vec<ControlRequest>) {
         Python::attach(|_py| {
             for request in requests {
-                let result = handlers::dispatch(world, request.operation, self);
+                let result = dispatch(world, request.operation, self);
 
                 // Inject pause warning into successful responses
                 let result = result.map(|mut val| {
@@ -42,19 +42,19 @@ impl ControlRuntime for Pyo3ControlRuntime {
     }
 
     fn execute_python(&mut self, world: &mut World, code: String) -> Result<Value, ControlError> {
-        handlers::pyo3::execute::execute_python(world, code)
+        execute::execute_python(world, code)
     }
 
     fn list_entities(&mut self, world: &mut World) -> Result<Value, ControlError> {
-        handlers::pyo3::scene::list_entities(world)
+        scene::list_entities(world)
     }
 
     fn get_entity(&mut self, world: &mut World, entity: EntityRef) -> Result<Value, ControlError> {
-        handlers::pyo3::scene::get_entity(world, entity)
+        scene::get_entity(world, entity)
     }
 
     fn list_resources(&mut self, world: &mut World) -> Result<Value, ControlError> {
-        handlers::pyo3::scene::list_resources(world)
+        scene::list_resources(world)
     }
 
     fn list_systems(
@@ -62,7 +62,7 @@ impl ControlRuntime for Pyo3ControlRuntime {
         world: &mut World,
         include_internal: bool,
     ) -> Result<Value, ControlError> {
-        handlers::pyo3::scene::list_systems(world, include_internal)
+        scene::list_systems(world, include_internal)
     }
 
     fn query_entities(
@@ -70,7 +70,7 @@ impl ControlRuntime for Pyo3ControlRuntime {
         world: &mut World,
         params: QueryEntitiesParams,
     ) -> Result<Value, ControlError> {
-        handlers::pyo3::scene::query_entities(world, params.with, params.without, params.limit)
+        scene::query_entities(world, params.with, params.without, params.limit)
     }
 
     fn get_component_schema(
@@ -78,7 +78,7 @@ impl ControlRuntime for Pyo3ControlRuntime {
         world: &mut World,
         name: String,
     ) -> Result<Value, ControlError> {
-        handlers::pyo3::scene::get_component_schema(world, name)
+        scene::get_component_schema(world, name)
     }
 
     fn get_component(
@@ -86,7 +86,7 @@ impl ControlRuntime for Pyo3ControlRuntime {
         world: &mut World,
         params: GetComponentParams,
     ) -> Result<Value, ControlError> {
-        handlers::pyo3::scene::get_component(world, params.entity, params.component)
+        scene::get_component(world, params.entity, params.component)
     }
 
     fn get_resource(
@@ -94,11 +94,11 @@ impl ControlRuntime for Pyo3ControlRuntime {
         world: &mut World,
         params: GetResourceParams,
     ) -> Result<Value, ControlError> {
-        handlers::pyo3::scene::get_resource(world, params.resource_type)
+        scene::get_resource(world, params.resource_type)
     }
 
     fn scene_summary(&mut self, world: &mut World) -> Result<Value, ControlError> {
-        handlers::pyo3::scene::scene_summary(world)
+        scene::scene_summary(world)
     }
 
     fn get_bounding_box(
@@ -106,11 +106,11 @@ impl ControlRuntime for Pyo3ControlRuntime {
         world: &mut World,
         entity: EntityRef,
     ) -> Result<Value, ControlError> {
-        handlers::pyo3::scene::get_bounding_box(world, entity)
+        scene::get_bounding_box(world, entity)
     }
 
     fn debug_registry(&mut self, world: &mut World) -> Result<Value, ControlError> {
-        handlers::pyo3::scene::debug_registry(world)
+        scene::debug_registry(world)
     }
 
     fn spawn_entity(
@@ -118,7 +118,7 @@ impl ControlRuntime for Pyo3ControlRuntime {
         world: &mut World,
         components: Value,
     ) -> Result<Value, ControlError> {
-        handlers::pyo3::mutate::spawn_entity(world, components)
+        mutate::spawn_entity(world, components)
     }
 
     fn set_component(
@@ -126,7 +126,7 @@ impl ControlRuntime for Pyo3ControlRuntime {
         world: &mut World,
         params: SetComponentParams,
     ) -> Result<Value, ControlError> {
-        handlers::pyo3::mutate::set_component(world, params.entity, params.component, params.fields)
+        mutate::set_component(world, params.entity, params.component, params.fields)
     }
 
     fn remove_component(
@@ -134,7 +134,7 @@ impl ControlRuntime for Pyo3ControlRuntime {
         world: &mut World,
         params: RemoveComponentParams,
     ) -> Result<Value, ControlError> {
-        handlers::pyo3::mutate::remove_component(world, params.entity, params.component)
+        mutate::remove_component(world, params.entity, params.component)
     }
 
     fn insert_resource(
@@ -142,7 +142,7 @@ impl ControlRuntime for Pyo3ControlRuntime {
         world: &mut World,
         params: SetResourceParams,
     ) -> Result<Value, ControlError> {
-        handlers::pyo3::mutate::insert_resource(world, params.resource_type, params.value)
+        mutate::insert_resource(world, params.resource_type, params.value)
     }
 
     fn remove_resource(
@@ -150,7 +150,7 @@ impl ControlRuntime for Pyo3ControlRuntime {
         world: &mut World,
         resource_type: String,
     ) -> Result<Value, ControlError> {
-        handlers::pyo3::mutate::remove_resource(world, resource_type)
+        mutate::remove_resource(world, resource_type)
     }
 
     fn batch_mutate(
@@ -158,7 +158,7 @@ impl ControlRuntime for Pyo3ControlRuntime {
         world: &mut World,
         operations: Vec<Value>,
     ) -> Result<Value, ControlError> {
-        handlers::pyo3::mutate::batch_mutate(world, operations)
+        mutate::batch_mutate(world, operations)
     }
 
     fn mutate_asset(
@@ -166,7 +166,7 @@ impl ControlRuntime for Pyo3ControlRuntime {
         world: &mut World,
         params: SetAssetParams,
     ) -> Result<Value, ControlError> {
-        handlers::pyo3::asset::mutate_asset(
+        assets::mutate_asset(
             world,
             params.entity,
             params.component,
