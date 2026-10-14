@@ -2059,8 +2059,8 @@ impl PyApp {
             .borrow()
             .contains_class(type_ptr as usize, &qualified_name);
 
-        if python_added {
-            return Ok(true);
+        if python_added || self.is_reload_temp.get() {
+            return Ok(python_added);
         }
 
         let Some(bridge) = plugin_registry::get_by_py_type(type_ptr) else {

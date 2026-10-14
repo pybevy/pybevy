@@ -46,7 +46,7 @@ fn bench_vm_alloc_per_entity(c: &mut Criterion) {
                         let mut vm = VM::new();
                         let ptr = value as *mut f32 as *mut u8;
                         unsafe {
-                            vm.execute(&bytecode, &[ptr], i);
+                            vm.execute(&bytecode, &[ptr], i as u64);
                         }
                     }
                     black_box(&values);
@@ -79,7 +79,7 @@ fn bench_vm_pooled(c: &mut Criterion) {
                         vm.reset();
                         let ptr = value as *mut f32 as *mut u8;
                         unsafe {
-                            vm.execute(&bytecode, &[ptr], i);
+                            vm.execute(&bytecode, &[ptr], i as u64);
                         }
                     }
                     black_box(&values);
@@ -111,7 +111,7 @@ fn bench_vm_single_reuse(c: &mut Criterion) {
                         vm.reset();
                         let ptr = value as *mut f32 as *mut u8;
                         unsafe {
-                            vm.execute(&bytecode, &[ptr], i);
+                            vm.execute(&bytecode, &[ptr], i as u64);
                         }
                     }
                     black_box(&values);
@@ -173,7 +173,7 @@ fn bench_comparison(c: &mut Criterion) {
                 let mut vm = VM::new();
                 let ptr = value as *mut f32 as *mut u8;
                 unsafe {
-                    vm.execute(&bytecode, &[ptr], i);
+                    vm.execute(&bytecode, &[ptr], i as u64);
                 }
             }
             black_box(&values);
@@ -188,7 +188,7 @@ fn bench_comparison(c: &mut Criterion) {
                 vm.reset();
                 let ptr = value as *mut f32 as *mut u8;
                 unsafe {
-                    vm.execute(&bytecode, &[ptr], i);
+                    vm.execute(&bytecode, &[ptr], i as u64);
                 }
             }
             black_box(&values);
@@ -202,7 +202,7 @@ fn bench_comparison(c: &mut Criterion) {
                 vm.reset();
                 let ptr = value as *mut f32 as *mut u8;
                 unsafe {
-                    vm.execute(&bytecode, &[ptr], i);
+                    vm.execute(&bytecode, &[ptr], i as u64);
                 }
             }
             black_box(&values);

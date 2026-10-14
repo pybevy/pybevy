@@ -1064,6 +1064,9 @@ class View(Generic[QueryParam_T, *Qs]):
         """
         Count entities matching a condition (or all entities if no condition).
 
+        A numeric expression counts its nonzero values, NaN included, like
+        ``numpy.count_nonzero``.
+
         Args:
             expr: Optional condition to filter entities
 

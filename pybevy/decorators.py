@@ -19,7 +19,7 @@ from .material import material as material
 RT = TypeVar("RT", bound=Resource)
 MT = TypeVar("MT", bound=Message)
 ET = TypeVar("ET", bound=Event)
-DT = TypeVar("DT")
+_DT = TypeVar("_DT")
 
 _component_cache: dict[str, type[Component]] = {}
 _component_layout_signatures: dict[str, tuple[object, ...]] = {}
@@ -45,13 +45,13 @@ def _component_class_by_name(qualified_name: str) -> type[Component] | None:
     return _component_classes_by_name.get(qualified_name)
 
 
-def _guard_missing_constructor(cls: type[DT], decorator_name: str) -> None:
+def _guard_missing_constructor(cls: type[_DT], decorator_name: str) -> None:
     if dataclasses.is_dataclass(cls) or cls.__init__ is not object.__init__:
         return
 
     original_new = cls.__new__
 
-    def guarded_new(value_type: type[DT], *args: object, **kwargs: object) -> DT:
+    def guarded_new(value_type: type[_DT], *args: object, **kwargs: object) -> _DT:
         if (
             (args or kwargs)
             and not dataclasses.is_dataclass(value_type)
@@ -903,6 +903,12 @@ def entrypoint(func: Callable) -> Callable:
             from .mcp import McpPlugin
 
             port = int(os.environ.get("PYBEVY_CONTROL_PORT", "8420"))
+            if result.is_plugin_added(McpPlugin):
+                raise RuntimeError(
+                    f"`pybevy mcp` adds McpPlugin itself (port {port}); remove "
+                    f"McpPlugin from '{func.__name__}()', or add it only when "
+                    "PYBEVY_MCP is not set."
+                )
             result = result.add_plugins(McpPlugin(port=port, execute_python=True))
 
             # Auto-inject ImageCopyPlugin for headless screenshot support
@@ -910,7 +916,8 @@ def entrypoint(func: Callable) -> Callable:
                 ImageCopyPlugin,  # type: ignore[attr-defined]
             )
 
-            result = result.add_plugins(ImageCopyPlugin())
+            if not result.is_plugin_added(ImageCopyPlugin):
+                result = result.add_plugins(ImageCopyPlugin())
 
         return result
 

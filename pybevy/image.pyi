@@ -1067,6 +1067,8 @@ class TextureAtlasLayout(Asset):
 
         Bevy leaves offset out of the layout size it computes, so with a
         non-zero offset the reported size stops short of the placed rects.
+        Grids above 1,048,576 rectangles or whose coordinates overflow u32
+        raise ValueError before layout generation.
 
         Args:
             tile_size: Size of each tile in pixels.
@@ -1211,7 +1213,9 @@ class TextureAtlasBuilder:
     """Pack source images into an atlas using Bevy's static atlas builder.
 
     ``add_texture`` snapshots each image at call time. Supply its source handle
-    as ``image_id`` to populate ``TextureAtlasSources`` lookups.
+    as ``image_id`` to populate ``TextureAtlasSources`` lookups. Initial and
+    maximum sizes must not exceed 67,108,864 pixels; the output format must
+    fit within 268,435,456 atlas bytes. Oversized settings raise ValueError.
     """
 
     def __init__(self) -> None: ...

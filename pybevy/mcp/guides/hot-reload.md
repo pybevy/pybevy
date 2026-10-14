@@ -3,10 +3,13 @@
 Full vs partial reload, what persists across reloads, error recovery, and diagnostics.
 
 The file watcher ignores build/cache directories by exact directory name below
-the watch root, including `target`, `.venv`, `__pycache__`, `.git`, and
-`node_modules`, plus any Python environment (a directory containing `pyvenv.cfg`
-or `conda-meta/`, such as a project-local `venv/`). Project and helper names that
-merely contain those words are watched. Reload cleanup similarly
+the watch root, including `target`, `__pycache__`, and `node_modules`, every
+directory whose name starts with `.` (`.git`, `.venv`, `.cache`, nested
+`.worktrees`), plus any Python environment (a directory containing `pyvenv.cfg`
+or `conda-meta/`, such as a project-local `venv/`). The watch root itself is
+watched even when its name starts with `.`. Keep reloadable helpers out of
+dot-directories; they cannot be imported as packages anyway. Project and helper
+names that merely contain the ignored words are watched. Reload cleanup similarly
 protects actual installed package directories, not project paths that happen to
 contain `site-packages` or `dist-packages`.
 The native-plugin loader uses the same boundary for PyBevy's module name, so a
@@ -341,6 +344,11 @@ class MyGamePlugin(Plugin):
 - Bridge-backed plugins (built-in Rust plugins) - they call `with_bevy_app()` which temp apps lack
 - New bridge-backed plugin types added mid-development require a `run_scene` restart
 
+Inside a reloading `build()`, `app.is_plugin_added(X)` reports whether the
+reloading entrypoint has added `X` so far, so the usual
+`if not app.is_plugin_added(X): app.add_plugins(X())` guard behaves the same
+on the first load and on reload.
+
 ## Selective Module Flushing
 
 Hot reload uses an AST-based import graph to minimize the modules flushed from `sys.modules`:
@@ -348,6 +356,11 @@ Hot reload uses an AST-based import graph to minimize the modules flushed from `
 - On startup, all `.py` files under the watch root are parsed and import dependencies are tracked
 - Imports through `sys.path` entries inside the watch root are tracked too;
   edits to a helper in a project-local `lib/` or `src/` directory can reload the scene
+- The start-up scan skips the same directories as the file watcher, including
+  dot-directories, which stay untracked even through a `sys.path` entry. Installed
+  code is never tracked: a Python environment below the watch root (marked by
+  `pyvenv.cfg` or `conda-meta/`) or the interpreter's install roots, even when
+  imported through `sys.path`
 - When files change, only the changed files and their transitive dependents are flushed
 - Package initializers are dependencies of modules inside their package; editing
   `pkg/__init__.py` flushes cached `pkg.*` modules before re-importing them

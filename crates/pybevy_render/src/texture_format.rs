@@ -90,6 +90,14 @@ pub enum PyTextureFormat {
     EacRg11Snorm,
 }
 
+#[pymethods]
+impl PyTextureFormat {
+    #[classattr]
+    fn __pybevy_variant_aliases__() -> Vec<(&'static str, &'static str)> {
+        Vec::new()
+    }
+}
+
 impl From<PyTextureFormat> for TextureFormat {
     fn from(format: PyTextureFormat) -> Self {
         match format {

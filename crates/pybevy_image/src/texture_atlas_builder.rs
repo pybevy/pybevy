@@ -1,6 +1,6 @@
 use bevy::{
     asset::{AssetId, Handle},
-    image::{Image, TextureAtlasBuilder},
+    image::{Image, TextureAtlasBuilder, TextureFormatPixelInfo},
     math::UVec2,
     render::render_resource::TextureFormat,
 };
@@ -13,6 +13,19 @@ use crate::{
     image::PyImage, texture_atlas_layout::PyTextureAtlasLayout,
     texture_atlas_sources::PyTextureAtlasSources,
 };
+
+const MAX_ATLAS_PIXELS: u64 = 1 << 26;
+const MAX_ATLAS_BYTES: u64 = 1 << 28;
+
+fn check_atlas_pixels(size: UVec2) -> PyResult<()> {
+    let pixels = u64::from(size.x) * u64::from(size.y);
+    if pixels > MAX_ATLAS_PIXELS {
+        return Err(PyValueError::new_err(format!(
+            "atlas size {size:?} would contain {pixels} pixels; maximum is {MAX_ATLAS_PIXELS}"
+        )));
+    }
+    Ok(())
+}
 
 #[pyclass(
     name = "TextureAtlasBuilder",
@@ -57,6 +70,7 @@ impl PyTextureAtlasBuilder {
         if size.x == 0 || size.y == 0 {
             return Err(PyValueError::new_err("atlas initial size must be nonzero"));
         }
+        check_atlas_pixels(size)?;
         slf.initial_size = size;
         Ok(slf)
     }
@@ -69,6 +83,7 @@ impl PyTextureAtlasBuilder {
         if size.x == 0 || size.y == 0 {
             return Err(PyValueError::new_err("atlas maximum size must be nonzero"));
         }
+        check_atlas_pixels(size)?;
         slf.max_size = size;
         Ok(slf)
     }
@@ -115,6 +130,27 @@ impl PyTextureAtlasBuilder {
         Py<PyTextureAtlasSources>,
         Py<PyImage>,
     )> {
+        let bytes_per_pixel =
+            self.format
+                .pixel_size()
+                .map_err(|error| PyValueError::new_err(error.to_string()))? as u64;
+        for size in [self.initial_size, self.max_size] {
+            let bytes = u64::from(size.x) * u64::from(size.y) * bytes_per_pixel;
+            if bytes > MAX_ATLAS_BYTES {
+                return Err(PyValueError::new_err(format!(
+                    "atlas size {size:?} would allocate {bytes} bytes; maximum is {MAX_ATLAS_BYTES}"
+                )));
+            }
+        }
+        for (_, image) in &self.textures {
+            if image.width().checked_add(self.padding.x).is_none()
+                || image.height().checked_add(self.padding.y).is_none()
+            {
+                return Err(PyValueError::new_err(
+                    "atlas source size plus padding overflows u32",
+                ));
+            }
+        }
         let converted = self
             .textures
             .iter()

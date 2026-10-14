@@ -5,13 +5,13 @@ use bevy::{
         CameraProjection, CustomProjection, OrthographicProjection, PerspectiveProjection,
         Projection, SubCameraView,
     },
-    math::{Rect, Vec2},
+    math::{AspectRatio, Rect, Vec2},
 };
 use pybevy_core::{ComponentStorage, FieldStorage, FromBorrowedStorage};
 use pybevy_macros::{pyenum, pyfield};
 use pybevy_math::{mat4::PyMat4, rect::PyRect, vec2::PyVec2, vec3a::PyVec3A, vec4::PyVec4};
 use pybevy_transform::global_transform::PyGlobalTransform;
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyValueError, prelude::*};
 
 use crate::{frustum::PyFrustum, scaling_mode::PyScalingMode, sub_camera_view::PySubCameraView};
 
@@ -20,6 +20,17 @@ const DEFAULT_ORTHOGRAPHIC_FAR: f32 = 1000.0;
 const DEFAULT_ORTHOGRAPHIC_SCALE: f32 = 1.0;
 const DEFAULT_ORTHOGRAPHIC_VIEWPORT_ORIGIN: Vec2 = Vec2::new(0.5, 0.5);
 const DEFAULT_ORTHOGRAPHIC_AREA: Rect = Rect::new(-1.0, -1.0, 1.0, 1.0);
+
+fn check_projection_size(width: f32, height: f32) -> PyResult<()> {
+    let ratio = AspectRatio::try_new(width, height)
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+    if !ratio.ratio().is_finite() {
+        return Err(PyValueError::new_err(
+            "projection aspect ratio must be finite",
+        ));
+    }
+    Ok(())
+}
 
 #[pyfield]
 #[pyclass(
@@ -108,7 +119,9 @@ impl PyPerspectiveProjection {
     }
 
     pub fn update(&mut self, width: f32, height: f32) -> PyResult<()> {
-        self.as_mut()?.update(width, height);
+        let mut projection = self.as_mut()?;
+        check_projection_size(width, height)?;
+        projection.update(width, height);
         Ok(())
     }
 
@@ -268,7 +281,9 @@ impl PyOrthographicProjection {
     }
 
     pub fn update(&mut self, width: f32, height: f32) -> PyResult<()> {
-        self.as_mut()?.update(width, height);
+        let mut projection = self.as_mut()?;
+        check_projection_size(width, height)?;
+        projection.update(width, height);
         Ok(())
     }
 

@@ -63,7 +63,10 @@ use crate::ecs::{
 
 fn view_program_error(error: ViewRuntimeError) -> PyErr {
     match error {
-        ViewRuntimeError::ImplicitFloatToInteger { .. } => PyTypeError::new_err(error.to_string()),
+        ViewRuntimeError::ImplicitFloatToInteger { .. }
+        | ViewRuntimeError::ImplicitSignedToUnsigned { .. } => {
+            PyTypeError::new_err(error.to_string())
+        }
         ViewRuntimeError::IntegerLiteralOutOfBounds(_) => {
             PyOverflowError::new_err(error.to_string())
         }

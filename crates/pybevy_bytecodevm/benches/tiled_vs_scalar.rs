@@ -84,7 +84,7 @@ unsafe fn run_scalar(bc: &CompiledBytecode, buf: &mut [f32], n: usize) {
     for i in 0..n {
         let xp = unsafe { base.add(i * 8) };
         let vp = unsafe { base.add(i * 8 + 4) };
-        unsafe { vm.execute(bc, &[xp, vp], i) };
+        unsafe { vm.execute(bc, &[xp, vp], i as u64) };
     }
 }
 
@@ -154,7 +154,7 @@ unsafe fn run_scalar_dense(bc: &CompiledBytecode, x: &mut [f32], v: &[f32], n: u
     for i in 0..n {
         let xp = unsafe { xb.add(i * 4) };
         let vp = unsafe { vb.add(i * 4) };
-        unsafe { vm.execute(bc, &[xp, vp], i) };
+        unsafe { vm.execute(bc, &[xp, vp], i as u64) };
     }
 }
 
@@ -260,7 +260,7 @@ unsafe fn run_scalar_u64(bytecode: &CompiledBytecode, values: &mut [u64]) {
     let mut vm = VM::new();
     for (index, value) in values.iter_mut().enumerate() {
         let pointers = [(value as *mut u64).cast::<u8>()];
-        unsafe { vm.execute(bytecode, &pointers, index) };
+        unsafe { vm.execute(bytecode, &pointers, index as u64) };
     }
 }
 

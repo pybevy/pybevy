@@ -534,11 +534,17 @@ class Rect:
 
     @staticmethod
     def from_center_size(origin: Vec2, size: Vec2) -> Rect:
-        """Create a Rect from center point and size."""
+        """Create a Rect from center point and size.
+
+        Raises ValueError if either size component is negative or NaN.
+        """
 
     @staticmethod
     def from_center_half_size(origin: Vec2, half_size: Vec2) -> Rect:
-        """Create a Rect from center point and half size."""
+        """Create a Rect from center point and half size.
+
+        Raises ValueError if either half-size component is negative or NaN.
+        """
 
     def center(self) -> Vec2:
         """Get the center point of the rectangle."""

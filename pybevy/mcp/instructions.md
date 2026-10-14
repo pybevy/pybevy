@@ -136,6 +136,7 @@ Owned nested UI gradient values and `Isometry2d` vector fields are read-only sna
       main().run()
   ```
   Common mistakes: missing `@entrypoint` decorator, wrong signature (must be `def main(app: App) -> App`), missing `return app`, missing `if __name__` guard.
+- **Do not add `McpPlugin` to scenes run by `pybevy mcp`** - the entrypoint injects it on the port the bridge expects and raises `RuntimeError` if the scene already added one. Add it only when `os.environ.get("PYBEVY_MCP") != "1"`.
 - **Always use chained return style** - use `return (app.add_plugins(...).add_systems(...))`. Do NOT use separate `app.method(...)` calls followed by `return app`.
 - Always use `from pybevy.prelude import *` (NOT `from pybevy import *`)
 - Pass shapes directly to meshes.add(): `meshes.add(Cuboid(1,1,1))`

@@ -263,7 +263,9 @@ Key View rules:
   Division follows NumPy: `/` is float64 true division; `//` with `%` gives a
   matching floor quotient and remainder, exact for integer fields. Assigning a
   float expression (including a `/` result) to an integer field raises
-  `TypeError`; use `//` instead. Zero divisors never raise: floats give
+  `TypeError`; use `//` instead. A signed integer expression assigned to an
+  unsigned field raises `TypeError` too; other stores between integer widths
+  wrap as NumPy casts them. Zero divisors never raise: floats give
   inf/-inf/NaN, integers give 0, and no warning is emitted.
 - Literals follow NumPy: an `int` literal takes the field's type, a `float`
   literal makes an integer expression float64. `int_field * 2` stays integer;

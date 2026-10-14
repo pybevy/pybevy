@@ -1557,7 +1557,7 @@ mod tests {
         for i in 0..n {
             let xp = unsafe { base.add(i * 8) };
             let vp = unsafe { base.add(i * 8 + 4) };
-            unsafe { vm.execute(bc, &[xp, vp], i) };
+            unsafe { vm.execute(bc, &[xp, vp], i as u64) };
         }
     }
 
@@ -1965,7 +1965,7 @@ mod tests {
                     let ptrs: Vec<*mut u8> = (0..num_fields)
                         .map(|f| base.add(i * stride + f * 8))
                         .collect();
-                    vm.execute(&bc, &ptrs, i);
+                    vm.execute(&bc, &ptrs, i as u64);
                 }
             }
             unsafe {
@@ -2058,7 +2058,7 @@ mod tests {
                         .map(|c| c.as_mut_ptr().add(i) as *mut u8)
                         .collect();
                     ptrs.push(scalar_out.as_mut_ptr().add(i) as *mut u8);
-                    vm.execute(&bc, &ptrs, i);
+                    vm.execute(&bc, &ptrs, i as u64);
                 }
             }
 
@@ -2326,7 +2326,7 @@ mod tests {
                     let pointers = [(value as *mut $ty).cast::<u8>()];
                     // SAFETY: the pointer names one live value with the bytecode's
                     // declared type and is exclusively borrowed for this call.
-                    unsafe { vm.execute(&bytecode, &pointers, index) };
+                    unsafe { vm.execute(&bytecode, &pointers, index as u64) };
                 }
 
                 let mut tiled = initial;

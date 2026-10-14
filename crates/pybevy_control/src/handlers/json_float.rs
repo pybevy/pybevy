@@ -12,7 +12,9 @@ pub(crate) fn require_finite_float(value: f64) -> Result<f64, String> {
 pub(crate) fn reject_narrowed_nonfinite(request: &Value, written: &Value) -> Result<(), String> {
     match (request, written) {
         (Value::Number(number), Value::String(value))
-            if number.as_f64().is_some_and(f64::is_finite)
+            if number
+                .as_f64()
+                .is_some_and(|number| number.is_finite() && number.abs() > f64::from(f32::MAX))
                 && matches!(value.as_str(), "NaN" | "Infinity" | "-Infinity") =>
         {
             Err("number is outside the f32 range".to_string())
@@ -100,6 +102,21 @@ mod tests {
                 &serde_json::json!({"elapsed": 1e39, "existing": "Infinity"})
             )
             .is_ok()
+        );
+    }
+
+    #[test]
+    fn in_range_numbers_may_become_nonfinite_through_the_native_constructor() {
+        let request = serde_json::json!({"normal_d": [0.0, 0.0, 0.0, 0.0]});
+        let written = serde_json::json!({"normal_d": ["NaN", "NaN", "NaN", "NaN"]});
+        assert!(reject_narrowed_nonfinite(&request, &written).is_ok());
+        assert_eq!(
+            reject_narrowed_nonfinite(
+                &serde_json::json!({"value": -3.5e38}),
+                &serde_json::json!({"value": "-Infinity"})
+            )
+            .unwrap_err(),
+            "value: number is outside the f32 range"
         );
     }
 }
