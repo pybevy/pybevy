@@ -16,7 +16,7 @@ use crate::{
     font_width::PyFontWidth,
 };
 
-#[pycomponent(TextFont, bridge)]
+#[pycomponent(TextFont, bridge, domains = [font_size => [finite, non_negative]])]
 #[pyclass(name = "TextFont", module = "pybevy.text", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyTextFont {
@@ -69,7 +69,7 @@ impl PyTextFont {
     ) -> PyResult<PyClassInitializer<Self>> {
         Ok(Self::from_owned(TextFont {
             font: font.0,
-            font_size: font_size.0,
+            font_size: Self::check_font_size(font_size.0)?,
             font_smoothing: font_smoothing.into(),
             weight: weight.into(),
             width: width.into(),
@@ -84,8 +84,8 @@ impl PyTextFont {
     pub fn from_font_size(py: Python<'_>, font_size: &Bound<'_, PyAny>) -> PyResult<Py<Self>> {
         Py::new(
             py,
-            Self::from_owned(TextFont::from_font_size(extract_font_size_from_any(
-                font_size,
+            Self::from_owned(TextFont::from_font_size(Self::check_font_size(
+                extract_font_size_from_any(font_size)?,
             )?)),
         )
     }
@@ -116,7 +116,8 @@ impl PyTextFont {
 
     #[setter]
     pub fn set_font_size(&mut self, value: IntoFontSize) -> PyResult<()> {
-        self.as_mut()?.font_size = value.0;
+        let value = Self::check_font_size(value.0)?;
+        self.as_mut()?.font_size = value;
         Ok(())
     }
 
@@ -194,7 +195,7 @@ impl PyTextFont {
         py: Python<'_>,
         font_size: &Bound<'_, PyAny>,
     ) -> PyResult<Py<Self>> {
-        let font_size = extract_font_size_from_any(font_size)?;
+        let font_size = Self::check_font_size(extract_font_size_from_any(font_size)?)?;
         let mut text_font = self.as_ref()?.clone();
         text_font.font_size = font_size;
         Py::new(py, Self::from_owned(text_font))

@@ -2,7 +2,9 @@ use std::time::Duration;
 
 use bevy::time::{Timer, TimerMode};
 use pybevy_core::{
-    duration_from_py, duration_from_secs_f64, public_error::TIMER_ELAPSED_PAST_DURATION,
+    DURATION_DOMAIN, check_duration,
+    domain::{DurationInput, check},
+    public_error::TIMER_ELAPSED_PAST_DURATION,
 };
 use pybevy_macros::pyenum;
 use pyo3::{exceptions::PyValueError, prelude::*};
@@ -43,9 +45,9 @@ pub struct PyTimer {
 impl PyTimer {
     #[new]
     #[pyo3(signature = (duration = None, mode = PyTimerMode::Once))]
-    pub fn new(duration: Option<&Bound<'_, PyAny>>, mode: PyTimerMode) -> PyResult<Self> {
+    pub fn new(duration: Option<DurationInput>, mode: PyTimerMode) -> PyResult<Self> {
         let dur = match duration {
-            Some(d) => duration_from_py(d)?,
+            Some(d) => check_duration("Timer", "duration", d, DURATION_DOMAIN)?,
             None => Duration::ZERO,
         };
         Ok(Self {
@@ -56,17 +58,25 @@ impl PyTimer {
 
     #[staticmethod]
     pub fn from_seconds(duration: f32, mode: PyTimerMode) -> PyResult<Self> {
+        // Checked as f32 first so the message shows the value as passed.
+        let duration = check("Timer", "duration", duration, DURATION_DOMAIN)?;
+        let duration = check_duration(
+            "Timer",
+            "duration",
+            DurationInput::Seconds(duration.into()),
+            DURATION_DOMAIN,
+        )?;
         Ok(Self {
-            timer: Timer::new(duration_from_secs_f64(duration.into())?, mode.into()),
+            timer: Timer::new(duration, mode.into()),
             count_overflowed: false,
         })
     }
 
     pub fn tick<'py>(
         mut slf: PyRefMut<'py, Self>,
-        delta: &Bound<'_, PyAny>,
+        delta: DurationInput,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        let delta = duration_from_py(delta)?;
+        let delta = check_duration("Timer", "delta", delta, DURATION_DOMAIN)?;
         slf.count_overflowed = slf.would_overflow_finishes(delta);
         slf.timer.tick(delta);
         Ok(slf)
@@ -88,8 +98,9 @@ impl PyTimer {
         self.timer.duration()
     }
 
-    pub fn set_duration(&mut self, duration: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.timer.set_duration(duration_from_py(duration)?);
+    pub fn set_duration(&mut self, duration: DurationInput) -> PyResult<()> {
+        let duration = check_duration("Timer", "duration", duration, DURATION_DOMAIN)?;
+        self.timer.set_duration(duration);
         Ok(())
     }
 
@@ -142,8 +153,9 @@ impl PyTimer {
         self.timer.elapsed_secs_f64()
     }
 
-    pub fn set_elapsed(&mut self, time: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.timer.set_elapsed(duration_from_py(time)?);
+    pub fn set_elapsed(&mut self, time: DurationInput) -> PyResult<()> {
+        let time = check_duration("Timer", "elapsed", time, DURATION_DOMAIN)?;
+        self.timer.set_elapsed(time);
         Ok(())
     }
 

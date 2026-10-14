@@ -51,7 +51,7 @@ impl PyCircularSector {
         }
         Ok((
             Self(CircularSector {
-                arc: checked_arc(radius, half_angle)?,
+                arc: checked_arc("CircularSector", radius, half_angle)?,
             }),
             PyMeshable,
         )
@@ -64,7 +64,7 @@ impl PyCircularSector {
             py,
             (
                 Self(CircularSector {
-                    arc: checked_arc_from_radians(radius, angle)?,
+                    arc: checked_arc_from_radians("CircularSector", radius, angle)?,
                 }),
                 PyMeshable,
             ),
@@ -77,7 +77,7 @@ impl PyCircularSector {
             py,
             (
                 Self(CircularSector {
-                    arc: checked_arc_from_degrees(radius, angle)?,
+                    arc: checked_arc_from_degrees("CircularSector", radius, angle)?,
                 }),
                 PyMeshable,
             ),
@@ -90,7 +90,7 @@ impl PyCircularSector {
             py,
             (
                 Self(CircularSector {
-                    arc: checked_arc_from_turns(radius, fraction)?,
+                    arc: checked_arc_from_turns("CircularSector", radius, fraction)?,
                 }),
                 PyMeshable,
             ),

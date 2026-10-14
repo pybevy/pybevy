@@ -12,6 +12,7 @@ pyo3 = { workspace = true, features = ["macros"] }
 numpy = { workspace = true }
 pybevy_color = { workspace = true }
 pybevy_core = { workspace = true }
+pybevy_storage = { path = "../pybevy_storage", version = "=0.3.0-rc.1", features = ["ui"] }
 pybevy_macros = { workspace = true }
 pybevy_math = { workspace = true }
 pybevy_sprite = { workspace = true }

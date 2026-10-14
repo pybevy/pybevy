@@ -4,7 +4,8 @@ use bevy::math::{
 };
 use pybevy_core::{
     FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
-    public_error::{EMPTY_POINT_CLOUD, bounding_operation, bounding_radius, bounding_shrink},
+    domain::{NON_NEGATIVE, check},
+    public_error::{EMPTY_POINT_CLOUD, bounding_operation, bounding_shrink},
     repr::{ReprLiteral, float_repr},
 };
 use pyo3::{exceptions::PyValueError, prelude::*};
@@ -85,12 +86,7 @@ impl PyBoundingCircle {
     #[new]
     pub fn new(center: PyVec2, radius: f32) -> PyResult<Self> {
         let center_vec: Vec2 = center.try_into()?;
-        if radius.is_nan() || radius < 0.0 {
-            return Err(PyValueError::new_err(bounding_radius(
-                "BoundingCircle",
-                radius,
-            )));
-        }
+        let radius = check("BoundingCircle", "radius", radius, NON_NEGATIVE)?;
         Ok(PyBoundingCircle::from_bounding_circle(BoundingCircle::new(
             center_vec, radius,
         )))
@@ -167,23 +163,17 @@ impl PyBoundingCircle {
 
     pub fn grow(&self, amount: f32) -> PyResult<PyBoundingCircle> {
         let bounds = self.as_ref()?;
-        if amount.is_nan() || amount < 0.0 {
-            return Err(PyValueError::new_err(bounding_operation(
-                "BoundingCircle",
-                "grow",
-            )));
-        }
+        let amount = check("BoundingCircle", "amount", amount, NON_NEGATIVE)?;
         Ok(PyBoundingCircle::from_bounding_circle(bounds.grow(amount)))
     }
 
     pub fn shrink(&self, amount: f32) -> PyResult<PyBoundingCircle> {
         let bounds = self.as_ref()?;
-        if amount.is_nan()
-            || amount < 0.0
-            || bounds
-                .radius()
-                .partial_cmp(&amount)
-                .is_none_or(|order| order.is_lt())
+        let amount = check("BoundingCircle", "amount", amount, NON_NEGATIVE)?;
+        if bounds
+            .radius()
+            .partial_cmp(&amount)
+            .is_none_or(|order| order.is_lt())
         {
             return Err(PyValueError::new_err(bounding_shrink("BoundingCircle")));
         }
@@ -194,12 +184,7 @@ impl PyBoundingCircle {
 
     pub fn scale_around_center(&self, scale: f32) -> PyResult<PyBoundingCircle> {
         let bounds = self.as_ref()?;
-        if scale.is_nan() || scale < 0.0 {
-            return Err(PyValueError::new_err(bounding_operation(
-                "BoundingCircle",
-                "scale_around_center",
-            )));
-        }
+        let scale = check("BoundingCircle", "scale", scale, NON_NEGATIVE)?;
         Ok(PyBoundingCircle::from_bounding_circle(
             bounds.scale_around_center(scale),
         ))

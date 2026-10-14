@@ -56,11 +56,11 @@ impl PyAnnulus {
     ) -> PyResult<PyClassInitializer<Self>> {
         let inner_circle = match inner_circle {
             Some(circle) => circle.try_get()?,
-            None => Circle::new(dimension("inner_radius", inner_radius)?),
+            None => Circle::new(dimension("Annulus", "inner_radius", inner_radius)?),
         };
         let outer_circle = match outer_circle {
             Some(circle) => circle.try_get()?,
-            None => Circle::new(dimension("outer_radius", outer_radius)?),
+            None => Circle::new(dimension("Annulus", "outer_radius", outer_radius)?),
         };
         Ok((
             Self(Annulus {

@@ -48,7 +48,7 @@ impl From<Rhombus> for PyRhombus {
 }
 
 fn check_half_diagonals(value: &Vec2) -> Result<(), StorageError> {
-    dimension("half_diagonals", *value).map(drop)
+    dimension("Rhombus", "half_diagonals", *value).map(drop)
 }
 
 #[pyconstructor(
@@ -65,25 +65,25 @@ impl PyRhombus {
         #[expected("Vec2")] half_diagonals: Option<PyVec2>,
     ) -> PyResult<PyClassInitializer<Self>> {
         if let Some(hd) = half_diagonals {
-            let half_diagonals = dimension("half_diagonals", hd.try_into()?)?;
+            let half_diagonals = dimension("Rhombus", "half_diagonals", hd.try_into()?)?;
             return Ok((Self::from_owned(Rhombus { half_diagonals }), PyMeshable).into());
         }
         let rhombus = Rhombus::new(
-            dimension("horizontal_diagonal", horizontal_diagonal)?,
-            dimension("vertical_diagonal", vertical_diagonal)?,
+            dimension("Rhombus", "horizontal_diagonal", horizontal_diagonal)?,
+            dimension("Rhombus", "vertical_diagonal", vertical_diagonal)?,
         );
         Ok((Self::from_owned(rhombus), PyMeshable).into())
     }
 
     #[staticmethod]
     pub fn from_side(py: Python, side: f32) -> PyResult<Py<Self>> {
-        let rhombus = Rhombus::from_side(dimension("side", side)?);
+        let rhombus = Rhombus::from_side(dimension("Rhombus", "side", side)?);
         Py::new(py, (Self::from_owned(rhombus), PyMeshable))
     }
 
     #[staticmethod]
     pub fn from_inradius(py: Python, inradius: f32) -> PyResult<Py<Self>> {
-        let rhombus = Rhombus::from_inradius(dimension("inradius", inradius)?);
+        let rhombus = Rhombus::from_inradius(dimension("Rhombus", "inradius", inradius)?);
         check_half_diagonals(&rhombus.half_diagonals)?;
         Py::new(py, (Self::from_owned(rhombus), PyMeshable))
     }
@@ -101,7 +101,7 @@ impl PyRhombus {
     pub fn set_half_diagonals(&mut self, value: PyVec2) -> PyResult<()> {
         let half_diagonals = value.try_into()?;
         let mut rhombus = self.as_mut()?;
-        rhombus.half_diagonals = dimension("half_diagonals", half_diagonals)?;
+        rhombus.half_diagonals = dimension("Rhombus", "half_diagonals", half_diagonals)?;
         Ok(())
     }
 

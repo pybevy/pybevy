@@ -4,9 +4,9 @@ use bevy::math::{
 };
 use pybevy_core::{
     FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
+    domain::{NON_NEGATIVE, check},
     public_error::{
-        EMPTY_POINT_CLOUD, bounding_half_size, bounding_operation, bounding_shrink,
-        intersects_volume_type,
+        EMPTY_POINT_CLOUD, bounding_operation, bounding_shrink, intersects_volume_type,
     },
     repr::ReprLiteral,
 };
@@ -93,12 +93,7 @@ impl PyAabb2d {
     pub fn new(center: PyVec2, half_size: PyVec2) -> PyResult<Self> {
         let center_vec: Vec2 = center.try_into()?;
         let half_size_vec: Vec2 = half_size.try_into()?;
-        if !half_size_vec.cmpge(Vec2::ZERO).all() {
-            return Err(PyValueError::new_err(bounding_half_size(
-                "Aabb2d",
-                &[half_size_vec.x, half_size_vec.y],
-            )));
-        }
+        let half_size_vec = check("Aabb2d", "half_size", half_size_vec, NON_NEGATIVE)?;
         Ok(PyAabb2d::from_aabb2d(Aabb2d::new(
             center_vec,
             half_size_vec,

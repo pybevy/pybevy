@@ -1,16 +1,11 @@
 use bevy::math::{IRect, IVec2};
 use pybevy_core::{
     FromBorrowedStorage, ValueStorage,
-    public_error::{
-        INTEGER_RECT_HALF_SIZE_NEGATIVE, INTEGER_RECT_SIZE_NEGATIVE, UNSUPPORTED_COMPARISON,
-    },
+    domain::{NON_NEGATIVE, check},
+    public_error::UNSUPPORTED_COMPARISON,
 };
 use pybevy_macros::pyvalue;
-use pyo3::{
-    basic::CompareOp,
-    exceptions::{PyTypeError, PyValueError},
-    prelude::*,
-};
+use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 use super::{integer::checked, ivec2::PyIVec2, rect::PyRect, urect::PyURect};
 use crate::richcmp::comparison_result;
@@ -74,9 +69,7 @@ impl PyIRect {
     #[staticmethod]
     pub fn from_center_size(origin: PyIVec2, size: PyIVec2) -> PyResult<PyIRect> {
         let size: IVec2 = size.try_into()?;
-        if size.x < 0 || size.y < 0 {
-            return Err(PyValueError::new_err(INTEGER_RECT_SIZE_NEGATIVE));
-        }
+        let size = check("IRect", "size", size, NON_NEGATIVE)?;
         Self::from_center_half_size(origin, (size / 2).into())
     }
 
@@ -84,9 +77,7 @@ impl PyIRect {
     pub fn from_center_half_size(origin: PyIVec2, half_size: PyIVec2) -> PyResult<PyIRect> {
         let origin: IVec2 = origin.try_into()?;
         let half_size: IVec2 = half_size.try_into()?;
-        if half_size.x < 0 || half_size.y < 0 {
-            return Err(PyValueError::new_err(INTEGER_RECT_HALF_SIZE_NEGATIVE));
-        }
+        let half_size = check("IRect", "half_size", half_size, NON_NEGATIVE)?;
         Ok(IRect {
             min: IVec2::new(
                 checked(origin.x.checked_sub(half_size.x))?,

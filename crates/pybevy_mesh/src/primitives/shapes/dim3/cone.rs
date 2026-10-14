@@ -21,7 +21,10 @@ impl PyCone {
     #[new]
     #[pyo3(signature = (radius=0.5, height=1.0))]
     pub fn new(radius: f32, height: f32) -> PyResult<PyClassInitializer<Self>> {
-        let cone = Cone::new(dimension("radius", radius)?, dimension("height", height)?);
+        let cone = Cone::new(
+            dimension("Cone", "radius", radius)?,
+            dimension("Cone", "height", height)?,
+        );
         Ok((Self(cone), PyMeshable).into())
     }
 
@@ -32,7 +35,7 @@ impl PyCone {
 
     #[setter]
     pub fn set_radius(&mut self, value: f32) -> PyResult<()> {
-        self.0.radius = dimension("radius", value)?;
+        self.0.radius = dimension("Cone", "radius", value)?;
         Ok(())
     }
 
@@ -43,7 +46,7 @@ impl PyCone {
 
     #[setter]
     pub fn set_height(&mut self, value: f32) -> PyResult<()> {
-        self.0.height = dimension("height", value)?;
+        self.0.height = dimension("Cone", "height", value)?;
         Ok(())
     }
 

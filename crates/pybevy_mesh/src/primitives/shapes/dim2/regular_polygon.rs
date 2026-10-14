@@ -2,13 +2,18 @@ use bevy::{
     math::primitives::{Measured2d, RegularPolygon},
     mesh::Meshable,
 };
-use pybevy_core::repr::float_repr;
+use pybevy_core::{
+    domain::{IntegerInput, check},
+    repr::float_repr,
+};
 use pybevy_math::primitives::dimension::dimension;
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pyo3::prelude::*;
 
 use super::circle::PyCircle;
 use crate::{
-    mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyRegularPolygonMeshBuilder,
+    mesh_builder::PyMeshBuilder,
+    meshable::PyMeshable,
+    primitives::{PyRegularPolygonMeshBuilder, validation::AT_LEAST_THREE},
 };
 
 #[pyclass(name = "RegularPolygon", module = "pybevy.math", extends = PyMeshable, eq, skip_from_py_object)]
@@ -30,10 +35,10 @@ impl From<RegularPolygon> for PyRegularPolygon {
 #[pymethods]
 impl PyRegularPolygon {
     #[new]
-    #[pyo3(signature = (circumradius = 0.5, sides = 6))]
-    pub fn new(circumradius: f32, sides: u32) -> PyResult<PyClassInitializer<Self>> {
-        let circumradius = dimension("circumradius", circumradius)?;
-        validate_sides(sides)?;
+    #[pyo3(signature = (circumradius = 0.5, sides = IntegerInput::new(6)))]
+    pub fn new(circumradius: f32, sides: IntegerInput<u32>) -> PyResult<PyClassInitializer<Self>> {
+        let circumradius = dimension("RegularPolygon", "circumradius", circumradius)?;
+        let sides = validate_sides(sides)?;
         Ok((Self(RegularPolygon::new(circumradius, sides)), PyMeshable).into())
     }
 
@@ -48,7 +53,7 @@ impl PyRegularPolygon {
     #[setter]
     pub fn set_circumcircle(&mut self, value: &PyCircle) -> PyResult<()> {
         let mut circle = value.try_get()?;
-        circle.radius = dimension("circumradius", circle.radius)?;
+        circle.radius = dimension("RegularPolygon", "circumradius", circle.radius)?;
         self.0.circumcircle = circle;
         Ok(())
     }
@@ -59,9 +64,8 @@ impl PyRegularPolygon {
     }
 
     #[setter]
-    pub fn set_sides(&mut self, value: u32) -> PyResult<()> {
-        validate_sides(value)?;
-        self.0.sides = value;
+    pub fn set_sides(&mut self, value: IntegerInput<u32>) -> PyResult<()> {
+        self.0.sides = validate_sides(value)?;
         Ok(())
     }
 
@@ -120,11 +124,6 @@ impl PyRegularPolygon {
     }
 }
 
-fn validate_sides(sides: u32) -> PyResult<()> {
-    if sides < 3 {
-        return Err(PyValueError::new_err(format!(
-            "sides must be at least 3 (got {sides})"
-        )));
-    }
-    Ok(())
+fn validate_sides(sides: IntegerInput<u32>) -> PyResult<u32> {
+    Ok(check("RegularPolygon", "sides", sides, AT_LEAST_THREE)?.stored())
 }

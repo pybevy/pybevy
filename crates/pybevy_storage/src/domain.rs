@@ -7,7 +7,11 @@
 
 use std::{fmt, marker::PhantomData, num::NonZero, time::Duration};
 
-use bevy::math::{Quat, Vec2, Vec3, Vec3A, Vec4};
+use bevy::math::{IVec2, Quat, Vec2, Vec3, Vec3A, Vec4};
+#[cfg(feature = "text")]
+use bevy::text::FontSize;
+#[cfg(feature = "ui")]
+use bevy::ui::{UiRect, Val};
 #[cfg(feature = "pyo3")]
 use pyo3::{
     Borrowed, FromPyObject, PyAny, PyErr,
@@ -37,6 +41,17 @@ pub enum FieldDomain {
     /// `v >= n`.
     AtLeast(i64),
 }
+
+/// Rejects NaN and both infinities.
+pub const FINITE: &[FieldDomain] = &[FieldDomain::Finite];
+/// Rejects only NaN.
+pub const NOT_NAN: &[FieldDomain] = &[FieldDomain::NotNan];
+/// `v >= 0`, positive infinity included.
+pub const NON_NEGATIVE: &[FieldDomain] = &[FieldDomain::NonNegative];
+/// Finite and `v >= 0`.
+pub const FINITE_NON_NEGATIVE: &[FieldDomain] = &[FieldDomain::Finite, FieldDomain::NonNegative];
+/// Finite and `v > 0`.
+pub const POSITIVE: &[FieldDomain] = &[FieldDomain::Positive];
 
 impl FieldDomain {
     fn accepts(self, value: DomainValue) -> bool {
@@ -226,6 +241,7 @@ vector_domain_values! {
     Vec3A => ["x", "y", "z"];
     Vec4 => ["x", "y", "z", "w"];
     Quat => ["x", "y", "z", "w"];
+    IVec2 => ["x", "y"];
 }
 
 impl DomainValues for DomainValue {
@@ -236,6 +252,73 @@ impl DomainValues for DomainValue {
         domains: &'static [FieldDomain],
     ) -> Result<(), DomainViolation> {
         check_component(owner, field, None, self, domains)
+    }
+}
+
+/// The magnitude of a `Val`; `Auto` has none and always passes.
+#[cfg(feature = "ui")]
+fn val_magnitude(value: Val) -> Option<f32> {
+    match value {
+        Val::Auto => None,
+        Val::Px(v) | Val::Percent(v) | Val::Vw(v) | Val::Vh(v) | Val::VMin(v) | Val::VMax(v) => {
+            Some(v)
+        }
+    }
+}
+
+#[cfg(feature = "ui")]
+impl DomainValues for Val {
+    fn check_domains(
+        self,
+        owner: &'static str,
+        field: &'static str,
+        domains: &'static [FieldDomain],
+    ) -> Result<(), DomainViolation> {
+        val_magnitude(self).map_or(Ok(()), |magnitude| {
+            check_component(owner, field, None, magnitude.into(), domains)
+        })
+    }
+}
+
+/// Each side's magnitude, named by the side.
+#[cfg(feature = "ui")]
+impl DomainValues for UiRect {
+    fn check_domains(
+        self,
+        owner: &'static str,
+        field: &'static str,
+        domains: &'static [FieldDomain],
+    ) -> Result<(), DomainViolation> {
+        let sides = [
+            ("left", self.left),
+            ("right", self.right),
+            ("top", self.top),
+            ("bottom", self.bottom),
+        ];
+        for (side, value) in sides {
+            if let Some(magnitude) = val_magnitude(value) {
+                check_component(owner, field, Some(side), magnitude.into(), domains)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(feature = "text")]
+impl DomainValues for FontSize {
+    fn check_domains(
+        self,
+        owner: &'static str,
+        field: &'static str,
+        domains: &'static [FieldDomain],
+    ) -> Result<(), DomainViolation> {
+        let (FontSize::Px(magnitude)
+        | FontSize::Vw(magnitude)
+        | FontSize::Vh(magnitude)
+        | FontSize::VMin(magnitude)
+        | FontSize::VMax(magnitude)
+        | FontSize::Rem(magnitude)) = self;
+        check_component(owner, field, None, magnitude.into(), domains)
     }
 }
 
@@ -318,6 +401,7 @@ impl<T: StoredInteger> IntegerInput<T> {
         }
     }
 
+    #[cfg(any(feature = "pyo3", test))]
     fn beyond() -> Self {
         Self {
             value: WideInteger::Beyond,
@@ -390,7 +474,9 @@ impl DomainValues for Duration {
 
 /// A Python duration bound for a `Duration` field. A `timedelta` or integer
 /// seconds converts exactly; other seconds are checked before conversion, so a
-/// negative, non-finite or too-large value reaches the domain check.
+/// negative, non-finite or too-large value reaches the domain check. Seconds
+/// that round to a `Duration` the rules reject, such as a positive subnormal
+/// for a `positive` domain, are out of the supported duration range.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DurationInput {
     Exact(Duration),
@@ -419,7 +505,9 @@ impl DomainValues for DurationInput {
             Self::Exact(duration) => duration.check_domains(owner, field, domains),
             Self::Seconds(seconds) => {
                 check_component(owner, field, None, seconds.into(), domains)?;
-                if Duration::try_from_secs_f64(seconds).is_ok() {
+                if let Ok(duration) = Duration::try_from_secs_f64(seconds)
+                    && duration.check_domains(owner, field, domains).is_ok()
+                {
                     return Ok(());
                 }
                 Err(DomainViolation::new(
@@ -790,21 +878,20 @@ mod tests {
     use std::time::Duration;
 
     use bevy::math::{Quat, Vec2, Vec3, Vec3A, Vec4};
+    #[cfg(feature = "text")]
+    use bevy::text::FontSize;
+    #[cfg(feature = "ui")]
+    use bevy::ui::{UiRect, Val};
 
     use super::{
-        DomainValue, DomainViolation, DurationInput, F32Input, FieldDomain, IntegerInput,
-        ViolationDetails, ViolationKind, check, check_column, check_components, check_f64_as_f32,
-        check_ordered,
+        DomainValue, DomainViolation, DurationInput, F32Input, FINITE, FINITE_NON_NEGATIVE,
+        FieldDomain, IntegerInput, NON_NEGATIVE, NOT_NAN, POSITIVE, ViolationDetails,
+        ViolationKind, check, check_column, check_components, check_f64_as_f32, check_ordered,
     };
     use crate::StorageError;
 
-    const FINITE: &[FieldDomain] = &[FieldDomain::Finite];
-    const NOT_NAN: &[FieldDomain] = &[FieldDomain::NotNan];
     const UNBOUNDED: &[FieldDomain] = &[FieldDomain::FiniteOrPosInf];
-    const NON_NEGATIVE: &[FieldDomain] = &[FieldDomain::NonNegative];
-    const POSITIVE: &[FieldDomain] = &[FieldDomain::Positive];
     const FINITE_POSITIVE: &[FieldDomain] = &[FieldDomain::Finite, FieldDomain::Positive];
-    const FINITE_NON_NEGATIVE: &[FieldDomain] = &[FieldDomain::Finite, FieldDomain::NonNegative];
     const HALF_OPEN: &[FieldDomain] = &[FieldDomain::Range { lo: 0.0, hi: 1.0 }];
     const CLOSED: &[FieldDomain] = &[FieldDomain::RangeInclusive { lo: -1.0, hi: 1.0 }];
     const AT_LEAST_ONE: &[FieldDomain] = &[FieldDomain::AtLeast(1)];
@@ -1071,6 +1158,63 @@ mod tests {
                 POSITIVE
             )),
             "E.period must be finite and greater than zero (got 0.0)"
+        );
+        assert_eq!(
+            message(check(
+                "E",
+                "period",
+                DurationInput::Seconds(1e-320),
+                POSITIVE
+            )),
+            "E.period must be within the supported duration range (got 1e-320)"
+        );
+        assert_eq!(
+            check(
+                "T",
+                "delta",
+                DurationInput::Seconds(1e-320),
+                FINITE_NON_NEGATIVE
+            )
+            .map(DurationInput::stored),
+            Ok(Duration::ZERO)
+        );
+    }
+
+    #[cfg(feature = "ui")]
+    #[test]
+    fn val_and_ui_rect_check_magnitudes_and_skip_auto() {
+        assert_eq!(check("N", "width", Val::Auto, FINITE), Ok(Val::Auto));
+        assert_eq!(
+            message(check("N", "width", Val::Percent(f32::NAN), FINITE)),
+            "N.width must be finite (got nan)"
+        );
+        let rect = UiRect {
+            top: Val::Auto,
+            bottom: Val::Vh(-2.0),
+            ..UiRect::px(1.0, 2.0, 0.0, 0.0)
+        };
+        assert_eq!(
+            message(check("N", "padding", rect, NON_NEGATIVE)),
+            "N.padding.bottom must be non-negative (got -2.0)"
+        );
+        assert_eq!(
+            check("N", "padding", UiRect::AUTO, NON_NEGATIVE),
+            Ok(UiRect::AUTO)
+        );
+    }
+
+    #[cfg(feature = "text")]
+    #[test]
+    fn font_size_checks_every_variant_magnitude() {
+        assert!(check("T", "font_size", FontSize::Rem(1.5), FINITE_NON_NEGATIVE).is_ok());
+        assert_eq!(
+            message(check(
+                "T",
+                "font_size",
+                FontSize::VMax(-1.0),
+                FINITE_NON_NEGATIVE
+            )),
+            "T.font_size must be finite and non-negative (got -1.0)"
         );
     }
 

@@ -37,9 +37,9 @@ impl PyCapsule2d {
         #[default(1.0)] length: f32,
         half_length: Option<f32>,
     ) -> PyResult<PyClassInitializer<Self>> {
-        let radius = dimension("radius", radius)?;
+        let radius = dimension("Capsule2d", "radius", radius)?;
         if let Some(half_length) = half_length {
-            let half_length = dimension("half_length", half_length)?;
+            let half_length = dimension("Capsule2d", "half_length", half_length)?;
             return Ok((
                 Self(Capsule2d {
                     radius,
@@ -49,7 +49,7 @@ impl PyCapsule2d {
             )
                 .into());
         }
-        let capsule = Capsule2d::new(radius, dimension("length", length)?);
+        let capsule = Capsule2d::new(radius, dimension("Capsule2d", "length", length)?);
         Ok((Self(capsule), PyMeshable).into())
     }
 
@@ -60,7 +60,7 @@ impl PyCapsule2d {
 
     #[setter]
     pub fn set_radius(&mut self, value: f32) -> PyResult<()> {
-        self.0.radius = dimension("radius", value)?;
+        self.0.radius = dimension("Capsule2d", "radius", value)?;
         Ok(())
     }
 
@@ -71,7 +71,7 @@ impl PyCapsule2d {
 
     #[setter]
     pub fn set_half_length(&mut self, value: f32) -> PyResult<()> {
-        self.0.half_length = dimension("half_length", value)?;
+        self.0.half_length = dimension("Capsule2d", "half_length", value)?;
         Ok(())
     }
 

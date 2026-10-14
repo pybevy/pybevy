@@ -76,7 +76,9 @@ subclass from `mesh()`; its `build()` must return a `Mesh`.
 
 Primitive dimensions (radii, lengths, heights, half-sizes) must be finite and
 non-negative; constructors, `from_*` constructors, and setters raise
-`ValueError` otherwise, such as `radius must be finite and non-negative (got -1)`.
+`ValueError` otherwise, naming the shape and field, such as
+`Circle.radius must be finite and non-negative (got -1.0)` or
+`Cuboid.half_size.y must be finite and non-negative (got nan)`.
 Zero is allowed. Bevy accepts any value; PyBevy rejects these on purpose.
 
 ### Mesh Builder Options
@@ -140,8 +142,9 @@ Mesh-builder counts must meet their minimum usable resolution. Capsule3d needs
 at least 4 latitudes and 1 longitude; Capsule2d needs resolution 2; Annulus
 needs resolution 1; Ellipse needs resolution 3; CircularSector and
 CircularSegment need resolution 2; Circle, Cylinder and Cone need resolution 3;
-Cylinder needs at least 1 height segment. Smaller values raise `ValueError` before
-Bevy builds the mesh.
+Cylinder needs at least 1 height segment. Smaller or negative values raise
+`ValueError` before Bevy builds the mesh, for example
+`CircleMeshBuilder.resolution must be at least 3 (got 2)`.
 
 `ConicalFrustum.mesh()` requires `resolution(3)` or higher and `segments(1)`
 or higher. Resolution-driven primitive builders raise `ValueError` before
@@ -149,8 +152,9 @@ building a mesh with more than 16,777,216 (2**24) vertices, about a 4096 x 4096
 grid, including planes, spheres,
 tori, annuli, sectors, segments, capsules, ellipses, and regular polygons.
 The Circle, Cylinder and Cone builders use the same limit.
-Lower the relevant counts for large meshes. An invalid icosphere kind also
-raises `ValueError` when built.
+Lower the relevant counts for large meshes. `ico(subdivisions)` and an
+icosphere kind accept 0 to 79 subdivisions; others raise `ValueError`
+(`SphereMeshBuilder.subdivisions must be in [0, 80) (got 80)`).
 
 ## Custom Meshes from Vertices
 

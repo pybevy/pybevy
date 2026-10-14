@@ -42,15 +42,15 @@ impl PyTorus {
     ) -> PyResult<PyClassInitializer<Self>> {
         let torus = match (minor_radius, major_radius) {
             (Some(minor_radius), Some(major_radius)) => Torus {
-                minor_radius: dimension("minor_radius", minor_radius)?,
-                major_radius: dimension("major_radius", major_radius)?,
+                minor_radius: dimension("Torus", "minor_radius", minor_radius)?,
+                major_radius: dimension("Torus", "major_radius", major_radius)?,
             },
             _ => {
                 let torus = Torus::new(
-                    dimension("inner_radius", inner_radius)?,
-                    dimension("outer_radius", outer_radius)?,
+                    dimension("Torus", "inner_radius", inner_radius)?,
+                    dimension("Torus", "outer_radius", outer_radius)?,
                 );
-                dimension("minor_radius", torus.minor_radius)?;
+                dimension("Torus", "minor_radius", torus.minor_radius)?;
                 torus
             }
         };
@@ -64,7 +64,7 @@ impl PyTorus {
 
     #[setter]
     pub fn set_minor_radius(&mut self, value: f32) -> PyResult<()> {
-        self.0.minor_radius = dimension("minor_radius", value)?;
+        self.0.minor_radius = dimension("Torus", "minor_radius", value)?;
         Ok(())
     }
 
@@ -75,7 +75,7 @@ impl PyTorus {
 
     #[setter]
     pub fn set_major_radius(&mut self, value: f32) -> PyResult<()> {
-        self.0.major_radius = dimension("major_radius", value)?;
+        self.0.major_radius = dimension("Torus", "major_radius", value)?;
         Ok(())
     }
 

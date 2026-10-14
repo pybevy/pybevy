@@ -1,10 +1,7 @@
 use bevy::text::FontSize;
 use pybevy_core::repr::float_repr;
 use pybevy_macros::pyenum;
-use pyo3::{
-    exceptions::{PyTypeError, PyValueError},
-    prelude::*,
-};
+use pyo3::{exceptions::PyTypeError, prelude::*};
 
 #[pyenum(FontSize, manual)]
 #[pyclass(name = "FontSize", module = "pybevy.text", frozen, eq, from_py_object)]
@@ -58,6 +55,7 @@ impl FromPyObject<'_, '_> for IntoFontSize {
 
 /// Extract a [`FontSize`], mirroring bevy's `impl Into<FontSize>` parameters:
 /// a plain float is `FontSize::Px` (bevy's `From<f32>`), otherwise a `FontSize`.
+/// Callers check the magnitude with their owner's `check_font_size`.
 pub fn extract_font_size_from_any(obj: &Bound<'_, PyAny>) -> PyResult<FontSize> {
     let size = if let Ok(size) = obj.extract::<PyFontSize>() {
         size.into()
@@ -69,21 +67,6 @@ pub fn extract_font_size_from_any(obj: &Bound<'_, PyAny>) -> PyResult<FontSize> 
             obj.get_type().name()?
         )));
     };
-
-    let value = match size {
-        FontSize::Px(value)
-        | FontSize::Vw(value)
-        | FontSize::Vh(value)
-        | FontSize::VMin(value)
-        | FontSize::VMax(value)
-        | FontSize::Rem(value) => value,
-    };
-    if !value.is_finite() || value < 0.0 {
-        return Err(PyValueError::new_err(format!(
-            "font_size must be finite and non-negative (got {value})"
-        )));
-    }
-
     Ok(size)
 }
 

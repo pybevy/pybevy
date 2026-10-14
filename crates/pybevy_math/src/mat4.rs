@@ -1,11 +1,12 @@
 use bevy::math::{Mat4, Vec3, Vec4};
 use pybevy_core::{
     FromBorrowedStorage, StorageRef, ValueStorage,
+    domain::{POSITIVE, check},
     public_error::{
         DIRECTION_NOT_NORMALIZED, MAT4_LOOK_AT_EYE_EQUALS_CENTER,
         MAT4_LOOK_DIRECTION_PARALLEL_TO_UP, UNSUPPORTED_COMPARISON, UP_NOT_NORMALIZED,
-        affine_transform_last_row, euler_axes_not_normalized, mat4_perspective_depth_planes,
-        mat4_perspective_near, mat4_projection_not_finite, matrix_decomposition_singular,
+        affine_transform_last_row, euler_axes_not_normalized, mat4_projection_not_finite,
+        matrix_decomposition_singular,
     },
     repr::ReprLiteral,
 };
@@ -100,19 +101,14 @@ fn finite_projection(function: &str, matrix: Mat4) -> PyResult<PyMat4> {
     Ok(PyMat4::mat4(matrix))
 }
 
-fn perspective_near(function: &str, z_near: f32) -> PyResult<()> {
-    if z_near.is_nan() || z_near <= 0.0 {
-        return Err(PyValueError::new_err(mat4_perspective_near(function)));
-    }
+fn perspective_near(z_near: f32) -> PyResult<()> {
+    check("Mat4", "z_near", z_near, POSITIVE)?;
     Ok(())
 }
 
-fn perspective_depth_planes(function: &str, z_near: f32, z_far: f32) -> PyResult<()> {
-    if !(z_near > 0.0 && z_far > 0.0) {
-        return Err(PyValueError::new_err(mat4_perspective_depth_planes(
-            function,
-        )));
-    }
+fn perspective_depth_planes(z_near: f32, z_far: f32) -> PyResult<()> {
+    check("Mat4", "z_near", z_near, POSITIVE)?;
+    check("Mat4", "z_far", z_far, POSITIVE)?;
     Ok(())
 }
 
@@ -295,7 +291,7 @@ impl PyMat4 {
         z_near: f32,
         z_far: f32,
     ) -> PyResult<Self> {
-        perspective_depth_planes("perspective_lh", z_near, z_far)?;
+        perspective_depth_planes(z_near, z_far)?;
         finite_projection(
             "perspective_lh",
             Mat4::perspective_lh(fov_y_radians, aspect_ratio, z_near, z_far),
@@ -309,7 +305,7 @@ impl PyMat4 {
         z_near: f32,
         z_far: f32,
     ) -> PyResult<Self> {
-        perspective_depth_planes("perspective_rh", z_near, z_far)?;
+        perspective_depth_planes(z_near, z_far)?;
         finite_projection(
             "perspective_rh",
             Mat4::perspective_rh(fov_y_radians, aspect_ratio, z_near, z_far),
@@ -322,7 +318,7 @@ impl PyMat4 {
         aspect_ratio: f32,
         z_near: f32,
     ) -> PyResult<Self> {
-        perspective_near("perspective_infinite_reverse_rh", z_near)?;
+        perspective_near(z_near)?;
         finite_projection(
             "perspective_infinite_reverse_rh",
             Mat4::perspective_infinite_reverse_rh(fov_y_radians, aspect_ratio, z_near),
@@ -652,7 +648,7 @@ impl PyMat4 {
         aspect_ratio: f32,
         z_near: f32,
     ) -> PyResult<Self> {
-        perspective_near("perspective_infinite_lh", z_near)?;
+        perspective_near(z_near)?;
         finite_projection(
             "perspective_infinite_lh",
             Mat4::perspective_infinite_lh(fov_y_radians, aspect_ratio, z_near),
@@ -665,7 +661,7 @@ impl PyMat4 {
         aspect_ratio: f32,
         z_near: f32,
     ) -> PyResult<Self> {
-        perspective_near("perspective_infinite_rh", z_near)?;
+        perspective_near(z_near)?;
         finite_projection(
             "perspective_infinite_rh",
             Mat4::perspective_infinite_rh(fov_y_radians, aspect_ratio, z_near),
@@ -678,7 +674,7 @@ impl PyMat4 {
         aspect_ratio: f32,
         z_near: f32,
     ) -> PyResult<Self> {
-        perspective_near("perspective_infinite_reverse_lh", z_near)?;
+        perspective_near(z_near)?;
         finite_projection(
             "perspective_infinite_reverse_lh",
             Mat4::perspective_infinite_reverse_lh(fov_y_radians, aspect_ratio, z_near),
