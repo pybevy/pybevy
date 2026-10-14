@@ -13,7 +13,8 @@ pub mod storage_material;
 pub mod texture_binding;
 use material_shader_variants::{MaterialShaderVariants, material_shader_handle};
 pub use storage_material::{
-    StorageShaderMaterial, StorageShaderMaterialExtension, StorageShaderMaterialPlugin,
+    ShaderMaterialPlugin, StorageShaderMaterial, StorageShaderMaterialExtension,
+    StorageShaderMaterialPlugin,
 };
 
 use std::{
@@ -598,3 +599,5 @@ pub fn sync_shader_handles(
     variants.sync(&mut shaders, &extensions);
     *reported_diagnostics = current_diagnostics;
 }
+
+pub mod sampler_binding;

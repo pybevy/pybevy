@@ -6,15 +6,22 @@ use crate::{
     shader_material_py::build_shader_material,
 };
 use bevy::{
-    app::App, asset::Handle, image::Image, pbr::MeshMaterial3d, render::storage::ShaderBuffer,
+    app::App,
+    asset::Handle,
+    image::{Image, ImageSamplerDescriptor},
+    pbr::MeshMaterial3d,
+    render::storage::ShaderBuffer,
 };
 use pybevy_core::{
-    AssetInputConverter, AssetStorage, ComponentStorage, LogicalTypeId, PluginBuild, PyComponent,
-    PyHandle, PyMaterial, PyPlugin, ensure_asset_type, extract_handle_from_any,
+    AssetInputConverter, AssetStorage, ComponentStorage, FieldStorage, LogicalTypeId, PluginBuild,
+    PyComponent, PyHandle, PyMaterial, PyPlugin, ensure_asset_type, extract_handle_from_any,
 };
+use pybevy_image::sampler_descriptor::PyImageSamplerDescriptor;
 use pybevy_macros::{pyasset, pycomponent, pyplugin};
 use pybevy_shader_types::{
-    storage_element::StorageElement, storage_material::StorageBinding,
+    sampler_binding::{MaterialSamplerBinding, MaterialSamplerKind},
+    storage_element::StorageElement,
+    storage_material::StorageBinding,
     texture_binding::TextureBindingLayout,
 };
 use pyo3::{
@@ -23,7 +30,7 @@ use pyo3::{
     types::{PyList, PyType},
 };
 
-type TextureLayoutInput = (String, String, bool, String);
+type TextureLayoutInput = (String, String, bool, Option<String>);
 
 fn extract_storage_handle(
     handle: Option<&Bound<'_, PyAny>>,
@@ -43,7 +50,7 @@ fn extract_storage_handle(
     not_loadable,
     input_converter,
     material,
-    missing_resource_hint = "Add StorageShaderMaterialPlugin() to your app to create this collection."
+    missing_resource_hint = "Add ShaderMaterialPlugin() to your app to create this collection."
 )]
 #[pyclass(name = "StorageShaderMaterial", module = "pybevy.pbr", extends = PyMaterial, skip_from_py_object)]
 #[derive(Debug)]
@@ -63,8 +70,16 @@ impl AssetInputConverter for PyStorageShaderMaterial {
     }
 }
 
+type ShaderStructLayoutTuple = (u32, u32, u32, Vec<(String, u32, u32, u32)>);
+
 #[pymethods]
 impl PyStorageShaderMaterial {
+    #[staticmethod]
+    fn _copy_sampler_descriptor(
+        value: &PyImageSamplerDescriptor,
+    ) -> PyResult<PyImageSamplerDescriptor> {
+        Ok(ImageSamplerDescriptor::try_from(value)?.into())
+    }
     #[staticmethod]
     fn _validate_storage_handle(value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
         extract_storage_handle(value).map(|_| ())
@@ -74,6 +89,24 @@ impl PyStorageShaderMaterial {
         let element =
             StorageElement::parse(element, declarations).map_err(PyValueError::new_err)?;
         Ok((element.stride, element.alignment))
+    }
+    #[staticmethod]
+    fn _storage_struct_layout(
+        element: &str,
+        declarations: &str,
+    ) -> PyResult<ShaderStructLayoutTuple> {
+        let layout =
+            StorageElement::struct_layout(element, declarations).map_err(PyValueError::new_err)?;
+        Ok((
+            layout.size,
+            layout.stride,
+            layout.alignment,
+            layout
+                .fields
+                .into_iter()
+                .map(|field| (field.name, field.offset, field.size, field.alignment))
+                .collect(),
+        ))
     }
     #[staticmethod]
     fn _validate_texture_handle(value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
@@ -88,17 +121,20 @@ impl PyStorageShaderMaterial {
         dimension: &str,
         sample_type: &str,
         filterable: bool,
-        sampler: &str,
+        sampler: Option<&str>,
     ) -> PyResult<(String, String)> {
-        Ok(
-            TextureBindingLayout::parse(dimension, sample_type, filterable, sampler)
-                .map_err(PyValueError::new_err)?
-                .wgsl_types(),
+        Ok(TextureBindingLayout::parse(
+            dimension,
+            sample_type,
+            filterable,
+            sampler.unwrap_or("none"),
         )
+        .map_err(PyValueError::new_err)?
+        .wgsl_types())
     }
     #[new]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (base, fragment_shader=None, vertex_shader=None, data=None, shader_defs=0, shader_def_names=None, textures=None, bindings_wgsl=None, *, storage_buffer=None, storage_buffers=None, storage_layouts=None, texture_layouts=None, prepass_vertex_shader=None, prepass_fragment_shader=None, deferred_vertex_shader=None, deferred_fragment_shader=None))]
+    #[pyo3(signature = (base, fragment_shader=None, vertex_shader=None, data=None, shader_defs=0, shader_def_names=None, textures=None, bindings_wgsl=None, *, storage_buffer=None, storage_buffers=None, storage_layouts=None, texture_layouts=None, samplers=None, prepass_vertex_shader=None, prepass_fragment_shader=None, deferred_vertex_shader=None, deferred_fragment_shader=None))]
     pub fn new(
         py: Python<'_>,
         base: &Bound<'_, PyAny>,
@@ -113,6 +149,7 @@ impl PyStorageShaderMaterial {
         storage_buffers: Option<&Bound<'_, PyList>>,
         storage_layouts: Option<Vec<(String, String)>>,
         texture_layouts: Option<Vec<Option<TextureLayoutInput>>>,
+        samplers: Option<Vec<(String, PyImageSamplerDescriptor)>>,
         prepass_vertex_shader: Option<String>,
         prepass_fragment_shader: Option<String>,
         deferred_vertex_shader: Option<String>,
@@ -134,10 +171,25 @@ impl PyStorageShaderMaterial {
             .map(|value| {
                 value
                     .map(|(dimension, sample, filterable, sampler)| {
-                        TextureBindingLayout::parse(&dimension, &sample, filterable, &sampler)
-                            .map_err(PyValueError::new_err)
+                        TextureBindingLayout::parse(
+                            &dimension,
+                            &sample,
+                            filterable,
+                            sampler.as_deref().unwrap_or("none"),
+                        )
+                        .map_err(PyValueError::new_err)
                     })
                     .transpose()
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        let samplers = samplers
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(kind, descriptor)| {
+                Ok(MaterialSamplerBinding {
+                    kind: MaterialSamplerKind::parse(&kind).map_err(PyValueError::new_err)?,
+                    descriptor: ImageSamplerDescriptor::try_from(&descriptor)?,
+                })
             })
             .collect::<PyResult<Vec<_>>>()?;
         let handles = match storage_buffers {
@@ -184,8 +236,31 @@ impl PyStorageShaderMaterial {
                 inner: material.extension,
                 buffers,
                 texture_layouts,
+                samplers,
             },
         }))
+    }
+
+    fn get_sampler(&self, slot: usize) -> PyResult<PyImageSamplerDescriptor> {
+        let values: FieldStorage<Vec<MaterialSamplerBinding>> = self.storage.borrow_field(
+            |material| &material.extension.samplers,
+            |material| &mut material.extension.samplers,
+        )?;
+        Ok(values.borrow_resolved_index_as::<ImageSamplerDescriptor, FieldStorage<ImageSamplerDescriptor>, PyImageSamplerDescriptor>(
+            slot, |values, index| values.get(index).map(|s| &s.descriptor),
+            |values, index| values.get_mut(index).map(|s| &mut s.descriptor),
+        )?)
+    }
+    fn set_sampler(&mut self, slot: usize, descriptor: &PyImageSamplerDescriptor) -> PyResult<()> {
+        let descriptor = ImageSamplerDescriptor::try_from(descriptor)?;
+        let mut material = self.as_mut()?;
+        material
+            .extension
+            .samplers
+            .get_mut(slot)
+            .ok_or_else(|| PyIndexError::new_err("Sampler slot out of range"))?
+            .descriptor = descriptor;
+        Ok(())
     }
 
     #[getter]
@@ -277,7 +352,9 @@ impl PyStorageShaderMaterialPlugin {
 }
 impl PluginBuild for PyStorageShaderMaterialPlugin {
     fn build(_plugin: &Bound<'_, PyAny>, app: &mut App) -> PyResult<()> {
-        app.add_plugins(StorageShaderMaterialPlugin);
+        if !app.is_plugin_added::<StorageShaderMaterialPlugin>() {
+            app.add_plugins(StorageShaderMaterialPlugin);
+        }
         Ok(())
     }
 }

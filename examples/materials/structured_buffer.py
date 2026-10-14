@@ -5,9 +5,9 @@ import struct
 from dataclasses import dataclass
 from typing import Annotated
 
-from pybevy.material import StorageBinding
+from pybevy.material import StorageBinding, pack_shader_structs, shader_struct
 from pybevy.mesh import MeshTag
-from pybevy.pbr import StorageShaderMaterialPlugin
+from pybevy.pbr import ShaderMaterialPlugin
 from pybevy.prelude import *
 from pybevy.render import ShaderBuffer
 
@@ -15,16 +15,20 @@ SHADER_PATH = "shaders/examples/structured_buffer.wgsl"
 RECORD_COUNT = 7
 
 
+@shader_struct
+@dataclass
+class Tile:
+    offset: Vec3
+    scale: float
+    color: Vec4
+
+
 @material(vertex_shader=SHADER_PATH, fragment_shader=SHADER_PATH)
 class StructuredTiles(Material):
-    records: Annotated[
-        Handle[ShaderBuffer] | None,
-        StorageBinding(
-            element="Tile",
-            declarations="struct Tile { offset: vec3<f32>, scale: f32, color: vec4<f32>, }",
-        ),
-    ] = None
-    indices: Annotated[Handle[ShaderBuffer] | None, StorageBinding(element="u32")] = None
+    records: StorageBinding[Tile] = StorageBinding()
+    indices: Annotated[Handle[ShaderBuffer] | None, StorageBinding(element="u32")] = (
+        None
+    )
 
 
 @resource
@@ -35,16 +39,16 @@ class TileBuffers(Resource):
 
 
 def tile_bytes(seconds: float) -> bytes:
-    # vec3 + f32 occupies 16 bytes; vec4 adds 16. Each Tile has a 32-byte stride.
-    return b"".join(
-        struct.pack(
-            "<8f",
-            0,
-            0,
-            0.25 * math.sin(seconds * 2 + index),
-            0.75 + 0.2 * math.sin(seconds * 3 + index),
-            *(0.5 + 0.45 * math.sin(seconds + index + phase) for phase in (0, 2, 4)),
-            1,
+    return pack_shader_structs(
+        Tile(
+            offset=Vec3(0, 0, 0.25 * math.sin(seconds * 2 + index)),
+            scale=0.75 + 0.2 * math.sin(seconds * 3 + index),
+            color=Vec4(
+                0.5 + 0.45 * math.sin(seconds + index),
+                0.5 + 0.45 * math.sin(seconds + index + 2),
+                0.5 + 0.45 * math.sin(seconds + index + 4),
+                1,
+            ),
         )
         for index in range(RECORD_COUNT)
     )
@@ -94,7 +98,7 @@ def animate(
 def main(app: App) -> App:
     return (
         app.add_plugins(DefaultPlugins)
-        .add_plugins(StorageShaderMaterialPlugin())
+        .add_plugins(ShaderMaterialPlugin())
         .add_systems(Startup, setup)
         .add_systems(Startup, setup_camera)
         .add_systems(Update, animate)

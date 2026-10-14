@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Annotated
 
 from pybevy.image import ImageSampler
-from pybevy.material import Texture
+from pybevy.material import TextureBinding
 from pybevy.pbr import StorageShaderMaterialPlugin
 from pybevy.prelude import *
 from pybevy.render import (
@@ -18,7 +18,7 @@ from pybevy.render import (
 
 @material(fragment_shader="shaders/examples/volume_texture.wgsl")
 class VolumeSlice(Material):
-    volume: Annotated[Handle[Image] | None, Texture(dimension="3d")] = None
+    volume: Annotated[Handle[Image] | None, TextureBinding(dimension="3d")] = None
     slice_z: float = 0.15
 
 

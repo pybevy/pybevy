@@ -23,21 +23,8 @@ Each subfolder maps to the corresponding Bevy example category:
 | [large_scenes/](large_scenes/) | [examples/large_scenes](https://github.com/bevyengine/bevy/tree/v0.19.0/examples/large_scenes) |
 | [movement/](movement/) | [examples/movement](https://github.com/bevyengine/bevy/tree/v0.19.0/examples/movement) |
 | [picking/](picking/) | [examples/picking](https://github.com/bevyengine/bevy/tree/v0.19.0/examples/picking) |
+| [shaders/](shaders/) | [examples/shader](https://github.com/bevyengine/bevy/tree/v0.19.0/examples/shader) |
 | [stress_tests/](stress_tests/) | [examples/stress_tests](https://github.com/bevyengine/bevy/tree/v0.19.0/examples/stress_tests) |
 | [time/](time/) | [examples/time](https://github.com/bevyengine/bevy/tree/v0.19.0/examples/time) |
 | [transforms/](transforms/) | [examples/transforms](https://github.com/bevyengine/bevy/tree/v0.19.0/examples/transforms) |
 | [window/](window/) | [examples/window](https://github.com/bevyengine/bevy/tree/v0.19.0/examples/window) |
-
-## Storage-buffer material
-
-[shaders/storage_buffer.py](shaders/storage_buffer.py) ports the
-[Bevy 0.19.1 storage example](https://github.com/bevyengine/bevy/blob/v0.19.1/examples/shader/storage_buffer.rs).
-The material uses `Storage[Vec4]` with generated binding numbers.
-It animates a shared read-only vec4 color array and indexes it with `MeshTag`.
-The Python annotation selects `StorageShaderMaterialPlugin`; generated bindings
-use slot 109 rather than the Rust example's standalone slot 0.
-
-The standard 60-frame example-smoke test passes on a private Xvfb display
-with Vulkan. Material bindings also have headless pixel and reload coverage.
-The separate guide scene runner's previously observed signal 11 is not
-qualified by this windowed entrypoint check.

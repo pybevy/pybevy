@@ -16,13 +16,14 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Callable
+from copy import copy
 from threading import Lock
 from typing import Any, Protocol, TypeVar, cast, dataclass_transform, get_type_hints
 
 from .. import _pybevy  # type: ignore
 from ..assets import Handle
 from ..color import LinearRgba
-from ..image import Image
+from ..image import Image, ImageSamplerDescriptor
 from ..math import Vec2, Vec3, Vec4
 from ..pbr import (
     MeshMaterial3dShader,
@@ -32,16 +33,36 @@ from ..pbr import (
     StorageShaderMaterial,
 )
 from ..render import ShaderBuffer
+from ._bindings import SamplerBinding as SamplerBinding
 from ._bindings import StorageBinding as StorageBinding
-from ._bindings import Texture as Texture
-from ._bindings import _partition_storage_fields, _partition_texture_fields
-from ._declarations import Storage as Storage
+from ._bindings import TextureBinding as TextureBinding
+from ._bindings import (
+    _copy_sampler,
+    _partition_sampler_fields,
+    _partition_storage_fields,
+    _partition_texture_fields,
+)
 from ._declarations import _lower_declarations
 from ._layout import (
     _MAX_TEXTURE_SLOTS,
     _compute_layout,
     _generate_wgsl,
     _validate_binding_names,
+)
+from ._structs import (
+    ShaderStructField as ShaderStructField,
+)
+from ._structs import (
+    ShaderStructLayout as ShaderStructLayout,
+)
+from ._structs import (
+    pack_shader_structs as pack_shader_structs,
+)
+from ._structs import (
+    shader_struct as shader_struct,
+)
+from ._structs import (
+    shader_struct_layout as shader_struct_layout,
 )
 
 _Material = _pybevy.pbr.Material  # type: ignore
@@ -162,6 +183,11 @@ class _StorageInstance(Protocol):
     _storage_buffers: list[Handle[ShaderBuffer] | None]
 
 
+class _SamplerInstance(Protocol):
+    _shader_mat: StorageShaderMaterial | None
+    _samplers: list[ImageSamplerDescriptor]
+
+
 _SENTINEL = object()
 
 
@@ -174,13 +200,16 @@ def _inherited_material_default(cls: type, name: str, typ: type) -> object:
     for base in cls.__mro__[1:]:
         if name not in base.__dict__:
             continue
-        declarations = base.__dict__.get("_material_storage_declarations", {})
+        declarations = base.__dict__.get("_material_binding_declarations", {})
         if name in declarations:
             annotation, default = declarations[name]
             return default if annotation == typ else _SENTINEL
         fields = base.__dict__.get("_material_field_map", {})
         if name in fields and fields[name].python_type is typ:
             return fields[name].default
+        sampler_defaults = base.__dict__.get("_material_sampler_defaults", {})
+        if name in sampler_defaults:
+            return sampler_defaults[name]
         bool_fields = base.__dict__.get("_material_bool_field_map", {})
         if typ is bool and name in bool_fields:
             return bool_fields[name].default
@@ -188,7 +217,7 @@ def _inherited_material_default(cls: type, name: str, typ: type) -> object:
     return _SENTINEL
 
 
-@dataclass_transform(kw_only_default=True, eq_default=False, field_specifiers=(Storage,))
+@dataclass_transform(kw_only_default=True, eq_default=False)
 def material(
     fragment_shader: str | None = None,
     vertex_shader: str | None = None,
@@ -279,36 +308,48 @@ def material(
         for name, typ in hints.items():
             if hasattr(cls, name):
                 value = getattr(cls, name)
-                if isinstance(value, property | Storage) and name not in cls.__dict__:
+                if isinstance(value, property | StorageBinding | TextureBinding | SamplerBinding) and name not in cls.__dict__:
                     value = _inherited_material_default(cls, name, typ)
                 if value is not _SENTINEL:
                     defaults[name] = value
 
         declared_types = dict(hints)
         declared_defaults = dict(defaults)
-        hints, concise_storage, required_storage = _lower_declarations(hints, defaults)
+        hints, concise_bindings, required_bindings = _lower_declarations(hints, defaults)
 
         # Compute layout (separates uniform, bool, and texture fields)
-        texture_hints, texture_layouts = _partition_texture_fields(hints)
+        sampler_hints, sampler_fields = _partition_sampler_fields(hints)
+        sampler_defaults = {
+            field.name: _copy_sampler(defaults.get(field.name, field.layout._default))
+            for field in sampler_fields
+        }
+        texture_hints, texture_layouts = _partition_texture_fields(sampler_hints)
         ordinary_hints, storage_fields = _partition_storage_fields(texture_hints)
         layout, bool_fields, texture_fields = _compute_layout(ordinary_hints, defaults)
         for texture in texture_fields:
             texture.layout = texture_layouts.get(texture.name)
-        extended_bindings = bool(storage_fields or texture_layouts)
+        extended_bindings = bool(storage_fields or texture_layouts or sampler_fields)
         for field in storage_fields:
-            if field.name in {f"{texture.name}_sampler" for texture in texture_fields}:
+            if field.name in {
+                f"{texture.name}_sampler"
+                for texture in texture_fields
+                if texture.layout is None or texture.layout.sampler is not None
+            }:
                 raise TypeError(
-                    f"Storage field '{field.name}' conflicts with a generated sampler"
+                    f"StorageBinding field '{field.name}' conflicts with a generated sampler"
                 )
             if defaults.get(field.name) is not None:
                 raise TypeError(
-                    f"Storage field '{field.name}' must default to None; pass its handle to the material instance"
+                    f"StorageBinding field '{field.name}' must default to None; pass its handle to the material instance"
                 )
         _validate_binding_names(
-            cls.__name__, layout, texture_fields, (field.name for field in storage_fields)
+            cls.__name__, layout, texture_fields,
+            (field.name for field in storage_fields),
+            (field.name for field in sampler_fields),
         )
         native_type = StorageShaderMaterial if extended_bindings else ShaderMaterial
         layout_signature: _MaterialLayoutSignature = (
+            tuple((field.name, field.layout.kind) for field in sampler_fields),
             tuple(
                 (
                     field.name,
@@ -355,6 +396,9 @@ def material(
                 f"var<storage, read> {field.name}: array<{field.layout.wgsl_type}>;\n"
             )
 
+        for slot, sampler_field in enumerate(sampler_fields):
+            wgsl += f"\n@group(3) @binding({109 + len(storage_fields) + slot}) var {sampler_field.name}: {sampler_field.layout.wgsl_type};\n"
+
         # Compute default shader_defs bitmask from bool defaults
         default_shader_defs: int = 0
         for bf in bool_fields:
@@ -363,9 +407,9 @@ def material(
         shader_def_names = [bf.def_name for bf in bool_fields]
 
         # Store metadata on the class
-        _cls._material_storage_declarations = {
+        _cls._material_binding_declarations = {
             name: (declared_types[name], declared_defaults.get(name, _SENTINEL))
-            for name in concise_storage
+            for name in concise_bindings
         }
         _cls._material_layout = layout
         _cls._material_field_map = field_map
@@ -373,6 +417,7 @@ def material(
         _cls._material_bool_field_map = bool_field_map
         _cls._material_texture_fields = texture_fields
         _cls._material_texture_field_map = texture_field_map
+        _cls._material_sampler_defaults = sampler_defaults
         _cls._material_storage_fields = storage_fields
         _cls._material_fragment_shader = fragment_shader
         _cls._material_vertex_shader = vertex_shader
@@ -388,9 +433,10 @@ def material(
             base: StandardMaterial | None = None,
             **kwargs: Any,  # noqa: ANN401
         ) -> None:
-            missing = [name for name in required_storage if name not in kwargs]
+            missing = [name for name in required_bindings if name not in kwargs]
             if missing:
-                raise TypeError(f"Missing required storage fields: {', '.join(missing)}")
+                kind = "material" if any(declared_types[name] in (TextureBinding, SamplerBinding) for name in missing) else "storage"
+                raise TypeError(f"Missing required {kind} fields: {', '.join(missing)}")
             # Auto-construct base StandardMaterial with decorator defaults if not provided
             if base is None:
                 base = (
@@ -429,6 +475,10 @@ def material(
                 if value is not None:
                     textures[tf.slot_index] = value
 
+            self._samplers = [
+                _copy_sampler(kwargs.pop(field.name, sampler_defaults[field.name]))
+                for field in sampler_fields
+            ]
             self._storage_buffers = []
             for field in storage_fields:
                 value = kwargs.pop(field.name, None)
@@ -441,6 +491,7 @@ def material(
                 valid += [bf.name for bf in bool_fields]
                 valid += [tf.name for tf in texture_fields]
                 valid += [sf.name for sf in storage_fields]
+                valid += [sf.name for sf in sampler_fields]
                 message = f"Unknown material fields: {', '.join(unknown)}"
                 hint = _pybevy._keyword_hint(cls.__name__, unknown[0], valid)
                 if hint:
@@ -479,6 +530,10 @@ def material(
                 **(
                     {
                         "storage_buffers": self._storage_buffers,
+                        "samplers": [
+                            (field.layout.kind, self._samplers[slot])
+                            for slot, field in enumerate(sampler_fields)
+                        ],
                         "texture_layouts": [
                             None
                             if field.layout is None
@@ -596,6 +651,11 @@ def material(
         # Add property accessors for texture fields
         for tf in texture_fields:
             _slot = tf.slot_index
+            if tf.name in concise_bindings:
+                texture_descriptor = copy(tf.layout)
+                object.__setattr__(texture_descriptor, "_slot", _slot)
+                setattr(cls, tf.name, texture_descriptor)
+                continue
 
             def _tex_getter(self: Any, slot: int = _slot) -> Handle[Image] | None:  # noqa: ANN401
                 if self._shader_mat is not None:
@@ -620,9 +680,9 @@ def material(
             setattr(cls, tf.name, property(_tex_getter, _tex_setter))
 
         for slot, storage_field in enumerate(storage_fields):
-            if storage_field.name in concise_storage:
-                descriptor = Storage[object](default=None)
-                descriptor._slot = slot
+            if storage_field.name in concise_bindings:
+                descriptor = copy(storage_field.layout)
+                object.__setattr__(descriptor, "_slot", slot)
                 setattr(cls, storage_field.name, descriptor)
                 continue
 
@@ -645,6 +705,29 @@ def material(
                     self._storage_buffers[_slot] = value
 
             setattr(cls, storage_field.name, property(_storage_getter, _storage_setter))
+
+        for slot, sampler_field in enumerate(sampler_fields):
+            if sampler_field.name in concise_bindings:
+                sampler_descriptor = copy(sampler_field.layout)
+                object.__setattr__(sampler_descriptor, "_slot", slot)
+                setattr(cls, sampler_field.name, sampler_descriptor)
+                continue
+            def _sampler_getter(
+                self: _SamplerInstance, _slot: int = slot
+            ) -> ImageSamplerDescriptor:
+                if self._shader_mat is not None:
+                    return self._shader_mat.get_sampler(_slot)
+                return self._samplers[_slot]
+
+            def _sampler_setter(
+                self: _SamplerInstance, value: ImageSamplerDescriptor, _slot: int = slot
+            ) -> None:
+                if self._shader_mat is not None:
+                    self._shader_mat.set_sampler(_slot, value)
+                else:
+                    self._samplers[_slot] = _copy_sampler(value)
+
+            setattr(cls, sampler_field.name, property(_sampler_getter, _sampler_setter))
 
         _cls.__init__ = __init__
         _cls.to_shader_material = to_shader_material

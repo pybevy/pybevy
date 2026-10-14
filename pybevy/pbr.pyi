@@ -6,7 +6,7 @@ from pybevy.app import App, Plugin
 from pybevy.assets import Asset, Handle
 from pybevy.color import Color, LinearRgba
 from pybevy.ecs import Batchable, Component, Resource
-from pybevy.image import Image
+from pybevy.image import Image, ImageSamplerDescriptor
 from pybevy.material import AlphaMode, OpaqueRendererMethod
 from pybevy.math import Affine2, Range, Rect, UVec2, UVec3, Vec3
 from pybevy.mesh import UvChannel
@@ -942,9 +942,9 @@ class AtmosphereSettings(Component):
     ) -> Batchable: ...
 
 class ShaderMaterialPlugin(Plugin):
-    """Plugin that registers the ShaderMaterial type.
+    """Register ordinary, storage, texture and sampler @material backends.
 
-    Must be added before creating ShaderMaterial assets.
+    Add once before creating custom material assets.
 
     Example:
         ```python
@@ -1050,14 +1050,14 @@ class ShaderMaterial(Material):
         """Clear a texture slot (set to None)."""
 
 class StorageShaderMaterialPlugin(Plugin):
-    """Opt into storage/custom-texture layouts and ordinary shader material support."""
+    """Compatibility entry point; prefer ShaderMaterialPlugin for all custom materials."""
     def __init__(self) -> None: ...
 
 class StorageShaderMaterial(Material):
     """Custom 3D material with typed storage arrays and sampled texture layouts.
 
     Uses the ordinary shader stages, uniform and texture slots. An absent or
-    unprepared buffer leaves the material pending. Requires StorageShaderMaterialPlugin.
+    unprepared buffer leaves the material pending. Requires ShaderMaterialPlugin.
     """
 
     def __copy__(self) -> StorageShaderMaterial: ...
@@ -1077,7 +1077,8 @@ class StorageShaderMaterial(Material):
         storage_buffer: Handle[ShaderBuffer] | None = None,
         storage_buffers: list[Handle[ShaderBuffer] | None] | None = None,
         storage_layouts: list[tuple[str, str]] | None = None,
-        texture_layouts: list[tuple[str, str, bool, str] | None] | None = None,
+        texture_layouts: list[tuple[str, str, bool, str | None] | None] | None = None,
+        samplers: list[tuple[str, ImageSamplerDescriptor]] | None = None,
         prepass_vertex_shader: str | None = None,
         prepass_fragment_shader: str | None = None,
         deferred_vertex_shader: str | None = None,
@@ -1110,6 +1111,9 @@ class StorageShaderMaterial(Material):
 
     def clear_texture(self, slot: int) -> None:
         """Clear a texture slot (set to None)."""
+
+    def get_sampler(self, slot: int) -> ImageSamplerDescriptor: ...
+    def set_sampler(self, slot: int, descriptor: ImageSamplerDescriptor) -> None: ...
 
     storage_buffer: Handle[ShaderBuffer] | None
     def get_storage_buffer_at(self, slot: int) -> Handle[ShaderBuffer] | None: ...

@@ -80,6 +80,18 @@ class GlassMaterial(Material):
 mat = GlassMaterial(opacity=0.5)
 ```
 
+These parameters provide defaults for the base material. Passing `base=` replaces
+those defaults, so include its desired `alpha_mode` and other settings explicitly.
+Assigning `mat.alpha_mode` or `mat.cull_mode` creates an ordinary Python attribute;
+it does not edit the native base or change rendering.
+
+`AlphaMode.Mask(cutoff)` selects the alpha-mask pass, but custom fragment WGSL
+must perform the discard. In the PBR fragment pattern below, call
+`alpha_discard(pbr_input.material, output_color)` before returning the color.
+The cutoff is a per-material float uniform; materials can share a shader file
+with different thresholds. A fragment that simply returns `vec4(...)` does not
+apply the mask threshold. Match discards in custom prepass/deferred hooks too.
+
 Converting an `@material` instance to `ShaderMaterial` consumes its base; use a fresh `StandardMaterial` for each conversion:
 
 ```python
@@ -91,6 +103,36 @@ mat = GlowMaterial(
 
 ## Supported Field Types
 
+Bindings use the same declaration pattern:
+
+<!-- pybevy-snippet: typecheck -->
+```python
+from pybevy.image import ImageSamplerDescriptor
+from pybevy.material import SamplerBinding, StorageBinding, TextureBinding, material
+from pybevy.math import Vec4
+from pybevy.pbr import Material
+
+@material(fragment_shader="shaders/surface.wgsl")
+class Surface(Material):
+    colors: StorageBinding[Vec4]                 # required ShaderBuffer handle
+    image: TextureBinding                       # required Image handle
+    sharp: SamplerBinding = SamplerBinding("non_filtering")
+    soft: SamplerBinding = SamplerBinding(default=ImageSamplerDescriptor.linear())
+```
+
+Without a default, each binding requires a constructor argument. `StorageBinding()` and
+`TextureBinding()` default to `None`; `SamplerBinding()` supplies a fresh nearest-filtered
+descriptor. Use `TextureBinding(dimension="cube")`, `TextureBinding(sampler=None)`, or other
+options to configure a texture declaration. Class annotations describe bindings;
+instance reads, assignments and constructor arguments use `Handle[ShaderBuffer]
+| None`, `Handle[Image] | None`, or `ImageSamplerDescriptor`. Both mypy and
+Pyright/Pylance understand these types, including inherited fields.
+
+These declarations reuse the explicit `Annotated` forms below. Keep those for
+advanced metadata such as custom WGSL storage structs. Binding numbers and
+shader syntax do not change. Explicit texture bindings, storage and independent
+samplers use the same `ShaderMaterialPlugin()`.
+
 | Python type    | WGSL type      | Notes                          |
 |----------------|----------------|--------------------------------|
 | `float`        | `f32`          | 4 bytes                        |
@@ -101,9 +143,20 @@ mat = GlowMaterial(
 | `LinearRgba`   | `vec4<f32>`    | 16 bytes, 16-byte aligned      |
 | `bool`         | shader def     | `#ifdef FIELD_NAME` in WGSL    |
 | `Handle[Image] \| None` | texture slot | `texture_2d<f32>` + `sampler` |
-| `Storage[Vec4]` | read-only storage | concise typed binding; opt-in plugin |
-| `Annotated[Handle[Image] \| None, Texture(...)]` | sampled texture | cube/3D/array dimensions and sample controls; opt-in plugin |
-| `Annotated[Handle[ShaderBuffer] \| None, StorageBinding()]` | read-only storage | typed read-only arrays; opt-in plugin |
+| `Annotated[Handle[Image] \| None, TextureBinding(...)]` | sampled texture | cube/3D/array dimensions and sample controls |
+| `StorageBinding[Vec4]` | read-only storage | concise typed array declaration |
+| `TextureBinding` | sampled texture | concise Image-handle declaration |
+| `SamplerBinding` | independent sampler | concise ImageSamplerDescriptor declaration |
+| `Annotated[Handle[ShaderBuffer] \| None, StorageBinding()]` | read-only storage | typed read-only arrays |
+
+Use `StorageBinding[T]` or explicit `StorageBinding` metadata for buffers. A bare
+`Handle[ShaderBuffer]` cannot declare storage: `Handle[T]` currently erases `T`
+at runtime, so an unmarked handle annotation follows the texture-field path.
+
+WGSL integer-vector spellings are `vec2i` / `vec2<i32>` and `vec2u` /
+`vec2<u32>`, with the analogous forms for three and four components. GLSL names
+such as `ivec2` and `uvec2` are not WGSL aliases. WGSL struct members use commas,
+including inside `StorageBinding(declarations=...)`.
 
 ## How It Works
 
@@ -115,7 +168,7 @@ The decorator:
 5. Registers metadata for `Assets[YourMaterial]` and `MeshMaterial3d[YourMaterial]`
 
 Each decorated class keeps a distinct logical identity even though the engine stores
-them as `ShaderMaterial` or, for classes with storage or explicit `Texture` metadata,
+them as `ShaderMaterial` or, for classes with storage or explicit `TextureBinding` metadata,
 `StorageShaderMaterial`. `Assets[GlowMaterial]` rejects handles from another
 custom material class, and `Query[MeshMaterial3d[GlowMaterial]]` only matches entities
 using `GlowMaterial`. In optional query data, a different custom material class is
@@ -159,13 +212,13 @@ layout padding), not Bevy's typed shader serialization; `None` clears CPU data.
 
 ## Read-only Material Storage
 
-Use `Storage[Vec4]` or `Storage[int]` to bind existing `ShaderBuffer` assets as
-read-only arrays. Fields hold typed handles; declarations do not allocate or
-serialize buffers. `Annotated[..., StorageBinding(...)]` remains available for
-custom WGSL element types and explicit metadata.
-`StorageShaderMaterialPlugin()` enables storage materials and ordinary shader
-materials. Add it after `DefaultPlugins`; you do not also need
-`ShaderMaterialPlugin()`.
+Use `StorageBinding[Vec4]` to bind an existing `ShaderBuffer` asset as a read-only
+array of vec4 elements. The field value remains a typed buffer handle; PyBevy
+assigns binding numbers and generates matching WGSL declarations. `StorageBinding`
+is a declaration, not a buffer allocation or CPU data serializer.
+`ShaderMaterialPlugin()` enables all custom material layouts. Add it once after
+`DefaultPlugins`. The existing `StorageShaderMaterialPlugin()` remains supported;
+there is no need to add both.
 
 <!-- pybevy-snippet: typecheck -->
 ```python
@@ -173,14 +226,14 @@ import struct
 
 from pybevy.assets import Assets, Handle
 from pybevy.ecs import ResMut
-from pybevy.material import Storage, material
+from pybevy.material import StorageBinding, material
 from pybevy.math import Vec4
-from pybevy.pbr import Material, StorageShaderMaterialPlugin
+from pybevy.pbr import Material, ShaderMaterialPlugin
 from pybevy.render import ShaderBuffer
 
 @material(fragment_shader="shaders/palette.wgsl")
 class Palette(Material):
-    colors: Storage[Vec4]
+    colors: StorageBinding[Vec4]
 
 def make_palette(
     buffers: ResMut[Assets[ShaderBuffer]],
@@ -191,18 +244,41 @@ def make_palette(
     return materials.add(surface)
 ```
 
-Bare `Storage[Vec4]` requires a constructor argument. Pass `None` explicitly
-to leave the material pending; `Storage(default=None)` makes omission valid.
-The instance field and constructor argument are `Handle[ShaderBuffer] | None`.
-Pyright/Pylance and mypy infer these types from the declaration. Binding 109
-is assigned automatically; the explicit `Annotated[..., StorageBinding()]`
-form remains available. For multiple buffers, declare each field in binding
-order, for example `colors: Storage[Vec4]` followed by
-`indices: Storage[int]`. They receive bindings 109 and 110 respectively.
+Bare `StorageBinding[T]` fields require a constructor argument. The argument and
+attribute value are `Handle[ShaderBuffer] | None`, while `T` describes the WGSL
+element (`float`, `int`, `Vec2`, `Vec3` or `Vec4`). Passing `None` explicitly
+keeps the material pending until a valid handle is assigned. For an optional
+field, declare `colors: StorageBinding[Vec4] = StorageBinding()` (`StorageBinding(default=None)` is equivalent).
 
-To pass a custom StandardMaterial as `base=` with a typed constructor, add
-`base: InitVar[StandardMaterial | None] = None`. The base is constructor input,
-not a shader binding. Ordinary materials create their base automatically.
+Pyright/Pylance and mypy infer keyword constructor arguments and handle-valued
+reads/writes through descriptor typing. Constructor checking is based on
+explicit field defaults: provide arguments for annotations without defaults.
+Ordinary material fields keep their existing runtime defaults; concise storage
+fields enforce requiredness at runtime too. Decorated classes are not standard
+library dataclasses; use the material API rather than `dataclasses.replace`.
+
+Usually `@material` creates its own StandardMaterial. To supply a custom `base=`
+with a typed constructor, declare it as initialization-only input:
+
+<!-- pybevy-snippet: typecheck -->
+```python
+from dataclasses import InitVar
+from pybevy.material import StorageBinding, material
+from pybevy.math import Vec4
+from pybevy.pbr import Material, StandardMaterial
+
+@material(fragment_shader="shaders/palette.wgsl")
+class BasedPalette(Material):
+    base: InitVar[StandardMaterial | None] = None
+    colors: StorageBinding[Vec4]
+
+surface = BasedPalette(base=StandardMaterial(unlit=True), colors=None)
+```
+
+The base declaration adds no shader field. It is only needed for the explicit
+`base=` argument; ordinary StandardMaterial assets require no decorator or
+InitVar. Existing runtime base arguments remain accepted without the declaration,
+but type checkers need the declared InitVar to include it in the constructor.
 
 `assets/shaders/palette.wgsl` can read the array directly in a vertex or
 fragment stage, including custom prepass/deferred shaders:
@@ -231,10 +307,11 @@ and suppresses its draw. Restoring a valid handle/upload makes it drawable.
 There is no fallback storage buffer. Material and nested uniform accesses keep
 the usual asset authority, change tracking and system lifetime rules.
 
-Each field gets its own binding starting at 109, in declaration order. Elements
-accept `float` (`f32`), `int` (`i32`), `Vec2`, `Vec3`, `Vec4`, or WGSL type text
-such as `"u32"`, `"mat3x3<f32>"`, and `"array<vec2<u32>, 3>"`. For structs,
-provide their WGSL in `declarations`. These storage types are separate from
+Each field gets its own binding starting at 109, in declaration order. For
+custom WGSL types, keep the explicit `Annotated[Handle[ShaderBuffer] | None,
+StorageBinding(...)]` form below. Its `element` accepts `float` (`f32`), `int` (`i32`), `Vec2`, `Vec3`, `Vec4`, or WGSL type text
+such as `"u32"`, `"mat3x3<f32>"`, and `"array<vec2<u32>, 3>"`. For manually declared structs,
+provide their WGSL in `declarations`; typed dataclasses can use `@shader_struct` below. These storage types are separate from
 uniform `int`, which retains its existing `f32` encoding.
 
 <!-- pybevy-snippet: typecheck -->
@@ -275,7 +352,7 @@ ready. Handle assignment rejects other asset types immediately. The raw
 `set_storage_buffer_at` for indexed access. The original `storage_buffer`
 constructor argument/property still addresses the first Vec4 slot by default.
 
-Storage requires vertex and fragment storage-buffer support and adequate
+Storage buffers require vertex and fragment storage-buffer support and adequate
 combined material binding limits. Each material binds only its declared storage
 slots; the device determines the maximum count. No new Cargo feature flag is
 needed. This path is tested on native Vulkan; WebGL and other backends/devices
@@ -284,13 +361,71 @@ layout. Writable storage and general user-selected binding numbers remain
 outside this API. Bevy 0.20's changing
 buffer/shader APIs still require a separate port.
 
+## Typed Shader Structs
+
+Use `@shader_struct` above `@dataclass` to generate WGSL for a storage record.
+`StorageBinding[Tile]` uses that definition; `pack_shader_structs` produces bytes
+for `ShaderBuffer` or its `set_data` method.
+
+<!-- pybevy-snippet: typecheck -->
+```python
+from dataclasses import dataclass
+from pybevy.material import (
+    StorageBinding, material, shader_struct, shader_struct_layout, pack_shader_structs,
+)
+from pybevy.math import Vec3, Vec4
+from pybevy.pbr import Material
+from pybevy.render import ShaderBuffer
+
+@shader_struct
+@dataclass
+class Tile:
+    offset: Vec3
+    scale: float
+    color: Vec4
+
+@material(fragment_shader="shaders/tiles.wgsl")
+class Tiles(Material):
+    records: StorageBinding[Tile]
+
+rows = [Tile(Vec3.ZERO, 1.0, Vec4.ONE)]
+buffer = ShaderBuffer(pack_shader_structs(rows))
+layout = shader_struct_layout(Tile)
+assert layout.stride == 32
+assert tuple(field.offset for field in layout.fields) == (0, 12, 16)
+rows[0].scale = 2.0
+buffer.set_data(pack_shader_structs(rows))
+```
+
+Add `buffer` to `Assets[ShaderBuffer]`, then pass its handle as `Tiles(records=handle)`.
+In WGSL, import the material bindings and access `records[index].offset`, `.scale`
+and `.color`. `ShaderMaterialPlugin()` is the same plugin used for other materials.
+
+The first version accepts `float` (`f32`), `int` (`i32`), and `Vec2/Vec3/Vec4`.
+Packing validates value types, finite f32 ranges and signed 32-bit integer ranges.
+It writes little-endian bytes, zeroes padding and uses Naga's field offsets,
+alignment and array stride. All records must have exactly the same decorated
+class. An empty iterable produces empty bytes; `struct_type=Tile` can explicitly
+select and validate the schema. ClassVar attributes are excluded; InitVar, nested
+structs, matrices, arrays and bool fields are unsupported in this decorator.
+Explicit WGSL `StorageBinding(element=..., declarations=...)` remains available.
+
+The immutable `ShaderStructLayout` exposes declarations, size, stride, alignment
+and per-field name, WGSL type, offset, size and alignment. It does not allocate or
+upload GPU data. The packing helper does not update existing buffers or retain
+records; call `set_data` explicitly after edits. Reading borrowed vector fields
+still requires a live borrow. Layout metadata is separate from CPU packing so
+future GPU producers can validate the same contract without CPU staging.
+Binding metadata normalizes a decorated record type to its WGSL name and
+declarations, avoiding global references to reloadable Python classes.
+
 ## Texture Dimensions and Sampling
 
 Plain `Handle[Image] | None` fields retain the four ordinary 2D float slots and
-white fallbacks. Use `Annotated[..., Texture(...)]` to declare a different
-sampled-image contract. These classes use `StorageShaderMaterialPlugin()` even
-if they have no storage fields. Texture-only layouts do not require storage
-buffer support. There are still four texture/sampler pairs at bindings 101–108;
+white fallbacks. Use `Annotated[..., TextureBinding(...)]` to declare a different
+sampled-image contract. These classes use `ShaderMaterialPlugin()` even
+if they have no storage fields. TextureBinding-only layouts do not require storage
+buffer support. There are still four texture slots at bindings 101–108 (with optional paired samplers);
 this API does not expose binding arrays, storage textures or multisampled images.
 
 <!-- pybevy-snippet: typecheck -->
@@ -298,13 +433,13 @@ this API does not expose binding arrays, storage textures or multisampled images
 from typing import Annotated
 from pybevy.assets import Handle
 from pybevy.image import Image, ImageSampler
-from pybevy.material import Texture, material
-from pybevy.pbr import Material, StorageShaderMaterialPlugin
+from pybevy.material import TextureBinding, material
+from pybevy.pbr import Material, ShaderMaterialPlugin
 from pybevy.render import Extent3d, TextureViewDescriptor, TextureViewDimension
 
 @material(fragment_shader="shaders/environment.wgsl")
 class Environment(Material):
-    sky: Annotated[Handle[Image] | None, Texture(dimension="cube")] = None
+    sky: Annotated[Handle[Image] | None, TextureBinding(dimension="cube")] = None
 
 # Six square faces in +X, -X, +Y, -Y, +Z, -Z order.
 image = Image(
@@ -333,9 +468,19 @@ fn fragment() -> @location(0) vec4<f32> {
 | `"cube_array"` | D2, six faces per cube; `TextureViewDimension.CubeArray` | `vec3` direction plus integer cube index |
 | `"3d"` | `TextureDimension.D3`; depth is `depth_or_array_layers` | normalized `vec3` UVW |
 
+Array sampling takes a separate fourth argument in standard WGSL:
+`textureSample(tex, samp, uv, layer)` for 2D arrays, and
+`textureSample(tex, samp, direction, cube_index)` for cube arrays. A 12-face cube
+array contains cubes 0 and 1; the cube index is not a face-layer offset. Do not
+pack the array index into a `vec4` coordinate.
+
 The annotation describes the binding; it does not reinterpret or reshape the
 image. Prepare the matching view with `image.texture_view_descriptor`, and use
 `reinterpret_stacked_2d_as_array(layers)` when converting stacked source images.
+Assigning a D3 view to a D2 image raises `ValueError`; create a volume using
+`Image(..., dimension=TextureDimension.D3)`. This setter checks native dimension
+compatibility; matching face counts, square cube faces and other descriptor
+constraints still need valid image data and are subject to GPU validation.
 Explicitly annotated fields are required: `None`, missing images or incompatible
 views/formats/samplers leave the material pending with no fallback. Invalid
 contracts log a diagnostic; correct the image or assign a compatible handle to
@@ -345,7 +490,7 @@ resume drawing. Image view and sampler allocation changes refresh bindings.
 For integer or unfilterable float formats, set `filterable=False` and
 `sampler="non_filtering"`, configure `ImageSampler.nearest()`, and use
 `textureLoad` where WGSL requires it. For example:
-`Texture(sample_type="uint", filterable=False, sampler="non_filtering")`
+`TextureBinding(sample_type="uint", filterable=False, sampler="non_filtering")`
 pairs with `TextureFormat.Rgba32Uint` and emits `texture_2d<u32>`.
 Depth contracts use `filterable=False`; `sampler="comparison"` emits
 `sampler_comparison` and requires an Image sampler descriptor with `compare`
@@ -364,10 +509,73 @@ Actual min/mag/mipmap filtering, wrap modes, LOD clamps and anisotropy stay on
 `Image.sampler`, using `ImageSampler.Descriptor(ImageSamplerDescriptor(...))`.
 `sampler="filtering"` permits linear or nearest filtering; `"non_filtering"`
 requires nearest filtering. `filterable=True` requires a filterable texture
-format/device feature. Settings affect every material using that image; use
-separate image assets when independent sampler settings are needed. Images do
+format/device feature. These image-owned settings affect every paired binding
+using that image. Use independent sampler fields below to share its pixels with
+different sampling settings. Images do
 not acquire mipmaps automatically. See the [image sampling guide](sprites.md) for existing
 image/sampler controls. No new Cargo feature flag is required.
+
+## Independent Samplers
+
+Use `TextureBinding(sampler=None)` to emit only the texture binding, and declare
+`SamplerBinding` fields for separate native
+samplers. This maps to Bevy's separate texture and sampler bindings. Register
+`ShaderMaterialPlugin()`, including for sampler-only declarations.
+
+<!-- pybevy-snippet: typecheck -->
+```python
+from pybevy.image import ImageSamplerDescriptor
+from pybevy.material import SamplerBinding, TextureBinding, material
+from pybevy.pbr import Material, ShaderMaterialPlugin
+
+@material(fragment_shader="shaders/sampling.wgsl")
+class Sampling(Material):
+    image: TextureBinding = TextureBinding(sampler=None)
+    sharp: SamplerBinding = SamplerBinding("non_filtering")
+    soft: SamplerBinding = SamplerBinding(default=ImageSamplerDescriptor.linear())
+```
+
+```wgsl
+#import pybevy::gen::Sampling as params
+#import bevy_pbr::forward_io::VertexOutput
+
+@fragment
+fn fragment(input: VertexOutput) -> @location(0) vec4<f32> {
+    let sharp = textureSample(params::image, params::sharp, input.uv);
+    let soft = textureSample(params::image, params::soft, input.uv);
+    return mix(sharp, soft, 0.5);
+}
+```
+
+`SamplerBinding()` defaults to `"filtering"`; `"non_filtering"` requires nearest
+min/mag/mipmap filters. `"comparison"` requires a descriptor with `compare`
+set, emits `sampler_comparison`, and works with depth textures and
+`textureSampleCompare`. Other kinds require `compare=None`. WGSL must use a
+sampler compatible with the sampled texture. A sampler-free texture also works
+with `textureLoad`, which needs no sampler at all.
+
+The descriptor controls filtering, address modes, LOD clamps and anisotropy.
+Defaults and constructor values are copied per material. Through
+`ResMut[Assets[Sampling]]`, `surface.soft.mag_filter = ...` writes through and
+refreshes rendering; replacing `surface.soft` also works. Read-only asset
+access rejects changes, and borrowed descriptors expire with their system.
+A raw owned `StorageShaderMaterial.get_sampler()` returns a read-only snapshot;
+use `set_sampler()` to replace it. No image copy is needed, and these fields
+ignore `Image.sampler` when the texture's paired sampler is omitted.
+
+Descriptors with invalid LOD clamps, incompatible filtering/comparison modes,
+or unsupported border-address features leave the material pending with a
+render diagnostic. Correcting the descriptor resumes rendering. Anisotropy
+above one requires all-linear filtering; mipmaps still require actual mip levels.
+Border modes depend on enabled device features. No new Cargo feature is needed.
+Native descriptors share cached sampler allocations, retired when no live
+material needs them. Explicit sampler bindings start at `109 + storage_count`,
+in field order, and count against the device's combined material limits.
+Persistent errors log once until the diagnostic changes or rendering recovers,
+even when a system repeatedly writes the same invalid descriptor. Messages name
+the binding number, sampler kind and offending filter/comparison property; match
+the number to the declaration order or generated WGSL to find its Python field.
+Binding arrays, storage textures and multisampled textures remain unsupported.
 
 ## Runnable Binding Examples
 
@@ -376,6 +584,7 @@ Python scenes and WGSL, with procedural assets and no downloads:
 
 | Example | Binding technique |
 |---|---|
+| `independent_samplers.py` | One checker image and material, sampled with nearest and linear descriptors side by side |
 | `structured_buffer.py` | A 32-byte WGSL struct array plus a separate `u32` index buffer, animated with `ShaderBuffer.set_data` |
 | `cubemap.py` | Six square faces, a cube view, linear filtering and reflected-direction sampling |
 | `array_texture.py` | One 2D-array image, nearest filtering and `MeshTag` selecting a layer per mesh |

@@ -44,7 +44,10 @@ use bevy::{
 
 use crate::{
     ShaderMaterial, ShaderMaterialExtension, ShaderMaterialKey, clear_shader_registries,
-    storage_element::StorageElement, sync_shader_handles, texture_binding::TextureBindingLayout,
+    sampler_binding::{MaterialSamplerBinding, MaterialSamplerCache, MaterialSamplerKind},
+    storage_element::StorageElement,
+    sync_shader_handles,
+    texture_binding::TextureBindingLayout,
 };
 
 pub const STORAGE_BINDING: u32 = 109;
@@ -59,6 +62,7 @@ pub struct StorageBinding {
 pub struct StorageShaderMaterialExtension {
     pub inner: ShaderMaterialExtension,
     pub buffers: Vec<StorageBinding>,
+    pub samplers: Vec<MaterialSamplerBinding>,
     pub texture_layouts: Vec<Option<TextureBindingLayout>>,
 }
 
@@ -68,6 +72,7 @@ impl Default for StorageShaderMaterialExtension {
             inner: ShaderMaterialExtension::default(),
             buffers: vec![StorageBinding::default()],
             texture_layouts: Vec::new(),
+            samplers: Vec::new(),
         }
     }
 }
@@ -97,6 +102,7 @@ pub struct StorageMaterialKey {
     extension: ShaderMaterialKey,
     strides: Vec<u32>,
     textures: Vec<Option<TextureBindingLayout>>,
+    samplers: Vec<MaterialSamplerKind>,
 }
 
 /// Checked before binding; an absent or invalid buffer must not produce a draw.
@@ -144,7 +150,7 @@ fn storage_layout_error_for_limits(
             .any(|entry| entry.binding >= limits.max_bindings_per_bind_group)
     {
         return Some(format!(
-            "StorageShaderMaterialPlugin requires material group 3 and binding indices below {}; highest requested binding is {}",
+            "ShaderMaterialPlugin requires material group 3 and binding indices below {}; highest requested binding is {}",
             limits.max_bindings_per_bind_group,
             entries.iter().map(|entry| entry.binding).max().unwrap_or(0)
         ));
@@ -181,7 +187,7 @@ fn storage_layout_error_for_limits(
             .any(|(count, limit)| count > limit)
         {
             return Some(format!(
-                "StorageShaderMaterialPlugin combined material layout exceeds device limits for {stage:?}: required {counts:?}, available {maxima:?} (storage, uniform, texture, sampler)"
+                "ShaderMaterialPlugin combined material layout exceeds device limits for {stage:?}: required {counts:?}, available {maxima:?} (storage, uniform, texture, sampler)"
             ));
         }
     }
@@ -221,6 +227,7 @@ impl AsBindGroup for StorageShaderMaterial {
         SRes<StorageBufferAvailability>,
         SRes<RenderAssets<GpuImage>>,
         SRes<DefaultImageSamplerDescriptor>,
+        SRes<MaterialSamplerCache>,
     );
 
     fn label() -> &'static str {
@@ -229,6 +236,7 @@ impl AsBindGroup for StorageShaderMaterial {
 
     fn bind_group_data(&self) -> Self::Data {
         StorageMaterialKey {
+            samplers: self.extension.samplers.iter().map(|s| s.kind).collect(),
             base: self.base.bind_group_data(),
             textures: self.extension.texture_layouts.clone(),
             extension: ShaderMaterialKey::from(&self.extension.inner),
@@ -268,6 +276,10 @@ impl AsBindGroup for StorageShaderMaterial {
         descriptor
             .entries
             .extend(storage_entries(&self.bind_group_data().strides));
+        descriptor.entries.extend(sampler_entries(
+            self.extension.buffers.len(),
+            self.extension.samplers.iter().map(|s| s.kind),
+        ));
         if storage_layout_error(device, &descriptor.entries).is_some() {
             return Err(AsBindGroupError::RetryNextUpdate);
         }
@@ -327,10 +339,12 @@ impl AsBindGroup for StorageShaderMaterial {
                     image.texture_view.clone(),
                 ),
             ));
-            textures.push((
-                102 + slot as u32 * 2,
-                OwnedBindingResource::Sampler(metadata.sampler_type(), image.sampler.clone()),
-            ));
+            if metadata.has_sampler() {
+                textures.push((
+                    102 + slot as u32 * 2,
+                    OwnedBindingResource::Sampler(metadata.sampler_type(), image.sampler.clone()),
+                ));
+            }
             // The derive-generated ordinary path validates all textures as float 2D.
             // Let it supply uniform/fallback resources, then replace custom slots.
             *inner.texture_slot_mut(slot).unwrap() = None;
@@ -352,7 +366,26 @@ impl AsBindGroup for StorageShaderMaterial {
                 .find(|(binding, _)| *binding == index)
                 .unwrap() = (index, resource);
         }
+        bindings.retain(|(binding, _)| {
+            descriptor
+                .entries
+                .iter()
+                .any(|entry| entry.binding == *binding)
+        });
         bindings.extend(storage);
+        for (slot, binding) in self.extension.samplers.iter().enumerate() {
+            binding
+                .validate(device.features())
+                .map_err(|_| AsBindGroupError::RetryNextUpdate)?;
+            let sampler = param
+                .6
+                .get(&binding.descriptor)
+                .ok_or(AsBindGroupError::RetryNextUpdate)?;
+            bindings.push((
+                STORAGE_BINDING + self.extension.buffers.len() as u32 + slot as u32,
+                OwnedBindingResource::Sampler(binding.kind.binding_type(), sampler.clone()),
+            ));
+        }
         // Direct preparation must perform the uniform packing normally done by the allocator.
         for (_, resource) in bindings.iter_mut() {
             if let OwnedBindingResource::Data(data) = resource {
@@ -452,7 +485,39 @@ impl Material for StorageShaderMaterial {
         descriptor.layout[3]
             .entries
             .extend(storage_entries(&key.bind_group_data.strides));
+        descriptor.layout[3].entries.extend(sampler_entries(
+            key.bind_group_data.strides.len(),
+            key.bind_group_data.samplers.iter().copied(),
+        ));
         Ok(())
+    }
+}
+
+fn sampler_entries(
+    storage_count: usize,
+    kinds: impl IntoIterator<Item = MaterialSamplerKind>,
+) -> Vec<BindGroupLayoutEntry> {
+    kinds
+        .into_iter()
+        .enumerate()
+        .map(|(slot, kind)| BindGroupLayoutEntry {
+            binding: STORAGE_BINDING + storage_count as u32 + slot as u32,
+            visibility: ShaderStages::VERTEX_FRAGMENT,
+            ty: BindingType::Sampler(kind.binding_type()),
+            count: None,
+        })
+        .collect()
+}
+
+/// Registers every native backing type used by Python material declarations.
+#[derive(Default)]
+pub struct ShaderMaterialPlugin;
+
+impl Plugin for ShaderMaterialPlugin {
+    fn build(&self, app: &mut App) {
+        if !app.is_plugin_added::<MaterialBackendsPlugin>() {
+            app.add_plugins(MaterialBackendsPlugin);
+        }
     }
 }
 
@@ -460,6 +525,16 @@ impl Material for StorageShaderMaterial {
 pub struct StorageShaderMaterialPlugin;
 
 impl Plugin for StorageShaderMaterialPlugin {
+    fn build(&self, app: &mut App) {
+        if !app.is_plugin_added::<MaterialBackendsPlugin>() {
+            app.add_plugins(MaterialBackendsPlugin);
+        }
+    }
+}
+
+struct MaterialBackendsPlugin;
+
+impl Plugin for MaterialBackendsPlugin {
     fn build(&self, app: &mut App) {
         if !app.is_plugin_added::<MaterialPlugin<ShaderMaterial>>() {
             clear_shader_registries();
@@ -470,6 +545,7 @@ impl Plugin for StorageShaderMaterialPlugin {
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app
                 .init_resource::<StorageBufferAvailability>()
+                .init_resource::<MaterialSamplerCache>()
                 .init_resource::<StorageMaterialDependencies>()
                 .add_systems(
                     ExtractSchedule,
@@ -494,30 +570,25 @@ impl Plugin for StorageShaderMaterialPlugin {
                 .get_downlevel_capabilities()
                 .flags;
             let required = DownlevelFlags::VERTEX_STORAGE | DownlevelFlags::FRAGMENT_STORAGE;
-            let error = if !flags.contains(required) {
-                Some("StorageShaderMaterialPlugin requires vertex and fragment storage-buffer support".to_owned())
-            } else {
-                None
-            };
-            if let Some(error) = error {
-                tracing::error!("{error}; storage materials will not render");
-                render_app
-                    .world_mut()
-                    .resource_mut::<StorageBufferAvailability>()
-                    .unsupported = true;
-            }
+            render_app
+                .world_mut()
+                .resource_mut::<StorageBufferAvailability>()
+                .unsupported = !flags.contains(required);
         }
     }
 }
 
 fn apply_texture_layouts(
-    entries: &mut [BindGroupLayoutEntry],
+    entries: &mut Vec<BindGroupLayoutEntry>,
     layouts: &[Option<TextureBindingLayout>],
 ) {
     for (slot, layout) in layouts.iter().enumerate() {
         let Some(layout) = layout else {
             continue;
         };
+        if !layout.has_sampler() {
+            entries.retain(|entry| entry.binding != 102 + slot as u32 * 2);
+        }
         for entry in entries.iter_mut() {
             if entry.binding == 101 + slot as u32 * 2 {
                 entry.ty = layout.binding_type();
@@ -532,7 +603,8 @@ fn apply_texture_layouts(
 #[derive(PartialEq, Eq)]
 struct MaterialAllocation {
     buffers: Vec<BufferId>,
-    textures: Vec<(TextureViewId, SamplerId)>,
+    textures: Vec<(TextureViewId, Option<SamplerId>)>,
+    samplers: Vec<SamplerId>,
 }
 
 struct MaterialDependency {
@@ -557,14 +629,19 @@ fn extract_storage_dependencies(
     }
     for (id, material) in &extracted.extracted {
         if !extracted.removed.contains(id) {
-            dependencies.0.insert(
-                *id,
-                MaterialDependency {
+            dependencies
+                .0
+                .entry(*id)
+                .and_modify(|dependency| {
+                    // Preserve the last diagnostic while changed inputs are revalidated.
+                    dependency.material = material.clone();
+                    dependency.allocation = None;
+                })
+                .or_insert_with(|| MaterialDependency {
                     material: material.clone(),
                     allocation: None,
                     diagnostic: None,
-                },
-            );
+                });
         }
     }
     availability.images.clear();
@@ -597,7 +674,9 @@ fn refresh_storage_bindings(
     mut extracted: ResMut<ExtractedAssets<MeshMaterial3d<StorageShaderMaterial>>>,
     mut bindings: ResMut<RenderMaterialBindings>,
     mut allocators: ResMut<MaterialBindGroupAllocators>,
+    mut sampler_cache: ResMut<MaterialSamplerCache>,
 ) {
+    sampler_cache.begin_frame();
     let fresh: HashSet<_> = extracted.extracted.iter().map(|(id, _)| *id).collect();
     for (id, dependency) in &mut dependencies.0 {
         let mut diagnostic = if dependency.material.extension.texture_layouts.len() > 4 {
@@ -661,18 +740,58 @@ fn refresh_storage_bindings(
                             return None;
                         }
                     }
-                    Some((image.texture_view.id(), image.sampler.id()))
+                    Some((
+                        image.texture_view.id(),
+                        metadata
+                            .is_none_or(TextureBindingLayout::has_sampler)
+                            .then(|| image.sampler.id()),
+                    ))
                 })())
             })
             .collect();
-        let allocation = allocation
-            .zip(textures)
-            .map(|(buffers, textures)| MaterialAllocation { buffers, textures });
+        let samplers: Option<Vec<_>> = dependency
+            .material
+            .extension
+            .samplers
+            .iter()
+            .enumerate()
+            .map(
+                |(slot, binding)| match sampler_cache.prepare(binding, &device) {
+                    Ok(sampler) => Some(sampler.id()),
+                    Err(error) => {
+                        let number = 109 + dependency.material.extension.buffers.len() + slot;
+                        diagnostic = Some(format!(
+                            "sampler binding {number} ({:?}): {error}",
+                            binding.kind
+                        ));
+                        None
+                    }
+                },
+            )
+            .collect();
+        let allocation =
+            allocation
+                .zip(textures)
+                .zip(samplers)
+                .map(|((buffers, textures), samplers)| MaterialAllocation {
+                    buffers,
+                    textures,
+                    samplers,
+                });
         let mut entries = StorageShaderMaterial::bind_group_layout_entries(&device, true);
         entries.extend(storage_entries(
             &dependency.material.bind_group_data().strides,
         ));
         apply_texture_layouts(&mut entries, &dependency.material.extension.texture_layouts);
+        entries.extend(sampler_entries(
+            dependency.material.extension.buffers.len(),
+            dependency
+                .material
+                .extension
+                .samplers
+                .iter()
+                .map(|s| s.kind),
+        ));
         diagnostic = diagnostic.or_else(|| storage_layout_error(&device, &entries));
         if diagnostic != dependency.diagnostic {
             if let Some(error) = &diagnostic {
@@ -691,6 +810,7 @@ fn refresh_storage_bindings(
             }
         }
     }
+    sampler_cache.finish_frame();
     // Bevy 0.19's direct-preparation path allocates a fresh slot without retiring
     // the previous one. Retire it once before fresh inputs (including retries)
     // supersede the old binding; ordinary material removal still belongs to Bevy.
