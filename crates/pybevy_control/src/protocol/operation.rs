@@ -173,9 +173,346 @@ pub enum ControlOperation {
     ListConfigs,
 }
 
+macro_rules! operation_tags {
+    ($($variant:ident => $name:literal,)*) => {
+        /// Payload-free identity of a [`ControlOperation`] variant.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub(crate) enum OperationTag {
+            $($variant,)*
+        }
+
+        impl OperationTag {
+            pub(crate) const ALL: &[Self] = &[$(Self::$variant,)*];
+
+            /// The serde `tool` name of the variant.
+            pub(crate) fn name(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $name,)*
+                }
+            }
+        }
+
+        impl ControlOperation {
+            pub(crate) fn tag(&self) -> OperationTag {
+                match self {
+                    $(Self::$variant { .. } => OperationTag::$variant,)*
+                }
+            }
+        }
+    };
+}
+
+operation_tags! {
+    ListEntities => "list_entities",
+    GetEntity => "get_entity",
+    ListResources => "list_resources",
+    ListSystems => "get_system_list",
+    GetComponentSchema => "get_component_schema",
+    GetComponent => "get_component",
+    GetResource => "get_resource",
+    QueryEntities => "query_entities",
+    GetSceneSummary => "get_scene_summary",
+    GetBoundingBox => "get_bounding_box",
+    GetRegistry => "get_registry",
+    CaptureScreenshot => "capture_screenshot",
+    CaptureStats => "capture_stats",
+    CompareFrames => "compare_frames",
+    CaptureWithGizmos => "capture_with_gizmos",
+    CaptureTimeline => "capture_timeline",
+    CaptureTurnaround => "capture_turnaround",
+    CaptureDepth => "capture_depth",
+    Reload => "reload",
+    ReloadAndCapture => "reload_and_capture",
+    GetReloadStatus => "get_reload_status",
+    GetLastError => "get_last_error",
+    SpawnEntity => "spawn_entity",
+    DespawnEntity => "despawn_entity",
+    SetComponent => "set_component",
+    RemoveComponent => "remove_component",
+    SetResource => "set_resource",
+    RemoveResource => "remove_resource",
+    Batch => "batch",
+    SetAsset => "set_asset",
+    PauseTime => "pause_time",
+    ResumeTime => "resume_time",
+    SetTimeScale => "set_time_scale",
+    GetTimeStatus => "get_time_status",
+    SeekTime => "seek_time",
+    QuerySpatial => "query_spatial",
+    QuerySpatialNeighborhood => "query_spatial_neighborhood",
+    CheckOverlaps => "check_overlaps",
+    CheckAllOverlaps => "check_all_overlaps",
+    RunCode => "run_code",
+    GetPerformance => "get_performance",
+    ScheduleActions => "schedule_actions",
+    GetConfig => "get_config",
+    ListConfigs => "list_configs",
+}
+
+/// A `McpPlugin` switch that disables a group of control tools.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FeatureGate {
+    Screenshot,
+    Manipulation,
+    ExecutePython,
+}
+
+/// How the engine services an operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OperationKind {
+    /// Answered in the batched dispatch of the frame that received it.
+    Sync,
+    /// Queued and answered by a later-frame capture or reload system.
+    Deferred,
+    /// Stored as an active schedule.
+    Schedule,
+}
+
+/// Per-operation facts shared by dispatch, gating, scheduling and delivery.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct OperationSpec {
+    pub kind: OperationKind,
+    pub gate: Option<FeatureGate>,
+    /// Accepted as a `schedule_actions` action.
+    pub schedulable: bool,
+    /// The response can carry images prepared for MCP delivery.
+    pub image_delivery: bool,
+    /// A scheduled call propagates transforms afterwards. Despawn needs no
+    /// propagation because it also despawns the children.
+    pub mutates_transforms: bool,
+    /// A scheduled call requests a render frame before later captures.
+    pub mutates_render: bool,
+    /// Rejected while Python holds live asset access.
+    pub structural_guard: bool,
+}
+
+impl OperationSpec {
+    const READ: Self = Self {
+        kind: OperationKind::Sync,
+        gate: None,
+        schedulable: true,
+        image_delivery: false,
+        mutates_transforms: false,
+        mutates_render: false,
+        structural_guard: false,
+    };
+    const CAPTURE: Self = Self {
+        kind: OperationKind::Deferred,
+        gate: Some(FeatureGate::Screenshot),
+        ..Self::READ
+    };
+    const MUTATION: Self = Self {
+        gate: Some(FeatureGate::Manipulation),
+        mutates_render: true,
+        structural_guard: true,
+        ..Self::READ
+    };
+}
+
+impl OperationTag {
+    pub(crate) fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.iter().copied().find(|tag| tag.name() == name)
+    }
+
+    pub(crate) fn spec(self) -> OperationSpec {
+        use OperationSpec as S;
+        match self {
+            Self::ListEntities
+            | Self::GetEntity
+            | Self::ListResources
+            | Self::ListSystems
+            | Self::GetComponentSchema
+            | Self::GetComponent
+            | Self::GetResource
+            | Self::QueryEntities
+            | Self::GetSceneSummary
+            | Self::GetBoundingBox
+            | Self::GetRegistry
+            | Self::GetReloadStatus
+            | Self::GetLastError
+            | Self::PauseTime
+            | Self::ResumeTime
+            | Self::SetTimeScale
+            | Self::GetTimeStatus
+            | Self::SeekTime
+            | Self::QuerySpatial
+            | Self::QuerySpatialNeighborhood
+            | Self::CheckOverlaps
+            | Self::CheckAllOverlaps
+            | Self::GetPerformance
+            | Self::GetConfig
+            | Self::ListConfigs => S::READ,
+            Self::CaptureScreenshot
+            | Self::CaptureWithGizmos
+            | Self::CaptureTimeline
+            | Self::CaptureTurnaround
+            | Self::CaptureDepth => S {
+                image_delivery: true,
+                ..S::CAPTURE
+            },
+            Self::CaptureStats => S::CAPTURE,
+            Self::CompareFrames => S {
+                gate: Some(FeatureGate::Screenshot),
+                ..S::READ
+            },
+            // A schedule waiting on a reload would block the app loop the
+            // reload must drop and re-enter.
+            Self::Reload => S {
+                kind: OperationKind::Deferred,
+                schedulable: false,
+                ..S::READ
+            },
+            Self::ReloadAndCapture => S {
+                schedulable: false,
+                image_delivery: true,
+                ..S::CAPTURE
+            },
+            Self::SpawnEntity | Self::SetComponent | Self::RemoveComponent | Self::Batch => S {
+                mutates_transforms: true,
+                ..S::MUTATION
+            },
+            Self::DespawnEntity | Self::SetResource | Self::RemoveResource => S::MUTATION,
+            Self::SetAsset => S {
+                structural_guard: false,
+                ..S::MUTATION
+            },
+            Self::RunCode => S {
+                gate: Some(FeatureGate::ExecutePython),
+                ..S::READ
+            },
+            Self::ScheduleActions => S {
+                kind: OperationKind::Schedule,
+                schedulable: false,
+                image_delivery: true,
+                ..S::READ
+            },
+        }
+    }
+}
+
+impl ControlOperation {
+    pub(crate) fn spec(&self) -> OperationSpec {
+        self.tag().spec()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::catalog::tools::list_tools;
+
+    fn names_where(predicate: impl Fn(OperationSpec) -> bool) -> Vec<&'static str> {
+        OperationTag::ALL
+            .iter()
+            .filter(|tag| predicate(tag.spec()))
+            .map(|tag| tag.name())
+            .collect()
+    }
+
+    #[test]
+    fn tags_cover_every_schema_variant() {
+        let schema = serde_json::to_value(schemars::schema_for!(ControlOperation)).unwrap();
+        let variants = schema["oneOf"].as_array().unwrap().len();
+        assert_eq!(OperationTag::ALL.len(), variants);
+        for tool in list_tools() {
+            let name = tool["name"].as_str().unwrap();
+            assert!(OperationTag::from_name(name).is_some(), "{name}");
+        }
+    }
+
+    #[test]
+    fn tag_names_are_the_serde_tool_names() {
+        for tag in OperationTag::ALL {
+            let parsed =
+                serde_json::from_value::<ControlOperation>(serde_json::json!({"tool": tag.name()}));
+            match parsed {
+                Ok(operation) => assert_eq!(operation.tag(), *tag),
+                Err(error) => assert!(
+                    !error.to_string().contains("unknown variant"),
+                    "{}: {error}",
+                    tag.name()
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn deferred_operations_are_captures_and_reloads() {
+        assert_eq!(
+            names_where(|spec| spec.kind == OperationKind::Deferred),
+            [
+                "capture_screenshot",
+                "capture_stats",
+                "capture_with_gizmos",
+                "capture_timeline",
+                "capture_turnaround",
+                "capture_depth",
+                "reload",
+                "reload_and_capture",
+            ]
+        );
+        assert_eq!(
+            names_where(|spec| spec.kind == OperationKind::Schedule),
+            ["schedule_actions"]
+        );
+    }
+
+    #[test]
+    fn schedules_reject_reloads_and_nested_schedules() {
+        assert_eq!(
+            names_where(|spec| !spec.schedulable),
+            ["reload", "reload_and_capture", "schedule_actions"]
+        );
+    }
+
+    #[test]
+    fn mutation_flags_name_the_mutating_operations() {
+        assert_eq!(
+            names_where(|spec| spec.mutates_transforms),
+            ["spawn_entity", "set_component", "remove_component", "batch"]
+        );
+        assert_eq!(
+            names_where(|spec| spec.mutates_render),
+            [
+                "spawn_entity",
+                "despawn_entity",
+                "set_component",
+                "remove_component",
+                "set_resource",
+                "remove_resource",
+                "batch",
+                "set_asset",
+            ]
+        );
+        assert_eq!(
+            names_where(|spec| spec.structural_guard),
+            [
+                "spawn_entity",
+                "despawn_entity",
+                "set_component",
+                "remove_component",
+                "set_resource",
+                "remove_resource",
+                "batch",
+            ]
+        );
+    }
+
+    #[test]
+    fn image_delivery_names_the_image_responses() {
+        assert_eq!(
+            names_where(|spec| spec.image_delivery),
+            [
+                "capture_screenshot",
+                "capture_with_gizmos",
+                "capture_timeline",
+                "capture_turnaround",
+                "capture_depth",
+                "reload_and_capture",
+                "schedule_actions",
+            ]
+        );
+    }
 
     #[test]
     fn list_systems_defaults_to_scene_only() {

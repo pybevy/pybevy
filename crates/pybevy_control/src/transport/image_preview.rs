@@ -2,6 +2,8 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use image::{DynamicImage, GenericImageView, ImageFormat, codecs::jpeg::JpegEncoder};
 use serde_json::{Map, Value};
 
+use crate::protocol::OperationTag;
+
 pub(crate) const MCP_IMAGE_DELIVERY_HEADER: &str = "x-pybevy-image-delivery";
 pub(crate) const MCP_IMAGE_DELIVERY_VALUE: &str = "mcp";
 
@@ -48,16 +50,8 @@ pub(crate) fn prepare_mcp_response_images(response: &mut Value) {
         let is_image_tool = action
             .get("tool")
             .and_then(Value::as_str)
-            .is_some_and(|tool| {
-                matches!(
-                    tool,
-                    "capture_screenshot"
-                        | "capture_timeline"
-                        | "capture_turnaround"
-                        | "capture_depth"
-                        | "reload_and_capture"
-                )
-            });
+            .and_then(OperationTag::from_name)
+            .is_some_and(|tag| tag.spec().image_delivery);
         if !is_image_tool {
             continue;
         }

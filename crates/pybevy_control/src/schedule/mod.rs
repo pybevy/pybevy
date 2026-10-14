@@ -14,15 +14,9 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 
 use crate::{
-    capture::queue::PendingScreenshots,
-    engine::{
-        deferred::{
-            push_pending_depth, push_pending_screenshot, push_pending_stats, push_pending_timeline,
-            push_pending_turnaround,
-        },
-        dispatch::dispatch,
-    },
-    protocol::{ControlError, ControlOperation, json_object_schema},
+    capture::screenshot::RenderFrameReadiness,
+    engine::{channel::ControlRequest, deferred::DeferredBatch, dispatch::dispatch},
+    protocol::{ControlError, ControlOperation, OperationKind, OperationTag, json_object_schema},
     scene::transform_sync::propagate_transforms,
 };
 
@@ -312,58 +306,19 @@ impl SharedScheduleRegistry {
 
 #[derive(Resource, Clone)]
 pub struct SharedScheduleRegistryResource(pub SharedScheduleRegistry);
-const NON_SCHEDULABLE_TOOLS: &[&str] = &[
-    "schedule_actions",
+/// Bridge-local MCP tools that never reach the engine.
+const BRIDGE_LOCAL_TOOLS: &[&str] = &[
     "get_schedule_result",
     "run_scene",
     "get_started",
     "get_logs",
     "search_api",
     "get_type_definition",
-    // reload tools cannot run inside a schedule: the schedule blocks waiting
-    // for the deferred response (ScheduleState::WaitingForDeferred), but the
-    // reload itself needs the app loop to drop and re-enter, which can't
-    // happen while process_active_schedules is mid-flight. Result: 120 s
-    // engine timeout. Reject at validation instead.
-    "reload",
-    "reload_and_capture",
 ];
 
 fn is_non_schedulable(tool: &str) -> bool {
-    NON_SCHEDULABLE_TOOLS.contains(&tool)
-}
-
-fn is_deferred_tool(name: &str) -> bool {
-    matches!(
-        name,
-        "capture_screenshot"
-            | "capture_stats"
-            | "capture_timeline"
-            | "capture_turnaround"
-            | "capture_depth"
-    )
-}
-
-/// Transform mutations require propagation; despawning a parent also despawns its children.
-fn is_transform_mutation_tool(name: &str) -> bool {
-    matches!(
-        name,
-        "set_component" | "remove_component" | "spawn_entity" | "batch"
-    )
-}
-
-fn is_render_mutation_tool(name: &str) -> bool {
-    matches!(
-        name,
-        "set_component"
-            | "remove_component"
-            | "spawn_entity"
-            | "despawn_entity"
-            | "set_resource"
-            | "remove_resource"
-            | "set_asset"
-            | "batch"
-    )
+    BRIDGE_LOCAL_TOOLS.contains(&tool)
+        || OperationTag::from_name(tool).is_some_and(|tag| !tag.spec().schedulable)
 }
 
 pub fn validate_schedule(request: &ScheduleRequest) -> Result<(), String> {
@@ -833,10 +788,12 @@ fn process_single_schedule(
                 let tool_args = action.args.clone();
                 let action_at = resolve_at(action);
                 let mut seeked_clock = false;
-                let is_transform_mutation = is_transform_mutation_tool(&tool_name);
-                let is_render_mutation = is_render_mutation_tool(&tool_name);
+                let spec = OperationTag::from_name(&tool_name).map(OperationTag::spec);
+                let is_transform_mutation = spec.is_some_and(|spec| spec.mutates_transforms);
+                let is_render_mutation = spec.is_some_and(|spec| spec.mutates_render);
 
-                if is_deferred_tool(&tool_name) {
+                if spec.is_some_and(|spec| spec.kind == OperationKind::Deferred && spec.schedulable)
+                {
                     // Set up deferred execution via forwarder pattern
                     match setup_deferred_action(world, &tool_name, &tool_args) {
                         Ok(rx) => {
@@ -948,11 +905,11 @@ fn process_single_schedule(
                                         propagate_transforms(world);
                                     }
                                     if is_render_mutation
-                                        && let Some(readiness) = world.get_resource::<
-                                            crate::capture::screenshot::RenderFrameReadiness,
-                                        >() {
-                                            readiness.request_frame();
-                                        }
+                                        && let Some(readiness) =
+                                            world.get_resource::<RenderFrameReadiness>()
+                                    {
+                                        readiness.request_frame();
+                                    }
                                 }
                                 Err(e) => {
                                     if let Some(ref label) = action.label {
@@ -1015,41 +972,20 @@ fn setup_deferred_action(
     tool: &str,
     args: &serde_json::Value,
 ) -> Result<oneshot::Receiver<Result<serde_json::Value, ControlError>>, String> {
-    let op = tool_to_operation(tool, args)?;
-    let (tx, rx) = oneshot::channel();
-    let mut screenshots = Vec::new();
-
-    match op {
-        ControlOperation::CaptureScreenshot(p) => {
-            let with_gizmos = p.gizmos;
-            push_pending_screenshot(p, with_gizmos, tx, &mut screenshots)
-        }
-        ControlOperation::CaptureWithGizmos(p) => {
-            push_pending_screenshot(p, true, tx, &mut screenshots)
-        }
-        ControlOperation::CaptureStats(p) => push_pending_stats(p, tx, &mut screenshots),
-        ControlOperation::CaptureTimeline(p) => push_pending_timeline(p, tx, world),
-        ControlOperation::CaptureTurnaround(p) => push_pending_turnaround(p, tx, world),
-        ControlOperation::CaptureDepth(p) => push_pending_depth(p, tx, &mut screenshots, world),
-        _ => return Err(format!("tool '{tool}' is not deferrable")),
+    let operation = tool_to_operation(tool, args)?;
+    let (response_tx, rx) = oneshot::channel();
+    let render_epoch = world
+        .get_resource::<RenderFrameReadiness>()
+        .map(RenderFrameReadiness::requested_epoch);
+    let mut batch = DeferredBatch::new(render_epoch);
+    let request = ControlRequest {
+        operation,
+        response_tx,
+    };
+    if batch.enqueue(world, request).is_some() {
+        return Err(format!("tool '{tool}' is not deferrable"));
     }
-
-    if !screenshots.is_empty() {
-        if let Some(required_epoch) = world
-            .get_resource::<crate::capture::screenshot::RenderFrameReadiness>()
-            .map(|readiness| readiness.requested_epoch())
-        {
-            for screenshot in &mut screenshots {
-                screenshot.required_render_epoch = Some(required_epoch);
-            }
-        }
-        for screenshot in &mut screenshots {
-            crate::capture::screenshot::prepare_pending_screenshot_gizmos(world, screenshot);
-        }
-        let mut pending = world.get_resource_or_insert_with(PendingScreenshots::default);
-        pending.pending.extend(screenshots);
-    }
-
+    batch.commit(world);
     Ok(rx)
 }
 fn abort_remaining(schedule: &mut ActiveSchedule, from_index: usize) {
@@ -1141,6 +1077,7 @@ fn finalize_schedule(schedule: ActiveSchedule) {
 mod tests {
     use super::*;
     use crate::{
+        capture::queue::PendingScreenshots,
         protocol::{
             CaptureScreenshotParams, CaptureStatsParams, CompareFramesParams, EntityRef,
             GetComponentParams, QueryEntitiesParams, ReloadMode, ReloadParams, SeekTimeParams,
@@ -1587,21 +1524,6 @@ mod tests {
     }
 
     #[test]
-    fn test_is_deferred_tool() {
-        assert!(is_deferred_tool("capture_screenshot"));
-        assert!(is_deferred_tool("capture_stats"));
-        assert!(is_deferred_tool("capture_timeline"));
-        assert!(is_deferred_tool("capture_turnaround"));
-        assert!(is_deferred_tool("capture_depth"));
-        // reload variants are NOT deferrable inside a schedule: see
-        // NON_SCHEDULABLE_TOOLS for the deadlock rationale.
-        assert!(!is_deferred_tool("reload"));
-        assert!(!is_deferred_tool("reload_and_capture"));
-        assert!(!is_deferred_tool("pause_time"));
-        assert!(!is_deferred_tool("set_component"));
-    }
-
-    #[test]
     fn test_is_non_schedulable() {
         assert!(is_non_schedulable("schedule_actions"));
         assert!(is_non_schedulable("run_scene"));
@@ -2025,17 +1947,6 @@ mod tests {
             "ok"
         };
         assert_eq!(status, "ok");
-    }
-
-    #[test]
-    fn test_is_transform_mutation_tool() {
-        assert!(is_transform_mutation_tool("set_component"));
-        assert!(is_transform_mutation_tool("spawn_entity"));
-        assert!(is_transform_mutation_tool("batch"));
-        assert!(is_transform_mutation_tool("remove_component"));
-        assert!(!is_transform_mutation_tool("pause_time"));
-        assert!(!is_transform_mutation_tool("query_entities"));
-        assert!(!is_transform_mutation_tool("capture_screenshot"));
     }
 
     #[test]

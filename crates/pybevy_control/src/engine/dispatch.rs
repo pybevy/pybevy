@@ -76,6 +76,10 @@ pub fn dispatch(
     operation: ControlOperation,
     runtime: &mut dyn ControlRuntime,
 ) -> Result<serde_json::Value, ControlError> {
+    let tag = operation.tag();
+    if tag.spec().structural_guard {
+        guard_structural_request(world, tag.name())?;
+    }
     match operation {
         ControlOperation::ListEntities => runtime.list_entities(world),
         ControlOperation::GetEntity { entity } => runtime.get_entity(world, entity),
@@ -90,36 +94,19 @@ pub fn dispatch(
         ControlOperation::GetSceneSummary => runtime.scene_summary(world),
         ControlOperation::GetBoundingBox { entity } => runtime.get_bounding_box(world, entity),
         ControlOperation::GetRegistry => registry_with_resource_names(world, runtime),
-        ControlOperation::SpawnEntity { components } => {
-            guard_structural_request(world, "spawn_entity")?;
-            runtime.spawn_entity(world, components)
-        }
-        ControlOperation::DespawnEntity { entity } => {
-            guard_structural_request(world, "despawn_entity")?;
-            despawn_entity(world, entity)
-        }
-        ControlOperation::SetComponent(p) => {
-            guard_structural_request(world, "set_component")?;
-            runtime.set_component(world, p)
-        }
+        ControlOperation::SpawnEntity { components } => runtime.spawn_entity(world, components),
+        ControlOperation::DespawnEntity { entity } => despawn_entity(world, entity),
+        ControlOperation::SetComponent(p) => runtime.set_component(world, p),
         ControlOperation::RemoveComponent(p) => {
-            guard_structural_request(world, "remove_component")?;
             let result = runtime.remove_component(world, p)?;
             propagate_transforms(world);
             Ok(result)
         }
-        ControlOperation::SetResource(p) => {
-            guard_structural_request(world, "set_resource")?;
-            runtime.insert_resource(world, p)
-        }
+        ControlOperation::SetResource(p) => runtime.insert_resource(world, p),
         ControlOperation::RemoveResource { resource_type } => {
-            guard_structural_request(world, "remove_resource")?;
             runtime.remove_resource(world, resource_type)
         }
-        ControlOperation::Batch { operations } => {
-            guard_structural_request(world, "batch")?;
-            runtime.batch_mutate(world, operations)
-        }
+        ControlOperation::Batch { operations } => runtime.batch_mutate(world, operations),
         ControlOperation::PauseTime => time::pause_time(world),
         ControlOperation::ResumeTime => time::resume_time(world),
         ControlOperation::SetTimeScale { scale } => time::set_time_scale(world, scale),
