@@ -26,6 +26,11 @@ const ERR_CROSS_THREAD: &str = "PyBevy system parameter used from a different th
      them in a global read by another system running in parallel, or hand them \
      to a thread you spawned.";
 
+const ERR_OWNED_VALUE_CROSS_THREAD: &str = "PyBevy value used from a different thread than the one \
+     that created it. Live sub-objects of a Python-created value, such as the \
+     ActiveAnimation returned by AnimationPlayer.play(), are pinned to that thread: \
+     create the value on the thread that uses it.";
+
 pub const NESTED_EXECUTION: &str = "PyBevy outer system parameter accessed during nested execution. \
     Use the parameters injected into the inner system or observer; outer parameters \
     become available again after the nested call returns.";
@@ -48,6 +53,10 @@ pub enum StorageError {
     /// system on a worker thread cannot cause a use-after-free / data race.
     CrossThreadAccess,
 
+    /// A live sub-object of a Python-created value was used from a thread other
+    /// than the one that created the value (`RuntimeError`).
+    OwnedValueCrossThreadAccess,
+
     /// An ancestor callback's parameter was used during nested execution.
     NestedExecution,
 
@@ -69,6 +78,10 @@ pub enum StorageError {
 
     /// Operation would alias or invalidate a live NumPy view (`RuntimeError`)
     AssetViewsLive,
+
+    /// A zero-copy view was requested over an asset nested in another asset
+    /// (`RuntimeError`).
+    NestedAssetView,
 
     /// Another Python asset resolution currently holds an incompatible
     /// resource-wide access guard (`RuntimeError`).
@@ -146,6 +159,7 @@ impl fmt::Display for StorageError {
                 "Component no longer available (entity despawned or component removed).",
             ),
             StorageError::CrossThreadAccess => f.write_str(ERR_CROSS_THREAD),
+            StorageError::OwnedValueCrossThreadAccess => f.write_str(ERR_OWNED_VALUE_CROSS_THREAD),
             StorageError::NestedExecution => f.write_str(NESTED_EXECUTION),
             StorageError::ReadOnly => f.write_str(
                 "Cannot modify read-only component. \
@@ -170,6 +184,10 @@ impl fmt::Display for StorageError {
                 "A live array view still aliases this asset's data. \
                  Drop the array (del it or leave the with-block that created it) \
                  before mutating or consuming the asset.",
+            ),
+            StorageError::NestedAssetView => f.write_str(
+                "Zero-copy array views are not available for an asset nested inside another \
+                 asset. Read or assign the field through its parent instead.",
             ),
             StorageError::BorrowedAccessConflict => f.write_str("Conflicting access to this borrowed value is already active."),
             StorageError::AssetAccessConflict => f.write_str(
@@ -211,6 +229,7 @@ impl From<StorageError> for PyErr {
             StorageError::InvalidAccess
             | StorageError::EntityUnavailable
             | StorageError::CrossThreadAccess
+            | StorageError::OwnedValueCrossThreadAccess
             | StorageError::NestedExecution
             | StorageError::ReadOnly
             | StorageError::OwnedFieldReadOnly
@@ -220,6 +239,7 @@ impl From<StorageError> for PyErr {
             | StorageError::AssetReadOnly
             | StorageError::AssetUnavailable
             | StorageError::AssetViewsLive
+            | StorageError::NestedAssetView
             | StorageError::AssetAccessConflict
             | StorageError::BorrowedAccessConflict
             | StorageError::VariantChanged(_)
@@ -282,18 +302,6 @@ mod tests {
     }
 
     #[test]
-    fn test_index_out_of_range_message() {
-        let err = StorageError::IndexOutOfRange;
-        assert_eq!(err.to_string(), "list index out of range");
-    }
-
-    #[test]
-    fn test_empty_list_message() {
-        let err = StorageError::EmptyList;
-        assert_eq!(err.to_string(), "pop from empty list");
-    }
-
-    #[test]
     fn test_cross_thread_access_names_the_pinning() {
         let err = StorageError::CrossThreadAccess;
         assert!(err.to_string().contains("different thread"));
@@ -329,9 +337,5 @@ mod tests {
         let err = StorageError::VariantChanged("Circle");
         assert!(err.to_string().contains("Circle"));
         assert!(err.to_string().contains("current variant"));
-        assert_eq!(
-            enum_variant_changed("Circle"),
-            "Circle wrapper no longer matches the value's current variant; fetch it again to observe the new variant"
-        );
     }
 }

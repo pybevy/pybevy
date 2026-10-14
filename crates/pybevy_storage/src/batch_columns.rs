@@ -517,6 +517,9 @@ fn stored_value(value: f64, field_type: crate::FieldType) -> DomainValue {
         FieldType::I32 => DomainValue::Int(i128::from(value as i32)),
         FieldType::U8 => DomainValue::Int(i128::from(value as u8)),
         FieldType::U32 => DomainValue::Int(i128::from(value as u32)),
+        FieldType::I64 => DomainValue::Int(i128::from(value as i64)),
+        FieldType::U64 => DomainValue::Int(i128::from(value as u64)),
+        FieldType::Bool => DomainValue::Int(i128::from(value != 0.0)),
         _ => DomainValue::F64(value),
     }
 }
@@ -830,6 +833,22 @@ mod tests {
                 Err("Bloom.n must be greater than zero (got 0 at row 0)".into())
             );
         }
+    }
+
+    #[test]
+    fn wide_integer_view_fields_check_the_truncated_value() {
+        for field_type in [FieldType::I64, FieldType::U64] {
+            assert_eq!(
+                check_view_assignment("T", "n", &[2.0, 0.5], field_type, POSITIVE)
+                    .map_err(|violation| violation.to_string()),
+                Err("T.n must be greater than zero (got 0 at row 1)".into())
+            );
+        }
+        assert_eq!(
+            check_view_assignment("T", "n", &[-1.0], FieldType::U64, POSITIVE)
+                .map_err(|violation| violation.to_string()),
+            Err("T.n must be greater than zero (got 0 at row 0)".into())
+        );
     }
 
     #[test]

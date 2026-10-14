@@ -194,9 +194,13 @@ fn expanded_field_offsets(
             if let Some((_, Some(layout))) =
                 registered_custom_layout(world, component_id, *type_ptr, py)
             {
-                // Matrices have no View column, so their bytes stay outside the program set.
+                // Composite expressions address the declared f32 coordinates individually.
                 for field in &layout.fields {
-                    if let Some(field_type) = field.field_type.to_field_type() {
+                    if field.field_type.is_composite() {
+                        for lane in 0..field.field_type.element_count() {
+                            fields.insert((field.offset + lane * 4, FieldType::F32));
+                        }
+                    } else if let Some(field_type) = field.field_type.to_field_type() {
                         insert_expanded_field(&mut fields, field.offset, field_type);
                     }
                 }

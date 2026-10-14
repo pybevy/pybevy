@@ -1140,6 +1140,7 @@ impl<T: Asset> AssetStorage<T> {
     /// wrappers created by distinct access scopes still exclude a conflicting
     /// write view. Owned and untracked wrappers use their local counters.
     pub fn prepare_read_view(&self) -> Result<ReadViewClaim, StorageError> {
+        self.check_view_root()?;
         if let Some(resolver) = &self.resolver {
             resolver.root.validity.check_read()?;
             let _resource_guard = resolver.root.state.try_read()?;
@@ -1165,6 +1166,7 @@ impl<T: Asset> AssetStorage<T> {
     /// The resource-wide guard makes the cross-scope check and local counter
     /// claim one atomic transaction with respect to other Python resolvers.
     pub fn prepare_write_view(&self) -> Result<PendingViewClaim, StorageError> {
+        self.check_view_root()?;
         if let Some(resolver) = &self.resolver {
             resolver.root.validity.check_write()?;
             if !resolver.writable {
@@ -1184,14 +1186,23 @@ impl<T: Asset> AssetStorage<T> {
             .ok_or(StorageError::AssetViewsLive)
     }
 
+    /// A nested source has neither a validity flag nor shared view counters to
+    /// fence a zero-copy view with.
+    fn check_view_root(&self) -> Result<(), StorageError> {
+        match self.inner {
+            AssetStorageInner::Source(_) => Err(StorageError::NestedAssetView),
+            _ => Ok(()),
+        }
+    }
+
     /// Counters tracking live zero-copy NumPy views over this asset's data
     pub fn view_counters(&self) -> &ViewCounters {
         &self.views
     }
 
     /// The validity flag gating a borrowed asset, or `None` for an owned asset
-    /// (which is always live). Used to build liveness probes for zero-copy
-    /// bounded arrays over this asset's data.
+    /// (which is always live) or a nested source, which refuses views. Used to
+    /// build liveness probes for zero-copy bounded arrays over this asset's data.
     pub fn validity_flag(&self) -> Option<ValidityFlag> {
         match &self.inner {
             AssetStorageInner::Owned(_) | AssetStorageInner::OwnedReadOnly(_) => None,
@@ -2149,6 +2160,41 @@ mod tests {
         drop(mutable);
         assert_eq!(container.nested.value, 7);
         assert_eq!(EXTERNAL_NESTED.value, 91);
+    }
+
+    #[test]
+    fn nested_asset_source_refuses_zero_copy_views() {
+        let (mut world, _) = tracked_world();
+        let mut assets = Assets::<AssetContainer>::default();
+        let asset_id = assets
+            .add(AssetContainer {
+                nested: NestedAsset { value: 3 },
+            })
+            .id();
+        world.insert_resource(assets);
+        let validity = ValidityFlag::new_write();
+        let registry = AssetAccessRegistry::default();
+        let counter = AssetBorrowCounter::from_scope(registry.new_scope(
+            TypeId::of::<AssetContainer>(),
+            "AssetContainer",
+            validity.clone(),
+            "system:test",
+        ));
+        let _guard = ValidityGuard::new(validity.clone());
+        let storage = tracked_storage(&mut world, asset_id, &validity, &counter);
+        let nested = storage
+            .borrow_asset_field(|asset| &asset.nested, |asset| &mut asset.nested)
+            .expect("nested asset field");
+
+        assert!(matches!(
+            nested.prepare_read_view(),
+            Err(StorageError::NestedAssetView)
+        ));
+        assert!(matches!(
+            nested.prepare_write_view(),
+            Err(StorageError::NestedAssetView)
+        ));
+        assert_eq!(nested.as_ref().expect("nested read").value, 3);
     }
 
     #[test]

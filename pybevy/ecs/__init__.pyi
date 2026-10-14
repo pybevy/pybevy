@@ -28,7 +28,10 @@ from pybevy.app import (
 )
 from pybevy.expr import Expr
 from pybevy.expr import FieldExpr as _FieldExpr
+from pybevy.expr import Vec3Expression as _Vec3Expression
 from pybevy.light import PointLight
+from pybevy.math import Quat as _Quat
+from pybevy.math import Vec3 as _Vec3
 from pybevy.transform import Transform
 
 # Bound so View[...] and bare component types are rejected. The whole Query is
@@ -1029,8 +1032,8 @@ class Vec3Expr(Generic[_FieldT]):
     # Unary operators
     def __neg__(self) -> Vec3Expr: ...
 
-    # Assignment method
-    def set(self, value: Vec3Expr) -> None: ...
+    def set(self, value: Vec3Expr | _Vec3Expression | _Vec3) -> None:
+        """Assign after evaluating all coordinates, like whole-field assignment."""
 
     @overload
     def from_jax(self, obj: Any) -> None:
@@ -1062,6 +1065,9 @@ class QuatExpr(Generic[_FieldT]):
     @w.setter
     def w(self, value: Expr | ViewColumn | float | int) -> None: ...
 
+    def set(self: QuatExpr[_FieldExpr], value: QuatExpr | _Quat) -> None:
+        """Copy quaternion coordinates through a lazy View column."""
+
     @overload
     def from_jax(self, obj: Any) -> None:
         """Write back from object with .x, .y, .z, .w attributes. Requires `import pybevy.ecs.jax_ext`."""
@@ -1079,9 +1085,18 @@ class TransformViewColumn(ViewColumn, Generic[_FieldT]):
     View.column()/column_mut() return a lazy expression column.
     """
 
-    translation: Vec3Expr[_FieldT]
-    rotation: QuatExpr[_FieldT]
-    scale: Vec3Expr[_FieldT]
+    @property
+    def translation(self) -> Vec3Expr[_FieldT]: ...
+    @translation.setter
+    def translation(self, value: Vec3Expr | _Vec3Expression | _Vec3) -> None: ...
+    @property
+    def rotation(self) -> QuatExpr[_FieldT]: ...
+    @rotation.setter
+    def rotation(self, value: QuatExpr | _Quat) -> None: ...
+    @property
+    def scale(self) -> Vec3Expr[_FieldT]: ...
+    @scale.setter
+    def scale(self, value: Vec3Expr | _Vec3Expression | _Vec3) -> None: ...
 
 class PointLightViewColumn(ViewColumn, Generic[_FieldT]):
     """View column accessor for PointLight component.

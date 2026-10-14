@@ -87,7 +87,7 @@ impl<T: Component> ComponentStorage<T> {
         Self {
             inner: ComponentStorageInner::Owned {
                 data: OwnedCell::new(component),
-                validity: ValidityFlag::new_write(),
+                validity: ValidityFlag::new_owned_value(AccessMode::Write),
             },
         }
     }
@@ -100,7 +100,7 @@ impl<T: Component> ComponentStorage<T> {
         Self {
             inner: ComponentStorageInner::OwnedReadOnly {
                 data: OwnedCell::new(component.clone()),
-                validity: ValidityFlag::new_read(),
+                validity: ValidityFlag::new_owned_value(AccessMode::Read),
             },
         }
     }

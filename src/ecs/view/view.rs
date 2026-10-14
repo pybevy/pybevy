@@ -53,7 +53,7 @@ use pyo3::{
 use crate::ecs::{
     component_layout::{
         ComponentLayout, ComponentLayoutExt, ComponentStorageType, ComponentStorageTypeExt,
-        PrimitiveType, PrimitiveTypeExt,
+        PrimitiveType, PrimitiveTypeExt, extract_primitive_from_py,
     },
     component_type::PyComponentType,
     helpers::validity_guard::ValidityFlag,
@@ -396,7 +396,7 @@ impl PyView {
     }
 }
 
-/// A custom component's matrix field has no View column representation.
+/// A custom component's matrix field has no batch buffer representation.
 pub(crate) fn matrix_view_field_error(field: &str, field_type: PrimitiveType) -> PyErr {
     PyTypeError::new_err(public_error::view_matrix_field_unsupported(
         field,
@@ -413,101 +413,13 @@ pub(crate) fn get_component_field_info(
     field_name: &str,
 ) -> PyResult<(usize, pybevy_bytecodevm::bytecode::FieldType)> {
     match component_type {
-        PyComponentType::Custom(type_ptr) => {
-            // Get Python type and ComponentLayout
-            Python::attach(|py| {
-                // SAFETY: registered type pointers live for the interpreter lifetime
-                let py_type = unsafe {
-                    pyo3::Bound::from_borrowed_ptr(py, *type_ptr as *mut pyo3::ffi::PyObject)
-                };
-
-                if let Ok(cls) = py_type.cast::<pyo3::types::PyType>() {
-                    // Check storage type
-                    let storage_type = ComponentStorageType::from_python_class(cls)
-                        .unwrap_or(ComponentStorageType::PyObject);
-
-                    if let ComponentStorageType::Wrapper(_) = storage_type {
-                        // Get ComponentLayout for field offsets
-                        if let Ok(layout) = ComponentLayout::from_annotations(cls) {
-                            // Handle nested fields (e.g., "position.x" for Vec3 fields)
-                            if let Some((base, sub)) = field_name.split_once('.') {
-                                for field in &layout.fields {
-                                    if field.name == base {
-                                        match field.field_type {
-                                            vector @ (PrimitiveType::Vec2
-                                            | PrimitiveType::Vec3
-                                            | PrimitiveType::Vec4
-                                            | PrimitiveType::Quat) => {
-                                                let lane = ["x", "y", "z", "w"]
-                                                    [..vector.element_count()]
-                                                    .iter()
-                                                    .position(|lane| *lane == sub)
-                                                    .ok_or_else(|| {
-                                                        PyAttributeError::new_err(format!(
-                                                            "{:?} has no sub-field '{}'",
-                                                            vector, sub
-                                                        ))
-                                                    })?;
-                                                return Ok((
-                                                    field.offset + lane * 4,
-                                                    VmFieldType::F32,
-                                                ));
-                                            }
-                                            matrix if matrix.is_matrix() => {
-                                                return Err(matrix_view_field_error(base, matrix));
-                                            }
-                                            _ => {
-                                                return Err(PyAttributeError::new_err(format!(
-                                                    "Field '{}' is not a composite type",
-                                                    base
-                                                )));
-                                            }
-                                        }
-                                    }
-                                }
-                                let available: Vec<&str> =
-                                    layout.fields.iter().map(|f| f.name.as_str()).collect();
-                                return Err(PyAttributeError::new_err(format!(
-                                    "Custom component has no field '{}' (available: {})",
-                                    base,
-                                    available.join(", ")
-                                )));
-                            }
-
-                            // Find the field in the layout
-                            for field in &layout.fields {
-                                if field.name == field_name {
-                                    let vm_field_type =
-                                        field.field_type.to_field_type().ok_or_else(|| {
-                                            matrix_view_field_error(field_name, field.field_type)
-                                        })?;
-                                    return Ok((field.offset, vm_field_type));
-                                }
-                            }
-
-                            // Field not found
-                            let available: Vec<&str> =
-                                layout.fields.iter().map(|f| f.name.as_str()).collect();
-                            Err(PyAttributeError::new_err(format!(
-                                "Custom component has no field '{}' (available: {})",
-                                field_name,
-                                available.join(", ")
-                            )))
-                        } else {
-                            Err(PyRuntimeError::new_err(
-                                "Failed to get ComponentLayout for custom component",
-                            ))
-                        }
-                    } else {
-                        Err(PyTypeError::new_err(
-                            "View API only supports wrapper storage custom components",
-                        ))
-                    }
-                } else {
-                    Err(PyTypeError::new_err("Invalid custom component type"))
-                }
-            })
-        }
+        PyComponentType::Custom(type_ptr) => Python::attach(|py| {
+            let (offset, primitive) = custom_view_field_info(py, *type_ptr, field_name)?;
+            let field_type = primitive
+                .to_field_type()
+                .ok_or_else(|| matrix_view_field_error(field_name, primitive))?;
+            Ok((offset, field_type))
+        }),
         PyComponentType::Dynamic(type_ptr) => {
             // Get bridge from global registry
             let bridge = global_registry::get_bridge_by_py_type(*type_ptr).ok_or_else(|| {
@@ -635,96 +547,205 @@ pub(crate) fn native_view_field_domains(
         .map(|field| (field.owner, field.name, field.domains))
 }
 
-/// Shared __getattr__ implementation for both read-only and mutable column proxies
-/// Returns the appropriate field proxy (FieldExpr, Vec3Expr, or QuatExpr)
-/// The declared primitive type of one wrapper-stored custom component field.
-fn custom_field_primitive(
+/// Resolve custom field shapes and bounded matrix/vector projections.
+fn custom_view_field_info(
     py: Python<'_>,
     type_ptr: *const pyo3::ffi::PyTypeObject,
     field_name: &str,
-) -> Option<PrimitiveType> {
+) -> PyResult<(usize, PrimitiveType)> {
     // SAFETY: registered type pointers live for the interpreter lifetime.
     let py_type = unsafe { Bound::from_borrowed_ptr(py, type_ptr as *mut pyo3::ffi::PyObject) };
-    let layout = ComponentLayout::from_annotations(py_type.cast::<PyType>().ok()?).ok()?;
-    layout.get_field(field_name).map(|field| field.field_type)
+    let class = py_type.cast::<PyType>()?;
+    if !matches!(
+        ComponentStorageType::from_python_class(class)?,
+        ComponentStorageType::Wrapper(_)
+    ) {
+        return Err(PyTypeError::new_err(
+            "View API only supports wrapper storage custom components",
+        ));
+    }
+    let layout = ComponentLayout::from_annotations(class)?;
+    let (base, sub) = field_name
+        .split_once('.')
+        .map_or((field_name, None), |(base, sub)| (base, Some(sub)));
+    let field = layout.get_field(base).ok_or_else(|| {
+        let available: Vec<_> = layout
+            .fields
+            .iter()
+            .map(|field| field.name.as_str())
+            .collect();
+        PyAttributeError::new_err(format!(
+            "Custom component has no field '{base}' (available: {})",
+            available.join(", ")
+        ))
+    })?;
+    let mut primitive = field.field_type;
+    let mut offset = field.offset;
+    let Some(mut sub) = sub else {
+        return Ok((offset, primitive));
+    };
+    if primitive.is_matrix() {
+        let (axis, lane) = sub
+            .split_once('.')
+            .map_or((sub, None), |(axis, lane)| (axis, Some(lane)));
+        let dimension = match primitive {
+            PrimitiveType::Mat2 => 2,
+            PrimitiveType::Mat3 => 3,
+            PrimitiveType::Mat4 => 4,
+            _ => unreachable!(),
+        };
+        let column = ["x_axis", "y_axis", "z_axis", "w_axis"][..dimension]
+            .iter()
+            .position(|name| *name == axis)
+            .ok_or_else(|| {
+                PyAttributeError::new_err(format!("{primitive:?} has no sub-field '{axis}'"))
+            })?;
+        offset += column * dimension * size_of::<f32>();
+        primitive = [
+            PrimitiveType::Vec2,
+            PrimitiveType::Vec3,
+            PrimitiveType::Vec4,
+        ][dimension - 2];
+        let Some(lane) = lane else {
+            return Ok((offset, primitive));
+        };
+        sub = lane;
+    }
+    if !primitive.is_composite() {
+        return Err(PyAttributeError::new_err(format!(
+            "Field '{base}' is not a composite type"
+        )));
+    }
+    let lane = ["x", "y", "z", "w"][..primitive.element_count()]
+        .iter()
+        .position(|name| *name == sub)
+        .ok_or_else(|| {
+            PyAttributeError::new_err(format!("{primitive:?} has no sub-field '{sub}'"))
+        })?;
+    Ok((offset + lane * size_of::<f32>(), PrimitiveType::F32))
 }
 
+fn lazy_view_field_info(
+    py: Python<'_>,
+    component_type: &PyComponentType,
+    field_name: &str,
+) -> PyResult<(usize, VmFieldType, Option<PrimitiveType>)> {
+    if let PyComponentType::Custom(type_ptr) = component_type {
+        let (offset, primitive) = custom_view_field_info(py, *type_ptr, field_name)?;
+        return if primitive.is_composite() {
+            Ok((offset, VmFieldType::F32, Some(primitive)))
+        } else {
+            Ok((
+                offset,
+                primitive.to_field_type().expect("scalar VM field type"),
+                None,
+            ))
+        };
+    }
+    let (offset, field_type) = get_component_field_info(component_type, field_name)?;
+    let primitive = match field_type {
+        VmFieldType::Vec2 => Some(PrimitiveType::Vec2),
+        VmFieldType::Vec3 => Some(PrimitiveType::Vec3),
+        VmFieldType::Vec4 => {
+            if matches!(component_type, PyComponentType::Dynamic(type_ptr)
+                if field_name == "rotation" && global_registry::get_bridge_by_py_type(*type_ptr).is_some_and(|bridge| bridge.name() == "Transform"))
+            {
+                Some(PrimitiveType::Quat)
+            } else {
+                Some(PrimitiveType::Vec4)
+            }
+        }
+        _ => None,
+    };
+    Ok((
+        offset,
+        if primitive.is_some() {
+            VmFieldType::F32
+        } else {
+            field_type
+        },
+        primitive,
+    ))
+}
+
+/// Construct the expression proxy for the declared scalar or composite shape.
 fn create_field_proxy<'py>(
     py: Python<'py>,
     component_type: &PyComponentType,
     component_id: ComponentId,
     field_name: &str,
 ) -> PyResult<Py<PyAny>> {
-    // Import the proxy classes from Python
-    let expr_module = py.import("pybevy.expr")?;
-
-    // Determine field offset and type based on component type and field name
-    let (offset, field_type) = get_component_field_info(component_type, field_name)?;
-    let field_type_str = format!("{:?}", field_type); // FieldType Debug prints as "F32", "I64", etc.
-
-    // For Vec3/Vec2 fields (any component, including custom), return composite proxy.
-    // Custom Vec4/Quat fields get x/y/z/w lane proxies; native quaternions are
-    // resolved through their bridge below.
-    if let (pybevy_bytecodevm::bytecode::FieldType::Vec4, PyComponentType::Custom(type_ptr)) =
-        (field_type, component_type)
-    {
-        let proxy_name = match custom_field_primitive(py, *type_ptr, field_name) {
-            Some(PrimitiveType::Quat) => "QuatExpr",
-            _ => "Vec4Expr",
-        };
-        let lane_proxy = expr_module.getattr(proxy_name)?;
-        let args = (component_id.index(), field_name, offset);
-        return Ok(lane_proxy.call1(args)?.unbind());
+    let module = py.import("pybevy.expr")?;
+    let (offset, field_type, primitive) = lazy_view_field_info(py, component_type, field_name)?;
+    if let Some(primitive) = primitive {
+        let proxy = module.getattr(format!("{primitive:?}Expr"))?;
+        Ok(proxy
+            .call1((component_id.index(), field_name, offset))?
+            .unbind())
+    } else {
+        let proxy = module.getattr("FieldExpr")?;
+        Ok(proxy
+            .call1((
+                component_id.index(),
+                field_name,
+                offset,
+                format!("{field_type:?}"),
+            ))?
+            .unbind())
     }
-    match field_type {
-        pybevy_bytecodevm::bytecode::FieldType::Vec3 => {
-            let vec3_proxy = expr_module.getattr("Vec3Expr")?;
-            let args = (component_id.index(), field_name, offset);
-            let result = vec3_proxy.call1(args)?;
-            return Ok(result.unbind());
-        }
-        pybevy_bytecodevm::bytecode::FieldType::Vec2 => {
-            let vec2_proxy = expr_module.getattr("Vec2Expr")?;
-            let args = (component_id.index(), field_name, offset);
-            let result = vec2_proxy.call1(args)?;
-            return Ok(result.unbind());
-        }
-        _ => {}
-    }
+}
 
-    // Check if this is a Transform-like component (Dynamic Transform bridge)
-    // Transform fields return F32 from bridge, but we need composite proxies
-    let is_transform = match component_type {
-        PyComponentType::Dynamic(type_ptr) => global_registry::get_bridge_by_py_type(*type_ptr)
-            .map(|b| b.name() == "Transform")
-            .unwrap_or(false),
-        _ => false,
-    };
-
-    // For Transform, translation/scale are Vec3, rotation is Quat
-    if is_transform {
-        match field_name {
-            "translation" | "scale" => {
-                let vec3_proxy = expr_module.getattr("Vec3Expr")?;
-                let args = (component_id.index(), field_name, offset);
-                let result = vec3_proxy.call1(args)?;
-                return Ok(result.unbind());
+/// Extract only matching expression shapes, or a validity-checked native constant.
+fn composite_assignment_expressions(
+    py: Python<'_>,
+    primitive: PrimitiveType,
+    value: &Bound<'_, PyAny>,
+) -> PyResult<Vec<RustExpr>> {
+    let module = py.import("pybevy.expr")?;
+    let is_proxy = value.is_instance(&module.getattr(format!("{primitive:?}Expr"))?)?;
+    let is_expression = matches!(
+        primitive,
+        PrimitiveType::Vec2 | PrimitiveType::Vec3 | PrimitiveType::Vec4
+    ) && value
+        .is_instance(&module.getattr(format!("{primitive:?}Expression"))?)?;
+    if is_proxy || is_expression {
+        let axes = ["x", "y", "z", "w"];
+        let count = primitive.element_count();
+        let mut expressions = Vec::with_capacity(count);
+        if primitive.is_matrix() {
+            let dimension = match primitive {
+                PrimitiveType::Mat2 => 2,
+                PrimitiveType::Mat3 => 3,
+                PrimitiveType::Mat4 => 4,
+                _ => unreachable!(),
+            };
+            for axis in &axes[..dimension] {
+                let column = value.getattr(format!("{axis}_axis"))?;
+                for lane in &axes[..dimension] {
+                    expressions.push(RustExpr::from_py_object(py, &column.getattr(*lane)?)?);
+                }
             }
-            "rotation" => {
-                let quat_proxy = expr_module.getattr("QuatExpr")?;
-                let args = (component_id.index(), field_name, offset);
-                let result = quat_proxy.call1(args)?;
-                return Ok(result.unbind());
+        } else {
+            for axis in &axes[..count] {
+                expressions.push(RustExpr::from_py_object(py, &value.getattr(*axis)?)?);
             }
-            _ => {}
         }
+        return Ok(expressions);
     }
-
-    // For scalar fields, return FieldExpr directly with field type
-    let lazy_field_proxy = expr_module.getattr("FieldExpr")?;
-    let args = (component_id.index(), field_name, offset, field_type_str);
-    let result = lazy_field_proxy.call1(args)?;
-    Ok(result.unbind())
+    let math = py.import("pybevy.math")?;
+    if !value.is_instance(&math.getattr(format!("{primitive:?}"))?)? {
+        return Err(PyTypeError::new_err(
+            public_error::view_composite_assignment_type(format!("{primitive:?}")),
+        ));
+    }
+    let primitive_value = extract_primitive_from_py(primitive, value)?;
+    let (lanes, count) = primitive_value
+        .f32_lanes()
+        .expect("composite f32 representation");
+    Ok(lanes[..count]
+        .iter()
+        .map(|value| RustExpr::Const(f64::from(*value)))
+        .collect())
 }
 
 /// Read-only column proxy for component fields
@@ -849,25 +870,34 @@ impl PyViewColMut {
     ) -> PyResult<()> {
         self.validity.check()?;
 
-        let (dest_offset, dest_field_type) =
-            get_component_field_info(&self.component_type, field_name)?;
+        let (dest_offset, dest_field_type, primitive) =
+            lazy_view_field_info(py, &self.component_type, field_name)?;
+        let expressions = if let Some(primitive) = primitive {
+            composite_assignment_expressions(py, primitive, value)?
+        } else {
+            vec![RustExpr::from_py_object(py, value)?]
+        };
+
+        self.validity.check()?;
 
         // SAFETY: validity was checked immediately above. The proxy and parent
         // are created for the same run and the run guard invalidates the shared
         // flag before the parent can be used again.
         let view = unsafe { &*self.view_ptr };
 
-        // Parse the Python expression to RustExpr
-        let expr = RustExpr::from_py_object(py, value)?;
         let destination = FieldId {
             component_id: self.component_id,
             offset: dest_offset,
             field_type: dest_field_type,
         };
-        let program = view
-            .runtime
-            .prepare_assignment_program(destination, &expr)
-            .map_err(view_program_error)?;
+        let program = if primitive.is_some() {
+            view.runtime
+                .prepare_composite_assignment_program(destination, &expressions)
+        } else {
+            view.runtime
+                .prepare_assignment_program(destination, &expressions[0])
+        }
+        .map_err(view_program_error)?;
         let lease = view
             .runtime
             .gather_batches()
@@ -875,15 +905,18 @@ impl PyViewColMut {
         if let Some((owner, field, domains)) =
             native_view_field_domains(&self.component_type, field_name)
         {
-            let read_program = view
-                .runtime
-                .prepare_read_program(&expr)
-                .map_err(view_program_error)?;
-            let values = lease
-                .evaluate(&read_program, true)
-                .map_err(view_execution_error)?;
-            check_view_assignment(owner, field, &values, dest_field_type, domains)
-                .map_err(PyErr::from)?;
+            let lane_type = dest_field_type;
+            for expression in &expressions {
+                let read_program = view
+                    .runtime
+                    .prepare_read_program(expression)
+                    .map_err(view_program_error)?;
+                let values = lease
+                    .evaluate(&read_program, true)
+                    .map_err(view_execution_error)?;
+                check_view_assignment(owner, field, &values, lane_type, domains)
+                    .map_err(PyErr::from)?;
+            }
         }
         lease
             .execute_assignment(&program, true)

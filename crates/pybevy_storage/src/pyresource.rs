@@ -48,7 +48,7 @@ impl<T: Resource + Clone> Clone for ResourceStorage<T> {
         let inner = match &self.inner {
             ResourceStorageInner::Owned { data, validity: _ } => ResourceStorageInner::Owned {
                 data: Box::new((**data).clone()),
-                validity: ValidityFlag::new_write(),
+                validity: ValidityFlag::new_owned_value(AccessMode::Write),
             },
             ResourceStorageInner::BorrowedRef(b) => ResourceStorageInner::BorrowedRef(b.clone()),
             // A cloned mutable borrow downgrades to read-only to avoid aliasing.
@@ -96,7 +96,7 @@ impl<T: Resource> ResourceStorage<T> {
         Self {
             inner: ResourceStorageInner::Owned {
                 data: Box::new(resource),
-                validity: ValidityFlag::new_write(),
+                validity: ValidityFlag::new_owned_value(AccessMode::Write),
             },
         }
     }

@@ -10,6 +10,7 @@ use std::{
     fmt,
     hash::{Hash, Hasher},
     marker::PhantomData,
+    mem::size_of,
     rc::Rc,
     sync::{
         Arc, Mutex,
@@ -47,6 +48,26 @@ pub enum ProgramIntent {
         /// The only field the program may store to.
         destination: FieldId,
     },
+    /// Evaluate all scalar results before storing one contiguous composite field.
+    CompositeAssignment {
+        /// First scalar coordinate in one mutable component.
+        destination: FieldId,
+        /// Number of contiguous f32 coordinates.
+        lanes: usize,
+    },
+}
+
+impl ProgramIntent {
+    fn destination_component(self) -> Result<ComponentId, ViewRuntimeError> {
+        match self {
+            Self::Assignment { destination } => Ok(destination.component_id),
+            Self::CompositeAssignment { destination, .. } => Ok(destination.component_id),
+            Self::ReadOnly => Err(ViewRuntimeError::ProgramIntentMismatch {
+                expected: "assignment",
+                actual: "read-only",
+            }),
+        }
+    }
 }
 
 /// Interpreter-neutral metadata resolved for one View parameter.
@@ -169,6 +190,10 @@ enum CachedProgramKey {
         destination: FieldId,
         expression: RustExpr,
     },
+    CompositeAssignment {
+        destination: FieldId,
+        expressions: Box<[RustExpr]>,
+    },
 }
 
 /// A borrowed cache lookup key; the expression is cloned only on a miss.
@@ -178,6 +203,10 @@ enum ProgramKey<'a> {
     Assignment {
         destination: FieldId,
         expression: &'a RustExpr,
+    },
+    CompositeAssignment {
+        destination: FieldId,
+        expressions: &'a [RustExpr],
     },
 }
 
@@ -195,6 +224,20 @@ impl ProgramKey<'_> {
                     expression: be,
                 },
             ) => ad == *bd && ae.canonical_eq(be),
+            (
+                Self::CompositeAssignment {
+                    destination: ad,
+                    expressions: ae,
+                },
+                CachedProgramKey::CompositeAssignment {
+                    destination: bd,
+                    expressions: be,
+                },
+            ) => {
+                ad == *bd
+                    && ae.len() == be.len()
+                    && ae.iter().zip(be.iter()).all(|(a, b)| a.canonical_eq(b))
+            }
             _ => false,
         }
     }
@@ -205,6 +248,17 @@ impl ProgramKey<'_> {
             Self::ReadOnly(expression) => {
                 0_u8.hash(&mut hasher);
                 expression.canonical_hash(&mut hasher);
+            }
+            Self::CompositeAssignment {
+                destination,
+                expressions,
+            } => {
+                2_u8.hash(&mut hasher);
+                destination.hash(&mut hasher);
+                expressions.len().hash(&mut hasher);
+                for expression in expressions {
+                    expression.canonical_hash(&mut hasher);
+                }
             }
             Self::Assignment {
                 destination,
@@ -228,6 +282,13 @@ impl ProgramKey<'_> {
                 destination,
                 expression: expression.clone(),
             },
+            Self::CompositeAssignment {
+                destination,
+                expressions,
+            } => CachedProgramKey::CompositeAssignment {
+                destination,
+                expressions: expressions.into(),
+            },
         }
     }
 
@@ -248,6 +309,24 @@ impl ProgramKey<'_> {
                 destination.field_type,
                 expression,
             )?,
+            Self::CompositeAssignment {
+                destination,
+                expressions,
+            } => {
+                let mut compiler = Compiler::new();
+                for expression in expressions {
+                    expression.compile(&mut compiler);
+                }
+                for lane in (0..expressions.len()).rev() {
+                    let index = compiler.add_field(FieldId {
+                        offset: destination.offset + lane * size_of::<f32>(),
+                        ..destination
+                    });
+                    compiler.emit(Op::StoreField(index));
+                }
+                compiler.optimize();
+                compiler.try_finalize()?
+            }
         };
         Ok(Arc::new(bytecode))
     }
@@ -572,6 +651,29 @@ impl ViewRuntimeCore {
         self.validate_program(bytecode, ProgramIntent::Assignment { destination })
     }
 
+    /// Compile/cache a composite assignment with simultaneous right-hand-side reads.
+    pub fn prepare_composite_assignment_program(
+        &self,
+        destination: FieldId,
+        expressions: &[RustExpr],
+    ) -> Result<ValidatedViewProgram, ViewRuntimeError> {
+        self.check_valid()?;
+        let lanes = expressions.len();
+        if !valid_composite_destination(destination, lanes) {
+            return Err(ViewRuntimeError::InvalidCompositeAssignment);
+        }
+        let bytecode = self
+            .cached
+            .get_or_compile(ProgramKey::CompositeAssignment {
+                destination,
+                expressions,
+            })?;
+        self.validate_program(
+            bytecode,
+            ProgramIntent::CompositeAssignment { destination, lanes },
+        )
+    }
+
     /// Reject a capability validated for a different View runtime.
     pub fn check_program(&self, program: &ValidatedViewProgram) -> Result<(), ViewRuntimeError> {
         if Arc::ptr_eq(self.cached.spec(), &program.spec) {
@@ -853,16 +955,11 @@ impl BatchLease {
         ) -> Result<(), BatchExecutionError>,
     ) -> Result<(), ViewRuntimeError> {
         self.runtime.check_program(program)?;
-        let ProgramIntent::Assignment { destination } = program.intent() else {
-            return Err(ViewRuntimeError::ProgramIntentMismatch {
-                expected: "assignment",
-                actual: "read-only",
-            });
-        };
+        let destination = program.intent().destination_component()?;
 
         let _operation = self.runtime.enter_operation()?;
         self.runtime.validate_live_world_metadata()?;
-        let changed_ticks = self.resolve_change_ticks(destination.component_id)?;
+        let changed_ticks = self.resolve_change_ticks(destination)?;
         let _change_marker = ChangeMarkGuard {
             changed_ticks: &changed_ticks,
             this_run: self.runtime.this_run,
@@ -1086,22 +1183,17 @@ impl BatchSlice {
         parallel: bool,
     ) -> Result<(), ViewRuntimeError> {
         self.lease.runtime.check_program(program)?;
-        let ProgramIntent::Assignment { destination } = program.intent() else {
-            return Err(ViewRuntimeError::ProgramIntentMismatch {
-                expected: "assignment",
-                actual: "read-only",
-            });
-        };
+        let destination = program.intent().destination_component()?;
         // Resolve the destination capability before execution. This validates
         // mutable access and marks exactly these rows changed, matching Bevy's
         // conservative `&mut T` change-detection semantics even if execution
         // later unwinds after a partial write.
-        let _destination = self.column(destination.component_id, true)?;
+        let _destination = self.column(destination, true)?;
         let _operation = self.lease.runtime.enter_operation()?;
         self.lease.runtime.validate_live_world_metadata()?;
         let batch = self.exact_batch()?;
         // SAFETY: program validation proves field identities, spans, and the
-        // unique mutable destination; the operation fence covers execution.
+        // single mutable destination component; the fence covers execution.
         unsafe {
             view_engine::execute_batch_assignment(
                 std::slice::from_ref(&batch),
@@ -1488,6 +1580,8 @@ pub enum ViewRuntimeError {
         /// Number of stores found in the bytecode.
         actual: usize,
     },
+    /// A composite assignment has invalid destinations or interleaves reads and writes.
+    InvalidCompositeAssignment,
     /// The assignment store does not name its declared destination.
     AssignmentDestinationMismatch {
         /// Destination declared by the operation.
@@ -1713,6 +1807,10 @@ impl fmt::Display for ViewRuntimeError {
             Self::AssignmentStoreCount { actual } => write!(
                 f,
                 "View assignment must contain exactly one StoreField instruction, found {actual}"
+            ),
+            Self::InvalidCompositeAssignment => write!(
+                f,
+                "View composite assignment requires 2, 3, 4, 9 or 16 contiguous f32 coordinates with all reads before reversed stores"
             ),
             Self::AssignmentDestinationMismatch { expected, actual } => write!(
                 f,
@@ -2052,6 +2150,15 @@ fn validate_field_span(
     Ok(())
 }
 
+fn valid_composite_destination(destination: FieldId, lanes: usize) -> bool {
+    matches!(lanes, 2 | 3 | 4 | 9 | 16)
+        && destination.field_type == FieldType::F32
+        && destination
+            .offset
+            .checked_add(lanes * size_of::<f32>())
+            .is_some()
+}
+
 fn validate_write_effects(
     bytecode: &CompiledBytecode,
     intent: ProgramIntent,
@@ -2086,6 +2193,33 @@ fn validate_write_effects(
                     expected: destination,
                     actual,
                 });
+            }
+            if !mutable_components.contains(&destination.component_id) {
+                return Err(ViewRuntimeError::AssignmentDestinationReadOnly(
+                    destination.component_id,
+                ));
+            }
+            Ok(())
+        }
+        ProgramIntent::CompositeAssignment { destination, lanes } => {
+            let final_stores = bytecode
+                .bytecode
+                .iter()
+                .rev()
+                .take(lanes)
+                .all(|op| matches!(op, Op::StoreField(_)));
+            if !valid_composite_destination(destination, lanes)
+                || stores.len() != lanes
+                || !final_stores
+                || !stores.iter().enumerate().all(|(index, actual)| {
+                    *actual
+                        == FieldId {
+                            offset: destination.offset + (lanes - 1 - index) * size_of::<f32>(),
+                            ..destination
+                        }
+                })
+            {
+                return Err(ViewRuntimeError::InvalidCompositeAssignment);
             }
             if !mutable_components.contains(&destination.component_id) {
                 return Err(ViewRuntimeError::AssignmentDestinationReadOnly(
@@ -2320,7 +2454,9 @@ pub(crate) fn validate_stack_effects(
 
     let (intent_name, expected) = match intent {
         ProgramIntent::ReadOnly => ("read-only", 1),
-        ProgramIntent::Assignment { .. } => ("assignment", 0),
+        ProgramIntent::Assignment { .. } | ProgramIntent::CompositeAssignment { .. } => {
+            ("assignment", 0)
+        }
     };
     if stack.len() != expected {
         return Err(ViewRuntimeError::InvalidFinalStackDepth {
@@ -2659,13 +2795,14 @@ pub(crate) fn check_integer_types(
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
-    use std::ops::Deref;
+    use std::{array::from_fn, ops::Deref, ptr};
 
     use bevy_ecs::{
         change_detection::DetectChanges, component::Component, entity::Entity, world::World,
     };
 
     use super::*;
+    use crate::tiled::supported_program;
 
     const STRIDE: usize = 8;
 
@@ -2680,6 +2817,10 @@ mod tests {
     #[derive(Component)]
     #[repr(transparent)]
     struct RuntimeWide([u8; 16]);
+
+    #[derive(Component)]
+    #[repr(transparent)]
+    struct RuntimeVector([f32; 32]);
 
     #[derive(Component)]
     #[component(storage = "SparseSet")]
@@ -3026,6 +3167,261 @@ mod tests {
             integers: Vec::new(),
             field_map: vec![field],
         })
+    }
+
+    fn vector_cache(
+        world: &World,
+        component_id: ComponentId,
+        mutable: bool,
+    ) -> Arc<CachedViewCore> {
+        cache_for(
+            world,
+            filter(component_id),
+            if mutable {
+                HashSet::from([component_id])
+            } else {
+                HashSet::new()
+            },
+            HashMap::from([(
+                component_id,
+                (0..32).map(|lane| (lane * 4, FieldType::F32)).collect(),
+            )]),
+        )
+    }
+
+    #[test]
+    fn composite_assignment_snapshots_rhs_on_every_execution_path() {
+        for lanes in [2, 3, 4, 9, 16] {
+            for parallel in [false, true] {
+                for sliced in [false, true] {
+                    for fallback in [false, true] {
+                        let mut world = World::new();
+                        let entities: Vec<_> = (0..513)
+                            .map(|index| {
+                                world
+                                    .spawn(RuntimeVector(from_fn(|lane| {
+                                        index as f32 + lane as f32 + 2.0
+                                    })))
+                                    .id()
+                            })
+                            .collect();
+                        let component_id =
+                            world.components().component_id::<RuntimeVector>().unwrap();
+                        let cache = vector_cache(&world, component_id, true);
+                        let this_run = Tick::new(77);
+                        // SAFETY: the World stays live and structurally unchanged until invalidation.
+                        let runtime =
+                            unsafe { runtime_for_world(&mut world, cache, Tick::new(0), this_run) };
+                        let destination = field(component_id, 0, FieldType::F32);
+                        let expressions: Vec<_> = (0..lanes)
+                            .map(|lane| {
+                                let expression = RustExpr::Mul(
+                                    Box::new(RustExpr::Field {
+                                        component_id,
+                                        offset: 0,
+                                        field_type: FieldType::F32,
+                                    }),
+                                    Box::new(RustExpr::Field {
+                                        component_id,
+                                        offset: lane * 4,
+                                        field_type: FieldType::F32,
+                                    }),
+                                );
+                                if fallback && lane == 0 {
+                                    RustExpr::Add(
+                                        Box::new(expression),
+                                        Box::new(RustExpr::Random(0)),
+                                    )
+                                } else {
+                                    expression
+                                }
+                            })
+                            .collect();
+                        let program = runtime
+                            .prepare_composite_assignment_program(destination, &expressions)
+                            .unwrap();
+                        assert_eq!(supported_program(program.bytecode()), !fallback);
+                        let lease = Arc::new(runtime.gather_batches().unwrap());
+                        let expected: Vec<_> = expressions
+                            .iter()
+                            .map(|expression| {
+                                lease
+                                    .evaluate(
+                                        &runtime.prepare_read_program(expression).unwrap(),
+                                        false,
+                                    )
+                                    .unwrap()
+                            })
+                            .collect();
+                        if sliced {
+                            for slice in lease.contiguous_slices().unwrap() {
+                                slice.execute_assignment(&program, parallel).unwrap();
+                            }
+                        } else {
+                            lease.execute_assignment(&program, parallel).unwrap();
+                        }
+                        runtime.validity().set_invalid();
+                        drop(lease);
+                        drop(runtime);
+                        for (row, entity) in entities.iter().enumerate() {
+                            let entity_ref = world.entity(*entity);
+                            let vector = entity_ref.get_ref::<RuntimeVector>().unwrap();
+                            assert_eq!(
+                                &vector.0[..lanes],
+                                &expected
+                                    .iter()
+                                    .map(|axis| axis[row] as f32)
+                                    .collect::<Vec<_>>()
+                            );
+                            assert_eq!(vector.last_changed(), this_run);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn composite_assignment_validation_rejects_read_only_and_interleaved_stores() {
+        let mut world = World::new();
+        world.spawn(RuntimeVector([1.0; 32]));
+        let component_id = world.components().component_id::<RuntimeVector>().unwrap();
+        for mutable in [false, true] {
+            let cache = vector_cache(&world, component_id, mutable);
+            // SAFETY: the World remains live and unchanged; this test only validates programs.
+            let runtime =
+                unsafe { runtime_for_world(&mut world, cache, Tick::new(0), Tick::new(1)) };
+            let destinations = [0, 4, 8].map(|offset| field(component_id, offset, FieldType::F32));
+            let expressions = [
+                RustExpr::Const(2.0),
+                RustExpr::Const(3.0),
+                RustExpr::Const(4.0),
+            ];
+            for count in [0, 1, 5, 17] {
+                assert!(matches!(
+                    runtime.prepare_composite_assignment_program(
+                        destinations[0],
+                        &vec![RustExpr::Const(1.0); count]
+                    ),
+                    Err(ViewRuntimeError::InvalidCompositeAssignment)
+                ));
+            }
+            let overflow = field(component_id, usize::MAX - 3, FieldType::F32);
+            assert!(matches!(
+                runtime.prepare_composite_assignment_program(overflow, &expressions),
+                Err(ViewRuntimeError::InvalidCompositeAssignment)
+            ));
+            let result =
+                runtime.prepare_composite_assignment_program(destinations[0], &expressions);
+            if mutable {
+                let program = result.unwrap();
+                let mut interleaved = program.bytecode().clone();
+                interleaved.bytecode.swap(1, 3);
+                assert!(matches!(
+                    runtime.validate_program(Arc::new(interleaved), program.intent()),
+                    Err(ViewRuntimeError::InvalidCompositeAssignment)
+                ));
+                for indices in [[0, 0, 0], [0, 2, 1]] {
+                    let mut forged = program.bytecode().clone();
+                    for (op, index) in forged.bytecode.iter_mut().rev().take(3).zip(indices) {
+                        *op = Op::StoreField(index);
+                    }
+                    assert!(matches!(
+                        runtime.validate_program(Arc::new(forged), program.intent()),
+                        Err(ViewRuntimeError::InvalidCompositeAssignment)
+                    ));
+                }
+            } else {
+                assert!(
+                    matches!(result, Err(ViewRuntimeError::AssignmentDestinationReadOnly(id)) if id == component_id)
+                );
+            }
+            runtime.validity().set_invalid();
+        }
+    }
+
+    #[test]
+    fn composite_assignment_cache_distinguishes_each_axis_and_destination() {
+        let mut world = World::new();
+        world.spawn(RuntimeVector([1.0; 32]));
+        let component_id = world.components().component_id::<RuntimeVector>().unwrap();
+        let cache = vector_cache(&world, component_id, true);
+        // SAFETY: the World remains live and unchanged; only program preparation is tested.
+        let runtime = unsafe { runtime_for_world(&mut world, cache, Tick::new(0), Tick::new(1)) };
+        let destinations = [0, 4, 8].map(|offset| field(component_id, offset, FieldType::F32));
+        let expressions = [
+            RustExpr::Const(2.0),
+            RustExpr::Const(3.0),
+            RustExpr::Const(4.0),
+        ];
+        let first = runtime
+            .prepare_composite_assignment_program(destinations[0], &expressions)
+            .unwrap();
+        let again = runtime
+            .prepare_composite_assignment_program(destinations[0], &expressions)
+            .unwrap();
+        assert!(ptr::eq(first.bytecode(), again.bytecode()));
+        for axis in 0..3 {
+            let mut changed = expressions.clone();
+            changed[axis] = RustExpr::Const(5.0);
+            let next = runtime
+                .prepare_composite_assignment_program(destinations[0], &changed)
+                .unwrap();
+            assert!(!ptr::eq(first.bytecode(), next.bytecode()));
+            let cache = runtime.cached();
+            let first_collision = cache
+                .get_or_compile_with_hash(
+                    ProgramKey::CompositeAssignment {
+                        destination: destinations[0],
+                        expressions: &expressions,
+                    },
+                    17,
+                )
+                .unwrap();
+            let next_collision = cache
+                .get_or_compile_with_hash(
+                    ProgramKey::CompositeAssignment {
+                        destination: destinations[0],
+                        expressions: &changed,
+                    },
+                    17,
+                )
+                .unwrap();
+            assert!(!Arc::ptr_eq(&first_collision, &next_collision));
+        }
+        let short = runtime
+            .prepare_composite_assignment_program(destinations[0], &expressions[..2])
+            .unwrap();
+        assert!(!ptr::eq(first.bytecode(), short.bytecode()));
+        let cache = runtime.cached();
+        let long_collision = cache
+            .get_or_compile_with_hash(
+                ProgramKey::CompositeAssignment {
+                    destination: destinations[0],
+                    expressions: &expressions,
+                },
+                17,
+            )
+            .unwrap();
+        let short_collision = cache
+            .get_or_compile_with_hash(
+                ProgramKey::CompositeAssignment {
+                    destination: destinations[0],
+                    expressions: &expressions[..2],
+                },
+                17,
+            )
+            .unwrap();
+        assert!(!Arc::ptr_eq(&long_collision, &short_collision));
+        let other_destinations = destinations.map(|mut destination| {
+            destination.offset += 12;
+            destination
+        });
+        let other = runtime
+            .prepare_composite_assignment_program(other_destinations[0], &expressions)
+            .unwrap();
+        assert!(!ptr::eq(first.bytecode(), other.bytecode()));
+        runtime.validity().set_invalid();
     }
 
     fn assignment_program(destination: FieldId) -> Arc<CompiledBytecode> {

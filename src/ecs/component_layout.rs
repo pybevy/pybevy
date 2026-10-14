@@ -25,7 +25,7 @@ pub trait PrimitiveTypeExt {
     /// Convert to numpy dtype string
     fn to_numpy_dtype(self) -> &'static str;
 
-    /// Convert to FieldType for bytecode VM; `None` for matrices, which View does not expose
+    /// Convert to FieldType for bytecode VM; `None` for matrices, which require scalar expansion
     fn to_field_type(self) -> Option<FieldType>;
 }
 

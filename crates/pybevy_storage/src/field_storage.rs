@@ -104,7 +104,7 @@ impl<T: Clone> Clone for FieldStorage<T> {
                 // Each owned instance needs independent validity tracking.
                 FieldStorageInner::Owned {
                     data: Box::new((**data).clone()),
-                    validity: ValidityFlag::new_write(),
+                    validity: ValidityFlag::new_owned_value(AccessMode::Write),
                 }
             }
             FieldStorageInner::OwnedReadOnly { data } => FieldStorageInner::OwnedReadOnly {
@@ -226,7 +226,7 @@ impl<T: Clone> FieldStorage<T> {
         Self {
             inner: FieldStorageInner::Owned {
                 data: Box::new(value),
-                validity: ValidityFlag::new_write(),
+                validity: ValidityFlag::new_owned_value(AccessMode::Write),
             },
         }
     }
@@ -482,7 +482,10 @@ impl<T: Clone> FieldStorage<T> {
         Ok(W::from_borrowed(storage))
     }
 
-    /// Resolve a non-Copy enum payload, validating its variant on every asset access.
+    /// Resolve a non-Copy enum payload that rechecks its variant on every access.
+    ///
+    /// Borrowed storage yields a checked path inheriting the parent's authority.
+    /// Owned storage yields a read-only snapshot.
     pub fn borrow_resolved_variant_as<F: Clone + 'static, W>(
         &self,
         name: &'static str,
@@ -490,7 +493,7 @@ impl<T: Clone> FieldStorage<T> {
         write: WriteVariant<T, F>,
     ) -> Result<W, StorageError>
     where
-        T: 'static,
+        T: Send + Sync + 'static,
         W: FromBorrowedStorage<FieldStorage<F>>,
     {
         let storage = match &self.inner {
@@ -503,7 +506,12 @@ impl<T: Clone> FieldStorage<T> {
             _ => {
                 let current = self.as_ref()?;
                 let value = read(&current).ok_or(StorageError::VariantChanged(name))?;
-                FieldStorage::snapshot(value)
+                match RevalidatingSource::from_borrowed_field(self) {
+                    Some(source) => {
+                        FieldStorage::revalidating_source(source.variant(name, read, write))
+                    }
+                    None => FieldStorage::snapshot(value),
+                }
             }
         };
         Ok(W::from_borrowed(storage))
@@ -572,6 +580,9 @@ impl<T: Clone> FieldStorage<T> {
     }
 
     /// Resolve a keyed child, checking that the key still exists on every access.
+    ///
+    /// Borrowed storage yields a checked path inheriting the parent's authority.
+    /// Owned storage yields a read-only snapshot.
     pub fn borrow_resolved_key_as<Key, F, S, W>(
         &self,
         key: Key,
@@ -579,7 +590,7 @@ impl<T: Clone> FieldStorage<T> {
         write: WriteKey<T, Key, F>,
     ) -> Result<W, StorageError>
     where
-        T: 'static,
+        T: Send + Sync + 'static,
         Key: Clone + Debug + Eq + Send + Sync + 'static,
         F: Clone + 'static,
         S: BorrowableStorage<F>,
@@ -597,7 +608,10 @@ impl<T: Clone> FieldStorage<T> {
                 let current = self.as_ref()?;
                 let value = read(&current, &key)
                     .ok_or_else(|| StorageError::KeyNotFound(format!("{key:?}")))?;
-                S::snapshot(value)
+                match RevalidatingSource::from_borrowed_field(self) {
+                    Some(source) => S::revalidating_source(source.key(key, read, write)),
+                    None => S::snapshot(value),
+                }
             }
         };
         Ok(W::from_borrowed(storage))
@@ -636,6 +650,8 @@ impl<T: Clone> FieldStorage<T> {
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
+    use std::collections::BTreeMap;
+
     use bevy::ecs::{change_detection::DetectChangesMut, world::World};
 
     use super::*;
@@ -1151,6 +1167,108 @@ mod tests {
         drop(guard);
         assert!(child.0.as_ref().is_err());
         assert_eq!(values, vec![10, 20]);
+    }
+
+    #[derive(Clone, Debug, PartialEq)]
+    enum Choice {
+        Text(String),
+        Number(i32),
+    }
+
+    struct TextChild(FieldStorage<String>);
+
+    impl FromBorrowedStorage<FieldStorage<String>> for TextChild {
+        fn from_borrowed(storage: FieldStorage<String>) -> Self {
+            Self(storage)
+        }
+    }
+
+    fn text_child(choice: &FieldStorage<Choice>) -> Result<TextChild, StorageError> {
+        choice.borrow_resolved_variant_as(
+            "Choice.Text",
+            |choice| match choice {
+                Choice::Text(text) => Some(text),
+                Choice::Number(_) => None,
+            },
+            |choice| match choice {
+                Choice::Text(text) => Some(text),
+                Choice::Number(_) => None,
+            },
+        )
+    }
+
+    #[test]
+    fn variant_child_of_mutable_borrow_writes_through_and_rechecks_its_variant() {
+        let mut choice = Choice::Text("before".into());
+        let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
+        let _guard = ValidityGuard::new(validity.flag.clone());
+        // SAFETY: `choice` outlives `parent` and is written only through it.
+        let mut parent = unsafe { FieldStorage::borrowed(&mut choice as *mut Choice, validity) };
+
+        let mut child = text_child(&parent).unwrap();
+        child.0.as_mut().unwrap().push_str(" after");
+        assert_eq!(
+            *parent.as_ref().unwrap(),
+            Choice::Text("before after".into())
+        );
+
+        *parent.as_mut().unwrap() = Choice::Number(3);
+        assert!(matches!(
+            child.0.as_ref(),
+            Err(StorageError::VariantChanged("Choice.Text"))
+        ));
+        assert!(matches!(
+            child.0.as_mut(),
+            Err(StorageError::VariantChanged("Choice.Text"))
+        ));
+        assert_eq!(choice, Choice::Number(3));
+    }
+
+    #[test]
+    fn variant_child_of_read_borrow_is_read_only_and_of_owned_is_a_snapshot() {
+        let choice = Choice::Text("shared".into());
+        let flag = ValidityFlag::new_read();
+        // SAFETY: `choice` outlives `parent` and is never mutated.
+        let parent = unsafe { FieldStorage::borrowed_ref(&choice, flag.clone()) };
+        let mut child = text_child(&parent).unwrap();
+        assert_eq!(&*child.0.as_ref().unwrap(), "shared");
+        assert!(matches!(child.0.as_mut(), Err(StorageError::ReadOnly)));
+        flag.set_invalid();
+        assert!(matches!(child.0.as_ref(), Err(StorageError::InvalidAccess)));
+
+        let owned = FieldStorage::owned(Choice::Text("owned".into()));
+        let mut child = text_child(&owned).unwrap();
+        assert!(matches!(
+            child.0.as_mut(),
+            Err(StorageError::OwnedFieldReadOnly)
+        ));
+    }
+
+    #[test]
+    fn keyed_child_of_mutable_borrow_writes_through_and_rechecks_its_key() {
+        let mut map: BTreeMap<String, i32> = [("first".to_owned(), 1)].into();
+        let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
+        let _guard = ValidityGuard::new(validity.flag.clone());
+        // SAFETY: `map` outlives `parent` and is written only through it.
+        let mut parent =
+            unsafe { FieldStorage::borrowed(&mut map as *mut BTreeMap<String, i32>, validity) };
+
+        let mut child: IndexedChild = parent
+            .borrow_resolved_key_as::<String, i32, FieldStorage<i32>, IndexedChild>(
+                "first".to_owned(),
+                |values, key| values.get(key),
+                |values, key| values.get_mut(key),
+            )
+            .unwrap();
+        *child.0.as_mut().unwrap() = 5;
+        assert_eq!(parent.as_ref().unwrap()["first"], 5);
+
+        parent.as_mut().unwrap().remove("first");
+        assert!(matches!(
+            child.0.as_mut(),
+            Err(StorageError::KeyNotFound(_))
+        ));
+        assert!(map.is_empty());
     }
 
     #[test]

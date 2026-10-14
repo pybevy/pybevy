@@ -80,6 +80,8 @@ struct ValidityInner {
     owner: AtomicU64,
     suspensions: AtomicUsize,
     owned_world: Option<WorldId>,
+    /// Guards a Python-created value rather than a system parameter.
+    owned_value: bool,
     has_invalidation_observers: AtomicBool,
     invalidation_observers: Mutex<Vec<Weak<dyn InvalidationObserver>>>,
     /// The enclosing window of a child flag, which must also admit every access.
@@ -121,6 +123,7 @@ impl ValidityInner {
             owner: AtomicU64::new(owner),
             suspensions: AtomicUsize::new(0),
             owned_world: None,
+            owned_value: false,
             has_invalidation_observers: AtomicBool::new(false),
             invalidation_observers: Mutex::new(Vec::new()),
             parent: None,
@@ -186,9 +189,8 @@ impl ValidityFlagWithMode {
     /// Check if writing is allowed
     pub fn check_write(&self) -> Result<(), StorageError> {
         self.flag.check_read()?;
-        // Valid on this thread; now check our access mode allows writing.
         match self.access_mode {
-            AccessMode::Write => Ok(()),
+            AccessMode::Write => self.flag.check_write(),
             AccessMode::Read => Err(StorageError::ReadOnly),
             AccessMode::Invalid => {
                 unreachable!("ValidityFlagWithMode should never have Invalid mode")
@@ -251,6 +253,15 @@ impl ValidityFlag {
             self.observe_invalidation(&link);
         }
         Self(child)
+    }
+
+    /// Window of a Python-created value that lends live sub-objects. Like every
+    /// flag it is pinned to the creating thread, and reports a cross-thread use
+    /// as a misplaced value rather than a misplaced system parameter.
+    pub fn new_owned_value(mode: AccessMode) -> Self {
+        let mut inner = ValidityInner::new(mode);
+        inner.owned_value = true;
+        Self(Arc::new(inner))
     }
 
     /// Whole-World authority retained by a standalone owned World wrapper.
@@ -327,7 +338,11 @@ impl ValidityFlag {
             return Err(StorageError::NestedExecution);
         }
         if self.0.owner.load(Ordering::Relaxed) != current_thread_token() {
-            return Err(StorageError::CrossThreadAccess);
+            return Err(if self.0.owned_value {
+                StorageError::OwnedValueCrossThreadAccess
+            } else {
+                StorageError::CrossThreadAccess
+            });
         }
         if let Some(world_id) = self.0.owned_world
             && WORLD_EXECUTIONS
@@ -868,6 +883,29 @@ mod tests {
             .join()
             .unwrap();
         assert!(matches!(err, StorageError::CrossThreadAccess));
+    }
+
+    #[test]
+    fn owned_value_cross_thread_use_names_the_value() {
+        let flag = ValidityFlag::new_owned_value(AccessMode::Write);
+        assert!(flag.check_write().is_ok());
+        let other = flag.clone();
+        let err = std::thread::spawn(move || other.check_read().unwrap_err())
+            .join()
+            .unwrap();
+        assert!(matches!(err, StorageError::OwnedValueCrossThreadAccess));
+    }
+
+    #[test]
+    fn write_mode_over_a_read_window_is_read_only() {
+        let (guard, _) = ValidityGuard::read();
+        let write = guard.flag.with_access_mode(AccessMode::Write);
+        assert!(write.check_read().is_ok());
+        assert!(matches!(write.check_write(), Err(StorageError::ReadOnly)));
+
+        let parent = ValidityFlag::new_read();
+        let child = parent.new_child().with_access_mode(AccessMode::Write);
+        assert!(matches!(child.check_write(), Err(StorageError::ReadOnly)));
     }
 
     #[test]
