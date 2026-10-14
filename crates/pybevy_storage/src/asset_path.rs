@@ -1247,7 +1247,7 @@ mod tests {
     use bevy::ecs::{change_detection::Tick, component::Component, entity::Entity, world::World};
 
     use super::*;
-    use crate::{AccessMode, BorrowableStorage, ValidityFlag};
+    use crate::{AccessMode, BorrowableStorage, ValidityFlag, owned_cell::TestWorld};
 
     #[derive(Component, Clone, Copy)]
     struct Holder(Option<f32>);
@@ -1281,14 +1281,14 @@ mod tests {
 
     #[test]
     fn revalidating_payload_survives_moves_and_failed_write_does_not_mark() {
-        let mut world = World::new();
+        let mut world = TestWorld::new();
         let entity = world.spawn(Holder(Some(1.0))).id();
         let component = world.components().component_id::<Holder>().unwrap();
         let flag = ValidityFlag::new_write();
         // SAFETY: the test owns World and accesses only this live Holder through the handle.
         let storage: ValueStorage<Holder> = unsafe {
             ValueStorage::revalidating(
-                world.as_unsafe_world_cell(),
+                world.access(),
                 entity,
                 component,
                 0,

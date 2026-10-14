@@ -25,7 +25,9 @@ use bevy::{
     },
     math::{Mat2, Mat3, Mat4, Quat, Vec2, Vec3, Vec4},
 };
-use pybevy_core::{ComponentWriteContext, ValueStorage, storage_traits::FromBorrowedStorage};
+use pybevy_core::{
+    ComponentWriteContext, RevalidatingWorld, ValueStorage, storage_traits::FromBorrowedStorage,
+};
 use pybevy_ecs::shared::run_ticks::RunTicks;
 use pybevy_math::{
     mat2::PyMat2, mat3::PyMat3, mat4::PyMat4, quat::PyQuat, vec2::PyVec2, vec3::PyVec3,
@@ -41,6 +43,7 @@ use pyo3::{
 use super::{
     component_layout::{ComponentLayout, PrimitiveType, extract_primitive_from_py},
     helpers::validity_guard::ValidityFlagWithMode,
+    world_gc::{WorldGcGuard, WorldGcState},
 };
 
 /// How a [`PyLazyWrapperProxy`] relates to ECS storage, which decides whether its cached
@@ -102,8 +105,9 @@ pub struct PyLazyWrapperProxy {
     /// Query items use their cached data pointer and store null here.
     world_ptr: *mut World,
 
-    /// The validity-fenced world cell used for narrow change-tick writeback.
+    /// Query cell used for narrow change-tick writeback. WorldGet uses world_ptr.
     world_cell: UnsafeWorldCell<'static>,
+    gc_state: Option<WorldGcState>,
 
     /// Captured query ticks. `None` is used by long-lived `World.get_mut`
     /// proxies, which intentionally stamp Bevy's current live tick.
@@ -179,6 +183,11 @@ impl PyLazyWrapperProxy {
             entity,
             world_ptr,
             world_cell,
+            gc_state: if kind == ProxyKind::WorldGet {
+                WorldGcState::for_world(world_cell.id())
+            } else {
+                None
+            },
             run_ticks,
             kind,
         }
@@ -271,10 +280,12 @@ impl PyLazyWrapperProxy {
                 // SAFETY: the world cell is valid while `validity` is active, the
                 // proxy holds write access, and no other reference to this
                 // component is live during synchronous attribute assignment.
+                let (cell, _gc) = self.write_cell()?;
+                // SAFETY: the checked write cell excludes traversal and competing component access.
                 unsafe {
                     pybevy_ecs::shared::change_tracking::reresolve_wrapper_ptr_mut(
                         self.entity,
-                        self.world_cell,
+                        cell,
                         self.component_id,
                     )
                 }
@@ -285,6 +296,19 @@ impl PyLazyWrapperProxy {
                 })
             }
             ProxyKind::QueryItem => Ok(self.data_ptr),
+        }
+    }
+
+    /// Reborrow from the owner's origin only when this proxy has exclusive World access.
+    fn write_cell(&self) -> PyResult<(UnsafeWorldCell<'_>, Option<WorldGcGuard>)> {
+        self.validity.check_write()?;
+        match self.kind {
+            ProxyKind::QueryItem => Ok((self.world_cell, None)),
+            ProxyKind::WorldGet => {
+                let gc = self.gc_state.as_ref().map(WorldGcState::suspend);
+                // SAFETY: checked write authority and the guard fence this owner-origin borrow.
+                Ok((unsafe { &mut *self.world_ptr }.as_unsafe_world_cell(), gc))
+            }
         }
     }
 
@@ -404,7 +428,7 @@ impl PyLazyWrapperProxy {
             // wrapper whose layout holds a `T` at `offset`; `validity` fences access.
             ProxyKind::WorldGet => unsafe {
                 ValueStorage::revalidating(
-                    self.world_cell,
+                    RevalidatingWorld::from_exclusive(self.world_ptr),
                     self.entity,
                     self.component_id,
                     offset,
@@ -568,10 +592,12 @@ impl PyLazyWrapperProxy {
         // Mark component as changed using stored entity context.
         // SAFETY: world_ptr is valid (protected by ValidityFlag on LazyWrapperProxy),
         // entity was extracted from a live query during system execution.
+        let (cell, _gc) = this.write_cell()?;
+        // SAFETY: checked write authority and the guard fence this exact component's tick update.
         unsafe {
             pybevy_ecs::shared::change_tracking::mark_component_changed_explicit(
                 this.entity,
-                this.world_cell,
+                cell,
                 this.component_id,
                 this.run_ticks,
             );

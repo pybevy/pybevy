@@ -3,12 +3,10 @@
 //! These traits define the interface for storage types that support borrowed references
 //! with validity tracking.
 
-use bevy::ecs::{
-    component::ComponentId, entity::Entity, world::unsafe_world_cell::UnsafeWorldCell,
-};
+use bevy::ecs::{component::ComponentId, entity::Entity};
 
 use crate::{
-    RevalidatingSource,
+    RevalidatingSource, RevalidatingWorld,
     component_change::ComponentWriteContext,
     validity_guard::{ValidityFlag, ValidityFlagWithMode},
 };
@@ -74,10 +72,10 @@ pub trait BorrowableStorage<T>: Sized {
     ///
     /// # Safety
     /// - `world` must remain live while `validity` is non-Invalid.
-    /// - The cell must permit component access matching the validity mode.
+    /// - The World origin must permit access matching the validity mode.
     /// - `(entity, component_id, offset)` must identify a live field of type `T`
-    unsafe fn revalidating_field(
-        world: UnsafeWorldCell<'_>,
+    unsafe fn revalidating_field<'w>(
+        world: impl Into<RevalidatingWorld<'w>>,
         entity: Entity,
         component_id: ComponentId,
         offset: usize,

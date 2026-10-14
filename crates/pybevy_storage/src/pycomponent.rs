@@ -6,13 +6,12 @@
 use bevy::ecs::{
     component::{Component, ComponentId},
     entity::Entity,
-    world::unsafe_world_cell::UnsafeWorldCell,
 };
 
 use crate::{
     ReadField, ReadVariant, RevalidatingSource, StorageMut, StorageRef, ValidateField, WriteField,
     WriteVariant,
-    borrowed::{BorrowedMut, BorrowedRef, RevalidatingField},
+    borrowed::{BorrowedMut, BorrowedRef, RevalidatingField, RevalidatingWorld},
     component_change::ComponentWriteContext,
     owned_cell::OwnedCell,
     storage_error::StorageError,
@@ -184,10 +183,10 @@ impl<T: Component> ComponentStorage<T> {
     ///
     /// # Safety
     /// - `world` must remain live while `validity` is active.
-    /// - The cell must permit component access matching the validity mode.
+    /// - The World origin must permit access matching the validity mode.
     /// - `(entity, component_id)` must identify a live component of type `T`.
-    pub unsafe fn revalidating(
-        world: UnsafeWorldCell<'_>,
+    pub unsafe fn revalidating<'w>(
+        world: impl Into<RevalidatingWorld<'w>>,
         entity: Entity,
         component_id: ComponentId,
         validity: ValidityFlagWithMode,
@@ -606,8 +605,8 @@ impl<T: Component> BorrowableStorage<T> for ComponentStorage<T> {
         Self::read_only_snapshot(value)
     }
 
-    unsafe fn revalidating_field(
-        world: UnsafeWorldCell<'_>,
+    unsafe fn revalidating_field<'w>(
+        world: impl Into<RevalidatingWorld<'w>>,
         entity: Entity,
         component_id: ComponentId,
         offset: usize,
@@ -647,7 +646,7 @@ mod tests {
     use super::*;
     use crate::{
         AccessMode, BorrowableStorage, ComponentWriteContext, ValidityFlag, ValidityGuard,
-        storage_traits::FromBorrowedStorage, value_storage::ValueStorage,
+        owned_cell::TestWorld, storage_traits::FromBorrowedStorage, value_storage::ValueStorage,
     };
 
     #[derive(Clone, Debug, PartialEq, Component)]
@@ -1104,10 +1103,10 @@ mod tests {
 
     #[test]
     fn test_revalidating_reads_and_writes_live_component() {
-        let mut world = World::new();
+        let mut world = TestWorld::new();
         let cid = world.register_component::<TestComponent>();
         let e = world.spawn(TestComponent { value: 5 }).id();
-        let cell = world.as_unsafe_world_cell();
+        let cell = world.access();
 
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
         let mut storage =
@@ -1122,10 +1121,10 @@ mod tests {
 
     #[test]
     fn test_revalidating_tracks_after_archetype_move() {
-        let mut world = World::new();
+        let mut world = TestWorld::new();
         let cid = world.register_component::<TestComponent>();
         let e = world.spawn(TestComponent { value: 1 }).id();
-        let cell = world.as_unsafe_world_cell();
+        let cell = world.access();
 
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
         let mut storage =
@@ -1144,10 +1143,10 @@ mod tests {
 
     #[test]
     fn test_revalidating_errors_after_despawn() {
-        let mut world = World::new();
+        let mut world = TestWorld::new();
         let cid = world.register_component::<TestComponent>();
         let e = world.spawn(TestComponent { value: 5 }).id();
-        let cell = world.as_unsafe_world_cell();
+        let cell = world.access();
 
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
         let mut storage =
@@ -1162,10 +1161,10 @@ mod tests {
 
     #[test]
     fn test_revalidating_read_mode_rejects_write() {
-        let mut world = World::new();
+        let mut world = TestWorld::new();
         let cid = world.register_component::<TestComponent>();
         let e = world.spawn(TestComponent { value: 5 }).id();
-        let cell = world.as_unsafe_world_cell();
+        let cell = world.access();
 
         let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
         let mut storage =
@@ -1178,10 +1177,10 @@ mod tests {
 
     #[test]
     fn test_revalidating_borrow_field_writes_through_and_tracks_move() {
-        let mut world = World::new();
+        let mut world = TestWorld::new();
         let cid = world.register_component::<NestedComponent>();
         let e = world.spawn(NestedComponent { x: 1.0, y: 2.0 }).id();
-        let cell = world.as_unsafe_world_cell();
+        let cell = world.access();
 
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
         let storage =
@@ -1202,10 +1201,10 @@ mod tests {
     fn test_share_borrow_revalidating_tracks_move() {
         // Mirrors AnimationPlayer.play() sharing a world.get_mut handle: the shared
         // sub-object must re-resolve from the entity, not a cached pointer.
-        let mut world = World::new();
+        let mut world = TestWorld::new();
         let cid = world.register_component::<TestComponent>();
         let e = world.spawn(TestComponent { value: 1 }).id();
-        let cell = world.as_unsafe_world_cell();
+        let cell = world.access();
 
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
         let storage =
@@ -1251,10 +1250,10 @@ mod tests {
 
     #[test]
     fn test_revalidating_variant_payload_rejects_stale_variant() {
-        let mut world = World::new();
+        let mut world = TestWorld::new();
         let cid = world.register_component::<Shape>();
         let e = world.spawn(Shape::Size([1, 2])).id();
-        let cell = world.as_unsafe_world_cell();
+        let cell = world.access();
         let validity = ValidityFlag::new_write();
         // SAFETY: the test owns World and accesses only this Shape through the handle.
         let storage = unsafe {
@@ -1407,7 +1406,7 @@ mod tests {
 
     #[test]
     fn test_revalidating_optional_child_rejects_none_after_move() {
-        let mut world = World::new();
+        let mut world = TestWorld::new();
         let component_id = world.register_component::<Sized2>();
         let entity = world
             .spawn(Sized2 {
@@ -1418,7 +1417,7 @@ mod tests {
         // SAFETY: the test owns World and accesses only this Sized2 through the handle.
         let parent = unsafe {
             ComponentStorage::<Sized2>::revalidating(
-                world.as_unsafe_world_cell(),
+                world.access(),
                 entity,
                 component_id,
                 validity.with_access_mode(AccessMode::Write),

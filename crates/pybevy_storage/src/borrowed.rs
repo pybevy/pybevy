@@ -12,7 +12,9 @@
 //! here once rather than being duplicated per storage type.
 
 use bevy::ecs::{
-    component::ComponentId, entity::Entity, world::unsafe_world_cell::UnsafeWorldCell,
+    component::ComponentId,
+    entity::Entity,
+    world::{World, unsafe_world_cell::UnsafeWorldCell},
 };
 
 use crate::{
@@ -20,6 +22,7 @@ use crate::{
     storage_error::StorageError,
     storage_traits::BorrowableStorage,
     validity_guard::{AccessMode, ValidityFlag, ValidityFlagWithMode},
+    world_traversal::WorldTraversalState,
 };
 
 /// Return the byte offset of `field` only when its complete object lies inside
@@ -310,6 +313,68 @@ pub(crate) unsafe fn revalidate_field_ptr_mut(
     Some(unsafe { base.add(offset) })
 }
 
+/// World origin for re-resolving component fields.
+///
+/// Scheduled access retains its narrow cell. Exclusive World handles retain the
+/// owner's stable pointer, since a cell derived from a temporary World reference
+/// cannot survive a later structural mutation through a fresh owner reference.
+#[derive(Debug, Clone)]
+pub struct RevalidatingWorld<'w> {
+    source: WorldSource<'w>,
+    traversal: Option<WorldTraversalState>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum WorldSource<'w> {
+    Cell(UnsafeWorldCell<'w>),
+    Exclusive(*mut World),
+}
+
+impl<'w> From<UnsafeWorldCell<'w>> for RevalidatingWorld<'w> {
+    fn from(cell: UnsafeWorldCell<'w>) -> Self {
+        Self {
+            source: WorldSource::Cell(cell),
+            traversal: None,
+        }
+    }
+}
+
+impl RevalidatingWorld<'_> {
+    /// Retain the pointer used by an exclusive World owner.
+    ///
+    /// # Safety
+    /// The pointer must retain its provenance and remain live for every handle's
+    /// validity window. Every operation must have exclusive World authority and
+    /// exclude competing references. Derive it from the owner's stable origin,
+    /// never from a temporary World reborrow or a scheduled Query cell. If the
+    /// owner registered a GC gate, accesses must remain interpreter-attached.
+    pub unsafe fn from_exclusive(world: *mut World) -> Self {
+        // SAFETY: the caller grants a live World reference during construction.
+        let id = unsafe { &*world }.id();
+        Self {
+            source: WorldSource::Exclusive(world),
+            traversal: WorldTraversalState::for_world(id),
+        }
+    }
+
+    /// # Safety
+    /// The source must still be valid and authorize the requested access.
+    #[inline]
+    unsafe fn cell(&self, mutable: bool) -> UnsafeWorldCell<'_> {
+        match self.source {
+            WorldSource::Cell(cell) => cell,
+            WorldSource::Exclusive(ptr) if mutable => {
+                // SAFETY: the exclusive owner grants a fresh mutable World borrow.
+                unsafe { &mut *ptr }.as_unsafe_world_cell()
+            }
+            WorldSource::Exclusive(ptr) => {
+                // SAFETY: the exclusive owner grants a fresh shared World borrow.
+                unsafe { &*ptr }.as_unsafe_world_cell_readonly()
+            }
+        }
+    }
+}
+
 /// ECS identity of a component field, re-resolved on each access instead of cached.
 ///
 /// Shared by every storage type's `Revalidating` variant. It caches no field pointer, so
@@ -321,7 +386,7 @@ pub(crate) unsafe fn revalidate_field_ptr_mut(
 /// `pub` `Revalidating` variant; all fields stay private.
 #[derive(Debug, Clone)]
 pub struct RevalidatingField {
-    world: UnsafeWorldCell<'static>,
+    world: RevalidatingWorld<'static>,
     entity: Entity,
     component_id: ComponentId,
     offset: usize,
@@ -330,9 +395,9 @@ pub struct RevalidatingField {
     validity: ValidityFlagWithMode,
 }
 
-// SAFETY: the cell is only used for the identified component through a fresh
-// re-resolve gated by `validity` (Arc<AtomicU8>, itself Send + Sync), which is
-// invalidated when the owning system exits. The other fields are plain Copy data.
+// SAFETY: thread-affine validity gates every resolution and expires with its
+// owner. Scheduled access stays component-scoped; exclusive World access uses
+// the owner's stable pointer and shared traversal gate.
 unsafe impl Send for RevalidatingField {}
 // SAFETY: same argument as the impl above
 unsafe impl Sync for RevalidatingField {}
@@ -340,20 +405,21 @@ unsafe impl Sync for RevalidatingField {}
 impl RevalidatingField {
     /// # Safety
     /// - `world` must remain live while `validity` is non-Invalid.
-    /// - The cell must permit component access matching the validity mode.
+    /// - The World origin must permit access matching the validity mode.
     /// - `(entity, component_id, offset)` must identify a live field of the type the
     ///   caller will read/write through this handle.
     #[inline]
-    pub(crate) unsafe fn new(
-        world: UnsafeWorldCell<'_>,
+    pub(crate) unsafe fn new<'w>(
+        world: impl Into<RevalidatingWorld<'w>>,
         entity: Entity,
         component_id: ComponentId,
         offset: usize,
         validity: ValidityFlagWithMode,
     ) -> Self {
-        // SAFETY: the caller fences this cell with the handle's validity flag.
-        let world =
-            unsafe { std::mem::transmute::<UnsafeWorldCell<'_>, UnsafeWorldCell<'static>>(world) };
+        // SAFETY: the caller fences this World origin with the validity flag.
+        let world = unsafe {
+            std::mem::transmute::<RevalidatingWorld<'w>, RevalidatingWorld<'static>>(world.into())
+        };
         Self {
             world,
             entity,
@@ -375,7 +441,7 @@ impl RevalidatingField {
 
     pub(crate) fn clone_as_ref(&self) -> Self {
         Self {
-            world: self.world,
+            world: self.world.clone(),
             entity: self.entity,
             component_id: self.component_id,
             offset: self.offset,
@@ -386,16 +452,35 @@ impl RevalidatingField {
     #[inline]
     fn resolve(&self) -> Result<*const u8, StorageError> {
         // SAFETY: forwarded from this handle's construction contract
-        unsafe { revalidate_field_ptr(self.world, self.entity, self.component_id, self.offset) }
-            .ok_or(StorageError::EntityUnavailable)
+        unsafe {
+            revalidate_field_ptr(
+                self.world.cell(false),
+                self.entity,
+                self.component_id,
+                self.offset,
+            )
+        }
+        .ok_or(StorageError::EntityUnavailable)
     }
 
     #[inline]
     fn resolve_mut(&mut self) -> Result<*mut u8, StorageError> {
+        let _guard = self
+            .world
+            .traversal
+            .as_ref()
+            .map(WorldTraversalState::suspend);
         // SAFETY: forwarded from this handle's construction contract; `&mut self`
         // represents the handle's exclusive write access.
-        unsafe { revalidate_field_ptr_mut(self.world, self.entity, self.component_id, self.offset) }
-            .ok_or(StorageError::EntityUnavailable)
+        unsafe {
+            revalidate_field_ptr_mut(
+                self.world.cell(true),
+                self.entity,
+                self.component_id,
+                self.offset,
+            )
+        }
+        .ok_or(StorageError::EntityUnavailable)
     }
 
     /// Read the field as `&T`, checking validity. `T` must be the field's type.
@@ -443,7 +528,7 @@ impl RevalidatingField {
         // re-resolved per access exactly like this handle
         Ok(unsafe {
             S::revalidating_field(
-                self.world,
+                self.world.clone(),
                 self.entity,
                 self.component_id,
                 child_offset,

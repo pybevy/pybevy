@@ -229,7 +229,7 @@ mod tests {
         assert_eq!(first.parent().unwrap(), a);
         assert!(first.__eq__(&second).unwrap());
         assert!(!first.__eq__(&other).unwrap());
-        // Bevy 0.19 prints entities as "<index>v<generation>".
+        // Bevy 0.20 prints entities as "<index>v<generation>".
         assert_eq!(first.__repr__().unwrap(), "ChildOf(5v0)");
     }
 

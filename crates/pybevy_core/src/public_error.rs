@@ -1921,7 +1921,7 @@ mod tests {
 
     #[test]
     fn does_not_suggest_a_shared_prefix_neighbour() {
-        // Bevy 0.19 has no emissive_intensity; emissive is the real target.
+        // Bevy 0.20 has no emissive_intensity; emissive is the real target.
         assert_eq!(
             suggest_keyword(
                 "emissive_intensity",

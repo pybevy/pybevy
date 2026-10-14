@@ -9,6 +9,12 @@
 
 use std::{cell::UnsafeCell, fmt};
 
+#[cfg(test)]
+use bevy::ecs::world::World;
+
+#[cfg(test)]
+use crate::RevalidatingWorld;
+
 /// A heap-allocated `T` whose address may be lent out mutably through `&self`.
 ///
 /// Every handle - the owner's own references included - derives from
@@ -18,6 +24,38 @@ use std::{cell::UnsafeCell, fmt};
 /// under both Stacked Borrows and Tree Borrows however the lifetime works out.
 pub struct OwnedCell<T> {
     data: Box<UnsafeCell<T>>,
+}
+
+/// Exclusive World owner matching PyWorld's stable boxed UnsafeCell origin.
+#[cfg(test)]
+pub(crate) struct TestWorld(OwnedCell<World>);
+
+#[cfg(test)]
+impl TestWorld {
+    pub(crate) fn new() -> Self {
+        Self(OwnedCell::new(World::new()))
+    }
+
+    pub(crate) fn access(&mut self) -> RevalidatingWorld<'static> {
+        // SAFETY: tests retain this owner and use fresh, sequential borrows.
+        unsafe { RevalidatingWorld::from_exclusive(self.0.as_mut_ptr()) }
+    }
+}
+
+#[cfg(test)]
+impl std::ops::Deref for TestWorld {
+    type Target = World;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.get()
+    }
+}
+
+#[cfg(test)]
+impl std::ops::DerefMut for TestWorld {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0.get_mut()
+    }
 }
 
 // SAFETY: the cell owns its `T` outright and `Box` keeps its address across the
