@@ -1,9 +1,7 @@
 use bevy::prelude::Resource;
 use tokio::sync::oneshot;
 
-use super::{
-    analysis::FrameStatsOptions, depth::PendingDepthAnalysis, screenshot::GizmoEnabledRestore,
-};
+use super::{analysis::FrameStatsOptions, depth::PendingDepthAnalysis, hold::GizmoEnabledRestore};
 use crate::protocol::{ControlError, EntityRef};
 
 /// Default screenshot width when the caller doesn't pass `max_width`.

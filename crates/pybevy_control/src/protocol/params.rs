@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 
 use super::EntityRef;
 use crate::capture::{
-    analysis::DEFAULT_COMPARE_EPSILON,
-    screenshot::{MAX_CAPTURE_DELAY_FRAMES, MAX_TIMELINE_FRAMES},
+    analysis::DEFAULT_COMPARE_EPSILON, screenshot::MAX_CAPTURE_DELAY_FRAMES,
+    timeline::MAX_TIMELINE_FRAMES,
 };
 
 /// Reload mode: full (default) re-executes all scene code, partial only reloads changed systems.

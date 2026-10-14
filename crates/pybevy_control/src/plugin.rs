@@ -206,9 +206,9 @@ impl Plugin for ControlBevyPlugin {
         app.add_systems(
             Last,
             (
-                crate::capture::screenshot::hold_capture_pose,
+                crate::capture::camera::hold_capture_pose,
                 crate::capture::screenshot::process_pending_screenshots,
-                crate::capture::screenshot::process_pending_timelines,
+                crate::capture::timeline::process_pending_timelines,
                 crate::reload::process_pending_reloads,
                 crate::capture::turnaround::process_pending_turnarounds,
             ),
@@ -218,8 +218,8 @@ impl Plugin for ControlBevyPlugin {
         app.add_observer(crate::capture::screenshot::screenshot_captured_observer);
         app.init_resource::<CapturedFrames>();
         app.init_resource::<crate::capture::screenshot::PendingScreenshotResponders>();
-        app.init_resource::<crate::capture::screenshot::PendingTimelines>();
-        app.init_resource::<crate::capture::screenshot::TimelineCaptures>();
+        app.init_resource::<crate::capture::timeline::PendingTimelines>();
+        app.init_resource::<crate::capture::timeline::TimelineCaptures>();
         app.init_resource::<crate::capture::turnaround::PendingTurnarounds>();
         app.init_resource::<crate::capture::turnaround::TurnaroundCaptures>();
 
@@ -231,10 +231,10 @@ impl Plugin for ControlBevyPlugin {
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
-        let readiness = crate::capture::screenshot::RenderFrameReadiness::default();
+        let readiness = crate::capture::readiness::RenderFrameReadiness::default();
         render_app.insert_resource(readiness.clone()).add_systems(
             Render,
-            crate::capture::screenshot::update_render_frame_readiness.after(RenderSystems::Render),
+            crate::capture::readiness::update_render_frame_readiness.after(RenderSystems::Render),
         );
         app.insert_resource(readiness);
     }

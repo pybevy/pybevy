@@ -6,7 +6,7 @@ use bevy::{
     window::PrimaryWindow,
 };
 
-use super::screenshot::select_capture_camera_3d;
+use super::camera::select_capture_camera_3d;
 use crate::{
     protocol::ControlError,
     scene::spatial::{self, compute_world_aabb},

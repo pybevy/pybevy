@@ -16,7 +16,7 @@ use super::{
     request::{ScheduleAction, ScheduleRequest, resolve_at, resolve_at_frame, tool_to_operation},
 };
 use crate::{
-    capture::screenshot::RenderFrameReadiness,
+    capture::readiness::RenderFrameReadiness,
     engine::{channel::ControlRequest, deferred::DeferredBatch, dispatch::dispatch},
     protocol::{ControlError, OperationKind, OperationTag},
     pyo3::components::has_embedded_errors,
@@ -798,7 +798,7 @@ mod tests {
     #[test]
     fn scheduled_capture_inherits_the_latest_render_epoch() {
         let mut world = World::new();
-        let readiness = crate::capture::screenshot::RenderFrameReadiness::default();
+        let readiness = crate::capture::readiness::RenderFrameReadiness::default();
         let required_epoch = readiness.request_frame();
         world.insert_resource(readiness);
 

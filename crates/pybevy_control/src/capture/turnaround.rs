@@ -7,11 +7,17 @@ use bevy::{
 use image::{ImageFormat, Rgb, RgbImage};
 use tokio::sync::oneshot;
 
-use super::screenshot::{
-    CAPTURE_CANCELLED_ERROR, CAPTURE_DEADLINE_ERROR, DebugCameraCleanup,
-    EntityCaptureIsolationActive, MAX_CAPTURE_WAIT_FRAMES, STALE_HEADLESS_FRAME_ERROR,
-    capture_in_progress, cleanup_debug_camera_world, headless_frame_sequence, hsv_to_rgb,
-    restore_ui_nodes, setup_debug_camera_with_up,
+use super::{
+    camera::{DebugCameraCleanup, cleanup_debug_camera_world, setup_debug_camera_with_up},
+    compose::hsv_to_rgb,
+    headless::{headless_frame_sequence, read_headless_frame},
+    hold::{release_internal_overlay, restore_ui_nodes, suppress_internal_overlay},
+    isolation::EntityCaptureIsolationActive,
+    lease::capture_in_progress,
+    screenshot::{
+        CAPTURE_CANCELLED_ERROR, CAPTURE_DEADLINE_ERROR, MAX_CAPTURE_WAIT_FRAMES,
+        STALE_HEADLESS_FRAME_ERROR,
+    },
 };
 use crate::{
     capture::{hold::InternalOverlayUi, queue::DebugCameraRequest},
@@ -184,7 +190,7 @@ fn fail_turnaround(world: &mut World, mut turnaround: ActiveTurnaround, message:
         restore_ui_nodes(world, restore);
     }
     if turnaround.overlay_suppressed {
-        super::screenshot::release_internal_overlay(world);
+        release_internal_overlay(world);
     }
     if let Some(tx) = turnaround.response_tx.take() {
         let _ = tx.send(Err(ControlError::internal(message)));
@@ -269,7 +275,7 @@ pub fn process_pending_turnarounds(world: &mut World) {
             // Release the overlay suppression held by this turnaround
             if turnaround.overlay_suppressed {
                 turnaround.overlay_suppressed = false;
-                super::screenshot::release_internal_overlay(world);
+                release_internal_overlay(world);
             }
 
             // Composite and send response
@@ -283,7 +289,7 @@ pub fn process_pending_turnarounds(world: &mut World) {
         // Suppress the internal overlay for the duration of the turnaround
         // (the overlay is capture noise regardless of hide_ui)
         if turnaround.current_index == 0 && !turnaround.overlay_suppressed {
-            super::screenshot::suppress_internal_overlay(world);
+            suppress_internal_overlay(world);
             turnaround.overlay_suppressed = true;
         }
 
@@ -310,7 +316,7 @@ pub fn process_pending_turnarounds(world: &mut World) {
                     }
                 }
                 if turnaround.overlay_suppressed {
-                    super::screenshot::release_internal_overlay(world);
+                    release_internal_overlay(world);
                 }
                 if let Some(tx) = turnaround.response_tx.take() {
                     let _ = tx.send(Err(error));
@@ -379,7 +385,7 @@ pub fn process_pending_turnarounds(world: &mut World) {
         }
 
         if !ready.is_empty() {
-            match super::screenshot::read_headless_frame(world) {
+            match read_headless_frame(world) {
                 Ok(rgb) => {
                     for idx in ready {
                         let capture_index = pending.active[idx].current_index;
@@ -777,7 +783,7 @@ mod tests {
     #[test]
     fn headless_turnaround_does_not_reuse_the_previous_view() {
         let mut world = World::new();
-        world.insert_resource(crate::capture::screenshot::HeadlessFrameBuffer {
+        world.insert_resource(crate::capture::headless::HeadlessFrameBuffer {
             latest: Some((vec![255, 0, 0, 255], 1, 1)),
             sequence: 5,
         });
@@ -811,7 +817,7 @@ mod tests {
     #[test]
     fn headless_turnaround_advances_to_view_setup_after_capture() {
         let mut world = World::new();
-        world.insert_resource(crate::capture::screenshot::HeadlessFrameBuffer {
+        world.insert_resource(crate::capture::headless::HeadlessFrameBuffer {
             latest: Some((vec![0, 255, 0, 255], 1, 1)),
             sequence: 8,
         });
