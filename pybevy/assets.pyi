@@ -87,12 +87,14 @@ class AssetId(Generic[A_co]):
 
     class Index(AssetId[_VariantA_co], Generic[_VariantA_co]):
         __match_args__: ClassVar[tuple[Literal["index"]]]
-        index: AssetIndex
+        @property
+        def index(self) -> AssetIndex: ...
         def __init__(self, *, index: AssetIndex, asset_type: type[_VariantA_co]) -> None: ...
 
     class Uuid(AssetId[_VariantA_co], Generic[_VariantA_co]):
         __match_args__: ClassVar[tuple[Literal["uuid"]]]
-        uuid: int
+        @property
+        def uuid(self) -> int: ...
         def __init__(self, *, uuid: int, asset_type: type[_VariantA_co]) -> None: ...
 
     @staticmethod
@@ -556,27 +558,32 @@ class AssetEvent(Message, Generic[A_co]):
 
     class Added(AssetEvent[_VariantA_co], Generic[_VariantA_co]):
         __match_args__: ClassVar[tuple[Literal["id"]]]
-        id: AssetId[_VariantA_co]
+        @property
+        def id(self) -> AssetId[_VariantA_co]: ...
         def __init__(self, *, id: AssetId[_VariantA_co]) -> None: ...
 
     class Modified(AssetEvent[_VariantA_co], Generic[_VariantA_co]):
         __match_args__: ClassVar[tuple[Literal["id"]]]
-        id: AssetId[_VariantA_co]
+        @property
+        def id(self) -> AssetId[_VariantA_co]: ...
         def __init__(self, *, id: AssetId[_VariantA_co]) -> None: ...
 
     class Removed(AssetEvent[_VariantA_co], Generic[_VariantA_co]):
         __match_args__: ClassVar[tuple[Literal["id"]]]
-        id: AssetId[_VariantA_co]
+        @property
+        def id(self) -> AssetId[_VariantA_co]: ...
         def __init__(self, *, id: AssetId[_VariantA_co]) -> None: ...
 
     class Unused(AssetEvent[_VariantA_co], Generic[_VariantA_co]):
         __match_args__: ClassVar[tuple[Literal["id"]]]
-        id: AssetId[_VariantA_co]
+        @property
+        def id(self) -> AssetId[_VariantA_co]: ...
         def __init__(self, *, id: AssetId[_VariantA_co]) -> None: ...
 
     class LoadedWithDependencies(AssetEvent[_VariantA_co], Generic[_VariantA_co]):
         __match_args__: ClassVar[tuple[Literal["id"]]]
-        id: AssetId[_VariantA_co]
+        @property
+        def id(self) -> AssetId[_VariantA_co]: ...
         def __init__(self, *, id: AssetId[_VariantA_co]) -> None: ...
 
 class AssetLoadFailedEvent(Message, Generic[A_co]):

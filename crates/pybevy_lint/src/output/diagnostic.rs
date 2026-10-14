@@ -57,7 +57,7 @@ pub enum DiagnosticCode {
     W004,
     /// W005: Missing Option wrapper for default None
     W005,
-    /// W006: Storage-derived mutable result has no explicit mutation semantics
+    /// W006: Storage, message, or enum payload result is mutable without explicit semantics
     W006,
     /// W007: Property has getter but no setter (read-only)
     W007,
@@ -210,7 +210,9 @@ impl DiagnosticCode {
             DiagnosticCode::W003 => "setter missing set_ prefix",
             DiagnosticCode::W004 => "factory method should return PyResult<Py<Self>>",
             DiagnosticCode::W005 => "parameter with None default should be Option<T>",
-            DiagnosticCode::W006 => "storage-derived mutable result has no mutation semantics",
+            DiagnosticCode::W006 => {
+                "storage, message, or enum payload mutable result has no mutation semantics"
+            }
             DiagnosticCode::W007 => "property has getter but no setter (read-only)",
             DiagnosticCode::W008 => {
                 "enum has both variant and classattr alias (redundant constructor)"

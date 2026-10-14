@@ -404,7 +404,8 @@ class SliceScaleMode:
     class Tile(SliceScaleMode):
         """Repeat the slice after the drawing-to-source ratio reaches the threshold."""
         __match_args__: ClassVar[tuple[Literal["stretch_value"]]]
-        stretch_value: float
+        @property
+        def stretch_value(self) -> float: ...
         def __init__(self,*, stretch_value: float = 1.0) -> None: ...
 
     def __eq__(self, other: object) -> bool: ...

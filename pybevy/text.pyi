@@ -356,7 +356,8 @@ class FontStyle:
         """A sloped face with an optional slant angle in degrees."""
 
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: float | None
+        @property
+        def value(self) -> float | None: ...
         def __init__(self, value: float | None = None) -> None: ...
 
     def __eq__(self, other: object) -> bool: ...
@@ -620,32 +621,38 @@ class FontSize:
 
     class Px(FontSize):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: float
+        @property
+        def value(self) -> float: ...
         def __init__(self, value: float) -> None: ...
 
     class Vw(FontSize):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: float
+        @property
+        def value(self) -> float: ...
         def __init__(self, value: float) -> None: ...
 
     class Vh(FontSize):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: float
+        @property
+        def value(self) -> float: ...
         def __init__(self, value: float) -> None: ...
 
     class VMin(FontSize):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: float
+        @property
+        def value(self) -> float: ...
         def __init__(self, value: float) -> None: ...
 
     class VMax(FontSize):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: float
+        @property
+        def value(self) -> float: ...
         def __init__(self, value: float) -> None: ...
 
     class Rem(FontSize):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: float
+        @property
+        def value(self) -> float: ...
         def __init__(self, value: float) -> None: ...
 
     def __eq__(self, other: object) -> bool: ...
@@ -671,7 +678,8 @@ class FontSource:
 
     class Handle(FontSource):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: AssetHandle
+        @property
+        def value(self) -> AssetHandle: ...
         def __init__(self, value: AssetHandle) -> None: ...
 
     class Family(FontSource):
@@ -684,7 +692,8 @@ class FontSource:
         """
 
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: str
+        @property
+        def value(self) -> str: ...
         def __init__(self, value: str) -> None: ...
 
     class Serif(FontSource):
@@ -1102,6 +1111,18 @@ class LetterSpacing(Component):
     def __eq__(self, other: object) -> bool: ...
 
 
+class PreeditCursor:
+    """Selection within IME preedit text, as byte offsets from its start.
+
+    `anchor == focus` is a caret.
+    """
+
+    anchor: int
+    focus: int
+    def __init__(self, *, anchor: int, focus: int) -> None: ...
+    def __eq__(self, other: object) -> bool: ...
+
+
 class TextEdit:
     """Deferred text edit/navigation command applied by the text systems."""
 
@@ -1118,8 +1139,9 @@ class TextEdit:
         def __init__(self) -> None: ...
 
     class Insert(TextEdit):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: str
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> str: ...
         def __init__(self, value: str) -> None: ...
 
     class Backspace(TextEdit):
@@ -1139,63 +1161,75 @@ class TextEdit:
         def __init__(self) -> None: ...
 
     class Left(TextEdit):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: bool
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> bool: ...
         def __init__(self, value: bool) -> None: ...
 
     class Right(TextEdit):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: bool
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> bool: ...
         def __init__(self, value: bool) -> None: ...
 
     class WordLeft(TextEdit):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: bool
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> bool: ...
         def __init__(self, value: bool) -> None: ...
 
     class WordRight(TextEdit):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: bool
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> bool: ...
         def __init__(self, value: bool) -> None: ...
 
     class Up(TextEdit):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: bool
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> bool: ...
         def __init__(self, value: bool) -> None: ...
 
     class Down(TextEdit):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: bool
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> bool: ...
         def __init__(self, value: bool) -> None: ...
 
     class TextStart(TextEdit):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: bool
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> bool: ...
         def __init__(self, value: bool) -> None: ...
 
     class TextEnd(TextEdit):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: bool
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> bool: ...
         def __init__(self, value: bool) -> None: ...
 
     class HardLineStart(TextEdit):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: bool
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> bool: ...
         def __init__(self, value: bool) -> None: ...
 
     class HardLineEnd(TextEdit):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: bool
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> bool: ...
         def __init__(self, value: bool) -> None: ...
 
     class LineStart(TextEdit):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: bool
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> bool: ...
         def __init__(self, value: bool) -> None: ...
 
     class LineEnd(TextEdit):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: bool
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> bool: ...
         def __init__(self, value: bool) -> None: ...
 
     class CollapseSelection(TextEdit):
@@ -1247,14 +1281,17 @@ class TextEdit:
         def __init__(self, value: Vec2) -> None: ...
 
     class ImeSetCompose(TextEdit):
-        __match_args__: ClassVar[tuple[Literal["value"], Literal["cursor"]]]
-        value: str
-        cursor: tuple[int, int] | None
-        def __init__(self, *, value: str, cursor: tuple[int, int] | None) -> None: ...
+        __match_args__: ClassVar[tuple[Literal["value"], Literal["cursor"]]] = ("value", "cursor")
+        @property
+        def value(self) -> str: ...
+        @property
+        def cursor(self) -> PreeditCursor | None: ...
+        def __init__(self, *, value: str, cursor: PreeditCursor | None) -> None: ...
 
     class ImeCommit(TextEdit):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: str
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> str: ...
         def __init__(self, *, value: str) -> None: ...
 
     def __eq__(self, other: object) -> bool: ...

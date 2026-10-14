@@ -1,11 +1,12 @@
 use bevy::{
     ecs::entity::Entity,
     input::mouse::{MouseButtonInput, MouseMotion, MouseWheel},
+    math::Vec2,
 };
+use pybevy_core::PyEntity;
 pub use pybevy_core::PyMessage;
-use pybevy_core::{FromBorrowedStorage, PyEntity, ValueStorage};
 use pybevy_macros::pymessage;
-use pybevy_math::vec2::PyVec2;
+use pybevy_math::snapshot::Snapshot;
 use pyo3::prelude::*;
 
 use crate::{
@@ -119,25 +120,18 @@ impl PyMouseButtonInput {
 #[pyclass(name = "MouseMotion", module = "pybevy.input", extends = PyMessage, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyMouseMotion {
-    pub delta: PyVec2,
+    pub delta: Vec2,
 }
 
 impl PyMouseMotion {
     pub fn from_bevy(event: &MouseMotion) -> (Self, PyMessage) {
-        (
-            PyMouseMotion {
-                delta: event.delta.into(),
-            },
-            PyMessage,
-        )
+        (PyMouseMotion::from(event), PyMessage)
     }
 }
 
 impl From<&MouseMotion> for PyMouseMotion {
     fn from(event: &MouseMotion) -> Self {
-        PyMouseMotion {
-            delta: event.delta.into(),
-        }
+        PyMouseMotion { delta: event.delta }
     }
 }
 
@@ -145,9 +139,7 @@ impl TryFrom<&PyMouseMotion> for MouseMotion {
     type Error = PyErr;
 
     fn try_from(value: &PyMouseMotion) -> PyResult<Self> {
-        Ok(MouseMotion {
-            delta: value.delta.try_get()?,
-        })
+        Ok(MouseMotion { delta: value.delta })
     }
 }
 
@@ -155,25 +147,25 @@ impl TryFrom<&PyMouseMotion> for MouseMotion {
 impl PyMouseMotion {
     #[new]
     #[pyo3(signature = (*, delta))]
-    fn new(delta: PyVec2) -> PyClassInitializer<Self> {
-        (PyMouseMotion { delta }, PyMessage).into()
+    fn new(delta: Snapshot<Vec2>) -> PyClassInitializer<Self> {
+        (PyMouseMotion { delta: delta.0 }, PyMessage).into()
     }
 
     #[getter]
-    fn delta(&self) -> PyResult<PyVec2> {
-        Ok(PyVec2::from_borrowed(ValueStorage::read_only_snapshot(
-            self.delta.try_get()?,
-        )))
+    fn delta(&self) -> Snapshot<Vec2> {
+        Snapshot(self.delta)
     }
 
     #[setter]
-    fn set_delta(&mut self, delta: PyVec2) {
-        self.delta = delta;
+    fn set_delta(&mut self, delta: Snapshot<Vec2>) {
+        self.delta = delta.0;
     }
 
-    fn __repr__(&self) -> PyResult<String> {
-        let d = self.delta.try_get()?;
-        Ok(format!("MouseMotion(delta=Vec2({}, {}))", d.x, d.y))
+    fn __repr__(&self) -> String {
+        format!(
+            "MouseMotion(delta=Vec2({}, {}))",
+            self.delta.x, self.delta.y
+        )
     }
 }
 

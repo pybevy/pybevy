@@ -5,7 +5,7 @@ use pybevy_core::{
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 use super::{mat3::PyMat3, vec2::PyVec2};
-use crate::richcmp::comparison_result;
+use crate::{require_invertible, richcmp::comparison_result};
 
 #[pyclass(name = "Affine2", module = "pybevy.math", from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
@@ -203,7 +203,9 @@ impl PyAffine2 {
     }
 
     pub fn inverse(&self) -> PyResult<PyAffine2> {
-        Ok(PyAffine2::from_affine2(self.as_ref()?.inverse()))
+        let inverse = self.as_ref()?.inverse();
+        require_invertible("Affine2", inverse.is_finite())?;
+        Ok(PyAffine2::from_affine2(inverse))
     }
 
     pub fn transform_point2(&self, point: PyVec2) -> PyResult<PyVec2> {
@@ -435,7 +437,9 @@ impl PyMat2 {
     }
 
     pub fn inverse(&self) -> PyResult<PyMat2> {
-        Ok(PyMat2::from_mat2(self.as_ref()?.inverse()))
+        let inverse = self.as_ref()?.inverse();
+        require_invertible("Mat2", inverse.is_finite())?;
+        Ok(PyMat2::from_mat2(inverse))
     }
 
     pub fn mul_vec2(&self, rhs: PyVec2) -> PyResult<PyVec2> {

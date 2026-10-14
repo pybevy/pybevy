@@ -910,14 +910,17 @@ class Falloff:
     class Exponential(Falloff):
         """Exponential falloff with given scale."""
         __match_args__: ClassVar[tuple[Literal["scale"]]]
-        scale: float
+        @property
+        def scale(self) -> float: ...
         def __init__(self, *, scale: float) -> None: ...
 
     class Tent(Falloff):
         """Tent-shaped falloff with given center and width."""
         __match_args__: ClassVar[tuple[Literal["center"], Literal["width"]]]
-        center: float
-        width: float
+        @property
+        def center(self) -> float: ...
+        @property
+        def width(self) -> float: ...
         def __init__(self, *, center: float, width: float) -> None: ...
 
 class PhaseFunction:
@@ -942,13 +945,15 @@ class PhaseFunction:
     class Mie(PhaseFunction):
         """Henyey-Greenstein approximation of Mie scattering."""
         __match_args__: ClassVar[tuple[Literal["asymmetry"]]]
-        asymmetry: float
+        @property
+        def asymmetry(self) -> float: ...
         def __init__(self, *, asymmetry: float) -> None: ...
 
     class ChromaticTexture(PhaseFunction):
         """Chromatic phase function sampled from an Nx1 Rgba32Float texture."""
         __match_args__: ClassVar[tuple[Literal["image"]]]
-        image: Handle[Image]
+        @property
+        def image(self) -> Handle[Image]: ...
         def __init__(self, image: Handle[Image]) -> None: ...
 
 class ScatteringTerm:

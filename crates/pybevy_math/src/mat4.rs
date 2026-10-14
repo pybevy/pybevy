@@ -1,7 +1,11 @@
 use bevy::math::{Mat4, Vec3, Vec4};
 use pybevy_core::{
     FromBorrowedStorage, StorageRef, ValueStorage,
-    public_error::{MAT4_PERSPECTIVE_INFINITE_REVERSE_RH_NEAR, UNSUPPORTED_COMPARISON},
+    public_error::{
+        MAT4_LOOK_AT_EYE_EQUALS_CENTER, MAT4_LOOK_DIRECTION_PARALLEL_TO_UP,
+        MAT4_PERSPECTIVE_INFINITE_REVERSE_RH_NEAR, UNSUPPORTED_COMPARISON,
+        mat4_perspective_depth_planes, mat4_projection_not_finite,
+    },
 };
 use pyo3::{
     basic::CompareOp,
@@ -10,7 +14,7 @@ use pyo3::{
 };
 
 use super::{mat3::PyMat3, quat::PyQuat, vec3::PyVec3, vec4::PyVec4};
-use crate::richcmp::comparison_result;
+use crate::{require_invertible, richcmp::comparison_result};
 
 #[pyclass(name = "Mat4", module = "pybevy.math", from_py_object)]
 #[derive(Debug, Clone)]
@@ -73,6 +77,57 @@ impl PyMat4 {
     fn as_ref(&self) -> PyResult<StorageRef<'_, Mat4>> {
         Ok(self.storage.as_ref()?)
     }
+}
+
+fn finite_projection(function: &str, matrix: Mat4) -> PyResult<PyMat4> {
+    if !matrix.is_finite() {
+        return Err(PyValueError::new_err(mat4_projection_not_finite(function)));
+    }
+    Ok(PyMat4::mat4(matrix))
+}
+
+fn perspective_depth_planes(function: &str, z_near: f32, z_far: f32) -> PyResult<()> {
+    if !(z_near > 0.0 && z_far > 0.0) {
+        return Err(PyValueError::new_err(mat4_perspective_depth_planes(
+            function,
+        )));
+    }
+    Ok(())
+}
+
+fn look_direction(eye: Vec3, center: Vec3) -> PyResult<Vec3> {
+    (center - eye)
+        .try_normalize()
+        .ok_or_else(|| PyValueError::new_err(MAT4_LOOK_AT_EYE_EQUALS_CENTER))
+}
+
+fn require_not_parallel(dir: Vec3, up: Vec3) -> PyResult<()> {
+    if dir.cross(up).try_normalize().is_none() {
+        return Err(PyValueError::new_err(MAT4_LOOK_DIRECTION_PARALLEL_TO_UP));
+    }
+    Ok(())
+}
+
+fn look_to_inputs(eye: &PyVec3, dir: &PyVec3, up: &PyVec3) -> PyResult<(Vec3, Vec3, Vec3)> {
+    let eye: Vec3 = eye.try_into()?;
+    let dir: Vec3 = dir.try_into()?;
+    let up: Vec3 = up.try_into()?;
+    if !dir.is_normalized() {
+        return Err(PyValueError::new_err("direction must be normalized"));
+    }
+    if !up.is_normalized() {
+        return Err(PyValueError::new_err("up must be normalized"));
+    }
+    require_not_parallel(dir, up)?;
+    Ok((eye, dir, up))
+}
+
+fn look_at_inputs(eye: &PyVec3, center: &PyVec3, up: &PyVec3) -> PyResult<(Vec3, Vec3, Vec3)> {
+    let eye: Vec3 = eye.try_into()?;
+    let up: Vec3 = up.try_into()?;
+    let dir = look_direction(eye, center.try_into()?)?;
+    require_not_parallel(dir, up)?;
+    Ok((eye, dir, up))
 }
 
 #[pymethods]
@@ -197,23 +252,31 @@ impl PyMat4 {
     }
 
     #[staticmethod]
-    pub fn perspective_lh(fov_y_radians: f32, aspect_ratio: f32, z_near: f32, z_far: f32) -> Self {
-        PyMat4::mat4(Mat4::perspective_lh(
-            fov_y_radians,
-            aspect_ratio,
-            z_near,
-            z_far,
-        ))
+    pub fn perspective_lh(
+        fov_y_radians: f32,
+        aspect_ratio: f32,
+        z_near: f32,
+        z_far: f32,
+    ) -> PyResult<Self> {
+        perspective_depth_planes("perspective_lh", z_near, z_far)?;
+        finite_projection(
+            "perspective_lh",
+            Mat4::perspective_lh(fov_y_radians, aspect_ratio, z_near, z_far),
+        )
     }
 
     #[staticmethod]
-    pub fn perspective_rh(fov_y_radians: f32, aspect_ratio: f32, z_near: f32, z_far: f32) -> Self {
-        PyMat4::mat4(Mat4::perspective_rh(
-            fov_y_radians,
-            aspect_ratio,
-            z_near,
-            z_far,
-        ))
+    pub fn perspective_rh(
+        fov_y_radians: f32,
+        aspect_ratio: f32,
+        z_near: f32,
+        z_far: f32,
+    ) -> PyResult<Self> {
+        perspective_depth_planes("perspective_rh", z_near, z_far)?;
+        finite_projection(
+            "perspective_rh",
+            Mat4::perspective_rh(fov_y_radians, aspect_ratio, z_near, z_far),
+        )
     }
 
     #[staticmethod]
@@ -228,11 +291,10 @@ impl PyMat4 {
                 MAT4_PERSPECTIVE_INFINITE_REVERSE_RH_NEAR,
             ));
         }
-        Ok(PyMat4::mat4(Mat4::perspective_infinite_reverse_rh(
-            fov_y_radians,
-            aspect_ratio,
-            z_near,
-        )))
+        finite_projection(
+            "perspective_infinite_reverse_rh",
+            Mat4::perspective_infinite_reverse_rh(fov_y_radians, aspect_ratio, z_near),
+        )
     }
 
     #[staticmethod]
@@ -243,8 +305,11 @@ impl PyMat4 {
         top: f32,
         near: f32,
         far: f32,
-    ) -> Self {
-        PyMat4::mat4(Mat4::orthographic_lh(left, right, bottom, top, near, far))
+    ) -> PyResult<Self> {
+        finite_projection(
+            "orthographic_lh",
+            Mat4::orthographic_lh(left, right, bottom, top, near, far),
+        )
     }
 
     #[staticmethod]
@@ -255,53 +320,34 @@ impl PyMat4 {
         top: f32,
         near: f32,
         far: f32,
-    ) -> Self {
-        PyMat4::mat4(Mat4::orthographic_rh(left, right, bottom, top, near, far))
+    ) -> PyResult<Self> {
+        finite_projection(
+            "orthographic_rh",
+            Mat4::orthographic_rh(left, right, bottom, top, near, far),
+        )
     }
 
     #[staticmethod]
     pub fn look_at_lh(eye: &PyVec3, center: &PyVec3, up: &PyVec3) -> PyResult<Self> {
-        Ok(PyMat4::mat4(Mat4::look_at_lh(
-            eye.try_into()?,
-            center.try_into()?,
-            up.try_into()?,
-        )))
+        let (eye, dir, up) = look_at_inputs(eye, center, up)?;
+        Ok(PyMat4::mat4(Mat4::look_to_lh(eye, dir, up)))
     }
 
     #[staticmethod]
     pub fn look_at_rh(eye: &PyVec3, center: &PyVec3, up: &PyVec3) -> PyResult<Self> {
-        Ok(PyMat4::mat4(Mat4::look_at_rh(
-            eye.try_into()?,
-            center.try_into()?,
-            up.try_into()?,
-        )))
+        let (eye, dir, up) = look_at_inputs(eye, center, up)?;
+        Ok(PyMat4::mat4(Mat4::look_to_rh(eye, dir, up)))
     }
 
     #[staticmethod]
     pub fn look_to_lh(eye: &PyVec3, dir: &PyVec3, up: &PyVec3) -> PyResult<Self> {
-        let eye: Vec3 = eye.try_into()?;
-        let dir: Vec3 = dir.try_into()?;
-        let up: Vec3 = up.try_into()?;
-        if !dir.is_normalized() {
-            return Err(PyValueError::new_err("direction must be normalized"));
-        }
-        if !up.is_normalized() {
-            return Err(PyValueError::new_err("up must be normalized"));
-        }
+        let (eye, dir, up) = look_to_inputs(eye, dir, up)?;
         Ok(PyMat4::mat4(Mat4::look_to_lh(eye, dir, up)))
     }
 
     #[staticmethod]
     pub fn look_to_rh(eye: &PyVec3, dir: &PyVec3, up: &PyVec3) -> PyResult<Self> {
-        let eye: Vec3 = eye.try_into()?;
-        let dir: Vec3 = dir.try_into()?;
-        let up: Vec3 = up.try_into()?;
-        if !dir.is_normalized() {
-            return Err(PyValueError::new_err("direction must be normalized"));
-        }
-        if !up.is_normalized() {
-            return Err(PyValueError::new_err("up must be normalized"));
-        }
+        let (eye, dir, up) = look_to_inputs(eye, dir, up)?;
         Ok(PyMat4::mat4(Mat4::look_to_rh(eye, dir, up)))
     }
 
@@ -332,7 +378,9 @@ impl PyMat4 {
     }
 
     pub fn inverse(&self) -> PyResult<Self> {
-        Ok(PyMat4::mat4(self.as_ref()?.inverse()))
+        let inverse = self.as_ref()?.inverse();
+        require_invertible("Mat4", inverse.is_finite())?;
+        Ok(PyMat4::mat4(inverse))
     }
 
     pub fn mul_vec4(&self, rhs: &PyVec4) -> PyResult<PyVec4> {

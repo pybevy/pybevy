@@ -21,6 +21,7 @@ pub mod ray;
 pub mod rect;
 mod richcmp;
 pub mod rot2;
+pub mod snapshot;
 pub mod torus_kind;
 pub mod urect;
 pub mod uvec2;
@@ -31,8 +32,18 @@ pub mod vec3a;
 pub mod vec4;
 pub mod winding_order;
 
-use pybevy_core::public_error::matrix_index_out_of_range;
-use pyo3::{exceptions::PyIndexError, prelude::*};
+use pybevy_core::public_error::{matrix_index_out_of_range, matrix_not_invertible};
+use pyo3::{
+    exceptions::{PyIndexError, PyValueError},
+    prelude::*,
+};
+
+pub(crate) fn require_invertible(type_name: &str, inverse_is_finite: bool) -> PyResult<()> {
+    if !inverse_is_finite {
+        return Err(PyValueError::new_err(matrix_not_invertible(type_name)));
+    }
+    Ok(())
+}
 
 /// Resolve a Python-style column/row index against a square matrix.
 ///

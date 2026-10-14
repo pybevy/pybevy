@@ -3,7 +3,7 @@ use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 use super::{mat3a::PyMat3A, mat4::PyMat4, quat::PyQuat, vec3::PyVec3, vec3a::PyVec3A};
-use crate::richcmp::comparison_result;
+use crate::{require_invertible, richcmp::comparison_result};
 
 #[pyclass(name = "Affine3A", module = "pybevy.math", skip_from_py_object)]
 #[derive(Debug, Clone)]
@@ -233,7 +233,9 @@ impl PyAffine3A {
     }
 
     pub fn inverse(&self) -> PyResult<Self> {
-        Ok(PyAffine3A::from_affine3a(self.as_ref()?.inverse()))
+        let inverse = self.as_ref()?.inverse();
+        require_invertible("Affine3A", inverse.is_finite())?;
+        Ok(PyAffine3A::from_affine3a(inverse))
     }
 
     pub fn is_finite(&self) -> PyResult<bool> {

@@ -50,34 +50,42 @@ class ScalingMode:
     class Fixed(ScalingMode):
         """Use a fixed projection size and ignore window resizing."""
         __match_args__: ClassVar[tuple[Literal["width"], Literal["height"]]]
-        width: float
-        height: float
+        @property
+        def width(self) -> float: ...
+        @property
+        def height(self) -> float: ...
         def __init__(self, *, width: float, height: float) -> None: ...
 
     class AutoMin(ScalingMode):
         """Preserve aspect ratio with minimum axis sizes."""
         __match_args__: ClassVar[tuple[Literal["min_width"], Literal["min_height"]]]
-        min_width: float
-        min_height: float
+        @property
+        def min_width(self) -> float: ...
+        @property
+        def min_height(self) -> float: ...
         def __init__(self, *, min_width: float, min_height: float) -> None: ...
 
     class AutoMax(ScalingMode):
         """Preserve aspect ratio with maximum axis sizes."""
         __match_args__: ClassVar[tuple[Literal["max_width"], Literal["max_height"]]]
-        max_width: float
-        max_height: float
+        @property
+        def max_width(self) -> float: ...
+        @property
+        def max_height(self) -> float: ...
         def __init__(self, *, max_width: float, max_height: float) -> None: ...
 
     class FixedVertical(ScalingMode):
         """Keep projection height constant and adjust width."""
         __match_args__: ClassVar[tuple[Literal["viewport_height"]]]
-        viewport_height: float
+        @property
+        def viewport_height(self) -> float: ...
         def __init__(self, *, viewport_height: float) -> None: ...
 
     class FixedHorizontal(ScalingMode):
         """Keep projection width constant and adjust height."""
         __match_args__: ClassVar[tuple[Literal["viewport_width"]]]
-        viewport_width: float
+        @property
+        def viewport_width(self) -> float: ...
         def __init__(self, *, viewport_width: float) -> None: ...
 
 class OrthographicProjection:
@@ -183,7 +191,8 @@ class Camera3dDepthLoadOp:
 
     class Clear(Camera3dDepthLoadOp):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: float
+        @property
+        def value(self) -> float: ...
         def __init__(self, value: float) -> None: ...
 
     class Load(Camera3dDepthLoadOp):
@@ -218,17 +227,20 @@ class RenderTarget(Component):
 
     class Window(RenderTarget):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: WindowRef
+        @property
+        def value(self) -> WindowRef: ...
         def __init__(self, value: WindowRef) -> None: ...
 
     class Image(RenderTarget):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: ImageRenderTarget
+        @property
+        def value(self) -> ImageRenderTarget: ...
         def __init__(self, value: ImageRenderTarget) -> None: ...
 
     class TextureView(RenderTarget):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: ManualTextureViewHandle
+        @property
+        def value(self) -> ManualTextureViewHandle: ...
         def __init__(self, value: ManualTextureViewHandle) -> None: ...
 
     class None_(RenderTarget):
@@ -1776,18 +1788,22 @@ class NormalizedRenderTarget:
 
     class Image(NormalizedRenderTarget):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: ImageRenderTarget
+        @property
+        def value(self) -> ImageRenderTarget: ...
         def __init__(self, value: ImageRenderTarget) -> None: ...
 
     class TextureView(NormalizedRenderTarget):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: ManualTextureViewHandle
+        @property
+        def value(self) -> ManualTextureViewHandle: ...
         def __init__(self, value: ManualTextureViewHandle) -> None: ...
 
     class None_(NormalizedRenderTarget):
         __match_args__: ClassVar[tuple[Literal["width"], Literal["height"]]]
-        width: int
-        height: int
+        @property
+        def width(self) -> int: ...
+        @property
+        def height(self) -> int: ...
         def __init__(self, width: int, height: int) -> None: ...
 
     def __eq__(self, other: object) -> bool: ...

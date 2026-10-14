@@ -1,11 +1,12 @@
 use bevy::{
     ecs::entity::Entity,
     input::touch::{ForceTouch, TouchInput},
+    math::Vec2,
 };
 use pybevy_core::PyEntity;
 pub use pybevy_core::PyMessage;
 use pybevy_macros::pymessage;
-use pybevy_math::vec2::PyVec2;
+use pybevy_math::snapshot::Snapshot;
 use pyo3::prelude::*;
 
 use crate::touch_phase::PyTouchPhase;
@@ -17,8 +18,7 @@ pub struct PyTouchInput {
     #[pyo3(get)]
     pub phase: PyTouchPhase,
 
-    #[pyo3(get)]
-    pub position: PyVec2,
+    pub position: Vec2,
 
     #[pyo3(get)]
     pub id: u64,
@@ -49,7 +49,7 @@ impl From<&TouchInput> for PyTouchInput {
 
         PyTouchInput {
             phase: event.phase.into(),
-            position: event.position.into(),
+            position: event.position,
             id: event.id,
             force,
             window: event.window.into(),
@@ -63,7 +63,7 @@ impl TryFrom<&PyTouchInput> for TouchInput {
     fn try_from(value: &PyTouchInput) -> PyResult<Self> {
         Ok(Self {
             phase: value.phase.into(),
-            position: (&value.position).try_into()?,
+            position: value.position,
             window: value.window.into(),
             force: value.force.map(ForceTouch::Normalized),
             id: value.id,
@@ -77,7 +77,7 @@ impl PyTouchInput {
     #[pyo3(signature = (*, phase, position, window = PyEntity::from(Entity::PLACEHOLDER), force = None, id))]
     pub fn new(
         phase: PyTouchPhase,
-        position: PyVec2,
+        position: Snapshot<Vec2>,
         window: PyEntity,
         force: Option<f64>,
         id: u64,
@@ -85,7 +85,7 @@ impl PyTouchInput {
         (
             PyTouchInput {
                 phase,
-                position,
+                position: position.0,
                 id,
                 force,
                 window,
@@ -95,23 +95,27 @@ impl PyTouchInput {
             .into()
     }
 
-    pub fn __repr__(&self) -> PyResult<String> {
-        Ok(format!(
-            "TouchInput(phase={}, position=Vec2(x={:.2}, y={:.2}), id={}, force={:?})",
-            self.phase.__repr__(),
-            self.position.x()?,
-            self.position.y()?,
-            self.id,
-            self.force
-        ))
+    #[getter]
+    fn position(&self) -> Snapshot<Vec2> {
+        Snapshot(self.position)
     }
 
-    pub fn __eq__(&self, other: &Self) -> PyResult<bool> {
-        Ok(self.phase == other.phase
-            && self.position.x()? == other.position.x()?
-            && self.position.y()? == other.position.y()?
+    pub fn __repr__(&self) -> String {
+        format!(
+            "TouchInput(phase={}, position=Vec2(x={:.2}, y={:.2}), id={}, force={:?})",
+            self.phase.__repr__(),
+            self.position.x,
+            self.position.y,
+            self.id,
+            self.force
+        )
+    }
+
+    pub fn __eq__(&self, other: &Self) -> bool {
+        self.phase == other.phase
+            && self.position == other.position
             && self.id == other.id
             && self.force == other.force
-            && self.window == other.window)
+            && self.window == other.window
     }
 }

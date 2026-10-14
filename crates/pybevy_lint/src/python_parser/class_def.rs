@@ -218,6 +218,7 @@ fn parse_variant_def(
         kind,
         constructor,
         writable_fields,
+        payload_fields: Vec::new(),
     })
 }
 

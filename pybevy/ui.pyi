@@ -2552,7 +2552,8 @@ class GridTrackRepetition:
 
     class Count(GridTrackRepetition):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: int
+        @property
+        def value(self) -> int: ...
         def __init__(self, value: int) -> None: ...
 
     class AutoFill(GridTrackRepetition):

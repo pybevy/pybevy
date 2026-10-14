@@ -66,6 +66,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<text_color::PyTextColor>()?;
     m.add_class::<text_cursor_style::PyTextCursorStyle>()?;
     m.add_class::<text_edit::PyTextEdit>()?;
+    m.add_class::<text_edit::PyPreeditCursor>()?;
     m.add_class::<text_background_color::PyTextBackgroundColor>()?;
     m.add_class::<text_font::PyTextFont>()?;
     m.add_class::<text_layout::PyTextLayout>()?;

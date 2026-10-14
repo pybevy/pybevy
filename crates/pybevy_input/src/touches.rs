@@ -1,7 +1,10 @@
-use bevy::input::touch::{ForceTouch, Touch, Touches};
+use bevy::{
+    input::touch::{ForceTouch, Touch, Touches},
+    math::Vec2,
+};
 use pybevy_core::{PyResource, ResourceStorage, resource_initializer};
 use pybevy_macros::pyresource;
-use pybevy_math::vec2::PyVec2;
+use pybevy_math::{snapshot::Snapshot, vec2::PyVec2};
 use pyo3::prelude::*;
 
 #[pyresource(Touches, no_clone, bridge, default_insert, no_reflect)]
@@ -128,11 +131,11 @@ impl PyTouches {
 #[derive(Debug, Clone)]
 pub struct PyTouch {
     id: u64,
-    start_position: PyVec2,
+    start_position: Vec2,
     start_force: Option<f64>,
-    previous_position: PyVec2,
+    previous_position: Vec2,
     previous_force: Option<f64>,
-    position: PyVec2,
+    position: Vec2,
     force: Option<f64>,
 }
 
@@ -140,11 +143,11 @@ impl PyTouch {
     pub fn from_bevy(touch: &Touch) -> Self {
         PyTouch {
             id: touch.id(),
-            start_position: touch.start_position().into(),
+            start_position: touch.start_position(),
             start_force: touch.start_force().and_then(extract_force_value),
-            previous_position: touch.previous_position().into(),
+            previous_position: touch.previous_position(),
             previous_force: touch.previous_force().and_then(extract_force_value),
-            position: touch.position().into(),
+            position: touch.position(),
             force: touch.force().and_then(extract_force_value),
         }
     }
@@ -169,18 +172,18 @@ impl PyTouch {
     }
 
     #[getter]
-    fn position(&self) -> PyVec2 {
-        self.position.clone()
+    fn position(&self) -> Snapshot<Vec2> {
+        Snapshot(self.position)
     }
 
     #[getter]
-    fn start_position(&self) -> PyVec2 {
-        self.start_position.clone()
+    fn start_position(&self) -> Snapshot<Vec2> {
+        Snapshot(self.start_position)
     }
 
     #[getter]
-    fn previous_position(&self) -> PyVec2 {
-        self.previous_position.clone()
+    fn previous_position(&self) -> Snapshot<Vec2> {
+        Snapshot(self.previous_position)
     }
 
     #[getter]
@@ -198,27 +201,18 @@ impl PyTouch {
         self.previous_force
     }
 
-    pub fn delta(&self) -> PyResult<PyVec2> {
-        Ok(PyVec2::new(
-            self.position.x()? - self.previous_position.x()?,
-            self.position.y()? - self.previous_position.y()?,
-        ))
+    pub fn delta(&self) -> PyVec2 {
+        (self.position - self.previous_position).into()
     }
 
-    pub fn distance(&self) -> PyResult<PyVec2> {
-        Ok(PyVec2::new(
-            self.position.x()? - self.start_position.x()?,
-            self.position.y()? - self.start_position.y()?,
-        ))
+    pub fn distance(&self) -> PyVec2 {
+        (self.position - self.start_position).into()
     }
 
-    fn __repr__(&self) -> PyResult<String> {
-        Ok(format!(
+    fn __repr__(&self) -> String {
+        format!(
             "Touch(id={}, position=({}, {}), force={:?})",
-            self.id,
-            self.position.x()?,
-            self.position.y()?,
-            self.force
-        ))
+            self.id, self.position.x, self.position.y, self.force
+        )
     }
 }

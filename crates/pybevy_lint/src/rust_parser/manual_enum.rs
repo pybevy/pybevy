@@ -58,6 +58,7 @@ pub(super) fn extract(file: &syn::File, classes: &mut [PyClassDef]) {
                                 kind,
                                 constructor: None,
                                 writable_fields: Vec::new(),
+                                payload_fields: Vec::new(),
                             });
                         } else {
                             supported = false;
@@ -102,6 +103,7 @@ pub(super) fn extract(file: &syn::File, classes: &mut [PyClassDef]) {
                             kind,
                             constructor: variant.constructor.clone(),
                             writable_fields: Vec::new(),
+                            payload_fields: Vec::new(),
                         });
                     } else {
                         supported = false;

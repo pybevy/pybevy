@@ -1544,6 +1544,7 @@ reason = "Bevy 0.19.1 bevy_mesh::Mesh::new maps primitive_topology; PyBevy suppl
 "pybevy.sprite.PyColorMaterial" = "Bevy 0.19.1 bevy_sprite_render::ColorMaterial fields define the established Python constructor"
 "pybevy.sprite.PySprite" = "Bevy 0.19.1 bevy_sprite::Sprite fields define the established Python constructor"
 "pybevy.sprite.PyTextureSlicer" = "Bevy 0.19.1 bevy_sprite::TextureSlicer fields define the established Python constructor"
+"pybevy.text.PyPreeditCursor" = "Bevy 0.19.1 bevy_text::PreeditCursor fields define the Python constructor"
 "pybevy.text.PyText2dShadow" = "Bevy 0.19.1 bevy_sprite::Text2dShadow fields define the established Python constructor"
 "pybevy.text.PyTextCursorStyle" = "Bevy 0.19.1 bevy_text::TextCursorStyle fields define the established Python constructor"
 "pybevy.text.PyTextFont" = "Bevy 0.19.1 bevy_text::TextFont fields define the established Python constructor"
@@ -3365,3 +3366,9 @@ code = "W017"
 path = "core.AssetPath"
 message = "constructor 'AssetPath' parameter 'source' accepts None but the upstream field bevy_asset::AssetPath::source is `AssetSourceId < 'a >`; default to Bevy's value and reject None"
 reason = "AssetSourceId is Option-shaped; Python models AssetSourceId::Default as None on the constructor, getter, and repr"
+
+[[validation.exceptions]]
+code = "W006"
+path = "text.TextEdit"
+message = "enum payload 'TextEdit.ImeSetCompose.cursor' returns unclassified mutable result 'Option < PyPreeditCursor >'"
+reason = "PyPreeditCursor's by-value extraction stores a read-only ValueStorage snapshot, so the payload rejects writes; Snapshot<T> cannot wrap the foreign PreeditCursor type from pybevy_text (orphan rule)"

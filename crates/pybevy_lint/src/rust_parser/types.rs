@@ -38,7 +38,7 @@ pub fn normalize_rust_type(ty: &str) -> String {
 
     // Handle Bound<'_, T> -> T. remove_lifetimes may have already consumed
     // the lifetime and its trailing comma, leaving a single parameter.
-    for wrapper in ["Bound", "PyRef", "PyRefMut", "Borrowed"] {
+    for wrapper in ["Bound", "PyRef", "PyRefMut", "Borrowed", "Snapshot"] {
         if let Some(inner) = extract_generic(ty.trim(), wrapper) {
             return normalize_rust_type(&inner);
         }

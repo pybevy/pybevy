@@ -34,6 +34,24 @@ pub fn process_conversion_impl(item_impl: &ItemImpl, classes: &mut [PyClassDef],
     }
 }
 
+/// Mark wrappers whose handwritten `Clone` yields a read-only snapshot.
+pub fn process_clone_impl(item_impl: &ItemImpl, classes: &mut [PyClassDef]) {
+    let Some((_, path, _)) = item_impl.trait_.as_ref() else {
+        return;
+    };
+    if !path.is_ident("Clone") {
+        return;
+    }
+    let Some(target) = self_type_name(&item_impl.self_ty) else {
+        return;
+    };
+    if let Some(class) = classes.iter_mut().find(|class| class.rust_name == target)
+        && quote::quote!(#item_impl).to_string().contains("snapshot")
+    {
+        class.clone_snapshots = true;
+    }
+}
+
 /// The `T` of `impl From<T> for Py...`, when the trait is a conversion.
 fn conversion_source(item_impl: &ItemImpl) -> Option<String> {
     let (_, path, _) = item_impl.trait_.as_ref()?;

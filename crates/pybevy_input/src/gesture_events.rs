@@ -4,7 +4,7 @@ use bevy::{
 };
 pub use pybevy_core::PyMessage;
 use pybevy_macros::pymessage;
-use pybevy_math::vec2::PyVec2;
+use pybevy_math::{snapshot::Snapshot, vec2::PyVec2};
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 #[pymessage(PinchGesture)]
@@ -130,8 +130,8 @@ impl PyPanGesture {
     }
 
     #[getter]
-    fn value(&self) -> PyVec2 {
-        self.0.into()
+    fn value(&self) -> Snapshot<Vec2> {
+        Snapshot(self.0)
     }
 
     #[getter]
@@ -145,8 +145,8 @@ impl PyPanGesture {
     }
 
     #[getter]
-    fn delta(&self) -> PyVec2 {
-        self.0.into()
+    fn delta(&self) -> Snapshot<Vec2> {
+        Snapshot(self.0)
     }
 
     fn __repr__(&self) -> String {
