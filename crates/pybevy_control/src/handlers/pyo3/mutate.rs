@@ -1,5 +1,4 @@
 use std::{
-    alloc::Layout,
     any::TypeId,
     collections::{BTreeSet, HashMap},
     sync::{Arc, OnceLock},
@@ -245,6 +244,10 @@ pub fn spawn_entity(
             }
             Err(ReflectError::ComponentNotOnEntity) => {
                 errors.push(format!("{comp_name}: entity not found"));
+                continue;
+            }
+            Err(ReflectError::InvalidValue(error)) => {
+                errors.push(format!("{comp_name}.{error}"));
                 continue;
             }
         }
@@ -1018,6 +1021,11 @@ pub fn set_component(
                             entity_id,
                         )));
                     }
+                    Err(ReflectError::InvalidValue(error)) => {
+                        return Err(ControlError::invalid_params(format!(
+                            "Failed to set '{component}': {error}"
+                        )));
+                    }
                 }
             }
             Err(ReflectError::FieldError(_)) => {
@@ -1026,6 +1034,11 @@ pub fn set_component(
             }
             Err(ReflectError::NoReflectDefault) => {
                 // Not applicable for set_component, fall back
+            }
+            Err(ReflectError::InvalidValue(error)) => {
+                return Err(ControlError::invalid_params(format!(
+                    "Failed to set '{component}': {error}"
+                )));
             }
         }
 
@@ -1383,7 +1396,6 @@ fn set_custom_component(
         });
 
     // Fallback: check for qualified name variants (e.g. "module.Oscillator" vs "Oscillator")
-    // and scan the entity's archetype for matching custom components
     let custom_info = custom_info.or_else(|| {
         let info = world.get_resource::<CustomComponentInfo>()?;
         let entity_ref = world.get_entity(entity).ok()?;
@@ -1394,48 +1406,6 @@ fn set_custom_component(
             let short_name = entry.name.rsplit('.').next().unwrap_or(&entry.name);
             if short_name == component && entity_ref.get_by_id(id).is_ok() {
                 return Some((id, entry.is_pyobject_storage, entry.wrapper_layout.clone()));
-            }
-        }
-
-        // Last resort: check entity's archetype for PyObject-stored components
-        // whose Python type name matches. PyObject storage is identified by the
-        // exact descriptor shape create_python_object_descriptor produces: no Rust
-        // TypeId, immutable, Py<PyAny> layout. Wrapper storage is mutable, so it
-        // can never reach the deref below (ComponentWrapper8 has the same layout).
-        let components = world.components();
-        for comp_id in entity_ref.archetype().components() {
-            // Skip components already in CustomComponentInfo (checked above)
-            if info.get(*comp_id).is_some() {
-                continue;
-            }
-            let Some(comp_info) = components.get_info(*comp_id) else {
-                continue;
-            };
-            let is_pyobject_descriptor = comp_info.type_id().is_none()
-                && !comp_info.mutable()
-                && comp_info.layout() == Layout::new::<Py<PyAny>>();
-            if !is_pyobject_descriptor {
-                continue;
-            }
-            if let Ok(ptr) = entity_ref.get_by_id(*comp_id) {
-                let matched = Python::attach(|py| {
-                    // SAFETY: only create_python_object_descriptor registrations
-                    // match the descriptor shape checked above, so the raw data
-                    // is a live Py<PyAny>
-                    let py_obj: &pyo3::Py<PyAny> =
-                        unsafe { &*(ptr.as_ptr() as *const pyo3::Py<PyAny>) };
-                    let bound = py_obj.bind(py);
-                    let type_name = bound
-                        .get_type()
-                        .name()
-                        .ok()
-                        .map(|n| n.to_string())
-                        .unwrap_or_default();
-                    type_name == component
-                });
-                if matched {
-                    return Some((*comp_id, true, None));
-                }
             }
         }
 
@@ -4355,7 +4325,7 @@ pub(crate) fn json_to_py(py: Python<'_>, value: &serde_json::Value) -> Result<Py
 
 #[cfg(test)]
 mod tests {
-    use std::{alloc::Layout, ffi::CString, mem, ptr, sync::Once};
+    use std::{alloc::Layout, ffi::CString, ptr, sync::Once};
 
     use bevy::{
         camera::ClearColor,
@@ -6734,10 +6704,8 @@ track_holder = TrackHolder()
         }
     }
 
-    /// Regression test: the last-resort archetype scan must not reinterpret a
-    /// wrapper-like component (mutable, TypeId-less, Py<PyAny>-sized) as a
-    /// Py<PyAny>. Before the descriptor-shape check, this test dereferenced
-    /// arbitrary bytes as a Python object pointer.
+    /// A TypeId-less component absent from CustomComponentInfo is never
+    /// reinterpreted as a Py<PyAny>, even with a matching layout.
     #[test]
     fn set_component_wrapper_like_bytes_not_misread_as_pyobject() {
         setup_python();
@@ -6777,61 +6745,6 @@ track_holder = TrackHolder()
         );
         let err = result.expect_err("wrapper-like component must not match");
         assert_eq!(err.code, ErrorCode::NotFound);
-    }
-
-    /// The last-resort archetype scan must still find genuine PyObject-storage
-    /// components that are missing from CustomComponentInfo.
-    #[test]
-    fn set_component_last_resort_finds_pyobject_component() {
-        setup_python();
-
-        let mut world = World::new();
-        let entity = world.spawn(Name::new("Target")).id();
-
-        // Same descriptor shape as create_python_object_descriptor: immutable,
-        // TypeId-less, Py<PyAny> layout. No drop fn so the test world can be
-        // dropped without running Python refcounting on shutdown ordering.
-        let comp_id = world.register_component_with_descriptor(unsafe {
-            ComponentDescriptor::new_with_layout(
-                "SimpleNamespace",
-                StorageType::Table,
-                Layout::new::<Py<PyAny>>(),
-                None,
-                false,
-                ComponentCloneBehavior::Default,
-                None,
-            )
-        });
-
-        let py_obj: Py<PyAny> = Python::attach(|py| {
-            let ns = py
-                .import("types")
-                .unwrap()
-                .getattr("SimpleNamespace")
-                .unwrap()
-                .call0()
-                .unwrap();
-            ns.setattr("x", 1).unwrap();
-            ns.unbind()
-        });
-
-        let mut entity_mut = world.get_entity_mut(entity).unwrap();
-        unsafe {
-            let data = core::ptr::NonNull::new_unchecked(ptr::addr_of!(py_obj) as *mut u8);
-            entity_mut.insert_by_id(comp_id, bevy::ptr::OwningPtr::new(data));
-        }
-        mem::forget(py_obj);
-
-        world.insert_resource(CustomComponentInfo::default());
-
-        let result = set_component(
-            &mut world,
-            EntityRef::Id(entity.to_bits()),
-            "SimpleNamespace".to_string(),
-            serde_json::json!({"x": 5}),
-        );
-        let value = result.expect("PyObject component must be found via last resort");
-        assert_eq!(value["new_values"], serde_json::json!({"x": 5}));
     }
 
     #[test]

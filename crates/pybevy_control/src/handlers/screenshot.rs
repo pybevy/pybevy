@@ -247,11 +247,12 @@ pub struct DebugCameraCleanup {
 
 /// Frames a queued capture may wait for its readback before it is failed and
 /// its visibility/camera state restored, so a capture that never completes
-/// cannot wedge `another_capture_is_active` or hang its request forever.
+/// cannot wedge `capture_in_progress` or hang its request forever.
 pub(crate) const MAX_CAPTURE_WAIT_FRAMES: u32 = 600;
 
 pub(crate) const CAPTURE_DEADLINE_ERROR: &str =
     "capture did not complete within the deadline (render readback never arrived)";
+pub(crate) const CAPTURE_CANCELLED_ERROR: &str = "capture cancelled: the requester is gone";
 pub(crate) const STALE_HEADLESS_FRAME_ERROR: &str = "capture did not receive a fresh headless frame before the deadline; the renderer may have stopped";
 
 /// Per-screenshot responder stored until the observer fires.
@@ -310,13 +311,15 @@ pub struct ActiveTimeline {
     pub response_tx: Option<oneshot::Sender<Result<serde_json::Value, ControlError>>>,
     pub max_width: Option<u32>,
     pub columns: u32,
+    /// Camera pose applied when the timeline starts.
+    pub debug_camera: Option<DebugCameraRequest>,
     pub debug_cleanup: Option<DebugCameraCleanup>,
     pub schedule: VecDeque<u32>,
     pub total_captures: u32,
     pub next_capture_index: u32,
     pub collected: Vec<(u32, RgbImage)>,
-    /// Whether this timeline holds an `OverlaySuppression` refcount
-    /// (taken at first capture, released on completion).
+    /// Whether this timeline has started and holds the capture state
+    /// (an `OverlaySuppression` refcount, released on completion).
     pub overlay_suppressed: bool,
     pub hide_ui: bool,
     pub with_gizmos: bool,
@@ -358,19 +361,49 @@ pub fn compute_schedule(total_frames: u32, capture_count: u32) -> VecDeque<u32> 
     schedule
 }
 
-fn another_capture_is_active(world: &World) -> bool {
-    world
-        .get_resource::<PendingScreenshotResponders>()
-        .is_some_and(|responders| !responders.map.is_empty())
+/// Upper bound on `delay_frames` for every capture tool.
+pub const MAX_CAPTURE_DELAY_FRAMES: u32 = 600;
+/// Upper bound on `capture_timeline`'s `total_frames`.
+pub const MAX_TIMELINE_FRAMES: u32 = 1200;
+
+pub(crate) fn validate_capture_delay(delay_frames: u32) -> Result<(), ControlError> {
+    if delay_frames > MAX_CAPTURE_DELAY_FRAMES {
+        return Err(ControlError::invalid_params(format!(
+            "delay_frames must be at most {MAX_CAPTURE_DELAY_FRAMES}"
+        )));
+    }
+    Ok(())
+}
+
+impl ActiveTimeline {
+    fn is_started(&self) -> bool {
+        self.overlay_suppressed && self.response_tx.is_some()
+    }
+}
+
+/// Captures start one at a time so each snapshots authored state, not another capture's.
+pub(crate) fn capture_in_progress(world: &World) -> bool {
+    world.contains_resource::<EntityCaptureIsolationActive>()
+        || world
+            .get_resource::<PendingScreenshotResponders>()
+            .is_some_and(|responders| !responders.map.is_empty())
         || world
             .get_resource::<StagedScreenshots>()
             .is_some_and(|staged| !staged.pending.is_empty())
         || world
+            .get_resource::<TimelineCaptures>()
+            .is_some_and(|captures| !captures.map.is_empty())
+        || world
             .get_resource::<PendingTimelines>()
-            .is_some_and(|timelines| !timelines.active.is_empty())
+            .is_some_and(|timelines| timelines.active.values().any(ActiveTimeline::is_started))
         || world
             .get_resource::<super::turnaround::PendingTurnarounds>()
-            .is_some_and(|turnarounds| !turnarounds.active.is_empty())
+            .is_some_and(|turnarounds| {
+                turnarounds
+                    .active
+                    .iter()
+                    .any(super::turnaround::ActiveTurnaround::is_started)
+            })
 }
 
 fn validate_capture_camera(
@@ -483,6 +516,10 @@ pub fn process_pending_screenshots(world: &mut World) {
     let mut ready = Vec::new();
 
     for mut screenshot in pending.pending.drain(..) {
+        if screenshot.response_tx.is_closed() {
+            restore_gizmos_enabled(world, screenshot.gizmo_restore);
+            continue;
+        }
         prepare_pending_screenshot_gizmos(world, &mut screenshot);
         if screenshot.required_render_epoch.is_some_and(|epoch| {
             world
@@ -505,9 +542,7 @@ pub fn process_pending_screenshots(world: &mut World) {
 
     // Process ready screenshots
     for mut screenshot in ready {
-        if world.contains_resource::<EntityCaptureIsolationActive>()
-            || (screenshot.entity.is_some() && another_capture_is_active(world))
-        {
+        if capture_in_progress(world) {
             world
                 .resource_mut::<PendingScreenshots>()
                 .pending
@@ -681,6 +716,10 @@ pub fn process_pending_screenshots(world: &mut World) {
         let mut still_waiting = Vec::new();
 
         for mut s in staged.pending.drain(..) {
+            if s.response_tx.is_closed() {
+                fail_staged_screenshot(world, s, CAPTURE_CANCELLED_ERROR);
+                continue;
+            }
             if s.frames_remaining > 0 {
                 s.frames_remaining -= 1;
                 still_waiting.push(s);
@@ -843,7 +882,9 @@ fn expire_stuck_screenshot_responders(world: &mut World) {
             .iter_mut()
             .filter_map(|(entity, responder)| {
                 responder.frames_waited += 1;
-                (responder.frames_waited > MAX_CAPTURE_WAIT_FRAMES).then_some(*entity)
+                (responder.frames_waited > MAX_CAPTURE_WAIT_FRAMES
+                    || responder.response_tx.is_closed())
+                .then_some(*entity)
             })
             .collect();
         stuck
@@ -914,6 +955,20 @@ fn fail_timeline(
     }
 }
 
+/// Take the capture state a timeline holds until it completes.
+fn start_timeline(world: &mut World, timeline: &mut ActiveTimeline) -> Result<(), ControlError> {
+    if let Some(request) = timeline.debug_camera.take() {
+        timeline.debug_cleanup = Some(setup_debug_camera(world, &request)?);
+    }
+    let (ui_restore, gizmo_restore) =
+        prepare_capture_visibility(world, timeline.hide_ui, timeline.with_gizmos);
+    timeline.overlay_suppressed = true;
+    timeline.ui_restore = ui_restore;
+    timeline.gizmo_restore = gizmo_restore;
+    timeline.headless_sequence = headless_frame_sequence(world);
+    Ok(())
+}
+
 /// Process pending timelines: decrement schedule, spawn captures when ready.
 pub fn process_pending_timelines(world: &mut World) {
     let Some(mut timelines) = world.remove_resource::<PendingTimelines>() else {
@@ -945,26 +1000,46 @@ pub fn process_pending_timelines(world: &mut World) {
             })
     };
 
-    // Prepare visibility before scheduling any new captures.
-    let pending_visibility: Vec<u64> = timelines
+    let abandoned: Vec<u64> = timelines
         .active
         .iter()
-        .filter(|(_, timeline)| timeline.response_tx.is_some() && !timeline.overlay_suppressed)
+        .filter(|(_, timeline)| {
+            timeline
+                .response_tx
+                .as_ref()
+                .is_some_and(oneshot::Sender::is_closed)
+        })
         .map(|(&id, _)| id)
         .collect();
-    for id in pending_visibility {
-        let Some((hide_ui, with_gizmos)) = timelines
+    for id in abandoned {
+        if let Some(timeline) = timelines.active.remove(&id) {
+            fail_timeline(world, id, timeline, CAPTURE_CANCELLED_ERROR.to_string());
+        }
+    }
+
+    let next_to_start = (!timelines.active.values().any(ActiveTimeline::is_started)
+        && !capture_in_progress(world))
+    .then(|| {
+        timelines
             .active
-            .get(&id)
-            .map(|timeline| (timeline.hide_ui, timeline.with_gizmos))
-        else {
-            continue;
-        };
-        let (ui_restore, gizmo_restore) = prepare_capture_visibility(world, hide_ui, with_gizmos);
-        if let Some(timeline) = timelines.active.get_mut(&id) {
-            timeline.overlay_suppressed = true;
-            timeline.ui_restore = ui_restore;
-            timeline.gizmo_restore = gizmo_restore;
+            .iter()
+            .filter(|(_, timeline)| timeline.response_tx.is_some())
+            .map(|(&id, _)| id)
+            .min()
+    })
+    .flatten();
+    if let Some(id) = next_to_start
+        && let Some(mut timeline) = timelines.active.remove(&id)
+    {
+        match start_timeline(world, &mut timeline) {
+            Ok(()) => {
+                timelines.active.insert(id, timeline);
+            }
+            Err(error) => {
+                if let Some(tx) = timeline.response_tx.take() {
+                    let _ = tx.send(Err(error));
+                }
+            }
         }
     }
 
@@ -975,6 +1050,9 @@ pub fn process_pending_timelines(world: &mut World) {
     let mut stale_headless_ids: Vec<u64> = Vec::new();
 
     for (&id, timeline) in timelines.active.iter_mut() {
+        if timeline.response_tx.is_some() && !timeline.overlay_suppressed {
+            continue;
+        }
         if timeline.schedule.is_empty() {
             // All captures scheduled, waiting for collection
             if timeline.response_tx.is_none() {
@@ -3404,6 +3482,7 @@ mod tests {
         let img = RgbImage::from_pixel(4, 4, Rgb([100, 100, 100]));
         let (tx, _rx) = oneshot::channel();
         let mut timeline = ActiveTimeline {
+            debug_camera: None,
             response_tx: Some(tx),
             max_width: None,
             columns: 3,
@@ -3439,6 +3518,7 @@ mod tests {
         }
         let (tx, _rx) = oneshot::channel();
         let mut timeline = ActiveTimeline {
+            debug_camera: None,
             response_tx: Some(tx),
             max_width: None,
             columns: 2,
@@ -3467,6 +3547,7 @@ mod tests {
     fn composite_contact_sheet_empty_captures() {
         let (tx, _rx) = oneshot::channel();
         let mut timeline = ActiveTimeline {
+            debug_camera: None,
             response_tx: Some(tx),
             max_width: None,
             columns: 3,
@@ -3493,6 +3574,7 @@ mod tests {
         let img = RgbImage::from_pixel(100, 100, Rgb([100, 100, 100]));
         let (tx, _rx) = oneshot::channel();
         let mut timeline = ActiveTimeline {
+            debug_camera: None,
             response_tx: Some(tx),
             max_width: Some(50),
             columns: 3,
@@ -3730,6 +3812,7 @@ mod tests {
         pending.active.insert(
             0,
             ActiveTimeline {
+                debug_camera: None,
                 response_tx: Some(tx),
                 max_width: None,
                 columns: 2,
@@ -3784,6 +3867,7 @@ mod tests {
         pending.active.insert(
             0,
             ActiveTimeline {
+                debug_camera: None,
                 response_tx: Some(tx),
                 max_width: None,
                 columns: 2,
@@ -3891,13 +3975,200 @@ mod tests {
                 .is_empty()
         );
         assert!(
-            !another_capture_is_active(&world),
+            !capture_in_progress(&world),
             "expired responder must unwedge entity-isolated captures"
         );
         assert_eq!(world.resource::<OverlaySuppression>().0, 0);
         assert_eq!(*world.get::<Visibility>(ui).unwrap(), Visibility::Visible);
         assert!(gizmos_enabled(&world));
         assert!(world.get_entity(screenshot_entity).is_err());
+    }
+
+    fn queued_screenshot(
+        frames_remaining: u32,
+    ) -> (
+        PendingScreenshot,
+        oneshot::Receiver<Result<serde_json::Value, ControlError>>,
+    ) {
+        let (tx, rx) = oneshot::channel();
+        let screenshot = PendingScreenshot {
+            response_tx: tx,
+            frames_remaining,
+            required_render_epoch: None,
+            with_gizmos: false,
+            gizmo_restore: GizmoEnabledRestore::new(),
+            max_width: None,
+            debug_camera: None,
+            hide_ui: true,
+            entity: None,
+            depth_analysis: None,
+            extra_response: None,
+            response_kind: CaptureResponseKind::Screenshot,
+        };
+        (screenshot, rx)
+    }
+
+    #[test]
+    fn ready_captures_start_one_at_a_time() {
+        let (mut world, _first_rx) = world_with_pending_screenshot(false);
+        let (second, _second_rx) = queued_screenshot(0);
+        world
+            .resource_mut::<PendingScreenshots>()
+            .pending
+            .push(second);
+
+        process_pending_screenshots(&mut world);
+
+        assert_eq!(world.resource::<PendingScreenshotResponders>().map.len(), 1);
+        assert_eq!(world.resource::<PendingScreenshots>().pending.len(), 1);
+        assert!(capture_in_progress(&world));
+    }
+
+    #[test]
+    fn abandoned_queued_screenshot_restores_gizmos() {
+        let mut world = world_with_gizmos();
+        let (screenshot, rx) = queued_screenshot(5);
+        world.insert_resource(PendingScreenshots {
+            pending: vec![screenshot],
+        });
+        process_pending_screenshots(&mut world);
+        assert!(!gizmos_enabled(&world));
+
+        drop(rx);
+        process_pending_screenshots(&mut world);
+
+        assert!(gizmos_enabled(&world));
+        assert!(world.resource::<PendingScreenshots>().pending.is_empty());
+    }
+
+    #[test]
+    fn abandoned_responder_releases_capture_state() {
+        let mut world = world_with_gizmos();
+        world.insert_resource(OverlaySuppression(1));
+        let ui = world.spawn((Visibility::Hidden, Node::default())).id();
+        let screenshot_entity = world.spawn_empty().id();
+        let (tx, rx) = oneshot::channel();
+        let mut responders = PendingScreenshotResponders::default();
+        responders.map.insert(
+            screenshot_entity,
+            ScreenshotResponder {
+                response_tx: tx,
+                max_width: None,
+                debug_cleanup: None,
+                ui_restore: Some(vec![(ui, Visibility::Visible)]),
+                entity_isolation: None,
+                gizmo_restore: default_group_restore(true),
+                extra_response: None,
+                capture_viewport: None,
+                response_kind: CaptureResponseKind::Screenshot,
+                frames_waited: 0,
+            },
+        );
+        world.insert_resource(responders);
+        world.insert_resource(PendingScreenshots::default());
+        set_gizmos_enabled(&mut world, false);
+        drop(rx);
+
+        process_pending_screenshots(&mut world);
+
+        assert!(!capture_in_progress(&world));
+        assert_eq!(world.resource::<OverlaySuppression>().0, 0);
+        assert_eq!(*world.get::<Visibility>(ui).unwrap(), Visibility::Visible);
+        assert!(gizmos_enabled(&world));
+        assert!(world.get_entity(screenshot_entity).is_err());
+    }
+
+    fn queued_timeline(
+        hide_ui: bool,
+    ) -> (
+        ActiveTimeline,
+        oneshot::Receiver<Result<serde_json::Value, ControlError>>,
+    ) {
+        let (tx, rx) = oneshot::channel();
+        let timeline = ActiveTimeline {
+            response_tx: Some(tx),
+            max_width: None,
+            columns: 2,
+            debug_camera: None,
+            debug_cleanup: None,
+            schedule: VecDeque::from([3, 5]),
+            total_captures: 2,
+            next_capture_index: 0,
+            collected: vec![],
+            overlay_suppressed: false,
+            hide_ui,
+            with_gizmos: false,
+            ui_restore: None,
+            gizmo_restore: GizmoEnabledRestore::new(),
+            headless_sequence: None,
+            stall_frames: 0,
+        };
+        (timeline, rx)
+    }
+
+    #[test]
+    fn queued_timeline_starts_after_the_active_capture_ends() {
+        let mut world = world_with_gizmos();
+        let ui = world.spawn((Visibility::Visible, Node::default())).id();
+        let screenshot_entity = world.spawn_empty().id();
+        let (tx, _responder_rx) = oneshot::channel();
+        let mut responders = PendingScreenshotResponders::default();
+        responders.map.insert(
+            screenshot_entity,
+            ScreenshotResponder {
+                response_tx: tx,
+                max_width: None,
+                debug_cleanup: None,
+                ui_restore: None,
+                entity_isolation: None,
+                gizmo_restore: GizmoEnabledRestore::new(),
+                extra_response: None,
+                capture_viewport: None,
+                response_kind: CaptureResponseKind::Screenshot,
+                frames_waited: 0,
+            },
+        );
+        world.insert_resource(responders);
+        let (timeline, _rx) = queued_timeline(true);
+        let mut pending = PendingTimelines::default();
+        pending.active.insert(0, timeline);
+        world.insert_resource(pending);
+
+        process_pending_timelines(&mut world);
+        let timeline = &world.resource::<PendingTimelines>().active[&0];
+        assert!(!timeline.overlay_suppressed);
+        assert_eq!(timeline.schedule, VecDeque::from([3, 5]));
+        assert_eq!(*world.get::<Visibility>(ui).unwrap(), Visibility::Visible);
+
+        world
+            .resource_mut::<PendingScreenshotResponders>()
+            .map
+            .clear();
+        process_pending_timelines(&mut world);
+        let timeline = &world.resource::<PendingTimelines>().active[&0];
+        assert!(timeline.overlay_suppressed);
+        assert_eq!(timeline.schedule, VecDeque::from([2, 5]));
+        assert_eq!(*world.get::<Visibility>(ui).unwrap(), Visibility::Hidden);
+    }
+
+    #[test]
+    fn abandoned_timeline_releases_capture_state() {
+        let mut world = world_with_gizmos();
+        let ui = world.spawn((Visibility::Visible, Node::default())).id();
+        let (timeline, rx) = queued_timeline(true);
+        let mut pending = PendingTimelines::default();
+        pending.active.insert(0, timeline);
+        world.insert_resource(pending);
+        process_pending_timelines(&mut world);
+        assert_eq!(*world.get::<Visibility>(ui).unwrap(), Visibility::Hidden);
+
+        drop(rx);
+        process_pending_timelines(&mut world);
+
+        assert!(world.resource::<PendingTimelines>().active.is_empty());
+        assert_eq!(*world.get::<Visibility>(ui).unwrap(), Visibility::Visible);
+        assert_eq!(world.resource::<OverlaySuppression>().0, 0);
+        assert!(gizmos_enabled(&world));
     }
 
     #[test]
@@ -4079,6 +4350,7 @@ mod tests {
         timelines.active.insert(
             3,
             ActiveTimeline {
+                debug_camera: None,
                 response_tx: Some(tx),
                 max_width: None,
                 columns: 2,
@@ -4123,6 +4395,7 @@ mod tests {
         timelines.active.insert(
             0,
             ActiveTimeline {
+                debug_camera: None,
                 response_tx: Some(tx),
                 max_width: None,
                 columns: 2,
@@ -4175,6 +4448,7 @@ mod tests {
         timelines.active.insert(
             0,
             ActiveTimeline {
+                debug_camera: None,
                 response_tx: Some(tx),
                 max_width: None,
                 columns: 3,
@@ -4414,6 +4688,7 @@ mod tests {
         timelines.active.insert(
             0,
             ActiveTimeline {
+                debug_camera: None,
                 response_tx: Some(tx),
                 max_width: None,
                 columns: 3,
@@ -4459,6 +4734,7 @@ mod tests {
         timelines.active.insert(
             0,
             ActiveTimeline {
+                debug_camera: None,
                 response_tx: Some(tx),
                 max_width: None,
                 columns: 3,
@@ -4479,6 +4755,13 @@ mod tests {
         timelines.next_id = 1;
         world.insert_resource(timelines);
 
+        process_pending_timelines(&mut world);
+        assert_eq!(
+            world.resource::<PendingTimelines>().active[&0].next_capture_index,
+            0,
+            "the first capture waits for a frame rendered after the timeline started"
+        );
+        world.resource_mut::<HeadlessFrameBuffer>().sequence = 2;
         process_pending_timelines(&mut world);
 
         // First capture should be spawned
@@ -4524,6 +4807,7 @@ mod tests {
         timelines.active.insert(
             0,
             ActiveTimeline {
+                debug_camera: None,
                 response_tx: Some(tx),
                 max_width: None,
                 columns: 1,
@@ -4602,6 +4886,7 @@ mod tests {
         timelines.active.insert(
             0,
             ActiveTimeline {
+                debug_camera: None,
                 response_tx: Some(tx),
                 max_width: None,
                 columns: 1,

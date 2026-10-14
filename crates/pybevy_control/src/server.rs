@@ -21,7 +21,7 @@ use crate::{
         CaptureTurnaroundParams, CheckAllOverlapsParams, CheckOverlapsParams, CompareFramesParams,
         ControlOperation, ControlRequest, ControlSender, EntityRef, ErrorCode, GetComponentParams,
         GetResourceParams, QueryEntitiesParams, QuerySpatialNeighborhoodParams, QuerySpatialParams,
-        ReloadAndCaptureParams, ReloadMode, ReloadParams, RemoveComponentParams, SeekTimeParams,
+        ReloadAndCaptureParams, ReloadParams, RemoveComponentParams, SeekTimeParams,
         SetAssetParams, SetComponentParams, SetResourceParams, SseEventBroadcaster,
         default_max_float_gap,
     },
@@ -31,6 +31,7 @@ use crate::{
     image_preview::{
         MCP_IMAGE_DELIVERY_HEADER, MCP_IMAGE_DELIVERY_VALUE, prepare_mcp_response_images,
     },
+    plugin::ControlConfig,
 };
 
 /// Shared state for the Axum server
@@ -39,7 +40,7 @@ pub struct AppState {
     pub sender: ControlSender,
     pub sse_broadcaster: SseEventBroadcaster,
     pub api_index: Arc<ApiIndex>,
-    pub config: ServerConfig,
+    pub config: ControlConfig,
     pub schedule_registry: SharedScheduleRegistry,
 }
 
@@ -48,7 +49,7 @@ impl AppState {
         sender: ControlSender,
         sse_broadcaster: SseEventBroadcaster,
         api_index: Arc<ApiIndex>,
-        config: ServerConfig,
+        config: ControlConfig,
         schedule_registry: SharedScheduleRegistry,
     ) -> Self {
         Self {
@@ -61,13 +62,6 @@ impl AppState {
     }
 }
 
-#[derive(Clone)]
-pub struct ServerConfig {
-    pub screenshot_enabled: bool,
-    pub manipulation_enabled: bool,
-    pub execute_python_enabled: bool,
-    pub api_discovery_enabled: bool,
-}
 async fn send_operation(
     sender: &ControlSender,
     operation: ControlOperation,
@@ -91,6 +85,7 @@ async fn send_operation(
         Ok(Err(e)) => {
             let status = match e.code {
                 ErrorCode::NotFound => StatusCode::NOT_FOUND,
+                ErrorCode::Forbidden => StatusCode::FORBIDDEN,
                 ErrorCode::InvalidParams => StatusCode::BAD_REQUEST,
                 ErrorCode::Internal | ErrorCode::NotSupported => StatusCode::INTERNAL_SERVER_ERROR,
             };
@@ -281,6 +276,7 @@ async fn get_entity(
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SpawnBody {
     components: serde_json::Value,
 }
@@ -289,9 +285,6 @@ async fn spawn_entity(
     State(state): State<AppState>,
     Json(body): Json<SpawnBody>,
 ) -> impl IntoResponse {
-    if !state.config.manipulation_enabled {
-        return error_response(StatusCode::FORBIDDEN, "Manipulation disabled");
-    }
     match send_operation(
         &state.sender,
         ControlOperation::SpawnEntity {
@@ -309,9 +302,6 @@ async fn despawn_entity(
     State(state): State<AppState>,
     Path(entity): Path<String>,
 ) -> impl IntoResponse {
-    if !state.config.manipulation_enabled {
-        return error_response(StatusCode::FORBIDDEN, "Manipulation disabled");
-    }
     match send_operation(
         &state.sender,
         ControlOperation::DespawnEntity {
@@ -344,6 +334,7 @@ async fn get_component(
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SetComponentBody {
     fields: serde_json::Value,
 }
@@ -353,9 +344,6 @@ async fn set_component(
     Path((entity, component)): Path<(String, String)>,
     Json(body): Json<SetComponentBody>,
 ) -> impl IntoResponse {
-    if !state.config.manipulation_enabled {
-        return error_response(StatusCode::FORBIDDEN, "Manipulation disabled");
-    }
     match send_operation(
         &state.sender,
         ControlOperation::SetComponent(SetComponentParams {
@@ -375,9 +363,6 @@ async fn remove_component(
     State(state): State<AppState>,
     Path((entity, component)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    if !state.config.manipulation_enabled {
-        return error_response(StatusCode::FORBIDDEN, "Manipulation disabled");
-    }
     match send_operation(
         &state.sender,
         ControlOperation::RemoveComponent(RemoveComponentParams {
@@ -408,29 +393,11 @@ async fn get_bounding_box(
         Err(e) => e,
     }
 }
-#[derive(Deserialize)]
-struct QueryEntitiesBody {
-    #[serde(default)]
-    with: Vec<String>,
-    #[serde(default)]
-    without: Vec<String>,
-    limit: Option<usize>,
-}
-
 async fn query_entities(
     State(state): State<AppState>,
-    Json(body): Json<QueryEntitiesBody>,
+    Json(params): Json<QueryEntitiesParams>,
 ) -> impl IntoResponse {
-    match send_operation(
-        &state.sender,
-        ControlOperation::QueryEntities(QueryEntitiesParams {
-            with: body.with,
-            without: body.without,
-            limit: body.limit.unwrap_or(100),
-        }),
-    )
-    .await
-    {
+    match send_operation(&state.sender, ControlOperation::QueryEntities(params)).await {
         Ok(v) => (StatusCode::OK, Json(v)),
         Err(e) => e,
     }
@@ -465,6 +432,7 @@ async fn get_resource(
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct InsertResourceBody {
     value: serde_json::Value,
 }
@@ -474,9 +442,6 @@ async fn insert_resource(
     Path(resource_type): Path<String>,
     Json(body): Json<InsertResourceBody>,
 ) -> impl IntoResponse {
-    if !state.config.manipulation_enabled {
-        return error_response(StatusCode::FORBIDDEN, "Manipulation disabled");
-    }
     match send_operation(
         &state.sender,
         ControlOperation::SetResource(SetResourceParams {
@@ -495,9 +460,6 @@ async fn remove_resource(
     State(state): State<AppState>,
     Path(resource_type): Path<String>,
 ) -> impl IntoResponse {
-    if !state.config.manipulation_enabled {
-        return error_response(StatusCode::FORBIDDEN, "Manipulation disabled");
-    }
     match send_operation(
         &state.sender,
         ControlOperation::RemoveResource { resource_type },
@@ -541,6 +503,7 @@ async fn get_component_schema(
     }
 }
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ScreenshotBody {
     entity: Option<EntityRef>,
     #[serde(default = "default_delay_frames")]
@@ -556,6 +519,10 @@ struct ScreenshotBody {
 
 fn default_delay_frames() -> i64 {
     2
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn screenshot_params(
@@ -606,9 +573,6 @@ async fn capture_screenshot(
     headers: HeaderMap,
     Json(body): Json<ScreenshotBody>,
 ) -> impl IntoResponse {
-    if !state.config.screenshot_enabled {
-        return error_response(StatusCode::FORBIDDEN, "Screenshot disabled");
-    }
     let params = match screenshot_params(body, false) {
         Ok(params) => params,
         Err(response) => return response,
@@ -629,9 +593,6 @@ async fn capture_with_gizmos(
     headers: HeaderMap,
     Json(body): Json<ScreenshotBody>,
 ) -> impl IntoResponse {
-    if !state.config.screenshot_enabled {
-        return error_response(StatusCode::FORBIDDEN, "Screenshot disabled");
-    }
     let params = match screenshot_params(body, true) {
         Ok(params) => params,
         Err(response) => return response,
@@ -643,13 +604,22 @@ async fn capture_with_gizmos(
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct StatsBody {
     #[serde(default = "default_stats_grid")]
     grid: u32,
     region: Option<[i64; 4]>,
     sample_points: Option<Vec<[i64; 2]>>,
-    #[serde(flatten)]
-    screenshot: ScreenshotBody,
+    entity: Option<EntityRef>,
+    #[serde(default = "default_delay_frames")]
+    delay_frames: i64,
+    max_width: Option<i64>,
+    position: Option<[f32; 3]>,
+    look_at: Option<[f32; 3]>,
+    #[serde(default = "default_true")]
+    hide_ui: bool,
+    #[serde(default)]
+    gizmos: bool,
 }
 
 fn default_stats_grid() -> u32 {
@@ -660,10 +630,16 @@ async fn capture_stats(
     State(state): State<AppState>,
     Json(body): Json<StatsBody>,
 ) -> impl IntoResponse {
-    if !state.config.screenshot_enabled {
-        return error_response(StatusCode::FORBIDDEN, "Screenshot disabled");
-    }
-    let common = match screenshot_params(body.screenshot, false) {
+    let screenshot = ScreenshotBody {
+        entity: body.entity,
+        delay_frames: body.delay_frames,
+        max_width: body.max_width,
+        position: body.position,
+        look_at: body.look_at,
+        hide_ui: body.hide_ui,
+        gizmos: body.gizmos,
+    };
+    let common = match screenshot_params(screenshot, false) {
         Ok(params) => params,
         Err(response) => return response,
     };
@@ -693,173 +669,50 @@ async fn compare_frames(
     State(state): State<AppState>,
     Json(params): Json<CompareFramesParams>,
 ) -> impl IntoResponse {
-    if !state.config.screenshot_enabled {
-        return error_response(StatusCode::FORBIDDEN, "Screenshot disabled");
-    }
     match send_operation(&state.sender, ControlOperation::CompareFrames(params)).await {
         Ok(value) => (StatusCode::OK, Json(value)),
         Err(response) => response,
     }
 }
 
-#[derive(Deserialize)]
-struct TimelineBody {
-    #[serde(default = "default_total_frames")]
-    total_frames: u32,
-    #[serde(default = "default_capture_count")]
-    capture_count: u32,
-    max_width: Option<u32>,
-    #[serde(default = "default_columns")]
-    columns: u32,
-    position: Option<[f32; 3]>,
-    look_at: Option<[f32; 3]>,
-    #[serde(default = "default_true")]
-    hide_ui: bool,
-    #[serde(default)]
-    gizmos: bool,
-}
-
-fn default_total_frames() -> u32 {
-    120
-}
-fn default_capture_count() -> u32 {
-    6
-}
-fn default_columns() -> u32 {
-    3
-}
-
 async fn capture_timeline(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(body): Json<TimelineBody>,
+    Json(params): Json<CaptureTimelineParams>,
 ) -> impl IntoResponse {
-    if !state.config.screenshot_enabled {
-        return error_response(StatusCode::FORBIDDEN, "Screenshot disabled");
-    }
-    match send_operation(
-        &state.sender,
-        ControlOperation::CaptureTimeline(CaptureTimelineParams {
-            total_frames: body.total_frames,
-            capture_count: body.capture_count,
-            max_width: body.max_width,
-            columns: body.columns,
-            position: body.position,
-            look_at: body.look_at,
-            hide_ui: body.hide_ui,
-            gizmos: body.gizmos,
-        }),
-    )
-    .await
-    {
+    match send_operation(&state.sender, ControlOperation::CaptureTimeline(params)).await {
         Ok(value) => image_response(StatusCode::OK, value, &headers),
         Err(e) => e,
     }
-}
-
-#[derive(Deserialize)]
-struct TurnaroundBody {
-    look_at: Option<[f32; 3]>,
-    distance: Option<f32>,
-    elevation: Option<f32>,
-    view_count: Option<u32>,
-    include_top: Option<bool>,
-    columns: Option<u32>,
-    max_width: Option<u32>,
-    hide_ui: Option<bool>,
 }
 
 async fn capture_turnaround(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(body): Json<TurnaroundBody>,
+    Json(params): Json<CaptureTurnaroundParams>,
 ) -> impl IntoResponse {
-    if !state.config.screenshot_enabled {
-        return error_response(StatusCode::FORBIDDEN, "Screenshot disabled");
-    }
-    match send_operation(
-        &state.sender,
-        ControlOperation::CaptureTurnaround(CaptureTurnaroundParams {
-            look_at: body.look_at,
-            distance: body.distance,
-            elevation: body.elevation,
-            view_count: body.view_count,
-            include_top: body.include_top,
-            columns: body.columns,
-            max_width: body.max_width,
-            hide_ui: body.hide_ui,
-        }),
-    )
-    .await
-    {
+    match send_operation(&state.sender, ControlOperation::CaptureTurnaround(params)).await {
         Ok(value) => image_response(StatusCode::OK, value, &headers),
         Err(e) => e,
     }
-}
-
-#[derive(Deserialize)]
-struct DepthBody {
-    position: Option<[f32; 3]>,
-    look_at: Option<[f32; 3]>,
-    sample_points: Option<Vec<[i64; 2]>>,
-    grid_density: Option<u32>,
-    include_rgb: Option<bool>,
-    delay_frames: Option<u32>,
-    hide_ui: Option<bool>,
-    max_width: Option<u32>,
 }
 
 async fn capture_depth(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(body): Json<DepthBody>,
+    Json(params): Json<CaptureDepthParams>,
 ) -> impl IntoResponse {
-    if !state.config.screenshot_enabled {
-        return error_response(StatusCode::FORBIDDEN, "Screenshot disabled");
-    }
-    match send_operation(
-        &state.sender,
-        ControlOperation::CaptureDepth(CaptureDepthParams {
-            position: body.position,
-            look_at: body.look_at,
-            sample_points: body.sample_points,
-            grid_density: body.grid_density,
-            include_rgb: body.include_rgb,
-            delay_frames: body.delay_frames,
-            hide_ui: body.hide_ui,
-            max_width: body.max_width,
-        }),
-    )
-    .await
-    {
+    match send_operation(&state.sender, ControlOperation::CaptureDepth(params)).await {
         Ok(value) => image_response(StatusCode::OK, value, &headers),
         Err(e) => e,
     }
 }
-#[derive(Deserialize)]
-struct ReloadBody {
-    #[serde(default)]
-    mode: ReloadMode,
-    #[serde(default)]
-    pause: bool,
-    time_scale: Option<f32>,
-}
-
 async fn trigger_reload(
     State(state): State<AppState>,
-    Json(body): Json<ReloadBody>,
+    Json(params): Json<ReloadParams>,
 ) -> impl IntoResponse {
-    match send_operation(
-        &state.sender,
-        ControlOperation::Reload(ReloadParams {
-            mode: body.mode,
-            pause: body.pause,
-            time_scale: body.time_scale,
-        }),
-    )
-    .await
-    {
-        Ok(v) => (StatusCode::OK, Json(v)),
+    match send_operation(&state.sender, ControlOperation::Reload(params)).await {
+        Ok(value) => (StatusCode::OK, Json(value)),
         Err(e) => e,
     }
 }
@@ -871,45 +724,18 @@ async fn get_reload_status(State(state): State<AppState>) -> impl IntoResponse {
     }
 }
 
-#[derive(Deserialize)]
-struct ReloadAndCaptureBody {
-    #[serde(default)]
-    mode: ReloadMode,
-    #[serde(default)]
-    pause: bool,
-    time_scale: Option<f32>,
-    delay_frames: Option<u32>,
-    max_width: Option<u32>,
-    position: Option<[f32; 3]>,
-    look_at: Option<[f32; 3]>,
-    hide_ui: Option<bool>,
-}
-
 async fn reload_and_capture(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(body): Json<ReloadAndCaptureBody>,
+    Json(params): Json<ReloadAndCaptureParams>,
 ) -> impl IntoResponse {
-    match send_operation(
-        &state.sender,
-        ControlOperation::ReloadAndCapture(ReloadAndCaptureParams {
-            mode: body.mode,
-            pause: body.pause,
-            time_scale: body.time_scale,
-            delay_frames: body.delay_frames,
-            max_width: body.max_width,
-            position: body.position,
-            look_at: body.look_at,
-            hide_ui: body.hide_ui,
-        }),
-    )
-    .await
-    {
+    match send_operation(&state.sender, ControlOperation::ReloadAndCapture(params)).await {
         Ok(value) => image_response(StatusCode::OK, value, &headers),
         Err(e) => e,
     }
 }
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ExecuteBody {
     code: String,
 }
@@ -918,9 +744,6 @@ async fn execute_python(
     State(state): State<AppState>,
     Json(body): Json<ExecuteBody>,
 ) -> impl IntoResponse {
-    if !state.config.execute_python_enabled {
-        return error_response(StatusCode::FORBIDDEN, "Python execution disabled");
-    }
     match send_operation(&state.sender, ControlOperation::RunCode { code: body.code }).await {
         Ok(v) => (StatusCode::OK, Json(v)),
         Err(e) => e,
@@ -948,6 +771,7 @@ async fn resume_time(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct TimeScaleBody {
     scale: f32,
 }
@@ -967,35 +791,17 @@ async fn set_time_scale(
     }
 }
 
-#[derive(Deserialize)]
-struct SeekTimeBody {
-    seconds: f64,
-    #[serde(default = "default_true")]
-    pause: bool,
-}
-
-fn default_true() -> bool {
-    true
-}
-
 async fn seek_time(
     State(state): State<AppState>,
-    Json(body): Json<SeekTimeBody>,
+    Json(params): Json<SeekTimeParams>,
 ) -> impl IntoResponse {
-    match send_operation(
-        &state.sender,
-        ControlOperation::SeekTime(SeekTimeParams {
-            seconds: body.seconds,
-            pause: body.pause,
-        }),
-    )
-    .await
-    {
-        Ok(v) => (StatusCode::OK, Json(v)),
+    match send_operation(&state.sender, ControlOperation::SeekTime(params)).await {
+        Ok(value) => (StatusCode::OK, Json(value)),
         Err(e) => e,
     }
 }
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct MutateAssetBody {
     entity: serde_json::Value,
     component: String,
@@ -1007,9 +813,6 @@ async fn mutate_asset(
     State(state): State<AppState>,
     Json(body): Json<MutateAssetBody>,
 ) -> impl IntoResponse {
-    if !state.config.manipulation_enabled {
-        return error_response(StatusCode::FORBIDDEN, "Manipulation disabled");
-    }
     let entity: EntityRef = match serde_json::from_value(body.entity) {
         Ok(e) => e,
         Err(_) => return error_response(StatusCode::BAD_REQUEST, "Invalid entity reference"),
@@ -1030,6 +833,7 @@ async fn mutate_asset(
     }
 }
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SpatialQueryBody {
     entity_a: serde_json::Value,
     entity_b: serde_json::Value,
@@ -1059,6 +863,7 @@ async fn query_spatial(
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct NeighborhoodBody {
     entity: serde_json::Value,
     radius: f32,
@@ -1089,6 +894,7 @@ async fn query_spatial_neighborhood(
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CheckOverlapsBody {
     entity: serde_json::Value,
     #[serde(default)]
@@ -1124,34 +930,12 @@ async fn check_overlaps(
     }
 }
 
-#[derive(Deserialize)]
-struct CheckAllOverlapsBody {
-    min_penetration: Option<f32>,
-    max_results: Option<usize>,
-    #[serde(default = "default_max_float_gap")]
-    max_float_gap: f32,
-    ground_y: Option<f32>,
-    #[serde(default)]
-    include_siblings: bool,
-}
-
 async fn check_all_overlaps(
     State(state): State<AppState>,
-    Json(body): Json<CheckAllOverlapsBody>,
+    Json(params): Json<CheckAllOverlapsParams>,
 ) -> impl IntoResponse {
-    match send_operation(
-        &state.sender,
-        ControlOperation::CheckAllOverlaps(CheckAllOverlapsParams {
-            min_penetration: body.min_penetration,
-            max_results: body.max_results,
-            max_float_gap: body.max_float_gap,
-            ground_y: body.ground_y,
-            include_siblings: body.include_siblings,
-        }),
-    )
-    .await
-    {
-        Ok(v) => (StatusCode::OK, Json(v)),
+    match send_operation(&state.sender, ControlOperation::CheckAllOverlaps(params)).await {
+        Ok(value) => (StatusCode::OK, Json(value)),
         Err(e) => e,
     }
 }
@@ -1176,6 +960,7 @@ async fn debug_registry(State(state): State<AppState>) -> impl IntoResponse {
     }
 }
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct BatchBody {
     operations: Vec<serde_json::Value>,
 }
@@ -1184,9 +969,6 @@ async fn batch_mutate(
     State(state): State<AppState>,
     Json(body): Json<BatchBody>,
 ) -> impl IntoResponse {
-    if !state.config.manipulation_enabled {
-        return error_response(StatusCode::FORBIDDEN, "Manipulation disabled");
-    }
     match send_operation(
         &state.sender,
         ControlOperation::Batch {
@@ -1283,7 +1065,7 @@ struct SearchQuery {
 const DEFAULT_STUB_SEARCH_LIMIT: usize = 200;
 
 async fn stubs_index(State(state): State<AppState>) -> impl IntoResponse {
-    if !state.config.api_discovery_enabled {
+    if !state.config.api_discovery {
         return (
             StatusCode::FORBIDDEN,
             Json(serde_json::json!({ "error": "API discovery disabled" })),
@@ -1299,7 +1081,7 @@ async fn stubs_search(
     State(state): State<AppState>,
     AxumQuery(params): AxumQuery<SearchQuery>,
 ) -> impl IntoResponse {
-    if !state.config.api_discovery_enabled {
+    if !state.config.api_discovery {
         return (
             StatusCode::FORBIDDEN,
             Json(serde_json::json!({ "error": "API discovery disabled" })),
@@ -1322,7 +1104,7 @@ async fn stubs_module(
     State(state): State<AppState>,
     Path(module): Path<String>,
 ) -> impl IntoResponse {
-    if !state.config.api_discovery_enabled {
+    if !state.config.api_discovery {
         return (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "API discovery disabled" })),
@@ -1344,7 +1126,7 @@ async fn stubs_type(
     State(state): State<AppState>,
     Path(type_name): Path<String>,
 ) -> impl IntoResponse {
-    if !state.config.api_discovery_enabled {
+    if !state.config.api_discovery {
         return (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "API discovery disabled" })),
@@ -1369,7 +1151,7 @@ async fn stubs_type_structured(
     State(state): State<AppState>,
     Path(type_name): Path<String>,
 ) -> impl IntoResponse {
-    if !state.config.api_discovery_enabled {
+    if !state.config.api_discovery {
         return (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "API discovery disabled" })),
@@ -1520,21 +1302,6 @@ mod tests {
     }
 
     #[test]
-    fn default_total_frames_value() {
-        assert_eq!(default_total_frames(), 120);
-    }
-
-    #[test]
-    fn default_capture_count_value() {
-        assert_eq!(default_capture_count(), 6);
-    }
-
-    #[test]
-    fn default_columns_value() {
-        assert_eq!(default_columns(), 3);
-    }
-
-    #[test]
     fn screenshot_body_deserialize_defaults() {
         let json = r#"{"position": [1.0, 2.0, 3.0]}"#;
         let body: ScreenshotBody = serde_json::from_str(json).unwrap();
@@ -1565,94 +1332,8 @@ mod tests {
         let body: StatsBody = serde_json::from_str(r#"{"sample_points": [[1, 2]]}"#).unwrap();
         assert_eq!(body.grid, 1);
         assert_eq!(body.sample_points, Some(vec![[1, 2]]));
-        assert_eq!(body.screenshot.delay_frames, 2);
-        assert!(body.screenshot.hide_ui);
-    }
-
-    #[test]
-    fn timeline_body_deserialize_defaults() {
-        let json = "{}";
-        let body: TimelineBody = serde_json::from_str(json).unwrap();
-        assert_eq!(body.total_frames, 120);
-        assert_eq!(body.capture_count, 6);
-        assert_eq!(body.columns, 3);
-        assert!(body.max_width.is_none());
+        assert_eq!(body.delay_frames, 2);
         assert!(body.hide_ui);
-        assert!(!body.gizmos);
-    }
-
-    #[test]
-    fn timeline_body_preserves_capture_visibility_options() {
-        let body: TimelineBody =
-            serde_json::from_str(r#"{"hide_ui": false, "gizmos": true}"#).unwrap();
-        assert!(!body.hide_ui);
-        assert!(body.gizmos);
-    }
-
-    #[test]
-    fn depth_body_deserialize_defaults() {
-        let json = "{}";
-        let body: DepthBody = serde_json::from_str(json).unwrap();
-        assert!(body.position.is_none());
-        assert!(body.look_at.is_none());
-        assert!(body.sample_points.is_none());
-        assert!(body.grid_density.is_none());
-        assert!(body.include_rgb.is_none());
-        assert!(body.delay_frames.is_none());
-        assert!(body.hide_ui.is_none());
-        assert!(body.max_width.is_none());
-    }
-
-    #[test]
-    fn depth_body_deserializes_signed_sample_points_for_handler_validation() {
-        let json = r#"{"sample_points": [[99999, -50], [10, 10]]}"#;
-        let body: DepthBody = serde_json::from_str(json).unwrap();
-
-        assert_eq!(body.sample_points, Some(vec![[99999, -50], [10, 10]]));
-    }
-
-    #[test]
-    fn turnaround_body_deserialize_defaults() {
-        let json = "{}";
-        let body: TurnaroundBody = serde_json::from_str(json).unwrap();
-        assert!(body.look_at.is_none());
-        assert!(body.distance.is_none());
-        assert!(body.elevation.is_none());
-        assert!(body.view_count.is_none());
-    }
-
-    #[test]
-    fn query_entities_body_deserialize_defaults() {
-        let json = "{}";
-        let body: QueryEntitiesBody = serde_json::from_str(json).unwrap();
-        assert!(body.with.is_empty());
-        assert!(body.without.is_empty());
-        assert!(body.limit.is_none());
-    }
-
-    #[test]
-    fn seek_time_body_pause_defaults_to_true() {
-        // Schema documents `pause: default true`. A missing `pause` field must
-        // deserialize to true so the REST endpoint matches the documented contract
-        // (and matches SeekTimeParams::pause in bridge.rs).
-        let json = r#"{"seconds": 5.0}"#;
-        let body: SeekTimeBody = serde_json::from_str(json).unwrap();
-        assert_eq!(body.seconds, 5.0);
-        assert!(body.pause);
-    }
-
-    #[test]
-    fn seek_time_body_pause_explicit_false_honored() {
-        let json = r#"{"seconds": 5.0, "pause": false}"#;
-        let body: SeekTimeBody = serde_json::from_str(json).unwrap();
-        assert!(!body.pause);
-    }
-
-    #[test]
-    fn seek_time_body_pause_explicit_true_honored() {
-        let json = r#"{"seconds": 5.0, "pause": true}"#;
-        let body: SeekTimeBody = serde_json::from_str(json).unwrap();
-        assert!(body.pause);
     }
 
     #[test]
@@ -1661,37 +1342,6 @@ mod tests {
         let body: CheckOverlapsBody = serde_json::from_str(json).unwrap();
         assert!(!body.include_siblings);
         assert_eq!(body.max_float_gap, 0.1);
-    }
-
-    #[test]
-    fn check_all_overlaps_body_deserialize_defaults() {
-        let json = "{}";
-        let body: CheckAllOverlapsBody = serde_json::from_str(json).unwrap();
-        assert!(body.min_penetration.is_none());
-        assert!(body.max_results.is_none());
-        assert_eq!(body.max_float_gap, 0.1);
-    }
-
-    #[test]
-    fn server_config_clone() {
-        let config = ServerConfig {
-            screenshot_enabled: true,
-            manipulation_enabled: false,
-            execute_python_enabled: true,
-            api_discovery_enabled: false,
-        };
-        let cloned = config.clone();
-        assert!(cloned.screenshot_enabled);
-        assert!(!cloned.manipulation_enabled);
-    }
-
-    #[test]
-    fn reload_body_deserialize_defaults() {
-        let json = "{}";
-        let body: ReloadBody = serde_json::from_str(json).unwrap();
-        assert_eq!(body.mode, ReloadMode::Full);
-        assert!(!body.pause);
-        assert!(body.time_scale.is_none());
     }
 
     #[test]
@@ -1760,15 +1410,6 @@ mod tests {
     }
 
     #[test]
-    fn reload_and_capture_body_deserialize() {
-        let json = r#"{"position": [0, 5, 10]}"#;
-        let body: ReloadAndCaptureBody = serde_json::from_str(json).unwrap();
-        assert_eq!(body.mode, ReloadMode::Full);
-        assert!(!body.pause);
-        assert!(body.position.is_some());
-    }
-
-    #[test]
     fn search_query_deserialize() {
         let json = r#"{"q": "Transform"}"#;
         let q: SearchQuery = serde_json::from_str(json).unwrap();
@@ -1790,11 +1431,13 @@ mod tests {
             sender,
             SseEventBroadcaster::new(),
             Arc::new(ApiIndex::build(std::path::Path::new(""))),
-            ServerConfig {
-                screenshot_enabled: true,
-                manipulation_enabled: true,
-                execute_python_enabled: true,
-                api_discovery_enabled: true,
+            ControlConfig {
+                port: 0,
+                host: "127.0.0.1".into(),
+                screenshot: true,
+                manipulation: true,
+                execute_python: true,
+                api_discovery: true,
             },
             SharedScheduleRegistry::default(),
         );
@@ -1807,11 +1450,13 @@ mod tests {
             sender,
             SseEventBroadcaster::new(),
             Arc::new(ApiIndex::build(std::path::Path::new(""))),
-            ServerConfig {
-                screenshot_enabled: false,
-                manipulation_enabled: false,
-                execute_python_enabled: false,
-                api_discovery_enabled: false,
+            ControlConfig {
+                port: 0,
+                host: "127.0.0.1".into(),
+                screenshot: false,
+                manipulation: false,
+                execute_python: false,
+                api_discovery: false,
             },
             SharedScheduleRegistry::default(),
         );
@@ -1959,6 +1604,44 @@ mod tests {
         });
         let response = app.oneshot(get_req("/api/v1/performance")).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn timeline_route_forwards_the_schema_default_span() {
+        let (state, mut receiver) = test_state_enabled();
+        let app = build_router(state);
+        let responder = tokio::spawn(async move {
+            let request = receiver.rx.recv().await.unwrap();
+            let ControlOperation::CaptureTimeline(params) = &request.operation else {
+                panic!("expected capture_timeline, got {:?}", request.operation);
+            };
+            assert_eq!(params.total_frames, 60);
+            let _ = request.response_tx.send(Ok(serde_json::json!({})));
+        });
+
+        let response = app
+            .oneshot(json_post("/api/v1/screenshot/timeline", "{}"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        responder.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn body_routes_reject_unknown_fields() {
+        let (state, _receiver) = test_state_enabled();
+        let app = build_router(state);
+        for (uri, body) in [
+            ("/api/v1/screenshot/turnaround", r#"{"views": 3}"#),
+            ("/api/v1/screenshot/stats", r#"{"grid": 2, "views": 3}"#),
+            ("/api/v1/entities", r#"{"components": {}, "views": 3}"#),
+        ] {
+            let response = app.clone().oneshot(json_post(uri, body)).await.unwrap();
+            assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY, "{uri}");
+            let text = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            let text = String::from_utf8(text.to_vec()).unwrap();
+            assert!(text.contains("unknown field `views`"), "{uri}: {text}");
+        }
     }
 
     #[tokio::test]
@@ -2393,105 +2076,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn spawn_entity_forbidden() {
-        let (state, _rx) = test_state_disabled();
-        let app = build_router(state);
-        let response = app
-            .oneshot(json_post("/api/v1/entities", r#"{"components": {}}"#))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    }
-
-    #[tokio::test]
-    async fn despawn_entity_forbidden() {
-        let (state, _rx) = test_state_disabled();
-        let app = build_router(state);
-        let response = app.oneshot(delete_req("/api/v1/entities/1")).await.unwrap();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    }
-
-    #[tokio::test]
-    async fn set_component_forbidden() {
-        let (state, _rx) = test_state_disabled();
-        let app = build_router(state);
-        let response = app
-            .oneshot(
-                axum::http::Request::builder()
-                    .method("PUT")
-                    .uri("/api/v1/entities/1/components/X")
-                    .header("content-type", "application/json")
-                    .body(axum::body::Body::from(r#"{"fields": {}}"#))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    }
-
-    #[tokio::test]
-    async fn remove_component_forbidden() {
-        let (state, _rx) = test_state_disabled();
-        let app = build_router(state);
-        let response = app
-            .oneshot(delete_req("/api/v1/entities/1/components/X"))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    }
-
-    #[tokio::test]
-    async fn insert_resource_forbidden() {
-        let (state, _rx) = test_state_disabled();
-        let app = build_router(state);
-        let response = app
-            .oneshot(
-                axum::http::Request::builder()
-                    .method("PUT")
-                    .uri("/api/v1/resources/MyRes")
-                    .header("content-type", "application/json")
-                    .body(axum::body::Body::from(r#"{"value": {}}"#))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    }
-
-    #[tokio::test]
-    async fn remove_resource_forbidden() {
-        let (state, _rx) = test_state_disabled();
-        let app = build_router(state);
-        let response = app
-            .oneshot(delete_req("/api/v1/resources/MyRes"))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    }
-
-    #[tokio::test]
-    async fn batch_mutate_forbidden() {
-        let (state, _rx) = test_state_disabled();
-        let app = build_router(state);
-        let response = app
-            .oneshot(json_post("/api/v1/batch", r#"{"operations": []}"#))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    }
-
-    #[tokio::test]
-    async fn capture_screenshot_forbidden() {
-        let (state, _rx) = test_state_disabled();
-        let app = build_router(state);
-        let response = app
-            .oneshot(json_post("/api/v1/screenshot", "{}"))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    }
-
-    #[tokio::test]
     async fn screenshot_mcp_delivery_is_opt_in_at_the_http_boundary() {
         const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
 
@@ -2541,79 +2125,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn capture_gizmos_forbidden() {
-        let (state, _rx) = test_state_disabled();
+    async fn engine_forbidden_error_maps_to_http_403() {
+        let (state, mut receiver) = test_state_enabled();
         let app = build_router(state);
-        let response = app
-            .oneshot(json_post("/api/v1/screenshot/gizmos", "{}"))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    }
-
-    #[tokio::test]
-    async fn capture_timeline_forbidden() {
-        let (state, _rx) = test_state_disabled();
-        let app = build_router(state);
-        let response = app
-            .oneshot(json_post("/api/v1/screenshot/timeline", "{}"))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    }
-
-    #[tokio::test]
-    async fn capture_turnaround_forbidden() {
-        let (state, _rx) = test_state_disabled();
-        let app = build_router(state);
-        let response = app
-            .oneshot(json_post("/api/v1/screenshot/turnaround", "{}"))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    }
-
-    #[tokio::test]
-    async fn capture_depth_forbidden() {
-        let (state, _rx) = test_state_disabled();
-        let app = build_router(state);
-        let response = app
-            .oneshot(json_post("/api/v1/screenshot/depth", "{}"))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    }
-
-    #[tokio::test]
-    async fn frame_analysis_forbidden_when_screenshots_are_disabled() {
-        let (state, _rx) = test_state_disabled();
-        let app = build_router(state);
-        let response = app
-            .clone()
-            .oneshot(json_post("/api/v1/screenshot/stats", "{}"))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let responder = tokio::spawn(async move {
+            let request = receiver.rx.recv().await.unwrap();
+            request
+                .response_tx
+                .send(Err(ControlError::forbidden("Manipulation disabled")))
+                .unwrap();
+        });
 
         let response = app
-            .oneshot(json_post(
-                "/api/v1/screenshot/compare",
-                r#"{"a": "f_1", "b": "f_2"}"#,
-            ))
+            .oneshot(json_post("/api/v1/entities", r#"{"components": {}}"#))
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    }
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body, serde_json::json!({"error": "Manipulation disabled"}));
 
-    #[tokio::test]
-    async fn execute_python_forbidden() {
-        let (state, _rx) = test_state_disabled();
-        let app = build_router(state);
-        let response = app
-            .oneshot(json_post("/api/v1/execute", r#"{"code": "print(1)"}"#))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        responder.await.unwrap();
     }
 
     #[tokio::test]
@@ -2788,19 +2320,5 @@ mod tests {
             body["error"],
             "action[0]: 'at_frame' must be a non-negative integer"
         );
-    }
-
-    #[tokio::test]
-    async fn mutate_asset_forbidden() {
-        let (state, _rx) = test_state_disabled();
-        let app = build_router(state);
-        let response = app
-            .oneshot(json_post(
-                "/api/v1/assets/mutate",
-                r#"{"entity": 1, "component": "X", "asset_type": "Y", "fields": {}}"#,
-            ))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 }

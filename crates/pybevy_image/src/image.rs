@@ -826,8 +826,9 @@ pub struct ImageDataContext {
 
 #[pymethods]
 impl ImageDataContext {
-    fn __enter__(&self, py: Python<'_>) -> Py<PyArray> {
-        self.array.clone_ref(py)
+    fn __enter__(&self, py: Python<'_>) -> PyResult<Py<PyArray>> {
+        self.anchor.check_read().map_err(PyRuntimeError::new_err)?;
+        Ok(self.array.clone_ref(py))
     }
 
     #[pyo3(signature = (_exc_type=None, _exc_value=None, _traceback=None))]
@@ -850,8 +851,9 @@ pub struct ImageDataContextMut {
 
 #[pymethods]
 impl ImageDataContextMut {
-    fn __enter__(&self, py: Python<'_>) -> Py<PyArray> {
-        self.array.clone_ref(py)
+    fn __enter__(&self, py: Python<'_>) -> PyResult<Py<PyArray>> {
+        self.anchor.check_read().map_err(PyRuntimeError::new_err)?;
+        Ok(self.array.clone_ref(py))
     }
 
     #[pyo3(signature = (_exc_type=None, _exc_value=None, _traceback=None))]
@@ -874,8 +876,9 @@ pub struct ImagePixelContextMut {
 
 #[pymethods]
 impl ImagePixelContextMut {
-    fn __enter__(&self, py: Python<'_>) -> Py<PyArray> {
-        self.array.clone_ref(py)
+    fn __enter__(&self, py: Python<'_>) -> PyResult<Py<PyArray>> {
+        self.anchor.check_read().map_err(PyRuntimeError::new_err)?;
+        Ok(self.array.clone_ref(py))
     }
 
     #[pyo3(signature = (_exc_type=None, _exc_value=None, _traceback=None))]

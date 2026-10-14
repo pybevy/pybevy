@@ -341,6 +341,9 @@ pub fn process_pending_reload_and_capture(world: &mut World) {
     let mut still_waiting = Vec::new();
 
     for mut rac in pending.pending.drain(..) {
+        if rac.response_tx.is_closed() {
+            continue;
+        }
         if rac.reload_frames_remaining > 0 {
             rac.reload_frames_remaining -= 1;
             still_waiting.push(rac);

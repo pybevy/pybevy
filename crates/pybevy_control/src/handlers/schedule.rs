@@ -38,6 +38,7 @@ pub enum ScheduleMode {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ScheduleRequest {
     /// Ordered list of tool calls to execute
     pub actions: Vec<ScheduleAction>,
@@ -49,6 +50,7 @@ pub struct ScheduleRequest {
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ScheduleAction {
     /// Tool name to call
     pub tool: String,

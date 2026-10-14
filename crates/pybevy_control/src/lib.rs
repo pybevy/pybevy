@@ -3,6 +3,7 @@ pub mod asset_reference;
 pub mod bridge;
 pub mod client;
 mod client_pyo3;
+mod feature_gate;
 pub mod handlers;
 mod image_preview;
 pub mod plugin;

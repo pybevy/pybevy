@@ -57,7 +57,7 @@ Fix the source and reload again to apply the new definitions.
 - `check_all_overlaps` - Scene-wide AABB overlap + floating/sunken detection across every entity. Use `ground_y` for first-load GLB sweeps.
 - `reload_and_capture` - One round-trip: reload → error check → render-pipeline readiness → screenshot. The capture delay starts after readiness; asynchronous asset loads may still need more time.
 - `capture_turnaround` - Multi-viewpoint orbit capture composited into one contact sheet. Auto-fits to scene bounds.
-- `capture_timeline` - Frames over time in a contact sheet. Headless image-target captures apply UI/overlay suppression from the first tile and restore capture state after completion or timeout.
+- `capture_timeline` - Frames over time in a contact sheet (default 6 captures across 60 frames). Headless image-target captures apply UI/overlay suppression from the first tile and restore capture state after completion or timeout.
 - `capture_depth` - RGB screenshot + ray-AABB depth samples from one camera context. It selects the active `Camera3d` with the highest render order (lowest entity ID breaks ties), retains that identity across the delay, and captures its exact target. The result reports camera, viewport, and same-target pass provenance plus **entity names at each sample point** (semantic segmentation), making it the primary tool for diagnosing **occlusion, visibility, and "wrong entity showing"** problems. Use it before repeated screenshots when geometry appears wrong.
 - `capture_stats` - Numeric RGB/luma summaries, grid cells, and pixel samples without returning a PNG. Captures a retained `frame_id` for later `compare_frames` calls. Pass `entity` to either `capture_stats` or `capture_screenshot` to isolate one entity subtree while retaining camera and lighting support.
 - Temporary `position`/`look_at` overrides on `capture_stats` and `capture_screenshot` render the moved 3D camera before capturing its image target, then restore camera state. No extra caller delay is needed for objects outside the original view.
@@ -79,7 +79,7 @@ When geometry looks wrong (wrong size, shape, missing, or occluded), follow this
 
 ## Batched Schedules
 
-- `schedule_actions` - Submit batched, timed tool calls that execute inside the engine frame loop. Same-`at` actions fire in the same frame (atomic). Supports time offsets (`at`), frame offsets (`at_frame`), `stop_on_error`, `skip_if_error`, and sync/async modes.
+- `schedule_actions` - Submit batched, timed tool calls that execute inside the engine frame loop. Same-`at` actions fire in the same frame (atomic). Supports time offsets (`at`), frame offsets (`at_frame`), `stop_on_error`, `skip_if_error`, and sync/async modes. A schedule naming a tool that `McpPlugin` disables (for example `run_code` without `execute_python=True`) is rejected before any action runs.
 - `get_schedule_result` - Poll status of an async schedule.
 
 **Use `schedule_actions` instead of sequential tool calls** when you need atomic multi-step operations (pause → seek → screenshot → resume), time-lapse captures, or any workflow where intermediate frames between tool calls would cause drift. See `guide://scene-editing` for examples.

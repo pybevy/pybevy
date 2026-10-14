@@ -15,7 +15,7 @@ use crate::{
     api_index::ApiIndex,
     bridge::{self, SseEventBroadcaster},
     handlers::frame_analysis::CapturedFrames,
-    server::{AppState, ServerConfig},
+    server::AppState,
 };
 
 #[pyplugin(ControlBevyPlugin)]
@@ -155,11 +155,13 @@ impl Plugin for ControlBevyPlugin {
         // Create SSE broadcaster
         let sse_broadcaster = SseEventBroadcaster::new();
 
-        let server_config = ServerConfig {
-            screenshot_enabled: config.screenshot,
-            manipulation_enabled: config.manipulation,
-            execute_python_enabled: config.execute_python,
-            api_discovery_enabled: config.api_discovery,
+        let control_config = ControlConfig {
+            port: config.port,
+            host: config.host.clone(),
+            screenshot: config.screenshot,
+            manipulation: config.manipulation,
+            execute_python: config.execute_python,
+            api_discovery: config.api_discovery,
         };
 
         // Create shared schedule registry
@@ -170,7 +172,7 @@ impl Plugin for ControlBevyPlugin {
             sender,
             sse_broadcaster.clone(),
             Arc::new(api_index),
-            server_config,
+            control_config.clone(),
             schedule_registry.clone(),
         );
 
@@ -183,14 +185,7 @@ impl Plugin for ControlBevyPlugin {
             schedule_registry,
         ));
         app.init_resource::<crate::asset_reference::AssetReferenceSession>();
-        app.insert_resource(ControlConfig {
-            port: config.port,
-            host: config.host.clone(),
-            screenshot: config.screenshot,
-            manipulation: config.manipulation,
-            execute_python: config.execute_python,
-            api_discovery: config.api_discovery,
-        });
+        app.insert_resource(control_config);
 
         app.insert_non_send(Box::new(crate::runtime_pyo3::Pyo3ControlRuntime)
             as Box<dyn crate::runtime::ControlRuntime>);

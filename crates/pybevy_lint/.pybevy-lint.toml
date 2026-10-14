@@ -2314,7 +2314,6 @@ notes = "custom<P> and the Custom payload require an arbitrary native CameraProj
 intentional_readonly_properties = ["bits", "active_layers"]
 intentional_missing_methods = ["bitand", "bitor", "bitxor"]
 intentional_signature_diffs = ["from_layers", "layer", "without"]
-intentional_extra_methods = ["all"]
 renames = { "with" = "with_" }
 notes = "bitand/bitor/bitxor implemented as __and__/__or__/__xor__, 'with' renamed 'with_' (Python keyword), Layer type -> u8. bits exposes the private bitset as a slice; active_layers is derived iteration."
 

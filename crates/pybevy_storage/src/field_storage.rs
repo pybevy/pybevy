@@ -93,7 +93,7 @@ pub enum FieldStorageInner<T: Clone> {
     Revalidating(Box<RevalidatingField>),
 
     /// A typed path into a live Bevy asset.
-    Source(Box<RevalidatingSource<T>>),
+    Source(RevalidatingSource<T>),
 }
 
 impl<T: Clone> Clone for FieldStorage<T> {
@@ -215,7 +215,7 @@ impl<T: Clone> BorrowableStorage<T> for FieldStorage<T> {
         T: 'static,
     {
         Self {
-            inner: FieldStorageInner::Source(Box::new(source)),
+            inner: FieldStorageInner::Source(source),
         }
     }
 }
@@ -321,19 +321,17 @@ impl<T: Clone> FieldStorage<T> {
         let source = match &self.inner {
             FieldStorageInner::Source(source) => {
                 read(&*source.resolve_ref()?);
-                source.field(read, write)
+                source.validated_field(read, write, validate)
             }
             _ => {
                 read(&*self.as_ref()?);
                 match RevalidatingSource::from_borrowed_field(self) {
-                    Some(source) => source.field(read, write),
+                    Some(source) => source.validated_field(read, write, validate),
                     None => return self.snapshot_field_as(read),
                 }
             }
         };
-        Ok(W::from_borrowed(S::revalidating_source(
-            source.validated(validate),
-        )))
+        Ok(W::from_borrowed(S::revalidating_source(source)))
     }
 
     /// Get the current value (returns a clone)
