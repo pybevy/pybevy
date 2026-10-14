@@ -1024,6 +1024,11 @@ class CompositeAlphaMode:
 class WindowResizeConstraints:
     """Constraints on window resizing dimensions.
 
+    Minima must be finite. Maxima must be finite or positive infinity
+    (unbounded). Invalid construction or assignment raises ValueError. As in
+    Bevy, minima below 1 logical pixel and maxima below their minima are
+    stored as given and normalized when applied to the native window.
+
     Example:
         ```python
         from pybevy.window import Window, WindowResizeConstraints
@@ -1044,11 +1049,11 @@ class WindowResizeConstraints:
         max_width: float = ...,
         max_height: float = ...
     ) -> None:
-        """Create window resize constraints."""
+        """Create validated window resize constraints with unbounded defaults."""
 
     @property
     def min_width(self) -> float:
-        """Minimum window width."""
+        """Finite minimum window width in logical pixels."""
 
     @min_width.setter
     def min_width(self, value: float) -> None:
@@ -1056,7 +1061,7 @@ class WindowResizeConstraints:
 
     @property
     def min_height(self) -> float:
-        """Minimum window height."""
+        """Finite minimum window height in logical pixels."""
 
     @min_height.setter
     def min_height(self, value: float) -> None:
@@ -1064,7 +1069,7 @@ class WindowResizeConstraints:
 
     @property
     def max_width(self) -> float:
-        """Maximum window width."""
+        """Maximum width, finite or positive infinity for no upper bound."""
 
     @max_width.setter
     def max_width(self, value: float) -> None:
@@ -1072,7 +1077,7 @@ class WindowResizeConstraints:
 
     @property
     def max_height(self) -> float:
-        """Maximum window height."""
+        """Maximum height, finite or positive infinity for no upper bound."""
 
     @max_height.setter
     def max_height(self, value: float) -> None:

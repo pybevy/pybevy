@@ -51,6 +51,7 @@ pub mod entity;
 pub mod entity_index;
 pub mod enum_comparison;
 pub mod float_live_list;
+pub mod gpu_validation;
 pub mod handle;
 pub mod hierarchy;
 pub mod live_sequence;

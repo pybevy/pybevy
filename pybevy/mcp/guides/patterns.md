@@ -709,12 +709,18 @@ Query[Optional[Mut[Transform]]]                # mutable when present
 
 # AnyOf is query data -- match at least one and return optional values
 Query[AnyOf[tuple[Transform, Visibility]]]
+Query[tuple[Entity, AnyOf[tuple[Transform, Visibility]]]]
 
 # Or combines query filters; each tuple item is one alternative
 Query[Entity, Or[tuple[With[Sprite], With[Mesh3d]]]]
 ```
 
 Multiple Query filters belong in one second-position `tuple[...]`.
+Use builtin `tuple[...]`, not `typing.Tuple[...]`, for direct Query/Single/View
+data or filter-group slots. Nested marker inputs such as
+`AnyOf[typing.Tuple[A, B]]` keep their own accepted forms. `AnyOf[...]` belongs
+in the first Query data position (or inside its data tuple), not the second
+filter position; View does not support it.
 `Query[Transform, (With[Player], Without[Dead])]` and
 `Query[Transform, With[Player], Without[Dead]]` raise `TypeError` and show the
 canonical spelling above.

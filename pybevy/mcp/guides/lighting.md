@@ -547,7 +547,7 @@ that contains the camera applies to the entire frame at once.
 | `density_factor` | Overall thickness | Faint haze (0.05) | Thick soup (0.5) |
 | `absorption` | Light absorbed passing through | Thin, see-through (0.01) | **Opaque, dark** (0.3+) |
 | `scattering` | Light bounced out of, and into, the view ray | Thin, see-through (0.1) | **Opaque** (0.7) |
-| `scattering_asymmetry` | Asymmetry (-1 to 1) | Backscatter (-0.5) | Forward scatter (0.5) |
+| `scattering_asymmetry` | Asymmetry [-1, 1]; other values and non-finite numbers raise `ValueError` | Backscatter (-0.5) | Forward scatter (0.5) |
 
 **Both parameters darken the background; they are not opposites.** Bevy
 attenuates each step by `exp(-step * density * (absorption + scattering))`, so

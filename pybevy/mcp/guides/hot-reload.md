@@ -103,8 +103,15 @@ reload {"mode": "full", "time_scale": 0.1}            - Reload at slow-motion
 reload {"mode": "full", "pause": true, "time_scale": 0.1} - Both: frozen at 0.1x, resume when ready
 
 get_reload_status                  - Check if reload is pending/complete
-get_last_error                     - Get Python error traceback if reload failed
+get_last_error                     - Get Python error traceback if reload failed, plus wgpu_validation GPU errors
 ```
+
+`get_last_error.wgpu_validation` is `null` or reports GPU validation errors
+recorded since the last successful reload: `count`, `first` and `last`
+(`message`, pipeline `label`), and `last_seen_secs_ago`. A successful full or
+partial reload clears it. An invalid pipeline reports again every frame, so a
+still-broken shader reappears right after the reload, while a growing
+`last_seen_secs_ago` means the error is no longer occurring.
 
 Error responses from `reload` and `reload_and_capture` can include an advisory
 `hint` when the surfaced exception has a recognized message. The field is
@@ -392,7 +399,7 @@ Press **F7** to toggle the memory overlay, which shows:
 - Python GC object count
 - Schedule system count
 - Per-reload memory deltas (rolling window of last 20 reloads)
-- Warning indicator if RSS growth exceeds threshold (100 MB default)
+- Warning indicator if RSS growth exceeds threshold (200 MB default)
 
 Memory data is also available via MCP:
 ```
@@ -411,9 +418,10 @@ The same response distinguishes process lifetime from reload lifetime:
 `uptime_secs` remains monotonic across reloads, while
 `generation_uptime_secs` resets after a full reload.
 
-`memory_growth_mb` is RSS since the first stats tick (about a second after startup),
-not reload leak: it reads hundreds of MB at `reload_count: 0`. For per-reload growth
-use `delta_mb` in `reload_memory_snapshots`.
+`memory_growth_mb` is RSS since a baseline taken after the first 120 frames, not
+reload leak: asset loading after that point still counts, so it can read tens or
+hundreds of MB at `reload_count: 0`. It is absent until the baseline exists. For
+per-reload growth use `delta_mb` in `reload_memory_snapshots`.
 
 Retired views release their bin-unpacking bind groups and cached pipeline keys during render cleanup;
 allocator and driver caching can still keep reported memory above its startup level.

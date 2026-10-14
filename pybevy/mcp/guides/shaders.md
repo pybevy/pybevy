@@ -99,7 +99,7 @@ expire when the system ends. Reading the base does not mark an asset modified;
 writing it does.
 
 On a newly constructed, copied or removed material, `mat.base` is a read-only
-snapshot. Replace the whole base with `mat.base = StandardMaterial(...)`, or copy
+snapshot. Replace the whole base with `mat.base = new_base`, or copy
 it, edit the copy and assign it back. Whole-base assignment copies the supplied
 value and also works through `get_mut()`; it does not consume the replacement.
 Unknown assignments raise AttributeError: base settings such as `mat.unlit` point
@@ -167,7 +167,7 @@ samplers use the same `ShaderMaterialPlugin()`.
 | `LinearRgba`   | `vec4<f32>`    | 16 bytes, 16-byte aligned      |
 | `bool`         | shader def     | `#ifdef FIELD_NAME` in WGSL    |
 | `Handle[Image] \| None` | texture slot | `texture_2d<f32>` + `sampler` |
-| `Annotated[Handle[Image] \| None, TextureBinding(...)]` | sampled texture | cube/3D/array dimensions and sample controls |
+| `Annotated[Handle[Image] \| None, TextureBinding(dimension=...)]` | sampled texture | cube/3D/array dimensions and sample controls |
 | `StorageBinding[Vec4]` | read-only storage | concise typed array declaration |
 | `TextureBinding` | sampled texture | concise Image-handle declaration |
 | `SamplerBinding` | independent sampler | concise ImageSamplerDescriptor declaration |
@@ -352,7 +352,7 @@ the usual asset authority, change tracking and system lifetime rules.
 
 Each field gets its own binding starting at 109, in declaration order. For
 custom WGSL types, keep the explicit `Annotated[Handle[ShaderBuffer] | None,
-StorageBinding(...)]` form below. Its `element` accepts `float` (`f32`), `int` (`i32`), `U32` (`u32`), `Vec2`, `Vec3`, `Vec4`, or WGSL type text
+StorageBinding(element=...)]` form below. Its `element` accepts `float` (`f32`), `int` (`i32`), `U32` (`u32`), `Vec2`, `Vec3`, `Vec4`, or WGSL type text
 such as `"u32"`, `"mat3x3<f32>"`, and `"array<vec2<u32>, 3>"`. For manually declared structs,
 provide their WGSL in `declarations`; typed dataclasses can use `@shader_type` below. Both material uniforms and shader structs encode `int` as `i32`.
 Use `float` explicitly for floating-point shader math, or cast with `f32(material.count)` in WGSL.
@@ -485,7 +485,7 @@ declarations, avoiding global references to reloadable Python classes.
 ## Texture Dimensions and Sampling
 
 Plain `Handle[Image] | None` fields retain the four ordinary 2D float slots and
-white fallbacks. Use `image: TextureBinding = TextureBinding(...)` to declare a different
+white fallbacks. Use `image: TextureBinding = TextureBinding(dimension=...)` to declare a different
 sampled-image contract. These classes use `ShaderMaterialPlugin()` even
 if they have no storage fields. TextureBinding-only layouts do not require storage
 buffer support. There are still four texture slots at bindings 101–108 (with optional paired samplers);
@@ -573,7 +573,7 @@ Set `ImageSampler.Descriptor(ImageSamplerDescriptor(compare=ImageCompareFunction
 upload recipe does not generalize to every depth format.
 
 Actual min/mag/mipmap filtering, wrap modes, LOD clamps and anisotropy stay on
-`Image.sampler`, using `ImageSampler.Descriptor(ImageSamplerDescriptor(...))`.
+`Image.sampler`, using `ImageSampler.Descriptor(descriptor)`.
 `sampler_type="filtering"` permits linear or nearest filtering; `"non_filtering"`
 requires nearest filtering. `filterable=True` requires a filterable texture
 format/device feature. These image-owned settings affect every paired binding
@@ -1107,6 +1107,9 @@ Use imports that match the pass's native bindings. Forward view resources are
 not universally available in a shadow/prepass layout. The optional pass hooks
 above determine which custom stages run; providing only forward paths keeps
 the base material's default prepass, shadow and deferred behavior.
+A prepass/shadow shader that imports `globals` fails its pipeline, and the
+whole frame, not just that mesh, can render black; `get_last_error` then
+names the pipeline under `wgpu_validation`.
 
 All `@material` classes use the shared `ShaderMaterialPlugin`. You may add a new
 decorated class during hot reload as long as that plugin was installed when the
@@ -1172,7 +1175,7 @@ Use `shader_type`, `shader_type_layout`, `ShaderTypeField`, `ShaderTypeLayout`
 and `pack_shader_data` instead of the shader_struct family. The decorator now
 supplies dataclass generation. Prefer `ShaderBuffer(rows)` and `set_data(rows)`
 for typed uploads. Replace material decorator base-property keywords with
-`base=StandardMaterial(...)`; instance base= needs no InitVar declaration.
+`base=standard_material`; instance base= needs no InitVar declaration.
 TextureBinding's sampler option is now sampler_type=; integer sample spellings
 are s_int/u_int. SamplerBinding also calls its kind sampler_type.
 Generated WGSL uses Bevy's MATERIAL_BIND_GROUP definition. Renaming a material

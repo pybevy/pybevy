@@ -100,6 +100,11 @@ def kernel(col):
         col[i] = col[i] + 1.0    # read and write via []
 ```
 
+Numba stores write raw memory and skip PyBevy's value-domain checks, such as
+`FogVolume.scattering_asymmetry` in `[-1, 1]` or `Bloom.max_mip_dimension >= 1`.
+Keep written values valid yourself, or use a validated View assignment,
+`ViewColumn.set()`, or `write_from_buffer()` when you want the check.
+
 **Do NOT:**
 - `np.asarray(col)` - raises RuntimeError
 - `col.to_numpy()` - does not exist on ViewColumn

@@ -298,7 +298,7 @@ mod tests {
         assert!(
             StorageError::AssetViewsLive
                 .to_string()
-                .contains("NumPy view")
+                .contains("array view")
         );
         assert!(
             StorageError::AssetAccessConflict

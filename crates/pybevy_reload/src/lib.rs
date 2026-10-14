@@ -49,8 +49,8 @@ pub use overlay::{
     update_system_stats,
 };
 pub use profiling::{
-    HotReloadStats, InterpreterDiagnostics, MemoryProfile, ReloadMemorySnapshot, SystemMonitor,
-    SystemProfiler, SystemStage,
+    FrameTimeWindow, HotReloadStats, InterpreterDiagnostics, MemoryProfile, ReloadMemorySnapshot,
+    SystemMonitor, SystemProfiler, SystemStage,
 };
 pub use progress::{
     ReloadProgress, ReloadProgressPhase, ReloadProgressReporter, ReloadProgressSink,

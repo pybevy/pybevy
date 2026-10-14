@@ -1,8 +1,9 @@
 use pybevy_core::{
     LogicalTypeId, PyLogicalComponentParam,
     public_error::{
-        ANY_OF_EMPTY, ANY_OF_TUPLE_REQUIRED, OR_IS_FILTER, parenthesized_filter_tuple,
-        query_data_required, variadic_filters,
+        ANY_OF_EMPTY, ANY_OF_TUPLE_REQUIRED, OR_IS_FILTER, QUERY_BUILTIN_TUPLE_REQUIRED,
+        any_of_query_data_position, parenthesized_filter_tuple, query_data_required,
+        variadic_filters,
     },
     registry::global_registry,
 };
@@ -89,6 +90,10 @@ pub(crate) fn extract_param_type_from_query_param(
     py: Python,
     key: &Bound<'_, PyAny>,
 ) -> Result<(bool, SmallVec<[ParamType; 2]>), PyErr> {
+    if is_typing_tuple_alias(py, key) {
+        return Err(PyTypeError::new_err(QUERY_BUILTIN_TUPLE_REQUIRED));
+    }
+
     // Check for Optional[T] / T | None FIRST
     if let Some(inner) = extract_optional_inner(py, key)? {
         // Reject Optional[Entity]
@@ -366,6 +371,10 @@ pub(crate) fn construct_query_class_item_with_options(
 ) -> PyResult<Py<PyAny>> {
     let py = cls.py();
 
+    if is_typing_tuple_alias(py, key) {
+        return Err(PyTypeError::new_err(QUERY_BUILTIN_TUPLE_REQUIRED));
+    }
+
     if let Ok(items) = key.cast::<PyTuple>() {
         if items
             .iter()
@@ -423,6 +432,9 @@ pub(crate) fn construct_query_class_item_with_options(
             for item in iter {
                 let item = item?;
                 let (_single, new_components) = extract_param_type_from_query_param(py, &item)?;
+                let contains_anyof = new_components
+                    .iter()
+                    .any(|param| matches!(param, ParamType::AnyOf(_)));
                 components.extend(new_components);
 
                 count += 1;
@@ -437,6 +449,15 @@ pub(crate) fn construct_query_class_item_with_options(
                 }
 
                 if (count == 2 && !is_filter && !is_filter_tuple) || count > 2 {
+                    if count == 2 && contains_anyof {
+                        return Err(PyTypeError::new_err(any_of_query_data_position(
+                            if single_entity_enforced {
+                                "Single"
+                            } else {
+                                "Query"
+                            },
+                        )));
+                    }
                     return Err(PyTypeError::new_err(
                         "Invalid Query. To query multiple components, use a tuple: Query[tuple[Component1, Component2, ...]]",
                     ));
@@ -554,6 +575,13 @@ fn is_query_filter(item: &Bound<'_, PyAny>) -> bool {
         || item.is_instance_of::<PyChanged>()
         || item.is_instance_of::<PyAdded>()
         || item.is_instance_of::<PyOr>()
+}
+
+pub(crate) fn is_typing_tuple_alias(py: Python<'_>, key: &Bound<'_, PyAny>) -> bool {
+    !key.is_instance_of::<PyGenericAlias>()
+        && key
+            .getattr("__origin__")
+            .is_ok_and(|origin| origin.is(py.get_type::<PyTuple>()))
 }
 
 fn is_filter_tuple_alias(py: Python<'_>, item: &Bound<'_, PyAny>) -> bool {

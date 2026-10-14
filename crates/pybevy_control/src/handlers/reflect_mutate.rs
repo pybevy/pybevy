@@ -19,7 +19,7 @@ use bevy::{
     },
 };
 use pybevy_core::{
-    BatchFieldMeta, FieldType, ReflectTypeRegistration,
+    BatchFieldMeta, ComponentBridge, FieldType, ReflectTypeRegistration,
     batch_columns::{has_view_assignment_checks, validate_view_assignment_values},
     inventory, public_error,
 };
@@ -51,12 +51,35 @@ pub enum ReflectError {
 
 /// Try reflection-based field mutation on a component.
 /// Returns each written field mapped to its post-write JSON value.
-pub fn reflect_set_component(
+#[cfg(test)]
+fn reflect_set_component(
     world: &mut World,
     entity: Entity,
     type_id: TypeId,
     fields: &Map<String, Value>,
     declared: &[BatchFieldMeta],
+) -> Result<Map<String, Value>, ReflectError> {
+    reflect_set_component_inner(world, entity, type_id, fields, declared, None)
+}
+
+pub fn reflect_set_component_with_bridge(
+    world: &mut World,
+    entity: Entity,
+    type_id: TypeId,
+    fields: &Map<String, Value>,
+    declared: &[BatchFieldMeta],
+    bridge: &dyn ComponentBridge,
+) -> Result<Map<String, Value>, ReflectError> {
+    reflect_set_component_inner(world, entity, type_id, fields, declared, Some(bridge))
+}
+
+fn reflect_set_component_inner(
+    world: &mut World,
+    entity: Entity,
+    type_id: TypeId,
+    fields: &Map<String, Value>,
+    declared: &[BatchFieldMeta],
+    bridge: Option<&dyn ComponentBridge>,
 ) -> Result<Map<String, Value>, ReflectError> {
     // Clone AppTypeRegistry Arc - cheap, avoids borrow conflict with entity_mut later
     let registry_arc = world
@@ -111,6 +134,7 @@ pub fn reflect_set_component(
         )
         .map_err(|error| ReflectError::FieldError(format!("variant: {error}")))?;
 
+        validate_candidate(candidate.as_ref(), bridge)?;
         drop(type_registry);
         store_candidate(world, entity, &reflect_component, candidate)?;
 
@@ -178,6 +202,7 @@ pub fn reflect_set_component(
         }
     }
 
+    validate_candidate(candidate.as_ref(), bridge)?;
     drop(type_registry);
     store_candidate(world, entity, &reflect_component, candidate)?;
 
@@ -200,6 +225,18 @@ pub fn reflect_set_component(
         .collect();
 
     Ok(updated)
+}
+
+fn validate_candidate(
+    candidate: &dyn Reflect,
+    bridge: Option<&dyn ComponentBridge>,
+) -> Result<(), ReflectError> {
+    if let Some(bridge) = bridge {
+        bridge
+            .validate_reflected_candidate(candidate)
+            .map_err(ReflectError::InvalidValue)?;
+    }
+    Ok(())
 }
 
 /// Replace the live component with a validated detached candidate.
@@ -700,12 +737,35 @@ pub fn reflect_to_json(value: &dyn PartialReflect) -> Value {
 }
 
 /// Create a component from JSON fields via reflection and insert it into an entity.
-pub fn reflect_spawn_component(
+#[cfg(test)]
+fn reflect_spawn_component(
     world: &mut World,
     entity: Entity,
     type_id: TypeId,
     fields: &Map<String, Value>,
     declared: &[BatchFieldMeta],
+) -> Result<(), ReflectError> {
+    reflect_spawn_component_inner(world, entity, type_id, fields, declared, None)
+}
+
+pub fn reflect_spawn_component_with_bridge(
+    world: &mut World,
+    entity: Entity,
+    type_id: TypeId,
+    fields: &Map<String, Value>,
+    declared: &[BatchFieldMeta],
+    bridge: &dyn ComponentBridge,
+) -> Result<(), ReflectError> {
+    reflect_spawn_component_inner(world, entity, type_id, fields, declared, Some(bridge))
+}
+
+fn reflect_spawn_component_inner(
+    world: &mut World,
+    entity: Entity,
+    type_id: TypeId,
+    fields: &Map<String, Value>,
+    declared: &[BatchFieldMeta],
+    bridge: Option<&dyn ComponentBridge>,
 ) -> Result<(), ReflectError> {
     // Clone AppTypeRegistry Arc
     let registry_arc = world
@@ -778,6 +838,8 @@ pub fn reflect_spawn_component(
             _ => return Err(ReflectError::NotAStruct),
         }
     }
+
+    validate_candidate(default_component.as_ref(), bridge)?;
 
     // Insert the component into the entity
     // registry_arc is independent of world, so holding the read guard is fine

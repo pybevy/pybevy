@@ -151,3 +151,7 @@ app.insert_resource(UiScale(1.5))
 def zoom_ui(scale: ResMut[UiScale]) -> None:
     scale.scale = 2.0
 ```
+
+The scale must be finite and greater than zero. Invalid constructor values,
+resource writes, and scene-editing resource patches raise an error before UI
+layout runs.

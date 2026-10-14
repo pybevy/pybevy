@@ -230,7 +230,14 @@ pub fn spawn_entity(
         let declared = declared_fields(&bridge);
 
         // Try reflection first
-        match reflect_mutate::reflect_spawn_component(world, entity, type_id, &fields, declared) {
+        match reflect_mutate::reflect_spawn_component_with_bridge(
+            world,
+            entity,
+            type_id,
+            &fields,
+            declared,
+            bridge.as_ref(),
+        ) {
             Ok(()) => {
                 added_components.push(comp_name.clone());
                 continue;
@@ -971,7 +978,14 @@ pub fn set_component(
         let declared = declared_fields(bridge);
 
         // Try reflection first
-        match reflect_mutate::reflect_set_component(world, entity, type_id, field_obj, declared) {
+        match reflect_mutate::reflect_set_component_with_bridge(
+            world,
+            entity,
+            type_id,
+            field_obj,
+            declared,
+            bridge.as_ref(),
+        ) {
             Ok(new_values) => {
                 return Ok(serde_json::json!({
                     "entity_id": entity_id,
@@ -992,8 +1006,13 @@ pub fn set_component(
                         "Component '{component}' cannot be inserted from Python"
                     )));
                 }
-                match reflect_mutate::reflect_spawn_component(
-                    world, entity, type_id, field_obj, declared,
+                match reflect_mutate::reflect_spawn_component_with_bridge(
+                    world,
+                    entity,
+                    type_id,
+                    field_obj,
+                    declared,
+                    bridge.as_ref(),
                 ) {
                     Ok(()) => {
                         let new_values = reflect_mutate::reflect_read_fields(
@@ -2213,13 +2232,14 @@ pub fn remove_resource(
     let target = resolve_resource(world, &resource_type)?;
     if let Some(ResourceTarget::Native(bridge)) = &target {
         let type_id = bridge.bevy_type_id();
-        if [
-            TypeId::of::<Time>(),
-            TypeId::of::<Time<Real>>(),
-            TypeId::of::<Time<Virtual>>(),
-            TypeId::of::<Time<Fixed>>(),
-        ]
-        .contains(&type_id)
+        if !bridge.can_user_remove()
+            || [
+                TypeId::of::<Time>(),
+                TypeId::of::<Time<Real>>(),
+                TypeId::of::<Time<Virtual>>(),
+                TypeId::of::<Time<Fixed>>(),
+            ]
+            .contains(&type_id)
         {
             return Err(ControlError::invalid_params(
                 public_error::control_resource_remove_forbidden(&resource_type),

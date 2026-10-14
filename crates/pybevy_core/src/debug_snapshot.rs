@@ -23,8 +23,14 @@ pub struct DebugSnapshot {
     pub cpu_percent: f32,
     pub cpu_core_count: usize,
 
+    /// Frames divided by their summed real time over the last 60 frames.
     pub fps_average: f32,
+    /// Inverse of the median real frame time over the last 5 frames.
     pub fps_current: f32,
+    /// Median real frame time over the last 60 frames, in milliseconds.
+    pub frame_time_p50_ms: f32,
+    /// 95th-percentile real frame time over the last 60 frames, in milliseconds.
+    pub frame_time_p95_ms: f32,
     /// Process-wide uptime, sourced from the operating system.
     pub uptime_secs: f64,
     /// Elapsed real time in the current Bevy app generation. This resets on a

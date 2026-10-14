@@ -10,7 +10,7 @@ use pybevy_core::{
 use pybevy_macros::{pycomponent, pyresource};
 use pyo3::prelude::*;
 
-#[pyresource(GlobalAmbientLight, bridge)]
+#[pyresource(GlobalAmbientLight, bridge, no_user_remove)]
 #[pyclass(name = "GlobalAmbientLight", module = "pybevy.light", extends = PyResource, from_py_object)]
 #[derive(Debug, Resource)]
 pub struct PyGlobalAmbientLight {

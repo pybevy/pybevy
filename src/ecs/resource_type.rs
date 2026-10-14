@@ -9,20 +9,28 @@ use bevy::{
 /// Main/PyO3 name for the backend-neutral custom-resource identity registry.
 pub use pybevy_core::custom_resource::CustomResourceRegistry as ResourceRegistry;
 use pybevy_core::{
-    ComponentWriteContext,
+    ComponentWriteContext, PyComponent,
     custom_resource::{
         ResourceRegisterOutcome, insert_dynamic_resource_value, register_custom_resource_guarded,
     },
     public_error::{
         ASSET_SERVER_MANUAL_INSERT, ASSET_SERVER_MANUAL_REMOVE, BUTTON_INPUT_REQUIRES_BUTTON_TYPE,
-        RESOURCE_BRIDGE_NOT_FOUND, expected_resource_subclass, resource_decorator_required,
-        resource_not_present, resource_type_not_found, state_resource_descriptor_required,
+        RESOURCE_BRIDGE_NOT_FOUND, component_passed_as_resource, expected_resource_subclass,
+        resource_counterpart_of_component, resource_decorator_required, resource_not_present,
+        resource_type_not_found, resource_user_remove_forbidden,
+        state_resource_descriptor_required,
     },
     registry::global_registry,
     resource_initializer,
 };
 use pybevy_input::button_input::PyButtonInput;
-use pyo3::{PyTypeInfo, exceptions::PyTypeError, ffi::PyTypeObject, prelude::*, types::PyType};
+use pyo3::{
+    PyTypeInfo,
+    exceptions::{PyRuntimeError, PyTypeError},
+    ffi::PyTypeObject,
+    prelude::*,
+    types::PyType,
+};
 
 use crate::{
     app::hot_reload::bindings::PyHotReloadControl,
@@ -368,6 +376,7 @@ impl PyResourceType {
 
     /// Remove a Python resource from the world
     pub fn remove_from_world(&self, world: &mut World, _py: Python) -> PyResult<()> {
+        self.ensure_user_removable()?;
         match self {
             PyResourceType::AssetServer => Err(PyTypeError::new_err(ASSET_SERVER_MANUAL_REMOVE)),
             PyResourceType::Dynamic(type_ptr) => {
@@ -392,6 +401,7 @@ impl PyResourceType {
     }
 
     pub fn take_from_world(&self, world: &mut World, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        self.ensure_user_removable()?;
         match self {
             Self::AssetServer => Err(PyTypeError::new_err(ASSET_SERVER_MANUAL_REMOVE)),
             Self::Dynamic(type_ptr) => {
@@ -415,6 +425,19 @@ impl PyResourceType {
                 Ok(Some(value))
             }
         }
+    }
+
+    pub fn ensure_user_removable(&self) -> PyResult<()> {
+        if let Self::Dynamic(type_ptr) = self {
+            let bridge = global_registry::get_resource_bridge_by_py_type(*type_ptr)
+                .ok_or_else(|| PyTypeError::new_err(RESOURCE_BRIDGE_NOT_FOUND))?;
+            if !bridge.can_user_remove() {
+                return Err(PyRuntimeError::new_err(resource_user_remove_forbidden(
+                    bridge.name(),
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// Get the ComponentId for this resource type from the world
@@ -594,9 +617,16 @@ impl TryFrom<(&Bound<'_, PyType>, Python<'_>)> for PyResourceType {
                 .name()
                 .map(|n| n.to_string())
                 .unwrap_or_else(|_| "Unknown".to_string());
-            return Err(PyErr::new::<PyTypeError, _>(expected_resource_subclass(
-                class_name,
-            )));
+            let message = if ty.is_subclass_of::<PyComponent>()? {
+                let module = ty.module().map(|m| m.to_string()).unwrap_or_default();
+                component_passed_as_resource(
+                    &class_name,
+                    resource_counterpart_of_component(&module, &class_name),
+                )
+            } else {
+                expected_resource_subclass(class_name)
+            };
+            return Err(PyErr::new::<PyTypeError, _>(message));
         }
 
         // Check for known resource types

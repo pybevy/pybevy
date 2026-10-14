@@ -4,7 +4,9 @@ use bevy::{
     time::{Time, Virtual},
 };
 use pybevy_core::{
-    PendingReloadRequest, ReloadRequestMode, ReloadResult, public_error::reload_error_hint,
+    PendingReloadRequest, ReloadRequestMode, ReloadResult,
+    gpu_validation::{WgpuValidationEntry, WgpuValidationErrorState},
+    public_error::{WGPU_VALIDATION_FRAME_HINT, reload_error_hint},
 };
 use pybevy_ecs::shared::system_runtime::HotReloadGeneration;
 use tokio::sync::oneshot;
@@ -163,8 +165,38 @@ pub fn get_reload_status(world: &mut World) -> Result<serde_json::Value, Control
     Ok(serde_json::Value::Object(result))
 }
 
-/// Get the last Python system error
+/// Get the last Python system error and any recorded wgpu validation errors.
 pub fn get_last_error(world: &mut World) -> Result<serde_json::Value, ControlError> {
+    let mut response = last_python_error(world);
+    response["wgpu_validation"] = wgpu_validation_json(world);
+    Ok(response)
+}
+
+fn wgpu_validation_entry_json(entry: &WgpuValidationEntry) -> serde_json::Value {
+    serde_json::json!({
+        "message": entry.message,
+        "label": entry.label,
+        "is_pipeline": entry.is_pipeline,
+    })
+}
+
+fn wgpu_validation_json(world: &World) -> serde_json::Value {
+    let Some(summary) = world
+        .get_resource::<WgpuValidationErrorState>()
+        .and_then(WgpuValidationErrorState::summary)
+    else {
+        return serde_json::Value::Null;
+    };
+    serde_json::json!({
+        "count": summary.count,
+        "first": wgpu_validation_entry_json(&summary.first),
+        "last": wgpu_validation_entry_json(&summary.last),
+        "last_seen_secs_ago": summary.last_seen_ago.as_secs_f64(),
+        "hint": WGPU_VALIDATION_FRAME_HINT,
+    })
+}
+
+fn last_python_error(world: &World) -> serde_json::Value {
     let reload_failure = world
         .get_resource::<ReloadResult>()
         .filter(|result| result.failed && result.failure_reason.is_some());
@@ -175,33 +207,23 @@ pub fn get_last_error(world: &mut World) -> Result<serde_json::Value, ControlErr
     if let Some(last_error) = live_error
         && reload_failure.is_none_or(|reload| last_error.sequence > reload.failure_sequence)
     {
-        return Ok(serde_json::json!({
+        return serde_json::json!({
             "error": last_error.error,
             "traceback": last_error.traceback,
             "timestamp_secs": last_error.timestamp_secs,
-        }));
+        });
     }
 
     if let Some(reload_result) = reload_failure {
-        return Ok(serde_json::json!({
+        return serde_json::json!({
             "error": reload_result.failure_reason,
             "traceback": reload_result.failure_traceback,
             "reload_failed": true,
             "running_previous_generation": reload_result.running_previous_generation,
-        }));
+        });
     }
 
-    match live_error {
-        Some(last_error) => match &last_error.error {
-            Some(error) => Ok(serde_json::json!({
-                "error": error,
-                "traceback": last_error.traceback,
-                "timestamp_secs": last_error.timestamp_secs,
-            })),
-            None => Ok(serde_json::json!({ "error": null })),
-        },
-        None => Ok(serde_json::json!({ "error": null })),
-    }
+    serde_json::json!({ "error": null })
 }
 
 /// Post-fetch frames granted so the resumed generation's first error can land
@@ -660,6 +682,40 @@ mod tests {
 
         assert_eq!(result["error"], "current system error");
         assert!(result.get("reload_failed").is_none());
+    }
+
+    #[test]
+    fn get_last_error_reports_wgpu_validation_beside_python_error() {
+        let mut world = World::new();
+        let state = WgpuValidationErrorState::default();
+        world.insert_resource(state.clone());
+        assert!(get_last_error(&mut world).unwrap()["wgpu_validation"].is_null());
+
+        state.record(&WgpuValidationEntry::from_message(
+            "In Device::create_render_pipeline, label = 'pbr_prepass_pipeline'".to_string(),
+        ));
+        state.record(&WgpuValidationEntry::from_message(
+            "In a set_pipeline command\n  RenderPipeline with 'pbr_prepass_pipeline' label is invalid"
+                .to_string(),
+        ));
+        let result = get_last_error(&mut world).unwrap();
+
+        assert!(result["error"].is_null());
+        let wgpu = &result["wgpu_validation"];
+        assert_eq!(wgpu["count"], 2);
+        assert_eq!(wgpu["first"]["label"], "pbr_prepass_pipeline");
+        assert_eq!(wgpu["first"]["is_pipeline"], true);
+        assert!(
+            wgpu["last"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("label is invalid")
+        );
+        assert_eq!(wgpu["hint"], WGPU_VALIDATION_FRAME_HINT);
+        assert!(wgpu["last_seen_secs_ago"].as_f64().unwrap() >= 0.0);
+
+        state.clear();
+        assert!(get_last_error(&mut world).unwrap()["wgpu_validation"].is_null());
     }
 
     fn world_with_reload_deps() -> World {

@@ -127,6 +127,8 @@ _MAX_CAPTURED_OUTPUT_LINES = 500
 _STARTUP_TIMEOUT = 60.0
 
 _MAX_REPORTED_WARN_LINES = 25
+_MAX_STARTUP_ERROR_LINES = 80
+_STREAM_PREFIX = re.compile(r"^\[(?:stdout|stderr)\] ")
 
 
 GET_LOGS_TOOL: JsonDict = {
@@ -996,16 +998,15 @@ class McpBridge:
                 )
             else:
                 error_msg = f"Bevy subprocess crashed on startup (exit code {exit_code})"
-            if stderr_output or process_output:
-                error_msg += (
-                    f"\n\nSubprocess output:\n{process_output or stderr_output}"
-                )
+            failure_output = self._format_failure_output(stderr_output, process_output)
+            if failure_output:
+                error_msg += f"\n\n{failure_output}"
                 error_msg += (
                     "\n\nUse get_logs with a larger 'lines' value to inspect the "
                     "retained subprocess output before starting another scene."
                 )
             if not headless and self._looks_like_graphical_startup_failure(
-                process_output or stderr_output
+                failure_output
             ):
                 error_msg += (
                     "\n\nThis looks like a graphical-session startup failure. "
@@ -1017,24 +1018,28 @@ class McpBridge:
         bind_failure = self._control_bind_failure()
         if bind_failure:
             port = self._subprocess_port
-            process_output = self._get_recent_process_output()
+            process_output = self._format_failure_output(
+                self._check_stderr_for_errors(), self._get_recent_process_output()
+            )
             self._stop_subprocess()
             error_msg = (
                 f"PyBevy control server failed to bind on port {port}; "
                 "the scene subprocess was stopped. Retry run_scene to allocate a new port."
             )
             if process_output:
-                error_msg += f"\n\nSubprocess output:\n{process_output}"
+                error_msg += f"\n\n{process_output}"
             else:
                 error_msg += f"\n\nSubprocess output:\n{bind_failure}"
             return self._error(req_id, -32603, error_msg)
 
         if startup_lookup_error:
-            process_output = self._get_recent_process_output()
+            process_output = self._format_failure_output(
+                self._check_stderr_for_errors(), self._get_recent_process_output()
+            )
             self._stop_subprocess()
             error_msg = f"Scene startup did not complete: {startup_lookup_error}"
             if process_output:
-                error_msg += f"\n\nSubprocess output:\n{process_output}"
+                error_msg += f"\n\n{process_output}"
             return self._error(req_id, -32603, error_msg)
 
         status_parts = [
@@ -1459,8 +1464,9 @@ class McpBridge:
             stderr_output = self._check_stderr_for_errors()
             process_output = self._get_recent_process_output()
             msg = f"Subprocess exited immediately (code {exit_code})"
-            if stderr_output or process_output:
-                msg += f"\n\nOutput:\n{process_output or stderr_output}"
+            failure_output = self._format_failure_output(stderr_output, process_output)
+            if failure_output:
+                msg += f"\n\n{failure_output}"
             _log(f"[MCP Bridge] {msg}")
 
     def _stop_subprocess(self) -> None:
@@ -1611,6 +1617,36 @@ class McpBridge:
             f"[{stream}] {self._format_captured_line(line, repeat_count)}"
             for (stream, line), repeat_count in zip(lines, repeat_counts, strict=True)
         )
+
+    @staticmethod
+    def _format_failure_output(error_output: str, process_output: str) -> str:
+        """Show extracted errors first, then recent output lines not already shown."""
+        sections: list[str] = []
+        shown: set[str] = set()
+        if error_output:
+            error_lines = error_output.split("\n")
+            omitted = len(error_lines) - _MAX_STARTUP_ERROR_LINES
+            if omitted > 0:
+                error_lines = [
+                    f"({omitted} earlier error lines omitted; use get_logs)",
+                    *error_lines[-_MAX_STARTUP_ERROR_LINES:],
+                ]
+            shown = {_strip_ansi(line).strip() for line in error_lines}
+            shown.discard("")
+            sections.append("Errors:\n" + "\n".join(error_lines))
+        tail = [
+            line
+            for line in process_output.split("\n")
+            if _strip_ansi(_STREAM_PREFIX.sub("", line)).strip() not in shown
+        ]
+        while tail and not _STREAM_PREFIX.sub("", tail[0]).strip():
+            tail.pop(0)
+        while tail and not _STREAM_PREFIX.sub("", tail[-1]).strip():
+            tail.pop()
+        if tail:
+            heading = "Other recent output:" if sections else "Subprocess output:"
+            sections.append(heading + "\n" + "\n".join(tail))
+        return "\n\n".join(sections)
 
     def _collect_stderr_warnings(self) -> str:
         """Return distinct captured WARN lines, oldest first."""

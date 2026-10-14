@@ -2965,7 +2965,10 @@ class UiScale(Resource):
         ```
 
     Args:
-        scale: Scale factor (default: 1.0)
+        scale: Finite, positive scale factor (default: 1.0).
+
+    Raises:
+        ValueError: If the scale is non-finite or not positive.
     """
     def __init__(self, scale: float = 1.0) -> None: ...
 

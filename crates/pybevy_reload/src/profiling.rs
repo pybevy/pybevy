@@ -59,10 +59,14 @@ pub struct HotReloadStats {
     pub memory_mb: f64,
     /// Current CPU usage percentage
     pub cpu_percent: f32,
-    /// FPS rolling average (60 frames)
+    /// Frames divided by their summed real time over the last 60 frames.
     pub fps_average: f32,
-    /// Current frame FPS
+    /// Inverse of the median real frame time over the last 5 frames.
     pub fps_current: f32,
+    /// Median real frame time over the last 60 frames, in milliseconds.
+    pub frame_time_p50_ms: f32,
+    /// 95th-percentile real frame time over the last 60 frames, in milliseconds.
+    pub frame_time_p95_ms: f32,
     /// Total system RAM in MB
     pub total_memory_mb: f64,
     /// Number of CPU cores
@@ -94,6 +98,8 @@ impl Default for HotReloadStats {
             cpu_percent: 0.0,
             fps_average: 0.0,
             fps_current: 0.0,
+            frame_time_p50_ms: 0.0,
+            frame_time_p95_ms: 0.0,
             total_memory_mb: 0.0,
             cpu_core_count: 1,
             gil_enabled: false,
@@ -114,10 +120,97 @@ pub struct SystemMonitor {
     /// Process ID for monitoring, None if PID could not be determined
     pub process_pid: Option<sysinfo::Pid>,
     pub last_update: f64,
-    /// Last 60 FPS values for rolling average
-    pub fps_history: VecDeque<f32>,
+    /// Recent real frame durations behind the FPS and frame-time statistics.
+    pub frame_times: FrameTimeWindow,
+    /// Frames sampled since startup; gates the memory baseline until warm-up ends.
+    pub frames_observed: u64,
     /// Last time the overlay text was updated (for throttling)
     pub last_render_update: f64,
+}
+
+/// Rolling window of real frame durations.
+///
+/// Rates are derived from durations rather than averaging per-frame FPS values,
+/// so one very short frame cannot dominate the average.
+#[derive(Clone, Debug, Default)]
+pub struct FrameTimeWindow {
+    frame_secs: VecDeque<f32>,
+    discard_remaining: u8,
+}
+
+impl FrameTimeWindow {
+    /// Frames retained for the average and percentiles.
+    pub const CAPACITY: usize = 60;
+    /// Trailing frames whose median defines the current FPS.
+    pub const CURRENT_FRAMES: usize = 5;
+    /// Resetting `Time<Real>` mid-frame inflates that frame's delta and
+    /// truncates the next one.
+    const FRAMES_DISTORTED_BY_CLOCK_RESET: u8 = 2;
+
+    /// Record one frame's real duration. Returns whether it entered the window.
+    pub fn record(&mut self, delta_secs: f32) -> bool {
+        if !(delta_secs.is_finite() && delta_secs > 0.0) {
+            return false;
+        }
+        if self.discard_remaining > 0 {
+            self.discard_remaining -= 1;
+            return false;
+        }
+        self.frame_secs.push_back(delta_secs);
+        if self.frame_secs.len() > Self::CAPACITY {
+            self.frame_secs.pop_front();
+        }
+        true
+    }
+
+    /// Forget the history after the real clock is reset mid-frame and skip the
+    /// frames whose deltas that reset distorts.
+    pub fn reset_after_clock_reset(&mut self) {
+        self.frame_secs.clear();
+        self.discard_remaining = Self::FRAMES_DISTORTED_BY_CLOCK_RESET;
+    }
+
+    pub fn len(&self) -> usize {
+        self.frame_secs.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.frame_secs.is_empty()
+    }
+
+    /// Frames divided by their summed duration.
+    pub fn average_fps(&self) -> Option<f32> {
+        let total: f32 = self.frame_secs.iter().sum();
+        (total > 0.0).then(|| self.frame_secs.len() as f32 / total)
+    }
+
+    /// Inverse of the median duration of the most recent frames.
+    pub fn current_fps(&self) -> Option<f32> {
+        let skip = self.frame_secs.len().saturating_sub(Self::CURRENT_FRAMES);
+        let mut recent: Vec<f32> = self.frame_secs.iter().skip(skip).copied().collect();
+        if recent.is_empty() {
+            return None;
+        }
+        recent.sort_by(f32::total_cmp);
+        let mid = recent.len() / 2;
+        let median = if recent.len().is_multiple_of(2) {
+            (recent[mid - 1] + recent[mid]) / 2.0
+        } else {
+            recent[mid]
+        };
+        Some(1.0 / median)
+    }
+
+    /// Nearest-rank percentile of the frame durations, in milliseconds.
+    pub fn frame_time_percentile_ms(&self, percentile: f32) -> Option<f32> {
+        if self.frame_secs.is_empty() {
+            return None;
+        }
+        let mut sorted: Vec<f32> = self.frame_secs.iter().copied().collect();
+        sorted.sort_by(f32::total_cmp);
+        let rank = (percentile.clamp(0.0, 100.0) / 100.0 * sorted.len() as f32).ceil() as usize;
+        Some(sorted[rank.clamp(1, sorted.len()) - 1] * 1000.0)
+    }
 }
 
 /// Performance profiling statistics for dynamic systems
@@ -317,7 +410,7 @@ pub struct ReloadMemorySnapshot {
 pub struct MemoryProfile {
     /// Rolling window of reload snapshots (capped at MAX_SNAPSHOTS)
     pub snapshots: Vec<ReloadMemorySnapshot>,
-    /// Baseline RSS captured after first Startup (MB)
+    /// Baseline RSS captured after the warm-up frames (MB)
     pub baseline_rss_mb: f64,
     /// Peak RSS observed (MB)
     pub peak_rss_mb: f64,
@@ -341,6 +434,9 @@ impl Default for MemoryProfile {
 
 impl MemoryProfile {
     pub const MAX_SNAPSHOTS: usize = 20;
+    /// Frames to run before the baseline is taken, so it includes warmed-up
+    /// render pipelines rather than the first post-Startup frame.
+    pub const BASELINE_WARMUP_FRAMES: u64 = 120;
 
     /// Capture a snapshot at reload time
     pub fn capture_snapshot(
@@ -381,7 +477,7 @@ impl MemoryProfile {
         }
     }
 
-    /// Capture baseline RSS after first Startup
+    /// Capture baseline RSS once, after warm-up
     pub fn capture_baseline(&mut self, rss_mb: f64) {
         if !self.baseline_captured {
             self.baseline_rss_mb = rss_mb;
@@ -430,6 +526,94 @@ mod tests {
         assert!(diagnostics.refresh_gc_objects_if_due(0.25, &mut measure));
         assert_eq!(diagnostics.gc_objects, 1_003);
         assert_eq!(measurements, 3);
+    }
+
+    fn window_of(deltas: &[f32]) -> FrameTimeWindow {
+        let mut window = FrameTimeWindow::default();
+        for &delta in deltas {
+            assert!(window.record(delta));
+        }
+        window
+    }
+
+    fn assert_close(actual: Option<f32>, expected: f32) {
+        let actual = actual.expect("window has samples");
+        assert!(
+            (actual - expected).abs() < 1e-3,
+            "expected {expected}, got {actual}"
+        );
+    }
+
+    #[test]
+    fn frame_time_window_average_is_frames_over_summed_time() {
+        // 59 frames at 5 ms and one 0.1 ms partial frame.
+        let mut deltas = vec![0.005_f32; 59];
+        deltas.push(0.0001);
+        let window = window_of(&deltas);
+
+        // 60 / (59 * 0.005 + 0.0001) s, not the per-frame FPS mean (362.5).
+        assert_close(window.average_fps(), 60.0 / 0.2951);
+        // The median of the last five frames ignores the partial frame.
+        assert_close(window.current_fps(), 200.0);
+        assert_close(window.frame_time_percentile_ms(50.0), 5.0);
+        assert_close(window.frame_time_percentile_ms(95.0), 5.0);
+    }
+
+    #[test]
+    fn frame_time_window_current_fps_ignores_one_long_frame() {
+        let window = window_of(&[0.010, 0.010, 0.500, 0.010, 0.010]);
+        assert_close(window.current_fps(), 100.0);
+        assert_close(window.average_fps(), 5.0 / 0.54);
+        assert_close(window.frame_time_percentile_ms(50.0), 10.0);
+        assert_close(window.frame_time_percentile_ms(95.0), 500.0);
+    }
+
+    #[test]
+    fn frame_time_window_current_fps_uses_the_even_median_of_short_windows() {
+        let window = window_of(&[0.010, 0.020]);
+        assert_close(window.current_fps(), 1.0 / 0.015);
+        assert_close(window.frame_time_percentile_ms(50.0), 10.0);
+        assert_close(window.frame_time_percentile_ms(95.0), 20.0);
+    }
+
+    #[test]
+    fn frame_time_window_keeps_only_the_most_recent_frames() {
+        let mut deltas = vec![1.0_f32; 10];
+        deltas.extend(std::iter::repeat_n(0.010, FrameTimeWindow::CAPACITY));
+        let window = window_of(&deltas);
+        assert_eq!(window.len(), FrameTimeWindow::CAPACITY);
+        assert_close(window.average_fps(), 100.0);
+    }
+
+    #[test]
+    fn frame_time_window_rejects_non_positive_and_non_finite_deltas() {
+        let mut window = FrameTimeWindow::default();
+        assert!(!window.record(0.0));
+        assert!(!window.record(-0.01));
+        assert!(!window.record(f32::NAN));
+        assert!(!window.record(f32::INFINITY));
+        assert!(window.is_empty());
+        assert_eq!(window.average_fps(), None);
+        assert_eq!(window.current_fps(), None);
+        assert_eq!(window.frame_time_percentile_ms(95.0), None);
+    }
+
+    #[test]
+    fn frame_time_window_clock_reset_clears_history_and_skips_distorted_frames() {
+        let mut window = window_of(&[0.050; 10]);
+        window.reset_after_clock_reset();
+        assert!(window.is_empty());
+
+        // The reload frame (includes the reload) and the truncated next frame.
+        assert!(!window.record(2.0));
+        assert!(!window.record(0.0002));
+        assert!(window.is_empty());
+
+        assert!(window.record(0.010));
+        assert!(window.record(0.010));
+        assert_eq!(window.len(), 2);
+        assert_close(window.average_fps(), 100.0);
+        assert_close(window.current_fps(), 100.0);
     }
 
     #[test]

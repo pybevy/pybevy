@@ -596,6 +596,7 @@ pub(crate) enum SourceIdentity {
 
 pub(crate) trait ErasedRevalidatingSource: fmt::Debug + Send + Sync {
     fn resolve_ref(&self) -> Result<ErasedResolvedRef, StorageError>;
+    fn check_write_access(&self) -> Result<(), StorageError>;
     fn resolve_mut(
         &self,
         stage: Option<&mut dyn FnMut(*mut u8)>,
@@ -723,6 +724,18 @@ impl<T: Send + Sync + 'static> ErasedRevalidatingSource for BorrowedSource<T> {
             ptr,
             guard: SourceReadGuard::Borrowed { _guard: guard },
         })
+    }
+
+    fn check_write_access(&self) -> Result<(), StorageError> {
+        self.shared.root.check_write()?;
+        if self.readonly {
+            return Err(StorageError::ReadOnly);
+        }
+        let _guard = BorrowedPathGuard::acquire(self.shared.clone(), true)?;
+        let root = self.shared.root.read()? as *const T as *const u8;
+        // SAFETY: the root remains live under the retained path guard.
+        unsafe { self.path.project_ref(root)? };
+        Ok(())
     }
 
     fn resolve_mut(
@@ -1028,6 +1041,10 @@ impl<T: 'static> RevalidatingSource<T> {
 }
 
 impl<T> RevalidatingSource<T> {
+    pub fn check_write_access(&self) -> Result<(), StorageError> {
+        self.inner.check_write_access()
+    }
+
     pub fn resolve_ref(&self) -> Result<RevalidatingRef<'_, T>, StorageError> {
         let resolved = self.inner.resolve_ref()?;
         Ok(RevalidatingRef {

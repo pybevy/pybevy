@@ -259,6 +259,22 @@ impl<T: Copy> ValueStorage<T> {
         }
     }
 
+    /// Check write authority and path validity without borrowing mutable data
+    /// or advancing Bevy's change tick.
+    pub fn check_write_access(&self) -> Result<(), StorageError> {
+        match &self.inner {
+            ValueStorageInner::Owned(_) => Ok(()),
+            ValueStorageInner::OwnedReadOnly(_) => Err(StorageError::OwnedFieldReadOnly),
+            ValueStorageInner::BorrowedRef(borrow) => {
+                borrow.validity().check_read()?;
+                Err(StorageError::ReadOnly)
+            }
+            ValueStorageInner::BorrowedMut(borrow) => borrow.validity().check_write(),
+            ValueStorageInner::Revalidating(field) => field.check_write_access(),
+            ValueStorageInner::Source(source) => source.check_write_access(),
+        }
+    }
+
     /// Get mutable reference to the value, checking validity and write permission
     ///
     /// # Errors
@@ -508,6 +524,36 @@ mod tests {
         let mut storage = ValueStorage::owned(TestValue { x: 1.0, y: 2.0 });
         storage.as_mut().unwrap().x = 42.0;
         assert_eq!(storage.as_ref().unwrap().x, 42.0);
+    }
+
+    #[test]
+    fn write_access_preflight_checks_authority_without_mutating() {
+        let mut value = TestValue { x: 1.0, y: 2.0 };
+        let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
+        let writable = unsafe { ValueStorage::borrowed(&mut value, validity.clone()) };
+        assert!(writable.check_write_access().is_ok());
+        assert_eq!(value.x, 1.0);
+
+        let readonly = unsafe { ValueStorage::borrowed_ref(&value, validity.flag.clone()) };
+        assert!(matches!(
+            readonly.check_write_access(),
+            Err(StorageError::ReadOnly)
+        ));
+
+        validity.flag.set_invalid();
+        assert!(matches!(
+            writable.check_write_access(),
+            Err(StorageError::InvalidAccess)
+        ));
+        assert!(matches!(
+            readonly.check_write_access(),
+            Err(StorageError::InvalidAccess)
+        ));
+        assert!(ValueStorage::owned(value).check_write_access().is_ok());
+        assert!(matches!(
+            ValueStorage::read_only_snapshot(value).check_write_access(),
+            Err(StorageError::OwnedFieldReadOnly)
+        ));
     }
 
     #[test]

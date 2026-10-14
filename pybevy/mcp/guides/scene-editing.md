@@ -155,6 +155,15 @@ field and range, as in `u8 value must be between 0 and 255, got 300`.
 The exception is a `Range` endpoint: `"Infinity"` and `"-Infinity"` replay
 there, but `"NaN"` remains invalid. JSON `null` is valid
 only for an `Option<T>` field; a required float field needs a JSON number.
+Python scene code may leave `WindowResizeConstraints.max_width` or `max_height`
+at positive infinity to mean unbounded; minima must be finite. As in Bevy,
+finite minima below one logical pixel and maxima below their minima are stored
+as given and normalized when applied to the native window. Invalid Python
+construction or assignment raises `ValueError`. MCP `set_component`,
+`spawn_entity`, and batch operations apply the same validation before
+committing a `Window`; rejected writes leave the component unchanged. MCP JSON
+scalar writes remain finite-only, so set unbounded window maxima in scene code
+rather than sending `"Infinity"` through `set_component`.
 An enum variant named `None`, such as `Display.None_` or `ClearColorConfig.None_`,
 is not `null`: it reads, writes, and echoes as `{"variant": "None"}`.
 Finite fields returned by `get_component` can be replayed with `set_component`
@@ -313,6 +322,13 @@ resource entity and mark the resource changed without replacement hooks.
 Resources that cannot safely provide a detached copy reject patches without
 mutation. An absent resource still requires support for construction and
 insertion; a failed patch does not insert a partial value.
+
+`ClearColor`, `GlobalAmbientLight`, and `DefaultOpaqueRendererMethod` cannot be
+removed through MCP or Python `World`/`Commands` resource APIs. Bevy copies
+them into the render world and does not clear those copies when their main-world
+resource disappears. Set their fields or insert a replacement instead. Other
+native resources whose bridges prohibit removal likewise return an error rather
+than a successful no-op; custom Python resources remain removable.
 
 ## Batching Mutations
 

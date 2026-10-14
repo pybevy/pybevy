@@ -619,6 +619,10 @@ class ViewColumn:
     system that created this view has finished execution, accessing it will
     raise a RuntimeError instead of causing a segfault.
 
+    Numba stores are raw zero-copy writes and skip value-domain checks on
+    constrained native fields. Use validated View assignments, set(), or
+    write_from_buffer() when those checks are needed.
+
     Examples:
         import numba
 
@@ -951,6 +955,8 @@ class View(Generic[QueryParam_T, *Qs]):
     IMPORTANT:
     - Use Mut[T] for mutable access, plain T for read-only (just like Query)
     - Filters must be explicit (With[T], Without[T], etc.), not bare component types
+    - Use builtin tuple[...] for direct grouped data or filter slots, not typing.Tuple[...]
+    - AnyOf[...] is Query data and is not supported in View
 
     Column access has two models:
     - column(T) and column_mut(T) return a lazy expression column. Field
@@ -1454,7 +1460,8 @@ class World:
         """Create an ad-hoc query bound to this World.
 
         Only accepts Query[...]; View[...] is a system parameter and is
-        rejected at runtime.
+        rejected at runtime. A tuple, tuple[...] or bare component type raises
+        TypeError naming the Query[...] spelling to use instead.
 
         Example:
             transforms = world.query(Query[tuple[Entity, Transform]])
@@ -1675,7 +1682,9 @@ class Query(Generic[QueryParam_T, *Qs]):
     """Iterate over matching entities as components or tuples.
 
     Use Query[data, filters], with optional filters in the second position.
-    Group multiple data items or filters with tuple[...], not parentheses.
+    Group direct data or filter slots with builtin tuple[...], not
+    typing.Tuple[...] or parentheses. Nested marker inputs have their own
+    accepted tuple forms.
     Extra Query filter type arguments raise TypeError and show the canonical
     Query[Data, tuple[With[A], Without[B]]] form.
     Nested data tuples preserve their nesting in every returned row, matching
@@ -1683,6 +1692,8 @@ class Query(Generic[QueryParam_T, *Qs]):
     For nested Mut/Has/AnyOf markers, use typing.cast on the returned row when
     the type checker cannot infer the concrete nested result type.
     Mut[T] enables writes and yields T; Optional[T] yields None when absent.
+    AnyOf[...] is data, so place it in the first Query argument or inside the
+    first data tuple, never in the second filter argument.
 
     Examples:
         Query[Transform] - read-only components

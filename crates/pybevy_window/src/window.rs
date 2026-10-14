@@ -4,16 +4,23 @@ use bevy::{
     math::DVec2,
     window::{Window, WindowPosition},
 };
-use pybevy_core::{ComponentStorage, PyComponent, computed_owned, public_error, repr::str_repr};
+use pybevy_core::{
+    ComponentStorage, PyComponent, StorageError, computed_owned, public_error, repr::str_repr,
+};
 use pybevy_macros::pycomponent;
 use pybevy_math::{compass::PyCompassOctant, uvec2::PyUVec2, vec2::PyVec2};
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 use crate::{
-    composite_alpha_mode::PyCompositeAlphaMode, enabled_buttons::PyEnabledButtons,
-    present_mode::PyPresentMode, resize_constraints::PyWindowResizeConstraints,
-    screen_edge::PyScreenEdge, window_level::PyWindowLevel, window_mode::PyWindowMode,
-    window_position::PyWindowPosition, window_resolution::PyWindowResolution,
+    composite_alpha_mode::PyCompositeAlphaMode,
+    enabled_buttons::PyEnabledButtons,
+    present_mode::PyPresentMode,
+    resize_constraints::{PyWindowResizeConstraints, validate_constraints},
+    screen_edge::PyScreenEdge,
+    window_level::PyWindowLevel,
+    window_mode::PyWindowMode,
+    window_position::PyWindowPosition,
+    window_resolution::PyWindowResolution,
     window_theme::PyWindowTheme,
 };
 
@@ -29,11 +36,15 @@ fn maximum_frame_latency(value: Option<u32>) -> PyResult<Option<NonZero<u32>>> {
         .transpose()
 }
 
-#[pycomponent(Window, bridge, view_fields = [decorations, resizable, transparent])]
+#[pycomponent(Window, bridge, reflect_validate = validate_window_resize_constraints, view_fields = [decorations, resizable, transparent])]
 #[pyclass(name = "Window", module = "pybevy.window", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyWindow {
     pub(crate) storage: ComponentStorage<Window>,
+}
+
+fn validate_window_resize_constraints(window: &Window) -> Result<(), StorageError> {
+    validate_constraints(&window.resize_constraints)
 }
 
 #[pymethods]
@@ -49,12 +60,7 @@ impl PyWindow {
         title = DEFAULT_APP_TITLE.to_string(),
         name = None,
         composite_alpha_mode = PyCompositeAlphaMode::Auto,
-        resize_constraints = PyWindowResizeConstraints::new(
-            180.0,
-            120.0,
-            f32::INFINITY,
-            f32::INFINITY,
-        ),
+        resize_constraints = PyWindowResizeConstraints::default(),
         resizable = true,
         enabled_buttons = PyEnabledButtons::new(true, true, true),
         decorations = true,
@@ -587,12 +593,16 @@ impl PyWindow {
 
     #[getter]
     pub fn resize_constraints(&self) -> PyResult<PyWindowResizeConstraints> {
-        Ok(self.storage.borrow_field_as(|w| &w.resize_constraints)?)
+        Ok(self.storage.borrow_validated_field_as(
+            |w| &w.resize_constraints,
+            |w| &mut w.resize_constraints,
+            validate_constraints,
+        )?)
     }
 
     #[setter]
     pub fn set_resize_constraints(&mut self, value: PyWindowResizeConstraints) -> PyResult<()> {
-        let constraints = value.to_bevy()?;
+        let constraints = value.try_into()?;
         self.as_mut()?.resize_constraints = constraints;
         Ok(())
     }

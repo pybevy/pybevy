@@ -236,6 +236,11 @@ pub enum BatchValueConstraint {
         end: f32,
         message: &'static str,
     },
+    RangeInclusive {
+        start: f32,
+        end: f32,
+        message: &'static str,
+    },
     NonNegative {
         message: &'static str,
     },
@@ -388,6 +393,15 @@ pub fn validate_f32_values(
                     return Err(BatchColumnError::Constraint { message });
                 }
             }
+            BatchValueConstraint::RangeInclusive {
+                start,
+                end,
+                message,
+            } => {
+                if values.iter().any(|value| !(*start..=*end).contains(value)) {
+                    return Err(BatchColumnError::Constraint { message });
+                }
+            }
             BatchValueConstraint::NonNegative { message } => {
                 if values.iter().any(|value| value.is_nan() || *value < 0.0) {
                     return Err(BatchColumnError::Constraint { message });
@@ -430,6 +444,10 @@ pub fn validate_view_assignment_values(
                 let value = stored_value(*value, field_type);
                 value < f64::from(*start) || value >= f64::from(*end) || value.is_nan()
             }),
+            BatchValueConstraint::RangeInclusive { start, end, .. } => values.iter().any(|value| {
+                let value = stored_value(*value, field_type);
+                value < f64::from(*start) || value > f64::from(*end) || value.is_nan()
+            }),
             BatchValueConstraint::NonNegative { .. } => values.iter().any(|value| {
                 let value = stored_value(*value, field_type);
                 value.is_nan() || value < 0.0
@@ -441,6 +459,7 @@ pub fn validate_view_assignment_values(
         };
         if violates
             && let BatchValueConstraint::Range { message, .. }
+            | BatchValueConstraint::RangeInclusive { message, .. }
             | BatchValueConstraint::NonNegative { message }
             | BatchValueConstraint::Positive { message } = constraint
         {
@@ -773,6 +792,38 @@ mod tests {
                 Err(BatchColumnError::Constraint {
                     message: "distance must be non-negative"
                 }),
+            );
+        }
+    }
+
+    #[test]
+    fn inclusive_range_accepts_endpoints_and_rejects_nonfinite_values() {
+        let constraint = [BatchValueConstraint::RangeInclusive {
+            start: -1.0,
+            end: 1.0,
+            message: "asymmetry must be in [-1, 1]",
+        }];
+        assert_eq!(
+            validate_f32_values("asymmetry", &[-1.0, 0.0, 1.0], &constraint),
+            Ok(())
+        );
+        for value in [-1.01, 1.01, f32::NAN, f32::NEG_INFINITY, f32::INFINITY] {
+            assert_eq!(
+                validate_f32_values("asymmetry", &[value], &constraint),
+                Err(BatchColumnError::Constraint {
+                    message: "asymmetry must be in [-1, 1]"
+                })
+            );
+        }
+        assert!(has_view_assignment_checks(&constraint));
+        assert_eq!(
+            validate_view_assignment_values(&[-1.0, 1.0], crate::FieldType::F32, &constraint),
+            Ok(())
+        );
+        for value in [-1.01, 1.01, f64::NAN, f64::NEG_INFINITY, f64::INFINITY] {
+            assert!(
+                validate_view_assignment_values(&[value], crate::FieldType::F32, &constraint)
+                    .is_err()
             );
         }
     }

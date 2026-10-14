@@ -209,6 +209,11 @@ commands.spawn(
 Positive `LensDistortion.intensity` produces barrel distortion; negative values
 produce pincushion distortion. Increase `scale` to crop stretched edges. Set
 either component's `intensity` to `0.0` to disable its effect.
+`Vignette` requires finite values for its five scalar settings and both
+`center` coordinates. Invalid constructor, setter, batch, and View writes
+raise `ValueError` before changing the component. Bevy clamps several finite
+settings while rendering, so these checks do not impose additional numeric
+ranges.
 
 ### Screen-Space Effects
 

@@ -1725,6 +1725,7 @@ impl PyCommands {
             })?;
 
             let py_resource_type = PyResourceType::try_from((type_obj, py))?;
+            py_resource_type.ensure_user_removable()?;
             let trace_operation = if self.parity_trace.is_some() {
                 Some(PendingParityOp {
                     kind: ParityOpKind::ResourceRemove,
