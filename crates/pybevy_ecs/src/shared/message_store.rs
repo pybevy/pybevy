@@ -806,26 +806,14 @@ impl MessageRegistryCore {
         Ok(MessageRegisterOutcome::Registered(channel))
     }
 
-    /// Remove stale exact identities while retaining every newest-generation alias.
+    /// Remove exact identities older than the supported generation window.
     ///
     /// Returned keys let the backend remove and later drop its matching strong
     /// class handles after releasing the registry's World resource borrow.
     pub fn prune_aliases(&mut self, minimum_generation: u32) -> Vec<MessageTypeKey> {
-        let mut newest_by_channel = HashMap::<MessageChannelId, u32>::new();
-        for alias in self.by_type.values() {
-            newest_by_channel
-                .entry(alias.channel)
-                .and_modify(|generation| *generation = (*generation).max(alias.generation))
-                .or_insert(alias.generation);
-        }
-
         let mut removed = Vec::new();
         self.by_type.retain(|type_key, alias| {
-            let newest = newest_by_channel
-                .get(&alias.channel)
-                .copied()
-                .unwrap_or(alias.generation);
-            let keep = alias.generation >= minimum_generation || alias.generation == newest;
+            let keep = alias.generation >= minimum_generation;
             if !keep {
                 removed.push(*type_key);
             }
@@ -1307,7 +1295,7 @@ mod tests {
     }
 
     #[test]
-    fn pruning_returns_stale_keys_and_keeps_the_newest_alias_per_channel() {
+    fn pruning_releases_obsolete_aliases_and_preserves_channel_identity() {
         let mut registry = MessageRegistryCore::default();
         registry
             .register(MessageTypeKey::new(1), "game.Hit", 0, |_| {
@@ -1339,12 +1327,19 @@ mod tests {
             Some(channel(0))
         );
 
-        assert!(registry.prune_aliases(10).is_empty());
-        assert_eq!(registry.alias_count(), 1);
+        assert_eq!(registry.prune_aliases(10), [MessageTypeKey::new(3)]);
+        assert_eq!(registry.alias_count(), 0);
         assert_eq!(
             registry.channel_for_qualified_name("game.Hit"),
             Some(channel(0))
         );
+        let restored = registry
+            .register(MessageTypeKey::new(4), "game.Hit", 11, |_| {
+                panic!("re-registering a logical channel must reuse its access id")
+            })
+            .unwrap();
+        assert_eq!(restored.channel(), channel(0));
+        assert_eq!(registry.channel_count(), 1);
     }
 
     #[test]

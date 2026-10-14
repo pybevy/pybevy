@@ -40,6 +40,13 @@ pub trait BatchableField: Sized + Copy {
     /// For scalars: `data[index]`
     /// For Vec3: `data[index * 3 .. index * 3 + 3]`
     fn from_numpy_f32_slice(data: &[f32], index: usize) -> Self;
+
+    /// Construct a value from an exact integer column, for fields with an
+    /// [`INTEGER_COLUMN`](Self::INTEGER_COLUMN). Values were range-checked.
+    fn from_integer_slice(data: &[i64], index: usize) -> Self {
+        let _ = (data, index);
+        unreachable!("only integer batch fields carry integer columns")
+    }
 }
 
 impl BatchableField for f32 {
@@ -77,6 +84,11 @@ impl BatchableField for i32 {
     fn from_numpy_f32_slice(data: &[f32], index: usize) -> Self {
         data[index] as i32
     }
+
+    #[inline(always)]
+    fn from_integer_slice(data: &[i64], index: usize) -> Self {
+        data[index] as i32
+    }
 }
 
 impl BatchableField for u32 {
@@ -88,6 +100,11 @@ impl BatchableField for u32 {
 
     #[inline(always)]
     fn from_numpy_f32_slice(data: &[f32], index: usize) -> Self {
+        data[index] as u32
+    }
+
+    #[inline(always)]
+    fn from_integer_slice(data: &[i64], index: usize) -> Self {
         data[index] as u32
     }
 }
@@ -217,6 +234,22 @@ pub fn check_batch_field<T: BatchableField + DomainValues>(
     Ok(())
 }
 
+/// [`check_batch_field`] over an exact integer column.
+pub fn check_integer_batch_field<T: BatchableField + DomainValues>(
+    _field: &T,
+    owner: &'static str,
+    name: &'static str,
+    data: &[i64],
+    domains: &'static [FieldDomain],
+) -> Result<(), DomainViolation> {
+    for row in 0..data.len() / T::NUMPY_COLUMNS {
+        T::from_integer_slice(data, row)
+            .check_domains(owner, name, domains)
+            .map_err(|violation| violation.at_row(row))?;
+    }
+    Ok(())
+}
+
 /// View API metadata helper: returns the `FieldType` for a field type.
 ///
 /// Uses type inference to resolve T from a `&field` reference, then returns
@@ -234,6 +267,12 @@ pub fn batch_integer_column_of<T: BatchableField>(_field: &T) -> Option<IntegerC
 #[inline(always)]
 pub fn set_field_from_numpy<T: BatchableField>(field: &mut T, data: &[f32], index: usize) {
     *field = T::from_numpy_f32_slice(data, index);
+}
+
+/// Assignment helper for an exact integer column: compiler resolves T from `&mut field`.
+#[inline(always)]
+pub fn set_field_from_integers<T: BatchableField>(field: &mut T, data: &[i64], index: usize) {
+    *field = T::from_integer_slice(data, index);
 }
 
 #[cfg(test)]
@@ -485,6 +524,22 @@ mod tests {
         );
         assert!(
             check_batch_field(&Vec3::ZERO, "Transform", "translation", &rows[..3], FINITE).is_ok()
+        );
+    }
+
+    #[test]
+    fn integer_columns_set_and_check_exact_values() {
+        let data = [16_777_217_i64, i64::from(u32::MAX)];
+        let mut value = 0_u32;
+        set_field_from_integers(&mut value, &data, 0);
+        assert_eq!(value, 16_777_217);
+        set_field_from_integers(&mut value, &data, 1);
+        assert_eq!(value, u32::MAX);
+        assert_eq!(i32::from_integer_slice(&[-16_777_217], 0), -16_777_217);
+        assert_eq!(
+            check_integer_batch_field(&0_u32, "Bloom", "max_mip_dimension", &[3, 0], POSITIVE)
+                .map_err(|violation| violation.to_string()),
+            Err("Bloom.max_mip_dimension must be greater than zero (got 0 at row 1)".into())
         );
     }
 

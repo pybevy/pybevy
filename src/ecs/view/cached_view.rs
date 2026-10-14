@@ -10,14 +10,11 @@ use pybevy_bytecodevm::{
     view_runtime::{CachedViewCore, ResolvedViewSpec, ViewRuntimeError},
 };
 use pybevy_core::registry::global_registry;
-use pyo3::{ffi::PyTypeObject, prelude::*, types::PyType};
+use pyo3::{ffi::PyTypeObject, prelude::*};
 
 use crate::ecs::{
-    component_layout::{
-        ComponentLayout, ComponentLayoutExt, ComponentStorageType, ComponentStorageTypeExt,
-        PrimitiveTypeExt,
-    },
-    component_type::PyComponentType,
+    component_layout::PrimitiveTypeExt,
+    component_type::{PyComponentType, registered_custom_layout},
     view::view_param::{PyViewParam, ViewParamType},
 };
 
@@ -96,9 +93,10 @@ impl CachedPyView {
         let allowed_fields = component_types
             .iter()
             .map(|component_type| {
+                let component_id = component_ids[component_type];
                 (
-                    component_ids[component_type],
-                    expanded_field_offsets(component_type, py),
+                    component_id,
+                    expanded_field_offsets(world, component_id, component_type, py),
                 )
             })
             .collect();
@@ -185,22 +183,16 @@ fn insert_expanded_field(
 /// Components without View-compatible storage deliberately produce an empty
 /// set, causing any attempted field program to fail closed during validation.
 fn expanded_field_offsets(
+    world: &World,
+    component_id: ComponentId,
     component_type: &PyComponentType,
     py: Python,
 ) -> HashSet<(usize, FieldType)> {
     let mut fields = HashSet::new();
     match component_type {
         PyComponentType::Custom(type_ptr) => {
-            // SAFETY: registered type pointers live for the interpreter lifetime.
-            let py_type =
-                unsafe { Bound::from_borrowed_ptr(py, *type_ptr as *mut pyo3::ffi::PyObject) };
-            if let Ok(class) = py_type.cast::<PyType>()
-                && matches!(
-                    ComponentStorageType::from_python_class(class)
-                        .unwrap_or(ComponentStorageType::PyObject),
-                    ComponentStorageType::Wrapper(_)
-                )
-                && let Ok(layout) = ComponentLayout::from_annotations(class)
+            if let Some((_, Some(layout))) =
+                registered_custom_layout(world, component_id, *type_ptr, py)
             {
                 // Matrices have no View column, so their bytes stay outside the program set.
                 for field in &layout.fields {

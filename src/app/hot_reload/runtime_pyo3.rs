@@ -11,6 +11,7 @@ use bevy::ecs::{
     },
     world::World,
 };
+
 use pybevy_core::{
     PluginIdentity, ReloadRequestMode, ReloadResult, public_error::reload_schedule_rejected,
 };
@@ -29,6 +30,7 @@ use super::{
     cleanup, fingerprint::InitialDefsFingerprint, registry::DynamicSystemRegistry,
     util::get_python_gc_objects,
 };
+
 use crate::{
     app::{
         PyStage,
@@ -64,6 +66,7 @@ pub(crate) struct PendingDefinitions {
     pub systems: Vec<(PyStage, Vec<Py<PyAny>>)>,
     pub set_configs: Vec<(PyStage, Vec<Py<PyAny>>)>,
     pub resources: Vec<Py<PyAny>>,
+
     pub states: Vec<PendingStateDefinition>,
     pub state_systems: Vec<PendingStateSystems>,
     pub messages: Vec<Py<PyType>>,
@@ -625,6 +628,7 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
                 systems: temp_app_ref.take_pending_systems(),
                 set_configs: temp_app_ref.take_pending_set_configs(),
                 resources: temp_app_ref.take_pending_resources(),
+
                 states: temp_app_ref.take_pending_states(),
                 state_systems: temp_app_ref.take_pending_state_systems(),
                 messages: temp_app_ref.take_pending_messages(),

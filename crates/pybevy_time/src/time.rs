@@ -161,7 +161,12 @@ fn playable_timestep(timestep: Duration) -> PyResult<Duration> {
 }
 
 #[pyresource(Time<Fixed>, bridge, "_TimeFixed")]
-#[pyclass(name = "_TimeFixed", extends = PyResource, from_py_object)]
+#[pyclass(
+    name = "_TimeFixed",
+    module = "pybevy.time",
+    extends = PyResource,
+    from_py_object
+)]
 #[derive(Debug)]
 pub struct PyTimeFixed {
     pub(crate) storage: ResourceStorage<Time<Fixed>>,
@@ -318,7 +323,12 @@ impl PyTimeFixed {
 }
 
 #[pyresource(Time<Virtual>, bridge, "_TimeVirtual")]
-#[pyclass(name = "_TimeVirtual", extends = PyResource, from_py_object)]
+#[pyclass(
+    name = "_TimeVirtual",
+    module = "pybevy.time",
+    extends = PyResource,
+    from_py_object
+)]
 #[derive(Debug)]
 pub struct PyTimeVirtual {
     pub(crate) storage: ResourceStorage<Time<Virtual>>,
@@ -464,7 +474,12 @@ impl PyTimeVirtual {
 }
 
 #[pyresource(Time<Real>, bridge, "_TimeReal")]
-#[pyclass(name = "_TimeReal", extends = PyResource, from_py_object)]
+#[pyclass(
+    name = "_TimeReal",
+    module = "pybevy.time",
+    extends = PyResource,
+    from_py_object
+)]
 #[derive(Debug)]
 pub struct PyTimeReal {
     pub(crate) storage: ResourceStorage<Time<Real>>,

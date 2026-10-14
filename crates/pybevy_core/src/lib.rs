@@ -509,8 +509,9 @@ pub use registry::{
     PreparedBatchComponent, PreparedNativeBatch, PreparedNativeUniform, PreparedNativeUniformWith,
     PreparedUniformComponent, PreparedUniformFn, PyRustComponentBatch, ReaderCursorOp,
     ResourceBridge, apply_cursor_op, apply_reader_cursor, batch_field_meta_for,
-    batch_integer_column_of, check_batch_field, check_f32_integer_batch_column,
-    check_integer_batch_column, field_type_of, portable_f32_batch_column, set_field_from_numpy,
+    batch_integer_column_of, check_batch_field, check_integer_batch_column,
+    check_integer_batch_field, field_type_of, integer_batch_column, portable_f32_batch_column,
+    read_next_message, set_field_from_integers, set_field_from_numpy, write_native_message_batch,
 };
 pub use reload_request::{
     CustomComponentEntry, CustomComponentInfo, CustomResourceEntry, CustomResourceInfo,

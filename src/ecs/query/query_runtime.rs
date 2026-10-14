@@ -45,9 +45,9 @@ use crate::{
         commands::entity_logical_type_matches,
         component::PyComponent,
         component_layout::{
-            ComponentLayout, ComponentLayoutExt, ComponentStorageType, ComponentStorageTypeExt,
+            ComponentLayout, ComponentStorageType, cached_storage_and_layout_match,
         },
-        component_type::{PyComponentType, register_component_id},
+        component_type::{PyComponentType, register_component_id, registered_custom_layout},
         custom_component::PyCustomComponent,
         filter::QueryFilter,
         helpers::validity_guard::{AccessMode, ValidityFlag},
@@ -60,8 +60,7 @@ use crate::{
     },
 };
 
-type LayoutCacheEntry = (ComponentStorageType, Option<Arc<ComponentLayout>>);
-type LayoutCache = HashMap<*const PyTypeObject, LayoutCacheEntry>;
+type CustomLayout = (ComponentStorageType, Option<Arc<ComponentLayout>>);
 
 /// Rebind a queried component to its logical specialization, such as a custom
 /// material's handle identity.
@@ -160,6 +159,9 @@ pub struct CachedQuery {
 
     /// Extraction function pointers for dynamic components, keyed by Python type.
     extract_fns: HashMap<PyComponentType, ExtractFn>,
+
+    /// Registered storage and layout of each custom data type's column.
+    custom_layouts: HashMap<*const PyTypeObject, Option<CustomLayout>>,
 
     /// Physical `Assets<T>` resource IDs keyed by the native asset class.
     asset_component_ids: HashMap<*const PyTypeObject, ComponentId>,
@@ -357,6 +359,17 @@ impl CachedQuery {
             }
         }
 
+        let custom_layouts = component_id_cache
+            .iter()
+            .filter_map(|(ty, &component_id)| match ty {
+                PyComponentType::Custom(type_ptr) => Some((
+                    *type_ptr,
+                    registered_custom_layout(world, component_id, *type_ptr, py),
+                )),
+                _ => None,
+            })
+            .collect();
+
         let single_entity_enforced = param.single_entity_enforced;
         let optional_single = param.optional_single;
 
@@ -366,6 +379,7 @@ impl CachedQuery {
             component_id_cache,
             custom_component_ids,
             extract_fns,
+            custom_layouts,
             asset_component_ids,
             logical_type_map_component_id,
             single_entity_enforced,
@@ -408,13 +422,9 @@ pub struct PyQueryIter {
     /// SmallVec[8] keeps up to 8 items on stack (most queries have 1-4 params)
     values_buffer: RefCell<SmallVec<[Py<PyAny>; 8]>>,
 
-    /// Cached ComponentLayouts and storage types for custom wrapper components, keyed by type pointer.
-    /// Avoids re-parsing Python __annotations__ and __pybevy_storage__ on every entity iteration.
-    layout_cache: RefCell<LayoutCache>,
-
     /// Last resolved component id, keyed by the requesting type. Queries ask for
     /// the same handful of types on every row, so this turns the per-row map
-    /// probe into a comparison. Scoped to this validity window like `layout_cache`.
+    /// probe into a comparison. Scoped to this validity window.
     last_component_id: Cell<Option<(ComponentTypeKey, ComponentId)>>,
 
     /// Last resolved extraction function, keyed the same way and for the same
@@ -423,14 +433,10 @@ pub struct PyQueryIter {
 
     /// Last resolved storage type and layout for a custom component, same
     /// reasoning and same validity-window scope as the lookups above.
-    #[allow(clippy::type_complexity)]
-    last_layout: RefCell<
-        Option<(
-            *const PyTypeObject,
-            ComponentStorageType,
-            Option<Arc<ComponentLayout>>,
-        )>,
-    >,
+    last_layout: RefCell<Option<(*const PyTypeObject, CustomLayout)>>,
+
+    /// Custom types whose live class this run checked against its registered layout.
+    checked_classes: RefCell<SmallVec<[*const PyTypeObject; 4]>>,
 }
 
 /// Discriminant plus type pointer, enough to distinguish any `PyComponentType`.
@@ -635,7 +641,7 @@ impl PyQueryIter {
             last_component_id: Cell::new(None),
             last_extract_fn: Cell::new(None),
             last_layout: RefCell::new(None),
-            layout_cache: RefCell::new(HashMap::new()),
+            checked_classes: RefCell::new(SmallVec::new()),
         }
     }
 
@@ -664,7 +670,7 @@ impl PyQueryIter {
             last_component_id: Cell::new(None),
             last_extract_fn: Cell::new(None),
             last_layout: RefCell::new(None),
-            layout_cache: RefCell::new(HashMap::new()),
+            checked_classes: RefCell::new(SmallVec::new()),
         }
     }
 
@@ -1095,49 +1101,34 @@ impl PyQueryIter {
     /// (in extract_components_from_entity, single, and get methods).
     ///
     /// Called by PyComponentType::extract_from_entity() macro dispatch method.
-    fn layout_for(
-        &self,
-        type_ptr: *const PyTypeObject,
-        py: Python,
-    ) -> (ComponentStorageType, Option<Arc<ComponentLayout>>) {
-        if let Some((last_ptr, st, layout)) = &*self.last_layout.borrow()
+    fn layout_for(&self, type_ptr: *const PyTypeObject, py: Python) -> PyResult<CustomLayout> {
+        if let Some((last_ptr, layout)) = &*self.last_layout.borrow()
             && *last_ptr == type_ptr
         {
-            return (*st, layout.clone());
+            return Ok(layout.clone());
         }
-        let resolved = {
-            let cache = self.layout_cache.borrow();
-            if let Some(cached) = cache.get(&type_ptr) {
-                (cached.0, cached.1.clone())
-            } else {
-                drop(cache);
-
-                // SAFETY: the live query parameter retains this class.
-                let py_type = unsafe { Bound::from_borrowed_ptr(py, type_ptr as *mut FfiPyObject) };
-                let st = if let Ok(cls) = py_type.cast::<PyType>() {
-                    ComponentStorageType::from_python_class(cls)
-                        .unwrap_or(ComponentStorageType::PyObject)
-                } else {
-                    ComponentStorageType::PyObject
-                };
-                let layout = if let ComponentStorageType::Wrapper(_) = &st {
-                    let cls = py_type
-                        .cast::<PyType>()
-                        .expect("Type pointer should be valid");
-                    Some(Arc::new(ComponentLayout::from_annotations(cls).expect(
-                        "Layout should be computable for wrapper components",
-                    )))
-                } else {
-                    None
-                };
-                self.layout_cache
-                    .borrow_mut()
-                    .insert(type_ptr, (st, layout.clone()));
-                (st, layout)
+        let layout = self
+            .cached()
+            .custom_layouts
+            .get(&type_ptr)
+            .cloned()
+            .flatten()
+            .ok_or_else(|| {
+                PyRuntimeError::new_err("custom query component has no registered storage")
+            })?;
+        if !self.checked_classes.borrow().contains(&type_ptr) {
+            // SAFETY: the live query parameter retains this class.
+            let class = unsafe { Bound::from_borrowed_ptr(py, type_ptr as *mut FfiPyObject) };
+            let class = class.cast::<PyType>()?;
+            if !cached_storage_and_layout_match(class, layout.0, layout.1.as_deref())? {
+                return Err(PyValueError::new_err(
+                    public_error::registered_component_layout_changed(&class.name()?.to_string()),
+                ));
             }
-        };
-        *self.last_layout.borrow_mut() = Some((type_ptr, resolved.0, resolved.1.clone()));
-        resolved
+            self.checked_classes.borrow_mut().push(type_ptr);
+        }
+        *self.last_layout.borrow_mut() = Some((type_ptr, layout.clone()));
+        Ok(layout)
     }
 
     pub(crate) fn extract_custom_component(
@@ -1148,8 +1139,7 @@ impl PyQueryIter {
         access_mode: AccessMode,
         py: Python,
     ) -> PyResult<Py<PyAny>> {
-        // Get cached storage type + layout, or compute and cache on first access
-        let (storage_type, cached_layout) = self.layout_for(type_ptr, py);
+        let (storage_type, cached_layout) = self.layout_for(type_ptr, py)?;
 
         match storage_type {
             ComponentStorageType::Wrapper(wrapper_size) => {

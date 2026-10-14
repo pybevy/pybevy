@@ -69,6 +69,7 @@ is `KeyboardInterrupt` or `SystemExit`.
 - **Single** uses `into_inner()` for typed component access and tuple unpacking. Use `Mut[T]` for writes.
 - **Systems** are functions that run each frame, organized by Stage (Startup, Update, Last, etc.)
 - **Messages** are App-local buffered channels registered with `app.add_message(T)`. Ordered readers can observe same-pass writes. Two native `MessageReader[T]` parameters may coexist in one system; two readers of one custom Python message channel conflict and need separate systems. A writer or mutator cannot share its channel with another reader, writer, or mutator in one system.
+- Message iteration consumes only yielded values; iterators expire with the system run. Batch writes are atomic. A custom `__copy__` must return the exact message class, and callbacks that expire the writer reject the write.
 - **Coordinate system** - Bevy is right-handed, Y-up. Camera default forward is −Z. When a camera on the −Z side looks toward +Z, the X-axis appears mirrored on screen (world +X = screen left). Plan grid layouts accordingly.
 
 ## Spatial Intelligence Tools
@@ -254,6 +255,9 @@ Call `get_guide("index")` for the full list of available guides with description
 
 ## Scene Generation (MANDATORY)
 
+Fake remains the default; hosted calls require explicit OpenRouter configuration.
+No inference SDK or model installation is needed.
+
 ### Incremental Development (CRITICAL)
 **Never write the entire scene in one shot.** Large scenes (500+ lines) will exceed the output token limit and fail. Instead:
 
@@ -318,6 +322,7 @@ and `Annulus.inner_circle`; a mutable asset's nested UV matrix axis writes throu
 Use `copy.copy()` for independent mutable flags. The same rules apply to
 `Image.asset_usage`, `Mesh.asset_usage`, `ImageLoaderSettings.asset_usage`,
 and `GltfLoaderSettings.load_meshes`/`load_materials`.
+
 
 ## Getting Started
 

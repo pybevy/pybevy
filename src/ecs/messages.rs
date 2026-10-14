@@ -1,12 +1,14 @@
 use std::{
     any::Any,
-    sync::{Arc, Mutex},
+    mem::transmute,
+    ptr::eq,
+    sync::{Arc, Mutex, MutexGuard},
 };
 
 use bevy::{
     ecs::{
         component::ComponentId,
-        message::{Message, MessageCursor, Messages},
+        message::{Message, Messages},
         world::{World, unsafe_world_cell::UnsafeWorldCell},
     },
     input::keyboard::KeyboardInput,
@@ -18,21 +20,27 @@ use pybevy_core::{
         ASSET_BRIDGE_NOT_FOUND, ASSET_EVENT_TYPE_REQUIRED, ASSET_LOAD_FAILED_TYPE_REQUIRED,
         MESSAGES_RESOURCE_READ_ONLY,
     },
+    read_next_message,
     registry::{global_registry, register_native_message},
 };
 use pybevy_ecs::shared::message_resources::ensure_message_resource;
-use pybevy_world_serialization::WorldInstanceReadyMessage;
+use pybevy_window::window_event::PyWindowEvent;
+use pybevy_world_serialization::{
+    WorldInstanceReadyMessage, world_instance_ready::PyWorldInstanceReady,
+};
 use pyo3::{
-    IntoPyObjectExt, PyTraverseError, PyVisit,
-    exceptions::{PyRuntimeError, PyTypeError},
+    IntoPyObjectExt, PyTraverseError, PyTypeInfo, PyVisit,
+    exceptions::{PyNotImplementedError, PyRuntimeError, PyTypeError},
+    ffi::PyTypeObject,
     prelude::*,
-    types::{PyTuple, PyType},
+    types::{PyTuple, PyType, PyTypeMethods},
 };
 
 use super::{message::PyMessage, python_message::register_python_message};
 use crate::{
-    assets::asset_load_failed_event::{
-        PyAssetLoadFailedEvent, materialize_asset_load_failed_record,
+    assets::{
+        asset_event::{PyAssetEvent, materialize_asset_event_record},
+        asset_load_failed_event::{PyAssetLoadFailedEvent, materialize_asset_load_failed_record},
     },
     ecs::{
         deferred_drop::WorldMutGuard, dynamic_system::lock_or_recover,
@@ -71,7 +79,7 @@ impl MessageWorld {
     pub(crate) unsafe fn new(cell: UnsafeWorldCell, validity: ValidityFlag) -> Self {
         // SAFETY: layout-preserving lifetime erasure of a Copy pointer type; the
         // cell is only touched while `validity` is active.
-        let cell: UnsafeWorldCell<'static> = unsafe { std::mem::transmute(cell) };
+        let cell: UnsafeWorldCell<'static> = unsafe { transmute(cell) };
         Self {
             cell,
             validity,
@@ -98,12 +106,13 @@ impl MessageWorld {
 ///
 /// Provides read and write access to a specific message type's resource,
 /// used by `MessageReader` and `MessageWriter` system parameters.
-#[pyclass(name = "Messages", module = "pybevy.ecs", extends = PyResource, frozen)]
+#[pyclass(name = "Messages", module = "pybevy.ecs", extends = PyResource, frozen, skip_from_py_object)]
+#[derive(Clone)]
 pub struct PyMessages {
     pub(crate) message_type: MessageType,
     pub(crate) world: MessageWorld,
     /// Persistent cursor for MessageReader iteration.
-    /// When Some, iter_to_python uses the stored cursor to avoid re-reading messages.
+    /// When Some, each yielded message advances the stored cursor.
     /// When None, creates a fresh cursor each time (legacy behavior).
     pub(crate) cursor_storage: Option<CursorStorage>,
     /// Set for `World.resource()`, whose `&Messages<T>` cannot be cleared.
@@ -111,35 +120,65 @@ pub struct PyMessages {
 }
 
 impl PyMessages {
-    /// Generic helper to iterate messages and convert to Python objects.
-    /// Uses persistent cursor when cursor_storage is available.
-    fn iter_messages<BevyMsg, F>(
-        &self,
-        py: Python,
-        world: &mut bevy::ecs::world::World,
-        cursor_state: &mut Option<Box<dyn Any + Send + Sync>>,
-        convert: F,
-    ) -> PyResult<Vec<Py<PyAny>>>
-    where
-        BevyMsg: Message + 'static,
-        F: Fn(&BevyMsg, Python) -> PyResult<Py<PyAny>>,
-    {
-        let messages = world.get_resource::<Messages<BevyMsg>>();
-        if let Some(messages_res) = messages {
-            let mut cursor = cursor_state
-                .as_ref()
-                .and_then(|s| s.downcast_ref::<MessageCursor<BevyMsg>>())
-                .cloned()
-                .unwrap_or_else(|| messages_res.get_cursor());
-            let mut result = Vec::new();
-            for msg in cursor.read(messages_res) {
-                let py_msg = convert(msg, py)?;
-                result.push(py_msg);
+    pub(crate) fn check_valid(&self) -> PyResult<()> {
+        self.world
+            .validity
+            .check_read()
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))
+    }
+
+    pub(crate) fn next_to_python(&self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        let world = self.world.world_mut()?;
+        let mut guard = self.lock_cursor();
+        let mut detached = None;
+        let state = match guard.as_mut() {
+            Some(state) => &mut **state,
+            None => &mut detached,
+        };
+        match &self.message_type {
+            MessageType::WindowEvent => read_next_message(
+                world.get_resource::<Messages<WindowEvent>>(),
+                state,
+                |event| {
+                    Ok(PyWindowEvent::from_bevy(py, event)?
+                        .into_pyobject(py)?
+                        .into_any()
+                        .unbind())
+                },
+            ),
+            MessageType::WorldInstanceReady => read_next_message(
+                world.get_resource::<Messages<WorldInstanceReadyMessage>>(),
+                state,
+                |event| {
+                    Py::new(py, (PyWorldInstanceReady::from(&event.0), PyMessage)).map(Py::into_any)
+                },
+            ),
+            MessageType::AssetEvent(type_ptr) => {
+                let bridge = global_registry::get_asset_bridge_by_py_type(*type_ptr)
+                    .ok_or_else(|| PyTypeError::new_err(ASSET_BRIDGE_NOT_FOUND))?;
+                bridge
+                    .read_next_event(&world, state)
+                    .map(|event| materialize_asset_event_record(py, event))
+                    .transpose()
             }
-            *cursor_state = Some(Box::new(cursor));
-            Ok(result)
-        } else {
-            Ok(Vec::new())
+            MessageType::AssetLoadFailed(type_ptr) => {
+                let bridge = global_registry::get_asset_bridge_by_py_type(*type_ptr)
+                    .ok_or_else(|| PyTypeError::new_err(ASSET_BRIDGE_NOT_FOUND))?;
+                bridge
+                    .read_next_load_failed_event(&world, state)
+                    .map(|event| materialize_asset_load_failed_record(py, event))
+                    .transpose()
+            }
+            MessageType::Dynamic(type_ptr) => {
+                let bridge =
+                    global_registry::get_message_bridge_by_py_type(*type_ptr).ok_or_else(|| {
+                        PyTypeError::new_err("Message type not registered in global registry")
+                    })?;
+                bridge.next_to_python(py, &world, state)
+            }
+            MessageType::Custom(_) => Err(PyTypeError::new_err(
+                "custom messages use the shared Python message store",
+            )),
         }
     }
 
@@ -186,77 +225,8 @@ impl PyMessages {
 
     /// Lock cursor storage (if available) and return a mutable reference to the inner state.
     /// Returns a default None state when no cursor storage is configured.
-    fn lock_cursor(&self) -> Option<std::sync::MutexGuard<'_, Option<Box<dyn Any + Send + Sync>>>> {
+    fn lock_cursor(&self) -> Option<MutexGuard<'_, Option<Box<dyn Any + Send + Sync>>>> {
         self.cursor_storage.as_ref().map(|cs| lock_or_recover(cs))
-    }
-
-    pub(crate) fn iter_to_python(&self, py: Python) -> PyResult<Vec<Py<PyAny>>> {
-        let mut world = self.world.world_mut()?;
-        let mut guard = self.lock_cursor();
-        let cursor_state = match guard.as_mut() {
-            Some(g) => &mut **g,
-            None => {
-                // No persistent cursor: use a temporary that's discarded
-                &mut None
-            }
-        };
-
-        match &self.message_type {
-            MessageType::WindowEvent => {
-                use pybevy_window::window_event::PyWindowEvent;
-                self.iter_messages::<WindowEvent, _>(py, &mut world, cursor_state, |msg, py| {
-                    Ok(PyWindowEvent::from_bevy(py, msg)?
-                        .into_pyobject(py)?
-                        .into_any()
-                        .unbind())
-                })
-            }
-            MessageType::WorldInstanceReady => {
-                use pybevy_world_serialization::world_instance_ready::PyWorldInstanceReady;
-                self.iter_messages::<WorldInstanceReadyMessage, _>(
-                    py,
-                    &mut world,
-                    cursor_state,
-                    |msg, py| {
-                        Ok(
-                            Py::new(py, (PyWorldInstanceReady::from(&msg.0), PyMessage))?
-                                .into_any(),
-                        )
-                    },
-                )
-            }
-            MessageType::AssetEvent(type_ptr) => {
-                use crate::assets::asset_event::materialize_asset_event_record;
-
-                let bridge = global_registry::get_asset_bridge_by_py_type(*type_ptr)
-                    .ok_or_else(|| PyTypeError::new_err(ASSET_BRIDGE_NOT_FOUND))?;
-                bridge
-                    .read_events(&world, cursor_state)
-                    .into_iter()
-                    .map(|event| materialize_asset_event_record(py, event))
-                    .collect()
-            }
-            MessageType::AssetLoadFailed(type_ptr) => {
-                let bridge = global_registry::get_asset_bridge_by_py_type(*type_ptr)
-                    .ok_or_else(|| PyTypeError::new_err(ASSET_BRIDGE_NOT_FOUND))?;
-                bridge
-                    .read_load_failed_events(&world, cursor_state)
-                    .into_iter()
-                    .map(|event| materialize_asset_load_failed_record(py, event))
-                    .collect()
-            }
-            MessageType::Custom(_) => Err(PyTypeError::new_err(
-                "custom messages use the shared Python message store",
-            )),
-            MessageType::Dynamic(type_ptr) => {
-                // Use global registry for dynamic dispatch (most message types use this)
-                let bridge =
-                    global_registry::get_message_bridge_by_py_type(*type_ptr).ok_or_else(|| {
-                        PyTypeError::new_err("Message type not registered in global registry")
-                    })?;
-                bridge.iter_to_python_with_cursor(py, &mut world, cursor_state)
-            }
-        }
     }
 
     fn with_messages<F, R>(&self, f: F) -> PyResult<R>
@@ -322,7 +292,7 @@ impl<'a, T: Message> ErasedMessages for Wrap<'a, T> {
     }
 
     fn iter_messages(&self, _py: Python) -> PyResult<Vec<Py<PyAny>>> {
-        Err(pyo3::exceptions::PyNotImplementedError::new_err(
+        Err(PyNotImplementedError::new_err(
             "iter_messages not implemented for this message type",
         ))
     }
@@ -449,13 +419,13 @@ pub enum MessageType {
     // Special handling required (no bridge)
     WindowEvent,
     WorldInstanceReady,
-    AssetEvent(*const pyo3::ffi::PyTypeObject),
-    AssetLoadFailed(*const pyo3::ffi::PyTypeObject),
+    AssetEvent(*const PyTypeObject),
+    AssetLoadFailed(*const PyTypeObject),
     // Python custom messages
     Custom(Py<PyType>),
     /// Dynamic message type registered via global message bridge registry.
     /// All event types with #[pymessage] use this variant.
-    Dynamic(*const pyo3::ffi::PyTypeObject),
+    Dynamic(*const PyTypeObject),
 }
 
 impl MessageType {
@@ -481,12 +451,10 @@ impl PartialEq for MessageType {
         match (self, other) {
             (MessageType::WindowEvent, MessageType::WindowEvent) => true,
             (MessageType::WorldInstanceReady, MessageType::WorldInstanceReady) => true,
-            (MessageType::AssetEvent(a), MessageType::AssetEvent(b)) => std::ptr::eq(*a, *b),
-            (MessageType::AssetLoadFailed(a), MessageType::AssetLoadFailed(b)) => {
-                std::ptr::eq(*a, *b)
-            }
+            (MessageType::AssetEvent(a), MessageType::AssetEvent(b)) => eq(*a, *b),
+            (MessageType::AssetLoadFailed(a), MessageType::AssetLoadFailed(b)) => eq(*a, *b),
             (MessageType::Custom(a), MessageType::Custom(b)) => a.is(b),
-            (MessageType::Dynamic(a), MessageType::Dynamic(b)) => std::ptr::eq(*a, *b),
+            (MessageType::Dynamic(a), MessageType::Dynamic(b)) => eq(*a, *b),
             _ => false,
         }
     }
@@ -636,16 +604,12 @@ impl PyMessageType {
     }
 
     pub(crate) fn from_message_type(message: &Bound<'_, PyType>) -> PyResult<Self> {
-        use pybevy_window::window_event::PyWindowEvent;
-        use pybevy_world_serialization::world_instance_ready::PyWorldInstanceReady;
-        use pyo3::{PyTypeInfo, types::PyTypeMethods};
-
         let py = message.py();
         let type_ptr = message.as_type_ptr();
 
         // Check global message bridge registry first (dynamic dispatch)
         // Most message types use this path via #[pymessage] attribute
-        if pybevy_core::registry::global_registry::contains_message_py_type(type_ptr) {
+        if global_registry::contains_message_py_type(type_ptr) {
             return Ok(PyMessageType(MessageType::Dynamic(type_ptr)));
         }
 
@@ -655,7 +619,7 @@ impl PyMessageType {
         for base in mro.iter().skip(1) {
             let base = base.cast_into::<PyType>()?;
             let base_ptr = base.as_type_ptr();
-            if pybevy_core::registry::global_registry::contains_message_py_type(base_ptr) {
+            if global_registry::contains_message_py_type(base_ptr) {
                 return Ok(PyMessageType(MessageType::Dynamic(base_ptr)));
             }
         }
@@ -671,7 +635,6 @@ impl PyMessageType {
 
         // AssetEvent is generic over the asset channel. The bare class cannot
         // identify which Bevy `Messages<AssetEvent<A>>` resource to access.
-        use crate::assets::asset_event::PyAssetEvent;
         if message.is(<PyAssetEvent as PyTypeInfo>::type_object(py)) {
             return Err(PyTypeError::new_err(ASSET_EVENT_TYPE_REQUIRED));
         }

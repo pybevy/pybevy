@@ -4,9 +4,9 @@ import pybevy.color
 from pybevy.math import Vec3, Vec4
 
 if TYPE_CHECKING:
-    from pybevy.pbr import StandardMaterial
+    from pybevy.pbr import Materializable, StandardMaterial
 
-class Color:
+class Color(Materializable):
     """A color represented by one of Bevy's supported color spaces.
 
     Note: Color does not support arithmetic operations (*, /, +, -).

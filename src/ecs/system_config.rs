@@ -194,7 +194,7 @@ impl PySystemSet {
 }
 
 /// Fluent configuration for one Python system callable.
-#[pyclass(name = "SystemConfig", from_py_object)]
+#[pyclass(name = "SystemConfig", module = "pybevy.ecs", from_py_object)]
 pub struct PySystemConfig {
     pub(crate) system: Py<PyAny>,
     pub(crate) pipe_stages: Vec<Py<PyAny>>,

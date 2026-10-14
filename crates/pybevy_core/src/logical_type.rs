@@ -8,7 +8,7 @@ use pyo3::{
 };
 
 /// Callable component specialization carrying a logical type identity.
-#[pyclass(name = "LogicalComponentParam", frozen)]
+#[pyclass(name = "LogicalComponentParam", module = "pybevy.ecs", frozen)]
 pub struct PyLogicalComponentParam {
     component_type: Py<PyType>,
     logical_type_id: LogicalTypeId,

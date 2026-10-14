@@ -1039,6 +1039,15 @@ mod tests {
             unreachable!()
         }
 
+        fn next_to_python(
+            &self,
+            _py: Python,
+            _world: &World,
+            _cursor: &mut Option<Box<dyn Any + Send + Sync>>,
+        ) -> PyResult<Option<Py<PyAny>>> {
+            Ok(None)
+        }
+
         fn reader_cursor(
             &self,
             _world: &World,
@@ -1244,6 +1253,14 @@ mod tests {
             Vec::new()
         }
 
+        fn read_next_event(
+            &self,
+            _world: &World,
+            _cursor: &mut Option<Box<dyn Any + Send + Sync>>,
+        ) -> Option<AssetEventRecord> {
+            None
+        }
+
         fn event_reader_cursor(
             &self,
             _world: &World,
@@ -1273,6 +1290,14 @@ mod tests {
             _cursor: &mut Option<Box<dyn Any + Send + Sync>>,
         ) -> Vec<AssetLoadFailedRecord> {
             Vec::new()
+        }
+
+        fn read_next_load_failed_event(
+            &self,
+            _world: &World,
+            _cursor: &mut Option<Box<dyn Any + Send + Sync>>,
+        ) -> Option<AssetLoadFailedRecord> {
+            None
         }
 
         fn load_failed_reader_cursor(

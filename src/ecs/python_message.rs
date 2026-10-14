@@ -38,21 +38,12 @@ pub(crate) type WeakPythonMessageStore = WeakMessageStore<PythonMessageValue>;
 #[derive(Default, Resource)]
 pub(crate) struct PythonMessageClassTable {
     by_type: HashMap<MessageTypeKey, Arc<Py<PyType>>>,
-    newest_by_channel: HashMap<MessageChannelId, Arc<Py<PyType>>>,
 }
 
 impl PythonMessageClassTable {
-    fn insert(
-        &mut self,
-        type_key: MessageTypeKey,
-        channel: MessageChannelId,
-        class: Arc<Py<PyType>>,
-    ) -> Vec<Arc<Py<PyType>>> {
+    fn insert(&mut self, type_key: MessageTypeKey, class: Arc<Py<PyType>>) -> Vec<Arc<Py<PyType>>> {
         let mut replaced = Vec::new();
-        if let Some(old) = self.by_type.insert(type_key, Arc::clone(&class)) {
-            replaced.push(old);
-        }
-        if let Some(old) = self.newest_by_channel.insert(channel, class) {
+        if let Some(old) = self.by_type.insert(type_key, class) {
             replaced.push(old);
         }
         replaced
@@ -101,11 +92,7 @@ pub(crate) fn traverse_python_messages(
     // SAFETY: the World/App owner holds its GC traversal gate.
     if let Some(table) = unsafe { world.get_resource::<PythonMessageClassTable>() } {
         let mut owners = HashSet::new();
-        for class in table
-            .by_type
-            .values()
-            .chain(table.newest_by_channel.values())
-        {
+        for class in table.by_type.values() {
             if owners.insert(Arc::as_ptr(class)) {
                 visit.call(class.as_ref())?;
             }
@@ -204,9 +191,11 @@ pub(crate) fn register_python_message(
     }
 
     let class = Arc::new(message.as_unbound().clone_ref(py));
+
     let replaced = {
         let mut table = world.resource_mut::<PythonMessageClassTable>();
-        table.insert(key, channel, class)
+
+        table.insert(key, class)
     };
     drop(replaced);
     Ok(outcome)

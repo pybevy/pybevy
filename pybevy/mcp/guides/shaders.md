@@ -234,6 +234,12 @@ scenes.
 `get_mut()`, iteration, and `remove()`. Iterated materials are read-only and
 expire with the system; removed materials are independent owned values.
 
+Calling `add()` through `Res[Assets[T]]` rejects the write before conversion
+and keeps the input material's base usable. Input conversion hooks and
+`from_mut` projections may read the same collection during `add()`,
+`get_mut()`, and `remove()`. A removal projection sees the asset already
+removed; validity and live-borrow restrictions continue to apply.
+
 Custom material collections with the same native material type share one underlying
 resource: `Assets[ShaderMaterial]` for ordinary materials and
 `Assets[StorageShaderMaterial]` for storage/explicit-texture materials. Several

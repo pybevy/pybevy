@@ -1145,10 +1145,16 @@ IDs compare and hash by message type and numeric ID; ordering requires the same
 message type. Custom types use their registered qualified name, preserved across
 reloads and unaffected by later class metadata edits. Native types use Bevy's type
 identity. IDs do not retain the Python class or message payload.
+Batch writes validate and copy every input before committing any messages.
+Fallback custom copies bypass the constructor and `__new__`; an explicit `__copy__`
+must return the exact message class. A copy error or callback that expires the
+writer rejects the write, including the entire batch.
 `MessageReader` methods: iteration via `for msg in reader`, `read()`, reader-local `clear()`, `is_empty()`, `len()`. Each reader parameter has an independent cursor, and iteration consumes only values actually yielded.
 A custom message reaches readers exactly as written: `write()` stores a shallow copy, and a
 `MessageReader` yields a read-only view that supports field reads, `isinstance`, `match` and `==`.
 The view lasts for the system run; `copy.copy(msg)` gives an owned, writable copy to keep.
+Native reader values are owned snapshots. Native and custom iterators expire
+with their system run; creating an iterator leaves the unread count unchanged.
 
 In an exclusive system, `world.resource(Messages[T])` returns Bevy's `Messages<T>` buffer for a native
 message type, with `len()` and `is_empty()`; `world.resource_mut(Messages[T]).clear()` empties it.

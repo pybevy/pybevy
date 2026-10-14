@@ -13,7 +13,7 @@ use pyo3::{
 ///
 /// The Python CLI owns this adapter on its existing watcher thread. The
 /// `FileWatcher` worker itself contains no Python objects.
-#[pyclass(name = "_FileWatcher")]
+#[pyclass(name = "_FileWatcher", module = "pybevy.app")]
 pub struct PyFileWatcher {
     watcher: FileWatcher,
 }

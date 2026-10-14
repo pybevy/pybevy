@@ -23,6 +23,7 @@ use bevy::{
     log::LogPlugin,
     time::{Real, Time},
 };
+
 use pybevy_core::{
     ActiveSceneModule, AppId, AppLifecycle, AppOperation, AppStoreCore, AppStoreError,
     LastSystemError, PluginIdentity, PyPlugin as PyPluginBase,
@@ -513,6 +514,7 @@ impl PyApp {
             pending_systems: RefCell::new(Vec::new()),
             pending_set_configs: RefCell::new(Vec::new()),
             pending_resources: RefCell::new(Vec::new()),
+
             pending_states: RefCell::new(Vec::new()),
             pending_state_systems: RefCell::new(Vec::new()),
             pending_messages: RefCell::new(Vec::new()),
@@ -755,6 +757,7 @@ impl PyApp {
             pending_systems: RefCell::new(Vec::new()),
             pending_set_configs: RefCell::new(Vec::new()),
             pending_resources: RefCell::new(Vec::new()),
+
             pending_states: RefCell::new(Vec::new()),
             pending_state_systems: RefCell::new(Vec::new()),
             pending_messages: RefCell::new(Vec::new()),

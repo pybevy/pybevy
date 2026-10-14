@@ -4,7 +4,13 @@ use pyo3::{exceptions::PyNotImplementedError, prelude::*};
 ///
 /// This is a marker class for the Python type hierarchy.
 /// Subclasses (like Color) can be used in material contexts.
-#[pyclass(name = "Materializable", subclass, frozen, skip_from_py_object)]
+#[pyclass(
+    name = "Materializable",
+    module = "pybevy.pbr",
+    subclass,
+    frozen,
+    skip_from_py_object
+)]
 #[derive(Debug, Clone)]
 pub struct PyMaterializable;
 
@@ -41,7 +47,7 @@ mod tests {
             assert!(error.is_instance_of::<PyTypeError>(py));
             assert_eq!(
                 error.value(py).str().unwrap().to_string(),
-                "cannot create 'builtins.Materializable' instances"
+                "cannot create 'pybevy.pbr.Materializable' instances"
             );
 
             let error = Py::new(py, PyMaterializable)

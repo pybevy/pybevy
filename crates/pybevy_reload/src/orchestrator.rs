@@ -7,6 +7,7 @@ use bevy::{
     prelude::Without,
     time::{Real, Time},
 };
+
 use pybevy_core::{
     CustomComponentInfo, PluginIdentity, gpu_validation::clear_wgpu_validation_errors,
     public_error, publish_last_system_error, publish_reload_failure, publish_reload_failure_at,
@@ -75,7 +76,6 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
         ReloadProgress::new(ReloadProgressPhase::DefinitionsReady, next_generation, mode),
     );
 
-    // Commit: increment generation (point of no return).
     hot_reload_state.increment_generation();
     let new_generation = hot_reload_state.current_generation();
 
@@ -710,6 +710,7 @@ fn fail_registration<S: HotReloadStateAccess>(
     error: &ReloadError,
 ) {
     hot_reload_state.set_generation(old_generation);
+
     world.resource_mut::<HotReloadGeneration>().update();
 
     publish_reload_failure(
@@ -771,6 +772,7 @@ mod tests {
     };
 
     use bevy::{app::Startup, ecs::schedule::Schedules, prelude::*};
+
     use pybevy_core::{
         ReloadRequestMode, ReloadResult,
         gpu_validation::{WgpuValidationEntry, WgpuValidationErrorState},
@@ -2203,6 +2205,8 @@ mod tests {
         printed: Option<Arc<AtomicUsize>>,
         inject_startup_error: bool,
         register_systems_error: bool,
+
+        reject_messages: bool,
     }
 
     impl ReloadRuntime for TestRuntime {
@@ -2272,6 +2276,13 @@ mod tests {
             _defs: &(),
             _gen: u32,
         ) -> Result<(), ReloadError> {
+            if self.reject_messages {
+                return Err(ReloadError {
+                    message: "message registration rejected".into(),
+                    traceback: None,
+                    is_load_failure: false,
+                });
+            }
             Ok(())
         }
         fn register_observers(

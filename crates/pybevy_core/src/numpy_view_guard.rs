@@ -23,7 +23,7 @@ use pyo3::{PyTraverseError, PyVisit, prelude::*};
 /// The counter is released either by [`release`](Self::release) (called from a
 /// view context's `__exit__`) or by `Drop` when NumPy deallocates the array,
 /// whichever comes first.
-#[pyclass(name = "_NumpyViewGuard", frozen)]
+#[pyclass(name = "_NumpyViewGuard", module = "pybevy.array", frozen)]
 pub struct PyNumpyViewGuard {
     claim: PyViewClaim,
     _owner: Py<PyAny>,
@@ -113,18 +113,6 @@ impl PendingNumpyViewGuard {
     }
 }
 
-/// Release the view guard backing a NumPy array, if it has one.
-///
-/// Looks up the array's `base` object; a missing or foreign base is ignored so
-/// this is safe to call on any object.
-pub fn release_array_guard(array: &Bound<'_, PyAny>) {
-    if let Ok(base) = array.getattr("base")
-        && let Ok(guard) = base.cast::<PyNumpyViewGuard>()
-    {
-        guard.get().release();
-    }
-}
-
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
@@ -211,42 +199,6 @@ mod tests {
             guard.release();
             guard.release();
             assert_eq!(counters.read_count(), 0);
-        });
-    }
-
-    #[test]
-    fn release_array_guard_releases_only_a_guard_base() {
-        Python::initialize();
-        let counter = Arc::new(AtomicUsize::new(0));
-        Python::attach(|py| {
-            let guard = Py::new(
-                py,
-                PyNumpyViewGuard::acquire(counter.clone(), py.None().into_any()),
-            )
-            .unwrap();
-            let namespace = py
-                .import("types")
-                .unwrap()
-                .getattr("SimpleNamespace")
-                .unwrap();
-
-            // A guard base releases the counted view, exactly once.
-            let with_guard: Bound<PyAny> = namespace.call0().unwrap();
-            with_guard.setattr("base", guard.clone_ref(py)).unwrap();
-            assert_eq!(counter.load(Ordering::Acquire), 1);
-            release_array_guard(&with_guard);
-            assert_eq!(counter.load(Ordering::Acquire), 0);
-            release_array_guard(&with_guard);
-            assert_eq!(counter.load(Ordering::Acquire), 0);
-
-            // A missing base and a foreign base are no-ops.
-            let plain: Bound<PyAny> = namespace.call0().unwrap();
-            release_array_guard(&plain);
-            assert_eq!(counter.load(Ordering::Acquire), 0);
-            let foreign: Bound<PyAny> = namespace.call0().unwrap();
-            foreign.setattr("base", 42i32).unwrap();
-            release_array_guard(&foreign);
-            assert_eq!(counter.load(Ordering::Acquire), 0);
         });
     }
 

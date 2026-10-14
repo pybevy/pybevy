@@ -1,4 +1,4 @@
-use std::{any::Any, sync::Arc};
+use std::{any::Any, mem::transmute, sync::Arc};
 
 use bevy::ecs::{
     component::ComponentId,
@@ -92,8 +92,7 @@ impl PyRemovedComponents {
         validity: ValidityFlag,
     ) -> Self {
         // SAFETY: the validity flag fences every use of the erased cell.
-        let world =
-            unsafe { std::mem::transmute::<UnsafeWorldCell<'_>, UnsafeWorldCell<'static>>(world) };
+        let world = unsafe { transmute::<UnsafeWorldCell<'_>, UnsafeWorldCell<'static>>(world) };
         Self {
             component_id,
             cursor_storage,
@@ -207,7 +206,7 @@ impl PyRemovedComponents {
 }
 
 /// Iterator over unread removals; each yielded entity advances the cursor.
-#[pyclass(name = "RemovedComponentsIter")]
+#[pyclass(name = "RemovedComponentsIter", module = "pybevy.ecs")]
 pub(crate) struct PyRemovedComponentsIter {
     source: PyRemovedComponents,
 }

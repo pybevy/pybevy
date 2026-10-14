@@ -42,6 +42,7 @@ pub mod prelude {
 pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "pbr")?;
     m.add_class::<pybevy_core::PyMaterial>()?;
+    m.add_class::<pybevy_core::PyMaterializable>()?;
     m.add_class::<plugin::PyPbrPlugin>()?;
     m.add_class::<distance_fog::PyDistanceFog>()?;
     m.add_class::<fog_falloff::PyFogFalloff>()?;

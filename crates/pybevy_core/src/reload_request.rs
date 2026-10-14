@@ -241,17 +241,18 @@ impl CustomResourceInfo {
     /// Update the type_ptr for an existing entry (used during hot reload aliasing).
     ///
     /// Replaces the retained class alongside the pointer so the two never
-    /// describe different objects.
+    /// describe different objects, and returns the retired class so the caller
+    /// can release it after ending the resource borrow.
+    #[must_use]
     pub fn update_type_ptr(
         &mut self,
         component_id: ComponentId,
         new_type_ptr: *const PyTypeObject,
         new_type_object: Option<Py<PyAny>>,
-    ) {
-        if let Some(entry) = self.entries.get_mut(&component_id) {
-            entry.type_ptr = new_type_ptr;
-            entry.type_object = new_type_object;
-        }
+    ) -> Option<Py<PyAny>> {
+        let entry = self.entries.get_mut(&component_id)?;
+        entry.type_ptr = new_type_ptr;
+        std::mem::replace(&mut entry.type_object, new_type_object)
     }
 }
 
@@ -498,7 +499,7 @@ mod tests {
         info.insert(id, make_resource_entry("Score"));
 
         let fake_ptr = 0xBEEF as *const PyTypeObject;
-        info.update_type_ptr(id, fake_ptr, None);
+        assert!(info.update_type_ptr(id, fake_ptr, None).is_none());
         assert_eq!(info.get(id).unwrap().type_ptr, fake_ptr);
         assert!(info.get(id).unwrap().type_object.is_none());
     }

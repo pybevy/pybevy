@@ -664,6 +664,29 @@ impl PreparedCustomComponentRegistration {
     }
 }
 
+/// The storage and wrapper layout registered for `component_id`.
+///
+/// Read paths use this rather than the live class, whose annotations may have
+/// changed since its column was laid out.
+pub(crate) fn registered_custom_layout(
+    world: &World,
+    component_id: ComponentId,
+    type_ptr: *const PyTypeObject,
+    py: Python,
+) -> Option<(ComponentStorageType, Option<Arc<ComponentLayout>>)> {
+    let registry = world.get_resource::<ComponentRegistry>()?;
+    let storage = registry.storage_type(component_id)?;
+    let layout = match storage {
+        ComponentStorageType::Wrapper(_) => Some(Arc::new(
+            registry
+                .wrapper_schema(component_id)?
+                .to_layout(type_ptr.cast(), get_python_type_name(py, type_ptr)),
+        )),
+        ComponentStorageType::PyObject => None,
+    };
+    Some((storage, layout))
+}
+
 fn current_reload_generation(world: &World) -> u32 {
     world
         .get_resource::<pybevy_reload::HotReloadGeneration>()
