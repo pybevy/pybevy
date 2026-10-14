@@ -20,7 +20,10 @@ use std::{
     hash::{Hash, Hasher},
 };
 
+#[allow(unused_imports)]
+use bevy::asset::LoadedFolder;
 use bevy::asset::{Asset, Handle, UntypedAssetId, UntypedHandle};
+use pybevy_macros::pyenum;
 use pyo3::{
     IntoPyObjectExt, PyClass,
     exceptions::{PyTypeError, PyValueError},
@@ -34,6 +37,7 @@ use uuid::Uuid;
 use crate::{
     LogicalTypeId, PyAssetId,
     constructor::{Omittable, pyo3::reject_explicit_none},
+    enum_comparison::reject_variant_type,
     materialize_asset_id, public_error,
     registry::global_registry,
 };
@@ -53,9 +57,12 @@ enum HandleKind {
     Uuid(Uuid),
 }
 
+// `extends = PyAny` suppresses PyO3's generated conversion so every return materializes a variant.
+#[pyenum(Handle<LoadedFolder>, manual)]
 #[pyclass(
     name = "Handle",
     module = "pybevy.assets",
+    extends = PyAny,
     subclass,
     frozen,
     from_py_object
@@ -65,6 +72,32 @@ pub struct PyHandle {
     kind: HandleKind,
     type_ptr: *const PyTypeObject,
     logical_type_id: Option<LogicalTypeId>,
+}
+
+impl<'py> IntoPyObject<'py> for PyHandle {
+    type Target = PyHandle;
+    type Output = Bound<'py, PyHandle>;
+    type Error = PyErr;
+
+    fn into_pyobject(self, py: Python<'py>) -> PyResult<Self::Output> {
+        let strong = self.is_strong();
+        let initializer = PyClassInitializer::from(self);
+        if strong {
+            Ok(Bound::new(py, initializer.add_subclass(PyHandleStrong))?.into_super())
+        } else {
+            Ok(Bound::new(py, initializer.add_subclass(PyHandleUuid))?.into_super())
+        }
+    }
+}
+
+impl<'py> IntoPyObject<'py> for &PyHandle {
+    type Target = PyHandle;
+    type Output = Bound<'py, PyHandle>;
+    type Error = PyErr;
+
+    fn into_pyobject(self, py: Python<'py>) -> PyResult<Self::Output> {
+        self.clone().into_pyobject(py)
+    }
 }
 
 // SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
@@ -225,6 +258,13 @@ impl From<PyHandle> for UntypedAssetId {
 
 #[pymethods]
 impl PyHandle {
+    #[new]
+    pub fn new() -> PyResult<Self> {
+        Err(PyTypeError::new_err(
+            "Handle is an enum base; construct a nested variant",
+        ))
+    }
+
     fn __copy__(&self) -> Self {
         self.clone()
     }
@@ -241,48 +281,6 @@ impl PyHandle {
     ) -> PyResult<Py<PyAny>> {
         let _ = key;
         cls.into_py_any(cls.py())
-    }
-
-    /// Create a non-owning UUID handle.
-    ///
-    /// This creates a handle that does not keep the asset alive.
-    #[staticmethod]
-    pub fn uuid_from_u128<'py>(
-        py: Python,
-        value: u128,
-        asset_type: Bound<'py, PyType>,
-    ) -> PyResult<Py<Self>> {
-        let (type_ptr, logical_type_id) = if asset_type.hasattr("__pybevy_asset_type__")? {
-            let actual_type = asset_type
-                .getattr("__pybevy_asset_type__")?
-                .cast_into::<PyType>()?;
-            let logical_type_id = asset_type
-                .getattr("__pybevy_logical_type_id__")?
-                .extract::<u64>()?;
-            (
-                actual_type.as_type_ptr(),
-                Some(LogicalTypeId::new(logical_type_id)),
-            )
-        } else {
-            (asset_type.as_type_ptr(), None)
-        };
-
-        // Verify it's a registered asset type
-        if !global_registry::contains_asset_py_type(type_ptr) {
-            return Err(PyValueError::new_err(format!(
-                "Unknown asset type: {:?}. Asset type must be registered.",
-                asset_type.name()?
-            )));
-        }
-
-        Py::new(
-            py,
-            PyHandle {
-                kind: HandleKind::Uuid(Uuid::from_u128(value)),
-                type_ptr,
-                logical_type_id,
-            },
-        )
     }
 
     /// Get the Python type of the asset this handle refers to.
@@ -367,6 +365,9 @@ impl PyHandle {
     ) -> PyResult<Py<PyAny>> {
         use pyo3::pyclass::CompareOp;
 
+        if matches!(op, CompareOp::Eq | CompareOp::Ne) {
+            reject_variant_type::<Self>(other)?;
+        }
         let Ok(other_handle) = other.extract::<Self>() else {
             return other.py().NotImplemented().into_py_any(other.py());
         };
@@ -516,6 +517,98 @@ impl PyHandle {
             HandleKind::Uuid(_) => None,
         }
     }
+}
+
+#[pyclass(
+    module = "pybevy.assets",
+    name = "Strong",
+    extends = PyHandle,
+    frozen
+)]
+pub struct PyHandleStrong;
+
+#[pymethods]
+#[allow(non_upper_case_globals)]
+impl PyHandleStrong {
+    #[classattr]
+    const __qualname__: &'static str = "Handle.Strong";
+
+    #[classattr]
+    const __match_args__: () = ();
+}
+
+#[pyclass(
+    module = "pybevy.assets",
+    name = "Uuid",
+    extends = PyHandle,
+    frozen
+)]
+pub struct PyHandleUuid;
+
+#[pymethods]
+#[allow(non_upper_case_globals)]
+impl PyHandleUuid {
+    #[classattr]
+    const __qualname__: &'static str = "Handle.Uuid";
+
+    #[classattr]
+    fn __match_args__() -> (&'static str,) {
+        ("uuid",)
+    }
+
+    #[new]
+    #[pyo3(signature = (uuid, *, asset_type))]
+    pub fn new(uuid: u128, asset_type: &Bound<'_, PyType>) -> PyResult<PyClassInitializer<Self>> {
+        let (type_ptr, logical_type_id) = registered_asset_type(asset_type)?;
+        Ok(PyClassInitializer::from(PyHandle {
+            kind: HandleKind::Uuid(Uuid::from_u128(uuid)),
+            type_ptr,
+            logical_type_id,
+        })
+        .add_subclass(Self))
+    }
+
+    #[getter]
+    pub fn uuid(slf: PyRef<'_, Self>) -> u128 {
+        match slf.into_super().kind {
+            HandleKind::Uuid(uuid) => uuid.as_u128(),
+            HandleKind::Strong(_) => unreachable!("Handle.Uuid changed discriminant"),
+        }
+    }
+}
+
+fn registered_asset_type(
+    asset_type: &Bound<'_, PyType>,
+) -> PyResult<(*const PyTypeObject, Option<LogicalTypeId>)> {
+    let (type_ptr, logical_type_id) = if asset_type.hasattr("__pybevy_asset_type__")? {
+        let actual_type = asset_type
+            .getattr("__pybevy_asset_type__")?
+            .cast_into::<PyType>()?;
+        let logical_type_id = asset_type
+            .getattr("__pybevy_logical_type_id__")?
+            .extract::<u64>()?;
+        (
+            actual_type.as_type_ptr(),
+            Some(LogicalTypeId::new(logical_type_id)),
+        )
+    } else {
+        (asset_type.as_type_ptr(), None)
+    };
+    if !global_registry::contains_asset_py_type(type_ptr) {
+        return Err(PyValueError::new_err(format!(
+            "Unknown asset type: {:?}. Asset type must be registered.",
+            asset_type.name()?
+        )));
+    }
+    Ok((type_ptr, logical_type_id))
+}
+
+pub fn register_handle_variants(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    let py = module.py();
+    let base = module.getattr("Handle")?;
+    base.setattr("Strong", py.get_type::<PyHandleStrong>())?;
+    base.setattr("Uuid", py.get_type::<PyHandleUuid>())?;
+    Ok(())
 }
 
 /// Extract a PyHandle from a Python object.

@@ -273,8 +273,9 @@ fn construct_and_insert(
                 "Component '{component}' is not an asset-handle component"
             )));
         }
-        let handle =
-            Py::new(py, handle).map_err(|error| ControlError::invalid_params(error.to_string()))?;
+        let handle = handle
+            .into_pyobject(py)
+            .map_err(|error| ControlError::invalid_params(error.to_string()))?;
         let instance = py_type.call1((handle,)).map_err(|error| {
             ControlError::invalid_params(format!(
                 "Asset reference type does not match component '{component}': {error}"

@@ -164,29 +164,30 @@ class LoadState:
         """Returns `True` if this instance is `LoadState.Failed`"""
 
 class Handle(Generic[A_co]):
-    """Reference to an asset stored in ``Assets[A]``.
+    """Reference to an asset stored in ``Assets[A]``, with exact Bevy enum variants.
 
-    Handles returned by ``Assets.add`` and ``AssetServer.load*`` are strong and
-    keep the asset alive. After the last strong handle is dropped, Bevy
-    reclaims the asset on a later asset-tracking pass.
+    Handles returned by ``Assets.add`` and ``AssetServer.load*`` are
+    ``Handle.Strong`` and keep the asset alive; ``Handle.Uuid`` does not.
+    After the last strong handle is dropped, Bevy reclaims the asset on a
+    later asset-tracking pass.
     """
 
     def __copy__(self) -> Handle[A_co]: ...
     def __deepcopy__(self, memo: dict[int, object]) -> Handle[A_co]: ...
 
-    @staticmethod
-    def uuid_from_u128(value: int, asset_type: type[A_co]) -> Handle[A_co]:
-        """Create a non-owning Bevy UUID handle.
+    class Strong(Handle[_VariantA_co], Generic[_VariantA_co]):
+        """A handle that keeps its asset alive; produced by ``Assets.add`` and ``AssetServer.load*``."""
 
-        This handle does not keep an asset alive. It is useful for:
-        - Referencing assets that will be loaded later
-        - Creating handles for comparison/lookup
-        - Testing scenarios
+        __match_args__: ClassVar[tuple[()]]
 
-        Args:
-            value: A u128 value to use as the UUID
-            asset_type: The Python type of the asset (e.g., Mesh, Image)
-        """
+    class Uuid(Handle[_VariantA_co], Generic[_VariantA_co]):
+        """A non-owning handle naming an asset by a stable UUID."""
+
+        __match_args__: ClassVar[tuple[Literal["uuid"]]]
+        @property
+        def uuid(self) -> int: ...
+        def __init__(self, uuid: int, *, asset_type: type[_VariantA_co]) -> None: ...
+
     def asset_type_class(self) -> type[A_co]:
         """Get the Python type class of the asset this handle refers to.
 

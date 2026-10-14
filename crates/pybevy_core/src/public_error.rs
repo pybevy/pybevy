@@ -23,6 +23,7 @@ pub const TURNAROUND_CAMERA3D_REQUIRED: &str =
 pub const BUTTON_INPUT_TYPE_REQUIRED: &str =
     "ButtonInput[...] requires a button type, for example ButtonInput[KeyCode]";
 pub const UNSUPPORTED_LOGICAL_KEY_VARIANT: &str = "unsupported logical key variant";
+pub const FLOAT_SEQUENCE_NOT_STR: &str = "expected an iterable of floats, not str";
 
 pub fn button_input_unsupported_type(name: &str) -> String {
     format!(
@@ -436,6 +437,10 @@ pub const MESH_ATTRIBUTE_LAYOUT_CHANGED: &str =
 
 pub fn mesh_tangents_failed(error: impl Display) -> String {
     format!("Failed to generate tangents: {error}")
+}
+
+pub fn fixed_length_collection(name: &str) -> String {
+    format!("{name} has a fixed length; assign elements by index instead of resizing")
 }
 
 pub fn morph_weights_creation_failed(error: impl Debug) -> String {

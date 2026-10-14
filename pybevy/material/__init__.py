@@ -158,6 +158,10 @@ def material(
     fragment_shader: str | None = None,
     vertex_shader: str | None = None,
     *,
+    prepass_vertex_shader: str | None = None,
+    prepass_fragment_shader: str | None = None,
+    deferred_vertex_shader: str | None = None,
+    deferred_fragment_shader: str | None = None,
     alpha_mode: AlphaMode | None = None,
     double_sided: bool | None = None,
     cull_mode: object = _SENTINEL,
@@ -171,6 +175,10 @@ def material(
     Args:
         fragment_shader: Asset path to custom fragment shader (relative to assets/ directory).
         vertex_shader: Asset path to custom vertex shader (relative to assets/ directory).
+        prepass_vertex_shader: WGSL vertex shader for depth, normals, motion and shadows.
+        prepass_fragment_shader: WGSL fragment shader for those prepasses, including discard.
+        deferred_vertex_shader: WGSL vertex shader for deferred rendering.
+        deferred_fragment_shader: WGSL fragment shader writing the deferred G-buffer.
         alpha_mode: Default AlphaMode for the base StandardMaterial (e.g., AlphaMode.Blend()).
         double_sided: Whether the material renders on both sides.
         cull_mode: Face culling mode. None = no culling, Face.Back = back-face culling (default).
@@ -363,6 +371,10 @@ def material(
                 shader_def_names=shader_def_names if shader_def_names else None,
                 textures=tex_list,
                 bindings_wgsl=_wgsl,
+                prepass_vertex_shader=prepass_vertex_shader,
+                prepass_fragment_shader=prepass_fragment_shader,
+                deferred_vertex_shader=deferred_vertex_shader,
+                deferred_fragment_shader=deferred_fragment_shader,
             )
             cast(Any, shader_material)._set_logical_type_id(material_type_id)
             return shader_material

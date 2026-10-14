@@ -131,8 +131,10 @@ come from `Rectangle.size()` and capsule interiors from
 formerly exposed through extra length or indexing helpers.
 `MorphWeights.weights` is a fixed-length live view: `mw.weights[i] = w`
 writes through `Query[Mut[MorphWeights]]` and marks the component changed,
-invalid indices raise `IndexError`, and an owned value's view is a read-only
-snapshot, so assign the whole list there.
+invalid indices raise `IndexError`, resizing raises `ValueError`, and an
+owned value's view is a read-only snapshot, so assign the whole list there. `MeshMorphWeights.Value.weights`
+is a resizable live list with the same access rules that raises once the
+component changes variant.
 
 Mesh-builder counts must meet their minimum usable resolution. Capsule3d needs
 at least 4 latitudes and 1 longitude; Capsule2d needs resolution 2; Annulus

@@ -970,10 +970,17 @@ class ShaderMaterial(Material):
             the Python @material constructor alone does not consume it.
         fragment_shader: Asset path to a custom fragment shader.
         vertex_shader: Asset path to a custom vertex shader.
+        prepass_vertex_shader: WGSL vertex path for depth, normals, motion and shadows.
+        prepass_fragment_shader: WGSL fragment path for those prepasses, including discard.
+        deferred_vertex_shader: WGSL vertex path for the deferred G-buffer pass.
+        deferred_fragment_shader: WGSL fragment path writing deferred PBR/G-buffer data.
         data: Flat list of up to 256 floats for the uniform buffer at binding 100.
         shader_defs: Bitmask of active shader defs (up to 32 bits).
         shader_def_names: Names for each bit (bit 0 = names[0], etc.).
         textures: List of up to 4 texture handles (or None per slot).
+
+    All custom shader paths must name .wgsl assets. Omitted stage paths keep
+    native defaults; forward paths are not applied to prepass/deferred passes.
 
     Example:
         ```python
@@ -1008,6 +1015,11 @@ class ShaderMaterial(Material):
         shader_def_names: list[str] | None = None,
         textures: list[Handle[Image] | None] | None = None,
         bindings_wgsl: str | None = None,
+        *,
+        prepass_vertex_shader: str | None = None,
+        prepass_fragment_shader: str | None = None,
+        deferred_vertex_shader: str | None = None,
+        deferred_fragment_shader: str | None = None,
     ) -> None: ...
 
     def set_data_float(self, index: int, value: float) -> None:
