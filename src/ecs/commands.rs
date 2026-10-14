@@ -63,7 +63,7 @@ use crate::ecs::{
         BufferedSystemError, SystemErrorBuffer, SystemErrorReport, lock_or_recover,
         print_reported_system_error_once,
     },
-    observer::{PyEvent, PyOn},
+    observer::PyEvent,
     observer_registry::ObserverRegistry,
     parity_trace::{canonicalize_payload, canonicalize_payload_without_root_field},
 };
@@ -95,59 +95,25 @@ pub(crate) fn trigger_event_helper(
         let mut world = commands.world_mut()?;
         ensure_no_live_asset_access(&world, "commands.trigger()")
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-        let observers = world
-            .get_resource::<ObserverRegistry>()
-            .map(|registry| registry.snapshot_user_event(&event, target_entity))
-            .unwrap_or_default();
-        for observer_entry in observers {
-            if !ObserverRegistry::matches_user_filter(&observer_entry, &world, target_entity) {
-                continue;
-            }
-
-            let on_param = Py::new(
-                py,
-                PyOn {
-                    event_data: event_clone.clone_ref(py),
-                    entity: target_entity,
-                },
-            )?;
-            ObserverRegistry::invoke(
-                &observer_entry,
-                &mut world,
-                &on_param,
-                target_entity,
-                ErrorPolicy::PropagateToCaller,
-            )?;
-        }
+        ObserverRegistry::dispatch_user_event(
+            py,
+            &event,
+            target_entity,
+            &mut world,
+            ErrorPolicy::PropagateToCaller,
+        )?;
     } else {
+        let error_sink = commands.error_sink.clone();
         commands.execute_or_queue(move |world: &mut World| {
             Python::attach(|py| {
-                let event_bound = event_clone.bind(py);
-                let observers = world
-                    .get_resource::<ObserverRegistry>()
-                    .map(|registry| registry.snapshot_user_event(event_bound, target_entity))
-                    .unwrap_or_default();
-                for observer_entry in observers {
-                    if !ObserverRegistry::matches_user_filter(&observer_entry, world, target_entity)
-                    {
-                        continue;
-                    }
-
-                    if let Ok(on_param) = Py::new(
-                        py,
-                        PyOn {
-                            event_data: event_clone.clone_ref(py),
-                            entity: target_entity,
-                        },
-                    ) {
-                        let _ = ObserverRegistry::invoke(
-                            &observer_entry,
-                            world,
-                            &on_param,
-                            target_entity,
-                            ErrorPolicy::ReportAndContinue,
-                        );
-                    }
+                if let Err(error) = ObserverRegistry::dispatch_user_event(
+                    py,
+                    event_clone.bind(py),
+                    target_entity,
+                    world,
+                    ErrorPolicy::ReportAndContinue,
+                ) {
+                    report_deferred_error(&error_sink, "Failed to trigger event", error);
                 }
             });
         })?;

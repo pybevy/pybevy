@@ -18,7 +18,7 @@ use pybevy_core::{
         ASSET_BRIDGE_NOT_FOUND, ASSET_EVENT_TYPE_REQUIRED, ASSET_LOAD_FAILED_TYPE_REQUIRED,
         MESSAGES_RESOURCE_READ_ONLY,
     },
-    registry::global_registry,
+    registry::{global_registry, register_native_message},
 };
 use pybevy_ecs::shared::message_resources::ensure_message_resource;
 use pybevy_world_serialization::WorldInstanceReadyMessage;
@@ -29,7 +29,7 @@ use pyo3::{
     types::{PyTuple, PyType},
 };
 
-use super::message::PyMessage;
+use super::{message::PyMessage, python_message::register_python_message};
 use crate::{
     assets::asset_load_failed_event::{
         PyAssetLoadFailedEvent, materialize_asset_load_failed_record,
@@ -701,6 +701,35 @@ impl PyMessageTypeParam {
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
         self.0.0.traverse(&visit)
     }
+}
+
+/// Register the buffer selected by the same dispatch used by system parameters.
+pub(crate) fn register_message_channel(
+    py: Python,
+    world: &mut World,
+    message_type: &Bound<'_, PyType>,
+    generation: u32,
+) -> PyResult<()> {
+    match PyMessageType::from_message_type(message_type)?.0 {
+        MessageType::Custom(_) => {
+            register_python_message(py, world, message_type, generation)?;
+        }
+        MessageType::Dynamic(type_ptr) => {
+            global_registry::get_message_bridge_by_py_type(type_ptr)
+                .ok_or_else(|| {
+                    PyTypeError::new_err("Message type not registered in global registry")
+                })?
+                .register_messages(world);
+        }
+        MessageType::WindowEvent => register_native_message::<WindowEvent>(world),
+        MessageType::WorldInstanceReady => {
+            register_native_message::<WorldInstanceReadyMessage>(world)
+        }
+        MessageType::AssetEvent(_) | MessageType::AssetLoadFailed(_) => {
+            unreachable!("asset channels require a parameterized annotation")
+        }
+    }
+    Ok(())
 }
 
 /// Insert empty buffers for built-in message types whose owning plugin may be

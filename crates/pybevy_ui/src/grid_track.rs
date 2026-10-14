@@ -3,10 +3,11 @@ use bevy::{
     ui::{GridTrack, MaxTrackSizingFunction, MinTrackSizingFunction},
 };
 use pybevy_core::{
+    FieldStorage,
     domain::{FINITE, check_for},
     repr::float_repr,
 };
-use pyo3::prelude::*;
+use pyo3::{prelude::*, types::PyList};
 
 /// The factory name and arguments that rebuild `track`, when one exists.
 pub(crate) fn grid_track_factory(track: &GridTrack) -> Option<(&'static str, Option<String>)> {
@@ -65,6 +66,20 @@ pub(crate) fn grid_track_factory(track: &GridTrack) -> Option<(&'static str, Opt
 pub struct PyGridTrack {
     pub(crate) inner: GridTrack,
 }
+
+#[pyclass(name = "_GridTracks", module = "pybevy.ui", skip_from_py_object)]
+#[derive(Clone)]
+pub struct PyGridTracks {
+    storage: FieldStorage<Vec<GridTrack>>,
+}
+
+pybevy_core::impl_live_value_list!(
+    PyGridTracks,
+    "_GridTracks",
+    Vec<GridTrack>,
+    GridTrack,
+    PyGridTrack
+);
 
 impl From<GridTrack> for PyGridTrack {
     fn from(track: GridTrack) -> Self {

@@ -1,6 +1,7 @@
 from collections.abc import Sequence
 from typing import ClassVar, Literal, overload
 
+from pybevy.collections import LiveArray
 from pybevy.mesh import (
     AnnulusMeshBuilder,
     Capsule2dMeshBuilder,
@@ -2363,7 +2364,13 @@ class ViewFrustum:
     FAR_PLANE_IDX: ClassVar[int]
 
     @property
-    def half_spaces(self) -> list[HalfSpace]: ...
+    def half_spaces(self) -> LiveArray[HalfSpace]:
+        """Fixed-length live view of the six half-spaces.
+
+        Reached through a mutable `Frustum` query, `half_spaces[i] = h` writes
+        the component; a standalone `ViewFrustum` returns a read-only view, so
+        assign all six there. Resizing raises `ValueError`.
+        """
     @half_spaces.setter
     def half_spaces(self, value: list[HalfSpace]) -> None: ...
 

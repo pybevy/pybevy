@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import math
 import os
 import re
 import secrets
@@ -36,7 +37,7 @@ from .engine import (
 )
 from .recorder import SessionRecorder
 
-type JsonId = int | str | None
+type JsonId = int | float | str | None
 type JsonDict = dict[str, Any]
 
 _ControlConnectError = _rust_mcp._ControlConnectError
@@ -49,6 +50,21 @@ _control_last_error = _rust_mcp._control_last_error
 _control_request_scene_resource = _rust_mcp._control_request_scene_resource
 _control_request_tool = _rust_mcp._control_request_tool
 _CapturedLine = TypeVar("_CapturedLine")
+
+
+def _valid_rpc_id(value: object) -> bool:
+    return (
+        value is None
+        or isinstance(value, str)
+        or type(value) is int
+        or (isinstance(value, float) and math.isfinite(value))
+    )
+
+
+def _valid_rpc_header(envelope: JsonDict) -> bool:
+    return envelope.get("jsonrpc") == "2.0" and (
+        "id" not in envelope or _valid_rpc_id(envelope["id"])
+    )
 
 
 def _server_version() -> str:
@@ -348,14 +364,18 @@ class McpBridge:
         return response
 
     def _dispatch_inner(self, request: JsonDict) -> JsonDict | None:
+        if not _valid_rpc_header(request):
+            return self._error(None, -32600, "Invalid Request")
         if "method" not in request:
             if "result" in request or "error" in request:
                 return None
             return self._error(request.get("id"), -32600, "Invalid Request")
+        if not isinstance(request["method"], str):
+            return self._error(None, -32600, "Invalid Request")
         if "id" not in request:
             return None
 
-        method = str(request.get("method", ""))
+        method = request["method"]
         req_id: JsonId = request.get("id")  # type: ignore[assignment]
         raw_params = request.get("params")
         if raw_params is not None and not isinstance(raw_params, dict):

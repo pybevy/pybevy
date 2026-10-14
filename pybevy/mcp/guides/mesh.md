@@ -129,8 +129,10 @@ builder. `PlaneMeshBuilder(normal, size)` uses a normal positional constructor;
 `from_size()` and `from_length()` remain available. `UvChannel` is selected
 through `UvChannel.Uv0` or `.Uv1`, not a base constructor. Shape dimensions
 come from `Rectangle.size()` and capsule interiors from
-`Capsule2d.to_inner_rectangle()`. `SkinnedMesh.joints` provides the list
-formerly exposed through extra length or indexing helpers.
+`Capsule2d.to_inner_rectangle()`. `SkinnedMesh.joints` is a live list of
+joint entities: through `Query[Mut[SkinnedMesh]]`, `append` and item
+assignment write the component; through a plain `Query` and on an owned value
+it is read-only, so assign the whole list there.
 `MorphWeights.weights` is a fixed-length live view: `mw.weights[i] = w`
 writes through `Query[Mut[MorphWeights]]` and marks the component changed,
 invalid indices raise `IndexError`, resizing raises `ValueError`, and an

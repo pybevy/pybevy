@@ -5,7 +5,7 @@
 //! Python sequence methods; this module holds the concrete wrapper so its
 //! behavior can be unit-tested beside the type.
 
-use pybevy_storage::{FieldStorage, FieldStorageInner};
+use pybevy_storage::FieldStorage;
 use pyo3::{
     exceptions::{PyTypeError, PyValueError},
     prelude::*,
@@ -59,14 +59,9 @@ impl PyFloatLiveList {
                 public_error::fixed_length_collection(name)
             }
         };
-        match &self.storage.inner {
-            FieldStorageInner::OwnedReadOnly { .. } | FieldStorageInner::BorrowedRef(_) => {
-                return Ok(());
-            }
-            FieldStorageInner::Revalidating(field) if field.check_write_access().is_err() => {
-                return Ok(());
-            }
-            _ => {}
+        // Storage without write authority reports that error from the write itself.
+        if self.storage.check_write_access().is_err() {
+            return Ok(());
         }
         Err(PyValueError::new_err(error))
     }

@@ -360,6 +360,10 @@ mod tests {
     struct InvMessageBridge;
 
     impl MessageBridge for InvMessageBridge {
+        fn register_messages(&self, _world: &mut World) {
+            unreachable!("identity-only fake bridge")
+        }
+
         fn bevy_type_id(&self) -> TypeId {
             TypeId::of::<InvMessageBridge>()
         }

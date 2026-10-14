@@ -1,5 +1,5 @@
 use bevy::camera::visibility::VisibleMeshEntities;
-use pybevy_core::{ComponentStorage, PyComponent, PyEntity};
+use pybevy_core::{ComponentStorage, PyComponent, PyEntity, PyEntityLiveList};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
@@ -22,14 +22,8 @@ impl PyVisibleMeshEntities {
             .into()
     }
     #[getter]
-    pub fn entities(&self) -> PyResult<Vec<PyEntity>> {
-        Ok(self
-            .as_ref()?
-            .entities
-            .iter()
-            .copied()
-            .map(PyEntity::from)
-            .collect())
+    pub fn entities(&self) -> PyResult<PyEntityLiveList> {
+        Ok(self.storage.borrow_field_as(|visible| &visible.entities)?)
     }
 
     #[setter]

@@ -3067,6 +3067,65 @@ path = "gltf.GltfMesh"
 reason = "private generated indexed adapter structurally implements the public LiveSequence[GltfPrimitive] protocol"
 
 [[validation.exceptions]]
+code = "E006"
+path = "ui.Node"
+message = "property 'Node::grid_template_columns' type mismatch: Rust='PyResult < PyRepeatedGridTracks >' vs Python='LiveList[RepeatedGridTrack]'"
+reason = "private generated value adapter structurally implements the public LiveList[RepeatedGridTrack] protocol"
+
+[[validation.exceptions]]
+code = "E006"
+path = "ui.Node"
+message = "property 'Node::grid_template_rows' type mismatch: Rust='PyResult < PyRepeatedGridTracks >' vs Python='LiveList[RepeatedGridTrack]'"
+reason = "private generated value adapter structurally implements the public LiveList[RepeatedGridTrack] protocol"
+
+[[validation.exceptions]]
+code = "E006"
+path = "ui.Node"
+message = "property 'Node::grid_auto_columns' type mismatch: Rust='PyResult < PyGridTracks >' vs Python='LiveList[GridTrack]'"
+reason = "private generated value adapter structurally implements the public LiveList[GridTrack] protocol"
+
+[[validation.exceptions]]
+code = "E006"
+path = "ui.Node"
+message = "property 'Node::grid_auto_rows' type mismatch: Rust='PyResult < PyGridTracks >' vs Python='LiveList[GridTrack]'"
+reason = "private generated value adapter structurally implements the public LiveList[GridTrack] protocol"
+
+[[validation.exceptions]]
+code = "E006"
+path = "ui.BoxShadow"
+reason = "private generated indexed adapter structurally implements the public LiveList[ShadowStyle] protocol"
+
+[[validation.exceptions]]
+code = "E006"
+path = "ui.BackgroundGradient"
+reason = "private generated value adapter structurally implements the public LiveList[Gradient] protocol"
+
+[[validation.exceptions]]
+code = "E006"
+path = "ui.BorderGradient"
+reason = "private generated value adapter structurally implements the public LiveList[Gradient] protocol"
+
+[[validation.exceptions]]
+code = "E006"
+path = "mesh.SkinnedMesh"
+reason = "shared _EntityLiveList structurally implements the public LiveList[Entity] protocol"
+
+[[validation.exceptions]]
+code = "E006"
+path = "camera.VisibleMeshEntities"
+reason = "shared _EntityLiveList structurally implements the public LiveList[Entity] protocol"
+
+[[validation.exceptions]]
+code = "E006"
+path = "camera.Frustum"
+reason = "private generated fixed-length adapter structurally implements the public LiveArray[HalfSpace] protocol"
+
+[[validation.exceptions]]
+code = "E006"
+path = "math.ViewFrustum"
+reason = "private generated fixed-length adapter structurally implements the public LiveArray[HalfSpace] protocol"
+
+[[validation.exceptions]]
 code = "E003"
 path = "ecs.ViewColumn"
 reason = "to_jax is installed at runtime by the optional pybevy.ecs.jax_ext extension module, not by the Rust class"

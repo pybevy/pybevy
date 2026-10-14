@@ -16,7 +16,7 @@ use std::any::{Any, TypeId};
 
 use bevy::ecs::{
     component::ComponentId,
-    message::{Message, MessageCursor, Messages},
+    message::{Message, MessageCursor, MessageRegistry, Messages},
     world::World,
 };
 use pyo3::{ffi::PyTypeObject, prelude::*, types::PyType};
@@ -62,6 +62,13 @@ pub fn apply_cursor_op<M: Message>(
         *cursor_state = Some(Box::new(cursor));
     }
     unread
+}
+
+/// Register a native channel once, preserving any plugin-owned buffer.
+pub fn register_native_message<M: Message>(world: &mut World) {
+    if !world.contains_resource::<Messages<M>>() {
+        MessageRegistry::register_message::<M>(world);
+    }
 }
 
 /// Trait that bridges a Bevy message type to its Python wrapper.
@@ -156,6 +163,9 @@ pub trait MessageBridge: Send + Sync + 'static {
     /// Used by system access declaration to register read/write access.
     fn resource_id(&self, world: &World) -> Option<ComponentId>;
 
+    /// Initialize the native buffer and its Bevy message maintenance once.
+    fn register_messages(&self, world: &mut World);
+
     /// Register (get-or-create) the ComponentId for the `Messages<T>` resource.
     ///
     /// Unlike `resource_id`, this never returns None: it creates the id when the
@@ -193,6 +203,10 @@ mod tests {
     }
 
     impl MessageBridge for DefaultMessageBridge {
+        fn register_messages(&self, _world: &mut World) {
+            unreachable!("default-methods-only fake bridge")
+        }
+
         fn bevy_type_id(&self) -> TypeId {
             TypeId::of::<DefaultMessageBridge>()
         }

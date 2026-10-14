@@ -3,7 +3,7 @@ use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
 use pybevy_math::{
     affine3a::PyAffine3A,
-    primitives::{half_space::PyHalfSpace, view_frustum::PyViewFrustum},
+    primitives::{half_space::PyHalfSpace, half_spaces::PyHalfSpaces, view_frustum::PyViewFrustum},
 };
 use pyo3::{exceptions::PyValueError, prelude::*};
 
@@ -42,9 +42,10 @@ impl PyFrustum {
     }
 
     #[getter]
-    pub fn half_spaces(&self) -> PyResult<Vec<PyHalfSpace>> {
-        let frustum = self.as_ref()?;
-        Ok(frustum.half_spaces.iter().map(|&hs| hs.into()).collect())
+    pub fn half_spaces(&self) -> PyResult<PyHalfSpaces> {
+        Ok(self
+            .storage
+            .borrow_field_as(|frustum| &frustum.0.half_spaces)?)
     }
 
     #[setter]

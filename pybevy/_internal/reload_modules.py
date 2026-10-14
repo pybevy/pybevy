@@ -221,6 +221,8 @@ class ModuleReloadTransaction:
                 if self._entrypoint_fingerprint is not None:
                     _committed_entrypoint[0] = self._entrypoint_fingerprint
             else:
+                for graph, candidate in self._import_graph_updates.values():
+                    graph.remember_failed_candidate(candidate)
                 for name, module in list(sys.modules.items()):
                     if (
                         name not in self._before
@@ -443,4 +445,3 @@ def entrypoint_changed() -> bool:
     candidate = transaction._entrypoint_fingerprint
     committed = _committed_entrypoint[0]
     return candidate is not None and committed is not None and candidate != committed
-

@@ -665,6 +665,7 @@ pub(crate) fn convert_with_current(
     declared_type: Option<&str>,
     current: Bound<'_, PyAny>,
 ) -> Result<Py<PyAny>, String> {
+    let current = detached_live_sequence(py, &current)?.unwrap_or(current);
     let context = FieldContext::new(
         py,
         component,
@@ -679,6 +680,31 @@ pub(crate) fn convert_with_current(
         }
     }
     json_to_py(py, field_value)
+}
+
+/// A live collection's elements as a plain list, so list rules apply to it.
+fn detached_live_sequence<'py>(
+    py: Python<'py>,
+    current: &Bound<'py, PyAny>,
+) -> Result<Option<Bound<'py, PyAny>>, String> {
+    if current.is_instance_of::<PyList>() {
+        return Ok(None);
+    }
+    let Ok(live_sequence) = PyModule::import(py, "pybevy.collections")
+        .and_then(|module| module.getattr("LiveSequence"))
+    else {
+        return Ok(None);
+    };
+    if !current
+        .is_instance(&live_sequence)
+        .map_err(|error| error.to_string())?
+    {
+        return Ok(None);
+    }
+    current
+        .call_method0("to_list")
+        .map(Some)
+        .map_err(|error| error.to_string())
 }
 
 /// Convert a JSON value to a Python object

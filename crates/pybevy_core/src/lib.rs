@@ -50,6 +50,7 @@ pub mod debug_snapshot;
 pub mod duration;
 pub mod entity;
 pub mod entity_index;
+pub mod entity_live_list;
 pub mod enum_comparison;
 pub mod float_live_list;
 pub mod gpu_validation;
@@ -86,6 +87,7 @@ use bevy::ecs::{
     resource::Resource,
     world::{EntityRef, EntityWorldMut, World},
 };
+pub use entity_live_list::PyEntityLiveList;
 pub use float_live_list::PyFloatLiveList;
 pub use logical_type::PyLogicalComponentParam;
 pub use pybevy_storage::{

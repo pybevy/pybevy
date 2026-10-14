@@ -76,7 +76,7 @@ use crate::{
         lazy_wrapper_proxy::{ProxyKind, PyLazyWrapperProxy},
         message::{PyMessageId, PyMessageWriter},
         messages::{MessageType, MessageWorld, PyMessageType, PyMessageTypeParam, PyMessages},
-        observer::{PyEvent, PyOn},
+        observer::PyEvent,
         observer_registry::ObserverRegistry,
         python_message::{python_message_is_registered, resolve_from_world},
         query::{query_param::PyQueryParam, query_runtime::PyQueryIter},
@@ -1287,34 +1287,13 @@ impl PyWorld {
             self.check_native_asset_access("world.trigger()")?;
 
             let mut world = self.world_mut()?;
-            let observers = world
-                .get_resource::<ObserverRegistry>()
-                .map(|registry| registry.snapshot_user_event(&event, target_entity))
-                .unwrap_or_default();
-
-            for observer_entry in observers {
-                if !ObserverRegistry::matches_user_filter(&observer_entry, &world, target_entity) {
-                    continue;
-                }
-
-                let on_param = Py::new(
-                    py,
-                    PyOn {
-                        event_data: event.clone().unbind(),
-                        entity: target_entity,
-                    },
-                )?;
-
-                ObserverRegistry::invoke(
-                    &observer_entry,
-                    &mut world,
-                    &on_param,
-                    target_entity,
-                    ErrorPolicy::PropagateToCaller,
-                )?;
-            }
-
-            Ok(())
+            ObserverRegistry::dispatch_user_event(
+                py,
+                &event,
+                target_entity,
+                &mut world,
+                ErrorPolicy::PropagateToCaller,
+            )
         })
     }
 

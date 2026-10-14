@@ -9,10 +9,10 @@ use crate::{
     PyOverflowAxis, PyPositionType,
     border_radius::PyBorderRadius,
     grid_placement::PyGridPlacement,
-    grid_track::PyGridTrack,
+    grid_track::{PyGridTrack, PyGridTracks},
     overflow::PyOverflow,
     overflow_clip_margin::PyOverflowClipMargin,
-    repeated_grid_track::{PyRepeatedGridTrack, extract_repeated_grid_track_from_any},
+    repeated_grid_track::{PyRepeatedGridTracks, extract_repeated_grid_track_from_any},
     ui_rect::PyUiRect,
     val::{IntoVal, PyVal},
 };
@@ -611,13 +611,10 @@ impl PyNode {
     }
 
     #[getter]
-    pub fn grid_template_columns(&self) -> PyResult<Vec<PyRepeatedGridTrack>> {
+    pub fn grid_template_columns(&self) -> PyResult<PyRepeatedGridTracks> {
         Ok(self
-            .as_ref()?
-            .grid_template_columns
-            .iter()
-            .map(|t| t.clone().into())
-            .collect())
+            .storage
+            .borrow_field_as(|node| &node.grid_template_columns)?)
     }
 
     #[setter]
@@ -631,13 +628,10 @@ impl PyNode {
     }
 
     #[getter]
-    pub fn grid_template_rows(&self) -> PyResult<Vec<PyRepeatedGridTrack>> {
+    pub fn grid_template_rows(&self) -> PyResult<PyRepeatedGridTracks> {
         Ok(self
-            .as_ref()?
-            .grid_template_rows
-            .iter()
-            .map(|t| t.clone().into())
-            .collect())
+            .storage
+            .borrow_field_as(|node| &node.grid_template_rows)?)
     }
 
     #[setter]
@@ -651,13 +645,10 @@ impl PyNode {
     }
 
     #[getter]
-    pub fn grid_auto_columns(&self) -> PyResult<Vec<PyGridTrack>> {
+    pub fn grid_auto_columns(&self) -> PyResult<PyGridTracks> {
         Ok(self
-            .as_ref()?
-            .grid_auto_columns
-            .iter()
-            .map(|t| (*t).into())
-            .collect())
+            .storage
+            .borrow_field_as(|node| &node.grid_auto_columns)?)
     }
 
     #[setter]
@@ -667,14 +658,8 @@ impl PyNode {
     }
 
     #[getter]
-    pub fn grid_auto_rows(&self) -> PyResult<Vec<PyGridTrack>> {
-        Ok(self
-            .as_ref()?
-            .grid_auto_rows
-            .iter()
-            .copied()
-            .map(|t| t.into())
-            .collect())
+    pub fn grid_auto_rows(&self) -> PyResult<PyGridTracks> {
+        Ok(self.storage.borrow_field_as(|node| &node.grid_auto_rows)?)
     }
 
     #[setter]

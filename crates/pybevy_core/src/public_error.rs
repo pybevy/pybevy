@@ -1177,6 +1177,12 @@ pub fn entity_does_not_exist(entity: impl Debug) -> String {
     format!("Entity {entity:?} does not exist")
 }
 
+pub const EVENT_PROPAGATION_REQUIRES_TARGET: &str = "an event declared with @event(propagate=True) propagates from an entity: give it an `entity` field or trigger it with EntityCommands.trigger()";
+
+pub fn event_propagation_method_requires_declaration(method: &str) -> String {
+    format!("On.{method}() is available for events declared with @event(propagate=True)")
+}
+
 pub fn hierarchy_parent_does_not_exist(entity: impl Display) -> String {
     format!("Parent entity {entity} does not exist")
 }

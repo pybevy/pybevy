@@ -230,11 +230,9 @@ def _view_column_getitem_impl(typingctx, view_col_t, idx_t):
     The dtype is checked at JIT compile time (not runtime), eliminating
     per-access branching overhead.
     """
-    # Always return float64 to handle all column types uniformly
-    sig = types.float64(view_col_t, idx_t)
-
-    # Compile-time dtype check - determines which code path to generate
     dtype = view_col_t.dtype
+    result_type = {"i4": types.int32, "i8": types.int64}.get(dtype, types.float64)
+    sig = result_type(view_col_t, idx_t)
 
     def codegen(context, builder, sig, args):
         view_val, idx_val = args
@@ -255,17 +253,14 @@ def _view_column_getitem_impl(typingctx, view_col_t, idx_t):
             ptr64 = builder.inttoptr(addr, f64_ptr_t)
             return builder.load(ptr64)
         if dtype == "i4":
-            # i32 path: load 4 bytes as i32, convert to f64
+            # Preserve integer arithmetic inside compiled kernels.
             i32_ptr_t = context.get_value_type(types.int32).as_pointer()
             ptr32 = builder.inttoptr(addr, i32_ptr_t)
-            val32 = builder.load(ptr32)
-            return builder.sitofp(val32, context.get_value_type(types.float64))
+            return builder.load(ptr32)
         if dtype == "i8":
-            # i64 path: load 8 bytes as i64, convert to f64
             i64_ptr_t = context.get_value_type(types.int64).as_pointer()
             ptr64 = builder.inttoptr(addr, i64_ptr_t)
-            val64 = builder.load(ptr64)
-            return builder.sitofp(val64, context.get_value_type(types.float64))
+            return builder.load(ptr64)
         # f32 path: load 4 bytes as f32, extend to f64
         f32_ptr_t = context.get_value_type(types.float32).as_pointer()
         ptr32 = builder.inttoptr(addr, f32_ptr_t)
@@ -277,7 +272,7 @@ def _view_column_getitem_impl(typingctx, view_col_t, idx_t):
 
 @overload(operator.getitem)
 def view_column_getitem_overload(view_col, idx):
-    """High-level typing for view[i] - returns float64"""
+    """Read integers exactly; floating columns retain float64 promotion."""
     if isinstance(view_col, ViewColumnType) and isinstance(idx, types.Integer):
 
         def getitem_impl(view_col, idx):
@@ -350,41 +345,17 @@ def _view_column_setitem_impl(typingctx, view_col_t, idx_t, val_t):
         offset = builder.mul(idx, view.stride)
         addr = builder.add(view.ptr, offset)
 
-        # Convert input to float64 first (handles int, float32, float64)
-        if isinstance(sig.args[2], types.Integer):
-            f64_val = builder.sitofp(value_val, context.get_value_type(types.float64))
-        elif sig.args[2] == types.float32:
-            f64_val = builder.fpext(value_val, context.get_value_type(types.float64))
-        else:
-            f64_val = value_val
-
-        if dtype == "f8":
-            # f64 path: store 8 bytes as f64
-            f64_ptr_t = context.get_value_type(types.float64).as_pointer()
-            ptr64 = builder.inttoptr(addr, f64_ptr_t)
-            store_inst = builder.store(f64_val, ptr64)
-            store_inst.volatile = True
-        elif dtype == "i4":
-            # i32 path: convert f64 to i32 and store 4 bytes
-            i32_val = builder.fptosi(f64_val, context.get_value_type(types.int32))
-            i32_ptr_t = context.get_value_type(types.int32).as_pointer()
-            ptr32 = builder.inttoptr(addr, i32_ptr_t)
-            store_inst = builder.store(i32_val, ptr32)
-            store_inst.volatile = True
-        elif dtype == "i8":
-            # i64 path: convert f64 to i64 and store 8 bytes
-            i64_val = builder.fptosi(f64_val, context.get_value_type(types.int64))
-            i64_ptr_t = context.get_value_type(types.int64).as_pointer()
-            ptr64 = builder.inttoptr(addr, i64_ptr_t)
-            store_inst = builder.store(i64_val, ptr64)
-            store_inst.volatile = True
-        else:
-            # f32 path: truncate to f32 and store 4 bytes
-            f32_val = builder.fptrunc(f64_val, context.get_value_type(types.float32))
-            f32_ptr_t = context.get_value_type(types.float32).as_pointer()
-            ptr32 = builder.inttoptr(addr, f32_ptr_t)
-            store_inst = builder.store(f32_val, ptr32)
-            store_inst.volatile = True
+        destination_type = {
+            "f4": types.float32,
+            "f8": types.float64,
+            "i4": types.int32,
+            "i8": types.int64,
+        }[dtype]
+        converted = context.cast(builder, value_val, sig.args[2], destination_type)
+        pointer_type = context.get_value_type(destination_type).as_pointer()
+        pointer = builder.inttoptr(addr, pointer_type)
+        store_inst = builder.store(converted, pointer)
+        store_inst.volatile = True
 
         return context.get_dummy_value()
 

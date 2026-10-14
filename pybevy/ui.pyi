@@ -11,6 +11,7 @@ from typing import ClassVar, Literal
 import numpy as np
 
 from pybevy.assets import Handle
+from pybevy.collections import LiveList
 from pybevy.color import (
     Color,
     Hsla,
@@ -1020,8 +1021,13 @@ class BorderGradient(Component):
         """Create a BorderGradient with the given gradients."""
 
     @property
-    def gradients(self) -> list[Gradient]:
-        """Get all gradients."""
+    def gradients(self) -> LiveList[Gradient]:
+        """Get all gradients.
+
+        Through `Query[Mut[BorderGradient]]` list edits write the component; through
+        `Query[BorderGradient]` and on an owned value the list is read-only, so assign a
+        whole list there. The list expires with its system.
+        """
 
     @gradients.setter
     def gradients(self, value: list[Gradient]) -> None: ...
@@ -1453,8 +1459,13 @@ class Node(Component):
     def grid_row(self, value: GridPlacement) -> None: ...
 
     @property
-    def grid_template_columns(self) -> list[RepeatedGridTrack]:
-        """Defines the columns of a grid layout."""
+    def grid_template_columns(self) -> LiveList[RepeatedGridTrack]:
+        """Defines the columns of a grid layout.
+
+        Through `Query[Mut[Node]]` list edits write the component; through
+        `Query[Node]` and on an owned value the list is read-only, so assign a
+        whole list there. The list expires with its system.
+        """
 
     @grid_template_columns.setter
     def grid_template_columns(
@@ -1462,8 +1473,13 @@ class Node(Component):
     ) -> None: ...
 
     @property
-    def grid_template_rows(self) -> list[RepeatedGridTrack]:
-        """Defines the rows of a grid layout."""
+    def grid_template_rows(self) -> LiveList[RepeatedGridTrack]:
+        """Defines the rows of a grid layout.
+
+        Through `Query[Mut[Node]]` list edits write the component; through
+        `Query[Node]` and on an owned value the list is read-only, so assign a
+        whole list there. The list expires with its system.
+        """
 
     @grid_template_rows.setter
     def grid_template_rows(
@@ -1471,15 +1487,25 @@ class Node(Component):
     ) -> None: ...
 
     @property
-    def grid_auto_columns(self) -> list[GridTrack]:
-        """Size of implicitly created grid columns."""
+    def grid_auto_columns(self) -> LiveList[GridTrack]:
+        """Size of implicitly created grid columns.
+
+        Through `Query[Mut[Node]]` list edits write the component; through
+        `Query[Node]` and on an owned value the list is read-only, so assign a
+        whole list there. The list expires with its system.
+        """
 
     @grid_auto_columns.setter
     def grid_auto_columns(self, value: list[GridTrack]) -> None: ...
 
     @property
-    def grid_auto_rows(self) -> list[GridTrack]:
-        """Size of implicitly created grid rows."""
+    def grid_auto_rows(self) -> LiveList[GridTrack]:
+        """Size of implicitly created grid rows.
+
+        Through `Query[Mut[Node]]` list edits write the component; through
+        `Query[Node]` and on an owned value the list is read-only, so assign a
+        whole list there. The list expires with its system.
+        """
 
     @grid_auto_rows.setter
     def grid_auto_rows(self, value: list[GridTrack]) -> None: ...
@@ -3728,8 +3754,14 @@ class BoxShadow(Component):
         """
 
     @property
-    def shadows(self) -> list[ShadowStyle]:
-        """All shadow styles."""
+    def shadows(self) -> LiveList[ShadowStyle]:
+        """All shadow styles.
+
+        Through `Query[Mut[BoxShadow]]` edits to the list and its items write
+        the component; through `Query[BoxShadow]` and on an owned value the list
+        is read-only, so assign a whole list there. The list expires with its
+        system.
+        """
 
     @shadows.setter
     def shadows(self, value: list[ShadowStyle]) -> None: ...
@@ -3784,8 +3816,13 @@ class BackgroundGradient(Component):
         """Create with a list of gradients."""
 
     @property
-    def gradients(self) -> list[Gradient]:
-        """The list of gradients."""
+    def gradients(self) -> LiveList[Gradient]:
+        """The list of gradients.
+
+        Through `Query[Mut[BackgroundGradient]]` list edits write the component; through
+        `Query[BackgroundGradient]` and on an owned value the list is read-only, so assign a
+        whole list there. The list expires with its system.
+        """
 
     @gradients.setter
     def gradients(self, value: list[Gradient]) -> None: ...

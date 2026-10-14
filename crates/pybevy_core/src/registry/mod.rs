@@ -27,7 +27,9 @@ pub use batchable_field::{
 };
 pub use component_bridge::{ComponentBridge, ExtractFn};
 pub use global_registry::{ComponentBatchInsertFn, ComponentBatchMeta, ComponentBatchPrepareFn};
-pub use message_bridge::{MessageBridge, ReaderCursorOp, apply_cursor_op, apply_reader_cursor};
+pub use message_bridge::{
+    MessageBridge, ReaderCursorOp, apply_cursor_op, apply_reader_cursor, register_native_message,
+};
 pub use registries::PluginConfigs;
 pub use resource_bridge::ResourceBridge;
 pub use rust_batch::{PyRustComponentBatch, check_integer_batch_column, portable_f32_batch_column};

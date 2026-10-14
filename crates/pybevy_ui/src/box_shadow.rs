@@ -3,9 +3,11 @@ use bevy::{
     ui::{BoxShadow, ShadowStyle},
 };
 use pybevy_color::color::PyColor;
-use pybevy_core::{ComponentStorage, PyComponent, ValueStorage, public_error, repr::object_repr};
+use pybevy_core::{
+    ComponentStorage, FieldStorage, PyComponent, ValueStorage, public_error, repr::object_repr,
+};
 use pybevy_macros::pycomponent;
-use pyo3::{exceptions::PyIndexError, prelude::*};
+use pyo3::{exceptions::PyIndexError, prelude::*, types::PyList};
 
 use crate::{shadow_style::PyShadowStyle, val::PyVal};
 
@@ -15,6 +17,21 @@ use crate::{shadow_style::PyShadowStyle, val::PyVal};
 pub struct PyBoxShadow {
     pub(crate) storage: ComponentStorage<BoxShadow>,
 }
+
+#[pyclass(name = "_ShadowStyles", module = "pybevy.ui", skip_from_py_object)]
+#[derive(Clone)]
+pub struct PyShadowStyles {
+    storage: FieldStorage<Vec<ShadowStyle>>,
+}
+
+pybevy_core::impl_live_field_list!(
+    PyShadowStyles,
+    "_ShadowStyles",
+    Vec<ShadowStyle>,
+    ShadowStyle,
+    PyShadowStyle,
+    ValueStorage<ShadowStyle>
+);
 
 fn shadow_index(index: isize, length: usize) -> PyResult<usize> {
     let normalized = if index >= 0 {
@@ -61,13 +78,8 @@ impl PyBoxShadow {
     }
 
     #[getter]
-    pub fn shadows(&self) -> PyResult<Vec<PyShadowStyle>> {
-        Ok(self
-            .as_ref()?
-            .0
-            .iter()
-            .map(|style| PyShadowStyle::from_borrowed(ValueStorage::read_only_snapshot(*style)))
-            .collect())
+    pub fn shadows(&self) -> PyResult<PyShadowStyles> {
+        Ok(self.storage.borrow_field_as(|shadow| &shadow.0)?)
     }
 
     #[setter]
@@ -108,11 +120,8 @@ impl PyBoxShadow {
     }
 
     pub fn __getitem__(&self, index: isize) -> PyResult<PyShadowStyle> {
-        let inner = self.as_ref()?;
-        let index = shadow_index(index, inner.0.len())?;
-        Ok(PyShadowStyle::from_borrowed(
-            ValueStorage::read_only_snapshot(inner.0[index]),
-        ))
+        let index = shadow_index(index, self.as_ref()?.0.len())?;
+        self.shadows()?.item(index as isize)
     }
 
     pub fn __setitem__(&mut self, index: isize, style: PyShadowStyle) -> PyResult<()> {
@@ -123,6 +132,9 @@ impl PyBoxShadow {
     }
 
     pub fn __repr__(&self) -> PyResult<String> {
-        Ok(format!("BoxShadow({})", object_repr(self.shadows()?)))
+        Ok(format!(
+            "BoxShadow({})",
+            object_repr(self.shadows()?.to_list()?)
+        ))
     }
 }

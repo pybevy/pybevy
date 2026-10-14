@@ -1,6 +1,7 @@
 pub mod arc2d;
 pub mod dimension;
 pub mod half_space;
+pub mod half_spaces;
 pub mod infinite_plane3d;
 pub mod line2d;
 pub mod line3d;

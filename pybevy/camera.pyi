@@ -3,6 +3,7 @@ from typing import ClassVar, Literal, Self
 
 from pybevy.app import App, Plugin
 from pybevy.assets import Handle
+from pybevy.collections import LiveArray, LiveList
 from pybevy.color import Color
 from pybevy.ecs import Batchable, Component, Entity, Resource
 from pybevy.image import Image as ImageAsset
@@ -964,7 +965,14 @@ class Frustum(Component):
     """The wrapped ViewFrustum (bevy newtype payload)."""
 
     @property
-    def half_spaces(self) -> list[HalfSpace]: ...
+    def half_spaces(self) -> LiveArray[HalfSpace]:
+        """Fixed-length live view of the six half-spaces.
+
+        Through `Query[Mut[Frustum]]`, `half_spaces[i] = h` writes the
+        component; through `Query[Frustum]` and on an owned value the view is
+        read-only, so assign all six there. Resizing raises `ValueError`, and
+        the view expires with its system.
+        """
     @half_spaces.setter
     def half_spaces(self, value: list[HalfSpace]) -> None: ...
 
@@ -1691,8 +1699,13 @@ class VisibleMeshEntities(Component):
     def __init__(self) -> None: ...
 
     @property
-    def entities(self) -> list[Entity]:
-        """Get all visible entities as a list."""
+    def entities(self) -> LiveList[Entity]:
+        """All visible entities.
+
+        Through `Query[Mut[VisibleMeshEntities]]` list edits write the component; through
+        `Query[VisibleMeshEntities]` and on an owned value the list is read-only, so assign a
+        whole list there. The list expires with its system.
+        """
 
     @entities.setter
     def entities(self, value: list[Entity]) -> None: ...

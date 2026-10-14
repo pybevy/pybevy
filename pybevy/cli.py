@@ -193,6 +193,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Host for HTTP transport (default 127.0.0.1).",
     )
     mcp_parser.add_argument(
+        "--token",
+        default=None,
+        help=(
+            "Bearer token HTTP clients must send; required when --host is not a "
+            "loopback address. Defaults to PYBEVY_MCP_TOKEN, which is preferable "
+            "because command lines are visible to other users."
+        ),
+    )
+    mcp_parser.add_argument(
         "--port",
         default=8080,
         type=int,
@@ -310,7 +319,12 @@ def watch_command(
 
 
 def mcp_command(
-    script_path: str | None, transport: str, host: str, port: int, record: bool
+    script_path: str | None,
+    transport: str,
+    host: str,
+    port: int,
+    record: bool,
+    token: str | None = None,
 ) -> None:
     """Start MCP bridge for AI agent integration.
 
@@ -329,7 +343,13 @@ def mcp_command(
             )
         from .mcp.http_transport import run_mcp_http
 
-        run_mcp_http(host=host, port=port, record=record)
+        token = token or os.environ.get("PYBEVY_MCP_TOKEN") or None
+        try:
+            run_mcp_http(host=host, port=port, record=record, token=token)
+        except ValueError as error:
+            raise CliUsageError(
+                f"{error}; pass --token or set PYBEVY_MCP_TOKEN"
+            ) from error
     else:
         from .mcp.bridge import McpBridge
 
