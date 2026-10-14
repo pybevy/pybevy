@@ -91,7 +91,7 @@ impl PyImageNode {
     pub fn rect(&self) -> PyResult<Option<PyRect>> {
         Ok(self
             .storage
-            .borrow_optional_field(|n| &n.rect)?
+            .borrow_optional_field("ImageNode.rect", |n| &n.rect, |n| &mut n.rect)?
             .map(<PyRect as FromBorrowedStorage<_>>::from_borrowed))
     }
 

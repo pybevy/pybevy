@@ -6,7 +6,9 @@ use std::{
 };
 
 use bevy::{
-    ecs::{entity::Entity, reflect::AppTypeRegistry, world::World},
+    ecs::{
+        change_detection::DetectChangesMut, entity::Entity, reflect::AppTypeRegistry, world::World,
+    },
     reflect::{TypeInfo, enums::VariantInfo},
     time::{Fixed, Real, Time, Virtual},
 };
@@ -1586,7 +1588,6 @@ fn set_custom_component(
         return Ok(result);
     }
 
-    // Component exists - get mutable pointer for in-place mutation
     let ptr = world
         .get_entity(entity)
         .map_err(|_| ControlError::not_found(public_error::mcp_entity_not_found(entity_id)))?
@@ -1596,14 +1597,16 @@ fn set_custom_component(
                 "Component '{component}' not found on entity {entity_id}"
             ))
         })?;
+    let py_obj = Python::attach(|py| {
+        // SAFETY: We checked is_pyobject_storage above - raw data is a Py<PyAny>
+        unsafe { &*(ptr.as_ptr() as *const pyo3::Py<PyAny>) }.clone_ref(py)
+    });
 
     let mut new_values = serde_json::Map::new();
     let mut errors = Vec::new();
 
     Python::attach(|py| -> Result<(), ControlError> {
-        // SAFETY: We checked is_pyobject_storage above - raw data is a Py<PyAny>
-        let py_obj: &pyo3::Py<PyAny> = unsafe { &*(ptr.as_ptr() as *const pyo3::Py<PyAny>) };
-        let bound = py_obj.bind(py);
+        let bound = &py_obj.into_bound(py);
         let class = bound.get_type();
         let unknown = field_obj
             .keys()
@@ -1642,6 +1645,13 @@ fn set_custom_component(
         }
         Ok(())
     })?;
+
+    if !new_values.is_empty()
+        && let Ok(mut entity_mut) = world.get_entity_mut(entity)
+        && let Ok(mut stored) = entity_mut.get_mut_by_id(comp_id)
+    {
+        stored.set_changed();
+    }
 
     // Nothing was written: report the failure rather than a 200 the caller
     // would read as success.

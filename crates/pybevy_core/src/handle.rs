@@ -521,6 +521,31 @@ pub fn extract_handle_from_any(obj: &Bound<'_, PyAny>) -> PyResult<PyHandle> {
     Ok(obj.extract::<PyHandle>()?)
 }
 
+/// Non-optional handle argument: omission yields `Handle::default()`, explicit `None` is rejected.
+#[derive(Debug, Clone, Default)]
+pub enum HandleArg {
+    #[default]
+    Omitted,
+    Supplied(PyHandle),
+}
+
+impl<'a, 'py> FromPyObject<'a, 'py> for HandleArg {
+    type Error = PyErr;
+
+    fn extract(obj: Borrowed<'a, 'py, PyAny>) -> Result<Self, Self::Error> {
+        Ok(Self::Supplied(extract_handle_from_any(&obj)?))
+    }
+}
+
+impl HandleArg {
+    pub fn into_handle<A: Asset>(self) -> PyResult<Handle<A>> {
+        match self {
+            Self::Omitted => Ok(Handle::default()),
+            Self::Supplied(handle) => handle.try_into(),
+        }
+    }
+}
+
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {

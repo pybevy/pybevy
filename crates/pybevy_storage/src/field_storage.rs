@@ -328,37 +328,40 @@ impl<T: Clone> FieldStorage<T> {
         }
     }
 
-    /// Borrow an optional field from the stored value.
+    /// Borrow an `Option` field whose child rechecks `Some` on every access.
     ///
     /// Owned storage returns a read-only snapshot. Borrowed storage returns a
-    /// validity-bound field inheriting the parent's read/write access.
-    pub fn borrow_optional_field<F: Clone, S>(
+    /// checked path inheriting the parent's authority that raises once the field
+    /// becomes `None` and follows a later `Some` value.
+    pub fn borrow_optional_field<F: Clone + 'static, S>(
         &self,
-        field_accessor: impl Fn(&T) -> &Option<F>,
+        name: &'static str,
+        read: ReadField<T, Option<F>>,
+        write: WriteField<T, Option<F>>,
     ) -> Result<Option<S>, StorageError>
     where
+        T: Send + Sync + 'static,
         S: BorrowableStorage<F>,
     {
-        match &self.inner {
-            FieldStorageInner::Owned { data, .. } | FieldStorageInner::OwnedReadOnly { data } => {
-                match field_accessor(data) {
-                    Some(field) => Ok(Some(S::snapshot(field))),
-                    None => Ok(None),
-                }
-            }
-            FieldStorageInner::BorrowedRef(borrow) => borrow.borrow_optional_field(field_accessor),
-            FieldStorageInner::BorrowedMut(borrow) => borrow.borrow_optional_field(field_accessor),
-            FieldStorageInner::Revalidating(field) => {
-                field.child_of_optional::<T, F, S>(field_accessor)
-            }
+        let child = match &self.inner {
             FieldStorageInner::Source(source) => {
-                let resolved = source.resolve_ref()?;
-                match field_accessor(&resolved) {
-                    Some(field) => Ok(Some(S::snapshot(field))),
-                    None => Ok(None),
+                if read(&*source.resolve_ref()?).is_none() {
+                    return Ok(None);
+                }
+                source.optional(name, read, write)
+            }
+            _ => {
+                let current = self.as_ref()?;
+                let Some(value) = read(&current) else {
+                    return Ok(None);
+                };
+                match RevalidatingSource::from_borrowed_field(self) {
+                    Some(source) => source.optional(name, read, write),
+                    None => return Ok(Some(S::snapshot(value))),
                 }
             }
-        }
+        };
+        Ok(Some(S::revalidating_source(child)))
     }
 
     /// Helper to borrow a field and wrap it in the final Python type
@@ -784,6 +787,14 @@ mod tests {
         assert_eq!(field.values, vec![10, 20, 30]);
     }
 
+    fn optional_value(field: &OptionalField) -> &Option<String> {
+        &field.value
+    }
+
+    fn optional_value_mut(field: &mut OptionalField) -> &mut Option<String> {
+        &mut field.value
+    }
+
     #[test]
     fn test_borrow_optional_field_from_owned_is_read_only_snapshot() {
         let storage = FieldStorage::owned(OptionalField {
@@ -791,7 +802,7 @@ mod tests {
         });
 
         let mut value: FieldStorage<String> = storage
-            .borrow_optional_field(|field| &field.value)
+            .borrow_optional_field("OptionalField.value", optional_value, optional_value_mut)
             .unwrap()
             .unwrap();
 
@@ -803,28 +814,65 @@ mod tests {
     }
 
     #[test]
-    fn test_borrow_optional_field_from_mutable_borrow_writes_through() {
+    fn test_borrow_optional_field_rechecks_some_on_every_access() {
         let mut field = OptionalField {
             value: Some("before".into()),
         };
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
-        let storage =
+        // SAFETY: field outlives every access below, all made through this storage.
+        let mut storage =
             unsafe { FieldStorage::borrowed(&mut field as *mut OptionalField, validity.clone()) };
 
         let mut value: FieldStorage<String> = storage
-            .borrow_optional_field(|field| &field.value)
+            .borrow_optional_field("OptionalField.value", optional_value, optional_value_mut)
             .unwrap()
             .unwrap();
         value.as_mut().unwrap().push_str(" after");
+        assert_eq!(
+            storage.as_ref().unwrap().value.as_deref(),
+            Some("before after")
+        );
 
-        assert_eq!(field.value.as_deref(), Some("before after"));
+        storage.as_mut().unwrap().value = None;
+        assert!(matches!(
+            value.as_ref(),
+            Err(StorageError::VariantChanged("OptionalField.value"))
+        ));
+        assert!(matches!(
+            value.as_mut(),
+            Err(StorageError::VariantChanged("OptionalField.value"))
+        ));
+        assert_eq!(storage.as_ref().unwrap().value, None);
+
+        storage.as_mut().unwrap().value = Some("replaced".into());
+        assert_eq!(&*value.as_ref().unwrap(), "replaced");
+        validity.flag.set_invalid();
+        assert!(matches!(value.as_ref(), Err(StorageError::InvalidAccess)));
+    }
+
+    #[test]
+    fn test_borrow_optional_field_from_read_borrow_is_read_only() {
+        let field = OptionalField {
+            value: Some("shared".into()),
+        };
+        let flag = ValidityFlag::new_read();
+        // SAFETY: field outlives every access below and is never mutated.
+        let storage = unsafe { FieldStorage::borrowed_ref(&field, flag.clone()) };
+        let mut value: FieldStorage<String> = storage
+            .borrow_optional_field("OptionalField.value", optional_value, optional_value_mut)
+            .unwrap()
+            .unwrap();
+        assert_eq!(&*value.as_ref().unwrap(), "shared");
+        assert!(matches!(value.as_mut(), Err(StorageError::ReadOnly)));
+        flag.set_invalid();
     }
 
     #[test]
     fn test_borrow_optional_field_preserves_none() {
         let storage = FieldStorage::owned(OptionalField { value: None });
-        let value: Option<FieldStorage<String>> =
-            storage.borrow_optional_field(|field| &field.value).unwrap();
+        let value: Option<FieldStorage<String>> = storage
+            .borrow_optional_field("OptionalField.value", optional_value, optional_value_mut)
+            .unwrap();
 
         assert!(value.is_none());
     }

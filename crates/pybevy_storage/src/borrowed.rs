@@ -134,31 +134,6 @@ impl<T> BorrowedRef<T> {
         // SAFETY: field_ptr addresses a checked sub-field of the valid parent.
         Ok(unsafe { S::borrowed_ref(field_ptr, self.validity.clone()) })
     }
-
-    /// Borrow an optional sub-field, inheriting read-only access.
-    pub fn borrow_optional_field<F, S>(
-        &self,
-        field_accessor: impl FnOnce(&T) -> &Option<F>,
-    ) -> Result<Option<S>, StorageError>
-    where
-        S: BorrowableStorage<F>,
-    {
-        self.validity.check_read()?;
-        // SAFETY: validity checked above; ptr is stable during system execution.
-        match field_accessor(unsafe { &*self.ptr }) {
-            Some(field_ref) => {
-                let offset = checked_field_offset(self.ptr, field_ref)?;
-                // SAFETY: containment was checked above, so the pointer retains
-                // the parent's provenance and shares its validity flag.
-                let field_ptr = unsafe { self.ptr.cast::<u8>().add(offset).cast::<F>() };
-                // SAFETY: field_ptr addresses a checked sub-field of the valid parent.
-                Ok(Some(unsafe {
-                    S::borrowed_ref(field_ptr, self.validity.clone())
-                }))
-            }
-            None => Ok(None),
-        }
-    }
 }
 
 impl<T> BorrowedMut<T> {
@@ -291,41 +266,6 @@ impl<T> BorrowedMut<T> {
                 None => S::borrowed_mut(field_ptr, self.validity.clone()),
             }
         })
-    }
-
-    /// Borrow an optional sub-field, inheriting mutable access.
-    pub fn borrow_optional_field<F, S>(
-        &self,
-        field_accessor: impl FnOnce(&T) -> &Option<F>,
-    ) -> Result<Option<S>, StorageError>
-    where
-        S: BorrowableStorage<F>,
-    {
-        self.validity.check_read()?;
-        let base = match self.component_write {
-            Some(context) => context.resolve()? as *mut T,
-            None => self.ptr,
-        };
-        // SAFETY: validity was checked and base points to the current parent value.
-        let parent = unsafe { &*base };
-        let offset = match field_accessor(parent) {
-            Some(field_ref) => checked_field_offset(base, field_ref)?,
-            None => return Ok(None),
-        };
-        // SAFETY: containment was checked above, so the pointer retains the
-        // mutable parent's provenance.
-        let field_ptr = unsafe { (base as *mut u8).add(offset) as *mut F };
-        // SAFETY: the untracked arm inherits the parent's mutable provenance. In
-        // the tracked arm, every mutable access re-resolves through the context's
-        // mutable component access before dereferencing this cached pointer.
-        Ok(Some(unsafe {
-            match self.component_write {
-                Some(context) => {
-                    S::borrowed_mut_tracked(field_ptr, self.validity.clone(), context.child(offset))
-                }
-                None => S::borrowed_mut(field_ptr, self.validity.clone()),
-            }
-        }))
     }
 }
 
@@ -511,41 +451,6 @@ impl RevalidatingField {
         })
     }
 
-    /// Like [`child_of`](Self::child_of) for an `Option<F>` sub-field: `Ok(None)` when
-    /// the option is empty, else a re-resolving handle to the contained `F`.
-    pub(crate) fn child_of_optional<T, F, S>(
-        &self,
-        field_accessor: impl FnOnce(&T) -> &Option<F>,
-    ) -> Result<Option<S>, StorageError>
-    where
-        S: BorrowableStorage<F>,
-    {
-        self.validity.check_read()?;
-        let base = self.resolve()?;
-        // SAFETY: validity checked; base re-resolved to the live value of type T
-        let value_ref: &T = unsafe { &*(base as *const T) };
-        match field_accessor(value_ref) {
-            Some(field_ref) => {
-                let relative = checked_field_offset(base.cast::<T>(), field_ref)?;
-                let child_offset = self
-                    .offset
-                    .checked_add(relative)
-                    .ok_or(StorageError::InvalidFieldAccessor)?;
-                // SAFETY: the contained field lives at `child_offset` within the component
-                Ok(Some(unsafe {
-                    S::revalidating_field(
-                        self.world,
-                        self.entity,
-                        self.component_id,
-                        child_offset,
-                        self.validity.clone(),
-                    )
-                }))
-            }
-            None => Ok(None),
-        }
-    }
-
     /// Two handles are equal when they name the same field of the same entity.
     #[inline]
     pub(crate) fn same_identity(&self, other: &Self) -> bool {
@@ -564,7 +469,6 @@ mod tests {
     use crate::value_storage::ValueStorage;
 
     static EXTERNAL_FIELD: u32 = 91;
-    static EXTERNAL_OPTION: Option<u32> = Some(92);
 
     #[derive(Component)]
     struct FieldOwner(u32);
@@ -637,27 +541,6 @@ mod tests {
     }
 
     #[test]
-    fn test_borrowed_ref_borrow_optional_field_some() {
-        let opt: Option<u32> = Some(99);
-        let flag = ValidityFlag::new_read();
-        // SAFETY: opt outlives the borrow within this test scope
-        let borrow = unsafe { BorrowedRef::new(&opt, flag) };
-        let field: Option<ValueStorage<u32>> = borrow.borrow_optional_field(|o| o).unwrap();
-        assert!(field.is_some());
-        assert_eq!(field.unwrap().get().unwrap(), 99);
-    }
-
-    #[test]
-    fn test_borrowed_ref_borrow_optional_field_none() {
-        let opt: Option<u32> = None;
-        let flag = ValidityFlag::new_read();
-        // SAFETY: opt outlives the borrow within this test scope
-        let borrow = unsafe { BorrowedRef::new(&opt, flag) };
-        let field: Option<ValueStorage<u32>> = borrow.borrow_optional_field(|o| o).unwrap();
-        assert!(field.is_none());
-    }
-
-    #[test]
     fn borrowed_ref_rejects_external_field_accessors() {
         let owner = FieldOwner(1);
         // SAFETY: owner outlives the borrow within this test scope.
@@ -665,9 +548,6 @@ mod tests {
 
         let field: Result<ValueStorage<u32>, _> = borrow.borrow_field(|_| &EXTERNAL_FIELD);
         assert!(matches!(field, Err(StorageError::InvalidFieldAccessor)));
-        let optional: Result<Option<ValueStorage<u32>>, _> =
-            borrow.borrow_optional_field(|_| &EXTERNAL_OPTION);
-        assert!(matches!(optional, Err(StorageError::InvalidFieldAccessor)));
     }
 
     #[test]
@@ -732,19 +612,6 @@ mod tests {
         assert_eq!(pair.1, 99);
     }
 
-    #[test]
-    fn test_borrowed_mut_borrow_optional_field_some() {
-        let mut opt: Option<u32> = Some(5);
-        let flag = ValidityFlag::new_write();
-        // SAFETY: opt outlives the borrow within this test scope
-        let borrow = unsafe { BorrowedMut::new(&mut opt, flag) };
-        let field: Option<ValueStorage<u32>> = borrow.borrow_optional_field(|o| o).unwrap();
-        assert!(field.is_some());
-        let mut f = field.unwrap();
-        *f.as_mut().unwrap() = 77;
-        assert_eq!(opt, Some(77));
-    }
-
     /// The field pointer is rebuilt from the base rather than cast from the
     /// accessor's reference, so the offset has to be applied in bytes. Applying
     /// it in units of `F` would scale it by `size_of::<F>()` and write outside
@@ -768,16 +635,6 @@ mod tests {
     }
 
     #[test]
-    fn test_borrowed_mut_borrow_optional_field_none() {
-        let mut opt: Option<u32> = None;
-        let flag = ValidityFlag::new_write();
-        // SAFETY: opt outlives the borrow within this test scope
-        let borrow = unsafe { BorrowedMut::new(&mut opt, flag) };
-        let field: Option<ValueStorage<u32>> = borrow.borrow_optional_field(|o| o).unwrap();
-        assert!(field.is_none());
-    }
-
-    #[test]
     fn borrowed_mut_rejects_external_field_accessors() {
         let mut owner = FieldOwner(1);
         // SAFETY: owner outlives the exclusive borrow within this test scope.
@@ -785,9 +642,6 @@ mod tests {
 
         let field: Result<ValueStorage<u32>, _> = borrow.borrow_field(|_| &EXTERNAL_FIELD);
         assert!(matches!(field, Err(StorageError::InvalidFieldAccessor)));
-        let optional: Result<Option<ValueStorage<u32>>, _> =
-            borrow.borrow_optional_field(|_| &EXTERNAL_OPTION);
-        assert!(matches!(optional, Err(StorageError::InvalidFieldAccessor)));
     }
 
     #[test]
@@ -810,9 +664,6 @@ mod tests {
         let child: Result<ValueStorage<u32>, _> =
             field.child_of::<FieldOwner, u32, _>(|_| &EXTERNAL_FIELD);
         assert!(matches!(child, Err(StorageError::InvalidFieldAccessor)));
-        let optional: Result<Option<ValueStorage<u32>>, _> =
-            field.child_of_optional::<FieldOwner, u32, _>(|_| &EXTERNAL_OPTION);
-        assert!(matches!(optional, Err(StorageError::InvalidFieldAccessor)));
         assert_eq!(world.entity(entity).get::<FieldOwner>().unwrap().0, 1);
     }
 }

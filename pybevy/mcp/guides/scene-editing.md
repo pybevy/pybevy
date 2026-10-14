@@ -127,9 +127,13 @@ Non-finite float fields are reported as the JSON strings `"NaN"`,
 be finite; a rejected value names its field and leaves the component unchanged.
 Finite JSON numbers that overflow a native `f32` field are also rejected before
 the component or resource is committed. Native `f64` fields keep their wider range.
+Integer fields likewise reject a value outside their type's range, such as
+`300` for a `u8`, instead of storing a wrapped value.
 The exception is a `Range` endpoint: `"Infinity"` and `"-Infinity"` replay
 there, but `"NaN"` remains invalid. JSON `null` is valid
 only for an `Option<T>` field; a required float field needs a JSON number.
+An enum variant named `None`, such as `Display.None_` or `ClearColorConfig.None_`,
+is not `null`: it reads, writes, and echoes as `{"variant": "None"}`.
 Finite fields returned by `get_component` can be replayed with `set_component`
 for editable components. `set_component` echoes each written field under that
 same Python spelling, so a response replays unchanged; a Bevy field named after
@@ -606,7 +610,11 @@ schedule_actions {"actions": [
 
 ### Time-Offset Actions
 
-Actions at different `at` values fire at the corresponding game-time offset from schedule start:
+Actions at different `at` values fire at the corresponding virtual-time offset
+from schedule start. `pause_time`, `resume_time`, and `set_time_scale` change how
+fast that clock advances, not the offsets. `seek_time` moves the clock, so later
+actions keep their `at` spacing from the seek: a seek at `at: 1` followed by an
+action at `at: 3` runs that action 2 virtual seconds after the seek.
 ```
 schedule_actions {"actions": [
     {"tool": "capture_screenshot", "at": 0, "label": "start"},

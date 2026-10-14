@@ -40,10 +40,10 @@ impl PyRenderLayers {
 
     #[staticmethod]
     pub fn layer(py: Python<'_>, layer: usize) -> PyResult<Py<Self>> {
-        if layer >= usize::BITS as usize {
+        if layer >= u64::BITS as usize {
             return Err(PyValueError::new_err(format!(
                 "layer must be less than {} for RenderLayers.layer(); use from_layers() for higher layers",
-                usize::BITS
+                u64::BITS
             )));
         }
         Py::new(

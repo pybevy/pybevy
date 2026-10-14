@@ -73,11 +73,6 @@ impl PyAnchor {
         Py::new(py, Self::from_owned(Anchor::TOP_RIGHT))
     }
 
-    #[staticmethod]
-    pub fn custom(value: PyVec2, py: Python<'_>) -> PyResult<Py<Self>> {
-        Py::new(py, Self::from_owned(Anchor(value.try_into()?)))
-    }
-
     #[getter]
     pub fn value(&self) -> PyResult<PyVec2> {
         Ok(self.storage.borrow_field_as(|a| &a.0)?)

@@ -58,7 +58,11 @@ impl PyAabbGizmoConfigGroup {
     #[getter]
     pub fn default_color(&self, py: Python<'_>) -> PyResult<Option<Py<PyColor>>> {
         self.storage
-            .borrow_optional_field(|group| &group.default_color)?
+            .borrow_optional_field(
+                "AabbGizmoConfigGroup.default_color",
+                |group| &group.default_color,
+                |group| &mut group.default_color,
+            )?
             .map(|storage| PyColor::from_storage(storage, py))
             .transpose()
     }
@@ -164,7 +168,11 @@ impl PyShowAabbGizmo {
     #[getter]
     pub fn color(&self, py: Python<'_>) -> PyResult<Option<Py<PyColor>>> {
         self.storage
-            .borrow_optional_field(|gizmo| &gizmo.color)?
+            .borrow_optional_field(
+                "ShowAabbGizmo.color",
+                |gizmo| &gizmo.color,
+                |gizmo| &mut gizmo.color,
+            )?
             .map(|storage| PyColor::from_storage(storage, py))
             .transpose()
     }

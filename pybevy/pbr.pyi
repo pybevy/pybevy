@@ -762,7 +762,7 @@ class Lightmap(Component):
     def __init__(
         self,
         *,
-        image: Handle[Image] | None = None,
+        image: Handle[Image] = ...,
         uv_rect: Rect | None = None,
         bicubic_sampling: bool = False
     ) -> None: ...

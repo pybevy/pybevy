@@ -472,7 +472,7 @@ pub use duration::{
 };
 pub use entity::{PyEntity, extract_entity_from_any};
 pub use entity_index::PyEntityIndex;
-pub use handle::{PyHandle, ensure_asset_type, extract_handle_from_any};
+pub use handle::{HandleArg, PyHandle, ensure_asset_type, extract_handle_from_any};
 pub use hierarchy::{PyChildOf, PyChildren, PyChildrenIterator};
 pub use materializable::PyMaterializable;
 pub use message::{PyMessage, PyMessageId};

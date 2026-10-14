@@ -182,6 +182,7 @@ class Anchor(Component):
 
     Examples:
         ```python
+        from pybevy.math import Vec2
         from pybevy.sprite import Sprite, Anchor
         from pybevy.transform import Transform
 
@@ -203,7 +204,7 @@ class Anchor(Component):
         commands.spawn(
             Sprite.from_image(image),
             Transform.from_xyz(100.0, 50.0, 0.0),
-            Anchor.custom(Vec2(0.25, -0.25))  # Right of center, below center
+            Anchor(Vec2(0.25, -0.25))  # Right of center, below center
         )
         ```
 
@@ -235,30 +236,6 @@ class Anchor(Component):
             value: Normalized anchor position where:
                    x: -0.5 (left) to 0.5 (right)
                    y: -0.5 (bottom) to 0.5 (top)
-        """
-
-    @staticmethod
-    def custom(value: Vec2) -> Anchor:
-        """Create a custom anchor at the specified normalized position.
-
-        Args:
-            value: Normalized anchor position:
-                   - (0, 0) = center
-                   - (-0.5, -0.5) = bottom-left
-                   - (0.5, 0.5) = top-right
-                   - Any value in between for custom positioning
-
-        Returns:
-            Anchor at the specified position
-
-        Examples:
-            ```python
-            # One-quarter from left, one-quarter from bottom
-            anchor = Anchor.custom(Vec2(-0.25, -0.25))
-
-            # Slightly above center
-            anchor = Anchor.custom(Vec2(0.0, 0.1))
-            ```
         """
 
     @property
@@ -636,7 +613,7 @@ class Sprite(Component):
     def __init__(
         self,
         *,
-        image: Handle[Image],
+        image: Handle[Image] = ...,
         texture_atlas: TextureAtlas | None = None,
         color: Color = Color.WHITE,
         flip_x: bool = False,
@@ -648,7 +625,7 @@ class Sprite(Component):
         """Create a sprite with the specified configuration.
 
         Args:
-            image: Handle to the image asset
+            image: Handle to the image asset (default: Bevy's default image handle)
             color: Color tint (default: white = no tint)
             flip_x: Mirror horizontally
             flip_y: Mirror vertically

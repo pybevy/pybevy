@@ -96,7 +96,9 @@ impl PySubCameraView {
 
     #[getter]
     pub fn full_size(&self) -> PyResult<PyUVec2> {
-        Ok(self.storage.borrow_field_as(|s| &s.full_size)?)
+        Ok(self
+            .storage
+            .borrow_resolved_field_as(|s| &s.full_size, |s| &mut s.full_size)?)
     }
 
     #[setter]
@@ -107,7 +109,9 @@ impl PySubCameraView {
 
     #[getter]
     pub fn offset(&self) -> PyResult<PyVec2> {
-        Ok(self.storage.borrow_field_as(|s| &s.offset)?)
+        Ok(self
+            .storage
+            .borrow_resolved_field_as(|s| &s.offset, |s| &mut s.offset)?)
     }
 
     #[setter]
@@ -118,7 +122,9 @@ impl PySubCameraView {
 
     #[getter]
     pub fn size(&self) -> PyResult<PyUVec2> {
-        Ok(self.storage.borrow_field_as(|s| &s.size)?)
+        Ok(self
+            .storage
+            .borrow_resolved_field_as(|s| &s.size, |s| &mut s.size)?)
     }
 
     #[setter]

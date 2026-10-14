@@ -1,4 +1,4 @@
-use std::{any::TypeId, ops::Range, sync::OnceLock};
+use std::{any::TypeId, fmt::Debug, ops::Range, sync::OnceLock};
 
 use bevy::{
     ecs::{
@@ -17,7 +17,7 @@ use bevy::{
         tuple_struct::DynamicTupleStruct,
     },
 };
-use pybevy_core::{ReflectTypeRegistration, inventory};
+use pybevy_core::{ReflectTypeRegistration, inventory, public_error};
 use serde_json::{Map, Value};
 
 use super::{
@@ -387,12 +387,13 @@ pub fn reflect_to_json(value: &dyn PartialReflect) -> Value {
         }
         ReflectRef::Enum(e) => {
             let variant_name = e.variant_name().to_string();
-            // Option<T>: unwrap None to Value::Null, Some(x) to inner JSON
-            if variant_name == "None" {
-                return Value::Null;
-            }
-            if variant_name == "Some" && e.field_len() == 1 {
-                return e.field_at(0).map(reflect_to_json).unwrap_or(Value::Null);
+            if let Some(TypeInfo::Enum(info)) = e.get_represented_type_info()
+                && is_option_enum(info)
+            {
+                return match e.field_at(0) {
+                    Some(inner) => reflect_to_json(inner),
+                    None => Value::Null,
+                };
             }
             let payload = match e.variant_type() {
                 VariantType::Unit => EnumPayload::Unit,
@@ -1096,6 +1097,23 @@ fn build_dynamic_struct_from_fields(
     Ok(Box::new(dynamic))
 }
 
+fn integer_in_range<T>(
+    n: &serde_json::Number,
+    type_name: &str,
+    minimum: T,
+    maximum: T,
+) -> Result<T, String>
+where
+    T: TryFrom<i128> + Debug,
+{
+    let value = n
+        .as_i128()
+        .ok_or_else(|| format!("expected integer for {type_name}, got {n}"))?;
+    T::try_from(value).map_err(|_| {
+        public_error::value_out_of_range(format!("{type_name} value"), minimum, maximum, value)
+    })
+}
+
 /// Convert a JSON number to the correct numeric Reflect type.
 fn convert_number(
     n: &serde_json::Number,
@@ -1113,59 +1131,36 @@ fn convert_number(
             .as_f64()
             .ok_or_else(|| format!("expected number for f64, got {n}"))?;
         Ok(Box::new(require_finite_float(value)?))
-    } else if target_type_id == TypeId::of::<i32>() {
-        Ok(Box::new(
-            n.as_i64()
-                .ok_or_else(|| format!("expected integer for i32, got {n}"))? as i32,
-        ))
-    } else if target_type_id == TypeId::of::<u32>() {
-        Ok(Box::new(
-            n.as_u64()
-                .ok_or_else(|| format!("expected unsigned integer for u32, got {n}"))?
-                as u32,
-        ))
-    } else if target_type_id == TypeId::of::<i64>() {
-        Ok(Box::new(n.as_i64().ok_or_else(|| {
-            format!("expected integer for i64, got {n}")
-        })?))
-    } else if target_type_id == TypeId::of::<u64>() {
-        Ok(Box::new(n.as_u64().ok_or_else(|| {
-            format!("expected unsigned integer for u64, got {n}")
-        })?))
-    } else if target_type_id == TypeId::of::<usize>() {
-        Ok(Box::new(
-            n.as_u64()
-                .ok_or_else(|| format!("expected unsigned integer for usize, got {n}"))?
-                as usize,
-        ))
     } else if target_type_id == TypeId::of::<i8>() {
-        Ok(Box::new(
-            n.as_i64()
-                .ok_or_else(|| format!("expected integer for i8, got {n}"))? as i8,
-        ))
-    } else if target_type_id == TypeId::of::<u8>() {
-        Ok(Box::new(
-            n.as_u64()
-                .ok_or_else(|| format!("expected unsigned integer for u8, got {n}"))?
-                as u8,
-        ))
+        Ok(Box::new(integer_in_range(n, "i8", i8::MIN, i8::MAX)?))
     } else if target_type_id == TypeId::of::<i16>() {
-        Ok(Box::new(
-            n.as_i64()
-                .ok_or_else(|| format!("expected integer for i16, got {n}"))? as i16,
-        ))
-    } else if target_type_id == TypeId::of::<u16>() {
-        Ok(Box::new(
-            n.as_u64()
-                .ok_or_else(|| format!("expected unsigned integer for u16, got {n}"))?
-                as u16,
-        ))
+        Ok(Box::new(integer_in_range(n, "i16", i16::MIN, i16::MAX)?))
+    } else if target_type_id == TypeId::of::<i32>() {
+        Ok(Box::new(integer_in_range(n, "i32", i32::MIN, i32::MAX)?))
+    } else if target_type_id == TypeId::of::<i64>() {
+        Ok(Box::new(integer_in_range(n, "i64", i64::MIN, i64::MAX)?))
     } else if target_type_id == TypeId::of::<isize>() {
-        Ok(Box::new(
-            n.as_i64()
-                .ok_or_else(|| format!("expected integer for isize, got {n}"))?
-                as isize,
-        ))
+        Ok(Box::new(integer_in_range(
+            n,
+            "isize",
+            isize::MIN,
+            isize::MAX,
+        )?))
+    } else if target_type_id == TypeId::of::<u8>() {
+        Ok(Box::new(integer_in_range(n, "u8", u8::MIN, u8::MAX)?))
+    } else if target_type_id == TypeId::of::<u16>() {
+        Ok(Box::new(integer_in_range(n, "u16", u16::MIN, u16::MAX)?))
+    } else if target_type_id == TypeId::of::<u32>() {
+        Ok(Box::new(integer_in_range(n, "u32", u32::MIN, u32::MAX)?))
+    } else if target_type_id == TypeId::of::<u64>() {
+        Ok(Box::new(integer_in_range(n, "u64", u64::MIN, u64::MAX)?))
+    } else if target_type_id == TypeId::of::<usize>() {
+        Ok(Box::new(integer_in_range(
+            n,
+            "usize",
+            usize::MIN,
+            usize::MAX,
+        )?))
     } else {
         let target = target_type_info
             .map(|info| info.type_path_table().short_path())
@@ -1187,6 +1182,71 @@ mod tests {
     };
 
     use super::*;
+
+    #[derive(Reflect)]
+    enum NoneOrSome {
+        None,
+        Some(u32),
+        Other,
+    }
+
+    #[test]
+    fn reflect_to_json_tags_a_variant_named_none_outside_option() {
+        assert_eq!(
+            reflect_to_json(&NoneOrSome::None),
+            serde_json::json!({"variant": "None"})
+        );
+        assert_eq!(
+            reflect_to_json(&NoneOrSome::Some(3)),
+            serde_json::json!({"variant": "Some", "value": 3})
+        );
+        assert_eq!(
+            reflect_to_json(&NoneOrSome::Other),
+            serde_json::json!({"variant": "Other"})
+        );
+        assert_eq!(reflect_to_json(&Option::<u32>::None), Value::Null);
+        assert_eq!(reflect_to_json(&Some(3_u32)), serde_json::json!(3));
+    }
+
+    #[test]
+    fn integer_conversion_rejects_values_outside_the_target_range() {
+        let cases = [
+            (
+                serde_json::json!(300),
+                TypeId::of::<u8>(),
+                "u8 value must be between 0 and 255, got 300",
+            ),
+            (
+                serde_json::json!(5_000_000_000_u64),
+                TypeId::of::<u32>(),
+                "u32 value must be between 0 and 4294967295, got 5000000000",
+            ),
+            (
+                serde_json::json!(-1),
+                TypeId::of::<u16>(),
+                "u16 value must be between 0 and 65535, got -1",
+            ),
+            (
+                serde_json::json!(2_147_483_648_i64),
+                TypeId::of::<i32>(),
+                "i32 value must be between -2147483648 and 2147483647, got 2147483648",
+            ),
+            (
+                serde_json::json!(u64::MAX),
+                TypeId::of::<i64>(),
+                "i64 value must be between -9223372036854775808 and 9223372036854775807, got 18446744073709551615",
+            ),
+        ];
+        for (value, type_id, expected) in cases {
+            let Value::Number(n) = value else {
+                unreachable!()
+            };
+            assert_eq!(convert_number(&n, type_id, None).unwrap_err(), expected);
+        }
+        let n = serde_json::Number::from(255);
+        let stored = convert_number(&n, TypeId::of::<u8>(), None).unwrap();
+        assert_eq!(stored.try_downcast_ref::<u8>(), Some(&255));
+    }
 
     #[test]
     fn reflect_to_json_renders_a_range_as_a_start_end_pair() {

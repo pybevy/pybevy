@@ -592,7 +592,7 @@ class Timer:
             - Check times_finished_this_tick() for multiple completions
         """
 
-    def finished(self) -> bool:
+    def is_finished(self) -> bool:
         """Check if the timer has reached its duration.
 
         For repeating timers, returns True only on ticks when duration was reached.
@@ -603,7 +603,7 @@ class Timer:
 
         Example:
             ```python
-            if timer.finished():
+            if timer.is_finished():
                 # Timer has completed
                 timer.reset()
             ```
@@ -611,9 +611,6 @@ class Timer:
         See Also:
             - just_finished(): Detects the exact tick when timer finished
         """
-
-    def is_finished(self) -> bool:
-        """Alias for finished()."""
 
     def just_finished(self) -> bool:
         """Check if the timer finished on this exact tick.
@@ -703,15 +700,12 @@ class Timer:
             ```
         """
 
-    def paused(self) -> bool:
+    def is_paused(self) -> bool:
         """Check if the timer is paused.
 
         Returns:
             True if timer is paused
         """
-
-    def is_paused(self) -> bool:
-        """Alias for paused()."""
 
     def fraction(self) -> float:
         """Get the progress as a fraction.

@@ -33,7 +33,11 @@ impl PyRelativeCursorPosition {
     pub fn normalized(&self) -> PyResult<Option<PyVec2>> {
         Ok(self
             .storage
-            .borrow_optional_field(|r| &r.normalized)?
+            .borrow_optional_field(
+                "RelativeCursorPosition.normalized",
+                |r| &r.normalized,
+                |r| &mut r.normalized,
+            )?
             .map(PyVec2::from_borrowed))
     }
 

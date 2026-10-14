@@ -7,7 +7,7 @@ use bevy::{
 };
 use pybevy_color::color::PyColor;
 use pybevy_core::{
-    ComponentStorage, FromBorrowedStorage, PyAssetId, PyComponent, PyHandle,
+    ComponentStorage, FromBorrowedStorage, HandleArg, PyAssetId, PyComponent, PyHandle,
     extract_handle_from_any, materialize_asset_id,
 };
 use pybevy_image::texture_atlas::PyTextureAtlas;
@@ -30,7 +30,7 @@ impl PySprite {
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         *,
-        image,
+        image = HandleArg::default(),
         texture_atlas = None,
         color = PyColor::default(),
         flip_x = false,
@@ -40,7 +40,7 @@ impl PySprite {
         image_mode = PySpriteImageMode::default()
     ))]
     pub fn new(
-        image: &Bound<'_, PyAny>,
+        image: HandleArg,
         texture_atlas: Option<PyTextureAtlas>,
         color: PyColor,
         flip_x: bool,
@@ -49,8 +49,7 @@ impl PySprite {
         rect: Option<PyRect>,
         image_mode: PySpriteImageMode,
     ) -> PyResult<PyClassInitializer<Self>> {
-        let py_handle = extract_handle_from_any(image)?;
-        let image_handle = py_handle.try_into()?;
+        let image_handle = image.into_handle()?;
         let texture_atlas_handle = texture_atlas.map(|ta| ta.try_into()).transpose()?;
         let custom_size_vec = custom_size.map(TryInto::try_into).transpose()?;
         let rect_bevy = rect.map(TryInto::try_into).transpose()?;
@@ -194,7 +193,7 @@ impl PySprite {
     pub fn rect(&self) -> PyResult<Option<PyRect>> {
         Ok(self
             .storage
-            .borrow_optional_field(|s| &s.rect)?
+            .borrow_optional_field("Sprite.rect", |s| &s.rect, |s| &mut s.rect)?
             .map(<PyRect as FromBorrowedStorage<_>>::from_borrowed))
     }
 
@@ -208,7 +207,11 @@ impl PySprite {
     pub fn texture_atlas(&self) -> PyResult<Option<PyTextureAtlas>> {
         Ok(self
             .storage
-            .borrow_optional_field(|s| &s.texture_atlas)?
+            .borrow_optional_field(
+                "Sprite.texture_atlas",
+                |s| &s.texture_atlas,
+                |s| &mut s.texture_atlas,
+            )?
             .map(PyTextureAtlas::from_borrowed_storage))
     }
 
@@ -244,7 +247,11 @@ impl PySprite {
     pub fn custom_size(&self) -> PyResult<Option<PyVec2>> {
         Ok(self
             .storage
-            .borrow_optional_field(|s| &s.custom_size)?
+            .borrow_optional_field(
+                "Sprite.custom_size",
+                |s| &s.custom_size,
+                |s| &mut s.custom_size,
+            )?
             .map(<PyVec2 as FromBorrowedStorage<_>>::from_borrowed))
     }
 

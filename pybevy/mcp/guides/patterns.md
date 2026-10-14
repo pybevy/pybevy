@@ -748,6 +748,8 @@ Query data implies `With` for required components. Reciprocal `Without` filters 
 wrapper and Python-object storage. Wrapper-backed `Vec2` and `Vec3` setters also
 mark their owning component. For Python-object storage, reassign a list, dict, or
 other mutable child after changing it in place so the assignment can be observed.
+MCP `set_component` writes to either storage mark the component changed once;
+reads and rejected writes do not.
 
 #### Query Methods
 

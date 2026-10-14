@@ -127,35 +127,20 @@ pub fn seek_time(
     // `< 0.0` is false for NaN, and Duration tops out near 1.8e19 seconds.
     let target = try_duration_from_secs_f64(seconds)
         .map_err(|error| ControlError::invalid_params(error.message()))?;
-    let current = world.resource::<Time<Virtual>>().elapsed_secs_f64();
-    if seconds < current {
-        // Replacing virtual time resets pause and speed, so preserve both.
-        let old_speed = world.resource::<Time<Virtual>>().relative_speed();
-        let was_paused = world.resource::<Time<Virtual>>().is_paused();
-        world.insert_resource(Time::<Virtual>::default());
-        let mut time = world.resource_mut::<Time<Virtual>>();
-        time.set_relative_speed(old_speed);
-        if seconds > 0.0 {
-            time.advance_to(target);
-        }
-        if was_paused {
-            time.pause();
-        }
-    } else {
-        let mut time = world.resource_mut::<Time<Virtual>>();
-        time.advance_to(target);
+    let mut time = world.resource_mut::<Time<Virtual>>();
+    if target < time.elapsed() {
+        let mut rewound = Time::new_with(*time.context());
+        rewound.set_wrap_period(time.wrap_period());
+        *time = rewound;
     }
-    {
-        // advance_to leaves the whole jump as this frame's delta, and the
-        // fixed main loop consumes Time<Virtual>::delta directly: a large
-        // seek would replay that many FixedMain catch-up iterations in one
-        // frame. Nothing else reads this delta (the generic clock was synced
-        // earlier in the frame), so zero it.
-        let mut time = world.resource_mut::<Time<Virtual>>();
-        time.advance_by(Duration::ZERO);
-    }
+    time.advance_to(target);
+    // advance_to leaves the whole jump as this frame's delta, and the fixed
+    // main loop consumes Time<Virtual>::delta directly: a large seek would
+    // replay that many FixedMain catch-up iterations in one frame. Nothing
+    // else reads this delta (the generic clock was synced earlier in the
+    // frame), so zero it.
+    time.advance_by(Duration::ZERO);
     if pause {
-        let mut time = world.resource_mut::<Time<Virtual>>();
         time.pause();
     }
     // Sync GlobalTransform for root entities so spatial queries work immediately
@@ -214,6 +199,32 @@ mod tests {
         )
         .expect("a finite target must seek");
         assert_eq!(result["elapsed_secs"], 2.5);
+    }
+
+    #[test]
+    fn backward_seek_keeps_virtual_configuration() {
+        let mut world = world_with_virtual_time();
+        {
+            let mut time = world.resource_mut::<Time<Virtual>>();
+            time.set_max_delta(Duration::from_secs(2));
+            time.set_wrap_period(Duration::from_secs(7));
+            time.set_relative_speed(0.5);
+            time.advance_to(Duration::from_secs(5));
+        }
+        seek_time(
+            &mut world,
+            SeekTimeParams {
+                seconds: 1.5,
+                pause: false,
+            },
+        )
+        .unwrap();
+        let time = world.resource::<Time<Virtual>>();
+        assert_eq!(time.elapsed(), Duration::from_secs_f64(1.5));
+        assert_eq!(time.max_delta(), Duration::from_secs(2));
+        assert_eq!(time.wrap_period(), Duration::from_secs(7));
+        assert_eq!(time.relative_speed(), 0.5);
+        assert!(!time.is_paused());
     }
 
     #[test]

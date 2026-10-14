@@ -72,10 +72,6 @@ impl PyTimer {
         Ok(slf)
     }
 
-    pub fn finished(&self) -> bool {
-        self.timer.is_finished()
-    }
-
     pub fn is_finished(&self) -> bool {
         self.timer.is_finished()
     }
@@ -108,10 +104,6 @@ impl PyTimer {
 
     pub fn unpause(&mut self) {
         self.timer.unpause();
-    }
-
-    pub fn paused(&self) -> bool {
-        self.timer.is_paused()
     }
 
     pub fn is_paused(&self) -> bool {

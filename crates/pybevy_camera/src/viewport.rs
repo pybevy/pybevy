@@ -55,7 +55,9 @@ impl PyViewport {
 
     #[getter]
     pub fn physical_position(&self) -> PyResult<PyUVec2> {
-        Ok(self.storage.borrow_field_as(|v| &v.physical_position)?)
+        Ok(self
+            .storage
+            .borrow_resolved_field_as(|v| &v.physical_position, |v| &mut v.physical_position)?)
     }
 
     #[setter]
@@ -66,7 +68,9 @@ impl PyViewport {
 
     #[getter]
     pub fn physical_size(&self) -> PyResult<PyUVec2> {
-        Ok(self.storage.borrow_field_as(|v| &v.physical_size)?)
+        Ok(self
+            .storage
+            .borrow_resolved_field_as(|v| &v.physical_size, |v| &mut v.physical_size)?)
     }
 
     #[setter]

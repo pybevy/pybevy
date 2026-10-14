@@ -1,5 +1,5 @@
 use bevy::{asset::Handle, image::Image, light::IrradianceVolume};
-use pybevy_core::{ComponentStorage, PyComponent, PyHandle, extract_handle_from_any};
+use pybevy_core::{ComponentStorage, HandleArg, PyComponent, PyHandle, extract_handle_from_any};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
@@ -12,18 +12,14 @@ pub struct PyIrradianceVolume {
 #[pymethods]
 impl PyIrradianceVolume {
     #[new]
-    #[pyo3(signature = (*, voxels = None, intensity = 0.0, affects_lightmapped_meshes = true))]
+    #[pyo3(signature = (*, voxels = HandleArg::default(), intensity = 0.0, affects_lightmapped_meshes = true))]
     pub fn new(
-        voxels: Option<&Bound<'_, PyAny>>,
+        voxels: HandleArg,
         intensity: f32,
         affects_lightmapped_meshes: bool,
     ) -> PyResult<PyClassInitializer<Self>> {
-        let handle = match voxels {
-            Some(h) => Handle::<Image>::try_from(extract_handle_from_any(h)?)?,
-            None => Handle::default(),
-        };
         Ok(Self::from_owned(IrradianceVolume {
-            voxels: handle,
+            voxels: voxels.into_handle()?,
             intensity,
             affects_lightmapped_meshes,
         })

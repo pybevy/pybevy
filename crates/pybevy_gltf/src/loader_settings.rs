@@ -207,11 +207,12 @@ impl PyGltfLoaderSettings {
 
     #[getter]
     pub fn default_sampler(&self) -> PyResult<Option<PyImageSamplerDescriptor>> {
-        let storage: Option<FieldStorage<ImageSamplerDescriptor>> = self
-            .storage
-            .borrow_optional_field(|settings: &GltfLoaderSettingsValue| {
-                &settings.0.default_sampler
-            })?;
+        let storage: Option<FieldStorage<ImageSamplerDescriptor>> =
+            self.storage.borrow_optional_field(
+                "GltfLoaderSettings.default_sampler",
+                |settings| &settings.0.default_sampler,
+                |settings| &mut settings.0.default_sampler,
+            )?;
         Ok(storage.map(FromBorrowedStorage::from_borrowed))
     }
 
@@ -246,11 +247,12 @@ impl PyGltfLoaderSettings {
 
     #[getter]
     pub fn convert_coordinates(&self) -> PyResult<Option<PyGltfConvertCoordinates>> {
-        let storage: Option<ValueStorage<GltfConvertCoordinates>> = self
-            .storage
-            .borrow_optional_field(|settings: &GltfLoaderSettingsValue| {
-                &settings.0.convert_coordinates
-            })?;
+        let storage: Option<ValueStorage<GltfConvertCoordinates>> =
+            self.storage.borrow_optional_field(
+                "GltfLoaderSettings.convert_coordinates",
+                |settings| &settings.0.convert_coordinates,
+                |settings| &mut settings.0.convert_coordinates,
+            )?;
         Ok(storage.map(PyGltfConvertCoordinates::from_borrowed))
     }
 

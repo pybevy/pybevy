@@ -1160,7 +1160,7 @@ class TextureAtlas:
     def __init__(
         self,
         *,
-        layout: Handle[TextureAtlasLayout] | None = None,
+        layout: Handle[TextureAtlasLayout] = ...,
         index: int = 0
     ) -> None:
         """Create a TextureAtlas reference.

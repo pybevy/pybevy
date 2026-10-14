@@ -11,10 +11,11 @@ use std::{
     },
 };
 
-use bevy::asset::UntypedAssetId;
+use bevy::{asset::UntypedAssetId, ecs::component::Component};
 
 use crate::{
-    AssetResourceReadGuard, AssetResourceWriteGuard, StorageError, ValueStorage,
+    AssetResourceReadGuard, AssetResourceWriteGuard, ComponentStorage, ComponentStorageInner,
+    FieldStorage, FieldStorageInner, StorageError, ValueStorage,
     borrowed::{BorrowedMut, BorrowedRef, RevalidatingField},
     value_storage::ValueStorageInner,
 };
@@ -538,6 +539,17 @@ impl<T: Send + Sync + 'static> ErasedRevalidatingSource for BorrowedSource<T> {
     }
 }
 
+impl<T: Send + Sync + 'static> RevalidatingSource<T> {
+    fn from_borrowed_root(root: BorrowedRoot<T>) -> Self {
+        Self::new(Arc::new(BorrowedSource {
+            root: Arc::new(root),
+            gate: Arc::new(AtomicIsize::new(0)),
+            path: AssetPath::root::<T>(),
+            readonly: false,
+        }))
+    }
+}
+
 impl<T: Copy + Send + Sync + 'static> RevalidatingSource<T> {
     pub(crate) fn from_borrowed_value(storage: &ValueStorage<T>) -> Option<Self> {
         let root = match &storage.inner {
@@ -546,12 +558,31 @@ impl<T: Copy + Send + Sync + 'static> RevalidatingSource<T> {
             ValueStorageInner::Revalidating(root) => BorrowedRoot::Component((**root).clone()),
             _ => return None,
         };
-        Some(Self::new(Arc::new(BorrowedSource {
-            root: Arc::new(root),
-            gate: Arc::new(AtomicIsize::new(0)),
-            path: AssetPath::root::<T>(),
-            readonly: false,
-        })))
+        Some(Self::from_borrowed_root(root))
+    }
+}
+
+impl<T: Clone + Send + Sync + 'static> RevalidatingSource<T> {
+    pub(crate) fn from_borrowed_field(storage: &FieldStorage<T>) -> Option<Self> {
+        let root = match &storage.inner {
+            FieldStorageInner::BorrowedRef(root) => BorrowedRoot::Read(root.clone()),
+            FieldStorageInner::BorrowedMut(root) => BorrowedRoot::Write(root.share()),
+            FieldStorageInner::Revalidating(root) => BorrowedRoot::Component((**root).clone()),
+            _ => return None,
+        };
+        Some(Self::from_borrowed_root(root))
+    }
+}
+
+impl<T: Component> RevalidatingSource<T> {
+    pub(crate) fn from_borrowed_component(storage: &ComponentStorage<T>) -> Option<Self> {
+        let root = match &storage.inner {
+            ComponentStorageInner::BorrowedRef(root) => BorrowedRoot::Read(root.clone()),
+            ComponentStorageInner::BorrowedMut(root) => BorrowedRoot::Write(root.share()),
+            ComponentStorageInner::Revalidating(root) => BorrowedRoot::Component((**root).clone()),
+            _ => return None,
+        };
+        Some(Self::from_borrowed_root(root))
     }
 }
 
@@ -601,6 +632,17 @@ impl<T: 'static> RevalidatingSource<T> {
         let step: Arc<dyn ErasedPathStep> = Arc::new(EnumVariantStep { name, read, write });
         let path = self.inner.path().append(step);
         RevalidatingSource::new(self.inner.append_step(path))
+    }
+
+    /// Project the `Some` payload of an `Option` field, rechecked on every access.
+    pub fn optional<Field: 'static>(
+        &self,
+        name: &'static str,
+        read: ReadField<T, Option<Field>>,
+        write: WriteField<T, Option<Field>>,
+    ) -> RevalidatingSource<Field> {
+        self.field(read, write)
+            .variant(name, Option::as_ref, Option::as_mut)
     }
 
     pub fn index<Field: 'static>(
