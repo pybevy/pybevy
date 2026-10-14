@@ -10,6 +10,7 @@ Use `Res[ButtonInput[KeyCode]]` to read keyboard state.
 from pybevy.input import ButtonInput, KeyCode
 from pybevy.prelude import *
 
+@system
 def movement_system(keyboard: Res[ButtonInput[KeyCode]], time: Res[Time]) -> None:
     dt = time.delta_secs()
     speed = 5.0
@@ -77,7 +78,9 @@ For event-driven input, including text input, use `MessageReader[KeyboardInput]`
 
 ```python
 from pybevy.input import ButtonState, Key, KeyboardInput
+from pybevy.ecs import system
 
+@system
 def key_events(reader: MessageReader[KeyboardInput]) -> None:
     for event in reader:
         if event.state == ButtonState.Pressed():
@@ -100,6 +103,7 @@ with a constructor hint; replace its `...` with any required payload arguments.
 from pybevy.input import ButtonInput, MouseButton
 from pybevy.prelude import *
 
+@system
 def click_system(mouse: Res[ButtonInput[MouseButton]]) -> None:
     # Note the parens: MouseButton.Left() not MouseButton.Left
     if mouse.just_pressed(MouseButton.Left()):
@@ -114,7 +118,9 @@ def click_system(mouse: Res[ButtonInput[MouseButton]]) -> None:
 
 ```python
 from pybevy.input import AccumulatedMouseMotion
+from pybevy.ecs import system
 
+@system
 def camera_look(motion: Res[AccumulatedMouseMotion]) -> None:
     if motion.delta.x != 0.0 or motion.delta.y != 0.0:
         yaw = -motion.delta.x * 0.003
@@ -126,7 +132,9 @@ def camera_look(motion: Res[AccumulatedMouseMotion]) -> None:
 
 ```python
 from pybevy.input import MouseWheel
+from pybevy.ecs import system
 
+@system
 def scroll_system(scroll: MessageReader[MouseWheel]) -> None:
     for event in scroll:
         if event.y != 0.0:
@@ -156,7 +164,9 @@ Payload reads are independent copies, not mutable views into the message.
 
 ```python
 from pybevy.input import Gamepad, GamepadButton, GamepadAxis
+from pybevy.ecs import system
 
+@system
 def gamepad_system(query: Query[Gamepad]) -> None:
     for gamepad in query:
         if gamepad.just_pressed(GamepadButton.South()):  # A / Cross
@@ -189,9 +199,10 @@ A message written during `Update` reaches `ButtonInput` on the next frame, and
 releasing a key needs a matching `ButtonState.Released()` message.
 
 ```python
-from pybevy.ecs import MessageWriter
+from pybevy.ecs import MessageWriter, system
 from pybevy.input import ButtonState, Key, KeyboardInput, KeyCode
 
+@system
 def simulate_jump(writer: MessageWriter[KeyboardInput]) -> None:
     writer.write(
         KeyboardInput(

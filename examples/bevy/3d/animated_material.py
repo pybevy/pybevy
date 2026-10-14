@@ -9,6 +9,7 @@ colors that continuously shift through the color spectrum.
 from pybevy.prelude import *
 
 
+@system
 def setup(
     commands: Commands,
     asset_server: Res[AssetServer],
@@ -47,6 +48,7 @@ def setup(
             hue = (hue + GOLDEN_ANGLE) % 360.0
 
 
+@system
 def animate_materials(
     material_handles: Query[MeshMaterial3d],
     time: Res[Time],

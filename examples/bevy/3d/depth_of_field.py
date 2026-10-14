@@ -64,6 +64,7 @@ class AppSettings(Resource):
         )
 
 
+@system
 def setup(commands: Commands, asset_server: Res[AssetServer], app_settings: Res[AppSettings]) -> None:
     # HDR bloom highlights the depth of field effect.
     camera = commands.spawn(
@@ -88,6 +89,7 @@ def setup(commands: Commands, asset_server: Res[AssetServer], app_settings: Res[
     )
 
 
+@system
 def adjust_focus(input: Res[ButtonInput[KeyCode]], app_settings: ResMut[AppSettings]) -> None:
     distance_delta = 0.0
     if input.pressed(KeyCode.ArrowDown):
@@ -105,6 +107,7 @@ def adjust_focus(input: Res[ButtonInput[KeyCode]], app_settings: ResMut[AppSetti
     app_settings.aperture_f_stops = max(app_settings.aperture_f_stops + f_stop_delta, MIN_APERTURE_F_STOPS)
 
 
+@system
 def change_mode(input: Res[ButtonInput[KeyCode]], app_settings: ResMut[AppSettings]) -> None:
     if not input.just_pressed(KeyCode.Space):
         return
@@ -116,6 +119,7 @@ def change_mode(input: Res[ButtonInput[KeyCode]], app_settings: ResMut[AppSettin
         app_settings.mode = None
 
 
+@system
 def update_dof_settings(
     commands: Commands,
     view_targets: Query[Entity, With[Camera]],
@@ -129,6 +133,7 @@ def update_dof_settings(
             commands.entity(view).insert(depth_of_field)
 
 
+@system
 def tweak_scene(
     commands: Commands,
     asset_server: Res[AssetServer],
@@ -152,6 +157,7 @@ def tweak_scene(
             commands.entity(entity).insert(Lightmap(image=asset_server.load_image(LIGHTMAP_PATH)))
 
 
+@system
 def update_text(texts: Query[Mut[Text]], app_settings: Res[AppSettings]) -> None:
     for text in texts:
         text.text = app_settings.help_text()

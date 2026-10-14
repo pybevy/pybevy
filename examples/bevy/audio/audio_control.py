@@ -25,6 +25,7 @@ class ProgressText(Component):
 
 
 
+@system
 def setup(commands: Commands, asset_server: Res[AssetServer]) -> None:
     """Set up the audio player and UI."""
     # Load and play music
@@ -52,6 +53,7 @@ def setup(commands: Commands, asset_server: Res[AssetServer]) -> None:
     commands.spawn(Camera2d())
 
 
+@system
 def update_progress_text(
     music_controller: Single[AudioSink, With[MyMusic]],
     progress_text: Query[Mut[Text2d], With[ProgressText]],
@@ -63,6 +65,7 @@ def update_progress_text(
         text.text = f"Progress: {position:.1f}s"
 
 
+@system
 def update_speed(
     music_controller: Query[AudioSink, With[MyMusic]], time: Res[Time]
 ) -> None:
@@ -74,6 +77,7 @@ def update_speed(
             sink.set_speed(speed)  # type: ignore[union-attr]
 
 
+@system
 def pause(
     keyboard_input: Res[ButtonInput[KeyCode]],
     music_controller: Query[AudioSink, With[MyMusic]],
@@ -87,6 +91,7 @@ def pause(
                 sink.pause()  # type: ignore[union-attr]
 
 
+@system
 def mute(
     keyboard_input: Res[ButtonInput[KeyCode]],
     music_controller: Query[AudioSink, With[MyMusic]],
@@ -100,6 +105,7 @@ def mute(
                 sink.mute()  # type: ignore[union-attr]
 
 
+@system
 def volume(
     keyboard_input: Res[ButtonInput[KeyCode]],
     music_controller: Query[AudioSink, With[MyMusic]],

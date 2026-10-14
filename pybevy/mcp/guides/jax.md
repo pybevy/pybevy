@@ -48,6 +48,7 @@ def my_kernel(pos, speed, t, dt):
     return new_x, new_y, pos.z
 
 # 2. System extracts ViewColumns, passes to kernel, writes back
+@system
 def my_system(
     view: View[tuple[Mut[Transform], MyComponent], With[Marker]],
     time: Res[Time],
@@ -191,6 +192,7 @@ def nbody_step(pos, mass, dt):
 
     return pos.x + ax, pos.y + ay, pos.z + az
 
+@system
 def gravity_system(
     view: View[tuple[Mut[Transform], Mass], With[Body]],
     time: Res[Time],

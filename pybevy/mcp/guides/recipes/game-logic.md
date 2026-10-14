@@ -67,6 +67,7 @@ class Prey(Component):
 Smoothly interpolates Transform between grid cells with a hop bounce:
 
 ```python
+@system
 def move_entities(
     query: Query[tuple[Mut[Transform], Mut[GridMover]]],
     time: Res[Time],
@@ -143,6 +144,7 @@ A chaser needs to read prey positions, but both share `GridMover`. You **cannot*
 
 ```python
 # ✅ Without filters → zero-cost, no extra systems
+@system
 def chaser_ai(
     chasers: Query[Mut[GridMover], tuple[With[Chaser], Without[Prey]]],
     prey: Query[GridMover, tuple[With[Prey], Without[Chaser]]],
@@ -156,6 +158,7 @@ def chaser_ai(
 
 ```python
 from dataclasses import dataclass
+from pybevy.ecs import system
 
 @resource
 @dataclass
@@ -170,6 +173,7 @@ class GameState(Resource):
     p1z: int = 0
 
 # System 1: Sync all positions into resource (two IMMUTABLE queries - OK)
+@system
 def sync_positions(
     chaser_q: Query[GridMover, With[Chaser]],
     prey_q: Query[GridMover, With[Prey]],
@@ -189,6 +193,7 @@ def sync_positions(
         state.p1z = positions[1][1]
 
 # System 2: Chaser AI - BFS toward nearest prey
+@system
 def chaser_ai(
     query: Query[Mut[GridMover], With[Chaser]],
     state: Res[GameState],
@@ -214,6 +219,7 @@ def chaser_ai(
         mover.progress = 0.0
 
 # System 3: Prey AI - flee when close, wander otherwise
+@system
 def prey_ai(
     query: Query[Mut[GridMover], With[Prey]],
     state: Res[GameState],
@@ -245,6 +251,7 @@ def prey_ai(
 Check if two entities occupy the same cell. Teleport the caught entity to a random distant cell:
 
 ```python
+@system
 def check_catch(
     query: Query[tuple[Mut[Transform], Mut[GridMover]], With[Prey]],
     state: ResMut[GameState],

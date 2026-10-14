@@ -25,12 +25,13 @@ borrow is valid:
 ```python
 from copy import copy
 
-from pybevy.ecs import Query
+from pybevy.ecs import Query, system
 from pybevy.math import Vec3
 from pybevy.transform import Transform
 
 previous_positions: list[Vec3] = []
 
+@system
 def remember_positions(query: Query[Transform]) -> None:
     for transform in query:
         previous_positions.append(copy(transform.translation))
@@ -80,6 +81,7 @@ you can inspect nested values directly without parsing Python `repr` strings.
 For high-performance batch operations on many entities (10k+), use View instead of Query:
 
 ```python
+@system
 def batch_update(view: View[Mut[Transform], With[Marker]]) -> None:
     pos = view.column_mut(Transform)
     pos.translation.y = expr.sin(time_val) * 10.0  # Updates ALL matching entities at once
@@ -101,6 +103,7 @@ Numba kernel. `set()`, `peek()`, `to_list()`, and indexing work for every dtype.
 Entity IDs are available via `batch.entities()` when using `iter_batches()`:
 
 ```python
+@system
 def batch_with_entities(view: View[tuple[Entity, Mut[Transform]]], commands: Commands) -> None:
     for batch in view.iter_batches():
         entities = batch.entities()  # list[Entity] in same order as column data
@@ -123,12 +126,14 @@ pure column math. Measure the actual workload; see `guide://performance`.
 Resources live on entities (bevy 0.19), so a bare `Query[Entity]` also matches them. Use `Without[IsResource]` when an operation applies to every ordinary entity, or scope the query with a domain component:
 
 ```python
-from pybevy.ecs import IsResource
+from pybevy.ecs import IsResource, system
 
+@system
 def cleanup_all(commands: Commands, query: Query[Entity, Without[IsResource]]) -> None:
     for entity in query:
         commands.entity(entity).despawn()
 
+@system
 def cleanup_enemies(commands: Commands, query: Query[Entity, With[Enemy]]) -> None:
     for e in query:
         commands.entity(e).despawn()
@@ -142,6 +147,7 @@ constructed or inserted from Python.
 Native resource wrappers can also be queried on that entity:
 
 ```python
+@system
 def inspect_time(query: Query[tuple[Entity, Time]]) -> None:
     for resource_entity, time in query:
         print(resource_entity, time.elapsed_secs())
@@ -194,15 +200,17 @@ attribute access or assignment on the holder raises `AttributeError`.
 
 <!-- pybevy-snippet: typecheck -->
 ```python
-from pybevy.ecs import Entity, Mut, Single
+from pybevy.ecs import Entity, Mut, Single, system
 from pybevy.transform import Transform
 
 
+@system
 def move(row: Single[tuple[Entity, Mut[Transform]]]) -> None:
     _entity, transform = row.into_inner()
     transform.translation.x += 1.0
 
 
+@system
 def move_one(row: Single[Mut[Transform]]) -> None:
     transform = row.into_inner()
     transform.translation.x += 1.0

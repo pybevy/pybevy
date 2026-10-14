@@ -22,12 +22,12 @@ pub use batch_bridge::{
     PreparedNativeUniformWith, PreparedUniformComponent, PreparedUniformFn,
 };
 pub use batchable_field::{
-    BatchFieldMeta, BatchableField, batch_field_meta_for, check_batch_field, field_type_of,
-    set_field_from_numpy,
+    BatchFieldMeta, BatchableField, batch_field_meta_for, batch_integer_column_of,
+    check_batch_field, field_type_of, set_field_from_numpy,
 };
 pub use component_bridge::{ComponentBridge, ExtractFn};
 pub use global_registry::{ComponentBatchInsertFn, ComponentBatchMeta, ComponentBatchPrepareFn};
 pub use message_bridge::MessageBridge;
 pub use registries::PluginConfigs;
 pub use resource_bridge::ResourceBridge;
-pub use rust_batch::{PyRustComponentBatch, portable_f32_batch_column};
+pub use rust_batch::{PyRustComponentBatch, check_integer_batch_column, portable_f32_batch_column};

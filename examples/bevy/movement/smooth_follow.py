@@ -59,6 +59,7 @@ class FollowingSphere(Component):
     pass
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -106,6 +107,7 @@ def setup(
     commands.insert_resource(TargetCurrentPosition(Vec3.ZERO))
 
 
+@system
 def move_target(
     target_query: Query[Mut[Transform], With[TargetSphere]],
     target_speed: Res[TargetSphereSpeed],
@@ -143,6 +145,7 @@ def move_target(
         current_pos.position = Vec3(target.translation.x, target.translation.y, target.translation.z)
 
 
+@system
 def move_follower(
     following_query: Query[Mut[Transform], With[FollowingSphere]],
     target_current: Res[TargetCurrentPosition],

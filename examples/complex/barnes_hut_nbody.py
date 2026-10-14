@@ -146,6 +146,7 @@ def sample_plummer_sphere(
     return particles
 
 
+@system
 def setup_simulation(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -556,6 +557,7 @@ def velocity_kick(
         vel_z[i] += accel_z[i] * dt * 0.5
 
 
+@system
 def physics_system(
     query: Query[tuple[Mut[Particle], Mut[Transform]], With[SimMarker]],
     sim_state: ResMut[SimulationState],

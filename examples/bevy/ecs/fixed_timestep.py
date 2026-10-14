@@ -9,6 +9,7 @@ from pybevy.prelude import *
 from pybevy.time import Fixed, Time
 
 
+@system
 def frame_update(last_time: Local[float], time: Res[Time]) -> None:
     """Run once per frame (matches your screen's refresh rate).
 
@@ -25,6 +26,7 @@ def frame_update(last_time: Local[float], time: Res[Time]) -> None:
     last_time.current = time.elapsed_secs()
 
 
+@system
 def fixed_update(
     last_time: Local[float],
     time: Res[Time],

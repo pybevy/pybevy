@@ -48,6 +48,7 @@ class Energy(Component):
     value: float = 1.0
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -97,6 +98,7 @@ def setup(
 
 
 # Syntax 1: Query iteration - simple syntax suitable for small number of entities (<1000)
+@system
 def update_query_cube(
     time: Res[Time], query: Query[Mut[Transform], With[QueryCube]]
 ) -> None:
@@ -105,6 +107,7 @@ def update_query_cube(
 
 
 # Syntax 2: View column API - very fast vectorized access for larger numbers of entities - no complex logic
+@system
 def update_view_cube(time: Res[Time], view: View[Mut[Transform], With[ViewCube]]) -> None:
     t = time.elapsed_secs()
 
@@ -120,6 +123,7 @@ def fast_transform(translation, time: float) -> None:
 
 
 # Syntax 3: View + Numba JIT - compiled zero-copy access for maximum performance, complex logic, large numbers of entities
+@system
 def update_jit_cube(time: Res[Time], view: View[Mut[Transform], With[JitCube]]) -> None:
     t = time.elapsed_secs()
 
@@ -128,6 +132,7 @@ def update_jit_cube(time: Res[Time], view: View[Mut[Transform], With[JitCube]]) 
         fast_transform(transform.translation, t)
 
 
+@system
 def update_cross_cube(
     time: Res[Time],
     view: View[tuple[Mut[Transform], Mut[PointLight], Energy], With[CrossCube]],

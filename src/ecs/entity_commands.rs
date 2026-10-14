@@ -15,7 +15,10 @@ use super::{
     helpers::validity_guard::ValidityFlag,
     world_commands::{ErrorBoundary, WorldCommand},
 };
-use crate::ecs::observer_registry::ObserverRegistry;
+use crate::ecs::{
+    decorated_callable::{CallableKind, unwrap_decorated},
+    observer_registry::ObserverRegistry,
+};
 
 /// Represents a handle to perform deferred operations on an entity.
 /// Operations are queued and applied later when the Commands are flushed.
@@ -268,12 +271,14 @@ impl PyEntityCommands {
     ///
     /// # Example
     /// ```python
+    /// @observer
     /// def on_damage(trigger: On[TakeDamage]) -> None:
     ///     print(f"Entity {trigger.entity()} took damage")
     ///
     /// commands.spawn(Player()).observe(on_damage)
     /// ```
     pub fn observe(&self, py: Python, observer: Bound<'_, PyAny>) -> PyResult<PyEntityCommands> {
+        let observer = unwrap_decorated(&observer, CallableKind::Observer, "observe()")?;
         self.error_boundary()?.run(|| {
             if let Some(commands) = self.get_commands()?
                 && commands.is_world_queue()

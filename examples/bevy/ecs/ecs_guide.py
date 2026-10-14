@@ -144,11 +144,13 @@ class PlayerData(Resource):
 # time the app updates.
 
 
+@system
 def print_message_system() -> None:
     """Simplest type of system - just prints a message on each run."""
     print("This game is fun!")
 
 
+@system
 def new_round_system(game_rules: Res[GameRules], game_state: ResMut[GameState]) -> None:
     """System that reads and modifies resources.
 
@@ -159,6 +161,7 @@ def new_round_system(game_rules: Res[GameRules], game_state: ResMut[GameState]) 
     print(f"Begin round {game_state.current_round} of {game_rules.max_rounds}")
 
 
+@system
 def score_system(
     query: Query[Entity, With[Player]],
     player_data: ResMut[PlayerData]
@@ -201,6 +204,7 @@ def score_system(
     # this game isn't very fun is it :)
 
 
+@system
 def score_check_system(
     game_rules: Res[GameRules],
     game_state: ResMut[GameState],
@@ -221,6 +225,7 @@ def score_check_system(
             game_state.winning_player = player.name
 
 
+@system
 def game_over_system(
     game_rules: Res[GameRules],
     game_state: Res[GameState],
@@ -239,6 +244,7 @@ def game_over_system(
         app_exit_writer.write(AppExit.Success())
 
 
+@system
 def startup_system(
     commands: Commands,
     game_state: ResMut[GameState],
@@ -267,6 +273,7 @@ def startup_system(
     game_state.total_players = 2
 
 
+@system
 def new_player_system(
     commands: Commands,
     game_rules: Res[GameRules],
@@ -291,6 +298,7 @@ def new_player_system(
         print(f"Player {game_state.total_players} joined the game!")
 
 
+@system
 def print_at_end_round(counter: Local[Counter]) -> None:
     """System demonstrating Local<T> for per-system state.
 

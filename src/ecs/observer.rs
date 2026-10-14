@@ -91,11 +91,13 @@ pub struct PyDespawn;
 /// from pybevy.ecs import On, Event
 ///
 /// # Simple observer (no bundle filter)
+/// @observer
 /// def on_player_died(trigger: On[PlayerDied]) -> None:
 ///     event = trigger.event()
 ///     print(f"Player died: {event.player_id}")
 ///
 /// # With bundle filter - only triggers for entities with Mine component
+/// @observer
 /// def on_explode(trigger: On[Explode, Mine]) -> None:
 ///     entity = trigger.entity()
 ///     event = trigger.event()

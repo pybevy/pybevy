@@ -15,7 +15,8 @@ use crate::ecs::query::{
 ///
 /// Example:
 /// ```python
-/// def system(player: Single[tuple[Mut[Transform], Player]]) -> None:
+/// @system
+/// def my_system(player: Single[tuple[Mut[Transform], Player]]) -> None:
 ///     transform, player_data = player[0], player[1]
 ///     transform.translation.x += 10.0
 /// ```

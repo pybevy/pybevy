@@ -58,6 +58,38 @@ pub fn view_column_float_only(operation: &str, dtype: &str) -> String {
     )
 }
 
+/// A plain function reached a scheduler entry point that requires `@decorator`.
+///
+/// `name` identifies the callable (its `__qualname__`); `short_name` is its
+/// `__name__`, used to spell the call-form fix.
+pub fn undecorated_callable(entry: &str, name: &str, short_name: &str, decorator: &str) -> String {
+    let argument = if short_name == "<lambda>" {
+        "lambda ..."
+    } else {
+        short_name
+    };
+    format!(
+        "{entry} received the plain function `{name}`; decorate it with @{decorator} (from pybevy.ecs import {decorator}) or pass {decorator}({argument})"
+    )
+}
+
+/// A callable decorated for one role reached an entry point for another.
+pub fn wrong_callable_decorator(entry: &str, name: &str, found: &str, decorator: &str) -> String {
+    format!(
+        "{entry} received `{name}`, which is decorated with @{found}; this argument must be decorated with @{decorator} (from pybevy.ecs import {decorator})"
+    )
+}
+
+/// A non-callable value reached an entry point that requires `@decorator`.
+pub fn non_callable_for_decorator(entry: &str, type_name: &str, decorator: &str) -> String {
+    format!("{entry} expected a function decorated with @{decorator}, got {type_name}")
+}
+
+/// A decorator received a value it cannot wrap.
+pub fn cannot_decorate(decorator: &str, found: &str) -> String {
+    format!("@{decorator} cannot wrap {found}")
+}
+
 pub fn callable_ordered_against_own_set(system: &str, relation: &str, target: &str) -> String {
     format!(
         "system `{system}` cannot be ordered {relation} `{target}`: callables share one ordering set per __module__ and __qualname__, so the target includes this system; use chain() or a SystemSet to order same-named lambdas or closures"

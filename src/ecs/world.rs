@@ -66,6 +66,7 @@ use crate::{
         },
         custom_batch::PyCustomComponentBatch,
         custom_component::PyCustomComponent,
+        decorated_callable::{CallableKind, unwrap_decorated},
         deferred_drop,
         dynamic_system::lock_or_recover,
         entity_commands::PyEntityCommands,
@@ -1246,6 +1247,7 @@ impl PyWorld {
         py: Python,
         observer: Bound<'_, PyAny>,
     ) -> PyResult<PyEntityCommands> {
+        let observer = unwrap_decorated(&observer, CallableKind::Observer, "add_observer()")?;
         world_commands::ErrorBoundary::new(pyself.world_ref()?).run(|| {
             pyself.check_valid()?;
             pyself.check_native_asset_access("world.add_observer()")?;
@@ -1384,6 +1386,7 @@ impl PyWorld {
     ///
     /// # Example
     /// ```python
+    /// @system
     /// def my_system(query: Query[Transform]) -> None:
     ///     for transform in query:
     ///         print(transform.translation)
@@ -1391,6 +1394,14 @@ impl PyWorld {
     /// world.run_system_once(my_system)
     /// ```
     pub fn run_system_once(&self, func: Bound<'_, PyAny>) -> PyResult<()> {
+        let func = unwrap_decorated(&func, CallableKind::System, "run_system_once()")?;
+        self.run_system_function_once(func)
+    }
+}
+
+impl PyWorld {
+    /// Run an already unwrapped system function once.
+    pub(crate) fn run_system_function_once(&self, func: Bound<'_, PyAny>) -> PyResult<()> {
         self.check_valid()?;
         let py = func.py();
 

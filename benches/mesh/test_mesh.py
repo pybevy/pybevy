@@ -4,7 +4,7 @@ from pytest_benchmark.fixture import BenchmarkFixture
 from benches._helpers import initialize
 from pybevy.app import App, MinimalPlugins, Startup, Update
 from pybevy.assets import AssetPlugin, Assets
-from pybevy.ecs import Commands, Query, ResMut
+from pybevy.ecs import Commands, Query, ResMut, system
 from pybevy.mesh import (
     Mesh,
     Mesh3d,
@@ -17,6 +17,7 @@ vertex_count = 10_000_000
 indices_count = vertex_count * 3
 
 
+@system
 def setup(meshes: ResMut[Assets[Mesh]], commands: Commands) -> None:
     mesh = (
         Mesh(PrimitiveTopology.TriangleList)
@@ -51,6 +52,7 @@ def create_app() -> App:
 
 
 def test_mesh_system_get_primitive_topology(benchmark: BenchmarkFixture) -> None:
+    @system
     def update_system(assets: Assets[Mesh], query: Query[Mesh3d]) -> None:
         for mesh_3d in query:
             mesh = assets.get(mesh_3d.handle)
@@ -64,6 +66,7 @@ def test_mesh_system_get_primitive_topology(benchmark: BenchmarkFixture) -> None
 
 
 def test_mesh_system_get_ref_vertices(benchmark: BenchmarkFixture) -> None:
+    @system
     def update_system(assets: Assets[Mesh], query: Query[Mesh3d]) -> None:
         for mesh_3d in query:
             mesh = assets.get(mesh_3d.handle)
@@ -80,6 +83,7 @@ def test_mesh_system_get_ref_vertices(benchmark: BenchmarkFixture) -> None:
 
 
 def test_mesh_system_get_mut_vertices(benchmark: BenchmarkFixture) -> None:
+    @system
     def update_system(assets: ResMut[Assets[Mesh]], query: Query[Mesh3d]) -> None:
         mesh_3d = query.single()
         assert mesh_3d is not None

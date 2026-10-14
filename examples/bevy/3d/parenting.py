@@ -17,6 +17,7 @@ class Rotator(Component):
     """Component that marks entities that should rotate."""
 
 
+@system
 def rotator_system(
     time: Res[Time],
     query: Query[Mut[Transform], With[Rotator]]
@@ -25,6 +26,7 @@ def rotator_system(
     for transform in query:
         transform.rotate_x(3.0 * time.delta_secs())
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],

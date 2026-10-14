@@ -5,6 +5,8 @@ use pyo3::{
     prelude::*,
 };
 
+use crate::ecs::decorated_callable::{CallableKind, strip_decorated, unwrap_decorated};
+
 const CONDITION_EXPR_ATTR: &str = "__pybevy_condition_expr__";
 const MAX_CONDITION_EXPR_DEPTH: usize = 64;
 
@@ -23,6 +25,7 @@ fn extract_condition_expr_at(
     }
 
     Python::attach(|py| {
+        let condition = strip_decorated(condition.bind(py), CallableKind::Condition)?.unbind();
         let marker = match condition.bind(py).getattr(CONDITION_EXPR_ATTR) {
             Ok(marker) => marker,
             Err(error) if error.is_instance_of::<PyAttributeError>(py) => {
@@ -110,16 +113,14 @@ impl PyConditionalSystem {
     }
 
     #[new]
-    pub fn new(system: Py<PyAny>, condition: Py<PyAny>) -> PyResult<Self> {
-        if Python::attach(|py| system.bind(py).is_instance_of::<PyConditionalSystem>()) {
+    pub fn py_new(system: &Bound<'_, PyAny>, condition: &Bound<'_, PyAny>) -> PyResult<Self> {
+        if system.is_instance_of::<PyConditionalSystem>() {
             return Err(PyTypeError::new_err(
                 "run_if() cannot wrap a ConditionalSystem; use .and_(condition)",
             ));
         }
-        Ok(Self {
-            system,
-            condition: extract_condition_expr(condition)?,
-        })
+        let system = unwrap_decorated(system, CallableKind::System, "run_if()")?;
+        Self::new(system.unbind(), condition_callable(condition, "run_if()")?)
     }
 
     /// Proxy to the inner system's __name__ for introspection paths.
@@ -131,7 +132,8 @@ impl PyConditionalSystem {
     /// Combine this condition with another using AND logic
     /// Both conditions must return true for the system to run
     /// Usage: run_if(system, condition1).and_(condition2)
-    pub fn and_(&self, condition: Py<PyAny>) -> PyResult<Self> {
+    pub fn and_(&self, condition: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let condition = condition_callable(condition, "and_()")?;
         Python::attach(|py| {
             Ok(Self {
                 system: self.system.clone_ref(py),
@@ -149,7 +151,8 @@ impl PyConditionalSystem {
     /// Combine this condition with another using OR logic
     /// Either condition must return true for the system to run
     /// Usage: run_if(system, condition1).or_(condition2)
-    pub fn or_(&self, condition: Py<PyAny>) -> PyResult<Self> {
+    pub fn or_(&self, condition: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let condition = condition_callable(condition, "or_()")?;
         Python::attach(|py| {
             Ok(Self {
                 system: self.system.clone_ref(py),
@@ -180,9 +183,26 @@ impl PyConditionalSystem {
     }
 }
 
+impl PyConditionalSystem {
+    /// A conditional system over an already unwrapped system and condition.
+    pub(crate) fn new(system: Py<PyAny>, condition: Py<PyAny>) -> PyResult<Self> {
+        Ok(Self {
+            system,
+            condition: extract_condition_expr(condition)?,
+        })
+    }
+}
+
+fn condition_callable(condition: &Bound<'_, PyAny>, entry: &str) -> PyResult<Py<PyAny>> {
+    Ok(unwrap_decorated(condition, CallableKind::Condition, entry)?.unbind())
+}
+
 /// Helper function to create a conditional system
 /// Usage: run_if(system_func, condition_func)
 #[pyfunction]
-pub fn run_if(system: Py<PyAny>, condition: Py<PyAny>) -> PyResult<PyConditionalSystem> {
-    PyConditionalSystem::new(system, condition)
+pub fn run_if(
+    system: &Bound<'_, PyAny>,
+    condition: &Bound<'_, PyAny>,
+) -> PyResult<PyConditionalSystem> {
+    PyConditionalSystem::py_new(system, condition)
 }

@@ -4,7 +4,7 @@ from datetime import timedelta
 
 import pytest
 
-from pybevy.ecs import Commands, Component, Mut, Query
+from pybevy.ecs import Commands, Component, Mut, Query, system
 from pybevy.prelude import App, MinimalPlugins
 from pybevy.text import EditableText
 
@@ -71,10 +71,12 @@ def test_max_characters_clearable() -> None:
 def test_spawn_and_query() -> None:
     results: list[int] = []
 
+    @system
     def setup(commands: Commands) -> None:
         commands.spawn(EditableText("one"))
         commands.spawn(EditableText("two", max_characters=5))
 
+    @system
     def query_system(query: Query[EditableText]) -> None:
         results.append(sum(1 for _ in query))
 
@@ -86,13 +88,16 @@ def test_spawn_and_query() -> None:
 def test_mutation_persists() -> None:
     results: list[bool] = []
 
+    @system
     def setup(commands: Commands) -> None:
         commands.spawn(EditableText("hi", allow_newlines=False))
 
+    @system
     def mutate(query: Query[Mut[EditableText]]) -> None:
         for et in query:
             et.allow_newlines = True
 
+    @system
     def verify(query: Query[EditableText]) -> None:
         for et in query:
             results.append(et.allow_newlines)

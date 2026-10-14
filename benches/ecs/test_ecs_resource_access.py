@@ -7,7 +7,7 @@ of zero-copy optimization.
 from pybevy.app import App, Update
 from pybevy.audio import GlobalVolume, Volume
 from pybevy.color import Color
-from pybevy.ecs import Res
+from pybevy.ecs import Res, system
 from pybevy.pbr import WireframeConfig
 from pybevy.time import Time
 
@@ -29,7 +29,7 @@ def test_time_access_many_systems(benchmark):
                     _ = time.elapsed()
                 return system
 
-            app.add_systems(Update, make_system(i))
+            app.add_systems(Update, system(make_system(i)))
 
         return app
 
@@ -54,7 +54,7 @@ def test_wireframe_config_access_many_systems(benchmark):
                     _ = config.default_color
                 return system
 
-            app.add_systems(Update, make_system(i))
+            app.add_systems(Update, system(make_system(i)))
 
         return app
 
@@ -75,7 +75,7 @@ def test_global_volume_access_many_systems(benchmark):
                     _ = volume.volume.to_linear()
                 return system
 
-            app.add_systems(Update, make_system(i))
+            app.add_systems(Update, system(make_system(i)))
 
         return app
 
@@ -88,7 +88,8 @@ def test_multiple_resources_single_system(benchmark):
 
     results = []
 
-    def system(
+    @system
+    def read_resources(
         time: Res[Time],
         wireframe: Res[WireframeConfig],
         volume: Res[GlobalVolume],
@@ -103,11 +104,10 @@ def test_multiple_resources_single_system(benchmark):
     app.insert_resource(Time())
     app.insert_resource(WireframeConfig(global_=True))
     app.insert_resource(GlobalVolume(volume=Volume.Linear(0.5)))
-    app.add_systems(Update, system)
+    app.add_systems(Update, read_resources)
     app.update()
 
     benchmark(app.update)
 
     # Verify system ran
     assert len(results) > 0
-

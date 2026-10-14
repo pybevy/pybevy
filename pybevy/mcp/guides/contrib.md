@@ -21,6 +21,7 @@ def main(app: App) -> App:
         .add_systems(Startup, setup)
     )
 
+@system
 def setup(commands: Commands) -> None:
     commands.spawn(
         Camera3d(),
@@ -91,6 +92,7 @@ def main(app: App) -> App:
         .add_systems(Startup, setup)
     )
 
+@system
 def setup(commands: Commands) -> None:
     commands.spawn(
         Camera3d(),

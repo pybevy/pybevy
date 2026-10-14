@@ -22,6 +22,7 @@ class Cube(Component):
 
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -56,12 +57,14 @@ def setup(
     )
 
 
+@system
 def rotate_cube(query: Query[Mut[Transform], With[Cube]], time: Res[Time]) -> None:
     """Rotate the cube each frame. Change ROTATION_SPEED and reload!"""
     for transform in query:
         transform.rotation *= Quat.from_rotation_y(time.delta_secs() * ROTATION_SPEED)
 
 
+@system
 def apply_damage(query: Query[Mut[Health]], time: Res[Time]) -> None:
     """Python mutates the Rust-defined Health component every frame.
 

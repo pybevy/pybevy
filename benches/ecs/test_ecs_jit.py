@@ -18,7 +18,7 @@ except ImportError:
 from benches._helpers import initialize
 from pybevy.app import App, Last, ScheduleRunnerPlugin, Startup, Update
 from pybevy.decorators import component
-from pybevy.ecs import Commands, Component, Mut, Query, View, With
+from pybevy.ecs import Commands, Component, Mut, Query, View, With, system
 from pybevy.transform import Transform
 
 
@@ -54,9 +54,11 @@ ENTITY_COUNTS = [100, 1000, 10000]
 def test_simple_query(benchmark: BenchmarkFixture, entity_count: int) -> None:
     """Benchmark Query simple operation (x = x * 2 + 5)."""
 
+    @system
     def spawn(commands: Commands) -> None:
         _spawn_entities(commands, entity_count)
 
+    @system
     def bench_query(query: Query[tuple[Mut[Transform], Marker]]) -> None:
         for t, _ in query:
             t.translation.x = t.translation.x * 2.0 + 5.0
@@ -75,9 +77,11 @@ def test_simple_query(benchmark: BenchmarkFixture, entity_count: int) -> None:
 def test_simple_view(benchmark: BenchmarkFixture, entity_count: int) -> None:
     """Benchmark View simple operation (x = x * 2 + 5)."""
 
+    @system
     def spawn(commands: Commands) -> None:
         _spawn_entities(commands, entity_count)
 
+    @system
     def bench_view(view: View[Mut[Transform], With[Marker]]) -> None:
         transform = view.column_mut(Transform)
         transform.translation.x = transform.translation.x * 2.0 + 5.0
@@ -96,11 +100,13 @@ def test_simple_view(benchmark: BenchmarkFixture, entity_count: int) -> None:
 def test_multi_field_query(benchmark: BenchmarkFixture, entity_count: int) -> None:
     """Benchmark Query multi-field operation (x, y, z *= 0.99)."""
 
+    @system
     def spawn(commands: Commands) -> None:
         for i in range(entity_count):
             x = float(i % 100)
             commands.spawn(Transform.from_xyz(x, x * 0.5, x * 0.3), Marker())
 
+    @system
     def bench_query(query: Query[tuple[Mut[Transform], Marker]]) -> None:
         for t, _ in query:
             t.translation.x = t.translation.x * 0.99
@@ -121,11 +127,13 @@ def test_multi_field_query(benchmark: BenchmarkFixture, entity_count: int) -> No
 def test_multi_field_view(benchmark: BenchmarkFixture, entity_count: int) -> None:
     """Benchmark View multi-field operation (x, y, z *= 0.99)."""
 
+    @system
     def spawn(commands: Commands) -> None:
         for i in range(entity_count):
             x = float(i % 100)
             commands.spawn(Transform.from_xyz(x, x * 0.5, x * 0.3), Marker())
 
+    @system
     def bench_view(view: View[Mut[Transform], With[Marker]]) -> None:
         transform = view.column_mut(Transform)
         transform.translation.x = transform.translation.x * 0.99
@@ -164,6 +172,7 @@ def test_jit_api_available() -> None:
         for i in range(length):
             positions[i] = positions[i] * scale
 
+    @system
     def spawn(commands: Commands) -> None:
         for i in range(10):
             commands.spawn(Transform.from_xyz(float(i), 0.0, 0.0), Marker())
@@ -171,7 +180,8 @@ def test_jit_api_available() -> None:
     jit_called = [False]
     error_caught: list[str | None] = [None]
 
-    def try_jit(view: View[Transform, Marker]) -> None:
+    @system
+    def try_jit(view: View[Transform, With[Marker]]) -> None:
         transform = view.column_mut(Transform)
         try:
             view.jit("scale_kernel", transform.translation.x, scale=2.0)  # type: ignore[attr-defined]
@@ -198,14 +208,17 @@ def test_view_correctness() -> None:
     entity_count = 100
     results = []
 
+    @system
     def spawn(commands: Commands) -> None:
         for i in range(entity_count):
             commands.spawn(Transform.from_xyz(float(i), 0.0, 0.0), Marker())
 
+    @system
     def calc_view(view: View[Mut[Transform], With[Marker]]) -> None:
         transform = view.column_mut(Transform)
         transform.translation.x = transform.translation.x * 2.0 + 5.0
 
+    @system
     def verify(query: Query[tuple[Mut[Transform], Marker]]) -> None:
         for t, _ in query:
             results.append(t.translation.x)

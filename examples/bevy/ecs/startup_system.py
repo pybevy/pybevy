@@ -11,11 +11,13 @@ Startup systems run exactly once when the app starts up, right before normal sys
 from pybevy.prelude import *
 
 
+@system
 def startup_system() -> None:
     """Startup system - runs once at app start."""
     print("startup system ran first")
 
 
+@system
 def normal_system() -> None:
     """Normal system - runs every frame."""
     print("normal system ran second")

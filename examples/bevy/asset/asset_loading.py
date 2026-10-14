@@ -11,6 +11,7 @@ Demonstrates:
 from pybevy.prelude import *
 
 
+@system
 def setup(
     commands: Commands,
     asset_server: Res[AssetServer],

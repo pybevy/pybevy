@@ -29,6 +29,7 @@ class Child(Component):
         self.name = name
 
 
+@system
 def setup(commands: Commands) -> None:
     """Set up entity hierarchy."""
     # Create a parent entity
@@ -53,6 +54,7 @@ def setup(commands: Commands) -> None:
     print(f"  Child3: {child3}")
 
 
+@system
 def print_hierarchy(
     parents: Query[tuple[Entity, Parent, Children]],
     children_query: Query[tuple[Entity, Child]],
@@ -72,6 +74,7 @@ def print_hierarchy(
                 print(f"  [{i}] Unknown entity ({child_entity})")
 
 
+@system
 def animate_parent(
     time: Res[Time],
     parents: Query[Mut[Transform], With[Parent]],

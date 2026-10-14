@@ -35,6 +35,7 @@ class Stats(Resource):
         self.total_damage = 0.0
 
 
+@system
 def setup(commands: Commands) -> None:
     commands.spawn(Health(100.0), Poison(10.0), Name("Warrior"))
     commands.spawn(Health(200.0), Poison(20.0), Shield(), Name("Tank"))
@@ -42,6 +43,7 @@ def setup(commands: Commands) -> None:
     print("[setup] Spawned 3 entities", flush=True)
 
 
+@system
 def apply_poison(
     query: Query[tuple[Mut[Health], Poison, Name], Without[Shield]],
     messages: MessageWriter[DamageMessage],
@@ -51,6 +53,7 @@ def apply_poison(
         messages.write(DamageMessage(str(name), poison.dps))
 
 
+@system
 def apply_shielded_poison(
     query: Query[tuple[Mut[Health], Poison, Name], With[Shield]],
     messages: MessageWriter[DamageMessage],
@@ -61,6 +64,7 @@ def apply_shielded_poison(
         messages.write(DamageMessage(str(name), damage))
 
 
+@system
 def track_and_report(
     messages: MessageReader[DamageMessage],
     query: Query[tuple[Health, Name]],

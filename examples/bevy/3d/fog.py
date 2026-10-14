@@ -18,6 +18,7 @@ class FogSettings(Resource):
         self.density = 0.05  # For exponential mode
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -84,6 +85,7 @@ def setup(
     commands.insert_resource(FogSettings())
 
 
+@system
 def toggle_fog_mode(
     keyboard: Res[ButtonInput[KeyCode]],
     fog_query: Query[Mut[DistanceFog]],

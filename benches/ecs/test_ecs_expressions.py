@@ -14,7 +14,7 @@ from pytest_benchmark.fixture import BenchmarkFixture
 from benches._helpers import initialize
 from pybevy.app import ScheduleRunnerPlugin
 from pybevy.decorators import component
-from pybevy.ecs import Commands, Component, Mut, Query, View
+from pybevy.ecs import Commands, Component, Mut, Query, View, system
 from pybevy.expr import where
 from pybevy.prelude import *
 from pybevy.transform import Transform
@@ -35,9 +35,11 @@ def _setup_reduce_view(operation: str, entity_count: int) -> App:
     """Setup app for View reduction benchmark. Returns app ready for benchmark."""
     result = {}
 
+    @system
     def setup(commands: Commands) -> None:
         _spawn_entities(commands, entity_count)
 
+    @system
     def reduce_system(view: View[Transform, With[Marker]]) -> None:
         transform = view.column(Transform)
         x = transform.translation.x
@@ -64,9 +66,11 @@ def _setup_reduce_query(operation: str, entity_count: int) -> App:
     """Setup app for Query reduction benchmark. Returns app ready for benchmark."""
     result = {}
 
+    @system
     def setup(commands: Commands) -> None:
         _spawn_entities(commands, entity_count)
 
+    @system
     def query_system(query: Query[tuple[Transform, Marker]]) -> None:
         if operation == "sum":
             total = 0.0
@@ -105,8 +109,8 @@ def _bench_comparison_operator(operator_fn, setup_fn) -> App:
     """Helper to benchmark comparison operators."""
     app = App()
     app.add_plugins(ScheduleRunnerPlugin.run_once())
-    app.add_systems(Startup, setup_fn)
-    app.add_systems(Update, operator_fn)
+    app.add_systems(Startup, system(setup_fn))
+    app.add_systems(Update, system(operator_fn))
     initialize(app)
     app.update()
     return app
@@ -473,11 +477,13 @@ def test_conditional_view_100000(benchmark: BenchmarkFixture) -> None:
 def test_conditional_query_100000(benchmark: BenchmarkFixture) -> None:
     """Benchmark Query with Python if/else (100k entities)."""
 
+    @system
     def setup(commands: Commands) -> None:
         for i in range(NUM_ENTITIES):
             x = float(i % 200 - 100)
             commands.spawn(Transform.from_xyz(x, 0.0, 0.0))
 
+    @system
     def query_conditional(query: Query[Mut[Transform]]) -> None:
         for transform in query:
             x = transform.translation.x

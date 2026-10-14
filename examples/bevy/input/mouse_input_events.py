@@ -13,6 +13,7 @@ from pybevy.input import MouseButtonInput, MouseMotion, MouseWheel
 from pybevy.prelude import *
 
 
+@system
 def print_mouse_events_system(
     mouse_button_input_reader: MessageReader[MouseButtonInput],
     mouse_motion_reader: MessageReader[MouseMotion],

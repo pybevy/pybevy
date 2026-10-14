@@ -12,6 +12,7 @@ from pybevy.prelude import *
 from pybevy.sprite import AlphaMode2d
 
 
+@system
 def setup(
     commands: Commands,
     asset_server: Res[AssetServer],

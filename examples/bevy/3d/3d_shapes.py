@@ -15,6 +15,7 @@ SHAPES_X_EXTENT = 10.0
 Z_EXTENT = 5.0
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -76,6 +77,7 @@ def setup(
     )
 
 
+@system
 def rotate(query: Query[Mut[Transform], With[Shape]], time: Res[Time]):
     """Rotate all shapes"""
     for transform in query:

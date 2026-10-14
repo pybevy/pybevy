@@ -94,7 +94,7 @@ def install_system_set_api(native: _NativeEcsModule) -> None:
         "return": "SystemSetConfig",
     }
     SystemSetEnum.run_if.__annotations__ = {
-        "condition": "Callable[..., object]",
+        "condition": "ConditionFn",
         "return": "SystemSetConfig",
     }
     system_set.__module__ = native.__name__

@@ -6,7 +6,7 @@ from pytest_benchmark.fixture import BenchmarkFixture
 from benches._helpers import initialize
 from pybevy.app import App, ScheduleRunnerPlugin, Startup
 from pybevy.decorators import component
-from pybevy.ecs import Commands, Component, World
+from pybevy.ecs import Commands, Component, World, system
 from pybevy.transform import Transform
 
 
@@ -19,6 +19,7 @@ def _bench_batch_spawn(entity_count: int) -> None:
     """Helper to benchmark batch spawn."""
     positions = np.random.rand(entity_count, 3).astype(np.float32) * 100
 
+    @system
     def setup_batch(world: World) -> None:
         batch = Transform.batch(translation=positions)
         world.commands().spawn_batch(batch, Marker())
@@ -34,6 +35,7 @@ def _bench_normal_spawn(entity_count: int) -> None:
     """Helper to benchmark normal spawn."""
     positions = np.random.rand(entity_count, 3).astype(np.float32) * 100
 
+    @system
     def setup_normal(commands: Commands) -> None:
         for i in range(entity_count):
             x, y, z = positions[i]
@@ -52,6 +54,7 @@ def _bench_batch_scaling(entity_count: int) -> None:
     rotations = np.zeros((entity_count, 4), dtype=np.float32)
     rotations[:, 3] = 1.0
 
+    @system
     def setup(world: World) -> None:
         batch = Transform.batch(translation=positions, rotation=rotations)
         world.commands().spawn_batch(batch, Marker())
@@ -128,6 +131,7 @@ def test_batch_spawn_with_full_transform_data(benchmark: BenchmarkFixture) -> No
     rotations = rotations / norms
     scales = np.ones((count, 3), dtype=np.float32)
 
+    @system
     def setup(world: World) -> None:
         batch = Transform.batch(
             translation=positions, rotation=rotations, scale=scales
@@ -150,6 +154,7 @@ def test_batch_spawn_positions_only(benchmark: BenchmarkFixture) -> None:
     count = 100_000
     positions = np.random.rand(count, 3).astype(np.float32) * 100
 
+    @system
     def setup(world: World) -> None:
         batch = Transform.batch(translation=positions)
         world.commands().spawn_batch(batch, Marker())

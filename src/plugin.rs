@@ -75,7 +75,10 @@ use crate::{
             systems::{check_hot_reload_system, handle_f5_reload_system},
         },
     },
-    ecs::system_interpreter::{MainDynamicSystem as DynamicSystem, new_main_system},
+    ecs::{
+        decorated_callable::{CallableKind, unwrap_decorated},
+        system_interpreter::{MainDynamicSystem as DynamicSystem, new_main_system},
+    },
 };
 
 /// Global flag to ensure Python is initialized only once
@@ -216,6 +219,8 @@ impl PySystemBuilder {
             let func = module
                 .getattr(&self.function_name)
                 .map_err(|_| SystemLoadError::MissingFunction)?;
+            let func = unwrap_decorated(&func, CallableKind::System, "PyBevyPlugin::with_system()")
+                .map_err(SystemLoadError::Failed)?;
 
             // Create DynamicSystem
             let system_stage = if self.stage.is_startup() {

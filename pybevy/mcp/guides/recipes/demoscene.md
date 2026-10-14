@@ -137,6 +137,7 @@ def main(app: App) -> App:
     )
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -211,6 +212,7 @@ def setup(
                    Transform.from_xyz(0.0, -wt/2.0, 0.0))
 
 
+@system
 def animate_blocks(
     query: Query[tuple[Mut[Transform], Mut[TetrisBlock]]],
     time: Res[Time],
@@ -276,6 +278,7 @@ def animate_blocks(
             transform.translation.z = z
 
 
+@system
 def animate_camera(
     query: Query[Mut[Transform], With[Camera3d]],
     time: Res[Time],

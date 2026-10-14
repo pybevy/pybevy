@@ -8,6 +8,7 @@ Reuse mesh/material handles to avoid rebuilding and uploading duplicates.
 
 ```python
 # ❌ BAD - rebuilds and re-uploads the same asset every frame
+@system
 def spawn_effect(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -24,6 +25,7 @@ Pre-create handles in Startup and store them in a resource:
 
 ```python
 from dataclasses import dataclass
+from pybevy.ecs import system
 
 @resource
 @dataclass
@@ -33,6 +35,7 @@ class VfxAssets(Resource):
     burst_mesh: Handle[Mesh]
     burst_mat: Handle[StandardMaterial]
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -51,6 +54,7 @@ def setup(
     commands.insert_resource(VfxAssets(bolt_mesh, bolt_mat, burst_mesh, burst_mat))
 
 # ✅ GOOD - reuses cached handles, zero asset growth
+@system
 def spawn_effect(commands: Commands, assets: Res[VfxAssets]) -> None:
     commands.spawn(Mesh3d(assets.bolt_mesh), MeshMaterial3d(assets.bolt_mat), ...)
 
@@ -82,6 +86,7 @@ request mutable access when a write is needed.
 
 ```python
 from dataclasses import dataclass
+from pybevy.ecs import system
 
 @resource
 @dataclass
@@ -89,11 +94,13 @@ class MatHandle(Resource):
     value: Handle[StandardMaterial]
 
 # ❌ BAD - unconditionally marks the material changed every frame
+@system
 def animate(materials: ResMut[Assets[StandardMaterial]], handle: Res[MatHandle]):
     mat = materials.get_mut(handle.value)
     mat.base_color = Color.linear_rgb(...)  # Every frame!
 
 # ✅ GOOD - only update on change
+@system
 def animate(materials: ResMut[Assets[StandardMaterial]], handle: Res[MatHandle]):
     new_color = compute_color(time)
     current = materials.get(handle.value)
@@ -136,7 +143,9 @@ For spawning many entities at once (1k+), use `spawn_batch` with NumPy arrays in
 
 ```python
 import numpy as np
+from pybevy.ecs import system
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -167,6 +176,8 @@ def setup(
   `Assets.get_mut()`, and close zero-copy views, before immediate world
   structural operations.
 - Arrays are auto-cast to float32 and validated for shape at `batch()` time.
+  Integer fields first reject values they cannot hold: out of range raises
+  `ValueError`, and fractional, NaN or infinite values raise `TypeError`.
 - Arrays are auto-cast to float32 and validated for shape and declared field constraints at `from_numpy()` time; CascadeShadowConfig checks overlap in [0, 1) and non-negative minimum distance.
   Transform translation, rotation, and scale arrays also reject NaN and infinity.
 - `Transform.batch()` accepts `translation` (Nx3), `rotation` (Nx4), `scale` (Nx3) - all optional
@@ -232,7 +243,9 @@ expression runs serially.
 ```python
 from pybevy.prelude import View, Mut, With
 from pybevy import expr
+from pybevy.ecs import system
 
+@system
 def batch_update(
     view: View[tuple[Mut[Transform], Mut[PointLight]], With[Marker]],
     time: Res[Time],
@@ -306,12 +319,14 @@ The View API supports **per-entity conditionals** via `.where()`, making it suit
 
 ```python
 from dataclasses import dataclass, field
+from pybevy.ecs import system
 
 @component
 @dataclass
 class Velocity(Component):
     vel: Vec3 = field(default_factory=lambda: Vec3.ZERO)
 
+@system
 def bounce(
     view: View[tuple[Mut[Transform], Mut[Velocity]], With[Ball]],
     time: Res[Time],

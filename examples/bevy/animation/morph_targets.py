@@ -36,6 +36,7 @@ class AnimationToPlay(Component):
         self.index = index
 
 
+@system
 def setup(
     commands: Commands,
     asset_server: Res[AssetServer],
@@ -74,6 +75,7 @@ def setup(
     )
 
 
+@system
 def play_animation_when_ready(
     commands: Commands,
     scene_ready: MessageReader[WorldInstanceReady],

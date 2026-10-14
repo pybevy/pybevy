@@ -39,7 +39,7 @@ from benches.paper.bench_utils import (
 )
 from pybevy.app import App, ScheduleRunnerPlugin, Startup, Update
 from pybevy.decorators import component
-from pybevy.ecs import Commands, Mut, Query, View
+from pybevy.ecs import Commands, Mut, Query, View, system
 from pybevy.math import Vec3
 from pybevy.prelude import Component
 from pybevy.transform import Transform
@@ -68,6 +68,7 @@ class Velocity(Component):
 def _make_query_app(entity_count: int) -> App:
     """Create an app with Query-based flocking."""
 
+    @system
     def setup(commands: Commands) -> None:
         import random
 
@@ -83,6 +84,7 @@ def _make_query_app(entity_count: int) -> App:
                 Velocity(vel=Vec3(vx, vy, 0.0)),
             )
 
+    @system
     def flocking(
         query: Query[tuple[Mut[Transform], Mut[Velocity]]],
     ) -> None:
@@ -297,6 +299,7 @@ def _make_numba_app(entity_count: int, parallel: bool = True) -> App:
     jit_flocking = _get_numba_flocking(parallel=parallel)
     r2 = PERCEPTION_RADIUS * PERCEPTION_RADIUS
 
+    @system
     def setup(commands: Commands) -> None:
         import random
 
@@ -311,6 +314,7 @@ def _make_numba_app(entity_count: int, parallel: bool = True) -> App:
                 Velocity(vel=Vec3(vx, vy, 0.0)),
             )
 
+    @system
     def flocking(view: View[tuple[Mut[Transform], Mut[Velocity]]]) -> None:
         for batch in view.iter_batches():
             pos = batch.column_mut(Transform)

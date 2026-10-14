@@ -14,6 +14,7 @@ from pybevy.input import AccumulatedMouseMotion, ButtonInput, MouseButton, Mouse
 from pybevy.prelude import *
 
 
+@system
 def mouse_click_system(mouse_button_input: Res[ButtonInput[MouseButton]]) -> None:
     """Print mouse button press/release events."""
     if mouse_button_input.pressed(MouseButton.Left()):
@@ -26,6 +27,7 @@ def mouse_click_system(mouse_button_input: Res[ButtonInput[MouseButton]]) -> Non
         print("left mouse just released")
 
 
+@system
 def mouse_move_system(
     accumulated_mouse_motion: Res[AccumulatedMouseMotion],
     mouse_scroll: MessageReader[MouseWheel],

@@ -11,6 +11,7 @@ use bevy::{
 };
 use pybevy_storage::{
     FieldType,
+    batch_columns::IntegerColumn,
     domain::{DomainValues, DomainViolation, FieldDomain},
 };
 
@@ -30,6 +31,9 @@ pub trait BatchableField: Sized + Copy {
 
     /// View API field type. Only meaningful for types used in `view_fields`.
     const VIEW_FIELD_TYPE: FieldType;
+
+    /// Integer type whose range and integrality `batch` inputs are checked against.
+    const INTEGER_COLUMN: Option<IntegerColumn> = None;
 
     /// Construct a value from a contiguous f32 slice at the given entity index.
     ///
@@ -67,6 +71,7 @@ impl BatchableField for i32 {
     const NUMPY_DTYPE: &'static str = "float32";
     const NUMPY_COLUMNS: usize = 1;
     const VIEW_FIELD_TYPE: FieldType = FieldType::I32;
+    const INTEGER_COLUMN: Option<IntegerColumn> = Some(IntegerColumn::I32);
 
     #[inline(always)]
     fn from_numpy_f32_slice(data: &[f32], index: usize) -> Self {
@@ -79,6 +84,7 @@ impl BatchableField for u32 {
     const NUMPY_DTYPE: &'static str = "float32";
     const NUMPY_COLUMNS: usize = 1;
     const VIEW_FIELD_TYPE: FieldType = FieldType::U32;
+    const INTEGER_COLUMN: Option<IntegerColumn> = Some(IntegerColumn::U32);
 
     #[inline(always)]
     fn from_numpy_f32_slice(data: &[f32], index: usize) -> Self {
@@ -219,6 +225,11 @@ pub fn field_type_of<T: BatchableField>(_field: &T) -> FieldType {
     T::VIEW_FIELD_TYPE
 }
 
+/// Batch input check helper: `Some` for integer fields, resolved from `&field`.
+pub fn batch_integer_column_of<T: BatchableField>(_field: &T) -> Option<IntegerColumn> {
+    T::INTEGER_COLUMN
+}
+
 /// Assignment helper: compiler resolves T from `&mut field`.
 #[inline(always)]
 pub fn set_field_from_numpy<T: BatchableField>(field: &mut T, data: &[f32], index: usize) {
@@ -242,6 +253,14 @@ mod tests {
         assert_eq!(u32::VIEW_FIELD_TYPE, FieldType::U32);
         assert_eq!(field_type_of::<i32>(&0), FieldType::I32);
         assert_eq!(field_type_of::<u32>(&0), FieldType::U32);
+    }
+
+    #[test]
+    fn integer_fields_declare_their_checked_column() {
+        assert_eq!(batch_integer_column_of(&0u32), Some(IntegerColumn::U32));
+        assert_eq!(batch_integer_column_of(&0i32), Some(IntegerColumn::I32));
+        assert_eq!(batch_integer_column_of(&0.0f32), None);
+        assert_eq!(batch_integer_column_of(&false), None);
     }
 
     #[test]

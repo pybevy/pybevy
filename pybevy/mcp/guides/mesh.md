@@ -182,6 +182,7 @@ buffer until typed attribute-value readback is available.
 import numpy as np
 from pybevy.prelude import *
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -286,6 +287,7 @@ dtype. These arrays borrow mesh data zero-copy: mutating the mesh is blocked
 while an array is alive, and access after the owning system ends raises.
 
 ```python
+@system
 def analyze_mesh(
     meshes: Res[Assets[Mesh]],
     query: Query[Mesh3d],
@@ -315,6 +317,7 @@ slices reach the mesh and expire with the surrounding `with` block.
 surrounding `with` block. Use `.copy()` for independent data.
 
 ```python
+@system
 def deform_mesh(
     time: Res[Time],
     meshes: ResMut[Assets[Mesh]],
@@ -392,6 +395,7 @@ For 2D rendering, use `Mesh2d` with `MeshMaterial2d`:
 ```python
 from pybevy.prelude import *
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],

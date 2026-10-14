@@ -160,6 +160,7 @@ class Cube(Component):
 
 
 
+@system
 def setup_scene(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -217,6 +218,7 @@ def setup_scene(
 
 
 
+@system
 def cube_animation_system(
     view: View[Mut[Transform], With[Cube]],
     time: Res[Time],
@@ -266,6 +268,7 @@ class FPSCounter:
         self.frame_count: int = 0
 
 
+@system
 def fps_system(time: Res[Time], counter: Local[FPSCounter]) -> None:
     counter.frame_count += 1
     t = time.elapsed_secs()

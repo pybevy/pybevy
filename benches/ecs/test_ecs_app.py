@@ -4,7 +4,7 @@ from pytest_benchmark.fixture import BenchmarkFixture
 
 from benches._helpers import initialize
 from pybevy.app import App, MinimalPlugins, Update
-from pybevy.ecs import Commands, Entity, Query, Res, World
+from pybevy.ecs import Commands, Entity, Query, Res, World, system
 from pybevy.time import Time
 from pybevy.transform import Transform
 
@@ -19,6 +19,7 @@ def test_empty_app_update(benchmark: BenchmarkFixture) -> None:
 def test_app_update(benchmark: BenchmarkFixture) -> None:
     """Benchmark app update with empty system."""
 
+    @system
     def update_system() -> None:
         pass
 
@@ -31,6 +32,7 @@ def test_app_update(benchmark: BenchmarkFixture) -> None:
 def test_app_update_with_time(benchmark: BenchmarkFixture) -> None:
     """Benchmark app update with Time resource injection."""
 
+    @system
     def time_system(time: Res[Time]) -> None:
         pass
 
@@ -43,6 +45,7 @@ def test_app_update_with_time(benchmark: BenchmarkFixture) -> None:
 def test_schedule_empty(benchmark: BenchmarkFixture) -> None:
     """Benchmark schedule execution with dummy system."""
 
+    @system
     def dummy_system() -> None:
         pass
 
@@ -55,6 +58,7 @@ def test_schedule_empty(benchmark: BenchmarkFixture) -> None:
 def test_schedule_time(benchmark: BenchmarkFixture) -> None:
     """Benchmark schedule with Time parameter."""
 
+    @system
     def dummy_system(time: Res[Time]) -> None:
         pass
 
@@ -67,6 +71,7 @@ def test_schedule_time(benchmark: BenchmarkFixture) -> None:
 def test_schedule_time_and_query(benchmark: BenchmarkFixture) -> None:
     """Benchmark schedule with Time and Query parameters."""
 
+    @system
     def dummy_system(time: Res[Time], query: Query[Transform]) -> None:
         pass
 
@@ -79,6 +84,7 @@ def test_schedule_time_and_query(benchmark: BenchmarkFixture) -> None:
 def test_schedule_multiple_params(benchmark: BenchmarkFixture) -> None:
     """Benchmark schedule with multiple system parameters."""
 
+    @system
     def dummy_system(
         time: Res[Time], query: Query[Transform], commands: Commands
     ) -> None:
@@ -93,6 +99,7 @@ def test_schedule_multiple_params(benchmark: BenchmarkFixture) -> None:
 def test_query_iter_create_empty(benchmark: BenchmarkFixture) -> None:
     """Benchmark query construction overhead."""
 
+    @system
     def dummy_system(query: Query[Transform]) -> None:
         query.__iter__()
 
@@ -105,6 +112,7 @@ def test_query_iter_create_empty(benchmark: BenchmarkFixture) -> None:
 def test_query_loop_empty(benchmark: BenchmarkFixture) -> None:
     """Benchmark empty query loop overhead."""
 
+    @system
     def dummy_system(query: Query[Transform]) -> None:
         for _ in query:
             pass
@@ -118,6 +126,7 @@ def test_query_loop_empty(benchmark: BenchmarkFixture) -> None:
 def test_query_iter_100_empty_entities(benchmark: BenchmarkFixture) -> None:
     """Benchmark query with 100 empty entities."""
 
+    @system
     def dummy_system(query: Query[Entity]) -> None:
         query.__iter__()
 
@@ -148,6 +157,7 @@ def test_world_spawn_empty_idle_asset_barrier(benchmark: BenchmarkFixture) -> No
 def test_query_iter_100_transforms(benchmark: BenchmarkFixture) -> None:
     """Benchmark query with 100 Transform entities."""
 
+    @system
     def dummy_system(query: Query[Transform]) -> None:
         query.__iter__()
 
@@ -168,6 +178,7 @@ def test_query_iter_100_transforms(benchmark: BenchmarkFixture) -> None:
 def test_query_loop_100_transforms(benchmark: BenchmarkFixture) -> None:
     """Benchmark query iteration with 100 Transform entities."""
 
+    @system
     def dummy_system(query: Query[Transform]) -> None:
         for _ in query:
             pass

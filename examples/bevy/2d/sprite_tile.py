@@ -20,6 +20,7 @@ class AnimationState(Resource):
         self.speed = 50.0
 
 
+@system
 def setup(commands: Commands, asset_server: Res[AssetServer]) -> None:
     """Set up camera and tiled sprite."""
     commands.spawn(Camera2d())
@@ -37,6 +38,7 @@ def setup(commands: Commands, asset_server: Res[AssetServer]) -> None:
     commands.spawn(sprite)
 
 
+@system
 def animate(
     sprites: Query[Mut[Sprite]],
     state: ResMut[AnimationState],

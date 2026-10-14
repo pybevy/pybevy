@@ -27,6 +27,7 @@ class AnimationToPlay(Component):
         self.graph_handle = graph_handle
         self.index = index
 
+@system
 def setup(
     commands: Commands,
     asset_server: Res[AssetServer],
@@ -58,6 +59,7 @@ def setup(
 GLB scenes load asynchronously. The `AnimationPlayer` component is created by Bevy inside the scene hierarchy, not on your spawned entity. Use `WorldInstanceReady` to detect when loading finishes, then find the player in children.
 
 ```python
+@system
 def play_when_ready(
     commands: Commands,
     scene_ready: MessageReader[WorldInstanceReady],
@@ -79,6 +81,7 @@ def play_when_ready(
                     AnimationGraphHandle(anim.graph_handle)
                 )
 
+@system
 def iter_descendants(entity: Entity, children_query: Query[Children]):
     """Recursively yield all descendants of an entity."""
     children_list = children_query.get(entity)
@@ -169,6 +172,7 @@ Use `AnimationTransitions` to cross-fade between animations (e.g., idle → walk
 commands.entity(player_entity).insert(AnimationTransitions())
 
 # In a system - fade to new animation over 0.3 seconds
+@system
 def switch_animation(
     query: Query[tuple[Mut[AnimationPlayer], Mut[AnimationTransitions]]],
 ) -> None:

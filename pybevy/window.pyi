@@ -265,6 +265,7 @@ class Window(Component):
         from pybevy.window import Window, PrimaryWindow, WindowMode, MonitorSelection, VideoModeSelection
         from pybevy.ecs import Single, Mut, With
 
+        @system
         def toggle_fullscreen(
             window: Single[Mut[Window], With[PrimaryWindow]],
             keyboard: Res[ButtonInput[KeyCode]],
@@ -725,6 +726,7 @@ class PrimaryWindow(Component):
         from pybevy.window import Window, PrimaryWindow
         from pybevy.ecs import Single, With
 
+        @system
         def check_window(window: Single[Window, With[PrimaryWindow]]) -> None:
             print(f"Window: {window.title}")
         ```
@@ -745,6 +747,7 @@ class PrimaryMonitor(Component):
         from pybevy.window import PrimaryMonitor
         from pybevy.ecs import Single, With
 
+        @system
         def check_primary_monitor(entity: Single[Entity, With[PrimaryMonitor]]) -> None:
             print(f"Primary monitor entity: {entity}")
         ```
@@ -785,6 +788,7 @@ class CursorOptions(Component):
         ```python
         from pybevy.window import CursorOptions, CursorGrabMode
 
+        @system
         def grab_mouse(
             cursor_options: Single[Mut[CursorOptions]],
             mouse: Res[ButtonInput[MouseButton]],
@@ -850,6 +854,7 @@ class CursorIcon(Component):
         from pybevy.window import CursorIcon, SystemCursorIcon, PrimaryWindow
         from pybevy.ecs import Commands, Entity, Mut, Single, With
 
+        @system
         def set_pointer_cursor(
             commands: Commands, window: Single[Entity, With[PrimaryWindow]]
         ) -> None:
@@ -857,6 +862,7 @@ class CursorIcon(Component):
                 CursorIcon.System(SystemCursorIcon.Pointer)
             )
 
+        @system
         def set_wait_cursor(
             cursor: Single[Mut[CursorIcon], With[PrimaryWindow]],
         ) -> None:
@@ -1134,6 +1140,7 @@ class AppLifecycle:
         from pybevy.ecs import MessageReader
         from pybevy.window import AppLifecycle, WindowEvent
 
+        @system
         def check_lifecycle(events: MessageReader[WindowEvent]) -> None:
             for event in events:
                 if isinstance(event, WindowEvent.AppLifecycle):
@@ -1306,6 +1313,7 @@ class VideoMode:
         from pybevy.window import Monitor, PrimaryMonitor
         from pybevy.ecs import Single, With
 
+        @system
         def list_video_modes(monitor: Single[Monitor, With[PrimaryMonitor]]) -> None:
             for mode in monitor.video_modes:
                 print(f"{mode.physical_size.x}x{mode.physical_size.y} @ {mode.refresh_rate_millihertz / 1000}Hz")
@@ -1353,6 +1361,7 @@ class Monitor(Component):
         from pybevy.window import Monitor, PrimaryMonitor
         from pybevy.ecs import Single, With
 
+        @system
         def print_monitor_info(monitor: Single[Monitor, With[PrimaryMonitor]]) -> None:
             print(f"Primary monitor: {monitor.name}")
             print(f"Resolution: {monitor.physical_width}x{monitor.physical_height}")
@@ -1412,6 +1421,7 @@ class Ime(Message):
         from pybevy.ecs import MessageReader
         from pybevy.window import Ime
 
+        @system
         def handle_ime(ime_events: MessageReader[Ime]) -> None:
             for ime in ime_events:
                 match ime:
@@ -1480,6 +1490,7 @@ class FileDragAndDrop(Message):
         from pybevy.ecs import MessageReader
         from pybevy.window import FileDragAndDrop
 
+        @system
         def handle_file_drop(events: MessageReader[FileDragAndDrop]) -> None:
             for event in events:
                 match event:
@@ -1531,6 +1542,7 @@ class CursorEntered(Message):
         from pybevy.ecs import MessageReader
         from pybevy.window import CursorEntered
 
+        @system
         def handle_cursor_enter(events: MessageReader[CursorEntered]) -> None:
             for event in events:
                 print(f"Cursor entered window: {event.window}")
@@ -1555,6 +1567,7 @@ class CursorLeft(Message):
         from pybevy.ecs import MessageReader
         from pybevy.window import CursorLeft
 
+        @system
         def handle_cursor_leave(events: MessageReader[CursorLeft]) -> None:
             for event in events:
                 print(f"Cursor left window: {event.window}")
@@ -1578,6 +1591,7 @@ class CursorMoved(Message):
 
     Example:
         ```python
+        @system
         def handle_cursor(reader: MessageReader[CursorMoved]) -> None:
             for event in reader:
                 print(f"Cursor at: {event.position}")
@@ -1605,6 +1619,7 @@ class WindowResized(Message):
 
     Example:
         ```python
+        @system
         def handle_resize(reader: MessageReader[WindowResized]) -> None:
             for event in reader:
                 print(f"Window resized to {event.width} x {event.height}")
@@ -1634,6 +1649,7 @@ class WindowFocused(Message):
 
     Example:
         ```python
+        @system
         def handle_focus(reader: MessageReader[WindowFocused]) -> None:
             for event in reader:
                 if event.focused:
@@ -1662,6 +1678,7 @@ class WindowCloseRequested(Message):
 
     Example:
         ```python
+        @system
         def handle_close(reader: MessageReader[WindowCloseRequested]) -> None:
             for event in reader:
                 print("Window close requested")
@@ -1690,6 +1707,7 @@ class RequestRedraw(Message):
         from pybevy.ecs import MessageWriter
         from pybevy.window import RequestRedraw
 
+        @system
         def force_redraw(writer: MessageWriter[RequestRedraw]) -> None:
             writer.write(RequestRedraw())
         ```
@@ -1740,6 +1758,7 @@ class WindowEvent:
         from pybevy.ecs import MessageReader
         from pybevy.window import WindowEvent
 
+        @system
         def handle_window_events(events: MessageReader[WindowEvent]) -> None:
             for event in events:
                 match event:

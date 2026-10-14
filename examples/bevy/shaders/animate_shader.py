@@ -28,6 +28,7 @@ class AnimatedMaterial(Material):
     """Material with time-based color animation done entirely in WGSL."""
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],

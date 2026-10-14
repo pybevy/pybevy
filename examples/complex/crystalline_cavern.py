@@ -79,6 +79,7 @@ class CinematicCamera(Component):
     """Camera following cinematic path."""
 
 
+@system
 def setup_cave(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -140,6 +141,7 @@ def setup_cave(
     )
 
 
+@system
 def setup_crystals(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -202,6 +204,7 @@ def setup_crystals(
         )
 
 
+@system
 def setup_volumetric_lights(commands: Commands) -> None:
     # Spotlight positions and colors
     spotlight_configs = [
@@ -244,6 +247,7 @@ def setup_volumetric_lights(commands: Commands) -> None:
     commands.insert_resource(GlobalAmbientLight(brightness=50.0, color=Color.srgb(0.5, 0.6, 0.8)))
 
 
+@system
 def spawn_particles(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -283,6 +287,7 @@ def spawn_particles(
         )
 
 
+@system
 def setup_post_processing(commands: Commands) -> None:
     # Camera with HDR, bloom, color grading, and tonemapping
     commands.spawn(
@@ -389,6 +394,7 @@ def particle_physics_kernel(
             pos.y[i] = -1.0
 
 
+@system
 def particle_physics_system(
     view: View[tuple[Mut[Transform], Mut[Particle]], With[Particle]],
     time: Res[Time],
@@ -408,6 +414,7 @@ def particle_physics_system(
         )
 
 
+@system
 def crystal_rotation_system(
     query: Query[tuple[Mut[Transform], Crystal]],
     time: Res[Time],
@@ -421,6 +428,7 @@ def crystal_rotation_system(
         transform.rotation = Quat.from_rotation_y(angle) * Quat.from_rotation_z(math.pi / 6.0)
 
 
+@system
 def spotlight_sweep_system(
     query: Query[tuple[Mut[Transform], SweepingLight]],
     time: Res[Time],
@@ -446,6 +454,7 @@ def spotlight_sweep_system(
         transform.look_at(target, Vec3.Y)
 
 
+@system
 def camera_cinematic_system(
     query: Query[Mut[Transform], With[CinematicCamera]],
     time: Res[Time],

@@ -36,6 +36,7 @@ class CameraSettings(Resource):
         self.yaw_speed = 0.004
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -76,6 +77,7 @@ def setup(
     )
 
 
+@system
 def orbit(
     camera_query: Single[Mut[Transform], With[Camera3d]],
     camera_settings: Res[CameraSettings],

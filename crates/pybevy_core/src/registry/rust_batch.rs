@@ -7,11 +7,12 @@
 use std::{collections::HashMap, sync::Arc};
 
 use bevy::ecs::{entity::Entity, world::World};
+use pybevy_storage::batch_columns::{BatchScalar, IntegerColumn, check_batch_integer};
 use pyo3::{
     PyTraverseError, PyVisit,
-    exceptions::PyValueError,
+    exceptions::{PyOverflowError, PyTypeError, PyValueError},
     prelude::*,
-    types::{PyDict, PyList, PyTuple},
+    types::{PyBool, PyDict, PyList, PyTuple},
 };
 
 use super::{
@@ -96,6 +97,126 @@ pub fn portable_f32_batch_column(
         .call_method0("tolist")?
         .extract()?;
     Ok(Some((shape, values)))
+}
+
+/// Reject `batch` inputs an integer column cannot hold before any cast runs.
+///
+/// Out-of-range values raise `ValueError` and non-integral values `TypeError`.
+/// The message names `name`, the offending input as given, and its row. NumPy
+/// arrays are checked with vectorized reductions, lists, tuples, and bounded
+/// arrays element by element; other inputs are left to the caller's
+/// normalization.
+pub fn check_integer_batch_column(
+    value: &Bound<'_, PyAny>,
+    name: &str,
+    column: IntegerColumn,
+) -> PyResult<()> {
+    if value.is_instance_of::<PyList>() || value.is_instance_of::<PyTuple>() {
+        for (row, item) in value.try_iter()?.enumerate() {
+            check_integer_items(&item?, name, column, row)?;
+        }
+        return Ok(());
+    }
+    let py = value.py();
+    if value.is_instance(&py.import("pybevy.array")?.getattr("Array")?)? {
+        let items = value.call_method0("ravel")?.call_method0("tolist")?;
+        let stride = row_stride(value, items.len()?)?;
+        for (index, item) in items.try_iter()?.enumerate() {
+            check_integer_scalar(&item?, name, column, index / stride)?;
+        }
+        return Ok(());
+    }
+    // Unsupported inputs keep the caller's own column-type error.
+    let Ok(np) = py.import("numpy") else {
+        return Ok(());
+    };
+    if !value.hasattr("__array__")? {
+        return Ok(());
+    }
+    let array = np.call_method1("ravel", (value,))?;
+    let kind: String = array.getattr("dtype")?.getattr("kind")?.extract()?;
+    let len = array.len()?;
+    if kind == "b" || len == 0 {
+        return Ok(());
+    }
+    let stride = row_stride(value, len)?;
+    if !matches!(kind.as_str(), "i" | "u" | "f") {
+        let items = array.call_method0("tolist")?;
+        for (index, item) in items.try_iter()?.enumerate() {
+            check_integer_scalar(&item?, name, column, index / stride)?;
+        }
+        return Ok(());
+    }
+    if kind == "f" {
+        let integral = np.call_method1(
+            "logical_and",
+            (
+                np.call_method1("isfinite", (&array,))?,
+                np.call_method1("equal", (np.call_method1("trunc", (&array,))?, &array))?,
+            ),
+        )?;
+        if !integral.call_method0("all")?.is_truthy()? {
+            let first: usize = np.call_method1("argmin", (&integral,))?.extract()?;
+            return check_integer_scalar(&array.get_item(first)?, name, column, first / stride);
+        }
+    }
+    for reduction in ["argmin", "argmax"] {
+        let index: usize = array.call_method0(reduction)?.extract()?;
+        check_integer_scalar(&array.get_item(index)?, name, column, index / stride)?;
+    }
+    Ok(())
+}
+
+/// Flat elements per row of `value`, whose raveled length is `len`.
+fn row_stride(value: &Bound<'_, PyAny>, len: usize) -> PyResult<usize> {
+    let rows = value.len()?;
+    Ok(if rows == 0 { 1 } else { (len / rows).max(1) })
+}
+
+fn check_integer_items(
+    item: &Bound<'_, PyAny>,
+    name: &str,
+    column: IntegerColumn,
+    row: usize,
+) -> PyResult<()> {
+    if item.is_instance_of::<PyList>() || item.is_instance_of::<PyTuple>() {
+        for inner in item.try_iter()? {
+            check_integer_items(&inner?, name, column, row)?;
+        }
+        Ok(())
+    } else {
+        check_integer_scalar(item, name, column, row)
+    }
+}
+
+fn check_integer_scalar(
+    item: &Bound<'_, PyAny>,
+    name: &str,
+    column: IntegerColumn,
+    row: usize,
+) -> PyResult<()> {
+    let scalar = if item.is_instance_of::<PyBool>() {
+        BatchScalar::Int(i128::from(item.is_truthy()?))
+    } else {
+        match item.extract::<i128>() {
+            Ok(integer) => BatchScalar::Int(integer),
+            Err(error) if error.is_instance_of::<PyOverflowError>(item.py()) => {
+                BatchScalar::BigInt(item.str()?.to_string())
+            }
+            Err(_) => match item.extract::<f64>() {
+                Ok(float) => BatchScalar::Float(float),
+                Err(_) => BatchScalar::Other(item.repr()?.to_string()),
+            },
+        }
+    };
+    check_batch_integer(name, column, scalar).map_err(|error| {
+        let error = error.at_row(row);
+        if error.is_out_of_range() {
+            PyValueError::new_err(error.to_string())
+        } else {
+            PyTypeError::new_err(error.to_string())
+        }
+    })
 }
 
 /// Bridge for RustComponentBatch that implements BatchComponent.

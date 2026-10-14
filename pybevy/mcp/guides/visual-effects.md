@@ -152,6 +152,7 @@ for m in range(60):
 **Animate** with slow circular drift + gentle vertical bob in an Update system:
 
 ```python
+@system
 def animate_mist(query: Query[tuple[Mut[Transform], MistDrift]], time: Res[Time]) -> None:
     t = time.elapsed_secs()
     for transform, drift in query:
@@ -186,6 +187,7 @@ class Particle(Component):
 Cache mesh/material in a `@resource` (see `guide://performance`). Spawn 20–30 per burst max:
 
 ```python
+@system
 def spawn_sparks(commands: Commands, assets: Res[SparkAssets]) -> None:
     for i in range(20):
         angle = i * math.tau / 20.0 + math.sin(i * 2.3) * 0.4
@@ -207,6 +209,7 @@ def spawn_sparks(commands: Commands, assets: Res[SparkAssets]) -> None:
 ### Animate + Despawn
 
 ```python
+@system
 def animate_particles(
     commands: Commands,
     query: Query[tuple[Entity, Mut[Transform], Mut[Particle]]],

@@ -7,7 +7,10 @@
 
 use std::fmt;
 
-use crate::domain::{DomainValue, DomainViolation, FieldDomain, check};
+use crate::{
+    domain::{DomainValue, DomainViolation, FieldDomain, check},
+    float_repr::float_repr,
+};
 
 /// Target dtype of one `batch` column. Covers every
 /// `pybevy_core::component_layout::PrimitiveType` payload (Vec3/Vec2 lower to
@@ -338,6 +341,151 @@ pub fn check_known_field(field: &str, valid: &[&str]) -> Result<(), BatchColumnE
             field: field.to_string(),
             valid: format!("{valid:?}"),
         })
+    }
+}
+
+/// Integer type of a `batch` column whose inputs must be checked before casting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntegerColumn {
+    I32,
+    I64,
+    U32,
+    U64,
+}
+
+impl IntegerColumn {
+    pub fn from_dtype(dtype: ColumnDType) -> Option<Self> {
+        match dtype {
+            ColumnDType::I32 => Some(Self::I32),
+            ColumnDType::I64 => Some(Self::I64),
+            ColumnDType::U32 => Some(Self::U32),
+            ColumnDType::U64 => Some(Self::U64),
+            ColumnDType::F32 | ColumnDType::F64 | ColumnDType::Bool => None,
+        }
+    }
+
+    /// Inclusive bounds of the column type.
+    pub const fn bounds(self) -> (i128, i128) {
+        match self {
+            Self::I32 => (i32::MIN as i128, i32::MAX as i128),
+            Self::I64 => (i64::MIN as i128, i64::MAX as i128),
+            Self::U32 => (0, u32::MAX as i128),
+            Self::U64 => (0, u64::MAX as i128),
+        }
+    }
+
+    fn range_name(self) -> &'static str {
+        match self {
+            Self::I32 => "32-bit signed integer",
+            Self::I64 => "64-bit signed integer",
+            Self::U32 => "32-bit unsigned integer",
+            Self::U64 => "64-bit unsigned integer",
+        }
+    }
+}
+
+/// One input element of an integer `batch` column, as the caller supplied it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum BatchScalar {
+    Int(i128),
+    /// An integer beyond `i128`, shown by its decimal text.
+    BigInt(String),
+    Float(f64),
+    /// An element with no numeric reading, shown by its repr.
+    Other(String),
+}
+
+impl fmt::Display for BatchScalar {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Int(value) => write!(f, "{value}"),
+            Self::Float(value) => f.write_str(&float_repr(*value)),
+            Self::BigInt(text) | Self::Other(text) => f.write_str(text),
+        }
+    }
+}
+
+/// Why an integer `batch` element cannot be stored exactly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BatchIntegerErrorKind {
+    /// Adapters raise `ValueError`.
+    OutOfRange(IntegerColumn),
+    /// Fractional, NaN, infinite or non-numeric; adapters raise `TypeError`.
+    NotInteger,
+}
+
+/// An integer `batch` element the target column cannot hold exactly.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BatchIntegerError {
+    pub name: String,
+    pub row: Option<usize>,
+    pub value: BatchScalar,
+    pub kind: BatchIntegerErrorKind,
+}
+
+impl BatchIntegerError {
+    pub fn is_out_of_range(&self) -> bool {
+        matches!(self.kind, BatchIntegerErrorKind::OutOfRange(_))
+    }
+
+    /// The same error reported at `row` of the column.
+    pub fn at_row(mut self, row: usize) -> Self {
+        self.row = Some(row);
+        self
+    }
+}
+
+impl fmt::Display for BatchIntegerError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            name, row, value, ..
+        } = self;
+        match self.kind {
+            BatchIntegerErrorKind::OutOfRange(column) => {
+                write!(f, "{name} must be within the {} range", column.range_name())?
+            }
+            BatchIntegerErrorKind::NotInteger => write!(f, "{name} must be an integer")?,
+        }
+        match row {
+            Some(row) => write!(f, " (got {value} at row {row})"),
+            None => write!(f, " (got {value})"),
+        }
+    }
+}
+
+impl std::error::Error for BatchIntegerError {}
+
+/// Check that `value` converts to `column` without truncation, wrapping, or saturation.
+///
+/// `name` is the qualified field name used in the message, such as
+/// `Bloom.max_mip_dimension`.
+pub fn check_batch_integer(
+    name: &str,
+    column: IntegerColumn,
+    value: BatchScalar,
+) -> Result<(), BatchIntegerError> {
+    let (low, high) = column.bounds();
+    let error = |value, kind| BatchIntegerError {
+        name: name.to_string(),
+        row: None,
+        value,
+        kind,
+    };
+    let integer = match &value {
+        BatchScalar::Int(integer) => Some(*integer),
+        BatchScalar::Float(float) => {
+            if !float.is_finite() || float.fract() != 0.0 {
+                return Err(error(value, BatchIntegerErrorKind::NotInteger));
+            }
+            // Integral floats beyond i128 are out of range for every column.
+            (float.abs() < 1.0e38).then_some(*float as i128)
+        }
+        BatchScalar::BigInt(_) => None,
+        BatchScalar::Other(_) => return Err(error(value, BatchIntegerErrorKind::NotInteger)),
+    };
+    match integer {
+        Some(integer) if (low..=high).contains(&integer) => Ok(()),
+        _ => Err(error(value, BatchIntegerErrorKind::OutOfRange(column))),
     }
 }
 
@@ -981,6 +1129,57 @@ mod tests {
             }
             .as_f32()
             .is_none()
+        );
+    }
+
+    #[test]
+    fn integer_check_rejects_values_the_column_cannot_hold() {
+        let check = |column, value| check_batch_integer("C.f", column, value);
+        assert!(check(IntegerColumn::U32, BatchScalar::Int(0)).is_ok());
+        assert!(check(IntegerColumn::U32, BatchScalar::Int(u32::MAX.into())).is_ok());
+        assert!(check(IntegerColumn::I32, BatchScalar::Float(-3.0)).is_ok());
+
+        let negative = check(IntegerColumn::U32, BatchScalar::Int(-1)).unwrap_err();
+        assert!(negative.is_out_of_range());
+        assert_eq!(
+            negative.clone().at_row(2).to_string(),
+            "C.f must be within the 32-bit unsigned integer range (got -1 at row 2)"
+        );
+        assert_eq!(
+            negative.to_string(),
+            "C.f must be within the 32-bit unsigned integer range (got -1)"
+        );
+        let oversized = check(IntegerColumn::U32, BatchScalar::Int(1 << 40)).unwrap_err();
+        assert!(oversized.is_out_of_range());
+        assert!(
+            check(IntegerColumn::U64, BatchScalar::Float(1e30))
+                .unwrap_err()
+                .is_out_of_range()
+        );
+        assert!(
+            check(IntegerColumn::I64, BatchScalar::BigInt("2".repeat(50)))
+                .unwrap_err()
+                .is_out_of_range()
+        );
+        assert!(
+            !check(IntegerColumn::I64, BatchScalar::Other("'a'".into()))
+                .unwrap_err()
+                .is_out_of_range()
+        );
+
+        let fraction = check(IntegerColumn::I64, BatchScalar::Float(7.9)).unwrap_err();
+        assert!(!fraction.is_out_of_range());
+        assert_eq!(fraction.to_string(), "C.f must be an integer (got 7.9)");
+        assert_eq!(
+            check(IntegerColumn::U64, BatchScalar::Float(1e30))
+                .unwrap_err()
+                .to_string(),
+            "C.f must be within the 64-bit unsigned integer range (got 1e+30)"
+        );
+        assert!(
+            !check(IntegerColumn::I64, BatchScalar::Float(f64::NAN))
+                .unwrap_err()
+                .is_out_of_range()
         );
     }
 }

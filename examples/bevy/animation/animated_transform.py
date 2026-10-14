@@ -12,6 +12,7 @@ import math
 from pybevy.prelude import *
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -41,6 +42,7 @@ def setup(
     )
 
 
+@system
 def animate_cube(cubes: Query[Mut[Transform], With[Mesh3d]], time: Res[Time]) -> None:
     """Animate the cube with rotation and bobbing motion."""
     t = time.elapsed_secs()

@@ -13,6 +13,7 @@ Load an image and display it:
 ```python
 from pybevy.prelude import *
 
+@system
 def setup(commands: Commands, asset_server: Res[AssetServer]) -> None:
     commands.spawn(Camera2d())
     image = asset_server.load_image("bevy/branding/bevy_bird_dark.png")
@@ -53,7 +54,9 @@ The full pipeline: load image -> define grid layout -> create atlas -> spawn spr
 ```python
 from pybevy.image import TextureAtlas, TextureAtlasLayout
 from pybevy.math import URect, UVec2
+from pybevy.ecs import system
 
+@system
 def setup(
     commands: Commands,
     asset_server: Res[AssetServer],
@@ -104,12 +107,13 @@ The `Assets[TextureAtlasLayout]` collection needs `SpritePlugin` (included in
 <!-- pybevy-snippet: typecheck -->
 ```python
 from pybevy.assets import Assets, Handle
-from pybevy.ecs import ResMut
+from pybevy.ecs import ResMut, system
 from pybevy.image import Image, TextureAtlas, TextureAtlasBuilder, TextureAtlasLayout
 from pybevy.math import UVec2
 from pybevy.render import Extent3d
 
 
+@system
 def pack_source(
     images: ResMut[Assets[Image]],
     layouts: ResMut[Assets[TextureAtlasLayout]],
@@ -177,6 +181,7 @@ class AnimationTimer(Component):
 ### 3. Animation System
 
 ```python
+@system
 def animate_sprite(
     time: Res[Time],
     query: Query[tuple[AnimationIndices, Mut[AnimationTimer], Mut[Sprite]]],
@@ -210,6 +215,7 @@ If you don't need `Timer` features (pause, speed, just_finished), a simpler floa
 
 ```python
 from dataclasses import dataclass
+from pybevy.ecs import system
 
 @component
 @dataclass
@@ -218,6 +224,7 @@ class SpriteAnimation(Component):
     fps: float = 8.0
     timer: float = 0.0
 
+@system
 def animate_sprites(
     query: Query[tuple[Mut[Sprite], Mut[SpriteAnimation]]],
     time: Res[Time],
@@ -261,7 +268,9 @@ in integer texture formats, so `Color.WHITE` writes byte value 255 and sRGB
 ```python
 from pybevy.image import ImageSampler, TextureAtlas, TextureAtlasLayout
 from pybevy.render import Extent3d
+from pybevy.ecs import system
 
+@system
 def make_sprite_sheet(images: ResMut[Assets[Image]]) -> int:
     frames = 4
     size = 16
@@ -305,6 +314,7 @@ complete descriptor while retaining the `Descriptor` variant.
 Then use it like any other sprite sheet:
 
 ```python
+@system
 def setup(
     commands: Commands,
     images: ResMut[Assets[Image]],

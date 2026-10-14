@@ -19,6 +19,7 @@ def main(app: App) -> App:
     )
 
 
+@system
 def setup(commands: Commands, server: Res[AssetServer]) -> None:
     """Set up the scene with camera, lighting, and GLTF model."""
     # Spawn camera

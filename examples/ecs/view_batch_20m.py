@@ -30,6 +30,7 @@ class FPSCounter:
 COUNT = 20_000_000
 
 
+@system
 def spawn_entities(world: World) -> None:
     """Spawn {COUNT} entities with Transform using batch spawning."""
     print(f"Spawning {COUNT:,} entities...")
@@ -46,6 +47,7 @@ def spawn_entities(world: World) -> None:
     print(f"Spawned {len(entities):,} entities.")
 
 
+@system
 def update_positions(
     time: Res[Time],
     view: View[Mut[Transform], With[Marker]],
@@ -63,6 +65,7 @@ def update_positions(
     )
 
 
+@system
 def print_stats(
     time: Res[Time],
     fps_counter: Local[FPSCounter],

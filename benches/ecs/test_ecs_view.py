@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from benches._helpers import initialize
 from pybevy.app import App, ScheduleRunnerPlugin, Startup, Update
 from pybevy.decorators import component
-from pybevy.ecs import Commands, Component, Mut, Query, View
+from pybevy.ecs import Commands, Component, Mut, Query, View, With, system
 from pybevy.transform import Transform
 
 
@@ -67,9 +67,11 @@ def _warmup_numba() -> None:
     app = App()
     app.add_plugins(ScheduleRunnerPlugin.run_once())
 
+    @system
     def setup(commands: Commands) -> None:
         commands.spawn(Transform.from_xyz(1.0, 0.0, 0.0))
 
+    @system
     def warmup(view: View[Mut[Transform]]) -> None:
         for batch in view.iter_batches():
             col = batch.column_mut(Transform).translation.x
@@ -86,10 +88,12 @@ def _setup_view_numba_sum(entity_count: int) -> App:
     """Setup app for View Numba sum benchmark."""
     _warmup_numba()
 
+    @system
     def setup(commands: Commands) -> None:
         for i in range(entity_count):
             commands.spawn(Transform.from_xyz(float(i), 0.0, 0.0))
 
+    @system
     def measure_view(view: View[Mut[Transform]]) -> None:
         total = 0.0
         for batch in view.iter_batches():
@@ -108,10 +112,12 @@ def _setup_view_numba_sum(entity_count: int) -> App:
 def _setup_query_sum(entity_count: int) -> App:
     """Setup app for Query sum benchmark."""
 
+    @system
     def setup(commands: Commands) -> None:
         for i in range(entity_count):
             commands.spawn(Transform.from_xyz(float(i), 0.0, 0.0))
 
+    @system
     def measure_query(query: Query[Transform]) -> None:
         total = 0.0
         for t in query:
@@ -129,6 +135,7 @@ def _setup_query_sum(entity_count: int) -> App:
 def _setup_view_batch_ops(entity_count: int) -> App:
     """Setup app for View batch operations benchmark."""
 
+    @system
     def setup(commands: Commands) -> None:
         for i in range(entity_count):
             commands.spawn(
@@ -136,7 +143,8 @@ def _setup_view_batch_ops(entity_count: int) -> App:
                 Marker(),
             )
 
-    def batch_ops(view: View[Mut[Position], Marker]) -> None:
+    @system
+    def batch_ops(view: View[Mut[Position], With[Marker]]) -> None:
         pos = view.column_mut(Position)
         pos.x = pos.x * 2.0 + 1.0
         pos.y = pos.y * 1.5 + 0.5
@@ -154,6 +162,7 @@ def _setup_view_batch_ops(entity_count: int) -> App:
 def _setup_query_batch_ops(entity_count: int) -> App:
     """Setup app for Query batch operations benchmark."""
 
+    @system
     def setup(commands: Commands) -> None:
         for i in range(entity_count):
             commands.spawn(
@@ -161,6 +170,7 @@ def _setup_query_batch_ops(entity_count: int) -> App:
                 Marker(),
             )
 
+    @system
     def iter_ops(query: Query[Mut[Position]]) -> None:
         for pos in query:
             pos.x = pos.x * 2.0 + 1.0
@@ -179,12 +189,14 @@ def _setup_query_batch_ops(entity_count: int) -> App:
 def _setup_view_complex_ops(entity_count: int) -> App:
     """Setup app for View complex operations benchmark."""
 
+    @system
     def setup(commands: Commands) -> None:
         for i in range(entity_count):
             fi = float(i)
             commands.spawn(Position(x=fi, y=fi * 2, z=fi * 3), Marker())
 
-    def complex_ops(view: View[Mut[Position], Marker]) -> None:
+    @system
+    def complex_ops(view: View[Mut[Position], With[Marker]]) -> None:
         pos = view.column_mut(Position)
         pos.x = pos.x * 2.0 + pos.y * 0.5 - pos.z * 0.1
         pos.y = pos.y * 1.5 + pos.z * 0.3 + pos.x * 0.2
@@ -202,11 +214,13 @@ def _setup_view_complex_ops(entity_count: int) -> App:
 def _setup_query_complex_ops(entity_count: int) -> App:
     """Setup app for Query complex operations benchmark."""
 
+    @system
     def setup(commands: Commands) -> None:
         for i in range(entity_count):
             fi = float(i)
             commands.spawn(Position(x=fi, y=fi * 2, z=fi * 3), Marker())
 
+    @system
     def complex_ops(query: Query[Mut[Position]]) -> None:
         for pos in query:
             new_x = pos.x * 2.0 + pos.y * 0.5 - pos.z * 0.1
@@ -274,10 +288,12 @@ def test_physics_query_10000(benchmark: BenchmarkFixture) -> None:
     """Benchmark Query with physics-like computation (10k entities)."""
     entity_count = 10000
 
+    @system
     def setup(commands: Commands) -> None:
         for i in range(entity_count):
             commands.spawn(Transform.from_xyz(float(i), float(i) * 0.5, 0.0))
 
+    @system
     def physics_query(query: Query[Mut[Transform]]) -> None:
         dt = 0.016
         for t in query:
@@ -300,10 +316,12 @@ def test_physics_view_numba_10000(benchmark: BenchmarkFixture) -> None:
     _warmup_numba()
     entity_count = 10000
 
+    @system
     def setup(commands: Commands) -> None:
         for i in range(entity_count):
             commands.spawn(Transform.from_xyz(float(i), float(i) * 0.5, 0.0))
 
+    @system
     def physics_view(view: View[Mut[Transform]]) -> None:
         for batch in view.iter_batches():
             transform = batch.column_mut(Transform)

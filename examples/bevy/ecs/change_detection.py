@@ -34,6 +34,7 @@ class MyResource(Resource):
         self.previous_value = value
 
 
+@system
 def setup(commands: Commands) -> None:
     """Spawn an entity with MyComponent and insert MyResource."""
     commands.spawn(MyComponent())
@@ -41,6 +42,7 @@ def setup(commands: Commands) -> None:
     print("Setup: Spawned entity with MyComponent and inserted MyResource")
 
 
+@system
 def change_component(
     time: Res[Time], query: Query[tuple[Entity, Mut[MyComponent]]]
 ) -> None:
@@ -59,6 +61,7 @@ def change_component(
             # Other systems could use Query[T, Changed[T]] to detect this
 
 
+@system
 def change_component_2(
     time: Res[Time], query: Query[tuple[Entity, Mut[MyComponent]]]
 ) -> None:
@@ -74,6 +77,7 @@ def change_component_2(
             print(f"  [change_component_2] Modified component on {entity} (tick={new_value})")
 
 
+@system
 def change_resource(time: Res[Time], my_resource: ResMut[MyResource]) -> None:
     """Randomly modify MyResource and track changes.
 
@@ -94,6 +98,7 @@ def change_resource(time: Res[Time], my_resource: ResMut[MyResource]) -> None:
             )
 
 
+@system
 def detect_resource_changes(my_resource: Res[MyResource]) -> None:
     """React to resource changes using manual tracking.
 

@@ -18,6 +18,7 @@ class Orbit(Component):
     y_speed: float = 0.0
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -62,6 +63,7 @@ def setup(
     )
 
 
+@system
 def animate(
     view: View[tuple[Mut[Transform], Orbit], With[Orbit]],
     time: Res[Time],

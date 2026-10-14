@@ -31,6 +31,7 @@ dependency failures, with the corresponding load-state enum family.
 from pybevy.prelude import *
 from pybevy.world_serialization import WorldAsset, WorldAssetRoot
 
+@system
 def setup(commands: Commands, asset_server: Res[AssetServer]) -> None:
     # Load model - note the #Scene0 suffix
     model_handle = asset_server.load("models/rabbit.glb#Scene0", asset_type=WorldAsset)

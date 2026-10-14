@@ -14,6 +14,7 @@ from pybevy.input import ButtonState, KeyboardInput
 from pybevy.prelude import *
 
 
+@system
 def print_char_event_system(keyboard_inputs: MessageReader[KeyboardInput]) -> None:
     """Print all character inputs as they come in."""
     for event in keyboard_inputs:

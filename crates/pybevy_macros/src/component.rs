@@ -1353,6 +1353,7 @@ fn generate_bridge_tokens(
 
         let field_normalize_stmts: Vec<_> = fields.iter().map(|field| {
             let name_str = field.python_name.to_string();
+            let qualified_name = format!("{component_name}.{name_str}");
             let cols_var = quote::format_ident!("{}_cols", field.python_name);
             let accessor = &field.rust_accessor;
             let domain_check = |values: proc_macro2::TokenStream| {
@@ -1380,6 +1381,10 @@ fn generate_bridge_tokens(
             });
             quote! {
                 if let Some(arr) = kwargs.get_item(#name_str)? {
+                    // Integer inputs are checked before the f32 normalization can saturate them.
+                    if let Some(column) = pybevy_core::batch_integer_column_of(&default_val #accessor) {
+                        pybevy_core::check_integer_batch_column(&arr, #qualified_name, column)?;
+                    }
                     if let Some((shape, portable_values)) =
                         pybevy_core::portable_f32_batch_column(&arr)?
                     {

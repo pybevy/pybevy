@@ -380,6 +380,7 @@ Animate the DirectionalLight to simulate time of day:
 class Sun(Component):
     pass
 
+@system
 def day_night_cycle(
     query: Query[tuple[Mut[Transform], Mut[DirectionalLight]], With[Sun]],
     time: Res[Time],

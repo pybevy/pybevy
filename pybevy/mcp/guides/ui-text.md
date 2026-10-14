@@ -182,6 +182,7 @@ commands.spawn(
 )
 
 # In update system:
+@system
 def update_score_display(
     query: Query[Mut[Text], With[ScoreDisplay]],
     score: Res[GameScore],
@@ -207,6 +208,7 @@ expose Bevy's `UiPlugin` separately, so the supported public setup is
 
 ```python
 from pybevy.text import EditableText
+from pybevy.ecs import system
 
 # In setup:
 commands.spawn(
@@ -217,6 +219,7 @@ commands.spawn(
 )
 
 # In an update system:
+@system
 def read_input(query: Query[EditableText]):
     for field in query:
         if field.value:
@@ -235,6 +238,7 @@ Options worth knowing:
 Animate `TextColor` alpha for fade-in/fade-out effects:
 
 ```python
+@system
 def fade_text(
     query: Query[tuple[Mut[TextColor], Mut[BackgroundColor]], With[MyText]],
     time: Res[Time],
@@ -287,7 +291,9 @@ For percentage-based values, use `Val.Percent(50.0)` on properties that accept `
 ```python
 from pybevy.ui import BackgroundColor, Node, PositionType, Text
 from pybevy.text import TextFont, TextColor
+from pybevy.ecs import system
 
+@system
 def setup_hud(commands: Commands):
     # Top-left score
     score_node = Node()

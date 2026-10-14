@@ -31,6 +31,7 @@ class CustomMaterial(Material):
     intensity: float = 1.0
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],

@@ -50,6 +50,7 @@ class FlyCameraState(Resource):
         self.right_mouse_pressed = False
 
 
+@system
 def fly_camera_control_system(
     query: Query[tuple[Mut[Transform], Mut[FlyCamera]]],
     mouse_buttons: Res[ButtonInput[MouseButton]],
@@ -84,6 +85,7 @@ def fly_camera_control_system(
         transform.rotation = yaw_quat * pitch_quat
 
 
+@system
 def fly_camera_movement_system(
     query: Query[tuple[Mut[Transform], FlyCamera]],
     keyboard_input: Res[ButtonInput[KeyCode]],
@@ -165,5 +167,5 @@ class FlyCameraPlugin(Plugin):
         app.add_systems(Update, fly_camera_control_system)
         app.add_systems(
             Update,
-            system(fly_camera_movement_system).after(fly_camera_control_system),
+            fly_camera_movement_system.after(fly_camera_control_system),
         )

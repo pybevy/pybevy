@@ -9,7 +9,7 @@ from benches._helpers import initialize
 from pybevy.app import App, Startup
 from pybevy.camera import Visibility
 from pybevy.decorators import component
-from pybevy.ecs import Commands, Component, World
+from pybevy.ecs import Commands, Component, World, system
 from pybevy.transform import Transform
 
 
@@ -20,7 +20,7 @@ class Marker(Component):
 
 def _run_batch(setup_fn: Callable[..., None]) -> None:
     app = App()
-    app.add_systems(Startup, setup_fn)
+    app.add_systems(Startup, system(setup_fn))
     initialize(app)
     app.update()
 

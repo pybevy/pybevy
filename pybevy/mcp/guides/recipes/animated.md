@@ -29,6 +29,7 @@ def main(app: App) -> App:
         .add_systems(Update, (apply_velocity, apply_bobbing))
     )
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -80,6 +81,7 @@ def setup(
             Bobbing(speed=2.0 + i * 0.3, amplitude=0.8, phase=i * 0.5),
         )
 
+@system
 def apply_velocity(
     query: Query[tuple[Mut[Transform], Velocity]],
     time: Res[Time],
@@ -95,6 +97,7 @@ def apply_velocity(
         if transform.translation.x > 5.0:
             transform.translation = Vec3(-5.0, transform.translation.y, transform.translation.z)
 
+@system
 def apply_bobbing(
     query: Query[tuple[Mut[Transform], Bobbing]],
     time: Res[Time],

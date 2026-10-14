@@ -51,7 +51,8 @@ use crate::ecs::{
 ///     for i in range(len(view)):
 ///         view[i] = view[i] + 1.0
 ///
-/// def system(view: View[Mut[Transform]]):
+/// @system
+/// def my_system(view: View[Mut[Transform]]):
 ///     for batch in view.batch_iter():
 ///         y = batch.col(Transform).translation.y
 ///         kernel(y)  # Safety check at call boundary

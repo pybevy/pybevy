@@ -15,6 +15,7 @@ class SharedImage(Material):
     soft: SamplerBinding = SamplerBinding(default=ImageSamplerDescriptor.linear())
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],

@@ -10,6 +10,7 @@ import numpy as np
 from pybevy.prelude import *
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],

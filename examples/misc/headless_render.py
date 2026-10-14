@@ -16,6 +16,7 @@ from pybevy.window import ExitCondition
 from pybevy.winit import WinitPlugin
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -49,6 +50,7 @@ def setup(
     )
 
 
+@system
 def rotate_cube(query: Query[Mut[Transform], With[Mesh3d]], time: Res[Time]) -> None:
     """Rotate the cube around the Y axis."""
     dt = time.delta_secs()

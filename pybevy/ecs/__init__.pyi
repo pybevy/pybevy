@@ -3,7 +3,9 @@ from enum import Enum
 from typing import (
     Any,
     Generic,
+    ParamSpec,
     Protocol,
+    Self,
     TypeVar,
     TypeVarTuple,
     Unpack,
@@ -17,6 +19,8 @@ from typing import (
 from pybevy.app import (
     ChainedSystems,
     ChainedSystemSets,
+    ConditionFn,
+    ObserverFn,
     Stage,
     SystemChainItem,
     SystemFn,
@@ -72,6 +76,7 @@ class Resource(Component):
             level: int = 1
 
         # Access in systems via Res[T] (read-only) or ResMut[T] (mutable)
+        @system
         def update_score(state: ResMut[GameState]) -> None:
             state.score += 10
         ```
@@ -95,10 +100,12 @@ class Event:
             cause: str
 
         # Trigger events via Commands or World
+        @system
         def kill_player(commands: Commands) -> None:
             commands.trigger(PlayerDied(player_id=1, cause="lava"))
 
         # Handle events via observers
+        @observer
         def on_player_died(trigger: On[PlayerDied]) -> None:
             event = trigger.event()
             print(f"Player {event.player_id} died from {event.cause}")
@@ -116,7 +123,8 @@ unhashable, and comparison through expired World handles raises RuntimeError.
 
 Example:
     ```python
-    def system(time: Res[Time]):
+    @system
+    def my_system(time: Res[Time]):
         elapsed = time.elapsed_secs()
     ```
 
@@ -134,7 +142,8 @@ unhashable, and comparison through expired World handles raises RuntimeError.
 
 Example:
     ```python
-    def system(state: ResMut[GameState]):
+    @system
+    def my_system(state: ResMut[GameState]):
         state.score += 10
     ```
 
@@ -159,6 +168,7 @@ class MessageWriter(Generic[M]):
     message channel; split that work into ordered systems or distinct message types.
 
     Example:
+        @system
         def my_system(writer: MessageWriter[AppExit]) -> None:
             writer.write(AppExit.Success())
     """
@@ -177,6 +187,7 @@ class MessageReader(Generic[M]):
     Dropping a partially consumed iterator leaves its remaining values unread.
 
     Example:
+        @system
         def my_system(reader: MessageReader[AppExit]) -> None:
             for msg in reader:
                 print(f"Received: {msg}")
@@ -272,14 +283,17 @@ class On(Generic[Unpack[OnTypes]]):
     - On[Despawn, ComponentType] - Observe entity despawn lifecycle events
 
     Example:
+        @observer
         def on_player_died(trigger: On[PlayerDied]) -> None:
             event = trigger.event()
             print(f"Player {event.player_id} died")
 
+        @observer
         def on_transform_added(trigger: On[Add, Transform]) -> None:
             entity = trigger.entity()
             print(f"Transform added to {entity}")
 
+        @observer
         def on_damage_with_bundle(trigger: On[DamageEvent, tuple[Transform, Health]]) -> None:
             # Triggers when the event targets Transform OR Health
             event = trigger.event()
@@ -360,9 +374,11 @@ class ConditionalSystem:
 
     Example:
         ```python
+        @condition
         def should_run() -> bool:
             return True
 
+        @condition
         def other_condition() -> bool:
             return False
 
@@ -376,9 +392,9 @@ class ConditionalSystem:
         app.add_systems(Update, run_if(my_system, should_run).not_())
         ```
     """
-    def __init__(self, system: Any, condition: Callable[..., object]) -> None: ...
+    def __init__(self, system: SystemFn, condition: ConditionFn) -> None: ...
 
-    def and_(self, condition: Callable[..., object]) -> ConditionalSystem:
+    def and_(self, condition: ConditionFn) -> ConditionalSystem:
         """Combine with another condition using AND logic.
 
         Args:
@@ -388,7 +404,7 @@ class ConditionalSystem:
             New ConditionalSystem that runs only if both conditions are true
         """
 
-    def or_(self, condition: Callable[..., object]) -> ConditionalSystem:
+    def or_(self, condition: ConditionFn) -> ConditionalSystem:
         """Combine with another condition using OR logic.
 
         Args:
@@ -417,7 +433,7 @@ class SystemSet:
     def in_set(self, parent: SystemSet | SystemSetEnum) -> SystemSetConfig: ...
     def before(self, target: SystemSet | SystemSetEnum | SystemFn) -> SystemSetConfig: ...
     def after(self, target: SystemSet | SystemSetEnum | SystemFn) -> SystemSetConfig: ...
-    def run_if(self, condition: Callable[..., object]) -> SystemSetConfig: ...
+    def run_if(self, condition: ConditionFn) -> SystemSetConfig: ...
     def __eq__(self, other: object) -> bool: ...
     def __hash__(self) -> int: ...
 
@@ -430,15 +446,15 @@ class SystemSetEnum(Enum):  # type: ignore[misc]
     def in_set(self, parent: SystemSet | SystemSetEnum) -> SystemSetConfig: ...
     def before(self, target: SystemSet | SystemSetEnum | SystemFn) -> SystemSetConfig: ...
     def after(self, target: SystemSet | SystemSetEnum | SystemFn) -> SystemSetConfig: ...
-    def run_if(self, condition: Callable[..., object]) -> SystemSetConfig: ...
+    def run_if(self, condition: ConditionFn) -> SystemSetConfig: ...
 
 class SystemConfig:
-    """Immutable fluent scheduling configuration for one system callable."""
+    """Immutable fluent scheduling configuration for one ``@system`` function."""
     def __init__(self, system: SystemFn) -> None: ...
     def in_set(self, set: SystemSet | SystemSetEnum) -> SystemConfig: ...
     def before(self, target: SystemSet | SystemSetEnum | SystemFn | SystemConfig) -> SystemConfig: ...
     def after(self, target: SystemSet | SystemSetEnum | SystemFn | SystemConfig) -> SystemConfig: ...
-    def run_if(self, condition: Callable[..., object]) -> SystemConfig: ...
+    def run_if(self, condition: ConditionFn) -> SystemConfig: ...
     def pipe(self, target: SystemFn) -> SystemConfig:
         """Pass this system's return value into a downstream ``In[T]`` system."""
 
@@ -447,10 +463,92 @@ class SystemSetConfig:
     def in_set(self, parent: SystemSet | SystemSetEnum) -> SystemSetConfig: ...
     def before(self, target: SystemSet | SystemSetEnum | SystemFn) -> SystemSetConfig: ...
     def after(self, target: SystemSet | SystemSetEnum | SystemFn) -> SystemSetConfig: ...
-    def run_if(self, condition: Callable[..., object]) -> SystemSetConfig: ...
+    def run_if(self, condition: ConditionFn) -> SystemSetConfig: ...
 
-def system(system: SystemFn, /) -> SystemConfig:
-    """Wrap a callable for ``in_set``, ``before``, ``after``, or ``run_if``."""
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+_R_co = TypeVar("_R_co", covariant=True)
+
+class System(Generic[_P, _R_co]):
+    """A function decorated with ``@system``.
+
+    Calling it calls the function. ``in_set``, ``before``, ``after``,
+    ``run_if`` and ``pipe`` return an immutable ``SystemConfig``.
+    """
+    __name__: str
+    __qualname__: str
+    __module__: str
+    __doc__: str | None
+    @property
+    def __wrapped__(self) -> Callable[_P, _R_co]: ...
+    def __call__(self, *args: _P.args, **kwargs: _P.kwargs) -> _R_co: ...
+    @overload
+    def __get__(self, instance: None, owner: type[object] | None = None, /) -> Self: ...
+    @overload
+    def __get__(self, instance: object, owner: type[object] | None = None, /) -> System[..., _R_co]: ...
+    def in_set(self, set: SystemSet | SystemSetEnum) -> SystemConfig: ...
+    def before(self, target: SystemSet | SystemSetEnum | SystemFn | SystemConfig) -> SystemConfig: ...
+    def after(self, target: SystemSet | SystemSetEnum | SystemFn | SystemConfig) -> SystemConfig: ...
+    def run_if(self, condition: ConditionFn) -> SystemConfig: ...
+    def pipe(self, target: SystemFn) -> SystemConfig:
+        """Pass this system's return value into a downstream ``In[T]`` system."""
+
+class SystemCondition(Generic[_P, _R_co]):
+    """A predicate decorated with ``@condition``; its result is tested for truth."""
+    __name__: str
+    __qualname__: str
+    __module__: str
+    __doc__: str | None
+    @property
+    def __wrapped__(self) -> Callable[_P, _R_co]: ...
+    def __call__(self, *args: _P.args, **kwargs: _P.kwargs) -> _R_co: ...
+    @overload
+    def __get__(self, instance: None, owner: type[object] | None = None, /) -> Self: ...
+    @overload
+    def __get__(self, instance: object, owner: type[object] | None = None, /) -> SystemCondition[..., _R_co]: ...
+    def and_(self, *others: ConditionFn) -> SystemCondition[..., bool]:
+        """True when this and every other condition are true (short-circuits)."""
+    def or_(self, *others: ConditionFn) -> SystemCondition[..., bool]:
+        """True when this or any other condition is true (short-circuits)."""
+    def not_(self) -> SystemCondition[..., bool]:
+        """True when this condition is false."""
+
+class ObserverSystem(Generic[_P, _R_co]):
+    """A function decorated with ``@observer``."""
+    __name__: str
+    __qualname__: str
+    __module__: str
+    __doc__: str | None
+    @property
+    def __wrapped__(self) -> Callable[_P, _R_co]: ...
+    def __call__(self, *args: _P.args, **kwargs: _P.kwargs) -> _R_co: ...
+    @overload
+    def __get__(self, instance: None, owner: type[object] | None = None, /) -> Self: ...
+    @overload
+    def __get__(self, instance: object, owner: type[object] | None = None, /) -> ObserverSystem[..., _R_co]: ...
+
+@overload
+def system(func: Callable[[], _R], /) -> System[[], _R]: ...
+@overload
+def system(func: Callable[_P, _R], /) -> System[_P, _R]:  # type: ignore[overload-cannot-match]
+    """Mark a function as a system for ``add_systems`` and one-shot runs.
+
+    Required for every callable passed to ``add_systems``, ``chain``, ``pipe``,
+    ordering targets, and ``run_system_once``. Idempotent on a ``System``.
+    """
+
+@overload
+def condition(func: Callable[[], _R], /) -> SystemCondition[[], _R]: ...
+@overload
+def condition(func: Callable[_P, _R], /) -> SystemCondition[_P, _R]:  # type: ignore[overload-cannot-match]
+    """Mark a predicate, including a lambda, as a run condition for ``run_if``."""
+
+@overload
+def observer(func: Callable[[], _R], /) -> ObserverSystem[[], _R]: ...
+@overload
+def observer(func: Callable[_P, _R], /) -> ObserverSystem[_P, _R]:  # type: ignore[overload-cannot-match]
+    """Mark a function as an observer for ``add_observer`` and ``observe``."""
 
 def pipe(source: SystemFn, target: SystemFn, /) -> SystemConfig:
     """Compose two systems, passing ``source``'s output to ``target``'s ``In[T]``."""
@@ -463,26 +561,30 @@ def system_set(cls: type[_SystemSetEnumT], /) -> type[_SystemSetEnumT]: ...  # t
 def system_set(cls: type[object], /) -> SystemSet:
     """Declare a system set using the class's stable fully qualified name."""
 
-def run_if(system: SystemFn, condition: Callable[..., object]) -> ConditionalSystem:
+def run_if(system: SystemFn, condition: ConditionFn) -> ConditionalSystem:
     """Create a conditional system that only runs when condition returns true.
 
     Args:
-        system: The system function to run conditionally
-        condition: A function whose result is evaluated for truthiness (can have system parameters)
+        system: The ``@system`` function to run conditionally
+        condition: A ``@condition`` whose result is evaluated for truthiness (can have system parameters)
 
     Returns:
         ConditionalSystem that can be added to schedules or chained with combinators
 
     Example:
         ```python
+        @condition
         def should_run() -> bool:
             return True
 
+        @system
         def my_system() -> None:
             print("Running!")
 
         # System only runs when should_run() returns True
         app.add_systems(Update, run_if(my_system, should_run))
+        # Equivalent fluent form
+        app.add_systems(Update, my_system.run_if(should_run))
 
         # Chain conditions
         app.add_systems(Update, run_if(my_system, cond1).and_(cond2).or_(cond3))
@@ -560,6 +662,7 @@ class Component:
             pass
 
         # Query components in systems
+        @system
         def move_entities(query: Query[tuple[Mut[Transform], Velocity]]) -> None:
             for transform, velocity in query:
                 transform.translation.x += velocity.x
@@ -631,7 +734,8 @@ class ViewColumn:
             for i in range(len(view)):
                 view[i] = view[i] + 1.0
 
-        def system(view: View[Mut[Transform]]):
+        @system
+        def my_system(view: View[Mut[Transform]]):
             for batch in view.iter_batches():
                 y = batch.column_mut(Transform).translation.y
                 kernel(y)  # Safety check at call boundary
@@ -971,38 +1075,45 @@ class View(Generic[QueryParam_T, *Qs]):
 
     Examples:
         # Modify all entities with Transform (requires Mut[])
-        def system(view: View[Mut[Transform]]):
+        @system
+        def my_system(view: View[Mut[Transform]]):
             transform = view.column_mut(Transform)
             transform.translation.x = transform.translation.x + 1.0
 
         # Read-only access (no Mut[])
-        def system(view: View[Transform]):
+        @system
+        def my_system(view: View[Transform]):
             transform = view.column(Transform)  # read-only
             total = view.reduce_sum(transform.translation.x)
 
         # Filter to only entities with specific components (requires With[])
-        def system(view: View[Mut[Transform], With[Cube]]):  # Only Transform+Cube entities
+        @system
+        def my_system(view: View[Mut[Transform], With[Cube]]):  # Only Transform+Cube entities
             transform = view.column_mut(Transform)
             transform.translation.y = 0.5
 
         # Read-only with filter
-        def system(view: View[Transform, With[Marker]]):
+        @system
+        def my_system(view: View[Transform, With[Marker]]):
             transform = view.column(Transform)  # read-only
             sum_x = view.reduce_sum(transform.translation.x)
 
         # Mixed access (mutable + read-only)
-        def system(view: View[tuple[Mut[Transform], Velocity]]):
+        @system
+        def my_system(view: View[tuple[Mut[Transform], Velocity]]):
             transform = view.column_mut(Transform)
             velocity = view.column(Velocity)  # read-only
             transform.translation.x += velocity.x
 
         # Change detection: only affect entities whose Transform changed
-        def system(view: View[Mut[Transform], Changed[Transform]]):
+        @system
+        def my_system(view: View[Mut[Transform], Changed[Transform]]):
             transform = view.column_mut(Transform)
             transform.translation.y = transform.translation.y + 1.0
 
         # Added detection: only affect newly spawned entities
-        def system(view: View[Mut[Transform], Added[Transform]]):
+        @system
+        def my_system(view: View[Mut[Transform], Added[Transform]]):
             transform = view.column_mut(Transform)
             transform.translation.y = 0.0
     """
@@ -1123,6 +1234,7 @@ class View(Generic[QueryParam_T, *Qs]):
                     if y[i] > 0.5:  # Only visible entities
                         x[i] = x[i] * 0.9
 
+            @system
             def wiggle_system(view: View[Mut[Transform], With[Marker]], time: Time) -> None:
                 # Concrete ViewColumn buffers, scoped to this batch.
                 for batch in view.iter_batches():
@@ -1291,12 +1403,13 @@ class EntityCommands:
         Returns:
             Self for method chaining
         """
-    def observe(self, observer: SystemFn) -> EntityCommands:
+    def observe(self, observer: ObserverFn) -> EntityCommands:
         """Register an observer for this specific entity.
 
         The observer will only trigger when events target this entity.
 
         Example:
+            @observer
             def on_damage(trigger: On[TakeDamage]) -> None:
                 print(f"Entity {trigger.entity()} took damage")
 
@@ -1315,7 +1428,8 @@ class Name(Component):
         commands.spawn(Name("Player"), Transform())
 
         # Query named entities
-        def system(query: Query[Name]) -> None:
+        @system
+        def my_system(query: Query[Name]) -> None:
             for name in query:
                 print(f"Entity: {name}")
         ```
@@ -1429,7 +1543,7 @@ class World:
         """
     def write_message(self, message: MessageTypeVar) -> MessageId | None:
         """Write a message, returning None if its channel is not registered."""
-    def add_observer(self, observer: SystemFn) -> EntityCommands:
+    def add_observer(self, observer: ObserverFn) -> EntityCommands:
         """Register an observer and return commands for its entity.
 
         Call ``.id()`` to keep the observer entity; despawning that entity with
@@ -1438,6 +1552,7 @@ class World:
         app.add_observer() instead.
 
         Example:
+            @observer
             def on_player_died(trigger: On[PlayerDied]) -> None:
                 print(f"Player died")
 
@@ -1550,6 +1665,7 @@ class Changed(Generic[T]):
 
     Example:
         # Only update UI when health changes
+        @system
         def update_health_ui(query: Query[tuple[Health, UIElement], Changed[Health]]) -> None:
             for health, ui in query:
                 ui.text = f"HP: {health.value}"
@@ -1563,6 +1679,7 @@ class Added(Generic[T]):
 
     Example:
         # Initialize new entities
+        @system
         def init_player(query: Query[Mut[Player], Added[Player]]) -> None:
             for player in query:
                 player.health = player.max_health
@@ -1578,6 +1695,7 @@ class Has(Generic[T]):
 
     Example:
         # Check if entity has a component
+        @system
         def check_armor(query: Query[tuple[Entity, Has[Armor]]]) -> None:
             for entity, has_armor in query:
                 if has_armor:
@@ -1591,6 +1709,7 @@ class AnyOf(Generic[QueryParam_T]):
     result is a tuple whose corresponding item is the component or ``None``.
 
     Example:
+        @system
         def inspect(
             query: Query[AnyOf[tuple[Transform, Visibility]]],
         ) -> None:
@@ -1603,6 +1722,7 @@ class Or(Generic[QueryParam_T]):
 
     Example:
         # Match entities with Sprite OR Mesh
+        @system
         def render_visuals(
             query: Query[Entity, Or[tuple[With[Sprite], With[Mesh]]]],
         ) -> None:
@@ -2137,10 +2257,12 @@ class Single(Generic[QueryParam_T, *Qs]):
         Single[tuple[Mut[Transform], Player]] - single entity with both components
 
     Usage:
-        def system(row: Single[Mut[Transform]]) -> None:
+        @system
+        def my_system(row: Single[Mut[Transform]]) -> None:
             transform = row.into_inner()
             transform.translation.x += 10.0
 
+        @system
         def pair(row: Single[tuple[Mut[Transform], Player]]) -> None:
             transform, player_data = row.into_inner()
             transform.translation.x += 10.0
@@ -2316,9 +2438,11 @@ class Local(Generic[V]):
 
     Example:
         ```python
+        @system
         def update_stats(stats: Local[Stats]) -> None:
             stats.frame_count += 1
 
+        @system
         def count_frames(counter: Local[int]) -> None:
             counter.current += 1
         ```

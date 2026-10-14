@@ -1,7 +1,6 @@
-from collections.abc import Callable
 from typing import Generic, TypeVar
 
-from pybevy.ecs import Component, Res, Resource
+from pybevy.ecs import Component, Res, Resource, SystemCondition
 
 StateType = TypeVar("StateType")
 
@@ -12,6 +11,7 @@ class State(Generic[StateType], Resource):
     Created automatically by app.init_state() or app.insert_state().
 
     Example:
+        @system
         def check_state(current: Res[State[GameState]]) -> None:
             if current.get() == GameState.MENU:
                 print("In menu")
@@ -47,6 +47,7 @@ class NextState(Generic[StateType], Resource):
     by the StateTransition schedule (or manually via Commands).
 
     Example:
+        @system
         def start_game(next_state: ResMut[NextState[GameState]]) -> None:
             next_state.set(GameState.IN_GAME)
 
@@ -92,17 +93,17 @@ def state(cls: type[StateType]) -> type[StateType]:
             IN_GAME = auto()
     """
 
-def in_state(state: StateType) -> Callable[[Res[State[StateType]]], bool]:
+def in_state(state: StateType) -> SystemCondition[[Res[State[StateType]] | None], bool]:
     """Create a run condition that checks if current state matches target state.
 
     Args:
         state: The target state to check for
 
     Returns:
-        A run condition function for `SystemConfig.run_if`
+        A ``SystemCondition`` for ``run_if``
 
     Example:
-        app.add_systems(Update, system(menu_system).run_if(in_state(GameState.MENU)))
+        app.add_systems(Update, menu_system.run_if(in_state(GameState.MENU)))
     """
 
 # Schedule label types (internal - returned by OnEnter/OnExit/OnTransition functions)

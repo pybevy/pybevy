@@ -9,6 +9,7 @@ A minimal 2D sprite example showing:
 from pybevy.prelude import *
 
 
+@system
 def setup(commands: Commands, asset_server: Res[AssetServer]) -> None:
     """Spawn camera and sprite."""
     commands.spawn(Camera2d())

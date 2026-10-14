@@ -26,6 +26,7 @@ class MovementSettings(Resource):
         self.speed = 2.0
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -49,6 +50,7 @@ def setup(
     commands.spawn(DirectionalLight(), Transform.from_xyz(3.0, 3.0, 3.0).looking_at(Vec3.ZERO, Vec3.Y))
 
 
+@system
 def move_cube(
     cubes: Query[Mut[Transform], With[Movable]],
     settings: ResMut[MovementSettings],

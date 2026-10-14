@@ -205,6 +205,7 @@ def main(app: App) -> App:
     )
 
 
+@system
 def setup(
     commands: Commands,
     server: Res[AssetServer],
@@ -462,6 +463,7 @@ def spawn_forest(
             )
 
 
+@system
 def simulate_cars(query: Query[tuple[Mut[Transform], Mut[CarState]]], time: Res[Time]) -> None:
     """Move each car along its road segment, wrapping at the end."""
     speed = 1.5
@@ -476,6 +478,7 @@ def simulate_cars(query: Query[tuple[Mut[Transform], Mut[CarState]]], time: Res[
         transform.translation = Vec3(car.start_x + dx * t, 0.0, car.start_z + dz * t)
 
 
+@system
 def fly_camera(
     query: Query[tuple[Mut[Transform], Mut[FlyCam]], With[Camera3d]],
     keys: Res[ButtonInput[KeyCode]],
@@ -517,6 +520,7 @@ def fly_camera(
         transform.translation = transform.translation + motion * move_speed
 
 
+@system
 def toggle_wireframe(keys: Res[ButtonInput[KeyCode]], config: ResMut[WireframeConfig]) -> None:
     if keys.just_pressed(KeyCode.KeyK):
         config.global_ = not config.global_

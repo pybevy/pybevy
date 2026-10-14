@@ -14,7 +14,7 @@ from pytest_benchmark.fixture import BenchmarkFixture
 from benches._helpers import initialize
 from pybevy.app import App, ScheduleRunnerPlugin, Startup, Update
 from pybevy.decorators import component
-from pybevy.ecs import Commands, Component, Mut, Query, View
+from pybevy.ecs import Commands, Component, Mut, Query, View, With, system
 
 
 @component
@@ -52,12 +52,14 @@ class Marker(Component):
 def _setup_query_wrapper_read(entity_count: int) -> App:
     """Setup app for wrapper storage query read benchmark."""
 
+    @system
     def spawn(commands: Commands) -> None:
         for i in range(entity_count):
             commands.spawn(
                 WrapperPosition(x=float(i), y=float(i * 2), z=float(i * 3))
             )
 
+    @system
     def query_read(query: Query[WrapperPosition]) -> None:
         total = 0.0
         for comp in query:
@@ -75,6 +77,7 @@ def _setup_query_wrapper_read(entity_count: int) -> App:
 def _setup_query_pyobject_read(entity_count: int, *, nested_size: int = 1) -> App:
     """Setup app for PyObject storage query read benchmark."""
 
+    @system
     def spawn(commands: Commands) -> None:
         for i in range(entity_count):
             commands.spawn(
@@ -86,6 +89,7 @@ def _setup_query_pyobject_read(entity_count: int, *, nested_size: int = 1) -> Ap
                 )
             )
 
+    @system
     def query_read(query: Query[PyObjectPosition]) -> None:
         total = 0.0
         for comp in query:
@@ -103,12 +107,14 @@ def _setup_query_pyobject_read(entity_count: int, *, nested_size: int = 1) -> Ap
 def _setup_query_wrapper_write(entity_count: int) -> App:
     """Setup app for wrapper storage query write benchmark."""
 
+    @system
     def spawn(commands: Commands) -> None:
         for i in range(entity_count):
             commands.spawn(
                 WrapperPosition(x=float(i), y=float(i * 2), z=float(i * 3)), Marker()
             )
 
+    @system
     def query_write(query: Query[Mut[WrapperPosition]]) -> None:
         for pos in query:
             pos.x = pos.x * 2.0 + 1.0
@@ -127,6 +133,7 @@ def _setup_query_wrapper_write(entity_count: int) -> App:
 def _setup_query_pyobject_write(entity_count: int) -> App:
     """Setup app for PyObject storage query write benchmark."""
 
+    @system
     def spawn(commands: Commands) -> None:
         for i in range(entity_count):
             commands.spawn(
@@ -136,6 +143,7 @@ def _setup_query_pyobject_write(entity_count: int) -> App:
                 Marker(),
             )
 
+    @system
     def query_write(query: Query[Mut[PyObjectPosition]]) -> None:
         for pos in query:
             pos.x = pos.x * 2.0 + 1.0
@@ -154,13 +162,15 @@ def _setup_query_pyobject_write(entity_count: int) -> App:
 def _setup_view_wrapper_write(entity_count: int) -> App:
     """Setup app for wrapper storage View write benchmark."""
 
+    @system
     def spawn(commands: Commands) -> None:
         for i in range(entity_count):
             commands.spawn(
                 WrapperPosition(x=float(i), y=float(i * 2), z=float(i * 3)), Marker()
             )
 
-    def view_write(view: View[Mut[WrapperPosition], Marker]) -> None:
+    @system
+    def view_write(view: View[Mut[WrapperPosition], With[Marker]]) -> None:
         pos = view.column_mut(WrapperPosition)
         pos.x = pos.x * 2.0 + 1.0
         pos.y = pos.y * 1.5 + 0.5
@@ -227,6 +237,7 @@ def test_multi_component_wrapper_10000(benchmark: BenchmarkFixture) -> None:
     """Benchmark multi-component query with wrapper storage (10k entities)."""
     entity_count = 10000
 
+    @system
     def spawn(commands: Commands) -> None:
         for i in range(entity_count):
             commands.spawn(
@@ -234,6 +245,7 @@ def test_multi_component_wrapper_10000(benchmark: BenchmarkFixture) -> None:
                 WrapperVelocity(vx=1.0, vy=2.0, vz=3.0),
             )
 
+    @system
     def query_multi(query: Query[tuple[Mut[WrapperPosition], WrapperVelocity]]) -> None:
         for pos, vel in query:
             pos.x += vel.vx

@@ -13,6 +13,7 @@ from pybevy.prelude import *
 from pybevy.window import WindowResolution
 
 
+@system
 def setup(commands: Commands) -> None:
     """Set up a camera."""
     commands.spawn(Camera2d())

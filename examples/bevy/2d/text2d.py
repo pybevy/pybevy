@@ -31,6 +31,7 @@ class AnimateScale(Component):
     """Marker for text with scale animation."""
 
 
+@system
 def setup(commands: Commands) -> None:
     """Set up 2D text examples with animations."""
     # Camera
@@ -92,6 +93,7 @@ def setup(commands: Commands) -> None:
     )
 
 
+@system
 def animate_translation(
     time: Res[Time],
     transforms: Query[Mut[Transform], With[tuple[Text2d, AnimateTranslation]]],
@@ -103,6 +105,7 @@ def animate_translation(
         transform.translation.y = 100.0 * math.cos(t) + 100.0
 
 
+@system
 def animate_rotation(
     time: Res[Time],
     transforms: Query[Mut[Transform], With[tuple[Text2d, AnimateRotation]]],
@@ -113,6 +116,7 @@ def animate_rotation(
         transform.rotation = Quat.from_rotation_z(math.cos(t))
 
 
+@system
 def animate_scale(
     time: Res[Time],
     transforms: Query[Mut[Transform], With[tuple[Text2d, AnimateScale]]],

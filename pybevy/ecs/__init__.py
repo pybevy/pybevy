@@ -4,6 +4,7 @@ import typing as _typing
 
 from .. import _pybevy  # type: ignore
 from .._module_loader import load_sibling_module as _load_sibling_module
+from ._callables import install_callable_api as _install_callable_api
 from ._system_sets import install_system_set_api as _install_system_set_api
 
 _native = _pybevy.ecs
@@ -13,6 +14,7 @@ _native.__path__ = [_ecs_dir]  # type: ignore
 _native.__package__ = __name__  # type: ignore
 sys.modules[__name__] = _native  # type: ignore
 _install_system_set_api(_native)
+_install_callable_api(_native)
 
 # Register Python submodules so `from pybevy.ecs import <submod>` works.
 # The sys.modules replacement above breaks normal submodule discovery because

@@ -29,6 +29,7 @@ class ScalingSettings(Resource):
         self.min_element_size = 1.0
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -50,6 +51,7 @@ def setup(
     commands.spawn(DirectionalLight(), Transform.from_xyz(3.0, 3.0, 3.0).looking_at(Vec3.ZERO, Vec3.Y))
 
 
+@system
 def change_scale_direction(
     cubes: Query[Mut[Transform], With[Scaling]],
     settings: ResMut[ScalingSettings],
@@ -69,6 +71,7 @@ def change_scale_direction(
             settings.scale_direction = settings.scale_direction.zxy()
 
 
+@system
 def scale_cube(
     cubes: Query[Mut[Transform], With[Scaling]],
     settings: Res[ScalingSettings],

@@ -55,6 +55,7 @@ class PrintMessageState(Resource):
         self.timer = timer
 
 
+@system
 def print_message_system(state: ResMut[PrintMessageState], time: Res[Time]) -> None:
     """Print the message when the timer finishes."""
     state.timer.tick(time.delta_secs())

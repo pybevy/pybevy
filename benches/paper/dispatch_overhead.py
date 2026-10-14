@@ -35,7 +35,7 @@ from benches.paper.bench_utils import (
     print_system_info,
 )
 from pybevy.app import App, ScheduleRunnerPlugin, Startup, Update
-from pybevy.ecs import Commands, Mut, View
+from pybevy.ecs import Commands, Mut, View, system
 from pybevy.transform import Transform
 
 DEFAULT_ENTITIES = 1_000_000
@@ -46,10 +46,12 @@ DEFAULT_ENTITIES = 1_000_000
 def _make_increment_app(entity_count: int) -> App:
     """Single field increment: translation.x += 1.0"""
 
+    @system
     def setup(commands: Commands) -> None:
         for i in range(entity_count):
             commands.spawn(Transform.from_xyz(float(i), 0.0, 0.0))
 
+    @system
     def workload(view: View[Mut[Transform]]) -> None:
         col = view.column_mut(Transform)
         col.translation.x += 1.0
@@ -66,10 +68,12 @@ def _make_increment_app(entity_count: int) -> App:
 def _make_complex_math_app(entity_count: int) -> App:
     """Complex math: translation.x = sin(translation.x) * 2.0 + 1.0"""
 
+    @system
     def setup(commands: Commands) -> None:
         for i in range(entity_count):
             commands.spawn(Transform.from_xyz(float(i) * 0.01, 0.0, 0.0))
 
+    @system
     def workload(view: View[Mut[Transform]]) -> None:
         col = view.column_mut(Transform)
         col.translation.x = col.translation.x.sin() * 2.0 + 1.0
@@ -86,10 +90,12 @@ def _make_complex_math_app(entity_count: int) -> App:
 def _make_multi_field_app(entity_count: int) -> App:
     """Multi-field: operations on translation.x, .y, .z"""
 
+    @system
     def setup(commands: Commands) -> None:
         for i in range(entity_count):
             commands.spawn(Transform.from_xyz(float(i), float(i) * 0.5, 0.0))
 
+    @system
     def workload(view: View[Mut[Transform]]) -> None:
         col = view.column_mut(Transform)
         col.translation.x += 1.0

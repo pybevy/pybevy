@@ -23,6 +23,7 @@ class GlowMaterial(Material):
     color: LinearRgba = LinearRgba(0.0, 1.0, 0.5, 1.0)
     intensity: float = 1.5
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -259,7 +260,7 @@ from dataclasses import dataclass
 from pybevy.app import Startup
 from pybevy.assets import Assets, Handle
 from pybevy.decorators import resource
-from pybevy.ecs import Res, ResMut, Resource, chain
+from pybevy.ecs import Res, ResMut, Resource, chain, system
 from pybevy.image import Image
 from pybevy.material import TextureBinding, material
 from pybevy.pbr import Material
@@ -277,12 +278,15 @@ class Water(Material):
 class SharedSky(Resource):
     cubemap: Handle[Image] | None = None
 
+@system
 def load_sky(images: ResMut[Assets[Image]], shared: ResMut[SharedSky]) -> None:
     shared.cubemap = images.add(make_cubemap())  # a six-face cube image
 
+@system
 def add_glass(shared: Res[SharedSky], materials: ResMut[Assets[Glass]]) -> None:
     materials.add(Glass(sky=shared.cubemap))
 
+@system
 def add_water(shared: Res[SharedSky], materials: ResMut[Assets[Water]]) -> None:
     materials.add(Water(sky=shared.cubemap))
 
@@ -337,7 +341,7 @@ there is no need to add both.
 import struct
 
 from pybevy.assets import Assets, Handle
-from pybevy.ecs import ResMut
+from pybevy.ecs import ResMut, system
 from pybevy.material import StorageBinding, material
 from pybevy.math import Vec4
 from pybevy.pbr import Material, ShaderMaterialPlugin
@@ -347,6 +351,7 @@ from pybevy.render import ShaderBuffer
 class Palette(Material):
     colors: StorageBinding[Vec4]
 
+@system
 def make_palette(
     buffers: ResMut[Assets[ShaderBuffer]],
     materials: ResMut[Assets[Palette]],
@@ -992,7 +997,7 @@ from dataclasses import dataclass, field
 
 from pybevy.assets import Assets, Handle
 from pybevy.decorators import resource
-from pybevy.ecs import Res, ResMut, Resource
+from pybevy.ecs import Res, ResMut, Resource, system
 from pybevy.material import AlphaMode, TextureBinding, material
 from pybevy.pbr import Material, StandardMaterial
 from pybevy.time import Time
@@ -1021,6 +1026,7 @@ class MyCutout(Material):
 class Cutouts(Resource):
     handles: list[Handle[MyCutout]] = field(default_factory=list)
 
+@system
 def animate(
     time: Res[Time], cutouts: Res[Cutouts], materials: ResMut[Assets[MyCutout]]
 ) -> None:
@@ -1328,6 +1334,7 @@ class is decorated.
 In the setup system, pass loaded image handles:
 
 ```python
+@system
 def setup(commands, meshes, materials, asset_server: Res[AssetServer]):
     grass_tex = asset_server.load_image("textures/grass.png")
     rock_tex = asset_server.load_image("textures/rock.png")
@@ -1385,6 +1392,7 @@ instance data.
 Modify material fields at 60fps from update systems:
 
 ```python
+@system
 def animate_materials(
     materials: ResMut[Assets[GlowMaterial]],
     query: Query[MeshMaterial3d[GlowMaterial]],

@@ -38,6 +38,7 @@ class PlayerPosition(Resource):
         self.position = Vec3(0.0, 0.0, 0.0)
 
 
+@system
 def setup_scene(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -65,11 +66,13 @@ def setup_scene(
     )
 
 
+@system
 def setup_camera(commands: Commands) -> None:
     """Set up the 2D camera."""
     commands.spawn(Camera2d())
 
 
+@system
 def update_camera(
     camera_query: Query[Mut[Transform], With[Camera2d]],
     player_pos: Res[PlayerPosition],
@@ -95,6 +98,7 @@ def update_camera(
         camera.translation.z += diff_z * decay_factor
 
 
+@system
 def move_player(
     player_query: Query[Mut[Transform], With[Player]],
     player_pos: ResMut[PlayerPosition],

@@ -514,7 +514,9 @@ Draw debug lines from regular systems with the `Gizmos` system parameter:
 
 ```python
 from pybevy.prelude import Color, Gizmos, Vec3
+from pybevy.ecs import system
 
+@system
 def draw_axes(gizmos: Gizmos) -> None:
     gizmos.ray(Vec3.ZERO, Vec3.X, Color.srgb(1.0, 0.0, 0.0))
     gizmos.ray(Vec3.ZERO, Vec3.Y, Color.srgb(0.0, 1.0, 0.0))

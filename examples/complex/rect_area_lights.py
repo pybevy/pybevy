@@ -106,6 +106,7 @@ def spawn_floor(
             )
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -237,6 +238,7 @@ def setup(
     )
 
 
+@system
 def spin_panels(
     time: Res[Time],
     query: Query[Mut[Transform], With[SpinningPanel]],
@@ -246,6 +248,7 @@ def spin_panels(
         transform.rotate_y(time.delta_secs() * 0.5)
 
 
+@system
 def orbit_camera(
     time: Res[Time],
     query: Query[Mut[Transform], With[OrbitCamera]],

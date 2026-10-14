@@ -32,7 +32,7 @@ zero division produces float infinity/NaN, and scalar arithmetic preserves
 
 ```python
 from pybevy.color import Color
-from pybevy.ecs import Commands
+from pybevy.ecs import Commands, system
 from pybevy.ui import (
     BackgroundColor,
     BorderColor,
@@ -46,6 +46,7 @@ from pybevy.ui import (
 )
 
 
+@system
 def setup(commands: Commands) -> None:
     panel = Node(
         width=Val.Px(320.0),
@@ -84,10 +85,11 @@ After UI layout has run, query `ComputedNode` for the resolved size and
 reported in physical pixels:
 
 ```python
-from pybevy.ecs import Query
+from pybevy.ecs import Query, system
 from pybevy.ui import ComputedNode, UiGlobalTransform
 
 
+@system
 def inspect_layout(query: Query[tuple[ComputedNode, UiGlobalTransform]]) -> None:
     for computed, transform in query:
         print("size", computed.size, "position", transform.translation)
@@ -143,11 +145,12 @@ its shorter side (80-by-80 on a 200-by-80 node), not a filled area. Assign
 or mutate the existing value with `ResMut[UiScale]`:
 
 ```python
-from pybevy.ecs import ResMut
+from pybevy.ecs import ResMut, system
 from pybevy.ui import UiScale
 
 app.insert_resource(UiScale(1.5))
 
+@system
 def zoom_ui(scale: ResMut[UiScale]) -> None:
     scale.scale = 2.0
 ```

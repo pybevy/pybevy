@@ -32,7 +32,7 @@ from benches.paper.bench_utils import print_system_info
 from pybevy.app import App, AppExit, DefaultPlugins, Startup, Update
 from pybevy.assets import Assets, Handle
 from pybevy.camera import Camera3d
-from pybevy.ecs import Commands, MessageWriter, Mut, Res, ResMut, View, With
+from pybevy.ecs import Commands, MessageWriter, Mut, Res, ResMut, View, With, system
 from pybevy.math import Cuboid, Vec3
 from pybevy.mesh import Mesh, Mesh3d
 from pybevy.pbr import MeshMaterial3d, StandardMaterial
@@ -116,6 +116,7 @@ def main() -> None:
     phase_frame_times: list[float] = []
     results: list[dict[str, float]] = []
 
+    @system
     def setup(
         commands: Commands,
         meshes: ResMut[Assets[Mesh]],
@@ -154,6 +155,7 @@ def main() -> None:
             )
         current_entities[0] = total
 
+    @system
     def animate(
         view: View[Mut[Transform], With[Mesh3d]],
         time_res: Res[Time],
@@ -163,6 +165,7 @@ def main() -> None:
             col = batch.column_mut(Transform)
             _wave_kernel(col.translation, t)
 
+    @system
     def tick(
         commands: Commands,
         time_res: Res[Time],

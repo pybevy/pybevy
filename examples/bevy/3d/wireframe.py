@@ -17,6 +17,7 @@ from pybevy.pbr import (
 from pybevy.prelude import *
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -117,6 +118,7 @@ def setup(
     ))
 
 
+@system
 def toggle_wireframe(
     keyboard: Res[ButtonInput[KeyCode]],
     config: ResMut[WireframeConfig],

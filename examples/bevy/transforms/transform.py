@@ -24,6 +24,7 @@ class Orbiter(Component):
     turn_speed: float = 0.2
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -55,6 +56,7 @@ def setup(
     commands.spawn(DirectionalLight(), Transform.from_xyz(3.0, 3.0, 3.0).looking_at(Vec3.ZERO, Vec3.Y))
 
 
+@system
 def move_and_rotate_orbiter(
     orbiters: Query[tuple[Mut[Transform], Orbiter]],
     time: Res[Time],
