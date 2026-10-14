@@ -10,6 +10,7 @@ use pyo3::{exceptions::PyValueError, prelude::*};
     module = "pybevy.text",
     frozen,
     eq,
+    hash,
     skip_from_py_object
 )]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

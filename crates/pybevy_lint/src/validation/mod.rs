@@ -173,10 +173,8 @@ pub fn validate_with_bevy(
             ));
         }
 
-        if let Some(MacroInfo::BevyEnum { .. }) = &rust_class.macro_info
-            && let Some((_, bevy_item)) = resolved_bevy
-        {
-            policy_diagnostics.extend(class_rules::validate_enum_hashability(
+        if let Some((_, bevy_item)) = resolved_bevy {
+            policy_diagnostics.extend(class_rules::validate_value_hashability(
                 rust_class, bevy_item,
             ));
         }
@@ -864,6 +862,11 @@ fn validate_all_impl_with_consumed(
         class_diagnostics.extend(class_rules::validate_value_enum_without_pyenum(rust_class));
         class_diagnostics.extend(method_rules::validate_builder_receivers(rust_class));
         class_diagnostics.extend(class_rules::validate_conversion_fallbacks(rust_class));
+        class_diagnostics.extend(protocol_rules::validate_copy_pairing(
+            rust_class,
+            rust_classes,
+            true,
+        ));
         let self_borrow_reason = shared_borrow_reason(config, rust_class);
         if let Some(reason) = self_borrow_reason {
             class_diagnostics.extend(method_rules::validate_shared_borrow_receivers(
@@ -909,6 +912,11 @@ fn validate_all_impl_with_consumed(
                     py_class,
                     rust_classes,
                     python_classes,
+                ));
+                class_diagnostics.extend(protocol_rules::validate_copy_pairing(
+                    py_class,
+                    python_classes,
+                    false,
                 ));
 
                 // Validate properties

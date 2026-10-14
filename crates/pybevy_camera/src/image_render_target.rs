@@ -10,9 +10,10 @@ use pyo3::prelude::*;
     module = "pybevy.camera",
     frozen,
     eq,
+    hash,
     from_py_object
 )]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PyImageRenderTarget {
     pub(crate) inner: ImageRenderTarget,
 }

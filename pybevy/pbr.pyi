@@ -936,7 +936,10 @@ class AtmosphereSettings(Component):
         """Size of aerial view LUT texture (3D); each axis 1 to 2048.
 
         Larger sizes raise ValueError: they exceed GPU texture limits and black
-        out the frame.
+        out the frame. The texture takes 8 bytes per texel, so sizes near the
+        limit exceed GPU memory (2048 on every axis is 68 GB); that allocation
+        fails with a logged, non-fatal out-of-memory error and the frame renders
+        black until the size is lowered.
         """
     @aerial_view_lut_size.setter
     def aerial_view_lut_size(self, value: UVec3) -> None: ...

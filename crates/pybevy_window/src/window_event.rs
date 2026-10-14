@@ -1,7 +1,17 @@
 use bevy::{
-    input::touch::ForceTouch,
+    input::{
+        gestures::{DoubleTapGesture, PanGesture, PinchGesture, RotationGesture},
+        keyboard::{KeyboardFocusLost, KeyboardInput},
+        mouse::{MouseButtonInput, MouseMotion, MouseWheel},
+        touch::{ForceTouch, TouchInput, TouchPhase},
+    },
     math::{IVec2, Vec2},
-    window::{FileDragAndDrop, Ime, WindowEvent},
+    window::{
+        CursorEntered, CursorLeft, CursorMoved, FileDragAndDrop, Ime, RequestRedraw,
+        WindowBackendScaleFactorChanged, WindowCloseRequested, WindowCreated, WindowDestroyed,
+        WindowEvent, WindowFocused, WindowMoved, WindowOccluded, WindowResized,
+        WindowScaleFactorChanged, WindowThemeChanged,
+    },
 };
 use pybevy_core::{PyEntity, PyMessage};
 use pybevy_input::{
@@ -322,6 +332,137 @@ impl PyWindowEvent {
                 theme: e.theme.into(),
                 window: e.window.into(),
             },
+        })
+    }
+}
+
+impl TryFrom<&PyWindowEvent> for WindowEvent {
+    type Error = PyErr;
+
+    fn try_from(event: &PyWindowEvent) -> PyResult<Self> {
+        Ok(match event.clone() {
+            PyWindowEvent::AppLifecycle { lifecycle } => {
+                WindowEvent::AppLifecycle(lifecycle.into())
+            }
+            PyWindowEvent::CursorEntered { window } => CursorEntered {
+                window: window.into(),
+            }
+            .into(),
+            PyWindowEvent::CursorLeft { window } => CursorLeft {
+                window: window.into(),
+            }
+            .into(),
+            PyWindowEvent::CursorMoved {
+                position,
+                window,
+                delta,
+            } => CursorMoved {
+                window: window.into(),
+                position: position.0,
+                delta: delta.map(|delta| delta.0),
+            }
+            .into(),
+            PyWindowEvent::FileDragAndDrop { value } => value.0.into(),
+            PyWindowEvent::Ime { value } => value.0.into(),
+            PyWindowEvent::RequestRedraw {} => RequestRedraw.into(),
+            PyWindowEvent::WindowCloseRequested { window } => WindowCloseRequested {
+                window: window.into(),
+            }
+            .into(),
+            PyWindowEvent::WindowFocused { focused, window } => WindowFocused {
+                window: window.into(),
+                focused,
+            }
+            .into(),
+            PyWindowEvent::WindowResized {
+                width,
+                height,
+                window,
+            } => WindowResized {
+                window: window.into(),
+                width,
+                height,
+            }
+            .into(),
+            PyWindowEvent::MouseButtonInput {
+                button,
+                state,
+                window,
+            } => MouseButtonInput {
+                button: button.into(),
+                state: state.into(),
+                window: window.into(),
+            }
+            .into(),
+            PyWindowEvent::MouseMotion { delta } => MouseMotion { delta: delta.0 }.into(),
+            // The Python variant carries no phase; a wheel event outside a touchpad gesture is Moved.
+            PyWindowEvent::MouseWheel { unit, x, y, window } => MouseWheel {
+                unit: unit.into(),
+                x,
+                y,
+                window: window.into(),
+                phase: TouchPhase::Moved,
+            }
+            .into(),
+            PyWindowEvent::PinchGesture { value } => PinchGesture(value).into(),
+            PyWindowEvent::RotationGesture { value } => RotationGesture(value).into(),
+            PyWindowEvent::DoubleTapGesture {} => DoubleTapGesture.into(),
+            PyWindowEvent::PanGesture { x, y } => PanGesture(Vec2::new(x, y)).into(),
+            PyWindowEvent::TouchInput {
+                phase,
+                position,
+                id,
+                window,
+                force,
+            } => TouchInput {
+                phase: phase.into(),
+                position: position.0,
+                window: window.into(),
+                force: force.map(ForceTouch::Normalized),
+                id,
+            }
+            .into(),
+            PyWindowEvent::KeyboardFocusLost {} => KeyboardFocusLost.into(),
+            PyWindowEvent::WindowCreated { window } => WindowCreated {
+                window: window.into(),
+            }
+            .into(),
+            PyWindowEvent::WindowDestroyed { window } => WindowDestroyed {
+                window: window.into(),
+            }
+            .into(),
+            PyWindowEvent::WindowMoved { position, window } => WindowMoved {
+                window: window.into(),
+                position: position.0,
+            }
+            .into(),
+            PyWindowEvent::WindowOccluded { occluded, window } => WindowOccluded {
+                window: window.into(),
+                occluded,
+            }
+            .into(),
+            PyWindowEvent::WindowScaleFactorChanged {
+                scale_factor,
+                window,
+            } => WindowScaleFactorChanged {
+                window: window.into(),
+                scale_factor,
+            }
+            .into(),
+            PyWindowEvent::WindowBackendScaleFactorChanged {
+                scale_factor,
+                window,
+            } => WindowBackendScaleFactorChanged {
+                window: window.into(),
+                scale_factor,
+            }
+            .into(),
+            PyWindowEvent::WindowThemeChanged { theme, window } => WindowThemeChanged {
+                window: window.into(),
+                theme: theme.into(),
+            }
+            .into(),
+            PyWindowEvent::KeyboardInput { value } => KeyboardInput::try_from(&value.0)?.into(),
         })
     }
 }

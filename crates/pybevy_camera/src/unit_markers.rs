@@ -172,8 +172,8 @@ impl PyShadowLodOrigin {
 ///
 /// When added to a camera entity, enables high dynamic range rendering.
 #[pycomponent(Hdr, unit, bridge)]
-#[pyclass(name = "Hdr", module = "pybevy.camera", extends = PyComponent, frozen, eq, skip_from_py_object)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[pyclass(name = "Hdr", module = "pybevy.camera", extends = PyComponent, frozen, eq, hash, skip_from_py_object)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PyHdr;
 
 impl From<Hdr> for PyHdr {

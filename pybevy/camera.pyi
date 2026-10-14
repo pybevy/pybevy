@@ -287,8 +287,9 @@ class Viewport:
     UI overlays.
 
     Attributes:
-        physical_position: Position in pixels from top-left corner of render target
-        physical_size: Size in pixels of the viewport rectangle
+        physical_position: Position in pixels from top-left corner of render target,
+            each axis 0 to 2**31 - 1
+        physical_size: Size in pixels of the viewport rectangle, each axis 1 to 2**31
         depth: Depth range (near, far), typically Range(0.0, 1.0)
 
     Examples:
@@ -1789,6 +1790,7 @@ class ImageRenderTarget:
     @property
     def scale_factor(self) -> float: ...
     def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
 
 class ManualTextureViewHandle:
     def __init__(self, value: int = 0) -> None: ...
@@ -1835,3 +1837,5 @@ class Hdr(Component):
     """Marker component that enables HDR (High Dynamic Range) rendering for a camera."""
 
     def __init__(self) -> None: ...
+
+    def __hash__(self) -> int: ...

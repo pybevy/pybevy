@@ -56,9 +56,10 @@ impl PyWindowRef {
     module = "pybevy.window",
     frozen,
     eq,
+    hash,
     from_py_object
 )]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PyNormalizedWindowRef {
     inner: NormalizedWindowRef,
 }

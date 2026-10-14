@@ -9,6 +9,10 @@ use pybevy_core::{
 };
 use pyo3::{prelude::*, types::PyList};
 
+use crate::track_sizing_function::{
+    PyMaxTrackSizingFunction, PyMinTrackSizingFunction, checked_max, checked_min,
+};
+
 /// The factory name and arguments that rebuild `track`, when one exists.
 pub(crate) fn grid_track_factory(track: &GridTrack) -> Option<(&'static str, Option<String>)> {
     let ReflectRef::Struct(fields) = track.reflect_ref() else {
@@ -65,6 +69,24 @@ pub(crate) fn grid_track_factory(track: &GridTrack) -> Option<(&'static str, Opt
         }
         _ => return None,
     })
+}
+
+/// `GridTrack.minmax(...)` for a track no single-unit factory rebuilds.
+pub(crate) fn grid_track_minmax_repr(track: &GridTrack) -> Option<String> {
+    let ReflectRef::Struct(fields) = track.reflect_ref() else {
+        return None;
+    };
+    let min = fields
+        .field("min_sizing_function")?
+        .try_downcast_ref::<MinTrackSizingFunction>()?;
+    let max = fields
+        .field("max_sizing_function")?
+        .try_downcast_ref::<MaxTrackSizingFunction>()?;
+    Some(format!(
+        "GridTrack.minmax({}, {})",
+        PyMinTrackSizingFunction::from(*min).__repr__(),
+        PyMaxTrackSizingFunction::from(*max).__repr__()
+    ))
 }
 
 #[pyclass(name = "GridTrack", module = "pybevy.ui", eq, frozen, from_py_object)]
@@ -227,6 +249,13 @@ impl PyGridTrack {
         })
     }
 
+    #[staticmethod]
+    pub fn minmax(min: PyMinTrackSizingFunction, max: PyMaxTrackSizingFunction) -> PyResult<Self> {
+        Ok(PyGridTrack {
+            inner: GridTrack::minmax(checked_min(min)?, checked_max(max)?),
+        })
+    }
+
     pub fn __copy__(&self) -> Self {
         self.clone()
     }
@@ -240,7 +269,9 @@ impl PyGridTrack {
             Some((name, argument)) => {
                 format!("GridTrack.{name}({})", argument.unwrap_or_default())
             }
-            None => "GridTrack(...)".to_string(),
+            None => {
+                grid_track_minmax_repr(&self.inner).unwrap_or_else(|| "GridTrack(...)".to_string())
+            }
         }
     }
 }

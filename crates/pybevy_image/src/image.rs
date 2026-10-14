@@ -28,8 +28,11 @@ use pybevy_core::{
 use pybevy_macros::{pyasset, pyvalue};
 use pybevy_math::{uvec2::PyUVec2, uvec3::PyUVec3, vec2::PyVec2};
 use pybevy_render::{
-    extent3d::PyExtent3d, texture_descriptor::PyTextureDescriptor,
-    texture_dimension::PyTextureDimension, texture_format::PyTextureFormat,
+    extent3d::PyExtent3d,
+    target_format_guard::{is_camera_renderable, unrenderable_target_message},
+    texture_descriptor::PyTextureDescriptor,
+    texture_dimension::PyTextureDimension,
+    texture_format::PyTextureFormat,
     texture_view_descriptor::PyTextureViewDescriptor,
 };
 use pyo3::{
@@ -1162,6 +1165,9 @@ impl PyImage {
                  render targets need an uncompressed format"
             ))
         })?;
+        if !is_camera_renderable(format) {
+            return Err(PyValueError::new_err(unrenderable_target_message(format)));
+        }
         validate_target_allocation(width, height, format)?;
         let image = Image::new_target_texture(width, height, format, None);
 

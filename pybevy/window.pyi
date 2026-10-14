@@ -4,6 +4,7 @@ import numpy as np
 
 from pybevy.app import App, Plugin
 from pybevy.ecs import Batchable, Component, Entity, Message, SystemSet
+from pybevy.ecs import Entity as _EcsEntity
 from pybevy.input import (
     ButtonState,
     KeyboardInput,
@@ -48,12 +49,13 @@ class WindowRef:
         def entity(self) -> Entity: ...
         def __init__(self, entity: Entity) -> None: ...
 
-    def normalize(self, primary_window: Entity | None = None) -> NormalizedWindowRef | None: ...
+    def normalize(self, primary_window: _EcsEntity | None = None) -> NormalizedWindowRef | None: ...
 
 class NormalizedWindowRef:
     @property
     def entity(self) -> Entity: ...
     def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
 
 class WindowPlugin(Plugin):
     """Plugin for window management.
@@ -1720,10 +1722,18 @@ class RequestRedraw(Message):
 
 
 class WindowEvent:
-    """Window event union type (read-only).
+    """Window event union type.
 
     A unified event type that wraps all window-related events, allowing you to
     receive all events through a single MessageReader and pattern match on types.
+
+    `MessageWriter[WindowEvent]` writes the canonical stream that Bevy's picking
+    reads, so its `CursorMoved` and `MouseButtonInput` variants can hover and
+    click UI from a script or headless test. As in Bevy, only winit
+    splits window events into the specific streams such as `CursorMoved`; a
+    written `WindowEvent` does not reach `MessageReader[CursorMoved]`. A written
+    `MouseWheel` has phase `TouchPhase.Moved`, and a `TouchInput` force is
+    normalized. `write_default()` raises `TypeError`.
 
     This is a PyO3 enum - use Python's pattern matching to handle different event types.
 

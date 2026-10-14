@@ -36,6 +36,7 @@ pub mod scroll_position;
 pub mod shadow_style;
 pub mod text;
 pub mod text_shadow;
+pub mod track_sizing_function;
 pub mod ui_global_transform;
 pub mod ui_position;
 pub mod ui_rect;
@@ -140,6 +141,8 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<repeated_grid_track::PyRepeatedGridTrack>()?;
     m.add_class::<repeated_grid_track::PyRepeatedGridTracks>()?;
     m.add_class::<grid_track_repetition::PyGridTrackRepetition>()?;
+    m.add_class::<track_sizing_function::PyMinTrackSizingFunction>()?;
+    m.add_class::<track_sizing_function::PyMaxTrackSizingFunction>()?;
     m.add_class::<auto_directional_navigation::PyAutoDirectionalNavigation>()?;
     m.add_class::<ignore_scroll::PyIgnoreScroll>()?;
 

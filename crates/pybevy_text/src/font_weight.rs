@@ -6,6 +6,7 @@ use pyo3::prelude::*;
     module = "pybevy.text",
     frozen,
     eq,
+    hash,
     from_py_object
 )]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

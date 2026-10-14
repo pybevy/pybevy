@@ -2518,6 +2518,163 @@ class GridAutoFlow:
     """Fill columns first, using dense packing (fills gaps)."""
 
 
+class MinTrackSizingFunction:
+    """The lower bound of a grid track's size, used by GridTrack.minmax()."""
+
+    def __copy__(self) -> MinTrackSizingFunction: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> MinTrackSizingFunction: ...
+
+
+    class Px(MinTrackSizingFunction):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        @property
+        def value(self) -> float: ...
+        def __init__(self, value: float) -> None: ...
+
+    class Percent(MinTrackSizingFunction):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        @property
+        def value(self) -> float: ...
+        def __init__(self, value: float) -> None: ...
+
+    class Em(MinTrackSizingFunction):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        @property
+        def value(self) -> float: ...
+        def __init__(self, value: float) -> None: ...
+
+    class Rem(MinTrackSizingFunction):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        @property
+        def value(self) -> float: ...
+        def __init__(self, value: float) -> None: ...
+
+    class MinContent(MinTrackSizingFunction):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class MaxContent(MinTrackSizingFunction):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Auto(MinTrackSizingFunction):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class VMin(MinTrackSizingFunction):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        @property
+        def value(self) -> float: ...
+        def __init__(self, value: float) -> None: ...
+
+    class VMax(MinTrackSizingFunction):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        @property
+        def value(self) -> float: ...
+        def __init__(self, value: float) -> None: ...
+
+    class Vh(MinTrackSizingFunction):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        @property
+        def value(self) -> float: ...
+        def __init__(self, value: float) -> None: ...
+
+    class Vw(MinTrackSizingFunction):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        @property
+        def value(self) -> float: ...
+        def __init__(self, value: float) -> None: ...
+
+
+class MaxTrackSizingFunction:
+    """The upper bound of a grid track's size, used by GridTrack.minmax().
+
+    Fraction(n) is a CSS `nfr` share of the free space.
+    """
+
+    def __copy__(self) -> MaxTrackSizingFunction: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> MaxTrackSizingFunction: ...
+
+
+    class Px(MaxTrackSizingFunction):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        @property
+        def value(self) -> float: ...
+        def __init__(self, value: float) -> None: ...
+
+    class Percent(MaxTrackSizingFunction):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        @property
+        def value(self) -> float: ...
+        def __init__(self, value: float) -> None: ...
+
+    class Em(MaxTrackSizingFunction):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        @property
+        def value(self) -> float: ...
+        def __init__(self, value: float) -> None: ...
+
+    class Rem(MaxTrackSizingFunction):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        @property
+        def value(self) -> float: ...
+        def __init__(self, value: float) -> None: ...
+
+    class MinContent(MaxTrackSizingFunction):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class MaxContent(MaxTrackSizingFunction):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class FitContentPx(MaxTrackSizingFunction):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        @property
+        def value(self) -> float: ...
+        def __init__(self, value: float) -> None: ...
+
+    class FitContentPercent(MaxTrackSizingFunction):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        @property
+        def value(self) -> float: ...
+        def __init__(self, value: float) -> None: ...
+
+    class Auto(MaxTrackSizingFunction):
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Fraction(MaxTrackSizingFunction):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        @property
+        def value(self) -> float: ...
+        def __init__(self, value: float) -> None: ...
+
+    class VMin(MaxTrackSizingFunction):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        @property
+        def value(self) -> float: ...
+        def __init__(self, value: float) -> None: ...
+
+    class VMax(MaxTrackSizingFunction):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        @property
+        def value(self) -> float: ...
+        def __init__(self, value: float) -> None: ...
+
+    class Vh(MaxTrackSizingFunction):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        @property
+        def value(self) -> float: ...
+        def __init__(self, value: float) -> None: ...
+
+    class Vw(MaxTrackSizingFunction):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        @property
+        def value(self) -> float: ...
+        def __init__(self, value: float) -> None: ...
+
+
 class GridTrack:
     """Size specification for a single grid track (row or column).
 
@@ -2603,6 +2760,20 @@ class GridTrack:
     @staticmethod
     def vmax(value: float) -> GridTrack:
         """Create a track sized to viewport maximum dimension percentage."""
+
+    @staticmethod
+    def minmax(min: MinTrackSizingFunction, max: MaxTrackSizingFunction) -> GridTrack:
+        """Create a CSS `minmax(min, max)` track.
+
+        Example:
+            ```python
+            from pybevy.ui import GridTrack, MaxTrackSizingFunction, MinTrackSizingFunction
+
+            track = GridTrack.minmax(
+                MinTrackSizingFunction.Px(100.0), MaxTrackSizingFunction.Fraction(1.0)
+            )
+            ```
+        """
 
     def __eq__(self, other: object) -> bool: ...
     def __copy__(self) -> GridTrack: ...
@@ -2770,6 +2941,59 @@ class RepeatedGridTrack:
     @staticmethod
     def fit_content_percent(repetition: int, limit: float) -> RepeatedGridTrack:
         """Create repeated fit-content tracks with percentage limit."""
+
+    @staticmethod
+    def vmin(repetition: int | GridTrackRepetition, value: float) -> RepeatedGridTrack:
+        """Create repeated tracks sized to a percentage of the viewport's smaller dimension."""
+
+    @staticmethod
+    def vmax(repetition: int | GridTrackRepetition, value: float) -> RepeatedGridTrack:
+        """Create repeated tracks sized to a percentage of the viewport's larger dimension."""
+
+    @staticmethod
+    def vh(repetition: int | GridTrackRepetition, value: float) -> RepeatedGridTrack:
+        """Create repeated tracks sized to a percentage of the viewport's height."""
+
+    @staticmethod
+    def vw(repetition: int | GridTrackRepetition, value: float) -> RepeatedGridTrack:
+        """Create repeated tracks sized to a percentage of the viewport's width."""
+
+    @staticmethod
+    def minmax(
+        repetition: int | GridTrackRepetition,
+        min: MinTrackSizingFunction,
+        max: MaxTrackSizingFunction,
+    ) -> RepeatedGridTrack:
+        """Create repeated CSS `minmax(min, max)` tracks.
+
+        The responsive CSS grid `repeat(auto-fill, minmax(100px, 1fr))`:
+
+        Example:
+            ```python
+            from pybevy.ui import (
+                GridTrackRepetition,
+                MaxTrackSizingFunction,
+                MinTrackSizingFunction,
+                RepeatedGridTrack,
+            )
+
+            columns = RepeatedGridTrack.minmax(
+                GridTrackRepetition.AutoFill(),
+                MinTrackSizingFunction.Px(100.0),
+                MaxTrackSizingFunction.Fraction(1.0),
+            )
+            ```
+        """
+
+    @staticmethod
+    def repeat_many(
+        repetition: int | GridTrackRepetition, tracks: list[GridTrack]
+    ) -> RepeatedGridTrack:
+        """Repeat a sequence of tracks, like CSS `repeat(n, 100px 1fr)`.
+
+        Raises:
+            ValueError: If tracks is empty.
+        """
 
     def __eq__(self, other: object) -> bool: ...
     def __copy__(self) -> RepeatedGridTrack: ...
@@ -4042,6 +4266,8 @@ __all__ = [
     "JustifySelf",
     "Label",
     "LinearGradient",
+    "MaxTrackSizingFunction",
+    "MinTrackSizingFunction",
     "Node",
     "NodeImageMode",
     "Outline",

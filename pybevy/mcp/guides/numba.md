@@ -102,7 +102,7 @@ def kernel(col):
 ```
 
 Numba stores write raw memory and skip PyBevy's value-domain checks, such as
-`FogVolume.scattering_asymmetry` in `[-1, 1]` or `Bloom.max_mip_dimension >= 8`.
+`FogVolume.scattering_asymmetry` in `[-1, 1]` or `Bloom.high_pass_frequency > 0`.
 Keep written values valid yourself, or use a validated View assignment,
 `ViewColumn.set()`, or `write_from_buffer()` when you want the check.
 

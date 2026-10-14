@@ -18,6 +18,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from importlib.metadata import PackageNotFoundError, version
@@ -147,6 +148,8 @@ LOAD_SCENE_TOOL: JsonDict = {
 
 # Retain startup warnings through the DefaultPlugins output burst.
 _MAX_CAPTURED_OUTPUT_LINES = 500
+# One printed line must not fill an agent's context or the bridge's memory.
+_MAX_CAPTURED_LINE_BYTES = 4096
 # A scene's parent-death signal fires when its spawning thread exits, not the process.
 _SPAWNER = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pybevy-mcp-spawn")
 _STARTUP_TIMEOUT = 60.0
@@ -154,6 +157,18 @@ _STARTUP_TIMEOUT = 60.0
 _MAX_REPORTED_WARN_LINES = 25
 _MAX_STARTUP_ERROR_LINES = 80
 _STREAM_PREFIX = re.compile(r"^\[(?:stdout|stderr)\] ")
+
+
+def _captured_lines(stream: Iterable[bytes]) -> Iterator[str]:
+    """Yield decoded output lines, keeping the first bytes of an oversized one."""
+    for raw in stream:
+        line = raw.rstrip(b"\n")
+        if len(line) <= _MAX_CAPTURED_LINE_BYTES:
+            yield line.decode("utf-8", errors="replace").rstrip()
+            continue
+        kept = line[:_MAX_CAPTURED_LINE_BYTES].decode("utf-8", errors="replace").rstrip()
+        omitted = len(line) - _MAX_CAPTURED_LINE_BYTES
+        yield f"{kept} [line truncated: {omitted} more bytes]"
 
 
 GET_LOGS_TOOL: JsonDict = {
@@ -1599,10 +1614,9 @@ class McpBridge:
         if stdout is None:
             return
 
-        for raw_line in stdout:
+        for line in _captured_lines(stdout):
             if self._subprocess is not proc:
                 break
-            line = raw_line.decode("utf-8", errors="replace").rstrip()
             _log(f"[Bevy stdout] {line}")
             self._append_process_output("stdout", line)
 
@@ -1614,10 +1628,9 @@ class McpBridge:
         if proc is None or proc.stderr is None:
             return
 
-        for raw_line in proc.stderr:
+        for line in _captured_lines(proc.stderr):
             if self._subprocess is not proc:
                 break
-            line = raw_line.decode("utf-8", errors="replace").rstrip()
             _log(f"[Bevy stderr] {line}")
             with self._output_lock:
                 self._append_stderr_line_locked(line)

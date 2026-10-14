@@ -767,6 +767,8 @@ class Msaa(Component):
             ValueError: If samples is not 1, 2, 4, or 8
         """
 
+    def __hash__(self) -> int: ...
+
 class TemporalJitter(Component):
     """A subpixel offset to jitter a perspective camera's frustum.
 

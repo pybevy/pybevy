@@ -86,6 +86,8 @@ pub(super) struct StagedScreenshot {
     pub(super) response_kind: CaptureResponseKind,
     pub(super) baseline_headless_sequence: Option<u64>,
     pub(super) frames_waited: u32,
+    /// A new capture camera's pipelines compile asynchronously; capture after them.
+    pub(super) required_render_epoch: Option<u64>,
 }
 
 /// Upper bound on `delay_frames` for every capture tool.
@@ -260,6 +262,11 @@ pub fn process_pending_screenshots(world: &mut World) {
         // would grab a frame laid out before the isolation.
         if hold.debug_cleanup.is_some() || !has_window || isolated {
             let baseline_headless_sequence = headless_frame_sequence(world);
+            let required_render_epoch = hold.debug_cleanup.as_ref().and_then(|_| {
+                world
+                    .get_resource::<RenderFrameReadiness>()
+                    .map(RenderFrameReadiness::request_frame)
+            });
             let mut staged = world.get_resource_or_insert_with(StagedScreenshots::default);
             staged.pending.push(StagedScreenshot {
                 response_tx: screenshot.response_tx,
@@ -272,6 +279,7 @@ pub fn process_pending_screenshots(world: &mut World) {
                 response_kind: screenshot.response_kind,
                 baseline_headless_sequence,
                 frames_waited: 0,
+                required_render_epoch,
             });
             continue;
         }
@@ -329,7 +337,18 @@ pub fn process_pending_screenshots(world: &mut World) {
             if s.frames_remaining > 0 {
                 s.frames_remaining -= 1;
                 still_waiting.push(s);
+            } else if s.required_render_epoch.is_some_and(|epoch| {
+                world
+                    .get_resource::<RenderFrameReadiness>()
+                    .is_some_and(|readiness| !readiness.is_complete(epoch))
+            }) && s.frames_waited < MAX_CAPTURE_WAIT_FRAMES
+            {
+                s.frames_waited += 1;
+                still_waiting.push(s);
             } else {
+                if s.required_render_epoch.take().is_some() {
+                    s.frames_waited = 0;
+                }
                 // Debug camera has rendered - capture now
                 if s.depth_analysis.is_none()
                     && let Err(error) =
@@ -1083,6 +1102,55 @@ mod tests {
     }
 
     #[test]
+    fn staged_capture_waits_for_the_capture_cameras_pipelines() {
+        let mut world = world_with_gizmos();
+        let readiness = RenderFrameReadiness::default();
+        world.insert_resource(readiness.clone());
+        let image = Handle::<Image>::default();
+        world.spawn((
+            Camera3d::default(),
+            Transform::default(),
+            GlobalTransform::default(),
+            RenderTarget::Image(image.into()),
+        ));
+        let (response_tx, _response_rx) = oneshot::channel();
+        world.insert_resource(PendingScreenshots {
+            pending: vec![PendingScreenshot {
+                response_tx,
+                frames_remaining: 0,
+                required_render_epoch: None,
+                with_gizmos: false,
+                gizmo_restore: Default::default(),
+                max_width: None,
+                debug_camera: Some(DebugCameraRequest {
+                    position: [0.0, 0.0, 5.0],
+                    look_at: [0.0, 0.0, 0.0],
+                }),
+                hide_ui: false,
+                entity: None,
+                depth_analysis: None,
+                extra_response: None,
+                response_kind: CaptureResponseKind::Screenshot,
+            }],
+        });
+
+        process_pending_screenshots(&mut world);
+        let epoch = world.resource::<StagedScreenshots>().pending[0]
+            .required_render_epoch
+            .unwrap();
+        for _ in 0..5 {
+            process_pending_screenshots(&mut world);
+        }
+        assert_eq!(world.resource::<StagedScreenshots>().pending.len(), 1);
+        assert!(world.query::<&Screenshot>().iter(&world).next().is_none());
+
+        readiness.complete_extracted_frame(epoch);
+        process_pending_screenshots(&mut world);
+        assert!(world.resource::<StagedScreenshots>().pending.is_empty());
+        assert_eq!(world.query::<&Screenshot>().iter(&world).count(), 1);
+    }
+
+    #[test]
     fn headless_debug_capture_waits_for_its_image_and_restores_on_timeout() {
         let mut world = world_with_gizmos();
         let original = Transform::from_xyz(0.0, 0.0, 5.0);
@@ -1121,6 +1189,7 @@ mod tests {
                 response_kind: CaptureResponseKind::Screenshot,
                 baseline_headless_sequence: Some(5),
                 frames_waited: 0,
+                required_render_epoch: None,
             }],
         });
         world.insert_resource(PendingScreenshots::default());
@@ -1451,6 +1520,7 @@ mod tests {
                 response_kind: CaptureResponseKind::Screenshot,
                 baseline_headless_sequence: None,
                 frames_waited: 0,
+                required_render_epoch: None,
             }],
         });
         // Need PendingScreenshots resource for the function to proceed
@@ -1555,6 +1625,7 @@ mod tests {
                 response_kind: CaptureResponseKind::Screenshot,
                 baseline_headless_sequence: Some(5),
                 frames_waited: MAX_CAPTURE_WAIT_FRAMES,
+                required_render_epoch: None,
             }],
         });
 
@@ -1592,6 +1663,7 @@ mod tests {
                 response_kind: CaptureResponseKind::Screenshot,
                 baseline_headless_sequence: Some(5),
                 frames_waited: 0,
+                required_render_epoch: None,
             }],
         });
 
@@ -1629,6 +1701,7 @@ mod tests {
                 response_kind: CaptureResponseKind::Screenshot,
                 baseline_headless_sequence: Some(5),
                 frames_waited: 0,
+                required_render_epoch: None,
             }],
         });
 

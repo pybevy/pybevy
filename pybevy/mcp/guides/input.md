@@ -228,6 +228,53 @@ before sending button or axis input; a `RawGamepadEvent.Connection` by itself
 does not insert the `Gamepad` component. `GamepadRumbleRequest` requests haptic
 output.
 
+```python
+from pybevy.ecs import Commands, Entity, MessageWriter, Query, With, system
+from pybevy.input import (
+    Gamepad,
+    GamepadButton,
+    GamepadConnection,
+    GamepadConnectionEvent,
+    RawGamepadButtonChangedEvent,
+    RawGamepadEvent,
+)
+
+@system  # Startup: the connection inserts Name and Gamepad on the entity
+def connect_virtual_pad(
+    commands: Commands, connect: MessageWriter[GamepadConnectionEvent]
+) -> None:
+    pad = commands.spawn().id()
+    connected = GamepadConnection.Connected(name="Virtual pad", vendor_id=None, product_id=None)
+    connect.write(GamepadConnectionEvent(pad, connected))
+
+@system  # First: press the south button (A / Cross) for this frame's Gamepad state
+def press_south(
+    pads: Query[Entity, With[Gamepad]], raw: MessageWriter[RawGamepadEvent]
+) -> None:
+    for pad in pads:
+        raw.write(RawGamepadEvent.Button(RawGamepadButtonChangedEvent(pad, GamepadButton.South(), 1.0)))
+```
+
+Button values pass Bevy's press threshold (0.75) and release threshold (0.65);
+write `0.0` to release. Axis values within the 0.05 dead zone read as `0.0`.
+
+Bevy's picking reads the canonical `WindowEvent` stream, not `CursorMoved` or
+`MouseButtonInput`. To hover or click UI from a script, write pointer input as
+`WindowEvent` variants, in `First` so picking sees them that frame:
+
+```python
+from pybevy.ecs import Entity, MessageWriter, Query, With, system
+from pybevy.input import ButtonState, MouseButton
+from pybevy.math import Vec2
+from pybevy.window import PrimaryWindow, WindowEvent
+
+@system
+def click(windows: Query[Entity, With[PrimaryWindow]], events: MessageWriter[WindowEvent]) -> None:
+    window = windows.single()
+    events.write(WindowEvent.CursorMoved(Vec2(200.0, 140.0), window))
+    events.write(WindowEvent.MouseButtonInput(MouseButton.Left(), ButtonState.Pressed(), window))
+```
+
 `InputPlugin` processes `TouchInput` in `PreUpdate`; write in `First` for same-frame
 `Touches` updates. `force` is a
 `ForceTouch.Calibrated(force=1.0, max_possible_force=6.0, altitude_angle=None)` or

@@ -1352,6 +1352,15 @@ the caller, and aborts later observers. Lifecycle and deferred
 `Commands.trigger()` callbacks report errors and continue with later
 still-applicable observers.
 
+Because those commands apply before the next observer, `commands.trigger()`
+inside an observer runs the new event's observers immediately, nested in the
+current call, not on a later frame. A chain of observers that each trigger the
+next therefore deepens the native stack: at roughly 4,000 hops Python raises
+`RecursionError` inside an observer, which is reported, and the chain stops.
+Step long event-driven chains, such as a state machine advancing once per
+event, from a system that triggers one event per frame, or loop inside one
+observer.
+
 #### Event propagation
 
 An entity event declared with `@event(propagate=True)` travels up the

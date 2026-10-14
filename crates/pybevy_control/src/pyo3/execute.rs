@@ -370,16 +370,36 @@ fn execute_python_with_limit(
             .call_method0("getvalue")
             .and_then(|value| value.extract::<String>())
             .unwrap_or_default();
-        let error = execution.err().map(|error| format_python_error(py, &error));
+        let error = execution
+            .err()
+            .map(|error| clip_output(format_python_error(py, &error)));
         drop(restore);
 
         Ok(serde_json::json!({
-            "stdout": stdout,
-            "stderr": stderr,
+            "stdout": clip_output(stdout),
+            "stderr": clip_output(stderr),
             "error": error,
             "success": error.is_none(),
         }))
     })
+}
+
+/// Characters of each run_code result field kept, split between its start and end.
+const RUN_CODE_OUTPUT_CHARS: usize = 100_000;
+
+/// Keeps the start and end of an oversized result so one print cannot flood the caller.
+fn clip_output(text: String) -> String {
+    let total = text.chars().count();
+    if total <= RUN_CODE_OUTPUT_CHARS {
+        return text;
+    }
+    let half = RUN_CODE_OUTPUT_CHARS / 2;
+    let head: String = text.chars().take(half).collect();
+    let tail: String = text.chars().skip(total - half).collect();
+    format!(
+        "{head}\n{}\n{tail}",
+        public_error::run_code_output_truncated(total - RUN_CODE_OUTPUT_CHARS)
+    )
 }
 
 #[cfg(test)]
@@ -406,6 +426,16 @@ mod tests {
         let _streams = STREAMS.lock().unwrap_or_else(PoisonError::into_inner);
         let mut world = World::new();
         execute_python(&mut world, code.to_string()).unwrap()
+    }
+
+    #[test]
+    fn oversized_output_keeps_its_start_and_end() {
+        let text = format!("A{}Z", "x".repeat(RUN_CODE_OUTPUT_CHARS));
+        let clipped = clip_output(text);
+        assert!(clipped.starts_with('A'));
+        assert!(clipped.ends_with('Z'));
+        assert!(clipped.contains("[run_code output truncated: 2 characters omitted]"));
+        assert_eq!(clip_output("short".to_string()), "short");
     }
 
     #[test]

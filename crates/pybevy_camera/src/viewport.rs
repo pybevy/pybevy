@@ -7,8 +7,13 @@ use pybevy_macros::pyfield;
 use pybevy_math::{range::PyRange, uvec2::PyUVec2};
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
-// wgpu rejects a zero-sized texture or a depth range outside 0.0..=1.0 or inverted.
-#[pyfield(domains = [physical_size => [positive], depth => [range_inclusive(0.0, 1.0), ordered]])]
+// wgpu rejects a zero-sized texture or a depth range outside 0.0..=1.0 or inverted;
+// Bevy adds position and size in u32, so together they must not overflow.
+#[pyfield(domains = [
+    physical_position => [range_inclusive(0.0, 2147483647.0)],
+    physical_size => [range_inclusive(1.0, 2147483648.0)],
+    depth => [range_inclusive(0.0, 1.0), ordered],
+])]
 #[pyclass(name = "Viewport", module = "pybevy.camera", skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyViewport {
@@ -24,10 +29,11 @@ impl PyViewport {
         physical_size: PyUVec2,
         depth: PyRange,
     ) -> PyResult<Self> {
+        let physical_position = Self::check_physical_position(UVec2::try_from(physical_position)?)?;
         let physical_size = Self::check_physical_size(UVec2::try_from(physical_size)?)?;
         let depth = Self::check_depth(depth.try_into()?)?;
         Ok(Self::from_owned(Viewport {
-            physical_position: physical_position.try_into()?,
+            physical_position,
             physical_size,
             depth,
         }))
@@ -35,14 +41,17 @@ impl PyViewport {
 
     #[getter]
     pub fn physical_position(&self) -> PyResult<PyUVec2> {
-        Ok(self
-            .storage
-            .borrow_resolved_field_as(|v| &v.physical_position, |v| &mut v.physical_position)?)
+        Ok(self.storage.borrow_validated_field_as(
+            |v| &v.physical_position,
+            |v| &mut v.physical_position,
+            Self::validate_physical_position,
+        )?)
     }
 
     #[setter]
     pub fn set_physical_position(&mut self, value: PyUVec2) -> PyResult<()> {
-        self.as_mut()?.physical_position = value.try_into()?;
+        let position = Self::check_physical_position(UVec2::try_from(value)?)?;
+        self.as_mut()?.physical_position = position;
         Ok(())
     }
 

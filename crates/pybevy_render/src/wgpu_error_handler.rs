@@ -2,7 +2,10 @@ use std::sync::Arc;
 
 use bevy::{app::Plugin, render::renderer::RenderDevice};
 pub use pybevy_core::gpu_validation::WgpuValidationErrorState;
-use pybevy_core::{gpu_validation::WgpuValidationEntry, public_error::wgpu_validation_log};
+use pybevy_core::{
+    gpu_validation::WgpuValidationEntry,
+    public_error::{wgpu_out_of_memory_log, wgpu_validation_log},
+};
 
 /// What the uncaptured-error handler should do with a given wgpu error.
 ///
@@ -16,7 +19,7 @@ enum WgpuErrorAction {
     Log(String),
     /// Drop the error: an identical validation message was already logged.
     Drop,
-    /// Fatal error (out of memory or internal): panic with the rendered message.
+    /// Fatal internal error: panic with the rendered message.
     Panic(String),
 }
 
@@ -41,6 +44,14 @@ fn classify_wgpu_error(error: &wgpu::Error, state: &WgpuValidationErrorState) ->
                 WgpuErrorAction::Drop
             }
         }
+        wgpu::Error::OutOfMemory { .. } => {
+            let entry = WgpuValidationEntry::from_message(format!("{error}"));
+            if state.record(&entry) {
+                WgpuErrorAction::Log(wgpu_out_of_memory_log(&entry.message))
+            } else {
+                WgpuErrorAction::Drop
+            }
+        }
         _ => WgpuErrorAction::Panic(format!("{error}")),
     }
 }
@@ -53,8 +64,8 @@ fn classify_wgpu_error(error: &wgpu::Error, state: &WgpuValidationErrorState) ->
 /// scene should fail that frame, while leaving the runtime available to load a
 /// corrected scene. This plugin replaces only the uncaptured-error callback.
 /// Validation errors are recorded in [`WgpuValidationErrorState`] and logged
-/// once per message; out-of-memory and internal errors still panic because
-/// continuing with an unstable device is unsafe.
+/// once per message, out-of-memory errors likewise; internal errors still
+/// panic because continuing with an unstable device is unsafe.
 pub struct WgpuErrorHandlerPlugin;
 
 impl Plugin for WgpuErrorHandlerPlugin {

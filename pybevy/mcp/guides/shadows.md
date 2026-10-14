@@ -21,7 +21,11 @@ commands.spawn(
 
 Global resources control shadow map texture size. Higher = sharper shadows, more VRAM.
 Rendering caps a size above the GPU's 2D texture limit (commonly 16384) at that
-limit and logs a warning; the resource keeps the requested value.
+limit and logs a warning; the resource keeps the requested value. A size within
+the limit can still exceed GPU memory, since a point light's cube map holds six
+faces (6 x 32768² x 4 bytes is 25.8 GB): the allocation fails with a logged,
+non-fatal out-of-memory error, those shadows render black, and the scene keeps
+running so the size can be lowered.
 
 ```python
 from pybevy.light import DirectionalLightShadowMap, PointLightShadowMap

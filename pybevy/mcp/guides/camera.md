@@ -83,7 +83,7 @@ commands.spawn(Camera3d(), Bloom.NATURAL)
 - `high_pass_frequency` - Controls the maximum scattering angle (above 0.0 up to 1.0, default 1.0); `0.0` raises `ValueError` because Bevy's blend factor divides by it and renders the camera black
 - `prefilter` - `BloomPrefilter(threshold=threshold, threshold_softness=threshold_softness)` limits bloom to bright regions
 - `composite_mode` - `BloomCompositeMode.EnergyConserving` by default; use `Additive` with a non-default prefilter
-- `max_mip_dimension` - Largest bloom mip dimension (default 512, 8 to 16384); the constructor, setter, and `Bloom.batch()` raise `ValueError` outside that range, because Bevy renders the camera black below 8 and the mip texture exceeds GPU limits far above it. Raise only to reduce sampling artifacts at large scales
+- `max_mip_dimension` - Largest bloom mip dimension (default 512, 8 to 16384); the constructor, setter, and `Bloom.batch()` raise `ValueError` outside that range, because Bevy renders the camera black below 8 and the mip texture exceeds GPU limits far above it. The mip texture is `width * max_mip_dimension / height` texels wide, so lower the value on very wide viewports (an 8192x64 target needs at most 256 on a 32768-limit GPU). Raise only to reduce sampling artifacts at large scales
 - `scale` - `Vec2` stretch per axis; values greater than 1 widen bloom on that axis
 
 **Bloom presets by scene style:**
