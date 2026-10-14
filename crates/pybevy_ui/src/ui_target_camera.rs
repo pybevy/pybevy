@@ -29,6 +29,9 @@ impl PyUiTargetCamera {
     }
 
     pub fn __repr__(&self) -> PyResult<String> {
-        Ok(format!("UiTargetCamera({:?})", self.as_ref()?.entity()))
+        Ok(format!(
+            "UiTargetCamera({})",
+            PyEntity::from(self.as_ref()?.entity()).__repr__()
+        ))
     }
 }

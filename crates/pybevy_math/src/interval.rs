@@ -1,5 +1,5 @@
 use bevy::math::curve::{Interval, interval};
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, ValueStorage, repr::float_repr};
 use pybevy_macros::pyvalue;
 use pyo3::{basic::CompareOp, exceptions::PyValueError, prelude::*};
 
@@ -115,8 +115,8 @@ impl PyInterval {
         let interval = self.to_bevy()?;
         Ok(format!(
             "Interval(start={}, end={})",
-            interval.start(),
-            interval.end()
+            float_repr(interval.start()),
+            float_repr(interval.end())
         ))
     }
 

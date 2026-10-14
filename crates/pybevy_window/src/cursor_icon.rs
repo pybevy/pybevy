@@ -46,7 +46,10 @@ impl PyCursorIcon {
     pub fn __repr__(&self) -> PyResult<String> {
         let cursor = self.as_ref()?;
         match cursor.as_system() {
-            Some(icon) => Ok(format!("CursorIcon.System({:?})", icon)),
+            Some(icon) => Ok(format!(
+                "CursorIcon({})",
+                PySystemCursorIcon::from(*icon).__repr__()
+            )),
             None => Ok("CursorIcon.Custom(...)".to_string()),
         }
     }

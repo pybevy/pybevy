@@ -1,6 +1,10 @@
 use bevy::{color::Color, ui::ColorStop};
 use pybevy_color::color::PyColor;
-use pybevy_core::{FromBorrowedStorage, ValueStorage, public_error::value_out_of_range};
+use pybevy_core::{
+    FromBorrowedStorage, ValueStorage,
+    public_error::value_out_of_range,
+    repr::{float_repr, object_repr},
+};
 use pybevy_macros::pyvalue;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
@@ -129,8 +133,10 @@ impl PyColorStop {
     pub fn __repr__(&self) -> PyResult<String> {
         let stop = self.as_ref()?;
         Ok(format!(
-            "ColorStop(color={:?}, point={:?}, hint={})",
-            stop.color, stop.point, stop.hint
+            "ColorStop(color={}, point={}, hint={})",
+            object_repr(PyColor::from(stop.color)),
+            object_repr(PyVal::from(stop.point)),
+            float_repr(stop.hint)
         ))
     }
 }

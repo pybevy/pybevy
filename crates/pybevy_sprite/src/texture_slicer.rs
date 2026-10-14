@@ -1,5 +1,5 @@
 use bevy::sprite::{BorderRect, TextureSlicer};
-use pybevy_core::{BorrowableStorage, FieldStorage, FieldStorageInner};
+use pybevy_core::{BorrowableStorage, FieldStorage, FieldStorageInner, repr::float_repr};
 use pyo3::prelude::*;
 
 use crate::{border_rect::PyBorderRect, slice_scale_mode::PySliceScaleMode};
@@ -108,7 +108,7 @@ impl PyTextureSlicer {
             PyBorderRect::from(slicer.border).__repr__()?,
             PySliceScaleMode::from(slicer.center_scale_mode).__repr__(),
             PySliceScaleMode::from(slicer.sides_scale_mode).__repr__(),
-            slicer.max_corner_scale,
+            float_repr(slicer.max_corner_scale),
         ))
     }
 }

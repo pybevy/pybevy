@@ -1,5 +1,5 @@
 use bevy::window::WindowFocused;
-use pybevy_core::{PyEntity, PyMessage};
+use pybevy_core::{PyEntity, PyMessage, repr::ReprLiteral};
 use pybevy_macros::pymessage;
 use pyo3::prelude::*;
 
@@ -39,6 +39,6 @@ impl PyWindowFocused {
     }
 
     fn __repr__(&self) -> String {
-        format!("WindowFocused(focused={})", self.focused)
+        format!("WindowFocused(focused={})", self.focused.repr_literal())
     }
 }

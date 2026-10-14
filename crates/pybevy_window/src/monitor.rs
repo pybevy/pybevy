@@ -1,5 +1,8 @@
 use bevy::window::Monitor;
-use pybevy_core::{ComponentStorage, PyComponent, ValueStorage};
+use pybevy_core::{
+    ComponentStorage, PyComponent, ValueStorage,
+    repr::{ReprLiteral, float_repr},
+};
 use pybevy_macros::pycomponent;
 use pybevy_math::{ivec2::PyIVec2, uvec2::PyUVec2};
 use pyo3::prelude::*;
@@ -63,8 +66,11 @@ impl PyMonitor {
     pub fn __repr__(&self) -> PyResult<String> {
         let monitor = self.as_ref()?;
         Ok(format!(
-            "Monitor(name={:?}, {}x{}, scale={})",
-            monitor.name, monitor.physical_width, monitor.physical_height, monitor.scale_factor
+            "Monitor(name={}, {}x{}, scale={})",
+            monitor.name.repr_literal(),
+            monitor.physical_width,
+            monitor.physical_height,
+            float_repr(monitor.scale_factor)
         ))
     }
 }

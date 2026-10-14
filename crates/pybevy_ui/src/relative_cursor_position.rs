@@ -1,5 +1,5 @@
 use bevy::ui::RelativeCursorPosition;
-use pybevy_core::{ComponentStorage, FromBorrowedStorage, PyComponent};
+use pybevy_core::{ComponentStorage, FromBorrowedStorage, PyComponent, repr::ReprLiteral};
 use pybevy_macros::pycomponent;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
@@ -54,7 +54,7 @@ impl PyRelativeCursorPosition {
     pub fn __repr__(&self) -> PyResult<String> {
         let inner = self.as_ref()?;
         let normalized = match inner.normalized {
-            Some(value) => format!("Vec2({}, {})", value.x, value.y),
+            Some(value) => value.repr_literal(),
             None => "None".to_owned(),
         };
         Ok(format!(

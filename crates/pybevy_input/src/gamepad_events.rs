@@ -5,8 +5,11 @@ use bevy::{
         GamepadConnection, GamepadConnectionEvent,
     },
 };
-use pybevy_core::PyEntity;
 pub use pybevy_core::PyMessage;
+use pybevy_core::{
+    PyEntity,
+    repr::{float_repr, str_repr},
+};
 use pybevy_macros::{pyenum, pymessage};
 use pyo3::prelude::*;
 
@@ -126,8 +129,9 @@ impl PyGamepadButtonChangedEvent {
 
     fn __repr__(&self) -> String {
         format!(
-            "GamepadButtonChangedEvent(button={:?}, value={})",
-            self.button, self.value
+            "GamepadButtonChangedEvent(button={}, value={})",
+            self.button.__repr__(),
+            float_repr(self.value)
         )
     }
 }
@@ -224,8 +228,9 @@ impl PyGamepadAxisChangedEvent {
 
     fn __repr__(&self) -> String {
         format!(
-            "GamepadAxisChangedEvent(axis={:?}, value={})",
-            self.axis, self.value
+            "GamepadAxisChangedEvent(axis={}, value={})",
+            self.axis.__repr__(),
+            float_repr(self.value)
         )
     }
 }
@@ -257,7 +262,8 @@ impl PyGamepadConnection {
                 vendor_id,
                 product_id,
             } => format!(
-                "GamepadConnection.Connected(name={name:?}, vendor_id={}, product_id={})",
+                "GamepadConnection.Connected(name={}, vendor_id={}, product_id={})",
+                str_repr(name),
                 optional_id(*vendor_id),
                 optional_id(*product_id)
             ),
@@ -349,8 +355,8 @@ impl PyGamepadConnectionEvent {
 
     fn __repr__(&self) -> String {
         format!(
-            "GamepadConnectionEvent(gamepad={:?}, connection={})",
-            self.gamepad,
+            "GamepadConnectionEvent(gamepad={}, connection={})",
+            self.gamepad.__repr__(),
             self.connection.__repr__()
         )
     }
@@ -452,8 +458,9 @@ impl PyGamepadButtonStateChangedEvent {
 
     fn __repr__(&self) -> String {
         format!(
-            "GamepadButtonStateChangedEvent(button={:?}, state={:?})",
-            self.button, self.state
+            "GamepadButtonStateChangedEvent(button={}, state={})",
+            self.button.__repr__(),
+            self.state.__repr__()
         )
     }
 }

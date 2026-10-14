@@ -5,7 +5,9 @@ use std::{
 };
 
 use bevy::asset::AssetPath;
-use pyo3::{exceptions::PyValueError, prelude::*, types::PyString};
+use pyo3::{exceptions::PyValueError, prelude::*};
+
+use crate::repr::ReprLiteral;
 
 #[pyclass(
     name = "AssetPath",
@@ -84,19 +86,13 @@ impl PyAssetPath {
         self.display()
     }
 
-    pub fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
-        let quoted = |value: Option<&str>| -> PyResult<String> {
-            match value {
-                None => Ok("None".to_string()),
-                Some(value) => Ok(PyString::new(py, value).repr()?.to_str()?.to_owned()),
-            }
-        };
-        Ok(format!(
+    pub fn __repr__(&self) -> String {
+        format!(
             "AssetPath(source={}, path={}, label={})",
-            quoted(self.source.as_deref())?,
-            quoted(Some(self.path.as_str()))?,
-            quoted(self.label.as_deref())?
-        ))
+            self.source.repr_literal(),
+            self.path.repr_literal(),
+            self.label.repr_literal()
+        )
     }
 }
 

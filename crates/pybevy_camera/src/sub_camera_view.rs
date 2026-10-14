@@ -1,5 +1,5 @@
 use bevy::camera::SubCameraView;
-use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage, repr::ReprLiteral};
 use pybevy_math::{uvec2::PyUVec2, vec2::PyVec2};
 use pyo3::prelude::*;
 
@@ -122,8 +122,10 @@ impl PySubCameraView {
     pub fn __repr__(&self) -> PyResult<String> {
         let scv = self.as_ref()?;
         Ok(format!(
-            "SubCameraView(full_size={:?}, offset={:?}, size={:?})",
-            scv.full_size, scv.offset, scv.size
+            "SubCameraView(full_size={:?}, offset={}, size={:?})",
+            scv.full_size,
+            scv.offset.repr_literal(),
+            scv.size
         ))
     }
 

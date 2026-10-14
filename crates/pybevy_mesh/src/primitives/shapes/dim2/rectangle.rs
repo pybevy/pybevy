@@ -2,7 +2,7 @@ use bevy::{
     math::primitives::{Measured2d, Rectangle},
     mesh::Meshable,
 };
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, ValueStorage, repr::float_list_repr};
 use pybevy_macros::{pyconstructor, pyvalue};
 use pybevy_math::{
     primitives::dimension::{check_half_size2, dimension},
@@ -113,7 +113,10 @@ impl PyRectangle {
     }
 
     pub fn __repr__(&self) -> PyResult<String> {
-        Ok(format!("Rectangle(size={})", self.as_ref()?.size()))
+        Ok(format!(
+            "Rectangle(size={})",
+            float_list_repr(&self.as_ref()?.size().to_array())
+        ))
     }
 }
 

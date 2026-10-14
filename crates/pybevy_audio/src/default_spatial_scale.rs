@@ -1,5 +1,5 @@
 use bevy::audio::DefaultSpatialScale;
-use pybevy_core::{PyResource, ResourceStorage};
+use pybevy_core::{PyResource, ResourceStorage, repr::object_repr};
 use pybevy_macros::pyresource;
 use pyo3::prelude::*;
 
@@ -36,7 +36,10 @@ impl PyDefaultSpatialScale {
 
     fn __repr__(&self) -> String {
         match self.as_ref() {
-            Ok(ds) => format!("DefaultSpatialScale({:?})", ds.0),
+            Ok(ds) => format!(
+                "DefaultSpatialScale({})",
+                object_repr(PySpatialScale::from(ds.0))
+            ),
             Err(_) => "DefaultSpatialScale(<invalid>)".to_string(),
         }
     }

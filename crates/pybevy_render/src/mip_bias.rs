@@ -1,5 +1,5 @@
 use bevy::render::camera::MipBias;
-use pybevy_core::PyComponent;
+use pybevy_core::{PyComponent, repr::float_repr};
 use pybevy_macros::pywrap;
 use pyo3::prelude::*;
 
@@ -22,6 +22,6 @@ impl PyMipBias {
     }
 
     pub fn __repr__(&self) -> String {
-        format!("MipBias({})", self.0.0)
+        format!("MipBias({})", float_repr(self.0.0))
     }
 }

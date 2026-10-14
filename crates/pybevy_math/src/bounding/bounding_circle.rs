@@ -5,6 +5,7 @@ use bevy::math::{
 use pybevy_core::{
     FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
     public_error::{EMPTY_POINT_CLOUD, bounding_operation, bounding_radius, bounding_shrink},
+    repr::{ReprLiteral, float_repr},
 };
 use pyo3::{
     exceptions::{PyTypeError, PyValueError},
@@ -256,9 +257,9 @@ impl PyBoundingCircle {
     fn __repr__(&self) -> PyResult<String> {
         let circle = self.as_ref()?;
         Ok(format!(
-            "BoundingCircle(center={:?}, radius={})",
-            circle.center,
-            circle.radius()
+            "BoundingCircle(center={}, radius={})",
+            circle.center.repr_literal(),
+            float_repr(circle.radius())
         ))
     }
 }

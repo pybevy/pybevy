@@ -2,6 +2,7 @@ use bevy::{
     math::primitives::{Measured2d, RegularPolygon},
     mesh::Meshable,
 };
+use pybevy_core::repr::float_repr;
 use pybevy_math::primitives::dimension::dimension;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
@@ -113,7 +114,7 @@ impl PyRegularPolygon {
     fn __repr__(&self) -> String {
         format!(
             "RegularPolygon(circumradius={}, sides={})",
-            self.0.circumradius(),
+            float_repr(self.0.circumradius()),
             self.0.sides
         )
     }

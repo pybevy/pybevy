@@ -6,6 +6,7 @@ use bevy::{
 };
 use pybevy_core::{
     ComponentStorage, PyComponent, handle::PyHandle, public_error, registry::global_registry,
+    repr::object_repr,
 };
 use pybevy_macros::pycomponent;
 use pyo3::{PyTypeInfo, exceptions::PyTypeError, prelude::*, types::PyType};
@@ -131,7 +132,10 @@ impl PyAudioPlayer {
 
     fn __repr__(&self) -> String {
         match self.as_ref() {
-            Ok(player) => format!("AudioPlayer(source={:?})", player.0.id()),
+            Ok(player) => format!(
+                "AudioPlayer(source={})",
+                object_repr(PyHandle::from(&player.0))
+            ),
             Err(_) => "AudioPlayer(<invalid>)".to_string(),
         }
     }
@@ -151,7 +155,10 @@ impl PyPitchPlayer {
 
     fn __repr__(&self) -> String {
         match self.as_ref() {
-            Ok(player) => format!("AudioPlayer[Pitch](source={:?})", player.0.id()),
+            Ok(player) => format!(
+                "AudioPlayer[Pitch](source={})",
+                object_repr(PyHandle::from(&player.0))
+            ),
             Err(_) => "AudioPlayer[Pitch](<invalid>)".to_string(),
         }
     }

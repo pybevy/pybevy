@@ -1,5 +1,5 @@
 use bevy::ui::ScrollPosition;
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, PyComponent, repr::float_repr};
 use pybevy_macros::pycomponent;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
@@ -54,6 +54,10 @@ impl PyScrollPosition {
 
     pub fn __repr__(&self) -> PyResult<String> {
         let pos = self.as_ref()?;
-        Ok(format!("ScrollPosition({}, {})", pos.0.x, pos.0.y))
+        Ok(format!(
+            "ScrollPosition({}, {})",
+            float_repr(pos.0.x),
+            float_repr(pos.0.y)
+        ))
     }
 }

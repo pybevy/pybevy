@@ -2,6 +2,7 @@ use bevy::math::{
     Vec3,
     cubic_splines::{CubicCardinalSpline, CubicGenerator},
 };
+use pybevy_core::repr::float_repr;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 use super::cubic_curve3d::PyCubicCurve3d;
@@ -65,7 +66,7 @@ impl PyCubicCardinalSpline3d {
     fn __repr__(&self) -> String {
         format!(
             "CubicCardinalSpline3d(tension={}, {} points)",
-            self.spline.tension,
+            float_repr(self.spline.tension),
             self.spline.control_points.len()
         )
     }

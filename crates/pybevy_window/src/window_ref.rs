@@ -45,7 +45,7 @@ impl PyWindowRef {
             Self::Primary() => "WindowRef.Primary()".to_string(),
             Self::Entity { value } => {
                 let value: PyEntity = *value;
-                format!("WindowRef.Entity({value:?})")
+                format!("WindowRef.Entity({})", value.__repr__())
             }
         }
     }
@@ -83,6 +83,9 @@ impl PyNormalizedWindowRef {
     }
 
     fn __repr__(&self) -> String {
-        format!("NormalizedWindowRef({:?})", self.inner.entity())
+        format!(
+            "NormalizedWindowRef({})",
+            PyEntity::from(self.inner.entity()).__repr__()
+        )
     }
 }

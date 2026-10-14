@@ -1,4 +1,5 @@
 use bevy::math::{Vec4, primitives::HalfSpace};
+use pybevy_core::repr::ReprLiteral;
 use pyo3::prelude::*;
 
 use crate::{vec3a::PyVec3A, vec4::PyVec4};
@@ -54,10 +55,7 @@ impl PyHalfSpace {
 
     pub fn __repr__(&self) -> String {
         let nd = self.inner.normal_d();
-        format!(
-            "HalfSpace(normal_d=Vec4({}, {}, {}, {}))",
-            nd.x, nd.y, nd.z, nd.w
-        )
+        format!("HalfSpace(normal_d={})", nd.repr_literal())
     }
 
     pub fn __eq__(&self, other: &Self) -> bool {

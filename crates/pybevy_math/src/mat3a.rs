@@ -1,5 +1,5 @@
 use bevy::math::{Mat3A, Vec3, Vec3A};
-use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage, repr::ReprLiteral};
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 use super::{vec3::PyVec3, vec3a::PyVec3A};
@@ -307,8 +307,10 @@ impl PyMat3A {
     fn __repr__(&self) -> PyResult<String> {
         let mat = *self.as_ref()?;
         Ok(format!(
-            "Mat3A(x_axis={:?}, y_axis={:?}, z_axis={:?})",
-            mat.x_axis, mat.y_axis, mat.z_axis
+            "Mat3A(x_axis={}, y_axis={}, z_axis={})",
+            mat.x_axis.repr_literal(),
+            mat.y_axis.repr_literal(),
+            mat.z_axis.repr_literal()
         ))
     }
 

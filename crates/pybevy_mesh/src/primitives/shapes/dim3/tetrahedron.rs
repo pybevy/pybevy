@@ -5,6 +5,7 @@ use bevy::{
     },
     mesh::Meshable,
 };
+use pybevy_core::repr::ReprLiteral;
 use pybevy_macros::pyconstructor;
 use pybevy_math::vec3::PyVec3;
 use pyo3::prelude::*;
@@ -120,19 +121,11 @@ impl PyTetrahedron {
     fn __repr__(&self) -> String {
         let v = &self.0.vertices;
         format!(
-            "Tetrahedron(Vec3({}, {}, {}), Vec3({}, {}, {}), Vec3({}, {}, {}), Vec3({}, {}, {}))",
-            v[0].x,
-            v[0].y,
-            v[0].z,
-            v[1].x,
-            v[1].y,
-            v[1].z,
-            v[2].x,
-            v[2].y,
-            v[2].z,
-            v[3].x,
-            v[3].y,
-            v[3].z
+            "Tetrahedron({}, {}, {}, {})",
+            v[0].repr_literal(),
+            v[1].repr_literal(),
+            v[2].repr_literal(),
+            v[3].repr_literal()
         )
     }
 }

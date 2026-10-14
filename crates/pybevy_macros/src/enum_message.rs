@@ -7,7 +7,7 @@ use crate::{
         BevyVariantShape, EnumSpec, VariantShape, constructor_signature, parameter, parameter_name,
     },
     message::generate_message_bridge_tokens,
-    util::to_snake_case,
+    util::{to_snake_case, value_repr},
 };
 
 struct PythonClassName {
@@ -235,7 +235,6 @@ fn try_expand(
             }
         });
 
-        let labels = fields.iter().map(|field| field.python_name.as_str());
         let names = fields
             .iter()
             .map(|field| {
@@ -244,7 +243,19 @@ fn try_expand(
                     .expect("struct-backed message fields are named")
             })
             .collect::<Vec<_>>();
-        let repr_names = names.clone();
+        let rendered = fields
+            .iter()
+            .zip(&names)
+            .map(|(field, name)| {
+                let label = field.python_name.as_str();
+                let converted = field.python_type.as_ref().map(|python_type| {
+                    let stored_type = field.rust_type;
+                    quote! { <#python_type as From<#stored_type>>::from(::core::clone::Clone::clone(#name)) }
+                });
+                let value = value_repr(field.rust_type, quote!(#name), converted);
+                quote! { format!("{}={}", #label, #value) }
+            })
+            .collect::<Vec<_>>();
         let prefix = format!("{python_name}.{variant_name}(");
         let repr_match = if unit_variant {
             quote! { #inner_type::#rust_name }
@@ -255,7 +266,7 @@ fn try_expand(
         };
         repr_arms.push(quote! {
             #repr_match => {
-                let fields: Vec<String> = vec![#(format!("{}={:?}", #labels, #repr_names)),*];
+                let fields: Vec<String> = vec![#(#rendered),*];
                 format!("{}{})", #prefix, fields.join(", "))
             }
         });

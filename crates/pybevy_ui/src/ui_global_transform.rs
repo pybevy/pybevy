@@ -1,5 +1,8 @@
 use bevy::ui::UiGlobalTransform;
-use pybevy_core::{ComponentStorage, FromBorrowedStorage, PyComponent, ValueStorage};
+use pybevy_core::{
+    ComponentStorage, FromBorrowedStorage, PyComponent, ValueStorage,
+    repr::{ReprLiteral, object_repr},
+};
 use pybevy_macros::pycomponent;
 use pybevy_math::{
     affine2::{PyAffine2, PyMat2},
@@ -102,8 +105,9 @@ impl PyUiGlobalTransform {
     pub fn __repr__(&self) -> PyResult<String> {
         let transform = self.as_ref()?;
         Ok(format!(
-            "UiGlobalTransform(matrix2={:?}, translation={:?})",
-            transform.matrix2, transform.translation
+            "UiGlobalTransform(matrix2={}, translation={})",
+            object_repr(PyMat2::from(transform.matrix2)),
+            transform.translation.repr_literal()
         ))
     }
 }

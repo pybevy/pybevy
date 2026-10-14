@@ -1,5 +1,8 @@
 use bevy::math::{Ray2d, Ray3d, Vec2, Vec3};
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{
+    FromBorrowedStorage, ValueStorage,
+    repr::{ReprLiteral, object_repr},
+};
 use pybevy_macros::pyvalue;
 use pyo3::prelude::*;
 
@@ -117,9 +120,9 @@ impl PyRay2d {
 
     fn __repr__(&self) -> PyResult<String> {
         Ok(format!(
-            "Ray2d(origin={:?}, direction={:?})",
-            self.as_ref()?.origin,
-            self.as_ref()?.direction
+            "Ray2d(origin={}, direction={})",
+            self.as_ref()?.origin.repr_literal(),
+            object_repr(PyDir2::from(self.as_ref()?.direction))
         ))
     }
 }
@@ -230,9 +233,9 @@ impl PyRay3d {
 
     fn __repr__(&self) -> PyResult<String> {
         Ok(format!(
-            "Ray3d(origin={:?}, direction={:?})",
-            self.as_ref()?.origin,
-            self.as_ref()?.direction
+            "Ray3d(origin={}, direction={})",
+            self.as_ref()?.origin.repr_literal(),
+            object_repr(PyDir3::from(self.as_ref()?.direction))
         ))
     }
 }

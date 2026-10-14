@@ -1,6 +1,7 @@
 use bevy::math::{BVec3, Dir3, Vec3, Vec3Swizzles};
 use pybevy_core::{
-    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage, public_error::UNSUPPORTED_COMPARISON,
+    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
+    public_error::UNSUPPORTED_COMPARISON, repr::ReprLiteral,
 };
 use pyo3::{
     basic::CompareOp,
@@ -550,7 +551,7 @@ impl PyVec3 {
 
     fn __repr__(&self) -> PyResult<String> {
         let v = *self.as_ref()?;
-        Ok(format!("Vec3({}, {}, {})", v.x, v.y, v.z))
+        Ok(v.repr_literal())
     }
 
     fn __richcmp__(

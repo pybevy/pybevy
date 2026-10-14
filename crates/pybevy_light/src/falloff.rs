@@ -1,5 +1,5 @@
 use bevy::light::atmosphere::Falloff;
-use pybevy_core::enum_comparison::reject_variant_type;
+use pybevy_core::{enum_comparison::reject_variant_type, repr::float_repr};
 use pybevy_macros::pyenum;
 use pyo3::{exceptions::PyTypeError, prelude::*, pyclass::CompareOp};
 
@@ -47,10 +47,14 @@ impl PyFalloff {
         match &self.0 {
             Falloff::Linear => "Falloff.Linear()".to_string(),
             Falloff::Exponential { scale } => {
-                format!("Falloff.Exponential(scale={scale})")
+                format!("Falloff.Exponential(scale={})", float_repr(*scale))
             }
             Falloff::Tent { center, width } => {
-                format!("Falloff.Tent(center={center}, width={width})")
+                format!(
+                    "Falloff.Tent(center={}, width={})",
+                    float_repr(*center),
+                    float_repr(*width)
+                )
             }
             Falloff::Curve(_) => "Falloff.Curve(...)".to_string(),
         }

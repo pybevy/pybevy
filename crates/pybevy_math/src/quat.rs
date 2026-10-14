@@ -1,6 +1,7 @@
 use bevy::math::{EulerRot, Quat, Vec3, Vec3A};
 use pybevy_core::{
-    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage, public_error::UNSUPPORTED_COMPARISON,
+    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
+    public_error::UNSUPPORTED_COMPARISON, repr::ReprLiteral,
 };
 use pybevy_macros::pyenum;
 use pyo3::{
@@ -402,7 +403,7 @@ impl PyQuat {
 
     pub fn __repr__(&self) -> PyResult<String> {
         let q = self.as_ref()?;
-        Ok(format!("Quat({}, {}, {}, {})", q.x, q.y, q.z, q.w))
+        Ok(q.repr_literal())
     }
 
     pub fn __richcmp__(

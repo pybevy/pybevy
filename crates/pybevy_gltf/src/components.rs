@@ -1,7 +1,7 @@
 use bevy::gltf::{
     GltfExtras, GltfMaterialExtras, GltfMaterialName, GltfMeshExtras, GltfMeshName, GltfSceneExtras,
 };
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, PyComponent, repr::str_repr};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
@@ -33,7 +33,7 @@ impl PyGltfExtras {
 
     pub fn __repr__(&self) -> PyResult<String> {
         match self.as_ref() {
-            Ok(extras) => Ok(format!("GltfExtras(value={:?})", extras.value)),
+            Ok(extras) => Ok(format!("GltfExtras(value={})", str_repr(&extras.value))),
             Err(_) => Ok("GltfExtras(<invalid>)".to_string()),
         }
     }
@@ -67,7 +67,7 @@ impl PyGltfMeshName {
 
     pub fn __repr__(&self) -> PyResult<String> {
         match self.as_ref() {
-            Ok(name) => Ok(format!("GltfMeshName({:?})", name.0)),
+            Ok(name) => Ok(format!("GltfMeshName({})", str_repr(&name.0))),
             Err(_) => Ok("GltfMeshName(<invalid>)".to_string()),
         }
     }
@@ -105,7 +105,7 @@ impl PyGltfMaterialName {
 
     pub fn __repr__(&self) -> PyResult<String> {
         match self.as_ref() {
-            Ok(name) => Ok(format!("GltfMaterialName({:?})", name.0)),
+            Ok(name) => Ok(format!("GltfMaterialName({})", str_repr(&name.0))),
             Err(_) => Ok("GltfMaterialName(<invalid>)".to_string()),
         }
     }
@@ -143,7 +143,10 @@ impl PyGltfSceneExtras {
 
     pub fn __repr__(&self) -> PyResult<String> {
         match self.as_ref() {
-            Ok(extras) => Ok(format!("GltfSceneExtras(value={:?})", extras.value)),
+            Ok(extras) => Ok(format!(
+                "GltfSceneExtras(value={})",
+                str_repr(&extras.value)
+            )),
             Err(_) => Ok("GltfSceneExtras(<invalid>)".to_string()),
         }
     }
@@ -177,7 +180,7 @@ impl PyGltfMeshExtras {
 
     pub fn __repr__(&self) -> PyResult<String> {
         match self.as_ref() {
-            Ok(extras) => Ok(format!("GltfMeshExtras(value={:?})", extras.value)),
+            Ok(extras) => Ok(format!("GltfMeshExtras(value={})", str_repr(&extras.value))),
             Err(_) => Ok("GltfMeshExtras(<invalid>)".to_string()),
         }
     }
@@ -211,7 +214,10 @@ impl PyGltfMaterialExtras {
 
     pub fn __repr__(&self) -> PyResult<String> {
         match self.as_ref() {
-            Ok(extras) => Ok(format!("GltfMaterialExtras(value={:?})", extras.value)),
+            Ok(extras) => Ok(format!(
+                "GltfMaterialExtras(value={})",
+                str_repr(&extras.value)
+            )),
             Err(_) => Ok("GltfMaterialExtras(<invalid>)".to_string()),
         }
     }

@@ -2,6 +2,7 @@ use bevy::{
     math::primitives::{Measured2d, Triangle3d},
     mesh::Meshable,
 };
+use pybevy_core::repr::ReprLiteral;
 use pybevy_macros::pyconstructor;
 use pybevy_math::{dir3::PyDir3, vec3::PyVec3};
 use pyo3::{exceptions::PyValueError, prelude::*};
@@ -125,8 +126,10 @@ impl PyTriangle3d {
     fn __repr__(&self) -> String {
         let v = &self.0.vertices;
         format!(
-            "Triangle3d(Vec3({}, {}, {}), Vec3({}, {}, {}), Vec3({}, {}, {}))",
-            v[0].x, v[0].y, v[0].z, v[1].x, v[1].y, v[1].z, v[2].x, v[2].y, v[2].z
+            "Triangle3d({}, {}, {})",
+            v[0].repr_literal(),
+            v[1].repr_literal(),
+            v[2].repr_literal()
         )
     }
 }

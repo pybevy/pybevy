@@ -1,5 +1,5 @@
 use bevy::camera::visibility::VisibilityRange;
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, PyComponent, repr::float_repr};
 use pybevy_macros::pycomponent;
 use pybevy_math::range::PyRange;
 use pyo3::prelude::*;
@@ -87,11 +87,11 @@ impl PyVisibilityRange {
     pub fn __repr__(&self) -> PyResult<String> {
         let vr = self.as_ref()?;
         Ok(format!(
-            "VisibilityRange(start_margin={}..{}, end_margin={}..{}, use_aabb={})",
-            vr.start_margin.start,
-            vr.start_margin.end,
-            vr.end_margin.start,
-            vr.end_margin.end,
+            "VisibilityRange(start_margin=({}, {}), end_margin=({}, {}), use_aabb={})",
+            float_repr(vr.start_margin.start),
+            float_repr(vr.start_margin.end),
+            float_repr(vr.end_margin.start),
+            float_repr(vr.end_margin.end),
             if vr.use_aabb { "True" } else { "False" }
         ))
     }

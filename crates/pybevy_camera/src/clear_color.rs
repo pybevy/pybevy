@@ -1,6 +1,6 @@
 use bevy::{camera::ClearColor, color::Color};
 use pybevy_color::color::PyColor;
-use pybevy_core::{PyResource, ResourceStorage};
+use pybevy_core::{PyResource, ResourceStorage, repr::object_repr};
 use pybevy_macros::pyresource;
 use pyo3::prelude::*;
 
@@ -33,7 +33,7 @@ impl PyClearColor {
 
     fn __repr__(&self) -> String {
         match self.as_ref() {
-            Ok(cc) => format!("ClearColor({:?})", cc.0),
+            Ok(cc) => format!("ClearColor({})", object_repr(PyColor::from(cc.0))),
             Err(_) => "ClearColor(<invalid>)".to_string(),
         }
     }

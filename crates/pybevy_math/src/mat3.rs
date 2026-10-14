@@ -1,6 +1,7 @@
 use bevy::math::{Mat3, Vec3};
 use pybevy_core::{
     FromBorrowedStorage, StorageRef, ValueStorage, public_error::UNSUPPORTED_COMPARISON,
+    repr::float_repr,
 };
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
@@ -311,7 +312,7 @@ impl PyMat3 {
 
     fn __repr__(&self) -> PyResult<String> {
         let mat = *self.as_ref()?;
-        let arr = mat.to_cols_array();
+        let arr = mat.to_cols_array().map(float_repr);
         Ok(format!(
             "Mat3([{}, {}, {}], [{}, {}, {}], [{}, {}, {}])",
             arr[0], arr[1], arr[2], arr[3], arr[4], arr[5], arr[6], arr[7], arr[8]

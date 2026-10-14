@@ -1,5 +1,5 @@
 use bevy::asset::RecursiveDependencyLoadState;
-use pybevy_core::public_error::enum_base_construction;
+use pybevy_core::{public_error::enum_base_construction, repr::str_repr};
 use pybevy_macros::pyenum;
 use pyo3::{exceptions::PyTypeError, prelude::*, types::PyDict};
 
@@ -85,7 +85,10 @@ impl PyRecursiveDependencyLoadState {
                 "RecursiveDependencyLoadState.Loaded()".to_string()
             }
             RecursiveDependencyLoadStateValue::Failed(value) => {
-                format!("RecursiveDependencyLoadState.Failed(value={value:?})")
+                format!(
+                    "RecursiveDependencyLoadState.Failed(value={})",
+                    str_repr(value)
+                )
             }
         }
     }

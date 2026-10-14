@@ -2,6 +2,7 @@ use bevy::{
     reflect::{PartialReflect, ReflectRef},
     text::{FontFeatureTag, FontFeatures},
 };
+use pybevy_core::repr::str_repr;
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
 
 use crate::font_feature_tag::{PyFontFeatureTag, tag_characters};
@@ -81,9 +82,9 @@ impl PyFontFeatures {
             .map(|(tag, value)| {
                 let tag_str = tag_characters(tag);
                 if *value == 1 {
-                    format!("\"{}\"", tag_str)
+                    str_repr(&tag_str)
                 } else {
-                    format!("\"{}\"={}", tag_str, value)
+                    format!("{}={}", str_repr(&tag_str), value)
                 }
             })
             .collect();

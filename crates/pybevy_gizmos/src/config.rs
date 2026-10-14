@@ -15,6 +15,7 @@ use pybevy_core::{
         DEFAULT_GIZMO_CONFIG_MISSING, UNSUPPORTED_GIZMO_LINE_STYLE, missing_gizmo_config_group,
         unregistered_gizmo_config_group,
     },
+    repr::float_repr,
 };
 use pybevy_macros::{pyenum, pyfield, pyresource};
 use pyo3::{
@@ -178,7 +179,11 @@ impl PyGizmoLineStyle {
                 gap_scale,
                 line_scale,
             } => {
-                format!("GizmoLineStyle.Dashed(gap_scale={gap_scale:?}, line_scale={line_scale:?})")
+                format!(
+                    "GizmoLineStyle.Dashed(gap_scale={}, line_scale={})",
+                    float_repr(*gap_scale),
+                    float_repr(*line_scale)
+                )
             }
         }
     }

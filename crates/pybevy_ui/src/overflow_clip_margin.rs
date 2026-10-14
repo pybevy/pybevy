@@ -1,4 +1,5 @@
 use bevy::ui::OverflowClipMargin;
+use pybevy_core::repr::{float_repr, object_repr};
 use pyo3::prelude::*;
 
 use crate::enums::PyVisualBox;
@@ -79,8 +80,9 @@ impl PyOverflowClipMargin {
 
     fn __repr__(&self) -> String {
         format!(
-            "OverflowClipMargin(visual_box={:?}, margin={})",
-            self.inner.visual_box, self.inner.margin
+            "OverflowClipMargin(visual_box={}, margin={})",
+            object_repr(PyVisualBox::from(self.inner.visual_box)),
+            float_repr(self.inner.margin)
         )
     }
 }

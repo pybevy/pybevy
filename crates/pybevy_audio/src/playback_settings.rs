@@ -1,7 +1,10 @@
 use std::time::Duration;
 
 use bevy::audio::PlaybackSettings;
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{
+    ComponentStorage, PyComponent,
+    repr::{float_repr, object_repr},
+};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
@@ -225,10 +228,10 @@ impl PyPlaybackSettings {
             Ok(settings) => {
                 let flag = |value: bool| if value { "True" } else { "False" };
                 format!(
-                    "PlaybackSettings(mode={:?}, volume={:?}, speed={}, paused={}, muted={}, spatial={})",
-                    settings.mode,
-                    settings.volume,
-                    settings.speed,
+                    "PlaybackSettings(mode={}, volume={}, speed={}, paused={}, muted={}, spatial={})",
+                    object_repr(PyPlaybackMode::from(settings.mode)),
+                    object_repr(PyVolume::from(settings.volume)),
+                    float_repr(settings.speed),
                     flag(settings.paused),
                     flag(settings.muted),
                     flag(settings.spatial)

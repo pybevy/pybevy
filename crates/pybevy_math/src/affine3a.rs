@@ -1,5 +1,8 @@
 use bevy::math::{Affine3A, Mat3A, Mat4, Quat, Vec3, Vec3A};
-use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
+use pybevy_core::{
+    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
+    repr::{ReprLiteral, object_repr},
+};
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 use super::{mat3a::PyMat3A, mat4::PyMat4, quat::PyQuat, vec3::PyVec3, vec3a::PyVec3A};
@@ -255,8 +258,9 @@ impl PyAffine3A {
     fn __repr__(&self) -> PyResult<String> {
         let aff = *self.as_ref()?;
         Ok(format!(
-            "Affine3A(matrix3={:?}, translation={:?})",
-            aff.matrix3, aff.translation
+            "Affine3A(matrix3={}, translation={})",
+            object_repr(PyMat3A::from(aff.matrix3)),
+            aff.translation.repr_literal()
         ))
     }
 

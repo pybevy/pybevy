@@ -6,6 +6,7 @@ use pybevy_core::{
         MAT4_PERSPECTIVE_INFINITE_REVERSE_RH_NEAR, UNSUPPORTED_COMPARISON,
         mat4_perspective_depth_planes, mat4_projection_not_finite,
     },
+    repr::float_repr,
 };
 use pyo3::{
     basic::CompareOp,
@@ -486,7 +487,7 @@ impl PyMat4 {
 
     fn __repr__(&self) -> PyResult<String> {
         let mat = *self.as_ref()?;
-        let arr = mat.to_cols_array();
+        let arr = mat.to_cols_array().map(float_repr);
         Ok(format!(
             "Mat4([{}, {}, {}, {}], [{}, {}, {}, {}], [{}, {}, {}, {}], [{}, {}, {}, {}])",
             arr[0],

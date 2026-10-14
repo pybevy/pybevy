@@ -1,5 +1,5 @@
 use bevy::window::WindowResolution;
-use pybevy_core::{FieldStorage, FromBorrowedStorage};
+use pybevy_core::{FieldStorage, FromBorrowedStorage, repr::float_repr};
 use pybevy_macros::pyfield;
 use pybevy_math::{uvec2::PyUVec2, vec2::PyVec2};
 use pyo3::prelude::*;
@@ -117,7 +117,7 @@ impl PyWindowResolution {
             "WindowResolution({}x{}, scale={})",
             inner.width(),
             inner.height(),
-            inner.scale_factor()
+            float_repr(inner.scale_factor())
         ))
     }
 }

@@ -1,6 +1,6 @@
 use accesskit::{Node, Rect};
 use bevy::a11y::AccessibilityNode;
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, PyComponent, repr::object_repr};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
@@ -191,6 +191,9 @@ impl PyAccessibilityNode {
     }
 
     pub fn __repr__(&self) -> PyResult<String> {
-        Ok(format!("AccessibilityNode(role={:?})", self.role()?))
+        Ok(format!(
+            "AccessibilityNode(role={})",
+            object_repr(self.role()?)
+        ))
     }
 }

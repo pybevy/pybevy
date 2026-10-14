@@ -1,5 +1,7 @@
 use bevy::{asset::Handle, image::Image, light::atmosphere::PhaseFunction};
-use pybevy_core::{PyHandle, enum_comparison::reject_variant_type, extract_handle_from_any};
+use pybevy_core::{
+    PyHandle, enum_comparison::reject_variant_type, extract_handle_from_any, repr::float_repr,
+};
 use pybevy_macros::pyenum;
 use pyo3::{exceptions::PyTypeError, prelude::*, pyclass::CompareOp};
 
@@ -48,7 +50,7 @@ impl PyPhaseFunction {
             PhaseFunction::Isotropic => "PhaseFunction.Isotropic()".to_string(),
             PhaseFunction::Rayleigh => "PhaseFunction.Rayleigh()".to_string(),
             PhaseFunction::Mie { asymmetry } => {
-                format!("PhaseFunction.Mie(asymmetry={asymmetry})")
+                format!("PhaseFunction.Mie(asymmetry={})", float_repr(*asymmetry))
             }
             PhaseFunction::Curve(_) => "PhaseFunction.Curve(...)".to_string(),
             PhaseFunction::ChromaticCurve(_) => "PhaseFunction.ChromaticCurve(...)".to_string(),

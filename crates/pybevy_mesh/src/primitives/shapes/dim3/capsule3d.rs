@@ -2,6 +2,7 @@ use bevy::{
     math::primitives::{Capsule3d, Measured3d},
     mesh::Meshable,
 };
+use pybevy_core::repr::float_repr;
 use pybevy_macros::pyconstructor;
 use pybevy_math::primitives::dimension::dimension;
 use pyo3::prelude::*;
@@ -88,8 +89,8 @@ impl PyCapsule3d {
     fn __repr__(&self) -> String {
         format!(
             "Capsule3d(radius={}, length={})",
-            self.0.radius,
-            self.0.half_length * 2.0
+            float_repr(self.0.radius),
+            float_repr(self.0.half_length * 2.0)
         )
     }
 }

@@ -124,7 +124,7 @@ impl PyMouseInput {
             Ok(input) => {
                 let pressed: Vec<String> = input
                     .get_pressed()
-                    .map(|button| format!("{:?}", button))
+                    .map(|button| PyMouseButton::from(*button).__repr__())
                     .collect();
                 format!("MouseInput(pressed=[{}])", pressed.join(", "))
             }

@@ -15,7 +15,7 @@ use bevy::{
     },
     prelude::DebugName,
 };
-use pybevy_core::public_error;
+use pybevy_core::{public_error, repr::str_repr};
 use pybevy_ecs::shared::{
     schedule::{ConditionExpr, DynamicSetLabel, ScheduleOrdering, SystemSetTarget},
     schedule_check::PlannedNode,
@@ -156,7 +156,7 @@ impl PySystemSet {
     }
 
     fn __repr__(&self) -> String {
-        format!("SystemSet({:?})", self.label.qualified_name())
+        format!("SystemSet({})", str_repr(self.label.qualified_name()))
     }
 
     fn __hash__(&self) -> u64 {

@@ -1,5 +1,5 @@
 use bevy::math::{Dir2, StableInterpolate, Vec2};
-use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage, repr::float_repr};
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 use super::{rot2::PyRot2, vec2::PyVec2};
@@ -220,7 +220,11 @@ impl PyDir2 {
 
     pub fn __repr__(&self) -> PyResult<String> {
         let value = self.as_ref()?;
-        Ok(format!("Dir2({}, {})", value.x, value.y))
+        Ok(format!(
+            "Dir2({}, {})",
+            float_repr(value.x),
+            float_repr(value.y)
+        ))
     }
 
     pub fn as_tuple(&self) -> PyResult<(f32, f32)> {

@@ -1,4 +1,5 @@
 use bevy::ui::Val2;
+use pybevy_core::repr::object_repr;
 use pyo3::prelude::*;
 
 use crate::val::PyVal;
@@ -59,6 +60,10 @@ impl PyVal2 {
     }
 
     fn __repr__(&self) -> String {
-        format!("Val2(x={:?}, y={:?})", self.inner.x, self.inner.y)
+        format!(
+            "Val2(x={}, y={})",
+            object_repr(PyVal::from(self.inner.x)),
+            object_repr(PyVal::from(self.inner.y))
+        )
     }
 }

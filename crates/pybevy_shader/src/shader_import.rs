@@ -1,4 +1,5 @@
 use bevy::shader::ShaderImport;
+use pybevy_core::repr::str_repr;
 use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
@@ -30,9 +31,9 @@ impl PyShaderImport {
     fn __repr__(&self) -> String {
         match self {
             PyShaderImport::AssetPath { value } => {
-                format!("ShaderImport.AssetPath(\"{}\")", value)
+                format!("ShaderImport.AssetPath({})", str_repr(value))
             }
-            PyShaderImport::Custom { value } => format!("ShaderImport.Custom(\"{}\")", value),
+            PyShaderImport::Custom { value } => format!("ShaderImport.Custom({})", str_repr(value)),
         }
     }
 

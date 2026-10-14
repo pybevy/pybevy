@@ -1,5 +1,8 @@
 use bevy::light::CascadeShadowConfig;
-use pybevy_core::{ComponentStorage, PyComponent, PyFloatLiveList, public_error};
+use pybevy_core::{
+    ComponentStorage, PyComponent, PyFloatLiveList, public_error,
+    repr::{float_list_repr, float_repr},
+};
 use pybevy_macros::pycomponent;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
@@ -109,8 +112,10 @@ impl PyCascadeShadowConfig {
     fn __repr__(&self) -> PyResult<String> {
         let config = self.as_ref()?;
         Ok(format!(
-            "CascadeShadowConfig(bounds={:?}, overlap_proportion={}, minimum_distance={})",
-            config.bounds, config.overlap_proportion, config.minimum_distance
+            "CascadeShadowConfig(bounds={}, overlap_proportion={}, minimum_distance={})",
+            float_list_repr(&config.bounds),
+            float_repr(config.overlap_proportion),
+            float_repr(config.minimum_distance)
         ))
     }
 }

@@ -1,4 +1,4 @@
-use bevy::image::{ImageSaverSettings, SaveImageFormatSetting};
+use bevy::image::ImageSaverSettings;
 use pyo3::prelude::*;
 
 use crate::save_image_format_setting::PySaveImageFormatSetting;
@@ -32,8 +32,10 @@ impl PyImageSaverSettings {
     }
 
     pub fn __repr__(&self) -> String {
-        let format: SaveImageFormatSetting = self.inner.format;
-        format!("ImageSaverSettings(format={format:?})")
+        format!(
+            "ImageSaverSettings(format={})",
+            PySaveImageFormatSetting::from(self.inner.format).__repr__()
+        )
     }
 }
 

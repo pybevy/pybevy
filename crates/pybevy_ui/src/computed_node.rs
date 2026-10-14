@@ -1,5 +1,5 @@
 use bevy::ui::ComputedNode;
-use pybevy_core::{ComponentStorage, PyComponent, computed_owned};
+use pybevy_core::{ComponentStorage, PyComponent, computed_owned, repr::ReprLiteral};
 use pybevy_macros::pycomponent;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
@@ -121,6 +121,6 @@ impl PyComputedNode {
 
     pub fn __repr__(&self) -> PyResult<String> {
         let inner = self.as_ref()?;
-        Ok(format!("ComputedNode(size={:?})", inner.size))
+        Ok(format!("ComputedNode(size={})", inner.size.repr_literal()))
     }
 }

@@ -30,8 +30,10 @@ pub enum PyGamepadInput {
 impl PyGamepadInput {
     fn __repr__(&self) -> String {
         match self {
-            PyGamepadInput::Axis { axis } => format!("GamepadInput.Axis({:?})", axis),
-            PyGamepadInput::Button { button } => format!("GamepadInput.Button({:?})", button),
+            PyGamepadInput::Axis { axis } => format!("GamepadInput.Axis({})", axis.__repr__()),
+            PyGamepadInput::Button { button } => {
+                format!("GamepadInput.Button({})", button.__repr__())
+            }
         }
     }
 }

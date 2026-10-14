@@ -92,13 +92,13 @@ impl PyImageSampler {
         )
     }
 
-    pub fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+    pub fn __repr__(&self) -> PyResult<String> {
         let sampler = self.storage.as_ref()?;
         let rendered = match sampler.reborrow() {
             ImageSampler::Default => "ImageSampler.Default".to_string(),
             ImageSampler::Descriptor(desc) => format!(
                 "ImageSampler.Descriptor({})",
-                PyImageSamplerDescriptor::from(desc.clone()).__repr__(py)?
+                PyImageSamplerDescriptor::from(desc.clone()).__repr__()?
             ),
         };
         if ImageSamplerVariant::of(&sampler) != self.expected {
@@ -358,10 +358,10 @@ impl PyImageLoaderSettings {
     pub fn __repr__(&self) -> PyResult<String> {
         let settings = self.as_ref()?;
         Ok(format!(
-            "ImageLoaderSettings(format={:?}, is_srgb={}, sampler={:?})",
-            settings.format,
+            "ImageLoaderSettings(format={}, is_srgb={}, sampler={})",
+            PyImageFormatSetting::from(settings.format.clone()).__repr__(),
             if settings.is_srgb { "True" } else { "False" },
-            settings.sampler
+            PyImageSampler::from(settings.sampler.clone()).__repr__()?
         ))
     }
 }

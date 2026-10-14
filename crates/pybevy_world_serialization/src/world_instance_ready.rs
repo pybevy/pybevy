@@ -1,5 +1,5 @@
 use bevy::world_serialization::WorldInstanceReady;
-use pybevy_core::{FromBorrowedStorage, PyEntity, PyMessage, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, PyEntity, PyMessage, ValueStorage, repr::object_repr};
 use pybevy_macros::pyvalue;
 use pyo3::prelude::*;
 
@@ -33,9 +33,9 @@ impl PyWorldInstanceReady {
     fn __repr__(&self) -> PyResult<String> {
         let ready = self.to_bevy()?;
         Ok(format!(
-            "WorldInstanceReady(entity={}, instance_id={:?})",
-            ready.entity,
-            PyInstanceId::from(ready.instance_id)
+            "WorldInstanceReady(entity={}, instance_id={})",
+            PyEntity::from(ready.entity).__repr__(),
+            object_repr(PyInstanceId::from(ready.instance_id))
         ))
     }
 }

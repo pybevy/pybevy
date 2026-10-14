@@ -68,6 +68,7 @@ pub mod public_error;
 pub mod reflect_registration;
 pub mod registry;
 pub mod reload_request;
+pub mod repr;
 pub mod resource;
 pub mod scene_module;
 pub mod source_location;
@@ -92,6 +93,7 @@ pub use pybevy_storage::{
     storage_error, storage_traits, validity_guard, value_storage, view_bridge,
 };
 use pyo3::{PyTypeInfo, exceptions::PyRuntimeError, ffi::PyTypeObject, prelude::*, types::PyType};
+pub use repr::{ReprLiteral, float_list_repr, float_repr, object_repr, str_repr};
 pub use scene_module::ActiveSceneModule;
 
 /// Build a re-resolving [`ComponentStorage<B>`] for a native/bridge component reached

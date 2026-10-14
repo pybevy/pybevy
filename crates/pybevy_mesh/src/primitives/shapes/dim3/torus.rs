@@ -2,6 +2,7 @@ use bevy::{
     math::primitives::{Measured3d, Torus},
     mesh::Meshable,
 };
+use pybevy_core::repr::float_repr;
 use pybevy_macros::pyconstructor;
 use pybevy_math::{primitives::dimension::dimension, torus_kind::PyTorusKind};
 use pyo3::prelude::*;
@@ -105,7 +106,8 @@ impl PyTorus {
     fn __repr__(&self) -> String {
         format!(
             "Torus(minor_radius={}, major_radius={})",
-            self.0.minor_radius, self.0.major_radius
+            float_repr(self.0.minor_radius),
+            float_repr(self.0.major_radius)
         )
     }
 }

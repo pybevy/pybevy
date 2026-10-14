@@ -1,5 +1,7 @@
 use bevy::{asset::Handle, image::Image, light::IrradianceVolume};
-use pybevy_core::{ComponentStorage, HandleArg, PyComponent, PyHandle, extract_handle_from_any};
+use pybevy_core::{
+    ComponentStorage, HandleArg, PyComponent, PyHandle, extract_handle_from_any, repr::float_repr,
+};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
@@ -63,7 +65,7 @@ impl PyIrradianceVolume {
         let iv = self.as_ref()?;
         Ok(format!(
             "IrradianceVolume(intensity={}, affects_lightmapped_meshes={})",
-            iv.intensity,
+            float_repr(iv.intensity),
             if iv.affects_lightmapped_meshes {
                 "True"
             } else {

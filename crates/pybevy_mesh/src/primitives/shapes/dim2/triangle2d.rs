@@ -2,6 +2,7 @@ use bevy::{
     math::primitives::{Measured2d, Triangle2d},
     mesh::Meshable,
 };
+use pybevy_core::repr::ReprLiteral;
 use pybevy_macros::pyconstructor;
 use pybevy_math::{vec2::PyVec2, winding_order::PyWindingOrder};
 use pyo3::prelude::*;
@@ -116,8 +117,10 @@ impl PyTriangle2d {
     fn __repr__(&self) -> String {
         let v = &self.0.vertices;
         format!(
-            "Triangle2d(Vec2({}, {}), Vec2({}, {}), Vec2({}, {}))",
-            v[0].x, v[0].y, v[1].x, v[1].y, v[2].x, v[2].y
+            "Triangle2d({}, {}, {})",
+            v[0].repr_literal(),
+            v[1].repr_literal(),
+            v[2].repr_literal()
         )
     }
 }

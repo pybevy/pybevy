@@ -1,5 +1,5 @@
 use bevy::input::gamepad::{RawGamepadAxisChangedEvent, RawGamepadButtonChangedEvent};
-use pybevy_core::{PyEntity, PyMessage};
+use pybevy_core::{PyEntity, PyMessage, repr::float_repr};
 use pybevy_macros::pymessage;
 use pyo3::prelude::*;
 
@@ -83,8 +83,10 @@ impl PyRawGamepadButtonChangedEvent {
 
     fn __repr__(&self) -> String {
         format!(
-            "RawGamepadButtonChangedEvent(gamepad={:?}, button={:?}, value={})",
-            self.gamepad, self.button, self.value
+            "RawGamepadButtonChangedEvent(gamepad={}, button={}, value={})",
+            self.gamepad.__repr__(),
+            self.button.__repr__(),
+            float_repr(self.value)
         )
     }
 }
@@ -167,8 +169,10 @@ impl PyRawGamepadAxisChangedEvent {
 
     fn __repr__(&self) -> String {
         format!(
-            "RawGamepadAxisChangedEvent(gamepad={:?}, axis={:?}, value={})",
-            self.gamepad, self.axis, self.value
+            "RawGamepadAxisChangedEvent(gamepad={}, axis={}, value={})",
+            self.gamepad.__repr__(),
+            self.axis.__repr__(),
+            float_repr(self.value)
         )
     }
 }

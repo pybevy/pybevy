@@ -1,6 +1,6 @@
 use bevy::{color::Color, ui::BorderColor};
 use pybevy_color::color::{IntoColorValue, PyColor};
-use pybevy_core::{ComponentStorage, Omittable, PyComponent};
+use pybevy_core::{ComponentStorage, Omittable, PyComponent, repr::object_repr};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
@@ -113,8 +113,11 @@ impl PyBorderColor {
     pub fn __repr__(&self) -> PyResult<String> {
         let bc = self.as_ref()?;
         Ok(format!(
-            "BorderColor(top={:?}, right={:?}, bottom={:?}, left={:?})",
-            bc.top, bc.right, bc.bottom, bc.left
+            "BorderColor(top={}, right={}, bottom={}, left={})",
+            object_repr(PyColor::from(bc.top)),
+            object_repr(PyColor::from(bc.right)),
+            object_repr(PyColor::from(bc.bottom)),
+            object_repr(PyColor::from(bc.left))
         ))
     }
 }

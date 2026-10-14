@@ -1,5 +1,8 @@
 use bevy::camera::ImageRenderTarget;
-use pybevy_core::{PyHandle, extract_handle_from_any};
+use pybevy_core::{
+    PyHandle, extract_handle_from_any,
+    repr::{float_repr, object_repr},
+};
 use pyo3::prelude::*;
 
 #[pyclass(
@@ -52,8 +55,9 @@ impl PyImageRenderTarget {
 
     fn __repr__(&self) -> String {
         format!(
-            "ImageRenderTarget(handle={:?}, scale_factor={})",
-            self.inner.handle, self.inner.scale_factor
+            "ImageRenderTarget(handle={}, scale_factor={})",
+            object_repr(PyHandle::from(&self.inner.handle)),
+            float_repr(self.inner.scale_factor)
         )
     }
 }

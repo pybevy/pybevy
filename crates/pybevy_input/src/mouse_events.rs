@@ -3,8 +3,11 @@ use bevy::{
     input::mouse::{MouseButtonInput, MouseMotion, MouseWheel},
     math::Vec2,
 };
-use pybevy_core::PyEntity;
 pub use pybevy_core::PyMessage;
+use pybevy_core::{
+    PyEntity,
+    repr::{ReprLiteral, float_repr},
+};
 use pybevy_macros::pymessage;
 use pybevy_math::snapshot::Snapshot;
 use pyo3::prelude::*;
@@ -110,8 +113,9 @@ impl PyMouseButtonInput {
 
     fn __repr__(&self) -> String {
         format!(
-            "MouseButtonInput(button={:?}, state={:?})",
-            self.button, self.state
+            "MouseButtonInput(button={}, state={})",
+            self.button.__repr__(),
+            self.state.__repr__()
         )
     }
 }
@@ -162,10 +166,7 @@ impl PyMouseMotion {
     }
 
     fn __repr__(&self) -> String {
-        format!(
-            "MouseMotion(delta=Vec2({}, {}))",
-            self.delta.x, self.delta.y
-        )
+        format!("MouseMotion(delta={})", self.delta.repr_literal())
     }
 }
 
@@ -288,8 +289,11 @@ impl PyMouseWheel {
 
     fn __repr__(&self) -> String {
         format!(
-            "MouseWheel(x={}, y={}, unit={:?}, phase={:?})",
-            self.x, self.y, self.unit, self.phase
+            "MouseWheel(x={}, y={}, unit={}, phase={})",
+            float_repr(self.x),
+            float_repr(self.y),
+            self.unit.__repr__(),
+            self.phase.__repr__()
         )
     }
 }

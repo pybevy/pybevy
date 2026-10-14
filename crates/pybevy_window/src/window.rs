@@ -4,7 +4,7 @@ use bevy::{
     math::DVec2,
     window::{Window, WindowPosition},
 };
-use pybevy_core::{ComponentStorage, PyComponent, computed_owned, public_error};
+use pybevy_core::{ComponentStorage, PyComponent, computed_owned, public_error, repr::str_repr};
 use pybevy_macros::pycomponent;
 use pybevy_math::{compass::PyCompassOctant, uvec2::PyUVec2, vec2::PyVec2};
 use pyo3::{exceptions::PyValueError, prelude::*};
@@ -687,9 +687,9 @@ impl PyWindow {
         let window = self.as_ref()?;
         let flag = |value: bool| if value { "True" } else { "False" };
         Ok(format!(
-            "Window(title='{}', {}x{}, decorations={}, resizable={}, mode={}, \
+            "Window(title={}, {}x{}, decorations={}, resizable={}, mode={}, \
              transparent={}, window_level={}, focused={})",
-            window.title,
+            str_repr(&window.title),
             window.resolution.width(),
             window.resolution.height(),
             flag(window.decorations),

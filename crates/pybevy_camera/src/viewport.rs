@@ -5,6 +5,7 @@ use pybevy_core::{
     FromBorrowedStorage, StorageError,
     field_storage::FieldStorage,
     public_error::{UNSUPPORTED_COMPARISON, inverted_range, value_out_of_range},
+    repr::float_repr,
 };
 use pybevy_macros::pyfield;
 use pybevy_math::{range::PyRange, uvec2::PyUVec2};
@@ -104,8 +105,8 @@ impl PyViewport {
             viewport.physical_position.y,
             viewport.physical_size.x,
             viewport.physical_size.y,
-            viewport.depth.start,
-            viewport.depth.end
+            float_repr(viewport.depth.start),
+            float_repr(viewport.depth.end)
         ))
     }
 

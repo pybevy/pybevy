@@ -1,4 +1,5 @@
 use bevy::shader::ShaderDefVal;
+use pybevy_core::repr::{ReprLiteral, str_repr};
 use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
@@ -33,13 +34,17 @@ impl PyShaderDefVal {
     fn __repr__(&self) -> String {
         match self {
             PyShaderDefVal::Bool { name, value } => {
-                format!("ShaderDefVal.Bool(\"{}\", {})", name, value)
+                format!(
+                    "ShaderDefVal.Bool({}, {})",
+                    str_repr(name),
+                    value.repr_literal()
+                )
             }
             PyShaderDefVal::Int { name, value } => {
-                format!("ShaderDefVal.Int(\"{}\", {})", name, value)
+                format!("ShaderDefVal.Int({}, {})", str_repr(name), value)
             }
             PyShaderDefVal::UInt { name, value } => {
-                format!("ShaderDefVal.UInt(\"{}\", {})", name, value)
+                format!("ShaderDefVal.UInt({}, {})", str_repr(name), value)
             }
         }
     }

@@ -1,6 +1,7 @@
 use bevy::math::{Vec3, Vec3A};
 use pybevy_core::{
-    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage, public_error::UNSUPPORTED_COMPARISON,
+    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
+    public_error::UNSUPPORTED_COMPARISON, repr::ReprLiteral,
 };
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
@@ -380,7 +381,7 @@ impl PyVec3A {
 
     pub fn __repr__(&self) -> PyResult<String> {
         let v = self.as_ref()?;
-        Ok(format!("Vec3A({}, {}, {})", v.x, v.y, v.z))
+        Ok(v.repr_literal())
     }
 
     pub fn __str__(&self) -> PyResult<String> {

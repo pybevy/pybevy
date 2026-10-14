@@ -5,7 +5,7 @@ use bevy::{
     },
     mesh::Meshable,
 };
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, ValueStorage, repr::float_list_repr};
 use pybevy_macros::{pyconstructor, pyvalue};
 use pybevy_math::{
     primitives::dimension::{check_half_size3, dimension},
@@ -114,7 +114,10 @@ impl PyCuboid {
     }
 
     pub fn __repr__(&self) -> PyResult<String> {
-        Ok(format!("Cuboid(half_size={})", self.as_ref()?.half_size))
+        Ok(format!(
+            "Cuboid(half_size={})",
+            float_list_repr(&self.as_ref()?.half_size.to_array())
+        ))
     }
 }
 

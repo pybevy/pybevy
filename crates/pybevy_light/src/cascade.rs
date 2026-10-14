@@ -1,4 +1,5 @@
 use bevy::light::cascade::Cascade;
+use pybevy_core::repr::{float_repr, object_repr};
 use pybevy_math::mat4::PyMat4;
 use pyo3::prelude::*;
 
@@ -46,8 +47,9 @@ impl PyCascade {
 
     fn __repr__(&self) -> String {
         format!(
-            "Cascade(texel_size={:.4}, world_from_cascade={:?})",
-            self.inner.texel_size, self.inner.world_from_cascade
+            "Cascade(texel_size={}, world_from_cascade={})",
+            float_repr(self.inner.texel_size),
+            object_repr(PyMat4::from(self.inner.world_from_cascade))
         )
     }
 }

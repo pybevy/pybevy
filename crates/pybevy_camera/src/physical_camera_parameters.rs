@@ -1,4 +1,5 @@
 use bevy::camera::PhysicalCameraParameters;
+use pybevy_core::repr::float_repr;
 use pyo3::prelude::*;
 
 #[pyclass(
@@ -102,10 +103,10 @@ impl PyPhysicalCameraParameters {
     pub fn __repr__(&self) -> String {
         format!(
             "PhysicalCameraParameters(aperture_f_stops={}, shutter_speed_s={}, sensitivity_iso={}, sensor_height={})",
-            self.inner.aperture_f_stops,
-            self.inner.shutter_speed_s,
-            self.inner.sensitivity_iso,
-            self.inner.sensor_height
+            float_repr(self.inner.aperture_f_stops),
+            float_repr(self.inner.shutter_speed_s),
+            float_repr(self.inner.sensitivity_iso),
+            float_repr(self.inner.sensor_height)
         )
     }
 }

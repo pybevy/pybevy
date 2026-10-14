@@ -1,5 +1,5 @@
 use bevy::window::WindowResized;
-use pybevy_core::{PyEntity, PyMessage};
+use pybevy_core::{PyEntity, PyMessage, repr::float_repr};
 use pybevy_macros::pymessage;
 use pyo3::prelude::*;
 
@@ -56,7 +56,8 @@ impl PyWindowResized {
     fn __repr__(&self) -> String {
         format!(
             "WindowResized(width={}, height={})",
-            self.width, self.height
+            float_repr(self.width),
+            float_repr(self.height)
         )
     }
 }

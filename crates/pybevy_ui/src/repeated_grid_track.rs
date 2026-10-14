@@ -1,9 +1,54 @@
-use bevy::ui::RepeatedGridTrack;
+use bevy::{
+    reflect::{PartialReflect, ReflectRef},
+    ui::{GridTrack, GridTrackRepetition, RepeatedGridTrack},
+};
 use pyo3::prelude::*;
 
 use crate::{
-    grid_track::finite_grid_value, grid_track_repetition::extract_grid_track_repetition_from_any,
+    grid_track::{finite_grid_value, grid_track_factory},
+    grid_track_repetition::{PyGridTrackRepetition, extract_grid_track_repetition_from_any},
 };
+
+const REPEATED_FACTORIES: [&str; 9] = [
+    "px",
+    "percent",
+    "fr",
+    "flex",
+    "auto",
+    "min_content",
+    "max_content",
+    "fit_content_px",
+    "fit_content_percent",
+];
+
+fn repeated_grid_track_repr(track: &RepeatedGridTrack) -> Option<String> {
+    let ReflectRef::Struct(fields) = track.reflect_ref() else {
+        return None;
+    };
+    let repetition = fields
+        .field("repetition")?
+        .try_downcast_ref::<GridTrackRepetition>()?;
+    let ReflectRef::List(tracks) = fields.field("tracks")?.reflect_ref() else {
+        return None;
+    };
+    if tracks.len() != 1 {
+        return None;
+    }
+    let single = tracks.get(0)?.try_downcast_ref::<GridTrack>()?;
+    let (name, argument) = grid_track_factory(single)?;
+    if !REPEATED_FACTORIES.contains(&name) {
+        return None;
+    }
+    let repetition = match repetition {
+        GridTrackRepetition::Count(count) => count.to_string(),
+        other => PyGridTrackRepetition::from(*other).__repr__(),
+    };
+    let arguments = match argument {
+        Some(argument) => format!("{repetition}, {argument}"),
+        None => repetition,
+    };
+    Some(format!("RepeatedGridTrack.{name}({arguments})"))
+}
 
 #[pyclass(
     name = "RepeatedGridTrack",
@@ -120,6 +165,6 @@ impl PyRepeatedGridTrack {
     }
 
     pub fn __repr__(&self) -> String {
-        format!("RepeatedGridTrack({:?})", self.inner)
+        repeated_grid_track_repr(&self.inner).unwrap_or_else(|| "RepeatedGridTrack(...)".into())
     }
 }

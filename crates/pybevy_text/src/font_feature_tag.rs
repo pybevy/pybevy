@@ -2,6 +2,7 @@ use bevy::{
     reflect::{PartialReflect, ReflectRef},
     text::FontFeatureTag,
 };
+use pybevy_core::repr::str_repr;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 #[pyclass(
@@ -115,7 +116,7 @@ impl PyFontFeatureTag {
     pub const SLANT: PyFontFeatureTag = PyFontFeatureTag(FontFeatureTag::SLANT);
 
     pub fn __repr__(&self) -> String {
-        format!("{:?}", self.0)
+        format!("FontFeatureTag({})", str_repr(&tag_characters(&self.0)))
     }
 
     #[getter]

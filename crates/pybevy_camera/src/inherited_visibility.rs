@@ -1,5 +1,5 @@
 use bevy::prelude::InheritedVisibility;
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, PyComponent, repr::ReprLiteral};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
@@ -29,7 +29,10 @@ impl PyInheritedVisibility {
     }
 
     pub fn __repr__(&self) -> PyResult<String> {
-        Ok(format!("InheritedVisibility({})", self.as_ref()?.get()))
+        Ok(format!(
+            "InheritedVisibility({})",
+            self.as_ref()?.get().repr_literal()
+        ))
     }
 
     pub fn __bool__(&self) -> PyResult<bool> {

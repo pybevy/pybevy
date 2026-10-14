@@ -5,7 +5,7 @@ use bevy::{
     },
     mesh::Meshable,
 };
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, ValueStorage, repr::ReprLiteral};
 use pybevy_macros::pyvalue;
 use pybevy_math::{
     primitives::dimension::{check_half_size2, dimension},
@@ -122,9 +122,8 @@ impl PyEllipse {
 
     fn __repr__(&self) -> PyResult<String> {
         Ok(format!(
-            "Ellipse(half_size=Vec2({}, {}))",
-            self.as_ref()?.half_size.x,
-            self.as_ref()?.half_size.y
+            "Ellipse(half_size={})",
+            self.as_ref()?.half_size.repr_literal()
         ))
     }
 }

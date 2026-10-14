@@ -1,7 +1,10 @@
 use std::time::Duration;
 
 use bevy::time::Stopwatch;
-use pybevy_core::duration_from_py;
+use pybevy_core::{
+    duration_from_py,
+    repr::{ReprLiteral, object_repr},
+};
 use pyo3::prelude::*;
 
 #[pyclass(name = "Stopwatch", module = "pybevy.time", eq, skip_from_py_object)]
@@ -61,6 +64,10 @@ impl PyStopwatch {
     }
 
     pub fn __repr__(&self) -> String {
-        format!("{:?}", self.stopwatch)
+        format!(
+            "Stopwatch(elapsed={}, is_paused={})",
+            object_repr(self.stopwatch.elapsed()),
+            self.stopwatch.is_paused().repr_literal()
+        )
     }
 }

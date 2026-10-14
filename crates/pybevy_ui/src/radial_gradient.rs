@@ -1,5 +1,5 @@
 use bevy::{prelude::InColorSpace, ui::RadialGradient};
-use pybevy_core::ValueStorage;
+use pybevy_core::{ValueStorage, repr::object_repr};
 use pyo3::prelude::*;
 
 use crate::{
@@ -121,9 +121,9 @@ impl PyRadialGradient {
 
     pub fn __repr__(&self) -> String {
         format!(
-            "RadialGradient(position={:?}, shape={:?}, stops={})",
-            self.inner.position,
-            self.inner.shape,
+            "RadialGradient(position={}, shape={}, stops={})",
+            object_repr(PyUiPosition::from(self.inner.position)),
+            object_repr(PyRadialGradientShape::from(self.inner.shape)),
             self.inner.stops.len()
         )
     }

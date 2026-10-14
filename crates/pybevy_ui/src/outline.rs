@@ -1,6 +1,6 @@
 use bevy::{color::Color, ui::Outline};
 use pybevy_color::color::PyColor;
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, PyComponent, repr::object_repr};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
@@ -71,8 +71,10 @@ impl PyOutline {
     pub fn __repr__(&self) -> PyResult<String> {
         let outline = self.as_ref()?;
         Ok(format!(
-            "Outline(width={:?}, offset={:?}, color={:?})",
-            outline.width, outline.offset, outline.color
+            "Outline(width={}, offset={}, color={})",
+            object_repr(PyVal::from(outline.width)),
+            object_repr(PyVal::from(outline.offset)),
+            object_repr(PyColor::from(outline.color))
         ))
     }
 }

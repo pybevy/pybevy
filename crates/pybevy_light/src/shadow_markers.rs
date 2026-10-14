@@ -1,7 +1,7 @@
 use bevy::light::{
     LightProbe, NotShadowCaster, NotShadowReceiver, TransmittedShadowReceiver, VolumetricLight,
 };
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, PyComponent, repr::ReprLiteral};
 use pybevy_macros::pycomponent;
 use pybevy_math::vec3::PyVec3;
 use pyo3::prelude::*;
@@ -191,6 +191,9 @@ impl PyLightProbe {
     }
 
     pub fn __repr__(&self) -> PyResult<String> {
-        Ok(format!("LightProbe(falloff={:?})", self.as_ref()?.falloff))
+        Ok(format!(
+            "LightProbe(falloff={})",
+            self.as_ref()?.falloff.repr_literal()
+        ))
     }
 }

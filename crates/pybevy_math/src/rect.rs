@@ -2,6 +2,7 @@ use bevy::math::{Rect, Vec2};
 use pybevy_core::{
     FromBorrowedStorage, ValueStorage,
     public_error::{RECT_HALF_SIZE_INVALID, RECT_SIZE_INVALID, UNSUPPORTED_COMPARISON},
+    repr::ReprLiteral,
 };
 use pybevy_macros::pyvalue;
 use pyo3::{
@@ -146,8 +147,9 @@ impl PyRect {
     pub fn __repr__(&self) -> PyResult<String> {
         let rect = self.to_bevy()?;
         Ok(format!(
-            "Rect(min=Vec2({}, {}), max=Vec2({}, {}))",
-            rect.min.x, rect.min.y, rect.max.x, rect.max.y
+            "Rect(min={}, max={})",
+            rect.min.repr_literal(),
+            rect.max.repr_literal()
         ))
     }
 

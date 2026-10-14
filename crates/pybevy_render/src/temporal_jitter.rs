@@ -1,5 +1,8 @@
 use bevy::{math::Vec2, render::camera::TemporalJitter};
-use pybevy_core::{ComponentStorage, PyComponent, StorageError, public_error::value_out_of_range};
+use pybevy_core::{
+    ComponentStorage, PyComponent, StorageError, public_error::value_out_of_range,
+    repr::ReprLiteral,
+};
 use pybevy_macros::pycomponent;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
@@ -55,8 +58,8 @@ impl PyTemporalJitter {
     pub fn __repr__(&self) -> PyResult<String> {
         let tj = self.as_ref()?;
         Ok(format!(
-            "TemporalJitter(offset=Vec2({}, {}))",
-            tj.offset.x, tj.offset.y
+            "TemporalJitter(offset={})",
+            tj.offset.repr_literal()
         ))
     }
 }

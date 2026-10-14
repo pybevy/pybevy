@@ -1,4 +1,5 @@
 use bevy::input::keyboard::NativeKey;
+use pybevy_core::repr::str_repr;
 use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
@@ -60,7 +61,7 @@ impl PyNativeKey {
             Self::MacOS { value } => format!("NativeKey.MacOS({value})"),
             Self::Windows { value } => format!("NativeKey.Windows({value})"),
             Self::Xkb { value } => format!("NativeKey.Xkb({value})"),
-            Self::Web { value } => format!("NativeKey.Web({value:?})"),
+            Self::Web { value } => format!("NativeKey.Web({})", str_repr(value)),
         }
     }
 

@@ -5,7 +5,7 @@ use bevy::{
     },
     mesh::Meshable,
 };
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, ValueStorage, repr::float_repr};
 use pybevy_math::{primitives::dimension::dimension, vec2::PyVec2};
 use pyo3::prelude::*;
 
@@ -76,7 +76,10 @@ impl PyCircle {
     }
 
     pub fn __repr__(&self) -> PyResult<String> {
-        Ok(format!("Circle(radius={})", self.0.as_ref()?.radius))
+        Ok(format!(
+            "Circle(radius={})",
+            float_repr(self.0.as_ref()?.radius)
+        ))
     }
 }
 

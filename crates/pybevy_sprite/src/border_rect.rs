@@ -1,5 +1,5 @@
 use bevy::{math::Vec2, sprite::BorderRect};
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, ValueStorage, repr::ReprLiteral};
 use pybevy_macros::pyvalue;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
@@ -70,8 +70,9 @@ impl PyBorderRect {
     pub fn __repr__(&self) -> PyResult<String> {
         let rect = self.to_bevy()?;
         Ok(format!(
-            "BorderRect(min_inset=Vec2({}, {}), max_inset=Vec2({}, {}))",
-            rect.min_inset.x, rect.min_inset.y, rect.max_inset.x, rect.max_inset.y
+            "BorderRect(min_inset={}, max_inset={})",
+            rect.min_inset.repr_literal(),
+            rect.max_inset.repr_literal()
         ))
     }
 }

@@ -47,7 +47,7 @@ impl PyImageFormatSetting {
             PyImageFormatSetting::FromExtension() => "ImageFormatSetting.FromExtension".to_string(),
             PyImageFormatSetting::Guess() => "ImageFormatSetting.Guess".to_string(),
             PyImageFormatSetting::Format { value } => {
-                format!("ImageFormatSetting.Format({value:?})")
+                format!("ImageFormatSetting.Format({})", value.__repr__())
             }
         }
     }

@@ -7,7 +7,7 @@ use bevy::{
     image::TextureAtlasLayout,
     text::{FontAtlas, FontAtlasKey},
 };
-use pybevy_core::{AssetStorage, FromBorrowedStorage, PyHandle, ValueStorage};
+use pybevy_core::{AssetStorage, FromBorrowedStorage, PyHandle, ValueStorage, repr::object_repr};
 use pybevy_image::texture_atlas_layout::PyTextureAtlasLayout;
 use pybevy_macros::pyvalue;
 use pyo3::prelude::*;
@@ -54,10 +54,10 @@ impl PyFontAtlas {
 
     pub fn __repr__(&self) -> String {
         format!(
-            "FontAtlas(texture_atlas=TextureAtlasLayout(size={:?}, texture_count={}), texture={:?})",
+            "FontAtlas(texture_atlas=TextureAtlasLayout(size={:?}, texture_count={}), texture={})",
             self.texture_atlas.size,
             self.texture_atlas.textures.len(),
-            self.texture
+            object_repr(self.texture.clone())
         )
     }
 }
@@ -128,13 +128,13 @@ impl PyFontAtlasKey {
     pub fn __repr__(&self) -> PyResult<String> {
         let key = self.to_bevy()?;
         Ok(format!(
-            "FontAtlasKey(id={}, index={}, font_size_bits={}, variations_hash={}, hinting={:?}, font_smoothing={:?})",
+            "FontAtlasKey(id={}, index={}, font_size_bits={}, variations_hash={}, hinting={}, font_smoothing={})",
             key.id,
             key.index,
             key.font_size_bits,
             key.variations_hash,
-            PyFontHinting::from(key.hinting),
-            PyFontSmoothing::from(key.font_smoothing)
+            object_repr(PyFontHinting::from(key.hinting)),
+            object_repr(PyFontSmoothing::from(key.font_smoothing))
         ))
     }
 }

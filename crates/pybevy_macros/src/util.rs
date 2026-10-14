@@ -159,6 +159,45 @@ pub(crate) fn is_string_type(ty: &Type) -> bool {
     false
 }
 
+fn is_literal_type(ty: &Type) -> bool {
+    if let Type::Path(type_path) = ty
+        && let Some(segment) = type_path.path.segments.last()
+    {
+        return [
+            "f32", "f64", "bool", "u8", "u16", "u32", "u64", "usize", "i8", "i16", "i32", "i64",
+            "isize", "String",
+        ]
+        .iter()
+        .any(|name| segment.ident == name);
+    }
+    false
+}
+
+/// Python literal rendering of a bound `&T` when `T` is a scalar or string, optionally wrapped in `Option`.
+pub(crate) fn literal_repr(
+    ty: &Type,
+    value: proc_macro2::TokenStream,
+) -> Option<proc_macro2::TokenStream> {
+    let inner = extract_option_inner(ty).unwrap_or(ty);
+    is_literal_type(inner).then(|| {
+        let (core, _) = pybevy_crate_paths();
+        quote! { #core::repr::ReprLiteral::repr_literal(#value) }
+    })
+}
+
+/// Python repr of a bound `&T`: a literal for scalars and strings, otherwise the converted object's repr.
+pub(crate) fn value_repr(
+    ty: &Type,
+    value: proc_macro2::TokenStream,
+    converted: Option<proc_macro2::TokenStream>,
+) -> proc_macro2::TokenStream {
+    literal_repr(ty, value.clone()).unwrap_or_else(|| {
+        let (core, _) = pybevy_crate_paths();
+        let object = converted.unwrap_or_else(|| quote! { ::core::clone::Clone::clone(#value) });
+        quote! { #core::repr::object_repr(#object) }
+    })
+}
+
 /// Check if a type is `Option<T>` and return the inner type if so
 pub(crate) fn extract_option_inner(ty: &Type) -> Option<&Type> {
     if let Type::Path(type_path) = ty

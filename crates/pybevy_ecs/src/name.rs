@@ -1,5 +1,5 @@
 use bevy::ecs::name::Name;
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, PyComponent, repr::str_repr};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
@@ -36,7 +36,7 @@ impl PyName {
     fn __repr__(&self) -> PyResult<String> {
         let value = self.as_ref()?;
         let name = value.as_str();
-        Ok(format!("Name(\"{}\")", name))
+        Ok(format!("Name({})", str_repr(name)))
     }
 
     fn __str__(&self) -> PyResult<String> {
