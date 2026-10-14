@@ -210,7 +210,6 @@ impl Plugin for ControlBevyPlugin {
                 crate::capture::screenshot::process_pending_screenshots,
                 crate::capture::screenshot::process_pending_timelines,
                 crate::reload::process_pending_reloads,
-                crate::reload::process_pending_reload_and_capture,
                 crate::capture::turnaround::process_pending_turnarounds,
             ),
         );
