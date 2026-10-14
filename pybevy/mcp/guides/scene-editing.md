@@ -889,8 +889,8 @@ several custom components, the summary chooses the component present on the
 fewest live scene entities, counting each entity once per name, and breaks ties
 lexically. This favors specific role tags such as `Chaser` and `Prey` over a
 shared `GridMover` component and is independent of component registration and
-insertion order. Resource backing entities are excluded from both prevalence
-and group counts.
+insertion order. Resource backing entities and Bevy observer entities are
+excluded from both prevalence and group counts.
 
 ## run_code Tips
 

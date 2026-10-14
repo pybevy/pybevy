@@ -1,13 +1,17 @@
-use bevy::ecs::world::World;
+use bevy::ecs::{entity::Entity, world::World};
 use pyo3::Python;
 use serde_json::Value;
 
 use super::{assets, batch, components, execute, inspect, resources, schema};
 use crate::{
-    engine::{channel::ControlRequest, dispatch::dispatch, runtime::ControlRuntime},
+    engine::{
+        channel::ControlRequest,
+        dispatch::dispatch,
+        runtime::{ComponentCatalog, ComponentFilter, ControlRuntime, EntityComponentNames},
+    },
     protocol::{
-        ControlError, EntityRef, GetComponentParams, GetResourceParams, QueryEntitiesParams,
-        RemoveComponentParams, SetAssetParams, SetComponentParams, SetResourceParams,
+        ControlError, EntityRef, GetComponentParams, GetResourceParams, RemoveComponentParams,
+        SetAssetParams, SetComponentParams, SetResourceParams,
     },
 };
 
@@ -44,8 +48,24 @@ impl ControlRuntime for Pyo3ControlRuntime {
         execute::execute_python(world, code)
     }
 
-    fn list_entities(&mut self, world: &mut World) -> Result<Value, ControlError> {
-        inspect::list_entities(world)
+    fn component_names(&mut self, world: &World, entity: Entity) -> EntityComponentNames {
+        inspect::component_names(world, entity)
+    }
+
+    fn resolve_component_filter(
+        &mut self,
+        world: &World,
+        name: &str,
+    ) -> Result<Option<ComponentFilter>, ControlError> {
+        inspect::resolve_component_filter(world, name)
+    }
+
+    fn component_catalog(&mut self, world: &World) -> ComponentCatalog {
+        inspect::component_catalog(world)
+    }
+
+    fn resource_names(&mut self, world: &mut World) -> Result<Vec<String>, ControlError> {
+        Ok(resources::resource_names(world))
     }
 
     fn get_entity(&mut self, world: &mut World, entity: EntityRef) -> Result<Value, ControlError> {
@@ -54,22 +74,6 @@ impl ControlRuntime for Pyo3ControlRuntime {
 
     fn list_resources(&mut self, world: &mut World) -> Result<Value, ControlError> {
         resources::list_resources(world)
-    }
-
-    fn list_systems(
-        &mut self,
-        world: &mut World,
-        include_internal: bool,
-    ) -> Result<Value, ControlError> {
-        inspect::list_systems(world, include_internal)
-    }
-
-    fn query_entities(
-        &mut self,
-        world: &mut World,
-        params: QueryEntitiesParams,
-    ) -> Result<Value, ControlError> {
-        inspect::query_entities(world, params.with, params.without, params.limit)
     }
 
     fn get_component_schema(
@@ -94,22 +98,6 @@ impl ControlRuntime for Pyo3ControlRuntime {
         params: GetResourceParams,
     ) -> Result<Value, ControlError> {
         resources::get_resource(world, params.resource_type)
-    }
-
-    fn scene_summary(&mut self, world: &mut World) -> Result<Value, ControlError> {
-        inspect::scene_summary(world)
-    }
-
-    fn get_bounding_box(
-        &mut self,
-        world: &mut World,
-        entity: EntityRef,
-    ) -> Result<Value, ControlError> {
-        inspect::get_bounding_box(world, entity)
-    }
-
-    fn debug_registry(&mut self, world: &mut World) -> Result<Value, ControlError> {
-        inspect::debug_registry(world)
     }
 
     fn spawn_entity(

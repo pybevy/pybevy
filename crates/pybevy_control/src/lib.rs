@@ -6,12 +6,14 @@ pub mod discovery;
 pub mod engine;
 pub mod plugin;
 pub mod protocol;
+#[cfg(feature = "pyo3-runtime")]
 pub mod pyo3;
 pub mod reload;
 pub mod scene;
 pub mod schedule;
 pub mod transport;
 
+#[cfg(feature = "pyo3-runtime")]
 use ::pyo3::{exceptions::PyRuntimeError, prelude::*};
 #[doc(hidden)]
 pub use catalog::{resources, tools};
@@ -19,9 +21,12 @@ pub use catalog::{resources, tools};
 pub use discovery as api_index;
 #[doc(hidden)]
 pub use engine::runtime;
+#[cfg(feature = "pyo3-runtime")]
 pub use plugin::PyControlPlugin;
+#[cfg(feature = "pyo3-runtime")]
 #[doc(hidden)]
 pub use pyo3::runtime as runtime_pyo3;
+#[cfg(feature = "pyo3-runtime")]
 pub use pyo3::{
     components::register_lifecycle_mutation_hooks, execute::register_world_wrapper_hook,
 };
@@ -41,12 +46,14 @@ pub mod bridge {
 
 #[doc(hidden)]
 pub mod handlers {
+    #[cfg(feature = "pyo3-runtime")]
+    pub use crate::pyo3;
     pub use crate::{
         capture::{analysis as frame_analysis, depth, turnaround},
         codec::reflect as reflect_mutate,
         engine::dispatch::dispatch,
-        pyo3, reload,
-        scene::{diagnostics, entity, entity_count, spatial, time as time_control},
+        reload,
+        scene::{diagnostics, entity, entity_count, spatial, systems, time as time_control},
         schedule,
     };
 
@@ -58,6 +65,7 @@ pub mod handlers {
 }
 
 /// Return MCP tool definitions generated from ControlOperation's JSON schema.
+#[cfg(feature = "pyo3-runtime")]
 #[pyfunction]
 fn rust_tool_definitions(py: Python<'_>) -> PyResult<Py<PyAny>> {
     let tools = catalog::tools::list_tools();
@@ -70,6 +78,7 @@ fn rust_tool_definitions(py: Python<'_>) -> PyResult<Py<PyAny>> {
 }
 
 /// Return MCP resource definitions advertised by the engine.
+#[cfg(feature = "pyo3-runtime")]
 #[pyfunction]
 fn rust_resource_definitions(py: Python<'_>) -> PyResult<Py<PyAny>> {
     let res = catalog::resources::list_resources();
@@ -80,10 +89,11 @@ fn rust_resource_definitions(py: Python<'_>) -> PyResult<Py<PyAny>> {
     Ok(result.into())
 }
 
+#[cfg(feature = "pyo3-runtime")]
 pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "mcp")?;
     m.add_class::<PyControlPlugin>()?;
-    m.add_class::<discovery::PyApiIndex>()?;
+    m.add_class::<pyo3::api_index::PyApiIndex>()?;
     m.add_function(wrap_pyfunction!(rust_tool_definitions, &m)?)?;
     m.add_function(wrap_pyfunction!(rust_resource_definitions, &m)?)?;
     transport::client_pyo3::add_functions(&m)?;

@@ -197,7 +197,6 @@ fn component_enum_variant_names(instance: &Bound<'_, PyAny>) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
 
     #[test]

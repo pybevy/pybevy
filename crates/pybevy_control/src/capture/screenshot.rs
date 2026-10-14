@@ -710,6 +710,7 @@ mod tests {
     use super::*;
     use crate::{
         capture::{
+            analysis::FrameStatsOptions,
             camera::{DebugCameraCleanup, setup_debug_camera},
             headless::HeadlessFrameBuffer,
             hold::{GizmoEnabledRestore, OverlaySuppression, suppress_internal_overlay},
@@ -718,7 +719,6 @@ mod tests {
             },
         },
         engine::deferred::push_pending_depth,
-        handlers::frame_analysis::FrameStatsOptions,
         protocol::{CaptureDepthParams, EntityRef},
     };
 

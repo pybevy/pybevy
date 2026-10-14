@@ -1,11 +1,9 @@
 use bevy::ecs::world::World;
 
 use crate::{
-    engine::dispatch::batch_response,
     protocol::{ControlError, EntityRef},
-    pyo3::components::{
-        despawn_entity, has_embedded_errors, remove_component, set_component, spawn_entity,
-    },
+    pyo3::components::{remove_component, set_component, spawn_entity},
+    scene::entity::{despawn_entity, has_embedded_errors},
 };
 
 /// Execute a batch of mutation operations in a single World access.
@@ -70,20 +68,24 @@ pub fn batch_mutate(
             ))),
         });
 
-        match result {
-            Ok(val) => {
-                let status = if has_embedded_errors(&val) {
-                    "partial"
-                } else {
-                    "ok"
-                };
-                results.push(serde_json::json!({"status": status, "result": val}));
-            }
-            Err(e) => results.push(serde_json::json!({"status": "error", "error": e.message})),
-        }
+        results.push(operation_entry(result));
     }
 
     Ok(batch_response(results))
+}
+
+fn operation_entry(result: Result<serde_json::Value, ControlError>) -> serde_json::Value {
+    match result {
+        Ok(val) => {
+            let status = if has_embedded_errors(&val) {
+                "partial"
+            } else {
+                "ok"
+            };
+            serde_json::json!({"status": status, "result": val})
+        }
+        Err(e) => serde_json::json!({"status": "error", "error": e.message}),
+    }
 }
 
 fn validate_batch_operation(
@@ -155,9 +157,25 @@ fn parse_entity_ref_from_op(op: &serde_json::Value) -> Result<EntityRef, String>
     Err("'entity' must be an integer ID or a string name".into())
 }
 
+pub(crate) fn batch_response(results: Vec<serde_json::Value>) -> serde_json::Value {
+    let count = |status| {
+        results
+            .iter()
+            .filter(|result| result.get("status").and_then(|value| value.as_str()) == Some(status))
+            .count()
+    };
+
+    serde_json::json!({
+        "succeeded": count("ok"),
+        "partial": count("partial"),
+        "failed": count("error"),
+        "total": results.len(),
+        "results": results,
+    })
+}
+
 #[cfg(test)]
 mod tests {
-
     use bevy::ecs::name::Name;
 
     use super::*;
@@ -397,33 +415,33 @@ mod tests {
     }
 
     #[test]
-    fn batch_mutate_partial_status_on_embedded_errors() {
-        // Simulate a batch where one operation returns Ok with embedded errors.
-        // We can't easily trigger real embedded errors without registered components,
-        // but we can test the status assignment logic directly.
-        let val_with_errors = serde_json::json!({
-            "entity_id": 42,
-            "new_values": {},
-            "errors": ["some field error"],
-        });
-        let val_without_errors = serde_json::json!({
-            "entity_id": 42,
-            "new_values": {"translation": [1.0, 2.0, 3.0]},
-        });
+    fn operation_entry_marks_embedded_errors_partial() {
+        let with_errors = serde_json::json!({"new_values": {}, "errors": ["some field error"]});
+        let without_errors = serde_json::json!({"new_values": {"translation": [1.0, 2.0, 3.0]}});
 
-        // Test status assignment
-        let status_partial = if has_embedded_errors(&val_with_errors) {
-            "partial"
-        } else {
-            "ok"
-        };
-        let status_ok = if has_embedded_errors(&val_without_errors) {
-            "partial"
-        } else {
-            "ok"
-        };
+        let partial = operation_entry(Ok(with_errors.clone()));
+        assert_eq!(partial["status"], "partial");
+        assert_eq!(partial["result"], with_errors);
+        assert_eq!(operation_entry(Ok(without_errors))["status"], "ok");
+        let error = operation_entry(Err(ControlError::invalid_params("bad")));
+        assert_eq!(
+            error,
+            serde_json::json!({"status": "error", "error": "bad"})
+        );
+    }
 
-        assert_eq!(status_partial, "partial");
-        assert_eq!(status_ok, "ok");
+    #[test]
+    fn batch_response_counts_each_terminal_status() {
+        let response = batch_response(vec![
+            serde_json::json!({"status": "ok"}),
+            serde_json::json!({"status": "partial"}),
+            serde_json::json!({"status": "error"}),
+            serde_json::json!({"status": "error"}),
+        ]);
+
+        assert_eq!(response["total"], 4);
+        assert_eq!(response["succeeded"], 1);
+        assert_eq!(response["partial"], 1);
+        assert_eq!(response["failed"], 2);
     }
 }

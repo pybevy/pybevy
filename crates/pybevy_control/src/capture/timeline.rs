@@ -348,17 +348,15 @@ mod tests {
     use tokio::sync::oneshot;
 
     use super::*;
-    use crate::{
-        capture::{
-            analysis::CapturedFrames,
-            headless::HeadlessFrameBuffer,
-            hold::{GizmoEnabledRestore, InternalOverlayUi, OverlaySuppression},
-            queue::CaptureResponseKind,
-            screenshot::{
-                PendingScreenshotResponders, ScreenshotResponder, screenshot_captured_observer,
-            },
+    use crate::capture::{
+        analysis::CapturedFrames,
+        headless::HeadlessFrameBuffer,
+        hold::{GizmoEnabledRestore, InternalOverlayUi, OverlaySuppression},
+        queue::CaptureResponseKind,
+        screenshot::{
+            PendingScreenshotResponders, ScreenshotResponder, screenshot_captured_observer,
         },
-        handlers::turnaround::{PendingTurnarounds, TurnaroundCaptures},
+        turnaround::{PendingTurnarounds, TurnaroundCaptures},
     };
 
     fn world_with_gizmos() -> World {

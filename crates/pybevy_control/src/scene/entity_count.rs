@@ -1,8 +1,8 @@
 //! Canonical scene-entity enumeration.
 //!
-//! Resources are stored as entities in Bevy, and the hot-reload overlay is
-//! control infrastructure rather than scene content. Every MCP endpoint that
-//! reports scene entities excludes both. Centralizing that filter keeps
+//! Resources and observers are stored as entities in Bevy, and the hot-reload
+//! overlay is control infrastructure rather than scene content. Every MCP
+//! endpoint that reports scene entities excludes all three. Centralizing that filter keeps
 //! `get_performance.entity_count`, `get_scene_summary`,
 //! `scene://entities`, `query_entities` and `reload_and_capture` in agreement on
 //! a single canonical value, and stops a new endpoint from re-deriving the query
@@ -10,11 +10,17 @@
 //! `world.entities().len()` (which over-counts by the resource-backing entities).
 
 use bevy::ecs::{
-    entity::Entity, entity_disabling::Disabled, prelude::Without, query::Allow,
+    entity::Entity, entity_disabling::Disabled, observer::Observer, prelude::Without, query::Allow,
     resource::IsResource, world::World,
 };
 
 use crate::capture::hold::InternalOverlayUi;
+
+type SceneFilter = (
+    Without<IsResource>,
+    Without<InternalOverlayUi>,
+    Without<Observer>,
+);
 
 /// All real scene entities, excluding resource backing and internal overlays.
 ///
@@ -23,7 +29,7 @@ use crate::capture::hold::InternalOverlayUi;
 /// avoids allocating the `Vec`.
 pub(crate) fn scene_entities(world: &mut World) -> Vec<Entity> {
     world
-        .query_filtered::<Entity, (Without<IsResource>, Without<InternalOverlayUi>)>()
+        .query_filtered::<Entity, SceneFilter>()
         .iter(world)
         .collect()
 }
@@ -31,11 +37,7 @@ pub(crate) fn scene_entities(world: &mut World) -> Vec<Entity> {
 /// Scene entities for an explicit Disabled-filtered discovery query.
 pub(crate) fn scene_entities_including_disabled(world: &mut World) -> Vec<Entity> {
     world
-        .query_filtered::<Entity, (
-            Without<IsResource>,
-            Without<InternalOverlayUi>,
-            Allow<Disabled>,
-        )>()
+        .query_filtered::<Entity, (SceneFilter, Allow<Disabled>)>()
         .iter(world)
         .collect()
 }
@@ -46,13 +48,15 @@ pub(crate) fn scene_entities_including_disabled(world: &mut World) -> Vec<Entity
 /// across the MCP surface must report.
 pub(crate) fn scene_entity_count(world: &mut World) -> u64 {
     world
-        .query_filtered::<Entity, (Without<IsResource>, Without<InternalOverlayUi>)>()
+        .query_filtered::<Entity, SceneFilter>()
         .iter(world)
         .count() as u64
 }
 
 #[cfg(test)]
 mod tests {
+    use bevy::ecs::{lifecycle::Add, observer::On};
+
     use super::*;
 
     #[test]
@@ -116,6 +120,22 @@ mod tests {
             scene_entities_including_disabled(&mut world),
             vec![enabled, disabled]
         );
+    }
+
+    #[test]
+    fn excludes_observer_entities() {
+        let mut world = World::new();
+        world.register_disabling_component::<Disabled>();
+        let scene_entity = world.spawn_empty().id();
+        let observer = world.add_observer(|_: On<Add, Disabled>| {}).id();
+
+        assert_eq!(scene_entities(&mut world), vec![scene_entity]);
+        assert_eq!(
+            scene_entities_including_disabled(&mut world),
+            vec![scene_entity]
+        );
+        assert_eq!(scene_entity_count(&mut world), 1);
+        assert!(world.get_entity(observer).is_ok());
     }
 
     #[derive(bevy::prelude::Resource)]

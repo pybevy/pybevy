@@ -95,9 +95,8 @@ pub(super) fn capture_headless_frame(
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
-    use crate::{capture::queue::CaptureResponseKind, handlers::frame_analysis::FrameStatsOptions};
+    use crate::capture::{analysis::FrameStatsOptions, queue::CaptureResponseKind};
 
     #[test]
     fn capture_headless_frame_no_buffer() {

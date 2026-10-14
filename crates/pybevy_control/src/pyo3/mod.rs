@@ -1,3 +1,4 @@
+pub mod api_index;
 pub(crate) mod asset_reference;
 pub mod assets;
 pub(crate) mod batch;

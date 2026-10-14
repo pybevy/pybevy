@@ -19,8 +19,7 @@ use crate::{
     capture::readiness::RenderFrameReadiness,
     engine::{channel::ControlRequest, deferred::DeferredBatch, dispatch::dispatch},
     protocol::{ControlError, OperationKind, OperationTag},
-    pyo3::components::has_embedded_errors,
-    scene::transform_sync::propagate_transforms,
+    scene::{entity::has_embedded_errors, transform_sync::propagate_transforms},
 };
 
 /// Outcome of one scheduled action, serialized as its lowercase name.
@@ -638,10 +637,9 @@ fn finalize_schedule(schedule: ActiveSchedule) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        capture::queue::PendingScreenshots, pyo3::runtime::Pyo3ControlRuntime,
-        schedule::request::ScheduleMode,
-    };
+    #[cfg(feature = "pyo3-runtime")]
+    use crate::pyo3::runtime::Pyo3ControlRuntime;
+    use crate::{capture::queue::PendingScreenshots, schedule::request::ScheduleMode};
 
     fn test_schedule(actions: Vec<ScheduleAction>, stop_on_error: bool) -> ActiveSchedule {
         ActiveSchedule {
@@ -732,6 +730,7 @@ mod tests {
 
     /// A virtual-time `at` behind paused time aborts the schedule even
     /// without stop_on_error.
+    #[cfg(feature = "pyo3-runtime")]
     #[test]
     fn stalled_virtual_time_aborts_the_schedule() {
         let mut world = World::new();

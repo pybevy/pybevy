@@ -363,7 +363,7 @@ mod tests {
         plugin::ControlConfig,
         schedule::SharedScheduleRegistry,
         transport::{
-            image_preview::{MCP_IMAGE_DELIVERY_HEADER, MCP_IMAGE_DELIVERY_VALUE},
+            image_delivery::{MCP_IMAGE_DELIVERY_HEADER, MCP_IMAGE_DELIVERY_VALUE},
             server::build_router,
             sse::SseEventBroadcaster,
         },

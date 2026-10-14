@@ -3,8 +3,7 @@ use std::sync::{Arc, OnceLock};
 use bevy::ecs::{change_detection::DetectChangesMut, entity::Entity, world::World};
 use pybevy_core::{
     ComponentBridge, CustomComponentInfo, PyEntity, ValidityFlag, ValidityGuard,
-    custom_resource::{hierarchy_contains_resource_entity, validate_hierarchy_link},
-    public_error,
+    custom_resource::validate_hierarchy_link, public_error,
 };
 use pyo3::{
     ffi::PyTypeObject,
@@ -37,27 +36,20 @@ use crate::{
         names::{ComponentTarget, resolve_component},
         to_json::py_value_to_json,
     },
-    scene::entity::resolve_entity,
+    scene::entity::{register_despawn_entity_hook, resolve_entity},
 };
 
 type RemoveComponentLifecycleHook = fn(&mut World, Entity, *const PyTypeObject);
 type DespawnEntityLifecycleHook = fn(&mut World, Entity);
 
-struct LifecycleMutationHooks {
-    remove_component: RemoveComponentLifecycleHook,
-    despawn_entity: DespawnEntityLifecycleHook,
-}
-
-static LIFECYCLE_MUTATION_HOOKS: OnceLock<LifecycleMutationHooks> = OnceLock::new();
+static REMOVE_COMPONENT_HOOK: OnceLock<RemoveComponentLifecycleHook> = OnceLock::new();
 
 pub fn register_lifecycle_mutation_hooks(
     remove_component: RemoveComponentLifecycleHook,
     despawn_entity: DespawnEntityLifecycleHook,
 ) {
-    let _ = LIFECYCLE_MUTATION_HOOKS.set(LifecycleMutationHooks {
-        remove_component,
-        despawn_entity,
-    });
+    let _ = REMOVE_COMPONENT_HOOK.set(remove_component);
+    register_despawn_entity_hook(despawn_entity);
 }
 
 /// Read written fields back off a live Python object for the `new_values`
@@ -110,15 +102,6 @@ fn canonical_enum_fields(
         return None;
     };
     fields.contains_key("variant").then_some(fields)
-}
-
-/// Check if a tool result contains embedded field-level errors.
-/// Used by batch and schedule to detect partial failures.
-pub fn has_embedded_errors(value: &serde_json::Value) -> bool {
-    value
-        .get("errors")
-        .and_then(|v| v.as_array())
-        .is_some_and(|arr| !arr.is_empty())
 }
 
 /// Spawn a new entity with components specified as JSON.
@@ -568,43 +551,6 @@ fn spawn_component_python_direct(
             added_components.push(comp_name.to_string());
         }
     });
-}
-
-/// Despawn an entity by ID or Name
-pub fn despawn_entity(
-    world: &mut World,
-    entity_ref: EntityRef,
-) -> Result<serde_json::Value, ControlError> {
-    let entity = resolve_entity(world, &entity_ref)?;
-    let entity_id = entity.to_bits();
-
-    // Bevy cascades the despawn through descendants, so a resource entity
-    // anywhere in the subtree would have its value silently discarded.
-    if hierarchy_contains_resource_entity(world, entity) {
-        return Err(ControlError::invalid_params(
-            public_error::RESOURCE_ENTITY_DESPAWN,
-        ));
-    }
-
-    let existed = world.entities().contains(entity);
-    if existed {
-        if let Some(hooks) = LIFECYCLE_MUTATION_HOOKS.get() {
-            (hooks.despawn_entity)(world, entity);
-        } else {
-            world.despawn(entity);
-        }
-    }
-
-    if existed {
-        Ok(serde_json::json!({
-            "despawned": true,
-            "entity_id": entity_id,
-        }))
-    } else {
-        Err(ControlError::not_found(public_error::mcp_entity_not_found(
-            entity_id,
-        )))
-    }
 }
 
 /// Partial mutation: change individual component fields.
@@ -1494,9 +1440,9 @@ pub fn remove_component(
                     "Component '{component}' not found on entity {entity_id}"
                 )));
             }
-            if let Some(hooks) = LIFECYCLE_MUTATION_HOOKS.get() {
+            if let Some(hook) = REMOVE_COMPONENT_HOOK.get() {
                 let type_ptr = Python::attach(|py| bridge.py_type(py).as_type_ptr());
-                (hooks.remove_component)(world, entity, type_ptr);
+                hook(world, entity, type_ptr);
             } else if let Ok(mut entity_mut) = world.get_entity_mut(entity) {
                 entity_mut.remove_by_id(component_id);
             }
@@ -1524,8 +1470,8 @@ pub fn remove_component(
                     "Component '{component}' not found on entity {entity_id}"
                 )));
             }
-            if let Some(hooks) = LIFECYCLE_MUTATION_HOOKS.get() {
-                (hooks.remove_component)(world, entity, type_ptr);
+            if let Some(hook) = REMOVE_COMPONENT_HOOK.get() {
+                hook(world, entity, type_ptr);
             } else if let Ok(mut entity_mut) = world.get_entity_mut(entity) {
                 entity_mut.remove_by_id(component_id);
             }
@@ -1580,7 +1526,7 @@ mod tests {
             name::Name,
             resource::IsResource,
         },
-        prelude::{ChildOf, Children, With},
+        prelude::With,
     };
     use pybevy_core::{
         CustomComponentEntry,
@@ -1602,60 +1548,6 @@ mod tests {
     }
 
     #[test]
-    fn despawn_entity_by_id_success() {
-        let mut world = World::new();
-        let entity = world.spawn(Name::new("Target")).id();
-        let result = despawn_entity(&mut world, EntityRef::Id(entity.to_bits())).unwrap();
-        assert_eq!(result["despawned"], true);
-        assert!(world.get_entity(entity).is_err());
-    }
-
-    #[test]
-    fn despawn_entity_by_name_success() {
-        let mut world = World::new();
-        world.spawn(Name::new("Target"));
-        let result = despawn_entity(&mut world, EntityRef::Name("Target".into())).unwrap();
-        assert_eq!(result["despawned"], true);
-    }
-
-    #[test]
-    fn despawn_rejects_resource_entity() {
-        let mut world = World::new();
-        world.init_resource::<ClearColor>();
-        let entity = world
-            .query_filtered::<Entity, With<IsResource>>()
-            .iter(&world)
-            .next()
-            .expect("init_resource should create a resource entity");
-
-        let error = despawn_entity(&mut world, EntityRef::Id(entity.to_bits()))
-            .expect_err("resource entity despawn must be rejected");
-
-        assert_eq!(error.code, ErrorCode::InvalidParams);
-        assert!(world.get_entity(entity).is_ok());
-        assert!(world.get_resource::<ClearColor>().is_some());
-    }
-
-    #[test]
-    fn despawn_rejects_resource_entity_in_subtree() {
-        let mut world = World::new();
-        world.init_resource::<ClearColor>();
-        let resource_entity = world
-            .query_filtered::<Entity, With<IsResource>>()
-            .iter(&world)
-            .next()
-            .expect("init_resource should create a resource entity");
-        let parent = world.spawn(Name::new("Parent")).id();
-        world.entity_mut(parent).add_child(resource_entity);
-
-        let error = despawn_entity(&mut world, EntityRef::Id(parent.to_bits()))
-            .expect_err("cascade into a resource entity must be rejected");
-
-        assert_eq!(error.code, ErrorCode::InvalidParams);
-        assert!(world.get_resource::<ClearColor>().is_some());
-    }
-
-    #[test]
     fn remove_component_rejects_is_resource_marker() {
         let mut world = World::new();
         world.init_resource::<ClearColor>();
@@ -1674,32 +1566,6 @@ mod tests {
 
         assert_eq!(error.code, ErrorCode::InvalidParams);
         assert!(world.get_resource::<ClearColor>().is_some());
-    }
-
-    #[test]
-    fn despawn_entity_not_found() {
-        let mut world = World::new();
-        let result = despawn_entity(&mut world, EntityRef::Id(999999));
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, ErrorCode::NotFound);
-    }
-
-    #[test]
-    fn despawn_entity_recursive_removes_children() {
-        let mut world = World::new();
-        let parent = world.spawn(Name::new("Parent")).id();
-        let child1 = world.spawn((Name::new("Child1"), ChildOf(parent))).id();
-        let child2 = world.spawn((Name::new("Child2"), ChildOf(parent))).id();
-        let grandchild = world.spawn((Name::new("Grandchild"), ChildOf(child1))).id();
-
-        let result = despawn_entity(&mut world, EntityRef::Id(parent.to_bits())).unwrap();
-        assert_eq!(result["despawned"], true);
-
-        // Parent and all descendants gone; no orphans with stale ChildOf.
-        assert!(world.get_entity(parent).is_err());
-        assert!(world.get_entity(child1).is_err());
-        assert!(world.get_entity(child2).is_err());
-        assert!(world.get_entity(grandchild).is_err());
     }
 
     #[test]
@@ -1745,14 +1611,6 @@ mod tests {
         let err = result.unwrap_err();
         assert_eq!(err.code, ErrorCode::InvalidParams);
         assert!(err.message.contains("Comp1"));
-    }
-
-    #[test]
-    fn despawn_entity_by_name_not_found() {
-        let mut world = World::new();
-        let result = despawn_entity(&mut world, EntityRef::Name("NonExistent".into()));
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, ErrorCode::NotFound);
     }
 
     #[test]
@@ -1830,6 +1688,7 @@ mod tests {
         let entity = world.spawn(Name::new("Target")).id();
 
         // Register a fake custom component via CustomComponentInfo
+        // SAFETY: the descriptor has no drop hook, so any layout-sized payload is valid.
         let comp_id = world.register_component_with_descriptor(unsafe {
             ComponentDescriptor::new_with_layout(
                 "CustomComp",
@@ -1877,33 +1736,6 @@ mod tests {
         );
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().code, ErrorCode::NotFound);
-    }
-
-    #[test]
-    fn has_embedded_errors_detects_errors() {
-        let val = serde_json::json!({
-            "entity_id": 42,
-            "errors": ["field not found"],
-        });
-        assert!(has_embedded_errors(&val));
-    }
-
-    #[test]
-    fn has_embedded_errors_empty_errors_is_false() {
-        let val = serde_json::json!({
-            "entity_id": 42,
-            "errors": [],
-        });
-        assert!(!has_embedded_errors(&val));
-    }
-
-    #[test]
-    fn has_embedded_errors_no_errors_key_is_false() {
-        let val = serde_json::json!({
-            "entity_id": 42,
-            "components_added": ["Transform"],
-        });
-        assert!(!has_embedded_errors(&val));
     }
 
     #[test]
@@ -2093,6 +1925,7 @@ mod tests {
             layout.wrapper_size,
         ));
         let mut wrapper = ComponentWrapper16::default();
+        // SAFETY: both writes fit in the 16-byte wrapper, which matches the registered layout.
         unsafe {
             PrimitiveValue::F64(1.25).write_to_ptr(wrapper.data.as_mut_ptr());
             PrimitiveValue::I64(2).write_to_ptr(wrapper.data.as_mut_ptr().add(8));
@@ -2157,6 +1990,7 @@ mod tests {
         let mut world = World::new();
         let entity = world.spawn(Name::new("Target")).id();
 
+        // SAFETY: the descriptor has no drop hook, so any layout-sized payload is valid.
         let comp_id = world.register_component_with_descriptor(unsafe {
             ComponentDescriptor::new_with_layout(
                 "ReinsertComp",
@@ -2222,6 +2056,7 @@ mod tests {
 
         // Mutable + TypeId-less + same layout as Py<PyAny>, mimicking
         // ComponentWrapper8, but absent from CustomComponentInfo
+        // SAFETY: the descriptor has no drop hook, so any layout-sized payload is valid.
         let comp_id = world.register_component_with_descriptor(unsafe {
             ComponentDescriptor::new_with_layout(
                 "FakeOscillator",
@@ -2237,6 +2072,7 @@ mod tests {
         let mut entity_mut = world.get_entity_mut(entity).unwrap();
         // Bit pattern of an f64, guaranteed not a valid PyObject pointer
         let payload: u64 = 0x3FF0_0000_0000_0000;
+        // SAFETY: the u64 payload matches the descriptor layout and has no drop hook.
         unsafe {
             let data = core::ptr::NonNull::new_unchecked(ptr::addr_of!(payload) as *mut u8);
             entity_mut.insert_by_id(comp_id, bevy::ptr::OwningPtr::new(data));
@@ -2252,35 +2088,5 @@ mod tests {
         );
         let err = result.expect_err("wrapper-like component must not match");
         assert_eq!(err.code, ErrorCode::NotFound);
-    }
-
-    #[test]
-    fn world_despawn_vs_entity_mut_despawn_baseline() {
-        // Pin the Bevy contract our despawn_entity handler relies on:
-        // both `World::despawn` AND `EntityWorldMut::despawn` walk the
-        // `Children` relationship recursively. If a future Bevy release
-        // changes World::despawn back to non-recursive, despawn_entity
-        // would need to switch to entity_mut(e).despawn() to preserve the
-        // user-visible recursive behavior.
-        let mut world = World::new();
-        let parent_a = world.spawn(Name::new("ParentA")).id();
-        let child_a = world.spawn((Name::new("ChildA"), ChildOf(parent_a))).id();
-
-        let _ = world.despawn(parent_a);
-
-        assert!(world.get_entity(parent_a).is_err());
-        assert!(
-            world.get_entity(child_a).is_err(),
-            "World::despawn(parent) is recursive in Bevy 0.18: child should also be despawned"
-        );
-
-        let parent_b = world.spawn(Name::new("ParentB")).id();
-        let child_b = world.spawn((Name::new("ChildB"), ChildOf(parent_b))).id();
-        assert!(world.get::<Children>(parent_b).is_some());
-
-        world.entity_mut(parent_b).despawn();
-
-        assert!(world.get_entity(parent_b).is_err());
-        assert!(world.get_entity(child_b).is_err());
     }
 }

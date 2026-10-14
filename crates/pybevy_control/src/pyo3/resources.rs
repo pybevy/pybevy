@@ -328,6 +328,7 @@ pub fn insert_resource(
             }
 
             // Resource doesn't exist yet: create default and apply fields
+            // SAFETY: the registry entry retains this class in `type_object`, so `type_ptr` stays live.
             let py_type = unsafe { pyo3::Bound::from_borrowed_ptr(py, type_ptr as *mut PyObject) };
             let Ok(cls) = py_type.cast::<PyType>() else {
                 return Err(ControlError::internal(
@@ -470,9 +471,9 @@ fn extract_custom_resource_fields(
     if map.is_empty() { None } else { Some(map) }
 }
 
-/// List all registered resources
-pub fn list_resources(world: &mut World) -> Result<serde_json::Value, ControlError> {
-    let mut resources = Vec::new();
+/// Registered resources with their addressable names, in listing order. A
+/// short name shared by several resources is replaced by its qualified name.
+fn named_resources(world: &World) -> Vec<(String, ResourceTarget)> {
     let bridges = all_resource_bridges();
     let custom_entries: Vec<(ComponentId, String)> = world
         .get_resource::<pybevy_core::CustomResourceInfo>()
@@ -490,32 +491,50 @@ pub fn list_resources(world: &mut World) -> Result<serde_json::Value, ControlErr
     for (_, name) in &custom_entries {
         *name_counts.entry(name.clone()).or_default() += 1;
     }
+    let shared = |name: &str| name_counts.get(name).is_some_and(|count| *count > 1);
 
+    let mut named = Vec::new();
     for bridge in bridges {
-        let mut entry = bridge_resource_entry(world, &bridge);
-        if name_counts
-            .get(bridge.name())
-            .is_some_and(|count| *count > 1)
-        {
-            let full_name = Python::attach(|py| qualified_type_name(&bridge.py_type(py)));
-            if let Some(full_name) = full_name {
-                entry["name"] = serde_json::json!(full_name);
-            }
-        }
-        resources.push(entry);
+        let name = if shared(bridge.name()) {
+            Python::attach(|py| qualified_type_name(&bridge.py_type(py)))
+                .unwrap_or_else(|| bridge.name().to_string())
+        } else {
+            bridge.name().to_string()
+        };
+        named.push((name, ResourceTarget::Native(bridge)));
     }
-
     for (comp_id, name) in custom_entries {
-        let display_name = if name_counts
-            .get(name.as_str())
-            .is_some_and(|count| *count > 1)
-        {
+        let name = if shared(&name) {
             custom_resource_name(world, comp_id).unwrap_or(name)
         } else {
             name
         };
-        resources.push(custom_resource_entry(world, comp_id, display_name));
+        named.push((name, ResourceTarget::Custom(comp_id)));
     }
+    named
+}
+
+/// The addressable name of every registered resource, without reading values.
+pub(crate) fn resource_names(world: &World) -> Vec<String> {
+    named_resources(world)
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect()
+}
+
+/// List all registered resources
+pub fn list_resources(world: &mut World) -> Result<serde_json::Value, ControlError> {
+    let resources: Vec<serde_json::Value> = named_resources(world)
+        .into_iter()
+        .map(|(name, target)| match target {
+            ResourceTarget::Native(bridge) => {
+                let mut entry = bridge_resource_entry(world, &bridge);
+                entry["name"] = serde_json::json!(name);
+                entry
+            }
+            ResourceTarget::Custom(comp_id) => custom_resource_entry(world, comp_id, name),
+        })
+        .collect();
 
     Ok(serde_json::json!({
         "resource_count": resources.len(),
@@ -956,6 +975,30 @@ mod tests {
             "Custom resource GameScore not found in list"
         );
         assert_eq!(custom.unwrap()["custom"], true);
+    }
+
+    #[test]
+    fn resource_names_are_the_listed_names_in_order() {
+        let mut world = World::new();
+        let mut info = pybevy_core::CustomResourceInfo::default();
+        info.insert(
+            ComponentId::new(99999),
+            pybevy_core::CustomResourceEntry {
+                type_ptr: ptr::null(),
+                type_object: None,
+                name: "GameScore".to_string(),
+            },
+        );
+        world.insert_resource(info);
+
+        let listed: Vec<String> = list_resources(&mut world).unwrap()["resources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|resource| resource["name"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(resource_names(&world), listed);
+        assert!(listed.iter().any(|name| name == "GameScore"));
     }
 
     #[test]

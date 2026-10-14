@@ -358,13 +358,11 @@ mod tests {
     use tokio::sync::oneshot;
 
     use super::*;
-    use crate::{
-        capture::{
-            hold::CaptureHold,
-            queue::{CaptureResponseKind, DebugCameraRequest, PendingScreenshots},
-            screenshot::{StagedScreenshot, StagedScreenshots, process_pending_screenshots},
-        },
-        handlers::frame_analysis::FrameStatsOptions,
+    use crate::capture::{
+        analysis::FrameStatsOptions,
+        hold::CaptureHold,
+        queue::{CaptureResponseKind, DebugCameraRequest, PendingScreenshots},
+        screenshot::{StagedScreenshot, StagedScreenshots, process_pending_screenshots},
     };
 
     fn spawn_structurally_valid_headless_camera(world: &mut World) -> Entity {

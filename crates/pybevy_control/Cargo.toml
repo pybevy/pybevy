@@ -8,12 +8,14 @@ repository = "https://github.com/pybevy/pybevy"
 homepage = "https://pybevy.com"
 
 [features]
+default = ["pyo3-runtime"]
+pyo3-runtime = ["dep:pyo3", "dep:pybevy_macros"]
 bevy_winit = ["bevy/bevy_winit"]
 x11 = ["bevy/x11"]
 wayland = ["bevy/wayland"]
 
 [dependencies]
-pyo3 = { workspace = true }
+pyo3 = { workspace = true, optional = true }
 bevy = { workspace = true, default-features = false, features = [
     "bevy_render",
     "bevy_pbr",
@@ -32,7 +34,7 @@ pybevy_core = { workspace = true }
 pybevy_color = { workspace = true }
 pybevy_math = { workspace = true }
 pybevy_ecs = { workspace = true }
-pybevy_macros = { workspace = true }
+pybevy_macros = { workspace = true, optional = true }
 
 pybevy_transform = { workspace = true }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }

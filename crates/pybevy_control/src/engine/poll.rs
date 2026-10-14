@@ -123,21 +123,23 @@ pub fn control_poll_system(world: &mut World) {
 
 #[cfg(test)]
 mod tests {
-    use std::{any::TypeId, sync::Once};
+    use std::any::TypeId;
+    #[cfg(feature = "pyo3-runtime")]
+    use std::sync::Once;
 
-    use bevy::{
-        ecs::entity::Entity,
-        gizmos::config::{DefaultGizmoConfigGroup, GizmoConfig, GizmoConfigStore},
-        prelude::Transform,
-    };
+    use bevy::gizmos::config::{DefaultGizmoConfigGroup, GizmoConfig, GizmoConfigStore};
+    #[cfg(feature = "pyo3-runtime")]
+    use bevy::{ecs::entity::Entity, prelude::Transform};
+    #[cfg(feature = "pyo3-runtime")]
     use pybevy_core::bridge_inventory::collect_all;
+    #[cfg(feature = "pyo3-runtime")]
     use pyo3::Python;
     use tokio::sync::oneshot;
 
     use super::*;
+    use crate::{capture::queue::PendingScreenshots, engine::channel::create_channel};
+    #[cfg(feature = "pyo3-runtime")]
     use crate::{
-        capture::queue::PendingScreenshots,
-        engine::channel::create_channel,
         protocol::{EntityRef, GetComponentParams},
         pyo3::runtime::Pyo3ControlRuntime,
     };
@@ -222,6 +224,7 @@ mod tests {
     /// Without the Python::attach() wrapper around the dispatch loop, rapid
     /// GIL acquire/release cycling after py.detach() can corrupt GIL state
     /// and cause a silent segfault (the original bug).
+    #[cfg(feature = "pyo3-runtime")]
     #[test]
     fn parallel_get_component_does_not_crash() {
         // Force linker to include pybevy_transform (its inventory entries register Transform bridge)

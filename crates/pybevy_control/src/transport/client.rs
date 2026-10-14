@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::{
     catalog::tools::is_engine_tool_name,
-    transport::image_preview::{MCP_IMAGE_DELIVERY_HEADER, MCP_IMAGE_DELIVERY_VALUE},
+    transport::image_delivery::{MCP_IMAGE_DELIVERY_HEADER, MCP_IMAGE_DELIVERY_VALUE},
 };
 
 const MAX_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
