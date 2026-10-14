@@ -45,9 +45,8 @@ impl PyTaskPoolThreadAssignmentPolicy {
 
     #[setter]
     pub fn set_min_threads(&mut self, min_threads: usize) -> PyResult<()> {
-        let mut policy = self.as_mut()?;
-        Self::check_min_threads_order(min_threads, policy.max_threads)?;
-        policy.min_threads = min_threads;
+        Self::check_min_threads_order(min_threads, self.as_ref()?.max_threads)?;
+        self.as_mut()?.min_threads = min_threads;
         Ok(())
     }
 
@@ -58,9 +57,8 @@ impl PyTaskPoolThreadAssignmentPolicy {
 
     #[setter]
     pub fn set_max_threads(&mut self, max_threads: usize) -> PyResult<()> {
-        let mut policy = self.as_mut()?;
-        Self::check_min_threads_order(policy.min_threads, max_threads)?;
-        policy.max_threads = max_threads;
+        Self::check_min_threads_order(self.as_ref()?.min_threads, max_threads)?;
+        self.as_mut()?.max_threads = max_threads;
         Ok(())
     }
 
@@ -143,9 +141,8 @@ impl PyTaskPoolOptions {
 
     #[setter]
     pub fn set_min_total_threads(&mut self, min_total_threads: usize) -> PyResult<()> {
-        let mut options = self.as_mut()?;
-        Self::check_min_total_threads_order(min_total_threads, options.max_total_threads)?;
-        options.min_total_threads = min_total_threads;
+        Self::check_min_total_threads_order(min_total_threads, self.as_ref()?.max_total_threads)?;
+        self.as_mut()?.min_total_threads = min_total_threads;
         Ok(())
     }
 
@@ -156,9 +153,8 @@ impl PyTaskPoolOptions {
 
     #[setter]
     pub fn set_max_total_threads(&mut self, max_total_threads: usize) -> PyResult<()> {
-        let mut options = self.as_mut()?;
-        Self::check_min_total_threads_order(options.min_total_threads, max_total_threads)?;
-        options.max_total_threads = max_total_threads;
+        Self::check_min_total_threads_order(self.as_ref()?.min_total_threads, max_total_threads)?;
+        self.as_mut()?.max_total_threads = max_total_threads;
         Ok(())
     }
 

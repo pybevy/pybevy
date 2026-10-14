@@ -7,6 +7,7 @@
 use std::{
     ffi::CStr,
     fmt::{Debug, Display},
+    time::Duration,
 };
 
 /// Value-domain violations carry their canonical wording in `Display`.
@@ -357,8 +358,9 @@ pub fn mcp_enum_component_unknown_fields(
 
 pub const RUN_CODE_EXECUTION_DEADLINE: &str = "run_code exceeded its execution deadline";
 
-pub const CONSTRUCTOR_ROTATION: &str =
-    "Rot2() requires finite cos and sin with cos*cos + sin*sin within 0.0002 of 1";
+pub fn rotation_not_normalized(operation: &str) -> String {
+    format!("{operation} requires finite cos and sin with cos*cos + sin*sin within 0.0002 of 1")
+}
 
 pub fn constructor_partial_group(ty: &str, group: &[&str], missing: &[&str]) -> String {
     format!(
@@ -554,6 +556,16 @@ pub fn gamepad_settings_failed(kind: impl Display, error: impl Display) -> Strin
     format!("failed to create {kind} gamepad settings: {error}")
 }
 
+pub fn audio_seek_beyond_speed_range(position: Duration, speed: f32) -> String {
+    format!(
+        "try_seek position {position:?} at playback speed {speed} is outside the supported \
+         duration range"
+    )
+}
+
+pub const SPATIAL_EARS_COINCIDE: &str =
+    "the left and right ear positions must differ; rodio asserts on coincident ears";
+
 pub fn audio_seek_failed(error: impl Debug) -> String {
     format!("Seek error: {error:?}")
 }
@@ -701,8 +713,8 @@ pub fn euler_axes_not_normalized(type_name: &str) -> String {
     format!("{type_name}.to_euler requires normalized x, y, and z axes")
 }
 
-pub fn affine_transform_last_row(type_name: &str, function: &str) -> String {
-    format!("{type_name}.{function} requires the last row to be (0, 0, 0, 1)")
+pub fn affine_transform_last_row(type_name: &str, function: &str, row: &str) -> String {
+    format!("{type_name}.{function} requires the last row to be {row}")
 }
 pub const MAT4_LOOK_DIRECTION_PARALLEL_TO_UP: &str = "look direction must not be parallel to up";
 pub const MAT4_LOOK_AT_EYE_EQUALS_CENTER: &str = "eye and center must be distinct finite points";
@@ -715,6 +727,13 @@ pub fn mat4_projection_not_finite(function: &str) -> String {
     format!("{function} parameters produce a non-finite matrix")
 }
 
+pub fn time_moved_backwards(owner: &str, elapsed: Duration, current: Duration) -> String {
+    format!(
+        "{owner}.advance_to cannot move time backwards (got {elapsed:?}, elapsed is {current:?})"
+    )
+}
+pub const TIMER_ALMOST_FINISH_NO_REMAINING: &str =
+    "Timer.almost_finish needs at least 1 ns remaining; the timer is already finished";
 pub const TIMER_ELAPSED_PAST_DURATION: &str = "the remaining time is undefined while Timer elapsed is past the duration; \
      call set_elapsed() with a value within the duration";
 
@@ -1436,8 +1455,12 @@ pub fn component_float_expected_number(received: impl Display) -> String {
 }
 pub const COMPONENT_FLOAT_NON_FINITE: &str = "float must be finite";
 
-pub fn physical_camera_parameter(name: &str, value: f32) -> String {
-    format!("PhysicalCameraParameters.{name} must be finite and positive (got {value})")
+pub fn direction_not_unit_length(operation: &str, length: f32) -> String {
+    format!("{operation} must produce a unit-length direction (got length {length})")
+}
+
+pub fn shader_buffer_too_large(size: u64) -> String {
+    format!("ShaderBuffer cannot allocate {size} bytes of CPU data")
 }
 
 pub fn physical_camera_ev100(value: f32) -> String {
@@ -1454,7 +1477,9 @@ pub fn bounding_shrink(kind: &str) -> String {
     format!("{kind} shrink must preserve nonnegative extents")
 }
 
-pub const AABB3D_MIN_MAX: &str = "Aabb3d min must not exceed max on any axis";
+pub fn aabb_min_exceeds_max(type_name: &str) -> String {
+    format!("{type_name} min must not exceed max on any axis")
+}
 
 pub fn enum_variant_missing_field(variant: &str, field: &str) -> String {
     format!("variant '{variant}' requires field '{field}'")
@@ -1507,6 +1532,56 @@ pub const IMAGE_NO_DATA: &str = "Image has no data";
 
 pub const RENDER_CREATION_MANUAL_UNSUPPORTED: &str = "RenderCreation.Manual carries live GPU device handles and cannot be represented in Python; use RenderCreation.Automatic(WgpuSettings(...))";
 pub const IMAGE_INVALID_PIXEL_COORDINATES: &str = "Invalid pixel coordinates or no image data";
+
+pub fn image_allocation_failed(byte_len: usize) -> String {
+    format!("cannot allocate {byte_len} bytes of image data")
+}
+
+pub fn image_data_shorter_than_descriptor(len: usize, expected: usize) -> String {
+    format!(
+        "Image data is {len} bytes, shorter than the {expected} bytes its texture descriptor \
+         describes; replace the data or the descriptor so they agree"
+    )
+}
+
+pub fn image_pixel_access_unsupported_format(format: impl Debug) -> String {
+    format!(
+        "Image pixel access does not support format {format:?}: its texel size depends on \
+         the texture aspect"
+    )
+}
+
+pub fn image_aspect_ratio_zero(width: u32, height: u32) -> String {
+    format!("Image.aspect_ratio needs a non-zero width and height (got {width}x{height})")
+}
+
+pub fn image_compressed_size(
+    format: impl Debug,
+    width: u32,
+    height: u32,
+    block_width: u32,
+    block_height: u32,
+) -> String {
+    format!(
+        "Image size for {format:?} must be a multiple of its {block_width}x{block_height} \
+         block (got {width}x{height})"
+    )
+}
+
+pub fn image_compressed_data_len(format: impl Debug, len: usize, expected: usize) -> String {
+    format!("Image data for {format:?} is {len} bytes, expected {expected}")
+}
+
+pub fn spawn_batch_count_too_large(count: usize) -> String {
+    format!(
+        "spawn_batch count must be at most {} (got {count}): Bevy entity indices are 32-bit",
+        u32::MAX
+    )
+}
+
+pub fn spawn_batch_allocation_failed(count: usize) -> String {
+    format!("cannot allocate entity ids for spawn_batch count {count}")
+}
 
 pub const IMAGE_PIXEL_COUNT_EXCEEDS_U32: &str =
     "image extent exceeds Bevy's u32 pixel count (width * height * depth)";

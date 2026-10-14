@@ -1,11 +1,18 @@
 use bevy::render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection};
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, PyComponent, domain::DomainViolation};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 use crate::color_grading::{PyColorGradingGlobal, PyColorGradingSection};
 
-#[pycomponent(ColorGrading, bridge)]
+/// MCP reflected writes do not read the nested sections' domains.
+fn validate_color_grading(grading: &ColorGrading) -> Result<(), DomainViolation> {
+    [&grading.shadows, &grading.midtones, &grading.highlights]
+        .into_iter()
+        .try_for_each(PyColorGradingSection::validate_domains)
+}
+
+#[pycomponent(ColorGrading, bridge, reflect_validate = validate_color_grading)]
 #[pyclass(name = "ColorGrading", module = "pybevy.render", extends = PyComponent)]
 pub struct PyColorGrading {
     pub(crate) storage: ComponentStorage<ColorGrading>,

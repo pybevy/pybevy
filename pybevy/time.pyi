@@ -839,6 +839,7 @@ class Timer:
         """Advance the timer to 1 nanosecond before finishing.
 
         Useful for testing: the next tick() with any positive duration will finish the timer.
+        Raises ValueError when less than 1 nanosecond remains.
         """
 
     def __eq__(self, other: object) -> bool: ...

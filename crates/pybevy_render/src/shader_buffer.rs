@@ -6,7 +6,10 @@ use pybevy_core::{
     AssetStorage, PyAsset,
     borrowed_array_anchor::{AssetBorrowAnchor, AssetBorrowAnchorMut},
     numpy_view_guard::{PendingNumpyViewGuard, PyNumpyViewGuard},
-    public_error::{SHADER_BUFFER_DATA_CHANGED, SHADER_BUFFER_DATA_TYPE, SHADER_BUFFER_NO_DATA},
+    public_error::{
+        SHADER_BUFFER_DATA_CHANGED, SHADER_BUFFER_DATA_TYPE, SHADER_BUFFER_NO_DATA,
+        shader_buffer_too_large,
+    },
 };
 use pybevy_macros::pyasset;
 use pyo3::{
@@ -198,12 +201,16 @@ impl PyShaderBuffer {
     }
 
     pub fn resize(&mut self, size: u64) -> PyResult<()> {
-        self.as_mut()?.resize(size);
+        let mut buffer = self.as_mut()?;
+        reserve_cpu_data(&mut buffer, size)?;
+        buffer.resize(size);
         Ok(())
     }
 
     pub fn resize_in_place(&mut self, size: u64) -> PyResult<()> {
-        self.as_mut()?.resize_in_place(size);
+        let mut buffer = self.as_mut()?;
+        reserve_cpu_data(&mut buffer, size)?;
+        buffer.resize_in_place(size);
         Ok(())
     }
 
@@ -280,6 +287,18 @@ fn map_array_read_error(error: ArrayError) -> PyErr {
         ArrayError::AllocationFailed { .. } => PyMemoryError::new_err(error.to_string()),
         _ => PyValueError::new_err(error.to_string()),
     }
+}
+
+/// Bevy zero-extends CPU data with an infallible `Vec::resize`, which aborts on
+/// allocation failure; reserve first so that becomes a `MemoryError`.
+fn reserve_cpu_data(buffer: &mut ShaderBuffer, size: u64) -> PyResult<()> {
+    let Some(data) = buffer.data.as_mut() else {
+        return Ok(());
+    };
+    let size =
+        usize::try_from(size).map_err(|_| PyMemoryError::new_err(shader_buffer_too_large(size)))?;
+    data.try_reserve_exact(size.saturating_sub(data.len()))
+        .map_err(|_| PyMemoryError::new_err(shader_buffer_too_large(size as u64)))
 }
 
 pub fn extract_shader_buffer_data_from_any(value: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {

@@ -1,10 +1,9 @@
 use bevy::math::{Affine3A, EulerRot, Mat3, Mat4, Quat, Vec2, Vec3, Vec3A};
 use pybevy_core::{
     FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
-    domain::{FINITE, check_for},
     public_error::{
         QUAT_NOT_NORMALIZED, ROTATION_ARC_NOT_NORMALIZED, ROTATION_AXES_NOT_NORMALIZED,
-        UNSUPPORTED_COMPARISON, quat_axis_not_normalized,
+        UNSUPPORTED_COMPARISON,
     },
     repr::ReprLiteral,
 };
@@ -19,6 +18,7 @@ use pyo3::{
 
 use crate::{
     affine3a::PyAffine3A,
+    checked_axis_angle,
     mat3::PyMat3,
     mat4::{PyMat4, look_at_inputs, look_to_axes},
     richcmp::comparison_result,
@@ -173,15 +173,7 @@ impl PyQuat {
 
     #[staticmethod]
     pub fn from_axis_angle(axis: PyVec3, angle: f32) -> PyResult<Self> {
-        // glam does not enforce its normalized-axis precondition in release builds.
-        let axis: Vec3 = axis.try_into()?;
-        let angle = check_for::<Self, _>("angle", angle, FINITE)?;
-        let axis = check_for::<Self, _>("axis", axis, FINITE)?;
-        if !axis.is_normalized() {
-            return Err(PyValueError::new_err(quat_axis_not_normalized(
-                axis.length(),
-            )));
-        }
+        let (axis, angle) = checked_axis_angle::<Self>(axis.try_into()?, angle)?;
         Ok(PyQuat {
             storage: ValueStorage::owned(Quat::from_axis_angle(axis, angle)),
         })
@@ -298,19 +290,23 @@ impl PyQuat {
 
     pub fn inverse(&self) -> PyResult<Self> {
         Ok(PyQuat {
-            storage: ValueStorage::owned(self.as_ref()?.inverse()),
+            storage: ValueStorage::owned(normalized_quat(*self.as_ref()?)?.inverse()),
         })
     }
 
     pub fn lerp(&self, rhs: &PyQuat, s: f32) -> PyResult<Self> {
         Ok(PyQuat {
-            storage: ValueStorage::owned(self.as_ref()?.lerp(rhs.try_get()?, s)),
+            storage: ValueStorage::owned(
+                normalized_quat(*self.as_ref()?)?.lerp(normalized_quat(rhs.try_get()?)?, s),
+            ),
         })
     }
 
     pub fn slerp(&self, rhs: &PyQuat, s: f32) -> PyResult<Self> {
         Ok(PyQuat {
-            storage: ValueStorage::owned(self.as_ref()?.slerp(rhs.try_get()?, s)),
+            storage: ValueStorage::owned(
+                normalized_quat(*self.as_ref()?)?.slerp(normalized_quat(rhs.try_get()?)?, s),
+            ),
         })
     }
 
@@ -340,10 +336,10 @@ impl PyQuat {
             let other_quat = Quat::try_from(&*other_quat.try_borrow()?)?;
             Ok(Py::new(py, Self::from_quat(*self_quat * other_quat))?.into_any())
         } else if let Ok(other_vec3) = other.cast::<PyVec3>() {
-            let v = *self_quat * Vec3::try_from(&*other_vec3.try_borrow()?)?;
+            let v = normalized_quat(*self_quat)? * Vec3::try_from(&*other_vec3.try_borrow()?)?;
             Ok(Py::new(py, PyVec3::from_vec3(v))?.into_any())
         } else if let Ok(other_vec3a) = other.cast::<PyVec3A>() {
-            let v = *self_quat * Vec3A::try_from(&*other_vec3a.try_borrow()?)?;
+            let v = normalized_quat(*self_quat)? * Vec3A::try_from(&*other_vec3a.try_borrow()?)?;
             Ok(Py::new(py, PyVec3A::from_vec3a(v))?.into_any())
         } else if let Ok(scalar) = other.extract::<f32>() {
             Ok(Py::new(py, Self::from_quat(*self_quat * scalar))?.into_any())

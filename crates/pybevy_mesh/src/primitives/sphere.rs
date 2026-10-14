@@ -6,13 +6,28 @@ use pybevy_core::{
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 use crate::{
-    mesh::PyMesh, mesh_builder::PyMeshBuilder, primitives::validation::vertex_budget,
+    mesh::PyMesh,
+    mesh_builder::PyMeshBuilder,
+    primitives::validation::{AT_LEAST_ONE, vertex_budget},
     sphere_kind::PySphereKind,
 };
 
+/// A UV sphere divides by both counts, so zero would give NaN positions.
 fn validate_uv(sectors: u32, stacks: u32) -> PyResult<()> {
+    check_for::<PySphereMeshBuilder, _>("sectors", sectors, AT_LEAST_ONE)?;
+    check_for::<PySphereMeshBuilder, _>("stacks", stacks, AT_LEAST_ONE)?;
     let vertices = (u128::from(sectors) + 1) * (u128::from(stacks) + 1);
     vertex_budget("SphereMeshBuilder", vertices)
+}
+
+fn validate_kind(kind: SphereKind) -> PyResult<SphereKind> {
+    match kind {
+        SphereKind::Ico { subdivisions } => {
+            check_for::<PySphereMeshBuilder, _>("subdivisions", subdivisions, SUBDIVISIONS_DOMAIN)?;
+        }
+        SphereKind::Uv { sectors, stacks } => validate_uv(sectors, stacks)?,
+    }
+    Ok(kind)
 }
 
 /// Bevy's icosphere indices are `u16`, which 79 subdivisions still fit.
@@ -31,7 +46,13 @@ impl From<SphereMeshBuilder> for PySphereMeshBuilder {
 #[pymethods]
 impl PySphereMeshBuilder {
     pub fn kind(&self, py: Python<'_>, kind: PySphereKind) -> PyResult<Py<Self>> {
-        Py::new(py, (Self(self.0.kind(kind.into())), PyMeshBuilder))
+        Py::new(
+            py,
+            (
+                Self(self.0.kind(validate_kind(kind.into())?)),
+                PyMeshBuilder,
+            ),
+        )
     }
 
     pub fn ico(&self, py: Python, subdivisions: IntegerInput<u32>) -> PyResult<Py<PyMesh>> {
@@ -46,23 +67,25 @@ impl PySphereMeshBuilder {
         Py::new(py, (builder, PyAsset))
     }
 
-    pub fn uv(&self, py: Python, sectors: u32, stacks: u32) -> PyResult<Py<PyMesh>> {
+    pub fn uv(
+        &self,
+        py: Python,
+        sectors: IntegerInput<u32>,
+        stacks: IntegerInput<u32>,
+    ) -> PyResult<Py<PyMesh>> {
+        let sectors = check_for::<Self, _>("sectors", sectors, AT_LEAST_ONE)?.stored();
+        let stacks = check_for::<Self, _>("stacks", stacks, AT_LEAST_ONE)?.stored();
         validate_uv(sectors, stacks)?;
         Py::new(py, (self.0.uv(sectors, stacks).into(), PyAsset))
     }
 
     pub fn build(&self, py: Python) -> PyResult<Py<PyMesh>> {
-        let mesh = match self.0.kind {
-            SphereKind::Ico { subdivisions } => {
-                check_for::<Self, _>("subdivisions", subdivisions, SUBDIVISIONS_DOMAIN)?;
-                self.0
-                    .ico(subdivisions)
-                    .map_err(|error| PyValueError::new_err(error.to_string()))?
-            }
-            SphereKind::Uv { sectors, stacks } => {
-                validate_uv(sectors, stacks)?;
-                self.0.build()
-            }
+        let mesh = match validate_kind(self.0.kind)? {
+            SphereKind::Ico { subdivisions } => self
+                .0
+                .ico(subdivisions)
+                .map_err(|error| PyValueError::new_err(error.to_string()))?,
+            SphereKind::Uv { .. } => self.0.build(),
         };
         Py::new(py, (mesh.into(), PyAsset))
     }

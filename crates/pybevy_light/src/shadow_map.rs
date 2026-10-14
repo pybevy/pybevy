@@ -1,9 +1,10 @@
 use bevy::light::{DirectionalLightShadowMap, PointLightShadowMap};
-use pybevy_core::{PyResource, ResourceStorage, resource_initializer};
+use pybevy_core::{PyResource, ResourceStorage, domain::IntegerInput, resource_initializer};
 use pybevy_macros::pyresource;
 use pyo3::prelude::*;
 
-#[pyresource(PointLightShadowMap, bridge)]
+// Bevy creates the shadow textures with `size as u32` sides.
+#[pyresource(PointLightShadowMap, bridge, domains = [size => [at_least(1)]])]
 #[pyclass(name = "PointLightShadowMap", module = "pybevy.light", extends = PyResource, from_py_object)]
 #[derive(Debug)]
 pub struct PyPointLightShadowMap {
@@ -13,9 +14,12 @@ pub struct PyPointLightShadowMap {
 #[pymethods]
 impl PyPointLightShadowMap {
     #[new]
-    #[pyo3(signature = (*, size = 1024))]
-    pub fn new(size: usize) -> PyClassInitializer<Self> {
-        resource_initializer(PyPointLightShadowMap::from(PointLightShadowMap { size }))
+    #[pyo3(signature = (*, size = IntegerInput::new(1024)))]
+    pub fn new(size: IntegerInput<u32>) -> PyResult<PyClassInitializer<Self>> {
+        let size = Self::check_size(size)?.stored() as usize;
+        Ok(resource_initializer(PyPointLightShadowMap::from(
+            PointLightShadowMap { size },
+        )))
     }
 
     #[getter]
@@ -24,8 +28,8 @@ impl PyPointLightShadowMap {
     }
 
     #[setter]
-    pub fn set_size(&mut self, value: usize) -> PyResult<()> {
-        self.as_mut()?.size = value;
+    pub fn set_size(&mut self, value: IntegerInput<u32>) -> PyResult<()> {
+        self.as_mut()?.size = Self::check_size(value)?.stored() as usize;
         Ok(())
     }
 
@@ -37,7 +41,7 @@ impl PyPointLightShadowMap {
     }
 }
 
-#[pyresource(DirectionalLightShadowMap, bridge)]
+#[pyresource(DirectionalLightShadowMap, bridge, domains = [size => [at_least(1)]])]
 #[pyclass(name = "DirectionalLightShadowMap", module = "pybevy.light", extends = PyResource, from_py_object)]
 #[derive(Debug)]
 pub struct PyDirectionalLightShadowMap {
@@ -47,11 +51,12 @@ pub struct PyDirectionalLightShadowMap {
 #[pymethods]
 impl PyDirectionalLightShadowMap {
     #[new]
-    #[pyo3(signature = (*, size = 2048))]
-    pub fn new(size: usize) -> PyClassInitializer<Self> {
-        resource_initializer(PyDirectionalLightShadowMap::from(
+    #[pyo3(signature = (*, size = IntegerInput::new(2048)))]
+    pub fn new(size: IntegerInput<u32>) -> PyResult<PyClassInitializer<Self>> {
+        let size = Self::check_size(size)?.stored() as usize;
+        Ok(resource_initializer(PyDirectionalLightShadowMap::from(
             DirectionalLightShadowMap { size },
-        ))
+        )))
     }
 
     #[getter]
@@ -60,8 +65,8 @@ impl PyDirectionalLightShadowMap {
     }
 
     #[setter]
-    pub fn set_size(&mut self, value: usize) -> PyResult<()> {
-        self.as_mut()?.size = value;
+    pub fn set_size(&mut self, value: IntegerInput<u32>) -> PyResult<()> {
+        self.as_mut()?.size = Self::check_size(value)?.stored() as usize;
         Ok(())
     }
 

@@ -46,10 +46,11 @@ impl TryFrom<&PyBVec2> for BVec2 {
 }
 
 fn check_index(index: isize) -> PyResult<usize> {
-    usize::try_from(index)
-        .ok()
-        .filter(|&index| index <= 1)
-        .ok_or_else(|| PyIndexError::new_err(BVEC2_INDEX_OUT_OF_RANGE))
+    let index = usize::try_from(index).unwrap_or(usize::MAX);
+    if index > 1 {
+        return Err(PyIndexError::new_err(BVEC2_INDEX_OUT_OF_RANGE));
+    }
+    Ok(index)
 }
 
 #[pymethods]

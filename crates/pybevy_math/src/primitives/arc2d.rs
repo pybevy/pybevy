@@ -6,9 +6,10 @@ use pybevy_core::{
     domain::{DomainViolation, FINITE, check_for},
     repr::float_repr,
 };
+use pybevy_macros::pyvalue;
 use pyo3::{PyClass, prelude::*};
 
-use super::dimension::dimension;
+use super::dimension::{Dimension, dimension};
 use crate::vec2::PyVec2;
 
 pub fn checked_arc<O: PyClass>(radius: f32, half_angle: f32) -> Result<Arc2d, DomainViolation> {
@@ -50,6 +51,7 @@ pub fn checked_arc_from_turns<O: PyClass>(
     Ok(arc)
 }
 
+#[pyvalue(domains = [radius => [finite, non_negative], half_angle => [finite]])]
 #[pyclass(name = "Arc2d", module = "pybevy.math", eq, from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyArc2d {
@@ -61,12 +63,6 @@ impl PyArc2d {
         Self {
             storage: ValueStorage::read_only_snapshot(*arc),
         }
-    }
-}
-
-impl FromBorrowedStorage<ValueStorage<Arc2d>> for PyArc2d {
-    fn from_borrowed(storage: ValueStorage<Arc2d>) -> Self {
-        Self { storage }
     }
 }
 
@@ -83,9 +79,9 @@ impl PyArc2d {
     #[new]
     #[pyo3(signature = (radius = 0.5, half_angle = 2.0 * FRAC_PI_3))]
     pub fn new(radius: f32, half_angle: f32) -> PyResult<Self> {
-        Ok(Self {
-            storage: ValueStorage::owned(checked_arc::<Self>(radius, half_angle)?),
-        })
+        let radius = Self::check_radius(radius)?.without_negative_zero();
+        let half_angle = Self::check_half_angle(half_angle)?;
+        Ok(Self::from_owned(Arc2d::new(radius, half_angle)))
     }
 
     #[staticmethod]
@@ -116,8 +112,7 @@ impl PyArc2d {
 
     #[setter]
     pub fn set_radius(&mut self, value: f32) -> PyResult<()> {
-        let mut arc = self.storage.as_mut()?;
-        arc.radius = dimension::<Self, _>("radius", value)?;
+        self.storage.as_mut()?.radius = Self::check_radius(value)?.without_negative_zero();
         Ok(())
     }
 
@@ -128,8 +123,7 @@ impl PyArc2d {
 
     #[setter]
     pub fn set_half_angle(&mut self, value: f32) -> PyResult<()> {
-        let mut arc = self.storage.as_mut()?;
-        arc.half_angle = check_for::<Self, _>("half_angle", value, FINITE)?;
+        self.storage.as_mut()?.half_angle = Self::check_half_angle(value)?;
         Ok(())
     }
 

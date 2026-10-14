@@ -10,7 +10,8 @@ use pybevy_render::texture_format::PyTextureFormat;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 use crate::{
-    image::PyImage, texture_atlas_layout::PyTextureAtlasLayout,
+    image::{PyImage, reject_aspect_dependent_format},
+    texture_atlas_layout::PyTextureAtlasLayout,
     texture_atlas_sources::PyTextureAtlasSources,
 };
 
@@ -88,9 +89,15 @@ impl PyTextureAtlasBuilder {
         Ok(slf)
     }
 
-    pub fn format(mut slf: PyRefMut<'_, Self>, format: PyTextureFormat) -> PyRefMut<'_, Self> {
-        slf.format = format.into();
-        slf
+    pub fn format(
+        mut slf: PyRefMut<'_, Self>,
+        format: PyTextureFormat,
+    ) -> PyResult<PyRefMut<'_, Self>> {
+        // Bevy's pixel_size() unwraps the texel size of these formats in build().
+        let format = format.into();
+        reject_aspect_dependent_format(format)?;
+        slf.format = format;
+        Ok(slf)
     }
 
     pub fn auto_format_conversion(

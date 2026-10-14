@@ -1,8 +1,25 @@
 use bevy::window::WindowResolution;
-use pybevy_core::{FieldStorage, FromBorrowedStorage, repr::float_repr};
+use pybevy_core::{
+    FieldStorage, FromBorrowedStorage,
+    domain::{DomainViolation, FINITE_NON_NEGATIVE, POSITIVE, check_for},
+    repr::float_repr,
+};
 use pybevy_macros::pyfield;
 use pybevy_math::{uvec2::PyUVec2, vec2::PyVec2};
 use pyo3::prelude::*;
+
+/// winit asserts that every scale factor is positive and normal when it converts
+/// sizes, so a zero, negative or non-finite one panics at window creation or on
+/// input events.
+pub(crate) fn validate_scale_factors(resolution: &WindowResolution) -> Result<(), DomainViolation> {
+    check_for::<PyWindowResolution, _>("scale_factor", resolution.base_scale_factor(), POSITIVE)?;
+    check_for::<PyWindowResolution, _>(
+        "scale_factor_override",
+        resolution.scale_factor_override(),
+        POSITIVE,
+    )?;
+    Ok(())
+}
 
 #[pyfield]
 #[pyclass(name = "WindowResolution", module = "pybevy.window", from_py_object)]
@@ -27,12 +44,14 @@ impl PyWindowResolution {
         physical_width: u32,
         physical_height: u32,
         scale_factor_override: Option<f32>,
-    ) -> Self {
+    ) -> PyResult<Self> {
+        let scale_factor_override =
+            check_for::<Self, _>("scale_factor_override", scale_factor_override, POSITIVE)?;
         let mut resolution = WindowResolution::new(physical_width, physical_height);
         if let Some(scale) = scale_factor_override {
             resolution.set_scale_factor_override(Some(scale));
         }
-        Self::from_owned(resolution)
+        Ok(Self::from_owned(resolution))
     }
 
     #[getter]
@@ -61,6 +80,9 @@ impl PyWindowResolution {
     }
 
     pub fn set(&mut self, width: f32, height: f32) -> PyResult<()> {
+        // An infinite logical size becomes a surface larger than wgpu accepts.
+        let width = check_for::<Self, _>("width", width, FINITE_NON_NEGATIVE)?;
+        let height = check_for::<Self, _>("height", height, FINITE_NON_NEGATIVE)?;
         self.as_mut()?.set(width, height);
         Ok(())
     }
@@ -74,6 +96,8 @@ impl PyWindowResolution {
         &mut self,
         scale_factor_override: Option<f32>,
     ) -> PyResult<()> {
+        let scale_factor_override =
+            check_for::<Self, _>("scale_factor_override", scale_factor_override, POSITIVE)?;
         self.as_mut()?
             .set_scale_factor_override(scale_factor_override);
         Ok(())
@@ -97,11 +121,14 @@ impl PyWindowResolution {
     }
 
     pub fn set_scale_factor(&mut self, scale_factor: f32) -> PyResult<()> {
+        let scale_factor = check_for::<Self, _>("scale_factor", scale_factor, POSITIVE)?;
         self.as_mut()?.set_scale_factor(scale_factor);
         Ok(())
     }
 
     pub fn with_scale_factor_override(&self, scale_factor_override: f32) -> PyResult<Self> {
+        let scale_factor_override =
+            check_for::<Self, _>("scale_factor_override", scale_factor_override, POSITIVE)?;
         let mut resolution = self.as_ref()?.clone();
         resolution.set_scale_factor_override(Some(scale_factor_override));
         Ok(Self::from_owned(resolution))

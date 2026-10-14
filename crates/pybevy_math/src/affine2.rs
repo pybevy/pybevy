@@ -1,10 +1,14 @@
 use bevy::math::{Affine2, Mat2, Mat3};
 use pybevy_core::{
     FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
-    public_error::UNSUPPORTED_COMPARISON,
+    public_error::{UNSUPPORTED_COMPARISON, matrix_decomposition_singular},
     repr::{ReprLiteral, object_repr},
 };
-use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
+use pyo3::{
+    basic::CompareOp,
+    exceptions::{PyTypeError, PyValueError},
+    prelude::*,
+};
 
 use super::{mat2::PyMat2, mat3::PyMat3, vec2::PyVec2};
 use crate::{require_invertible, richcmp::comparison_result};
@@ -175,7 +179,14 @@ impl PyAffine2 {
     }
 
     pub fn to_scale_angle_translation(&self) -> PyResult<(PyVec2, f32, PyVec2)> {
-        let (scale, angle, translation) = self.as_ref()?.to_scale_angle_translation();
+        let affine = *self.as_ref()?;
+        let determinant = affine.matrix2.determinant();
+        if !determinant.is_finite() || determinant == 0.0 {
+            return Err(PyValueError::new_err(matrix_decomposition_singular(
+                "Affine2",
+            )));
+        }
+        let (scale, angle, translation) = affine.to_scale_angle_translation();
         Ok((scale.into(), angle, translation.into()))
     }
 

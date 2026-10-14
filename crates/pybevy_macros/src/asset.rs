@@ -730,6 +730,11 @@ pub(crate) fn generate_asset_bridge_tokens(
                         pybevy_core::public_error::assets_resource_missing(#asset_name, #missing_hint)
                     )
                 })?;
+                // Bevy's remove indexes dense storage unchecked, so a forged index past
+                // the allocated slots would panic.
+                if !assets.contains(id.typed::<#bevy_type>()) {
+                    return Ok(None);
+                }
                 resource_state.advance_epoch();
 
                 match assets.remove(id.typed::<#bevy_type>()) {

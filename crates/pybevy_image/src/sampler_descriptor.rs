@@ -159,9 +159,8 @@ impl PyImageSamplerDescriptor {
     #[setter]
     pub fn set_lod_min_clamp(&mut self, value: f32) -> PyResult<()> {
         let value = Self::check_lod_min_clamp(value)?;
-        let mut descriptor = self.as_mut()?;
-        Self::check_lod_min_clamp_order(value, descriptor.lod_max_clamp)?;
-        descriptor.lod_min_clamp = value;
+        Self::check_lod_min_clamp_order(value, self.as_ref()?.lod_max_clamp)?;
+        self.as_mut()?.lod_min_clamp = value;
         Ok(())
     }
 
@@ -172,9 +171,8 @@ impl PyImageSamplerDescriptor {
 
     #[setter]
     pub fn set_lod_max_clamp(&mut self, value: f32) -> PyResult<()> {
-        let mut descriptor = self.as_mut()?;
-        Self::check_lod_min_clamp_order(descriptor.lod_min_clamp, value)?;
-        descriptor.lod_max_clamp = value;
+        Self::check_lod_min_clamp_order(self.as_ref()?.lod_min_clamp, value)?;
+        self.as_mut()?.lod_max_clamp = value;
         Ok(())
     }
 

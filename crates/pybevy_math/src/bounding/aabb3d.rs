@@ -6,7 +6,7 @@ use pybevy_core::{
     FromBorrowedStorage, ValueStorage,
     domain::{NON_NEGATIVE, check_for},
     public_error::{
-        AABB3D_MIN_MAX, EMPTY_POINT_CLOUD, bounding_operation, bounding_shrink,
+        EMPTY_POINT_CLOUD, aabb_min_exceeds_max, bounding_operation, bounding_shrink,
         intersects_volume_type,
     },
     repr::ReprLiteral,
@@ -57,6 +57,13 @@ impl From<Aabb3d> for PyAabb3d {
     }
 }
 
+fn check_min_max(min: Vec3A, max: Vec3A) -> PyResult<()> {
+    if !max.cmpge(min).all() {
+        return Err(PyValueError::new_err(aabb_min_exceeds_max("Aabb3d")));
+    }
+    Ok(())
+}
+
 #[pymethods]
 impl PyAabb3d {
     pub fn __copy__(&self) -> PyResult<Self> {
@@ -82,9 +89,7 @@ impl PyAabb3d {
     pub fn from_min_max(min: &Bound<'_, PyAny>, max: &Bound<'_, PyAny>) -> PyResult<Self> {
         let min = extract_vec3a_from_any(min)?;
         let max = extract_vec3a_from_any(max)?;
-        if !max.cmpge(min).all() {
-            return Err(PyValueError::new_err(AABB3D_MIN_MAX));
-        }
+        check_min_max(min, max)?;
         Ok(PyAabb3d::from_owned(Aabb3d::from_min_max(min, max)))
     }
 
@@ -95,7 +100,9 @@ impl PyAabb3d {
 
     #[setter]
     pub fn set_min(&mut self, value: PyVec3A) -> PyResult<()> {
-        self.as_mut()?.min = value.try_into()?;
+        let min: Vec3A = value.try_into()?;
+        check_min_max(min, self.as_ref()?.max)?;
+        self.as_mut()?.min = min;
         Ok(())
     }
 
@@ -106,7 +113,9 @@ impl PyAabb3d {
 
     #[setter]
     pub fn set_max(&mut self, value: PyVec3A) -> PyResult<()> {
-        self.as_mut()?.max = value.try_into()?;
+        let max: Vec3A = value.try_into()?;
+        check_min_max(self.as_ref()?.min, max)?;
+        self.as_mut()?.max = max;
         Ok(())
     }
 

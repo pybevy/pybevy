@@ -1,6 +1,6 @@
 use bevy::math::UVec3;
 use pybevy_core::{
-    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
+    FromBorrowedStorage, StorageRef, ValueStorage,
     public_error::{
         CLAMP_MIN_EXCEEDS_MAX, UNSUPPORTED_COMPARISON, integer_vector_division_by_zero,
     },
@@ -71,11 +71,6 @@ impl PyUVec3 {
         Ok(self.storage.as_ref()?)
     }
 
-    #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<StorageMut<'_, UVec3>> {
-        Ok(self.storage.as_mut()?)
-    }
-
     pub const ZERO: PyUVec3 = PyUVec3::uvec3(UVec3::ZERO);
     pub const ONE: PyUVec3 = PyUVec3::uvec3(UVec3::ONE);
     pub const X: PyUVec3 = PyUVec3::uvec3(UVec3::X);
@@ -144,7 +139,7 @@ impl PyUVec3 {
 
     #[setter]
     pub fn set_x(&mut self, value: u32) -> PyResult<()> {
-        self.as_mut()?.x = value;
+        self.storage.update(|vec| vec.x = value)?;
         Ok(())
     }
 
@@ -155,7 +150,7 @@ impl PyUVec3 {
 
     #[setter]
     pub fn set_y(&mut self, value: u32) -> PyResult<()> {
-        self.as_mut()?.y = value;
+        self.storage.update(|vec| vec.y = value)?;
         Ok(())
     }
 
@@ -166,7 +161,7 @@ impl PyUVec3 {
 
     #[setter]
     pub fn set_z(&mut self, value: u32) -> PyResult<()> {
-        self.as_mut()?.z = value;
+        self.storage.update(|vec| vec.z = value)?;
         Ok(())
     }
 

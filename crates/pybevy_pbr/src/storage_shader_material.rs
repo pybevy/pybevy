@@ -282,13 +282,10 @@ impl PyStorageShaderMaterial {
     fn set_sampler(&mut self, slot: isize, descriptor: &PyImageSamplerDescriptor) -> PyResult<()> {
         let slot = usize::try_from(slot).unwrap_or(usize::MAX);
         let descriptor = ImageSamplerDescriptor::try_from(descriptor)?;
-        let mut material = self.as_mut()?;
-        material
-            .extension
-            .samplers
-            .get_mut(slot)
-            .ok_or_else(|| PyIndexError::new_err("Sampler slot out of range"))?
-            .descriptor = descriptor;
+        if slot >= self.as_ref()?.extension.samplers.len() {
+            return Err(PyIndexError::new_err("Sampler slot out of range"));
+        }
+        self.as_mut()?.extension.samplers[slot].descriptor = descriptor;
         Ok(())
     }
 
@@ -365,13 +362,10 @@ impl PyStorageShaderMaterial {
     fn set_buffer_at(&mut self, slot: isize, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
         let slot = usize::try_from(slot).unwrap_or(usize::MAX);
         let handle = extract_storage_handle(value)?;
-        let mut material = self.as_mut()?;
-        let binding = material
-            .extension
-            .buffers
-            .get_mut(slot)
-            .ok_or_else(|| PyIndexError::new_err("Storage buffer slot out of range"))?;
-        binding.handle = handle;
+        if slot >= self.as_ref()?.extension.buffers.len() {
+            return Err(PyIndexError::new_err("Storage buffer slot out of range"));
+        }
+        self.as_mut()?.extension.buffers[slot].handle = handle;
         Ok(())
     }
 }

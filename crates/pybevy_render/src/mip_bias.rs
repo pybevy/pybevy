@@ -1,5 +1,9 @@
 use bevy::render::camera::MipBias;
-use pybevy_core::{PyComponent, repr::float_repr};
+use pybevy_core::{
+    PyComponent,
+    domain::{FINITE, check_for},
+    repr::float_repr,
+};
 use pybevy_macros::pywrap;
 use pyo3::prelude::*;
 
@@ -12,8 +16,9 @@ pub struct PyMipBias(pub(crate) MipBias);
 impl PyMipBias {
     #[new]
     #[pyo3(signature = (value = -1.0))]
-    pub fn new(value: f32) -> PyClassInitializer<Self> {
-        (PyMipBias(MipBias(value)), PyComponent).into()
+    pub fn new(value: f32) -> PyResult<PyClassInitializer<Self>> {
+        let value = check_for::<Self, _>("value", value, FINITE)?;
+        Ok((PyMipBias(MipBias(value)), PyComponent).into())
     }
 
     #[getter]

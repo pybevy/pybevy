@@ -18,7 +18,8 @@ use pyo3::{
 
 use super::{mat3::PyMat3, quat::PyQuat, vec3::PyVec3, vec4::PyVec4};
 use crate::{
-    matrix_index, quat::PyEulerRot, require_invertible, richcmp::comparison_result, vec3a::PyVec3A,
+    checked_axis_angle, matrix_index, quat::PyEulerRot, require_invertible,
+    richcmp::comparison_result, vec3a::PyVec3A,
 };
 
 #[pyclass(name = "Mat4", module = "pybevy.math", from_py_object)]
@@ -87,7 +88,9 @@ impl PyMat4 {
         let matrix = *self.as_ref()?;
         if !matrix.row(3).abs_diff_eq(Vec4::W, 1e-6) {
             return Err(PyValueError::new_err(affine_transform_last_row(
-                "Mat4", function,
+                "Mat4",
+                function,
+                "(0, 0, 0, 1)",
             )));
         }
         Ok(matrix)
@@ -237,7 +240,8 @@ impl PyMat4 {
 
     #[staticmethod]
     pub fn from_axis_angle(axis: &PyVec3, angle: f32) -> PyResult<Self> {
-        Ok(PyMat4::mat4(Mat4::from_axis_angle(axis.try_into()?, angle)))
+        let (axis, angle) = checked_axis_angle::<Self>(axis.try_into()?, angle)?;
+        Ok(PyMat4::mat4(Mat4::from_axis_angle(axis, angle)))
     }
 
     #[staticmethod]

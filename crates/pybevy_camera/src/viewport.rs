@@ -69,9 +69,8 @@ impl PyViewport {
 
     #[setter]
     pub fn set_depth(&mut self, value: &PyRange) -> PyResult<()> {
-        let depth = value.try_into()?;
-        let mut viewport = self.as_mut()?;
-        viewport.depth = Self::check_depth(depth)?;
+        let depth = Self::check_depth(value.try_into()?)?;
+        self.as_mut()?.depth = depth;
         Ok(())
     }
 

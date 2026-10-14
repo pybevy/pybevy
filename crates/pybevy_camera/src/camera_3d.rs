@@ -1,5 +1,11 @@
-use bevy::{camera::Camera3d, render::render_resource::TextureUsages};
-use pybevy_core::{ComponentStorage, PyComponent};
+use bevy::{
+    camera::{Camera3d, Camera3dDepthLoadOp},
+    render::render_resource::TextureUsages,
+};
+use pybevy_core::{
+    ComponentStorage, PyComponent,
+    domain::{DomainViolation, FieldDomain, check_for},
+};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
@@ -10,8 +16,21 @@ use crate::{
 
 const DEFAULT_DEPTH_TEXTURE_USAGE: u32 = TextureUsages::RENDER_ATTACHMENT.bits();
 const DEFAULT_DEPTH_CLEAR_VALUE: f32 = 0.0;
+/// wgpu rejects a depth clear value outside `0.0..=1.0` when the pass begins.
+const DEPTH_CLEAR_DOMAIN: &[FieldDomain] = &[FieldDomain::RangeInclusive { lo: 0.0, hi: 1.0 }];
 
-#[pycomponent(Camera3d, bridge)]
+fn check_depth_load_op(op: Camera3dDepthLoadOp) -> Result<Camera3dDepthLoadOp, DomainViolation> {
+    if let Camera3dDepthLoadOp::Clear(value) = op {
+        check_for::<PyCamera3d, _>("depth_load_op", value, DEPTH_CLEAR_DOMAIN)?;
+    }
+    Ok(op)
+}
+
+fn validate_camera_3d(camera: &Camera3d) -> Result<(), DomainViolation> {
+    check_depth_load_op(camera.depth_load_op.clone()).map(drop)
+}
+
+#[pycomponent(Camera3d, bridge, reflect_validate = validate_camera_3d)]
 #[pyclass(name = "Camera3d", module = "pybevy.camera", extends = PyComponent)]
 pub struct PyCamera3d {
     pub(crate) storage: ComponentStorage<Camera3d>,
@@ -28,13 +47,13 @@ impl PyCamera3d {
     pub fn new(
         depth_load_op: PyCamera3dDepthLoadOp,
         depth_texture_usages: PyCamera3dDepthTextureUsage,
-    ) -> PyClassInitializer<Self> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         let camera = Camera3d {
-            depth_load_op: depth_load_op.into(),
+            depth_load_op: check_depth_load_op(depth_load_op.into())?,
             depth_texture_usages: TextureUsages::from_bits_truncate(depth_texture_usages.0).into(),
         };
 
-        Self::from_owned(camera).into()
+        Ok(Self::from_owned(camera).into())
     }
 
     #[getter]
@@ -44,7 +63,7 @@ impl PyCamera3d {
 
     #[setter]
     pub fn set_depth_load_op(&mut self, value: PyCamera3dDepthLoadOp) -> PyResult<()> {
-        self.as_mut()?.depth_load_op = value.into();
+        self.as_mut()?.depth_load_op = check_depth_load_op(value.into())?;
         Ok(())
     }
 

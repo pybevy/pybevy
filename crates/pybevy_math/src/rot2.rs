@@ -1,6 +1,11 @@
+use std::f32::consts::TAU;
+
 use bevy::math::{Rot2, StableInterpolate, Vec2};
 use pybevy_core::{
-    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage, public_error, repr::float_repr,
+    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
+    domain::{FINITE, FINITE_NON_NEGATIVE, FieldDomain, NON_NEGATIVE, check_for},
+    public_error,
+    repr::float_repr,
 };
 use pybevy_macros::pyconstructor;
 use pyo3::{
@@ -9,6 +14,12 @@ use pyo3::{
 };
 
 use crate::vec2::PyVec2;
+
+/// A turn fraction whose angle, `TAU * fraction`, stays finite.
+const FRACTION_DOMAIN: &[FieldDomain] = &[FieldDomain::RangeInclusive {
+    lo: -(f32::MAX / TAU) as f64,
+    hi: (f32::MAX / TAU) as f64,
+}];
 
 #[pyclass(name = "Rot2", module = "pybevy.math", eq, from_py_object)]
 #[derive(Debug, Clone)]
@@ -70,6 +81,18 @@ impl PyRot2 {
     }
 }
 
+/// A rotation from its sine and cosine; Bevy's `from_sin_cos` panics in debug
+/// builds unless they are normalized.
+fn checked_rotation(operation: &str, sin: f32, cos: f32) -> PyResult<Rot2> {
+    let rotation = Rot2 { cos, sin };
+    if !cos.is_finite() || !sin.is_finite() || !rotation.is_normalized() {
+        return Err(PyValueError::new_err(
+            public_error::rotation_not_normalized(operation),
+        ));
+    }
+    Ok(rotation)
+}
+
 #[pyconstructor("Rot2", keyword_only(cos, sin), complete(cos, sin))]
 #[pymethods]
 impl PyRot2 {
@@ -84,11 +107,7 @@ impl PyRot2 {
     #[new]
     pub fn new(cos: Option<f32>, sin: Option<f32>) -> PyResult<Self> {
         if let (Some(c), Some(s)) = (cos, sin) {
-            let rotation = Rot2 { cos: c, sin: s };
-            if !c.is_finite() || !s.is_finite() || !rotation.is_normalized() {
-                return Err(PyValueError::new_err(public_error::CONSTRUCTOR_ROTATION));
-            }
-            return Ok(Self::rot2(rotation));
+            return Ok(Self::rot2(checked_rotation("Rot2()", s, c)?));
         }
         Ok(Self::rot2(Rot2::IDENTITY))
     }
@@ -136,23 +155,26 @@ impl PyRot2 {
     }
 
     #[staticmethod]
-    pub fn radians(radians: f32) -> Self {
-        Self::rot2(Rot2::radians(radians))
+    pub fn radians(radians: f32) -> PyResult<Self> {
+        let radians = check_for::<Self, _>("radians", radians, FINITE)?;
+        Ok(Self::rot2(Rot2::radians(radians)))
     }
 
     #[staticmethod]
-    pub fn degrees(degrees: f32) -> Self {
-        Self::rot2(Rot2::degrees(degrees))
+    pub fn degrees(degrees: f32) -> PyResult<Self> {
+        let degrees = check_for::<Self, _>("degrees", degrees, FINITE)?;
+        Ok(Self::rot2(Rot2::degrees(degrees)))
     }
 
     #[staticmethod]
-    pub fn turn_fraction(fraction: f32) -> Self {
-        Self::rot2(Rot2::turn_fraction(fraction))
+    pub fn turn_fraction(fraction: f32) -> PyResult<Self> {
+        let fraction = check_for::<Self, _>("fraction", fraction, FRACTION_DOMAIN)?;
+        Ok(Self::rot2(Rot2::turn_fraction(fraction)))
     }
 
     #[staticmethod]
-    pub fn from_sin_cos(sin: f32, cos: f32) -> Self {
-        Self::rot2(Rot2::from_sin_cos(sin, cos))
+    pub fn from_sin_cos(sin: f32, cos: f32) -> PyResult<Self> {
+        Ok(Self::rot2(checked_rotation("Rot2.from_sin_cos", sin, cos)?))
     }
 
     #[getter]
@@ -230,14 +252,17 @@ impl PyRot2 {
     }
 
     pub fn slerp(&self, rhs: &PyRot2, s: f32) -> PyResult<Self> {
+        let s = check_for::<Self, _>("s", s, FINITE)?;
         Ok(Self::rot2(self.as_ref()?.slerp(*rhs.as_ref()?, s)))
     }
 
     pub fn nlerp(&self, rhs: &PyRot2, s: f32) -> PyResult<Self> {
+        let s = check_for::<Self, _>("s", s, FINITE)?;
         Ok(Self::rot2(self.as_ref()?.nlerp(*rhs.as_ref()?, s)))
     }
 
     pub fn interpolate_stable(&self, other: &PyRot2, t: f32) -> PyResult<Self> {
+        let t = check_for::<Self, _>("t", t, FINITE)?;
         Ok(Self::rot2(
             self.as_ref()?
                 .interpolate_stable(other.as_ref()?.reborrow(), t),
@@ -245,13 +270,20 @@ impl PyRot2 {
     }
 
     pub fn interpolate_stable_assign(&mut self, other: &PyRot2, t: f32) -> PyResult<()> {
+        let t = check_for::<Self, _>("t", t, FINITE)?;
         let other = *other.as_ref()?;
         self.as_mut()?.interpolate_stable_assign(&other, t);
         Ok(())
     }
 
     pub fn smooth_nudge(&mut self, target: &PyRot2, decay_rate: f32, delta: f32) -> PyResult<()> {
+        let decay_rate = check_for::<Self, _>("decay_rate", decay_rate, NON_NEGATIVE)?;
+        let delta = check_for::<Self, _>("delta", delta, FINITE_NON_NEGATIVE)?;
         let target = *target.as_ref()?;
+        // No time passes: Bevy's result, without an infinite rate times zero.
+        if delta == 0.0 {
+            return Ok(());
+        }
         self.as_mut()?.smooth_nudge(&target, decay_rate, delta);
         Ok(())
     }

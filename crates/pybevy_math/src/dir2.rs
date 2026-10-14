@@ -1,11 +1,16 @@
 use bevy::math::{Dir2, StableInterpolate, Vec2};
-use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage, repr::float_repr};
+use pybevy_core::{
+    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
+    domain::{FINITE, FINITE_NON_NEGATIVE, NON_NEGATIVE, check_for},
+    repr::float_repr,
+};
 use pyo3::{
     exceptions::{PyTypeError, PyValueError},
     prelude::*,
 };
 
 use super::{rot2::PyRot2, vec2::PyVec2};
+use crate::check_direction_length;
 
 #[pyclass(name = "Dir2", module = "pybevy.math", eq, from_py_object)]
 #[derive(Debug, Clone)]
@@ -207,6 +212,7 @@ impl PyDir2 {
     }
 
     pub fn slerp(&self, rhs: &PyDir2, s: f32) -> PyResult<PyDir2> {
+        let s = check_for::<Self, _>("s", s, FINITE)?;
         Ok(PyDir2::dir2(self.get()?.slerp(rhs.get()?, s)))
     }
 
@@ -239,28 +245,39 @@ impl PyDir2 {
     }
 
     #[staticmethod]
-    pub fn from_xy_unchecked(x: f32, y: f32) -> PyDir2 {
-        PyDir2::dir2(Dir2::from_xy_unchecked(x, y))
+    pub fn from_xy_unchecked(x: f32, y: f32) -> PyResult<PyDir2> {
+        check_direction_length("Dir2.from_xy_unchecked", Vec2::new(x, y).length_squared())?;
+        Ok(PyDir2::dir2(Dir2::from_xy_unchecked(x, y)))
     }
 
     #[staticmethod]
     pub fn new_unchecked(value: PyVec2) -> PyResult<PyDir2> {
-        Ok(PyDir2::dir2(Dir2::new_unchecked(value.try_into()?)))
+        let value: Vec2 = value.try_into()?;
+        check_direction_length("Dir2.new_unchecked", value.length_squared())?;
+        Ok(PyDir2::dir2(Dir2::new_unchecked(value)))
     }
 
     pub fn interpolate_stable(&self, other: &PyDir2, t: f32) -> PyResult<PyDir2> {
+        let t = check_for::<Self, _>("t", t, FINITE)?;
         let other = other.get()?;
         Ok(PyDir2::dir2(self.get()?.interpolate_stable(&other, t)))
     }
 
     pub fn interpolate_stable_assign(&mut self, other: &PyDir2, t: f32) -> PyResult<()> {
+        let t = check_for::<Self, _>("t", t, FINITE)?;
         let other = other.get()?;
         self.as_mut()?.interpolate_stable_assign(&other, t);
         Ok(())
     }
 
     pub fn smooth_nudge(&mut self, target: &PyDir2, decay_rate: f32, delta: f32) -> PyResult<()> {
+        let decay_rate = check_for::<Self, _>("decay_rate", decay_rate, NON_NEGATIVE)?;
+        let delta = check_for::<Self, _>("delta", delta, FINITE_NON_NEGATIVE)?;
         let target = target.get()?;
+        // No time passes: Bevy's result, without an infinite rate times zero.
+        if delta == 0.0 {
+            return Ok(());
+        }
         self.as_mut()?.smooth_nudge(&target, decay_rate, delta);
         Ok(())
     }

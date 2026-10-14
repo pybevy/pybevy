@@ -1,9 +1,10 @@
 use bevy::math::{BVec3A, Vec3, Vec3A, Vec3Swizzles};
 use pybevy_core::{
     FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
+    domain::{NON_NEGATIVE, check_for},
     public_error::{
-        AXIS_NOT_NORMALIZED, NORMAL_NOT_NORMALIZED, RHS_NOT_NORMALIZED, UNSUPPORTED_COMPARISON,
-        VECTOR_NOT_NORMALIZED, from_slice_too_short,
+        AXIS_NOT_NORMALIZED, CLAMP_MIN_EXCEEDS_MAX, NORMAL_NOT_NORMALIZED, RHS_NOT_NORMALIZED,
+        UNSUPPORTED_COMPARISON, VECTOR_NOT_NORMALIZED, from_slice_too_short,
     },
     repr::ReprLiteral,
 };
@@ -532,9 +533,11 @@ impl PyVec3A {
     }
 
     pub fn clamp(&self, min: &PyVec3A, max: &PyVec3A) -> PyResult<PyVec3A> {
-        Ok(PyVec3A::from_vec3a(
-            self.as_ref()?.clamp(*min.as_ref()?, *max.as_ref()?),
-        ))
+        let (min, max) = (*min.as_ref()?, *max.as_ref()?);
+        if !min.cmple(max).all() {
+            return Err(PyValueError::new_err(CLAMP_MIN_EXCEEDS_MAX));
+        }
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.clamp(min, max)))
     }
 
     pub fn element_sum(&self) -> PyResult<f32> {
@@ -707,14 +710,21 @@ impl PyVec3A {
     }
 
     pub fn clamp_length(&self, min: f32, max: f32) -> PyResult<PyVec3A> {
+        let min = check_for::<Self, _>("min", min, NON_NEGATIVE)?;
+        let max = check_for::<Self, _>("max", max, NON_NEGATIVE)?;
+        if min > max {
+            return Err(PyValueError::new_err(CLAMP_MIN_EXCEEDS_MAX));
+        }
         Ok(PyVec3A::from_vec3a(self.as_ref()?.clamp_length(min, max)))
     }
 
     pub fn clamp_length_min(&self, min: f32) -> PyResult<PyVec3A> {
+        let min = check_for::<Self, _>("min", min, NON_NEGATIVE)?;
         Ok(PyVec3A::from_vec3a(self.as_ref()?.clamp_length_min(min)))
     }
 
     pub fn clamp_length_max(&self, max: f32) -> PyResult<PyVec3A> {
+        let max = check_for::<Self, _>("max", max, NON_NEGATIVE)?;
         Ok(PyVec3A::from_vec3a(self.as_ref()?.clamp_length_max(max)))
     }
 

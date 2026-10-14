@@ -26,7 +26,8 @@ fn infinite_plane_project_point(
     isometry: Isometry3d,
     point: Vec3,
 ) -> Vec3 {
-    let world_normal = isometry * plane.normal;
+    // A Vec3, not a Dir3: a non-normalized rotation must not trip Bevy's debug assert.
+    let world_normal = isometry.rotation * plane.normal.as_vec3();
     point - world_normal * plane.signed_distance(isometry, point)
 }
 

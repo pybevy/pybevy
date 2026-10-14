@@ -61,9 +61,8 @@ impl PyRayCast2d {
     #[setter]
     pub fn set_ray(&mut self, ray: &PyRay2d) -> PyResult<()> {
         // Rebuild via from_ray so the cached direction reciprocal stays valid.
-        let max = self.as_ref()?.max;
-        self.as_mut()?
-            .clone_from(&RayCast2d::from_ray(ray.to_ray2d()?, max));
+        let cast = RayCast2d::from_ray(ray.to_ray2d()?, self.as_ref()?.max);
+        self.as_mut()?.clone_from(&cast);
         Ok(())
     }
 

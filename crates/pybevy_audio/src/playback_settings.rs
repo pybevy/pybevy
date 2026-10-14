@@ -13,7 +13,7 @@ use crate::{playback_mode::PyPlaybackMode, spatial_scale::PySpatialScale, volume
 #[pycomponent(
     PlaybackSettings,
     bridge,
-    domains = [speed => [finite]],
+    domains = [speed => [positive]],
     view_fields = [speed, paused, muted, spatial]
 )]
 #[pyclass(name = "PlaybackSettings", module = "pybevy.audio", extends = PyComponent)]
@@ -193,8 +193,9 @@ impl PyPlaybackSettings {
     }
 
     pub fn with_speed(&self, py: Python, speed: f32) -> PyResult<Py<Self>> {
+        let speed = Self::check_speed(speed)?;
         let mut settings = *self.as_ref()?;
-        settings.speed = Self::check_speed(speed)?;
+        settings.speed = speed;
         Py::new(py, Self::from_owned(settings))
     }
 

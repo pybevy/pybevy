@@ -1,5 +1,9 @@
 use bevy::camera::PhysicalCameraParameters;
-use pybevy_core::{public_error, repr::float_repr};
+use pybevy_core::{
+    domain::{POSITIVE, check_for},
+    public_error,
+    repr::float_repr,
+};
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 fn validate_parameters(params: &PhysicalCameraParameters) -> PyResult<()> {
@@ -9,11 +13,7 @@ fn validate_parameters(params: &PhysicalCameraParameters) -> PyResult<()> {
         ("sensitivity_iso", params.sensitivity_iso),
         ("sensor_height", params.sensor_height),
     ] {
-        if !value.is_finite() || value <= 0.0 {
-            return Err(PyValueError::new_err(
-                public_error::physical_camera_parameter(name, value),
-            ));
-        }
+        check_for::<PyPhysicalCameraParameters, _>(name, value, POSITIVE)?;
     }
     let ev100 = params.ev100();
     if !ev100.is_finite() {

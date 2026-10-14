@@ -10,7 +10,7 @@ use pybevy_bytecodevm::bytecode::Op;
 use pyo3::{
     basic::CompareOp,
     buffer::PyBuffer,
-    exceptions::{PyAttributeError, PyTypeError, PyValueError},
+    exceptions::{PyAttributeError, PyOverflowError, PyTypeError, PyValueError},
     prelude::*,
     types::{PyCapsule, PyList, PySlice, PyTuple},
 };
@@ -23,6 +23,8 @@ use super::{
     lens::ArrayLens,
 };
 use crate::{ArrayDType, ArrayStorage, BorrowProbe, DenseArrayCore, IndexOp, Layout, Scalar};
+
+const ARRAY_STRIDES_OVERFLOW: &str = "array byte strides exceed the platform index range";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PendingBorrowKind {
@@ -379,10 +381,18 @@ impl PyArray {
     }
 
     #[getter]
-    fn strides<'py>(&self, py: Python<'py>) -> Bound<'py, PyTuple> {
+    fn strides<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
         let itemsize = self.core.itemsize() as isize;
-        let bytes = self.core.strides().iter().map(|s| s * itemsize);
-        PyTuple::new(py, bytes).expect("isize tuple")
+        // Zero-element arrays allocate nothing, so their element strides can be
+        // large enough that the byte strides overflow.
+        let bytes = self
+            .core
+            .strides()
+            .iter()
+            .map(|stride| stride.checked_mul(itemsize))
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| PyOverflowError::new_err(ARRAY_STRIDES_OVERFLOW))?;
+        PyTuple::new(py, bytes)
     }
 
     fn __len__(&self) -> PyResult<usize> {
@@ -420,6 +430,21 @@ impl PyArray {
     }
 
     fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        // Like NumPy, an empty multi-dimensional array reports its shape instead of
+        // expanding it: (10**10, 0) would build ten billion empty lists.
+        if self.core.size() == 0 && self.core.shape().len() > 1 {
+            let shape = self
+                .core
+                .shape()
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Ok(format!(
+                "Array([], shape=({shape}), dtype={})",
+                self.core.dtype().name()
+            ));
+        }
         let data = convert::to_list(py, &self.core)?;
         Ok(format!(
             "Array({}, dtype={})",

@@ -1,5 +1,9 @@
 use bevy::input::gamepad::{RawGamepadAxisChangedEvent, RawGamepadButtonChangedEvent};
-use pybevy_core::{PyEntity, PyMessage, repr::float_repr};
+use pybevy_core::{
+    PyEntity, PyMessage,
+    domain::{NOT_NAN, check_for},
+    repr::float_repr,
+};
 use pybevy_macros::pymessage;
 use pyo3::prelude::*;
 
@@ -39,8 +43,13 @@ impl TryFrom<&PyRawGamepadButtonChangedEvent> for RawGamepadButtonChangedEvent {
 #[pymethods]
 impl PyRawGamepadButtonChangedEvent {
     #[new]
-    fn new(gamepad: PyEntity, button: PyGamepadButton, value: f32) -> PyClassInitializer<Self> {
-        (
+    fn new(
+        gamepad: PyEntity,
+        button: PyGamepadButton,
+        value: f32,
+    ) -> PyResult<PyClassInitializer<Self>> {
+        let value = check_for::<Self, _>("value", value, NOT_NAN)?;
+        Ok((
             Self {
                 gamepad,
                 button,
@@ -48,7 +57,7 @@ impl PyRawGamepadButtonChangedEvent {
             },
             PyMessage,
         )
-            .into()
+            .into())
     }
 
     #[getter]
@@ -77,8 +86,9 @@ impl PyRawGamepadButtonChangedEvent {
     }
 
     #[setter]
-    fn set_value(&mut self, value: f32) {
-        self.value = value;
+    fn set_value(&mut self, value: f32) -> PyResult<()> {
+        self.value = check_for::<Self, _>("value", value, NOT_NAN)?;
+        Ok(())
     }
 
     fn __repr__(&self) -> String {
@@ -125,8 +135,14 @@ impl TryFrom<&PyRawGamepadAxisChangedEvent> for RawGamepadAxisChangedEvent {
 #[pymethods]
 impl PyRawGamepadAxisChangedEvent {
     #[new]
-    fn new(gamepad: PyEntity, axis: PyGamepadAxis, value: f32) -> PyClassInitializer<Self> {
-        (
+    fn new(
+        gamepad: PyEntity,
+        axis: PyGamepadAxis,
+        value: f32,
+    ) -> PyResult<PyClassInitializer<Self>> {
+        // Bevy's axis filter reaches `unreachable!()` for NaN.
+        let value = check_for::<Self, _>("value", value, NOT_NAN)?;
+        Ok((
             Self {
                 gamepad,
                 axis,
@@ -134,7 +150,7 @@ impl PyRawGamepadAxisChangedEvent {
             },
             PyMessage,
         )
-            .into()
+            .into())
     }
 
     #[getter]
@@ -163,8 +179,9 @@ impl PyRawGamepadAxisChangedEvent {
     }
 
     #[setter]
-    fn set_value(&mut self, value: f32) {
-        self.value = value;
+    fn set_value(&mut self, value: f32) -> PyResult<()> {
+        self.value = check_for::<Self, _>("value", value, NOT_NAN)?;
+        Ok(())
     }
 
     fn __repr__(&self) -> String {

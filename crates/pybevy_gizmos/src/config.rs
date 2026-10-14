@@ -10,6 +10,7 @@ use bevy::{
 use pybevy_camera::render_layers::PyRenderLayers;
 use pybevy_core::{
     ComponentStorage, FieldStorage, FromBorrowedStorage, Omittable, PyResource, ResourceStorage,
+    domain::{FieldDomain, check_for},
     inventory,
     public_error::{
         DEFAULT_GIZMO_CONFIG_MISSING, UNSUPPORTED_GIZMO_LINE_STYLE, missing_gizmo_config_group,
@@ -64,6 +65,19 @@ fn config_group_registration(
     let name = group.name()?;
     let name = name.to_string_lossy();
     Err(PyKeyError::new_err(unregistered_gizmo_config_group(&name)))
+}
+
+/// Bevy draws `3 * n` vertices per Round joint in `u32`; this is the gizmo curve cap.
+const ROUND_JOINT_DOMAIN: &[FieldDomain] = &[FieldDomain::RangeInclusive {
+    lo: 0.0,
+    hi: (1u32 << 20) as f64,
+}];
+
+fn check_joints(joints: PyGizmoLineJoint) -> PyResult<GizmoLineJoint> {
+    if let PyGizmoLineJoint::Round { value } = joints {
+        check_for::<PyGizmoLineConfig, _>("joints", value, ROUND_JOINT_DOMAIN)?;
+    }
+    Ok(joints.into())
 }
 
 #[pyenum(GizmoLineJoint, empty_tuple, unit_parens)]
@@ -217,13 +231,13 @@ impl PyGizmoLineConfig {
         perspective: bool,
         style: PyGizmoLineStyle,
         joints: PyGizmoLineJoint,
-    ) -> Self {
-        Self::from_owned(GizmoLineConfig {
+    ) -> PyResult<Self> {
+        Ok(Self::from_owned(GizmoLineConfig {
             width,
             perspective,
             style: style.into(),
-            joints: joints.into(),
-        })
+            joints: check_joints(joints)?,
+        }))
     }
 
     #[getter]
@@ -266,7 +280,7 @@ impl PyGizmoLineConfig {
 
     #[setter]
     pub fn set_joints(&mut self, joints: PyGizmoLineJoint) -> PyResult<()> {
-        self.as_mut()?.joints = joints.into();
+        self.as_mut()?.joints = check_joints(joints)?;
         Ok(())
     }
 }

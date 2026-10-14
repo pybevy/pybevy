@@ -1,9 +1,11 @@
 use bevy::render::view::{ColorGradingGlobal, ColorGradingSection};
-use pybevy_core::{FieldStorage, FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
-use pybevy_macros::pyfield;
+use pybevy_core::{FieldStorage, FromBorrowedStorage, ValueStorage};
+use pybevy_macros::{pyfield, pyvalue};
 use pybevy_math::range::PyRange;
 use pyo3::prelude::*;
 
+// The tonemapping shader raises to `1.0 / gamma`.
+#[pyvalue(domains = [gamma => [positive]])]
 #[pyclass(name = "ColorGradingSection", module = "pybevy.render", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyColorGradingSection {
@@ -12,33 +14,7 @@ pub struct PyColorGradingSection {
 
 impl Default for PyColorGradingSection {
     fn default() -> Self {
-        Self {
-            storage: ValueStorage::owned(ColorGradingSection::default()),
-        }
-    }
-}
-
-impl PyColorGradingSection {
-    pub(crate) fn from_owned(section: ColorGradingSection) -> Self {
-        Self {
-            storage: ValueStorage::owned(section),
-        }
-    }
-
-    #[inline(always)]
-    fn as_ref(&self) -> PyResult<StorageRef<'_, ColorGradingSection>> {
-        Ok(self.storage.as_ref()?)
-    }
-
-    #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<StorageMut<'_, ColorGradingSection>> {
-        Ok(self.storage.as_mut()?)
-    }
-}
-
-impl FromBorrowedStorage<ValueStorage<ColorGradingSection>> for PyColorGradingSection {
-    fn from_borrowed(storage: ValueStorage<ColorGradingSection>) -> Self {
-        Self { storage }
+        Self::from_owned(ColorGradingSection::default())
     }
 }
 
@@ -46,14 +22,14 @@ impl FromBorrowedStorage<ValueStorage<ColorGradingSection>> for PyColorGradingSe
 impl PyColorGradingSection {
     #[new]
     #[pyo3(signature = (*, saturation = 1.0, contrast = 1.0, gamma = 1.0, gain = 1.0, lift = 0.0))]
-    pub fn new(saturation: f32, contrast: f32, gamma: f32, gain: f32, lift: f32) -> Self {
-        Self::from_owned(ColorGradingSection {
+    pub fn new(saturation: f32, contrast: f32, gamma: f32, gain: f32, lift: f32) -> PyResult<Self> {
+        Ok(Self::from_owned(ColorGradingSection {
             saturation,
             contrast,
-            gamma,
+            gamma: Self::check_gamma(gamma)?,
             gain,
             lift,
-        })
+        }))
     }
 
     #[getter]
@@ -85,7 +61,7 @@ impl PyColorGradingSection {
 
     #[setter]
     pub fn set_gamma(&mut self, value: f32) -> PyResult<()> {
-        self.as_mut()?.gamma = value;
+        self.as_mut()?.gamma = Self::check_gamma(value)?;
         Ok(())
     }
 
@@ -126,7 +102,7 @@ impl TryFrom<PyColorGradingSection> for ColorGradingSection {
     type Error = PyErr;
 
     fn try_from(section: PyColorGradingSection) -> PyResult<Self> {
-        Ok(section.storage.get()?)
+        section.to_bevy()
     }
 }
 
@@ -134,7 +110,7 @@ impl TryFrom<&PyColorGradingSection> for ColorGradingSection {
     type Error = PyErr;
 
     fn try_from(section: &PyColorGradingSection) -> PyResult<Self> {
-        Ok(section.storage.get()?)
+        section.to_bevy()
     }
 }
 

@@ -2,7 +2,7 @@ use bevy::math::{Dir2, Isometry2d, Rot2, Vec2};
 use pybevy_core::{FromBorrowedStorage, ValueStorage, repr::ReprLiteral};
 use pyo3::prelude::*;
 
-use crate::{dir2::PyDir2, rot2::PyRot2, vec2::PyVec2};
+use crate::{check_direction_length, dir2::PyDir2, rot2::PyRot2, vec2::PyVec2};
 
 #[pyclass(name = "Isometry2d", module = "pybevy.math", eq, from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
@@ -129,8 +129,9 @@ impl PyIsometry2d {
             let transformed: Vec2 = iso * Vec2::try_from(other_vec)?;
             Ok(Py::new(py, PyVec2::from_vec2(transformed))?.into_any())
         } else if let Ok(other_dir) = other.extract::<PyDir2>() {
-            let rotated: Dir2 = iso * other_dir.into_dir2()?;
-            Ok(Py::new(py, PyDir2::from_dir2(rotated))?.into_any())
+            let rotated = iso.rotation * Vec2::from(other_dir.into_dir2()?);
+            check_direction_length("Isometry2d * Dir2", rotated.length_squared())?;
+            Ok(Py::new(py, PyDir2::from_dir2(Dir2::new_unchecked(rotated)))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }

@@ -36,8 +36,16 @@ pub mod vec3a;
 pub mod vec4;
 pub mod winding_order;
 
-use pybevy_core::public_error::{matrix_index_out_of_range, matrix_not_invertible};
+use bevy::math::Vec3;
+use pybevy_core::{
+    domain::{FINITE, check_for},
+    public_error::{
+        direction_not_unit_length, matrix_index_out_of_range, matrix_not_invertible,
+        quat_axis_not_normalized,
+    },
+};
 use pyo3::{
+    PyClass,
     exceptions::{PyIndexError, PyValueError},
     prelude::*,
 };
@@ -47,6 +55,32 @@ pub(crate) fn require_invertible(type_name: &str, inverse_is_finite: bool) -> Py
         return Err(PyValueError::new_err(matrix_not_invertible(type_name)));
     }
     Ok(())
+}
+
+/// Reject a direction whose squared length is as far from 1 as makes Bevy's
+/// `Dir` constructors panic in debug builds.
+pub(crate) fn check_direction_length(operation: &str, length_squared: f32) -> PyResult<()> {
+    let error = (length_squared - 1.0).abs();
+    if error > 2e-2 || error.is_nan() {
+        return Err(PyValueError::new_err(direction_not_unit_length(
+            operation,
+            length_squared.sqrt(),
+        )));
+    }
+    Ok(())
+}
+
+/// Check `from_axis_angle` arguments of `O`: glam requires a normalized axis
+/// but only asserts it under `glam_assert`.
+pub(crate) fn checked_axis_angle<O: PyClass>(axis: Vec3, angle: f32) -> PyResult<(Vec3, f32)> {
+    let angle = check_for::<O, _>("angle", angle, FINITE)?;
+    let axis = check_for::<O, _>("axis", axis, FINITE)?;
+    if !axis.is_normalized() {
+        return Err(PyValueError::new_err(quat_axis_not_normalized(
+            axis.length(),
+        )));
+    }
+    Ok((axis, angle))
 }
 
 /// Resolve a Python-style column/row index against a square matrix.

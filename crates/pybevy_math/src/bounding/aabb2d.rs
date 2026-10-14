@@ -6,7 +6,8 @@ use pybevy_core::{
     FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
     domain::{NON_NEGATIVE, check_for},
     public_error::{
-        EMPTY_POINT_CLOUD, bounding_operation, bounding_shrink, intersects_volume_type,
+        EMPTY_POINT_CLOUD, aabb_min_exceeds_max, bounding_operation, bounding_shrink,
+        intersects_volume_type,
     },
     repr::ReprLiteral,
 };
@@ -78,6 +79,13 @@ impl PyAabb2d {
     }
 }
 
+fn check_min_max(min: Vec2, max: Vec2) -> PyResult<()> {
+    if !max.cmpge(min).all() {
+        return Err(PyValueError::new_err(aabb_min_exceeds_max("Aabb2d")));
+    }
+    Ok(())
+}
+
 #[pymethods]
 impl PyAabb2d {
     pub fn __copy__(&self) -> PyResult<Self> {
@@ -107,7 +115,9 @@ impl PyAabb2d {
 
     #[setter]
     pub fn set_min(&mut self, value: PyVec2) -> PyResult<()> {
-        self.as_mut()?.min = value.try_into()?;
+        let min: Vec2 = value.try_into()?;
+        check_min_max(min, self.as_ref()?.max)?;
+        self.as_mut()?.min = min;
         Ok(())
     }
 
@@ -118,7 +128,9 @@ impl PyAabb2d {
 
     #[setter]
     pub fn set_max(&mut self, value: PyVec2) -> PyResult<()> {
-        self.as_mut()?.max = value.try_into()?;
+        let max: Vec2 = value.try_into()?;
+        check_min_max(self.as_ref()?.min, max)?;
+        self.as_mut()?.max = max;
         Ok(())
     }
 

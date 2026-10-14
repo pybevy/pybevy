@@ -9,12 +9,13 @@ use bevy::{
 };
 use pybevy_core::{
     ComponentStorage, FieldStorage, FromBorrowedStorage,
+    domain::{FINITE, check_for},
     repr::{ReprLiteral, float_repr, object_repr},
 };
 use pybevy_macros::{pyenum, pyfield};
 use pybevy_math::{mat4::PyMat4, rect::PyRect, vec2::PyVec2, vec3a::PyVec3A, vec4::PyVec4};
 use pybevy_transform::global_transform::PyGlobalTransform;
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pyo3::{PyClass, exceptions::PyValueError, prelude::*};
 
 use crate::{frustum::PyFrustum, scaling_mode::PyScalingMode, sub_camera_view::PySubCameraView};
 
@@ -24,7 +25,11 @@ const DEFAULT_ORTHOGRAPHIC_SCALE: f32 = 1.0;
 const DEFAULT_ORTHOGRAPHIC_VIEWPORT_ORIGIN: Vec2 = Vec2::new(0.5, 0.5);
 const DEFAULT_ORTHOGRAPHIC_AREA: Rect = Rect::new(-1.0, -1.0, 1.0, 1.0);
 
-fn check_projection_size(width: f32, height: f32) -> PyResult<()> {
+/// Check the `update(width, height)` arguments of projection `O`: both finite,
+/// neither zero, and a finite ratio.
+fn check_projection_size<O: PyClass>(width: f32, height: f32) -> PyResult<()> {
+    check_for::<O, _>("width", width, FINITE)?;
+    check_for::<O, _>("height", height, FINITE)?;
     let ratio = AspectRatio::try_new(width, height)
         .map_err(|error| PyValueError::new_err(error.to_string()))?;
     if !ratio.ratio().is_finite() {
@@ -35,7 +40,8 @@ fn check_projection_size(width: f32, height: f32) -> PyResult<()> {
     Ok(())
 }
 
-#[pyfield]
+// Bevy's reverse-Z perspective matrix needs a near plane above zero.
+#[pyfield(domains = [near => [positive]])]
 #[pyclass(
     name = "PerspectiveProjection",
     module = "pybevy.camera",
@@ -50,14 +56,14 @@ pub struct PyPerspectiveProjection {
 impl PyPerspectiveProjection {
     #[new]
     #[pyo3(signature = (*, fov = FRAC_PI_4, aspect_ratio = 1.0, near = 0.1, far = 1000.0))]
-    pub fn new(fov: f32, aspect_ratio: f32, near: f32, far: f32) -> Self {
-        Self::from_owned(PerspectiveProjection {
+    pub fn new(fov: f32, aspect_ratio: f32, near: f32, far: f32) -> PyResult<Self> {
+        Ok(Self::from_owned(PerspectiveProjection {
             fov,
             aspect_ratio,
-            near,
+            near: Self::check_near(near)?,
             far,
             ..Default::default()
-        })
+        }))
     }
 
     pub fn __repr__(&self) -> PyResult<String> {
@@ -100,7 +106,7 @@ impl PyPerspectiveProjection {
 
     #[setter]
     pub fn set_near(&mut self, near: f32) -> PyResult<()> {
-        self.as_mut()?.near = near;
+        self.as_mut()?.near = Self::check_near(near)?;
         Ok(())
     }
 
@@ -133,9 +139,8 @@ impl PyPerspectiveProjection {
     }
 
     pub fn update(&mut self, width: f32, height: f32) -> PyResult<()> {
-        let mut projection = self.as_mut()?;
-        check_projection_size(width, height)?;
-        projection.update(width, height);
+        check_projection_size::<Self>(width, height)?;
+        self.as_mut()?.update(width, height);
         Ok(())
     }
 
@@ -312,9 +317,8 @@ impl PyOrthographicProjection {
     }
 
     pub fn update(&mut self, width: f32, height: f32) -> PyResult<()> {
-        let mut projection = self.as_mut()?;
-        check_projection_size(width, height)?;
-        projection.update(width, height);
+        check_projection_size::<Self>(width, height)?;
+        self.as_mut()?.update(width, height);
         Ok(())
     }
 
