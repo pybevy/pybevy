@@ -76,6 +76,10 @@ fn resolved_field_annotation<'py>(
 }
 
 fn annotation_name(annotation: &Bound<'_, PyAny>) -> String {
+    // `float | None` and `list[int]` name themselves only through str().
+    if annotation.hasattr("__args__").unwrap_or(false) {
+        return annotation.to_string();
+    }
     annotation
         .getattr("__name__")
         .and_then(|name| name.extract::<String>())
@@ -559,6 +563,12 @@ pub(crate) fn json_to_py(py: Python<'_>, value: &serde_json::Value) -> Result<Py
                     .to_owned()
                     .into_any()
                     .unbind())
+            } else if let Some(u) = n.as_u64() {
+                Ok(u.into_pyobject(py)
+                    .map_err(|e| e.to_string())?
+                    .to_owned()
+                    .into_any()
+                    .unbind())
             } else if let Some(f) = n.as_f64() {
                 Ok(f.into_pyobject(py)
                     .map_err(|e| e.to_string())?
@@ -721,19 +731,9 @@ holder = Holder()
 
             let holder = globals.get_item("holder").unwrap().unwrap();
 
-            // Array with 3 elements should NOT trigger Color conversion (needs exactly 4).
-            // Falls through to math array check (no match for "Color" type), then to
-            // generic json_to_py which returns a Python list.
             let field_value = serde_json::json!([1.0, 0.0, 0.0]);
-            let result = convert_field_value(py, &holder, "color", &field_value);
-            assert!(result.is_ok());
-            let py_obj = result.unwrap();
-            let bound = py_obj.bind(py);
-            let type_name = bound.get_type().name().unwrap().to_string();
-            assert_eq!(
-                type_name, "list",
-                "Wrong-length array should fall through to list"
-            );
+            let error = convert_field_value(py, &holder, "color", &field_value).unwrap_err();
+            assert_eq!(error, "Color expects [r, g, b, a], got 3 elements");
         });
     }
 

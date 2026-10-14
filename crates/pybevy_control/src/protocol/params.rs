@@ -109,7 +109,8 @@ pub struct SetResourceParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SeekTimeParams {
-    /// Target elapsed time in seconds
+    /// Target elapsed time in seconds, at most 1e12
+    #[schemars(range(min = 0.0, max = 1e12))]
     pub seconds: f64,
     /// Pause after seeking (default true). `false` does not resume a paused scene.
     #[serde(default = "default_true")]

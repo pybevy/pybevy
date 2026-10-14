@@ -374,7 +374,8 @@ impl IntegerColumn {
         }
     }
 
-    fn range_name(self) -> &'static str {
+    /// Human name of the type's range, as messages spell it.
+    pub fn range_name(self) -> &'static str {
         match self {
             Self::I32 => "32-bit signed integer",
             Self::I64 => "64-bit signed integer",

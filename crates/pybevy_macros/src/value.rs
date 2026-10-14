@@ -2,7 +2,10 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{ItemStruct, Type, parse_macro_input};
 
-use crate::util::find_storage_field_type;
+use crate::{
+    domain::{StorageTypeArgs, domain_impl_tokens, owner_name},
+    util::find_storage_field_type,
+};
 
 /// Generates the shared storage boilerplate for `ValueStorage`-backed wrappers.
 ///
@@ -45,17 +48,25 @@ pub fn pyvalue(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemStruct);
     let py_type = &input.ident;
 
-    let bevy_type: Type = if attr.is_empty() {
-        match find_storage_field_type(&input, "ValueStorage") {
+    let args = parse_macro_input!(attr as StorageTypeArgs);
+    let bevy_type: Type = match args.bevy_type {
+        Some(ty) => ty,
+        None => match find_storage_field_type(&input, "ValueStorage") {
             Ok(ty) => ty.clone(),
             Err(e) => return e.to_compile_error().into(),
-        }
-    } else {
-        parse_macro_input!(attr as Type)
+        },
     };
+    let domain_tokens = domain_impl_tokens(
+        &bevy_type,
+        py_type,
+        &owner_name(py_type, None),
+        &args.domains,
+    );
 
     let expanded = quote! {
         #input
+
+        #domain_tokens
 
         impl FromBorrowedStorage<ValueStorage<#bevy_type>> for #py_type {
             fn from_borrowed(storage: ValueStorage<#bevy_type>) -> Self {

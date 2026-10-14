@@ -1,9 +1,7 @@
 use std::time::Duration;
 
-use pyo3::{
-    exceptions::{PyTypeError, PyValueError},
-    prelude::*,
-};
+use pybevy_storage::domain::DurationInput;
+use pyo3::{exceptions::PyValueError, prelude::*};
 
 use crate::public_error::{
     DURATION_NEGATIVE, DURATION_NON_FINITE, DURATION_OVERFLOW, DURATION_ZERO, FREQUENCY_NON_FINITE,
@@ -43,7 +41,7 @@ pub fn try_duration_from_secs_f64(seconds: f64) -> Result<Duration, DurationFrom
 
 /// PyO3 adapter for the shared floating-point duration validation.
 pub fn duration_from_secs_f64(seconds: f64) -> PyResult<Duration> {
-    try_duration_from_secs_f64(seconds).map_err(|error| PyTypeError::new_err(error.message()))
+    try_duration_from_secs_f64(seconds).map_err(|error| PyValueError::new_err(error.message()))
 }
 
 pub fn try_positive_duration_from_secs_f64(
@@ -58,7 +56,7 @@ pub fn try_positive_duration_from_secs_f64(
 
 pub fn positive_duration_from_secs_f64(seconds: f64) -> PyResult<Duration> {
     try_positive_duration_from_secs_f64(seconds)
-        .map_err(|error| PyTypeError::new_err(error.message()))
+        .map_err(|error| PyValueError::new_err(error.message()))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -96,7 +94,7 @@ pub fn try_duration_from_hz(hz: f64) -> Result<Duration, DurationFromFrequencyEr
 }
 
 pub fn duration_from_hz(hz: f64) -> PyResult<Duration> {
-    try_duration_from_hz(hz).map_err(|error| PyTypeError::new_err(error.message()))
+    try_duration_from_hz(hz).map_err(|error| PyValueError::new_err(error.message()))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -148,26 +146,17 @@ impl FromPyObject<'_, '_> for IntoDuration {
 
 /// Convert a Python `timedelta`, `float` (seconds), or `int` (seconds) to a `Duration`.
 pub fn duration_from_py(value: &Bound<'_, PyAny>) -> PyResult<Duration> {
-    if let Ok(duration) = value.extract::<Duration>() {
-        return Ok(duration);
+    match value.extract::<DurationInput>()? {
+        DurationInput::Exact(duration) => Ok(duration),
+        DurationInput::Seconds(seconds) => duration_from_secs_f64(seconds),
     }
-
-    if let Ok(seconds) = value.extract::<u64>() {
-        return Ok(Duration::from_secs(seconds));
-    }
-
-    if let Ok(seconds) = value.extract::<f64>() {
-        return duration_from_secs_f64(seconds);
-    }
-
-    Err(PyTypeError::new_err(
-        "Duration must be a Duration object, float (seconds), or int (seconds)",
-    ))
 }
 
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
+    use pyo3::exceptions::PyTypeError;
+
     use super::*;
 
     #[test]
@@ -344,60 +333,59 @@ mod tests {
     }
 
     #[test]
-    fn duration_adapters_map_errors_to_their_classes_and_shared_messages() {
+    fn duration_adapters_raise_value_errors_with_shared_messages() {
         Python::attach(|py| {
             let max_delta = Duration::from_millis(250);
 
             expect_adapter_error(
                 &duration_from_secs_f64(-1.0).unwrap_err(),
                 py,
-                true,
                 false,
+                true,
                 "Duration cannot be negative",
             );
             expect_adapter_error(
                 &duration_from_secs_f64(f64::NAN).unwrap_err(),
                 py,
-                true,
                 false,
+                true,
                 "Duration must be finite",
             );
             expect_adapter_error(
                 &duration_from_secs_f64(f64::MAX).unwrap_err(),
                 py,
-                true,
                 false,
+                true,
                 "Duration is too large",
             );
             expect_adapter_error(
                 &positive_duration_from_secs_f64(0.0).unwrap_err(),
                 py,
-                true,
                 false,
+                true,
                 "Duration must be greater than zero",
             );
             expect_adapter_error(
                 &duration_from_hz(0.0).unwrap_err(),
                 py,
-                true,
                 false,
+                true,
                 "Frequency must be greater than zero",
             );
             expect_adapter_error(
                 &duration_from_hz(f64::NAN).unwrap_err(),
                 py,
-                true,
                 false,
+                true,
                 "Frequency must be finite",
             );
             expect_adapter_error(
                 &duration_from_hz(f64::MAX).unwrap_err(),
                 py,
-                true,
                 false,
+                true,
                 "Frequency produces a timestep outside the supported duration range",
             );
-            // relative_speed alone reports ValueError, not TypeError.
             expect_adapter_error(
                 &relative_speed(-1.0, max_delta).unwrap_err(),
                 py,
@@ -439,7 +427,7 @@ mod tests {
     }
 
     #[test]
-    fn duration_from_py_accepts_timedelta_and_pins_the_bc99_intended_diagnostic() {
+    fn duration_from_py_accepts_timedelta_and_classifies_rejections() {
         Python::attach(|py| {
             let timedelta = py.import("datetime").unwrap().getattr("timedelta").unwrap();
 
@@ -461,15 +449,12 @@ mod tests {
                 "Duration must be a Duration object, float (seconds), or int (seconds)"
             );
 
-            // Preserve the extractor's value diagnostic rather than a kind error.
+            // A negative timedelta is a bad value, not an unsupported kind.
             let negative = timedelta.call1((-1,)).unwrap();
-            let extracted: PyResult<Duration> = negative.extract();
-            let (type_error, value_error, message) = adapter_error(&extracted.unwrap_err(), py);
+            let (type_error, value_error, message) =
+                adapter_error(&duration_from_py(&negative).unwrap_err(), py);
             assert!(!type_error && value_error);
-            assert_eq!(
-                message,
-                "It is not possible to convert a negative timedelta to a Rust Duration"
-            );
+            assert_eq!(message, "Duration cannot be negative");
         });
     }
 }

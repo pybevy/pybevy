@@ -27,7 +27,7 @@ use serde_json::{Map, Value};
 
 use super::{
     json_float::{float_to_json, nonfinite_float_from_json, require_finite_float},
-    math_shape::{FLOAT_VECTORS, math_shape},
+    math_shape::{CONSTRUCTIBLE, FLOAT_VECTORS, math_shape},
     value::{EnumPayload, enum_to_json, unit_quat_from_json},
 };
 
@@ -1266,6 +1266,19 @@ fn convert_object(
     registry: &TypeRegistry,
 ) -> Result<Box<dyn PartialReflect>, String> {
     if let Some(TypeInfo::Struct(info)) = target_type_info {
+        if let Some(shape) = math_shape(CONSTRUCTIBLE, info.type_path_table().short_path())
+            && let Some(missing) = shape
+                .coordinates
+                .iter()
+                .find(|name| !obj.contains_key(**name))
+        {
+            let message = format!("{} object is missing coordinate '{missing}'", shape.name);
+            return Err(if shape.name == "Vec3" {
+                public_error::mcp_vec3_input(message)
+            } else {
+                message
+            });
+        }
         let mut dynamic = DynamicStruct::default();
         dynamic.set_represented_type(target_type_info);
 

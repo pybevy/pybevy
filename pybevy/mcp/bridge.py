@@ -1107,7 +1107,7 @@ class McpBridge:
         if limit < 1:
             return self._error(req_id, -32602, "'limit' must be >= 1")
         if limit > max_limit:
-            limit = max_limit
+            return self._error(req_id, -32602, f"'limit' must be at most {max_limit}")
 
         raw = self._api_index.search(query, limit)
         try:
@@ -1183,7 +1183,13 @@ class McpBridge:
             lines = int(arguments.get("lines", 50))  # type: ignore[call-overload]
         except (TypeError, ValueError):
             return self._error(req_id, -32602, "get_logs 'lines' must be an integer")
-        line_limit = max(1, min(lines, _MAX_CAPTURED_OUTPUT_LINES))
+        if not 1 <= lines <= _MAX_CAPTURED_OUTPUT_LINES:
+            return self._error(
+                req_id,
+                -32602,
+                f"get_logs 'lines' must be between 1 and {_MAX_CAPTURED_OUTPUT_LINES}",
+            )
+        line_limit = lines
         errors_only = bool(arguments.get("errors_only", False))
         include_warnings = bool(arguments.get("include_warnings", False))
 

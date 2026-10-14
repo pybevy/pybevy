@@ -37,6 +37,7 @@ use crate::{
         screenshot::{
             PendingScreenshotResponders, process_pending_screenshots, screenshot_captured_observer,
         },
+        shader_errors::{ShaderErrors, publish_shader_errors},
         timeline::{PendingTimelines, TimelineCaptures, process_pending_timelines},
         turnaround::{PendingTurnarounds, TurnaroundCaptures, process_pending_turnarounds},
     },
@@ -225,17 +226,23 @@ pub fn build_control_plugin(
     start_server(config.host, config.port, server_state);
 }
 
-/// Shares render-frame completion between the render world and the main world.
+/// Shares render-frame completion and current shader compile errors between
+/// the render world and the main world.
 pub fn install_render_frame_readiness(app: &mut App) {
     let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
         return;
     };
     let readiness = RenderFrameReadiness::default();
-    render_app.insert_resource(readiness.clone()).add_systems(
-        Render,
-        update_render_frame_readiness.after(RenderSystems::Render),
-    );
+    let shader_errors = ShaderErrors::default();
+    render_app
+        .insert_resource(readiness.clone())
+        .insert_resource(shader_errors.clone())
+        .add_systems(
+            Render,
+            (update_render_frame_readiness, publish_shader_errors).after(RenderSystems::Render),
+        );
     app.insert_resource(readiness);
+    app.insert_resource(shader_errors);
 }
 
 /// Adds render-frame readiness once the render sub-app exists.

@@ -78,6 +78,10 @@ pub fn get_time_status(world: &mut World) -> Result<serde_json::Value, ControlEr
     }))
 }
 
+/// Past this, one frame's delta is lost in `elapsed_secs_f64`, so the clock
+/// and `at`-based schedules would stop advancing.
+const MAX_SEEK_SECONDS: f64 = 1e12;
+
 pub fn seek_time(
     world: &mut World,
     params: SeekTimeParams,
@@ -85,6 +89,11 @@ pub fn seek_time(
     let SeekTimeParams { seconds, pause } = params;
     if seconds < 0.0 {
         return Err(ControlError::invalid_params("seconds must be >= 0"));
+    }
+    if seconds > MAX_SEEK_SECONDS {
+        return Err(ControlError::invalid_params(format!(
+            "seconds must be at most {MAX_SEEK_SECONDS:e}; beyond that a frame is below the clock's f64 resolution"
+        )));
     }
     // `< 0.0` is false for NaN, and Duration tops out near 1.8e19 seconds.
     let target = try_duration_from_secs_f64(seconds)

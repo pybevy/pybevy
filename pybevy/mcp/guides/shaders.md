@@ -1463,7 +1463,8 @@ the same uniform at binding 1, but `bevy_pbr::prepass_bindings` declares only
 prepass stage compiles, then fails pipeline creation because binding 11 is not
 in that layout. The whole frame, not just that mesh, can then
 render black; `get_last_error` names the failing pipeline under
-`wgpu_validation`.
+`wgpu_validation`. A shader that does not compile, such as a WGSL syntax error,
+is listed under `get_last_error.shader_errors` instead.
 
 Alternatively, add a `time: float` material field and set it from Python each
 frame. Material bindings exist in every pass, Python controls the value

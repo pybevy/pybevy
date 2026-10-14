@@ -1,29 +1,19 @@
 use bevy::ui::UiScale;
-use pybevy_core::{
-    PyResource, ResourceStorage, public_error, repr::float_repr, resource_initializer,
-};
+use pybevy_core::{PyResource, ResourceStorage, repr::float_repr, resource_initializer};
 use pybevy_macros::pyresource;
-use pyo3::{exceptions::PyValueError, prelude::*};
-
-fn validate_ui_scale(scale: f32) -> PyResult<f32> {
-    if !scale.is_finite() {
-        return Err(PyValueError::new_err(public_error::ui_scale_not_finite(
-            scale,
-        )));
-    }
-    if scale <= 0.0 {
-        return Err(PyValueError::new_err(public_error::ui_scale_not_positive(
-            scale,
-        )));
-    }
-    Ok(scale)
-}
+use pyo3::prelude::*;
 
 fn clone_ui_scale(value: &UiScale) -> PyResult<UiScale> {
     Ok(UiScale(value.0))
 }
 
-#[pyresource(UiScale, no_clone, bridge, clone_with = clone_ui_scale)]
+#[pyresource(
+    UiScale,
+    no_clone,
+    bridge,
+    clone_with = clone_ui_scale,
+    domains = [0 as scale => [positive]]
+)]
 #[pyclass(name = "UiScale", module = "pybevy.ui", extends = PyResource)]
 #[derive(Debug)]
 pub struct PyUiScale {
@@ -36,7 +26,7 @@ impl PyUiScale {
     #[pyo3(signature = (scale = 1.0))]
     pub fn new(scale: f32) -> PyResult<PyClassInitializer<Self>> {
         Ok(resource_initializer(Self {
-            storage: ResourceStorage::owned(UiScale(validate_ui_scale(scale)?)),
+            storage: ResourceStorage::owned(UiScale(Self::check_scale(scale)?)),
         }))
     }
 
@@ -47,7 +37,7 @@ impl PyUiScale {
 
     #[setter]
     pub fn set_scale(&mut self, value: f32) -> PyResult<()> {
-        let value = validate_ui_scale(value)?;
+        let value = Self::check_scale(value)?;
         self.as_mut()?.0 = value;
         Ok(())
     }

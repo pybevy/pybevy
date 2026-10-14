@@ -9,13 +9,18 @@ use pybevy_core::{
     resource_initializer,
 };
 use pybevy_macros::pyresource;
-use pyo3::{PyTypeInfo, exceptions::PyTypeError, prelude::*, types::PyType};
+use pyo3::{
+    PyTypeInfo,
+    exceptions::{PyTypeError, PyValueError},
+    prelude::*,
+    types::PyType,
+};
 
 use crate::time_context::{PyFixed, PyReal, PyVirtual};
 
 fn require_positive_duration(duration: Duration) -> PyResult<Duration> {
     if duration.is_zero() {
-        return Err(PyTypeError::new_err(DURATION_ZERO));
+        return Err(PyValueError::new_err(DURATION_ZERO));
     }
     Ok(duration)
 }

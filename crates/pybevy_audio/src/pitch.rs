@@ -1,23 +1,12 @@
-use std::time::Duration;
-
 use bevy::audio::Pitch;
-use pybevy_core::{
-    AssetStorage, repr::float_repr, try_duration_from_secs_f64, try_finite_positive_frequency,
-};
+use pybevy_core::{AssetStorage, domain::DurationInput, repr::float_repr};
 use pybevy_macros::pyasset;
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pyo3::prelude::*;
 
-fn validate_frequency(frequency: f32) -> PyResult<()> {
-    try_finite_positive_frequency(frequency as f64)
-        .map_err(|error| PyValueError::new_err(error.message()))?;
-    Ok(())
-}
-
-fn validate_duration(duration: f64) -> PyResult<Duration> {
-    try_duration_from_secs_f64(duration).map_err(|error| PyValueError::new_err(error.message()))
-}
-
-#[pyasset(Pitch, bridge)]
+#[pyasset(Pitch, bridge, domains = [
+    frequency => [positive],
+    duration => [finite, non_negative],
+])]
 #[pyclass(name = "Pitch", module = "pybevy.audio", extends = pybevy_core::PyAsset, skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyPitch {
@@ -29,8 +18,9 @@ impl PyPitch {
     #[new]
     #[pyo3(signature = (frequency, duration))]
     pub fn new(frequency: f32, duration: f64) -> PyResult<PyClassInitializer<Self>> {
-        validate_frequency(frequency)?;
-        let pitch = Pitch::new(frequency, validate_duration(duration)?);
+        let frequency = Self::check_frequency(frequency)?;
+        let duration = Self::check_duration(DurationInput::Seconds(duration))?.stored();
+        let pitch = Pitch::new(frequency, duration);
         Ok(Self::from_owned(pitch).into())
     }
 
@@ -41,7 +31,7 @@ impl PyPitch {
 
     #[setter]
     pub fn set_frequency(&mut self, frequency: f32) -> PyResult<()> {
-        validate_frequency(frequency)?;
+        let frequency = Self::check_frequency(frequency)?;
         self.as_mut()?.frequency = frequency;
         Ok(())
     }
@@ -53,7 +43,7 @@ impl PyPitch {
 
     #[setter]
     pub fn set_duration(&mut self, duration: f64) -> PyResult<()> {
-        let duration = validate_duration(duration)?;
+        let duration = Self::check_duration(DurationInput::Seconds(duration))?.stored();
         self.as_mut()?.duration = duration;
         Ok(())
     }

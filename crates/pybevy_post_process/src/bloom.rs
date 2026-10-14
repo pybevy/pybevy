@@ -1,5 +1,5 @@
 use bevy::post_process::bloom::{Bloom, BloomPrefilter};
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, PyComponent, domain::IntegerInput};
 use pybevy_macros::pycomponent;
 use pybevy_math::vec2::{IntoVec2, PyVec2};
 use pyo3::prelude::*;
@@ -35,7 +35,7 @@ impl PyBloom {
         high_pass_frequency = 1.0,
         prefilter = PyBloomPrefilter::from(BloomPrefilter::default()),
         composite_mode = PyBloomCompositeMode::EnergyConserving,
-        max_mip_dimension = 512,
+        max_mip_dimension = IntegerInput::new(512),
         scale = IntoVec2(Bloom::default().scale)
     ))]
     pub fn new(
@@ -45,10 +45,10 @@ impl PyBloom {
         high_pass_frequency: f32,
         prefilter: PyBloomPrefilter,
         composite_mode: PyBloomCompositeMode,
-        max_mip_dimension: u32,
+        max_mip_dimension: IntegerInput<u32>,
         scale: IntoVec2,
     ) -> PyResult<PyClassInitializer<Self>> {
-        Self::check_max_mip_dimension(max_mip_dimension)?;
+        let max_mip_dimension = Self::check_max_mip_dimension(max_mip_dimension)?.stored();
 
         let bloom = Bloom {
             intensity,
@@ -160,8 +160,8 @@ impl PyBloom {
     }
 
     #[setter]
-    pub fn set_max_mip_dimension(&mut self, dimension: u32) -> PyResult<()> {
-        Self::check_max_mip_dimension(dimension)?;
+    pub fn set_max_mip_dimension(&mut self, dimension: IntegerInput<u32>) -> PyResult<()> {
+        let dimension = Self::check_max_mip_dimension(dimension)?.stored();
         self.as_mut()?.max_mip_dimension = dimension;
         Ok(())
     }

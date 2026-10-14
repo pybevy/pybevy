@@ -8,13 +8,15 @@ use bevy::{
     math::Vec3A,
     prelude::*,
     render::view::window::screenshot::Screenshot,
-    window::PrimaryWindow,
 };
 use image::RgbImage;
 use tokio::sync::oneshot;
 
 use super::{
-    camera::{DebugCameraCleanup, cleanup_debug_camera_world, setup_debug_camera_with_up},
+    camera::{
+        DebugCameraCleanup, cleanup_debug_camera_world, has_primary_window,
+        setup_debug_camera_with_up, validate_capture_camera,
+    },
     compose::{TURNAROUND_SHEET, compose_contact_sheet},
     headless::{headless_frame_sequence, read_headless_frame},
     hold::CaptureHold,
@@ -293,7 +295,13 @@ pub fn process_pending_turnarounds(world: &mut World) {
             position: view.position,
             look_at: turnaround.look_at,
         };
-        let cleanup = match setup_debug_camera_with_up(world, &debug_req, Vec3::from_array(view.up))
+        let camera = if has_primary_window(world) {
+            Ok(())
+        } else {
+            validate_capture_camera(world, "capture_turnaround")
+        };
+        let cleanup = match camera
+            .and_then(|()| setup_debug_camera_with_up(world, &debug_req, Vec3::from_array(view.up)))
         {
             Ok(cleanup) => cleanup,
             Err(error) => {
@@ -332,11 +340,7 @@ pub fn process_pending_turnarounds(world: &mut World) {
         }
     }
 
-    let has_window = world
-        .query_filtered::<Entity, With<PrimaryWindow>>()
-        .iter(world)
-        .next()
-        .is_some();
+    let has_window = has_primary_window(world);
 
     let mut headless = Vec::new();
     for idx in screenshots_to_spawn {
@@ -806,7 +810,10 @@ mod tests {
     #[test]
     fn process_turnaround_rejects_camera2d_scene() {
         let mut world = World::new();
-        let camera = world.spawn(Camera2d).id();
+        let target = Assets::<Image>::default().add(make_capture_image());
+        let camera = world
+            .spawn((Camera2d, RenderTarget::Image(target.into())))
+            .id();
         let (tx, mut rx) = oneshot::channel();
         let mut turnaround = make_turnaround(make_viewpoints(1), Vec::new(), 1, None);
         turnaround.response_tx = Some(tx);
@@ -1132,9 +1139,11 @@ mod tests {
     #[test]
     fn turnaround_hides_ui_from_the_frame_it_starts() {
         let mut world = World::new();
+        let target = Assets::<Image>::default().add(make_capture_image());
         world.spawn((
             Camera3d::default(),
             Camera::default(),
+            RenderTarget::Image(target.into()),
             Transform::default(),
             GlobalTransform::default(),
         ));

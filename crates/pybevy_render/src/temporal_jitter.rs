@@ -1,25 +1,15 @@
 use bevy::{math::Vec2, render::camera::TemporalJitter};
-use pybevy_core::{
-    ComponentStorage, PyComponent, StorageError, public_error::value_out_of_range,
-    repr::ReprLiteral,
-};
+use pybevy_core::{ComponentStorage, PyComponent, repr::ReprLiteral};
 use pybevy_macros::pycomponent;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
-/// A subpixel offset outside [-0.5, 0.5] jitters the frustum past a whole pixel.
-fn check_offset(offset: &Vec2) -> Result<(), StorageError> {
-    for (name, value) in [("offset.x", offset.x), ("offset.y", offset.y)] {
-        if !(-0.5..=0.5).contains(&value) {
-            return Err(StorageError::InvalidValue(value_out_of_range(
-                name, -0.5, 0.5, value,
-            )));
-        }
-    }
-    Ok(())
-}
-
-#[pycomponent(TemporalJitter, bridge)]
+// A subpixel offset outside [-0.5, 0.5] jitters the frustum past a whole pixel.
+#[pycomponent(
+    TemporalJitter,
+    bridge,
+    domains = [offset => [range_inclusive(-0.5, 0.5)]]
+)]
 #[pyclass(name = "TemporalJitter", module = "pybevy.render", extends = PyComponent)]
 pub struct PyTemporalJitter {
     pub(crate) storage: ComponentStorage<TemporalJitter>,
@@ -30,8 +20,7 @@ impl PyTemporalJitter {
     #[new]
     #[pyo3(signature = (*, offset = PyVec2::ZERO))]
     pub fn new(offset: PyVec2) -> PyResult<PyClassInitializer<Self>> {
-        let offset = offset.try_into()?;
-        check_offset(&offset)?;
+        let offset = Self::check_offset(Vec2::try_from(offset)?)?;
         Ok(Self::from_owned(TemporalJitter { offset }).into())
     }
 
@@ -40,7 +29,7 @@ impl PyTemporalJitter {
         Ok(self.storage.borrow_validated_field_as(
             |t| &t.offset,
             |t| &mut t.offset,
-            check_offset,
+            Self::validate_offset,
         )?)
     }
 
@@ -50,8 +39,7 @@ impl PyTemporalJitter {
         // Authority first: an expired or read-only component must report that,
         // not a complaint about the value it was never allowed to store.
         let mut jitter = self.as_mut()?;
-        check_offset(&offset)?;
-        jitter.offset = offset;
+        jitter.offset = Self::check_offset(offset)?;
         Ok(())
     }
 

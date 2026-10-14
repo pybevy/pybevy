@@ -5,11 +5,12 @@ use bevy::{
     window::{Window, WindowPosition},
 };
 use pybevy_core::{
-    ComponentStorage, PyComponent, StorageError, computed_owned, public_error, repr::str_repr,
+    ComponentStorage, PyComponent, StorageError, computed_owned, domain::IntegerInput,
+    repr::str_repr,
 };
 use pybevy_macros::pycomponent;
 use pybevy_math::{compass::PyCompassOctant, uvec2::PyUVec2, vec2::PyVec2};
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pyo3::prelude::*;
 
 use crate::{
     composite_alpha_mode::PyCompositeAlphaMode,
@@ -26,17 +27,18 @@ use crate::{
 
 pub const DEFAULT_APP_TITLE: &str = "PyBevy App";
 
-fn maximum_frame_latency(value: Option<u32>) -> PyResult<Option<NonZero<u32>>> {
-    value
-        .map(|value| {
-            NonZero::new(value).ok_or_else(|| {
-                PyValueError::new_err(public_error::DESIRED_MAXIMUM_FRAME_LATENCY_AT_LEAST_ONE)
-            })
-        })
-        .transpose()
+fn maximum_frame_latency(value: Option<IntegerInput<u32>>) -> PyResult<Option<NonZero<u32>>> {
+    let value = PyWindow::check_desired_maximum_frame_latency(value)?;
+    Ok(value.and_then(|value| NonZero::new(value.stored())))
 }
 
-#[pycomponent(Window, bridge, reflect_validate = validate_window_resize_constraints, view_fields = [decorations, resizable, transparent])]
+#[pycomponent(
+    Window,
+    bridge,
+    reflect_validate = validate_window_resize_constraints,
+    domains = [desired_maximum_frame_latency => [at_least(1)]],
+    view_fields = [decorations, resizable, transparent]
+)]
 #[pyclass(name = "Window", module = "pybevy.window", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyWindow {
@@ -115,7 +117,7 @@ impl PyWindow {
         visible: bool,
         skip_taskbar: bool,
         clip_children: bool,
-        desired_maximum_frame_latency: Option<u32>,
+        desired_maximum_frame_latency: Option<IntegerInput<u32>>,
         recognize_pinch_gesture: bool,
         recognize_rotation_gesture: bool,
         recognize_doubletap_gesture: bool,
@@ -586,7 +588,10 @@ impl PyWindow {
     }
 
     #[setter]
-    pub fn set_desired_maximum_frame_latency(&mut self, value: Option<u32>) -> PyResult<()> {
+    pub fn set_desired_maximum_frame_latency(
+        &mut self,
+        value: Option<IntegerInput<u32>>,
+    ) -> PyResult<()> {
         self.as_mut()?.desired_maximum_frame_latency = maximum_frame_latency(value)?;
         Ok(())
     }

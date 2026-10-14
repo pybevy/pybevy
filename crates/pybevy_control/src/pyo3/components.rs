@@ -11,6 +11,7 @@ use pybevy_core::{
     component_layout::ComponentLayout, custom_resource::validate_hierarchy_link, public_error,
 };
 use pyo3::{
+    exceptions::PyTypeError,
     ffi::PyTypeObject,
     prelude::*,
     types::{PyDict, PyType},
@@ -500,18 +501,25 @@ fn construct_native<'py>(
                 }
             }
             if errors.is_empty() {
-                return py_type.call((), Some(&kwargs)).map_err(|error| {
-                    vec![ConstructError::Component(format!(
-                        "failed to construct: {error}"
-                    ))]
-                });
+                return py_type
+                    .call((), Some(&kwargs))
+                    .map_err(|error| vec![constructor_failure(py, &error, "failed to construct")]);
             }
         }
-        Err(error) => errors.push(ConstructError::Component(format!(
-            "failed to create default: {error}"
-        ))),
+        Err(error) => errors.push(constructor_failure(py, &error, "failed to create default")),
     }
     Err(errors)
+}
+
+/// A wrapper without a Python constructor, such as a component Bevy computes,
+/// is named as such instead of surfacing CPython's `cannot create` TypeError.
+fn constructor_failure(py: Python<'_>, error: &PyErr, context: &str) -> ConstructError {
+    if error.is_instance_of::<PyTypeError>(py) && error.to_string().contains("cannot create") {
+        return ConstructError::Component(
+            "has no Python constructor, so MCP cannot create it".to_string(),
+        );
+    }
+    ConstructError::Component(format!("{context}: {error}"))
 }
 
 /// Check the written fields and a relationship link, then insert.

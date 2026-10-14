@@ -9,6 +9,7 @@ pub mod lease;
 pub mod queue;
 pub mod readiness;
 pub mod screenshot;
+pub mod shader_errors;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub mod timeline;

@@ -267,7 +267,7 @@ fn color_array(cx: &FieldContext<'_, '_>) -> Converted {
     if !cx.is_color() {
         return Ok(None);
     }
-    let Some(values) = cx.array().filter(|values| values.len() == 4) else {
+    let Some(values) = cx.array() else {
         return Ok(None);
     };
     srgba_from_array(cx.owner(), values).map(Some)

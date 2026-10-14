@@ -18,6 +18,7 @@ use crate::{
         hold::prepare_pending_screenshot_gizmos,
         queue::{CaptureResponseKind, DebugCameraRequest, PendingScreenshot, PendingScreenshots},
         readiness::RenderFrameReadiness,
+        shader_errors::ShaderErrors,
     },
     protocol::{ControlError, ReloadMode},
     scene::{entity_count::scene_entity_count, time::validate_time_scale},
@@ -203,7 +204,18 @@ pub fn get_reload_status(world: &mut World) -> Result<serde_json::Value, Control
 pub fn get_last_error(world: &mut World) -> Result<serde_json::Value, ControlError> {
     let mut response = last_python_error(world);
     response["wgpu_validation"] = wgpu_validation_json(world);
+    response["shader_errors"] = shader_errors_json(world);
     Ok(response)
+}
+
+fn shader_errors_json(world: &World) -> serde_json::Value {
+    match world
+        .get_resource::<ShaderErrors>()
+        .map(ShaderErrors::current)
+    {
+        Some(errors) if !errors.is_empty() => serde_json::json!(errors),
+        _ => serde_json::Value::Null,
+    }
 }
 
 fn wgpu_validation_entry_json(entry: &WgpuValidationEntry) -> serde_json::Value {
@@ -670,6 +682,24 @@ mod tests {
 
         assert_eq!(result["error"], "current system error");
         assert!(result.get("reload_failed").is_none());
+    }
+
+    #[test]
+    fn get_last_error_reports_current_shader_errors() {
+        let mut world = World::new();
+        let errors = ShaderErrors::default();
+        world.insert_resource(errors.clone());
+        assert!(get_last_error(&mut world).unwrap()["shader_errors"].is_null());
+
+        errors.replace(vec!["expected ';', found '}'".to_string()]);
+        let result = get_last_error(&mut world).unwrap();
+        assert_eq!(
+            result["shader_errors"],
+            serde_json::json!(["expected ';', found '}'"])
+        );
+
+        errors.replace(Vec::new());
+        assert!(get_last_error(&mut world).unwrap()["shader_errors"].is_null());
     }
 
     #[test]

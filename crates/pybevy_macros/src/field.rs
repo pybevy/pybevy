@@ -2,7 +2,10 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{ItemStruct, Type, parse_macro_input};
 
-use crate::util::find_storage_field_type;
+use crate::{
+    domain::{StorageTypeArgs, domain_impl_tokens, owner_name},
+    util::find_storage_field_type,
+};
 
 /// Generates boilerplate implementations for PyBevy field wrapper types.
 ///
@@ -37,20 +40,25 @@ pub fn pyfield(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemStruct);
     let py_type = &input.ident;
 
-    // Find the storage field and extract the Bevy type
-    let bevy_type: Type = if attr.is_empty() {
-        // Infer from storage field
-        match find_storage_field_type(&input, "FieldStorage") {
+    let args = parse_macro_input!(attr as StorageTypeArgs);
+    let bevy_type: Type = match args.bevy_type {
+        Some(ty) => ty,
+        None => match find_storage_field_type(&input, "FieldStorage") {
             Ok(ty) => ty.clone(),
             Err(e) => return e.to_compile_error().into(),
-        }
-    } else {
-        // Parse explicit type from attribute
-        parse_macro_input!(attr as Type)
+        },
     };
+    let domain_tokens = domain_impl_tokens(
+        &bevy_type,
+        py_type,
+        &owner_name(py_type, None),
+        &args.domains,
+    );
 
     let expanded = quote! {
         #input
+
+        #domain_tokens
 
         impl Clone for #py_type {
             fn clone(&self) -> Self {

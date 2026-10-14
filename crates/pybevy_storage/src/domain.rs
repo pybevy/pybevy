@@ -5,13 +5,17 @@
 //! [`DomainViolation`] whose `Display` text is the canonical user-facing
 //! message, and adapters raise it as `ValueError`.
 
-use std::fmt;
+use std::{fmt, marker::PhantomData, num::NonZero, time::Duration};
 
 use bevy::math::{Quat, Vec2, Vec3, Vec3A, Vec4};
 #[cfg(feature = "pyo3")]
-use pyo3::{PyErr, exceptions::PyValueError};
+use pyo3::{
+    Borrowed, FromPyObject, PyAny, PyErr,
+    exceptions::{PyOverflowError, PyTypeError, PyValueError},
+    types::{PyAnyMethods, PyDelta},
+};
 
-use crate::{StorageError, float_repr::float_repr};
+use crate::{StorageError, batch_columns::IntegerColumn, float_repr::float_repr};
 
 /// One rule of a value domain. Every rule rejects NaN.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -147,6 +151,20 @@ impl From<usize> for DomainValue {
     }
 }
 
+macro_rules! domain_value_from_nonzero {
+    ($($ty:ty),+) => {
+        $(
+            impl From<NonZero<$ty>> for DomainValue {
+                fn from(value: NonZero<$ty>) -> Self {
+                    Self::from(value.get())
+                }
+            }
+        )+
+    };
+}
+
+domain_value_from_nonzero!(u8, u16, u32, u64, usize);
+
 /// A value shape that can be checked against a domain: a scalar, a vector or
 /// quaternion checked per component, or an `Option` whose `None` passes.
 pub trait DomainValues: Copy {
@@ -176,6 +194,13 @@ macro_rules! scalar_domain_values {
 }
 
 scalar_domain_values!(f32, f64, i8, i16, i32, i64, u8, u16, u32, u64, usize);
+scalar_domain_values!(
+    NonZero<u8>,
+    NonZero<u16>,
+    NonZero<u32>,
+    NonZero<u64>,
+    NonZero<usize>
+);
 
 macro_rules! vector_domain_values {
     ($($ty:ty => [$($component:literal),+];)+) => {
@@ -214,6 +239,224 @@ impl DomainValues for DomainValue {
     }
 }
 
+/// A Python float bound for an `f32` field, checked before it narrows so a
+/// finite value too large for `f32` is rejected instead of becoming infinity.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct F32Input(pub f64);
+
+impl F32Input {
+    /// The value as the field stores it.
+    pub fn narrowed(self) -> f32 {
+        self.0 as f32
+    }
+}
+
+impl DomainValues for F32Input {
+    fn check_domains(
+        self,
+        owner: &'static str,
+        field: &'static str,
+        domains: &'static [FieldDomain],
+    ) -> Result<(), DomainViolation> {
+        check_f64_as_f32(owner, field, self.0, domains).map(drop)
+    }
+}
+
+/// An integer read wide from Python, so a value its field's type cannot hold
+/// reaches the domain check instead of failing extraction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WideInteger {
+    Value(i128),
+    /// Wider than 128 bits.
+    Beyond,
+}
+
+impl fmt::Display for WideInteger {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Value(value) => write!(f, "{value}"),
+            Self::Beyond => f.write_str("an integer wider than 128 bits"),
+        }
+    }
+}
+
+/// An integer type a field stores, with the range messages name.
+pub trait StoredInteger: Copy + TryFrom<i128> {
+    const COLUMN: IntegerColumn;
+}
+
+impl StoredInteger for i32 {
+    const COLUMN: IntegerColumn = IntegerColumn::I32;
+}
+
+impl StoredInteger for i64 {
+    const COLUMN: IntegerColumn = IntegerColumn::I64;
+}
+
+impl StoredInteger for u32 {
+    const COLUMN: IntegerColumn = IntegerColumn::U32;
+}
+
+impl StoredInteger for u64 {
+    const COLUMN: IntegerColumn = IntegerColumn::U64;
+}
+
+/// A Python integer bound for a field of type `T`. The check applies the
+/// declared rules to the wide value, then `T`'s range, so `-1` for a positive
+/// `u32` reports the rule and `2**40` the 32-bit range, both as `ValueError`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IntegerInput<T> {
+    value: WideInteger,
+    stored: PhantomData<T>,
+}
+
+impl<T: StoredInteger> IntegerInput<T> {
+    pub fn new(value: i128) -> Self {
+        Self {
+            value: WideInteger::Value(value),
+            stored: PhantomData,
+        }
+    }
+
+    fn beyond() -> Self {
+        Self {
+            value: WideInteger::Beyond,
+            stored: PhantomData,
+        }
+    }
+
+    /// The value as the field stores it; call after a successful check.
+    pub fn stored(self) -> T {
+        match self.value {
+            WideInteger::Value(value) => T::try_from(value)
+                .unwrap_or_else(|_| panic!("IntegerInput::stored before its range check")),
+            WideInteger::Beyond => panic!("IntegerInput::stored before its range check"),
+        }
+    }
+}
+
+impl<T: StoredInteger> DomainValues for IntegerInput<T> {
+    fn check_domains(
+        self,
+        owner: &'static str,
+        field: &'static str,
+        domains: &'static [FieldDomain],
+    ) -> Result<(), DomainViolation> {
+        if let WideInteger::Value(value) = self.value {
+            check_component(owner, field, None, DomainValue::Int(value), domains)?;
+            if T::try_from(value).is_ok() {
+                return Ok(());
+            }
+        }
+        Err(DomainViolation::new(
+            owner,
+            field,
+            None,
+            ViolationKind::IntegerRange {
+                column: T::COLUMN,
+                value: self.value,
+            },
+        ))
+    }
+}
+
+#[cfg(feature = "pyo3")]
+impl<T: StoredInteger> FromPyObject<'_, '_> for IntegerInput<T> {
+    type Error = PyErr;
+
+    fn extract(value: Borrowed<'_, '_, PyAny>) -> Result<Self, PyErr> {
+        match value.extract::<i128>() {
+            Ok(value) => Ok(Self::new(value)),
+            Err(error) if error.is_instance_of::<PyOverflowError>(value.py()) => Ok(Self::beyond()),
+            Err(error) => Err(error),
+        }
+    }
+}
+
+/// The Python types a `Duration` input accepts.
+pub const DURATION_INPUT_TYPES: &str =
+    "Duration must be a Duration object, float (seconds), or int (seconds)";
+
+impl DomainValues for Duration {
+    fn check_domains(
+        self,
+        owner: &'static str,
+        field: &'static str,
+        domains: &'static [FieldDomain],
+    ) -> Result<(), DomainViolation> {
+        check_component(owner, field, None, self.as_secs_f64().into(), domains)
+    }
+}
+
+/// A Python duration bound for a `Duration` field. A `timedelta` or integer
+/// seconds converts exactly; other seconds are checked before conversion, so a
+/// negative, non-finite or too-large value reaches the domain check.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DurationInput {
+    Exact(Duration),
+    Seconds(f64),
+}
+
+impl DurationInput {
+    /// The value as the field stores it; call after a successful check.
+    pub fn stored(self) -> Duration {
+        match self {
+            Self::Exact(duration) => duration,
+            Self::Seconds(seconds) => Duration::try_from_secs_f64(seconds)
+                .unwrap_or_else(|_| panic!("DurationInput::stored before its range check")),
+        }
+    }
+}
+
+impl DomainValues for DurationInput {
+    fn check_domains(
+        self,
+        owner: &'static str,
+        field: &'static str,
+        domains: &'static [FieldDomain],
+    ) -> Result<(), DomainViolation> {
+        match self {
+            Self::Exact(duration) => duration.check_domains(owner, field, domains),
+            Self::Seconds(seconds) => {
+                check_component(owner, field, None, seconds.into(), domains)?;
+                if Duration::try_from_secs_f64(seconds).is_ok() {
+                    return Ok(());
+                }
+                Err(DomainViolation::new(
+                    owner,
+                    field,
+                    None,
+                    ViolationKind::DurationRange { seconds },
+                ))
+            }
+        }
+    }
+}
+
+#[cfg(feature = "pyo3")]
+impl FromPyObject<'_, '_> for DurationInput {
+    type Error = PyErr;
+
+    fn extract(value: Borrowed<'_, '_, PyAny>) -> Result<Self, PyErr> {
+        if let Ok(duration) = value.extract::<Duration>() {
+            return Ok(Self::Exact(duration));
+        }
+        // Only a negative timedelta fails the exact conversion.
+        if let Ok(delta) = value.cast::<PyDelta>() {
+            return Ok(Self::Seconds(
+                delta.call_method0("total_seconds")?.extract()?,
+            ));
+        }
+        if let Ok(seconds) = value.extract::<u64>() {
+            return Ok(Self::Exact(Duration::from_secs(seconds)));
+        }
+        if let Ok(seconds) = value.extract::<f64>() {
+            return Ok(Self::Seconds(seconds));
+        }
+        Err(PyTypeError::new_err(DURATION_INPUT_TYPES))
+    }
+}
+
 impl<T: DomainValues> DomainValues for Option<T> {
     fn check_domains(
         self,
@@ -244,6 +487,13 @@ pub enum ViolationKind {
     },
     /// A finite `f64` falls outside the range an `f32` can represent.
     F32Range { value: f64 },
+    /// An integer falls outside the range of the type the field stores.
+    IntegerRange {
+        column: IntegerColumn,
+        value: WideInteger,
+    },
+    /// Seconds that no `Duration` can represent.
+    DurationRange { seconds: f64 },
     /// The field must not exceed `greater`, or must be less than it when
     /// `strict`.
     Ordering {
@@ -318,6 +568,16 @@ impl fmt::Display for DomainViolation {
                 f,
                 " must be within the 32-bit float range (got {}",
                 float_repr(*value)
+            )?,
+            ViolationKind::IntegerRange { column, value } => write!(
+                f,
+                " must be within the {} range (got {value}",
+                column.range_name()
+            )?,
+            ViolationKind::DurationRange { seconds } => write!(
+                f,
+                " must be within the supported duration range (got {}",
+                float_repr(*seconds)
             )?,
             ViolationKind::Ordering {
                 greater,
@@ -527,11 +787,14 @@ pub fn check_ordered<T: Copy + Into<DomainValue>>(
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
+    use std::time::Duration;
+
     use bevy::math::{Quat, Vec2, Vec3, Vec3A, Vec4};
 
     use super::{
-        DomainValue, DomainViolation, FieldDomain, ViolationDetails, ViolationKind, check,
-        check_column, check_components, check_f64_as_f32, check_ordered,
+        DomainValue, DomainViolation, DurationInput, F32Input, FieldDomain, IntegerInput,
+        ViolationDetails, ViolationKind, check, check_column, check_components, check_f64_as_f32,
+        check_ordered,
     };
     use crate::StorageError;
 
@@ -711,6 +974,124 @@ mod tests {
         assert_eq!(
             message(check_f64_as_f32("W", "min_width", f64::NAN, FINITE)),
             "W.min_width must be finite (got nan)"
+        );
+    }
+
+    #[test]
+    fn integer_input_checks_rules_then_the_stored_range() {
+        const POSITIVE: &[FieldDomain] = &[FieldDomain::Positive];
+        const AT_LEAST_ONE: &[FieldDomain] = &[FieldDomain::AtLeast(1)];
+        assert_eq!(
+            check("B", "mips", IntegerInput::<u32>::new(512), POSITIVE).map(IntegerInput::stored),
+            Ok(512)
+        );
+        assert_eq!(
+            message(check("B", "mips", IntegerInput::<u32>::new(-1), POSITIVE)),
+            "B.mips must be greater than zero (got -1)"
+        );
+        assert_eq!(
+            message(check(
+                "B",
+                "mips",
+                IntegerInput::<u32>::new(1 << 40),
+                POSITIVE
+            )),
+            "B.mips must be within the 32-bit unsigned integer range (got 1099511627776)"
+        );
+        assert_eq!(
+            message(check(
+                "W",
+                "latency",
+                Some(IntegerInput::<u32>::new(0)),
+                AT_LEAST_ONE
+            )),
+            "W.latency must be at least 1 (got 0)"
+        );
+        assert_eq!(
+            message(check(
+                "W",
+                "latency",
+                IntegerInput::<u32>::beyond(),
+                AT_LEAST_ONE
+            )),
+            "W.latency must be within the 32-bit unsigned integer range \
+             (got an integer wider than 128 bits)"
+        );
+        assert_eq!(
+            check("W", "latency", None::<IntegerInput<u32>>, AT_LEAST_ONE),
+            Ok(None)
+        );
+    }
+
+    #[test]
+    fn duration_input_checks_rules_then_the_duration_range() {
+        assert_eq!(
+            check(
+                "P",
+                "duration",
+                DurationInput::Seconds(0.25),
+                FINITE_NON_NEGATIVE
+            )
+            .map(DurationInput::stored),
+            Ok(Duration::from_millis(250))
+        );
+        assert_eq!(
+            check(
+                "P",
+                "duration",
+                DurationInput::Exact(Duration::MAX),
+                FINITE_NON_NEGATIVE
+            )
+            .map(DurationInput::stored),
+            Ok(Duration::MAX)
+        );
+        assert_eq!(
+            message(check(
+                "P",
+                "duration",
+                DurationInput::Seconds(-1.0),
+                FINITE_NON_NEGATIVE
+            )),
+            "P.duration must be finite and non-negative (got -1.0)"
+        );
+        assert_eq!(
+            message(check(
+                "P",
+                "duration",
+                DurationInput::Seconds(1e20),
+                FINITE_NON_NEGATIVE
+            )),
+            "P.duration must be within the supported duration range (got 1e+20)"
+        );
+        assert_eq!(
+            message(check(
+                "E",
+                "period",
+                DurationInput::Exact(Duration::ZERO),
+                POSITIVE
+            )),
+            "E.period must be finite and greater than zero (got 0.0)"
+        );
+    }
+
+    #[test]
+    fn f32_input_narrows_after_the_checks() {
+        assert_eq!(
+            check("W", "max_width", F32Input(2.5), UNBOUNDED).map(F32Input::narrowed),
+            Ok(2.5_f32)
+        );
+        assert_eq!(
+            message(check("W", "max_width", F32Input(-1e300), UNBOUNDED)),
+            "W.max_width must be within the 32-bit float range (got -1e+300)"
+        );
+        assert_eq!(
+            message(check(
+                "W",
+                "max_width",
+                F32Input(f64::NEG_INFINITY),
+                UNBOUNDED
+            )),
+            "W.max_width must be finite or positive infinity (got -inf)"
         );
     }
 
