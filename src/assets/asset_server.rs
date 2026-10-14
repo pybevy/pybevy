@@ -164,7 +164,7 @@ impl PyAssetServer {
     fn __getattr__(&self, py: Python<'_>, name: &str) -> PyResult<()> {
         let replacement = match name {
             "load_mesh" => "load(path, asset_type=Mesh)",
-            "load_world_asset" => "load(path, asset_type=WorldAsset)",
+            "load_scene" => "load(path, asset_type=WorldAsset)",
             "load_image_with_settings" => "load_builder().with_settings(settings).load(path)",
             _ => {
                 return Err(PyAttributeError::new_err(format!(

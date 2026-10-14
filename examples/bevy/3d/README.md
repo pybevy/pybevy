@@ -9,6 +9,7 @@ PyBevy ports of Bevy [3d examples](https://github.com/bevyengine/bevy/tree/v0.18
 | [animated_material.py](animated_material.py) | [animated_material.rs](https://github.com/bevyengine/bevy/blob/v0.18.0/examples/3d/animated_material.rs) |
 | [bloom_3d.py](bloom_3d.py) | [bloom_3d.rs](https://github.com/bevyengine/bevy/blob/v0.18.0/examples/3d/bloom_3d.rs) |
 | [color_grading.py](color_grading.py) | [color_grading.rs](https://github.com/bevyengine/bevy/blob/v0.18.0/examples/3d/color_grading.rs) |
+| [depth_of_field.py](depth_of_field.py) | [depth_of_field.rs](https://github.com/bevyengine/bevy/blob/v0.19.0/examples/3d/depth_of_field.rs) |
 | [fog.py](fog.py) | [fog.rs](https://github.com/bevyengine/bevy/blob/v0.18.0/examples/3d/fog.rs) |
 | [glb.py](glb.py) | [glb.rs](https://github.com/bevyengine/bevy/blob/v0.18.0/examples/3d/glb.rs) |
 | [lighting.py](lighting.py) | [lighting.rs](https://github.com/bevyengine/bevy/blob/v0.18.0/examples/3d/lighting.rs) |

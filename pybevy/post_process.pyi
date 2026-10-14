@@ -1,5 +1,6 @@
 from typing import ClassVar
 
+from pybevy.camera import PhysicalCameraParameters
 from pybevy.color import Color
 from pybevy.ecs import Batchable, Component
 from pybevy.math import Vec2
@@ -234,4 +235,87 @@ class MotionBlur(Component):
         *,
         shutter_angle: np.typing.ArrayLike | None = None,
         samples: np.typing.ArrayLike | None = None,
+    ) -> Batchable: ...
+
+class DepthOfFieldMode:
+    """How ``DepthOfField`` renders out-of-focus areas."""
+
+    def __copy__(self) -> DepthOfFieldMode: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> DepthOfFieldMode: ...
+
+    Bokeh: DepthOfFieldMode
+    Gaussian: DepthOfFieldMode
+
+class DepthOfField(Component):
+    """Camera depth of field that blurs objects away from the focal distance.
+
+    Add to a ``Camera3d`` with a perspective projection; other projections
+    render without the effect. It reads the main depth texture and supports
+    every MSAA setting, but WebGL2 builds disable it. Float fields must be
+    finite, except ``max_depth``, which also accepts positive infinity.
+    """
+
+    def __init__(
+        self,
+        *,
+        mode: DepthOfFieldMode = DepthOfFieldMode.Gaussian,
+        focal_distance: float = 10.0,
+        sensor_height: float = 0.01866,
+        aperture_f_stops: float = 1.0,
+        max_circle_of_confusion_diameter: float = 64.0,
+        max_depth: float = float("inf"),
+    ) -> None: ...
+
+    @staticmethod
+    def from_physical_camera(camera: PhysicalCameraParameters) -> DepthOfField:
+        """Copy ``sensor_height`` and ``aperture_f_stops``; other fields use defaults."""
+
+    @property
+    def mode(self) -> DepthOfFieldMode: ...
+    @mode.setter
+    def mode(self, value: DepthOfFieldMode) -> None: ...
+
+    @property
+    def focal_distance(self) -> float:
+        """Distance in meters to the plane in focus."""
+
+    @focal_distance.setter
+    def focal_distance(self, value: float) -> None: ...
+
+    @property
+    def sensor_height(self) -> float:
+        """Image sensor height in meters; with the FOV it sets the focal length."""
+
+    @sensor_height.setter
+    def sensor_height(self, value: float) -> None: ...
+
+    @property
+    def aperture_f_stops(self) -> float:
+        """F-number; lower values blur out-of-focus objects more."""
+
+    @aperture_f_stops.setter
+    def aperture_f_stops(self, value: float) -> None: ...
+
+    @property
+    def max_circle_of_confusion_diameter(self) -> float:
+        """Largest blur diameter in pixels."""
+
+    @max_circle_of_confusion_diameter.setter
+    def max_circle_of_confusion_diameter(self, value: float) -> None: ...
+
+    @property
+    def max_depth(self) -> float:
+        """Farthest distance considered for blur; caps skybox and background blur."""
+
+    @max_depth.setter
+    def max_depth(self, value: float) -> None: ...
+
+    @staticmethod
+    def batch(  # type: ignore[override]
+        *,
+        focal_distance: np.typing.ArrayLike | None = None,
+        sensor_height: np.typing.ArrayLike | None = None,
+        aperture_f_stops: np.typing.ArrayLike | None = None,
+        max_circle_of_confusion_diameter: np.typing.ArrayLike | None = None,
+        max_depth: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
