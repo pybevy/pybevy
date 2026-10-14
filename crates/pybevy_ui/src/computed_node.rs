@@ -4,7 +4,7 @@ use pybevy_macros::pycomponent;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
-#[pycomponent(ComputedNode, no_clone, bridge)]
+#[pycomponent(ComputedNode, bridge)]
 #[pyclass(name = "ComputedNode", module = "pybevy.ui", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyComputedNode {
@@ -13,6 +13,11 @@ pub struct PyComputedNode {
 
 #[pymethods]
 impl PyComputedNode {
+    #[new]
+    pub fn new() -> PyClassInitializer<Self> {
+        Self::from_owned(ComputedNode::default()).into()
+    }
+
     #[getter]
     pub fn size(&self) -> PyResult<PyVec2> {
         Ok(self

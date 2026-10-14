@@ -3,7 +3,16 @@ use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[pycomponent(ComputedStackIndex, no_clone, bridge)]
+fn clone_computed_stack_index(value: &ComputedStackIndex) -> ComputedStackIndex {
+    ComputedStackIndex(value.0)
+}
+
+#[pycomponent(
+    ComputedStackIndex,
+    no_clone,
+    bridge,
+    clone_with = clone_computed_stack_index
+)]
 #[pyclass(name = "ComputedStackIndex", module = "pybevy.ui", extends = PyComponent)]
 pub struct PyComputedStackIndex {
     pub(crate) storage: ComponentStorage<ComputedStackIndex>,
@@ -11,6 +20,17 @@ pub struct PyComputedStackIndex {
 
 #[pymethods]
 impl PyComputedStackIndex {
+    #[new]
+    pub fn new() -> PyClassInitializer<Self> {
+        (
+            Self {
+                storage: ComponentStorage::owned(ComputedStackIndex::default()),
+            },
+            PyComponent,
+        )
+            .into()
+    }
+
     #[getter]
     pub fn value(&self) -> PyResult<u32> {
         Ok(self.as_ref()?.0)

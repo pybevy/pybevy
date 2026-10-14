@@ -23,8 +23,19 @@ impl From<&Cascade> for PyCascade {
     }
 }
 
+impl Default for PyCascade {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[pymethods]
 impl PyCascade {
+    #[new]
+    pub fn new() -> Self {
+        Cascade::default().into()
+    }
+
     #[getter]
     pub fn world_from_cascade(&self) -> PyMat4 {
         self.inner.world_from_cascade.into()
