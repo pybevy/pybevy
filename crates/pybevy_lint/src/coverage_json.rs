@@ -43,8 +43,9 @@ impl Ratio {
 
 #[derive(Debug, Serialize)]
 pub struct Provenance {
-    pub bevy_tag: &'static str,
-    pub bevy_revision: &'static str,
+    /// The pinned tag, or `unpinned` when the report came from another revision.
+    pub bevy_tag: String,
+    pub bevy_revision: String,
     pub cargo_public_api: &'static str,
     pub extractor_flags: String,
 }
@@ -86,8 +87,9 @@ pub struct CoverageDocument {
     pub modules: Vec<ModuleCoverage>,
 }
 
-/// Render the report in the documented JSON shape.
-pub fn render(report: &CoverageReport) -> CoverageDocument {
+/// Render the report in the documented JSON shape; `bevy_revision` is the
+/// commit the report was extracted from.
+pub fn render(report: &CoverageReport, bevy_revision: &str) -> CoverageDocument {
     let mut modules: Vec<ModuleCoverage> = report
         .crates
         .iter()
@@ -115,8 +117,12 @@ pub fn render(report: &CoverageReport) -> CoverageDocument {
     CoverageDocument {
         schema_version: SCHEMA_VERSION,
         provenance: Provenance {
-            bevy_tag: BEVY_TAG,
-            bevy_revision: BEVY_REVISION,
+            bevy_tag: if bevy_revision == BEVY_REVISION {
+                BEVY_TAG.to_owned()
+            } else {
+                "unpinned".to_owned()
+            },
+            bevy_revision: bevy_revision.to_owned(),
             cargo_public_api: CARGO_PUBLIC_API_VERSION,
             extractor_flags: bevy_parser::public_api_flags(),
         },

@@ -1135,7 +1135,7 @@ fn read_any_field_order(path: &Path, type_name: &str) -> Option<Vec<String>> {
         let absolute = search_from + candidate;
         let next = text[absolute + struct_marker.len()..].chars().next();
         let boundary = next.is_none_or(|c| !(c.is_alphanumeric() || c == '_'));
-        if boundary {
+        if boundary && !in_line_comment(&text, absolute) {
             start = Some(absolute);
             break;
         }
@@ -1429,7 +1429,7 @@ fn read_impl_new(path: &Path, type_name: &str) -> Option<crate::bevy_parser::typ
         let absolute = search_from + cand;
         let next = text[absolute + impl_marker.len()..].chars().next();
         let boundary = next.is_none_or(|c| !(c.is_alphanumeric() || c == '_'));
-        if !boundary {
+        if !boundary || in_line_comment(&text, absolute) {
             search_from = absolute + impl_marker.len();
             continue;
         }
@@ -1463,9 +1463,8 @@ fn read_impl_new(path: &Path, type_name: &str) -> Option<crate::bevy_parser::typ
         let body = &text[body_start + 1..body_start + body_end_rel];
         let Some((new_offset, _)) = body.lines().enumerate().find(|(_, line)| {
             let t = line.trim();
-            t.contains("fn new(") && t.starts_with("pub ")
-                || t.starts_with("const")
-                || t.starts_with("fn")
+            t.contains("fn new(")
+                && (t.starts_with("pub ") || t.starts_with("const") || t.starts_with("fn"))
         }) else {
             search_from = absolute + impl_marker.len();
             continue;
@@ -1589,6 +1588,13 @@ fn skip_generics(text: &str) -> &str {
     text
 }
 
+/// Whether `position` sits after `//` on its line: doc examples such as
+/// `/// pub struct Score(f32);` are not declarations.
+fn in_line_comment(text: &str, position: usize) -> bool {
+    let line_start = text[..position].rfind('\n').map_or(0, |index| index + 1);
+    text[line_start..position].contains("//")
+}
+
 /// True when `text` contains an exact `pub struct/enum <Name>` declaration.
 fn has_exact_decl(text: &str, marker: &str) -> bool {
     marker_after(text, marker).is_some()
@@ -1600,7 +1606,9 @@ fn marker_after<'a>(text: &'a str, marker: &str) -> Option<&'a str> {
     while let Some(candidate) = text[search_from..].find(marker) {
         let absolute = search_from + candidate;
         let next = text[absolute + marker.len()..].chars().next();
-        if next.is_none_or(|c| !(c.is_alphanumeric() || c == '_')) {
+        if next.is_none_or(|c| !(c.is_alphanumeric() || c == '_'))
+            && !in_line_comment(text, absolute)
+        {
             return Some(&text[absolute + marker.len()..]);
         }
         search_from = absolute + marker.len();

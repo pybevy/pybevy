@@ -71,6 +71,11 @@ def _guard_missing_constructor(cls: type[_DT], decorator_name: str) -> None:
     cls.__new__ = staticmethod(guarded_new)  # type: ignore[method-assign]
 
 
+def _guard_component_constructor(cls: type[Component]) -> None:
+    if cls.__new__ is Component.__new__:
+        _guard_missing_constructor(cls, "@component")
+
+
 def message(cls: type[MT]) -> type[MT]:
     """Validate and mark a custom buffered-message class.
 
@@ -114,7 +119,11 @@ def event(
 
             # Runtime observers are keyed by the event class, so it keeps its identity.
             cached = _event_cache[key]
-            stage_class_body(cached, event_cls)
+            stage_class_body(
+                cached,
+                event_cls,
+                finalize=lambda: _guard_missing_constructor(cached, "@event"),
+            )
             return cached  # type: ignore[return-value]
         _guard_missing_constructor(event_cls, "@event")
         event_cls.__pybevy_event_decorated__ = True
@@ -372,7 +381,14 @@ def resource(cls: type[RT]) -> type[RT]:
             validation,
             lambda previous: validation.prepare(cls, previous),
         )
-        stage_class_body(cached, cls)
+        checked_setattr = cached.__setattr__
+
+        def finalize() -> None:
+            validation._original_setattr = cached.__setattr__
+            cached.__setattr__ = checked_setattr  # type: ignore[method-assign,assignment]
+            _guard_missing_constructor(cached, "@resource")
+
+        stage_class_body(cached, cls, finalize=finalize)
         return cached  # type: ignore[return-value]
 
     _guard_missing_constructor(cls, "@resource")
@@ -696,7 +712,7 @@ def _register_component(cls: type[CT], *, storage: str | None = None) -> type[CT
         # The Bevy component class and its instances keep their stable identity,
         # while annotations and the class body follow a successfully committed module.
         stage_component_annotations(cached, _component_hints(cls))
-        stage_class_body(cached, cls)
+        stage_class_body(cached, cls, finalize=lambda: _guard_component_constructor(cached))
         return cached  # type: ignore
 
     # Mark the component as properly decorated
@@ -745,8 +761,7 @@ def _register_component(cls: type[CT], *, storage: str | None = None) -> type[CT
         if verbose:
             print(f"Using FRESH component (caching disabled): {key}")
 
-    if cls.__new__ is Component.__new__:
-        _guard_missing_constructor(cls, "@component")
+    _guard_component_constructor(cls)
 
     return cls
 

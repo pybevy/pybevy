@@ -123,6 +123,8 @@ methods return new values, leaving the original builder unchanged.
 UV mode is a named variant, `CircularMeshUvMode.Mask(angle=...)`.
 `TorusMeshBuilder.angle_range()` accepts `pybevy.math.Range`; its `start` and
 `end` are used as the inclusive Bevy angle endpoints.
+A `Range` with NaN in either bound is empty, matching Rust; `contains()`
+returns false for such ranges.
 
 `SphereMeshBuilder.kind(kind)` requires a `SphereKind` and returns a new
 builder. `PlaneMeshBuilder(normal, size)` uses a normal positional constructor;

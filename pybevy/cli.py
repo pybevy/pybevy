@@ -448,12 +448,15 @@ def _run_script(
                 f"Invalid resolution format: {resolution!r}. Use WIDTHxHEIGHT (e.g. 1920x1080)."
             )
         try:
-            int(parts[0])
-            int(parts[1])
+            width, height = int(parts[0]), int(parts[1])
         except ValueError as err:
             raise CliUsageError(
                 f"Invalid resolution format: {resolution!r}. Use WIDTHxHEIGHT (e.g. 1920x1080)."
             ) from err
+        if width <= 0 or height <= 0:
+            raise CliUsageError(
+                f"Invalid resolution: {resolution!r}. Width and height must be positive."
+            )
         os.environ["PYBEVY_WINDOW_RESOLUTION"] = resolution
     else:
         os.environ.pop("PYBEVY_WINDOW_RESOLUTION", None)

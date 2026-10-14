@@ -685,6 +685,41 @@ fn extract_references(
             );
             return;
         }
+        "if_statement" | "elif_clause" | "while_statement" => {
+            if let Some(condition) = node.child_by_field_name("condition") {
+                process_expression(
+                    condition,
+                    source,
+                    file_path,
+                    imports,
+                    has_wildcard,
+                    var_types,
+                    usage,
+                );
+            }
+        }
+        "with_statement" => {
+            let mut cursor = node.walk();
+            for clause in node.named_children(&mut cursor) {
+                if clause.kind() != "with_clause" {
+                    continue;
+                }
+                let mut items = clause.walk();
+                for item in clause.named_children(&mut items) {
+                    if let Some(value) = item.child_by_field_name("value") {
+                        process_expression(
+                            value,
+                            source,
+                            file_path,
+                            imports,
+                            has_wildcard,
+                            var_types,
+                            usage,
+                        );
+                    }
+                }
+            }
+        }
         "for_statement" => {
             process_for_loop(
                 node,
@@ -898,14 +933,16 @@ fn process_assignment(
                     .entry(variable.to_string())
                     .or_default()
                     .push(class_path);
+            } else {
+                var_types.remove(variable);
             }
+            let container = format!("__container_type:{variable}");
             if let Some(class_path) =
                 resolve_collection_element_type(right, source, imports, var_types)
             {
-                var_types
-                    .entry(format!("__container_type:{variable}"))
-                    .or_default()
-                    .push(class_path);
+                var_types.entry(container).or_default().push(class_path);
+            } else {
+                var_types.remove(&container);
             }
         }
     }
@@ -1803,6 +1840,18 @@ fn process_for_loop(
 ) {
     let left = node.child_by_field_name("left");
     let right = node.child_by_field_name("right");
+
+    if let Some(right) = right {
+        process_expression(
+            right,
+            source,
+            file_path,
+            imports,
+            has_wildcard,
+            var_types,
+            usage,
+        );
+    }
 
     if let (Some(left), Some(right)) = (left, right) {
         // Resolve the iterable type

@@ -82,7 +82,7 @@ impl PyRange {
 
     pub fn is_empty(&self) -> PyResult<bool> {
         let r = self.as_ref()?;
-        Ok(r.start >= r.end)
+        Ok(r.is_empty())
     }
 
     pub fn contains(&self, value: f32) -> PyResult<bool> {

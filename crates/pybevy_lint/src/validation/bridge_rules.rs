@@ -30,9 +30,10 @@ pub fn validate_bridge_batch(rust_class: &PyClassDef, py_class: &PyClassDef) -> 
         return diagnostics;
     }
 
-    // Only validate stub if the Rust class actually exposes batch as a static method.
-    // Components may have view_fields (for View API) without exposing batch to Python.
-    let rust_has_batch = rust_class.static_methods.iter().any(|m| m.name == "batch");
+    // The bridge macro generates batch() for every insertable component with
+    // batch fields; a handwritten batch() counts too.
+    let rust_has_batch =
+        !bridge_info.no_insert || rust_class.static_methods.iter().any(|m| m.name == "batch");
     if !rust_has_batch {
         return diagnostics;
     }

@@ -483,7 +483,10 @@ pub(crate) fn handle_submit_schedule(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::AtomicU32;
+
     use bevy::{asset::Assets, camera::RenderTarget, image::Image, prelude::Camera2d};
+    use pybevy_ecs::shared::system_runtime::HotReloadGeneration;
 
     use super::*;
     use crate::{
@@ -610,6 +613,7 @@ mod tests {
         // caller and no response waiter should be queued.
         let mut world = World::new();
         world.init_resource::<Time<Virtual>>();
+        world.insert_resource(HotReloadGeneration::new(Arc::new(AtomicU32::new(0))));
         let (tx, mut rx) = oneshot::channel();
         push_pending_reload(
             ReloadParams {
@@ -639,6 +643,7 @@ mod tests {
         // response), confirming the error path did not regress the happy path.
         let mut world = World::new();
         world.init_resource::<Time<Virtual>>();
+        world.insert_resource(HotReloadGeneration::new(Arc::new(AtomicU32::new(0))));
         let (tx, mut rx) = oneshot::channel();
         push_pending_reload(
             ReloadParams {

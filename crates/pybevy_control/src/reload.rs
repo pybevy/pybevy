@@ -132,6 +132,12 @@ pub fn trigger_reload(
     pause: bool,
     time_scale: Option<f32>,
 ) -> Result<serde_json::Value, ControlError> {
+    // Without hot reload nothing consumes the request, so it would never run.
+    if !world.contains_resource::<HotReloadGeneration>() {
+        return Err(ControlError::invalid_params(
+            public_error::RELOAD_UNAVAILABLE,
+        ));
+    }
     let reload_mode = match mode {
         ReloadMode::Partial => ReloadRequestMode::Partial,
         ReloadMode::Full => ReloadRequestMode::Full,
@@ -899,7 +905,20 @@ mod tests {
     fn world_with_reload_deps() -> World {
         let mut world = World::new();
         world.init_resource::<Time<Virtual>>();
+        world.insert_resource(HotReloadGeneration::new(Arc::new(AtomicU32::new(0))));
         world
+    }
+
+    #[test]
+    fn trigger_reload_without_hot_reload_is_rejected_and_queues_nothing() {
+        let mut world = World::new();
+        world.init_resource::<Time<Virtual>>();
+        let error = trigger_reload(&mut world, ReloadMode::Full, true, Some(2.0)).unwrap_err();
+        assert_eq!(error.message, public_error::RELOAD_UNAVAILABLE);
+        assert!(!world.contains_resource::<PendingReloadRequest>());
+        let time = world.resource::<Time<Virtual>>();
+        assert!(!time.is_paused());
+        assert_eq!(time.relative_speed(), 1.0);
     }
 
     #[test]
@@ -1376,8 +1395,7 @@ mod tests {
         // Staleness is prevented by clearing the slot when the reload is
         // requested, not by comparing timestamps: the clock resets to 0 on a
         // full reload, so a pre-reload timestamp is not comparable afterwards.
-        let mut world = World::new();
-        world.init_resource::<Time<Virtual>>();
+        let mut world = world_with_reload_deps();
         world.insert_resource(pybevy_core::LastSystemError {
             error: Some("old error".into()),
             traceback: None,
@@ -1416,8 +1434,7 @@ mod tests {
     fn error_after_reload_is_reported_regardless_of_timestamp() {
         // The post-reload clock restarts near zero, so a new error can carry a
         // smaller timestamp than the pre-reload one it replaced.
-        let mut world = World::new();
-        world.init_resource::<Time<Virtual>>();
+        let mut world = world_with_reload_deps();
         world.insert_resource(pybevy_core::LastSystemError {
             error: Some("old error".into()),
             traceback: None,

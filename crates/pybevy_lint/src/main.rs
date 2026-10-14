@@ -616,28 +616,11 @@ fn run_validate(
     }
 
     let mut rust_classes = pybevy_lint::parse_rust_files(&args.rust_path)?;
+    pybevy_lint::retain_included_classes(&mut rust_classes, config);
 
     if !type_filter.is_empty() {
         let original_count = rust_classes.len();
-        rust_classes.retain(|c| {
-            type_filter.iter().any(|filter| {
-                c.python_name.eq_ignore_ascii_case(filter)
-                    || c.rust_name.eq_ignore_ascii_case(filter)
-                    || config
-                        .validation
-                        .specialized_receivers
-                        .iter()
-                        .any(|mapping| {
-                            mapping.rust_type == c.rust_name
-                                && mapping
-                                    .path
-                                    .split('[')
-                                    .next()
-                                    .and_then(|owner| owner.rsplit('.').next())
-                                    .is_some_and(|owner| owner.eq_ignore_ascii_case(filter))
-                        })
-            })
-        });
+        pybevy_lint::retain_filtered_rust(&mut rust_classes, type_filter, config);
         if args.verbose {
             eprintln!(
                 "{} Filtered to {} classes matching {:?}",
@@ -682,14 +665,10 @@ fn run_validate(
     }
 
     let mut python_classes = pybevy_lint::parse_python_stubs(&args.python_path)?;
+    pybevy_lint::retain_included_classes(&mut python_classes, config);
 
-    // Filter Python classes by type names if specified (same filter as Rust)
     if !type_filter.is_empty() {
-        python_classes.retain(|c| {
-            type_filter
-                .iter()
-                .any(|filter| c.python_name.eq_ignore_ascii_case(filter))
-        });
+        pybevy_lint::retain_filtered_stubs(&mut python_classes, &rust_classes, type_filter);
     }
 
     if args.verbose {
@@ -817,13 +796,13 @@ fn run_validate(
     let has_ignore_filter = !ignore_filter.is_empty();
 
     for diagnostic in &diagnostics {
-        let code_str = format!("{:?}", diagnostic.code);
+        let code_str = diagnostic.code.as_str();
 
-        if has_ignore_filter && ignore_filter.iter().any(|f| code_str.contains(f)) {
+        if has_ignore_filter && ignore_filter.iter().any(|f| f == code_str) {
             continue;
         }
 
-        if has_code_filter && !code_filter.iter().any(|f| code_str.contains(f)) {
+        if has_code_filter && !code_filter.iter().any(|f| f == code_str) {
             continue;
         }
 
@@ -1236,6 +1215,36 @@ fn check_type_usage_in_examples(
     Ok(usage_counts)
 }
 
+/// Count `.name(` and `::name(` calls of each method name in the examples;
+/// the type-usage scan only sees PascalCase identifiers.
+fn count_method_calls_in_examples(
+    examples_dir: &Path,
+    methods: &[String],
+) -> Result<std::collections::HashMap<String, usize>> {
+    let patterns: Vec<(String, regex::Regex)> = methods
+        .iter()
+        .map(|name| {
+            let pattern = format!(r"(?:\.|::)\s*{}\s*(?:::<[^>]*>)?\s*\(", regex::escape(name));
+            Ok((name.clone(), regex::Regex::new(&pattern)?))
+        })
+        .collect::<Result<_>>()?;
+    let mut counts: std::collections::HashMap<String, usize> =
+        methods.iter().map(|name| (name.clone(), 0)).collect();
+    for entry in walkdir::WalkDir::new(examples_dir)
+        .into_iter()
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "rs"))
+    {
+        let Ok(source) = std::fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        for (name, pattern) in &patterns {
+            *counts.get_mut(name).expect("seeded above") += pattern.find_iter(&source).count();
+        }
+    }
+    Ok(counts)
+}
+
 /// Count type usages in a Rust file using tree-sitter AST parsing.
 ///
 /// Counts `type_identifier` nodes, identifiers in `use_declaration` subtrees, and
@@ -1462,7 +1471,11 @@ fn run_coverage(
     match output.format {
         "json" => println!(
             "{}",
-            serde_json::to_string_pretty(&pybevy_lint::coverage_json::render(&result.report))?
+            serde_json::to_string_pretty(&pybevy_lint::coverage_json::render(
+                &result.report,
+                &pybevy_lint::bevy_parser::cache::get_bevy_git_ref(&bevy_path)
+                    .unwrap_or_else(|_| "unknown".to_owned()),
+            ))?
         ),
         "table" => print_coverage_table(
             &result.report,
@@ -1569,10 +1582,18 @@ fn run_test_coverage(
         );
     }
 
-    let stub_classes = pybevy_lint::parse_python_stubs(&args.python_path)?;
+    let mut stub_classes = pybevy_lint::parse_python_stubs(&args.python_path)?;
+    pybevy_lint::retain_included_classes(&mut stub_classes, config);
+    let included = |symbol: &pybevy_lint::python_parser::module_symbols::StubSymbolDef| {
+        !config.validation.excludes_module(&symbol.module_path)
+    };
+    let mut stub_symbols = pybevy_lint::parse_python_stub_symbols(&args.python_path)?;
+    stub_symbols.retain(|symbol| included(symbol));
+    let mut source_symbols = parse_source_only_symbols(&args.python_path)?;
+    source_symbols.retain(|symbol| included(symbol));
     let mut catalog = pybevy_lint::test_coverage::ApiCatalog::from_stub_classes(stub_classes);
-    catalog.add_stub_symbols(pybevy_lint::parse_python_stub_symbols(&args.python_path)?);
-    catalog.add_source_only_symbols(parse_source_only_symbols(&args.python_path)?);
+    catalog.add_stub_symbols(stub_symbols);
+    catalog.add_source_only_symbols(source_symbols);
     let prelude_path = args.python_path.join("prelude.py");
     if prelude_path.exists() {
         catalog.add_wildcard_reexports(pybevy_lint::parse_python_reexports(&prelude_path)?);
@@ -1831,7 +1852,7 @@ fn run_audit(
                 .collect();
 
             if !common_methods.is_empty() {
-                let usage = check_type_usage_in_examples(&examples_dir, &common_methods)?;
+                let usage = count_method_calls_in_examples(&examples_dir, &common_methods)?;
                 let mut found: Vec<_> = usage
                     .into_iter()
                     .filter(|(_, count)| *count >= min_usage)

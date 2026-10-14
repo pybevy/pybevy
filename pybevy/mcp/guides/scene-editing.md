@@ -156,7 +156,10 @@ Non-finite float fields are reported as the JSON strings `"NaN"`,
 be finite; a rejected value names its field and leaves the component unchanged.
 Finite JSON numbers that overflow a native `f32` field are also rejected before
 the component or resource is committed. Native `f64` fields keep their wider range.
-Integer fields likewise reject a value outside their type's range, such as
+Python integers on the read surface support `-2**63` through `2**64 - 1`.
+Values outside that range return a `serialization_error` marker, including in
+nested fields; omit marked fields from readback patches and inspect them in
+Python. Integer fields reject a value outside their type's range, such as
 `300` for a `u8`, instead of storing a wrapped value; the error names the
 field and range, as in `u8 value must be between 0 and 255, got 300`.
 The exception is a `Range` endpoint: `"Infinity"` and `"-Infinity"` replay
@@ -329,8 +332,11 @@ for an otherwise unused custom `@resource` class, not a native resource under
 a different control name.
 
 `set_resource` patches only the supplied fields of an existing resource;
-omitted fields keep their current values. Native-resource patches validate
-field names, conversions, and setters on a detached value before committing.
+omitted fields keep their current values. Native and custom Python-resource
+patches validate field names, conversions, and setters on detached state before
+committing. Custom resources retain their Python object identity and do not
+rerun constructors; dictionary and slot state is copied for staging. State that
+cannot be copied rejects the patch before mutation.
 If any field fails, no fields are changed and the resource is not marked
 changed. A rejected field is an invalid-parameters error (HTTP 400) naming
 `Resource.field`, for example `Failed to convert ClearColor.color: unknown

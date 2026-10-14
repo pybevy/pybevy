@@ -104,7 +104,7 @@ impl PyAppReloadState {
         });
     }
 
-    /// Check if the next reload will be in partial mode
+    /// Check the active attempt's import mode, or the next idle reload mode.
     /// Used by CLI loader to determine whether to enable component caching
     pub fn is_partial_reload(&self) -> bool {
         self.state.is_partial_reload()

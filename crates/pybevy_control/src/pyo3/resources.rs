@@ -5,7 +5,7 @@ use std::{
 };
 
 use bevy::{
-    ecs::{component::ComponentId, world::World},
+    ecs::{change_detection::DetectChangesMut, component::ComponentId, world::World},
     time::{Fixed, Real, Time, Virtual},
 };
 use pybevy_core::{
@@ -320,23 +320,39 @@ pub fn insert_resource(
 
     if let Some((comp_id, type_ptr)) = custom_entry {
         Python::attach(|py| {
-            // Patch semantics: if custom resource already exists, mutate in-place
-            // Mutable access so the patch stamps the change tick: Changed[T] and
-            // Res.is_changed must observe control-plane edits the same as ECS ones.
-            if let Some(mut existing) = world.get_resource_mut_by_id(comp_id) {
-                // SAFETY: custom resource metadata refers to a Py<PyAny> descriptor.
-                let existing = unsafe { existing.as_mut().deref_mut::<Py<PyAny>>() };
+            let existing = world.get_resource_by_id(comp_id).map(|ptr| {
+                // SAFETY: this registered custom descriptor stores a live Py<PyAny>.
+                unsafe { ptr.deref::<Py<PyAny>>() }.clone_ref(py)
+            });
+            if let Some(existing) = existing {
                 let bound = existing.bind(py);
-                if let Some(obj) = value.as_object() {
+                if let Some(obj) = value.as_object()
+                    && !obj.is_empty()
+                {
                     validate_custom_resource_fields(&resource_type, bound, obj)?;
                     if let Some(kind) = state_resource::classify(bound) {
-                        return apply_state_variant(bound, kind, &resource_type, obj);
+                        let response = apply_state_variant(bound, kind, &resource_type, obj)?;
+                        if let Some(mut stored) = world.get_resource_mut_by_id(comp_id) {
+                            stored.set_changed();
+                        }
+                        return Ok(response);
                     }
+                    let patch = py
+                        .import("pybevy.mcp._resource_patch")
+                        .and_then(|module| module.call_method1("_ResourcePatch", (bound,)))
+                        .map_err(|error| {
+                            ControlError::invalid_params(format!(
+                                "Failed to copy existing resource for atomic patch: {error}"
+                            ))
+                        })?;
+                    let staged = patch
+                        .getattr("value")
+                        .map_err(|error| ControlError::internal(error.to_string()))?;
                     let mut converted = Vec::with_capacity(obj.len());
                     for (field_name, field_value) in obj {
                         let py_value = convert_committed_resource_enum_field_value(
                             py,
-                            bound,
+                            &staged,
                             field_name,
                             field_value,
                         )
@@ -345,7 +361,7 @@ pub fn insert_resource(
                                 || {
                                     convert_annotated_field_value(
                                         py,
-                                        bound,
+                                        &staged,
                                         field_name,
                                         field_value,
                                     )
@@ -361,11 +377,21 @@ pub fn insert_resource(
                         converted.push((field_name, py_value));
                     }
                     for (field_name, py_value) in converted {
-                        if let Err(e) = bound.setattr(field_name.as_str(), py_value) {
-                            return Err(ControlError::invalid_params(format!(
-                                "Failed to set {resource_type}.{field_name}: {e}"
-                            )));
-                        }
+                        staged
+                            .setattr(field_name.as_str(), py_value)
+                            .map_err(|error| {
+                                ControlError::invalid_params(format!(
+                                    "Failed to set {resource_type}.{field_name}: {error}"
+                                ))
+                            })?;
+                    }
+                    patch.call_method0("commit").map_err(|error| {
+                        ControlError::invalid_params(format!(
+                            "Failed to copy existing resource for atomic patch: {error}"
+                        ))
+                    })?;
+                    if let Some(mut stored) = world.get_resource_mut_by_id(comp_id) {
+                        stored.set_changed();
                     }
                 }
                 return Ok(resource_mutation_response(&resource_type, false, true));
@@ -770,7 +796,7 @@ mod tests {
     }
 
     #[test]
-    fn insert_resource_custom_patch_stamps_the_change_tick() {
+    fn insert_resource_custom_empty_patch_preserves_the_change_tick() {
         setup_python();
 
         let mut world = World::new();
@@ -802,9 +828,9 @@ mod tests {
             .get_resource_change_ticks_by_id(comp_id)
             .expect("resource present")
             .changed;
-        assert_ne!(
+        assert_eq!(
             before, after,
-            "control-plane patch must stamp the change tick so Changed[T] observes it"
+            "an empty patch must preserve the change tick"
         );
     }
 
@@ -1008,6 +1034,7 @@ mod tests {
 
     #[test]
     fn resource_names_are_the_listed_names_in_order() {
+        setup();
         let mut world = World::new();
         let mut info = pybevy_core::CustomResourceInfo::default();
         info.insert(

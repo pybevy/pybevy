@@ -103,10 +103,12 @@ impl SharedScheduleRegistry {
         }
     }
 
+    /// Cancels a running schedule; false when it is unknown or already completed.
     pub fn cancel(&self, id: &str) -> bool {
         if let Ok(guard) = self.inner.lock()
             && let Some(arc) = guard.get(id)
             && let Ok(mut state) = arc.lock()
+            && state.status == ScheduleStatus::Running
         {
             state.cancelled = true;
             return true;
@@ -253,6 +255,14 @@ mod tests {
         assert_eq!(state.completed_actions, 2);
         assert_eq!(state.results.len(), 1);
         assert_eq!(state.results[0].tool, "pause_time");
+    }
+
+    #[test]
+    fn a_completed_schedule_cannot_be_cancelled() {
+        let registry = SharedScheduleRegistry::default();
+        registry.insert("done".to_string(), completed_state("done", Instant::now()));
+        assert!(!registry.cancel("done"));
+        assert!(!registry.get("done").unwrap().cancelled);
     }
 
     /// Verifies cancel propagates through the shared Arc so the schedule

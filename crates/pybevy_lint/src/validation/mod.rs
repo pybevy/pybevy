@@ -74,6 +74,7 @@ pub fn validate_with_bevy(
 
     if check_stale_exceptions {
         diagnostics.extend(specialized_receivers::audit_mappings(rust_classes, config));
+        diagnostics.extend(stale_shared_borrow_types(rust_classes, config));
         diagnostics.extend(origin::audit_constructor_mappings(
             rust_classes,
             &config.bevy,
@@ -102,14 +103,7 @@ pub fn validate_with_bevy(
         if rust_class.python_name.starts_with('_') {
             continue;
         }
-        let in_scope = rust_class.constructor.is_some()
-            || !rust_class.properties.is_empty()
-            || rust_class.is_enum
-            || rust_class
-                .enum_variants
-                .iter()
-                .any(|variant| variant.constructor.is_some());
-        if !in_scope {
+        if !in_constructor_policy_scope(rust_class) {
             continue;
         }
 
@@ -200,13 +194,6 @@ pub fn validate_with_bevy(
                 python_class,
             ));
         }
-
-        // W022 (payload arm): writable stub variant payload over a
-        // non-borrowed storage field is a detached write.
-        policy_diagnostics.extend(property_rules::validate_nested_variant_payload_writability(
-            rust_class,
-            python_classes,
-        ));
 
         // W023: nested wrapper fields must not use plain field getters.
         policy_diagnostics.extend(class_rules::validate_nested_wrapper_getters(
@@ -405,12 +392,23 @@ pub fn validate_with_bevy(
         if rust_class.python_name.starts_with('_') {
             continue;
         }
-        let (Some((crate_key, bevy_item)), _) =
-            resolve_bevy_item(rust_class, bevy_crates, config, internal_type_names)
-        else {
+        let path = class_path(rust_class);
+        let (resolved, resolution_diagnostics) =
+            resolve_bevy_item(rust_class, bevy_crates, config, internal_type_names);
+        // The constructor-policy pass already reported claims of in-scope classes.
+        if !in_constructor_policy_scope(rust_class) {
+            for diagnostic in resolution_diagnostics {
+                if is_disabled_code(Some(config), diagnostic.code.as_str())
+                    || consume_exception(Some(config), &mut consumed_exceptions, &path, &diagnostic)
+                {
+                    continue;
+                }
+                diagnostics.push(diagnostic);
+            }
+        }
+        let Some((crate_key, bevy_item)) = resolved else {
             continue;
         };
-        let path = class_path(rust_class);
         for finding in drift_rules::check_api_drift(
             rust_class,
             bevy_item,
@@ -497,6 +495,18 @@ pub fn validate_with_bevy(
     diagnostics
 }
 
+/// Classes the constructor-policy pass resolves and checks; the rest are
+/// method-only wrappers whose claims the drift pass resolves.
+fn in_constructor_policy_scope(class: &PyClassDef) -> bool {
+    class.constructor.is_some()
+        || !class.properties.is_empty()
+        || class.is_enum
+        || class
+            .enum_variants
+            .iter()
+            .any(|variant| variant.constructor.is_some())
+}
+
 /// E018 exceptions are consumed, and checked for staleness, by the domain lint.
 fn is_domain_lint_exception(exception: &ValidationException) -> bool {
     exception.code == DiagnosticCode::E018.as_str()
@@ -556,16 +566,7 @@ fn variant_policy(
         return Vec::new();
     };
 
-    let parent_rust_name = class.extends.as_deref().or(Some(class.rust_name.as_str()));
-    let Some(parent_rust_name) = parent_rust_name else {
-        return Vec::new();
-    };
-
-    let parent_class = PyClassDef {
-        rust_name: parent_rust_name.to_string(),
-        ..Default::default()
-    };
-    let bevy_name = crate::comparison::pybevy_bevy_name(&parent_class, bevy_config);
+    let bevy_name = crate::comparison::pybevy_bevy_name(class, bevy_config);
     let Some((crate_name, parent_item)) = find_bevy_item(bevy_crates, &bevy_name) else {
         return Vec::new();
     };
@@ -581,7 +582,6 @@ fn variant_policy(
         crate::bevy_parser::types::BevyVariantKind::Tuple(_) => {
             // Named adapters marked #[py_bevy(tuple)] keep the positional
             // payload contract, same as true tuple payloads.
-            let _ = &class.bevy_tuple_variants;
             ConstructorOrigin::TuplePayload {
                 upstream_type: parent_item.full_path.clone(),
             }
@@ -817,9 +817,6 @@ fn validate_all_impl_with_consumed(
     check_stale_exceptions: bool,
 ) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
-    let mut matched_shared_borrow_types = config
-        .map(|config| vec![false; config.validation.shared_borrow_types.len()])
-        .unwrap_or_default();
     let borrow_targets = shared_borrow_targets(config, rust_classes);
 
     // A missing `module = "pybevy...."` leaves `__module__` as `builtins` for
@@ -867,8 +864,7 @@ fn validate_all_impl_with_consumed(
         class_diagnostics.extend(class_rules::validate_value_enum_without_pyenum(rust_class));
         class_diagnostics.extend(method_rules::validate_builder_receivers(rust_class));
         class_diagnostics.extend(class_rules::validate_conversion_fallbacks(rust_class));
-        let self_borrow_reason =
-            shared_borrow_reason(config, &mut matched_shared_borrow_types, rust_class);
+        let self_borrow_reason = shared_borrow_reason(config, rust_class);
         if let Some(reason) = self_borrow_reason {
             class_diagnostics.extend(method_rules::validate_shared_borrow_receivers(
                 rust_class, reason,
@@ -982,25 +978,7 @@ fn validate_all_impl_with_consumed(
             }
         }
 
-        for (declared, matched) in config
-            .validation
-            .shared_borrow_types
-            .iter()
-            .zip(matched_shared_borrow_types)
-        {
-            if !matched {
-                diagnostics.push(
-                    Diagnostic::error(
-                        DiagnosticCode::E010,
-                        format!(
-                            "shared-borrow type '{}' matches no Rust class",
-                            declared.path
-                        ),
-                    )
-                    .with_note(declared.reason.clone()),
-                );
-            }
-        }
+        diagnostics.extend(stale_shared_borrow_types(rust_classes, config));
     }
 
     diagnostics
@@ -1053,24 +1031,39 @@ fn class_borrow_targets<'a>(
     visible
 }
 
-/// The reason a class is declared a shared-borrow proxy, marking the
-/// declaration as matched so a stale path is reported.
-fn shared_borrow_reason<'a>(
-    config: Option<&'a Config>,
-    matched: &mut [bool],
-    class: &PyClassDef,
-) -> Option<&'a str> {
+/// The reason a class is declared a shared-borrow proxy.
+fn shared_borrow_reason<'a>(config: Option<&'a Config>, class: &PyClassDef) -> Option<&'a str> {
     let path = class_path(class);
     config?
         .validation
         .shared_borrow_types
         .iter()
-        .enumerate()
-        .find(|(_, declared)| declared.path == path)
-        .map(|(index, declared)| {
-            matched[index] = true;
-            declared.reason.as_str()
+        .find(|declared| declared.path == path)
+        .map(|declared| declared.reason.as_str())
+}
+
+/// E010 for shared-borrow declarations that name no public Rust class.
+fn stale_shared_borrow_types(rust_classes: &[PyClassDef], config: &Config) -> Vec<Diagnostic> {
+    config
+        .validation
+        .shared_borrow_types
+        .iter()
+        .filter(|declared| {
+            !rust_classes.iter().any(|class| {
+                !class.python_name.starts_with('_') && class_path(class) == declared.path
+            })
         })
+        .map(|declared| {
+            Diagnostic::error(
+                DiagnosticCode::E010,
+                format!(
+                    "shared-borrow type '{}' matches no Rust class",
+                    declared.path
+                ),
+            )
+            .with_note(declared.reason.clone())
+        })
+        .collect()
 }
 
 fn class_path(class: &PyClassDef) -> String {
@@ -1137,7 +1130,9 @@ fn find_matching_python_class<'a>(
         // Try exact module match first
         if let Some(py_class) = python_classes.iter().find(|p| {
             p.python_name == rust_class.python_name
-                && p.module_path.as_ref().is_some_and(|pm| pm == rust_module)
+                && p.module_path
+                    .as_deref()
+                    .is_some_and(|pm| pm.strip_suffix(".__init__").unwrap_or(pm) == rust_module)
         }) {
             return Some(py_class);
         }

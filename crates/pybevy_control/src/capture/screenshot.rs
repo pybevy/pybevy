@@ -1326,7 +1326,7 @@ mod tests {
             2
         );
 
-        readiness.complete_requested_frame();
+        readiness.complete_extracted_frame(required_render_epoch);
         process_pending_screenshots(&mut world);
         assert_eq!(
             world.resource::<PendingScreenshots>().pending[0].frames_remaining,

@@ -236,6 +236,8 @@ impl ApiIndex {
             }
         }
 
+        // Module contents live in a HashMap; sort so a truncated page is stable.
+        results.sort_by(|left, right| (&left.module, left.line).cmp(&(&right.module, right.line)));
         let total = results.len();
         if let Some(cap) = limit {
             results.truncate(cap);
@@ -1870,6 +1872,31 @@ class Bloom(Component):
         assert_eq!(all.len(), 200);
         assert_eq!(all_total, 200);
 
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn api_index_search_truncates_in_module_and_line_order() {
+        let dir = scratch_dir("pybevy_test_search_order");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        for module in ["delta", "alpha", "charlie", "bravo"] {
+            fs::write(
+                dir.join(format!("{module}.pyi")),
+                "class Item:\n    pass\nclass ItemTwo:\n    pass\n",
+            )
+            .unwrap();
+        }
+
+        let index = ApiIndex::build(&dir);
+        let (results, total) = index.search("Item", Some(3));
+
+        assert_eq!(total, 8);
+        let page: Vec<(&str, usize)> = results
+            .iter()
+            .map(|result| (result.module.as_str(), result.line))
+            .collect();
+        assert_eq!(page, [("alpha", 1), ("alpha", 3), ("bravo", 1)]);
         let _ = fs::remove_dir_all(&dir);
     }
 

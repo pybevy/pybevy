@@ -9,6 +9,7 @@
 use pyo3::{prelude::*, types::PyType};
 
 pub(crate) const VARIANT: &str = "variant";
+const STATE_MODULE: &str = "pybevy.state";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StateResource {
@@ -16,13 +17,16 @@ pub(crate) enum StateResource {
     Next,
 }
 
-/// Identify a state resource by Python type name.
+/// Identify a state resource by its Python module and type name.
 ///
-/// Matching on the name rather than the type keeps this crate off a dependency
-/// on the root `pybevy` crate, which owns `PyState`. The same idiom serves
-/// `Color` and `Entity` in the value serializer.
+/// Matching on names rather than the type keeps this crate off a dependency
+/// on the root `pybevy` crate, which owns `PyState`. The module check keeps a
+/// user resource that happens to be called `State` an ordinary resource.
 pub(crate) fn classify(bound: &Bound<'_, PyAny>) -> Option<StateResource> {
     let py_type = bound.get_type();
+    if py_type.module().ok()?.to_str().ok()? != STATE_MODULE {
+        return None;
+    }
     let name = py_type.name().ok()?;
     match name.to_str().ok()? {
         "State" => Some(StateResource::Current),

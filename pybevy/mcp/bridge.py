@@ -468,6 +468,7 @@ class McpBridge:
         if argument_error:
             return self._error(req_id, -32602, argument_error)
         assert isinstance(arguments, dict)
+        arguments = self._coerce_arguments(tool_name, arguments)
 
         if tool_name == "get_started":
             return self._handle_get_started(req_id, arguments)
@@ -692,6 +693,7 @@ class McpBridge:
         if argument_error:
             return self._error(req_id, -32602, argument_error)
         assert isinstance(arguments, dict)
+        arguments = self._coerce_arguments(tool_name, arguments)
 
         if tool_name == "get_started":
             return self._handle_get_started(req_id, arguments)
@@ -830,7 +832,8 @@ class McpBridge:
 
     def _coerce_arguments(self, tool_name: str, arguments: JsonDict) -> JsonDict:
         """Coerce string arguments to their schema types (MCP clients may send strings)."""
-        tool_def = next((t for t in self._tools if t["name"] == tool_name), None)
+        definitions = [*self._tools, LOAD_SCENE_TOOL, GET_LOGS_TOOL]
+        tool_def = next((t for t in definitions if t["name"] == tool_name), None)
         if tool_def is None:
             return arguments
 
