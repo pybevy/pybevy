@@ -1,5 +1,5 @@
 use bevy::window::Monitor;
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, PyComponent, ValueStorage};
 use pybevy_macros::pycomponent;
 use pybevy_math::{ivec2::PyIVec2, uvec2::PyUVec2};
 use pyo3::prelude::*;
@@ -52,7 +52,7 @@ impl PyMonitor {
             .as_ref()?
             .video_modes
             .iter()
-            .map(|vm| (*vm).into())
+            .map(|mode| PyVideoMode::from_borrowed(ValueStorage::read_only_snapshot(*mode)))
             .collect())
     }
 

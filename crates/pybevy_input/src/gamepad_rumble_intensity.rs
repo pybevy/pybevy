@@ -1,5 +1,6 @@
 use bevy::input::gamepad::GamepadRumbleIntensity;
-use pybevy_core::public_error::value_out_of_range;
+use pybevy_core::{FromBorrowedStorage, ValueStorage, public_error::value_out_of_range};
+use pybevy_macros::pyvalue;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 /// bevy documents these as 0.0 to 1.0 and stores them unchecked.
@@ -13,6 +14,7 @@ pub(crate) fn check_motor(name: &str, value: f32) -> PyResult<f32> {
     }
 }
 
+#[pyvalue]
 #[pyclass(
     name = "GamepadRumbleIntensity",
     module = "pybevy.input",
@@ -20,27 +22,36 @@ pub(crate) fn check_motor(name: &str, value: f32) -> PyResult<f32> {
     frozen,
     from_py_object
 )]
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct PyGamepadRumbleIntensity {
-    pub strong_motor: f32,
-    pub weak_motor: f32,
+    pub(crate) storage: ValueStorage<GamepadRumbleIntensity>,
 }
 
-impl From<GamepadRumbleIntensity> for PyGamepadRumbleIntensity {
-    fn from(intensity: GamepadRumbleIntensity) -> Self {
-        PyGamepadRumbleIntensity {
-            strong_motor: intensity.strong_motor,
-            weak_motor: intensity.weak_motor,
-        }
+impl PartialEq for PyGamepadRumbleIntensity {
+    fn eq(&self, other: &Self) -> bool {
+        matches!((self.to_bevy(), other.to_bevy()), (Ok(a), Ok(b)) if a == b)
     }
 }
 
-impl From<PyGamepadRumbleIntensity> for GamepadRumbleIntensity {
-    fn from(intensity: PyGamepadRumbleIntensity) -> Self {
-        GamepadRumbleIntensity {
-            strong_motor: intensity.strong_motor,
-            weak_motor: intensity.weak_motor,
-        }
+impl From<GamepadRumbleIntensity> for PyGamepadRumbleIntensity {
+    fn from(value: GamepadRumbleIntensity) -> Self {
+        Self::from_owned(value)
+    }
+}
+
+impl TryFrom<PyGamepadRumbleIntensity> for GamepadRumbleIntensity {
+    type Error = PyErr;
+
+    fn try_from(value: PyGamepadRumbleIntensity) -> PyResult<Self> {
+        value.to_bevy()
+    }
+}
+
+impl TryFrom<&PyGamepadRumbleIntensity> for GamepadRumbleIntensity {
+    type Error = PyErr;
+
+    fn try_from(value: &PyGamepadRumbleIntensity) -> PyResult<Self> {
+        value.to_bevy()
     }
 }
 
@@ -49,44 +60,42 @@ impl PyGamepadRumbleIntensity {
     #[new]
     #[pyo3(signature = (*, strong_motor = 1.0, weak_motor = 1.0))]
     fn new(strong_motor: f32, weak_motor: f32) -> PyResult<Self> {
-        Ok(PyGamepadRumbleIntensity {
+        Ok(Self::from_owned(GamepadRumbleIntensity {
             strong_motor: check_motor("strong_motor", strong_motor)?,
             weak_motor: check_motor("weak_motor", weak_motor)?,
-        })
+        }))
     }
 
     #[classattr]
     const MAX: PyGamepadRumbleIntensity = PyGamepadRumbleIntensity {
-        strong_motor: 1.0,
-        weak_motor: 1.0,
+        storage: ValueStorage::owned(GamepadRumbleIntensity::MAX),
     };
 
     #[classattr]
     const WEAK_MAX: PyGamepadRumbleIntensity = PyGamepadRumbleIntensity {
-        strong_motor: 0.0,
-        weak_motor: 1.0,
+        storage: ValueStorage::owned(GamepadRumbleIntensity::WEAK_MAX),
     };
 
     #[classattr]
     const STRONG_MAX: PyGamepadRumbleIntensity = PyGamepadRumbleIntensity {
-        strong_motor: 1.0,
-        weak_motor: 0.0,
+        storage: ValueStorage::owned(GamepadRumbleIntensity::STRONG_MAX),
     };
 
     #[getter]
-    fn strong_motor(&self) -> f32 {
-        self.strong_motor
+    fn strong_motor(&self) -> PyResult<f32> {
+        Ok(self.as_ref()?.strong_motor)
     }
 
     #[getter]
-    fn weak_motor(&self) -> f32 {
-        self.weak_motor
+    fn weak_motor(&self) -> PyResult<f32> {
+        Ok(self.as_ref()?.weak_motor)
     }
 
-    fn __repr__(&self) -> String {
-        format!(
+    fn __repr__(&self) -> PyResult<String> {
+        let intensity = self.to_bevy()?;
+        Ok(format!(
             "GamepadRumbleIntensity(strong_motor={}, weak_motor={})",
-            self.strong_motor, self.weak_motor
-        )
+            intensity.strong_motor, intensity.weak_motor
+        ))
     }
 }

@@ -121,8 +121,8 @@ fn enum_source_order_is_checked_instead_of_alphabetical_api_order() {
         (
             "input",
             include_str!("../../pybevy_input/src/gamepad_rumble_request.rs"),
-            "duration: Duration,\n        #[py_type(PyGamepadRumbleIntensity)]\n        intensity: GamepadRumbleIntensity,\n        #[py_type(PyEntity)]\n        gamepad: Entity,",
-            "#[py_type(PyEntity)]\n        gamepad: Entity,\n        #[py_type(PyGamepadRumbleIntensity)]\n        intensity: GamepadRumbleIntensity,\n        duration: Duration,",
+            "duration: Duration,\n        #[py_type(PyGamepadRumbleIntensity)]\n        #[py_try_into]\n        intensity: GamepadRumbleIntensity,\n        #[py_type(PyEntity)]\n        gamepad: Entity,",
+            "#[py_type(PyEntity)]\n        gamepad: Entity,\n        #[py_type(PyGamepadRumbleIntensity)]\n        #[py_try_into]\n        intensity: GamepadRumbleIntensity,\n        duration: Duration,",
         ),
     ] {
         let (code, summary) = enum_summary(source, module);

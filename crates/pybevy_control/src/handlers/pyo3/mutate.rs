@@ -13,12 +13,13 @@ use bevy::{
 };
 use pybevy_color::linear_rgba::PyLinearRgba;
 use pybevy_core::{
-    ComponentBridge, CustomComponentInfo, CustomResourceInfo, PyEntity, ValidityFlag,
-    ValidityGuard,
+    BatchFieldMeta, ComponentBridge, CustomComponentInfo, CustomResourceInfo, PyEntity,
+    ValidityFlag, ValidityGuard,
     custom_resource::{
         hierarchy_contains_resource_entity, insert_dynamic_resource_value, validate_hierarchy_link,
     },
     public_error,
+    registry::global_registry,
 };
 use pybevy_math::{quat::PyQuat, range::PyRange, vec3::PyVec3};
 use pyo3::{
@@ -223,9 +224,10 @@ pub fn spawn_entity(
             continue;
         }
         let type_id = bridge.bevy_type_id();
+        let declared = declared_fields(&bridge);
 
         // Try reflection first
-        match reflect_mutate::reflect_spawn_component(world, entity, type_id, &fields) {
+        match reflect_mutate::reflect_spawn_component(world, entity, type_id, &fields, declared) {
             Ok(()) => {
                 added_components.push(comp_name.clone());
                 continue;
@@ -964,8 +966,10 @@ pub fn set_component(
             return Ok(result);
         }
 
+        let declared = declared_fields(bridge);
+
         // Try reflection first
-        match reflect_mutate::reflect_set_component(world, entity, type_id, field_obj) {
+        match reflect_mutate::reflect_set_component(world, entity, type_id, field_obj, declared) {
             Ok(new_values) => {
                 return Ok(serde_json::json!({
                     "entity_id": entity_id,
@@ -986,7 +990,9 @@ pub fn set_component(
                         "Component '{component}' cannot be inserted from Python"
                     )));
                 }
-                match reflect_mutate::reflect_spawn_component(world, entity, type_id, field_obj) {
+                match reflect_mutate::reflect_spawn_component(
+                    world, entity, type_id, field_obj, declared,
+                ) {
                     Ok(()) => {
                         let new_values = reflect_mutate::reflect_read_fields(
                             world,
@@ -1059,6 +1065,12 @@ pub fn set_component(
         component_id,
         field_obj,
     )
+}
+
+/// Field metadata carrying the value-domain constraints the wrapper's setters enforce.
+fn declared_fields(bridge: &Arc<dyn ComponentBridge>) -> &'static [BatchFieldMeta] {
+    global_registry::get_component_batch_meta(bridge.py_type_ptr() as usize)
+        .map_or(&[], |meta| meta.fields)
 }
 
 /// Python fallback for set_component: extract via bridge and use setattr.

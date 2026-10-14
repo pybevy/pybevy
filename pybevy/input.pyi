@@ -2591,6 +2591,55 @@ class TouchPhase:
 
     def __hash__(self) -> int: ...
 
+class ForceTouch:
+    """Touch pressure as reported by the platform.
+
+    Example:
+        ```python
+        match touch.force:
+            case ForceTouch.Calibrated(force, max_possible_force, _):
+                pressure = force / max_possible_force
+            case ForceTouch.Normalized(value):
+                pressure = value
+            case None:
+                pressure = 1.0
+        ```
+    """
+
+    def __copy__(self) -> ForceTouch: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> ForceTouch: ...
+    def __eq__(self, other: object) -> bool: ...
+
+    class Calibrated(ForceTouch):
+        """Force calibrated so that 1.0 is an average touch (iOS)."""
+
+        __match_args__: ClassVar[
+            tuple[Literal["force"], Literal["max_possible_force"], Literal["altitude_angle"]]
+        ]
+        @property
+        def force(self) -> float:
+            """Force of the touch, where 1.0 is the force of an average touch."""
+
+        @property
+        def max_possible_force(self) -> float:
+            """Maximum possible force for a touch."""
+
+        @property
+        def altitude_angle(self) -> float | None:
+            """Stylus altitude in radians: 0 is parallel to the surface, pi/2 perpendicular."""
+
+        def __init__(
+            self, *, force: float, max_possible_force: float, altitude_angle: float | None
+        ) -> None: ...
+
+    class Normalized(ForceTouch):
+        """Force normalized to the device range, where 1.0 is the maximum."""
+
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        @property
+        def value(self) -> float: ...
+        def __init__(self, value: float) -> None: ...
+
 class TouchInput(Message):
     """
     Touch input event message.
@@ -2598,7 +2647,6 @@ class TouchInput(Message):
     Contains information about touch screen interactions.
     Use MessageReader to receive touches or MessageWriter to simulate them.
     InputPlugin processes messages in PreUpdate to update Touches.
-    Written force values map to Bevy's normalized pressure variant.
 
     Example:
         ```python
@@ -2619,7 +2667,7 @@ class TouchInput(Message):
         phase: TouchPhase,
         position: Vec2,
         window: Entity = ...,
-        force: float | None = None,
+        force: ForceTouch | None = None,
         id: int
     ) -> None: ...
     @property
@@ -2639,12 +2687,8 @@ class TouchInput(Message):
         """
 
     @property
-    def force(self) -> float | None:
-        """
-        Optional pressure data for pressure-sensitive touchscreens.
-
-        Returns a value between 0.0 and 1.0, or None if not supported.
-        """
+    def force(self) -> ForceTouch | None:
+        """Pressure data for pressure-sensitive touchscreens, or None if not supported."""
 
     @property
     def window(self) -> Entity:
@@ -2939,20 +2983,16 @@ class Touch:
         """Position of the touch in the previous frame."""
 
     @property
-    def force(self) -> float | None:
-        """
-        Current pressure/force of the touch, if supported.
-
-        Normalized to 0.0-1.0 range. None if pressure sensing not available.
-        """
+    def force(self) -> ForceTouch | None:
+        """Current pressure of the touch, or None if pressure sensing is not available."""
 
     @property
-    def start_force(self) -> float | None:
-        """Pressure/force when the touch first made contact."""
+    def start_force(self) -> ForceTouch | None:
+        """Pressure when the touch first made contact."""
 
     @property
-    def previous_force(self) -> float | None:
-        """Pressure/force in the previous frame."""
+    def previous_force(self) -> ForceTouch | None:
+        """Pressure in the previous frame."""
 
     def delta(self) -> Vec2:
         """Get the movement delta between current and previous position."""

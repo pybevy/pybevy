@@ -20,6 +20,7 @@ pub enum PyGamepadRumbleRequest {
     Add {
         duration: Duration,
         #[py_type(PyGamepadRumbleIntensity)]
+        #[py_try_into]
         intensity: GamepadRumbleIntensity,
         #[py_type(PyEntity)]
         gamepad: Entity,

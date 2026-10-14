@@ -18,6 +18,7 @@ pub enum PyVideoModeSelection {
     #[py_bevy(tuple)]
     Specific {
         #[py_type(PyVideoMode)]
+        #[py_try_into]
         video_mode: VideoMode,
     },
 }
@@ -30,12 +31,12 @@ impl Default for PyVideoModeSelection {
 
 #[pymethods]
 impl PyVideoModeSelection {
-    fn __repr__(&self) -> String {
-        match self {
+    pub fn __repr__(&self) -> PyResult<String> {
+        Ok(match self {
             PyVideoModeSelection::Current() => "VideoModeSelection.Current()".to_string(),
             PyVideoModeSelection::Specific { video_mode } => {
-                format!("VideoModeSelection.Specific({})", video_mode.__repr__())
+                format!("VideoModeSelection.Specific({})", video_mode.__repr__()?)
             }
-        }
+        })
     }
 }

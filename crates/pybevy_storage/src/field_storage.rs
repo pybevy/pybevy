@@ -543,7 +543,7 @@ impl<T: Clone> FieldStorage<T> {
             _ => {
                 let current = self.as_ref()?;
                 let value = read(&current, index).ok_or(StorageError::IndexOutOfRange)?;
-                Ok(AssetStorage::owned_readonly(value.clone()))
+                Ok(AssetStorage::read_only_snapshot(value.clone()))
             }
         }
     }

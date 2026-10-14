@@ -601,7 +601,8 @@ impl<T: Asset> AssetStorage<T> {
         }
     }
 
-    pub(crate) fn owned_readonly(asset: T) -> Self {
+    /// Create an enforced read-only snapshot.
+    pub fn read_only_snapshot(asset: T) -> Self {
         Self {
             inner: AssetStorageInner::OwnedReadOnly(Box::new(asset)),
             views: ViewCounters::default(),
@@ -904,11 +905,11 @@ impl<T: Asset> AssetStorage<T> {
         }
         match &self.inner {
             AssetStorageInner::Owned(Some(asset)) => {
-                Ok(AssetStorage::owned_readonly(read(asset).clone()))
+                Ok(AssetStorage::read_only_snapshot(read(asset).clone()))
             }
             AssetStorageInner::Owned(None) => Err(StorageError::AssetConsumed),
             AssetStorageInner::OwnedReadOnly(asset) => {
-                Ok(AssetStorage::owned_readonly(read(asset).clone()))
+                Ok(AssetStorage::read_only_snapshot(read(asset).clone()))
             }
             AssetStorageInner::BorrowedRef { borrow, id } => {
                 let base = borrow.get()?;

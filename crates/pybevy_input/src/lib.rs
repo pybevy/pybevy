@@ -1,6 +1,7 @@
 pub mod accumulated_mouse;
 pub mod button_input;
 pub mod button_state;
+pub mod force_touch;
 pub mod gamepad;
 pub mod gamepad_axis;
 pub mod gamepad_button;
@@ -73,6 +74,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<mouse_events::PyMouseMotion>()?;
     m.add_class::<mouse_scroll_unit::PyMouseScrollUnit>()?;
     m.add_class::<mouse_events::PyMouseWheel>()?;
+    m.add_class::<force_touch::PyForceTouch>()?;
     m.add_class::<touch_input::PyTouchInput>()?;
     m.add_class::<touch_phase::PyTouchPhase>()?;
 

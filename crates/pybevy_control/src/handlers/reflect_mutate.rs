@@ -9,7 +9,8 @@ use bevy::{
     math::Quat,
     prelude::ReflectDefault,
     reflect::{
-        PartialReflect, ReflectMut, ReflectRef, TypeInfo, TypeRegistry,
+        PartialReflect, Reflect, ReflectFromReflect, ReflectMut, ReflectRef, TypeInfo,
+        TypeRegistry,
         enums::{DynamicEnum, DynamicVariant, EnumInfo, VariantInfo, VariantType},
         list::DynamicList,
         structs::{DynamicStruct, Struct, StructInfo},
@@ -17,7 +18,11 @@ use bevy::{
         tuple_struct::DynamicTupleStruct,
     },
 };
-use pybevy_core::{ReflectTypeRegistration, inventory, public_error};
+use pybevy_core::{
+    BatchFieldMeta, FieldType, ReflectTypeRegistration,
+    batch_columns::{has_view_assignment_checks, validate_view_assignment_values},
+    inventory, public_error,
+};
 use serde_json::{Map, Value};
 
 use super::{
@@ -51,6 +56,7 @@ pub fn reflect_set_component(
     entity: Entity,
     type_id: TypeId,
     fields: &Map<String, Value>,
+    declared: &[BatchFieldMeta],
 ) -> Result<Map<String, Value>, ReflectError> {
     // Clone AppTypeRegistry Arc - cheap, avoids borrow conflict with entity_mut later
     let registry_arc = world
@@ -97,17 +103,16 @@ pub fn reflect_set_component(
 
         // A reflected enum may accept an incomplete dynamic variant while a
         // concrete enum rejects it. Validate against a detached concrete clone
-        // before calling ReflectComponent::apply, whose implementation is
-        // infallible and would otherwise panic on attacker-controlled input.
-        candidate
-            .try_apply(replacement.as_ref())
-            .map_err(|error| ReflectError::FieldError(format!("variant: {error}")))?;
+        // before it replaces the live component.
+        replace_apply(
+            candidate.as_partial_reflect_mut(),
+            replacement.as_ref(),
+            &type_registry,
+        )
+        .map_err(|error| ReflectError::FieldError(format!("variant: {error}")))?;
 
         drop(type_registry);
-        let entity_mut = world
-            .get_entity_mut(entity)
-            .map_err(|_| ReflectError::ComponentNotOnEntity)?;
-        reflect_component.apply(entity_mut, candidate.as_partial_reflect());
+        store_candidate(world, entity, &reflect_component, candidate)?;
 
         let entity_ref = world
             .get_entity(entity)
@@ -157,8 +162,7 @@ pub fn reflect_set_component(
         ReflectMut::Struct(s) => {
             for (name, value) in converted {
                 if let Some(field) = s.field_mut(&name) {
-                    field
-                        .try_apply(value.as_ref())
+                    replace_apply(field, value.as_ref(), &type_registry)
                         .map_err(|e| ReflectError::FieldError(format!("{name}: {e}")))?;
                 } else {
                     return Err(ReflectError::FieldError(format!(
@@ -167,6 +171,7 @@ pub fn reflect_set_component(
                 }
                 updated_names.push(name);
             }
+            check_declared_constraints(s, &updated_names, declared)?;
         }
         _ => {
             return Err(ReflectError::NotAStruct);
@@ -174,10 +179,7 @@ pub fn reflect_set_component(
     }
 
     drop(type_registry);
-    let entity_mut = world
-        .get_entity_mut(entity)
-        .map_err(|_| ReflectError::ComponentNotOnEntity)?;
-    reflect_component.apply(entity_mut, candidate.as_partial_reflect());
+    store_candidate(world, entity, &reflect_component, candidate)?;
 
     let entity_ref = world
         .get_entity(entity)
@@ -198,6 +200,187 @@ pub fn reflect_set_component(
         .collect();
 
     Ok(updated)
+}
+
+/// Replace the live component with a validated detached candidate.
+///
+/// `ReflectComponent::apply` merges lists index-wise and never truncates, so a
+/// shorter list would keep the component's stale tail.
+fn store_candidate(
+    world: &mut World,
+    entity: Entity,
+    reflect_component: &ReflectComponent,
+    candidate: Box<dyn Reflect>,
+) -> Result<(), ReflectError> {
+    let entity_mut = world
+        .get_entity_mut(entity)
+        .map_err(|_| ReflectError::ComponentNotOnEntity)?;
+    let mut live = reflect_component
+        .reflect_mut(entity_mut)
+        .ok_or(ReflectError::ComponentNotOnEntity)?;
+    live.set(candidate).map_err(|_| {
+        ReflectError::FieldError("component candidate has a different concrete type".to_string())
+    })
+}
+
+/// Apply a converted JSON value with replacement semantics for lists.
+///
+/// Struct, tuple, array, and same-variant enum values still merge field by
+/// field, so an omitted field keeps its current value, but every list the
+/// value names is replaced by exactly the supplied elements.
+fn replace_apply(
+    target: &mut dyn PartialReflect,
+    value: &dyn PartialReflect,
+    registry: &TypeRegistry,
+) -> Result<(), String> {
+    match (target.reflect_mut(), value.reflect_ref()) {
+        (ReflectMut::List(list), ReflectRef::List(_)) => {
+            let type_info = list
+                .get_represented_type_info()
+                .ok_or("list has no represented type")?;
+            let replacement = registry
+                .get_type_data::<ReflectFromReflect>(type_info.type_id())
+                .and_then(|from_reflect| from_reflect.from_reflect(value))
+                .ok_or_else(|| {
+                    format!(
+                        "cannot build {} from the supplied list",
+                        type_info.type_path_table().short_path()
+                    )
+                })?;
+            list.try_as_reflect_mut()
+                .ok_or("list is not a concrete value")?
+                .set(replacement)
+                .map_err(|_| "list replacement has a different concrete type".to_string())
+        }
+        (ReflectMut::Struct(target), ReflectRef::Struct(source)) => {
+            for index in 0..source.field_len() {
+                let name = source.name_at(index).ok_or("struct field has no name")?;
+                let field = target
+                    .field_mut(name)
+                    .ok_or_else(|| format!("unknown field '{name}'"))?;
+                replace_apply(field, source.field_at(index).unwrap(), registry)?;
+            }
+            Ok(())
+        }
+        (ReflectMut::TupleStruct(target), ReflectRef::TupleStruct(source))
+            if target.field_len() == source.field_len() =>
+        {
+            for index in 0..source.field_len() {
+                replace_apply(
+                    target.field_mut(index).unwrap(),
+                    source.field(index).unwrap(),
+                    registry,
+                )?;
+            }
+            Ok(())
+        }
+        (ReflectMut::Tuple(target), ReflectRef::Tuple(source))
+            if target.field_len() == source.field_len() =>
+        {
+            for index in 0..source.field_len() {
+                replace_apply(
+                    target.field_mut(index).unwrap(),
+                    source.field(index).unwrap(),
+                    registry,
+                )?;
+            }
+            Ok(())
+        }
+        (ReflectMut::Array(target), ReflectRef::Array(source)) if target.len() == source.len() => {
+            for index in 0..source.len() {
+                replace_apply(
+                    target.get_mut(index).unwrap(),
+                    source.get(index).unwrap(),
+                    registry,
+                )?;
+            }
+            Ok(())
+        }
+        (ReflectMut::Enum(target), ReflectRef::Enum(source))
+            if target.variant_name() == source.variant_name()
+                && target.field_len() == source.field_len() =>
+        {
+            for index in 0..source.field_len() {
+                let field = match source.name_at(index) {
+                    Some(name) => target.field_mut(name),
+                    None => target.field_at_mut(index),
+                }
+                .ok_or_else(|| {
+                    format!("variant '{}' has no field {index}", source.variant_name())
+                })?;
+                replace_apply(field, source.field_at(index).unwrap(), registry)?;
+            }
+            Ok(())
+        }
+        _ => target.try_apply(value).map_err(|error| error.to_string()),
+    }
+}
+
+/// Enforce the domain constraints a native wrapper declares for its fields,
+/// the same checks its Python setters and View writes apply.
+fn check_declared_constraints(
+    component: &dyn Struct,
+    written: &[String],
+    declared: &[BatchFieldMeta],
+) -> Result<(), ReflectError> {
+    for name in written {
+        let python_name = python_field_name(name);
+        let Some(field_meta) = declared.iter().find(|field| field.name == python_name) else {
+            continue;
+        };
+        if !has_view_assignment_checks(field_meta.constraints) {
+            continue;
+        }
+        let mut values = Vec::new();
+        if let Some(value) = component.field(name) {
+            collect_numbers(value, &mut values);
+        }
+        validate_view_assignment_values(&values, FieldType::F64, field_meta.constraints)
+            .map_err(|error| ReflectError::InvalidValue(format!("{python_name}: {error}")))?;
+    }
+    Ok(())
+}
+
+fn collect_numbers(value: &dyn PartialReflect, values: &mut Vec<f64>) {
+    if let Some(number) = reflected_number(value) {
+        values.push(number);
+        return;
+    }
+    match value.reflect_ref() {
+        ReflectRef::Struct(value) => (0..value.field_len())
+            .filter_map(|index| value.field_at(index))
+            .for_each(|field| collect_numbers(field, values)),
+        ReflectRef::TupleStruct(value) => (0..value.field_len())
+            .filter_map(|index| value.field(index))
+            .for_each(|field| collect_numbers(field, values)),
+        ReflectRef::Tuple(value) => (0..value.field_len())
+            .filter_map(|index| value.field(index))
+            .for_each(|field| collect_numbers(field, values)),
+        ReflectRef::Array(value) => value.iter().for_each(|item| collect_numbers(item, values)),
+        ReflectRef::List(value) => value.iter().for_each(|item| collect_numbers(item, values)),
+        ReflectRef::Enum(value) => (0..value.field_len())
+            .filter_map(|index| value.field_at(index))
+            .for_each(|field| collect_numbers(field, values)),
+        _ => {}
+    }
+}
+
+fn reflected_number(value: &dyn PartialReflect) -> Option<f64> {
+    let value = value.try_as_reflect()?.as_any();
+    value
+        .downcast_ref::<f32>()
+        .map(|number| f64::from(*number))
+        .or_else(|| value.downcast_ref::<f64>().copied())
+        .or_else(|| value.downcast_ref::<u8>().map(|number| f64::from(*number)))
+        .or_else(|| value.downcast_ref::<u16>().map(|number| f64::from(*number)))
+        .or_else(|| value.downcast_ref::<u32>().map(|number| f64::from(*number)))
+        .or_else(|| value.downcast_ref::<u64>().map(|number| *number as f64))
+        .or_else(|| value.downcast_ref::<usize>().map(|number| *number as f64))
+        .or_else(|| value.downcast_ref::<i8>().map(|number| f64::from(*number)))
+        .or_else(|| value.downcast_ref::<i16>().map(|number| f64::from(*number)))
+        .or_else(|| value.downcast_ref::<i32>().map(|number| f64::from(*number)))
+        .or_else(|| value.downcast_ref::<i64>().map(|number| *number as f64))
+        .or_else(|| value.downcast_ref::<isize>().map(|number| *number as f64))
 }
 
 fn enum_component_fields(value: &dyn PartialReflect) -> Result<Map<String, Value>, ReflectError> {
@@ -433,6 +616,7 @@ pub fn reflect_spawn_component(
     entity: Entity,
     type_id: TypeId,
     fields: &Map<String, Value>,
+    declared: &[BatchFieldMeta],
 ) -> Result<(), ReflectError> {
     // Clone AppTypeRegistry Arc
     let registry_arc = world
@@ -465,12 +649,16 @@ pub fn reflect_spawn_component(
             TypeInfo::Enum(_) => {
                 let replacement =
                     enum_component_replacement(fields, type_id, type_info, &type_registry)?;
-                default_component
-                    .try_apply(replacement.as_ref())
-                    .map_err(|error| ReflectError::FieldError(format!("variant: {error}")))?;
+                replace_apply(
+                    default_component.as_partial_reflect_mut(),
+                    replacement.as_ref(),
+                    &type_registry,
+                )
+                .map_err(|error| ReflectError::FieldError(format!("variant: {error}")))?;
             }
             TypeInfo::Struct(struct_info) => match default_component.reflect_mut() {
                 ReflectMut::Struct(s) => {
+                    let mut written = Vec::with_capacity(fields.len());
                     for (field_name, field_value) in fields {
                         let actual_name =
                             resolve_field_name(field_name, struct_info).ok_or_else(|| {
@@ -484,15 +672,17 @@ pub fn reflect_spawn_component(
                         )?;
 
                         if let Some(field) = s.field_mut(&actual_name) {
-                            field.try_apply(reflected.as_ref()).map_err(|e| {
-                                ReflectError::FieldError(format!("{field_name}: {e}"))
-                            })?;
+                            replace_apply(field, reflected.as_ref(), &type_registry).map_err(
+                                |e| ReflectError::FieldError(format!("{field_name}: {e}")),
+                            )?;
                         } else {
                             return Err(ReflectError::FieldError(format!(
                                 "{field_name}: field not found on component"
                             )));
                         }
+                        written.push(actual_name);
                     }
+                    check_declared_constraints(s, &written, declared)?;
                 }
                 _ => return Err(ReflectError::NotAStruct),
             },
@@ -1337,7 +1527,7 @@ mod tests {
             serde_json::json!({"x": 10.0, "y": 20.0, "z": 30.0}),
         );
 
-        let result = reflect_set_component(world, entity, TypeId::of::<Transform>(), &fields);
+        let result = reflect_set_component(world, entity, TypeId::of::<Transform>(), &fields, &[]);
 
         assert!(
             result.is_ok(),
@@ -1369,7 +1559,7 @@ mod tests {
         let mut fields = Map::new();
         fields.insert("translation".into(), serde_json::json!([10.0, 20.0, 30.0]));
 
-        let result = reflect_set_component(world, entity, TypeId::of::<Transform>(), &fields);
+        let result = reflect_set_component(world, entity, TypeId::of::<Transform>(), &fields, &[]);
 
         assert!(
             result.is_ok(),
@@ -1393,7 +1583,9 @@ mod tests {
             "translation".to_string(),
             serde_json::json!(["NaN", "Infinity", "-Infinity"]),
         )]);
-        assert!(reflect_set_component(world, entity, TypeId::of::<Transform>(), &fields).is_err());
+        assert!(
+            reflect_set_component(world, entity, TypeId::of::<Transform>(), &fields, &[]).is_err()
+        );
         assert_eq!(world.get::<Transform>(entity).unwrap().translation, before);
     }
 
@@ -1406,7 +1598,7 @@ mod tests {
         fields.insert("translation".into(), serde_json::json!([5.0, 10.0, 15.0]));
         fields.insert("scale".into(), serde_json::json!([2.0, 2.0, 2.0]));
 
-        let result = reflect_set_component(world, entity, TypeId::of::<Transform>(), &fields);
+        let result = reflect_set_component(world, entity, TypeId::of::<Transform>(), &fields, &[]);
         assert!(result.is_ok());
 
         let t = world.get::<Transform>(entity).unwrap();
@@ -1423,7 +1615,8 @@ mod tests {
         let mut fields = Map::new();
         fields.insert("translation".into(), serde_json::json!([0.0, 5.0, 0.0]));
 
-        let result = reflect_spawn_component(world, entity, TypeId::of::<Transform>(), &fields);
+        let result =
+            reflect_spawn_component(world, entity, TypeId::of::<Transform>(), &fields, &[]);
         assert!(result.is_ok(), "reflect_spawn_component failed");
 
         let t = world.get::<Transform>(entity).unwrap();
@@ -1437,7 +1630,8 @@ mod tests {
         let entity = world.spawn_empty().id();
 
         let fields = Map::new();
-        let result = reflect_spawn_component(world, entity, TypeId::of::<Transform>(), &fields);
+        let result =
+            reflect_spawn_component(world, entity, TypeId::of::<Transform>(), &fields, &[]);
         assert!(result.is_ok());
 
         let t = world.get::<Transform>(entity).unwrap();
@@ -1505,8 +1699,13 @@ mod tests {
         let world = app.world_mut();
 
         let fields = shadow_list_fields();
-        let result =
-            reflect_set_component(world, entity, TypeId::of::<ShadowListComponent>(), &fields);
+        let result = reflect_set_component(
+            world,
+            entity,
+            TypeId::of::<ShadowListComponent>(),
+            &fields,
+            &[],
+        );
         assert!(
             result.is_ok(),
             "reflect_set_component failed: {:?}",
@@ -1544,8 +1743,13 @@ mod tests {
         let entity = world.spawn_empty().id();
 
         let fields = shadow_list_fields();
-        let result =
-            reflect_spawn_component(world, entity, TypeId::of::<ShadowListComponent>(), &fields);
+        let result = reflect_spawn_component(
+            world,
+            entity,
+            TypeId::of::<ShadowListComponent>(),
+            &fields,
+            &[],
+        );
         assert!(result.is_ok(), "reflect_spawn_component failed: {result:?}");
 
         let shadows = world
@@ -1573,8 +1777,13 @@ mod tests {
         let world = app.world_mut();
 
         let fields = point_list_fields();
-        let result =
-            reflect_set_component(world, entity, TypeId::of::<PointListComponent>(), &fields);
+        let result = reflect_set_component(
+            world,
+            entity,
+            TypeId::of::<PointListComponent>(),
+            &fields,
+            &[],
+        );
         let error = result.err().unwrap();
         assert!(
             matches!(&error, ReflectError::FieldError(message)
@@ -1599,9 +1808,14 @@ mod tests {
         let world = app.world_mut();
 
         let fields = point_list_fields();
-        let error =
-            reflect_spawn_component(world, entity, TypeId::of::<PointListComponent>(), &fields)
-                .unwrap_err();
+        let error = reflect_spawn_component(
+            world,
+            entity,
+            TypeId::of::<PointListComponent>(),
+            &fields,
+            &[],
+        )
+        .unwrap_err();
         assert!(
             matches!(&error, ReflectError::FieldError(message)
                 if message == "points: variant 'Point' requires field 'y'"),
@@ -1621,7 +1835,7 @@ mod tests {
         let bogus_type_id = TypeId::of::<UnregisteredTestType>();
         let fields = Map::new();
 
-        let result = reflect_set_component(world, entity, bogus_type_id, &fields);
+        let result = reflect_set_component(world, entity, bogus_type_id, &fields, &[]);
         assert!(matches!(result, Err(ReflectError::NotRegistered)));
     }
 
@@ -1633,7 +1847,7 @@ mod tests {
         let mut fields = Map::new();
         fields.insert("nonexistent".into(), serde_json::json!(42.0));
 
-        let result = reflect_set_component(world, entity, TypeId::of::<Transform>(), &fields);
+        let result = reflect_set_component(world, entity, TypeId::of::<Transform>(), &fields, &[]);
         assert!(matches!(result, Err(ReflectError::FieldError(_))));
     }
 
@@ -1647,7 +1861,7 @@ mod tests {
         let mut fields = Map::new();
         fields.insert("translation".into(), serde_json::json!([1.0, 2.0, 3.0]));
 
-        let result = reflect_set_component(world, entity, TypeId::of::<Transform>(), &fields);
+        let result = reflect_set_component(world, entity, TypeId::of::<Transform>(), &fields, &[]);
         assert!(matches!(result, Err(ReflectError::ComponentNotOnEntity)));
     }
 
@@ -1660,7 +1874,7 @@ mod tests {
         let mut fields = Map::new();
         fields.insert("translation".into(), serde_json::json!([1, 2, 3]));
 
-        let result = reflect_set_component(world, entity, TypeId::of::<Transform>(), &fields);
+        let result = reflect_set_component(world, entity, TypeId::of::<Transform>(), &fields, &[]);
         assert!(result.is_ok());
 
         let t = world.get::<Transform>(entity).unwrap();
@@ -1757,8 +1971,13 @@ mod tests {
         let entity = world.spawn(TestEnumComponent::VariantA).id();
 
         let fields = Map::new();
-        let result =
-            reflect_set_component(world, entity, TypeId::of::<TestEnumComponent>(), &fields);
+        let result = reflect_set_component(
+            world,
+            entity,
+            TypeId::of::<TestEnumComponent>(),
+            &fields,
+            &[],
+        );
         assert!(matches!(result, Err(ReflectError::FieldError(_))));
     }
 
@@ -1774,8 +1993,13 @@ mod tests {
         let mut fields = Map::new();
         fields.insert("variant".into(), serde_json::json!("VariantB"));
 
-        let result =
-            reflect_set_component(world, entity, TypeId::of::<TestEnumComponent>(), &fields);
+        let result = reflect_set_component(
+            world,
+            entity,
+            TypeId::of::<TestEnumComponent>(),
+            &fields,
+            &[],
+        );
 
         assert_eq!(
             result.unwrap(),
@@ -1811,6 +2035,7 @@ mod tests {
             entity,
             TypeId::of::<TestPayloadEnumComponent>(),
             &fields,
+            &[],
         );
 
         assert_eq!(
@@ -1865,6 +2090,7 @@ mod tests {
                 entity,
                 TypeId::of::<TestPartialPayloadEnumComponent>(),
                 &fields,
+                &[],
             );
             assert_eq!(result.unwrap(), expected);
         }
@@ -1874,6 +2100,7 @@ mod tests {
             entity,
             TypeId::of::<TestPartialPayloadEnumComponent>(),
             &expected,
+            &[],
         );
         assert_eq!(replay.unwrap(), expected);
         let Some(TestPartialPayloadEnumComponent::First(payload)) =
@@ -1908,6 +2135,7 @@ mod tests {
             entity,
             TypeId::of::<TestPartialPayloadEnumComponent>(),
             &fields,
+            &[],
         );
 
         assert_eq!(
@@ -1949,6 +2177,7 @@ mod tests {
             entity,
             TypeId::of::<TestPayloadEnumComponent>(),
             &fields,
+            &[],
         )
         .unwrap();
 
@@ -1987,6 +2216,7 @@ mod tests {
             entity,
             TypeId::of::<TestIncompletePayloadEnumComponent>(),
             &fields,
+            &[],
         );
 
         assert!(matches!(result, Err(ReflectError::FieldError(_))));
@@ -2024,6 +2254,7 @@ mod tests {
             entity,
             TypeId::of::<TestNamedEnumComponent>(),
             &fields,
+            &[],
         );
         let Err(ReflectError::FieldError(error)) = result else {
             panic!("incomplete named payload was accepted");
@@ -2048,8 +2279,13 @@ mod tests {
         let entity = world.spawn_empty().id();
 
         let fields = Map::new();
-        let result =
-            reflect_spawn_component(world, entity, TypeId::of::<TestEnumComponent>(), &fields);
+        let result = reflect_spawn_component(
+            world,
+            entity,
+            TypeId::of::<TestEnumComponent>(),
+            &fields,
+            &[],
+        );
         assert!(result.is_ok());
     }
 
@@ -2066,8 +2302,13 @@ mod tests {
         let mut fields = Map::new();
         fields.insert("variant".into(), serde_json::json!("VariantB"));
 
-        let result =
-            reflect_spawn_component(world, entity, TypeId::of::<TestEnumComponent>(), &fields);
+        let result = reflect_spawn_component(
+            world,
+            entity,
+            TypeId::of::<TestEnumComponent>(),
+            &fields,
+            &[],
+        );
         assert!(result.is_ok());
         assert!(matches!(
             world.get::<TestEnumComponent>(entity),
@@ -2109,6 +2350,7 @@ mod tests {
             entity,
             TypeId::of::<OptionalStructComponent>(),
             &fields,
+            &[],
         );
         assert!(
             matches!(result, Err(ReflectError::FieldError(_))),
@@ -2122,6 +2364,7 @@ mod tests {
             entity,
             TypeId::of::<OptionalStructComponent>(),
             &Map::from_iter([("value".into(), serde_json::json!({"x": 2.0, "y": 4.0}))]),
+            &[],
         );
         assert_eq!(
             accepted.unwrap(),
@@ -2162,6 +2405,7 @@ mod tests {
             entity,
             TypeId::of::<OptionalFieldComponent>(),
             &fields,
+            &[],
         );
 
         assert!(result.is_ok(), "Setting Option field failed: {:?}", result);
@@ -2193,6 +2437,7 @@ mod tests {
             entity,
             TypeId::of::<OptionalFieldComponent>(),
             &fields,
+            &[],
         );
 
         assert!(
@@ -2251,6 +2496,7 @@ mod tests {
             entity,
             TypeId::of::<TupleStructFieldComponent>(),
             &fields,
+            &[],
         );
         assert!(
             result.is_ok(),
@@ -2280,12 +2526,107 @@ mod tests {
         let mut fields = Map::new();
         fields.insert("weights".into(), serde_json::json!([1.0, 0.5, 0.0, 0.25]));
 
-        let result =
-            reflect_set_component(world, entity, TypeId::of::<VecFieldComponent>(), &fields);
+        let result = reflect_set_component(
+            world,
+            entity,
+            TypeId::of::<VecFieldComponent>(),
+            &fields,
+            &[],
+        );
         assert!(result.is_ok(), "Setting Vec field failed: {:?}", result);
 
         let comp = world.get::<VecFieldComponent>(entity).unwrap();
         assert_eq!(comp.weights, vec![1.0, 0.5, 0.0, 0.25]);
+    }
+
+    #[test]
+    fn reflect_set_vec_field_replaces_a_longer_list() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.register_type::<VecFieldComponent>();
+        app.register_type::<Vec<f32>>();
+        app.update();
+
+        let world = app.world_mut();
+        let entity = world
+            .spawn(VecFieldComponent {
+                weights: vec![1.0, 2.0, 3.0, 4.0],
+            })
+            .id();
+
+        let mut fields = Map::new();
+        fields.insert("weights".into(), serde_json::json!([9.0]));
+        let result = reflect_set_component(
+            world,
+            entity,
+            TypeId::of::<VecFieldComponent>(),
+            &fields,
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(result["weights"], serde_json::json!([9.0]));
+        let comp = world.get::<VecFieldComponent>(entity).unwrap();
+        assert_eq!(comp.weights, vec![9.0]);
+    }
+
+    #[derive(Component, Reflect, Default)]
+    #[reflect(Component, Default)]
+    struct OptionalVecComponent {
+        weights: Option<Vec<f32>>,
+    }
+
+    #[test]
+    fn reflect_set_list_inside_an_option_replaces_it() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.register_type::<OptionalVecComponent>();
+        app.update();
+
+        let world = app.world_mut();
+        let entity = world
+            .spawn(OptionalVecComponent {
+                weights: Some(vec![1.0, 2.0, 3.0]),
+            })
+            .id();
+
+        let mut fields = Map::new();
+        fields.insert("weights".into(), serde_json::json!([5.0, 6.0]));
+        reflect_set_component(
+            world,
+            entity,
+            TypeId::of::<OptionalVecComponent>(),
+            &fields,
+            &[],
+        )
+        .unwrap();
+
+        let comp = world.get::<OptionalVecComponent>(entity).unwrap();
+        assert_eq!(comp.weights, Some(vec![5.0, 6.0]));
+    }
+
+    #[test]
+    fn reflect_spawn_replaces_a_default_list() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.register_type::<OptionalVecComponent>();
+        app.update();
+
+        let world = app.world_mut();
+        let entity = world.spawn_empty().id();
+        let mut fields = Map::new();
+        fields.insert("weights".into(), serde_json::json!([]));
+        reflect_spawn_component(
+            world,
+            entity,
+            TypeId::of::<OptionalVecComponent>(),
+            &fields,
+            &[],
+        )
+        .unwrap();
+
+        let comp = world.get::<OptionalVecComponent>(entity).unwrap();
+        assert_eq!(comp.weights, Some(Vec::new()));
     }
 
     /// A component with a Color field for testing enum mutation.
@@ -2314,7 +2655,8 @@ mod tests {
             serde_json::json!({"Srgba": {"red": 1.0, "green": 0.5, "blue": 0.0, "alpha": 1.0}}),
         );
 
-        let result = reflect_set_component(world, entity, TypeId::of::<ColorComponent>(), &fields);
+        let result =
+            reflect_set_component(world, entity, TypeId::of::<ColorComponent>(), &fields, &[]);
 
         assert!(
             result.is_ok(),
@@ -2368,7 +2710,8 @@ mod tests {
         let mut fields = Map::new();
         fields.insert("mode".into(), serde_json::json!("Manual"));
 
-        let result = reflect_set_component(world, entity, TypeId::of::<ModeComponent>(), &fields);
+        let result =
+            reflect_set_component(world, entity, TypeId::of::<ModeComponent>(), &fields, &[]);
 
         assert!(
             result.is_ok(),
@@ -2395,7 +2738,8 @@ mod tests {
         let mut fields = Map::new();
         fields.insert("mode".into(), serde_json::json!({"Disabled": null}));
 
-        let result = reflect_set_component(world, entity, TypeId::of::<ModeComponent>(), &fields);
+        let result =
+            reflect_set_component(world, entity, TypeId::of::<ModeComponent>(), &fields, &[]);
 
         assert!(
             result.is_ok(),
@@ -2421,7 +2765,8 @@ mod tests {
         let mut fields = Map::new();
         fields.insert("mode".into(), serde_json::json!("NonExistent"));
 
-        let result = reflect_set_component(world, entity, TypeId::of::<ModeComponent>(), &fields);
+        let result =
+            reflect_set_component(world, entity, TypeId::of::<ModeComponent>(), &fields, &[]);
 
         // String "NonExistent" doesn't match any variant, falls through to String type
         // which will fail at try_apply because TestMode != String

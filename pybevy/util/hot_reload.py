@@ -16,7 +16,9 @@ Key features:
 
 from __future__ import annotations
 
+import hashlib
 import importlib.machinery
+import importlib.util
 import os
 import runpy
 import sys
@@ -150,6 +152,38 @@ def flush_user_modules(
     return to_remove
 
 
+class _LoadedSources:
+    """Digests of the source bytes each reload executed, keyed by real path."""
+
+    def __init__(self) -> None:
+        self._digests: dict[str, bytes] = {}
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def _digest(data: bytes) -> bytes:
+        return hashlib.blake2b(data, digest_size=16).digest()
+
+    def record(self, path: str, data: bytes) -> None:
+        with self._lock:
+            self._digests[os.path.realpath(path)] = self._digest(data)
+
+    def is_loaded(self, path: str) -> bool:
+        real_path = os.path.realpath(path)
+        with self._lock:
+            loaded = self._digests.get(real_path)
+        if loaded is None:
+            return False
+        try:
+            with open(real_path, "rb") as source:
+                data = source.read()
+        except OSError:
+            return False
+        return self._digest(data) == loaded
+
+
+_LOADED_SOURCES = _LoadedSources()
+
+
 class _SourceOnlyLoader(importlib.machinery.SourceFileLoader):
     """Compile a scene or flushed helper from source without using __pycache__.
 
@@ -166,15 +200,23 @@ class _SourceOnlyLoader(importlib.machinery.SourceFileLoader):
     ) -> None:
         super().__init__(fullname, path)
         self._on_success = on_success
+        self._source: bytes | None = None
 
     def get_code(self, fullname: str) -> CodeType:
-        source = self.get_source(fullname)
-        if source is None:
-            raise ImportError(f"no source for scene module {fullname!r}", name=fullname)
-        return self.source_to_code(source, self.path)
+        try:
+            self._source = self.get_data(self.path)
+        except OSError as error:
+            raise ImportError(
+                f"no source for scene module {fullname!r}", name=fullname
+            ) from error
+        return self.source_to_code(
+            importlib.util.decode_source(self._source), self.path
+        )
 
     def exec_module(self, module: ModuleType) -> None:
         super().exec_module(module)
+        if self._source is not None:
+            _LOADED_SOURCES.record(self.path, self._source)
         if self._on_success is not None:
             self._on_success()
 
@@ -796,7 +838,15 @@ def watch_for_changes(
                 if verbose:
                     print(f"{log_prefix} Detected {len(changed)} Python file changes")
 
-                changed_paths = {os.path.abspath(path) for path in changed}
+                changed_paths = {
+                    os.path.abspath(path)
+                    for path in changed
+                    if not _LOADED_SOURCES.is_loaded(path)
+                }
+                if not changed_paths:
+                    if verbose:
+                        print(f"{log_prefix} Ignoring contents already loaded")
+                    continue
                 if import_graph is not None:
                     changed_paths = import_graph.relevant_changed_files(changed_paths)
                     if not changed_paths:

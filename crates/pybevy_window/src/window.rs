@@ -128,7 +128,7 @@ impl PyWindow {
     ) -> PyResult<PyClassInitializer<Self>> {
         let window = Window {
             present_mode: present_mode.into(),
-            mode: mode.into(),
+            mode: mode.try_into()?,
             position: position.into(),
             resolution: resolution.try_into()?,
             title,
@@ -234,7 +234,7 @@ impl PyWindow {
 
     #[setter]
     pub fn set_mode(&mut self, mode: PyWindowMode) -> PyResult<()> {
-        self.as_mut()?.mode = mode.into();
+        self.as_mut()?.mode = mode.try_into()?;
         Ok(())
     }
 
@@ -694,7 +694,7 @@ impl PyWindow {
             window.resolution.height(),
             flag(window.decorations),
             flag(window.resizable),
-            PyWindowMode::from(window.mode).__repr__(),
+            PyWindowMode::from(window.mode).__repr__()?,
             flag(window.transparent),
             PyWindowLevel::from(window.window_level).__repr__(),
             flag(window.focused),

@@ -72,7 +72,7 @@ pub struct ScheduleAction {
     pub skip_if_error: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct ActionResult {
     pub index: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -81,7 +81,20 @@ pub struct ActionResult {
     pub at: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub at_frame: Option<u64>,
+    /// Virtual time when the action was dispatched.
     pub fired_at_game_time: f64,
+    /// Schedule frame when the action was dispatched.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fired_at_frame: Option<u64>,
+    /// Frames past `at_frame` when an earlier action held the schedule back.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub late_by_frames: Option<u64>,
+    /// Virtual seconds past `at` when an earlier action held the schedule back.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub late_by_seconds: Option<f64>,
+    /// Virtual time when a deferred action's result arrived.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completed_at_game_time: Option<f64>,
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<serde_json::Value>,
@@ -89,12 +102,50 @@ pub struct ActionResult {
     pub error: Option<String>,
 }
 
+/// When an action was dispatched, and how late relative to its offset.
+#[derive(Debug, Clone, Copy, Default)]
+struct Firing {
+    game_time: f64,
+    frame: u64,
+    late_by_frames: Option<u64>,
+    late_by_seconds: Option<f64>,
+}
+
+impl Firing {
+    /// An action is late when it was already due in an earlier frame, which only
+    /// happens while a deferred action holds the schedule.
+    fn dispatch(schedule: &ActiveSchedule, action: &ScheduleAction, world: &World) -> Self {
+        let time = world.get_resource::<Time<Virtual>>();
+        let game_time = time.map_or(0.0, Time::elapsed_secs_f64);
+        let previous_frame_time = game_time - time.map_or(0.0, Time::delta_secs_f64);
+        let frame = schedule.frame_counter;
+        match resolve_at_frame(action) {
+            Some(at_frame) => Self {
+                game_time,
+                frame,
+                late_by_frames: frame.checked_sub(at_frame).filter(|late| *late > 0),
+                late_by_seconds: None,
+            },
+            None => {
+                let target = schedule.timing_origin_game_time + resolve_at(action);
+                Self {
+                    game_time,
+                    frame,
+                    late_by_frames: None,
+                    late_by_seconds: (previous_frame_time >= target && game_time > target)
+                        .then_some(game_time - target),
+                }
+            }
+        }
+    }
+}
+
 impl ActionResult {
     /// Build a result mirroring an action's timing fields.
     fn new(
         action: &ScheduleAction,
         index: usize,
-        fired_at_game_time: f64,
+        fired: Option<Firing>,
         status: impl Into<String>,
     ) -> Self {
         Self {
@@ -103,11 +154,18 @@ impl ActionResult {
             tool: action.tool.clone(),
             at: action.at.unwrap_or(0.0),
             at_frame: resolve_at_frame(action),
-            fired_at_game_time,
+            fired_at_game_time: fired.map_or(0.0, |fired| fired.game_time),
+            fired_at_frame: fired.map(|fired| fired.frame),
+            late_by_frames: fired.and_then(|fired| fired.late_by_frames),
+            late_by_seconds: fired.and_then(|fired| fired.late_by_seconds),
             status: status.into(),
-            result: None,
-            error: None,
+            ..Self::default()
         }
+    }
+
+    fn completed_at(mut self, game_time: f64) -> Self {
+        self.completed_at_game_time = Some(game_time);
+        self
     }
 
     fn with_result(mut self, result: serde_json::Value) -> Self {
@@ -142,6 +200,7 @@ pub struct ActiveSchedule {
     sync_response_tx: Option<oneshot::Sender<Result<serde_json::Value, ControlError>>>,
     async_shared: Option<Arc<Mutex<SharedScheduleState>>>,
     deferred_rx: Option<oneshot::Receiver<Result<serde_json::Value, ControlError>>>,
+    deferred_firing: Option<Firing>,
 }
 
 #[derive(Resource, Default)]
@@ -514,6 +573,7 @@ impl ActiveSchedule {
             sync_response_tx: Some(response_tx),
             async_shared: None,
             deferred_rx: None,
+            deferred_firing: None,
         }
     }
 
@@ -537,6 +597,7 @@ impl ActiveSchedule {
             sync_response_tx: None,
             async_shared: Some(shared),
             deferred_rx: None,
+            deferred_firing: None,
         }
     }
 }
@@ -570,7 +631,7 @@ pub fn process_active_schedules(world: &mut World) {
                 while schedule.current_index < schedule.actions.len() {
                     let action = &schedule.actions[schedule.current_index];
                     schedule.results.push(
-                        ActionResult::new(action, schedule.current_index, 0.0, "cancelled")
+                        ActionResult::new(action, schedule.current_index, None, "cancelled")
                             .with_error("Schedule cancelled"),
                     );
                     schedule.current_index += 1;
@@ -609,10 +670,11 @@ fn process_single_schedule(
                 match rx.try_recv() {
                     Ok(result) => {
                         let action = &schedule.actions[schedule.current_index];
-                        let game_time = world
+                        let completed_at = world
                             .get_resource::<Time<Virtual>>()
                             .map(|t| t.elapsed_secs_f64())
                             .unwrap_or(0.0);
+                        let fired = schedule.deferred_firing.take();
 
                         match result {
                             Ok(value) => {
@@ -646,9 +708,10 @@ fn process_single_schedule(
                                         let mut r = ActionResult::new(
                                             action,
                                             schedule.current_index,
-                                            game_time,
+                                            fired,
                                             status,
                                         )
+                                        .completed_at(completed_at)
                                         .with_result(value);
                                         if let Some(msg) = error_msg {
                                             r = r.with_error(msg);
@@ -672,9 +735,10 @@ fn process_single_schedule(
                                 let mut r = ActionResult::new(
                                     action,
                                     schedule.current_index,
-                                    game_time,
+                                    fired,
                                     status,
                                 )
+                                .completed_at(completed_at)
                                 .with_result(value);
                                 if let Some(msg) = error_msg {
                                     r = r.with_error(msg);
@@ -689,9 +753,10 @@ fn process_single_schedule(
                                     ActionResult::new(
                                         action,
                                         schedule.current_index,
-                                        game_time,
+                                        fired,
                                         "error",
                                     )
+                                    .completed_at(completed_at)
                                     .with_error(e.message),
                                 );
                                 if schedule.stop_on_error {
@@ -714,8 +779,9 @@ fn process_single_schedule(
                         if let Some(ref label) = action.label {
                             schedule.errored_labels.insert(label.clone());
                         }
+                        let fired = schedule.deferred_firing.take();
                         schedule.results.push(
-                            ActionResult::new(action, schedule.current_index, 0.0, "error")
+                            ActionResult::new(action, schedule.current_index, fired, "error")
                                 .with_error("Deferred channel closed unexpectedly"),
                         );
                         schedule.deferred_rx = None;
@@ -775,17 +841,11 @@ fn process_single_schedule(
                         if let Some(ref label) = action_label {
                             schedule.errored_labels.insert(label.clone());
                         }
-                        schedule.results.push(ActionResult {
-                            index: schedule.current_index,
-                            label: action_label,
-                            tool: action_tool,
-                            at: action_at,
-                            at_frame: resolve_at_frame(action),
-                            fired_at_game_time: game_time,
-                            status: "error".to_string(),
-                            result: None,
-                            error: Some(error_msg),
-                        });
+                        let fired = Firing::dispatch(schedule, action, world);
+                        schedule.results.push(
+                            ActionResult::new(action, schedule.current_index, Some(fired), "error")
+                                .with_error(error_msg),
+                        );
                         schedule.current_index += 1;
                         abort_remaining(schedule, schedule.current_index);
                         schedule.state = ScheduleState::Done;
@@ -795,12 +855,14 @@ fn process_single_schedule(
                     return; // Try next frame
                 }
 
+                let fired = Firing::dispatch(schedule, action, world);
+
                 // Check skip_if_error
                 if let Some(ref skip_label) = action.skip_if_error
                     && schedule.errored_labels.contains(skip_label)
                 {
                     schedule.results.push(
-                        ActionResult::new(action, schedule.current_index, game_time, "skipped")
+                        ActionResult::new(action, schedule.current_index, Some(fired), "skipped")
                             .with_error(format!("Skipped due to error in '{}'", skip_label)),
                     );
                     schedule.current_index += 1;
@@ -821,6 +883,7 @@ fn process_single_schedule(
                     match setup_deferred_action(world, &tool_name, &tool_args) {
                         Ok(rx) => {
                             schedule.deferred_rx = Some(rx);
+                            schedule.deferred_firing = Some(fired);
                             schedule.state = ScheduleState::WaitingForDeferred;
                             return; // Wait for result
                         }
@@ -831,7 +894,7 @@ fn process_single_schedule(
                             let r = ActionResult::new(
                                 action,
                                 schedule.current_index,
-                                game_time,
+                                Some(fired),
                                 "error",
                             )
                             .with_error(e);
@@ -884,7 +947,7 @@ fn process_single_schedule(
                                             let mut r = ActionResult::new(
                                                 action,
                                                 schedule.current_index,
-                                                game_time,
+                                                Some(fired),
                                                 status,
                                             )
                                             .with_result(value);
@@ -910,7 +973,7 @@ fn process_single_schedule(
                                     let mut r = ActionResult::new(
                                         action,
                                         schedule.current_index,
-                                        game_time,
+                                        Some(fired),
                                         status,
                                     )
                                     .with_result(value);
@@ -940,7 +1003,7 @@ fn process_single_schedule(
                                     let r = ActionResult::new(
                                         action,
                                         schedule.current_index,
-                                        game_time,
+                                        Some(fired),
                                         "error",
                                     )
                                     .with_error(e.message);
@@ -961,7 +1024,7 @@ fn process_single_schedule(
                             let r = ActionResult::new(
                                 action,
                                 schedule.current_index,
-                                game_time,
+                                Some(fired),
                                 "error",
                             )
                             .with_error(e);
@@ -1034,7 +1097,7 @@ fn setup_deferred_action(
 fn abort_remaining(schedule: &mut ActiveSchedule, from_index: usize) {
     for idx in from_index..schedule.actions.len() {
         let action = &schedule.actions[idx];
-        let r = ActionResult::new(action, idx, 0.0, "aborted")
+        let r = ActionResult::new(action, idx, None, "aborted")
             .with_error("Aborted due to stop_on_error");
         schedule.results.push(r);
     }
@@ -1083,7 +1146,7 @@ fn finalize_schedule(schedule: ActiveSchedule) {
     let game_times: Vec<f64> = schedule
         .results
         .iter()
-        .map(|r| r.fired_at_game_time)
+        .map(|r| r.completed_at_game_time.unwrap_or(r.fired_at_game_time))
         .collect();
     let end_time = game_times.iter().copied().fold(0.0_f64, f64::max);
     let counts = action_counts(&schedule.results);
@@ -1642,6 +1705,7 @@ mod tests {
             status: "ok".to_string(),
             result: Some(serde_json::json!({"paused": true})),
             error: None,
+            ..Default::default()
         };
         let json = serde_json::to_value(&result).unwrap();
         assert_eq!(json["index"], 0);
@@ -1662,7 +1726,7 @@ mod tests {
             label: None,
             skip_if_error: None,
         };
-        let r = ActionResult::new(&action, 0, 0.5, "ok")
+        let r = ActionResult::new(&action, 0, None, "ok")
             .with_result(serde_json::json!({"paused": true}));
         let json = serde_json::to_value(&r).unwrap();
         assert_eq!(json["at"], 0.0);
@@ -1785,6 +1849,7 @@ mod tests {
             sync_response_tx: None,
             async_shared: Some(shared.clone()),
             deferred_rx: None,
+            deferred_firing: None,
         };
         finalize_schedule(schedule);
         assert!(shared.lock().unwrap().completed_at.is_some());
@@ -1855,6 +1920,7 @@ mod tests {
             sync_response_tx: None,
             async_shared: None,
             deferred_rx: None,
+            deferred_firing: None,
         };
         abort_remaining(&mut schedule, 0);
         assert_eq!(schedule.results.len(), 2);
@@ -1893,6 +1959,7 @@ mod tests {
                 status: "ok".to_string(),
                 result: Some(serde_json::json!({"paused": true})),
                 error: None,
+                ..Default::default()
             });
         }
 
@@ -2002,6 +2069,7 @@ mod tests {
             sync_response_tx: None,
             async_shared: None,
             deferred_rx: None,
+            deferred_firing: None,
         };
         abort_remaining(&mut schedule, 1);
         assert_eq!(schedule.results.len(), 1);
@@ -2401,6 +2469,7 @@ mod tests {
                 status: "ok".to_string(),
                 result: Some(serde_json::json!({"paused": true})),
                 error: None,
+                ..Default::default()
             }],
             current_index: 1,
             state: ScheduleState::Done,
@@ -2412,6 +2481,7 @@ mod tests {
             sync_response_tx: Some(tx),
             async_shared: None,
             deferred_rx: None,
+            deferred_firing: None,
         };
         finalize_schedule(schedule);
         let response = rx.blocking_recv().unwrap().unwrap();
@@ -2449,6 +2519,7 @@ mod tests {
                 status: "ok".to_string(),
                 result: None,
                 error: None,
+                ..Default::default()
             }],
             current_index: 1,
             state: ScheduleState::Done,
@@ -2460,6 +2531,7 @@ mod tests {
             sync_response_tx: None,
             async_shared: Some(shared.clone()),
             deferred_rx: None,
+            deferred_firing: None,
         };
         finalize_schedule(schedule);
         let guard = shared.lock().unwrap();
@@ -2488,6 +2560,7 @@ mod tests {
                     status: "ok".to_string(),
                     result: None,
                     error: None,
+                    ..Default::default()
                 },
                 ActionResult {
                     index: 1,
@@ -2499,6 +2572,7 @@ mod tests {
                     status: "ok".to_string(),
                     result: None,
                     error: None,
+                    ..Default::default()
                 },
             ],
             current_index: 2,
@@ -2511,6 +2585,7 @@ mod tests {
             sync_response_tx: None,
             async_shared: Some(shared.clone()),
             deferred_rx: None,
+            deferred_firing: None,
         };
         update_async_progress(&schedule);
         let guard = shared.lock().unwrap();
@@ -2536,6 +2611,7 @@ mod tests {
             sync_response_tx: None,
             async_shared: None,
             deferred_rx: None,
+            deferred_firing: None,
         };
         update_async_progress(&schedule); // No-op, should not panic
     }
@@ -2808,6 +2884,7 @@ mod tests {
             sync_response_tx: None,
             async_shared: None,
             deferred_rx: None,
+            deferred_firing: None,
         };
 
         // Reproduce the relevant slice of process_single_schedule's
@@ -2839,6 +2916,7 @@ mod tests {
             status: "error".to_string(),
             result: None,
             error: Some("Schedule self-deadlocked: virtual time is paused".to_string()),
+            ..Default::default()
         });
         schedule.current_index += 1;
         let from = schedule.current_index;
@@ -2900,6 +2978,7 @@ mod tests {
                 status: "error".to_string(),
                 result: None,
                 error: Some("Schedule self-deadlocked".to_string()),
+                ..Default::default()
             }],
             current_index: 1, // simulate the deadlock guard already consumed action 0
             state: ScheduleState::WaitingForTime,
@@ -2911,6 +2990,7 @@ mod tests {
             sync_response_tx: None,
             async_shared: None,
             deferred_rx: None,
+            deferred_firing: None,
         };
         let from = schedule.current_index;
         abort_remaining(&mut schedule, from);

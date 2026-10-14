@@ -353,6 +353,7 @@ pub fn check_hand_mirrored_value(
         || rust_class.macro_info.is_some()
         || rust_class.python_name.starts_with('_')
         || !matches!(bevy_item.kind, BevyItemKind::Struct)
+        || !implements_clone(bevy_item)
         || type_base(&bevy_item.name) != rust_class.python_name
         || !rust_class
             .python_module_path
@@ -399,6 +400,14 @@ pub fn check_hand_mirrored_value(
         diag = diag.with_location(location);
     }
     Some(diag)
+}
+
+/// Only a Clone Bevy value fits `ValueStorage` or `FieldStorage`.
+fn implements_clone(bevy_item: &BevyItem) -> bool {
+    bevy_item
+        .trait_impls
+        .iter()
+        .any(|name| matches!(name.rsplit("::").next(), Some("Clone" | "Copy")))
 }
 
 fn rust_identifiers(ty: &str) -> impl Iterator<Item = &str> {
