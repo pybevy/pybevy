@@ -1,6 +1,7 @@
 use bevy::{
     color::{
-        Alpha, Gray, LinearRgba, Luminance, Mix, Oklaba, Srgba, color_difference::EuclideanDistance,
+        Alpha, Color, Gray, LinearRgba, Luminance, Mix, Oklaba, Srgba,
+        color_difference::EuclideanDistance,
     },
     math::{StableInterpolate, Vec3, Vec4},
 };
@@ -9,7 +10,7 @@ use pybevy_macros::pyvalue;
 use pybevy_math::{vec3::PyVec3, vec4::PyVec4};
 use pyo3::prelude::*;
 
-use super::{linear_rgba::PyLinearRgba, srgba::PySrgba};
+use super::{color::PyColor, linear_rgba::PyLinearRgba, srgba::PySrgba};
 
 #[pyvalue]
 #[pyclass(name = "Oklaba", module = "pybevy.color", eq, skip_from_py_object)]
@@ -36,6 +37,11 @@ impl From<Oklaba> for PyOklaba {
 
 #[pymethods]
 impl PyOklaba {
+    #[staticmethod]
+    pub fn from_color(color: &PyColor) -> PyResult<Self> {
+        Ok(Self::from_owned(Oklaba::from(Color::try_from(color)?)))
+    }
+
     #[new]
     #[pyo3(signature = (lightness = 1.0, a = 0.0, b = 0.0, alpha = 1.0))]
     pub fn new(lightness: f32, a: f32, b: f32, alpha: f32) -> Self {

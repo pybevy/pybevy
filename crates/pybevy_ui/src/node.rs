@@ -12,7 +12,7 @@ use crate::{
     grid_track::PyGridTrack,
     overflow::PyOverflow,
     overflow_clip_margin::PyOverflowClipMargin,
-    repeated_grid_track::PyRepeatedGridTrack,
+    repeated_grid_track::{PyRepeatedGridTrack, extract_repeated_grid_track_from_any},
     ui_rect::PyUiRect,
     val::{IntoVal, PyVal},
 };
@@ -134,8 +134,8 @@ impl PyNode {
         row_gap: IntoVal,
         column_gap: IntoVal,
         grid_auto_flow: PyGridAutoFlow,
-        grid_template_rows: Vec<PyRepeatedGridTrack>,
-        grid_template_columns: Vec<PyRepeatedGridTrack>,
+        grid_template_rows: Vec<Bound<'_, PyAny>>,
+        grid_template_columns: Vec<Bound<'_, PyAny>>,
         grid_auto_rows: Vec<PyGridTrack>,
         grid_auto_columns: Vec<PyGridTrack>,
         grid_row: PyGridPlacement,
@@ -178,8 +178,14 @@ impl PyNode {
             row_gap: Self::check_row_gap(row_gap.0)?,
             column_gap: Self::check_column_gap(column_gap.0)?,
             grid_auto_flow: grid_auto_flow.into(),
-            grid_template_rows: grid_template_rows.into_iter().map(Into::into).collect(),
-            grid_template_columns: grid_template_columns.into_iter().map(Into::into).collect(),
+            grid_template_rows: grid_template_rows
+                .iter()
+                .map(extract_repeated_grid_track_from_any)
+                .collect::<PyResult<Vec<_>>>()?,
+            grid_template_columns: grid_template_columns
+                .iter()
+                .map(extract_repeated_grid_track_from_any)
+                .collect::<PyResult<Vec<_>>>()?,
             grid_auto_rows: grid_auto_rows.into_iter().map(Into::into).collect(),
             grid_auto_columns: grid_auto_columns.into_iter().map(Into::into).collect(),
             grid_row: grid_row.into(),
@@ -615,8 +621,12 @@ impl PyNode {
     }
 
     #[setter]
-    pub fn set_grid_template_columns(&mut self, value: Vec<PyRepeatedGridTrack>) -> PyResult<()> {
-        self.as_mut()?.grid_template_columns = value.into_iter().map(|t| t.into()).collect();
+    pub fn set_grid_template_columns(&mut self, value: Vec<Bound<'_, PyAny>>) -> PyResult<()> {
+        let tracks = value
+            .iter()
+            .map(extract_repeated_grid_track_from_any)
+            .collect::<PyResult<Vec<_>>>()?;
+        self.as_mut()?.grid_template_columns = tracks;
         Ok(())
     }
 
@@ -631,8 +641,12 @@ impl PyNode {
     }
 
     #[setter]
-    pub fn set_grid_template_rows(&mut self, value: Vec<PyRepeatedGridTrack>) -> PyResult<()> {
-        self.as_mut()?.grid_template_rows = value.into_iter().map(|t| t.into()).collect();
+    pub fn set_grid_template_rows(&mut self, value: Vec<Bound<'_, PyAny>>) -> PyResult<()> {
+        let tracks = value
+            .iter()
+            .map(extract_repeated_grid_track_from_any)
+            .collect::<PyResult<Vec<_>>>()?;
+        self.as_mut()?.grid_template_rows = tracks;
         Ok(())
     }
 

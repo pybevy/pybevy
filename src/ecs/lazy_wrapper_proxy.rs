@@ -23,13 +23,16 @@ use bevy::{
         entity::Entity,
         world::{World, unsafe_world_cell::UnsafeWorldCell},
     },
-    math::{Vec2, Vec3},
+    math::{Mat2, Mat3, Mat4, Quat, Vec2, Vec3, Vec4},
 };
 use pybevy_core::{ComponentWriteContext, ValueStorage, storage_traits::FromBorrowedStorage};
 use pybevy_ecs::shared::run_ticks::RunTicks;
-use pybevy_math::{vec2::PyVec2, vec3::PyVec3};
+use pybevy_math::{
+    mat2::PyMat2, mat3::PyMat3, mat4::PyMat4, quat::PyQuat, vec2::PyVec2, vec3::PyVec3,
+    vec4::PyVec4,
+};
 use pyo3::{
-    PyTraverseError, PyVisit,
+    PyClass, PyClassInitializer, PyTraverseError, PyVisit,
     exceptions::{PyAttributeError, PyRuntimeError, PyTypeError},
     prelude::*,
     types::{PyDict, PyType},
@@ -46,8 +49,8 @@ use super::{
 pub(crate) enum ProxyKind {
     /// Long-lived handle from `world.get` / `world.get_mut`. The entity may be
     /// structurally mutated while the proxy is held, so the address is re-resolved from
-    /// `(world_ptr, entity, component_id)` on every access, and escaped Vec3/Vec2 field
-    /// handles re-resolve too.
+    /// `(world_ptr, entity, component_id)` on every access, and escaped composite field
+    /// handles (vectors, quaternions, matrices) re-resolve too.
     WorldGet,
     /// Query iteration item. The cached `data_ptr` is valid for the ValidityFlag window
     /// (no immediate structural mutation can intervene), so it is used directly.
@@ -337,57 +340,69 @@ impl PyLazyWrapperProxy {
                 let val = unsafe { *(bytes_ptr as *const bool) };
                 Py::from(pyo3::types::PyBool::new(py, val)).into()
             }
-            PrimitiveType::Vec3 => match self.kind {
-                ProxyKind::WorldGet => {
-                    // Long-lived proxy: hand back a re-resolving handle, not a borrow into
-                    // ECS storage. The escaped PyVec3 re-derives the field's address on each
-                    // access, so `obj.field.x = ...` writes through to the live component and
-                    // survives structural moves (a cached borrow would dangle).
-                    let storage = unsafe {
-                        ValueStorage::revalidating(
-                            self.world_cell,
-                            self.entity,
-                            self.component_id,
-                            field.offset,
-                            self.validity.clone(),
-                        )
-                    };
-                    Py::new(py, PyVec3::from_borrowed(storage))?.into_any()
-                }
-                ProxyKind::QueryItem => {
-                    // Query iteration: the ValidityFlag covers the access window, so a
-                    // borrowed (write-through) sub-proxy is safe and preserves mutation.
-                    let vec3_ptr = bytes_ptr as *mut Vec3;
-                    let storage = unsafe {
-                        ValueStorage::borrowed(vec3_ptr, self.query_field_validity(field.offset))
-                    };
-                    Py::new(py, PyVec3::from_borrowed(storage))?.into_any()
-                }
-            },
-            PrimitiveType::Vec2 => match self.kind {
-                ProxyKind::WorldGet => {
-                    let storage = unsafe {
-                        ValueStorage::revalidating(
-                            self.world_cell,
-                            self.entity,
-                            self.component_id,
-                            field.offset,
-                            self.validity.clone(),
-                        )
-                    };
-                    Py::new(py, PyVec2::from_borrowed(storage))?.into_any()
-                }
-                ProxyKind::QueryItem => {
-                    let vec2_ptr = bytes_ptr as *mut Vec2;
-                    let storage = unsafe {
-                        ValueStorage::borrowed(vec2_ptr, self.query_field_validity(field.offset))
-                    };
-                    Py::new(py, PyVec2::from_borrowed(storage))?.into_any()
-                }
-            },
+            PrimitiveType::Vec3 => {
+                self.composite_field::<Vec3, PyVec3>(py, bytes_ptr, field.offset)?
+            }
+            PrimitiveType::Vec2 => {
+                self.composite_field::<Vec2, PyVec2>(py, bytes_ptr, field.offset)?
+            }
+            PrimitiveType::Vec4 => {
+                self.composite_field::<Vec4, PyVec4>(py, bytes_ptr, field.offset)?
+            }
+            PrimitiveType::Quat => {
+                self.composite_field::<Quat, PyQuat>(py, bytes_ptr, field.offset)?
+            }
+            PrimitiveType::Mat2 => {
+                self.composite_field::<Mat2, PyMat2>(py, bytes_ptr, field.offset)?
+            }
+            PrimitiveType::Mat3 => {
+                self.composite_field::<Mat3, PyMat3>(py, bytes_ptr, field.offset)?
+            }
+            PrimitiveType::Mat4 => {
+                self.composite_field::<Mat4, PyMat4>(py, bytes_ptr, field.offset)?
+            }
         };
 
         Ok(value)
+    }
+
+    /// Wrap a composite field as a live math value that writes through to the component.
+    ///
+    /// Safety contract: `bytes_ptr` is this field's current address, `offset` its layout
+    /// offset, and the layout placed a `T` there at `T`'s native alignment.
+    fn composite_field<T, W>(
+        &self,
+        py: Python,
+        bytes_ptr: *mut u8,
+        offset: usize,
+    ) -> PyResult<Py<PyAny>>
+    where
+        T: Copy,
+        W: FromBorrowedStorage<ValueStorage<T>> + PyClass + Into<PyClassInitializer<W>>,
+    {
+        let storage = match self.kind {
+            // Long-lived proxy: hand back a re-resolving handle, not a borrow into ECS
+            // storage, so `obj.field.x = ...` survives structural moves.
+            // SAFETY: the proxy's world cell, entity, and component identify a live
+            // wrapper whose layout holds a `T` at `offset`; `validity` fences access.
+            ProxyKind::WorldGet => unsafe {
+                ValueStorage::revalidating(
+                    self.world_cell,
+                    self.entity,
+                    self.component_id,
+                    offset,
+                    self.validity.clone(),
+                )
+            },
+            // Query iteration: the ValidityFlag covers the access window, so a borrowed
+            // (write-through) sub-proxy is safe and preserves mutation.
+            // SAFETY: `bytes_ptr` is the field's live, `T`-aligned address for the
+            // validity window, and write mode follows the query's access.
+            ProxyKind::QueryItem => unsafe {
+                ValueStorage::borrowed(bytes_ptr as *mut T, self.query_field_validity(offset))
+            },
+        };
+        Ok(Py::new(py, W::from_borrowed(storage))?.into_any())
     }
 
     /// Serialize a single field value and write it back to the wrapper bytes

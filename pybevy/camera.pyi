@@ -1,3 +1,4 @@
+from collections.abc import Iterator
 from typing import ClassVar, Literal, Self
 
 from pybevy.app import App, Plugin
@@ -1663,16 +1664,17 @@ class CubemapFrusta(Component):
 
     @property
     def frusta(self) -> list[Frustum]:
-        """Get all 6 frustums as a list."""
+        """All 6 frustums, each borrowed like `get`."""
 
     @frusta.setter
     def frusta(self, value: list[Frustum]) -> None: ...
 
     def get(self, index: int) -> Frustum:
-        """Get the frustum at the specified index (0-5)."""
+        """The frustum at the specified index (0-5), borrowed from the component:
+        writable through `Query[Mut[CubemapFrusta]]` and valid for the system."""
 
-    def __len__(self) -> int:
-        """Get the number of frustums (always 6)."""
+    def iter(self) -> Iterator[Frustum]:
+        """The six frustums in face order, as `get` returns them."""
 
 class VisibleMeshEntities(Component):
     """Contains the list of mesh entities visible to a camera.
@@ -1689,9 +1691,6 @@ class VisibleMeshEntities(Component):
 
     @entities.setter
     def entities(self, value: list[Entity]) -> None: ...
-
-    def __len__(self) -> int:
-        """Get the number of visible entities."""
 
     def is_empty(self) -> bool:
         """Check if there are no visible entities."""
@@ -1713,8 +1712,8 @@ class CubemapVisibleEntities(Component):
     def get(self, i: int) -> VisibleMeshEntities:
         """Get the VisibleMeshEntities for a specific cubemap face (0-5)."""
 
-    def __len__(self) -> int:
-        """Get the number of faces (always 6)."""
+    def iter(self) -> Iterator[VisibleMeshEntities]:
+        """The six faces in order, each borrowed as `get` returns it."""
 
 
 class VisibilityClass(Component):

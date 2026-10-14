@@ -49,8 +49,4 @@ impl PyLoadedFolder {
         }
         Ok(result)
     }
-
-    fn __len__(&self) -> PyResult<usize> {
-        Ok(self.storage.as_ref()?.handles.len())
-    }
 }

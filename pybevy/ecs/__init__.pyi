@@ -195,7 +195,7 @@ class MessageReader(Generic[M]):
     def clear(self) -> None:
         """Mark all currently retained messages read for this reader only."""
     def is_empty(self) -> bool:
-        """Check if there are any messages."""
+        """Check whether this reader has no unread messages."""
     def len(self) -> int:
         """Get this reader's unread message count without consuming it."""
     def read(self) -> Iterator[M]:

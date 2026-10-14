@@ -269,6 +269,41 @@ class QuatExpr:
     @w.setter
     def w(self, value: Expr | float | int) -> None: ...
 
+class Vec4Expr(QuatExpr):
+    """Represents a Vec4 field of a custom component in a View expression.
+
+    Provides x, y, z, w properties that return FieldExpr instances for
+    component-level access.
+    """
+
+    @property
+    def x(self) -> FieldExpr:
+        """X component of the Vec4."""
+
+    @x.setter
+    def x(self, value: Expr | float | int) -> None: ...
+
+    @property
+    def y(self) -> FieldExpr:
+        """Y component of the Vec4."""
+
+    @y.setter
+    def y(self, value: Expr | float | int) -> None: ...
+
+    @property
+    def z(self) -> FieldExpr:
+        """Z component of the Vec4."""
+
+    @z.setter
+    def z(self, value: Expr | float | int) -> None: ...
+
+    @property
+    def w(self) -> FieldExpr:
+        """W component of the Vec4."""
+
+    @w.setter
+    def w(self, value: Expr | float | int) -> None: ...
+
 class Vec2Expr(Expr):
     """Represents a Vec2 field in a View expression.
 

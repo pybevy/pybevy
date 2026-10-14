@@ -14,8 +14,45 @@
 
 use std::any::{Any, TypeId};
 
-use bevy::ecs::{component::ComponentId, world::World};
+use bevy::ecs::{
+    component::ComponentId,
+    message::{Message, MessageCursor, Messages},
+    world::World,
+};
 use pyo3::{ffi::PyTypeObject, prelude::*, types::PyType};
+
+/// A `MessageReader` operation on the reader's own cursor, as in Bevy's
+/// `MessageCursor`; the shared `Messages<M>` buffer is never modified.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReaderCursorOp {
+    /// Count the messages this reader has not read (`MessageReader::len`).
+    UnreadLen,
+    /// Mark every buffered message as read by this reader (`MessageReader::clear`).
+    Clear,
+}
+
+/// Apply `op` to a reader's type-erased persistent cursor and return how many
+/// messages it had not read beforehand. A missing buffer reads as empty.
+pub fn apply_reader_cursor<M: Message>(
+    world: &World,
+    cursor_state: &mut Option<Box<dyn Any + Send + Sync>>,
+    op: ReaderCursorOp,
+) -> usize {
+    let Some(messages) = world.get_resource::<Messages<M>>() else {
+        return 0;
+    };
+    let mut cursor = cursor_state
+        .as_ref()
+        .and_then(|state| state.downcast_ref::<MessageCursor<M>>())
+        .cloned()
+        .unwrap_or_else(|| messages.get_cursor());
+    let unread = cursor.len(messages);
+    if op == ReaderCursorOp::Clear {
+        cursor.clear(messages);
+        *cursor_state = Some(Box::new(cursor));
+    }
+    unread
+}
 
 /// Trait that bridges a Bevy message type to its Python wrapper.
 ///
@@ -87,6 +124,14 @@ pub trait MessageBridge: Send + Sync + 'static {
         )))
     }
 
+    /// Apply a reader cursor operation; see [`apply_reader_cursor`].
+    fn reader_cursor(
+        &self,
+        world: &World,
+        cursor_state: &mut Option<Box<dyn Any + Send + Sync>>,
+        op: ReaderCursorOp,
+    ) -> usize;
+
     /// Clear all messages of this type
     fn clear(&self, world: &mut World) -> PyResult<()>;
 
@@ -118,7 +163,7 @@ mod tests {
         sync::atomic::{AtomicUsize, Ordering},
     };
 
-    use bevy::ecs::component::ComponentId;
+    use bevy::ecs::{component::ComponentId, message::Message};
     use pyo3::{
         exceptions::PyTypeError,
         ffi::PyTypeObject,
@@ -157,6 +202,15 @@ mod tests {
         fn iter_to_python(&self, py: Python, _world: &mut World) -> PyResult<Vec<Py<PyAny>>> {
             let read = FRESH_READS.fetch_add(1, Ordering::SeqCst) + 1;
             Ok(vec![PyInt::new(py, read).into()])
+        }
+
+        fn reader_cursor(
+            &self,
+            _world: &World,
+            _cursor_state: &mut Option<Box<dyn Any + Send + Sync>>,
+            _op: ReaderCursorOp,
+        ) -> usize {
+            0
         }
 
         fn clear(&self, _world: &mut World) -> PyResult<()> {
@@ -249,5 +303,51 @@ mod tests {
             "the default leaves cursor storage untouched"
         );
         assert_eq!(FRESH_READS.load(Ordering::SeqCst), before + 2);
+    }
+
+    #[derive(Message)]
+    struct Ping;
+
+    #[test]
+    fn clearing_one_reader_cursor_leaves_the_buffer_and_other_readers() {
+        let mut world = World::new();
+        world.init_resource::<Messages<Ping>>();
+        for _ in 0..3 {
+            world.write_message(Ping);
+        }
+        let mut cleared = None;
+        let mut other = None;
+
+        assert_eq!(
+            apply_reader_cursor::<Ping>(&world, &mut cleared, ReaderCursorOp::Clear),
+            3
+        );
+        assert_eq!(
+            apply_reader_cursor::<Ping>(&world, &mut cleared, ReaderCursorOp::UnreadLen),
+            0
+        );
+        assert_eq!(
+            apply_reader_cursor::<Ping>(&world, &mut other, ReaderCursorOp::UnreadLen),
+            3
+        );
+        assert!(other.is_none(), "counting leaves an unset cursor unset");
+        assert_eq!(world.resource::<Messages<Ping>>().len(), 3);
+
+        world.write_message(Ping);
+        assert_eq!(
+            apply_reader_cursor::<Ping>(&world, &mut cleared, ReaderCursorOp::UnreadLen),
+            1
+        );
+    }
+
+    #[test]
+    fn a_missing_buffer_reads_as_empty() {
+        let world = World::new();
+        let mut cursor = None;
+        assert_eq!(
+            apply_reader_cursor::<Ping>(&world, &mut cursor, ReaderCursorOp::Clear),
+            0
+        );
+        assert!(cursor.is_none());
     }
 }

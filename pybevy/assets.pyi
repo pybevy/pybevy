@@ -119,8 +119,6 @@ class LoadedFolder(Asset):
         supported by PyBevy. In such cases, a warning is logged and those handles
         are skipped.
         """
-    def __len__(self) -> int:
-        """Get the number of assets in this folder."""
 
 class LoadState:
     """The load state of an asset.

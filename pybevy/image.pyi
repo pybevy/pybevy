@@ -1141,9 +1141,6 @@ class TextureAtlasLayout(Asset):
             True if the layout has no texture regions, False otherwise.
         """
 
-    def __len__(self) -> int:
-        """Get the number of textures (Python len() support)."""
-
     def __eq__(self, other: object) -> bool: ...
 
 class TextureAtlas:

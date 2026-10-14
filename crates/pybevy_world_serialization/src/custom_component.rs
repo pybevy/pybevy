@@ -11,7 +11,7 @@ use bevy::{
         world::EntityWorldMut,
     },
     log::warn,
-    math::{Vec2, Vec3},
+    math::{Mat2, Mat3, Mat4, Quat, Vec2, Vec3, Vec4},
     prelude::World,
     reflect::{FromReflect, PartialReflect, Reflect, TypeRegistry},
 };
@@ -35,6 +35,11 @@ enum ReflectedPrimitiveValue {
     Bool(bool),
     Vec3 { x: f32, y: f32, z: f32 },
     Vec2 { x: f32, y: f32 },
+    Vec4 { x: f32, y: f32, z: f32, w: f32 },
+    Quat { x: f32, y: f32, z: f32, w: f32 },
+    Mat2(Mat2),
+    Mat3(Mat3),
+    Mat4(Mat4),
 }
 
 impl From<PrimitiveValue> for ReflectedPrimitiveValue {
@@ -56,6 +61,21 @@ impl From<PrimitiveValue> for ReflectedPrimitiveValue {
                 x: value.x,
                 y: value.y,
             },
+            PrimitiveValue::Vec4(value) => Self::Vec4 {
+                x: value.x,
+                y: value.y,
+                z: value.z,
+                w: value.w,
+            },
+            PrimitiveValue::Quat(value) => Self::Quat {
+                x: value.x,
+                y: value.y,
+                z: value.z,
+                w: value.w,
+            },
+            PrimitiveValue::Mat2(value) => Self::Mat2(value),
+            PrimitiveValue::Mat3(value) => Self::Mat3(value),
+            PrimitiveValue::Mat4(value) => Self::Mat4(value),
         }
     }
 }
@@ -72,6 +92,11 @@ impl From<ReflectedPrimitiveValue> for PrimitiveValue {
             ReflectedPrimitiveValue::Bool(value) => Self::Bool(value),
             ReflectedPrimitiveValue::Vec3 { x, y, z } => Self::Vec3(Vec3::new(x, y, z)),
             ReflectedPrimitiveValue::Vec2 { x, y } => Self::Vec2(Vec2::new(x, y)),
+            ReflectedPrimitiveValue::Vec4 { x, y, z, w } => Self::Vec4(Vec4::new(x, y, z, w)),
+            ReflectedPrimitiveValue::Quat { x, y, z, w } => Self::Quat(Quat::from_xyzw(x, y, z, w)),
+            ReflectedPrimitiveValue::Mat2(value) => Self::Mat2(value),
+            ReflectedPrimitiveValue::Mat3(value) => Self::Mat3(value),
+            ReflectedPrimitiveValue::Mat4(value) => Self::Mat4(value),
         }
     }
 }

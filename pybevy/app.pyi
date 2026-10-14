@@ -198,8 +198,7 @@ class PluginGroupBuilder(PluginGroup):
     def build(self) -> PluginGroupBuilder:
         """Return this same builder."""
     def finish(self, app: App) -> None:
-        """Apply enabled members in order. Installed custom/minimal members are skipped.
-        Repeated native DefaultPlugins seed members can raise RuntimeError."""
+        """Apply enabled members in order, raising RuntimeError for duplicate plugins."""
 
 class DefaultPlugins(PluginGroup):
     """Default plugin group for typical PyBevy applications.
@@ -641,7 +640,10 @@ class RunMode:
     """
 
     class Loop(RunMode):
-        """Run the schedule repeatedly, optionally waiting between frames."""
+        """Run repeatedly, waiting the given milliseconds between frames.
+
+        None means no wait. Negative or out-of-range waits raise ValueError.
+        """
         __match_args__: ClassVar[tuple[Literal["wait"]]]
         @property
         def wait(self) -> int | None: ...

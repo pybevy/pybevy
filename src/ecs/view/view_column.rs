@@ -34,7 +34,7 @@ use pyo3::{
 
 use crate::ecs::{
     component_type::PyComponentType,
-    view::view::{get_component_field_info, native_view_field_domains},
+    view::view::{get_component_field_info, matrix_view_field_error, native_view_field_domains},
 };
 
 /// Opaque column view that can only be accessed through Numba JIT.
@@ -765,11 +765,25 @@ impl PyViewColumn {
                                     viewcolumn_accessors.getattr("Vec2ViewColumn")?;
                                 return Ok(vec2_wrapper.call1((vec2_col,))?.into());
                             }
-                            _ => {
-                                let field_col = self.at_offset_typed(
-                                    field.offset,
-                                    Some(field.field_type.to_field_type()),
-                                )?;
+                            lanes @ (PrimitiveType::Vec4 | PrimitiveType::Quat) => {
+                                let lane_col =
+                                    self.at_offset_typed(field.offset, Some(FieldType::Vec4))?;
+                                let viewcolumn_accessors =
+                                    py.import("pybevy.ecs.view_accessors")?;
+                                let wrapper_name = if lanes == PrimitiveType::Quat {
+                                    "QuatViewColumn"
+                                } else {
+                                    "Vec4ViewColumn"
+                                };
+                                let lane_wrapper = viewcolumn_accessors.getattr(wrapper_name)?;
+                                return Ok(lane_wrapper.call1((lane_col,))?.into());
+                            }
+                            scalar => {
+                                let field_type = scalar
+                                    .to_field_type()
+                                    .ok_or_else(|| matrix_view_field_error(name, scalar))?;
+                                let field_col =
+                                    self.at_offset_typed(field.offset, Some(field_type))?;
                                 return Ok(Py::new(py, field_col)?.into());
                             }
                         }

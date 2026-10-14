@@ -504,10 +504,10 @@ def component(
     return _apply
 
 
-from .math import Vec2, Vec3
+from .math import Mat2, Mat3, Mat4, Quat, Vec2, Vec3, Vec4
 
 _PRIMITIVE_TYPES = (int, float, bool)
-_WRAPPER_TYPES = (int, float, bool, Vec3, Vec2)
+_WRAPPER_TYPES = (int, float, bool, Vec3, Vec2, Vec4, Quat, Mat2, Mat3, Mat4)
 
 
 def _has_undeclared_component_state(
@@ -786,6 +786,8 @@ def _get_proxy_type_for_field(field_type: object) -> str:
         return "Vec3Expr"
     if "Vec2" in type_name:
         return "Vec2Expr"
+    if "Vec4" in type_name:
+        return "Vec4Expr"
     if "Quat" in type_name or "Quaternion" in type_name:
         return "QuatExpr"
     # Default to FieldExpr for unknown types

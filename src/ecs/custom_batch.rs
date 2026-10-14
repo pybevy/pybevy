@@ -1,9 +1,6 @@
 use std::sync::Arc;
 
-use bevy::{
-    ecs::{component::ComponentId, entity::Entity, ptr::OwningPtr, world::World},
-    math::{Vec2, Vec3},
-};
+use bevy::ecs::{component::ComponentId, entity::Entity, ptr::OwningPtr, world::World};
 use numpy::{PyReadonlyArray1, PyReadonlyArray2};
 use pybevy_array::{ArrayDType, owned_contiguous_le_bytes_from_any};
 use pybevy_core::{
@@ -16,7 +13,6 @@ use pybevy_core::{
     component_batch::{FieldColumn, build_wrapper_rows, column_dtype_for, field_column_for},
     registry::global_registry,
 };
-use pybevy_math::{vec2::PyVec2, vec3::PyVec3};
 use pyo3::{
     PyTraverseError, PyVisit,
     exceptions::{PyModuleNotFoundError, PyTypeError, PyValueError},
@@ -28,7 +24,7 @@ use pyo3::{
 use super::{
     component_layout::{
         ComponentLayout, ComponentStorageType, ComponentStorageTypeExt, PrimitiveType,
-        PrimitiveTypeExt, PrimitiveValue, extract_primitive_from_py,
+        PrimitiveTypeExt, PrimitiveValue, extract_primitive_from_py, primitive_to_py,
     },
     component_type::{PreparedCustomComponentRegistration, register_prepared_custom_component},
     component_wrapper::*,
@@ -99,9 +95,14 @@ fn field_default<'py>(
 
 fn empty_column(field_type: PrimitiveType) -> ColumnData {
     match field_type {
-        PrimitiveType::F32 | PrimitiveType::Vec2 | PrimitiveType::Vec3 => {
-            ColumnData::F32(Vec::new())
-        }
+        PrimitiveType::F32
+        | PrimitiveType::Vec2
+        | PrimitiveType::Vec3
+        | PrimitiveType::Vec4
+        | PrimitiveType::Quat
+        | PrimitiveType::Mat2
+        | PrimitiveType::Mat3
+        | PrimitiveType::Mat4 => ColumnData::F32(Vec::new()),
         PrimitiveType::F64 => ColumnData::F64(Vec::new()),
         PrimitiveType::I32 => ColumnData::I32(Vec::new()),
         PrimitiveType::I64 => ColumnData::I64(Vec::new()),
@@ -120,11 +121,9 @@ fn push_value(column: &mut ColumnData, value: PrimitiveValue) {
         (ColumnData::U32(values), PrimitiveValue::U32(value)) => values.push(value),
         (ColumnData::U64(values), PrimitiveValue::U64(value)) => values.push(value),
         (ColumnData::Bool(values), PrimitiveValue::Bool(value)) => values.push(u8::from(value)),
-        (ColumnData::F32(values), PrimitiveValue::Vec2(value)) => {
-            values.extend([value.x, value.y]);
-        }
-        (ColumnData::F32(values), PrimitiveValue::Vec3(value)) => {
-            values.extend([value.x, value.y, value.z]);
+        (ColumnData::F32(values), composite) if composite.f32_lanes().is_some() => {
+            let (lanes, count) = composite.f32_lanes().expect("checked composite value");
+            values.extend_from_slice(&lanes[..count]);
         }
         _ => unreachable!("primitive extraction returned a different field type"),
     }
@@ -179,14 +178,12 @@ fn column_value<'py>(
     row: usize,
 ) -> PyResult<Bound<'py, PyAny>> {
     Ok(match (field_type, column) {
-        (PrimitiveType::Vec3, ColumnData::F32(values)) => {
-            let base = row * 3;
-            let value = Vec3::new(values[base], values[base + 1], values[base + 2]);
-            Bound::new(py, PyVec3::from(value))?.into_any()
-        }
-        (PrimitiveType::Vec2, ColumnData::F32(values)) => {
-            let base = row * 2;
-            Bound::new(py, PyVec2::from(Vec2::new(values[base], values[base + 1])))?.into_any()
+        (composite, ColumnData::F32(values)) if composite.is_composite() => {
+            let lanes = composite.element_count();
+            let value =
+                PrimitiveValue::from_f32_lanes(composite, &values[row * lanes..(row + 1) * lanes])
+                    .expect("composite lanes match their field type");
+            primitive_to_py(py, value)?
         }
         (_, ColumnData::F32(values)) => values[row].into_pyobject(py)?.into_any(),
         (_, ColumnData::F64(values)) => values[row].into_pyobject(py)?.into_any(),
@@ -478,10 +475,8 @@ enum ReadonlyArrayHolder<'py> {
     U32(PyReadonlyArray1<'py, u32>),
     U64(PyReadonlyArray1<'py, u64>),
     Bool(PyReadonlyArray1<'py, u8>),
-    /// 2D array (N, 3) for Vec3 fields
-    Vec3(PyReadonlyArray2<'py, f32>),
-    /// 2D array (N, 2) for Vec2 fields
-    Vec2(PyReadonlyArray2<'py, f32>),
+    /// 2D array (N, lanes) for composite (vector, quaternion, matrix) fields
+    Lanes(PyReadonlyArray2<'py, f32>, usize),
 }
 
 /// Map a neutral custom-batch validation error to the exception type pyo3
@@ -575,12 +570,10 @@ fn prepare_custom_batch(
             PrimitiveType::Bool => {
                 ReadonlyArrayHolder::Bool(array.extract::<PyReadonlyArray1<u8>>()?)
             }
-            PrimitiveType::Vec3 => {
-                ReadonlyArrayHolder::Vec3(array.extract::<PyReadonlyArray2<f32>>()?)
-            }
-            PrimitiveType::Vec2 => {
-                ReadonlyArrayHolder::Vec2(array.extract::<PyReadonlyArray2<f32>>()?)
-            }
+            composite => ReadonlyArrayHolder::Lanes(
+                array.extract::<PyReadonlyArray2<f32>>()?,
+                composite.element_count(),
+            ),
         };
         holders.push(holder);
     }
@@ -624,16 +617,12 @@ fn prepare_custom_batch(
                     PyValueError::new_err(format!("Array not contiguous: {error}"))
                 })?)
             }
-            ReadonlyArrayHolder::Vec3(array) => {
-                FieldColumn::Vec3(array.as_slice().map_err(|error| {
+            ReadonlyArrayHolder::Lanes(array, lanes) => FieldColumn::Lanes(
+                array.as_slice().map_err(|error| {
                     PyValueError::new_err(format!("Array not contiguous: {error}"))
-                })?)
-            }
-            ReadonlyArrayHolder::Vec2(array) => {
-                FieldColumn::Vec2(array.as_slice().map_err(|error| {
-                    PyValueError::new_err(format!("Array not contiguous: {error}"))
-                })?)
-            }
+                })?,
+                *lanes,
+            ),
         };
         columns.push((*field_idx, column));
     }

@@ -8,7 +8,8 @@ use std::{
 use regex::Regex;
 
 use crate::{
-    bevy_parser::types::{BevyItem, BevyItemKind},
+    bevy_parser::types::{BevyItem, BevyItemKind, BevyVariantKind},
+    comparison::enum_variant_kinds_match,
     config::{BevyConfig, is_keyword_escape_of},
     model::{EnumVariantKind, MacroInfo, MethodDef, PyClassDef, SelfMutability, SourceLocation},
     output::{Diagnostic, DiagnosticCode, Suggestion},
@@ -809,6 +810,65 @@ pub fn validate_tuple_variant_exposure(rust: &PyClassDef, bevy: &BevyItem) -> Ve
         diagnostics.push(diagnostic);
     }
 
+    diagnostics
+}
+
+pub fn validate_variant_payload_parity(
+    rust: &PyClassDef,
+    bevy: &BevyItem,
+    config: &BevyConfig,
+) -> Vec<Diagnostic> {
+    if bevy.kind != BevyItemKind::Enum || !rust.is_enum {
+        return Vec::new();
+    }
+    let mut diagnostics = Vec::new();
+    for upstream in &bevy.variants {
+        if config.is_variant_intentionally_missing(&bevy.name, &upstream.name) {
+            continue;
+        }
+        let rename = config.get_rename(&bevy.name, &upstream.name);
+        let name = rename.as_deref().unwrap_or(&upstream.name);
+        let Some(variant) = rust
+            .enum_variants
+            .iter()
+            .find(|variant| variant.name == name)
+        else {
+            continue;
+        };
+        // Manual tuple adapters can flatten native event fields into named payloads.
+        if matches!(
+            rust.macro_info,
+            Some(MacroInfo::BevyEnum { manual: true, .. })
+        ) && matches!(
+            (&upstream.kind, &variant.kind),
+            (BevyVariantKind::Tuple(_), EnumVariantKind::Struct(_))
+        ) && !rust.bevy_tuple_variants.contains(&variant.name)
+        {
+            continue;
+        }
+        if enum_variant_kinds_match(
+            &upstream.kind,
+            &variant.kind,
+            rust.bevy_tuple_variants.contains(&variant.name),
+        ) {
+            continue;
+        }
+        let mut diagnostic = Diagnostic::warning(
+            DiagnosticCode::W042,
+            format!(
+                "enum variant '{}.{}' has a different shape or payload type from Bevy",
+                rust.python_name, variant.name,
+            ),
+        )
+        .with_note(format!("Bevy: {:?}; PyBevy: {:?}", upstream.kind, variant.kind))
+        .with_suggestion(Suggestion::new(
+            "store the upstream payload type or record a reasoned validation exception for an intentional conversion",
+        ));
+        if let Some(location) = &rust.location {
+            diagnostic = diagnostic.with_location(location.clone());
+        }
+        diagnostics.push(diagnostic);
+    }
     diagnostics
 }
 

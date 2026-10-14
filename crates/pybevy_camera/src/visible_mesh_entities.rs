@@ -38,10 +38,6 @@ impl PyVisibleMeshEntities {
         Ok(())
     }
 
-    pub fn __len__(&self) -> PyResult<usize> {
-        Ok(self.as_ref()?.entities.len())
-    }
-
     pub fn is_empty(&self) -> PyResult<bool> {
         Ok(self.as_ref()?.entities.is_empty())
     }

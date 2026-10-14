@@ -2,11 +2,14 @@ use bevy::{
     reflect::{PartialReflect, ReflectRef},
     ui::{GridTrack, GridTrackRepetition, RepeatedGridTrack},
 };
-use pybevy_core::domain::{FINITE, check_for};
-use pyo3::prelude::*;
+use pybevy_core::{
+    domain::{FINITE, check_for},
+    public_error::grid_template_track_type,
+};
+use pyo3::{exceptions::PyTypeError, prelude::*};
 
 use crate::{
-    grid_track::grid_track_factory,
+    grid_track::{PyGridTrack, grid_track_factory},
     grid_track_repetition::{PyGridTrackRepetition, extract_grid_track_repetition_from_any},
 };
 
@@ -61,6 +64,23 @@ fn repeated_grid_track_repr(track: &RepeatedGridTrack) -> Option<String> {
 #[derive(Clone, Debug, PartialEq)]
 pub struct PyRepeatedGridTrack {
     pub(crate) inner: RepeatedGridTrack,
+}
+
+/// Mirrors bevy's `impl From<GridTrack> for RepeatedGridTrack`: a bare track is
+/// one repetition of itself.
+pub fn extract_repeated_grid_track_from_any(
+    value: &Bound<'_, PyAny>,
+) -> PyResult<RepeatedGridTrack> {
+    if let Ok(track) = value.cast::<PyRepeatedGridTrack>() {
+        return Ok(track.get().inner.clone());
+    }
+    if let Ok(track) = value.cast::<PyGridTrack>() {
+        return Ok(RepeatedGridTrack::from(track.get().inner));
+    }
+    let type_name = value.get_type().name()?;
+    Err(PyTypeError::new_err(grid_template_track_type(
+        &type_name.to_string_lossy(),
+    )))
 }
 
 impl From<RepeatedGridTrack> for PyRepeatedGridTrack {

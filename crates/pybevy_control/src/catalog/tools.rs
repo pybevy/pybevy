@@ -597,6 +597,11 @@ mod tests {
         assert_eq!(stats_properties["sample_points"]["maxItems"], 256);
         assert_eq!(stats_properties["max_width"]["minimum"], 1);
 
+        let depth = tools.iter().find(|t| t["name"] == "capture_depth").unwrap();
+        let depth_properties = &depth["inputSchema"]["properties"];
+        assert_eq!(depth_properties["grid_density"]["maximum"], 32);
+        assert_eq!(depth_properties["sample_points"]["maxItems"], 1024);
+
         let compare = tools
             .iter()
             .find(|t| t["name"] == "compare_frames")

@@ -296,8 +296,8 @@ its scene World intact. It is not merely a code-generation check. After a
 failed reload, the `reload` and `reload_and_capture` responses,
 `get_reload_status`, `get_last_error` and `get_scene_summary` all report it,
 so an empty summary with `running_previous_generation: false` is a scene the
-failed Full reload cleared. `get_reload_status` and `get_last_error` then also
-add `scene_cleared`, saying so in words.
+failed Full reload cleared. Each of them then also adds `scene_cleared`, saying
+so in words.
 
 After successful recovery, the debug overlay clears the failure indicator and
 hides the previous error. Full reload resets the scene clocks but does not stall

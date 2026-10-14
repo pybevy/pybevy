@@ -6,6 +6,7 @@ use std::sync::{
 // Re-export base classes from pybevy_core
 pub use pybevy_core::{PyMessage, PyMessageId};
 use pybevy_core::{
+    ReaderCursorOp,
     public_error::{
         ASSET_EVENT_NO_DEFAULT, ASSET_EVENT_READ_ONLY, ASSET_LOAD_FAILED_NO_DEFAULT,
         ASSET_LOAD_FAILED_READ_ONLY, injected_system_parameter,
@@ -477,7 +478,9 @@ impl PyMessageReader {
                 .clear_reader(reader.resolved.channel, &reader.cursor)
                 .map_err(store_error);
         }
-        self.native_messages()?.clear()
+        self.native_messages()?
+            .reader_cursor(ReaderCursorOp::Clear)
+            .map(drop)
     }
 
     pub fn is_empty(&self) -> PyResult<bool> {
@@ -489,7 +492,10 @@ impl PyMessageReader {
                 .is_empty(reader.resolved.channel, &reader.cursor)
                 .map_err(store_error);
         }
-        self.native_messages()?.is_empty()
+        Ok(self
+            .native_messages()?
+            .reader_cursor(ReaderCursorOp::UnreadLen)?
+            == 0)
     }
 
     fn __len__(&self) -> PyResult<usize> {
@@ -507,7 +513,8 @@ impl PyMessageReader {
             return usize::try_from(len)
                 .map_err(|_| PyRuntimeError::new_err("unread message count exceeds usize"));
         }
-        self.native_messages()?.len()
+        self.native_messages()?
+            .reader_cursor(ReaderCursorOp::UnreadLen)
     }
 
     pub fn read(&self, py: Python) -> PyResult<PyMessageReaderIter> {

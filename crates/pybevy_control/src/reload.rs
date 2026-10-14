@@ -176,16 +176,7 @@ pub fn get_reload_status(world: &mut World) -> Result<serde_json::Value, Control
             if let Some(ref traceback) = reload_result.failure_traceback {
                 result.insert("traceback".into(), serde_json::json!(traceback));
             }
-            result.insert(
-                "running_previous_generation".into(),
-                serde_json::json!(reload_result.running_previous_generation),
-            );
-            if !reload_result.running_previous_generation {
-                result.insert(
-                    "scene_cleared".into(),
-                    serde_json::json!(public_error::RELOAD_FAILED_AFTER_SCENE_CLEARED),
-                );
-            }
+            insert_generation_state(&mut result, reload_result);
         }
         if let Some(ref added) = reload_result.plugins_added {
             result.insert("plugins_added".into(), serde_json::json!(added));
@@ -278,17 +269,18 @@ fn last_python_error(world: &World) -> serde_json::Value {
     }
 
     if let Some(reload_result) = reload_failure {
-        let mut response = serde_json::json!({
-            "error": reload_result.failure_reason,
-            "traceback": reload_result.failure_traceback,
-            "reload_failed": true,
-            "running_previous_generation": reload_result.running_previous_generation,
-        });
-        if !reload_result.running_previous_generation {
-            response["scene_cleared"] =
-                serde_json::json!(public_error::RELOAD_FAILED_AFTER_SCENE_CLEARED);
-        }
-        return response;
+        let mut response = serde_json::Map::new();
+        response.insert(
+            "error".into(),
+            serde_json::json!(reload_result.failure_reason),
+        );
+        response.insert(
+            "traceback".into(),
+            serde_json::json!(reload_result.failure_traceback),
+        );
+        response.insert("reload_failed".into(), serde_json::json!(true));
+        insert_generation_state(&mut response, reload_result);
+        return serde_json::Value::Object(response);
     }
 
     serde_json::json!({ "error": null })
@@ -319,17 +311,34 @@ fn add_error_hint(response: &mut serde_json::Value) {
     response["hint"] = serde_json::json!(hint);
 }
 
-/// Adds `reload_failed` and `running_previous_generation` after a failed
-/// reload, the pair `get_reload_status` and `get_last_error` also report. A
-/// false `running_previous_generation` means Full cleanup already cleared the
-/// previous scene.
+/// Inserts `running_previous_generation` for a failed reload and, when Full
+/// cleanup already cleared the previous scene, `scene_cleared`. Every surface
+/// that reports a failed reload goes through this.
+fn insert_generation_state(
+    response: &mut serde_json::Map<String, serde_json::Value>,
+    reload_result: &ReloadResult,
+) {
+    response.insert(
+        "running_previous_generation".into(),
+        serde_json::json!(reload_result.running_previous_generation),
+    );
+    if !reload_result.running_previous_generation {
+        response.insert(
+            "scene_cleared".into(),
+            serde_json::json!(public_error::RELOAD_FAILED_AFTER_SCENE_CLEARED),
+        );
+    }
+}
+
+/// Adds `reload_failed`, `running_previous_generation` and `scene_cleared`
+/// after a failed reload, as `get_reload_status` and `get_last_error` report.
 pub fn add_reload_failure_state(world: &World, response: &mut serde_json::Value) {
     if let Some(reload_result) = world.get_resource::<ReloadResult>()
         && reload_result.failed
+        && let Some(response) = response.as_object_mut()
     {
-        response["reload_failed"] = serde_json::json!(true);
-        response["running_previous_generation"] =
-            serde_json::json!(reload_result.running_previous_generation);
+        response.insert("reload_failed".into(), serde_json::json!(true));
+        insert_generation_state(response, reload_result);
     }
 }
 

@@ -185,7 +185,9 @@ def setup(
 - Any Rust component with `view_fields` supports `batch()` (e.g., `PointLight.batch(intensity=arr)`)
 - Custom `@component` classes with wrapper storage also support `batch()`.
   Their columns can be plain lists or tuples, `pybevy.array` arrays, or NumPy
-  arrays when NumPy is installed. Batch creation copies column values, so later
+  arrays when NumPy is installed. Composite fields take one row of float lanes
+  per entity: `(N, 2)`/`(N, 3)`/`(N, 4)` for vectors and `Quat` (`xyzw`), and
+  column-major `(N, 4)`/`(N, 9)`/`(N, 16)` for `Mat2`/`Mat3`/`Mat4`. Batch creation copies column values, so later
   changes to the inputs do not alter a queued spawn. Omitted fields use their
   declared dataclass or class defaults; default factories run once per row,
   while omitted required fields raise `TypeError` at batch creation.

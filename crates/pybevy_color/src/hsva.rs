@@ -1,5 +1,5 @@
 use bevy::{
-    color::{Alpha, Gray, Hsva, Hue, LinearRgba, Mix, Saturation, Srgba},
+    color::{Alpha, Color, Gray, Hsva, Hue, LinearRgba, Mix, Saturation, Srgba},
     math::{Vec3, Vec4},
 };
 use pybevy_core::{FromBorrowedStorage, ValueStorage, repr::float_repr};
@@ -7,7 +7,7 @@ use pybevy_macros::pyvalue;
 use pybevy_math::{vec3::PyVec3, vec4::PyVec4};
 use pyo3::prelude::*;
 
-use super::{linear_rgba::PyLinearRgba, srgba::PySrgba};
+use super::{color::PyColor, linear_rgba::PyLinearRgba, srgba::PySrgba};
 
 #[pyvalue]
 #[pyclass(name = "Hsva", module = "pybevy.color", eq, skip_from_py_object)]
@@ -43,6 +43,11 @@ impl From<Hsva> for PyHsva {
 
 #[pymethods]
 impl PyHsva {
+    #[staticmethod]
+    pub fn from_color(color: &PyColor) -> PyResult<Self> {
+        Ok(Self::from_owned(Hsva::from(Color::try_from(color)?)))
+    }
+
     #[new]
     #[pyo3(signature = (hue = 0.0, saturation = 0.0, value = 1.0, alpha = 1.0))]
     pub fn new(hue: f32, saturation: f32, value: f32, alpha: f32) -> Self {

@@ -10,8 +10,8 @@ use pybevy_storage::batch_columns::{ColumnDType, ColumnData};
 
 use crate::component_layout::{ComponentLayout, PrimitiveType};
 
-/// A borrowed typed column feeding one field of every row. `Vec3`/`Vec2` are
-/// flat `f32` slices with stride 3/2 per entity.
+/// A borrowed typed column feeding one field of every row. Composite fields
+/// (vectors, quaternions, matrices) are flat `f32` lane slices.
 pub enum FieldColumn<'a> {
     F32(&'a [f32]),
     F64(&'a [f64]),
@@ -20,16 +20,14 @@ pub enum FieldColumn<'a> {
     U32(&'a [u32]),
     U64(&'a [u64]),
     Bool(&'a [u8]),
-    /// Flat slice of f32 from an (N, 3) array: stride 3 per entity.
-    Vec3(&'a [f32]),
-    /// Flat slice of f32 from an (N, 2) array: stride 2 per entity.
-    Vec2(&'a [f32]),
+    /// Flat f32 slice from an (N, lanes) array: stride `lanes` per entity.
+    Lanes(&'a [f32], usize),
 }
 
 impl FieldColumn<'_> {
     /// Write the value at `index` into `buffer` at the given byte offset. Moved
     /// verbatim from the pyo3 `FieldSlice::write_to_buffer` (same little-endian
-    /// encoding and Vec3/Vec2 stride lanes).
+    /// encoding and composite stride lanes).
     #[inline(always)]
     pub fn write_to_buffer(&self, index: usize, buffer: &mut [u8], offset: usize) {
         match self {
@@ -54,24 +52,21 @@ impl FieldColumn<'_> {
             FieldColumn::Bool(s) => {
                 buffer[offset] = s[index];
             }
-            FieldColumn::Vec3(s) => {
-                let base = index * 3;
-                buffer[offset..offset + 4].copy_from_slice(&s[base].to_le_bytes());
-                buffer[offset + 4..offset + 8].copy_from_slice(&s[base + 1].to_le_bytes());
-                buffer[offset + 8..offset + 12].copy_from_slice(&s[base + 2].to_le_bytes());
-            }
-            FieldColumn::Vec2(s) => {
-                let base = index * 2;
-                buffer[offset..offset + 4].copy_from_slice(&s[base].to_le_bytes());
-                buffer[offset + 4..offset + 8].copy_from_slice(&s[base + 1].to_le_bytes());
+            FieldColumn::Lanes(s, lanes) => {
+                let row = &s[index * lanes..(index + 1) * lanes];
+                let dst = &mut buffer[offset..offset + lanes * 4];
+                for (chunk, lane) in dst.chunks_exact_mut(4).zip(row) {
+                    chunk.copy_from_slice(&lane.to_le_bytes());
+                }
             }
         }
     }
 }
 
 /// The extraction target for a `PrimitiveType`-keyed field: `(column dtype,
-/// columns per entity)`. `Vec3 -> (F32, 3)`, `Vec2 -> (F32, 2)`,
-/// `Bool -> (Bool, 1)`, everything else -> `(matching dtype, 1)`.
+/// columns per entity)`. Composite types map to `(F32, lanes)`, e.g.
+/// `Vec3 -> (F32, 3)` and `Mat4 -> (F32, 16)`; `Bool -> (Bool, 1)`; everything
+/// else -> `(matching dtype, 1)`.
 pub fn column_dtype_for(field_type: PrimitiveType) -> (ColumnDType, usize) {
     match field_type {
         PrimitiveType::F32 => (ColumnDType::F32, 1),
@@ -81,8 +76,7 @@ pub fn column_dtype_for(field_type: PrimitiveType) -> (ColumnDType, usize) {
         PrimitiveType::U32 => (ColumnDType::U32, 1),
         PrimitiveType::U64 => (ColumnDType::U64, 1),
         PrimitiveType::Bool => (ColumnDType::Bool, 1),
-        PrimitiveType::Vec3 => (ColumnDType::F32, 3),
-        PrimitiveType::Vec2 => (ColumnDType::F32, 2),
+        composite => (ColumnDType::F32, composite.element_count()),
     }
 }
 
@@ -98,8 +92,9 @@ pub fn field_column_for(field_type: PrimitiveType, data: &ColumnData) -> Option<
         (PrimitiveType::U32, ColumnData::U32(v)) => Some(FieldColumn::U32(v)),
         (PrimitiveType::U64, ColumnData::U64(v)) => Some(FieldColumn::U64(v)),
         (PrimitiveType::Bool, ColumnData::Bool(v)) => Some(FieldColumn::Bool(v)),
-        (PrimitiveType::Vec3, ColumnData::F32(v)) => Some(FieldColumn::Vec3(v)),
-        (PrimitiveType::Vec2, ColumnData::F32(v)) => Some(FieldColumn::Vec2(v)),
+        (composite, ColumnData::F32(v)) if composite.is_composite() => {
+            Some(FieldColumn::Lanes(v, composite.element_count()))
+        }
         _ => None,
     }
 }
@@ -146,7 +141,7 @@ mod tests {
         assert_eq!(f64::from_le_bytes(buf[0..8].try_into().unwrap()), 2.5);
 
         let mut buf = vec![0u8; 24];
-        FieldColumn::Vec3(&vecs).write_to_buffer(1, &mut buf, 8);
+        FieldColumn::Lanes(&vecs, 3).write_to_buffer(1, &mut buf, 8);
         assert_eq!(f32_le(&buf[8..12]), 4.0);
         assert_eq!(f32_le(&buf[12..16]), 5.0);
         assert_eq!(f32_le(&buf[16..20]), 6.0);
@@ -164,9 +159,28 @@ mod tests {
     }
 
     #[test]
+    fn matrix_lanes_write_column_major_rows() {
+        let lanes: Vec<f32> = (0..32).map(|i| i as f32).collect();
+        let mut buf = vec![0u8; 80];
+        FieldColumn::Lanes(&lanes, 16).write_to_buffer(1, &mut buf, 16);
+        let written: Vec<f32> = buf[16..80]
+            .chunks_exact(4)
+            .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap()))
+            .collect();
+        assert_eq!(written, lanes[16..32]);
+        assert!(buf[..16].iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
     fn column_dtype_mapping() {
         assert_eq!(column_dtype_for(PrimitiveType::Vec3), (ColumnDType::F32, 3));
         assert_eq!(column_dtype_for(PrimitiveType::Vec2), (ColumnDType::F32, 2));
+        assert_eq!(column_dtype_for(PrimitiveType::Quat), (ColumnDType::F32, 4));
+        assert_eq!(column_dtype_for(PrimitiveType::Mat3), (ColumnDType::F32, 9));
+        assert_eq!(
+            column_dtype_for(PrimitiveType::Mat4),
+            (ColumnDType::F32, 16)
+        );
         assert_eq!(column_dtype_for(PrimitiveType::I64), (ColumnDType::I64, 1));
         assert_eq!(
             column_dtype_for(PrimitiveType::Bool),
@@ -182,7 +196,7 @@ mod tests {
         let vecs = ColumnData::F32(vec![1.0, 2.0, 3.0]);
         assert!(matches!(
             field_column_for(PrimitiveType::Vec3, &vecs),
-            Some(FieldColumn::Vec3(_))
+            Some(FieldColumn::Lanes(_, 3))
         ));
     }
 
@@ -210,7 +224,7 @@ mod tests {
     fn write_vec2_lane() {
         let vecs = [1.0f32, 2.0, 3.0, 4.0];
         let mut buf = vec![0u8; 12];
-        FieldColumn::Vec2(&vecs).write_to_buffer(1, &mut buf, 4);
+        FieldColumn::Lanes(&vecs, 2).write_to_buffer(1, &mut buf, 4);
         assert_eq!(f32_le(&buf[4..8]), 3.0);
         assert_eq!(f32_le(&buf[8..12]), 4.0);
     }
@@ -252,7 +266,7 @@ mod tests {
         ));
         assert!(matches!(
             field_column_for(PrimitiveType::Vec2, &ColumnData::F32(vec![1.0, 2.0])),
-            Some(FieldColumn::Vec2(_))
+            Some(FieldColumn::Lanes(_, 2))
         ));
     }
 
@@ -320,7 +334,7 @@ mod tests {
             &[
                 (0, FieldColumn::F64(&a)),
                 (1, FieldColumn::I64(&b)),
-                (2, FieldColumn::Vec2(&v)),
+                (2, FieldColumn::Lanes(&v, 2)),
             ],
             2,
         );

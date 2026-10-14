@@ -132,6 +132,10 @@ if __name__ == "__main__":
    app.add_plugins(ScheduleRunnerPlugin.run_loop(16))  # 16ms ≈ 60fps
    ```
 
+   Waits are milliseconds. Both `ScheduleRunnerPlugin.run_loop(...)` and
+   `RunMode.Loop(wait=...)` accept `None` for no wait and reject negative waits
+   or values outside the 64-bit unsigned integer range with `ValueError`.
+
 3. **Use offscreen render target** - camera must render to an image, not the screen:
    ```python
    render_target = Image.new_render_target(width=256, height=256)

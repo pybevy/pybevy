@@ -5,6 +5,7 @@ TextFont, TextColor, and TextLayout from pybevy.text (same components
 work for both Text2d and UI Text).
 """
 
+from collections.abc import Sequence
 from typing import ClassVar, Literal
 
 import numpy as np
@@ -1162,8 +1163,8 @@ class Node(Component):
         row_gap: Val | float = Val.ZERO,
         column_gap: Val | float = Val.ZERO,
         grid_auto_flow: GridAutoFlow = ...,
-        grid_template_rows: list[RepeatedGridTrack] = ...,
-        grid_template_columns: list[RepeatedGridTrack] = ...,
+        grid_template_rows: Sequence[RepeatedGridTrack | GridTrack] = ...,
+        grid_template_columns: Sequence[RepeatedGridTrack | GridTrack] = ...,
         grid_auto_rows: list[GridTrack] = ...,
         grid_auto_columns: list[GridTrack] = ...,
         grid_row: GridPlacement = ...,
@@ -1456,14 +1457,18 @@ class Node(Component):
         """Defines the columns of a grid layout."""
 
     @grid_template_columns.setter
-    def grid_template_columns(self, value: list[RepeatedGridTrack]) -> None: ...
+    def grid_template_columns(
+        self, value: Sequence[RepeatedGridTrack | GridTrack]
+    ) -> None: ...
 
     @property
     def grid_template_rows(self) -> list[RepeatedGridTrack]:
         """Defines the rows of a grid layout."""
 
     @grid_template_rows.setter
-    def grid_template_rows(self, value: list[RepeatedGridTrack]) -> None: ...
+    def grid_template_rows(
+        self, value: Sequence[RepeatedGridTrack | GridTrack]
+    ) -> None: ...
 
     @property
     def grid_auto_columns(self) -> list[GridTrack]:
@@ -2422,7 +2427,9 @@ class GridTrack:
     """Size specification for a single grid track (row or column).
 
     Used to define the size of individual grid tracks or as part
-    of RepeatedGridTrack definitions.
+    of RepeatedGridTrack definitions. `grid_auto_rows` and `grid_auto_columns`
+    take these; the template fields also accept a bare `GridTrack` as one
+    repetition of itself, the way bevy's `From<GridTrack>` does.
     Numeric factories reject NaN and infinity with ValueError.
 
     Example:

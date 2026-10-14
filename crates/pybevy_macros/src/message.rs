@@ -219,6 +219,15 @@ pub(crate) fn generate_message_bridge_tokens(
 
             #write_message_impl
 
+            fn reader_cursor(
+                &self,
+                world: &bevy::ecs::world::World,
+                cursor_state: &mut Option<Box<dyn std::any::Any + Send + Sync>>,
+                op: pybevy_core::ReaderCursorOp,
+            ) -> usize {
+                pybevy_core::apply_reader_cursor::<#bevy_type>(world, cursor_state, op)
+            }
+
             // Maintenance paths treat a missing buffer as empty; never insert
             // (no structural world mutation from a possibly-parallel system).
             fn clear(&self, world: &mut bevy::ecs::world::World) -> pyo3::PyResult<()> {

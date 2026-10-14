@@ -6,7 +6,7 @@ use pybevy_core::{
     domain::{IntegerInput, NON_NEGATIVE, check_for},
 };
 use pybevy_macros::{pyenum, pyplugin};
-use pyo3::prelude::*;
+use pyo3::{prelude::*, types::PyInt};
 
 use crate::prelude::PyApp;
 
@@ -17,13 +17,36 @@ pub struct PyScheduleRunnerPlugin {
     run_mode: PyRunMode,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RunModeWait(Duration);
+
+impl<'py> IntoPyObject<'py> for RunModeWait {
+    type Target = PyInt;
+    type Output = Bound<'py, PyInt>;
+    type Error = <u128 as IntoPyObject<'py>>::Error;
+
+    fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+        self.0.as_millis().into_pyobject(py)
+    }
+}
+
+impl FromPyObject<'_, '_> for RunModeWait {
+    type Error = PyErr;
+
+    fn extract(value: Borrowed<'_, '_, PyAny>) -> PyResult<Self> {
+        let value = value.extract::<IntegerInput<u64>>()?;
+        let value = check_for::<PyRunMode, _>("Loop.wait", value, NON_NEGATIVE)?;
+        Ok(Self(Duration::from_millis(value.stored())))
+    }
+}
+
 #[pyenum(RunMode, manual)]
 #[pyclass(name = "RunMode", module = "pybevy.app", frozen, eq, from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PyRunMode {
     #[pyo3(constructor = (*, wait = None))]
     Loop {
-        wait: Option<u64>,
+        wait: Option<RunModeWait>,
     },
     Once(),
 }
@@ -32,7 +55,7 @@ impl From<PyRunMode> for RunMode {
     fn from(py_run_mode: PyRunMode) -> Self {
         match py_run_mode {
             PyRunMode::Loop { wait } => RunMode::Loop {
-                wait: wait.map(Duration::from_millis),
+                wait: wait.map(|wait| wait.0),
             },
             PyRunMode::Once() => RunMode::Once,
         }
@@ -67,7 +90,7 @@ impl PyScheduleRunnerPlugin {
             py,
             (
                 Self::with_mode(PyRunMode::Loop {
-                    wait: wait_duration,
+                    wait: wait_duration.map(|wait| RunModeWait(Duration::from_millis(wait))),
                 }),
                 PyPlugin,
             ),

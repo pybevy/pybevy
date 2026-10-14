@@ -1,5 +1,5 @@
 use bevy::{
-    color::{Alpha, Gray, Laba, LinearRgba, Luminance, Mix, Srgba},
+    color::{Alpha, Color, Gray, Laba, LinearRgba, Luminance, Mix, Srgba},
     math::{StableInterpolate, Vec3, Vec4},
 };
 use pybevy_core::{FromBorrowedStorage, ValueStorage, repr::float_repr};
@@ -7,7 +7,7 @@ use pybevy_macros::pyvalue;
 use pybevy_math::{vec3::PyVec3, vec4::PyVec4};
 use pyo3::prelude::*;
 
-use super::{linear_rgba::PyLinearRgba, srgba::PySrgba};
+use super::{color::PyColor, linear_rgba::PyLinearRgba, srgba::PySrgba};
 
 #[pyvalue]
 #[pyclass(name = "Laba", module = "pybevy.color", eq, skip_from_py_object)]
@@ -34,6 +34,11 @@ impl From<Laba> for PyLaba {
 
 #[pymethods]
 impl PyLaba {
+    #[staticmethod]
+    pub fn from_color(color: &PyColor) -> PyResult<Self> {
+        Ok(Self::from_owned(Laba::from(Color::try_from(color)?)))
+    }
+
     #[new]
     #[pyo3(signature = (lightness = 1.0, a = 0.0, b = 0.0, alpha = 1.0))]
     pub fn new(lightness: f32, a: f32, b: f32, alpha: f32) -> Self {

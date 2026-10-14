@@ -145,8 +145,4 @@ impl PyTextureAtlasLayout {
             layout.textures.len()
         ))
     }
-
-    pub fn __len__(&self) -> PyResult<usize> {
-        self.len()
-    }
 }

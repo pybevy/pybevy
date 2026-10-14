@@ -3,7 +3,7 @@ use pybevy_core::{
     ComponentStorage, ComponentStorageInner, PyComponent, public_error::CUBEMAP_FACE_INDEX,
 };
 use pybevy_macros::pycomponent;
-use pyo3::{exceptions::PyIndexError, prelude::*};
+use pyo3::{exceptions::PyIndexError, prelude::*, types::PyList};
 
 use crate::visible_mesh_entities::PyVisibleMeshEntities;
 
@@ -43,8 +43,12 @@ impl PyCubemapVisibleEntities {
         Py::new(py, PyVisibleMeshEntities::from_borrowed(storage))
     }
 
-    pub fn __len__(&self) -> usize {
-        CUBEMAP_FACE_COUNT
+    /// The six faces in order, each borrowed as `get` returns it.
+    pub fn iter(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let faces = (0..CUBEMAP_FACE_COUNT as isize)
+            .map(|index| self.get(py, index))
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(PyList::new(py, faces)?.call_method0("__iter__")?.unbind())
     }
 
     pub fn __repr__(&self) -> PyResult<String> {

@@ -4,7 +4,7 @@ use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 use super::EntityRef;
 use crate::capture::{
     analysis::DEFAULT_COMPARE_EPSILON,
-    depth::MAX_DEPTH_GRID_DENSITY,
+    depth::{MAX_DEPTH_GRID_DENSITY, MAX_DEPTH_SAMPLE_POINTS},
     screenshot::MAX_CAPTURE_DELAY_FRAMES,
     timeline::{MAX_TIMELINE_CAPTURES, MAX_TIMELINE_FRAMES},
 };
@@ -261,7 +261,8 @@ pub struct CaptureDepthParams {
     /// Override look-at point for the selected active Camera3d [x, y, z].
     pub look_at: Option<[f32; 3]>,
     /// Normalized ray-cast coordinates on a fixed 800x800 scale, using the
-    /// selected Camera3d projection and viewport. Grid if omitted.
+    /// selected Camera3d projection and viewport. Grid if omitted. Max 1024.
+    #[schemars(extend("maxItems" = MAX_DEPTH_SAMPLE_POINTS))]
     pub sample_points: Option<Vec<[i64; 2]>>,
     /// Auto-generate NxN sample grid (default 8 if no sample_points, max 32)
     #[schemars(extend("default" = 8))]

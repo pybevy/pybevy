@@ -96,6 +96,116 @@ fn enum_summary(source: &str, module: &str) -> (i32, serde_json::Value) {
 }
 
 #[test]
+fn validate_checks_manual_enum_payloads_and_their_input_storage() {
+    let bevy = pinned_bevy_source();
+    let source = r#"
+#[pyenum(RunMode, manual)]
+#[pyclass(name = "RunMode", module = "pybevy.app", frozen)]
+enum PyRunMode {
+    #[pyo3(constructor = (*, wait = None))]
+    Loop { wait: Option<WaitInput> },
+    Once(),
+}
+struct WaitInput(Duration);
+impl FromPyObject<'_, '_> for WaitInput {
+    type Error = PyErr;
+    fn extract(value: Borrowed<'_, '_, PyAny>) -> PyResult<Self> { todo!() }
+}
+"#;
+    let config = "[bevy.crate_mappings]\napp = 'bevy_app'\n";
+    for (source, config, expected) in [
+        (source.to_string(), config.to_string(), None),
+        (
+            source.replace("WaitInput(Duration)", "WaitInput(u64)"),
+            config.to_string(),
+            Some("W042"),
+        ),
+        (
+            source.replace("Option<WaitInput>", "Option<u64>"),
+            config.to_string(),
+            Some("W042"),
+        ),
+        (
+            source.replace("Option<WaitInput>", "WaitInput"),
+            config.to_string(),
+            Some("W042"),
+        ),
+        (
+            source.replace("Option<WaitInput>", "Option<Duration>"),
+            config.to_string(),
+            None,
+        ),
+        (
+            format!("{source}\n#[cfg(test)] struct WaitInput(u64);"),
+            config.to_string(),
+            Some("W042"),
+        ),
+        (
+            source.replace("Option<WaitInput>", "Option<u64>"),
+            format!(
+                "{config}\n[[validation.exceptions]]\ncode = 'W042'\npath = 'rust.RunMode'\nreason = 'fixture intentionally converts integer milliseconds'\n"
+            ),
+            None,
+        ),
+        (
+            source.to_string(),
+            format!(
+                "{config}\n[[validation.exceptions]]\ncode = 'W042'\npath = 'rust.RunMode'\nreason = 'fixture intentionally converts integer milliseconds'\n"
+            ),
+            Some("E010"),
+        ),
+    ] {
+        let fixture = Fixture::new(&source, "class RunMode: ...\n", &config);
+        let (code, output) = fixture.run(&[
+            "validate",
+            "--deny-warnings",
+            "--bevy-path",
+            bevy.to_str().unwrap(),
+        ]);
+        if let Some(diagnostic) = expected {
+            assert_eq!(code, 1, "{output}");
+            assert!(output.contains(diagnostic), "{output}");
+            if diagnostic == "W042" {
+                assert!(output.contains("RunMode.Loop"), "{output}");
+                assert!(output.contains("Duration"), "{output}");
+            }
+        } else {
+            assert_eq!(code, 0, "{output}");
+        }
+    }
+    for source in [
+        source.to_string(),
+        source.replace("WaitInput(Duration)", "WaitInput(u64)"),
+    ] {
+        let expected = i32::from(source.contains("WaitInput(u64)"));
+        let (code, summary) = enum_summary(&source, "app");
+        assert_eq!(code, expected, "{summary}");
+        assert_eq!(summary["mismatched_variants"], expected, "{summary}");
+    }
+    let fixture = Fixture::new(
+        r#"
+#[pyenum(WindowEvent, manual)]
+#[pyclass(name = "WindowEvent", module = "pybevy.window")]
+enum PyWindowEvent { CursorEntered { window: PyEntity } }
+"#,
+        "class WindowEvent: ...\n",
+        "[bevy.crate_mappings]\nwindow = 'bevy_window'\n",
+    );
+    let (code, output) = fixture.run(&[
+        "validate",
+        "-c",
+        "W042",
+        "--deny-warnings",
+        "--bevy-path",
+        bevy.to_str().unwrap(),
+    ]);
+    assert_eq!(
+        code, 0,
+        "manual event flattening has a separate conversion contract: {output}"
+    );
+}
+
+#[test]
 fn enum_source_order_is_checked_instead_of_alphabetical_api_order() {
     let connection = r#"
         #[pyenum(GamepadConnection, empty_tuple)]

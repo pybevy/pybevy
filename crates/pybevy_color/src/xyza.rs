@@ -1,5 +1,5 @@
 use bevy::{
-    color::{Alpha, Gray, LinearRgba, Luminance, Mix, Srgba, Xyza},
+    color::{Alpha, Color, Gray, LinearRgba, Luminance, Mix, Srgba, Xyza},
     math::{StableInterpolate, Vec3, Vec4},
 };
 use pybevy_core::{FromBorrowedStorage, ValueStorage, repr::float_repr};
@@ -7,7 +7,7 @@ use pybevy_macros::pyvalue;
 use pybevy_math::{vec3::PyVec3, vec4::PyVec4};
 use pyo3::prelude::*;
 
-use super::{linear_rgba::PyLinearRgba, srgba::PySrgba};
+use super::{color::PyColor, linear_rgba::PyLinearRgba, srgba::PySrgba};
 
 #[pyvalue]
 #[pyclass(name = "Xyza", module = "pybevy.color", eq, skip_from_py_object)]
@@ -34,6 +34,11 @@ impl From<Xyza> for PyXyza {
 
 #[pymethods]
 impl PyXyza {
+    #[staticmethod]
+    pub fn from_color(color: &PyColor) -> PyResult<Self> {
+        Ok(Self::from_owned(Xyza::from(Color::try_from(color)?)))
+    }
+
     #[new]
     #[pyo3(signature = (x = 0.0, y = 0.0, z = 0.0, alpha = 1.0))]
     pub fn new(x: f32, y: f32, z: f32, alpha: f32) -> Self {

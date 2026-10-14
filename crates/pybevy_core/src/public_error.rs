@@ -823,6 +823,12 @@ pub fn shader_float_range_out_of_range(start: usize, end: usize, maximum: usize)
     format!("float range {start}..{end} exceeds buffer (max {maximum})")
 }
 
+pub fn view_matrix_field_unsupported(field: &str, matrix_type: impl Display) -> String {
+    format!(
+        "{matrix_type} field '{field}' is not available as a View column; access it through Query, or use Vec4/Quat fields for View"
+    )
+}
+
 pub fn unsupported_packed_uniform_type(actual: impl Display) -> String {
     format!("packed uniform type must be Vec2, Vec3, Vec4, or LinearRgba, got {actual}")
 }
@@ -841,6 +847,10 @@ pub fn missing_gizmo_config_group(name: &str) -> String {
     format!(
         "{name} is not present in GizmoConfigStore; add the plugin that owns this gizmo config group"
     )
+}
+/// Keeps PyO3's "is not an instance of" wording, which MCP reads to find the element class.
+pub fn grid_template_track_type(type_name: &str) -> String {
+    format!("'{type_name}' object is not an instance of 'RepeatedGridTrack' or 'GridTrack'")
 }
 pub const CONDITION_WORLD: &str = "World (exclusive world access)";
 pub const CONDITION_COMMANDS: &str = "Commands (queued mutations are never applied to conditions)";

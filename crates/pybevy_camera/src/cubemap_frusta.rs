@@ -1,12 +1,13 @@
 use bevy::camera::primitives::{CubemapFrusta, Frustum};
 use pybevy_core::{
-    ComponentStorage, PyComponent,
+    ComponentStorage, ComponentStorageInner, PyComponent,
     public_error::{CUBEMAP_FACE_COUNT as CUBEMAP_FACE_COUNT_ERROR, CUBEMAP_FACE_INDEX},
 };
 use pybevy_macros::pycomponent;
 use pyo3::{
     exceptions::{PyIndexError, PyValueError},
     prelude::*,
+    types::PyList,
 };
 
 use crate::frustum::PyFrustum;
@@ -32,22 +33,22 @@ impl PyCubemapFrusta {
             .into()
     }
 
+    /// Each frustum borrowed from the component, like
+    /// `CubemapVisibleEntities.get`.
     #[getter]
     pub fn frusta(&self, py: Python<'_>) -> PyResult<Vec<Py<PyFrustum>>> {
-        let cf = self.as_ref()?;
-        let mut result = Vec::with_capacity(CUBEMAP_FACE_COUNT);
-        for frustum in cf.frusta.iter() {
-            result.push(Py::new(
-                py,
-                (
-                    PyFrustum {
-                        storage: ComponentStorage::read_only_snapshot(frustum),
-                    },
-                    PyComponent,
-                ),
-            )?);
-        }
-        Ok(result)
+        (0..CUBEMAP_FACE_COUNT)
+            .map(|index| {
+                let storage = match &self.storage.inner {
+                    // A re-resolving component handle can only represent whole components.
+                    ComponentStorageInner::Revalidating(_) => {
+                        ComponentStorage::read_only_snapshot(&self.as_ref()?.frusta[index])
+                    }
+                    _ => self.storage.borrow_field(|cf| &cf.frusta[index])?,
+                };
+                Py::new(py, PyFrustum::from_borrowed(storage))
+            })
+            .collect()
     }
 
     #[setter]
@@ -68,20 +69,14 @@ impl PyCubemapFrusta {
         if index >= CUBEMAP_FACE_COUNT {
             return Err(PyIndexError::new_err(CUBEMAP_FACE_INDEX));
         }
-        let cf = self.as_ref()?;
-        Py::new(
-            py,
-            (
-                PyFrustum {
-                    storage: ComponentStorage::read_only_snapshot(&cf.frusta[index]),
-                },
-                PyComponent,
-            ),
-        )
+        Ok(self.frusta(py)?.swap_remove(index))
     }
 
-    pub fn __len__(&self) -> usize {
-        CUBEMAP_FACE_COUNT
+    /// The six frustums in face order, as `get` returns them.
+    pub fn iter(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        Ok(PyList::new(py, self.frusta(py)?)?
+            .call_method0("__iter__")?
+            .unbind())
     }
 
     pub fn __repr__(&self) -> PyResult<String> {

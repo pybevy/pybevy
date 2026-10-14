@@ -202,12 +202,11 @@ fn expanded_field_offsets(
                 )
                 && let Ok(layout) = ComponentLayout::from_annotations(class)
             {
+                // Matrices have no View column, so their bytes stay outside the program set.
                 for field in &layout.fields {
-                    insert_expanded_field(
-                        &mut fields,
-                        field.offset,
-                        field.field_type.to_field_type(),
-                    );
+                    if let Some(field_type) = field.field_type.to_field_type() {
+                        insert_expanded_field(&mut fields, field.offset, field_type);
+                    }
                 }
             }
         }

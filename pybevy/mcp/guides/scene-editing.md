@@ -638,7 +638,8 @@ capture_depth {"position": [5, 5, 5], "look_at": [0, 0, 0], "grid_density": 8}
 → RGB screenshot + 64 ray-AABB depth samples with hit entity IDs and world positions
 ```
 
-`grid_density` runs from 1 to 32 (32 gives 1,024 samples).
+`grid_density` runs from 1 to 32 (32 gives 1,024 samples), and
+`sample_points` takes up to 1,024 points.
 Auto-grid samples report `grid: [column, row]` with
 `coordinate_space: "grid_indices"`. When `sample_points` is provided, samples
 instead report `pixel: [x, y]` with
