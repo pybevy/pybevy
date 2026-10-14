@@ -4,8 +4,13 @@ from pybevy.animation import AnimationClip
 from pybevy.app import App, Plugin
 from pybevy.assets import Asset, AssetPath, Handle, RenderAssetUsages
 from pybevy.collections import LiveSequence
+from pybevy.color import Color, LinearRgba
 from pybevy.ecs import Component
-from pybevy.image import ImageSamplerDescriptor
+from pybevy.image import Image, ImageSamplerDescriptor
+from pybevy.material import AlphaMode
+from pybevy.math import Affine2
+from pybevy.mesh import UvChannel
+from pybevy.render import Face
 from pybevy.transform import Transform
 
 class GltfPlugin(Plugin):
@@ -13,7 +18,80 @@ class GltfPlugin(Plugin):
     def build(self, app: App) -> None: ...
 
 class GltfMaterial(Asset):
-    """Source material data loaded from a glTF file."""
+    """Source material data loaded from a glTF file.
+
+    The PBR parameters the loader read from the file. The loader builds the
+    rendered `StandardMaterial` from them once, so later edits do not change it.
+    Bevy's feature-gated PBR texture fields are not exposed.
+    """
+
+    def __init__(
+        self,
+        *,
+        base_color: Color = Color.WHITE,
+        base_color_channel: UvChannel = UvChannel.Uv0,
+        base_color_texture: Handle[Image] | None = None,
+        emissive: LinearRgba = LinearRgba.BLACK,
+        emissive_channel: UvChannel = UvChannel.Uv0,
+        emissive_texture: Handle[Image] | None = None,
+        perceptual_roughness: float = 0.5,
+        metallic: float = 0.0,
+        metallic_roughness_channel: UvChannel = UvChannel.Uv0,
+        metallic_roughness_texture: Handle[Image] | None = None,
+        reflectance: float = 0.5,
+        specular_tint: Color = Color.WHITE,
+        specular_transmission: float = 0.0,
+        thickness: float = 0.0,
+        ior: float = 1.5,
+        attenuation_distance: float = float("inf"),
+        attenuation_color: Color = Color.WHITE,
+        normal_map_channel: UvChannel = UvChannel.Uv0,
+        normal_map_texture: Handle[Image] | None = None,
+        occlusion_channel: UvChannel = UvChannel.Uv0,
+        occlusion_texture: Handle[Image] | None = None,
+        clearcoat: float = 0.0,
+        clearcoat_perceptual_roughness: float = 0.5,
+        anisotropy_strength: float = 0.0,
+        anisotropy_rotation: float = 0.0,
+        double_sided: bool = False,
+        cull_mode: Face | None = Face.Back,
+        unlit: bool = False,
+        alpha_mode: AlphaMode = ...,
+        uv_transform: Affine2 = Affine2.IDENTITY,
+    ) -> None: ...
+    def __copy__(self) -> GltfMaterial: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> GltfMaterial: ...
+    base_color: Color
+    base_color_channel: UvChannel
+    base_color_texture: Handle[Image] | None
+    emissive: LinearRgba
+    emissive_channel: UvChannel
+    emissive_texture: Handle[Image] | None
+    perceptual_roughness: float
+    metallic: float
+    metallic_roughness_channel: UvChannel
+    metallic_roughness_texture: Handle[Image] | None
+    reflectance: float
+    specular_tint: Color
+    specular_transmission: float
+    thickness: float
+    ior: float
+    attenuation_distance: float
+    attenuation_color: Color
+    normal_map_channel: UvChannel
+    normal_map_texture: Handle[Image] | None
+    occlusion_channel: UvChannel
+    occlusion_texture: Handle[Image] | None
+    clearcoat: float
+    clearcoat_perceptual_roughness: float
+    anisotropy_strength: float
+    anisotropy_rotation: float
+    double_sided: bool
+    cull_mode: Face | None
+    unlit: bool
+    alpha_mode: AlphaMode
+    uv_transform: Affine2
+    def __repr__(self) -> str: ...
 
 class Gltf(Asset):
     """Representation of a loaded glTF file."""

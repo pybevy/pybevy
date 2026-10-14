@@ -2,7 +2,7 @@ use std::{
     any::TypeId,
     collections::{HashMap, HashSet},
     ptr::NonNull,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, MutexGuard},
 };
 
 use bevy::{
@@ -13,6 +13,7 @@ use bevy::{
         world::{CommandQueue, World, unsafe_world_cell::UnsafeWorldCell},
     },
     gizmos::config::{DefaultGizmoConfigGroup, GizmoConfig, GizmoConfigStore},
+    log::warn,
     prelude::*,
 };
 use pybevy_core::{
@@ -42,7 +43,7 @@ use pybevy_reload::{HotReloadGeneration, SystemProfiler};
 use pyo3::{
     PyTypeInfo,
     exceptions::{PyRuntimeError, PyTypeError},
-    ffi::PyTypeObject,
+    ffi::{PyObject as RawPyObject, PyTypeObject},
     prelude::*,
     types::{PyTuple, PyType},
 };
@@ -59,6 +60,7 @@ use crate::{
         },
         filter::QueryFilter,
         helpers::validity_guard::ValidityFlag,
+        logical_type::PyLogicalTypeMap,
         message::{PyMessageMutator, PyMessageReader, PyMessageWriter, python_message_cursor},
         messages::{CursorStorage, MessageType, MessageWorld, PyMessages},
         mutable::PyMut,
@@ -74,18 +76,20 @@ use crate::{
             single_runtime::PySingleQuery,
         },
         removed_components::PyRemovedComponents,
+        resource::{PyRes, PyResMut},
         resource_type::{PyResourceType, ResourceRegistry},
         state::{PyStateMachineRegistry, is_typed_state_resource, untyped_state_resource_kind},
         system::{AssetTypePtr, SystemFunction, SystemParam, SystemParamType, param_leaves},
+        system_interpreter::MainInterpreter,
         view::{cached_view::CachedPyView, view::PyView, view_param::ViewParamType},
         world::PyWorld,
     },
 };
 
 /// Helper to lock a mutex, recovering from poison if a thread panicked while holding it.
-pub(crate) fn lock_or_recover<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+pub(crate) fn lock_or_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poisoned| {
-        bevy::log::warn!("Recovered from poisoned DynamicSystemInner mutex");
+        warn!("Recovered from poisoned DynamicSystemInner mutex");
         poisoned.into_inner()
     })
 }
@@ -109,9 +113,8 @@ unsafe fn assets_present_in_cell(
 
 /// Handle to a DynamicSystem's Python-holding inner state.
 /// Used by DynamicSystemRegistry to release Python references from old-generation systems.
-pub(crate) type DynamicSystemHandle = pybevy_ecs::shared::system_runtime::SystemHandle<
-    crate::ecs::system_interpreter::MainInterpreter,
->;
+pub(crate) type DynamicSystemHandle =
+    pybevy_ecs::shared::system_runtime::SystemHandle<MainInterpreter>;
 
 /// One buffered Python system error awaiting transfer into `LastSystemError`.
 /// Kept off the world so `run_unsafe`'s parallel error path performs no
@@ -176,27 +179,19 @@ pub(crate) struct LastErrorBuffer {
 }
 
 /// Inner state holding Python references that can be released on demand.
-/// When `gut()` is called, all Python references are dropped to allow GC.
+/// Runtime retirement releases these references while attached and outside its lock.
 pub(crate) struct DynamicSystemInner {
     pub(crate) system_func: Option<SystemFunction>,
     pub(crate) cached_func: Option<Py<PyAny>>,
     pub(crate) cached_generation: u32,
-    pub(crate) message_cursor_storage: Vec<crate::ecs::messages::CursorStorage>,
+    pub(crate) message_cursor_storage: Vec<CursorStorage>,
     pub(crate) gutted: bool,
 }
 
-// SAFETY: SystemFunction contains Py<PyAny> refs which are Send+Sync when GIL is properly managed.
-// DynamicSystemInner is only accessed through Mutex which provides synchronization.
+// SAFETY: Python references stay owned and retained state is synchronized by its mutex.
 unsafe impl Send for DynamicSystemInner {}
+// SAFETY: shared Python access is attached and retained state uses its surrounding mutex.
 unsafe impl Sync for DynamicSystemInner {}
-
-impl DynamicSystemInner {}
-
-/// Clear the system parameter cache.
-/// Called when apps are dropped to prevent stale cache entries.
-pub fn clear_system_param_cache() {
-    SystemFunction::clear_cache();
-}
 
 /// Backend key types for the pyo3 backend (see `pybevy_ecs::shared::param_spec`).
 pub(crate) struct MainKeys;
@@ -257,7 +252,7 @@ fn component_uses_python_storage(comp_type: &PyComponentType, py: Python<'_>) ->
     // SAFETY: query parameters retain every custom class whose type pointer
     // they carry, so the pointer remains live throughout lowering.
     let type_obj =
-        unsafe { Bound::from_borrowed_ptr(py, type_ptr.cast_mut().cast::<pyo3::ffi::PyObject>()) };
+        unsafe { Bound::from_borrowed_ptr(py, type_ptr.cast_mut().cast::<RawPyObject>()) };
     type_obj
         .cast::<PyType>()
         .ok()
@@ -343,9 +338,8 @@ pub(crate) fn lower_param_type(ty: &SystemParamType, py: Python<'_>) -> ParamSpe
                 }
             }
             if has_logical_type {
-                let logical_map_type = Python::attach(|py| {
-                    crate::ecs::logical_type::PyLogicalTypeMap::type_object(py).as_type_ptr()
-                });
+                let logical_map_type =
+                    Python::attach(|py| PyLogicalTypeMap::type_object(py).as_type_ptr());
                 spec.components.push(component_spec(
                     &PyComponentType::Dynamic(logical_map_type),
                     false,
@@ -764,7 +758,7 @@ impl KeyResolver<MainKeys> for MainResolver<'_, '_> {
     }
 
     fn resource_marker_id(&mut self, world: &mut World) -> Option<ComponentId> {
-        Some(world.register_component::<bevy::ecs::resource::IsResource>())
+        Some(world.register_component::<IsResource>())
     }
 }
 
@@ -794,17 +788,14 @@ fn wrap_resource_in_res<'py>(
         // Wrap in ResMut[ResourceType]
         let resmut_wrapper = Py::new(
             py,
-            crate::ecs::resource::PyResMut::with_validity(resource_bound, validity.clone()),
+            PyResMut::with_validity(resource_bound, validity.clone()),
         )
         .expect("Failed to create PyResMut");
         args_buffer.push(resmut_wrapper.into_any());
     } else {
         // Wrap in Res[ResourceType]
-        let res_wrapper = Py::new(
-            py,
-            crate::ecs::resource::PyRes::with_validity(resource_bound, validity.clone()),
-        )
-        .expect("Failed to create PyRes");
+        let res_wrapper = Py::new(py, PyRes::with_validity(resource_bound, validity.clone()))
+            .expect("Failed to create PyRes");
         args_buffer.push(res_wrapper.into_any());
     }
 }
@@ -1003,6 +994,7 @@ pub(crate) unsafe fn build_run_args<'w, 'c1, 'c2>(
                 // SAFETY: exclusive scheduling guarantees this `&mut World` is
                 // the only borrow of the world for the duration of the run.
                 let world_mut = unsafe { world.world_mut() };
+                // SAFETY: exclusive execution owns this World until the validity expires.
                 let mut py_world = unsafe { PyWorld::new(world_mut, validity.clone()) };
                 py_world.parity_trace = parity_trace.clone();
                 let obj = Py::new(py, py_world).expect("Failed to create PyWorld");
@@ -1017,6 +1009,7 @@ pub(crate) unsafe fn build_run_args<'w, 'c1, 'c2>(
                 let commands = commands_storage
                     .as_mut()
                     .expect("Commands should be pre-created");
+                // SAFETY: the run owns this queue and invalidates wrappers before applying it.
                 let py_commands = unsafe {
                     PyCommands::new(
                         commands,
@@ -1029,6 +1022,7 @@ pub(crate) unsafe fn build_run_args<'w, 'c1, 'c2>(
                 args_buffer.push(obj.into_any());
             }
             SystemParamType::Gizmos => {
+                // SAFETY: Gizmos declares read access to GizmoConfigStore for this run.
                 let Some(config) = unsafe { world.get_resource::<GizmoConfigStore>() }
                     .and_then(|store| store.get_config::<DefaultGizmoConfigGroup>())
                     .map(|(config, _)| config)
@@ -1329,7 +1323,7 @@ pub(crate) unsafe fn execute_prepared_observer(
     // (usize-keyed) registry, recovering each `*const PyTypeObject` from its
     // stored `type_ptr as usize` identity.
     let custom_component_ids = {
-        let registry = world.get_resource::<crate::ecs::component_type::ComponentRegistry>();
+        let registry = world.get_resource::<ComponentRegistry>();
         if let Some(reg) = registry {
             Arc::new(
                 reg.ids_by_type()
@@ -1395,12 +1389,10 @@ pub(crate) unsafe fn execute_prepared_observer(
                 args_buffer.push(obj.into_any());
             }
             SystemParamType::Commands => {
-                // SAFETY: the neutral observer core owns this callback-local
-                // queue and matching exclusive World cell until all arguments
-                // have dropped; it applies the queue only after invalidation.
                 let commands = commands
                     .as_mut()
                     .expect("Commands parameter requires a local Commands façade");
+                // SAFETY: the observer owns this queue and invalidates wrappers before applying it.
                 let py_commands = unsafe {
                     PyCommands::new(
                         commands,
@@ -1507,27 +1499,20 @@ pub(crate) unsafe fn execute_prepared_observer(
                     let resource_bound = resource.into_bound(py);
                     let resmut_wrapper = Py::new(
                         py,
-                        crate::ecs::resource::PyResMut::with_validity(
-                            resource_bound,
-                            validity.clone(),
-                        ),
+                        PyResMut::with_validity(resource_bound, validity.clone()),
                     )
                     .expect("Failed to create PyResMut");
                     args_buffer.push(resmut_wrapper.into_any());
                 } else {
                     let resource_bound = resource.into_bound(py);
-                    let res_wrapper = Py::new(
-                        py,
-                        crate::ecs::resource::PyRes::with_validity(
-                            resource_bound,
-                            validity.clone(),
-                        ),
-                    )
-                    .expect("Failed to create PyRes");
+                    let res_wrapper =
+                        Py::new(py, PyRes::with_validity(resource_bound, validity.clone()))
+                            .expect("Failed to create PyRes");
                     args_buffer.push(res_wrapper.into_any());
                 }
             }
             SystemParamType::World => {
+                // SAFETY: observer execution owns this World until the validity expires.
                 let mut py_world = unsafe { PyWorld::new(world, validity.clone()) };
                 py_world.parity_trace = parity_trace.clone();
                 let obj = Py::new(py, py_world).expect("Failed to create PyWorld");

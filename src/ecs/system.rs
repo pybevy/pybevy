@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     sync::{Arc, Mutex, Weak},
 };
 
@@ -16,15 +16,16 @@ use pybevy_gizmos::gizmos::PyGizmos;
 use pyo3::{
     PyTraverseError, PyTypeInfo, PyVisit,
     exceptions::{PyRuntimeError, PyTypeError},
+    ffi::PyTypeObject,
     prelude::*,
-    types::{PyAny, PyTuple, PyType, PyWeakrefMethods, PyWeakrefReference},
+    types::{PyAny, PyTuple, PyType},
 };
 use smallvec::SmallVec;
 
 use super::{
     commands::PyCommands,
     local::PyLocal,
-    message::MessageTypeParam,
+    message::{MessageClass, MessageTypeParam},
     mutable::PyMut,
     resource::{PyRes, PyResMut, PyResource},
     system_input::PyInParam,
@@ -37,7 +38,7 @@ use crate::{
         dynamic_system::{DynamicSystemHandle, DynamicSystemInner},
         messages::{MessageType, PyMessageType},
         non_send_marker::PyNonSendMarker,
-        observer::EventType,
+        observer::{EventType, PyOnTypeParam},
         param_set::PyParamSetParam,
         query::{query_param::PyQueryParam, single::PySingle},
         removed_components::PyRemovedComponentsParam,
@@ -47,26 +48,6 @@ use crate::{
 };
 
 const STACK_PARAMS: usize = 8;
-
-/// One parsed-parameter cache entry for a Python system function.
-///
-/// The weak reference prevents the cache from keeping the callable alive. A hit
-/// requires it to resolve to the exact function whose address keys the map. The
-/// `__code__` pointer remains an additional cheap fingerprint, but cannot prove
-/// identity by itself because closures from one factory share a code object.
-struct SystemParamCacheEntry {
-    code_ptr: usize,
-    function: Py<PyWeakrefReference>,
-    params: Weak<SmallVec<[SystemParam; STACK_PARAMS]>>,
-}
-
-/// Global cache for parsed system parameters, keyed by Python function address.
-///
-/// Entries are behind `Arc` so lookup only clones a Rust pointer while holding
-/// the mutex. Weakref inspection and every operation that can touch Python
-/// reference counts happen after unlocking.
-type SystemParamCache = HashMap<usize, Arc<SystemParamCacheEntry>>;
-static SYSTEM_PARAM_CACHE: Mutex<Option<SystemParamCache>> = Mutex::new(None);
 
 /// Represents a pythonic system function with its parameters cached for efficient calls
 #[derive(Debug)]
@@ -365,11 +346,11 @@ impl SystemGcOwners {
             | SystemParamType::MessageReader { message_type }
             | SystemParamType::MessageMutator { message_type } => message_type.traverse(visit)?,
             SystemParamType::On { event_type, .. } => event_type.traverse(visit)?,
-            SystemParamType::ParamSet { members } => {
-                if self.descriptors.insert(Arc::as_ptr(members) as usize) {
-                    for member in members.iter() {
-                        self.traverse_param(&member.ty, visit)?;
-                    }
+            SystemParamType::ParamSet { members }
+                if self.descriptors.insert(Arc::as_ptr(members) as usize) =>
+            {
+                for member in members.iter() {
+                    self.traverse_param(&member.ty, visit)?;
                 }
             }
             _ => {}
@@ -379,28 +360,7 @@ impl SystemGcOwners {
 }
 
 impl SystemFunction {
-    /// Clear the global system parameter cache.
-    /// This should be called when tearing down an app to prevent stale cache entries.
-    pub fn clear_cache() {
-        // Cached params can own Python objects whose finalizers re-enter system
-        // registration. Move the cache out before dropping any entries so Python
-        // code never runs while SYSTEM_PARAM_CACHE is locked.
-        let old_cache = SYSTEM_PARAM_CACHE
-            .lock()
-            .ok()
-            .and_then(|mut cache_guard| cache_guard.take());
-        drop(old_cache);
-    }
-
     pub fn new(py: Python, func: Bound<'_, PyAny>) -> PyResult<Self> {
-        Self::new_impl(py, func, true)
-    }
-
-    pub(crate) fn new_uncached(py: Python, func: Bound<'_, PyAny>) -> PyResult<Self> {
-        Self::new_impl(py, func, false)
-    }
-
-    fn new_impl(py: Python, func: Bound<'_, PyAny>, use_cache: bool) -> PyResult<Self> {
         require_routine_callable(&func)?;
         let inspect = py.import("inspect")?;
         let is_coroutine_fn = inspect.getattr("iscoroutinefunction")?;
@@ -429,67 +389,7 @@ impl SystemFunction {
             }
         }
 
-        let params = if use_cache {
-            let func_addr = func.as_ptr() as usize;
-            let code_ptr = func
-                .getattr("__code__")
-                .map(|c| c.as_ptr() as usize)
-                .unwrap_or(0);
-
-            // Clone only the Rust Arc while locked. Inspecting the weakref upgrades
-            // a Python reference and must happen after unlocking.
-            let cached_entry = {
-                let mut cache_guard = SYSTEM_PARAM_CACHE.lock().unwrap();
-                cache_guard
-                    .get_or_insert_with(HashMap::new)
-                    .get(&func_addr)
-                    .map(Arc::clone)
-            };
-
-            let cached_params = cached_entry.as_ref().and_then(|entry| {
-                if entry.code_ptr != code_ptr {
-                    return None;
-                }
-                entry
-                    .function
-                    .bind(py)
-                    .upgrade()
-                    .filter(|cached_function| cached_function.is(&func))
-                    .and_then(|_| entry.params.upgrade())
-            });
-
-            // Remove only the entry we inspected: another thread may have replaced
-            // it while weakref validation ran outside the mutex. Move the stale Arc
-            // out of the map and drop it after unlocking.
-            let stale_entry = match (&cached_entry, &cached_params) {
-                (Some(cached_entry), None) => {
-                    let mut cache_guard = SYSTEM_PARAM_CACHE.lock().unwrap();
-                    let cache = cache_guard.get_or_insert_with(HashMap::new);
-                    match cache.get(&func_addr) {
-                        Some(current) if Arc::ptr_eq(current, cached_entry) => {
-                            cache.remove(&func_addr)
-                        }
-                        _ => None,
-                    }
-                }
-                _ => None,
-            };
-            drop(stale_entry);
-
-            if let Some(cached_params) = cached_params {
-                cached_params.as_ref().clone()
-            } else {
-                Self::parse_system_parameters(&func, py)?
-            }
-        } else {
-            Self::parse_system_parameters(&func, py)?
-        };
-
-        // Every registration needs its own Local. `Local[T]` in an annotation is
-        // one object built at module definition, and the parameter cache hands
-        // the same one back for a repeated callable, so rebuild here: this is
-        // the single point both the parsed and the cached path reach.
-        let mut params = params;
+        let mut params = Self::parse_system_parameters(&func, py)?;
         for param in &mut params {
             if let SystemParamType::Local(local) = &param.ty {
                 let fresh = local
@@ -502,23 +402,6 @@ impl SystemFunction {
         }
 
         let params = Arc::new(params);
-        if use_cache && let Ok(function) = PyWeakrefReference::new(&func) {
-            let entry = Arc::new(SystemParamCacheEntry {
-                code_ptr: func
-                    .getattr("__code__")
-                    .map(|code| code.as_ptr() as usize)
-                    .unwrap_or(0),
-                function: function.unbind(),
-                params: Arc::downgrade(&params),
-            });
-            let replaced = {
-                let mut cache = SYSTEM_PARAM_CACHE.lock().unwrap();
-                cache
-                    .get_or_insert_with(HashMap::new)
-                    .insert(func.as_ptr() as usize, entry)
-            };
-            drop(replaced);
-        }
         Ok(Self {
             func: func.unbind(),
             params,
@@ -792,13 +675,13 @@ impl SystemFunction {
             // MessageWriter[T], MessageReader[T], or MessageMutator[T]
             let message_param = annotation.extract::<MessageTypeParam>()?;
             match message_param.ty {
-                super::message::MessageClass::Writer => SystemParamType::MessageWriter {
+                MessageClass::Writer => SystemParamType::MessageWriter {
                     message_type: message_param.message_type,
                 },
-                super::message::MessageClass::Reader => SystemParamType::MessageReader {
+                MessageClass::Reader => SystemParamType::MessageReader {
                     message_type: message_param.message_type,
                 },
-                super::message::MessageClass::Mutator => {
+                MessageClass::Mutator => {
                     if !matches!(message_param.message_type, MessageType::Custom(_)) {
                         return Err(PyTypeError::new_err(
                             "MessageMutator currently supports custom Python messages only; native message wrappers are snapshots and cannot be mutated in place",
@@ -816,12 +699,9 @@ impl SystemFunction {
             SystemParamType::RemovedComponents {
                 param: Arc::new(annotation.extract::<PyRemovedComponentsParam>()?),
             }
-        } else if annotation
-            .get_type()
-            .is(super::observer::PyOnTypeParam::type_object(py))
-        {
+        } else if annotation.get_type().is(PyOnTypeParam::type_object(py)) {
             // On[E] or On[E, B] - extract event type and optional bundle filter
-            let on_param = annotation.extract::<super::observer::PyOnTypeParam>()?;
+            let on_param = annotation.extract::<PyOnTypeParam>()?;
             SystemParamType::On {
                 event_type: on_param.event_type,
                 bundle_filter: on_param.bundle_filter,
@@ -883,12 +763,14 @@ pub struct SystemParam {
 
 /// Wrapper for `*const PyTypeObject` that is Send + Sync.
 ///
-/// SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter.
-/// Python type objects are immutable after creation and safe to share across threads.
+/// SAFETY: asset parameters retain their class or use a registered native class.
+/// Interpreter access requires attachment; Bevy access requires scheduler authority.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct AssetTypePtr(pub(crate) *const pyo3::ffi::PyTypeObject);
+pub(crate) struct AssetTypePtr(pub(crate) *const PyTypeObject);
 
+// SAFETY: asset parameters retain the class; interpreter access requires attachment.
 unsafe impl Send for AssetTypePtr {}
+// SAFETY: the pointer carries identity only; dereferences require retained ownership.
 unsafe impl Sync for AssetTypePtr {}
 
 #[derive(Debug)]
