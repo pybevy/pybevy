@@ -4,7 +4,9 @@ use pybevy_macros::pycomponent;
 use pybevy_math::quat::PyQuat;
 use pyo3::prelude::*;
 
-#[pycomponent(EnvironmentMapLight, bridge, view_fields = [intensity, affects_lightmapped_mesh_diffuse], domains = [intensity => [finite]])]
+// The default map handles are 2D images, not cubemaps, so a default light dims the scene
+// and raises validation errors every frame.
+#[pycomponent(EnvironmentMapLight, bridge, no_spawn_example, view_fields = [intensity, affects_lightmapped_mesh_diffuse], domains = [intensity => [finite]])]
 #[pyclass(name = "EnvironmentMapLight", module = "pybevy.light", extends = PyComponent)]
 pub struct PyEnvironmentMapLight {
     pub(crate) storage: ComponentStorage<EnvironmentMapLight>,

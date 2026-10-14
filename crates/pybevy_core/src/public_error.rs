@@ -147,9 +147,44 @@ pub fn capture_inactive_cameras(operation: &str) -> String {
     format!("{operation} requires an active Camera, but all Camera entities are inactive")
 }
 
+pub fn image_upload_rejected(asset: &str, problem: &str) -> String {
+    format!(
+        "Image {asset} was not uploaded to the GPU because {problem}; materials and cameras using it render as if it were still loading"
+    )
+}
+
+pub fn shader_buffer_upload_rejected(asset: &str, size: u64, limit: u64) -> String {
+    format!(
+        "ShaderBuffer {asset} was not uploaded to the GPU because its {size} bytes exceed this GPU's maximum buffer size of {limit}"
+    )
+}
+
 pub fn capture_no_target(operation: &str) -> String {
     format!(
         "{operation} requires an active Camera with a capturable RenderTarget; active cameras have a missing component, RenderTarget.None, an unsupported TextureView, or an unavailable window target"
+    )
+}
+
+pub fn capture_target_exceeds_gpu_limit(
+    operation: &str,
+    width: u32,
+    height: u32,
+    limit: u32,
+) -> String {
+    format!(
+        "{operation} target image is {width}x{height}, beyond this GPU's 2D texture limit of {limit}; the GPU rejects it and nothing renders, so use a target within the limit"
+    )
+}
+
+pub fn camera_main_texture_usages_invalid(usages: &str) -> String {
+    format!(
+        "CameraMainTextureUsages must include RENDER_ATTACHMENT and TEXTURE_BINDING and must not include TRANSIENT_ATTACHMENT (got {usages})"
+    )
+}
+
+pub fn camera_depth_texture_usage_invalid(value: u32) -> String {
+    format!(
+        "Camera3dDepthTextureUsage must be TextureUsages bits that include RENDER_ATTACHMENT (16) and exclude STORAGE_BINDING, STORAGE_ATOMIC and TRANSIENT_ATTACHMENT (got {value})"
     )
 }
 
@@ -1786,6 +1821,18 @@ pub const IMAGE_INVALID_PIXEL_COORDINATES: &str = "Invalid pixel coordinates or 
 
 pub fn image_allocation_failed(byte_len: usize) -> String {
     format!("cannot allocate {byte_len} bytes of image data")
+}
+
+/// wgpu rejects an anisotropic sampler unless every filter is Linear.
+pub fn sampler_anisotropy_requires_linear(
+    owner: &str,
+    anisotropy_clamp: u16,
+    filter: &str,
+) -> String {
+    format!(
+        "{owner}.anisotropy_clamp must be 1 unless mag_filter, min_filter and mipmap_filter \
+         are Linear (got {anisotropy_clamp} with {filter} Nearest)"
+    )
 }
 
 pub fn image_data_shorter_than_descriptor(len: usize, expected: usize) -> String {

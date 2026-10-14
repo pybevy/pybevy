@@ -1,4 +1,4 @@
-use bevy::camera::Viewport;
+use bevy::{camera::Viewport, math::UVec2};
 use pybevy_core::{
     FromBorrowedStorage, field_storage::FieldStorage, public_error::UNSUPPORTED_COMPARISON,
     repr::float_repr,
@@ -7,8 +7,8 @@ use pybevy_macros::pyfield;
 use pybevy_math::{range::PyRange, uvec2::PyUVec2};
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
-// wgpu rejects a depth range outside 0.0..=1.0 or inverted, one error per frame.
-#[pyfield(domains = [depth => [range_inclusive(0.0, 1.0), ordered]])]
+// wgpu rejects a zero-sized texture or a depth range outside 0.0..=1.0 or inverted.
+#[pyfield(domains = [physical_size => [positive], depth => [range_inclusive(0.0, 1.0), ordered]])]
 #[pyclass(name = "Viewport", module = "pybevy.camera", skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyViewport {
@@ -24,10 +24,11 @@ impl PyViewport {
         physical_size: PyUVec2,
         depth: PyRange,
     ) -> PyResult<Self> {
+        let physical_size = Self::check_physical_size(UVec2::try_from(physical_size)?)?;
         let depth = Self::check_depth(depth.try_into()?)?;
         Ok(Self::from_owned(Viewport {
             physical_position: physical_position.try_into()?,
-            physical_size: physical_size.try_into()?,
+            physical_size,
             depth,
         }))
     }
@@ -47,14 +48,17 @@ impl PyViewport {
 
     #[getter]
     pub fn physical_size(&self) -> PyResult<PyUVec2> {
-        Ok(self
-            .storage
-            .borrow_resolved_field_as(|v| &v.physical_size, |v| &mut v.physical_size)?)
+        Ok(self.storage.borrow_validated_field_as(
+            |v| &v.physical_size,
+            |v| &mut v.physical_size,
+            Self::validate_physical_size,
+        )?)
     }
 
     #[setter]
     pub fn set_physical_size(&mut self, value: PyUVec2) -> PyResult<()> {
-        self.as_mut()?.physical_size = value.try_into()?;
+        let size = Self::check_physical_size(UVec2::try_from(value)?)?;
+        self.as_mut()?.physical_size = size;
         Ok(())
     }
 
@@ -112,7 +116,10 @@ impl PyViewport {
     }
 
     pub fn clamp_to_size(&mut self, size: PyUVec2) -> PyResult<()> {
-        self.as_mut()?.clamp_to_size(size.try_into()?);
+        let mut viewport = self.storage.get()?;
+        viewport.clamp_to_size(size.try_into()?);
+        Self::validate_domains(&viewport)?;
+        *self.as_mut()? = viewport;
         Ok(())
     }
 
@@ -128,7 +135,7 @@ impl PyViewport {
                 result_viewport = Some(Viewport::default());
             }
             if let Some(ref mut vp) = result_viewport {
-                vp.physical_size = override_size.try_into()?;
+                vp.physical_size = Self::check_physical_size(UVec2::try_from(override_size)?)?;
             }
         }
 

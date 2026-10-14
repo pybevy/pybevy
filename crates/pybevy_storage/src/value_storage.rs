@@ -849,10 +849,8 @@ mod tests {
         assert_eq!(storage.get().unwrap(), 1.0);
         *storage.as_mut().unwrap() = 7.0;
         // SAFETY: the previous storage guard has been dropped.
-        assert_eq!(
-            unsafe { &*world_ptr }.entity(e).get::<Holder>().unwrap().v[0],
-            7.0
-        );
+        let world = unsafe { &*world_ptr };
+        assert_eq!(world.entity(e).get::<Holder>().unwrap().v[0], 7.0);
         assert!(traversal.try_traverse().is_some());
         validity.flag.set_invalid();
         let _guard = traversal.suspend();

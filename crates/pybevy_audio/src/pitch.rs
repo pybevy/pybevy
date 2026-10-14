@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use bevy::audio::Pitch;
 use pybevy_core::{AssetStorage, domain::DurationInput, repr::float_repr};
 use pybevy_macros::pyasset;
@@ -37,8 +39,8 @@ impl PyPitch {
     }
 
     #[getter]
-    pub fn duration(&self) -> PyResult<f64> {
-        Ok(self.as_ref()?.duration.as_secs_f64())
+    pub fn duration(&self) -> PyResult<Duration> {
+        Ok(self.as_ref()?.duration)
     }
 
     #[setter]

@@ -386,7 +386,8 @@ class ScreenSpaceAmbientOcclusion(Component):
 
     SSAO is a rendering technique that approximates ambient occlusion
     in real-time by darkening creases, holes, and surfaces that are
-    close to each other in screen space.
+    close to each other in screen space. Needs `Msaa.Off` and a render target
+    at least 16 px on each side; smaller targets render black.
     """
 
     def __init__(
@@ -914,25 +915,29 @@ class AtmosphereSettings(Component):
 
     @property
     def transmittance_lut_size(self) -> UVec2:
-        """Size of transmittance LUT texture."""
+        """Size of transmittance LUT texture; each axis 1 to 8192."""
     @transmittance_lut_size.setter
     def transmittance_lut_size(self, value: UVec2) -> None: ...
 
     @property
     def multiscattering_lut_size(self) -> UVec2:
-        """Size of multiscattering LUT texture."""
+        """Size of multiscattering LUT texture; each axis 1 to 8192."""
     @multiscattering_lut_size.setter
     def multiscattering_lut_size(self, value: UVec2) -> None: ...
 
     @property
     def sky_view_lut_size(self) -> UVec2:
-        """Size of sky view LUT texture."""
+        """Size of sky view LUT texture; each axis 1 to 8192."""
     @sky_view_lut_size.setter
     def sky_view_lut_size(self, value: UVec2) -> None: ...
 
     @property
     def aerial_view_lut_size(self) -> UVec3:
-        """Size of aerial view LUT texture (3D)."""
+        """Size of aerial view LUT texture (3D); each axis 1 to 2048.
+
+        Larger sizes raise ValueError: they exceed GPU texture limits and black
+        out the frame.
+        """
     @aerial_view_lut_size.setter
     def aerial_view_lut_size(self, value: UVec3) -> None: ...
 
@@ -1112,7 +1117,11 @@ class ShaderMaterial(Material):
         """Get the shader defs bitmask."""
 
     def set_shader_defs(self, defs: int) -> None:
-        """Set the shader defs bitmask."""
+        """Set the shader defs bitmask.
+
+        Raises ValueError for a negative value, one above 32 bits, or a set bit
+        without a name in shader_def_names.
+        """
 
     def get_texture(self, slot: int) -> Handle[Image] | None:
         """Get the texture handle in a given slot (0-3), or None if the slot is empty."""
@@ -1172,7 +1181,11 @@ class StorageShaderMaterial(Material):
         """Get the shader defs bitmask."""
 
     def set_shader_defs(self, defs: int) -> None:
-        """Set the shader defs bitmask."""
+        """Set the shader defs bitmask.
+
+        Raises ValueError for a negative value, one above 32 bits, or a set bit
+        without a name in shader_def_names.
+        """
 
     def get_texture(self, slot: int) -> Handle[Image] | None:
         """Get the texture handle in a given slot (0-3), or None if the slot is empty."""

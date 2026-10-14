@@ -5193,6 +5193,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "bevy",
+ "half",
  "image",
  "pybevy_camera",
  "pybevy_color",

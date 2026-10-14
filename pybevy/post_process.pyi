@@ -67,7 +67,8 @@ class Bloom(Component):
     def low_frequency_boost_curvature(self, value: float) -> None: ...
 
     @property
-    def high_pass_frequency(self) -> float: ...
+    def high_pass_frequency(self) -> float:
+        """Above 0.0, up to 1.0; 0.0 raises ValueError."""
     @high_pass_frequency.setter
     def high_pass_frequency(self, value: float) -> None: ...
 
@@ -83,11 +84,11 @@ class Bloom(Component):
 
     @property
     def max_mip_dimension(self) -> int:
-        """Largest bloom mip dimension, in pixels. At least 1."""
+        """Largest bloom mip dimension, in pixels; 8 to 16384."""
 
     @max_mip_dimension.setter
     def max_mip_dimension(self, value: int) -> None:
-        """Raise ValueError for 0."""
+        """Raise ValueError outside 8 to 16384."""
 
     @property
     def scale(self) -> Vec2: ...
@@ -299,7 +300,11 @@ class DepthOfField(Component):
 
     @property
     def max_circle_of_confusion_diameter(self) -> float:
-        """Largest blur diameter in pixels."""
+        """Largest blur diameter in pixels, 0 to 16384.
+
+        Larger values raise ValueError: the blur cost grows with the diameter,
+        and a huge one stalls the GPU for seconds per frame.
+        """
 
     @max_circle_of_confusion_diameter.setter
     def max_circle_of_confusion_diameter(self, value: float) -> None: ...

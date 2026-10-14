@@ -113,7 +113,7 @@ Transform.from_xyz(x, 7.0, z).looking_at(Vec3(x, 0.0, z), Vec3.Z)
 
 ### RectLight (Area Light)
 
-Soft light emitted from a rectangular surface: window panes, softboxes, glowing ceiling panels, neon signs. The rectangle lies in the entity's local XY plane (sized by `width`/`height`) and shines along local -Z, so aim it with `looking_at` exactly like a spotlight.
+Soft light emitted from a rectangular surface: window panes, softboxes, glowing ceiling panels, neon signs. The rectangle lies in the entity's local XY plane (sized by `width`/`height`) and shines along local -Z, so aim it with `looking_at` exactly like a spotlight. `width` and `height` must be greater than zero: a degenerate rectangle turns every lit surface black, so despawn the light or set `intensity=0.0` to switch it off.
 
 ```python
 from pybevy.light import RectLight

@@ -494,6 +494,8 @@ registration of the same live callable after its annotations change.
 #### Schedule Stages
 
 ```python
+from pybevy.prelude import *
+
 @entrypoint
 def main(app: App) -> App:
     return (
@@ -615,6 +617,9 @@ itself. Native read-only resources such as `Res[Time]`, `Res[ButtonInput[KeyCode
 and `Res[State[GamePhase]]` are supported. Combine conditions with `.and_(other)`,
 `.or_(other)` and `.not_()` on a `@condition` (or with `and_`, `or_`, `not_`
 from `pybevy.ecs.conditions`): `game_logic.run_if(is_game_active.and_(other))`.
+A condition expression is capped at 64 combiner levels: a flat operand list
+such as `cond.and_(*many)` or repeated native combinations deeper than the cap
+raise `ValueError` at registration instead of building the expression.
 Every run condition must be decorated with `@condition`; for a lambda use
 `condition(lambda: ...)`. `run_if()` raises `TypeError` for a plain function.
 Systems, conditions, and observers must be ordinary functions, bound methods, or
@@ -1329,6 +1334,12 @@ emits `Discard` then `Remove`; despawn emits `Despawn`, `Discard`, then
 `Remove` for each component. The old component/entity remains readable during
 the pre-removal callbacks, and `trigger.event()` returns the corresponding
 marker instance.
+
+World/Commands insertion and batch spawning also emit Add/Insert for newly
+created native required components. Inserting Transform, for example, creates
+GlobalTransform and notifies its observers. Transitive requirements are included.
+Replacing Transform preserves an existing GlobalTransform without notifying
+its Add/Insert observers; if it is missing, recreation emits both events.
 
 Nested same-kind lifecycle events reach independent observers. A callback
 already executing for the same World, event, entity and component is skipped

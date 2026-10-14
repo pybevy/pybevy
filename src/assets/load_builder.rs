@@ -89,4 +89,8 @@ impl PyLoadBuilder {
         self.server.asset_server()?;
         Ok(self.clone())
     }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
 }

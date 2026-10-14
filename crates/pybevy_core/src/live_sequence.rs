@@ -408,6 +408,10 @@ macro_rules! __live_sequence {
                 self.to_list()
             }
 
+            fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Vec<$py_elem>> {
+                self.to_list()
+            }
+
             fn __richcmp__(
                 &self,
                 other: &Bound<'_, PyAny>,
@@ -700,6 +704,14 @@ macro_rules! impl_live_asset_sequence {
 
             /// Detached owned copies, as `copy.copy` of a list gives.
             fn __copy__(&self, py: Python<'_>) -> PyResult<Vec<Py<$py_elem>>> {
+                self.to_list(py)
+            }
+
+            fn __deepcopy__(
+                &self,
+                py: Python<'_>,
+                _memo: &Bound<'_, PyAny>,
+            ) -> PyResult<Vec<Py<$py_elem>>> {
                 self.to_list(py)
             }
 

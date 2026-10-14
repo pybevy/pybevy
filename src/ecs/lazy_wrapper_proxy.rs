@@ -478,6 +478,12 @@ impl PyLazyWrapperProxy {
         // resolved pointer across extract() would risk a use-after-free.
         let write = extract_primitive_from_py(field_type, value)?;
 
+        // Re-check write authority after coercion. The re-entrant Python above can
+        // end this member's borrow window (e.g. a __float__ that opens another
+        // ParamSet member), and the QueryItem arm of resolved_write_ptr trusts its
+        // caller to have checked, so a stale cached pointer must be rejected here.
+        self.validity.check_write()?;
+
         // Resolve the pointer immediately before the write, with no Python calls in
         // between. For long-lived proxies this fetches the component's current address
         // (erroring if the entity was despawned or the component removed since

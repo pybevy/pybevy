@@ -24,6 +24,7 @@ pub mod render_layers;
 pub mod render_target;
 pub mod sphere;
 pub mod sub_camera_view;
+pub mod texture_usage_rules;
 pub mod unit_markers;
 pub mod view_visibility;
 pub mod viewport;

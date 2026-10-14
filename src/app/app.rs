@@ -51,6 +51,8 @@ use pybevy_reload::{
 use pybevy_render::{
     cache_cleanup::RenderCacheCleanupPlugin,
     pipeline_drain::{PipelineCompilationDrainPlugin, drain_app_pipeline_compilation},
+    shadow_map_limits::ShadowMapLimitPlugin,
+    upload_guard::UploadGuardPlugin,
 };
 use pyo3::{
     IntoPyObjectExt, PyTraverseError, PyVisit,
@@ -960,7 +962,12 @@ impl PyApp {
 
         // Create and initialize the Bevy App immediately
         let mut app = App::new();
-        app.add_plugins((RenderCacheCleanupPlugin, PipelineCompilationDrainPlugin));
+        app.add_plugins((
+            RenderCacheCleanupPlugin,
+            PipelineCompilationDrainPlugin,
+            ShadowMapLimitPlugin,
+            UploadGuardPlugin,
+        ));
         // Reload can configure agents without the App, so capture readiness is always present.
 
         // Add LogPlugin only if it hasn't been initialized yet

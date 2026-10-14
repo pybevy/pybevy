@@ -12,6 +12,8 @@ use std::{collections::HashMap, error::Error, fmt};
 
 use bevy::ecs::{component::ComponentId, entity::Entity, world::World};
 
+use super::lifecycle_mutation::required_component_ids;
+
 /// Opaque interpreter type identity carried through the shared batch core.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BatchTypeKey(usize);
@@ -140,6 +142,8 @@ pub struct BatchInsertionFact {
 pub struct CommittedBatch {
     pub entities: Vec<Entity>,
     pub insertions: Vec<BatchInsertionFact>,
+    /// Required components missing before commit, excluding explicit insertions.
+    pub required_additions: Vec<(Entity, ComponentId)>,
 }
 
 pub struct BatchSpawnCore;
@@ -214,6 +218,23 @@ impl BatchSpawnCore {
     ) -> CommittedBatch {
         assert_eq!(entities.len(), plan.spawn_count);
         let mut facts = Vec::with_capacity(plan.insertion_count());
+        let explicit = plan
+            .columnar
+            .iter()
+            .chain(&plan.uniform)
+            .map(|inserter| inserter.component_id())
+            .collect::<Vec<_>>();
+        let required = required_component_ids(world.components(), &explicit);
+        let mut required_additions = Vec::new();
+        for &entity in &entities {
+            if let Ok(target) = world.get_entity(entity) {
+                required_additions.extend(
+                    required
+                        .iter()
+                        .filter_map(|&id| (!target.contains_id(id)).then_some((entity, id))),
+                );
+            }
+        }
 
         for mut inserter in plan.columnar.into_iter().chain(plan.uniform) {
             let component_id = inserter.component_id();
@@ -229,6 +250,7 @@ impl BatchSpawnCore {
         CommittedBatch {
             entities,
             insertions: facts,
+            required_additions,
         }
     }
 }
@@ -242,10 +264,15 @@ mod tests {
     use super::*;
 
     #[derive(Component, Debug, PartialEq, Eq)]
+    #[require(UniformValue)]
     struct ColumnValue(u32);
 
-    #[derive(Component, Debug, PartialEq, Eq)]
+    #[derive(Component, Debug, Default, PartialEq, Eq)]
+    #[require(RequiredLeaf)]
     struct UniformValue(u32);
+
+    #[derive(Component, Debug, Default, PartialEq, Eq)]
+    struct RequiredLeaf;
 
     enum FakeValues {
         Column(Vec<u32>),
@@ -334,6 +361,43 @@ mod tests {
 
     fn boxed(inserter: FakeInserter) -> Box<dyn PreparedBatchInserter> {
         Box::new(inserter)
+    }
+
+    #[test]
+    fn required_facts_include_transitive_additions_and_preserve_existing_values() {
+        let mut world = World::new();
+        let column_id = world.register_component::<ColumnValue>();
+        let uniform_id = world.register_component::<UniformValue>();
+        let leaf_id = world.register_component::<RequiredLeaf>();
+        let empty = world.spawn_empty().id();
+        let populated = world.spawn(UniformValue(77)).id();
+        let order = Arc::new(Mutex::new(Vec::new()));
+        let plan = BatchSpawnCore::validate(BatchSpawnPlan::new(
+            Some(2),
+            vec![boxed(FakeInserter::column(
+                column_id,
+                "column",
+                vec![1, 2],
+                order,
+            ))],
+        ))
+        .expect("valid column batch");
+        let committed = BatchSpawnCore::apply_to(&mut world, plan, vec![empty, populated]);
+        let mut required = committed.required_additions.clone();
+        required.sort_unstable_by_key(|(_, id)| id.index());
+        let mut expected = vec![(empty, uniform_id), (empty, leaf_id)];
+        expected.sort_unstable_by_key(|(_, id)| id.index());
+        assert_eq!(required, expected);
+        assert_eq!(world.get::<UniformValue>(empty), Some(&UniformValue(0)));
+        assert_eq!(
+            world.get::<UniformValue>(populated),
+            Some(&UniformValue(77))
+        );
+        assert!(world.get::<RequiredLeaf>(empty).is_some());
+        assert_eq!(
+            required_component_ids(world.components(), &[column_id, uniform_id]).as_slice(),
+            &[leaf_id]
+        );
     }
 
     #[test]

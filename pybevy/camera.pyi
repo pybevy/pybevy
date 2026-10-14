@@ -200,8 +200,14 @@ class Camera3dDepthLoadOp:
         def __init__(self) -> None: ...
 
 class Camera3dDepthTextureUsage:
-    """Texture usage flags for depth buffer."""
-    def __init__(self, flags: int) -> None: ...
+    """Raw wgpu `TextureUsages` bits for the camera's depth texture.
+
+    Must include RENDER_ATTACHMENT (16, the default) and exclude STORAGE_BINDING
+    (8), STORAGE_ATOMIC and TRANSIENT_ATTACHMENT; add TEXTURE_BINDING (4) to
+    sample the depth texture. Other values raise ValueError, because wgpu
+    rejects the texture and the camera renders black.
+    """
+    def __init__(self, value: int) -> None: ...
     @property
     def value(self) -> int: ...
 
@@ -974,7 +980,7 @@ class Frustum(Component):
     @half_spaces.setter
     def half_spaces(self, value: list[HalfSpace]) -> None: ...
 
-    def __init__(self, view_frustum: ViewFrustum = ...) -> None:
+    def __init__(self, value: ViewFrustum = ...) -> None:
         """Wrap a ViewFrustum, e.g. `Frustum(ViewFrustum.from_clip_from_world(mat))`."""
 
     def intersects_sphere(self, sphere: Sphere, intersect_far: bool) -> bool:
@@ -1605,7 +1611,11 @@ class ViewVisibility(Component):
 class CameraMainTextureUsages(Component):
     """Usage flags for the camera's main texture.
 
-    Defaults to RENDER_ATTACHMENT | TEXTURE_BINDING | COPY_SRC.
+    Defaults to RENDER_ATTACHMENT | TEXTURE_BINDING | COPY_SRC. Values without
+    RENDER_ATTACHMENT and TEXTURE_BINDING, or with TRANSIENT_ATTACHMENT, raise
+    ValueError, including writes through the live `value`. STORAGE_BINDING
+    needs an `Hdr` camera; an 8-bit sRGB main texture cannot be a storage
+    texture and renders black.
     """
 
     def __init__(self, value: TextureUsages = ...) -> None: ...

@@ -106,7 +106,7 @@ If you already have a Rust Bevy application, you can embed Python systems into i
 ```toml
 # Cargo.toml
 [dependencies]
-bevy = "0.19"
+bevy = "0.20"
 pybevy = { version = "0.3", features = ["native-plugin"] }
 ```
 
@@ -157,7 +157,7 @@ PyBevy versions target specific Bevy versions:
 
 | pybevy | Bevy |
 | ------ | ---- |
-| 0.3.x  | 0.19 |
+| 0.3.x  | 0.20 |
 | 0.2.x  | 0.18 |
 | 0.1.x  | 0.18 |
 

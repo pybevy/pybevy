@@ -107,11 +107,20 @@ def _add_reload_options(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _build_identity() -> str:
+    from . import BUILD_INFO
+
+    return str(BUILD_INFO)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pybevy",
         description="A command-line interface for pybevy.",
         allow_abbrev=False,
+    )
+    parser.add_argument(
+        "--version", action="version", version=f"pybevy {_build_identity()}"
     )
     commands = parser.add_subparsers(dest="command", required=True)
 

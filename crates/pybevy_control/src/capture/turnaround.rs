@@ -18,6 +18,7 @@ use super::{
         setup_debug_camera_with_up, validate_capture_camera,
     },
     compose::{TURNAROUND_SHEET, compose_contact_sheet},
+    convert::capture_to_dynamic,
     headless::{headless_frame_sequence, read_headless_frame},
     hold::CaptureHold,
     isolation::EntityCaptureIsolationActive,
@@ -443,10 +444,10 @@ pub fn handle_turnaround_capture(
         return true;
     };
 
-    let dyn_img = match image.clone().try_into_dynamic() {
+    let dyn_img = match capture_to_dynamic(image.clone()) {
         Ok(d) => d,
         Err(e) => {
-            error!("[MCP] Turnaround capture failed to convert image: {e:?}");
+            error!("[MCP] Turnaround capture failed to convert image: {e}");
             return true;
         }
     };

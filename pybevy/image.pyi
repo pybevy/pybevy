@@ -291,7 +291,12 @@ class Image(Asset):
 
         Args:
             size: Texture dimensions (width, height, depth_or_array_layers).
-                  Default is 1x1x1 single pixel.
+                  Default is 1x1x1 single pixel. An image the GPU cannot
+                  create, such as a zero-sized one or one wider than its 2D
+                  texture limit (commonly 16384 or 32768), is not uploaded:
+                  rendering logs an error and materials using it render as if
+                  it were still loading, without affecting other cameras or
+                  meshes.
             dimension: Texture dimension. Defaults to TextureDimension.D2.
             data: Optional pixel data. If None, fills with max-value bytes
                   (white for 8-bit unorm formats). Must match size and format;
@@ -1065,8 +1070,9 @@ class TextureAtlasLayout(Asset):
 
         Bevy leaves offset out of the layout size it computes, so with a
         non-zero offset the reported size stops short of the placed rects.
-        Grids above 1,048,576 rectangles or whose coordinates overflow u32
-        raise ValueError before layout generation.
+        Negative or 32-bit-overflowing columns or rows, grids above 1,048,576
+        rectangles, and grids whose coordinates overflow u32 raise ValueError
+        before layout generation.
 
         Args:
             tile_size: Size of each tile in pixels.
@@ -1286,6 +1292,12 @@ class ImageSamplerDescriptor:
     Mipmap filtering and LOD clamps only affect images with more than one mip
     level. Ordinary image formats and programmatic images do not generate mip
     levels automatically; authored DDS and KTX2 files can contain them.
+
+    As in wgpu, an anisotropy_clamp above 1 requires mag_filter, min_filter
+    and mipmap_filter to be Linear. The constructor and each setter raise
+    ValueError for a combination that breaks this rule, so switch the filters
+    to Linear before raising anisotropy_clamp, and lower it to 1 before
+    choosing a Nearest filter.
     """
 
     def __init__(
@@ -1316,7 +1328,8 @@ class ImageSamplerDescriptor:
             lod_min_clamp: Minimum level-of-detail
             lod_max_clamp: Maximum level-of-detail
             compare: Comparison function for depth testing
-            anisotropy_clamp: Maximum anisotropic filtering level, 1 to 65535
+            anisotropy_clamp: Maximum anisotropic filtering level, 1 to 65535;
+                above 1 every filter must be Linear
             border_color: Border color for ClampToBorder mode
             label: Debug label
         """
@@ -1396,7 +1409,8 @@ class ImageSamplerDescriptor:
     def anisotropy_clamp(self) -> int:
         """Maximum anisotropic filtering level.
 
-        Accepts 1 to 65535; other values raise `ValueError`.
+        Accepts 1 to 65535; other values raise `ValueError`. Values above 1
+        require all three filters to be Linear.
         """
 
     @anisotropy_clamp.setter
@@ -1415,6 +1429,8 @@ class ImageSamplerDescriptor:
 
     @label.setter
     def label(self, value: str | None) -> None: ...
+    def __copy__(self) -> ImageSamplerDescriptor: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> ImageSamplerDescriptor: ...
 
 class ImageFilterMode:
     """Image filtering mode for texture sampling."""

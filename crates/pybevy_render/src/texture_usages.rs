@@ -99,31 +99,43 @@ impl PyTextureUsages {
         Ok(self.to_bevy()?.into())
     }
 
+    fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
+
     pub fn contains(&self, other: &Self) -> PyResult<bool> {
         Ok(self.to_bevy()?.contains(other.to_bevy()?))
     }
 
     pub fn insert(slf: &Bound<'_, Self>, other: Self) -> PyResult<()> {
         let other = other.to_bevy()?;
-        slf.try_borrow_mut()?.as_mut()?.insert(other);
+        slf.try_borrow_mut()?
+            .storage
+            .update(|usages| usages.insert(other))?;
         Ok(())
     }
 
     pub fn remove(slf: &Bound<'_, Self>, other: Self) -> PyResult<()> {
         let other = other.to_bevy()?;
-        slf.try_borrow_mut()?.as_mut()?.remove(other);
+        slf.try_borrow_mut()?
+            .storage
+            .update(|usages| usages.remove(other))?;
         Ok(())
     }
 
     pub fn toggle(slf: &Bound<'_, Self>, other: Self) -> PyResult<()> {
         let other = other.to_bevy()?;
-        slf.try_borrow_mut()?.as_mut()?.toggle(other);
+        slf.try_borrow_mut()?
+            .storage
+            .update(|usages| usages.toggle(other))?;
         Ok(())
     }
 
     pub fn set(slf: &Bound<'_, Self>, other: Self, value: bool) -> PyResult<()> {
         let other = other.to_bevy()?;
-        slf.try_borrow_mut()?.as_mut()?.set(other, value);
+        slf.try_borrow_mut()?
+            .storage
+            .update(|usages| usages.set(other, value))?;
         Ok(())
     }
 

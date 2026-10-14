@@ -686,7 +686,7 @@ impl PyBevyPlugin {
 
         // Create and register the Python loader function.
         // Loads the scene module via importlib.util so it ends up in
-        // sys.modules (see NATIVE_LOADER_PY for details).
+        // sys.modules (see pybevy/_internal/native_loader.py).
         Python::attach(|py| {
             reload_state.set_loader(
                 self.make_reload_loader(py, systems_to_add)

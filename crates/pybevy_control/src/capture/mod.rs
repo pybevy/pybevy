@@ -1,6 +1,7 @@
 pub mod analysis;
 pub mod camera;
 pub mod compose;
+pub mod convert;
 pub mod depth;
 pub mod headless;
 pub mod hold;

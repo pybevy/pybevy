@@ -28,6 +28,9 @@ extern crate self as pybevy_core;
 /// Version published by every PyBevy interpreter adapter.
 pub const PYBEVY_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Bevy release series this PyBevy version targets.
+pub const BEVY_VERSION: &str = "0.20";
+
 pub mod added_plugins;
 pub mod asset;
 pub mod asset_access;

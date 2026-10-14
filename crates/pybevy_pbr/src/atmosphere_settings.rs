@@ -19,10 +19,10 @@ use crate::atmosphere_mode::PyAtmosphereMode;
     aerial_view_lut_max_distance,
     sky_max_samples
 ], domains = [
-    transmittance_lut_size => [positive],
-    multiscattering_lut_size => [positive],
-    sky_view_lut_size => [positive],
-    aerial_view_lut_size => [positive],
+    transmittance_lut_size => [range_inclusive(1.0, 8192.0)],
+    multiscattering_lut_size => [range_inclusive(1.0, 8192.0)],
+    sky_view_lut_size => [range_inclusive(1.0, 8192.0)],
+    aerial_view_lut_size => [range_inclusive(1.0, 2048.0)],
     transmittance_lut_samples => [range_inclusive(0.0, 1024.0)],
     multiscattering_lut_dirs => [range_inclusive(0.0, 1024.0)],
     multiscattering_lut_samples => [range_inclusive(0.0, 1024.0)],

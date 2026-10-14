@@ -12,6 +12,7 @@ use pyo3::prelude::*;
 use crate::{
     camera_3d_depth_load_op::PyCamera3dDepthLoadOp,
     camera_3d_depth_texture_usage::PyCamera3dDepthTextureUsage,
+    texture_usage_rules::check_depth_texture_usage,
 };
 
 const DEFAULT_DEPTH_TEXTURE_USAGE: u32 = TextureUsages::RENDER_ATTACHMENT.bits();
@@ -26,8 +27,9 @@ fn check_depth_load_op(op: Camera3dDepthLoadOp) -> Result<Camera3dDepthLoadOp, D
     Ok(op)
 }
 
-fn validate_camera_3d(camera: &Camera3d) -> Result<(), DomainViolation> {
-    check_depth_load_op(camera.depth_load_op.clone()).map(drop)
+fn validate_camera_3d(camera: &Camera3d) -> Result<(), String> {
+    check_depth_load_op(camera.depth_load_op.clone()).map_err(|error| error.to_string())?;
+    check_depth_texture_usage(camera.depth_texture_usages.0).map(drop)
 }
 
 #[pycomponent(Camera3d, bridge, reflect_validate = validate_camera_3d)]

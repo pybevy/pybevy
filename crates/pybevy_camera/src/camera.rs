@@ -2,7 +2,9 @@ use bevy::{
     camera::{Camera, SubCameraView},
     math::Vec3,
 };
-use pybevy_core::{ComponentStorage, FromBorrowedStorage, PyComponent, public_error};
+use pybevy_core::{
+    ComponentStorage, FromBorrowedStorage, PyComponent, domain::DomainViolation, public_error,
+};
 use pybevy_macros::pycomponent;
 use pybevy_math::{
     mat4::PyMat4, rect::PyRect, urect::PyURect, uvec2::PyUVec2, vec2::PyVec2, vec3::PyVec3,
@@ -16,7 +18,15 @@ use super::{
     sub_camera_view::PySubCameraView, viewport::PyViewport,
 };
 
-#[pycomponent(Camera, bridge, view_fields = [is_active])]
+/// MCP reflected writes do not read the nested viewport's domains.
+fn validate_camera(camera: &Camera) -> Result<(), DomainViolation> {
+    camera
+        .viewport
+        .as_ref()
+        .map_or(Ok(()), PyViewport::validate_domains)
+}
+
+#[pycomponent(Camera, bridge, view_fields = [is_active], reflect_validate = validate_camera)]
 #[pyclass(name = "Camera", module = "pybevy.camera", extends = PyComponent)]
 pub struct PyCamera {
     pub(crate) storage: ComponentStorage<Camera>,

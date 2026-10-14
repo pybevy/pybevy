@@ -115,6 +115,10 @@ impl PyBackends {
         Ok(self.to_bevy()?.into())
     }
 
+    fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
+
     pub fn contains(&self, other: &Self) -> PyResult<bool> {
         Ok(self.to_bevy()?.contains(other.to_bevy()?))
     }
@@ -347,6 +351,10 @@ impl PyWgpuSettings {
 
     fn __copy__(&self) -> PyResult<Self> {
         Ok(Self::from_owned(self.as_ref()?.clone()))
+    }
+
+    fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
     }
 
     pub fn __repr__(&self) -> PyResult<String> {

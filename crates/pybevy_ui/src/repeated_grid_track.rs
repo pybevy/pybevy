@@ -230,6 +230,14 @@ impl PyRepeatedGridTrack {
         })
     }
 
+    pub fn __copy__(&self) -> Self {
+        self.clone()
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> Self {
+        self.clone()
+    }
+
     pub fn __repr__(&self) -> String {
         repeated_grid_track_repr(&self.inner).unwrap_or_else(|| "RepeatedGridTrack(...)".into())
     }

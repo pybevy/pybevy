@@ -9,7 +9,7 @@
 
 use std::sync::OnceLock;
 
-use crate::PYBEVY_VERSION;
+use crate::{BEVY_VERSION, PYBEVY_VERSION};
 
 /// Placeholder for identity that the build could not determine.
 pub const UNKNOWN: &str = "unknown";
@@ -40,6 +40,7 @@ impl BuildInfo {
     pub fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
             "version": PYBEVY_VERSION,
+            "bevy_version": BEVY_VERSION,
             "git_sha": self.git_sha,
             "git_sha_short": self.git_sha_short,
             "git_dirty": self.git_dirty,
@@ -65,7 +66,7 @@ pub fn build_info() -> BuildInfo {
 
 #[cfg(test)]
 mod tests {
-    use super::{BuildInfo, PYBEVY_VERSION, UNKNOWN};
+    use super::{BEVY_VERSION, BuildInfo, PYBEVY_VERSION, UNKNOWN};
 
     #[test]
     fn json_carries_every_field_and_the_version() {
@@ -77,6 +78,7 @@ mod tests {
         };
         let json = info.to_json();
         assert_eq!(json["version"], PYBEVY_VERSION);
+        assert_eq!(json["bevy_version"], BEVY_VERSION);
         assert_eq!(json["git_sha"], info.git_sha);
         assert_eq!(json["git_sha_short"], info.git_sha_short);
         assert_eq!(json["git_dirty"], true);

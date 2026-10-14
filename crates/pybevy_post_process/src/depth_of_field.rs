@@ -6,6 +6,8 @@ use pyo3::prelude::*;
 
 use crate::depth_of_field_mode::PyDepthOfFieldMode;
 
+// The blur loops over the circle of confusion; a diameter beyond any render target
+// stalls the GPU for seconds per frame.
 #[pycomponent(
     DepthOfField,
     bridge,
@@ -13,7 +15,7 @@ use crate::depth_of_field_mode::PyDepthOfFieldMode;
         focal_distance => [finite(view = checked)],
         sensor_height => [finite(view = checked)],
         aperture_f_stops => [finite(view = checked)],
-        max_circle_of_confusion_diameter => [finite, non_negative],
+        max_circle_of_confusion_diameter => [range_inclusive(0.0, 16384.0)],
         max_depth => [finite_or_pos_inf(view = checked)],
     ],
     view_fields = [

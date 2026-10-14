@@ -235,6 +235,9 @@ Batch validation rejects resource-entity hierarchy links and duplicate registere
 component aliases before insertion. Rejected deferred batches reclaim their
 empty reservations. Python lifecycle observers run after all bundles in the call
 are inserted; native hook effects during insertion are not rolled back.
+World/Commands insertion and batch spawning notify Add/Insert observers for newly
+created native required components, including transitive requirements. Existing
+required components are preserved without replacement notifications.
 `world.query()` takes a `Query[...]` value, not a tuple or bare type: write
 `world.query(Query[tuple[A, B]])` or `world.query(Query[A])`.
 Grouped Query/Single data require builtin `tuple[...]`; `list[...]` and

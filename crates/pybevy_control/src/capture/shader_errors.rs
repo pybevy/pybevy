@@ -1,11 +1,11 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     iter, mem,
     sync::{Arc, Mutex, MutexGuard},
 };
 
 use bevy::{
-    asset::UntypedAssetId,
+    asset::{AssetId, UntypedAssetId},
     prelude::*,
     render::render_resource::{CachedPipelineState, PipelineCache, PipelineDescriptor},
     shader::{Shader, ShaderCacheError, ShaderImport, Source},
@@ -37,6 +37,7 @@ impl PipelineShaderError {
 struct ShaderErrorState {
     failing: Vec<PipelineShaderError>,
     recovered: Vec<u64>,
+    compiled: HashSet<AssetId<Shader>>,
 }
 
 /// Compile errors of the render pipelines that currently fail, and shader
@@ -63,6 +64,29 @@ impl ShaderErrors {
 
     fn take_recovered(&self) -> Vec<u64> {
         mem::take(&mut self.state().recovered)
+    }
+
+    fn compiled(&self) -> HashSet<AssetId<Shader>> {
+        self.state().compiled.clone()
+    }
+}
+
+fn pipeline_shaders(descriptor: &PipelineDescriptor) -> Vec<AssetId<Shader>> {
+    match descriptor {
+        PipelineDescriptor::RenderPipelineDescriptor(render) => iter::once(&render.vertex.shader)
+            .chain(render.fragment.as_ref().map(|fragment| &fragment.shader))
+            .map(Handle::id)
+            .collect(),
+        PipelineDescriptor::ComputePipelineDescriptor(compute) => vec![compute.shader.id()],
+        PipelineDescriptor::MeshPipelineDescriptor(mesh) => mesh
+            .task
+            .as_ref()
+            .map(|task| &task.shader)
+            .into_iter()
+            .chain(iter::once(&mesh.mesh.shader))
+            .chain(mesh.fragment.as_ref().map(|fragment| &fragment.shader))
+            .map(Handle::id)
+            .collect(),
     }
 }
 
@@ -103,6 +127,7 @@ pub fn publish_shader_errors(
 ) {
     let mut failing = Vec::new();
     let mut compiled = BTreeSet::new();
+    let mut compiled_shaders = HashSet::new();
     for pipeline in cache.pipelines() {
         let message = match &pipeline.state {
             CachedPipelineState::Err(ShaderCacheError::ProcessShaderError(error)) => {
@@ -111,8 +136,11 @@ pub fn publish_shader_errors(
             CachedPipelineState::Err(ShaderCacheError::CreateShaderModule(description)) => {
                 description.clone()
             }
-            CachedPipelineState::Ok(_) if !failed_before.is_empty() => {
-                compiled.extend(material_shaders(&pipeline.descriptor));
+            CachedPipelineState::Ok(_) => {
+                compiled_shaders.extend(pipeline_shaders(&pipeline.descriptor));
+                if !failed_before.is_empty() {
+                    compiled.extend(material_shaders(&pipeline.descriptor));
+                }
                 continue;
             }
             _ => continue,
@@ -147,6 +175,7 @@ pub fn publish_shader_errors(
     let mut state = errors.state();
     state.failing = failing;
     state.recovered.extend(recovered);
+    state.compiled = compiled_shaders;
 }
 
 /// An `@material` class whose custom shader stage uses a failing file.
@@ -306,10 +335,11 @@ pub fn report_material_shader_errors(world: &World, mut reported: Local<Vec<Pipe
     }
 }
 
-/// WESL imports no loaded shader defines. Bevy keeps such pipelines queued
-/// without an error, so the shader silently draws nothing.
+/// WESL imports no loaded shader defines, by importing shader. Bevy keeps
+/// pipelines that use such an import queued without an error, so the shader
+/// silently draws nothing.
 #[derive(Resource, Default)]
-pub struct UnresolvedShaderImports(Vec<String>);
+pub struct UnresolvedShaderImports(Vec<(String, String)>);
 
 /// A WESL module path: a package path such as `bevy_pbr::render`, or an asset
 /// path under `package::` when `package` is `None`.
@@ -379,18 +409,14 @@ impl ModulePath {
 /// imported name, which may itself be a module. An import resolves when either
 /// is a loaded WESL module; otherwise the module is reported, or the import
 /// itself when its module is a bare package.
-fn unresolved_imports(shaders: &[&Shader]) -> Vec<String> {
-    let provided: HashSet<ModulePath> = shaders
-        .iter()
-        .filter(|shader| matches!(shader.source, Source::Wesl(_)))
-        .filter_map(|shader| ModulePath::of(&shader.import_path))
-        .collect();
+fn unresolved_imports(shaders: &[(AssetId<Shader>, &Shader)]) -> Vec<(AssetId<Shader>, String)> {
+    let provided: HashSet<ModulePath> = provided_modules(shaders).into_keys().collect();
     let resolves = |path: &ModulePath| path.is_constants() || provided.contains(path);
     // Engine shaders import modules of pipelines that may never be built.
-    let mut missing: Vec<String> = shaders
+    let mut missing: Vec<(AssetId<Shader>, String)> = shaders
         .iter()
-        .filter(|shader| !shader.path.starts_with("embedded://"))
-        .flat_map(|shader| {
+        .filter(|(_, shader)| !shader.path.starts_with("embedded://"))
+        .flat_map(|&(id, shader)| {
             let imported: Vec<ModulePath> =
                 shader.imports.iter().filter_map(ModulePath::of).collect();
             imported
@@ -405,14 +431,52 @@ fn unresolved_imports(shaders: &[&Shader]) -> Vec<String> {
                     } else {
                         &module
                     };
-                    Some(reported.message(&shader.path))
+                    Some((id, reported.message(&shader.path)))
                 })
                 .collect::<Vec<_>>()
         })
         .collect();
-    missing.sort_unstable();
+    missing.sort_by(|a, b| a.1.cmp(&b.1));
     missing.dedup();
     missing
+}
+
+fn provided_modules(
+    shaders: &[(AssetId<Shader>, &Shader)],
+) -> HashMap<ModulePath, AssetId<Shader>> {
+    shaders
+        .iter()
+        .filter(|(_, shader)| matches!(shader.source, Source::Wesl(_)))
+        .filter_map(|&(id, shader)| Some((ModulePath::of(&shader.import_path)?, id)))
+        .collect()
+}
+
+/// Shaders of compiled pipelines and every module they import: none of their
+/// imports block compilation, so an unresolved one is unused.
+fn compiled_closure(
+    shaders: &[(AssetId<Shader>, &Shader)],
+    roots: &HashSet<AssetId<Shader>>,
+) -> HashSet<AssetId<Shader>> {
+    let provided = provided_modules(shaders);
+    let by_id: HashMap<AssetId<Shader>, &Shader> = shaders.iter().copied().collect();
+    let mut reached: HashSet<AssetId<Shader>> = HashSet::new();
+    let mut pending: Vec<AssetId<Shader>> = roots.iter().copied().collect();
+    while let Some(id) = pending.pop() {
+        if !reached.insert(id) {
+            continue;
+        }
+        let Some(shader) = by_id.get(&id) else {
+            continue;
+        };
+        pending.extend(
+            shader
+                .imports
+                .iter()
+                .filter_map(ModulePath::of)
+                .filter_map(|path| provided.get(&path).copied()),
+        );
+    }
+    reached
 }
 
 pub fn track_unresolved_shader_imports(
@@ -423,21 +487,62 @@ pub fn track_unresolved_shader_imports(
     if events.read().count() == 0 {
         return;
     }
-    let shaders: Vec<&Shader> = shaders.iter().map(|(_, shader)| shader).collect();
-    unresolved.0 = unresolved_imports(&shaders);
+    let shaders: Vec<(AssetId<Shader>, &Shader)> = shaders.iter().collect();
+    let paths: HashMap<AssetId<Shader>, &str> = shaders
+        .iter()
+        .map(|(id, shader)| (*id, shader.path.as_str()))
+        .collect();
+    unresolved.0 = unresolved_imports(&shaders)
+        .into_iter()
+        .map(|(id, message)| (paths[&id].to_owned(), message))
+        .collect();
 }
 
-/// Compile errors and unresolved imports, as `get_last_error.shader_errors` reports them.
+/// Compile errors and unresolved imports, as `get_last_error.shader_errors`
+/// reports them. Imports of shaders whose pipelines compiled are unused.
 pub fn current_shader_errors(world: &World) -> Vec<String> {
     let mut errors = attributed_shader_errors(world);
-    if let Some(unresolved) = world.get_resource::<UnresolvedShaderImports>() {
-        errors.extend(unresolved.0.iter().cloned());
-    }
+    let Some(unresolved) = world
+        .get_resource::<UnresolvedShaderImports>()
+        .filter(|unresolved| !unresolved.0.is_empty())
+    else {
+        return errors;
+    };
+    let roots = world
+        .get_resource::<ShaderErrors>()
+        .map(ShaderErrors::compiled)
+        .unwrap_or_default();
+    // One file can back several Shader assets; any compiled one proves its imports unused.
+    let compiled: HashSet<&str> = match world.get_resource::<Assets<Shader>>() {
+        Some(shaders) if !roots.is_empty() => {
+            let shaders: Vec<(AssetId<Shader>, &Shader)> = shaders.iter().collect();
+            compiled_closure(&shaders, &roots)
+                .into_iter()
+                .filter_map(|id| {
+                    shaders
+                        .iter()
+                        .find(|(shader, _)| *shader == id)
+                        .map(|(_, shader)| shader.path.as_str())
+                })
+                .collect()
+        }
+        _ => HashSet::new(),
+    };
+    let mut missing: Vec<String> = unresolved
+        .0
+        .iter()
+        .filter(|(path, _)| !compiled.contains(path.as_str()))
+        .map(|(_, message)| message.clone())
+        .collect();
+    missing.dedup();
+    errors.extend(missing);
     errors
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use bevy::{
         asset::AssetId,
         prelude::*,
@@ -446,7 +551,7 @@ mod tests {
     use pybevy_shader_types::{ShaderMaterial, ShaderMaterialExtension, hash_shader_path};
     use uuid::Uuid;
 
-    use super::{PipelineShaderError, attribute, unresolved_imports};
+    use super::{PipelineShaderError, attribute, compiled_closure, unresolved_imports};
 
     fn module(path: &str, source: &str) -> Shader {
         let mut shader = Shader::from_wesl(source.to_owned(), path.to_owned());
@@ -456,6 +561,23 @@ mod tests {
 
     fn asset(path: &str, source: &str) -> Shader {
         Shader::from_wesl(source.to_owned(), path.to_owned())
+    }
+
+    fn id(index: u128) -> AssetId<Shader> {
+        AssetId::Uuid {
+            uuid: Uuid::from_u128(index + 1),
+        }
+    }
+
+    fn with_ids(shaders: &[Shader]) -> Vec<(AssetId<Shader>, &Shader)> {
+        (0..).map(id).zip(shaders).collect()
+    }
+
+    fn messages(shaders: &[Shader]) -> Vec<String> {
+        unresolved_imports(&with_ids(shaders))
+            .into_iter()
+            .map(|(_, message)| message)
+            .collect()
     }
 
     fn extension(class_name: &str, fragment: &str) -> ShaderMaterialExtension {
@@ -529,10 +651,7 @@ mod tests {
             ),
         ];
 
-        assert_eq!(
-            unresolved_imports(&shaders.each_ref()),
-            Vec::<String>::new()
-        );
+        assert_eq!(messages(&shaders), Vec::<String>::new());
     }
 
     #[test]
@@ -546,7 +665,7 @@ mod tests {
         )];
 
         assert_eq!(
-            unresolved_imports(&shaders.each_ref()),
+            messages(&shaders),
             vec![
                 "shaders/broken.wesl imports `lab::common`, which no loaded shader provides; \
                  load the shader that defines module `lab::common` as a Shader asset and keep its handle",
@@ -571,11 +690,35 @@ mod tests {
         ];
 
         assert_eq!(
-            unresolved_imports(&shaders.each_ref()),
+            messages(&shaders),
             vec![
                 "shaders/uses_wgsl.wesl imports `package::shaders::common::tint`, \
                  but no shader asset `shaders/common/tint.wesl` is loaded"
             ]
+        );
+    }
+
+    #[test]
+    fn compiled_pipelines_reach_their_shaders_and_imported_modules_only() {
+        let shaders = [
+            asset(
+                "shaders/root.wesl",
+                "import super::common::tint::tint;\nimport lab::bogus;\nfn f() {}",
+            ),
+            asset("shaders/common/tint.wesl", "fn tint() {}"),
+            asset("shaders/other.wesl", "import lab::bogus;\nfn g() {}"),
+        ];
+        let shaders = with_ids(&shaders);
+
+        let reached = compiled_closure(&shaders, &HashSet::from([id(0)]));
+
+        assert_eq!(reached, HashSet::from([id(0), id(1)]));
+        assert_eq!(
+            unresolved_imports(&shaders)
+                .into_iter()
+                .map(|(shader, _)| shader)
+                .collect::<Vec<_>>(),
+            vec![id(2), id(0)]
         );
     }
 }

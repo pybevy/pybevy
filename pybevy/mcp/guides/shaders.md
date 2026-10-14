@@ -426,7 +426,7 @@ colors: array<vec4<f32>>`. `arrayLength(&params::colors)` gives its current row
 count. Existing uniform, texture, bool-definition and pass-hook syntax works
 alongside the storage field. For per-instance lookup, use `MeshTag` and Bevy's
 `mesh_functions::get_tag(instance_index)`, as in
-[the storage-buffer example](../../../examples/bevy/shaders/storage_buffer.py).
+`examples/bevy/shaders/storage_buffer.py` in the PyBevy source repository.
 
 Update bytes through `buffers.get_mut(handle).set_data(...)`, or assign a new
 handle through a mutable material. Allocation changes, including resize,
@@ -657,7 +657,10 @@ Set `ImageSampler.Descriptor(ImageSamplerDescriptor(compare=ImageCompareFunction
 upload recipe does not generalize to every depth format.
 
 Actual min/mag/mipmap filtering, wrap modes, LOD clamps and anisotropy stay on
-`Image.sampler`, using `ImageSampler.Descriptor(descriptor)`.
+`Image.sampler`, using `ImageSampler.Descriptor(descriptor)`. As in wgpu, an
+`anisotropy_clamp` above 1 requires all three filters to be Linear: start from
+`ImageSamplerDescriptor.linear()` and raise the clamp afterwards, because the
+constructor and each setter raise `ValueError` for any other order.
 `sampler_type="filtering"` permits linear or nearest filtering; `"non_filtering"`
 requires nearest filtering. `filterable=True` requires a filterable texture
 format/device feature. These image-owned settings affect every paired binding
@@ -730,7 +733,7 @@ Binding arrays, storage textures and multisampled textures remain unsupported.
 
 ## Runnable Binding Examples
 
-The [material examples](../../../examples/materials/README.md) include complete
+The material examples (`examples/materials/` in the PyBevy source repository) include complete
 Python scenes and WESL shaders, with procedural assets and no downloads:
 
 | Example | Binding technique |

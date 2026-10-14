@@ -20,6 +20,8 @@ commands.spawn(
 ## Shadow Map Resolution
 
 Global resources control shadow map texture size. Higher = sharper shadows, more VRAM.
+Rendering caps a size above the GPU's 2D texture limit (commonly 16384) at that
+limit and logs a warning; the resource keeps the requested value.
 
 ```python
 from pybevy.light import DirectionalLightShadowMap, PointLightShadowMap
