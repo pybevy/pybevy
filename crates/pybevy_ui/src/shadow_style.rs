@@ -52,25 +52,21 @@ impl PyShadowStyle {
     #[new]
     #[pyo3(signature = (
         *,
-        color = None,
+        color = PyColor::from(Color::BLACK),
         x_offset = PyVal::percent_unchecked(20.0),
         y_offset = PyVal::percent_unchecked(20.0),
         spread_radius = PyVal::zero(),
         blur_radius = PyVal::percent_unchecked(10.0)
     ))]
     pub fn new(
-        color: Option<PyColor>,
+        color: PyColor,
         x_offset: PyVal,
         y_offset: PyVal,
         spread_radius: PyVal,
         blur_radius: PyVal,
     ) -> PyResult<Self> {
-        let bevy_color = color
-            .map(Color::try_from)
-            .transpose()?
-            .unwrap_or(Color::BLACK);
         Ok(Self::from_owned(ShadowStyle {
-            color: bevy_color,
+            color: color.try_into()?,
             x_offset: x_offset.into(),
             y_offset: y_offset.into(),
             spread_radius: spread_radius.into(),

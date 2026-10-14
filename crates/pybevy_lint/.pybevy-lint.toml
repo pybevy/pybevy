@@ -1515,7 +1515,6 @@ reason = "Bevy 0.19.1 bevy_mesh::Mesh::new maps primitive_topology; PyBevy suppl
 "pybevy.math.PyAffine3A" = "Bevy 0.19.1 glam::Affine3A fields define the established Python constructor"
 "pybevy.math.PyLine2d" = "Bevy 0.19.1 bevy_math::primitives::Line2d fields define the established Python constructor"
 "pybevy.math.PyLine3d" = "Bevy 0.19.1 bevy_math::primitives::Line3d fields define the established Python constructor"
-"pybevy.math.PyRange" = "Rust core std::ops::Range<f32> fields define the established Python constructor"
 "pybevy.math.PyEllipse" = "Bevy 0.19.1 bevy_math::primitives::Ellipse fields define the established Python constructor"
 "pybevy.mesh.PySkinnedMesh" = "Bevy 0.19.1 bevy_mesh::skinning::SkinnedMesh fields define the established Python constructor"
 "pybevy.pbr.PyAtmosphereSettings" = "Bevy 0.19.1 bevy_pbr::AtmosphereSettings fields define the established Python constructor"
@@ -1711,6 +1710,7 @@ reason = "Bevy 0.19.1 bevy_audio::SpatialListener::new defines the gap prefix fo
 "pybevy.world_serialization.PyWorldAssetRoot" = "Bevy 0.19.1 bevy_world_serialization::WorldAssetRoot is a tuple struct/newtype; Python construction preserves its positional payload contract"
 
 [bevy.constructor_adapters]
+"pybevy.math.PyRange" = "Maintainer decision 2026-09-27: Range(start, end) mirrors the positional start..end range syntax of std::ops::Range<f32>, not keyword field initialization"
 "pybevy.winit.PyWinitPlugin" = "The settings input inserts the separate WinitSettings resource before building Bevy's default WinitPlugin"
 "pybevy.render.PyRenderPlugin" = "The constructor maps power_preference into nested WgpuSettings and accepts an optional synchronous pipeline compilation override"
 "pybevy.math.PyDir2" = "PyBevy flattens the Vec2 accepted by Bevy Dir2::new into x and y inputs"
@@ -3001,6 +3001,24 @@ path = "window.Window"
 reason = "constructor coverage exposes 19 additional platform-policy booleans; that does not make these low-frequency controls a reviewed columnar API, so retain the established decorations/resizable/transparent View lanes pending separate review"
 
 [[validation.exceptions]]
+code = "W009"
+path = "text.Text2dShadow"
+message = "'Text2dShadow' has eligible fields not in bridge view_fields: batch_only_fields candidates: color"
+reason = "color became visible to W009 when its constructor default stopped accepting None; columnar color batching is a separate feature with its own batch-path coverage"
+
+[[validation.exceptions]]
+code = "W009"
+path = "ui.TextShadow"
+message = "'TextShadow' has eligible fields not in bridge view_fields: batch_only_fields candidates: color"
+reason = "color became visible to W009 when its constructor default stopped accepting None; columnar color batching is a separate feature with its own batch-path coverage"
+
+[[validation.exceptions]]
+code = "W009"
+path = "post_process.Vignette"
+message = "'Vignette' has eligible fields not in bridge view_fields: batch_only_fields candidates: color"
+reason = "color became visible to W009 when its constructor default stopped accepting None; columnar color batching is a separate feature with its own batch-path coverage"
+
+[[validation.exceptions]]
 code = "E006"
 path = "assets.AssetLoadFailedEvent"
 message = "property 'AssetLoadFailedEvent::id' type mismatch: Rust='MaterializedPyAssetId' vs Python='AssetId[A_co]'"
@@ -3342,3 +3360,9 @@ reason = "core-010: instance __module__ proxies the wrapped callable, but the ty
 code = "W016"
 path = "render.ImageCopyPlugin"
 reason = "core-010: registered plugin class still reports builtins.ImageCopyPlugin"
+
+[[validation.exceptions]]
+code = "W017"
+path = "core.AssetPath"
+message = "constructor 'AssetPath' parameter 'source' accepts None but the upstream field bevy_asset::AssetPath::source is `AssetSourceId < 'a >`; default to Bevy's value and reject None"
+reason = "AssetSourceId is Option-shaped; Python models AssetSourceId::Default as None on the constructor, getter, and repr"

@@ -86,6 +86,18 @@ impl TryFrom<&PyFontSource> for FontSource {
     }
 }
 
+/// Accepted inputs at Bevy's `Into<FontSource>` boundaries.
+#[derive(Debug, Clone)]
+pub struct IntoFontSource(pub FontSource);
+
+impl FromPyObject<'_, '_> for IntoFontSource {
+    type Error = PyErr;
+
+    fn extract(obj: Borrowed<'_, '_, PyAny>) -> PyResult<Self> {
+        Ok(Self(extract_font_source_from_any(&obj)?))
+    }
+}
+
 /// Extract a [`FontSource`], mirroring bevy's `From` impls: a `FontSource`,
 /// a font `Handle` (`From<Handle<Font>>`), or a family name (`From<&str>`).
 pub fn extract_font_source_from_any(obj: &Bound<'_, PyAny>) -> PyResult<FontSource> {

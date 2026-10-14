@@ -1,4 +1,4 @@
-use bevy::{color::Color, math::Vec2, prelude::TextShadow};
+use bevy::{color::Color, prelude::TextShadow};
 use pybevy_color::color::PyColor;
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
@@ -15,22 +15,15 @@ pub struct PyTextShadow {
 #[pymethods]
 impl PyTextShadow {
     #[new]
-    #[pyo3(signature = (*, offset = None, color = None))]
-    pub fn new(
-        offset: Option<PyVec2>,
-        color: Option<PyColor>,
-    ) -> PyResult<PyClassInitializer<Self>> {
-        let bevy_offset: Vec2 = offset
-            .map(TryInto::try_into)
-            .transpose()?
-            .unwrap_or(Vec2::splat(4.0));
-        let bevy_color = color
-            .map(Color::try_from)
-            .transpose()?
-            .unwrap_or(Color::linear_rgba(0.0, 0.0, 0.0, 0.75));
+    #[pyo3(signature = (
+        *,
+        offset = PyVec2::from(TextShadow::default().offset),
+        color = PyColor::from(TextShadow::default().color)
+    ))]
+    pub fn new(offset: PyVec2, color: PyColor) -> PyResult<PyClassInitializer<Self>> {
         Ok(Self::from_owned(TextShadow {
-            offset: bevy_offset,
-            color: bevy_color,
+            offset: offset.try_into()?,
+            color: color.try_into()?,
         })
         .into())
     }

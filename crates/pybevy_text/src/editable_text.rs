@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use bevy::text::{EditableText, TextEdit};
-use pybevy_core::{ComponentStorage, PyComponent, duration_from_py};
+use pybevy_core::{ComponentStorage, IntoDuration, PyComponent};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
@@ -20,7 +20,7 @@ impl PyEditableText {
         text = "",
         *,
         cursor_width = 0.2,
-        cursor_blink_period = None,
+        cursor_blink_period = IntoDuration(EditableText::default().cursor_blink_period),
         max_characters = None,
         visible_lines = Some(1.0),
         visible_width = None,
@@ -29,7 +29,7 @@ impl PyEditableText {
     pub fn new(
         text: &str,
         cursor_width: f32,
-        cursor_blink_period: Option<&Bound<'_, PyAny>>,
+        cursor_blink_period: IntoDuration,
         max_characters: Option<usize>,
         visible_lines: Option<f32>,
         visible_width: Option<f32>,
@@ -37,10 +37,7 @@ impl PyEditableText {
     ) -> PyResult<PyClassInitializer<Self>> {
         let mut editable = EditableText::new(text);
         editable.cursor_width = cursor_width;
-        editable.cursor_blink_period = match cursor_blink_period {
-            Some(value) => duration_from_py(value)?,
-            None => Duration::from_secs(1),
-        };
+        editable.cursor_blink_period = cursor_blink_period.0;
         editable.max_characters = max_characters;
         editable.visible_lines = visible_lines;
         editable.visible_width = visible_width;
@@ -63,7 +60,8 @@ impl PyEditableText {
     }
 
     pub fn queue_edit(&mut self, edit: &PyTextEdit) -> PyResult<()> {
-        self.as_mut()?.queue_edit(edit.clone().into());
+        let edit = edit.clone().try_into()?;
+        self.as_mut()?.queue_edit(edit);
         Ok(())
     }
 
@@ -111,8 +109,8 @@ impl PyEditableText {
     }
 
     #[setter]
-    pub fn set_cursor_blink_period(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.as_mut()?.cursor_blink_period = duration_from_py(value)?;
+    pub fn set_cursor_blink_period(&mut self, value: IntoDuration) -> PyResult<()> {
+        self.as_mut()?.cursor_blink_period = value.0;
         Ok(())
     }
 

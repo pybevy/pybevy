@@ -1,13 +1,13 @@
 use std::ops::Range;
 
 use pybevy_core::{
-    FieldStorage, FromBorrowedStorage, StorageMut, StorageRef, public_error::UNSUPPORTED_COMPARISON,
+    FieldStorage, FromBorrowedStorage, StorageRef, public_error::UNSUPPORTED_COMPARISON,
 };
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 use crate::richcmp::comparison_result;
 
-#[pyclass(name = "Range", module = "pybevy.math", skip_from_py_object)]
+#[pyclass(name = "Range", module = "pybevy.math", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyRange {
     storage: FieldStorage<Range<f32>>,
@@ -39,17 +39,12 @@ impl PyRange {
     fn as_ref(&self) -> PyResult<StorageRef<'_, Range<f32>>> {
         Ok(self.storage.as_ref()?)
     }
-
-    #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Range<f32>>> {
-        Ok(self.storage.as_mut()?)
-    }
 }
 
 #[pymethods]
 impl PyRange {
     #[new]
-    #[pyo3(signature = (*, start, end))]
+    #[pyo3(signature = (start, end))]
     pub fn new(start: f32, end: f32) -> Self {
         PyRange::from_range(start, end)
     }
@@ -61,7 +56,7 @@ impl PyRange {
 
     #[setter]
     pub fn set_start(&mut self, value: f32) -> PyResult<()> {
-        self.as_mut()?.start = value;
+        self.storage.update(|range| range.start = value)?;
         Ok(())
     }
 
@@ -72,7 +67,7 @@ impl PyRange {
 
     #[setter]
     pub fn set_end(&mut self, value: f32) -> PyResult<()> {
-        self.as_mut()?.end = value;
+        self.storage.update(|range| range.end = value)?;
         Ok(())
     }
 

@@ -1,12 +1,40 @@
 use std::convert::Infallible;
 
 use pyo3::{
+    PyClass,
     exceptions::{PySystemError, PyTypeError},
     prelude::*,
 };
 
-use super::{check_complete_form, check_conflict};
+use super::{Omittable, check_complete_form, check_conflict};
 use crate::public_error;
+
+pub fn reject_explicit_none(obj: &Borrowed<'_, '_, PyAny>, expected: &str) -> PyResult<()> {
+    if obj.is_none() {
+        return Err(PyTypeError::new_err(public_error::omitted_argument_none(
+            expected,
+        )));
+    }
+    Ok(())
+}
+
+impl<'a, 'py, T: PyClass> FromPyObject<'a, 'py> for Omittable<Py<T>> {
+    type Error = PyErr;
+
+    fn extract(obj: Borrowed<'a, 'py, PyAny>) -> Result<Self, Self::Error> {
+        reject_explicit_none(&obj, <T as PyClass>::NAME)?;
+        Ok(Self::Supplied(obj.cast::<T>()?.to_owned().unbind()))
+    }
+}
+
+impl<'a, 'py, T: PyClass> FromPyObject<'a, 'py> for Omittable<PyRef<'py, T>> {
+    type Error = PyErr;
+
+    fn extract(obj: Borrowed<'a, 'py, PyAny>) -> Result<Self, Self::Error> {
+        reject_explicit_none(&obj, <T as PyClass>::NAME)?;
+        Ok(Self::Supplied(obj.cast::<T>()?.try_borrow()?))
+    }
+}
 
 pub enum RawArg<'py> {
     Missing,

@@ -8,7 +8,7 @@ from pybevy.color import Color, LinearRgba
 from pybevy.ecs import Batchable, Component, Resource
 from pybevy.image import Image
 from pybevy.material import AlphaMode, OpaqueRendererMethod
-from pybevy.math import Affine2, Rect, UVec2, UVec3, Vec3
+from pybevy.math import Affine2, Range, Rect, UVec2, UVec3, Vec3
 from pybevy.mesh import UvChannel
 from pybevy.render import Face
 
@@ -630,40 +630,40 @@ class ScreenSpaceReflections(Component):
     Inserting it later has no effect and SSR renders nothing. `DepthPrepass`
     and `DeferredPrepass` are required components and are added automatically.
 
-    `min_perceptual_roughness` defaults to `(0.08, 0.12)` and fades SSR *in*, so
+    `min_perceptual_roughness` defaults to `Range(0.08, 0.12)` and fades SSR *in*, so
     surfaces smoother than 0.08 receive none at all.
     """
 
     def __init__(
         self,
         *,
-        min_perceptual_roughness: tuple[float, float] = (0.08, 0.12),
-        max_perceptual_roughness: tuple[float, float] = (0.55, 0.6),
+        min_perceptual_roughness: Range = Range(0.08, 0.12),
+        max_perceptual_roughness: Range = Range(0.55, 0.6),
         thickness: float = 0.25,
         linear_steps: int = 10,
         linear_march_exponent: float = 1.0,
-        edge_fadeout: tuple[float, float] = (0.0, 0.0),
+        edge_fadeout: Range = Range(0.0, 0.0),
         bisection_steps: int = 5,
         use_secant: bool = True
     ) -> None: ...
 
     @property
-    def min_perceptual_roughness(self) -> tuple[float, float]:
-        """The perceptual roughness range (start, end) over which SSR fades in."""
+    def min_perceptual_roughness(self) -> Range:
+        """The perceptual roughness range over which SSR fades in."""
     @min_perceptual_roughness.setter
-    def min_perceptual_roughness(self, value: tuple[float, float]) -> None: ...
+    def min_perceptual_roughness(self, value: Range) -> None: ...
 
     @property
-    def max_perceptual_roughness(self) -> tuple[float, float]:
-        """The perceptual roughness range (start, end) over which SSR fades out."""
+    def max_perceptual_roughness(self) -> Range:
+        """The perceptual roughness range over which SSR fades out."""
     @max_perceptual_roughness.setter
-    def max_perceptual_roughness(self, value: tuple[float, float]) -> None: ...
+    def max_perceptual_roughness(self, value: Range) -> None: ...
 
     @property
-    def edge_fadeout(self) -> tuple[float, float]:
-        """The screen-edge fade range (start, end), in fraction of screen size."""
+    def edge_fadeout(self) -> Range:
+        """The screen-edge fade range, in fraction of screen size."""
     @edge_fadeout.setter
-    def edge_fadeout(self, value: tuple[float, float]) -> None: ...
+    def edge_fadeout(self, value: Range) -> None: ...
 
     @property
     def thickness(self) -> float:
@@ -763,7 +763,7 @@ class Lightmap(Component):
         self,
         *,
         image: Handle[Image] = ...,
-        uv_rect: Rect | None = None,
+        uv_rect: Rect = Rect(0.0, 0.0, 1.0, 1.0),
         bicubic_sampling: bool = False
     ) -> None: ...
 
@@ -1055,8 +1055,8 @@ class ForwardDecalMaterial(Material):
     def __init__(
         self,
         *,
-        base: StandardMaterial | None = None,
-        extension: ForwardDecalMaterialExt | None = None,
+        base: StandardMaterial = ...,
+        extension: ForwardDecalMaterialExt = ...,
     ) -> None: ...
     base: StandardMaterial
     extension: ForwardDecalMaterialExt

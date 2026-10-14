@@ -5,7 +5,7 @@ from pybevy.app import App, Plugin
 from pybevy.array import Array
 from pybevy.assets import Asset
 from pybevy.ecs import Component
-from pybevy.math import Vec2
+from pybevy.math import Range, Vec2
 from pybevy.pbr import StandardMaterial as StandardMaterial
 
 class ShaderBuffer(Asset):
@@ -414,7 +414,7 @@ class ColorGradingGlobal:
         tint: float = 0.0,
         hue: float = 0.0,
         post_saturation: float = 1.0,
-        midtones_range: tuple[float, float] = (0.2, 0.7)
+        midtones_range: Range = Range(0.2, 0.7)
     ) -> None: ...
 
     @property
@@ -454,9 +454,9 @@ class ColorGradingGlobal:
     def post_saturation(self, value: float) -> None: ...
 
     @property
-    def midtones_range(self) -> tuple[float, float]: ...
+    def midtones_range(self) -> Range: ...
     @midtones_range.setter
-    def midtones_range(self, value: tuple[float, float]) -> None: ...
+    def midtones_range(self, value: Range) -> None: ...
 
 class ColorGrading(Component):
     """Filmic color grading for camera post-processing.

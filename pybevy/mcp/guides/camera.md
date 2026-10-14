@@ -214,7 +214,7 @@ commands.spawn(
 )
 ```
 
-**SSR** (Screen-Space Reflections) adds real-time reflections on metallic surfaces. Best on `metallic >= 0.9` with `perceptual_roughness` in `0.12–0.55`. Tuning: `min_perceptual_roughness`/`max_perceptual_roughness` take `(start, end)` fade tuples, `edge_fadeout=(x, y)` fades reflections near screen edges:
+**SSR** (Screen-Space Reflections) adds real-time reflections on metallic surfaces. Best on `metallic >= 0.9` with `perceptual_roughness` in `0.12–0.55`. Tuning: `min_perceptual_roughness`/`max_perceptual_roughness` take fade ranges such as `Range(0.08, 0.12)` (from `pybevy.math`), and `edge_fadeout=Range(start, end)` fades reflections near screen edges:
 
 **SSR needs deferred rendering, enabled before any material is created.** Insert
 `DefaultOpaqueRendererMethod.deferred()` in `@entrypoint` (a Startup system also
@@ -249,7 +249,7 @@ commands.spawn(
 ```
 
 **Do not go below `perceptual_roughness=0.12`.** The default
-`min_perceptual_roughness=(0.08, 0.12)` is a fade-*in*, so a mirror-smooth
+`min_perceptual_roughness=Range(0.08, 0.12)` is a fade-*in*, so a mirror-smooth
 surface at 0.05 receives exactly zero SSR: the flat-mirror instinct produces a
 blank floor. Lower `min_perceptual_roughness` if you truly want a mirror.
 

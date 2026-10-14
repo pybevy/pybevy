@@ -83,7 +83,7 @@ class WindowPlugin(Plugin):
         self,
         *,
         primary_window: Window | None = None,
-        exit_condition: ExitCondition | None = None
+        exit_condition: ExitCondition = ExitCondition.OnAllClosed
     ) -> None: ...
     def build(self, app: App) -> None: ...
 
@@ -279,7 +279,7 @@ class Window(Component):
         *,
         present_mode: PresentMode = ...,
         mode: WindowMode = WindowMode.Windowed(),
-        position: WindowPosition | None = None,
+        position: WindowPosition = ...,
         resolution: WindowResolution = WindowResolution(1280, 720),
         title: str = "PyBevy App",
         name: str | None = None,

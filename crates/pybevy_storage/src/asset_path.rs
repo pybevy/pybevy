@@ -28,6 +28,7 @@ pub type ReadIndex<Parent, Field> = for<'a> fn(&'a Parent, usize) -> Option<&'a 
 pub type WriteIndex<Parent, Field> = for<'a> fn(&'a mut Parent, usize) -> Option<&'a mut Field>;
 pub type ReadKey<Parent, Key, Field> = for<'a> fn(&'a Parent, &Key) -> Option<&'a Field>;
 pub type WriteKey<Parent, Key, Field> = for<'a> fn(&'a mut Parent, &Key) -> Option<&'a mut Field>;
+pub type ValidateField<Field> = fn(&Field) -> Result<(), StorageError>;
 
 trait ErasedPathStep: fmt::Debug + Send + Sync {
     fn input_type(&self) -> TypeId;
@@ -42,6 +43,108 @@ trait ErasedPathStep: fmt::Debug + Send + Sync {
     /// # Safety
     /// `parent` must uniquely point to a live value of [`Self::input_type`].
     unsafe fn project_mut(&self, parent: *mut u8) -> Result<*mut u8, StorageError>;
+
+    fn validates(&self) -> bool {
+        false
+    }
+
+    /// Apply `mutate` to a copy of `value` reached through `suffix`, then
+    /// validate the copy. The live value is never touched.
+    ///
+    /// # Safety
+    /// `value` must point to a live value of [`Self::input_type`], and `suffix`
+    /// must continue this step's output type.
+    unsafe fn stage(
+        &self,
+        _value: *const u8,
+        _suffix: &[Arc<dyn ErasedPathStep>],
+        _mutate: &mut dyn FnMut(*mut u8),
+    ) -> Result<(), StorageError> {
+        Ok(())
+    }
+
+    /// # Safety
+    /// `value` must point to a live value of [`Self::input_type`].
+    unsafe fn check(&self, _value: *const u8) -> Result<(), StorageError> {
+        Ok(())
+    }
+}
+
+struct ValidatedStep<Field: 'static> {
+    validate: ValidateField<Field>,
+}
+
+impl<Field: 'static> fmt::Debug for ValidatedStep<Field> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ValidatedStep")
+            .field("field", &type_name::<Field>())
+            .finish_non_exhaustive()
+    }
+}
+
+impl<Field: Clone + 'static> ErasedPathStep for ValidatedStep<Field> {
+    fn input_type(&self) -> TypeId {
+        TypeId::of::<Field>()
+    }
+
+    fn output_type(&self) -> TypeId {
+        TypeId::of::<Field>()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn same_identity(&self, other: &dyn ErasedPathStep) -> bool {
+        other
+            .as_any()
+            .downcast_ref::<Self>()
+            .is_some_and(|other| self.validate as usize == other.validate as usize)
+    }
+
+    unsafe fn project_ref(&self, parent: *const u8) -> Result<*const u8, StorageError> {
+        Ok(parent)
+    }
+
+    unsafe fn project_mut(&self, parent: *mut u8) -> Result<*mut u8, StorageError> {
+        Ok(parent)
+    }
+
+    fn validates(&self) -> bool {
+        true
+    }
+
+    unsafe fn stage(
+        &self,
+        value: *const u8,
+        suffix: &[Arc<dyn ErasedPathStep>],
+        mutate: &mut dyn FnMut(*mut u8),
+    ) -> Result<(), StorageError> {
+        // SAFETY: forwarded from the erased step contract.
+        let mut candidate = unsafe { &*value.cast::<Field>() }.clone();
+        let root = (&mut candidate as *mut Field).cast::<u8>();
+        let mut leaf = root;
+        for step in suffix {
+            // SAFETY: the suffix continues this step's type chain over the
+            // uniquely owned candidate.
+            leaf = unsafe { step.project_mut(leaf)? };
+        }
+        mutate(leaf);
+        let mut current = root.cast_const();
+        for step in suffix {
+            // SAFETY: as above, over the mutated candidate.
+            unsafe {
+                step.check(current)?;
+                current = step.project_ref(current)?;
+            }
+        }
+        (self.validate)(&candidate)
+    }
+
+    unsafe fn check(&self, value: *const u8) -> Result<(), StorageError> {
+        // SAFETY: forwarded from the erased step contract.
+        (self.validate)(unsafe { &*value.cast::<Field>() })
+    }
 }
 
 struct InlineFieldStep<Parent: 'static, Field: 'static> {
@@ -316,6 +419,32 @@ impl AssetPath {
         Ok(current)
     }
 
+    /// Stage a write through the outermost validated step on a copy.
+    ///
+    /// Without a staged mutation, a path containing a validator rejects the
+    /// write, so a raw mutable resolution cannot bypass it.
+    ///
+    /// # Safety
+    /// `root` must point to a live value of the path's root type.
+    pub(crate) unsafe fn stage_write(
+        &self,
+        root: *const u8,
+        mutate: Option<&mut dyn FnMut(*mut u8)>,
+    ) -> Result<(), StorageError> {
+        let mut current = root;
+        for (index, step) in self.steps.iter().enumerate() {
+            if step.validates() {
+                let mutate = mutate.ok_or(StorageError::ValidatedFieldWrite)?;
+                // SAFETY: `current` is this step's live input and the suffix
+                // continues its checked type chain.
+                return unsafe { step.stage(current, &self.steps[index + 1..], mutate) };
+            }
+            // SAFETY: the root type and step chain are checked at construction.
+            current = unsafe { step.project_ref(current)? };
+        }
+        Ok(())
+    }
+
     fn same_identity(&self, other: &Self) -> bool {
         self.root_type == other.root_type
             && self.output_type == other.output_type
@@ -391,7 +520,10 @@ pub(crate) enum SourceIdentity {
 
 pub(crate) trait ErasedRevalidatingSource: fmt::Debug + Send + Sync {
     fn resolve_ref(&self) -> Result<ErasedResolvedRef, StorageError>;
-    fn resolve_mut(&self) -> Result<ErasedResolvedMut, StorageError>;
+    fn resolve_mut(
+        &self,
+        stage: Option<&mut dyn FnMut(*mut u8)>,
+    ) -> Result<ErasedResolvedMut, StorageError>;
     fn append_step(&self, path: AssetPath) -> Arc<dyn ErasedRevalidatingSource>;
     fn clone_readonly(&self) -> Arc<dyn ErasedRevalidatingSource>;
     fn root_identity(&self) -> SourceIdentity;
@@ -457,6 +589,17 @@ impl<T> BorrowedRoot<T> {
         }
     }
 
+    fn check_write(&self) -> Result<(), StorageError> {
+        match self {
+            Self::Read(root) => {
+                root.validity().check_read()?;
+                Err(StorageError::ReadOnly)
+            }
+            Self::Write(root) => root.validity().check_write(),
+            Self::Component(root) => root.check_write_access(),
+        }
+    }
+
     fn write_ptr(&self) -> Result<*mut u8, StorageError> {
         match self {
             Self::Read(_) => Err(StorageError::ReadOnly),
@@ -493,7 +636,10 @@ impl<T: Send + Sync + 'static> ErasedRevalidatingSource for BorrowedSource<T> {
         })
     }
 
-    fn resolve_mut(&self) -> Result<ErasedResolvedMut, StorageError> {
+    fn resolve_mut(
+        &self,
+        stage: Option<&mut dyn FnMut(*mut u8)>,
+    ) -> Result<ErasedResolvedMut, StorageError> {
         let guard = BorrowedPathGuard::acquire(&self.gate, true)?;
         let root = self.root.read()? as *const T as *const u8;
         // SAFETY: validate the full path under the writer before marking any change.
@@ -503,6 +649,9 @@ impl<T: Send + Sync + 'static> ErasedRevalidatingSource for BorrowedSource<T> {
         if self.readonly {
             return Err(StorageError::ReadOnly);
         }
+        self.root.check_write()?;
+        // SAFETY: the root was read under this writer; staging touches only a copy.
+        unsafe { self.path.stage_write(root, stage)? };
         let root = self.root.write_ptr()?;
         // SAFETY: write authority is checked; no callback intervenes after preflight.
         let ptr = unsafe { self.path.project_mut(root)? };
@@ -656,6 +805,16 @@ impl<T: 'static> RevalidatingSource<T> {
         RevalidatingSource::new(self.inner.append_step(path))
     }
 
+    /// Check every staged write through this path with `validate`.
+    pub fn validated(&self, validate: ValidateField<T>) -> RevalidatingSource<T>
+    where
+        T: Clone,
+    {
+        let step: Arc<dyn ErasedPathStep> = Arc::new(ValidatedStep { validate });
+        let path = self.inner.path().append(step);
+        RevalidatingSource::new(self.inner.append_step(path))
+    }
+
     pub fn key<Key, Field>(
         &self,
         key: Key,
@@ -683,12 +842,28 @@ impl<T> RevalidatingSource<T> {
     }
 
     pub fn resolve_mut(&self) -> Result<RevalidatingMut<'_, T>, StorageError> {
-        let resolved = self.inner.resolve_mut()?;
+        let resolved = self.inner.resolve_mut(None)?;
         Ok(RevalidatingMut {
             ptr: resolved.ptr.cast::<T>(),
             _guard: resolved.guard,
             _lifetime: PhantomData,
         })
+    }
+
+    /// Apply `mutate` once to a staged copy and, when every validator on the
+    /// path accepts the result, once to the live value. A rejected write
+    /// leaves the value and its change ticks untouched. `mutate` must depend
+    /// only on the value it receives.
+    pub fn update<R>(&self, mut mutate: impl FnMut(&mut T) -> R) -> Result<R, StorageError> {
+        let mut stage = |value: *mut u8| {
+            // SAFETY: the staged pointer addresses this path's output type.
+            mutate(unsafe { &mut *value.cast::<T>() });
+        };
+        let resolved = self
+            .inner
+            .resolve_mut(Some(&mut stage as &mut dyn FnMut(*mut u8)))?;
+        // SAFETY: the retained write guard uniquely authorizes this path.
+        Ok(mutate(unsafe { &mut *resolved.ptr.cast::<T>() }))
     }
 
     pub fn same_identity(&self, other: &Self) -> bool {
@@ -704,7 +879,7 @@ unsafe impl<T> Sync for RevalidatingSource<T> {}
 
 #[cfg(test)]
 mod tests {
-    use bevy::ecs::{component::Component, world::World};
+    use bevy::ecs::{change_detection::Tick, component::Component, entity::Entity, world::World};
 
     use super::*;
     use crate::{AccessMode, BorrowableStorage, ValidityFlag};
@@ -714,6 +889,30 @@ mod tests {
 
     #[derive(Component)]
     struct Extra;
+
+    #[derive(Component, Clone, Copy, Debug, PartialEq)]
+    struct Span {
+        bounds: (f32, f32),
+        label: u8,
+    }
+
+    fn ordered(bounds: &(f32, f32)) -> Result<(), StorageError> {
+        if bounds.0 > bounds.1 {
+            return Err(StorageError::InvalidValue(
+                "start must not exceed end".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn changed_tick(world: &World, entity: Entity) -> Tick {
+        let component = world.components().component_id::<Span>().unwrap();
+        world
+            .entity(entity)
+            .get_change_ticks_by_id(component)
+            .unwrap()
+            .changed
+    }
 
     #[test]
     fn revalidating_payload_survives_moves_and_failed_write_does_not_mark() {
@@ -815,6 +1014,85 @@ mod tests {
         ));
         assert!(matches!(
             payload.resolve_mut(),
+            Err(StorageError::InvalidAccess)
+        ));
+    }
+
+    #[test]
+    fn validated_field_stages_writes_and_rejects_without_marking() {
+        let mut world = World::new();
+        let entity = world
+            .spawn(Span {
+                bounds: (0.25, 0.5),
+                label: 1,
+            })
+            .id();
+        let component = world.components().component_id::<Span>().unwrap();
+        let flag = ValidityFlag::new_write();
+        // SAFETY: the test owns World and accesses only this live Span through the handle.
+        let storage: ValueStorage<Span> = unsafe {
+            ValueStorage::revalidating(
+                world.as_unsafe_world_cell(),
+                entity,
+                component,
+                0,
+                flag.with_access_mode(AccessMode::Write),
+            )
+        };
+        let bounds = RevalidatingSource::from_borrowed_value(&storage)
+            .unwrap()
+            .field(|span| &span.bounds, |span| &mut span.bounds)
+            .validated(ordered);
+        let end = bounds.field(|bounds| &bounds.1, |bounds| &mut bounds.1);
+        world.increment_change_tick();
+        let before = changed_tick(&world, entity);
+
+        assert!(matches!(
+            end.update(|end| *end = 0.125),
+            Err(StorageError::InvalidValue(_))
+        ));
+        assert!(matches!(
+            bounds.resolve_mut(),
+            Err(StorageError::ValidatedFieldWrite)
+        ));
+        assert!(matches!(
+            end.resolve_mut(),
+            Err(StorageError::ValidatedFieldWrite)
+        ));
+        assert_eq!(world.get::<Span>(entity).unwrap().bounds, (0.25, 0.5));
+        assert_eq!(changed_tick(&world, entity), before);
+
+        end.update(|end| *end = 0.75).unwrap();
+        assert_eq!(world.get::<Span>(entity).unwrap().bounds, (0.25, 0.75));
+        assert_ne!(changed_tick(&world, entity), before);
+        bounds.update(|bounds| *bounds = (0.5, 0.5)).unwrap();
+        assert_eq!(world.get::<Span>(entity).unwrap().bounds, (0.5, 0.5));
+        assert_eq!(world.get::<Span>(entity).unwrap().label, 1);
+        flag.set_invalid();
+    }
+
+    #[test]
+    fn validated_read_only_path_reports_authority_before_the_value() {
+        let span = Span {
+            bounds: (0.25, 0.5),
+            label: 1,
+        };
+        let flag = ValidityFlag::new_read();
+        // SAFETY: span remains live and immutable for this validity window.
+        let storage = unsafe { ValueStorage::borrowed_ref(&span, flag.clone()) };
+        let end = RevalidatingSource::from_borrowed_value(&storage)
+            .unwrap()
+            .field(|span| &span.bounds, |span| &mut span.bounds)
+            .validated(ordered)
+            .field(|bounds| &bounds.1, |bounds| &mut bounds.1);
+
+        assert!(matches!(
+            end.update(|end| *end = 0.125),
+            Err(StorageError::ReadOnly)
+        ));
+        flag.set_invalid();
+        assert!(matches!(
+            end.update(|end| *end = 0.75),
             Err(StorageError::InvalidAccess)
         ));
     }

@@ -1026,7 +1026,7 @@ class TextureAtlasLayout(Asset):
         self,
         *,
         size: UVec2 = ...,
-        textures: list[URect] | None = None
+        textures: list[URect] = ...
     ) -> None:
         """Create a new texture atlas layout.
 
@@ -1517,7 +1517,7 @@ class ImageLoaderSettings:
         self,
         *,
         is_srgb: bool = True,
-        sampler: ImageSampler | None = None
+        sampler: ImageSampler = ImageSampler.Default()
     ) -> None:
         """Create new image loader settings.
 
@@ -1530,7 +1530,7 @@ class ImageLoaderSettings:
     def with_format(
         format: ImageFormat,
         is_srgb: bool = True,
-        sampler: ImageSampler | None = None,
+        sampler: ImageSampler = ImageSampler.Default(),
     ) -> ImageLoaderSettings:
         """Create settings with a specific image format.
 

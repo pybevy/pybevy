@@ -397,11 +397,12 @@ so every entity spawned with that same handle changes too, while the response
 reports just the entity you named. Give an entity its own `materials.add(...)`
 handle to tweak it alone.
 
-`VisibilityRange.end_margin` uses infinity for its default no-far-limit range.
-Its readback and schema spelling, `{"start": "Infinity", "end": "Infinity"}`,
-can be sent back through `set_component` or `spawn_entity`. The same `Range`
-conversion applies to `start_margin` and future `Range`-valued fields. Other
-component floats still require finite values.
+`Range` fields such as `VisibilityRange.start_margin`/`end_margin`,
+`Viewport.depth`, and `ColorGrading.global_.midtones_range` read and write as
+`{"start": ..., "end": ...}` objects. An infinite endpoint reads back as
+`"Infinity"` or `"-Infinity"`, so `{"start": "Infinity", "end": "Infinity"}`
+(no far limit for `end_margin`) can be sent back through `set_component` or
+`spawn_entity`. Other component floats still require finite values.
 
 ## Camera Control
 

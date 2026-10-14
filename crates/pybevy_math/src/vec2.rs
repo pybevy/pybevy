@@ -1,6 +1,6 @@
 use bevy::math::{BVec2, Vec2, Vec2Swizzles};
 use pybevy_core::{
-    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage, public_error::UNSUPPORTED_COMPARISON,
+    FromBorrowedStorage, StorageRef, ValueStorage, public_error::UNSUPPORTED_COMPARISON,
 };
 use pyo3::{
     basic::CompareOp,
@@ -74,11 +74,6 @@ impl PyVec2 {
     #[inline(always)]
     fn as_ref(&self) -> PyResult<StorageRef<'_, Vec2>> {
         Ok(self.storage.as_ref()?)
-    }
-
-    #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Vec2>> {
-        Ok(self.storage.as_mut()?)
     }
 
     #[inline(always)]
@@ -185,7 +180,7 @@ impl PyVec2 {
 
     #[setter]
     pub fn set_x(&mut self, x: f32) -> PyResult<()> {
-        self.as_mut()?.x = x;
+        self.storage.update(|vec| vec.x = x)?;
         Ok(())
     }
 
@@ -196,7 +191,7 @@ impl PyVec2 {
 
     #[setter]
     pub fn set_y(&mut self, y: f32) -> PyResult<()> {
-        self.as_mut()?.y = y;
+        self.storage.update(|vec| vec.y = y)?;
         Ok(())
     }
 
@@ -627,6 +622,18 @@ impl PyVec2 {
 
     pub fn yy(&self) -> PyResult<PyVec2> {
         Ok(self.as_ref()?.yy().into())
+    }
+}
+
+/// Accepted inputs at Bevy's `Into<Vec2>` boundaries.
+#[derive(Debug, Clone, Copy)]
+pub struct IntoVec2(pub Vec2);
+
+impl FromPyObject<'_, '_> for IntoVec2 {
+    type Error = PyErr;
+
+    fn extract(obj: Borrowed<'_, '_, PyAny>) -> PyResult<Self> {
+        Ok(Self(extract_vec2_from_any(&obj)?))
     }
 }
 

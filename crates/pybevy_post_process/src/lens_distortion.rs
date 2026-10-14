@@ -21,28 +21,22 @@ impl PyLensDistortion {
         *,
         intensity = 0.5,
         scale = 1.0,
-        multiplier = None,
-        center = None,
+        multiplier = PyVec2::ONE,
+        center = PyVec2::from(Vec2::splat(0.5)),
         edge_curvature = 0.0
     ))]
     pub fn new(
         intensity: f32,
         scale: f32,
-        multiplier: Option<PyVec2>,
-        center: Option<PyVec2>,
+        multiplier: PyVec2,
+        center: PyVec2,
         edge_curvature: f32,
     ) -> PyResult<PyClassInitializer<Self>> {
         let lens_distortion = LensDistortion {
             intensity,
             scale,
-            multiplier: multiplier
-                .map(TryInto::try_into)
-                .transpose()?
-                .unwrap_or(Vec2::ONE),
-            center: center
-                .map(TryInto::try_into)
-                .transpose()?
-                .unwrap_or(Vec2::splat(0.5)),
+            multiplier: multiplier.try_into()?,
+            center: center.try_into()?,
             edge_curvature,
         };
 

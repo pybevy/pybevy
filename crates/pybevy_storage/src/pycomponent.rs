@@ -10,12 +10,13 @@ use bevy::ecs::{
 };
 
 use crate::{
-    ReadField, ReadVariant, RevalidatingSource, StorageMut, StorageRef, WriteField, WriteVariant,
+    ReadField, ReadVariant, RevalidatingSource, StorageMut, StorageRef, ValidateField, WriteField,
+    WriteVariant,
     borrowed::{BorrowedMut, BorrowedRef, RevalidatingField},
     component_change::ComponentWriteContext,
     owned_cell::OwnedCell,
     storage_error::StorageError,
-    storage_traits::BorrowableStorage,
+    storage_traits::{BorrowableStorage, FromBorrowedStorage},
     validity_guard::{AccessMode, ValidityFlag, ValidityFlagWithMode},
 };
 
@@ -236,6 +237,52 @@ impl<T: Component> ComponentStorage<T> {
         }
     }
 
+    /// Mutate the value, staging the write through any field validator first.
+    ///
+    /// Wrappers that can sit under a validated field write through this
+    /// instead of `as_mut`, which rejects validated paths. `mutate` must depend
+    /// only on the value it receives.
+    pub fn update<R>(&mut self, mut mutate: impl FnMut(&mut T) -> R) -> Result<R, StorageError> {
+        match &self.inner {
+            ComponentStorageInner::Source(source) => source.update(mutate),
+            _ => Ok(mutate(self.as_mut()?.reborrow_mut())),
+        }
+    }
+
+    /// Borrow a field whose every nested write must pass `validate`.
+    ///
+    /// Borrowed storage yields a checked path that stages each child write on a
+    /// copy of the field and commits it only when `validate` accepts the
+    /// result, so a rejected write neither changes the value nor marks the
+    /// owner changed. Owned storage yields a read-only snapshot.
+    pub fn borrow_validated_field_as<F: Clone + 'static, S, W>(
+        &self,
+        read: ReadField<T, F>,
+        write: WriteField<T, F>,
+        validate: ValidateField<F>,
+    ) -> Result<W, StorageError>
+    where
+        S: BorrowableStorage<F>,
+        W: FromBorrowedStorage<S>,
+    {
+        let source = match &self.inner {
+            ComponentStorageInner::Source(source) => {
+                read(&*source.resolve_ref()?);
+                source.field(read, write)
+            }
+            _ => {
+                read(&*self.as_ref()?);
+                match RevalidatingSource::from_borrowed_component(self) {
+                    Some(source) => source.field(read, write),
+                    None => return self.snapshot_field_as(read),
+                }
+            }
+        };
+        Ok(W::from_borrowed(S::revalidating_source(
+            source.validated(validate),
+        )))
+    }
+
     /// Create a second handle to the same component data.
     ///
     /// Borrowed storage shares the same pointer and validity flag, preserving its
@@ -353,7 +400,7 @@ impl<T: Component> ComponentStorage<T> {
     ) -> Result<W, StorageError>
     where
         S: BorrowableStorage<F>,
-        W: crate::storage_traits::FromBorrowedStorage<S>,
+        W: FromBorrowedStorage<S>,
     {
         Ok(W::from_borrowed(self.borrow_field(field_accessor)?))
     }
@@ -365,7 +412,7 @@ impl<T: Component> ComponentStorage<T> {
     ) -> Result<W, StorageError>
     where
         S: BorrowableStorage<F>,
-        W: crate::storage_traits::FromBorrowedStorage<S>,
+        W: FromBorrowedStorage<S>,
     {
         let component = self.as_ref()?;
         Ok(W::from_borrowed(S::snapshot(field_accessor(&component))))
@@ -381,7 +428,7 @@ impl<T: Component> ComponentStorage<T> {
     where
         T: 'static,
         S: BorrowableStorage<F>,
-        W: crate::storage_traits::FromBorrowedStorage<S>,
+        W: FromBorrowedStorage<S>,
     {
         let storage = match &self.inner {
             ComponentStorageInner::Source(source) => {
@@ -408,7 +455,7 @@ impl<T: Component> ComponentStorage<T> {
     ) -> Result<W, StorageError>
     where
         S: BorrowableStorage<F>,
-        W: crate::storage_traits::FromBorrowedStorage<S>,
+        W: FromBorrowedStorage<S>,
     {
         let storage = match &self.inner {
             ComponentStorageInner::Source(source) => {

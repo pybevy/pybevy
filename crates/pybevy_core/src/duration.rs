@@ -134,6 +134,18 @@ pub fn relative_speed(ratio: f64, max_delta: Duration) -> PyResult<f64> {
     try_relative_speed(ratio, max_delta).map_err(|error| PyValueError::new_err(error.message()))
 }
 
+/// Accepted `Duration` inputs: a `timedelta`, or `float`/`int` seconds.
+#[derive(Debug, Clone, Copy)]
+pub struct IntoDuration(pub Duration);
+
+impl FromPyObject<'_, '_> for IntoDuration {
+    type Error = PyErr;
+
+    fn extract(obj: Borrowed<'_, '_, PyAny>) -> PyResult<Self> {
+        Ok(Self(duration_from_py(&obj)?))
+    }
+}
+
 /// Convert a Python `timedelta`, `float` (seconds), or `int` (seconds) to a `Duration`.
 pub fn duration_from_py(value: &Bound<'_, PyAny>) -> PyResult<Duration> {
     if let Ok(duration) = value.extract::<Duration>() {

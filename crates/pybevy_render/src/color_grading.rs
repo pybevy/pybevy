@@ -1,6 +1,7 @@
 use bevy::render::view::{ColorGradingGlobal, ColorGradingSection};
 use pybevy_core::{FieldStorage, FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
 use pybevy_macros::pyfield;
+use pybevy_math::range::PyRange;
 use pyo3::prelude::*;
 
 #[pyclass(name = "ColorGradingSection", module = "pybevy.render", from_py_object)]
@@ -162,7 +163,7 @@ impl PyColorGradingGlobal {
         tint = 0.0,
         hue = 0.0,
         post_saturation = 1.0,
-        midtones_range = (0.2, 0.7)
+        midtones_range = PyRange::from_range(0.2, 0.7)
     ))]
     pub fn new(
         exposure: f32,
@@ -170,16 +171,16 @@ impl PyColorGradingGlobal {
         tint: f32,
         hue: f32,
         post_saturation: f32,
-        midtones_range: (f32, f32),
-    ) -> Self {
-        Self::from_owned(ColorGradingGlobal {
+        midtones_range: PyRange,
+    ) -> PyResult<Self> {
+        Ok(Self::from_owned(ColorGradingGlobal {
             exposure,
             temperature,
             tint,
             hue,
             post_saturation,
-            midtones_range: midtones_range.0..midtones_range.1,
-        })
+            midtones_range: midtones_range.try_into()?,
+        }))
     }
 
     #[getter]
@@ -238,14 +239,14 @@ impl PyColorGradingGlobal {
     }
 
     #[getter]
-    pub fn midtones_range(&self) -> PyResult<(f32, f32)> {
-        let range = &self.as_ref()?.midtones_range;
-        Ok((range.start, range.end))
+    pub fn midtones_range(&self) -> PyResult<PyRange> {
+        Ok(self.storage.borrow_field_as(|g| &g.midtones_range)?)
     }
 
     #[setter]
-    pub fn set_midtones_range(&mut self, value: (f32, f32)) -> PyResult<()> {
-        self.as_mut()?.midtones_range = value.0..value.1;
+    pub fn set_midtones_range(&mut self, value: &PyRange) -> PyResult<()> {
+        let range = value.try_into()?;
+        self.as_mut()?.midtones_range = range;
         Ok(())
     }
 }

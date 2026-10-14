@@ -13,18 +13,20 @@ pub struct PyLightmap {
 #[pymethods]
 impl PyLightmap {
     #[new]
-    #[pyo3(signature = (*, image = HandleArg::default(), uv_rect = None, bicubic_sampling = false))]
+    #[pyo3(signature = (
+        *,
+        image = HandleArg::default(),
+        uv_rect = PyRect::from(Rect::new(0.0, 0.0, 1.0, 1.0)),
+        bicubic_sampling = false
+    ))]
     pub fn new(
         image: HandleArg,
-        uv_rect: Option<PyRect>,
+        uv_rect: PyRect,
         bicubic_sampling: bool,
     ) -> PyResult<PyClassInitializer<Self>> {
         Ok(Self::from_owned(Lightmap {
             image: image.into_handle()?,
-            uv_rect: uv_rect
-                .map(TryInto::try_into)
-                .transpose()?
-                .unwrap_or(Rect::new(0.0, 0.0, 1.0, 1.0)),
+            uv_rect: uv_rect.try_into()?,
             bicubic_sampling,
         })
         .into())

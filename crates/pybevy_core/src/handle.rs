@@ -22,7 +22,7 @@ use std::{
 
 use bevy::asset::{Asset, Handle, UntypedAssetId, UntypedHandle};
 use pyo3::{
-    IntoPyObjectExt,
+    IntoPyObjectExt, PyClass,
     exceptions::{PyTypeError, PyValueError},
     ffi,
     ffi::PyTypeObject,
@@ -32,7 +32,10 @@ use pyo3::{
 use uuid::Uuid;
 
 use crate::{
-    LogicalTypeId, PyAssetId, materialize_asset_id, public_error, registry::global_registry,
+    LogicalTypeId, PyAssetId,
+    constructor::{Omittable, pyo3::reject_explicit_none},
+    materialize_asset_id, public_error,
+    registry::global_registry,
 };
 
 /// Handle variant that directly maps to Bevy's Handle enum.
@@ -522,17 +525,13 @@ pub fn extract_handle_from_any(obj: &Bound<'_, PyAny>) -> PyResult<PyHandle> {
 }
 
 /// Non-optional handle argument: omission yields `Handle::default()`, explicit `None` is rejected.
-#[derive(Debug, Clone, Default)]
-pub enum HandleArg {
-    #[default]
-    Omitted,
-    Supplied(PyHandle),
-}
+pub type HandleArg = Omittable<PyHandle>;
 
 impl<'a, 'py> FromPyObject<'a, 'py> for HandleArg {
     type Error = PyErr;
 
     fn extract(obj: Borrowed<'a, 'py, PyAny>) -> Result<Self, Self::Error> {
+        reject_explicit_none(&obj, <PyHandle as PyClass>::NAME)?;
         Ok(Self::Supplied(extract_handle_from_any(&obj)?))
     }
 }

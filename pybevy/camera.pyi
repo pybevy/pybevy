@@ -271,7 +271,7 @@ class Viewport:
     Attributes:
         physical_position: Position in pixels from top-left corner of render target
         physical_size: Size in pixels of the viewport rectangle
-        depth: Depth range (near, far) as a tuple, typically (0.0, 1.0)
+        depth: Depth range (near, far), typically Range(0.0, 1.0)
 
     Examples:
         >>> # Full-screen viewport
@@ -290,7 +290,7 @@ class Viewport:
         >>> minimap = Viewport(
         ...     physical_position=UVec2(1720, 0),
         ...     physical_size=UVec2(200, 200),
-        ...     depth=(0.0, 1.0)
+        ...     depth=Range(0.0, 1.0)
         ... )
     """
 
@@ -299,14 +299,14 @@ class Viewport:
         *,
         physical_position: UVec2 = ...,
         physical_size: UVec2 = ...,
-        depth: tuple[float, float] = (0.0, 1.0)
+        depth: Range = Range(0.0, 1.0)
     ) -> None:
         """Create a new Viewport.
 
         Args:
             physical_position: Position in pixels from top-left of render target
             physical_size: Size in pixels of the viewport
-            depth: Tuple of (near, far) depth range, defaults to (0.0, 1.0)
+            depth: Near and far depth range, defaults to Range(0.0, 1.0)
 
         Raises:
             ValueError: If either bound is outside 0.0 to 1.0, which the GPU
@@ -346,22 +346,24 @@ class Viewport:
         """
 
     @property
-    def depth(self) -> tuple[float, float]:
-        """Get the viewport's depth range as (near, far) tuple.
+    def depth(self) -> Range:
+        """Get the viewport's depth range (near, far).
 
         The depth range controls which parts of the scene are rendered based
         on distance from the camera. Objects outside this range are clipped.
 
         Returns:
-            (near, far) depth range, typically (0.0, 1.0)
+            Depth range, typically Range(0.0, 1.0)
         """
 
     @depth.setter
-    def depth(self, value: tuple[float, float]) -> None:
+    def depth(self, value: Range) -> None:
         """Set the viewport's depth range.
 
+        Writing `start` or `end` of the returned Range is checked the same way.
+
         Args:
-            value: Tuple of (near, far) depth range, both within 0.0 to 1.0
+            value: Near and far depth range, both within 0.0 to 1.0
 
         Raises:
             ValueError: If either bound is outside 0.0 to 1.0, or near > far
@@ -443,7 +445,7 @@ class Camera(Component):
         order: int = 0,
         is_active: bool = True,
         msaa_writeback: MsaaWriteback = ...,
-        clear_color: ClearColorConfig | None = None,
+        clear_color: ClearColorConfig = ...,
         sub_camera_view: SubCameraView | None = None
     ) -> None:
         """Create a new Camera with optional configuration.
@@ -779,8 +781,8 @@ class VisibilityRange(Component):
     def __init__(
         self,
         *,
-        start_margin: Range | None = None,
-        end_margin: Range | None = None,
+        start_margin: Range = Range(0.0, 0.0),
+        end_margin: Range = Range(0.0, 0.0),
         use_aabb: bool = False
     ) -> None: ...
     @staticmethod
@@ -1005,9 +1007,9 @@ class SubCameraView:
     def __init__(
         self,
         *,
-        full_size: UVec2 | None = None,
-        offset: Vec2 | None = None,
-        size: UVec2 | None = None
+        full_size: UVec2 = UVec2.ONE,
+        offset: Vec2 = Vec2.ZERO,
+        size: UVec2 = UVec2.ONE
     ) -> None: ...
 
     @property

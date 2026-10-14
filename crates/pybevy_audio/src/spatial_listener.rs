@@ -1,5 +1,5 @@
 use bevy::audio::SpatialListener;
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, Omittable, PyComponent};
 use pybevy_macros::pycomponent;
 use pybevy_math::vec3::PyVec3;
 use pyo3::prelude::*;
@@ -13,18 +13,23 @@ pub struct PySpatialListener {
 #[pymethods]
 impl PySpatialListener {
     #[new]
-    #[pyo3(signature = (gap=4.0, *, left_ear_offset=None, right_ear_offset=None))]
+    #[pyo3(signature = (
+        gap=4.0,
+        *,
+        left_ear_offset=Omittable::default(),
+        right_ear_offset=Omittable::default(),
+    ))]
     pub fn new(
         gap: f32,
-        left_ear_offset: Option<PyVec3>,
-        right_ear_offset: Option<PyVec3>,
+        left_ear_offset: Omittable<PyRef<'_, PyVec3>>,
+        right_ear_offset: Omittable<PyRef<'_, PyVec3>>,
     ) -> PyResult<PyClassInitializer<Self>> {
         let mut listener = SpatialListener::new(gap);
-        if let Some(offset) = left_ear_offset {
-            listener.left_ear_offset = offset.try_into()?;
+        if let Some(offset) = left_ear_offset.into_option() {
+            listener.left_ear_offset = (&*offset).try_into()?;
         }
-        if let Some(offset) = right_ear_offset {
-            listener.right_ear_offset = offset.try_into()?;
+        if let Some(offset) = right_ear_offset.into_option() {
+            listener.right_ear_offset = (&*offset).try_into()?;
         }
         Ok(Self::from_owned(listener).into())
     }

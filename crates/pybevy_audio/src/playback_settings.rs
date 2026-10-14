@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use bevy::audio::{PlaybackMode, PlaybackSettings};
+use bevy::audio::PlaybackSettings;
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
@@ -22,8 +22,8 @@ impl PyPlaybackSettings {
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         *,
-        mode = None,
-        volume = None,
+        mode = PyPlaybackMode::Once,
+        volume = PyVolume::Linear { value: 1.0 },
         speed = 1.0,
         paused = false,
         muted = false,
@@ -33,8 +33,8 @@ impl PyPlaybackSettings {
         duration = None
     ))]
     pub fn new(
-        mode: Option<PyPlaybackMode>,
-        volume: Option<PyVolume>,
+        mode: PyPlaybackMode,
+        volume: PyVolume,
         speed: f32,
         paused: bool,
         muted: bool,
@@ -44,8 +44,8 @@ impl PyPlaybackSettings {
         duration: Option<Duration>,
     ) -> PyResult<PyClassInitializer<Self>> {
         let settings = PlaybackSettings {
-            mode: mode.map(Into::into).unwrap_or(PlaybackMode::Once),
-            volume: volume.map(Into::into).unwrap_or_default(),
+            mode: mode.into(),
+            volume: volume.into(),
             speed: validate_speed(speed)?,
             paused,
             muted,

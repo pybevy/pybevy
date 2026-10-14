@@ -1,32 +1,32 @@
+use std::ops::Range;
+
 use bevy::camera::Viewport;
 use pybevy_core::{
-    FromBorrowedStorage,
+    FromBorrowedStorage, StorageError,
     field_storage::FieldStorage,
     public_error::{UNSUPPORTED_COMPARISON, inverted_range, value_out_of_range},
 };
 use pybevy_macros::pyfield;
-use pybevy_math::uvec2::PyUVec2;
-use pyo3::{
-    basic::CompareOp,
-    exceptions::{PyTypeError, PyValueError},
-    prelude::*,
-};
+use pybevy_math::{range::PyRange, uvec2::PyUVec2};
+use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 /// wgpu rejects a depth range outside 0.0..=1.0, one validation error per frame.
-fn check_depth(depth: (f32, f32)) -> PyResult<(f32, f32)> {
-    for (name, value) in [("depth near", depth.0), ("depth far", depth.1)] {
+fn check_depth(depth: &Range<f32>) -> Result<(), StorageError> {
+    for (name, value) in [("depth near", depth.start), ("depth far", depth.end)] {
         if !(0.0..=1.0).contains(&value) {
-            return Err(PyValueError::new_err(value_out_of_range(
+            return Err(StorageError::InvalidValue(value_out_of_range(
                 name, 0.0, 1.0, value,
             )));
         }
     }
-    if depth.0 > depth.1 {
-        return Err(PyValueError::new_err(inverted_range(
-            "depth", depth.0, depth.1,
+    if depth.start > depth.end {
+        return Err(StorageError::InvalidValue(inverted_range(
+            "depth",
+            depth.start,
+            depth.end,
         )));
     }
-    Ok(depth)
+    Ok(())
 }
 
 #[pyfield]
@@ -39,17 +39,18 @@ pub struct PyViewport {
 #[pymethods]
 impl PyViewport {
     #[new]
-    #[pyo3(signature = (*, physical_position = PyUVec2::ZERO, physical_size = PyUVec2::ONE, depth=(0.0, 1.0)))]
+    #[pyo3(signature = (*, physical_position = PyUVec2::ZERO, physical_size = PyUVec2::ONE, depth = PyRange::from_range(0.0, 1.0)))]
     pub fn new(
         physical_position: PyUVec2,
         physical_size: PyUVec2,
-        depth: (f32, f32),
+        depth: PyRange,
     ) -> PyResult<Self> {
-        let depth = check_depth(depth)?;
+        let depth = depth.try_into()?;
+        check_depth(&depth)?;
         Ok(Self::from_owned(Viewport {
             physical_position: physical_position.try_into()?,
             physical_size: physical_size.try_into()?,
-            depth: depth.0..depth.1,
+            depth,
         }))
     }
 
@@ -80,25 +81,25 @@ impl PyViewport {
     }
 
     #[getter]
-    pub fn depth(&self) -> PyResult<(f32, f32)> {
-        let viewport = self.as_ref()?;
-        Ok((viewport.depth.start, viewport.depth.end))
+    pub fn depth(&self) -> PyResult<PyRange> {
+        Ok(self
+            .storage
+            .borrow_validated_field_as(|v| &v.depth, |v| &mut v.depth, check_depth)?)
     }
 
     #[setter]
-    pub fn set_depth(&mut self, value: (f32, f32)) -> PyResult<()> {
-        // Authority first: an expired viewport must report that, not a
-        // complaint about the value it was never allowed to store.
+    pub fn set_depth(&mut self, value: &PyRange) -> PyResult<()> {
+        let depth = value.try_into()?;
         let mut viewport = self.as_mut()?;
-        let depth = check_depth(value)?;
-        viewport.depth = depth.0..depth.1;
+        check_depth(&depth)?;
+        viewport.depth = depth;
         Ok(())
     }
 
     pub fn __repr__(&self) -> PyResult<String> {
         let viewport = self.as_ref()?;
         Ok(format!(
-            "Viewport(physical_position=UVec2({}, {}), physical_size=UVec2({}, {}), depth=({}, {}))",
+            "Viewport(physical_position=UVec2({}, {}), physical_size=UVec2({}, {}), depth=Range({}, {}))",
             viewport.physical_position.x,
             viewport.physical_position.y,
             viewport.physical_size.x,

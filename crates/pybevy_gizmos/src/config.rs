@@ -9,7 +9,8 @@ use bevy::{
 };
 use pybevy_camera::render_layers::PyRenderLayers;
 use pybevy_core::{
-    ComponentStorage, FieldStorage, FromBorrowedStorage, PyResource, ResourceStorage, inventory,
+    ComponentStorage, FieldStorage, FromBorrowedStorage, Omittable, PyResource, ResourceStorage,
+    inventory,
     public_error::{
         DEFAULT_GIZMO_CONFIG_MISSING, UNSUPPORTED_GIZMO_LINE_STYLE, missing_gizmo_config_group,
         unregistered_gizmo_config_group,
@@ -280,16 +281,16 @@ impl PyGizmoConfig {
         enabled = true,
         line = PyGizmoLineConfig::default(),
         depth_bias = 0.0,
-        render_layers = None
+        render_layers = Omittable::default()
     ))]
     pub fn new(
         enabled: bool,
         line: PyGizmoLineConfig,
         depth_bias: f32,
-        render_layers: Option<&PyRenderLayers>,
+        render_layers: Omittable<PyRef<'_, PyRenderLayers>>,
     ) -> PyResult<Self> {
-        let render_layers = match render_layers {
-            Some(layers) => layers.as_ref()?.clone(),
+        let render_layers = match render_layers.into_option() {
+            Some(layers) => (*layers).as_ref()?.clone(),
             None => RenderLayers::default(),
         };
         Ok(Self::from_owned(GizmoConfig {

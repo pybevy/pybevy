@@ -4,6 +4,23 @@ pub mod pyo3;
 
 use crate::public_error;
 
+/// A constructor argument whose omission selects a computed default; explicit `None` is rejected.
+#[derive(Debug, Clone, Default)]
+pub enum Omittable<T> {
+    #[default]
+    Omitted,
+    Supplied(T),
+}
+
+impl<T> Omittable<T> {
+    pub fn into_option(self) -> Option<T> {
+        match self {
+            Self::Omitted => None,
+            Self::Supplied(value) => Some(value),
+        }
+    }
+}
+
 pub fn check_conflict(
     ty: &str,
     native: &[(&str, bool)],

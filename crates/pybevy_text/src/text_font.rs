@@ -8,9 +8,9 @@ use pyo3::prelude::*;
 
 use crate::{
     font_features::PyFontFeatures,
-    font_size::{PyFontSize, extract_font_size_from_any},
+    font_size::{IntoFontSize, PyFontSize, extract_font_size_from_any},
     font_smoothing::PyFontSmoothing,
-    font_source::{PyFontSource, extract_font_source_from_any},
+    font_source::{IntoFontSource, PyFontSource},
     font_style::PyFontStyle,
     font_weight::PyFontWeight,
     font_width::PyFontWidth,
@@ -50,8 +50,8 @@ impl PyTextFont {
     #[new]
     #[pyo3(signature = (
         *,
-        font = None,
-        font_size = None,
+        font = IntoFontSource(TextFont::default().font),
+        font_size = IntoFontSize(TextFont::default().font_size),
         weight = Self::default_weight(),
         width = Self::default_width(),
         style = Self::default_style(),
@@ -59,26 +59,17 @@ impl PyTextFont {
         font_features = Self::default_font_features()
     ))]
     pub fn new(
-        font: Option<&Bound<'_, PyAny>>,
-        font_size: Option<&Bound<'_, PyAny>>,
+        font: IntoFontSource,
+        font_size: IntoFontSize,
         weight: PyFontWeight,
         width: PyFontWidth,
         style: PyFontStyle,
         font_smoothing: PyFontSmoothing,
         font_features: PyFontFeatures,
     ) -> PyResult<PyClassInitializer<Self>> {
-        let font = match font {
-            Some(obj) => extract_font_source_from_any(obj)?,
-            None => FontSource::default(),
-        };
-        let font_size = match font_size {
-            Some(obj) => extract_font_size_from_any(obj)?,
-            None => TextFont::default().font_size,
-        };
-
         Ok(Self::from_owned(TextFont {
-            font,
-            font_size,
+            font: font.0,
+            font_size: font_size.0,
             font_smoothing: font_smoothing.into(),
             weight: weight.into(),
             width: width.into(),
@@ -113,8 +104,8 @@ impl PyTextFont {
     }
 
     #[setter]
-    pub fn set_font(&mut self, font: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.as_mut()?.font = extract_font_source_from_any(font)?;
+    pub fn set_font(&mut self, font: IntoFontSource) -> PyResult<()> {
+        self.as_mut()?.font = font.0;
         Ok(())
     }
 
@@ -124,8 +115,8 @@ impl PyTextFont {
     }
 
     #[setter]
-    pub fn set_font_size(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.as_mut()?.font_size = extract_font_size_from_any(value)?;
+    pub fn set_font_size(&mut self, value: IntoFontSize) -> PyResult<()> {
+        self.as_mut()?.font_size = value.0;
         Ok(())
     }
 

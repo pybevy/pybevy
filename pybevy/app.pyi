@@ -304,9 +304,9 @@ class TaskPoolOptions:
         *,
         min_total_threads: int = 1,
         max_total_threads: int = ...,
-        io: TaskPoolThreadAssignmentPolicy | None = None,
-        async_compute: TaskPoolThreadAssignmentPolicy | None = None,
-        compute: TaskPoolThreadAssignmentPolicy | None = None,
+        io: TaskPoolThreadAssignmentPolicy = ...,
+        async_compute: TaskPoolThreadAssignmentPolicy = ...,
+        compute: TaskPoolThreadAssignmentPolicy = ...,
     ) -> None: ...
     @staticmethod
     def with_num_threads(thread_count: int) -> TaskPoolOptions: ...
@@ -339,7 +339,7 @@ class TaskPoolPlugin(Plugin):
     objects, so field edits made before adding the plugin are preserved.
     """
 
-    def __init__(self, *, task_pool_options: TaskPoolOptions | None = None) -> None: ...
+    def __init__(self, *, task_pool_options: TaskPoolOptions = ...) -> None: ...
     @property
     def task_pool_options(self) -> TaskPoolOptions: ...
     @task_pool_options.setter

@@ -78,6 +78,7 @@ fn uses_borrow_field_pattern(method: &syn::ImplItemFn) -> bool {
         || body.contains("borrow_field_as")
         || body.contains("borrow_optional_field")
         || body.contains("borrow_resolved")
+        || body.contains("borrow_validated_field")
         || body.contains("borrow_asset_field")
         || body.contains("from_component_field")
         || body.contains("from_resource_field")

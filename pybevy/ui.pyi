@@ -781,7 +781,7 @@ class OverflowClipMargin:
     def __init__(
         self,
         *,
-        visual_box: VisualBox | None = None,
+        visual_box: VisualBox = VisualBox.PaddingBox,
         margin: float = 0.0
     ) -> None:
         """Create an overflow clip margin.
@@ -896,9 +896,9 @@ class UiTransform(Component):
     def __init__(
         self,
         *,
-        translation: Val2 | None = None,
-        scale: Vec2 | None = None,
-        rotation: Rot2 | None = None
+        translation: Val2 = Val2.ZERO,
+        scale: Vec2 = Vec2.ONE,
+        rotation: Rot2 = Rot2.IDENTITY
     ) -> None:
         """Create a UiTransform with optional translation, scale, and rotation."""
 
@@ -1134,16 +1134,16 @@ class Node(Component):
         overflow: Overflow = ...,
         scrollbar_width: float = 0.0,
         overflow_clip_margin: OverflowClipMargin = ...,
-        left: Val | float | None = None,
-        right: Val | float | None = None,
-        top: Val | float | None = None,
-        bottom: Val | float | None = None,
-        width: Val | float | None = None,
-        height: Val | float | None = None,
-        min_width: Val | float | None = None,
-        min_height: Val | float | None = None,
-        max_width: Val | float | None = None,
-        max_height: Val | float | None = None,
+        left: Val | float = Val.Auto(),
+        right: Val | float = Val.Auto(),
+        top: Val | float = Val.Auto(),
+        bottom: Val | float = Val.Auto(),
+        width: Val | float = Val.Auto(),
+        height: Val | float = Val.Auto(),
+        min_width: Val | float = Val.Auto(),
+        min_height: Val | float = Val.Auto(),
+        max_width: Val | float = Val.Auto(),
+        max_height: Val | float = Val.Auto(),
         aspect_ratio: float | None = None,
         align_items: AlignItems = ...,
         justify_items: JustifyItems = ...,
@@ -1160,9 +1160,9 @@ class Node(Component):
         flex_wrap: FlexWrap = ...,
         flex_grow: float = 0.0,
         flex_shrink: float = 1.0,
-        flex_basis: Val | float | None = None,
-        row_gap: Val | float | None = None,
-        column_gap: Val | float | None = None,
+        flex_basis: Val | float = Val.Auto(),
+        row_gap: Val | float = Val.ZERO,
+        column_gap: Val | float = Val.ZERO,
         grid_auto_flow: GridAutoFlow = ...,
         grid_template_rows: list[RepeatedGridTrack] = ...,
         grid_template_columns: list[RepeatedGridTrack] = ...,
@@ -1560,10 +1560,10 @@ class BorderColor(Component):
         self,
         color: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza | None = None,
         *,
-        top: Color | None = None,
-        right: Color | None = None,
-        bottom: Color | None = None,
-        left: Color | None = None,
+        top: Color = ...,
+        right: Color = ...,
+        bottom: Color = ...,
+        left: Color = ...,
     ) -> None: ...
 
     @staticmethod
@@ -3550,7 +3550,7 @@ class ShadowStyle:
     def __init__(
         self,
         *,
-        color: Color | None = None,
+        color: Color = Color.BLACK,
         x_offset: Val = ...,
         y_offset: Val = ...,
         spread_radius: Val = ...,
@@ -3773,8 +3773,8 @@ class TextShadow(Component):
     def __init__(
         self,
         *,
-        offset: Vec2 | None = None,
-        color: Color | None = None
+        offset: Vec2 = Vec2(4.0, 4.0),
+        color: Color = Color.linear_rgba(0.0, 0.0, 0.0, 0.75)
     ) -> None:
         """Create a text shadow.
 

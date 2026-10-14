@@ -37,21 +37,15 @@ pub struct PyTextureAtlasLayout {
 #[pymethods]
 impl PyTextureAtlasLayout {
     #[new]
-    #[pyo3(signature = (*, size = PyUVec2::ZERO, textures = None))]
-    pub fn new(
-        size: PyUVec2,
-        textures: Option<Vec<PyURect>>,
-    ) -> PyResult<Py<PyTextureAtlasLayout>> {
+    #[pyo3(signature = (*, size = PyUVec2::ZERO, textures = Vec::new()))]
+    pub fn new(size: PyUVec2, textures: Vec<PyURect>) -> PyResult<Py<PyTextureAtlasLayout>> {
         Python::attach(|py| {
             let layout = TextureAtlasLayout {
                 size: size.try_into()?,
-                textures: match textures {
-                    Some(v) => v
-                        .into_iter()
-                        .map(TryInto::try_into)
-                        .collect::<PyResult<Vec<_>>>()?,
-                    None => Vec::new(),
-                },
+                textures: textures
+                    .into_iter()
+                    .map(TryInto::try_into)
+                    .collect::<PyResult<Vec<_>>>()?,
             };
             Py::new(py, Self::from_owned(layout))
         })

@@ -51,7 +51,7 @@ pub(crate) use asset_path::{
 };
 pub use asset_path::{
     ReadField, ReadIndex, ReadKey, ReadVariant, RevalidatingMut, RevalidatingRef,
-    RevalidatingSource, WriteField, WriteIndex, WriteKey, WriteVariant,
+    RevalidatingSource, ValidateField, WriteField, WriteIndex, WriteKey, WriteVariant,
 };
 pub use asset_runtime::{AssetRuntimeCore, AssetRuntimeError};
 pub use borrowed::{BorrowedMut, BorrowedRef};
