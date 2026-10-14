@@ -3,8 +3,8 @@ use bevy::{
     image::{Image, TextureAtlasLayout, TextureAtlasSources},
     platform::collections::HashMap,
 };
-use pybevy_core::handle::PyHandle;
-use pyo3::prelude::*;
+use pybevy_core::{PyAssetId, handle::PyHandle, materialize_asset_id, public_error};
+use pyo3::{exceptions::PyTypeError, prelude::*, types::PyDict};
 
 use crate::texture_atlas::PyTextureAtlas;
 
@@ -39,24 +39,41 @@ impl PyTextureAtlasSources {
             .map(PyTextureAtlas::from))
     }
 
-    pub fn len(&self) -> usize {
-        self.inner.texture_ids.len()
+    #[getter]
+    pub fn texture_ids<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let ids = PyDict::new(py);
+        for (id, index) in &self.inner.texture_ids {
+            ids.set_item(materialize_asset_id(py, PyAssetId::from(id))?, *index)?;
+        }
+        Ok(ids)
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.inner.texture_ids.is_empty()
-    }
-
-    pub fn indices(&self) -> Vec<usize> {
-        self.inner.texture_ids.values().copied().collect()
+    #[setter]
+    pub fn set_texture_ids(&mut self, ids: &Bound<'_, PyDict>) -> PyResult<()> {
+        let mut texture_ids = HashMap::default();
+        for (id, index) in ids.iter() {
+            let id = id.extract::<PyAssetId>()?;
+            let typed = id.untyped().try_typed::<Image>().map_err(|_| {
+                PyTypeError::new_err(public_error::asset_type_mismatch(
+                    id.asset_type_name().unwrap_or("Unknown"),
+                    "Image",
+                ))
+            })?;
+            texture_ids.insert(typed, index.extract::<usize>()?);
+        }
+        self.inner.texture_ids = texture_ids;
+        Ok(())
     }
 
     pub fn __len__(&self) -> usize {
-        self.len()
+        self.inner.texture_ids.len()
     }
 
     pub fn __repr__(&self) -> String {
-        format!("TextureAtlasSources(texture_count={})", self.len())
+        format!(
+            "TextureAtlasSources(texture_count={})",
+            self.inner.texture_ids.len()
+        )
     }
 }
 

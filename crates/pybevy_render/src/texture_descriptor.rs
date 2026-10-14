@@ -3,7 +3,10 @@ use pybevy_core::{FieldStorage, FromBorrowedStorage};
 use pybevy_macros::pyfield;
 use pyo3::prelude::*;
 
-use crate::texture_usages::PyTextureUsages;
+use crate::{
+    texture_dimension::PyTextureDimension, texture_format::PyTextureFormat,
+    texture_usages::PyTextureUsages,
+};
 
 #[pyfield]
 #[pyclass(name = "TextureDescriptor", module = "pybevy.render", from_py_object)]
@@ -14,6 +17,39 @@ pub struct PyTextureDescriptor {
 
 #[pymethods]
 impl PyTextureDescriptor {
+    #[getter]
+    pub fn mip_level_count(&self) -> PyResult<u32> {
+        Ok(self.as_ref()?.mip_level_count)
+    }
+
+    #[setter]
+    pub fn set_mip_level_count(&mut self, mip_level_count: u32) -> PyResult<()> {
+        self.as_mut()?.mip_level_count = mip_level_count;
+        Ok(())
+    }
+
+    #[getter]
+    pub fn dimension(&self) -> PyResult<PyTextureDimension> {
+        Ok(self.as_ref()?.dimension.into())
+    }
+
+    #[setter]
+    pub fn set_dimension(&mut self, dimension: PyTextureDimension) -> PyResult<()> {
+        self.as_mut()?.dimension = dimension.into();
+        Ok(())
+    }
+
+    #[getter]
+    pub fn format(&self) -> PyResult<PyTextureFormat> {
+        PyTextureFormat::try_from(self.as_ref()?.format)
+    }
+
+    #[setter]
+    pub fn set_format(&mut self, format: PyTextureFormat) -> PyResult<()> {
+        self.as_mut()?.format = format.into();
+        Ok(())
+    }
+
     #[getter]
     pub fn usage(&self) -> PyResult<PyTextureUsages> {
         Ok(self.storage.borrow_resolved_field_as(

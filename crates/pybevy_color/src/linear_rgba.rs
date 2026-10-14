@@ -128,6 +128,17 @@ impl PyLinearRgba {
         Ok(())
     }
 
+    pub fn smooth_nudge(
+        &mut self,
+        target: &PyLinearRgba,
+        decay_rate: f32,
+        delta: f32,
+    ) -> PyResult<()> {
+        let target = *target.as_ref()?;
+        self.as_mut()?.smooth_nudge(&target, decay_rate, delta);
+        Ok(())
+    }
+
     pub fn darker(&self, amount: f32) -> PyResult<Self> {
         Ok(PyLinearRgba::from_owned(self.as_ref()?.darker(amount)))
     }
@@ -154,16 +165,6 @@ impl PyLinearRgba {
 
     pub fn distance(&self, other: &Self) -> PyResult<f32> {
         Ok(self.as_ref()?.distance(other.as_ref()?.reborrow()))
-    }
-
-    pub fn to_tuple(&self) -> PyResult<(f32, f32, f32, f32)> {
-        let color = self.as_ref()?;
-        Ok((color.red, color.green, color.blue, color.alpha))
-    }
-
-    #[staticmethod]
-    pub fn from_tuple(t: (f32, f32, f32, f32)) -> Self {
-        PyLinearRgba::from_owned(LinearRgba::new(t.0, t.1, t.2, t.3))
     }
 
     #[getter]

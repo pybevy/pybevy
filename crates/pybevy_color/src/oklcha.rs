@@ -174,7 +174,7 @@ impl PyOklcha {
         Ok(self.as_ref()?.distance_squared(other.as_ref()?.reborrow()))
     }
 
-    pub fn to_linear(&self) -> PyResult<PyLinearRgba> {
+    pub fn to_linear_rgba(&self) -> PyResult<PyLinearRgba> {
         let linear: LinearRgba = (*self.as_ref()?).into();
         Ok(PyLinearRgba::from_owned(linear))
     }

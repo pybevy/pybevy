@@ -1588,6 +1588,7 @@ reason = "Bevy 0.19.1 bevy_mesh::Mesh::new maps primitive_topology and asset_usa
 "pybevy.render.PyColorGrading" = { parameter_renames = { global = "global_" }, reason = "Bevy 0.19.1 bevy_render::view::ColorGrading fields define the established Python constructor; Python escapes the global spelling" }
 "pybevy.render.PyExtent3d" = "Bevy 0.19.1 re-export of wgpu_types::Extent3d fields defines the established Python constructor"
 "pybevy.render.PyTemporalJitter" = "Bevy 0.19.1 bevy_render::camera::TemporalJitter fields define the established Python constructor"
+"pybevy.render.PyTextureViewDescriptor" = "Bevy 0.19.1 re-export of wgpu_types::TextureViewDescriptor fields define the Python constructor"
 "pybevy.sprite.PyBorderRect" = "Bevy 0.19.1 bevy_sprite::BorderRect fields define the established Python constructor"
 "pybevy.sprite.PyColorMaterial" = "Bevy 0.19.1 bevy_sprite_render::ColorMaterial fields define the established Python constructor"
 "pybevy.sprite.PySprite" = "Bevy 0.19.1 bevy_sprite::Sprite fields define the established Python constructor"
@@ -2256,10 +2257,6 @@ intentional_signature_diffs = [
 ]
 notes = "textures is read-only; add_texture extends the atlas. new_empty param renamed dimensions to size"
 
-[bevy.type_ignores.ImageLoaderSettings]
-intentional_readonly_properties = ["format"]
-notes = "format is selected through with_format; other settings remain writable"
-
 # Render asset usages - bitflags
 [bevy.type_ignores.RenderAssetUsages]
 intentional_signature_diffs = ["contains", "insert", "remove", "toggle"]
@@ -2333,6 +2330,10 @@ notes = "Uses PySphere wrapper instead of bevy::camera::primitives::Sphere"
 intentional_missing_methods = ["from_world"]
 ignore_constructor_warnings = true
 notes = "from_world is FromWorld trait (not user-callable); Bevy's OrthographicProjection has no Default impl, so its keyword defaults are flagged even though they mirror OrthographicProjection::default_3d() field for field"
+
+[bevy.type_ignores.RenderCreation]
+intentional_missing_variants = ["Manual"]
+notes = "Manual(RenderResources) carries a live RenderDevice, queue, adapter and instance that only native code can create; Python configures the renderer through Automatic(WgpuSettings)"
 
 # Projection: custom<P> requires generic trait bounds
 [bevy.type_ignores.Projection]
@@ -3422,6 +3423,45 @@ code = "W037"
 reason = "Live view into one node of an AnimationGraph (graph + AnimationNodeIndex) with no standalone value; Bevy creates nodes through AnimationGraph::add_clip/add_blend/add_additive_blend, not Default"
 path = "animation.AnimationGraphNode"
 
+[[validation.exceptions]]
+code = "W038"
+reason = "Python views of Bevy's Image.data: Option<Vec<u8>> field, which cannot be lent to Python as a Rust slice: data()/data_mut() borrow the buffer as read-only/writable arrays under asset authority, data_copy() returns an owned array, and data_len() reads the length without acquiring a view (the ShaderBuffer data accessor family)"
+paths = [
+    "image.Image.data_copy",
+    "image.Image.data_len",
+    "image.Image.data_mut",
+]
+
+[[validation.exceptions]]
+code = "W038"
+reason = "Reviewed PyBevy render-target conveniences (BL-120 maintainer decision 2026-09-13): new_render_target is Bevy's new_target_texture(Rgba8UnormSrgb) plus COPY_SRC for CPU readback, and new_tensor_target adds the storage and sampling usages GPU tensor passes need; the Bevy spelling remains available through new_target_texture and texture_descriptor.usage"
+paths = [
+    "image.Image.new_render_target",
+    "image.Image.new_tensor_target",
+]
+
+[[validation.exceptions]]
+code = "W038"
+reason = "PyBevy image encoding: Bevy converts through Image::try_into_dynamic and leaves encoding to the image crate, whose DynamicImage has no Python wrapper, so encoding to bytes or a file is exposed on Image for screenshot and headless capture workflows"
+paths = [
+    "image.Image.save_to_buffer",
+    "image.Image.save_to_file",
+]
+
+[[validation.exceptions]]
+code = "W038"
+reason = "FontAtlasSet derefs to HashMap<FontAtlasKey, Vec<FontAtlas>>; Python reads that map through the mapping protocol (__iter__ over keys, __len__, items() for key/atlas pairs) instead of Rust's HashMap iterator methods"
+path = "text.FontAtlasSet.items"
+
+[[validation.exceptions]]
+code = "W040"
+reason = "Unit-only Bevy enum component: PyO3 enums cannot extend PyComponent, so the variants are compact class attributes of a pywrap struct (the reviewed Visibility/Interaction shape) rather than a #[pyclass] enum"
+paths = [
+    "core_pipeline.Tonemapping",
+    "pbr.WireframeTopology",
+    "render.Msaa",
+]
+
 # API drift (W037-W041) that existed when the checks landed. Delete entries
 # as the drift is fixed or moved to a durable reason.
 
@@ -3432,10 +3472,6 @@ paths = [
     "core.AssetPath",
     "ecs.DespawnOnEnter",
     "ecs.DespawnOnExit",
-    "pbr.MeshMaterial3d",
-    "pbr.MeshMaterial3dForwardDecal",
-    "pbr.MeshMaterial3dShader",
-    "sprite.MeshMaterial2d",
 ]
 
 [[validation.exceptions]]
@@ -3456,17 +3492,6 @@ paths = [
     "camera.Visibility.set_hidden",
     "camera.Visibility.set_inherited",
     "camera.Visibility.set_visible",
-    "color.Hsla.to_linear",
-    "color.Hsva.to_linear",
-    "color.Hwba.to_linear",
-    "color.Laba.to_linear",
-    "color.Lcha.to_linear",
-    "color.LinearRgba.from_tuple",
-    "color.LinearRgba.to_tuple",
-    "color.Oklaba.to_linear",
-    "color.Oklcha.to_linear",
-    "color.Srgba.to_linear",
-    "color.Xyza.to_linear",
     "core.AssetId.asset_type_class",
     "core.AssetId.uuid_from_u128",
     "core.Children.entities",
@@ -3474,7 +3499,6 @@ paths = [
     "core.EntityIndex.from_raw",
     "core.Handle.asset_type_class",
     "core.Handle.uuid_from_u128",
-    "core_pipeline.Tonemapping.PbrNeutral",
     "ecs.Commands.despawn",
     "ecs.DespawnOnEnter.state_value",
     "ecs.DespawnOnExit.state_value",
@@ -3500,21 +3524,6 @@ paths = [
     "ecs.SystemSet.name",
     "ecs.World.despawn_observer",
     "ecs.World.resource_entity",
-    "image.Image.data_copy",
-    "image.Image.data_len",
-    "image.Image.data_mut",
-    "image.Image.dimension",
-    "image.Image.format",
-    "image.Image.mip_level_count",
-    "image.Image.new_render_target",
-    "image.Image.new_tensor_target",
-    "image.Image.save_to_buffer",
-    "image.Image.save_to_file",
-    "image.Image.texture_view_dimension",
-    "image.ImageLoaderSettings.with_format",
-    "image.TextureAtlasSources.indices",
-    "image.TextureAtlasSources.is_empty",
-    "image.TextureAtlasSources.len",
     "input.Gamepad.get_axis",
     "input.Gamepad.get_axis_unclamped",
     "input.Gamepad.get_button",
@@ -3532,14 +3541,6 @@ paths = [
     "mesh.MorphWeights.set_weight",
     "mesh.SkinnedMeshInverseBindposes.get",
     "mesh.SkinnedMeshInverseBindposes.to_list",
-    "render.RenderPlugin.power_preference",
-    "text.Font.try_from_bytes",
-    "text.FontAtlasSet.items",
-    "text.FontFeatureTag.value",
-    "text.FontSize.value",
-    "text.TextLayout.new_with_justify",
-    "text.TextLayout.new_with_linebreak",
-    "text.TextLayout.new_with_no_wrap",
     "ui.BoxShadow.clear",
     "ui.BoxShadow.is_empty",
     "ui.BoxShadow.pop",
@@ -3637,8 +3638,6 @@ paths = [
     "ecs.World.add_observer",
     "ecs.World.iter_entities",
     "ecs.World.spawn",
-    "image.Image.pixel_bytes",
-    "image.Image.pixel_data_offset",
     "mesh.Mesh.indices",
     "transform.GlobalTransform.back",
     "transform.GlobalTransform.down",
@@ -3655,12 +3654,9 @@ reason = "Existing drift (Bevy enum wrapped as an ordinary class) found when W04
 paths = [
     "camera.Visibility",
     "core.Handle",
-    "core_pipeline.Tonemapping",
     "ecs.NextState",
     "light.ShadowFilteringMethod",
     "mesh.Indices",
-    "pbr.WireframeTopology",
-    "render.Msaa",
     "ui.FocusPolicy",
     "ui.Interaction",
     "window.CursorIcon",
@@ -3698,13 +3694,4 @@ paths = [
     "animation.AnimatableKeyframeCurve.sample",
     "animation.AnimatableKeyframeCurve.sample_clamped",
     "animation.AnimatableKeyframeCurve.sample_unchecked",
-    "color.Laba.interpolate_stable_assign",
-    "color.Laba.smooth_nudge",
-    "color.LinearRgba.smooth_nudge",
-    "color.Oklaba.interpolate_stable_assign",
-    "color.Oklaba.smooth_nudge",
-    "color.Srgba.interpolate_stable_assign",
-    "color.Srgba.smooth_nudge",
-    "color.Xyza.interpolate_stable_assign",
-    "color.Xyza.smooth_nudge",
 ]

@@ -27,7 +27,7 @@ use pybevy_math::{uvec2::PyUVec2, uvec3::PyUVec3, vec2::PyVec2};
 use pybevy_render::{
     extent3d::PyExtent3d, texture_descriptor::PyTextureDescriptor,
     texture_dimension::PyTextureDimension, texture_format::PyTextureFormat,
-    texture_view_dimension::PyTextureViewDimension,
+    texture_view_descriptor::PyTextureViewDescriptor,
 };
 use pyo3::{
     PyTraverseError, PyVisit,
@@ -906,6 +906,13 @@ impl ImagePixelContextMut {
     }
 }
 
+fn texture_access_error(error: TextureAccessError) -> PyErr {
+    PyRuntimeError::new_err(format!(
+        "{}: {error}",
+        public_error::IMAGE_INVALID_PIXEL_COORDINATES
+    ))
+}
+
 #[pyasset(Image, bridge)]
 #[pyclass(name = "Image", module = "pybevy.image", extends = PyAsset, skip_from_py_object)]
 #[derive(Debug)]
@@ -1225,18 +1232,20 @@ impl PyImage {
         })
     }
 
-    pub fn pixel_data_offset(&self, coords: PyUVec3) -> PyResult<Option<usize>> {
+    pub fn pixel_data_offset(&self, coords: PyUVec3) -> PyResult<usize> {
         image_with!(self, |image: &Image| {
-            Ok(image.pixel_data_offset(coords.try_into()?).ok())
+            image
+                .pixel_data_offset(coords.try_into()?)
+                .map_err(texture_access_error)
         })
     }
 
-    pub fn pixel_bytes(&self, py: Python<'_>, coords: PyUVec3) -> PyResult<Option<Py<PyBytes>>> {
+    pub fn pixel_bytes(&self, py: Python<'_>, coords: PyUVec3) -> PyResult<Py<PyBytes>> {
         image_with!(self, |image: &Image| {
-            Ok(image
+            let bytes = image
                 .pixel_bytes(coords.try_into()?)
-                .ok()
-                .map(|bytes| PyBytes::new(py, bytes).unbind()))
+                .map_err(texture_access_error)?;
+            Ok(PyBytes::new(py, bytes).unbind())
         })
     }
 
@@ -1297,64 +1306,26 @@ impl PyImage {
     }
 
     #[getter]
-    pub fn format(&self) -> PyResult<PyTextureFormat> {
-        image_with!(self, |image: &Image| {
-            PyTextureFormat::try_from(image.texture_descriptor.format)
-        })
-    }
-
-    #[getter]
-    pub fn dimension(&self) -> PyResult<PyTextureDimension> {
-        image_with!(self, |image: &Image| {
-            Ok(image.texture_descriptor.dimension.into())
-        })
-    }
-
-    #[getter]
-    pub fn texture_view_dimension(&self) -> PyResult<Option<PyTextureViewDimension>> {
-        image_with!(self, |image: &Image| {
-            Ok(image
-                .texture_view_descriptor
-                .as_ref()
-                .and_then(|descriptor| descriptor.dimension)
-                .map(Into::into))
-        })
+    pub fn texture_view_descriptor(&self) -> PyResult<Option<PyTextureViewDescriptor>> {
+        Ok(self
+            .storage
+            .borrow_optional_field(
+                "Image.texture_view_descriptor",
+                |image: &Image| &image.texture_view_descriptor,
+                |image: &mut Image| &mut image.texture_view_descriptor,
+            )?
+            .map(<PyTextureViewDescriptor as FromBorrowedStorage<_>>::from_borrowed))
     }
 
     #[setter]
-    pub fn set_texture_view_dimension(
+    pub fn set_texture_view_descriptor(
         &mut self,
-        dimension: Option<PyTextureViewDimension>,
+        descriptor: Option<PyTextureViewDescriptor>,
     ) -> PyResult<()> {
+        let descriptor = descriptor.map(TryInto::try_into).transpose()?;
         image_with_mut!(self, |image: &mut Image| {
-            match dimension {
-                Some(dimension) => {
-                    image
-                        .texture_view_descriptor
-                        .get_or_insert_default()
-                        .dimension = Some(dimension.into());
-                }
-                None => {
-                    let remove_descriptor =
-                        if let Some(descriptor) = image.texture_view_descriptor.as_mut() {
-                            descriptor.dimension = None;
-                            *descriptor == Default::default()
-                        } else {
-                            false
-                        };
-                    if remove_descriptor {
-                        image.texture_view_descriptor = None;
-                    }
-                }
-            }
+            image.texture_view_descriptor = descriptor;
             Ok(())
-        })
-    }
-
-    #[getter]
-    pub fn mip_level_count(&self) -> PyResult<u32> {
-        image_with!(self, |image: &Image| {
-            Ok(image.texture_descriptor.mip_level_count)
         })
     }
 

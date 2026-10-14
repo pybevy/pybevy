@@ -13,7 +13,7 @@ pub struct PyFont {
 #[pymethods]
 impl PyFont {
     #[staticmethod]
-    pub fn try_from_bytes(py: Python<'_>, font_data: &Bound<'_, PyBytes>) -> PyResult<Py<Self>> {
+    pub fn from_bytes(py: Python<'_>, font_data: &Bound<'_, PyBytes>) -> PyResult<Py<Self>> {
         let bytes = font_data.as_bytes().to_vec();
         let font = Font::from_bytes(bytes);
 

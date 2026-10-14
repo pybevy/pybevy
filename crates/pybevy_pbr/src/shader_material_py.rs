@@ -11,8 +11,8 @@ use bevy::{
 use pybevy_color::linear_rgba::PyLinearRgba;
 use pybevy_core::{
     AssetInputConverter, AssetStorage, ComponentStorage, FieldStorage, FromBorrowedStorage,
-    LogicalTypeId, NativeAsset, PluginBuild, PyComponent, PyHandle, PyMaterial, PyPlugin,
-    ValueStorage,
+    HandleArg, LogicalTypeId, NativeAsset, PluginBuild, PyComponent, PyHandle, PyMaterial,
+    PyPlugin, ValueStorage,
     asset_path::parse_asset_path,
     ensure_asset_type, extract_handle_from_any,
     public_error::{
@@ -440,9 +440,13 @@ fn extract_shader_material_handle(
 #[pymethods]
 impl PyMeshMaterial3dShader {
     #[new]
-    pub fn new(handle: &Bound<'_, PyAny>) -> PyResult<PyClassInitializer<Self>> {
-        let (handle, logical_type_id) = extract_shader_material_handle(handle)?;
-        let (mut component, base) = Self::from_owned(MeshMaterial3d(handle));
+    #[pyo3(signature = (handle = HandleArg::default()))]
+    pub fn new(handle: HandleArg) -> PyResult<PyClassInitializer<Self>> {
+        let logical_type_id = match &handle {
+            HandleArg::Supplied(handle) => handle.logical_type_id(),
+            HandleArg::Omitted => None,
+        };
+        let (mut component, base) = Self::from_owned(MeshMaterial3d(handle.into_handle()?));
         component.logical_type_id = logical_type_id;
         Ok((component, base).into())
     }

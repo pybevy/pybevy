@@ -59,7 +59,7 @@ def _apply() -> None:
         Vec4,
     )
     from .post_process import Bloom
-    from .render import TextureUsages
+    from .render import Backends, TextureUsages
     from .sprite import Anchor
     from .text import TextBackgroundColor, TextBounds, TextColor
     from .transform import GlobalTransform, Transform
@@ -98,7 +98,7 @@ def _apply() -> None:
                 "SomewhatBoringDisplayTransform",
                 "TonyMcMapface",
                 "BlenderFilmic",
-                "PbrNeutral",
+                "KhronosPbrNeutral",
             ],
         ),
         # light
@@ -115,6 +115,19 @@ def _apply() -> None:
                 "RENDER_ATTACHMENT",
                 "STORAGE_ATOMIC",
                 "TRANSIENT",
+            ],
+        ),
+        (
+            Backends,
+            [
+                "NOOP",
+                "VULKAN",
+                "GL",
+                "METAL",
+                "DX12",
+                "BROWSER_WEBGPU",
+                "PRIMARY",
+                "SECONDARY",
             ],
         ),
         # light

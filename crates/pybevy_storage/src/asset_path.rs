@@ -11,13 +11,17 @@ use std::{
     },
 };
 
-use bevy::{asset::UntypedAssetId, ecs::component::Component};
+use bevy::{
+    asset::{Asset, UntypedAssetId},
+    ecs::component::Component,
+};
 use smallvec::SmallVec;
 
 use crate::{
-    AssetResourceReadGuard, AssetResourceWriteGuard, ComponentStorage, ComponentStorageInner,
-    FieldStorage, FieldStorageInner, StorageError, ValueStorage,
+    AssetResourceReadGuard, AssetResourceWriteGuard, AssetStorage, ComponentStorage,
+    ComponentStorageInner, FieldStorage, FieldStorageInner, StorageError, ValueStorage,
     borrowed::{BorrowedMut, BorrowedRef, RevalidatingField},
+    pyasset::AssetStorageInner,
     value_storage::ValueStorageInner,
 };
 
@@ -889,6 +893,17 @@ impl<T: Clone + Send + Sync + 'static> RevalidatingSource<T> {
             FieldStorageInner::BorrowedRef(root) => BorrowedRoot::Read(root.clone()),
             FieldStorageInner::BorrowedMut(root) => BorrowedRoot::Write(root.share()),
             FieldStorageInner::Revalidating(root) => BorrowedRoot::Component((**root).clone()),
+            _ => return None,
+        };
+        Some(BorrowedRootSource::new(root))
+    }
+}
+
+impl<T: Asset> RevalidatingSource<T> {
+    pub(crate) fn from_borrowed_asset(storage: &AssetStorage<T>) -> Option<BorrowedRootSource<T>> {
+        let root = match &storage.inner {
+            AssetStorageInner::BorrowedRef { borrow, .. } => BorrowedRoot::Read(borrow.clone()),
+            AssetStorageInner::BorrowedMut { borrow, .. } => BorrowedRoot::Write(borrow.share()),
             _ => return None,
         };
         Some(BorrowedRootSource::new(root))

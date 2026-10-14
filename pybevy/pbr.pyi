@@ -1067,7 +1067,7 @@ class ForwardDecalMaterial(Material):
 class MeshMaterial3dForwardDecal(Component):
     """Component assigning a ForwardDecalMaterial to a mesh entity."""
 
-    def __init__(self, material: Handle[ForwardDecalMaterial]) -> None: ...
+    def __init__(self, material: Handle[ForwardDecalMaterial] = ...) -> None: ...
     handle: Handle[ForwardDecalMaterial]
 
 class MeshMaterial3dShader(Component):
@@ -1086,7 +1086,7 @@ class MeshMaterial3dShader(Component):
         ```
     """
 
-    def __init__(self, handle: Handle[ShaderMaterial]) -> None: ...
+    def __init__(self, handle: Handle[ShaderMaterial] = ...) -> None: ...
 
     @property
     def handle(self) -> Handle[ShaderMaterial]:
@@ -1105,7 +1105,7 @@ class MeshMaterial3d(Component):
         MeshMaterial3d[HologramMaterial](handle)
     """
     def __class_getitem__(cls, key: type) -> type: ...
-    def __init__(self, material: Handle[StandardMaterial]) -> None: ...
+    def __init__(self, material: Handle[StandardMaterial] = ...) -> None: ...
     @property
     def handle(self) -> Handle[StandardMaterial]: ...
     @handle.setter

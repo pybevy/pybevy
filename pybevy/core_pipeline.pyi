@@ -45,7 +45,7 @@ class Tonemapping(Component):
     SomewhatBoringDisplayTransform: ClassVar[Tonemapping]
     TonyMcMapface: ClassVar[Tonemapping]
     BlenderFilmic: ClassVar[Tonemapping]
-    PbrNeutral: ClassVar[Tonemapping]
+    KhronosPbrNeutral: ClassVar[Tonemapping]
 
 class DepthPrepass(Component):
     """If added to Camera3d, depth values are copied to a separate texture."""

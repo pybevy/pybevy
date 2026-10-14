@@ -1,12 +1,18 @@
-use bevy::{app::App, render::texture::TexturePlugin};
-use pybevy_core::{
-    PluginBuild, PyPlugin,
-    repr::{ReprLiteral, object_repr},
+use std::fmt;
+
+use bevy::{
+    app::App,
+    render::{
+        RenderPlugin,
+        settings::{RenderCreation, WgpuSettings},
+        texture::TexturePlugin,
+    },
 };
+use pybevy_core::{Omittable, PluginBuild, PyPlugin, repr::ReprLiteral};
 use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
-use crate::power_preference::PyPowerPreference;
+use crate::render_creation::PyRenderCreation;
 
 #[pyplugin(TexturePlugin)]
 #[pyclass(name = "TexturePlugin", module = "pybevy.render", extends = PyPlugin, frozen, skip_from_py_object)]
@@ -30,23 +36,36 @@ impl PluginBuild for PyTexturePlugin {
 
 #[pyplugin(bevy::render::RenderPlugin, default_plugin = Render)]
 #[pyclass(name = "RenderPlugin", module = "pybevy.render", extends = PyPlugin, frozen, skip_from_py_object)]
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct PyRenderPlugin {
-    pub power_preference: Option<PyPowerPreference>,
+    pub render_creation: Option<PyRenderCreation>,
     pub synchronous_pipeline_compilation: bool,
+}
+
+impl fmt::Debug for PyRenderPlugin {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PyRenderPlugin")
+            .field(
+                "synchronous_pipeline_compilation",
+                &self.synchronous_pipeline_compilation,
+            )
+            .finish_non_exhaustive()
+    }
 }
 
 #[pymethods]
 impl PyRenderPlugin {
     #[new]
-    #[pyo3(signature = (*, power_preference = None, synchronous_pipeline_compilation = false))]
+    #[pyo3(signature = (*, render_creation = Omittable::default(), synchronous_pipeline_compilation = false))]
     pub fn new(
-        power_preference: Option<PyPowerPreference>,
+        render_creation: Omittable<PyRef<'_, PyRenderCreation>>,
         synchronous_pipeline_compilation: bool,
     ) -> PyClassInitializer<Self> {
         (
             PyRenderPlugin {
-                power_preference,
+                render_creation: render_creation
+                    .into_option()
+                    .map(|creation| (*creation).clone()),
                 synchronous_pipeline_compilation,
             },
             PyPlugin,
@@ -55,8 +74,11 @@ impl PyRenderPlugin {
     }
 
     #[getter]
-    pub fn power_preference(&self) -> Option<PyPowerPreference> {
-        self.power_preference
+    pub fn render_creation(&self, py: Python<'_>) -> PyResult<Py<PyRenderCreation>> {
+        self.render_creation
+            .clone()
+            .unwrap_or_else(|| PyRenderCreation::automatic(WgpuSettings::default()))
+            .into_object(py)
     }
 
     #[getter]
@@ -66,8 +88,8 @@ impl PyRenderPlugin {
 
     pub fn __repr__(&self) -> String {
         let mut parts = Vec::new();
-        if let Some(ref pp) = self.power_preference {
-            parts.push(format!("power_preference={}", object_repr(*pp)));
+        if let Some(creation) = &self.render_creation {
+            parts.push(format!("render_creation={}", creation.__repr__()));
         }
         if self.synchronous_pipeline_compilation {
             parts.push(format!(
@@ -75,25 +97,20 @@ impl PyRenderPlugin {
                 true.repr_literal()
             ));
         }
-        if parts.is_empty() {
-            "RenderPlugin()".to_string()
-        } else {
-            format!("RenderPlugin({})", parts.join(", "))
-        }
+        format!("RenderPlugin({})", parts.join(", "))
     }
 }
 
 impl PluginBuild for PyRenderPlugin {
     fn build(py_plugin: &Bound<'_, PyAny>, app: &mut App) -> PyResult<()> {
         let config: PyRef<'_, PyRenderPlugin> = py_plugin.extract()?;
-        let mut wgpu_settings = bevy::render::settings::WgpuSettings::default();
-        if let Some(ref pp) = config.power_preference {
-            wgpu_settings.power_preference = (*pp).into();
-        }
-        app.add_plugins(bevy::render::RenderPlugin {
-            render_creation: bevy::render::settings::RenderCreation::Automatic(Box::new(
-                wgpu_settings,
-            )),
+        let render_creation = config
+            .render_creation
+            .as_ref()
+            .map(RenderCreation::from)
+            .unwrap_or_default();
+        app.add_plugins(RenderPlugin {
+            render_creation,
             synchronous_pipeline_compilation: config.synchronous_pipeline_compilation,
             ..Default::default()
         });

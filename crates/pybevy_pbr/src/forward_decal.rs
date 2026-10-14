@@ -6,8 +6,8 @@ use bevy::{
     },
 };
 use pybevy_core::{
-    AssetStorage, ComponentStorage, FieldStorage, FromBorrowedStorage, Omittable, PyComponent,
-    PyHandle, PyMaterial, ensure_asset_type, extract_handle_from_any,
+    AssetStorage, ComponentStorage, FieldStorage, FromBorrowedStorage, HandleArg, Omittable,
+    PyComponent, PyHandle, PyMaterial, ensure_asset_type, extract_handle_from_any,
 };
 use pybevy_macros::{pyasset, pycomponent, pyfield};
 use pyo3::{PyTypeInfo, prelude::*, types::PyType};
@@ -184,13 +184,9 @@ fn extract_forward_decal_material_handle(
 #[pymethods]
 impl PyMeshMaterial3dForwardDecal {
     #[new]
-    pub fn new(material: &Bound<'_, PyAny>) -> PyResult<PyClassInitializer<Self>> {
-        Ok(
-            Self::from_owned(MeshMaterial3d(extract_forward_decal_material_handle(
-                material,
-            )?))
-            .into(),
-        )
+    #[pyo3(signature = (material = HandleArg::default()))]
+    pub fn new(material: HandleArg) -> PyResult<PyClassInitializer<Self>> {
+        Ok(Self::from_owned(MeshMaterial3d(material.into_handle()?)).into())
     }
 
     #[getter]

@@ -5,7 +5,7 @@ import numpy as np
 
 from pybevy.app import App, Plugin
 from pybevy.array import Array
-from pybevy.assets import Asset, Handle, RenderAssetUsages
+from pybevy.assets import Asset, AssetId, Handle, RenderAssetUsages
 from pybevy.collections import LiveList
 from pybevy.color import Color
 from pybevy.math import URect, UVec2, UVec3, Vec2
@@ -14,7 +14,7 @@ from pybevy.render import (
     TextureDescriptor,
     TextureDimension,
     TextureFormat,
-    TextureViewDimension,
+    TextureViewDescriptor,
 )
 
 class ImageFormat:
@@ -458,25 +458,17 @@ class Image(Asset):
             ```
         """
 
-    # Texture descriptor properties
     @property
-    def format(self) -> TextureFormat:
-        """Get the texture format of this image."""
+    def texture_view_descriptor(self) -> TextureViewDescriptor | None:
+        """Descriptor used to create this image's texture view, or None for the default view.
 
-    @property
-    def dimension(self) -> TextureDimension:
-        """Get the texture dimension (D1, D2, D3) of this image."""
+        Borrows asset authority and lifetime like texture_descriptor: nested
+        writes require get_mut access, owned images return a read-only
+        snapshot, and a retained descriptor raises once the field becomes None.
+        """
 
-    @property
-    def texture_view_dimension(self) -> TextureViewDimension | None:
-        """Explicit dimension used to interpret this image's texture view."""
-
-    @texture_view_dimension.setter
-    def texture_view_dimension(self, value: TextureViewDimension | None) -> None: ...
-
-    @property
-    def mip_level_count(self) -> int:
-        """Get the number of mip levels in this image."""
+    @texture_view_descriptor.setter
+    def texture_view_descriptor(self, value: TextureViewDescriptor | None) -> None: ...
 
     @property
     def sampler(self) -> ImageSampler:
@@ -593,7 +585,7 @@ class Image(Asset):
             - For read-only access, use `data()`
         """
 
-    def pixel_data_offset(self, coords: UVec3) -> int | None:
+    def pixel_data_offset(self, coords: UVec3) -> int:
         """Compute the byte offset where a specific pixel's data is stored.
 
         Returns the byte offset into the image data buffer for the pixel at
@@ -604,7 +596,10 @@ class Image(Asset):
                     For 1D textures, y and z are ignored. For 2D textures, z is the layer.
 
         Returns:
-            Byte offset into the data buffer, or None if coordinates are out of bounds.
+            Byte offset into the data buffer.
+
+        Raises:
+            RuntimeError: If the coordinates are out of bounds or the format has no pixel size.
 
         Example:
             ```python
@@ -614,13 +609,12 @@ class Image(Asset):
 
             img = Image(Extent3d(width=64, height=64, depth_or_array_layers=1))
             offset = img.pixel_data_offset(UVec3(10, 20, 0))
-            if offset is not None:
-                # offset = (20 * 64 + 10) * 4 = 5160 for RGBA8
-                print(f"Pixel at (10, 20) starts at byte {offset}")
+            # offset = (20 * 64 + 10) * 4 = 5160 for RGBA8
+            print(f"Pixel at (10, 20) starts at byte {offset}")
             ```
         """
 
-    def pixel_bytes(self, coords: UVec3) -> bytes | None:
+    def pixel_bytes(self, coords: UVec3) -> bytes:
         """Get a copy of the bytes for a specific pixel.
 
         Returns a copy of the raw byte data for the pixel at the given coordinates.
@@ -630,7 +624,11 @@ class Image(Asset):
             coords: Pixel coordinates as UVec3(x, y, z) where z is the array layer.
 
         Returns:
-            Copy of the pixel bytes, or None if coordinates are out of bounds or no data.
+            Copy of the pixel bytes.
+
+        Raises:
+            RuntimeError: If the coordinates are out of bounds, the format has no
+                pixel size, or the image has no CPU data.
 
         Example:
             ```python
@@ -639,10 +637,8 @@ class Image(Asset):
             from pybevy.math import UVec3
 
             img = Image.new_fill(Extent3d(width=64, height=64, depth_or_array_layers=1), [255, 0, 0, 255])  # Red
-            pixel = img.pixel_bytes(UVec3(10, 20, 0))
-            if pixel is not None:
-                r, g, b, a = pixel
-                print(f"RGBA: ({r}, {g}, {b}, {a})")
+            r, g, b, a = img.pixel_bytes(UVec3(10, 20, 0))
+            print(f"RGBA: ({r}, {g}, {b}, {a})")
             ```
 
         Notes:
@@ -1265,14 +1261,16 @@ class TextureAtlasSources:
             TextureAtlas with the correct index, or None if texture not found.
         """
 
-    def len(self) -> int:
-        """Get the number of textures in this sources map."""
+    @property
+    def texture_ids(self) -> dict[AssetId[Image], int]:
+        """A copy of the map from source image ids to their atlas indices.
 
-    def is_empty(self) -> bool:
-        """Check if the sources map is empty."""
+        Assign a whole dict to replace the map; edits to the returned copy do
+        not change these sources.
+        """
 
-    def indices(self) -> list[int]:
-        """Get all texture indices as a list."""
+    @texture_ids.setter
+    def texture_ids(self, value: dict[AssetId[Image], int]) -> None: ...
 
     def __len__(self) -> int:
         """Get the number of textures (Python len() support)."""
@@ -1509,28 +1507,16 @@ class ImageLoaderSettings:
     def __init__(
         self,
         *,
+        format: ImageFormatSetting = ...,
         is_srgb: bool = True,
         sampler: ImageSampler = ImageSampler.Default()
     ) -> None:
         """Create new image loader settings.
 
         Args:
+            format: How the image format is chosen (default: ImageFormatSetting.FromExtension()).
             is_srgb: Whether to interpret image data as sRGB (default: True).
             sampler: Sampler to use for the loaded image (default: Default sampler).
-        """
-
-    @staticmethod
-    def with_format(
-        format: ImageFormat,
-        is_srgb: bool = True,
-        sampler: ImageSampler = ImageSampler.Default(),
-    ) -> ImageLoaderSettings:
-        """Create settings with a specific image format.
-
-        Args:
-            format: The image format to use for loading.
-            is_srgb: Whether to interpret image data as sRGB (default: True).
-            sampler: Sampler to use for the loaded image.
         """
 
     @property
@@ -1550,6 +1536,9 @@ class ImageLoaderSettings:
     @property
     def format(self) -> ImageFormatSetting:
         """The format detection setting for this image."""
+
+    @format.setter
+    def format(self, value: ImageFormatSetting) -> None: ...
 
     @property
     def asset_usage(self) -> RenderAssetUsages:

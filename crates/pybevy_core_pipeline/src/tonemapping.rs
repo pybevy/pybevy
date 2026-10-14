@@ -12,7 +12,7 @@ pub struct PyTonemapping(pub(crate) Tonemapping);
 impl PyTonemapping {
     #[classattr]
     fn __pybevy_variant_aliases__() -> Vec<(&'static str, &'static str)> {
-        vec![("None", "None_"), ("KhronosPbrNeutral", "PbrNeutral")]
+        vec![("None", "None_")]
     }
 
     #[new]
@@ -72,8 +72,8 @@ impl PyTonemapping {
     }
 
     #[staticmethod]
-    #[pyo3(name = "PbrNeutral")]
-    pub fn pbr_neutral(py: Python<'_>) -> PyResult<Py<Self>> {
+    #[pyo3(name = "KhronosPbrNeutral")]
+    pub fn khronos_pbr_neutral(py: Python<'_>) -> PyResult<Py<Self>> {
         Py::new(py, Self::from_owned(Tonemapping::KhronosPbrNeutral))
     }
 
@@ -93,7 +93,7 @@ impl PyTonemapping {
             }
             Tonemapping::TonyMcMapface => "Tonemapping.TonyMcMapface",
             Tonemapping::BlenderFilmic => "Tonemapping.BlenderFilmic",
-            Tonemapping::KhronosPbrNeutral => "Tonemapping.PbrNeutral",
+            Tonemapping::KhronosPbrNeutral => "Tonemapping.KhronosPbrNeutral",
         }
     }
 }
