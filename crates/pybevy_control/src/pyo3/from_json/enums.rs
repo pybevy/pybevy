@@ -6,7 +6,7 @@ use pyo3::{
 };
 
 use crate::{
-    codec::reflect::{self as reflect_mutate},
+    codec::{enum_payload, reflect},
     pyo3::{
         enum_names,
         from_json::{
@@ -160,7 +160,7 @@ pub(crate) fn enum_field_prototype<'py>(
     let native_variant =
         enum_names::canonical_variant_name(&owner, &variant_name.to_string_lossy());
     let Some(VariantInfo::Struct(fields)) =
-        reflect_mutate::compiled_enum_variant_info(&owner_name.to_string_lossy(), &native_variant)
+        reflect::compiled_enum_variant_info(&owner_name.to_string_lossy(), &native_variant)
     else {
         return Ok(None);
     };
@@ -218,25 +218,12 @@ pub(crate) fn enum_component_variant_request(
 pub(crate) fn tagged_enum_variant_request(
     fields: &serde_json::Map<String, serde_json::Value>,
 ) -> Option<EnumVariantRequest> {
-    if let Some(serde_json::Value::String(name)) = fields.get("variant") {
-        let mut payload = fields.clone();
-        payload.remove("variant");
-        let payload = if payload.is_empty() {
-            serde_json::Value::Null
-        } else if payload.len() == 1 {
-            payload
-                .remove("value")
-                .unwrap_or(serde_json::Value::Object(payload))
-        } else {
-            serde_json::Value::Object(payload)
-        };
-        return Some(EnumVariantRequest {
-            name: name.clone(),
-            payload,
-            source: VariantSource::Named,
-        });
-    }
-    None
+    let (name, payload) = enum_payload::normalize(fields)?;
+    Some(EnumVariantRequest {
+        name: name.to_owned(),
+        payload,
+        source: VariantSource::Named,
+    })
 }
 
 fn variant_payload_type<'py>(
@@ -250,7 +237,7 @@ fn variant_payload_type<'py>(
     }
     let owner_name = owner.name().ok()?;
     let Some(VariantInfo::Tuple(payload)) =
-        reflect_mutate::compiled_enum_variant_info(&owner_name.to_string_lossy(), native_name)
+        reflect::compiled_enum_variant_info(&owner_name.to_string_lossy(), native_name)
     else {
         return None;
     };
@@ -409,10 +396,7 @@ pub(crate) fn construct_enum_variant_for_owner(
             Err(error)
                 if owner.name().is_ok_and(|name| {
                     matches!(
-                        reflect_mutate::compiled_enum_variant_info(
-                            &name.to_string_lossy(),
-                            &native_name
-                        ),
+                        reflect::compiled_enum_variant_info(&name.to_string_lossy(), &native_name),
                         Some(VariantInfo::Struct(_))
                     )
                 }) =>
@@ -457,19 +441,8 @@ pub(crate) fn resolve_enum_instance(
     default: &Bound<'_, PyAny>,
     fields: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<Option<Py<PyAny>>, String> {
-    let Some(serde_json::Value::String(variant_name)) = fields.get("variant") else {
+    let Some((variant_name, payload)) = enum_payload::normalize(fields) else {
         return Ok(None);
-    };
-    let mut payload = fields.clone();
-    payload.remove("variant");
-    let payload = if payload.is_empty() {
-        serde_json::Value::Null
-    } else if payload.len() == 1 {
-        payload
-            .remove("value")
-            .unwrap_or(serde_json::Value::Object(payload))
-    } else {
-        serde_json::Value::Object(payload)
     };
     construct_enum_variant(py, default, variant_name, &payload, VariantSource::Named)
 }

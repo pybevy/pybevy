@@ -67,6 +67,46 @@ pub struct ScheduleAction {
     pub skip_if_error: Option<String>,
 }
 
+/// Outcome of one scheduled action, serialized as its lowercase name.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionStatus {
+    #[default]
+    Ok,
+    /// The action ran but reported embedded per-item errors.
+    Partial,
+    Error,
+    Skipped,
+    Aborted,
+    Cancelled,
+}
+
+impl ActionStatus {
+    fn failed(self) -> bool {
+        matches!(self, Self::Partial | Self::Error)
+    }
+}
+
+/// Status and error message for a dispatched action's successful response.
+fn classify(value: &serde_json::Value) -> (ActionStatus, Option<String>) {
+    let run_code_failed = value
+        .get("success")
+        .and_then(serde_json::Value::as_bool)
+        .is_some_and(|success| !success);
+    let error = run_code_failed
+        .then(|| value.get("error").and_then(serde_json::Value::as_str))
+        .flatten()
+        .map(str::to_owned);
+    let status = if has_embedded_errors(value) {
+        ActionStatus::Partial
+    } else if run_code_failed {
+        ActionStatus::Error
+    } else {
+        ActionStatus::Ok
+    };
+    (status, error)
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct ActionResult {
     pub index: usize,
@@ -90,7 +130,7 @@ pub struct ActionResult {
     /// Virtual time when a deferred action's result arrived.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub completed_at_game_time: Option<f64>,
-    pub status: String,
+    pub status: ActionStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -141,7 +181,7 @@ impl ActionResult {
         action: &ScheduleAction,
         index: usize,
         fired: Option<Firing>,
-        status: impl Into<String>,
+        status: ActionStatus,
     ) -> Self {
         Self {
             index,
@@ -153,14 +193,9 @@ impl ActionResult {
             fired_at_frame: fired.map(|fired| fired.frame),
             late_by_frames: fired.and_then(|fired| fired.late_by_frames),
             late_by_seconds: fired.and_then(|fired| fired.late_by_seconds),
-            status: status.into(),
+            status,
             ..Self::default()
         }
-    }
-
-    fn completed_at(mut self, game_time: f64) -> Self {
-        self.completed_at_game_time = Some(game_time);
-        self
     }
 
     fn with_result(mut self, result: serde_json::Value) -> Self {
@@ -170,6 +205,11 @@ impl ActionResult {
 
     fn with_error(mut self, error: impl Into<String>) -> Self {
         self.error = Some(error.into());
+        self
+    }
+
+    fn with_optional_error(mut self, error: Option<String>) -> Self {
+        self.error = error;
         self
     }
 }
@@ -204,10 +244,17 @@ pub struct ActiveSchedules {
     pub next_id: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScheduleStatus {
+    Running,
+    Completed,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SharedScheduleState {
     pub schedule_id: String,
-    pub status: String,
+    pub status: ScheduleStatus,
     pub total_actions: usize,
     /// Number of actions with a terminal result, including actions that did not run.
     pub completed_actions: usize,
@@ -226,7 +273,7 @@ impl SharedScheduleState {
     pub fn new(schedule_id: &str, total: usize) -> Self {
         Self {
             schedule_id: schedule_id.to_string(),
-            status: "running".to_string(),
+            status: ScheduleStatus::Running,
             total_actions: total,
             completed_actions: 0,
             executed_actions: 0,
@@ -515,7 +562,63 @@ impl ActiveSchedule {
             deferred_firing: None,
         }
     }
+
+    /// Stores a result; a failed result marks its action's label as errored.
+    fn record(&mut self, result: ActionResult) {
+        if result.status.failed()
+            && let Some(label) = &self.actions[result.index].label
+        {
+            self.errored_labels.insert(label.clone());
+        }
+        self.results.push(result);
+    }
+
+    /// Records the current action's outcome. Returns true when `stop_on_error`
+    /// ended the schedule, after aborting every later action.
+    fn record_outcome(
+        &mut self,
+        outcome: Result<serde_json::Value, String>,
+        fired: Option<Firing>,
+        completed_at: Option<f64>,
+    ) -> bool {
+        let action = &self.actions[self.current_index];
+        let mut result = match outcome {
+            Ok(value) => {
+                let (status, error) = classify(&value);
+                ActionResult::new(action, self.current_index, fired, status)
+                    .with_result(value)
+                    .with_optional_error(error)
+            }
+            Err(error) => ActionResult::new(action, self.current_index, fired, ActionStatus::Error)
+                .with_error(error),
+        };
+        result.completed_at_game_time = completed_at;
+        let failed = result.status.failed();
+        self.record(result);
+        if failed && self.stop_on_error {
+            self.abort_from(self.current_index + 1);
+            return true;
+        }
+        false
+    }
+
+    /// Aborts every action from `index` on and ends the schedule.
+    fn abort_from(&mut self, index: usize) {
+        for idx in index..self.actions.len() {
+            let result = ActionResult::new(&self.actions[idx], idx, None, ActionStatus::Aborted)
+                .with_error("Aborted due to stop_on_error");
+            self.results.push(result);
+        }
+        self.state = ScheduleState::Done;
+    }
 }
+
+fn virtual_elapsed(world: &World) -> f64 {
+    world
+        .get_resource::<Time<Virtual>>()
+        .map_or(0.0, Time::elapsed_secs_f64)
+}
+
 pub fn process_active_schedules(world: &mut World) {
     let mut schedules = world
         .remove_resource::<ActiveSchedules>()
@@ -546,8 +649,13 @@ pub fn process_active_schedules(world: &mut World) {
                 while schedule.current_index < schedule.actions.len() {
                     let action = &schedule.actions[schedule.current_index];
                     schedule.results.push(
-                        ActionResult::new(action, schedule.current_index, None, "cancelled")
-                            .with_error("Schedule cancelled"),
+                        ActionResult::new(
+                            action,
+                            schedule.current_index,
+                            None,
+                            ActionStatus::Cancelled,
+                        )
+                        .with_error("Schedule cancelled"),
                     );
                     schedule.current_index += 1;
                 }
@@ -584,126 +692,26 @@ fn process_single_schedule(
                 let rx = schedule.deferred_rx.as_mut().unwrap();
                 match rx.try_recv() {
                     Ok(result) => {
-                        let action = &schedule.actions[schedule.current_index];
-                        let completed_at = world
-                            .get_resource::<Time<Virtual>>()
-                            .map(|t| t.elapsed_secs_f64())
-                            .unwrap_or(0.0);
+                        let completed_at = virtual_elapsed(world);
                         let fired = schedule.deferred_firing.take();
-
-                        match result {
-                            Ok(value) => {
-                                let has_errors = has_embedded_errors(&value);
-                                let has_run_code_failure = value
-                                    .get("success")
-                                    .and_then(|v| v.as_bool())
-                                    .is_some_and(|s| !s);
-                                let status = if has_errors {
-                                    "partial"
-                                } else if has_run_code_failure {
-                                    "error"
-                                } else {
-                                    "ok"
-                                };
-
-                                if has_errors || has_run_code_failure {
-                                    if let Some(ref label) = action.label {
-                                        schedule.errored_labels.insert(label.clone());
-                                    }
-                                    if schedule.stop_on_error {
-                                        let error_msg = if has_run_code_failure {
-                                            value
-                                                .get("error")
-                                                .and_then(|v| v.as_str())
-                                                .map(|s| s.to_string())
-                                        } else {
-                                            None
-                                        };
-                                        let mut r = ActionResult::new(
-                                            action,
-                                            schedule.current_index,
-                                            fired,
-                                            status,
-                                        )
-                                        .completed_at(completed_at)
-                                        .with_result(value);
-                                        if let Some(msg) = error_msg {
-                                            r = r.with_error(msg);
-                                        }
-                                        schedule.results.push(r);
-                                        schedule.current_index += 1;
-                                        abort_remaining(schedule, schedule.current_index);
-                                        schedule.state = ScheduleState::Done;
-                                        return;
-                                    }
-                                }
-
-                                let error_msg = if has_run_code_failure {
-                                    value
-                                        .get("error")
-                                        .and_then(|v| v.as_str())
-                                        .map(|s| s.to_string())
-                                } else {
-                                    None
-                                };
-                                let mut r = ActionResult::new(
-                                    action,
-                                    schedule.current_index,
-                                    fired,
-                                    status,
-                                )
-                                .completed_at(completed_at)
-                                .with_result(value);
-                                if let Some(msg) = error_msg {
-                                    r = r.with_error(msg);
-                                }
-                                schedule.results.push(r);
-                            }
-                            Err(e) => {
-                                if let Some(ref label) = action.label {
-                                    schedule.errored_labels.insert(label.clone());
-                                }
-                                schedule.results.push(
-                                    ActionResult::new(
-                                        action,
-                                        schedule.current_index,
-                                        fired,
-                                        "error",
-                                    )
-                                    .completed_at(completed_at)
-                                    .with_error(e.message),
-                                );
-                                if schedule.stop_on_error {
-                                    abort_remaining(schedule, schedule.current_index + 1);
-                                    schedule.state = ScheduleState::Done;
-                                    return;
-                                }
-                            }
+                        let outcome = result.map_err(|error| error.message);
+                        if schedule.record_outcome(outcome, fired, Some(completed_at)) {
+                            return;
                         }
                         schedule.deferred_rx = None;
                         schedule.current_index += 1;
                         schedule.state = ScheduleState::WaitingForTime;
-                        // Update async shared state
                         update_async_progress(schedule);
                         continue;
                     }
                     Err(oneshot::error::TryRecvError::Empty) => return,
                     Err(oneshot::error::TryRecvError::Closed) => {
-                        let action = &schedule.actions[schedule.current_index];
-                        if let Some(ref label) = action.label {
-                            schedule.errored_labels.insert(label.clone());
-                        }
                         let fired = schedule.deferred_firing.take();
-                        schedule.results.push(
-                            ActionResult::new(action, schedule.current_index, fired, "error")
-                                .with_error("Deferred channel closed unexpectedly"),
-                        );
+                        let outcome = Err("Deferred channel closed unexpectedly".to_string());
+                        let stopped = schedule.record_outcome(outcome, fired, None);
                         schedule.deferred_rx = None;
                         schedule.current_index += 1;
-                        if schedule.stop_on_error {
-                            abort_remaining(schedule, schedule.current_index);
-                            schedule.state = ScheduleState::Done;
-                        } else {
+                        if !stopped {
                             schedule.state = ScheduleState::WaitingForTime;
                         }
                         update_async_progress(schedule);
@@ -719,12 +727,8 @@ fn process_single_schedule(
                 }
 
                 let action = &schedule.actions[schedule.current_index];
-                let game_time = world
-                    .get_resource::<Time<Virtual>>()
-                    .map(|t| t.elapsed_secs_f64())
-                    .unwrap_or(0.0);
+                let game_time = virtual_elapsed(world);
 
-                // Check timing
                 let uses_frame_offset = resolve_at_frame(action).is_some();
                 let ready = if let Some(frame_offset) = resolve_at_frame(action) {
                     schedule.frame_counter >= frame_offset
@@ -734,235 +738,106 @@ fn process_single_schedule(
                 };
 
                 if !ready {
-                    // Detect self-deadlock: if the next action gates on virtual
-                    // time but a previous action paused (or zero-scaled) virtual
-                    // time, virtual seconds will never advance - including any
-                    // later resume_time, since it too sits behind an `at` that
-                    // can never fire. Abort immediately rather than waiting for
-                    // the engine's 120 s timeout.
+                    // An `at` gated on paused or zero-scaled virtual time can never
+                    // fire, including any later resume_time behind it, so abort now
+                    // rather than waiting for the engine's 120 s timeout.
                     if !uses_frame_offset && virtual_time_is_stalled(world) {
-                        let action_at = resolve_at(action);
-                        let action_label = action.label.clone();
-                        let action_tool = action.tool.clone();
                         let error_msg = format!(
                             "Schedule self-deadlocked: virtual time is paused (or set to 0x \
                              scale), so action[{}] tool='{}' at={}s can never fire - virtual \
                              seconds do not advance while paused. Use 'at_frame' for actions \
                              that should run after pause_time/set_time_scale(0), or call \
                              resume_time from outside the schedule.",
-                            schedule.current_index, action_tool, action_at,
+                            schedule.current_index,
+                            action.tool,
+                            resolve_at(action),
                         );
-                        if let Some(ref label) = action_label {
-                            schedule.errored_labels.insert(label.clone());
-                        }
                         let fired = Firing::dispatch(schedule, action, world);
-                        schedule.results.push(
-                            ActionResult::new(action, schedule.current_index, Some(fired), "error")
-                                .with_error(error_msg),
-                        );
+                        let result = ActionResult::new(
+                            action,
+                            schedule.current_index,
+                            Some(fired),
+                            ActionStatus::Error,
+                        )
+                        .with_error(error_msg);
+                        schedule.record(result);
                         schedule.current_index += 1;
-                        abort_remaining(schedule, schedule.current_index);
-                        schedule.state = ScheduleState::Done;
+                        schedule.abort_from(schedule.current_index);
                         update_async_progress(schedule);
                         return;
                     }
-                    return; // Try next frame
+                    return;
                 }
 
                 let fired = Firing::dispatch(schedule, action, world);
 
-                // Check skip_if_error
                 if let Some(ref skip_label) = action.skip_if_error
                     && schedule.errored_labels.contains(skip_label)
                 {
-                    schedule.results.push(
-                        ActionResult::new(action, schedule.current_index, Some(fired), "skipped")
-                            .with_error(format!("Skipped due to error in '{}'", skip_label)),
-                    );
+                    let result = ActionResult::new(
+                        action,
+                        schedule.current_index,
+                        Some(fired),
+                        ActionStatus::Skipped,
+                    )
+                    .with_error(format!("Skipped due to error in '{}'", skip_label));
+                    schedule.record(result);
                     schedule.current_index += 1;
                     update_async_progress(schedule);
                     continue;
                 }
 
-                // Execute the action
                 let tool_name = action.tool.clone();
                 let tool_args = action.args.clone();
                 let action_at = resolve_at(action);
-                let mut seeked_clock = false;
                 let spec = OperationTag::from_name(&tool_name).map(OperationTag::spec);
                 let is_transform_mutation = spec.is_some_and(|spec| spec.mutates_transforms);
                 let is_render_mutation = spec.is_some_and(|spec| spec.mutates_render);
 
                 if spec.is_some_and(|spec| spec.kind == OperationKind::Deferred && spec.schedulable)
                 {
-                    // Set up deferred execution via forwarder pattern
                     match setup_deferred_action(world, &tool_name, &tool_args) {
                         Ok(rx) => {
                             schedule.deferred_rx = Some(rx);
                             schedule.deferred_firing = Some(fired);
                             schedule.state = ScheduleState::WaitingForDeferred;
-                            return; // Wait for result
+                            return;
                         }
-                        Err(e) => {
-                            if let Some(ref label) = action.label {
-                                schedule.errored_labels.insert(label.clone());
-                            }
-                            let r = ActionResult::new(
-                                action,
-                                schedule.current_index,
-                                Some(fired),
-                                "error",
-                            )
-                            .with_error(e);
-                            schedule.results.push(r);
-                            schedule.current_index += 1;
-                            if schedule.stop_on_error {
-                                abort_remaining(schedule, schedule.current_index);
-                                schedule.state = ScheduleState::Done;
+                        Err(error) => {
+                            if schedule.record_outcome(Err(error), Some(fired), None) {
                                 return;
                             }
+                            schedule.current_index += 1;
                             update_async_progress(schedule);
                             continue;
                         }
                     }
-                } else {
-                    // Sync tool - execute immediately via dispatch
-                    match tool_to_operation(&tool_name, &tool_args) {
-                        Ok(op) => {
-                            let result = dispatch(world, op, runtime);
-                            match result {
-                                Ok(value) => {
-                                    seeked_clock = tool_name == "seek_time";
-                                    let has_errors = has_embedded_errors(&value);
-                                    let has_run_code_failure = value
-                                        .get("success")
-                                        .and_then(|v| v.as_bool())
-                                        .is_some_and(|s| !s);
-                                    let status = if has_errors {
-                                        "partial"
-                                    } else if has_run_code_failure {
-                                        "error"
-                                    } else {
-                                        "ok"
-                                    };
-
-                                    if has_errors || has_run_code_failure {
-                                        if let Some(ref label) = action.label {
-                                            schedule.errored_labels.insert(label.clone());
-                                        }
-                                        if schedule.stop_on_error {
-                                            let error_msg = if has_run_code_failure {
-                                                value
-                                                    .get("error")
-                                                    .and_then(|v| v.as_str())
-                                                    .map(|s| s.to_string())
-                                            } else {
-                                                None
-                                            };
-                                            let mut r = ActionResult::new(
-                                                action,
-                                                schedule.current_index,
-                                                Some(fired),
-                                                status,
-                                            )
-                                            .with_result(value);
-                                            if let Some(msg) = error_msg {
-                                                r = r.with_error(msg);
-                                            }
-                                            schedule.results.push(r);
-                                            schedule.current_index += 1;
-                                            abort_remaining(schedule, schedule.current_index);
-                                            schedule.state = ScheduleState::Done;
-                                            return;
-                                        }
-                                    }
-
-                                    let error_msg = if has_run_code_failure {
-                                        value
-                                            .get("error")
-                                            .and_then(|v| v.as_str())
-                                            .map(|s| s.to_string())
-                                    } else {
-                                        None
-                                    };
-                                    let mut r = ActionResult::new(
-                                        action,
-                                        schedule.current_index,
-                                        Some(fired),
-                                        status,
-                                    )
-                                    .with_result(value);
-                                    if let Some(msg) = error_msg {
-                                        r = r.with_error(msg);
-                                    }
-                                    schedule.results.push(r);
-
-                                    // After successful dispatch, sync transforms if
-                                    // the tool could have modified them so that
-                                    // subsequent spatial queries in the same frame
-                                    // see up-to-date GlobalTransform values.
-                                    if is_transform_mutation {
-                                        propagate_transforms(world);
-                                    }
-                                    if is_render_mutation
-                                        && let Some(readiness) =
-                                            world.get_resource::<RenderFrameReadiness>()
-                                    {
-                                        readiness.request_frame();
-                                    }
-                                }
-                                Err(e) => {
-                                    if let Some(ref label) = action.label {
-                                        schedule.errored_labels.insert(label.clone());
-                                    }
-                                    let r = ActionResult::new(
-                                        action,
-                                        schedule.current_index,
-                                        Some(fired),
-                                        "error",
-                                    )
-                                    .with_error(e.message);
-                                    schedule.results.push(r);
-                                    if schedule.stop_on_error {
-                                        schedule.current_index += 1;
-                                        abort_remaining(schedule, schedule.current_index);
-                                        schedule.state = ScheduleState::Done;
-                                        return;
-                                    }
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            if let Some(ref label) = action.label {
-                                schedule.errored_labels.insert(label.clone());
-                            }
-                            let r = ActionResult::new(
-                                action,
-                                schedule.current_index,
-                                Some(fired),
-                                "error",
-                            )
-                            .with_error(e);
-                            schedule.results.push(r);
-                            if schedule.stop_on_error {
-                                schedule.current_index += 1;
-                                abort_remaining(schedule, schedule.current_index);
-                                schedule.state = ScheduleState::Done;
-                                return;
-                            }
-                        }
-                    }
-                    schedule.current_index += 1;
-                    if seeked_clock {
-                        let now = world
-                            .get_resource::<Time<Virtual>>()
-                            .map(|t| t.elapsed_secs_f64())
-                            .unwrap_or(0.0);
-                        schedule.timing_origin_game_time = now - action_at;
-                    }
-                    update_async_progress(schedule);
-                    continue; // Same-at actions fire in the same frame
                 }
+
+                let outcome = tool_to_operation(&tool_name, &tool_args).and_then(|operation| {
+                    dispatch(world, operation, runtime).map_err(|error| error.message)
+                });
+                let dispatched = outcome.is_ok();
+                if schedule.record_outcome(outcome, Some(fired), None) {
+                    return;
+                }
+                if dispatched {
+                    // Later spatial queries in the same frame need current GlobalTransforms.
+                    if is_transform_mutation {
+                        propagate_transforms(world);
+                    }
+                    if is_render_mutation
+                        && let Some(readiness) = world.get_resource::<RenderFrameReadiness>()
+                    {
+                        readiness.request_frame();
+                    }
+                }
+                schedule.current_index += 1;
+                if dispatched && tool_name == "seek_time" {
+                    schedule.timing_origin_game_time = virtual_elapsed(world) - action_at;
+                }
+                update_async_progress(schedule);
+                continue; // Same-at actions fire in the same frame
             }
         }
     }
@@ -988,15 +863,6 @@ fn setup_deferred_action(
     batch.commit(world);
     Ok(rx)
 }
-fn abort_remaining(schedule: &mut ActiveSchedule, from_index: usize) {
-    for idx in from_index..schedule.actions.len() {
-        let action = &schedule.actions[idx];
-        let r = ActionResult::new(action, idx, None, "aborted")
-            .with_error("Aborted due to stop_on_error");
-        schedule.results.push(r);
-    }
-}
-
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct ActionCounts {
     executed: usize,
@@ -1008,11 +874,11 @@ struct ActionCounts {
 fn action_counts(results: &[ActionResult]) -> ActionCounts {
     let mut counts = ActionCounts::default();
     for result in results {
-        match result.status.as_str() {
-            "skipped" => counts.skipped += 1,
-            "aborted" => counts.aborted += 1,
-            "cancelled" => counts.cancelled += 1,
-            _ => counts.executed += 1,
+        match result.status {
+            ActionStatus::Skipped => counts.skipped += 1,
+            ActionStatus::Aborted => counts.aborted += 1,
+            ActionStatus::Cancelled => counts.cancelled += 1,
+            ActionStatus::Ok | ActionStatus::Partial | ActionStatus::Error => counts.executed += 1,
         }
     }
     counts
@@ -1066,7 +932,7 @@ fn finalize_schedule(schedule: ActiveSchedule) {
     if let Some(ref shared) = schedule.async_shared
         && let Ok(mut guard) = shared.lock()
     {
-        guard.status = "completed".to_string();
+        guard.status = ScheduleStatus::Completed;
         guard.completed_actions = schedule.results.len();
         update_shared_action_counts(&mut guard, counts);
         guard.results = schedule.results;
@@ -1083,7 +949,202 @@ mod tests {
             GetComponentParams, QueryEntitiesParams, ReloadMode, ReloadParams, SeekTimeParams,
             SetComponentParams,
         },
+        pyo3::runtime::Pyo3ControlRuntime,
     };
+
+    fn test_schedule(actions: Vec<ScheduleAction>, stop_on_error: bool) -> ActiveSchedule {
+        ActiveSchedule {
+            schedule_id: "test".to_string(),
+            actions,
+            results: vec![],
+            current_index: 0,
+            state: ScheduleState::WaitingForTime,
+            start_game_time: 0.0,
+            timing_origin_game_time: 0.0,
+            frame_counter: 0,
+            stop_on_error,
+            errored_labels: HashSet::new(),
+            sync_response_tx: None,
+            async_shared: None,
+            deferred_rx: None,
+            deferred_firing: None,
+        }
+    }
+
+    fn timed_action(tool: &str, at: f64, label: &str) -> ScheduleAction {
+        ScheduleAction {
+            tool: tool.to_string(),
+            args: serde_json::Value::Null,
+            at: Some(at),
+            at_frame: None,
+            label: Some(label.to_string()),
+            skip_if_error: None,
+        }
+    }
+
+    #[test]
+    fn abort_from_aborts_later_actions_and_ends_the_schedule() {
+        let mut schedule = test_schedule(
+            vec![
+                timed_action("pause_time", 0.0, "a"),
+                timed_action("resume_time", 1.0, "b"),
+            ],
+            true,
+        );
+        schedule.abort_from(0);
+        assert_eq!(schedule.state, ScheduleState::Done);
+        assert_eq!(
+            schedule
+                .results
+                .iter()
+                .map(|result| result.status)
+                .collect::<Vec<_>>(),
+            [ActionStatus::Aborted, ActionStatus::Aborted]
+        );
+        assert_eq!(
+            action_counts(&schedule.results),
+            ActionCounts {
+                aborted: 2,
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
+    fn classify_reports_run_code_failures_and_embedded_errors() {
+        let cases = [
+            (serde_json::json!({"success": true}), ActionStatus::Ok, None),
+            (
+                serde_json::json!({"success": false, "error": "NameError: x"}),
+                ActionStatus::Error,
+                Some("NameError: x"),
+            ),
+            (
+                serde_json::json!({"errors": ["bad field"]}),
+                ActionStatus::Partial,
+                None,
+            ),
+            (
+                serde_json::json!({"success": false, "error": "boom", "errors": ["bad"]}),
+                ActionStatus::Partial,
+                Some("boom"),
+            ),
+        ];
+        for (value, status, error) in cases {
+            assert_eq!(
+                classify(&value),
+                (status, error.map(str::to_owned)),
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn serialized_statuses_keep_their_names() {
+        assert_eq!(
+            serde_json::to_value([
+                ActionStatus::Ok,
+                ActionStatus::Partial,
+                ActionStatus::Error,
+                ActionStatus::Skipped,
+                ActionStatus::Aborted,
+                ActionStatus::Cancelled,
+            ])
+            .unwrap(),
+            serde_json::json!(["ok", "partial", "error", "skipped", "aborted", "cancelled"])
+        );
+        assert_eq!(
+            serde_json::to_value([ScheduleStatus::Running, ScheduleStatus::Completed]).unwrap(),
+            serde_json::json!(["running", "completed"])
+        );
+    }
+
+    #[test]
+    fn failed_outcome_marks_its_label_and_stops_only_with_stop_on_error() {
+        let failure = || Ok(serde_json::json!({"success": false, "error": "boom"}));
+        let actions = || {
+            vec![
+                timed_action("run_code", 0.0, "failing_code"),
+                timed_action("pause_time", 0.0, "later"),
+            ]
+        };
+
+        let mut continuing = test_schedule(actions(), false);
+        assert!(!continuing.record_outcome(failure(), None, Some(2.0)));
+        assert_eq!(continuing.state, ScheduleState::WaitingForTime);
+        assert!(continuing.errored_labels.contains("failing_code"));
+        assert_eq!(continuing.results.len(), 1);
+        assert_eq!(continuing.results[0].status, ActionStatus::Error);
+        assert_eq!(continuing.results[0].error.as_deref(), Some("boom"));
+        assert_eq!(continuing.results[0].completed_at_game_time, Some(2.0));
+
+        let mut stopping = test_schedule(actions(), true);
+        assert!(stopping.record_outcome(failure(), None, None));
+        assert_eq!(stopping.state, ScheduleState::Done);
+        assert_eq!(
+            stopping
+                .results
+                .iter()
+                .map(|result| (result.tool.as_str(), result.status))
+                .collect::<Vec<_>>(),
+            [
+                ("run_code", ActionStatus::Error),
+                ("pause_time", ActionStatus::Aborted)
+            ]
+        );
+        assert_eq!(stopping.results[0].completed_at_game_time, None);
+    }
+
+    #[test]
+    fn successful_outcome_does_not_mark_its_label() {
+        let mut schedule = test_schedule(vec![timed_action("get_time_status", 0.0, "a")], true);
+        assert!(!schedule.record_outcome(Ok(serde_json::json!({"paused": false})), None, None));
+        assert!(schedule.errored_labels.is_empty());
+        assert_eq!(schedule.results[0].status, ActionStatus::Ok);
+        assert_eq!(schedule.results[0].error, None);
+    }
+
+    /// A virtual-time `at` behind paused time aborts the schedule even
+    /// without stop_on_error.
+    #[test]
+    fn stalled_virtual_time_aborts_the_schedule() {
+        let mut world = World::new();
+        let mut time = Time::<Virtual>::default();
+        time.pause();
+        world.insert_resource(time);
+        let mut schedule = test_schedule(
+            vec![
+                timed_action("get_time_status", 0.5, "blocked"),
+                timed_action("resume_time", 1.0, "never_runs"),
+                timed_action("get_time_status", 1.5, "also_never"),
+            ],
+            false,
+        );
+
+        process_single_schedule(&mut world, &mut schedule, &mut Pyo3ControlRuntime);
+
+        assert_eq!(schedule.state, ScheduleState::Done);
+        assert!(schedule.errored_labels.contains("blocked"));
+        assert_eq!(
+            schedule
+                .results
+                .iter()
+                .map(|result| (result.tool.as_str(), result.status))
+                .collect::<Vec<_>>(),
+            [
+                ("get_time_status", ActionStatus::Error),
+                ("resume_time", ActionStatus::Aborted),
+                ("get_time_status", ActionStatus::Aborted),
+            ]
+        );
+        assert!(
+            schedule.results[0]
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("self-deadlocked")
+        );
+    }
 
     #[test]
     fn test_validate_empty_actions() {
@@ -1579,7 +1640,7 @@ mod tests {
             at: 0.0,
             at_frame: None,
             fired_at_game_time: 1.5,
-            status: "ok".to_string(),
+            status: ActionStatus::Ok,
             result: Some(serde_json::json!({"paused": true})),
             error: None,
             ..Default::default()
@@ -1603,7 +1664,7 @@ mod tests {
             label: None,
             skip_if_error: None,
         };
-        let r = ActionResult::new(&action, 0, None, "ok")
+        let r = ActionResult::new(&action, 0, None, ActionStatus::Ok)
             .with_result(serde_json::json!({"paused": true}));
         let json = serde_json::to_value(&r).unwrap();
         assert_eq!(json["at"], 0.0);
@@ -1620,7 +1681,7 @@ mod tests {
 
         let state = registry.get("s-1").unwrap();
         assert_eq!(state.schedule_id, "s-1");
-        assert_eq!(state.status, "running");
+        assert_eq!(state.status, ScheduleStatus::Running);
         assert_eq!(state.total_actions, 3);
 
         // Update via the Arc directly (same as schedule state machine does)
@@ -1641,7 +1702,7 @@ mod tests {
         completed_at: std::time::Instant,
     ) -> Arc<Mutex<SharedScheduleState>> {
         let mut state = SharedScheduleState::new(id, 1);
-        state.status = "completed".to_string();
+        state.status = ScheduleStatus::Completed;
         state.completed_at = Some(completed_at);
         Arc::new(Mutex::new(state))
     }
@@ -1764,54 +1825,6 @@ mod tests {
         assert!(matches!(op, ControlOperation::CheckAllOverlaps(..)));
     }
 
-    #[test]
-    fn test_abort_remaining() {
-        let mut schedule = ActiveSchedule {
-            schedule_id: "test".to_string(),
-            actions: vec![
-                ScheduleAction {
-                    tool: "pause_time".to_string(),
-                    args: serde_json::Value::Null,
-                    at: Some(0.0),
-                    at_frame: None,
-                    label: Some("a".to_string()),
-                    skip_if_error: None,
-                },
-                ScheduleAction {
-                    tool: "resume_time".to_string(),
-                    args: serde_json::Value::Null,
-                    at: Some(1.0),
-                    at_frame: None,
-                    label: Some("b".to_string()),
-                    skip_if_error: None,
-                },
-            ],
-            results: vec![],
-            current_index: 0,
-            state: ScheduleState::WaitingForTime,
-            start_game_time: 0.0,
-            timing_origin_game_time: 0.0,
-            frame_counter: 0,
-            stop_on_error: true,
-            errored_labels: HashSet::new(),
-            sync_response_tx: None,
-            async_shared: None,
-            deferred_rx: None,
-            deferred_firing: None,
-        };
-        abort_remaining(&mut schedule, 0);
-        assert_eq!(schedule.results.len(), 2);
-        assert_eq!(schedule.results[0].status, "aborted");
-        assert_eq!(schedule.results[1].status, "aborted");
-        assert_eq!(
-            action_counts(&schedule.results),
-            ActionCounts {
-                aborted: 2,
-                ..Default::default()
-            }
-        );
-    }
-
     /// Verifies that the registry and ActiveSchedule share the same Arc,
     /// so updates from the schedule state machine are visible via registry.get().
     /// The registry previously stored a separate copy.
@@ -1824,7 +1837,7 @@ mod tests {
         // Simulate what finalize_schedule does
         {
             let mut guard = shared.lock().unwrap();
-            guard.status = "completed".to_string();
+            guard.status = ScheduleStatus::Completed;
             guard.completed_actions = 2;
             guard.results.push(ActionResult {
                 index: 0,
@@ -1833,7 +1846,7 @@ mod tests {
                 at: 0.0,
                 at_frame: None,
                 fired_at_game_time: 1.0,
-                status: "ok".to_string(),
+                status: ActionStatus::Ok,
                 result: Some(serde_json::json!({"paused": true})),
                 error: None,
                 ..Default::default()
@@ -1842,7 +1855,7 @@ mod tests {
 
         // Registry should see the updated state via the shared Arc
         let state = registry.get("s-1").unwrap();
-        assert_eq!(state.status, "completed");
+        assert_eq!(state.status, ScheduleStatus::Completed);
         assert_eq!(state.completed_actions, 2);
         assert_eq!(state.results.len(), 1);
         assert_eq!(state.results[0].tool, "pause_time");
@@ -1862,90 +1875,6 @@ mod tests {
         // Schedule state machine reads from its own Arc clone
         let guard = shared.lock().unwrap();
         assert!(guard.cancelled);
-    }
-
-    #[test]
-    fn schedule_actions_run_code_failure_status() {
-        // Simulate what happens when run_code returns {"success": false, "error": "..."}
-        let value = serde_json::json!({"success": false, "error": "NameError: x is not defined"});
-        let has_errors = has_embedded_errors(&value);
-        let has_run_code_failure = value
-            .get("success")
-            .and_then(|v| v.as_bool())
-            .is_some_and(|s| !s);
-        let status = if has_errors {
-            "partial"
-        } else if has_run_code_failure {
-            "error"
-        } else {
-            "ok"
-        };
-        assert!(!has_errors, "run_code failure has no 'errors' array");
-        assert!(has_run_code_failure, "run_code failure has success=false");
-        assert_eq!(status, "error");
-    }
-
-    #[test]
-    fn schedule_actions_stop_on_error_with_run_code() {
-        // Verify that a run_code failure with success=false triggers stop_on_error logic.
-        // The stop_on_error path calls abort_remaining, so we test that the remaining
-        // actions would be aborted after a run_code failure.
-        let mut schedule = ActiveSchedule {
-            schedule_id: "test-stop".to_string(),
-            actions: vec![
-                ScheduleAction {
-                    tool: "run_code".to_string(),
-                    args: serde_json::json!({"code": "x"}),
-                    at: Some(0.0),
-                    at_frame: None,
-                    label: Some("failing_code".to_string()),
-                    skip_if_error: None,
-                },
-                ScheduleAction {
-                    tool: "pause_time".to_string(),
-                    args: serde_json::Value::Null,
-                    at: Some(0.0),
-                    at_frame: None,
-                    label: Some("should_abort".to_string()),
-                    skip_if_error: None,
-                },
-            ],
-            results: vec![],
-            current_index: 1, // Simulate that first action already processed
-            state: ScheduleState::WaitingForTime,
-            start_game_time: 0.0,
-            timing_origin_game_time: 0.0,
-            frame_counter: 0,
-            stop_on_error: true,
-            errored_labels: HashSet::new(),
-            sync_response_tx: None,
-            async_shared: None,
-            deferred_rx: None,
-            deferred_firing: None,
-        };
-        abort_remaining(&mut schedule, 1);
-        assert_eq!(schedule.results.len(), 1);
-        assert_eq!(schedule.results[0].status, "aborted");
-        assert_eq!(schedule.results[0].tool, "pause_time");
-    }
-
-    #[test]
-    fn schedule_actions_run_code_success_is_ok() {
-        // Verify that run_code with success=true gets status "ok"
-        let value = serde_json::json!({"success": true});
-        let has_errors = has_embedded_errors(&value);
-        let has_run_code_failure = value
-            .get("success")
-            .and_then(|v| v.as_bool())
-            .is_some_and(|s| !s);
-        let status = if has_errors {
-            "partial"
-        } else if has_run_code_failure {
-            "error"
-        } else {
-            "ok"
-        };
-        assert_eq!(status, "ok");
     }
 
     #[test]
@@ -2307,7 +2236,7 @@ mod tests {
                 at: 0.0,
                 at_frame: None,
                 fired_at_game_time: 1.0,
-                status: "ok".to_string(),
+                status: ActionStatus::Ok,
                 result: Some(serde_json::json!({"paused": true})),
                 error: None,
                 ..Default::default()
@@ -2357,7 +2286,7 @@ mod tests {
                 at: 0.0,
                 at_frame: None,
                 fired_at_game_time: 2.0,
-                status: "ok".to_string(),
+                status: ActionStatus::Ok,
                 result: None,
                 error: None,
                 ..Default::default()
@@ -2376,7 +2305,7 @@ mod tests {
         };
         finalize_schedule(schedule);
         let guard = shared.lock().unwrap();
-        assert_eq!(guard.status, "completed");
+        assert_eq!(guard.status, ScheduleStatus::Completed);
         assert_eq!(guard.completed_actions, 1);
         assert_eq!(guard.executed_actions, 1);
         assert_eq!(guard.skipped_actions, 0);
@@ -2398,7 +2327,7 @@ mod tests {
                     at: 0.0,
                     at_frame: None,
                     fired_at_game_time: 0.0,
-                    status: "ok".to_string(),
+                    status: ActionStatus::Ok,
                     result: None,
                     error: None,
                     ..Default::default()
@@ -2410,7 +2339,7 @@ mod tests {
                     at: 0.0,
                     at_frame: None,
                     fired_at_game_time: 0.0,
-                    status: "ok".to_string(),
+                    status: ActionStatus::Ok,
                     result: None,
                     error: None,
                     ..Default::default()
@@ -2492,7 +2421,7 @@ mod tests {
     fn test_shared_schedule_state_new() {
         let state = SharedScheduleState::new("test-id", 5);
         assert_eq!(state.schedule_id, "test-id");
-        assert_eq!(state.status, "running");
+        assert_eq!(state.status, ScheduleStatus::Running);
         assert_eq!(state.total_actions, 5);
         assert_eq!(state.completed_actions, 0);
         assert_eq!(state.executed_actions, 0);
@@ -2616,156 +2545,5 @@ mod tests {
         // Missing resource: be conservative and treat as not stalled so we
         // don't spuriously abort schedules in environments without Time<Virtual>.
         assert!(!virtual_time_is_stalled(&world));
-    }
-
-    /// Drives the WaitingForTime branch directly via a stripped-down clone of
-    /// the deadlock-detection logic. We avoid invoking process_single_schedule
-    /// here because that requires a full ControlRuntime impl; the salient
-    /// behaviour - abort with a clear error when virtual time is paused and
-    /// the next action gates on a future virtual-time target - is exercised
-    /// end-to-end by the Python integration tests under tests/mcp/.
-    #[test]
-    fn schedule_deadlock_guard_aborts_when_virtual_time_paused() {
-        let mut world = World::new();
-        let mut time = Time::<Virtual>::default();
-        time.pause();
-        world.insert_resource(time);
-
-        let mut schedule = ActiveSchedule {
-            schedule_id: "deadlock-test".to_string(),
-            actions: vec![ScheduleAction {
-                tool: "get_time_status".to_string(),
-                args: serde_json::Value::Null,
-                at: Some(0.5),
-                at_frame: None,
-                label: Some("future".to_string()),
-                skip_if_error: None,
-            }],
-            results: vec![],
-            current_index: 0,
-            state: ScheduleState::WaitingForTime,
-            start_game_time: 0.0,
-            timing_origin_game_time: 0.0,
-            frame_counter: 0,
-            stop_on_error: false,
-            errored_labels: HashSet::new(),
-            sync_response_tx: None,
-            async_shared: None,
-            deferred_rx: None,
-            deferred_firing: None,
-        };
-
-        // Reproduce the relevant slice of process_single_schedule's
-        // WaitingForTime branch. Keep this in sync with the production code.
-        let action = schedule.actions[schedule.current_index].clone();
-        let game_time = world
-            .get_resource::<Time<Virtual>>()
-            .map(|t| t.elapsed_secs_f64())
-            .unwrap_or(0.0);
-        let uses_frame_offset = resolve_at_frame(&action).is_some();
-        let target_time = schedule.timing_origin_game_time + resolve_at(&action);
-        let ready = uses_frame_offset || game_time >= target_time;
-        assert!(!ready, "test setup: action should not be ready");
-        assert!(virtual_time_is_stalled(&world));
-
-        let action_at = resolve_at(&action);
-        let action_label = action.label.clone();
-        let action_tool = action.tool.clone();
-        if let Some(ref label) = action_label {
-            schedule.errored_labels.insert(label.clone());
-        }
-        schedule.results.push(ActionResult {
-            index: schedule.current_index,
-            label: action_label,
-            tool: action_tool,
-            at: action_at,
-            at_frame: resolve_at_frame(&action),
-            fired_at_game_time: game_time,
-            status: "error".to_string(),
-            result: None,
-            error: Some("Schedule self-deadlocked: virtual time is paused".to_string()),
-            ..Default::default()
-        });
-        schedule.current_index += 1;
-        let from = schedule.current_index;
-        abort_remaining(&mut schedule, from);
-        schedule.state = ScheduleState::Done;
-
-        assert_eq!(schedule.state, ScheduleState::Done);
-        assert_eq!(schedule.results.len(), 1);
-        assert_eq!(schedule.results[0].status, "error");
-        assert!(
-            schedule.results[0]
-                .error
-                .as_deref()
-                .unwrap()
-                .contains("self-deadlocked")
-        );
-    }
-
-    /// Verifies that a follow-up action still in the schedule gets aborted
-    /// (rather than left as a phantom pending entry) when the deadlock guard
-    /// trips on the current action.
-    #[test]
-    fn schedule_deadlock_guard_aborts_remaining_followup_actions() {
-        let mut schedule = ActiveSchedule {
-            schedule_id: "abort-followups".to_string(),
-            actions: vec![
-                ScheduleAction {
-                    tool: "get_time_status".to_string(),
-                    args: serde_json::Value::Null,
-                    at: Some(0.5),
-                    at_frame: None,
-                    label: Some("blocked".to_string()),
-                    skip_if_error: None,
-                },
-                ScheduleAction {
-                    tool: "resume_time".to_string(),
-                    args: serde_json::Value::Null,
-                    at: Some(1.0),
-                    at_frame: None,
-                    label: Some("never_runs".to_string()),
-                    skip_if_error: None,
-                },
-                ScheduleAction {
-                    tool: "get_time_status".to_string(),
-                    args: serde_json::Value::Null,
-                    at: Some(1.5),
-                    at_frame: None,
-                    label: Some("also_never".to_string()),
-                    skip_if_error: None,
-                },
-            ],
-            results: vec![ActionResult {
-                index: 0,
-                label: Some("blocked".to_string()),
-                tool: "get_time_status".to_string(),
-                at: 0.5,
-                at_frame: None,
-                fired_at_game_time: 0.0,
-                status: "error".to_string(),
-                result: None,
-                error: Some("Schedule self-deadlocked".to_string()),
-                ..Default::default()
-            }],
-            current_index: 1, // simulate the deadlock guard already consumed action 0
-            state: ScheduleState::WaitingForTime,
-            start_game_time: 0.0,
-            timing_origin_game_time: 0.0,
-            frame_counter: 0,
-            stop_on_error: false,
-            errored_labels: HashSet::new(),
-            sync_response_tx: None,
-            async_shared: None,
-            deferred_rx: None,
-            deferred_firing: None,
-        };
-        let from = schedule.current_index;
-        abort_remaining(&mut schedule, from);
-        assert_eq!(schedule.results.len(), 3);
-        assert_eq!(schedule.results[0].status, "error");
-        assert_eq!(schedule.results[1].status, "aborted");
-        assert_eq!(schedule.results[2].status, "aborted");
-        assert_eq!(schedule.results[1].tool, "resume_time");
     }
 }

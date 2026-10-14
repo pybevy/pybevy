@@ -14,10 +14,11 @@ use pyo3::{
 use crate::{
     codec::{
         json_float::float_to_json,
+        math_shape::{FLOAT_VECTORS, math_shape},
         value::{EnumPayload, enum_to_json},
     },
     engine::dispatch::LINEAR_RGBA_CHANNELS,
-    pyo3::{custom as custom_wrapper, from_json::enums::enum_variant_names},
+    pyo3::{custom, from_json::enums::enum_variant_names},
 };
 
 /// Extract field values from a custom component.
@@ -33,10 +34,10 @@ pub(crate) fn extract_custom_component_fields(
 
     if !entry.is_pyobject_storage {
         let layout = entry.wrapper_layout.as_deref()?;
-        if !custom_wrapper::descriptor_matches(layout, descriptor_layout) {
+        if !custom::descriptor_matches(layout, descriptor_layout) {
             return None;
         }
-        return custom_wrapper::fields_to_json(ptr, layout).ok();
+        return custom::fields_to_json(ptr, layout).ok();
     }
 
     // SAFETY: CustomComponentInfo records this ComponentId as PyObject storage,
@@ -306,12 +307,7 @@ fn python_enum_to_json(value: &Bound<'_, PyAny>) -> Option<serde_json::Value> {
 
 fn vector_to_json(value: &Bound<'_, PyAny>) -> Option<serde_json::Value> {
     let type_name = value.get_type().name().ok()?;
-    let fields: &[&str] = match type_name.to_str().ok()? {
-        "Vec2" => &["x", "y"],
-        "Vec3" => &["x", "y", "z"],
-        "Vec4" | "Quat" => &["x", "y", "z", "w"],
-        _ => return None,
-    };
+    let fields = math_shape(FLOAT_VECTORS, type_name.to_str().ok()?)?.coordinates;
     let values = fields
         .iter()
         .map(|field| value.getattr(*field).ok()?.extract::<f64>().ok())

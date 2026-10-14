@@ -2,35 +2,27 @@ use std::{any::TypeId, collections::HashMap, sync::Arc};
 
 use bevy::{
     ecs::{reflect::AppTypeRegistry, world::World},
-    reflect::{TypeInfo, enums::VariantInfo},
+    reflect::TypeInfo,
 };
-use pybevy_color::linear_rgba::PyLinearRgba;
 use pybevy_core::{ComponentBridge, PyEntity, public_error};
-use pybevy_math::{quat::PyQuat, range::PyRange, vec3::PyVec3};
 use pyo3::{
     prelude::*,
-    types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyModule, PySet, PyString, PyTuple, PyType},
+    types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyModule, PyTuple, PyType},
 };
 
 use crate::{
-    codec::{
-        json_float::{nonfinite_float_from_json, require_finite_float},
-        reflect::{self as reflect_mutate},
-        value::{self as value_conversion},
-    },
+    codec::json_float::{nonfinite_float_from_json, require_finite_float},
     pyo3::{
         dataclass_fields::dataclass_field_names,
-        enum_names,
         from_json::{
-            color::{construct_color_variant, linear_rgba_from_json},
             enums::{
-                EnumVariantRequest, VariantSource, construct_enum_variant,
-                construct_enum_variant_for_owner, enum_component_variant_request,
-                enum_field_prototype, enum_owner_type, enum_variant_names, reject_enum_constant,
-                tagged_enum_variant_request,
+                EnumVariantRequest, VariantSource, construct_enum_variant_for_owner,
+                enum_component_variant_request, enum_field_prototype, enum_owner_type,
+                enum_variant_names, tagged_enum_variant_request,
             },
-            lists::{convert_list_elements, find_pybevy_class},
-            math::{math_readback_array, math_value_from_json, range_from_json},
+            lists::find_pybevy_class,
+            math::math_readback_array,
+            rules::{FieldContext, RULES},
         },
     },
 };
@@ -414,7 +406,7 @@ pub(crate) fn declared_optional_type<'a>(
         .map(String::as_str)
 }
 
-fn construct_declared_optional(
+pub(super) fn construct_declared_optional(
     py: Python<'_>,
     type_name: &str,
     field_value: &serde_json::Value,
@@ -471,13 +463,13 @@ fn construct_declared_optional(
 
 /// Whether the value is a dataclass instance, the same check `dataclasses`
 /// itself performs, without importing the module for every candidate field.
-fn is_dataclass_instance(value: &Bound<'_, PyAny>) -> bool {
+pub(super) fn is_dataclass_instance(value: &Bound<'_, PyAny>) -> bool {
     !value.is_instance_of::<PyType>() && value.hasattr("__dataclass_fields__").unwrap_or(false)
 }
 
 /// Rebuild an array-like field (numpy and friends) from a JSON array through
 /// the module that owns the current value, so no array dependency is linked in.
-fn rebuild_array_like(
+pub(super) fn rebuild_array_like(
     py: Python<'_>,
     current: &Bound<'_, PyAny>,
     field_value: &serde_json::Value,
@@ -511,7 +503,7 @@ fn rebuild_array_like(
         .map_err(|error| error.to_string())
 }
 
-fn has_public_getset_fields(value: &Bound<'_, PyAny>) -> bool {
+pub(super) fn has_public_getset_fields(value: &Bound<'_, PyAny>) -> bool {
     value.get_type().dir().is_ok_and(|names| {
         names.iter().any(|name| {
             let Ok(name) = name.extract::<String>() else {
@@ -547,375 +539,26 @@ pub(crate) fn convert_field_value_typed(
     field_value: &serde_json::Value,
     declared_type: Option<&str>,
 ) -> Result<Py<PyAny>, String> {
-    // Try to get the current field value to detect its type
     if let Ok(current) = component.getattr(field_name) {
         let current = if let Ok(variant) = component.cast::<PyType>() {
             enum_field_prototype(py, variant, field_name)?.unwrap_or(current)
         } else {
             current
         };
-        if current.is_none()
-            && let Some(type_name) = declared_type
-            && let Some(value) = construct_declared_optional(py, type_name, field_value)?
-        {
-            return Ok(value);
-        }
-        if let Ok(range) = current.cast_exact::<PyRange>() {
-            return range_from_json(py, range, field_value);
-        }
-        let type_name = current
-            .get_type()
-            .name()
-            .map(|n| n.to_string())
-            .unwrap_or_default();
-        if current.cast::<PyLinearRgba>().is_ok() {
-            return linear_rgba_from_json(py, &current, field_value);
-        }
-        if current.cast_exact::<PyVec3>().is_ok() {
-            let value = value_conversion::vec3_from_json(field_value)?;
-            return Py::new(py, PyVec3::from_vec3(value))
-                .map(Py::into_any)
-                .map_err(|error| error.to_string());
-        }
-        if current.cast_exact::<PyQuat>().is_ok() {
-            let value = value_conversion::unit_quat_from_json(field_value)?;
-            return Py::new(py, PyQuat::from_quat(value))
-                .map(Py::into_any)
-                .map_err(|error| error.to_string());
-        }
-        let owner = enum_owner_type(&current);
-        let is_color = owner
-            .name()
-            .is_ok_and(|name| name.to_string_lossy() == "Color");
-        if current.is_instance_of::<PyFloat>()
-            && (field_value.is_number() || nonfinite_float_from_json(field_value).is_some())
-        {
-            return json_number_to_f64(field_value)?
-                .into_pyobject(py)
-                .map(|value| value.into_any().unbind())
-                .map_err(|error| error.to_string());
-        }
-        let expected_math_shape = match type_name.as_str() {
-            "Vec2" | "UVec2" | "IVec2" => Some("[x, y]"),
-            "UVec3" => Some("[x, y, z]"),
-            "Vec4" | "Quat" => Some("[x, y, z, w]"),
-            _ => None,
-        };
-
-        if let Some(serde_json::Value::Array(values)) = math_readback_array(&current, field_value)
-            && let Some(result) = math_value_from_json(py, &type_name, &values)
-        {
-            return result;
-        }
-
-        if let Some(shape) = expected_math_shape
-            && !field_value.is_array()
-        {
-            let kind = match field_value {
-                serde_json::Value::Null => "null",
-                serde_json::Value::Bool(_) => "boolean",
-                serde_json::Value::Number(_) => "number",
-                serde_json::Value::String(_) => "string",
-                serde_json::Value::Array(_) => unreachable!(),
-                serde_json::Value::Object(_) => "object",
-            };
-            return Err(format!("{type_name} expects {shape}, got {kind}"));
-        }
-
-        if let serde_json::Value::Object(fields) = field_value
-            && fields.len() == 1
-            && let Some(serde_json::Value::String(expected)) = fields.get("repr")
-        {
-            let actual = current.repr().map_err(|error| error.to_string())?;
-            if actual.to_string_lossy() == expected.as_str() {
-                return Ok(current.clone().unbind());
+        let context = FieldContext::new(
+            py,
+            component,
+            field_name,
+            field_value,
+            declared_type,
+            current,
+        );
+        for rule in RULES {
+            if let Some(value) = rule(&context)? {
+                return Ok(value);
             }
-            return Err(format!(
-                "opaque value cannot be edited; expected unchanged repr {actual}"
-            ));
-        }
-
-        if type_name == "Val"
-            && let serde_json::Value::Object(fields) = field_value
-            && fields.len() == 1
-        {
-            let (variant, payload) = fields.iter().next().unwrap();
-            let method = match variant.as_str() {
-                "Auto" => "auto",
-                "Px" => "px",
-                "Percent" => "percent",
-                "Vw" => "vw",
-                "Vh" => "vh",
-                "VMin" => "vmin",
-                "VMax" => "vmax",
-                _ => {
-                    reject_enum_constant(&owner, variant)?;
-                    return Err(format!("unknown Val variant '{variant}'"));
-                }
-            };
-            let val_type = current.get_type();
-            return if variant == "Auto" {
-                val_type
-                    .call_method0(method)
-                    .map(Bound::unbind)
-                    .map_err(|error| error.to_string())
-            } else {
-                let value = json_number_to_f32(payload)?;
-                val_type
-                    .call_method1(method, (value,))
-                    .map(Bound::unbind)
-                    .map_err(|error| error.to_string())
-            };
-        }
-
-        if is_color
-            && let serde_json::Value::Array(values) = field_value
-            && values.len() == 4
-        {
-            let red = json_number_to_f32(&values[0])?;
-            let green = json_number_to_f32(&values[1])?;
-            let blue = json_number_to_f32(&values[2])?;
-            let alpha = json_number_to_f32(&values[3])?;
-            return owner
-                .call_method1("srgba", (red, green, blue, alpha))
-                .map(Bound::unbind)
-                .map_err(|error| error.to_string());
-        }
-
-        if is_color
-            && let serde_json::Value::Object(fields) = field_value
-            && let Some(serde_json::Value::String(variant_name)) = fields.get("variant")
-            && let Some(variant_value) = fields.get("value")
-        {
-            return construct_color_variant(py, variant_name, variant_value);
-        }
-
-        if is_color
-            && let serde_json::Value::Object(fields) = field_value
-            && fields.len() == 1
-            && !fields.contains_key("variant")
-        {
-            let (variant_name, variant_value) = fields.iter().next().unwrap();
-            return construct_color_variant(py, variant_name, variant_value);
-        }
-
-        // Nested dataclass: apply the given fields onto the current value, so
-        // omitted fields keep their value and nested ones convert recursively.
-        if let serde_json::Value::Object(fields) = field_value
-            && is_dataclass_instance(&current)
-        {
-            let kwargs = PyDict::new(py);
-            for (name, value) in fields {
-                if !current.hasattr(name.as_str()).unwrap_or(false) {
-                    return Err(format!("{type_name} has no field '{name}'"));
-                }
-                let converted = convert_field_value(py, &current, name, value)?;
-                kwargs
-                    .set_item(name, converted)
-                    .map_err(|error| error.to_string())?;
-            }
-            let dataclasses =
-                PyModule::import(py, "dataclasses").map_err(|error| error.to_string())?;
-            return dataclasses
-                .getattr("replace")
-                .and_then(|replace| replace.call((&current,), Some(&kwargs)))
-                .map(Bound::unbind)
-                .map_err(|error| error.to_string());
-        }
-
-        // Accept the tagged form emitted by get_component for every variant.
-        if let serde_json::Value::Object(obj) = field_value
-            && let Some(serde_json::Value::String(variant_name)) = obj.get("variant")
-        {
-            if obj.contains_key("value") {
-                let owner_name = owner.name().map_err(|error| error.to_string())?;
-                let native_name = enum_names::canonical_variant_name(&owner, variant_name);
-                match reflect_mutate::compiled_enum_variant_info(
-                    &owner_name.to_string_lossy(),
-                    &native_name,
-                ) {
-                    Some(VariantInfo::Struct(_)) => {
-                        return Err(format!(
-                            "variant '{variant_name}' uses named payload fields; place them beside 'variant', not inside 'value'"
-                        ));
-                    }
-                    Some(VariantInfo::Unit(_)) => {
-                        return Err(format!(
-                            "variant '{variant_name}' has no payload; omit 'value'"
-                        ));
-                    }
-                    _ => {}
-                }
-            }
-            let mut payload = obj.clone();
-            payload.remove("variant");
-            let payload = if payload.is_empty() {
-                serde_json::Value::Null
-            } else if payload.len() == 1 && payload.contains_key("value") {
-                payload.remove("value").unwrap()
-            } else {
-                serde_json::Value::Object(payload)
-            };
-            if let Some(result) =
-                construct_enum_variant(py, &current, variant_name, &payload, VariantSource::Named)?
-            {
-                return Ok(result);
-            }
-        }
-
-        // Handle enum-variant types: {"Variant": value} becomes Type.Variant(value).
-        if let serde_json::Value::Object(obj) = field_value
-            && obj.len() == 1
-            && !obj.contains_key("variant")
-        {
-            let (variant_name, variant_value) = obj.iter().next().unwrap();
-            if let Some(result) = construct_enum_variant(
-                py,
-                &current,
-                variant_name,
-                variant_value,
-                VariantSource::ObjectKey,
-            )? {
-                return Ok(result);
-            }
-        }
-
-        if let serde_json::Value::String(variant_name) = field_value
-            && let Some(result) = construct_enum_variant(
-                py,
-                &current,
-                variant_name,
-                &serde_json::Value::Null,
-                VariantSource::Named,
-            )?
-        {
-            return Ok(result);
-        }
-
-        if let serde_json::Value::String(s) = field_value {
-            let owner = enum_owner_type(&current);
-            let variants = enum_variant_names(&owner);
-            if !variants.is_empty() {
-                let owner_name = owner
-                    .name()
-                    .map_err(|error| error.to_string())?
-                    .to_string_lossy()
-                    .into_owned();
-                return Err(format!(
-                    "unknown variant '{s}' for {}. Valid variants: {}",
-                    owner_name,
-                    enum_names::accepted_variant_names(&owner, variants).join(", ")
-                ));
-            }
-        }
-
-        // JSON has no entity type, so an Entity-valued field takes an id.
-        if type_name == "Entity" {
-            return entity_from_json(py, field_value);
-        }
-
-        // Convert JSON arrays to math types based on current field type
-        if let serde_json::Value::Array(arr) = field_value {
-            if current.is_instance_of::<PyTuple>() {
-                let values = arr
-                    .iter()
-                    .map(|value| json_to_py(py, value))
-                    .collect::<Result<Vec<_>, _>>()?;
-                return PyTuple::new(py, values)
-                    .map(|value| value.into_any().unbind())
-                    .map_err(|error| error.to_string());
-            }
-            if current.is_instance_of::<PySet>() {
-                let values = arr
-                    .iter()
-                    .map(|value| json_to_py(py, value))
-                    .collect::<Result<Vec<_>, _>>()?;
-                return PySet::new(py, values)
-                    .map(|value| value.into_any().unbind())
-                    .map_err(|error| error.to_string());
-            }
-            if let Some(array) = rebuild_array_like(py, &current, field_value)? {
-                return Ok(array);
-            }
-            if current.is_instance_of::<PyList>()
-                && !arr.is_empty()
-                && let Some(list) = convert_list_elements(py, component, field_name, &current, arr)?
-            {
-                return Ok(list);
-            }
-            let expected_shape = match type_name.as_str() {
-                "Vec2" | "UVec2" | "IVec2" => Some(("[x, y]", 2)),
-                "UVec3" => Some(("[x, y, z]", 3)),
-                "Vec4" | "Quat" => Some(("[x, y, z, w]", 4)),
-                _ => None,
-            };
-            if let Some((shape, expected_len)) = expected_shape
-                && arr.len() != expected_len
-            {
-                return Err(format!(
-                    "{type_name} expects {shape}, got {} elements",
-                    arr.len()
-                ));
-            }
-
-            if type_name != "Vec3"
-                && let Some(result) = math_value_from_json(py, &type_name, arr)
-            {
-                return result;
-            }
-        }
-
-        let is_pybevy_value = has_public_getset_fields(&current);
-
-        if is_pybevy_value
-            && !current.hasattr("variant").unwrap_or(false)
-            && current.hasattr("value").unwrap_or(false)
-            && !field_value.is_object()
-        {
-            let value = json_to_py(py, field_value)?;
-            return current
-                .get_type()
-                .call1((value,))
-                .map(Bound::unbind)
-                .map_err(|error| error.to_string());
-        }
-
-        if is_pybevy_value && let serde_json::Value::Object(fields) = field_value {
-            // Scalar getset descriptors must not turn object patches into default values.
-            if current.is_instance_of::<PyFloat>()
-                || current.is_instance_of::<PyInt>()
-                || current.is_instance_of::<PyString>()
-            {
-                return Err(public_error::mcp_scalar_object(&type_name));
-            }
-            if fields.is_empty() {
-                return Ok(current.clone().unbind());
-            }
-            let kwargs = PyDict::new(py);
-            for (name, value) in fields {
-                if !current.hasattr(name.as_str()).unwrap_or(false) {
-                    return Err(format!(
-                        "{} has no field '{name}'",
-                        current
-                            .get_type()
-                            .name()
-                            .map_err(|error| error.to_string())?
-                    ));
-                }
-                let converted = convert_field_value(py, &current, name, value)?;
-                kwargs
-                    .set_item(name, converted)
-                    .map_err(|error| error.to_string())?;
-            }
-            return current
-                .get_type()
-                .call((), Some(&kwargs))
-                .map(Bound::unbind)
-                .map_err(|error| error.to_string());
         }
     }
-
-    // Default: generic JSON → Python conversion
     json_to_py(py, field_value)
 }
 
@@ -989,6 +632,9 @@ mod tests {
     use std::{ffi::CString, sync::Once};
 
     use bevy::math::Vec3;
+    use pybevy_color::linear_rgba::PyLinearRgba;
+    use pybevy_math::vec3::PyVec3;
+    use pyo3::types::PySet;
 
     use super::*;
 
@@ -1089,13 +735,11 @@ class Color:
 color_mod = types.ModuleType("pybevy.color")
 color_mod.Color = Color
 
-# Also register pybevy.math so the array fallback path doesn't fail on import
-math_mod = types.ModuleType("pybevy.math")
 if "pybevy" not in sys.modules:
     pybevy_mod = types.ModuleType("pybevy")
     sys.modules["pybevy"] = pybevy_mod
 sys.modules["pybevy.color"] = color_mod
-sys.modules["pybevy.math"] = math_mod
+sys.modules.setdefault("pybevy.math", types.ModuleType("pybevy.math"))
 
 class Holder:
     def __init__(self):

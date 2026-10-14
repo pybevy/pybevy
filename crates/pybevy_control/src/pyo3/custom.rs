@@ -5,7 +5,7 @@ use pybevy_core::component_layout::{ComponentLayout, PrimitiveType, PrimitiveVal
 
 use crate::codec::{
     json_float::float_to_json,
-    value::{self as value_conversion, json_f64},
+    value::{self, json_f64},
 };
 
 pub(crate) fn descriptor_matches(layout: &ComponentLayout, descriptor: Layout) -> bool {
@@ -114,7 +114,7 @@ fn primitive_from_json(
                 .as_bool()
                 .ok_or_else(|| "expected a boolean".to_string())?,
         ),
-        PrimitiveType::Vec3 => PrimitiveValue::Vec3(value_conversion::vec3_from_json(value)?),
+        PrimitiveType::Vec3 => PrimitiveValue::Vec3(value::vec3_from_json(value)?),
         PrimitiveType::Vec2 => {
             let values = json_vector(value, 2)?;
             PrimitiveValue::Vec2(Vec2::new(values[0], values[1]))

@@ -15,11 +15,11 @@ use pyo3::{
 use crate::{
     codec::{
         json_float::reject_narrowed_nonfinite,
-        reflect::{self as reflect_mutate, ReflectError},
+        reflect::{self, ReflectError},
     },
     protocol::{ControlError, EntityRef},
     pyo3::{
-        custom as custom_wrapper,
+        custom,
         errors::{component_unknown_field_error, unknown_set_fields},
         execute::create_world_wrapper,
         from_json::{
@@ -216,7 +216,7 @@ pub fn spawn_entity(
         let type_id = bridge.bevy_type_id();
 
         // Try reflection first
-        match reflect_mutate::reflect_spawn_component_with_bridge(
+        match reflect::reflect_spawn_component_with_bridge(
             world,
             entity,
             type_id,
@@ -658,7 +658,7 @@ pub fn set_component(
         }
 
         // Try reflection first
-        match reflect_mutate::reflect_set_component_with_bridge(
+        match reflect::reflect_set_component_with_bridge(
             world,
             entity,
             type_id,
@@ -685,7 +685,7 @@ pub fn set_component(
                         "Component '{component}' cannot be inserted from Python"
                     )));
                 }
-                match reflect_mutate::reflect_spawn_component_with_bridge(
+                match reflect::reflect_spawn_component_with_bridge(
                     world,
                     entity,
                     type_id,
@@ -693,12 +693,8 @@ pub fn set_component(
                     bridge.as_ref(),
                 ) {
                     Ok(()) => {
-                        let new_values = reflect_mutate::reflect_read_fields(
-                            world,
-                            entity,
-                            type_id,
-                            field_obj.keys(),
-                        );
+                        let new_values =
+                            reflect::reflect_read_fields(world, entity, type_id, field_obj.keys());
                         return Ok(serde_json::json!({
                             "entity_id": entity_id,
                             "component": component,
@@ -1175,7 +1171,7 @@ fn set_custom_component(
             .ok_or_else(|| {
                 ControlError::internal(format!("Component '{component}' has no Bevy descriptor"))
             })?;
-        if !custom_wrapper::descriptor_matches(&layout, descriptor_layout) {
+        if !custom::descriptor_matches(&layout, descriptor_layout) {
             return Err(ControlError::internal(format!(
                 "Component '{component}' wrapper layout does not match its Bevy descriptor"
             )));
@@ -1204,7 +1200,7 @@ fn set_custom_component(
         // JSON conversion is complete before resolving a mutable ECS pointer.
         // This mirrors the Python adapter's pointer-safety rule even though JSON
         // conversion itself cannot re-enter Python.
-        let (values, errors) = custom_wrapper::values_from_json(&layout, field_obj);
+        let (values, errors) = custom::values_from_json(&layout, field_obj);
         if !errors.is_empty() {
             return Err(ControlError::invalid_params(format!(
                 "Failed to set '{component}': {}",
@@ -1237,7 +1233,7 @@ fn set_custom_component(
             // Read the wrapper back so new_values reports the stored primitive
             // rather than the input: Vec2/Vec3 fields hold f32 components, so
             // they narrow the caller's JSON doubles.
-            let stored = custom_wrapper::fields_to_json(untyped.as_ref(), &layout)
+            let stored = custom::fields_to_json(untyped.as_ref(), &layout)
                 .map_err(ControlError::internal)?;
             for name in written {
                 let value = stored
@@ -1394,7 +1390,7 @@ fn insert_custom_component(
             .ok_or_else(|| {
                 ControlError::internal(format!("Component '{component}' has no Bevy descriptor"))
             })?;
-        if !custom_wrapper::descriptor_matches(&layout, descriptor_layout) {
+        if !custom::descriptor_matches(&layout, descriptor_layout) {
             return Err(ControlError::internal(format!(
                 "Component '{component}' wrapper layout does not match its Bevy descriptor"
             )));
@@ -1408,8 +1404,7 @@ fn insert_custom_component(
                     "Component '{component}' was not inserted on entity {entity_id}"
                 ))
             })?;
-        let stored =
-            custom_wrapper::fields_to_json(ptr, &layout).map_err(ControlError::internal)?;
+        let stored = custom::fields_to_json(ptr, &layout).map_err(ControlError::internal)?;
         field_obj
             .keys()
             .map(|name| {
