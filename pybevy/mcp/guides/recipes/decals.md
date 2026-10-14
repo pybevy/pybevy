@@ -79,6 +79,14 @@ if __name__ == "__main__":
 - Use `tag` field to group decals (e.g., `tag=1` for blood, `tag=2` for bullet holes)
 - The texture should have an alpha channel for the decal shape
 
+### Optional texture slots
+
+`normal_map_texture`, `metallic_roughness_texture`, and `emissive_texture` are
+optional alongside `base_color_texture`. Normal maps encode XYZ in RGB with
+OpenGL Y orientation. Load normal and metallic-roughness maps as linear data;
+metallic and roughness use the blue and green channels, with base-color alpha
+controlling their blend. All decal images share one sampler.
+
 ## Forward decals
 
 Forward decals are mesh-based and use a material rather than a volume texture.

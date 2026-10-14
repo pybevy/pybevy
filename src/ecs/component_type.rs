@@ -183,7 +183,8 @@ impl PyComponentType {
     }
 
     /// Register this component type with the world and return its ComponentId.
-    /// For custom components, looks up the pre-registered ID from the HashMap.
+    /// For custom components, looks up the pre-registered ID from the HashMap
+    /// and registers a type missing from it on demand.
     pub fn register_with_world(
         &self,
         world: &mut World,
@@ -208,9 +209,10 @@ impl PyComponentType {
                     register_custom_resource(world, *type_ptr, py)
                 }
             }
-            PyComponentType::Custom(type_ptr) => *custom_component_ids
+            PyComponentType::Custom(type_ptr) => custom_component_ids
                 .get(type_ptr)
-                .expect("Custom component not registered"),
+                .copied()
+                .unwrap_or_else(|| register_custom_component(world, *type_ptr, py)),
         }
     }
 

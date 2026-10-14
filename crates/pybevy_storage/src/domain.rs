@@ -408,6 +408,14 @@ impl StoredInteger for u64 {
     const COLUMN: IntegerColumn = IntegerColumn::U64;
 }
 
+impl StoredInteger for usize {
+    const COLUMN: IntegerColumn = if usize::BITS == 32 {
+        IntegerColumn::U32
+    } else {
+        IntegerColumn::U64
+    };
+}
+
 /// A Python integer bound for a field of type `T`. The check applies the
 /// declared rules to the wide value, then `T`'s range, so `-1` for a positive
 /// `u32` reports the rule and `2**40` the 32-bit range, both as `ValueError`.

@@ -1083,6 +1083,7 @@ pub(crate) unsafe fn build_run_args<'w, 'c1, 'c2>(
                     message_type: message_type.clone(),
                     world: mw_1,
                     cursor_storage: cursor,
+                    read_only: false,
                 };
                 let py_reader = PyMessageReader::native(py_messages);
                 let obj = Py::new(py, py_reader).expect("Failed to create PyMessageReader");
@@ -1256,6 +1257,44 @@ pub(crate) unsafe fn execute_prepared_observer(
     };
 
     for param in params {
+        if let SystemParamType::Query { param: query_param } = &param.ty {
+            // Build a transient cached state; the exclusive &mut World makes this
+            // sound in the observer context (no parallel systems here).
+            transient_caches.push(Box::new(CachedQuery::build(
+                world,
+                query_param.clone(),
+                custom_component_ids.clone(),
+                py,
+            )));
+        }
+    }
+    // Like Bevy's Single validation, a required Single that does not match
+    // exactly one entity skips this observer before any parameter is built.
+    for cached in &transient_caches {
+        if !cached.single_entity_enforced || cached.optional_single {
+            continue;
+        }
+        let this_run = world.change_tick();
+        // SAFETY: exclusive &mut World during observer dispatch; the probe reads
+        // only this cache's access and drops before any parameter borrows the World.
+        let probe = unsafe {
+            PyQueryIter::new(
+                cached,
+                world.as_unsafe_world_cell(),
+                validity.clone(),
+                Tick::new(0),
+                this_run,
+            )
+        };
+        let count = probe.matching_count()?;
+        drop(probe);
+        if count != 1 {
+            return Ok(());
+        }
+    }
+    let mut query_cache_idx = 0usize;
+
+    for param in params {
         match &param.ty {
             SystemParamType::PipeInput { .. } => {
                 return Err(PyTypeError::new_err(
@@ -1305,19 +1344,10 @@ pub(crate) unsafe fn execute_prepared_observer(
                 args_buffer.push(obj.into_any());
             }
             SystemParamType::Query { param: query_param } => {
-                // Build a transient cached state; the exclusive &mut World makes this
-                // sound in the observer context (no parallel systems here).
-                transient_caches.push(Box::new(CachedQuery::build(
-                    world,
-                    query_param.clone(),
-                    custom_component_ids.clone(),
-                    py,
-                )));
                 let this_run = world.change_tick();
                 let cell = world.as_unsafe_world_cell();
-                // The box's heap address is stable across later pushes, so this
-                // reference (used only to hand a pointer to the query) stays valid.
-                let cached_ref: &CachedQuery = transient_caches.last().unwrap();
+                let cached_ref: &CachedQuery = &transient_caches[query_cache_idx];
+                query_cache_idx += 1;
                 if query_param.single_entity_enforced {
                     // SAFETY: exclusive &mut World during observer dispatch; the cached
                     // state and cell reference this same World. `transient_caches` keeps
@@ -1534,6 +1564,7 @@ pub(crate) unsafe fn execute_prepared_observer(
                     message_type: message_type.clone(),
                     world: mw_1,
                     cursor_storage: cursor,
+                    read_only: false,
                 };
                 let py_reader = PyMessageReader::native(py_messages);
                 let obj = Py::new(py, py_reader).expect("Failed to create PyMessageReader");

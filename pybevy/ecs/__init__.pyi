@@ -246,10 +246,11 @@ class MessageReaderIter(Iterator[Any]):
     def __next__(self) -> Any: ...
 
 class Messages(Resource, Generic[M]):
-    """Internal resource for message storage.
+    """Bevy's ``Messages<T>`` buffer for a native message type.
 
-    Users typically don't need to reference this type directly - use
-    MessageWriter and MessageReader for the public API.
+    ``World.resource(Messages[T])`` returns it read-only and
+    ``World.resource_mut(Messages[T])`` allows ``clear()``. Systems read and
+    write messages through MessageReader and MessageWriter.
     """
     def clear(self) -> None: ...
     def is_empty(self) -> bool: ...
@@ -1519,11 +1520,11 @@ class World:
     def insert_resource(self, resource: Resource) -> None: ...
     def remove_resource(self, resource_type: type[ResourceType]) -> ResourceType | None: ...
     def component_id(self, component: type[Component]) -> ComponentId | None:
-        """Return or register a component ID, including parameterized ``Assets[T]``."""
+        """Return or register a component ID, including ``Assets[T]`` and ``Messages[T]``."""
     def contains_resource(self, resource: type[ResourceType]) -> bool:
-        """Test resource presence, including parameterized ``Assets[T]`` collections."""
+        """Test resource presence, including ``Assets[T]`` and native ``Messages[T]``."""
     def resource_entity(self, resource: type[ResourceType]) -> Entity | None:
-        """Return a resource's stable entity, including ``Assets[T]``, if present."""
+        """Return a resource's stable entity, including ``Assets[T]`` and ``Messages[T]``."""
     def resource_entities(self) -> Iterator[tuple[ComponentId, Entity]]:
         """Iterate over resource component IDs with allocated Bevy entities."""
     def _get_last_error(self) -> tuple[str, str | None] | None:
@@ -2263,7 +2264,8 @@ class Single(Generic[QueryParam_T, *Qs]):
     """
     Single entity query that enforces exactly one entity matches.
 
-    Skips the system before its body runs if zero or multiple entities match.
+    Skips the system or observer before its body runs if zero or multiple
+    entities match.
     Optional[Single[T]], using typing.Optional re-exported by this module,
     instead injects None for invalid cardinality and runs the system with
     unchanged scheduler access. Single[T] | None is also supported.

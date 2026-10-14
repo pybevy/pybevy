@@ -4,7 +4,9 @@ use bevy::{
     ecs::{reflect::AppTypeRegistry, world::World},
     reflect::TypeInfo,
 };
-use pybevy_core::{ComponentBridge, PyEntity, public_error};
+use pybevy_core::{
+    ComponentBridge, PyEntity, component_fields::declared_annotations, public_error,
+};
 use pyo3::{
     prelude::*,
     types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyModule, PyTuple, PyType},
@@ -36,20 +38,9 @@ pub(crate) fn class_declares_component_field(
     if let Ok(Some(names)) = dataclass_field_names(class) {
         return Some(names.contains(field_name));
     }
-    let mut found_metadata = false;
-    for attribute in ["__dataclass_fields__", "__annotations__"] {
-        let Ok(metadata) = class.getattr(attribute) else {
-            continue;
-        };
-        let Ok(fields) = metadata.cast::<PyDict>() else {
-            continue;
-        };
-        found_metadata = true;
-        if fields.contains(field_name).unwrap_or(false) {
-            return Some(true);
-        }
-    }
-    found_metadata.then_some(false)
+    declared_annotations(class)
+        .ok()
+        .map(|fields| fields.contains(field_name).unwrap_or(false))
 }
 
 pub(crate) fn has_public_instance_field(instance: &Bound<'_, PyAny>, field_name: &str) -> bool {

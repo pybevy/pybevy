@@ -2,33 +2,93 @@ use std::any::TypeId;
 
 use bevy::{asset::UntypedHandle, ecs::world::World};
 use pybevy_core::{
-    AccessMode, AssetAccessRegistry, AssetBorrowCounter, ValidityFlag, ValidityGuard,
+    AccessMode, AssetAccessRegistry, AssetBorrowCounter, PyHandle, ValidityFlag, ValidityGuard,
     ensure_asset_access_registry,
     public_error::mcp_entity_not_found,
     registry::global_registry::{all_component_bridges, get_asset_bridge_by_name},
 };
 use pyo3::prelude::*;
 
-use super::from_json::field::convert_field_value;
+use super::{descriptors::is_field_descriptor, from_json::field::convert_field_value};
 use crate::{
     protocol::{ControlError, EntityRef},
     scene::entity::resolve_entity,
 };
 
-fn validate_asset_handle_type(
-    handle: &UntypedHandle,
+/// A handle-valued field of a component.
+struct ComponentHandle {
+    field: String,
+    handle: UntypedHandle,
+    asset_type: String,
+}
+
+/// Every public field of `component` that reads as an asset handle.
+fn component_handles(component: &Bound<'_, PyAny>) -> PyResult<Vec<ComponentHandle>> {
+    let class = component.get_type();
+    let mut handles = Vec::new();
+    for name in class.dir()? {
+        let field: String = name.extract()?;
+        if field.starts_with('_')
+            || !class
+                .getattr(field.as_str())
+                .is_ok_and(|attribute| is_field_descriptor(&attribute))
+        {
+            continue;
+        }
+        let Ok(value) = component.getattr(field.as_str()) else {
+            continue;
+        };
+        let Ok(handle) = value.extract::<PyRef<PyHandle>>() else {
+            continue;
+        };
+        let asset_type = handle.asset_type_name().unwrap_or("Unknown").to_owned();
+        let handle = handle.to_untyped_handle()?;
+        handles.push(ComponentHandle {
+            field,
+            handle,
+            asset_type,
+        });
+    }
+    Ok(handles)
+}
+
+/// The one handle of `component` whose asset type is `expected_type_id`.
+fn select_asset_handle(
+    handles: Vec<ComponentHandle>,
     expected_type_id: TypeId,
     component: &str,
     requested_asset_type: &str,
-    handle_asset_type: &str,
-) -> Result<(), String> {
-    if handle.type_id() == expected_type_id {
-        return Ok(());
+) -> Result<UntypedHandle, String> {
+    if handles.is_empty() {
+        return Err(format!("Component '{component}' has no asset handle field"));
     }
-
-    Err(format!(
-        "Asset type '{requested_asset_type}' does not match component '{component}' handle type '{handle_asset_type}'"
-    ))
+    let (mut matching, other): (Vec<_>, Vec<_>) = handles
+        .into_iter()
+        .partition(|candidate| candidate.handle.type_id() == expected_type_id);
+    match matching.len() {
+        1 => Ok(matching.remove(0).handle),
+        0 => {
+            let found = other
+                .iter()
+                .map(|candidate| format!("'{}'", candidate.asset_type))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let noun = if other.len() == 1 { "type" } else { "types" };
+            Err(format!(
+                "Asset type '{requested_asset_type}' does not match component '{component}' handle {noun} {found}"
+            ))
+        }
+        _ => {
+            let fields = matching
+                .iter()
+                .map(|candidate| candidate.field.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            Err(format!(
+                "Component '{component}' has several '{requested_asset_type}' handles ({fields}); set_asset cannot choose one"
+            ))
+        }
+    }
 }
 
 /// Modify asset properties (material color, roughness, etc.) live without code reload.
@@ -61,7 +121,12 @@ pub fn mutate_asset(
             return;
         };
 
-        // Extract the component to get the PyHandle
+        let Some(asset_bridge) = get_asset_bridge_by_name(&asset_type) else {
+            errors.push(format!("Asset type '{asset_type}' not in registry"));
+            return;
+        };
+
+        // Extract the component to read its handle fields
         let (read_window, validity) = ValidityGuard::read();
 
         let handle_obj = if world.get_entity(entity).is_ok() {
@@ -75,53 +140,29 @@ pub fn mutate_asset(
             errors.push(mcp_entity_not_found(entity_id));
             return;
         };
-        let untyped = (|| {
-            let handle_obj = handle_obj.ok_or_else(|| {
-                format!("Component '{component}' not found on entity {entity_id}")
-            })?;
-
-            let bound = handle_obj.bind(py);
-            let py_handle = bound.getattr("handle").map_err(|error| {
-                format!("Component '{component}' has no 'handle' attribute: {error}")
-            })?;
-            let handle: PyRef<pybevy_core::PyHandle> = py_handle
-                .extract()
-                .map_err(|error| format!("Failed to extract handle: {error}"))?;
-
-            let asset_type_name = handle.asset_type_name().unwrap_or("Unknown").to_owned();
-            let untyped = handle
-                .to_untyped_handle()
-                .map_err(|error| format!("Failed to convert handle: {error}"))?;
-            Ok((untyped, asset_type_name))
-        })();
+        let untyped = handle_obj
+            .ok_or_else(|| format!("Component '{component}' not found on entity {entity_id}"))
+            .and_then(|handle_obj| {
+                component_handles(handle_obj.bind(py))
+                    .map_err(|error| format!("Failed to read '{component}' handles: {error}"))
+            })
+            .and_then(|handles| {
+                select_asset_handle(
+                    handles,
+                    asset_bridge.bevy_type_id(),
+                    &component,
+                    &asset_type,
+                )
+            });
         drop(read_window);
 
-        let (untyped, handle_asset_type) = match untyped {
+        let untyped = match untyped {
             Ok(handle) => handle,
             Err(error) => {
                 errors.push(error);
                 return;
             }
         };
-
-        // Find the asset bridge by name
-        let asset_bridge = get_asset_bridge_by_name(&asset_type);
-
-        let Some(asset_bridge) = asset_bridge else {
-            errors.push(format!("Asset type '{asset_type}' not in registry"));
-            return;
-        };
-
-        if let Err(error) = validate_asset_handle_type(
-            &untyped,
-            asset_bridge.bevy_type_id(),
-            &component,
-            &asset_type,
-            &handle_asset_type,
-        ) {
-            errors.push(error);
-            return;
-        }
 
         // Get mutable access to the asset
         let write_flag = ValidityFlag::new();
@@ -268,26 +309,58 @@ mod tests {
         assert_eq!(result.unwrap_err().code, ErrorCode::InvalidParams);
     }
 
-    #[test]
-    fn mismatched_asset_handle_type_is_rejected_before_typed_conversion() {
-        let handle = Handle::<Mesh>::default().untyped();
+    fn handle_field<A: bevy::asset::Asset>(field: &str, asset_type: &str) -> ComponentHandle {
+        ComponentHandle {
+            field: field.into(),
+            handle: Handle::<A>::default().untyped(),
+            asset_type: asset_type.into(),
+        }
+    }
 
-        let error = validate_asset_handle_type(
-            &handle,
+    #[test]
+    fn asset_handle_is_selected_by_its_asset_type() {
+        let mismatch = select_asset_handle(
+            vec![handle_field::<Mesh>("handle", "Mesh")],
             TypeId::of::<StandardMaterial>(),
             "Mesh3d",
             "StandardMaterial",
+        )
+        .unwrap_err();
+        assert_eq!(
+            mismatch,
+            "Asset type 'StandardMaterial' does not match component 'Mesh3d' handle type 'Mesh'"
+        );
+
+        let selected = select_asset_handle(
+            vec![
+                handle_field::<StandardMaterial>("material", "StandardMaterial"),
+                handle_field::<Mesh>("source", "Mesh"),
+            ],
+            TypeId::of::<Mesh>(),
+            "Holder",
+            "Mesh",
+        )
+        .unwrap();
+        assert_eq!(selected.type_id(), TypeId::of::<Mesh>());
+
+        let ambiguous = select_asset_handle(
+            vec![
+                handle_field::<Mesh>("first", "Mesh"),
+                handle_field::<Mesh>("second", "Mesh"),
+            ],
+            TypeId::of::<Mesh>(),
+            "Holder",
             "Mesh",
         )
         .unwrap_err();
+        assert_eq!(
+            ambiguous,
+            "Component 'Holder' has several 'Mesh' handles (first, second); set_asset cannot choose one"
+        );
 
         assert_eq!(
-            error,
-            "Asset type 'StandardMaterial' does not match component 'Mesh3d' handle type 'Mesh'"
-        );
-        assert!(
-            validate_asset_handle_type(&handle, TypeId::of::<Mesh>(), "Mesh3d", "Mesh", "Mesh",)
-                .is_ok()
+            select_asset_handle(Vec::new(), TypeId::of::<Mesh>(), "Name", "Mesh").unwrap_err(),
+            "Component 'Name' has no asset handle field"
         );
     }
 

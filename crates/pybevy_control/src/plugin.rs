@@ -42,7 +42,7 @@ use crate::{
         },
         shader_errors::{
             ShaderErrors, UnresolvedShaderImports, publish_shader_errors,
-            track_unresolved_shader_imports,
+            report_material_shader_errors, track_unresolved_shader_imports,
         },
         timeline::{PendingTimelines, TimelineCaptures, process_pending_timelines},
         turnaround::{PendingTurnarounds, TurnaroundCaptures, process_pending_turnarounds},
@@ -281,7 +281,13 @@ pub fn install_render_frame_readiness(app: &mut App) {
     app.insert_resource(readiness);
     app.insert_resource(shader_errors);
     app.init_resource::<UnresolvedShaderImports>();
-    app.add_systems(Last, track_unresolved_shader_imports);
+    app.add_systems(
+        Last,
+        (
+            track_unresolved_shader_imports,
+            report_material_shader_errors,
+        ),
+    );
 }
 
 /// Adds render-frame readiness once the render sub-app exists.

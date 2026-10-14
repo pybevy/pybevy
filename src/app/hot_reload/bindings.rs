@@ -1,4 +1,5 @@
 use std::{
+    collections::{HashMap, HashSet},
     env,
     sync::{Arc, Mutex},
 };
@@ -6,21 +7,24 @@ use std::{
 use bevy::{
     app::{App, Last, MainScheduleOrder, PreStartup, Update},
     ecs::{
+        entity::Entity,
+        query::With,
         schedule::{IntoScheduleConfigs, ScheduleLabel, Schedules},
-        system::{Res, ResMut},
+        system::{Query, Res, ResMut},
     },
     time::{Real, Time},
+    window::{PrimaryWindow, Window},
 };
-use pybevy_core::{PyPlugin, ensure_asset_access_registry, resource_initializer};
+use pybevy_core::{PyPlugin, resource_initializer};
 use pybevy_ecs::shared::system_runtime::RunProfileSinkResource;
 use pybevy_reload::{
-    DefsFingerprint, EscalationTracker, FrameTimeWindow, HotReloadGeneration, HotReloadStats,
-    InterpreterDiagnostics, MemoryOverlayVisible, MemoryProfile, PluginTracker, ReloadMode,
-    ReloadStartupScheduleOrder, StartPaused, SystemMonitor, SystemProfiler, is_verbose,
-    parse_resolution, render_hot_reload_overlay, spawn_hot_reload_overlay_system,
-    update_system_stats,
+    BaseEntitySet, DefsFingerprint, EscalationTracker, FrameTimeWindow, HotReloadGeneration,
+    HotReloadStats, InterpreterDiagnostics, MemoryOverlayVisible, MemoryProfile, PluginTracker,
+    ReloadMode, ReloadStartupScheduleOrder, StartPaused, SystemMonitor, SystemProfiler,
+    cleanup::extend_base_entity_set, is_verbose, parse_resolution, render_hot_reload_overlay,
+    spawn_hot_reload_overlay_system, update_system_stats,
 };
-use pyo3::prelude::*;
+use pyo3::{prelude::*, types::PyType};
 
 use super::{
     registry::DynamicSystemRegistry,
@@ -307,7 +311,7 @@ pub fn add_hot_reload_system(
         uptime_secs: initial_uptime_secs,
         generation_uptime_secs: 0.0,
         entity_count: 0,
-        asset_counts: std::collections::HashMap::new(),
+        asset_counts: HashMap::new(),
         last_error_timestamp: 0.0,
         last_reload_frame: 0,
     });
@@ -356,10 +360,7 @@ pub fn add_hot_reload_system(
         // so register a PreStartup system to set resolution once it's available.
         app.add_systems(
             PreStartup,
-            move |mut query: bevy::ecs::system::Query<
-                &mut bevy::window::Window,
-                bevy::ecs::query::With<bevy::window::PrimaryWindow>,
-            >| {
+            move |mut query: Query<&mut Window, With<PrimaryWindow>>| {
                 if let Ok(mut window) = query.single_mut() {
                     window.resolution.set(width, height);
                 }
@@ -387,7 +388,7 @@ pub fn add_hot_reload_system(
 
         // Get the type pointer for HotReloadControl
         // PyHotReloadControl extends PyResource, so we need to get the Python class type
-        let type_obj: Bound<'_, pyo3::types::PyType> = py_control.bind(py).get_type();
+        let type_obj: Bound<'_, PyType> = py_control.bind(py).get_type();
         let type_ptr = type_obj.as_type_ptr();
 
         if let Err(error) = PyResourceType::Custom(type_ptr).insert_into_world(
@@ -436,13 +437,10 @@ pub fn add_hot_reload_system(
     // Capture base entity set NOW, before any user Startup systems run.
     // Every entity that exists at this point is Bevy-internal (plugin init).
     // On Full reload, everything NOT in this set gets despawned.
-    if !app
-        .world()
-        .contains_resource::<pybevy_reload::BaseEntitySet>()
-    {
-        let entities: std::collections::HashSet<bevy::ecs::entity::Entity> = app
+    if !app.world().contains_resource::<BaseEntitySet>() {
+        let entities: HashSet<Entity> = app
             .world_mut()
-            .query::<bevy::ecs::entity::Entity>()
+            .query::<Entity>()
             .iter(app.world())
             .collect();
         if verbose {
@@ -451,7 +449,7 @@ pub fn add_hot_reload_system(
                 entities.len()
             );
         }
-        app.insert_resource(pybevy_reload::BaseEntitySet { entities });
+        app.insert_resource(BaseEntitySet { entities });
 
         // Winit creates more engine entities (Monitors, a11y) when the event
         // loop starts, after the snapshot above. Fold everything alive at
@@ -462,10 +460,7 @@ pub fn add_hot_reload_system(
         app.world_mut()
             .resource_mut::<MainScheduleOrder>()
             .insert_startup_before(PreStartup, ExtendBaseEntitySet);
-        app.add_systems(
-            ExtendBaseEntitySet,
-            pybevy_reload::cleanup::extend_base_entity_set,
-        );
+        app.add_systems(ExtendBaseEntitySet, extend_base_entity_set);
     }
 
     let startup_labels = app
@@ -510,17 +505,6 @@ impl PyHotReloadPlugin {
     }
 
     pub fn build(&self, app: Bound<'_, PyApp>) -> PyResult<()> {
-        app.borrow().with_bevy_app(|bevy_app| {
-            ensure_asset_access_registry(bevy_app.world_mut());
-            // Create the hot reload state
-            let state = HotReloadState::new();
-            let error_state = Arc::new(Mutex::new(Vec::new()));
-
-            // Add hot reload systems and resources. The plugin runs while the
-            // entrypoint is still building, so there is nothing to seed yet.
-            add_hot_reload_system(bevy_app, state, error_state, None);
-
-            Ok(())
-        })
+        app.borrow().install_hot_reload_plugin()
     }
 }

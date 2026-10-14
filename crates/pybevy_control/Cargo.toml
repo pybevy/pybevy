@@ -34,6 +34,7 @@ pybevy_core = { workspace = true }
 pybevy_color = { workspace = true }
 pybevy_math = { workspace = true }
 pybevy_ecs = { workspace = true }
+pybevy_shader_types = { workspace = true }
 pybevy_macros = { workspace = true, optional = true }
 
 pybevy_transform = { workspace = true }

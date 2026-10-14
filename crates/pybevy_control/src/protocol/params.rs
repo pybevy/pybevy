@@ -396,9 +396,9 @@ pub struct CheckAllOverlapsParams {
 pub struct SetAssetParams {
     /// Packed entity ID from an MCP response, or Name
     pub entity: EntityRef,
-    /// Handle component: MeshMaterial3d, Mesh3d, MeshMaterial2d, AudioPlayer
+    /// Component holding the handle, such as MeshMaterial3d, Mesh3d, MeshMaterial2d, Sprite, AudioPlayer or PitchPlayer
     pub component: String,
-    /// Asset type: StandardMaterial, Mesh, ColorMaterial, AudioSource
+    /// Asset type of the handle to follow, such as StandardMaterial, Mesh, ColorMaterial, Image, AudioSource or Pitch
     pub asset_type: String,
     /// Fields to update on the asset. Enum values use {variant: name, ...}; named payload fields keep their native names and a single tuple payload uses value. Color and LinearRgba fields accept [r, g, b, a]; LinearRgba also accepts {red, green, blue, alpha}.
     #[schemars(schema_with = "json_object_schema")]

@@ -21,7 +21,9 @@ use crate::{
         descriptors::{constructor_fields, constructor_parameter_names},
         enum_names,
         from_json::{
-            color::{construct_color_variant, linear_rgba_from_json, srgba_from_array},
+            color::{
+                color_shape_error, construct_color_variant, linear_rgba_from_json, srgba_from_array,
+            },
             enums::{
                 VariantSource, construct_enum_variant, enum_owner_type, enum_variant_names,
                 reject_enum_constant,
@@ -273,17 +275,21 @@ fn color_tagged_variant(cx: &FieldContext<'_, '_>) -> Converted {
     construct_color_variant(cx.py, variant_name, variant_value).map(Some)
 }
 
+/// `{"<variant>": payload}`; any other non-empty object for a Color names the
+/// shapes. An empty object is a no-op patch.
 fn color_variant_key(cx: &FieldContext<'_, '_>) -> Converted {
-    if !cx.is_color() {
+    if !cx.is_color() || cx.object().is_none_or(Map::is_empty) {
         return Ok(None);
     }
-    let Some((variant_name, variant_value)) = cx.single_entry() else {
-        return Ok(None);
-    };
-    if variant_name == "variant" {
-        return Ok(None);
+    if let Some((variant_name, variant_value)) = cx.single_entry()
+        && variant_name != "variant"
+    {
+        if variant_value.is_object() || variant_value.is_array() {
+            return construct_color_variant(cx.py, variant_name, variant_value).map(Some);
+        }
+        reject_enum_constant(cx.owner(), variant_name)?;
     }
-    construct_color_variant(cx.py, variant_name, variant_value).map(Some)
+    Err(color_shape_error(cx.py, cx.value))
 }
 
 /// Applies the given fields onto the current dataclass, so omitted fields
@@ -393,10 +399,10 @@ fn unknown_enum_variant(cx: &FieldContext<'_, '_>) -> Converted {
         .map_err(|error| error.to_string())?
         .to_string_lossy()
         .into_owned();
-    Err(format!(
-        "unknown variant '{name}' for {}. Valid variants: {}",
-        owner_name,
-        enum_names::accepted_variant_names(owner, variants).join(", ")
+    Err(public_error::mcp_unknown_variant(
+        name,
+        &owner_name,
+        &enum_names::accepted_variant_names(owner, variants),
     ))
 }
 

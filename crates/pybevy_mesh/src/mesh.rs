@@ -5,6 +5,7 @@ use bevy::{
     math::{Quat, Vec3},
     mesh::{
         Indices, Mesh, MeshVertexAttribute, PrimitiveTopology, VertexAttributeValues, VertexFormat,
+        skinning::SkinnedMeshBounds,
     },
     transform::components::Transform,
 };
@@ -14,7 +15,7 @@ use pybevy_array::{
     borrowed_read_only_u16, borrowed_read_only_u32, owned_contiguous_le_bytes,
 };
 use pybevy_core::{
-    AssetInputConverter, AssetStorage, Omittable, PyAsset,
+    AssetInputConverter, AssetStorage, FieldStorage, Omittable, PyAsset,
     borrowed_array_anchor::{AssetBorrowAnchor, AssetBorrowAnchorMut},
     content_hash::CanonicalContentHasher,
     numpy_view_guard::{PendingNumpyViewGuard, PyNumpyViewGuard},
@@ -36,6 +37,7 @@ use crate::{
     mesh_builder::PyMeshBuilder,
     meshable::{PyMeshable, meshable_to_mesh},
     primitive_topology::PyPrimitiveTopology,
+    skinned_mesh_bounds::PySkinnedMeshBounds,
     validation::{
         check_index_range, check_index_range_over_all, check_indexed, check_scale,
         check_triangle_list,
@@ -318,6 +320,21 @@ fn check_smooth_normal_preconditions(mesh: &Mesh) -> PyResult<()> {
     Ok(())
 }
 
+fn copy_normal_sums(source: &Bound<'_, PyList>, normals: &mut [Vec3]) -> PyResult<()> {
+    if source.len() != normals.len() {
+        return Err(PyValueError::new_err(format!(
+            "compute_custom_smooth_normals: the normals list must keep its {} entries (got {})",
+            normals.len(),
+            source.len()
+        )));
+    }
+    for (item, slot) in source.iter().zip(normals.iter_mut()) {
+        let (x, y, z) = item.extract::<(f32, f32, f32)>()?;
+        *slot = Vec3::new(x, y, z);
+    }
+    Ok(())
+}
+
 macro_rules! mesh_with {
     ($s:expr, $f:expr) => {{
         let mesh = (*$s).as_ref()?;
@@ -570,6 +587,53 @@ impl PyMesh {
         })
     }
 
+    /// This mesh's bounds, a read-only view; `set_skinned_mesh_bounds` replaces them.
+    pub fn skinned_mesh_bounds(&self) -> PyResult<Option<PySkinnedMeshBounds>> {
+        Ok(self
+            .storage
+            .borrow_read_only_accessor::<SkinnedMeshBounds, FieldStorage<SkinnedMeshBounds>>(
+                "Mesh.skinned_mesh_bounds()",
+                "Mesh.set_skinned_mesh_bounds()",
+                Mesh::skinned_mesh_bounds,
+            )?
+            .map(PySkinnedMeshBounds::from_borrowed))
+    }
+
+    pub fn set_skinned_mesh_bounds(
+        &mut self,
+        skinned_mesh_bounds: Option<PySkinnedMeshBounds>,
+    ) -> PyResult<()> {
+        let bounds = skinned_mesh_bounds
+            .map(SkinnedMeshBounds::try_from)
+            .transpose()?;
+        mesh_with_mut!(self, |mesh: &mut Mesh| mesh.set_skinned_mesh_bounds(bounds));
+        Ok(())
+    }
+
+    pub fn with_skinned_mesh_bounds(
+        &self,
+        py: Python<'_>,
+        skinned_mesh_bounds: Option<PySkinnedMeshBounds>,
+    ) -> PyResult<Py<Self>> {
+        self.cloned_with(py, |mesh| mesh.set_skinned_mesh_bounds(skinned_mesh_bounds))
+    }
+
+    pub fn generate_skinned_mesh_bounds(&mut self) -> PyResult<()> {
+        let bounds = SkinnedMeshBounds::from_mesh(&*self.as_ref()?).map_err(|error| {
+            PyValueError::new_err(public_error::mesh_operation_failed(
+                "generate_skinned_mesh_bounds",
+                error,
+            ))
+        })?;
+        mesh_with_mut!(self, |mesh: &mut Mesh| mesh
+            .set_skinned_mesh_bounds(Some(bounds)));
+        Ok(())
+    }
+
+    pub fn with_generated_skinned_mesh_bounds(&self, py: Python<'_>) -> PyResult<Py<Self>> {
+        self.cloned_with(py, |mesh| mesh.generate_skinned_mesh_bounds())
+    }
+
     pub fn contains_attribute(&self, attribute: &PyMeshVertexAttribute) -> PyResult<bool> {
         mesh_with!(self, |mesh: &Mesh| mesh
             .try_contains_attribute(attribute.0.id))
@@ -751,6 +815,9 @@ impl PyMesh {
     }
 
     /// Per-triangle Python callback mutating the accumulating normals list in place.
+    ///
+    /// Every call receives the same positions tuple and normals list, built once,
+    /// and the sums are copied back after the last triangle, so the cost is linear.
     pub fn compute_custom_smooth_normals<'py>(
         &mut self,
         py: Python<'py>,
@@ -766,33 +833,49 @@ impl PyMesh {
         .map_err(PyValueError::new_err)?;
         drop(mesh);
         let mut candidate = mesh_with!(self, |mesh: &Mesh| mesh.clone());
+        let triangle_count = candidate
+            .try_indices()
+            .map_err(|error| mesh_operation_error("compute_custom_smooth_normals", error))?
+            .len()
+            / 3;
+        let mut positions_py: Option<Bound<'py, PyTuple>> = None;
+        let mut normals_py: Option<Bound<'py, PyList>> = None;
+        let mut calls = 0;
         let mut caught: Option<PyErr> = None;
         candidate
             .try_compute_custom_smooth_normals(|[a, b, c], positions, normals| {
+                calls += 1;
                 if caught.is_some() {
                     return;
                 }
-                let indices = (a, b, c);
-                let positions_list: Vec<(f32, f32, f32)> =
-                    positions.iter().map(|p| (p[0], p[1], p[2])).collect();
-                let normals_py = PyList::new(py, normals.iter().map(|n| (n.x, n.y, n.z)))
-                    .expect("tuple list conversion cannot fail");
-                match per_triangle.call1((indices, positions_list, &normals_py)) {
-                    Ok(_) => {
-                        for (index, slot) in normals.iter_mut().enumerate() {
-                            let value = normals_py
-                                .get_item(index)
-                                .and_then(|item| item.extract::<(f32, f32, f32)>());
-                            match value {
-                                Ok((x, y, z)) => *slot = Vec3::new(x, y, z),
-                                Err(error) => {
-                                    caught = Some(error);
-                                    return;
-                                }
-                            }
+                let positions_py = match &positions_py {
+                    Some(tuple) => tuple,
+                    None => match PyTuple::new(py, positions.iter().map(|p| (p[0], p[1], p[2]))) {
+                        Ok(tuple) => positions_py.insert(tuple),
+                        Err(error) => {
+                            caught = Some(error);
+                            return;
                         }
-                    }
-                    Err(error) => caught = Some(error),
+                    },
+                };
+                let normals_py = match &normals_py {
+                    Some(list) => list,
+                    None => match PyList::new(py, normals.iter().map(|n| (n.x, n.y, n.z))) {
+                        Ok(list) => normals_py.insert(list),
+                        Err(error) => {
+                            caught = Some(error);
+                            return;
+                        }
+                    },
+                };
+                if let Err(error) = per_triangle.call1(((a, b, c), positions_py, normals_py)) {
+                    caught = Some(error);
+                    return;
+                }
+                if calls == triangle_count
+                    && let Err(error) = copy_normal_sums(normals_py, normals)
+                {
+                    caught = Some(error);
                 }
             })
             .map_err(|error| mesh_operation_error("compute_custom_smooth_normals", error))?;

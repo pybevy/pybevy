@@ -82,6 +82,42 @@ pub fn callable_ordered_against_own_set(system: &str, relation: &str, target: &s
     )
 }
 
+pub fn material_shader_owner(
+    class_name: &str,
+    stages: &str,
+    path: &str,
+    entities: &[impl Display],
+) -> String {
+    const SHOWN: usize = 8;
+    let mut owner = format!("@material {class_name} {stages} shader {path}");
+    if !entities.is_empty() {
+        let shown: Vec<String> = entities
+            .iter()
+            .take(SHOWN)
+            .map(ToString::to_string)
+            .collect();
+        let more = entities.len().saturating_sub(SHOWN);
+        let suffix = if more > 0 {
+            format!(" and {more} more")
+        } else {
+            String::new()
+        };
+        owner.push_str(&format!(" (entities {}{suffix})", shown.join(", ")));
+    }
+    owner
+}
+
+pub fn material_shader_recovered(class_names: &[&str], path: &str) -> String {
+    if class_names.is_empty() {
+        format!("Shader {path} compiles again")
+    } else {
+        format!(
+            "@material {} shader {path} compiles again",
+            class_names.join(", ")
+        )
+    }
+}
+
 pub fn capture_no_camera(operation: &str) -> String {
     format!("{operation} requires an active Camera, but the scene has no Camera entities")
 }
@@ -351,6 +387,20 @@ pub fn mcp_schedule_non_public_tool(index: usize, tool: &str) -> String {
     format!("action[{index}]: tool '{tool}' is not a public schedulable tool")
 }
 
+pub fn mcp_unknown_variant(name: &str, owner: &str, variants: &[String]) -> String {
+    format!(
+        "unknown variant '{name}' for {owner}. Valid variants: {}",
+        variants.join(", ")
+    )
+}
+
+pub fn mcp_color_shape(got: &str, variants: &[String]) -> String {
+    format!(
+        "Color accepts [r, g, b, a] (sRGB), {{\"variant\": \"<name>\", \"value\": {{...}}}} or {{\"<name>\": {{...}}}} with an object or array payload; got {got}. Valid variants: {}",
+        variants.join(", ")
+    )
+}
+
 pub fn mcp_enum_constant_not_variant(
     constant: &str,
     owner: &str,
@@ -503,6 +553,10 @@ pub fn unregistered_component_type(name: &str) -> String {
 
 pub fn mesh_operation_failed(operation: impl Display, error: impl Display) -> String {
     format!("Mesh.{operation}() failed: {error}")
+}
+
+pub fn skinned_mesh_bounds_failed(operation: impl Display, error: impl Display) -> String {
+    format!("{operation}() failed: {error}")
 }
 
 pub const MESH_COLOR_ATTRIBUTE_SHAPE: &str = "Color attribute must have shape (N, 4)";
@@ -667,6 +721,9 @@ pub const ASSET_LOAD_FAILED_NO_DEFAULT: &str =
 pub const COMPONENT_BRIDGE_NOT_FOUND: &str = "Component bridge not found";
 
 pub const RESOURCE_BRIDGE_NOT_FOUND: &str = "Resource bridge not found for dynamic type";
+pub const MESSAGES_RESOURCE_READ_ONLY: &str =
+    "Messages from World.resource() are read-only; use World.resource_mut() to clear them";
+pub const CUSTOM_MESSAGES_RESOURCE: &str = "Messages[T] names the Bevy buffer of a native message type; custom Python messages are read with MessageReader[T] and written with MessageWriter[T]";
 pub const ASSET_SERVER_MANUAL_INSERT: &str =
     "AssetServer cannot be manually inserted. It is provided by AssetPlugin.";
 pub const ASSET_SERVER_MANUAL_REMOVE: &str =
@@ -1463,6 +1520,7 @@ pub const DIRECTION_NOT_NORMALIZED: &str = "direction must be normalized";
 pub const UP_NOT_NORMALIZED: &str = "up must be normalized";
 pub const ROTATION_ARC_NOT_NORMALIZED: &str = "start and end vectors must be normalized";
 pub const RELOAD_FAILED_AFTER_SCENE_CLEARED: &str = "the Full reload cleared the scene before it failed, so systems now run against an empty world; fix the error and reload, or call run_scene";
+pub const RELOAD_NOT_OBSERVED: &str = "the reload had not run when this response was built, so it reports no outcome; check get_reload_status for its generation, mode and errors";
 pub const RELOAD_ENTRYPOINT_CHANGED: &str = "the @entrypoint changed; Python plugins, systems and observers in it were reloaded, but native plugin settings (such as ScheduleRunnerPlugin.run_loop), WindowPlugin and other App configuration apply only at startup: call run_scene for those to take effect";
 pub const TRANSFORM_ROTATION_ZERO_LENGTH: &str =
     "Transform.rotation must be a non-zero quaternion; use Quat.IDENTITY for no rotation";

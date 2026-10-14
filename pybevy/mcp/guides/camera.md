@@ -246,11 +246,15 @@ camera automatically. Its `linear_steps` must be in `0..=1024` and
 `MotionBlur.samples`; `ContactShadows.linear_steps` and every
 `AtmosphereSettings` sample and direction count are limited to `0..=1024`.
 
-Other cameras in an app using deferred rendering must add
-`DepthPrepass()`, `DeferredPrepass()`, and `Msaa.Off` themselves. Without the
-prepass markers, forced-deferred meshes can be omitted from the frame without a
-diagnostic even while forward-rendered objects remain visible. Adding only
-`Msaa.Off` does not fix this; other incomplete prepass combinations may panic.
+Other cameras in an app using deferred rendering add `DepthPrepass()`,
+`DeferredPrepass()`, and `Msaa.Off` themselves; the three together draw
+forced-deferred meshes. A camera missing `DeferredPrepass()` leaves those meshes
+out of its frame while forward-rendered objects stay visible. A camera with
+`DepthPrepass()`, `NormalPrepass()` or `MotionVectorPrepass()` that sees a
+deferred mesh needs `DeferredPrepass()` as well, because Bevy 0.19 panics on the
+render thread for that combination. Give such a camera `DeferredPrepass()`, or
+render the material forward with
+`opaque_render_method=OpaqueRendererMethod.Forward`.
 
 ```python
 from pybevy.pbr import DefaultOpaqueRendererMethod
@@ -675,15 +679,13 @@ def orbit(
     transform.translation = Vec3.ZERO - transform.forward() * 20.0
 ```
 
-### Debug Camera Limitations (MCP Tools)
+### Debug Camera Captures and Shaders (MCP Tools)
 
-When using `capture_screenshot` or `capture_turnaround` with `position`/`look_at` overrides, the debug camera renders geometry from the specified viewpoint. However, **shader view uniforms** (`view.world_position` from `mesh_view_bindings`) may still reflect the scene camera's position due to render pipeline timing.
-
-This means **view-dependent shader effects** - Fresnel, specular highlights, parallax, atmosphere rims - will appear incorrect in debug captures. All turnaround angles may show the same Fresnel/specular distribution.
-
-- Use debug cameras for **geometry and layout verification**
-- Use the **scene camera** (no position override) for **shader visual validation**
-- Sun-direction-dependent effects (diffuse `dot(N, L)`) are view-independent and render correctly in debug captures
+`capture_screenshot` and `capture_turnaround` with `position`/`look_at`
+overrides move the capture camera's `Transform` and `GlobalTransform` together,
+so shader view uniforms (`view.world_position` from `mesh_view_bindings`) match
+the requested viewpoint. View-dependent effects such as Fresnel, specular
+highlights, parallax and atmosphere rims render from the debug viewpoint.
 
 ### Interior Camera Placement
 

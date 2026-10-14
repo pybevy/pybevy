@@ -18,6 +18,7 @@ use std::{
 
 use bevy::{
     ecs::{
+        component::ComponentId,
         ptr::OwningPtr,
         system::{RunSystemError, System},
         world::World,
@@ -28,10 +29,10 @@ use pybevy_core::{
     AssetAccessRegistry, AssetBorrowCounter, ensure_asset_access_registry,
     ensure_no_live_asset_access, extract_entity_from_any,
     public_error::{
-        COMPONENT_BRIDGE_NOT_FOUND, RESOURCE_BRIDGE_NOT_FOUND, RESOURCE_ENTITY_DESPAWN,
-        WORLD_BATCH_ARGUMENTS, WORLD_CALLBACK_COMMAND_ERRORS, native_resource_not_found,
-        one_shot_parameter_validation_skip, unregistered_message_write, world_query_param_required,
-        world_resource_param_wrapper,
+        COMPONENT_BRIDGE_NOT_FOUND, CUSTOM_MESSAGES_RESOURCE, RESOURCE_BRIDGE_NOT_FOUND,
+        RESOURCE_ENTITY_DESPAWN, WORLD_BATCH_ARGUMENTS, WORLD_CALLBACK_COMMAND_ERRORS,
+        native_resource_not_found, one_shot_parameter_validation_skip, unregistered_message_write,
+        world_query_param_required, world_resource_param_wrapper,
     },
     registry::global_registry,
     resource_initializer,
@@ -74,7 +75,7 @@ use crate::{
         helpers::validity_guard::{AccessMode, ValidityFlag, ValidityFlagWithMode, ValidityGuard},
         lazy_wrapper_proxy::{ProxyKind, PyLazyWrapperProxy},
         message::{PyMessageId, PyMessageWriter},
-        messages::{MessageType, MessageWorld, PyMessageType},
+        messages::{MessageType, MessageWorld, PyMessageType, PyMessageTypeParam, PyMessages},
         observer::{PyEvent, PyOn},
         observer_registry::ObserverRegistry,
         python_message::{python_message_is_registered, resolve_from_world},
@@ -416,6 +417,43 @@ impl PyWorld {
         Ok(py_assets.into_any())
     }
 
+    /// Return the `Messages` wrapper for Bevy's `Messages<T>` resource.
+    fn get_messages_resource(
+        &self,
+        py: Python,
+        message_type: MessageType,
+        read_only: bool,
+    ) -> PyResult<Py<PyAny>> {
+        self.check_valid()?;
+        if self.messages_resource_id(&message_type)?.is_none() {
+            return Err(PyRuntimeError::new_err(native_resource_not_found(
+                message_type.resource_name(),
+            )));
+        }
+        let validity = self.validity.clone().unwrap_or_default();
+        let _gc = self.gc_state.as_ref().map(WorldGcState::suspend);
+        // SAFETY: `world_ptr` is valid while this PyWorld is valid; the derived cell is
+        // fenced by the same `validity` flag. PyMessages only reaches `Messages<T>`.
+        let cell = unsafe { (*self.world_ptr()).as_unsafe_world_cell() };
+        // SAFETY: the cell stays valid for as long as `validity` is active.
+        let world = unsafe { MessageWorld::new(cell, validity) };
+        let messages = PyMessages {
+            message_type,
+            world,
+            cursor_storage: None,
+            read_only,
+        };
+        Ok(Py::new(py, resource_initializer(messages))?.into_any())
+    }
+
+    /// The id of the present `Messages<T>` resource for a native message type.
+    fn messages_resource_id(&self, message_type: &MessageType) -> PyResult<Option<ComponentId>> {
+        let mut world = self.world_mut()?;
+        Ok(message_type
+            .register_resource_id(&mut world)
+            .filter(|&resource_id| world.contains_resource_by_id(resource_id)))
+    }
+
     /// Extract a custom (Python-defined) component from an entity.
     fn extract_custom_component(
         &self,
@@ -731,6 +769,9 @@ impl PyWorld {
             // Return the Assets resource for this asset type
             return self.get_assets_resource(py, &asset_param);
         }
+        if let Some(message_type) = native_messages_param(&resource)? {
+            return self.get_messages_resource(py, message_type, true);
+        }
 
         // Extract the resource type
         let type_obj: Bound<'_, PyType> = resource.extract()?;
@@ -762,6 +803,9 @@ impl PyWorld {
         if resource.get_type().is(PyAssetTypeParam::type_object(py)) {
             let asset_param = resource.extract::<PyAssetTypeParam>()?;
             return self.get_assets_resource(py, &asset_param);
+        }
+        if let Some(message_type) = native_messages_param(&resource)? {
+            return self.get_messages_resource(py, message_type, false);
         }
 
         let type_obj: Bound<'_, PyType> = resource.extract()?;
@@ -931,6 +975,9 @@ impl PyWorld {
                 .resource_id(world)
                 .is_some_and(|resource_id| world.contains_resource_by_id(resource_id)));
         }
+        if let Some(message_type) = native_messages_param(&resource)? {
+            return Ok(self.messages_resource_id(&message_type)?.is_some());
+        }
 
         // Extract the resource type
         let type_obj: Bound<'_, PyType> = resource.extract()?;
@@ -979,6 +1026,14 @@ impl PyWorld {
                 .resource_id(world)
                 .and_then(|component_id| world.resource_entities().get(component_id))
                 .map(PyEntity));
+        }
+        if let Some(message_type) = native_messages_param(&resource)? {
+            let Some(resource_id) = self.messages_resource_id(&message_type)? else {
+                return Ok(None);
+            };
+            // SAFETY: `check_valid` above fences this momentary shared access.
+            let world = unsafe { &*self.world_ptr() };
+            return Ok(world.resource_entities().get(resource_id).map(PyEntity));
         }
 
         let type_obj: Bound<'_, PyType> = resource.extract()?;
@@ -1160,6 +1215,12 @@ impl PyWorld {
             };
             let mut world = self.world_mut()?;
             return Ok(Some(PyComponentId(bridge.register_resource_id(&mut world))));
+        }
+        if let Some(message_type) = native_messages_param(&component)? {
+            let mut world = self.world_mut()?;
+            return Ok(message_type
+                .register_resource_id(&mut world)
+                .map(PyComponentId));
         }
 
         let type_obj: Bound<'_, PyType> = component.extract()?;
@@ -1734,6 +1795,18 @@ impl PyWorld {
             }
         }
     }
+}
+
+/// The native message type a `Messages[T]` argument names, if it is one.
+fn native_messages_param(resource: &Bound<'_, PyAny>) -> PyResult<Option<MessageType>> {
+    let Ok(param) = resource.cast::<PyMessageTypeParam>() else {
+        return Ok(None);
+    };
+    let message_type = param.get().0.0.clone();
+    if matches!(message_type, MessageType::Custom(_)) {
+        return Err(PyTypeError::new_err(CUSTOM_MESSAGES_RESOURCE));
+    }
+    Ok(Some(message_type))
 }
 
 fn reject_resource_param(method: &str, resource: &Bound<'_, PyAny>) -> PyResult<()> {

@@ -1,13 +1,14 @@
 use std::{
     cell::{Cell, RefCell},
     collections::HashSet,
-    mem,
+    env::{VarError, var},
+    mem::{forget, replace, take},
     panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
-    thread::ThreadId,
+    thread::{ThreadId, current},
 };
 
 use bevy::{
@@ -27,25 +28,30 @@ use pybevy_core::{
     LastSystemError, PluginIdentity, PyPlugin as PyPluginBase,
     added_plugins::AddedPythonPlugins,
     allocate_id, consume_unstored_id,
+    custom_component::CustomComponentRegistry,
+    custom_resource::CustomResourceRegistry,
+    ensure_asset_access_registry,
     plugin::plugin_registry,
     public_error::{
-        NATIVE_PLUGIN_LIFECYCLE, PLUGIN_ADDED_QUERY_TYPE, PLUGIN_GROUP_BUILD_RESULT,
-        PLUGIN_GROUP_LIFECYCLE, duplicate_native_plugin, duplicate_plugin_identity,
-        duplicate_unkeyed_plugin_identity, plugin_build_error, plugin_key_type,
-        plugin_missing_decorator, plugin_not_a_plugin,
+        ADD_SYSTEMS_SCHEDULE_TYPE, NATIVE_PLUGIN_LIFECYCLE, PLUGIN_ADDED_QUERY_TYPE,
+        PLUGIN_GROUP_BUILD_RESULT, PLUGIN_GROUP_LIFECYCLE, duplicate_native_plugin,
+        duplicate_plugin_identity, duplicate_unkeyed_plugin_identity, plugin_build_error,
+        plugin_key_type, plugin_missing_decorator, plugin_not_a_plugin,
     },
-    register_wrapped_reflect_types_for_new_app,
+    publish_last_system_error, register_wrapped_reflect_types_for_new_app,
 };
 use pybevy_ecs::shared::schedule::{
     ScheduleDisplayNameRegistry, StateScheduleLabel, TransitionScheduleLabel,
     configure_standard_schedules, schedule_build_message,
 };
-use pybevy_reload::{HotReloadGeneration, PluginTracker, SystemStage, is_verbose};
+use pybevy_reload::{
+    HotReloadGeneration, PluginTracker, SystemStage, count_schedule_systems, is_verbose,
+};
 use pybevy_render::cache_cleanup::RenderCacheCleanupPlugin;
 use pyo3::{
     IntoPyObjectExt, PyTraverseError, PyVisit,
     exceptions::{PyAttributeError, PyRuntimeError, PyTypeError, PyValueError},
-    ffi::PyTypeObject,
+    ffi::{PyObject as FfiPyObject, PyTypeObject},
     panic::PanicException,
     prelude::*,
     types::{PyList, PyModule, PyTuple, PyType},
@@ -69,6 +75,7 @@ use crate::{
     },
     ecs::{
         decorated_callable::{CallableKind, unwrap_decorated},
+        deferred_drop::flush_deferred_py_drops,
         dynamic_system::{
             LastErrorBuffer, SystemErrorBuffer, clear_system_param_cache, lock_or_recover,
         },
@@ -80,7 +87,7 @@ use crate::{
             PyNextState, PyOnEnterSchedule, PyOnExitSchedule, PyOnTransitionSchedule, PyState,
             canonicalize_state_schedule_label, canonicalize_transition_schedule_label,
             ensure_state_transition_system_registered, insert_state_machine_resources,
-            registered_state_machine_count, state_member_type,
+            registered_state_machine_count, state_machine_is_registered, state_member_type,
         },
         system_config::{
             InstalledSystemSetConfigs, build_set_config, build_system_unit,
@@ -148,7 +155,7 @@ pub(crate) fn _test_force_cleanup() {
 }
 
 /// Raise collected system errors: single error preserves its type,
-/// multiple errors are wrapped in an ExceptionGroup.
+/// multiple errors are wrapped in a BaseExceptionGroup.
 fn raise_collected_errors(py: Python<'_>, error_state: &Arc<Mutex<Vec<PyErr>>>) -> PyResult<()> {
     raise_collected_errors_since(py, error_state, 0)
 }
@@ -170,13 +177,12 @@ pub(crate) fn raise_collected_errors_since(
     if errors.len() == 1 {
         return Err(errors.into_iter().next().unwrap());
     }
-    // Multiple errors: create ExceptionGroup
     let exceptions = PyList::empty(py);
     for err in errors {
         exceptions.append(err.value(py))?;
     }
     let builtins = PyModule::import(py, "builtins")?;
-    let exc_group_type = builtins.getattr("ExceptionGroup")?;
+    let exc_group_type = builtins.getattr("BaseExceptionGroup")?;
     let group = exc_group_type.call1(("system errors", exceptions))?;
     Err(PyErr::from_value(group))
 }
@@ -215,10 +221,10 @@ fn exit_after_max_frames(
 }
 
 fn max_frames_from_env() -> PyResult<Option<u64>> {
-    let value = match std::env::var("PYBEVY_MAX_FRAMES") {
+    let value = match var("PYBEVY_MAX_FRAMES") {
         Ok(value) => value,
-        Err(std::env::VarError::NotPresent) => return Ok(None),
-        Err(std::env::VarError::NotUnicode(_)) => {
+        Err(VarError::NotPresent) => return Ok(None),
+        Err(VarError::NotUnicode(_)) => {
             return Err(PyValueError::new_err(
                 "PYBEVY_MAX_FRAMES must be a positive integer",
             ));
@@ -264,7 +270,7 @@ pub(crate) fn drain_last_system_error(world: &mut World) {
         .get_resource::<Time<Real>>()
         .map(|t| t.elapsed_secs_f64())
         .unwrap_or(0.0);
-    pybevy_core::publish_last_system_error(world, err.error, err.traceback, timestamp);
+    publish_last_system_error(world, err.error, err.traceback, timestamp);
 }
 
 #[cfg(feature = "native-plugin")]
@@ -280,7 +286,7 @@ impl Drop for NativePythonRuntime {
 
 #[cfg(feature = "native-plugin")]
 fn report_native_system_errors(sinks: Res<ObserverRuntimeSinks>) {
-    let errors = mem::take(&mut *lock_or_recover(&sinks.error_state));
+    let errors = take(&mut *lock_or_recover(&sinks.error_state));
     Python::attach(|py| {
         for error in errors {
             error.print(py);
@@ -290,7 +296,7 @@ fn report_native_system_errors(sinks: Res<ObserverRuntimeSinks>) {
 
 fn plugin_qualified_name(type_ptr: *const PyTypeObject, py: Python) -> Option<String> {
     // SAFETY: registered type pointers live for the interpreter lifetime.
-    let py_type = unsafe { Bound::from_borrowed_ptr(py, type_ptr as *mut pyo3::ffi::PyObject) };
+    let py_type = unsafe { Bound::from_borrowed_ptr(py, type_ptr as *mut FfiPyObject) };
     if let Ok(cls) = py_type.cast::<PyType>() {
         let module = cls.getattr("__module__").ok()?.extract::<String>().ok()?;
         let qualname = cls.getattr("__qualname__").ok()?.extract::<String>().ok()?;
@@ -369,12 +375,12 @@ impl MainAppOperationGuard {
         let result =
             BEVY_APPS.with(|apps_cell| apps_cell.borrow_mut().finish_operation_consumed(app_id));
         if let Err(error) = result {
-            mem::forget(app);
-            mem::forget(self);
+            forget(app);
+            forget(self);
             panic!("failed to consume App {app_id}: {error}");
         }
         drop(app);
-        mem::forget(self);
+        forget(self);
     }
 }
 
@@ -388,7 +394,7 @@ impl Drop for MainAppOperationGuard {
             BEVY_APPS.with(|apps_cell| apps_cell.borrow_mut().restore_operation(self.app_id, app));
         if let Err(error) = restored {
             let (state_error, app) = error.into_parts();
-            mem::forget(app);
+            forget(app);
             panic!("failed to restore App {}: {state_error}", self.app_id);
         }
     }
@@ -472,6 +478,19 @@ pub struct PyApp {
 }
 
 impl PyApp {
+    pub(crate) fn install_hot_reload_plugin(&self) -> PyResult<()> {
+        self.with_bevy_app(|app| {
+            ensure_asset_access_registry(app.world_mut());
+            add_hot_reload_system(
+                app,
+                self.hot_reload_state.clone(),
+                self.system_error.clone(),
+                None,
+            );
+            Ok(())
+        })
+    }
+
     fn from_app_id(
         app_id: AppId,
         system_error: Arc<Mutex<Vec<PyErr>>>,
@@ -479,7 +498,7 @@ impl PyApp {
     ) -> Self {
         Self {
             app_id,
-            creation_thread: std::thread::current().id(),
+            creation_thread: current().id(),
             plugin_registry: RefCell::new(AddedPythonPlugins::default()),
             group_callback_depth: Cell::new(0),
             native_configuration: false,
@@ -558,7 +577,7 @@ impl PyApp {
             .with(|apps| apps.borrow_mut().remove(app_id))
             .map_err(app_store_error)?;
         drop(placeholder);
-        let plugins = mem::take(&mut *owner.borrow(py).plugin_registry.borrow_mut());
+        let plugins = take(&mut *owner.borrow(py).plugin_registry.borrow_mut());
         native.insert_resource(plugins);
         match result {
             Ok(result) => result,
@@ -643,7 +662,7 @@ impl PyApp {
         native: &mut App,
         callback: impl FnOnce() -> PyResult<R>,
     ) -> PyResult<R> {
-        let owned = mem::replace(native, App::empty());
+        let owned = replace(native, App::empty());
         let restored =
             BEVY_APPS.with(|apps| apps.borrow_mut().restore_operation(self.app_id, owned));
         if let Err(error) = restored {
@@ -721,7 +740,7 @@ impl PyApp {
 
         PyApp {
             app_id,
-            creation_thread: std::thread::current().id(),
+            creation_thread: current().id(),
             plugin_registry: RefCell::new(AddedPythonPlugins::default()),
             group_callback_depth: Cell::new(0),
             native_configuration: false,
@@ -863,7 +882,7 @@ impl PyApp {
     /// retired hot-reload systems still present in schedule graphs.
     fn _debug_schedule_system_count(&self) -> PyResult<usize> {
         self.with_bevy_app_operation(AppOperation::WorldCallback, |app| {
-            Ok(pybevy_reload::count_schedule_systems(app.world()))
+            Ok(count_schedule_systems(app.world()))
         })
     }
 
@@ -872,10 +891,10 @@ impl PyApp {
         self.with_bevy_app_operation(AppOperation::WorldCallback, |app| {
             let world = app.world();
             let components = world
-                .get_resource::<pybevy_core::custom_component::CustomComponentRegistry>()
+                .get_resource::<CustomComponentRegistry>()
                 .map_or(0, |registry| registry.alias_count());
             let resources = world
-                .get_resource::<pybevy_core::custom_resource::CustomResourceRegistry>()
+                .get_resource::<CustomResourceRegistry>()
                 .map_or(0, |registry| registry.alias_count());
             Ok((components, resources))
         })
@@ -965,9 +984,7 @@ impl PyApp {
                 on_transition.display_name(py)?,
             )
         } else {
-            return Err(PyTypeError::new_err(
-                pybevy_core::public_error::ADD_SYSTEMS_SCHEDULE_TYPE,
-            ));
+            return Err(PyTypeError::new_err(ADD_SYSTEMS_SCHEDULE_TYPE));
         };
 
         let error_state = pyself.system_error.clone();
@@ -1597,6 +1614,19 @@ impl PyApp {
             )));
         }
 
+        let already_initialized = if pyself.is_reload_temp.get() {
+            pyself
+                .pending_states
+                .borrow()
+                .iter()
+                .any(|definition| definition.state_type.bind(py).is(&state_type))
+        } else {
+            pyself.with_bevy_app(|app| Ok(state_machine_is_registered(app.world(), &state_type)))?
+        };
+        if already_initialized {
+            return Ok(pyself.into());
+        }
+
         // Get default state (first enum variant)
         let members_dict = state_type.getattr("__members__")?;
         let values = members_dict.call_method0("values")?;
@@ -1756,7 +1786,7 @@ impl PyApp {
         // Clear any previous errors before running
         let previous_errors = {
             let mut error_lock = lock_or_recover(&self.system_error);
-            std::mem::take(&mut *error_lock)
+            take(&mut *error_lock)
         };
         drop(previous_errors);
 
@@ -1780,7 +1810,7 @@ impl PyApp {
         // Frame teardown retired Python values into the deferred queue
         // (despawns, replacements, command application). No storage pointer is
         // in flight here, so run their finalizers before returning to Python.
-        crate::ecs::deferred_drop::flush_deferred_py_drops();
+        flush_deferred_py_drops();
 
         // Check if any system errors occurred and raise them
         raise_collected_errors(py, &self.system_error)?;
@@ -1833,7 +1863,7 @@ impl PyApp {
         // (pyo3's pool absorbed the decrefs). Reattach here and drain the
         // queue before returning, so the cleared scene's classes and values
         // are collectable and no flush runs inside the detached region.
-        crate::ecs::deferred_drop::flush_deferred_py_drops();
+        flush_deferred_py_drops();
 
         Ok(())
     }
@@ -1848,7 +1878,7 @@ impl PyApp {
         self.ensure_group_configuration()?;
         // Require @entrypoint decorator unless running in test mode
         if !self.entrypoint_set.get() {
-            let is_testing = std::env::var("PYBEVY_TESTING").is_ok();
+            let is_testing = var("PYBEVY_TESTING").is_ok();
             if !is_testing {
                 return Err(PyRuntimeError::new_err(concat!(
                     "App.run() requires the @entrypoint decorator. Example:\n",
@@ -1950,7 +1980,7 @@ impl PyApp {
 
         // The frame loop retired Python values into the deferred queue; drain
         // them now that no native mutation is in flight.
-        crate::ecs::deferred_drop::flush_deferred_py_drops();
+        flush_deferred_py_drops();
 
         // After the event loop exits, check for system errors and raise them
         raise_collected_errors(py, &error_state)?;
@@ -2023,7 +2053,7 @@ impl PyApp {
         pyself.hot_reload_state.set_loader(loader.unbind());
         let initial_plugins: HashSet<PluginIdentity> =
             pyself.take_pending_plugins().into_iter().collect();
-        let initial_systems = mem::take(&mut *pyself.pending_system_names.borrow_mut());
+        let initial_systems = take(&mut *pyself.pending_system_names.borrow_mut());
         // The entrypoint has finished building the app, so this fingerprint
         // describes the generation that is about to run.
         let initial_fingerprint = pyself.initial_fingerprint.borrow().finish();
@@ -2189,7 +2219,7 @@ impl Drop for PyApp {
     fn drop(&mut self) {
         if !self.is_reload_temp.get() {
             // Check if we're on the same thread where the PyApp was created
-            let current_thread = std::thread::current().id();
+            let current_thread = current().id();
             if current_thread != self.creation_thread {
                 // Cross-thread drop detected - we can't safely access thread-local storage
                 // This typically happens during parallel test execution (pytest -n auto)
@@ -2249,7 +2279,7 @@ impl Drop for PyApp {
                 // queue. Nothing else will flush after teardown, so drain now:
                 // unflushed values would keep their component classes alive
                 // across GC and defeat scene-namespace collection.
-                crate::ecs::deferred_drop::flush_deferred_py_drops();
+                flush_deferred_py_drops();
             }
 
             // Clear the system parameter cache to prevent stale entries

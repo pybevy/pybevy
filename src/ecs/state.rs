@@ -628,6 +628,13 @@ pub(crate) fn registered_state_machine_count(world: &World) -> usize {
         .map_or(0, PyStateMachineRegistry::len)
 }
 
+pub(crate) fn state_machine_is_registered(world: &World, state_type: &Bound<'_, PyType>) -> bool {
+    world
+        .get_resource::<PyStateMachineRegistry>()
+        .and_then(|registry| registry.canonical_id(state_type_key(state_type)))
+        .is_some()
+}
+
 pub(crate) fn retained_state_member_missing(
     py: Python<'_>,
     world: &World,
