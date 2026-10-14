@@ -1,6 +1,7 @@
 use std::{
     collections::HashSet,
     sync::{Arc, Mutex},
+    time::Instant,
 };
 
 use bevy::{
@@ -17,7 +18,10 @@ use super::{
 };
 use crate::{
     capture::readiness::RenderFrameReadiness,
-    engine::{channel::ControlRequest, deferred::DeferredBatch, dispatch::dispatch},
+    engine::{
+        channel::ControlRequest, deferred::DeferredBatch, dispatch::dispatch,
+        runtime::ControlRuntime,
+    },
     protocol::{ControlError, OperationKind, OperationTag},
     scene::{entity::has_embedded_errors, transform_sync::propagate_transforms},
 };
@@ -325,7 +329,7 @@ pub fn process_active_schedules(world: &mut World) {
 
     // Remove runtime from World to use for dispatch (same scope as old Python::attach)
     let mut runtime = world
-        .remove_non_send::<Box<dyn crate::engine::runtime::ControlRuntime>>()
+        .remove_non_send::<Box<dyn ControlRuntime>>()
         .expect("ControlRuntime resource missing");
 
     {
@@ -376,7 +380,7 @@ pub fn process_active_schedules(world: &mut World) {
 fn process_single_schedule(
     world: &mut World,
     schedule: &mut ActiveSchedule,
-    runtime: &mut dyn crate::engine::runtime::ControlRuntime,
+    runtime: &mut dyn ControlRuntime,
 ) {
     loop {
         match schedule.state {
@@ -630,7 +634,7 @@ fn finalize_schedule(schedule: ActiveSchedule) {
         guard.completed_actions = schedule.results.len();
         update_shared_action_counts(&mut guard, counts);
         guard.results = schedule.results;
-        guard.completed_at = Some(std::time::Instant::now());
+        guard.completed_at = Some(Instant::now());
     }
 }
 
@@ -639,7 +643,10 @@ mod tests {
     use super::*;
     #[cfg(feature = "pyo3-runtime")]
     use crate::pyo3::runtime::Pyo3ControlRuntime;
-    use crate::{capture::queue::PendingScreenshots, schedule::request::ScheduleMode};
+    use crate::{
+        capture::{queue::PendingScreenshots, readiness::RenderFrameReadiness},
+        schedule::request::ScheduleMode,
+    };
 
     fn test_schedule(actions: Vec<ScheduleAction>, stop_on_error: bool) -> ActiveSchedule {
         ActiveSchedule {
@@ -797,7 +804,7 @@ mod tests {
     #[test]
     fn scheduled_capture_inherits_the_latest_render_epoch() {
         let mut world = World::new();
-        let readiness = crate::capture::readiness::RenderFrameReadiness::default();
+        let readiness = RenderFrameReadiness::default();
         let required_epoch = readiness.request_frame();
         world.insert_resource(readiness);
 

@@ -1,5 +1,7 @@
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use image::{DynamicImage, GenericImageView, ImageFormat, codecs::jpeg::JpegEncoder};
+use image::{
+    DynamicImage, GenericImageView, ImageFormat, codecs::jpeg::JpegEncoder, imageops::FilterType,
+};
 use serde_json::{Map, Value};
 
 use crate::protocol::OperationTag;
@@ -189,11 +191,7 @@ pub(crate) fn prepare_mcp_image(
     let max_dimension = preview_max_dimension.max(1);
     let rgb = DynamicImage::ImageRgb8(source.to_rgb8());
     let preview = if width > max_dimension || height > max_dimension {
-        rgb.resize(
-            max_dimension,
-            max_dimension,
-            image::imageops::FilterType::Lanczos3,
-        )
+        rgb.resize(max_dimension, max_dimension, FilterType::Lanczos3)
     } else {
         rgb
     };

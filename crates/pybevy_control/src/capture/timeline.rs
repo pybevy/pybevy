@@ -1,14 +1,14 @@
 use std::collections::{HashMap, VecDeque};
 
 use bevy::{
-    camera::RenderTarget, ecs::world::World, prelude::*,
-    render::view::window::screenshot::Screenshot, window::PrimaryWindow,
+    ecs::world::World, prelude::*, render::view::window::screenshot::Screenshot,
+    window::PrimaryWindow,
 };
 use image::RgbImage;
 use tokio::sync::oneshot;
 
 use super::{
-    camera::setup_debug_camera,
+    camera::{selected_camera_screenshot_target, setup_debug_camera},
     compose::composite_contact_sheet,
     headless::{headless_frame_sequence, read_headless_frame},
     hold::CaptureHold,
@@ -55,15 +55,15 @@ pub struct TimelineCaptures {
     pub map: HashMap<Entity, (u64, u32)>,
 }
 
-/// Compute capture schedule as frame deltas.
-///
-/// For count=6, total=60: targets [0,12,24,36,48,60], deltas [0,12,12,12,12,12]
 /// Upper bound on timeline captures. Beyond this a contact sheet is unwieldy and
 /// the capture cost balloons; below 1 the schedule is a single frame while
 /// total_captures stays 0, so the completion check never matches and the request
 /// hangs until it times out.
 pub const MAX_TIMELINE_CAPTURES: u32 = 20;
 
+/// Compute capture schedule as frame deltas.
+///
+/// For count=6, total=60: targets [0,12,24,36,48,60], deltas [0,12,12,12,12,12]
 pub fn compute_schedule(total_frames: u32, capture_count: u32) -> VecDeque<u32> {
     if capture_count <= 1 {
         return VecDeque::from([0]);
@@ -151,15 +151,10 @@ pub fn process_pending_timelines(world: &mut World) {
         .then(|| headless_frame_sequence(world))
         .flatten();
     let screenshot_target = if has_window {
-        Some(Screenshot::primary_window())
+        Ok(Some(Screenshot::primary_window()))
     } else {
-        world
-            .query::<(&Camera, &RenderTarget)>()
-            .iter(world)
-            .find_map(|(camera, target)| {
-                (camera.is_active && matches!(target, RenderTarget::Image(_)))
-                    .then(|| Screenshot(target.clone()))
-            })
+        selected_camera_screenshot_target(world, "capture_timeline")
+            .map(|selected| selected.map(|(target, _)| Screenshot(target)))
     };
 
     let abandoned: Vec<u64> = timelines
@@ -233,7 +228,7 @@ pub fn process_pending_timelines(world: &mut World) {
             if *front > 0 {
                 *front -= 1;
             } else {
-                if screenshot_target.is_none()
+                if matches!(screenshot_target, Ok(None))
                     && timeline.headless_sequence.is_some_and(|baseline| {
                         current_headless_sequence.is_none_or(|current| current <= baseline)
                     })
@@ -275,33 +270,23 @@ pub fn process_pending_timelines(world: &mut World) {
 
     world.insert_resource(timelines);
 
-    if let Some(screenshot) = screenshot_target {
-        // Capture the scheduled render, not an earlier frame still in readback.
-        for (timeline_id, capture_index) in captures_to_spawn {
-            let entity = world.spawn(Screenshot(screenshot.0.clone())).id();
+    match screenshot_target {
+        Ok(Some(screenshot)) => {
+            // Capture the scheduled render, not an earlier frame still in readback.
+            for (timeline_id, capture_index) in captures_to_spawn {
+                let entity = world.spawn(Screenshot(screenshot.0.clone())).id();
 
-            let mut timeline_captures =
-                world.get_resource_or_insert_with(TimelineCaptures::default);
-            timeline_captures
-                .map
-                .insert(entity, (timeline_id, capture_index));
-        }
-    } else {
-        // Headless fallback: read from HeadlessFrameBuffer
-        match read_headless_frame(world) {
-            Err(error) => {
-                // The capture slots were already consumed from the schedule,
-                // so these timelines cannot complete: fail them now.
-                for (timeline_id, _) in captures_to_spawn {
-                    let timeline = world
-                        .resource_mut::<PendingTimelines>()
-                        .active
-                        .remove(&timeline_id);
-                    if let Some(timeline) = timeline {
-                        fail_timeline(world, timeline_id, timeline, error.message.clone());
-                    }
-                }
+                let mut timeline_captures =
+                    world.get_resource_or_insert_with(TimelineCaptures::default);
+                timeline_captures
+                    .map
+                    .insert(entity, (timeline_id, capture_index));
             }
+        }
+        Err(error) => fail_scheduled_captures(world, captures_to_spawn, &error.message),
+        // Headless fallback: read from HeadlessFrameBuffer
+        Ok(None) => match read_headless_frame(world) {
+            Err(error) => fail_scheduled_captures(world, captures_to_spawn, &error.message),
             Ok(rgb) => {
                 let mut holds = Vec::new();
                 {
@@ -323,6 +308,20 @@ pub fn process_pending_timelines(world: &mut World) {
                     hold.release(world);
                 }
             }
+        },
+    }
+}
+
+/// The capture slots were already consumed from the schedule, so these
+/// timelines cannot complete: fail them now.
+fn fail_scheduled_captures(world: &mut World, captures: Vec<(u64, u32)>, message: &str) {
+    for (timeline_id, _) in captures {
+        let timeline = world
+            .resource_mut::<PendingTimelines>()
+            .active
+            .remove(&timeline_id);
+        if let Some(timeline) = timeline {
+            fail_timeline(world, timeline_id, timeline, message.to_string());
         }
     }
 }
@@ -331,7 +330,7 @@ pub fn process_pending_timelines(world: &mut World) {
 mod tests {
     use std::collections::VecDeque;
 
-    use base64::Engine;
+    use base64::{Engine, engine::general_purpose::STANDARD};
     use bevy::{
         camera::RenderTarget,
         image::Image,
@@ -714,7 +713,7 @@ mod tests {
     fn process_pending_timelines_captures_at_zero_delay() {
         let mut world = World::new();
         world.spawn(PrimaryWindow);
-        let (tx, _rx) = tokio::sync::oneshot::channel();
+        let (tx, _rx) = oneshot::channel();
         let mut timelines = PendingTimelines::default();
         timelines.active.insert(
             0,
@@ -758,7 +757,7 @@ mod tests {
             latest: Some((vec![255, 255, 255, 255], 1, 1)),
             sequence: 1,
         });
-        let (tx, _rx) = tokio::sync::oneshot::channel();
+        let (tx, _rx) = oneshot::channel();
         let mut timelines = PendingTimelines::default();
         timelines.active.insert(
             0,
@@ -801,7 +800,7 @@ mod tests {
     }
 
     #[test]
-    fn headless_timeline_captures_active_image_and_does_not_resuppress_after_completion() {
+    fn headless_timeline_captures_the_screenshot_camera_and_does_not_resuppress_after_completion() {
         let mut world = world_with_gizmos();
         world.init_resource::<PendingScreenshotResponders>();
         world.init_resource::<TimelineCaptures>();
@@ -810,16 +809,28 @@ mod tests {
         world.init_resource::<CapturedFrames>();
         world.add_observer(screenshot_captured_observer);
         let mut images = Assets::<Image>::default();
+        let lower_order_image = images.add(make_test_image(1, 1));
         let inactive_image = images.add(make_test_image(1, 1));
         let active_image = images.add(make_test_image(1, 1));
         world.spawn((
+            Camera3d::default(),
             Camera {
+                order: -1,
+                ..default()
+            },
+            RenderTarget::Image(lower_order_image.into()),
+        ));
+        world.spawn((
+            Camera3d::default(),
+            Camera {
+                order: 5,
                 is_active: false,
                 ..default()
             },
             RenderTarget::Image(inactive_image.into()),
         ));
         world.spawn((
+            Camera3d::default(),
             Camera::default(),
             RenderTarget::Image(active_image.clone().into()),
         ));
@@ -869,7 +880,7 @@ mod tests {
         let mut screenshots = world.query::<(Entity, &Screenshot)>();
         let (entity, screenshot) = screenshots.single(&world).unwrap();
         let RenderTarget::Image(target) = &screenshot.0 else {
-            panic!("headless timeline must capture its active image target");
+            panic!("headless timeline must capture the highest-order active Camera3d target");
         };
         assert_eq!(target.handle, active_image);
         assert_eq!(world.resource::<TimelineCaptures>().map[&entity], (0, 0));
@@ -881,9 +892,7 @@ mod tests {
         world.flush();
 
         let result = rx.try_recv().unwrap().unwrap();
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(result["image"].as_str().unwrap())
-            .unwrap();
+        let bytes = STANDARD.decode(result["image"].as_str().unwrap()).unwrap();
         let captured = image::load_from_memory(&bytes).unwrap().to_rgb8();
         assert_eq!(*captured.get_pixel(0, 0), Rgb([255, 255, 255]));
         assert!(world.resource::<TimelineCaptures>().map.is_empty());
@@ -906,7 +915,7 @@ mod tests {
             latest: Some((vec![255, 0, 0, 255], 1, 1)),
             sequence: 5,
         });
-        let (tx, mut rx) = tokio::sync::oneshot::channel();
+        let (tx, mut rx) = oneshot::channel();
         let mut timelines = PendingTimelines::default();
         timelines.active.insert(
             0,

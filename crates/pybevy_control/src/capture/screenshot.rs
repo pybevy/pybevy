@@ -1,14 +1,16 @@
 use std::{collections::HashMap, io::Cursor, mem, sync::Arc};
 
-use base64::Engine;
+use base64::{Engine, engine::general_purpose::STANDARD};
 use bevy::{
     camera::RenderTarget,
     ecs::world::World,
+    image::Image,
+    log::error,
     prelude::*,
     render::view::window::screenshot::{Screenshot, ScreenshotCaptured},
     window::PrimaryWindow,
 };
-use image::{ImageFormat, RgbImage};
+use image::{ImageFormat, RgbImage, imageops::crop_imm};
 use pybevy_ecs::shared::system_runtime::HotReloadGeneration;
 use tokio::sync::oneshot;
 
@@ -32,6 +34,7 @@ use crate::{
             validate_depth_capture_camera,
         },
         queue::{CaptureResponseKind, PendingScreenshots},
+        turnaround::{PendingTurnarounds, TurnaroundCaptures, handle_turnaround_capture},
     },
     protocol::ControlError,
 };
@@ -316,7 +319,8 @@ pub fn process_pending_screenshots(world: &mut World) {
                         }
                     }
                 } else {
-                    match selected_camera_screenshot_target(world, &s.response_kind) {
+                    match selected_camera_screenshot_target(world, s.response_kind.operation_name())
+                    {
                         Ok(Some((target, viewport))) => (Some(target), viewport),
                         Ok(None) => (None, None),
                         Err(error) => {
@@ -452,8 +456,8 @@ pub fn screenshot_captured_observer(
     mut responders: ResMut<PendingScreenshotResponders>,
     mut timeline_captures: ResMut<TimelineCaptures>,
     mut timelines: ResMut<PendingTimelines>,
-    mut turnarounds: ResMut<super::turnaround::PendingTurnarounds>,
-    mut turnaround_captures: ResMut<super::turnaround::TurnaroundCaptures>,
+    mut turnarounds: ResMut<PendingTurnarounds>,
+    mut turnaround_captures: ResMut<TurnaroundCaptures>,
     mut captured_frames: ResMut<CapturedFrames>,
     hot_reload_generation: Option<Res<HotReloadGeneration>>,
     mut commands: Commands,
@@ -461,7 +465,7 @@ pub fn screenshot_captured_observer(
     let entity = trigger.entity;
 
     // Check if this is a turnaround capture
-    if super::turnaround::handle_turnaround_capture(
+    if handle_turnaround_capture(
         entity,
         &trigger.image,
         &mut turnarounds,
@@ -476,7 +480,7 @@ pub fn screenshot_captured_observer(
         let dyn_img = match img.try_into_dynamic() {
             Ok(d) => d,
             Err(e) => {
-                bevy::log::error!("[MCP] Timeline capture failed to convert image: {e:?}");
+                error!("[MCP] Timeline capture failed to convert image: {e:?}");
                 return;
             }
         };
@@ -520,10 +524,9 @@ pub fn screenshot_captured_observer(
     responder.hold.queue_release(&mut commands);
 }
 
-/// Encode a Bevy Image as a base64 PNG string, optionally resizing.
-/// If `extra` is `Some`, merges its fields into the screenshot result alongside
-/// screenshot/screenshot_width/screenshot_height. On screenshot error, the extra
-/// fields are still returned with a null screenshot.
+/// Without `extra`, returns the screenshot result unchanged. With it, returns
+/// `extra`'s fields alongside screenshot/screenshot_width/screenshot_height; on
+/// a screenshot error the extra fields are still returned with a null screenshot.
 fn merge_extra_response(
     result: Result<serde_json::Value, ControlError>,
     extra: Option<serde_json::Value>,
@@ -562,7 +565,7 @@ fn merge_extra_response(
 
 #[cfg(test)]
 fn encode_screenshot(
-    img: bevy::image::Image,
+    img: Image,
     max_width: Option<u32>,
 ) -> Result<serde_json::Value, ControlError> {
     let dyn_img = img.try_into_dynamic().map_err(|e| {
@@ -575,7 +578,7 @@ fn encode_screenshot(
 }
 
 fn complete_screenshot_capture(
-    img: bevy::image::Image,
+    img: Image,
     max_width: Option<u32>,
     capture_viewport: Option<CaptureViewport>,
     response_kind: CaptureResponseKind,
@@ -627,7 +630,7 @@ fn crop_capture_viewport(
             rgb.height(),
         )));
     }
-    Ok(image::imageops::crop_imm(
+    Ok(crop_imm(
         &rgb,
         viewport.physical_position.x,
         viewport.physical_position.y,
@@ -677,7 +680,7 @@ fn encode_rgb_screenshot(rgb: &RgbImage) -> Result<serde_json::Value, ControlErr
     rgb.write_to(&mut Cursor::new(&mut buf), ImageFormat::Png)
         .map_err(|e| ControlError::internal(format!("Failed to encode PNG: {e}")))?;
 
-    let b64 = base64::engine::general_purpose::STANDARD.encode(&buf);
+    let b64 = STANDARD.encode(&buf);
 
     Ok(serde_json::json!({
         "image": b64,
@@ -691,8 +694,9 @@ fn encode_rgb_screenshot(rgb: &RgbImage) -> Result<serde_json::Value, ControlErr
 #[cfg(test)]
 mod tests {
 
+    use base64::engine::general_purpose::STANDARD;
     use bevy::{
-        camera::{RenderTarget, Viewport},
+        camera::{ImageRenderTarget, RenderTarget, Viewport, primitives::Aabb},
         image::Image,
         render::view::window::screenshot::Screenshot,
         ui::Node,
@@ -837,7 +841,7 @@ mod tests {
             Camera::default(),
             Projection::default(),
             GlobalTransform::default(),
-            RenderTarget::Image(bevy::camera::ImageRenderTarget::from(first_target)),
+            RenderTarget::Image(ImageRenderTarget::from(first_target)),
             Name::new("first"),
         ));
         let selected = world
@@ -850,9 +854,7 @@ mod tests {
                 Projection::default(),
                 Transform::default(),
                 GlobalTransform::default(),
-                RenderTarget::Image(bevy::camera::ImageRenderTarget::from(
-                    selected_target.clone(),
-                )),
+                RenderTarget::Image(ImageRenderTarget::from(selected_target.clone())),
                 Name::new("selected"),
             ))
             .id();
@@ -892,7 +894,7 @@ mod tests {
         let ready_target = images.add(make_test_image(8, 6));
         world.insert_resource(images);
         world.spawn((
-            bevy::camera::primitives::Aabb::from_min_max(
+            Aabb::from_min_max(
                 Vec3::new(-100.0, -100.0, -1.0),
                 Vec3::new(100.0, 100.0, 1.0),
             ),
@@ -990,7 +992,7 @@ mod tests {
         let ui = world.spawn((Visibility::Visible, Node::default())).id();
         let (response_tx, mut response_rx) = oneshot::channel();
         world.insert_resource(PendingScreenshots {
-            pending: vec![crate::capture::queue::PendingScreenshot {
+            pending: vec![PendingScreenshot {
                 response_tx,
                 frames_remaining: 0,
                 required_render_epoch: None,
@@ -1620,7 +1622,7 @@ mod tests {
         let img = make_test_image(10, 10);
         let result = encode_screenshot(img, None).unwrap();
         let b64 = result["image"].as_str().unwrap();
-        let decoded = base64::engine::general_purpose::STANDARD.decode(b64);
+        let decoded = STANDARD.decode(b64);
         assert!(decoded.is_ok());
         // Should be a valid PNG
         let bytes = decoded.unwrap();

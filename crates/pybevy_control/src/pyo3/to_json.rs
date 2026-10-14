@@ -11,6 +11,7 @@ use pyo3::{
     types::{PyCFunction, PyDict, PyFloat, PyInt, PyModule, PyType},
 };
 
+use super::enum_names::{canonical_variant_name, is_enum_type};
 use crate::{
     codec::{
         json_float::float_to_json,
@@ -380,7 +381,7 @@ fn extract_bridge_fields_with_context(
         } else {
             EnumPayload::Named(map)
         };
-        let variant = super::enum_names::canonical_variant_name(&py_type, &variant);
+        let variant = canonical_variant_name(&py_type, &variant);
         return enum_to_json(variant, payload).as_object().unwrap().clone();
     }
 
@@ -411,7 +412,7 @@ fn extract_bridge_fields_with_context(
         && let Ok(repr_str) = repr.extract::<String>()
     {
         if let Some(variant) = parse_variant_from_repr(&repr_str) {
-            let variant = super::enum_names::canonical_variant_name(&py_type, &variant);
+            let variant = canonical_variant_name(&py_type, &variant);
             return enum_to_json(variant, EnumPayload::Unit)
                 .as_object()
                 .unwrap()
@@ -454,7 +455,7 @@ fn constructor_accessor_fields(
 }
 
 fn unit_enum_variant_name(bound: &Bound<'_, PyAny>, owner: &Bound<'_, PyType>) -> Option<String> {
-    if !super::enum_names::is_enum_type(owner) {
+    if !is_enum_type(owner) {
         return None;
     }
     let name = enum_variant_names(owner).into_iter().find(|name| {
@@ -462,7 +463,7 @@ fn unit_enum_variant_name(bound: &Bound<'_, PyAny>, owner: &Bound<'_, PyType>) -
             candidate.is_instance(owner).unwrap_or(false) && candidate.eq(bound).unwrap_or(false)
         })
     })?;
-    Some(super::enum_names::canonical_variant_name(owner, &name))
+    Some(canonical_variant_name(owner, &name))
 }
 
 fn pyo3_complex_enum_variant_name(py_type: &Bound<'_, PyType>) -> Option<String> {
@@ -624,6 +625,10 @@ mod tests {
     extern crate pybevy_camera;
     extern crate pybevy_transform;
 
+    use std::f64::consts::PI;
+
+    use pybevy_core::bridge_inventory::collect_all;
+
     use super::*;
 
     static INIT: Once = Once::new();
@@ -631,7 +636,7 @@ mod tests {
     fn setup() {
         INIT.call_once(|| {
             Python::initialize();
-            pybevy_core::bridge_inventory::collect_all();
+            collect_all();
         });
     }
 
@@ -667,10 +672,10 @@ mod tests {
             assert_eq!(py_value_to_json(&i), serde_json::json!(42));
 
             // float
-            let f = std::f64::consts::PI.into_pyobject(py).unwrap().into_any();
+            let f = PI.into_pyobject(py).unwrap().into_any();
             let result = py_value_to_json(&f);
             assert!(result.is_number());
-            assert!((result.as_f64().unwrap() - std::f64::consts::PI).abs() < 0.001);
+            assert!((result.as_f64().unwrap() - PI).abs() < 0.001);
 
             for (value, spelling) in [
                 (f64::NAN, "NaN"),

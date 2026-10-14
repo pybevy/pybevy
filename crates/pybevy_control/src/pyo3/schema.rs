@@ -17,7 +17,12 @@ use pyo3::{
     types::{PyDict, PyType},
 };
 
+use super::{
+    asset_reference::type_has_handle_property,
+    enum_names::{canonical_variant_name, is_enum_type},
+};
 use crate::{
+    asset_reference::ASSET_REFERENCE_FIELD,
     codec::{
         reflect,
         value::{EnumPayload, enum_to_json},
@@ -96,10 +101,10 @@ pub fn get_component_schema(
                     .unwrap_or_else(|_| name.clone())
             };
             let mut fields = get_class_fields(py, &py_type);
-            let is_asset_handle = super::asset_reference::type_has_handle_property(&py_type);
+            let is_asset_handle = type_has_handle_property(&py_type);
             if is_asset_handle {
                 fields.as_object_mut().unwrap().insert(
-                    crate::asset_reference::ASSET_REFERENCE_FIELD.to_string(),
+                    ASSET_REFERENCE_FIELD.to_string(),
                     serde_json::json!("AssetReference"),
                 );
             }
@@ -164,7 +169,7 @@ pub fn get_component_schema(
             let is_enum_schema = reflection_info
                 .as_ref()
                 .is_some_and(|(_, _, type_kind)| *type_kind == "Enum")
-                || super::enum_names::is_enum_type(&py_type);
+                || is_enum_type(&py_type);
             if is_enum_schema {
                 let python_default = default_enum_component_fields(&py_type);
                 if let Some(defaults) = &python_default {
@@ -502,7 +507,7 @@ fn default_enum_component_fields(
     }
     let repr = instance.repr().ok()?.to_string();
     let variant = parse_variant_from_repr(&repr)?;
-    let variant = super::enum_names::canonical_variant_name(py_type, &variant);
+    let variant = canonical_variant_name(py_type, &variant);
     let owner = py_type.name().ok()?;
     if !matches!(
         reflect::compiled_enum_variant_info(&owner.to_string_lossy(), &variant),
@@ -525,6 +530,8 @@ mod tests {
     extern crate pybevy_camera;
     extern crate pybevy_transform;
 
+    use pybevy_core::bridge_inventory::collect_all;
+
     use super::*;
     use crate::protocol::ErrorCode;
 
@@ -533,7 +540,7 @@ mod tests {
     fn setup() {
         INIT.call_once(|| {
             Python::initialize();
-            pybevy_core::bridge_inventory::collect_all();
+            collect_all();
         });
     }
 

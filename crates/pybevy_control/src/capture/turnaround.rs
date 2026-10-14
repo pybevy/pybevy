@@ -1,7 +1,14 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, f32::consts::TAU};
 
 use bevy::{
-    ecs::world::World, math::Vec3A, prelude::*, render::view::window::screenshot::Screenshot,
+    camera::{RenderTarget, primitives::Aabb},
+    ecs::world::World,
+    image::Image,
+    log::error,
+    math::Vec3A,
+    prelude::*,
+    render::view::window::screenshot::Screenshot,
+    window::PrimaryWindow,
 };
 use image::RgbImage;
 use tokio::sync::oneshot;
@@ -101,7 +108,7 @@ pub fn compute_viewpoints(
     let mut views = Vec::new();
 
     for i in 0..view_count {
-        let angle = (i as f32 / view_count as f32) * std::f32::consts::TAU;
+        let angle = (i as f32 / view_count as f32) * TAU;
         let angle_degrees = (angle.to_degrees()).round() as i32;
         let x = center.x + horizontal_dist * angle.cos();
         let z = center.z + horizontal_dist * angle.sin();
@@ -152,8 +159,7 @@ pub fn turnaround_framing(
 }
 
 pub fn compute_scene_bounds(world: &mut World) -> Option<(Vec3A, Vec3A)> {
-    let mut query_state =
-        world.query::<(Entity, &bevy::camera::primitives::Aabb, &GlobalTransform)>();
+    let mut query_state = world.query::<(Entity, &Aabb, &GlobalTransform)>();
     let entities: Vec<Entity> = query_state.iter(world).map(|(e, _, _)| e).collect();
 
     if entities.is_empty() {
@@ -327,28 +333,46 @@ pub fn process_pending_turnarounds(world: &mut World) {
     }
 
     let has_window = world
-        .query_filtered::<Entity, With<bevy::window::PrimaryWindow>>()
+        .query_filtered::<Entity, With<PrimaryWindow>>()
         .iter(world)
         .next()
         .is_some();
 
-    if has_window {
-        for idx in screenshots_to_spawn {
-            let entity = world.spawn(Screenshot::primary_window()).id();
-            let capture_index = pending.active[idx].current_index;
+    let mut headless = Vec::new();
+    for idx in screenshots_to_spawn {
+        let target = if has_window {
+            Some(Screenshot::primary_window())
+        } else {
+            pending.active[idx]
+                .debug_cleanup
+                .as_ref()
+                .and_then(
+                    |cleanup| match world.get::<RenderTarget>(cleanup.debug_entity) {
+                        Some(target @ RenderTarget::Image(_)) => Some(Screenshot(target.clone())),
+                        _ => None,
+                    },
+                )
+        };
+        let Some(screenshot) = target else {
+            headless.push(idx);
+            continue;
+        };
+        let entity = world.spawn(screenshot).id();
+        let capture_index = pending.active[idx].current_index;
 
-            let mut tc = world.get_resource_or_insert_with(TurnaroundCaptures::default);
-            tc.map.insert(entity, capture_index);
+        let mut tc = world.get_resource_or_insert_with(TurnaroundCaptures::default);
+        tc.map.insert(entity, capture_index);
 
-            pending.active[idx].pending_screenshot_entity = Some(entity);
-            pending.active[idx].current_index += 1;
-            pending.active[idx].frames_remaining = 2;
-        }
-    } else {
+        pending.active[idx].pending_screenshot_entity = Some(entity);
+        pending.active[idx].current_index += 1;
+        pending.active[idx].frames_remaining = 2;
+    }
+
+    if !headless.is_empty() {
         let current_sequence = headless_frame_sequence(world);
         let mut ready = Vec::new();
         let mut failed = Vec::new();
-        for idx in screenshots_to_spawn {
+        for idx in headless {
             let turnaround = &mut pending.active[idx];
             if !headless_view_is_ready(turnaround.headless_sequence, current_sequence) {
                 turnaround.stall_frames += 1;
@@ -399,7 +423,7 @@ pub fn process_pending_turnarounds(world: &mut World) {
 /// Handle turnaround screenshot captures from the observer.
 pub fn handle_turnaround_capture(
     entity: Entity,
-    image: &bevy::image::Image,
+    image: &Image,
     turnarounds: &mut PendingTurnarounds,
     turnaround_captures: &mut TurnaroundCaptures,
 ) -> bool {
@@ -418,7 +442,7 @@ pub fn handle_turnaround_capture(
     let dyn_img = match image.clone().try_into_dynamic() {
         Ok(d) => d,
         Err(e) => {
-            bevy::log::error!("[MCP] Turnaround capture failed to convert image: {e:?}");
+            error!("[MCP] Turnaround capture failed to convert image: {e:?}");
             return true;
         }
     };
@@ -463,11 +487,18 @@ fn composite_turnaround(
 
 #[cfg(test)]
 mod tests {
-    use bevy::camera::primitives::Aabb;
+    use bevy::{
+        asset::RenderAssetUsages,
+        camera::primitives::Aabb,
+        image::Image,
+        render::render_resource::{Extent3d, TextureDimension, TextureFormat},
+        ui::Node,
+    };
     use image::Rgb;
     use pybevy_core::public_error::TURNAROUND_CAMERA3D_REQUIRED;
 
     use super::*;
+    use crate::capture::{headless::HeadlessFrameBuffer, hold::OverlaySuppression};
 
     #[test]
     fn compute_viewpoints_default_6_views_with_top() {
@@ -671,7 +702,7 @@ mod tests {
     #[test]
     fn headless_turnaround_does_not_reuse_the_previous_view() {
         let mut world = World::new();
-        world.insert_resource(crate::capture::headless::HeadlessFrameBuffer {
+        world.insert_resource(HeadlessFrameBuffer {
             latest: Some((vec![255, 0, 0, 255], 1, 1)),
             sequence: 5,
         });
@@ -703,9 +734,51 @@ mod tests {
     }
 
     #[test]
+    fn headless_turnaround_captures_the_debug_camera_image_target() {
+        let mut world = World::new();
+        world.insert_resource(HeadlessFrameBuffer {
+            latest: Some((vec![0, 255, 0, 255], 1, 1)),
+            sequence: 8,
+        });
+        let image = Assets::<Image>::default().add(make_capture_image());
+        let camera = world
+            .spawn((
+                Camera3d::default(),
+                RenderTarget::Image(image.clone().into()),
+            ))
+            .id();
+        let mut turnaround = make_turnaround(make_viewpoints(2), Vec::new(), 2, None);
+        turnaround.frames_remaining = 1;
+        turnaround.view_staged = true;
+        turnaround.headless_sequence = Some(5);
+        turnaround.debug_cleanup = Some(DebugCameraCleanup {
+            debug_entity: camera,
+            reused_state: None,
+            original_cameras: Vec::new(),
+        });
+        world.insert_resource(PendingTurnarounds {
+            active: vec![turnaround],
+        });
+
+        process_pending_turnarounds(&mut world);
+
+        let mut screenshots = world.query::<(Entity, &Screenshot)>();
+        let (entity, screenshot) = screenshots.single(&world).unwrap();
+        let RenderTarget::Image(target) = &screenshot.0 else {
+            panic!("headless turnaround must capture its camera's image target");
+        };
+        assert_eq!(target.handle, image);
+        assert_eq!(world.resource::<TurnaroundCaptures>().map[&entity], 0);
+        let turnaround = &world.resource::<PendingTurnarounds>().active[0];
+        assert_eq!(turnaround.pending_screenshot_entity, Some(entity));
+        assert_eq!(turnaround.current_index, 1);
+        assert!(turnaround.captures.is_empty());
+    }
+
+    #[test]
     fn headless_turnaround_advances_to_view_setup_after_capture() {
         let mut world = World::new();
-        world.insert_resource(crate::capture::headless::HeadlessFrameBuffer {
+        world.insert_resource(HeadlessFrameBuffer {
             latest: Some((vec![0, 255, 0, 255], 1, 1)),
             sequence: 8,
         });
@@ -747,25 +820,20 @@ mod tests {
         assert_eq!(error.message, TURNAROUND_CAMERA3D_REQUIRED);
         assert!(world.resource::<PendingTurnarounds>().active.is_empty());
         assert!(world.get::<Camera>(camera).unwrap().is_active);
-        assert_eq!(
-            world
-                .resource::<crate::capture::hold::OverlaySuppression>()
-                .0,
-            0
-        );
+        assert_eq!(world.resource::<OverlaySuppression>().0, 0);
     }
 
-    fn make_capture_image() -> bevy::image::Image {
-        bevy::image::Image::new(
-            bevy::render::render_resource::Extent3d {
+    fn make_capture_image() -> Image {
+        Image::new(
+            Extent3d {
                 width: 2,
                 height: 2,
                 depth_or_array_layers: 1,
             },
-            bevy::render::render_resource::TextureDimension::D2,
+            TextureDimension::D2,
             vec![255u8; 16],
-            bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
-            bevy::asset::RenderAssetUsages::default(),
+            TextureFormat::Rgba8UnormSrgb,
+            RenderAssetUsages::default(),
         )
     }
 
@@ -857,10 +925,8 @@ mod tests {
     #[test]
     fn stalled_turnaround_fails_with_error_and_restored_state() {
         let mut world = World::new();
-        world.insert_resource(crate::capture::hold::OverlaySuppression(1));
-        let ui = world
-            .spawn((Visibility::Hidden, bevy::ui::Node::default()))
-            .id();
+        world.insert_resource(OverlaySuppression(1));
+        let ui = world.spawn((Visibility::Hidden, Node::default())).id();
         let screenshot_entity = world.spawn_empty().id();
 
         let (tx, mut rx) = oneshot::channel();
@@ -886,12 +952,7 @@ mod tests {
         assert!(error.message.contains("deadline"));
         assert!(world.resource::<PendingTurnarounds>().active.is_empty());
         assert!(world.resource::<TurnaroundCaptures>().map.is_empty());
-        assert_eq!(
-            world
-                .resource::<crate::capture::hold::OverlaySuppression>()
-                .0,
-            0
-        );
+        assert_eq!(world.resource::<OverlaySuppression>().0, 0);
         assert_eq!(*world.get::<Visibility>(ui).unwrap(), Visibility::Visible);
         assert!(world.get_entity(screenshot_entity).is_err());
     }
@@ -1079,7 +1140,7 @@ mod tests {
         ));
         let ui = world
             .spawn((
-                bevy::ui::Node::default(),
+                Node::default(),
                 Visibility::Visible,
                 InheritedVisibility::VISIBLE,
             ))

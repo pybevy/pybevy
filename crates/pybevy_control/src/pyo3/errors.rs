@@ -1,9 +1,12 @@
+use std::cmp;
+
 use pybevy_core::public_error;
 use pyo3::{prelude::*, types::PyType};
 
 use crate::pyo3::{
     dataclass_fields::dataclass_field_names,
     descriptors::{accepts_own_value, is_field_descriptor},
+    enum_names::accepted_variant_names,
     from_json::enums::{enum_owner_type, enum_variant_names},
 };
 
@@ -72,8 +75,8 @@ fn levenshtein_distance(left: &str, right: &str) -> usize {
         let mut current = vec![i + 1];
         for (j, right_char) in right.iter().enumerate() {
             let cost = usize::from(left_char != right_char);
-            current.push(std::cmp::min(
-                std::cmp::min(previous[j + 1] + 1, current[j] + 1),
+            current.push(cmp::min(
+                cmp::min(previous[j + 1] + 1, current[j] + 1),
                 previous[j] + cost,
             ));
         }
@@ -153,7 +156,7 @@ fn component_enum_variant_names(instance: &Bound<'_, PyAny>) -> Vec<String> {
     let owner = enum_owner_type(instance);
     let variants = enum_variant_names(&owner);
     if variants.is_empty() || !owner.is(&current_type) {
-        return super::enum_names::accepted_variant_names(&owner, variants);
+        return accepted_variant_names(&owner, variants);
     }
 
     let Ok(owner_name) = owner.name() else {
@@ -172,7 +175,7 @@ fn component_enum_variant_names(instance: &Bound<'_, PyAny>) -> Vec<String> {
                     .is_some_and(|rest| rest.starts_with('('))
         })
     }) {
-        super::enum_names::accepted_variant_names(&owner, variants)
+        accepted_variant_names(&owner, variants)
     } else {
         Vec::new()
     }

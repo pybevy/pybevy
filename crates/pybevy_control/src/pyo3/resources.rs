@@ -640,6 +640,8 @@ mod tests {
     extern crate pybevy_camera;
     extern crate pybevy_transform;
 
+    use pybevy_core::bridge_inventory::collect_all;
+
     use super::*;
     use crate::protocol::ErrorCode;
 
@@ -909,7 +911,7 @@ mod tests {
     fn setup() {
         INIT_WITH_BRIDGES.call_once(|| {
             Python::initialize();
-            pybevy_core::bridge_inventory::collect_all();
+            collect_all();
         });
     }
 

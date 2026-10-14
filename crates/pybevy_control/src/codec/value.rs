@@ -186,7 +186,7 @@ pub(crate) fn json_kind_name(value: &serde_json::Value) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use std::f32::consts::FRAC_1_SQRT_2;
+    use std::{f32::consts::FRAC_1_SQRT_2, f64::consts::PI};
 
     use pybevy_core::public_error;
     use serde_json::json;
@@ -196,7 +196,7 @@ mod tests {
     #[test]
     fn json_f64_accepts_json_numbers() {
         for (value, expected) in [
-            (json!(std::f64::consts::PI), std::f64::consts::PI),
+            (json!(PI), PI),
             (json!(42), 42.0),
             (json!(-7.5), -7.5),
             (json!(0), 0.0),

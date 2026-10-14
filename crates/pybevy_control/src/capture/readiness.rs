@@ -3,7 +3,7 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
-use bevy::prelude::*;
+use bevy::{prelude::*, render::render_resource::PipelineCache};
 
 /// Cross-world render completion state for captures queued after live edits.
 #[derive(Resource, Clone, Default)]
@@ -41,7 +41,7 @@ impl RenderFrameReadiness {
 /// Publish completion only after the render pipeline queue is empty at the
 /// end of a render-world frame.
 pub fn update_render_frame_readiness(
-    pipeline_cache: Res<bevy::render::render_resource::PipelineCache>,
+    pipeline_cache: Res<PipelineCache>,
     readiness: Res<RenderFrameReadiness>,
 ) {
     if pipeline_cache.waiting_pipelines().next().is_none() {

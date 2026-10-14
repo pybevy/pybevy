@@ -1,4 +1,8 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 
 use bevy::prelude::Resource;
 use serde::Serialize;
@@ -27,7 +31,7 @@ pub struct SharedScheduleState {
     pub results: Vec<ActionResult>,
     pub cancelled: bool,
     #[serde(skip)]
-    pub completed_at: Option<std::time::Instant>,
+    pub completed_at: Option<Instant>,
 }
 
 impl SharedScheduleState {
@@ -49,13 +53,13 @@ impl SharedScheduleState {
 }
 
 /// How long a completed schedule stays pollable before eviction.
-pub const COMPLETED_SCHEDULE_RETENTION: std::time::Duration = std::time::Duration::from_secs(300);
+pub const COMPLETED_SCHEDULE_RETENTION: Duration = Duration::from_secs(300);
 /// Completed schedules kept regardless of age; oldest beyond this are evicted.
 pub const MAX_COMPLETED_SCHEDULES: usize = 32;
 
 #[derive(Clone, Default)]
 pub struct SharedScheduleRegistry {
-    inner: Arc<Mutex<std::collections::HashMap<String, Arc<Mutex<SharedScheduleState>>>>>,
+    inner: Arc<Mutex<HashMap<String, Arc<Mutex<SharedScheduleState>>>>>,
 }
 
 impl SharedScheduleRegistry {
@@ -72,11 +76,9 @@ impl SharedScheduleRegistry {
         }
     }
 
-    fn evict_completed(
-        entries: &mut std::collections::HashMap<String, Arc<Mutex<SharedScheduleState>>>,
-    ) {
-        let now = std::time::Instant::now();
-        let mut completed: Vec<(String, std::time::Instant)> = entries
+    fn evict_completed(entries: &mut HashMap<String, Arc<Mutex<SharedScheduleState>>>) {
+        let now = Instant::now();
+        let mut completed: Vec<(String, Instant)> = entries
             .iter()
             .filter_map(|(id, state)| {
                 let completed_at = state.lock().ok()?.completed_at?;
@@ -118,13 +120,12 @@ pub struct SharedScheduleRegistryResource(pub SharedScheduleRegistry);
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
     use super::*;
     use crate::schedule::runner::ActionStatus;
 
-    fn completed_state(
-        id: &str,
-        completed_at: std::time::Instant,
-    ) -> Arc<Mutex<SharedScheduleState>> {
+    fn completed_state(id: &str, completed_at: Instant) -> Arc<Mutex<SharedScheduleState>> {
         let mut state = SharedScheduleState::new(id, 1);
         state.status = ScheduleStatus::Completed;
         state.completed_at = Some(completed_at);
@@ -158,11 +159,11 @@ mod tests {
     #[test]
     fn registry_evicts_expired_completed_schedules_on_insert() {
         let registry = SharedScheduleRegistry::default();
-        let expired = std::time::Instant::now() - COMPLETED_SCHEDULE_RETENTION * 2;
+        let expired = Instant::now() - COMPLETED_SCHEDULE_RETENTION * 2;
         registry.insert("old".to_string(), completed_state("old", expired));
         registry.insert(
             "fresh".to_string(),
-            completed_state("fresh", std::time::Instant::now()),
+            completed_state("fresh", Instant::now()),
         );
         registry.insert(
             "running".to_string(),
@@ -180,12 +181,12 @@ mod tests {
     #[test]
     fn registry_caps_completed_schedules_evicting_oldest() {
         let registry = SharedScheduleRegistry::default();
-        let base = std::time::Instant::now();
+        let base = Instant::now();
         for index in 0..=MAX_COMPLETED_SCHEDULES {
             let id = format!("s-{index}");
             registry.insert(
                 id.clone(),
-                completed_state(&id, base + std::time::Duration::from_millis(index as u64)),
+                completed_state(&id, base + Duration::from_millis(index as u64)),
             );
         }
         registry.insert(

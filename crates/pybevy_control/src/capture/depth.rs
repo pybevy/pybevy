@@ -1,5 +1,5 @@
 use bevy::{
-    camera::{Projection, RenderTarget},
+    camera::{Projection, RenderTarget, primitives::Aabb},
     ecs::{entity::Entity, name::Name, world::World},
     math::{Ray3d, UVec2, Vec3},
     prelude::*,
@@ -263,8 +263,7 @@ pub fn compute_depth_samples_for_camera(
     };
 
     // Collect all entity AABBs
-    let mut aabb_query =
-        world.query::<(Entity, &bevy::camera::primitives::Aabb, &GlobalTransform)>();
+    let mut aabb_query = world.query::<(Entity, &Aabb, &GlobalTransform)>();
     let entities: Vec<Entity> = aabb_query.iter(world).map(|(e, _, _)| e).collect();
 
     let mut aabbs = Vec::new();
@@ -476,6 +475,8 @@ fn ray_aabb_intersection(ray: &Ray3d, aabb: &spatial::WorldAabb) -> Option<f32> 
 
 #[cfg(test)]
 mod tests {
+    use std::f32::consts::{FRAC_PI_2, FRAC_PI_3};
+
     use bevy::{
         asset::Assets,
         camera::{
@@ -488,6 +489,7 @@ mod tests {
     };
 
     use super::{spatial::WorldAabb, *};
+    use crate::protocol::ErrorCode;
 
     fn make_aabb(min: [f32; 3], max: [f32; 3]) -> WorldAabb {
         WorldAabb {
@@ -562,7 +564,7 @@ mod tests {
     #[test]
     fn compute_depth_samples_explicit_position() {
         let mut world = World::new();
-        spawn_camera(&mut world, std::f32::consts::FRAC_PI_3, 1.0);
+        spawn_camera(&mut world, FRAC_PI_3, 1.0);
         // Use a large cube so that off-center grid rays still hit
         world.spawn((
             Aabb::from_min_max(Vec3::new(-5.0, -5.0, -5.0), Vec3::new(5.0, 5.0, 5.0)),
@@ -599,7 +601,7 @@ mod tests {
     #[test]
     fn compute_depth_samples_no_entities() {
         let mut world = World::new();
-        spawn_camera(&mut world, std::f32::consts::FRAC_PI_3, 1.0);
+        spawn_camera(&mut world, FRAC_PI_3, 1.0);
 
         let position = Some([0.0_f32, 0.0, 10.0]);
         let look_at = Some([0.0_f32, 0.0, 0.0]);
@@ -734,7 +736,7 @@ mod tests {
     #[test]
     fn odd_density_grid_samples_the_center_cell() {
         let mut world = World::new();
-        spawn_camera(&mut world, std::f32::consts::FRAC_PI_3, 1.0);
+        spawn_camera(&mut world, FRAC_PI_3, 1.0);
         world.spawn((
             Aabb::from_min_max(Vec3::splat(-0.25), Vec3::splat(0.25)),
             GlobalTransform::default(),
@@ -757,7 +759,7 @@ mod tests {
     #[test]
     fn compute_depth_samples_custom_sample_points() {
         let mut world = World::new();
-        spawn_camera(&mut world, std::f32::consts::FRAC_PI_3, 1.0);
+        spawn_camera(&mut world, FRAC_PI_3, 1.0);
         world.spawn((
             Aabb::from_min_max(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0)),
             GlobalTransform::default(),
@@ -824,7 +826,7 @@ mod tests {
                 ),
                 GlobalTransform::default(),
             ));
-            spawn_camera(&mut world, std::f32::consts::FRAC_PI_2, aspect_ratio);
+            spawn_camera(&mut world, FRAC_PI_2, aspect_ratio);
 
             let result =
                 compute_depth_samples(&mut world, &None, &None, &Some(vec![[600_i64, 400]]), &None)
@@ -872,7 +874,7 @@ mod tests {
         let error = compute_depth_samples(&mut world, &None, &None, &sample_points, &None)
             .expect_err("out-of-range coordinates must be rejected");
 
-        assert_eq!(error.code, crate::protocol::ErrorCode::InvalidParams);
+        assert_eq!(error.code, ErrorCode::InvalidParams);
         assert_eq!(
             error.message,
             "sample_points[0] must be within [0, 800) on both axes (got [99999, -50])"
@@ -886,7 +888,7 @@ mod tests {
         let error = compute_depth_samples(&mut world, &None, &None, &None, &Some(0))
             .expect_err("zero grid density must be rejected");
 
-        assert_eq!(error.code, crate::protocol::ErrorCode::InvalidParams);
+        assert_eq!(error.code, ErrorCode::InvalidParams);
         assert_eq!(error.message, "grid_density must be at least 1");
     }
 
@@ -908,7 +910,7 @@ mod tests {
         );
 
         let error = result.unwrap_err();
-        assert_eq!(error.code, crate::protocol::ErrorCode::NotFound);
+        assert_eq!(error.code, ErrorCode::NotFound);
         assert_eq!(
             error.message,
             "No Camera3d found for capture_depth projection"
@@ -918,7 +920,7 @@ mod tests {
     #[test]
     fn compute_depth_samples_hit_returns_entity_info() {
         let mut world = World::new();
-        spawn_camera(&mut world, std::f32::consts::FRAC_PI_3, 1.0);
+        spawn_camera(&mut world, FRAC_PI_3, 1.0);
         world.spawn((
             Aabb::from_min_max(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0)),
             GlobalTransform::default(),
@@ -951,7 +953,7 @@ mod tests {
     #[test]
     fn compute_depth_samples_miss_returns_null_distance() {
         let mut world = World::new();
-        spawn_camera(&mut world, std::f32::consts::FRAC_PI_3, 1.0);
+        spawn_camera(&mut world, FRAC_PI_3, 1.0);
         // Entity far off to the side
         world.spawn((
             Aabb::from_min_max(
@@ -1022,7 +1024,7 @@ mod tests {
     #[test]
     fn vertical_camera_produces_distinct_grid_samples() {
         let mut world = World::new();
-        spawn_camera(&mut world, std::f32::consts::FRAC_PI_3, 1.0);
+        spawn_camera(&mut world, FRAC_PI_3, 1.0);
         world.spawn((
             Aabb::from_min_max(
                 Vec3::new(-100.0, -0.1, -100.0),
@@ -1049,7 +1051,7 @@ mod tests {
     fn coincident_camera_points_are_rejected() {
         let error = camera_transform(Vec3::ONE, Vec3::ONE).unwrap_err();
 
-        assert_eq!(error.code, crate::protocol::ErrorCode::InvalidParams);
+        assert_eq!(error.code, ErrorCode::InvalidParams);
         assert_eq!(
             error.message,
             "position and look_at must be distinct finite points"

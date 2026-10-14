@@ -1,7 +1,10 @@
 use std::io::Cursor;
 
-use base64::Engine;
-use image::{ImageFormat, Rgb, RgbImage};
+use base64::{Engine, engine::general_purpose::STANDARD};
+use image::{
+    ImageFormat, Rgb, RgbImage,
+    imageops::{FilterType, overlay, resize},
+};
 
 use super::timeline::ActiveTimeline;
 use crate::protocol::ControlError;
@@ -92,17 +95,12 @@ pub(super) fn compose_contact_sheet<K: Ord + Copy>(
 
         let resized;
         let src = if frame.width() != cell_w || frame.height() != cell_h {
-            resized = image::imageops::resize(
-                frame,
-                cell_w,
-                cell_h,
-                image::imageops::FilterType::Triangle,
-            );
+            resized = resize(frame, cell_w, cell_h, FilterType::Triangle);
             &resized
         } else {
             frame
         };
-        image::imageops::overlay(&mut canvas, src, x as i64, y as i64);
+        overlay(&mut canvas, src, x as i64, y as i64);
 
         let hue = (i as f64 / count as f64) * 300.0;
         let color = hsv_to_rgb(hue, style.bar_saturation, style.bar_value);
@@ -121,12 +119,7 @@ pub(super) fn compose_contact_sheet<K: Ord + Copy>(
     {
         let scale = max_w as f64 / canvas.width() as f64;
         let new_height = (canvas.height() as f64 * scale).round() as u32;
-        canvas = image::imageops::resize(
-            &canvas,
-            max_w,
-            new_height,
-            image::imageops::FilterType::Triangle,
-        );
+        canvas = resize(&canvas, max_w, new_height, FilterType::Triangle);
     }
 
     let mut buf = Vec::new();
@@ -134,7 +127,7 @@ pub(super) fn compose_contact_sheet<K: Ord + Copy>(
         .write_to(&mut Cursor::new(&mut buf), ImageFormat::Png)
         .map_err(|e| ControlError::internal(format!("Failed to encode {} PNG: {e}", style.name)))?;
     Ok(ContactSheet {
-        image: base64::engine::general_purpose::STANDARD.encode(&buf),
+        image: STANDARD.encode(&buf),
         width: canvas.width(),
         height: canvas.height(),
         frame_count: count,

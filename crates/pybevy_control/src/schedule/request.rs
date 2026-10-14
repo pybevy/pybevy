@@ -4,7 +4,10 @@ use pybevy_core::public_error;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::{ControlOperation, OperationTag, json_object_schema};
+use crate::{
+    catalog::tools::is_public_tool_name,
+    protocol::{ControlOperation, OperationTag, json_object_schema},
+};
 
 /// sync (default): block until all actions complete. async: return schedule_id immediately.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
@@ -87,7 +90,7 @@ pub fn validate_schedule(request: &ScheduleRequest) -> Result<(), String> {
                 i, action.tool
             ));
         }
-        if !crate::catalog::tools::is_public_tool_name(&action.tool) {
+        if !is_public_tool_name(&action.tool) {
             return Err(public_error::mcp_schedule_non_public_tool(i, &action.tool));
         }
 
@@ -194,7 +197,7 @@ pub fn tool_to_operation(tool: &str, args: &serde_json::Value) -> Result<Control
     );
 
     let call: ControlOperation =
-        serde_json::from_value(obj).map_err(|e| format!("invalid tool call '{tool}': {e}"))?;
+        serde_json::from_value(obj).map_err(|e| format!("invalid '{tool}' arguments: {e}"))?;
     Ok(call)
 }
 pub(super) fn resolve_at(action: &ScheduleAction) -> f64 {
@@ -208,10 +211,13 @@ pub(super) fn resolve_at_frame(action: &ScheduleAction) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{
-        CaptureScreenshotParams, CaptureStatsParams, CompareFramesParams, EntityRef,
-        GetComponentParams, QueryEntitiesParams, ReloadMode, ReloadParams, SeekTimeParams,
-        SetComponentParams,
+    use crate::{
+        catalog::tools::list_tools,
+        protocol::{
+            CaptureScreenshotParams, CaptureStatsParams, CompareFramesParams, EntityRef,
+            GetComponentParams, QueryEntitiesParams, ReloadMode, ReloadParams, SeekTimeParams,
+            SetComponentParams,
+        },
     };
 
     #[test]
@@ -295,7 +301,7 @@ mod tests {
 
     #[test]
     fn test_public_tool_schema_matches_schedule_name_validation() {
-        for tool in crate::catalog::tools::list_tools() {
+        for tool in list_tools() {
             let name = tool["name"].as_str().unwrap();
             let req = ScheduleRequest {
                 actions: vec![ScheduleAction {

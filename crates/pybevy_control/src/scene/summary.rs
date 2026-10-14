@@ -1,9 +1,12 @@
 use std::collections::HashMap;
 
-use bevy::ecs::{
-    entity::Entity,
-    name::Name,
-    world::{EntityRef as BevyEntityRef, World},
+use bevy::{
+    ecs::{
+        entity::Entity,
+        name::Name,
+        world::{EntityRef as BevyEntityRef, World},
+    },
+    log::{debug, warn},
 };
 use pybevy_core::{public_error, source_location::SourceLocation};
 
@@ -219,7 +222,7 @@ pub fn query_entities(
     let entity_count = all_entities.len();
     let bridge_count = runtime.component_catalog(world).native_names.len();
     if entity_count > 0 && bridge_count == 0 {
-        bevy::log::warn!(
+        warn!(
             "[MCP] query_entities: {entity_count} entities but 0 bridges registered! Bridge registry may not be populated."
         );
     }
@@ -279,7 +282,7 @@ pub fn query_entities(
     {
         let sample_components = runtime.component_names(world, *first_entity).native;
         let has_name = world.get::<Name>(*first_entity).is_some();
-        bevy::log::debug!(
+        debug!(
             "[MCP] query_entities: 0 matches from {entity_count} entities (filters: with={with_filters:?}, without={without_filters:?}). \
                      Bridges: {bridge_count}. First entity ({}) has {} bridge components: {sample_components:?}. Has Bevy Name: {has_name}",
             first_entity.to_bits(),
@@ -720,9 +723,11 @@ mod runtime_tests {
     extern crate pybevy_camera;
     extern crate pybevy_transform;
 
+    use pybevy_core::bridge_inventory::collect_all;
+
     use super::*;
     use crate::{
-        protocol::{ErrorCode, QueryEntitiesParams},
+        protocol::{ErrorCode, MAX_QUERY_ENTITY_LIMIT, QueryEntitiesParams},
         pyo3::runtime::Pyo3ControlRuntime,
     };
 
@@ -731,7 +736,7 @@ mod runtime_tests {
     fn setup() {
         INIT.call_once(|| {
             Python::initialize();
-            pybevy_core::bridge_inventory::collect_all();
+            collect_all();
         });
     }
 
@@ -1193,13 +1198,8 @@ mod runtime_tests {
     #[test]
     fn query_entities_rejects_excessive_limit() {
         let mut world = World::new();
-        let error = query_entities(
-            &mut world,
-            vec![],
-            vec![],
-            crate::protocol::MAX_QUERY_ENTITY_LIMIT + 1,
-        )
-        .unwrap_err();
+        let error =
+            query_entities(&mut world, vec![], vec![], MAX_QUERY_ENTITY_LIMIT + 1).unwrap_err();
 
         assert_eq!(error.code, ErrorCode::InvalidParams);
         assert!(error.message.contains("at most 1000"));

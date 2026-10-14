@@ -4,6 +4,8 @@ use bevy::{asset::UntypedHandle, ecs::world::World};
 use pybevy_core::{
     AccessMode, AssetAccessRegistry, AssetBorrowCounter, ValidityFlag, ValidityGuard,
     ensure_asset_access_registry,
+    public_error::mcp_entity_not_found,
+    registry::global_registry::{all_component_bridges, get_asset_bridge_by_name},
 };
 use pyo3::prelude::*;
 
@@ -50,7 +52,7 @@ pub fn mutate_asset(
 
     Python::attach(|py| {
         // Find the component bridge for the handle component (e.g. MeshMaterial3d)
-        let comp_bridge = pybevy_core::registry::global_registry::all_component_bridges()
+        let comp_bridge = all_component_bridges()
             .into_iter()
             .find(|b| b.name() == component.as_str());
 
@@ -70,7 +72,7 @@ pub fn mutate_asset(
             .ok()
             .flatten()
         } else {
-            errors.push(pybevy_core::public_error::mcp_entity_not_found(entity_id));
+            errors.push(mcp_entity_not_found(entity_id));
             return;
         };
         let untyped = (|| {
@@ -103,8 +105,7 @@ pub fn mutate_asset(
         };
 
         // Find the asset bridge by name
-        let asset_bridge =
-            pybevy_core::registry::global_registry::get_asset_bridge_by_name(&asset_type);
+        let asset_bridge = get_asset_bridge_by_name(&asset_type);
 
         let Some(asset_bridge) = asset_bridge else {
             errors.push(format!("Asset type '{asset_type}' not in registry"));

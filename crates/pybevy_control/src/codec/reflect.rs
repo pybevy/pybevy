@@ -1083,8 +1083,8 @@ fn json_to_reflect(
                 ))
             }
         }
-        Value::Array(arr) => convert_array(arr, target_type_id, target_type_info, registry),
-        Value::Object(obj) => convert_object(obj, target_type_id, target_type_info, registry),
+        Value::Array(arr) => convert_array(arr, target_type_info, registry),
+        Value::Object(obj) => convert_object(obj, target_type_info, registry),
         Value::Null => Err("null values not supported".into()),
     }
 }
@@ -1194,7 +1194,6 @@ fn convert_option(
 /// Supports array shorthand: [1, 2, 3] → Vec3 { x: 1.0, y: 2.0, z: 3.0 }
 fn convert_array(
     arr: &[Value],
-    _target_type_id: TypeId,
     target_type_info: Option<&'static TypeInfo>,
     registry: &TypeRegistry,
 ) -> Result<Box<dyn PartialReflect>, String> {
@@ -1263,7 +1262,6 @@ fn convert_array(
 ///   - `{"UnitVariant": null}` or `{"UnitVariant": {}}` → unit variant
 fn convert_object(
     obj: &Map<String, Value>,
-    _target_type_id: TypeId,
     target_type_info: Option<&'static TypeInfo>,
     registry: &TypeRegistry,
 ) -> Result<Box<dyn PartialReflect>, String> {
@@ -1567,6 +1565,8 @@ fn convert_integer(
 
 #[cfg(test)]
 mod tests {
+    use std::f64::consts::PI;
+
     use bevy::{
         app::App,
         color::{Color, Srgba},
@@ -2186,7 +2186,7 @@ mod tests {
     }
 
     #[test]
-    fn reflect_set_non_struct_returns_not_a_struct() {
+    fn reflect_set_enum_without_variant_payload_is_a_field_error() {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
         app.register_type::<TestEnumComponent>();
@@ -2198,7 +2198,11 @@ mod tests {
         let fields = Map::new();
         let result =
             reflect_set_component(world, entity, TypeId::of::<TestEnumComponent>(), &fields);
-        assert!(matches!(result, Err(ReflectError::FieldError(_))));
+        assert!(matches!(
+            result,
+            Err(ReflectError::FieldError(message))
+                if message == "enum component updates require a tagged 'variant' payload or one variant key"
+        ));
     }
 
     #[test]
@@ -2652,7 +2656,7 @@ mod tests {
 
     #[test]
     fn convert_number_error_includes_type_info() {
-        let n = serde_json::Number::from_f64(std::f64::consts::PI).unwrap();
+        let n = serde_json::Number::from_f64(PI).unwrap();
         let result = super::convert_number(&n, TypeId::of::<i32>(), None);
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -2935,9 +2939,11 @@ mod tests {
 
         let result = reflect_set_component(world, entity, TypeId::of::<ModeComponent>(), &fields);
 
-        // String "NonExistent" doesn't match any variant, falls through to String type
-        // which will fail at try_apply because TestMode != String
-        assert!(matches!(result, Err(ReflectError::FieldError(_))));
+        assert!(matches!(
+            result,
+            Err(ReflectError::FieldError(message))
+                if message == "mode: unknown variant 'NonExistent'. Valid variants: Auto, Manual, Disabled"
+        ));
     }
 
     #[derive(Component, Reflect, Default)]

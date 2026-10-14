@@ -1,6 +1,10 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, HashSet},
+};
 
 use bevy::{
+    camera::primitives::Aabb,
     ecs::{entity::Entity, name::Name, world::World},
     math::Vec3A,
     prelude::*,
@@ -8,8 +12,8 @@ use bevy::{
 
 use super::entity::resolve_entity;
 use crate::protocol::{
-    CheckAllOverlapsParams, CheckOverlapsParams, ControlError, QuerySpatialNeighborhoodParams,
-    QuerySpatialParams,
+    CheckAllOverlapsParams, CheckOverlapsParams, ControlError, ErrorCode,
+    QuerySpatialNeighborhoodParams, QuerySpatialParams,
 };
 
 /// Round an f32 to 6 decimal places for cleaner JSON output.
@@ -27,7 +31,7 @@ pub struct WorldAabb {
 
 /// Compute world-space AABB for a single entity that has its own Aabb component.
 fn compute_entity_aabb(world: &World, entity: Entity) -> Result<Option<WorldAabb>, ControlError> {
-    let Some(aabb) = world.get::<bevy::camera::primitives::Aabb>(entity) else {
+    let Some(aabb) = world.get::<Aabb>(entity) else {
         return Ok(None);
     };
     let Some(gt) = world.get::<GlobalTransform>(entity) else {
@@ -460,7 +464,7 @@ pub fn query_spatial_neighborhood(
     }
 
     // Sort by distance
-    neighbors.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+    neighbors.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
 
     let limit = max_results.unwrap_or(50);
     let total_count = neighbors.len();
@@ -521,8 +525,7 @@ pub fn check_overlaps(
     let target_descendants = collect_descendants(world, target);
 
     // Collect all entities with Aabb + GlobalTransform
-    let mut query_state =
-        world.query::<(Entity, &bevy::camera::primitives::Aabb, &GlobalTransform)>();
+    let mut query_state = world.query::<(Entity, &Aabb, &GlobalTransform)>();
     let all_entities: Vec<Entity> = query_state.iter(world).map(|(e, _, _)| e).collect();
 
     let occurrences = NameOccurrences::collect(world);
@@ -542,7 +545,7 @@ pub fn check_overlaps(
 
         let other_aabb = match compute_world_aabb(world, *entity) {
             Ok(aabb) => aabb,
-            Err(error) if error.code == crate::protocol::ErrorCode::InvalidParams => {
+            Err(error) if error.code == ErrorCode::InvalidParams => {
                 invalid_entities.push(entity_label(world, *entity));
                 continue;
             }
@@ -646,8 +649,7 @@ pub fn check_all_overlaps(
     let max_res = max_results.unwrap_or(100);
 
     // Collect all world AABBs
-    let mut query_state =
-        world.query::<(Entity, &bevy::camera::primitives::Aabb, &GlobalTransform)>();
+    let mut query_state = world.query::<(Entity, &Aabb, &GlobalTransform)>();
     let entities: Vec<Entity> = query_state.iter(world).map(|(e, _, _)| e).collect();
 
     let mut aabbs: Vec<WorldAabb> = Vec::new();
@@ -655,7 +657,7 @@ pub fn check_all_overlaps(
     for entity in &entities {
         match compute_world_aabb(world, *entity) {
             Ok(aabb) => aabbs.push(aabb),
-            Err(error) if error.code == crate::protocol::ErrorCode::InvalidParams => {
+            Err(error) if error.code == ErrorCode::InvalidParams => {
                 invalid_entities.push(entity_label(world, *entity));
             }
             Err(_) => {}
@@ -663,12 +665,7 @@ pub fn check_all_overlaps(
     }
 
     // Sort by AABB min-Y for sweep-and-prune
-    aabbs.sort_by(|a, b| {
-        a.min
-            .y
-            .partial_cmp(&b.min.y)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    aabbs.sort_by(|a, b| a.min.y.partial_cmp(&b.min.y).unwrap_or(Ordering::Equal));
 
     let occurrences = NameOccurrences::collect(world);
     let mut overlaps = Vec::new();
@@ -781,6 +778,8 @@ pub fn check_all_overlaps(
 
 #[cfg(test)]
 mod tests {
+    use std::f32::consts::PI;
+
     use bevy::{camera::primitives::Aabb, ecs::entity::Entity, math::Vec3A};
 
     use super::*;
@@ -2269,7 +2268,7 @@ mod tests {
     // fires on the literal even though the input uses std::f32::consts::PI directly.
     #[allow(clippy::approx_constant)]
     fn round6_basic() {
-        assert_eq!(super::round6(std::f32::consts::PI), 3.141593);
+        assert_eq!(super::round6(PI), 3.141593);
         assert_eq!(super::round6(0.0), 0.0);
         assert_eq!(super::round6(-1.2345679), -1.234568);
     }

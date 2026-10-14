@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{convert::Infallible, sync::Arc, thread};
 
 use axum::{
     Json, Router,
@@ -8,10 +8,11 @@ use axum::{
         IntoResponse, Response,
         sse::{Event, KeepAlive, Sse},
     },
-    routing::{delete, get, post, put},
+    routing::{MethodRouter, delete, get, post, put},
 };
-use serde::{Deserialize, de::DeserializeOwned};
-use tokio::sync::oneshot;
+use serde::Deserialize;
+use serde_json::{Map, Value};
+use tokio::{net::TcpListener, runtime::Builder, sync::oneshot};
 use tokio_stream::StreamExt;
 
 use crate::{
@@ -20,14 +21,10 @@ use crate::{
     engine::channel::{ControlRequest, ControlSender},
     plugin::ControlConfig,
     protocol::{
-        CaptureDepthParams, CaptureScreenshotParams, CaptureStatsParams, CaptureTimelineParams,
-        CaptureTurnaroundParams, CheckAllOverlapsParams, CheckOverlapsParams, CompareFramesParams,
         ControlOperation, EntityRef, ErrorCode, GetComponentParams, GetResourceParams,
-        QueryEntitiesParams, QuerySpatialNeighborhoodParams, QuerySpatialParams,
-        ReloadAndCaptureParams, ReloadParams, RemoveComponentParams, SeekTimeParams,
-        SetAssetParams, SetComponentParams, SetResourceParams, default_max_float_gap,
+        RemoveComponentParams, SetComponentParams, SetResourceParams,
     },
-    schedule::{ScheduleMode, ScheduleRequest, SharedScheduleRegistry, validate_schedule},
+    schedule::{ScheduleMode, SharedScheduleRegistry, tool_to_operation, validate_schedule},
     transport::{
         image_delivery::{
             MCP_IMAGE_DELIVERY_HEADER, MCP_IMAGE_DELIVERY_VALUE, prepare_mcp_response_images,
@@ -163,51 +160,45 @@ pub(super) fn parse_entity_ref(entity: &str) -> EntityRef {
     EntityRef::parse(entity)
 }
 
-fn entity_ref_from_value(
-    value: serde_json::Value,
-    message: &str,
-) -> Result<EntityRef, ErrorResponse> {
-    serde_json::from_value(value).map_err(|_| error_response(StatusCode::BAD_REQUEST, message))
-}
-
-/// A JSON request body that maps to one operation, shared by its REST route
-/// and `POST /api/v1/tools/{name}`.
-pub(super) trait OperationBody: DeserializeOwned {
-    fn operation(self) -> Result<ControlOperation, ErrorResponse>;
-}
-
-async fn body_route<B: OperationBody>(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(body): Json<B>,
-) -> Response {
-    match body.operation() {
-        Ok(operation) => respond(&state, operation, &headers).await,
-        Err(error) => error.into_response(),
-    }
-}
-
-macro_rules! operation_bodies {
-    ($($body:ty => $variant:ident,)*) => {
-        $(impl OperationBody for $body {
-            fn operation(self) -> Result<ControlOperation, ErrorResponse> {
-                Ok(ControlOperation::$variant(self))
-            }
-        })*
+macro_rules! operation_route {
+    ($operation:expr) => {
+        |State(state): State<AppState>, headers: HeaderMap| async move {
+            respond(&state, $operation, &headers).await
+        }
     };
 }
 
-operation_bodies! {
-    QueryEntitiesParams => QueryEntities,
-    CompareFramesParams => CompareFrames,
-    CaptureTimelineParams => CaptureTimeline,
-    CaptureTurnaroundParams => CaptureTurnaround,
-    CaptureDepthParams => CaptureDepth,
-    ReloadParams => Reload,
-    ReloadAndCaptureParams => ReloadAndCapture,
-    SeekTimeParams => SeekTime,
-    CheckAllOverlapsParams => CheckAllOverlaps,
-    ScheduleRequest => ScheduleActions,
+/// A POST route whose JSON body holds `tool`'s arguments.
+fn tool_route(tool: &'static str) -> MethodRouter<AppState> {
+    post(
+        move |State(state): State<AppState>,
+              headers: HeaderMap,
+              Json(arguments): Json<Map<String, Value>>| async move {
+            respond_to_tool(&state, tool, arguments, &headers).await
+        },
+    )
+}
+
+/// Answer `tool` called with `arguments`; malformed arguments answer 422.
+pub(super) async fn respond_to_tool(
+    state: &AppState,
+    tool: &str,
+    arguments: Map<String, Value>,
+    headers: &HeaderMap,
+) -> Response {
+    match tool_to_operation(tool, &Value::Object(arguments)) {
+        Ok(operation) => respond(state, operation, headers).await,
+        Err(message) => error_response(StatusCode::UNPROCESSABLE_ENTITY, &message).into_response(),
+    }
+}
+
+async fn capture_with_gizmos(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(mut arguments): Json<Map<String, Value>>,
+) -> Response {
+    arguments.insert("gizmos".to_string(), Value::Bool(true));
+    respond_to_tool(&state, "capture_screenshot", arguments, &headers).await
 }
 
 pub fn build_router(state: AppState) -> Router {
@@ -217,8 +208,11 @@ pub fn build_router(state: AppState) -> Router {
         // SSE
         .route("/api/v1/sse", get(handle_sse))
         // Entities
-        .route("/api/v1/entities", get(list_entities))
-        .route("/api/v1/entities", post(body_route::<SpawnBody>))
+        .route(
+            "/api/v1/entities",
+            get(operation_route!(ControlOperation::ListEntities)),
+        )
+        .route("/api/v1/entities", tool_route("spawn_entity"))
         .route("/api/v1/entities/{entity}", get(get_entity))
         .route("/api/v1/entities/{entity}", delete(despawn_entity))
         .route(
@@ -238,10 +232,16 @@ pub fn build_router(state: AppState) -> Router {
             get(get_bounding_box),
         )
         // Query
-        .route("/api/v1/query", post(body_route::<QueryEntitiesParams>))
-        .route("/api/v1/scene/summary", get(scene_summary))
+        .route("/api/v1/query", tool_route("query_entities"))
+        .route(
+            "/api/v1/scene/summary",
+            get(operation_route!(ControlOperation::GetSceneSummary)),
+        )
         // Resources
-        .route("/api/v1/resources", get(list_resources))
+        .route(
+            "/api/v1/resources",
+            get(operation_route!(ControlOperation::ListResources)),
+        )
         .route("/api/v1/resources/{resource_type}", get(get_resource))
         .route("/api/v1/resources/{resource_type}", put(insert_resource))
         .route("/api/v1/resources/{resource_type}", delete(remove_resource))
@@ -253,75 +253,84 @@ pub fn build_router(state: AppState) -> Router {
             get(get_component_schema),
         )
         // Screenshot
-        .route("/api/v1/screenshot", post(body_route::<ScreenshotBody>))
+        .route("/api/v1/screenshot", tool_route("capture_screenshot"))
         .route("/api/v1/screenshot/gizmos", post(capture_with_gizmos))
         .route(
             "/api/v1/screenshot/timeline",
-            post(body_route::<CaptureTimelineParams>),
+            tool_route("capture_timeline"),
         )
         .route(
             "/api/v1/screenshot/turnaround",
-            post(body_route::<CaptureTurnaroundParams>),
+            tool_route("capture_turnaround"),
         )
-        .route(
-            "/api/v1/screenshot/depth",
-            post(body_route::<CaptureDepthParams>),
-        )
-        .route("/api/v1/screenshot/stats", post(body_route::<StatsBody>))
-        .route(
-            "/api/v1/screenshot/compare",
-            post(body_route::<CompareFramesParams>),
-        )
+        .route("/api/v1/screenshot/depth", tool_route("capture_depth"))
+        .route("/api/v1/screenshot/stats", tool_route("capture_stats"))
+        .route("/api/v1/screenshot/compare", tool_route("compare_frames"))
         // Reload
-        .route("/api/v1/reload", post(body_route::<ReloadParams>))
-        .route("/api/v1/reload/status", get(get_reload_status))
+        .route("/api/v1/reload", tool_route("reload"))
         .route(
-            "/api/v1/reload/capture",
-            post(body_route::<ReloadAndCaptureParams>),
+            "/api/v1/reload/status",
+            get(operation_route!(ControlOperation::GetReloadStatus)),
         )
+        .route("/api/v1/reload/capture", tool_route("reload_and_capture"))
         // Execute
-        .route("/api/v1/execute", post(body_route::<ExecuteBody>))
+        .route("/api/v1/execute", tool_route("run_code"))
         // Time control
-        .route("/api/v1/time", get(get_time_status))
-        .route("/api/v1/time/pause", post(pause_time))
-        .route("/api/v1/time/resume", post(resume_time))
-        .route("/api/v1/time/scale", post(body_route::<TimeScaleBody>))
-        .route("/api/v1/time/seek", post(body_route::<SeekTimeParams>))
-        // Asset mutation
-        .route("/api/v1/assets/mutate", post(body_route::<MutateAssetBody>))
-        // Spatial queries
         .route(
-            "/api/v1/spatial/query",
-            post(body_route::<SpatialQueryBody>),
+            "/api/v1/time",
+            get(operation_route!(ControlOperation::GetTimeStatus)),
         )
+        .route(
+            "/api/v1/time/pause",
+            post(operation_route!(ControlOperation::PauseTime)),
+        )
+        .route(
+            "/api/v1/time/resume",
+            post(operation_route!(ControlOperation::ResumeTime)),
+        )
+        .route("/api/v1/time/scale", tool_route("set_time_scale"))
+        .route("/api/v1/time/seek", tool_route("seek_time"))
+        // Asset mutation
+        .route("/api/v1/assets/mutate", tool_route("set_asset"))
+        // Spatial queries
+        .route("/api/v1/spatial/query", tool_route("query_spatial"))
         .route(
             "/api/v1/spatial/neighborhood",
-            post(body_route::<NeighborhoodBody>),
+            tool_route("query_spatial_neighborhood"),
         )
-        .route(
-            "/api/v1/spatial/overlaps",
-            post(body_route::<CheckOverlapsBody>),
-        )
+        .route("/api/v1/spatial/overlaps", tool_route("check_overlaps"))
         .route(
             "/api/v1/spatial/overlaps/all",
-            post(body_route::<CheckAllOverlapsParams>),
+            tool_route("check_all_overlaps"),
         )
         // Performance
-        .route("/api/v1/performance", get(get_performance))
+        .route(
+            "/api/v1/performance",
+            get(operation_route!(ControlOperation::GetPerformance)),
+        )
         // Error
-        .route("/api/v1/error", get(get_last_error))
+        .route(
+            "/api/v1/error",
+            get(operation_route!(ControlOperation::GetLastError)),
+        )
         // Batch
-        .route("/api/v1/batch", post(body_route::<BatchBody>))
+        .route("/api/v1/batch", tool_route("batch"))
         // Debug
-        .route("/api/v1/debug/registry", get(debug_registry))
+        .route(
+            "/api/v1/debug/registry",
+            get(operation_route!(ControlOperation::GetRegistry)),
+        )
         // Schedule
-        .route("/api/v1/schedule", post(body_route::<ScheduleRequest>))
+        .route("/api/v1/schedule", tool_route("schedule_actions"))
         .route(
             "/api/v1/schedule/{id}",
             get(get_schedule_status).delete(cancel_schedule),
         )
         // Plugin configs
-        .route("/api/v1/config", get(list_configs))
+        .route(
+            "/api/v1/config",
+            get(operation_route!(ControlOperation::ListConfigs)),
+        )
         .route("/api/v1/config/{key}", get(get_config))
         // API discovery (served directly from ApiIndex, no World access needed)
         .route("/api/v1/stubs", get(stubs_index))
@@ -345,7 +354,7 @@ async fn health() -> &'static str {
 
 async fn handle_sse(
     State(state): State<AppState>,
-) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
+) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
     let rx = state.sse_broadcaster.tx.subscribe();
     let stream = tokio_stream::wrappers::BroadcastStream::new(rx).filter_map(|msg| match msg {
         Ok(data) => Some(Ok(Event::default().data(data))),
@@ -353,10 +362,6 @@ async fn handle_sse(
     });
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
-async fn list_entities(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    respond(&state, ControlOperation::ListEntities, &headers).await
-}
-
 async fn get_entity(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -364,20 +369,6 @@ async fn get_entity(
 ) -> Response {
     let entity = parse_entity_ref(&entity);
     respond(&state, ControlOperation::GetEntity { entity }, &headers).await
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct SpawnBody {
-    components: serde_json::Value,
-}
-
-impl OperationBody for SpawnBody {
-    fn operation(self) -> Result<ControlOperation, ErrorResponse> {
-        Ok(ControlOperation::SpawnEntity {
-            components: self.components,
-        })
-    }
 }
 
 async fn despawn_entity(
@@ -445,13 +436,6 @@ async fn get_bounding_box(
         &headers,
     )
     .await
-}
-
-async fn scene_summary(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    respond(&state, ControlOperation::GetSceneSummary, &headers).await
-}
-async fn list_resources(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    respond(&state, ControlOperation::ListResources, &headers).await
 }
 
 async fn get_resource(
@@ -523,300 +507,6 @@ async fn get_component_schema(
     )
     .await
 }
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct ScreenshotBody {
-    entity: Option<EntityRef>,
-    #[serde(default = "default_delay_frames")]
-    delay_frames: i64,
-    max_width: Option<i64>,
-    position: Option<[f32; 3]>,
-    look_at: Option<[f32; 3]>,
-    #[serde(default = "default_true")]
-    hide_ui: bool,
-    #[serde(default)]
-    gizmos: bool,
-}
-
-fn default_delay_frames() -> i64 {
-    2
-}
-
-fn default_true() -> bool {
-    true
-}
-
-fn screenshot_params(
-    body: ScreenshotBody,
-    force_gizmos: bool,
-) -> Result<CaptureScreenshotParams, ErrorResponse> {
-    if body.delay_frames < 0 {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            "delay_frames must be a non-negative integer",
-        ));
-    }
-    let delay_frames = u32::try_from(body.delay_frames).map_err(|_| {
-        error_response(
-            StatusCode::BAD_REQUEST,
-            "delay_frames must not exceed 4294967295",
-        )
-    })?;
-    let max_width = match body.max_width {
-        Some(value) if value <= 0 => {
-            return Err(error_response(
-                StatusCode::BAD_REQUEST,
-                "max_width must be a positive integer",
-            ));
-        }
-        Some(value) => Some(u32::try_from(value).map_err(|_| {
-            error_response(
-                StatusCode::BAD_REQUEST,
-                "max_width must not exceed 4294967295",
-            )
-        })?),
-        None => None,
-    };
-
-    Ok(CaptureScreenshotParams {
-        entity: body.entity,
-        delay_frames,
-        max_width,
-        position: body.position,
-        look_at: body.look_at,
-        hide_ui: body.hide_ui,
-        gizmos: force_gizmos || body.gizmos,
-    })
-}
-
-pub(super) fn screenshot_operation(
-    body: ScreenshotBody,
-    force_gizmos: bool,
-) -> Result<ControlOperation, ErrorResponse> {
-    let params = screenshot_params(body, force_gizmos)?;
-    Ok(if params.gizmos {
-        ControlOperation::CaptureWithGizmos(params)
-    } else {
-        ControlOperation::CaptureScreenshot(params)
-    })
-}
-
-impl OperationBody for ScreenshotBody {
-    fn operation(self) -> Result<ControlOperation, ErrorResponse> {
-        screenshot_operation(self, false)
-    }
-}
-
-async fn capture_with_gizmos(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(body): Json<ScreenshotBody>,
-) -> Response {
-    match screenshot_operation(body, true) {
-        Ok(operation) => respond(&state, operation, &headers).await,
-        Err(error) => error.into_response(),
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct StatsBody {
-    #[serde(default = "default_stats_grid")]
-    grid: u32,
-    region: Option<[i64; 4]>,
-    sample_points: Option<Vec<[i64; 2]>>,
-    entity: Option<EntityRef>,
-    #[serde(default = "default_delay_frames")]
-    delay_frames: i64,
-    max_width: Option<i64>,
-    position: Option<[f32; 3]>,
-    look_at: Option<[f32; 3]>,
-    #[serde(default = "default_true")]
-    hide_ui: bool,
-    #[serde(default)]
-    gizmos: bool,
-}
-
-fn default_stats_grid() -> u32 {
-    1
-}
-
-impl OperationBody for StatsBody {
-    fn operation(self) -> Result<ControlOperation, ErrorResponse> {
-        let screenshot = ScreenshotBody {
-            entity: self.entity,
-            delay_frames: self.delay_frames,
-            max_width: self.max_width,
-            position: self.position,
-            look_at: self.look_at,
-            hide_ui: self.hide_ui,
-            gizmos: self.gizmos,
-        };
-        let common = screenshot_params(screenshot, false)?;
-        Ok(ControlOperation::CaptureStats(CaptureStatsParams {
-            entity: common.entity,
-            grid: self.grid,
-            region: self.region,
-            sample_points: self.sample_points,
-            delay_frames: common.delay_frames,
-            max_width: common.max_width,
-            position: common.position,
-            look_at: common.look_at,
-            hide_ui: common.hide_ui,
-            gizmos: common.gizmos,
-        }))
-    }
-}
-
-async fn get_reload_status(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    respond(&state, ControlOperation::GetReloadStatus, &headers).await
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct ExecuteBody {
-    code: String,
-}
-
-impl OperationBody for ExecuteBody {
-    fn operation(self) -> Result<ControlOperation, ErrorResponse> {
-        Ok(ControlOperation::RunCode { code: self.code })
-    }
-}
-
-async fn get_time_status(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    respond(&state, ControlOperation::GetTimeStatus, &headers).await
-}
-
-async fn pause_time(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    respond(&state, ControlOperation::PauseTime, &headers).await
-}
-
-async fn resume_time(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    respond(&state, ControlOperation::ResumeTime, &headers).await
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct TimeScaleBody {
-    scale: f32,
-}
-
-impl OperationBody for TimeScaleBody {
-    fn operation(self) -> Result<ControlOperation, ErrorResponse> {
-        Ok(ControlOperation::SetTimeScale { scale: self.scale })
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct MutateAssetBody {
-    pub(super) entity: serde_json::Value,
-    pub(super) component: String,
-    pub(super) asset_type: String,
-    pub(super) fields: serde_json::Value,
-}
-
-impl OperationBody for MutateAssetBody {
-    fn operation(self) -> Result<ControlOperation, ErrorResponse> {
-        let entity = entity_ref_from_value(self.entity, "Invalid entity reference")?;
-        Ok(ControlOperation::SetAsset(SetAssetParams {
-            entity,
-            component: self.component,
-            asset_type: self.asset_type,
-            fields: self.fields,
-        }))
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct SpatialQueryBody {
-    pub(super) entity_a: serde_json::Value,
-    pub(super) entity_b: serde_json::Value,
-}
-
-impl OperationBody for SpatialQueryBody {
-    fn operation(self) -> Result<ControlOperation, ErrorResponse> {
-        let entity_a = entity_ref_from_value(self.entity_a, "Invalid entity_a reference")?;
-        let entity_b = entity_ref_from_value(self.entity_b, "Invalid entity_b reference")?;
-        Ok(ControlOperation::QuerySpatial(QuerySpatialParams {
-            entity_a,
-            entity_b,
-        }))
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct NeighborhoodBody {
-    entity: serde_json::Value,
-    radius: f32,
-    max_results: Option<usize>,
-}
-
-impl OperationBody for NeighborhoodBody {
-    fn operation(self) -> Result<ControlOperation, ErrorResponse> {
-        let entity = entity_ref_from_value(self.entity, "Invalid entity reference")?;
-        Ok(ControlOperation::QuerySpatialNeighborhood(
-            QuerySpatialNeighborhoodParams {
-                entity,
-                radius: self.radius,
-                max_results: self.max_results,
-            },
-        ))
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct CheckOverlapsBody {
-    entity: serde_json::Value,
-    #[serde(default)]
-    include_siblings: bool,
-    #[serde(default = "default_max_float_gap")]
-    max_float_gap: f32,
-    ground_y: Option<f32>,
-    min_penetration: Option<f32>,
-}
-
-impl OperationBody for CheckOverlapsBody {
-    fn operation(self) -> Result<ControlOperation, ErrorResponse> {
-        let entity = entity_ref_from_value(self.entity, "Invalid entity reference")?;
-        Ok(ControlOperation::CheckOverlaps(CheckOverlapsParams {
-            entity,
-            include_siblings: self.include_siblings,
-            max_float_gap: self.max_float_gap,
-            ground_y: self.ground_y,
-            min_penetration: self.min_penetration,
-        }))
-    }
-}
-
-async fn get_performance(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    respond(&state, ControlOperation::GetPerformance, &headers).await
-}
-
-async fn get_last_error(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    respond(&state, ControlOperation::GetLastError, &headers).await
-}
-
-async fn debug_registry(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    respond(&state, ControlOperation::GetRegistry, &headers).await
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct BatchBody {
-    operations: Vec<serde_json::Value>,
-}
-
-impl OperationBody for BatchBody {
-    fn operation(self) -> Result<ControlOperation, ErrorResponse> {
-        Ok(ControlOperation::Batch {
-            operations: self.operations,
-        })
-    }
-}
 
 pub(super) fn schedule_status(state: &AppState, id: &str, headers: &HeaderMap) -> ErrorResponse {
     match state.schedule_registry.get(id) {
@@ -855,10 +545,6 @@ async fn cancel_schedule(
         )
     }
 }
-async fn list_configs(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    respond(&state, ControlOperation::ListConfigs, &headers).await
-}
-
 async fn get_config(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1019,8 +705,8 @@ async fn list_tools() -> Json<Vec<serde_json::Value>> {
 }
 
 pub fn start_server(host: String, port: u16, state: AppState) {
-    std::thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_multi_thread()
+    thread::spawn(move || {
+        let rt = Builder::new_multi_thread()
             .worker_threads(1)
             .enable_all()
             .build()
@@ -1028,7 +714,7 @@ pub fn start_server(host: String, port: u16, state: AppState) {
 
         rt.block_on(async move {
             let addr = format!("{host}:{port}");
-            let listener = match tokio::net::TcpListener::bind(&addr).await {
+            let listener = match TcpListener::bind(&addr).await {
                 Ok(l) => l,
                 Err(e) => {
                     eprintln!("[Control] Failed to bind to {addr}: {e}");
@@ -1048,13 +734,19 @@ pub fn start_server(host: String, port: u16, state: AppState) {
 
 #[cfg(test)]
 mod tests {
-    use axum::body::to_bytes;
+    use std::path::Path;
+
+    use axum::{
+        body::{Body, to_bytes},
+        http::Request,
+    };
+    use tokio::sync::mpsc::error::TryRecvError;
     use tower::ServiceExt;
 
     use super::*;
     use crate::{
         engine::channel::{ControlReceiver, create_channel},
-        protocol::ControlError,
+        protocol::{CaptureStatsParams, CompareFramesParams, ControlError},
     };
 
     #[test]
@@ -1109,61 +801,6 @@ mod tests {
     }
 
     #[test]
-    fn default_delay_frames_value() {
-        assert_eq!(default_delay_frames(), 2);
-    }
-
-    #[test]
-    fn screenshot_body_deserialize_defaults() {
-        let json = r#"{"position": [1.0, 2.0, 3.0]}"#;
-        let body: ScreenshotBody = serde_json::from_str(json).unwrap();
-        assert_eq!(body.delay_frames, 2);
-        assert!(body.max_width.is_none());
-        assert_eq!(body.position, Some([1.0, 2.0, 3.0]));
-        assert!(body.look_at.is_none());
-        assert!(body.hide_ui);
-    }
-
-    #[test]
-    fn screenshot_body_deserialize_all_fields() {
-        let json = r#"{"delay_frames": 5, "max_width": 800, "position": [0.0, 0.0, 0.0], "look_at": [1.0, 1.0, 1.0], "hide_ui": true}"#;
-        let body: ScreenshotBody = serde_json::from_str(json).unwrap();
-        assert_eq!(body.delay_frames, 5);
-        assert_eq!(body.max_width, Some(800));
-        assert!(body.hide_ui);
-    }
-
-    #[test]
-    fn screenshot_body_preserves_explicit_hide_ui_false() {
-        let body: ScreenshotBody = serde_json::from_str(r#"{"hide_ui": false}"#).unwrap();
-        assert!(!body.hide_ui);
-    }
-
-    #[test]
-    fn stats_body_deserializes_analysis_and_capture_defaults() {
-        let body: StatsBody = serde_json::from_str(r#"{"sample_points": [[1, 2]]}"#).unwrap();
-        assert_eq!(body.grid, 1);
-        assert_eq!(body.sample_points, Some(vec![[1, 2]]));
-        assert_eq!(body.delay_frames, 2);
-        assert!(body.hide_ui);
-    }
-
-    #[test]
-    fn check_overlaps_body_deserialize_defaults() {
-        let json = r#"{"entity": 42}"#;
-        let body: CheckOverlapsBody = serde_json::from_str(json).unwrap();
-        assert!(!body.include_siblings);
-        assert_eq!(body.max_float_gap, 0.1);
-    }
-
-    #[test]
-    fn spawn_body_deserialize() {
-        let json = r#"{"components": {"Transform": {"translation": [0, 1, 0]}}}"#;
-        let body: SpawnBody = serde_json::from_str(json).unwrap();
-        assert!(body.components.is_object());
-    }
-
-    #[test]
     fn set_component_body_deserialize() {
         let json = r#"{"fields": {"intensity": 100.0}}"#;
         let body: SetComponentBody = serde_json::from_str(json).unwrap();
@@ -1171,54 +808,10 @@ mod tests {
     }
 
     #[test]
-    fn execute_body_deserialize() {
-        let json = r#"{"code": "print('hi')"}"#;
-        let body: ExecuteBody = serde_json::from_str(json).unwrap();
-        assert_eq!(body.code, "print('hi')");
-    }
-
-    #[test]
-    fn batch_body_deserialize() {
-        let json = r#"{"operations": [{"type": "spawn", "components": {}}]}"#;
-        let body: BatchBody = serde_json::from_str(json).unwrap();
-        assert_eq!(body.operations.len(), 1);
-    }
-
-    #[test]
     fn insert_resource_body_deserialize() {
         let json = r#"{"value": {"difficulty": "hard"}}"#;
         let body: InsertResourceBody = serde_json::from_str(json).unwrap();
         assert!(body.value.is_object());
-    }
-
-    #[test]
-    fn mutate_asset_body_deserialize() {
-        let json = r#"{"entity": 42, "component": "MeshMaterial3d", "asset_type": "StandardMaterial", "fields": {"base_color": [1,0,0,1]}}"#;
-        let body: MutateAssetBody = serde_json::from_str(json).unwrap();
-        assert_eq!(body.component, "MeshMaterial3d");
-        assert_eq!(body.asset_type, "StandardMaterial");
-    }
-
-    #[test]
-    fn spatial_query_body_deserialize() {
-        let json = r#"{"entity_a": 1, "entity_b": 2}"#;
-        let body: SpatialQueryBody = serde_json::from_str(json).unwrap();
-        assert!(body.entity_a.is_number());
-    }
-
-    #[test]
-    fn neighborhood_body_deserialize() {
-        let json = r#"{"entity": "Player", "radius": 10.0}"#;
-        let body: NeighborhoodBody = serde_json::from_str(json).unwrap();
-        assert_eq!(body.radius, 10.0);
-        assert!(body.max_results.is_none());
-    }
-
-    #[test]
-    fn time_scale_body_deserialize() {
-        let json = r#"{"scale": 2.5}"#;
-        let body: TimeScaleBody = serde_json::from_str(json).unwrap();
-        assert_eq!(body.scale, 2.5);
     }
 
     #[test]
@@ -1242,7 +835,7 @@ mod tests {
         let state = AppState::new(
             sender,
             SseEventBroadcaster::new(),
-            Arc::new(ApiIndex::build(std::path::Path::new(""))),
+            Arc::new(ApiIndex::build(Path::new(""))),
             ControlConfig {
                 port: 0,
                 host: "127.0.0.1".into(),
@@ -1261,7 +854,7 @@ mod tests {
         let state = AppState::new(
             sender,
             SseEventBroadcaster::new(),
-            Arc::new(ApiIndex::build(std::path::Path::new(""))),
+            Arc::new(ApiIndex::build(Path::new(""))),
             ControlConfig {
                 port: 0,
                 host: "127.0.0.1".into(),
@@ -1275,16 +868,16 @@ mod tests {
         (state, receiver)
     }
 
-    fn json_post(uri: &str, body: &str) -> axum::http::Request<axum::body::Body> {
-        axum::http::Request::builder()
+    fn json_post(uri: &str, body: &str) -> Request<Body> {
+        Request::builder()
             .method("POST")
             .uri(uri)
             .header("content-type", "application/json")
-            .body(axum::body::Body::from(body.to_string()))
+            .body(Body::from(body.to_string()))
             .unwrap()
     }
 
-    fn mcp_json_post(uri: &str, body: &str) -> axum::http::Request<axum::body::Body> {
+    fn mcp_json_post(uri: &str, body: &str) -> Request<Body> {
         let mut request = json_post(uri, body);
         request.headers_mut().insert(
             MCP_IMAGE_DELIVERY_HEADER,
@@ -1293,18 +886,15 @@ mod tests {
         request
     }
 
-    fn get_req(uri: &str) -> axum::http::Request<axum::body::Body> {
-        axum::http::Request::builder()
-            .uri(uri)
-            .body(axum::body::Body::empty())
-            .unwrap()
+    fn get_req(uri: &str) -> Request<Body> {
+        Request::builder().uri(uri).body(Body::empty()).unwrap()
     }
 
-    fn delete_req(uri: &str) -> axum::http::Request<axum::body::Body> {
-        axum::http::Request::builder()
+    fn delete_req(uri: &str) -> Request<Body> {
+        Request::builder()
             .method("DELETE")
             .uri(uri)
-            .body(axum::body::Body::empty())
+            .body(Body::empty())
             .unwrap()
     }
 
@@ -1316,13 +906,13 @@ mod tests {
         let (state, mut rx) = test_state_enabled();
         let app = build_router(state);
 
-        let preflight = axum::http::Request::builder()
+        let preflight = Request::builder()
             .method("OPTIONS")
             .uri("/api/v1/execute")
             .header("origin", "https://evil.example")
             .header("access-control-request-method", "POST")
             .header("access-control-request-headers", "content-type")
-            .body(axum::body::Body::empty())
+            .body(Body::empty())
             .unwrap();
         let response = app.clone().oneshot(preflight).await.unwrap();
         assert!(
@@ -1520,16 +1110,11 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(conflict.status(), StatusCode::CONFLICT);
-        let body = axum::body::to_bytes(conflict.into_body(), usize::MAX)
-            .await
-            .unwrap();
+        let body = to_bytes(conflict.into_body(), usize::MAX).await.unwrap();
         let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(body["code"], "reentrant-control-call");
         assert!(body["error"].as_str().unwrap().contains("injected world"));
-        assert!(matches!(
-            rx.rx.try_recv(),
-            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
-        ));
+        assert!(matches!(rx.rx.try_recv(), Err(TryRecvError::Empty)));
 
         drop(guard);
         tokio::spawn(async move {
@@ -1623,13 +1208,11 @@ mod tests {
         });
         let response = app
             .oneshot(
-                axum::http::Request::builder()
+                Request::builder()
                     .method("PUT")
                     .uri("/api/v1/entities/42/components/Transform")
                     .header("content-type", "application/json")
-                    .body(axum::body::Body::from(
-                        r#"{"fields": {"translation": [0,1,0]}}"#,
-                    ))
+                    .body(Body::from(r#"{"fields": {"translation": [0,1,0]}}"#))
                     .unwrap(),
             )
             .await

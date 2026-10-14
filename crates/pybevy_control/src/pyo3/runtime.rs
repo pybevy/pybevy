@@ -1,4 +1,7 @@
-use bevy::ecs::{entity::Entity, world::World};
+use bevy::{
+    ecs::{entity::Entity, world::World},
+    time::{Time, Virtual},
+};
 use pyo3::Python;
 use serde_json::Value;
 
@@ -29,8 +32,7 @@ impl ControlRuntime for Pyo3ControlRuntime {
 
                 // Inject pause warning into successful responses
                 let result = result.map(|mut val| {
-                    if let Some(time) =
-                        world.get_resource::<bevy::time::Time<bevy::time::Virtual>>()
+                    if let Some(time) = world.get_resource::<Time<Virtual>>()
                         && time.is_paused()
                         && let Some(obj) = val.as_object_mut()
                     {

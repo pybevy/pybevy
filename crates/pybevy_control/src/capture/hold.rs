@@ -1,6 +1,6 @@
 use std::{any::TypeId, collections::HashSet};
 
-use bevy::{ecs::world::World, gizmos::config::GizmoConfigStore, prelude::*};
+use bevy::{ecs::world::World, gizmos::config::GizmoConfigStore, prelude::*, ui::Node};
 
 use super::{
     camera::{DebugCameraCleanup, cleanup_debug_camera_world},
@@ -80,8 +80,8 @@ pub(super) fn hide_ui_nodes(
     keep_visible: Option<&HashSet<Entity>>,
 ) -> Vec<(Entity, Visibility)> {
     let mut ui_entities: Vec<(Entity, Visibility)> = Vec::new();
-    let mut query = world
-        .query_filtered::<(Entity, &Visibility, &bevy::ui::Node), Without<InternalOverlayUi>>();
+    let mut query =
+        world.query_filtered::<(Entity, &Visibility, &Node), Without<InternalOverlayUi>>();
     for (entity, vis, _) in query.iter(world) {
         if keep_visible.is_some_and(|keep| keep.contains(&entity)) {
             continue;
