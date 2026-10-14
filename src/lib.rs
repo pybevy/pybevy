@@ -1,12 +1,13 @@
 #[cfg(feature = "mcp")]
 use bevy::ecs::{entity::Entity, world::World};
+use pybevy_core::build_info::build_info as installed_build_info;
 pub use pybevy_macros::{PyComponent, pybevy_app, pyfield};
 #[cfg(feature = "mcp")]
 use pyo3::ffi::PyTypeObject;
 use pyo3::{
     exceptions::PyImportError,
     prelude::*,
-    types::{IntoPyDict, PyFrozenSet},
+    types::{IntoPyDict, PyDict, PyFrozenSet},
 };
 
 #[cfg(feature = "mcp")]
@@ -88,6 +89,19 @@ fn features(py: Python<'_>) -> PyResult<Bound<'_, PyFrozenSet>> {
     )
 }
 
+/// Commit, dirty flag, and profile installed by the binary's entry point.
+#[pyfunction]
+fn build_info(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
+    let info = installed_build_info();
+    let dict = PyDict::new(py);
+    dict.set_item("version", pybevy_core::PYBEVY_VERSION)?;
+    dict.set_item("git_sha", info.git_sha)?;
+    dict.set_item("git_sha_short", info.git_sha_short)?;
+    dict.set_item("git_dirty", info.git_dirty)?;
+    dict.set_item("profile", info.profile)?;
+    Ok(dict)
+}
+
 /// Refuse an import shim when its optional Cargo feature is not compiled.
 #[pyfunction]
 fn _require_optional_feature(feature: &str, module: &str) -> PyResult<()> {
@@ -102,8 +116,11 @@ fn _require_optional_feature(feature: &str, module: &str) -> PyResult<()> {
 
 /// Populates a PyModule with all pybevy submodules and classes.
 /// Called by both the cdylib (pybevy_python) and native plugin (append_to_inittab).
+/// Build identity is `"unknown"` unless the caller first installs it with
+/// [`pybevy_core::build_info::install_build_info`], as `pybevy_python` does.
 pub fn init_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", pybevy_core::PYBEVY_VERSION)?;
+    m.add_function(wrap_pyfunction!(build_info, m)?)?;
 
     // Collect all inventory-registered bridges from feature crates
     pybevy_core::bridge_inventory::collect_all();

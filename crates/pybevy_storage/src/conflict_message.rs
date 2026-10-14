@@ -42,12 +42,74 @@ impl fmt::Display for SystemAccessConflictMessage<'_> {
 }
 
 pub const CONFLICT_ASSETS: &str = "Two parameters cannot address the same asset collection when either declares write access. Take it once, as ResMut[Assets[...]] if you need to write, or split the parameters across systems.";
-pub const CONFLICT_ASSETS_SHARED_VIEW: &str = "Every @material class is a logical view over one underlying Assets<ShaderMaterial> collection, so two Assets[...] parameters for different @material types address the same resource. Use one system per material type.";
 pub const CONFLICT_MESSAGES: &str = "A MessageWriter cannot share its channel with another reader or writer in the same system. Split the send and the read into separate systems.";
 pub const CONFLICT_WORLD: &str = "World is exclusive: a system taking World cannot take any other data parameter. Reach the other parameters through the World itself, or move them to a separate system.";
 pub const CONFLICT_RESOURCES: &str = "Two parameters cannot address the same resource when either declares write access. Take it once, as ResMut[...] if you need to write, or split the parameters across systems.";
 pub const CONFLICT_RESOURCE_QUERY: &str = "Query and Res parameters address the same resource entity. Add Without[IsResource] as the query filter to exclude resource entities where representable, or split the parameters across systems.";
 pub const CONFLICT_QUERIES: &str = "Different With[...] filters do not prove two queries are disjoint, because one entity could hold both markers. Add Without[...] to each query to prove exclusion (Query[tuple[Mut[Transform], Bat], Without[BatWing]] and Query[tuple[Mut[Transform], BatWing], Without[Bat]]), or split the queries across systems.";
+/// A query marker that only one of two conflicting queries requires.
+pub struct DisjointMarker<'a> {
+    pub name: &'a str,
+    /// Written as an explicit `With[...]` filter rather than implied by data.
+    pub explicit_with: bool,
+}
+
+/// Remedy for two parameters addressing one shared `@material` collection.
+pub fn conflict_assets_shared_view(backing: &str) -> String {
+    format!(
+        "@material classes backed by {backing} are logical views over one shared Assets<{backing}> collection, so these parameters address the same resource. \
+Any number of read-only parameters may share it, but a mutable parameter must be the only one: at most one ResMut[Assets[...]], with no Res[Assets[...]] or Assets[...] beside it. \
+Split the reads and writes across systems, or add each material in its own system, store the handles in a resource, and order those systems with chain()."
+    )
+}
+
+/// Query remedy naming the user's own markers; `None` when no marker
+/// separates the two queries, so the caller falls back to [`CONFLICT_QUERIES`].
+pub fn conflict_queries_disjoint(
+    existing_parameter: usize,
+    existing_only: Option<&DisjointMarker<'_>>,
+    parameter: usize,
+    current_only: Option<&DisjointMarker<'_>>,
+) -> Option<String> {
+    let filter = |own: &DisjointMarker<'_>, excluded: &str| {
+        if own.explicit_with {
+            format!("tuple[With[{}], Without[{excluded}]]", own.name)
+        } else {
+            format!("Without[{excluded}]")
+        }
+    };
+    let text = match (existing_only, current_only) {
+        (Some(existing), Some(current)) => {
+            let example = if existing.explicit_with || current.explicit_with {
+                format!(
+                    " (filters {} and {})",
+                    filter(existing, current.name),
+                    filter(current, existing.name)
+                )
+            } else {
+                String::new()
+            };
+            format!(
+                "Different With[...] filters do not prove two queries are disjoint, because one entity could hold both {e} and {c}. \
+Add Without[{c}] to parameter {existing_parameter} and Without[{e}] to parameter {parameter} to prove exclusion{example}, or split the queries across systems.",
+                e = existing.name,
+                c = current.name,
+            )
+        }
+        (Some(marker), None) => one_sided_disjoint(parameter, existing_parameter, marker.name),
+        (None, Some(marker)) => one_sided_disjoint(existing_parameter, parameter, marker.name),
+        (None, None) => return None,
+    };
+    Some(text)
+}
+
+fn one_sided_disjoint(open: usize, requiring: usize, marker: &str) -> String {
+    format!(
+        "Parameter {open} can also match entities with {marker}, which parameter {requiring} requires. \
+Add Without[{marker}] to parameter {open} to prove exclusion (combine several filters as tuple[...]), or split the queries across systems."
+    )
+}
+
 pub const CONDITION_READ_ONLY_GUIDANCE: &str = "Run conditions use Bevy's read-only world contract and never apply deferred operations. Accepted parameters are Local, read-only Assets, Res for a native engine resource, and read-only Query/View over wrapper-storage components. For exclusive Python values, use in_state(), a wrapper-storage component, or test the value inside the system.";
 
 #[cfg(test)]

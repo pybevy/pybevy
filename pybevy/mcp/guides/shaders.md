@@ -115,6 +115,11 @@ about the missing discard.
 The cutoff is a per-material float uniform; materials can share a shader file
 with different thresholds. A fragment that simply returns `vec4(...)` does not
 apply the mask threshold. Match discards in custom prepass/deferred hooks too.
+Bevy's default prepass fragment (`prepass_alpha_discard` in
+`pbr_prepass_functions.wgsl`) reads only the StandardMaterial base color and
+`base_color_texture`, so a cutout from a custom texture also needs
+`prepass_fragment_shader`; otherwise depth and shadows keep the uncut shape.
+See the [complete prepass template](#complete-prepass-template).
 
 Converting an `@material` instance to `ShaderMaterial` consumes its base; use a fresh `StandardMaterial` for each conversion:
 
@@ -226,10 +231,68 @@ expire with the system; removed materials are independent owned values.
 
 Custom material collections with the same native material type share one underlying
 resource: `Assets[ShaderMaterial]` for ordinary materials and
-`Assets[StorageShaderMaterial]` for storage/explicit-texture materials. A system cannot request
-two mutable collections backed by the same resource, such as two storage
-classes; split those mutations across ordered systems. An ordinary collection
-and a storage collection have distinct native resource identities.
+`Assets[StorageShaderMaterial]` for storage/explicit-texture materials. Several
+read-only parameters (`Res[Assets[...]]` or bare `Assets[...]`) may share one
+resource, but a `ResMut[Assets[...]]` must be the only parameter backed by it:
+two mutable collections, or a read-only and a mutable one, such as two storage
+classes, raise `RuntimeError` at `add_systems()`. Split those mutations across
+systems ordered with `chain()`, sharing handles through a resource when needed.
+An ordinary collection and a storage collection have distinct native resource
+identities.
+
+### Sharing handles across material types
+
+To give two material types the same asset, such as one cubemap, keep its
+handle in a resource and let ordered systems each mutate one collection:
+
+<!-- pybevy-snippet: typecheck
+from pybevy.app import App
+from pybevy.image import Image
+from pybevy.render import Extent3d
+app = App()
+def make_cubemap() -> Image:
+    return Image(Extent3d(width=1, height=1, depth_or_array_layers=6), data=bytes(24))
+-->
+```python
+from dataclasses import dataclass
+
+from pybevy.app import Startup
+from pybevy.assets import Assets, Handle
+from pybevy.decorators import resource
+from pybevy.ecs import Res, ResMut, Resource, chain
+from pybevy.image import Image
+from pybevy.material import TextureBinding, material
+from pybevy.pbr import Material
+
+@material(fragment_shader="shaders/glass.wgsl")
+class Glass(Material):
+    sky: TextureBinding = TextureBinding(dimension="cube")
+
+@material(fragment_shader="shaders/water.wgsl")
+class Water(Material):
+    sky: TextureBinding = TextureBinding(dimension="cube")
+
+@resource
+@dataclass
+class SharedSky(Resource):
+    cubemap: Handle[Image] | None = None
+
+def load_sky(images: ResMut[Assets[Image]], shared: ResMut[SharedSky]) -> None:
+    shared.cubemap = images.add(make_cubemap())  # a six-face cube image
+
+def add_glass(shared: Res[SharedSky], materials: ResMut[Assets[Glass]]) -> None:
+    materials.add(Glass(sky=shared.cubemap))
+
+def add_water(shared: Res[SharedSky], materials: ResMut[Assets[Water]]) -> None:
+    materials.add(Water(sky=shared.cubemap))
+
+app.insert_resource(SharedSky())
+app.add_systems(Startup, chain(load_sky, add_glass, add_water))
+```
+
+Both classes are storage-backed because of their `TextureBinding` field, so
+`add_glass` and `add_water` could not be one system. Spawn entities with the
+returned material handles as usual.
 
 ## Raw Shader Buffers
 
@@ -714,6 +777,46 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 }
 ```
 
+### Shared WGSL helper files
+
+Put helper functions in their own file under `assets/` and import them by
+asset path instead of copying them into every shader:
+
+```wgsl
+// assets/shaders/common/noise.wgsl
+fn hash33(p: vec3<f32>) -> vec3<f32> {
+    var q = fract(p * vec3(0.1031, 0.1030, 0.0973));
+    q += dot(q, q.yxz + 33.33);
+    return fract((q.xxy + q.yxx) * q.zyx);
+}
+
+fn fbm(p: vec3<f32>) -> f32 {
+    var total = 0.0;
+    var scale = 1.0;
+    for (var octave = 0; octave < 4; octave++) {
+        total += hash33(floor(p * scale)).x / scale;
+        scale *= 2.0;
+    }
+    return total * 0.5;
+}
+```
+
+```wgsl
+#import bevy_pbr::forward_io::VertexOutput
+#import "shaders/common/noise.wgsl"::{fbm, hash33}
+
+@fragment
+fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
+    let n = fbm(in.world_position.xyz * 3.0);
+    let speckle = hash33(floor(in.world_position.xyz * 20.0)).x;
+    return vec4(vec3(n * 0.8 + speckle * 0.2), 1.0);
+}
+```
+
+The quoted path is relative to `assets/`, like material shader paths, and the
+helper file needs no `#define_import_path`. Helper files may import other
+helper files the same way.
+
 ## One File for Vertex and Fragment Stages
 
 Set both shader paths to the same WGSL file when its vertex and fragment entry
@@ -866,8 +969,240 @@ the prepass fragment can use `pbr_prepass_functions::calculate_motion_vector`.
 Keep the previous animation parameters yourself. Camera/object transform
 history alone cannot recover an arbitrary shader's previous shape.
 Matching depth and motion are prerequisites for correct depth effects and
-motion blur. Shader displacement still does not update CPU culling bounds;
+motion blur. `MotionBlur` (see the [camera guide](camera.md#motion-blur))
+consumes motion vectors; TAA and `DepthOfField` are not wrapped yet (see its
+[anti-aliasing notes](camera.md#anti-aliasing-msaa)). You can also read them
+yourself with `bevy_pbr::prepass_utils::prepass_motion_vector` in a forward
+fragment on a camera with `MotionVectorPrepass()`, or through a
+[TensorPass](tensor-pass.md#g-buffer-and-motion-input-bundles) motion input.
+Shader displacement still does not update CPU culling bounds;
 use conservative mesh bounds or `NoFrustumCulling()` where appropriate.
+
+### Complete prepass template
+
+One file, four entry points: displacement plus alpha cutout. The same WGSL
+file is the forward vertex and fragment and the prepass vertex and fragment,
+so depth, normals, motion vectors and shadows see the displaced, cut-out shape
+that the forward pass draws.
+
+<!-- pybevy-snippet: typecheck -->
+```python
+from dataclasses import dataclass, field
+
+from pybevy.assets import Assets, Handle
+from pybevy.decorators import resource
+from pybevy.ecs import Res, ResMut, Resource
+from pybevy.material import AlphaMode, TextureBinding, material
+from pybevy.pbr import Material, StandardMaterial
+from pybevy.time import Time
+
+SHADER = "shaders/my_cutout.wgsl"
+
+@material(
+    vertex_shader=SHADER,
+    fragment_shader=SHADER,
+    prepass_vertex_shader=SHADER,    # same displacement in depth/shadow passes
+    prepass_fragment_shader=SHADER,  # same cutout in depth/shadow passes
+    base=StandardMaterial(
+        alpha_mode=AlphaMode.Mask(0.5),  # selects the alpha-mask phases
+        double_sided=True,
+        cull_mode=None,
+    ),
+)
+class MyCutout(Material):
+    mask: TextureBinding = TextureBinding()  # alpha channel is the coverage
+    time: float = 0.0
+    prev_time: float = 0.0  # previous frame's time, for motion vectors
+    amplitude: float = 0.2
+
+@resource
+@dataclass
+class Cutouts(Resource):
+    handles: list[Handle[MyCutout]] = field(default_factory=list)
+
+def animate(
+    time: Res[Time], cutouts: Res[Cutouts], materials: ResMut[Assets[MyCutout]]
+) -> None:
+    for handle in cutouts.handles:
+        value = materials.get_mut(handle)
+        if value is not None:
+            value.prev_time = value.time
+            value.time = time.elapsed_secs()
+```
+
+Keep the material handles in a resource when adding the materials, and add
+`animate` to `Update`. `assets/shaders/my_cutout.wgsl`:
+
+```wgsl
+// Forward vertex/fragment when PREPASS_PIPELINE is undefined; prepass
+// vertex/fragment (depth, normal, motion-vector and shadow passes) when defined.
+#import bevy_pbr::{
+    mesh_functions,
+    view_transformations::position_world_to_clip,
+}
+#import pybevy::gen::MyCutout as params
+
+#ifdef PREPASS_PIPELINE
+#import bevy_pbr::prepass_io::{Vertex, VertexOutput}
+#ifdef PREPASS_FRAGMENT
+#import bevy_pbr::prepass_io::FragmentOutput
+#endif
+#ifdef MOTION_VECTOR_PREPASS
+#import bevy_pbr::pbr_prepass_functions::calculate_motion_vector
+#endif
+#else
+#import bevy_pbr::{
+    forward_io::{Vertex, VertexOutput, FragmentOutput},
+    pbr_fragment::pbr_input_from_standard_material,
+    pbr_functions::{alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing},
+}
+#endif
+
+// Keep equal to the AlphaMode.Mask cutoff used by the forward alpha_discard.
+const CUTOFF: f32 = 0.5;
+
+// Shape and coverage: every pass must compute these identically.
+fn displace(world: vec3<f32>, local: vec3<f32>, t: f32) -> vec3<f32> {
+    let sway = sin(t * 1.7 + world.x) * params::material.amplitude * (local.y + 0.5);
+    return world + vec3(sway, 0.0, 0.0);
+}
+
+fn surface_alpha(in: VertexOutput) -> f32 {
+#ifdef VERTEX_UVS_A
+    return textureSample(params::mask, params::mask_sampler, in.uv).a;
+#else
+    return 1.0;
+#endif
+}
+
+@vertex
+fn vertex(vin: Vertex) -> VertexOutput {
+    var out: VertexOutput;
+    let local = vec4(vin.position, 1.0);
+    let world_from_local = mesh_functions::get_world_from_local(vin.instance_index);
+    let world = displace(
+        mesh_functions::mesh_position_local_to_world(world_from_local, local).xyz,
+        vin.position,
+        params::material.time
+    );
+    out.world_position = vec4(world, 1.0);
+    out.position = position_world_to_clip(world);
+
+#ifdef VERTEX_UVS_A
+    out.uv = vin.uv;
+#endif
+#ifdef VERTEX_UVS_B
+    out.uv_b = vin.uv_b;
+#endif
+#ifdef VERTEX_COLORS
+    out.color = vin.color;
+#endif
+#ifdef VERTEX_OUTPUT_INSTANCE_INDEX
+    out.instance_index = vin.instance_index;
+#endif
+
+#ifdef PREPASS_PIPELINE
+    // prepass_io declares normals only for normal or deferred prepasses.
+#ifdef NORMAL_PREPASS_OR_DEFERRED_PREPASS
+#ifdef VERTEX_NORMALS
+    out.world_normal = mesh_functions::mesh_normal_local_to_world(vin.normal, vin.instance_index);
+#endif
+#endif
+#ifdef MOTION_VECTOR_PREPASS
+    // The previous shape needs the previous transform and the previous time.
+    let previous_from_local = mesh_functions::get_previous_world_from_local(vin.instance_index);
+    let previous = displace(
+        mesh_functions::mesh_position_local_to_world(previous_from_local, local).xyz,
+        vin.position,
+        params::material.prev_time
+    );
+    out.previous_world_position = vec4(previous, 1.0);
+#endif
+#ifdef UNCLIPPED_DEPTH_ORTHO_EMULATION
+    // Directional shadow maps on GPUs without depth-clip control.
+    out.unclipped_depth = out.position.z;
+    out.position.z = min(out.position.z, 1.0);
+#endif
+#else
+#ifdef VERTEX_NORMALS
+    out.world_normal = mesh_functions::mesh_normal_local_to_world(vin.normal, vin.instance_index);
+#endif
+#ifdef VERTEX_TANGENTS
+    out.world_tangent = mesh_functions::mesh_tangent_local_to_world(
+        world_from_local,
+        vin.tangent,
+        vin.instance_index
+    );
+#endif
+#endif
+    return out;
+}
+
+#ifndef PREPASS_PIPELINE
+@fragment
+fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
+    var pbr_input = pbr_input_from_standard_material(in, is_front);
+    let color = vec4(pbr_input.material.base_color.rgb, surface_alpha(in));
+    // Performs the AlphaMode.Mask discard.
+    pbr_input.material.base_color = alpha_discard(pbr_input.material, color);
+    var out: FragmentOutput;
+    out.color = apply_pbr_lighting(pbr_input);
+    out.color = main_pass_post_lighting_processing(pbr_input, out.color);
+    return out;
+}
+#else
+#ifdef PREPASS_FRAGMENT
+// Normal and motion-vector prepasses, and shadows that need unclipped depth.
+@fragment
+fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
+    if surface_alpha(in) < CUTOFF {
+        discard;
+    }
+    var out: FragmentOutput;
+#ifdef NORMAL_PREPASS
+    let normal = normalize(in.world_normal);
+    out.normal = vec4(select(-normal, normal, is_front) * 0.5 + 0.5, 1.0);
+#endif
+#ifdef MOTION_VECTOR_PREPASS
+    out.motion_vector = calculate_motion_vector(in.world_position, in.previous_world_position);
+#endif
+#ifdef UNCLIPPED_DEPTH_ORTHO_EMULATION
+    out.frag_depth = in.unclipped_depth;
+#endif
+    return out;
+}
+#else
+// Depth-only and shadow passes have no color outputs.
+@fragment
+fn fragment(in: VertexOutput) {
+    if surface_alpha(in) < CUTOFF {
+        discard;
+    }
+}
+#endif
+#endif
+```
+
+Rules of thumb:
+
+1. Everything that changes the shape (displacement) or the coverage (discard)
+   must run in both pipelines with identical inputs. Otherwise shadows detach
+   from moving geometry and cutouts cast solid shadows.
+2. Drive animation from values every pass can read: material fields, or
+   `globals` declared as in [Bevy Globals in Shaders](#bevy-globals-in-shaders).
+   Motion vectors also need the previous value, so keep a `prev_time` field (or
+   the previous animation parameters) and update it before the current value.
+3. Guard every `Vertex` and `VertexOutput` field with the `#ifdef` that
+   declares it in `bevy_pbr::prepass_io` or `forward_io`; they differ. Prepass
+   normals need both `NORMAL_PREPASS_OR_DEFERRED_PREPASS` and `VERTEX_NORMALS`,
+   and `previous_world_position` exists only under `MOTION_VECTOR_PREPASS`.
+4. Without `prepass_fragment_shader`, the prepass uses Bevy's default fragment,
+   which cuts out only with StandardMaterial's base color texture.
+5. `textureSample` needs uniform control flow. Inside a branch or loop that
+   depends on per-fragment values, use `textureSampleLevel`.
+6. This template does not handle skinned or morph-target meshes; start from
+   Bevy's `prepass.wgsl` and mesh vertex flow for those. It also does not write
+   `DEFERRED_PREPASS` outputs; deferred rendering uses the `deferred_*` hooks.
 
 ### Grouping Parameters
 
@@ -1091,10 +1426,18 @@ Unused texture slots automatically get Bevy's 1x1 white fallback texture.
 
 ## Bevy Globals in Shaders
 
-You can access Bevy's built-in globals (time, etc.) without custom uniforms:
+Bevy's `globals` (`time`, `delta_time`, `frame_count`) are available without
+custom uniforms, but the declaration depends on the pass:
 
 ```wgsl
+#ifdef PREPASS_PIPELINE
+#import bevy_render::globals::Globals
+// Prepass, shadow and deferred views bind Globals here; no Bevy module declares it.
+@group(0) @binding(1) var<uniform> globals: Globals;
+#else
 #import bevy_pbr::mesh_view_bindings::globals
+#endif
+#import bevy_pbr::forward_io::VertexOutput
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
@@ -1103,13 +1446,25 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 ```
 
-Use imports that match the pass's native bindings. Forward view resources are
-not universally available in a shadow/prepass layout. The optional pass hooks
-above determine which custom stages run; providing only forward paths keeps
-the base material's default prepass, shadow and deferred behavior.
-A prepass/shadow shader that imports `globals` fails its pipeline, and the
-whole frame, not just that mesh, can render black; `get_last_error` then
-names the pipeline under `wgpu_validation`.
+Copy the `#ifdef` block to the top of any file that also serves as a
+`prepass_*` or `deferred_*` stage. The forward view binds `globals` at
+binding 11 through `mesh_view_bindings`. The prepass/shadow view layout binds
+the same uniform at binding 1, but `bevy_pbr::prepass_bindings` declares only
+`previous_view_uniforms`. Importing `mesh_view_bindings::globals` into a
+prepass stage compiles, then fails pipeline creation because binding 11 is not
+in that layout. The whole frame, not just that mesh, can then
+render black; `get_last_error` names the failing pipeline under
+`wgpu_validation`.
+
+Alternatively, add a `time: float` material field and set it from Python each
+frame. Material bindings exist in every pass, Python controls the value
+(`globals.time` wraps to zero after an hour), and a `prev_time` field beside
+it gives motion vectors the previous shape (see the
+[complete prepass template](#complete-prepass-template)).
+
+The optional pass hooks above determine which custom stages run; providing
+only forward paths keeps the base material's default prepass, shadow and
+deferred behavior.
 
 All `@material` classes use the shared `ShaderMaterialPlugin`. You may add a new
 decorated class during hot reload as long as that plugin was installed when the
@@ -1123,6 +1478,9 @@ Shader output values go through tone mapping before reaching the screen. The beh
 ### Non-PBR shaders
 
 Output goes directly to the HDR framebuffer. A separate post-processing pass applies tone mapping.
+Camera `Exposure` (`view.exposure`) is applied only inside PBR lighting, so
+unlit custom output is not scaled by it; changing exposure brightens or dims
+lit materials while this output stays the same.
 
 | Output range | On-screen result |
 |--------------|------------------|

@@ -108,9 +108,9 @@ pub const AUDIO_PLAYER_SOURCE_TYPES: &str =
 
 pub use pybevy_storage::{
     conflict_message::{
-        CONDITION_READ_ONLY_GUIDANCE, CONFLICT_ASSETS, CONFLICT_ASSETS_SHARED_VIEW,
-        CONFLICT_MESSAGES, CONFLICT_QUERIES, CONFLICT_RESOURCE_QUERY, CONFLICT_RESOURCES,
-        CONFLICT_WORLD, SystemAccessConflictMessage,
+        CONDITION_READ_ONLY_GUIDANCE, CONFLICT_ASSETS, CONFLICT_MESSAGES, CONFLICT_QUERIES,
+        CONFLICT_RESOURCE_QUERY, CONFLICT_RESOURCES, CONFLICT_WORLD, DisjointMarker,
+        SystemAccessConflictMessage, conflict_assets_shared_view, conflict_queries_disjoint,
     },
     storage_error::{
         EXPRESSION_MAX_DEPTH, EXPRESSION_MAX_POOL_ENTRIES, NESTED_EXECUTION, enum_variant_changed,
@@ -137,6 +137,9 @@ pub fn world_query_param_required(got: &str, names: &[String]) -> String {
     };
     format!("world.query expects a Query[...] parameter, got {got}; use {suggestion}")
 }
+pub const CHAIN_GROUP_MEMBER: &str =
+    "chain() members must be systems or chains; put a tuple of systems outside chain() instead";
+pub const EMPTY_CHAINED_SYSTEMS: &str = "Empty chained systems";
 pub const SYSTEM_CALLABLE_ROUTINE_REQUIRED: &str = "functools.partial and callable objects are not supported as systems, conditions, or observers; use a regular function, bound method, or closure";
 pub const ENTITY_ARGUMENT_INT: &str = "expected an Entity, not an int. Convert a packed ID from an MCP response or Entity.to_bits() with Entity.from_bits(id). The integer shown in Entity(<index>v<generation>) is an EntityIndex value, not a packed identity.";
 
@@ -460,6 +463,7 @@ pub const VIGNETTE_SMOOTHNESS_FINITE: &str = "Vignette.smoothness must be finite
 pub const VIGNETTE_ROUNDNESS_FINITE: &str = "Vignette.roundness must be finite";
 pub const VIGNETTE_EDGE_COMPENSATION_FINITE: &str = "Vignette.edge_compensation must be finite";
 pub const VIGNETTE_CENTER_FINITE: &str = "Vignette.center coordinates must be finite";
+pub const MOTION_BLUR_SHUTTER_ANGLE_FINITE: &str = "MotionBlur.shutter_angle must be finite";
 
 pub fn viewport_conversion_failed(error: impl Display) -> String {
     format!("Viewport conversion failed: {error}")

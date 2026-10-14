@@ -16,6 +16,7 @@ doctest = false
 
 [dependencies]
 pybevy = { path = "../..", version = "=0.3.0-rc.1" }
+pybevy_core = { workspace = true }
 pyo3 = { workspace = true }
 
 [features]

@@ -8,7 +8,7 @@ use bevy::{
     ecs::{
         resource::Resource,
         schedule::{
-            BoxedCondition, InternedSystemSet, IntoScheduleConfigs, ScheduleConfigs,
+            BoxedCondition, Chain, InternedSystemSet, IntoScheduleConfigs, ScheduleConfigs,
             SystemCondition, SystemSet, common_conditions::not,
         },
         system::{BoxedSystem, PipeSystem, ScheduleSystem},
@@ -31,7 +31,7 @@ use pyo3::{
 };
 
 use crate::{
-    app::PyStage,
+    app::{PyStage, chained_systems::chain_members},
     ecs::{
         conditional_system::{PyConditionalSystem, extract_condition_expr},
         dynamic_system::{DynamicSystemHandle, SystemErrorBuffer},
@@ -622,6 +622,64 @@ pub(crate) fn build_scheduled_system(
     }
 
     Ok((config, handles, ticks))
+}
+
+/// Build one registration unit: a single system or a chain of systems.
+///
+/// Chains become Bevy `Chain::Chained` configs so members run in order;
+/// `on_error` lets callers attach the failing member's source location.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+pub(crate) fn build_system_unit(
+    unit: &Bound<'_, PyAny>,
+    generation: u32,
+    error_state: Arc<Mutex<Vec<PyErr>>>,
+    error_buffer: SystemErrorBuffer,
+    system_stage: SystemStage,
+    is_startup: bool,
+    state_machine_count: Option<usize>,
+    on_error: &dyn Fn(&Bound<'_, PyAny>, PyErr) -> PyErr,
+) -> PyResult<(
+    ScheduleConfigs<ScheduleSystem>,
+    Vec<DynamicSystemHandle>,
+    Vec<SystemTickRegistration>,
+)> {
+    let Some(members) = chain_members(unit).map_err(|error| on_error(unit, error))? else {
+        let (config, handles, ticks) = build_scheduled_system(
+            unit,
+            generation,
+            error_state,
+            error_buffer,
+            system_stage,
+            is_startup,
+            state_machine_count,
+        )
+        .map_err(|error| on_error(unit, error))?;
+        return Ok((config, handles, vec![ticks]));
+    };
+    let mut configs = Vec::with_capacity(members.len());
+    let mut handles = Vec::new();
+    let mut registrations = Vec::with_capacity(members.len());
+    for member in &members {
+        let (config, member_handles, ticks) = build_scheduled_system(
+            member,
+            generation,
+            error_state.clone(),
+            error_buffer.clone(),
+            system_stage,
+            is_startup,
+            state_machine_count,
+        )
+        .map_err(|error| on_error(member, error))?;
+        configs.push(config);
+        handles.extend(member_handles);
+        registrations.push(ticks);
+    }
+    let config = ScheduleConfigs::Configs {
+        configs,
+        collective_conditions: Vec::new(),
+        metadata: Chain::Chained(Default::default()),
+    };
+    Ok((config, handles, registrations))
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -61,6 +61,8 @@ pub enum ParamAccess<K> {
     Components {
         accesses: Vec<ComponentAccess<K>>,
         filters: QueryFilters<K>,
+        /// Named entries of `filters.with`, in signature order, for remedies.
+        markers: Vec<QueryMarker<K>>,
     },
     /// Resource access (Res/ResMut)
     Resource {
@@ -77,6 +79,8 @@ pub enum ParamAccess<K> {
         key: K,
         marker: K,
         name: String,
+        /// Display name of the physical asset type behind `key`.
+        backing_name: String,
         mutable: bool,
     },
     /// Buffered message channel access. Readers are shared; writers are mutable.
@@ -91,14 +95,39 @@ pub enum ParamAccess<K> {
     None,
 }
 
+/// A component a query requires, named for conflict remedies.
+#[derive(Debug, Clone)]
+pub struct QueryMarker<K> {
+    pub key: K,
+    pub name: String,
+    /// Written as an explicit `With[...]` filter rather than implied by data.
+    pub explicit_with: bool,
+}
+
+/// A marker only one of two conflicting queries requires.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MarkerHint {
+    pub name: String,
+    pub explicit_with: bool,
+}
+
+/// Markers that tell two conflicting queries apart.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueryHints {
+    /// Required by the earlier parameter only.
+    pub existing_only: Option<MarkerHint>,
+    /// Required by the later parameter only.
+    pub current_only: Option<MarkerHint>,
+}
+
 /// Selects the remedy, so a conflict with no queries does not get the query one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConflictKind {
-    Queries,
+    Queries(Box<QueryHints>),
     Resources,
     ResourceQuery,
     Assets,
-    AssetsSharedView,
+    AssetsSharedView { backing_name: String },
     Messages,
     WorldExclusive,
 }
@@ -159,6 +188,7 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
             ParamAccess::Components {
                 accesses: comp_accesses,
                 filters: current_filters,
+                markers: current_markers,
             } => {
                 for comp in comp_accesses {
                     // Check against ALL previous accesses to this component
@@ -175,7 +205,16 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
                                     existing_mut: existing.mutable,
                                     existing_name: existing.name.clone(),
                                     kind: if existing.is_query {
-                                        ConflictKind::Queries
+                                        ConflictKind::Queries(Box::new(QueryHints {
+                                            existing_only: distinguishing_marker(
+                                                &existing.markers,
+                                                current_filters,
+                                            ),
+                                            current_only: distinguishing_marker(
+                                                current_markers,
+                                                &existing.filters,
+                                            ),
+                                        }))
                                     } else {
                                         ConflictKind::ResourceQuery
                                     },
@@ -197,6 +236,7 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
                             mutable: comp.mutable,
                             name: comp.name.clone(),
                             filters: current_filters.clone(),
+                            markers: current_markers.clone(),
                             is_query: true,
                         });
                 }
@@ -262,6 +302,7 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
                         mutable: *mutable,
                         name: name.clone(),
                         filters: resource_filters,
+                        markers: Vec::new(),
                         is_query: false,
                     });
 
@@ -285,6 +326,7 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
                 key,
                 marker,
                 name,
+                backing_name,
                 mutable,
             } => {
                 if let Some((existing_idx, existing_mut, existing_name)) = assets_access.get(key) {
@@ -299,7 +341,9 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
                             kind: if name == existing_name {
                                 ConflictKind::Assets
                             } else {
-                                ConflictKind::AssetsSharedView
+                                ConflictKind::AssetsSharedView {
+                                    backing_name: backing_name.clone(),
+                                }
                             },
                             category: ConflictCategory::Asset,
                             exclusive_read: false,
@@ -341,6 +385,7 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
                         mutable: *mutable,
                         name: format!("Assets<{name}>"),
                         filters: resource_filters,
+                        markers: Vec::new(),
                         is_query: false,
                     });
 
@@ -473,7 +518,25 @@ struct Recorded<K> {
     mutable: bool,
     name: String,
     filters: QueryFilters<K>,
+    markers: Vec<QueryMarker<K>>,
     is_query: bool,
+}
+
+/// First marker of `own` that `other` does not require, preferring explicit
+/// `With[...]` filters over required data components.
+fn distinguishing_marker<K: std::hash::Hash + Eq>(
+    own: &[QueryMarker<K>],
+    other: &QueryFilters<K>,
+) -> Option<MarkerHint> {
+    let explicit = own.iter().filter(|marker| marker.explicit_with);
+    let implied = own.iter().filter(|marker| !marker.explicit_with);
+    explicit
+        .chain(implied)
+        .find(|marker| !other.with.contains(&marker.key))
+        .map(|marker| MarkerHint {
+            name: marker.name.clone(),
+            explicit_with: marker.explicit_with,
+        })
 }
 
 #[cfg(test)]
@@ -500,9 +563,20 @@ mod tests {
         components: Vec<ComponentAccess<String>>,
         f: QueryFilters<String>,
     ) -> ParamAccess<String> {
+        let mut with = f.with.iter().cloned().collect::<Vec<_>>();
+        with.sort();
+        let markers = with
+            .into_iter()
+            .map(|key| QueryMarker {
+                explicit_with: !components.iter().any(|c| c.key == key),
+                name: key.clone(),
+                key,
+            })
+            .collect();
         ParamAccess::Components {
             accesses: components,
             filters: f,
+            markers,
         }
     }
 
@@ -517,12 +591,123 @@ mod tests {
     }
 
     fn assets(key: &str, mutable: bool) -> ParamAccess<String> {
+        logical_assets(key, key, mutable)
+    }
+
+    fn logical_assets(key: &str, name: &str, mutable: bool) -> ParamAccess<String> {
         ParamAccess::Assets {
             key: key.to_string(),
             marker: "resource marker".to_string(),
-            name: key.to_string(),
+            name: name.to_string(),
+            backing_name: key.to_string(),
             mutable,
         }
+    }
+
+    fn hint(name: &str, explicit_with: bool) -> Option<MarkerHint> {
+        Some(MarkerHint {
+            name: name.to_string(),
+            explicit_with,
+        })
+    }
+
+    #[test]
+    fn shared_view_conflict_names_backing_type() {
+        let params = [
+            logical_assets("StorageShaderMaterial", "Glow", true),
+            logical_assets("StorageShaderMaterial", "Palette", false),
+        ];
+        let err = validate_access(&params).unwrap_err();
+        assert_eq!(
+            err.kind,
+            ConflictKind::AssetsSharedView {
+                backing_name: "StorageShaderMaterial".to_string()
+            }
+        );
+        assert_eq!(err.existing_name, "Assets<Glow>");
+        assert_eq!(err.comp_name, "Assets<Palette>");
+    }
+
+    #[test]
+    fn shared_view_read_only_parameters_are_compatible() {
+        let params = [
+            logical_assets("ShaderMaterial", "Glow", false),
+            logical_assets("ShaderMaterial", "Palette", false),
+        ];
+        assert!(validate_access(&params).is_ok());
+    }
+
+    #[test]
+    fn query_conflict_prefers_explicit_filters_unique_to_each_query() {
+        // Query[Mut[Text], With[Hud]] vs Query[Mut[Text], With[Banner]]
+        let params = [
+            query(vec![comp("Text", true)], filters(&["Text", "Hud"], &[])),
+            query(vec![comp("Text", true)], filters(&["Text", "Banner"], &[])),
+        ];
+        let err = validate_access(&params).unwrap_err();
+        assert_eq!(
+            err.kind,
+            ConflictKind::Queries(Box::new(QueryHints {
+                existing_only: hint("Hud", true),
+                current_only: hint("Banner", true),
+            }))
+        );
+    }
+
+    #[test]
+    fn query_conflict_marks_data_markers_as_implied() {
+        // Query[tuple[Mut[Transform], Bat]] vs Query[tuple[Mut[Transform], BatWing]]
+        let params = [
+            query(
+                vec![comp("Transform", true), comp("Bat", false)],
+                filters(&["Transform", "Bat"], &[]),
+            ),
+            query(
+                vec![comp("Transform", true), comp("BatWing", false)],
+                filters(&["Transform", "BatWing"], &[]),
+            ),
+        ];
+        let err = validate_access(&params).unwrap_err();
+        assert_eq!(
+            err.kind,
+            ConflictKind::Queries(Box::new(QueryHints {
+                existing_only: hint("Bat", false),
+                current_only: hint("BatWing", false),
+            }))
+        );
+    }
+
+    #[test]
+    fn query_conflict_without_distinguishing_markers_has_no_hint() {
+        let params = [
+            query(vec![comp("Transform", true)], filters(&["Transform"], &[])),
+            query(vec![comp("Transform", true)], filters(&["Transform"], &[])),
+        ];
+        let err = validate_access(&params).unwrap_err();
+        assert_eq!(
+            err.kind,
+            ConflictKind::Queries(Box::new(QueryHints {
+                existing_only: None,
+                current_only: None,
+            }))
+        );
+    }
+
+    #[test]
+    fn query_conflict_with_one_sided_marker() {
+        // Query[Mut[Text], With[Hud]] vs Query[Mut[Text]]
+        let params = [
+            query(vec![comp("Text", true)], filters(&["Text", "Hud"], &[])),
+            query(vec![comp("Text", true)], filters(&["Text"], &[])),
+        ];
+        let err = validate_access(&params).unwrap_err();
+        assert_eq!(
+            err.kind,
+            ConflictKind::Queries(Box::new(QueryHints {
+                existing_only: hint("Hud", true),
+                current_only: None,
+            }))
+        );
     }
 
     fn message(key: &str, mutable: bool) -> ParamAccess<String> {

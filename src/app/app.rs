@@ -55,7 +55,7 @@ use crate::{
     app::{
         PyStage,
         app_exit::{PyAppExit, materialize_app_exit},
-        chained_systems::{PyChainedSystemSets, PyChainedSystems},
+        chained_systems::{PyChainedSystemSets, flatten_system_units},
         hot_reload::{
             bindings::{PyAppReloadState, add_hot_reload_system},
             cleanup::clear_entities_and_resources,
@@ -82,7 +82,7 @@ use crate::{
             registered_state_machine_count, state_member_type,
         },
         system_config::{
-            InstalledSystemSetConfigs, build_scheduled_system, build_set_config,
+            InstalledSystemSetConfigs, build_set_config, build_system_unit,
             system_set_config_identity,
         },
         system_interpreter::ObserverRuntimeSinks,
@@ -600,31 +600,16 @@ impl PyApp {
         system_stage: SystemStage,
         is_startup: bool,
     ) -> PyResult<()> {
-        if let Ok(chained) = system.extract::<PyChainedSystems>() {
-            for item in chained.systems.bind(py).iter() {
-                let _ = build_scheduled_system(
-                    &item,
-                    generation,
-                    error_state.clone(),
-                    error_buffer.clone(),
-                    system_stage,
-                    is_startup,
-                    None,
-                )
-                .map_err(|error| annotate_registration_error(py, &item, error))?;
-            }
-        } else {
-            let _ = build_scheduled_system(
-                system,
-                generation,
-                error_state.clone(),
-                error_buffer.clone(),
-                system_stage,
-                is_startup,
-                None,
-            )
-            .map_err(|error| annotate_registration_error(py, system, error))?;
-        }
+        build_system_unit(
+            system,
+            generation,
+            error_state.clone(),
+            error_buffer.clone(),
+            system_stage,
+            is_startup,
+            None,
+            &|item, error| annotate_registration_error(py, item, error),
+        )?;
         Ok(())
     }
 
@@ -939,10 +924,15 @@ impl PyApp {
     ) -> PyResult<Py<PyApp>> {
         pyself.ensure_active()?;
 
+        let mut units = Vec::new();
+        for system in systems.iter() {
+            flatten_system_units(&system, &mut units)?;
+        }
+
         if !pyself.is_reload_temp.get() {
             let mut names = pyself.pending_system_names.borrow_mut();
-            for system in systems.iter() {
-                collect_system_names(&system, &mut names);
+            for unit in &units {
+                collect_system_names(unit, &mut names);
             }
         }
 
@@ -984,19 +974,18 @@ impl PyApp {
             | ScheduleType::OnExit(_, _)
             | ScheduleType::OnTransition(_, _) => {
                 if pyself.is_reload_temp.get() {
-                    for system in systems.iter() {
-                        let _ = build_scheduled_system(
-                            &system,
+                    for unit in &units {
+                        Self::preflight_reload_system(
+                            py,
+                            unit,
                             current_generation,
-                            error_state.clone(),
-                            error_buffer.clone(),
+                            &error_state,
+                            &error_buffer,
                             SystemStage::UpdateOrLast,
                             false,
-                            None,
-                        )
-                        .map_err(|error| annotate_registration_error(py, &system, error))?;
+                        )?;
                     }
-                    let system_funcs = systems.iter().map(Bound::unbind).collect();
+                    let system_funcs = units.into_iter().map(Bound::unbind).collect();
                     pyself
                         .pending_state_systems
                         .borrow_mut()
@@ -1065,16 +1054,17 @@ impl PyApp {
                         .get_resource_or_insert_with(ScheduleDisplayNameRegistry::default)
                         .insert(label, name);
 
-                    // Add each system to the schedule.
-                    for system in systems.iter() {
-                        let (config, _, ticks) = build_scheduled_system(
-                            &system,
+                    // Add each system or chain to the schedule.
+                    for unit in &units {
+                        let (config, _, registrations) = build_system_unit(
+                            unit,
                             current_generation,
                             error_state.clone(),
                             error_buffer.clone(),
                             SystemStage::UpdateOrLast, // State systems treated like Update
                             false,
                             state_machine_count,
+                            &|_, error| error,
                         )?;
 
                         let label = match &schedule_type {
@@ -1084,9 +1074,14 @@ impl PyApp {
                             ScheduleType::OnTransition(lbl, _) => lbl.intern(),
                             _ => unreachable!(),
                         };
-                        app.world_mut()
-                            .get_resource_or_insert_with(DynamicSystemRegistry::default)
-                            .register_ticks(current_generation, None, label, ticks);
+                        {
+                            let mut registry = app
+                                .world_mut()
+                                .get_resource_or_insert_with(DynamicSystemRegistry::default);
+                            for ticks in registrations {
+                                registry.register_ticks(current_generation, None, label, ticks);
+                            }
+                        }
                         match &schedule_type {
                             ScheduleType::OnEnter(lbl, _) => app.add_systems(lbl.clone(), config),
                             ScheduleType::OnExit(lbl, _) => app.add_systems(lbl.clone(), config),
@@ -1117,23 +1112,17 @@ impl PyApp {
                 // If this is a temp reload app, just store the systems for later extraction
                 if pyself.is_reload_temp.get() {
                     let mut system_funcs = Vec::new();
-                    for system in systems.iter() {
-                        let system_list: Vec<Bound<PyAny>> = match system.try_iter() {
-                            Ok(iter) => iter.collect::<Result<Vec<_>, _>>()?,
-                            Err(_) => vec![system.clone()],
-                        };
-                        for sys in system_list {
-                            Self::preflight_reload_system(
-                                py,
-                                &sys,
-                                current_generation,
-                                &error_state,
-                                &error_buffer,
-                                Self::get_system_stage(stage),
-                                stage.is_startup(),
-                            )?;
-                            system_funcs.push(sys.unbind());
-                        }
+                    for unit in units {
+                        Self::preflight_reload_system(
+                            py,
+                            &unit,
+                            current_generation,
+                            &error_state,
+                            &error_buffer,
+                            Self::get_system_stage(stage),
+                            stage.is_startup(),
+                        )?;
+                        system_funcs.push(unit.unbind());
                     }
                     pyself
                         .pending_systems
@@ -1148,85 +1137,30 @@ impl PyApp {
                 // Add systems directly to the app with generation-based run conditions
                 pyself.with_bevy_app(|app| {
                     let state_machine_count = Some(registered_state_machine_count(app.world()));
-                    for system in systems {
-                        // Check if this is a ChainedSystems object
-                        if let Ok(chained) = system.extract::<PyChainedSystems>() {
-                            // Handle chained systems
-                            let system_stage = Self::get_system_stage(stage);
-
-                            // Create a complete config for each system in the chain.
-                            let py = system.py();
-                            let systems_tuple = chained.systems.bind(py);
-                            let mut configs = Vec::new();
-                            let mut registrations = Vec::new();
-
-                            for sys in systems_tuple.iter() {
-                                let (config, _, ticks) = build_scheduled_system(
-                                    &sys,
-                                    current_generation,
-                                    error_state.clone(),
-                                    error_buffer.clone(),
-                                    system_stage,
-                                    stage.is_startup(),
-                                    state_machine_count,
-                                )?;
-                                configs.push(config);
-                                registrations.push(ticks);
-                            }
-
-                            if configs.is_empty() {
-                                return Err(PyRuntimeError::new_err("Empty chained systems"));
-                            }
-
-                            let chained = ScheduleConfigs::Configs {
-                                configs,
-                                collective_conditions: Vec::new(),
-                                metadata: Chain::Chained(Default::default()),
-                            };
-
-                            add_to_schedule!(app, stage, chained);
-                            let mut registry = app
-                                .world_mut()
-                                .get_resource_or_insert_with(DynamicSystemRegistry::default);
-                            for ticks in registrations {
-                                registry.register_ticks(
-                                    current_generation,
-                                    None,
-                                    stage.intern_label(),
-                                    ticks,
-                                );
-                            }
-                            registered_systems.push(system);
-                        } else {
-                            // Handle regular systems (not chained)
-                            let system_list: Vec<Bound<PyAny>> = match system.try_iter() {
-                                Ok(iter) => iter.collect::<Result<Vec<_>, _>>()?,
-                                Err(_) => vec![system],
-                            };
-
-                            for sys in system_list {
-                                let system_stage = Self::get_system_stage(stage);
-                                let (config, _, ticks) = build_scheduled_system(
-                                    &sys,
-                                    current_generation,
-                                    error_state.clone(),
-                                    error_buffer.clone(),
-                                    system_stage,
-                                    stage.is_startup(),
-                                    state_machine_count,
-                                )?;
-                                app.world_mut()
-                                    .get_resource_or_insert_with(DynamicSystemRegistry::default)
-                                    .register_ticks(
-                                        current_generation,
-                                        None,
-                                        stage.intern_label(),
-                                        ticks,
-                                    );
-                                add_to_schedule!(app, stage, config);
-                                registered_systems.push(sys);
-                            }
+                    for unit in units {
+                        let (config, _, registrations) = build_system_unit(
+                            &unit,
+                            current_generation,
+                            error_state.clone(),
+                            error_buffer.clone(),
+                            Self::get_system_stage(stage),
+                            stage.is_startup(),
+                            state_machine_count,
+                            &|_, error| error,
+                        )?;
+                        add_to_schedule!(app, stage, config);
+                        let mut registry = app
+                            .world_mut()
+                            .get_resource_or_insert_with(DynamicSystemRegistry::default);
+                        for ticks in registrations {
+                            registry.register_ticks(
+                                current_generation,
+                                None,
+                                stage.intern_label(),
+                                ticks,
+                            );
                         }
+                        registered_systems.push(unit);
                     }
                     Ok(())
                 })?;

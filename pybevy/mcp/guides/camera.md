@@ -282,7 +282,30 @@ those meshes in a separate transmissive phase rather than into the deferred
 G-buffer. SSR therefore applies to surrounding opaque surfaces, not to the
 transmissive mesh itself, and may show screen-space artifacts along glass edges.
 
-ChromaticAberration, DepthOfField, and MotionBlur are not yet available in PyBevy.
+### Motion Blur
+
+`MotionBlur` blurs moving objects per pixel on a 3D camera. Spawning it adds
+`MotionVectorPrepass` automatically; `DefaultPlugins` already includes the
+render plugin. It works with MSAA (only WebGL2 builds need `Msaa.Off`):
+
+```python
+from pybevy.post_process import MotionBlur
+
+commands.spawn(
+    Camera3d(),
+    MotionBlur(shutter_angle=1.0, samples=2),
+)
+```
+
+`shutter_angle` is the fraction of a frame the shutter stays open: `0.5`
+matches film's 180 degrees; values above `1.0` stretch blur further than the
+object moved. Each pixel takes `samples * 2 + 1` taps. `samples=0` or a
+`shutter_angle` at or below `0.0` disables the effect. `shutter_angle` must be
+finite (`ValueError` otherwise); `samples` is an unsigned integer, so negative
+values raise `OverflowError`. Transparent meshes write no motion vectors and
+are not blurred.
+
+ChromaticAberration and DepthOfField are not yet available in PyBevy.
 
 ### Skybox
 
@@ -339,7 +362,8 @@ commands.spawn(Camera3d(), Msaa.Sample4)  # Default - good balance
 | `Msaa.Sample4` | Default - smooth edges |
 | `Msaa.Sample8` | Maximum quality, higher GPU cost |
 
-**Compatibility note:** SSAO and screen-space reflections require `Msaa.Off`.
+**Compatibility note:** SSAO and screen-space reflections require `Msaa.Off`;
+`MotionBlur` supports every MSAA setting.
 PyBevy does not yet expose Bevy's TAA, FXAA, or SMAA components, so there is no
 supported edge-anti-aliasing replacement for these effects yet.
 

@@ -369,10 +369,13 @@ faces for point lights). Two rules:
 
 ```
 get_performance
-→ FPS, frame times, CPU/GPU/RAM usage, entity/asset counts, system profiling times
+→ FPS, frame times, CPU/GPU/RAM usage, entity/asset counts, system profiling
+  times, build
 ```
 
-Use before and after changes to catch regressions.
+Use before and after changes to catch regressions. Its `build` object holds the
+`git_sha`, `git_dirty` flag, and `profile` of the running binary; record it with
+benchmark numbers, since `debug` and `release` builds differ greatly.
 
 Frame statistics come from real (unclamped) frame durations:
 

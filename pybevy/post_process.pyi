@@ -208,3 +208,30 @@ class LensDistortion(Component):
         scale: np.typing.ArrayLike | None = None,
         edge_curvature: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
+
+class MotionBlur(Component):
+    """Per-object, per-pixel camera motion blur.
+
+    Add to a ``Camera3d`` entity. Spawning it inserts ``MotionVectorPrepass``.
+    ``shutter_angle`` must be finite; values at or below ``0.0`` and
+    ``samples=0`` disable the effect.
+    """
+
+    def __init__(self, *, shutter_angle: float = 0.5, samples: int = 1) -> None: ...
+
+    @property
+    def shutter_angle(self) -> float: ...
+    @shutter_angle.setter
+    def shutter_angle(self, value: float) -> None: ...
+
+    @property
+    def samples(self) -> int: ...
+    @samples.setter
+    def samples(self, value: int) -> None: ...
+
+    @staticmethod
+    def batch(  # type: ignore[override]
+        *,
+        shutter_angle: np.typing.ArrayLike | None = None,
+        samples: np.typing.ArrayLike | None = None,
+    ) -> Batchable: ...

@@ -18,7 +18,7 @@
 //! Backend key types are opaque here; [`KeyResolver`] turns them into
 //! `ComponentId`s against a concrete `World`.
 
-use std::hash::Hash;
+use std::{borrow::Cow, hash::Hash};
 
 use bevy::ecs::{
     component::ComponentId,
@@ -26,16 +26,16 @@ use bevy::ecs::{
     world::World,
 };
 use pybevy_storage::conflict_message::{
-    CONDITION_READ_ONLY_GUIDANCE, CONFLICT_ASSETS, CONFLICT_ASSETS_SHARED_VIEW, CONFLICT_MESSAGES,
-    CONFLICT_QUERIES, CONFLICT_RESOURCE_QUERY, CONFLICT_RESOURCES, CONFLICT_WORLD,
-    SystemAccessConflictMessage,
+    CONDITION_READ_ONLY_GUIDANCE, CONFLICT_ASSETS, CONFLICT_MESSAGES, CONFLICT_QUERIES,
+    CONFLICT_RESOURCE_QUERY, CONFLICT_RESOURCES, CONFLICT_WORLD, DisjointMarker,
+    SystemAccessConflictMessage, conflict_assets_shared_view, conflict_queries_disjoint,
 };
 
 use super::{
     access_sets::{QueryParamAccess, build_resource_accesses},
     access_validation::{
-        ComponentAccess, ComponentAccessConflict, ConflictCategory, ConflictKind, ParamAccess,
-        QueryFilters,
+        ComponentAccess, ComponentAccessConflict, ConflictCategory, ConflictKind, MarkerHint,
+        ParamAccess, QueryFilters, QueryMarker,
     },
 };
 
@@ -158,6 +158,8 @@ pub enum ParamSpec<K: BackendKeys> {
         vkey: String,
         /// Display name for conflict messages.
         name: String,
+        /// Display name of the physical asset type that `vkey` identifies.
+        backing_name: String,
         mutable: bool,
     },
     MessageReader {
@@ -503,9 +505,15 @@ pub fn to_param_accesses<K: BackendKeys, VK: Hash + Eq + Clone>(
                 }));
 
                 let mut filters = QueryFilters::default();
+                let mut markers = Vec::new();
                 for c in &spec.components {
                     if !c.optional {
                         filters.with.insert(component_vkey(&c.key));
+                        markers.push(QueryMarker {
+                            key: component_vkey(&c.key),
+                            name: c.name.clone(),
+                            explicit_with: false,
+                        });
                     }
                 }
                 for asset in &spec.asset_components {
@@ -515,15 +523,29 @@ pub fn to_param_accesses<K: BackendKeys, VK: Hash + Eq + Clone>(
                 }
                 for f in &spec.with {
                     filters.with.insert(component_vkey(&f.key));
+                    markers.push(QueryMarker {
+                        key: component_vkey(&f.key),
+                        name: f.label.clone(),
+                        explicit_with: true,
+                    });
                 }
                 for f in &spec.without {
                     filters.without.insert(component_vkey(&f.key));
                 }
                 for f in spec.changed.iter().chain(&spec.added) {
                     filters.with.insert(component_vkey(&f.key));
+                    markers.push(QueryMarker {
+                        key: component_vkey(&f.key),
+                        name: f.label.clone(),
+                        explicit_with: false,
+                    });
                 }
 
-                ParamAccess::Components { accesses, filters }
+                ParamAccess::Components {
+                    accesses,
+                    filters,
+                    markers,
+                }
             }
             ParamSpec::Res {
                 key,
@@ -544,12 +566,13 @@ pub fn to_param_accesses<K: BackendKeys, VK: Hash + Eq + Clone>(
                 key,
                 vkey: _,
                 name,
+                backing_name,
                 mutable,
-                ..
             } => ParamAccess::Assets {
                 key: asset_vkey(key),
                 marker: resource_marker_vkey.clone(),
                 name: name.clone(),
+                backing_name: backing_name.clone(),
                 mutable: *mutable,
             },
             ParamSpec::MessageReader {
@@ -593,6 +616,7 @@ pub fn conflict_error_message(func_name: &str, conflict: &ComponentAccessConflic
         ConflictCategory::Asset => "asset",
         ConflictCategory::Component => "component",
     };
+    let remedy = conflict_remedy(conflict);
     SystemAccessConflictMessage {
         system: func_name,
         category,
@@ -603,21 +627,40 @@ pub fn conflict_error_message(func_name: &str, conflict: &ComponentAccessConflic
         existing_mutable: conflict.existing_mut,
         existing_name: &conflict.existing_name,
         exclusive_read: conflict.exclusive_read,
-        remedy: conflict_remedy(conflict.kind),
+        remedy: &remedy,
     }
     .to_string()
 }
 
 /// Actionable remedy for the conflict category.
-fn conflict_remedy(kind: ConflictKind) -> &'static str {
-    match kind {
-        ConflictKind::Assets => CONFLICT_ASSETS,
-        ConflictKind::AssetsSharedView => CONFLICT_ASSETS_SHARED_VIEW,
-        ConflictKind::Messages => CONFLICT_MESSAGES,
-        ConflictKind::WorldExclusive => CONFLICT_WORLD,
-        ConflictKind::Resources => CONFLICT_RESOURCES,
-        ConflictKind::ResourceQuery => CONFLICT_RESOURCE_QUERY,
-        ConflictKind::Queries => CONFLICT_QUERIES,
+fn conflict_remedy(conflict: &ComponentAccessConflict) -> Cow<'static, str> {
+    match &conflict.kind {
+        ConflictKind::Assets => Cow::Borrowed(CONFLICT_ASSETS),
+        ConflictKind::AssetsSharedView { backing_name } => {
+            Cow::Owned(conflict_assets_shared_view(backing_name))
+        }
+        ConflictKind::Messages => Cow::Borrowed(CONFLICT_MESSAGES),
+        ConflictKind::WorldExclusive => Cow::Borrowed(CONFLICT_WORLD),
+        ConflictKind::Resources => Cow::Borrowed(CONFLICT_RESOURCES),
+        ConflictKind::ResourceQuery => Cow::Borrowed(CONFLICT_RESOURCE_QUERY),
+        ConflictKind::Queries(hints) => {
+            let existing = hints.existing_only.as_ref().map(disjoint_marker);
+            let current = hints.current_only.as_ref().map(disjoint_marker);
+            conflict_queries_disjoint(
+                conflict.existing_idx,
+                existing.as_ref(),
+                conflict.param_idx,
+                current.as_ref(),
+            )
+            .map_or(Cow::Borrowed(CONFLICT_QUERIES), Cow::Owned)
+        }
+    }
+}
+
+fn disjoint_marker(hint: &MarkerHint) -> DisjointMarker<'_> {
+    DisjointMarker {
+        name: &hint.name,
+        explicit_with: hint.explicit_with,
     }
 }
 
@@ -1256,6 +1299,7 @@ mod tests {
         let params = [ParamSpec::<MockKeys>::Assets {
             key: "Mesh",
             vkey: "Mesh".to_string(),
+            backing_name: "Mesh".to_string(),
             name: "Mesh".to_string(),
             mutable: true,
         }];
@@ -1571,6 +1615,7 @@ mod tests {
         ParamSpec::Assets {
             key,
             vkey: name.to_string(),
+            backing_name: name.to_string(),
             name: name.to_string(),
             mutable,
         }
@@ -1808,6 +1853,7 @@ mod tests {
             ParamSpec::Assets {
                 key: "Mesh",
                 vkey: "Mesh".to_string(),
+                backing_name: "Mesh".to_string(),
                 name: "Mesh".to_string(),
                 mutable: false,
             },
@@ -1894,6 +1940,7 @@ mod tests {
             ParamSpec::Assets {
                 key: "Mesh",
                 vkey: "Mesh".to_string(),
+                backing_name: "Mesh".to_string(),
                 name: "Mesh".to_string(),
                 mutable: true,
             },

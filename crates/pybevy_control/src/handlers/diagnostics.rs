@@ -1,4 +1,5 @@
 use bevy::{ecs::world::World, time::Time};
+use pybevy_core::build_info::build_info;
 
 use crate::bridge::ControlError;
 
@@ -34,6 +35,7 @@ pub fn get_performance(world: &mut World) -> Result<serde_json::Value, ControlEr
         // Scene: live count, matches list_entities / scene_summary.
         result.insert("entity_count".into(), serde_json::json!(entity_count));
         result.insert("entity_count_scope".into(), serde_json::json!("all"));
+        result.insert("build".into(), build_info().to_json());
         if !snap.asset_counts.is_empty() {
             let assets: serde_json::Map<_, _> = snap
                 .asset_counts
@@ -155,6 +157,7 @@ pub fn get_performance(world: &mut World) -> Result<serde_json::Value, ControlEr
     let mut result = serde_json::Map::new();
     result.insert("entity_count".into(), serde_json::json!(entity_count));
     result.insert("entity_count_scope".into(), serde_json::json!("all"));
+    result.insert("build".into(), build_info().to_json());
     result.insert("reload_count".into(), serde_json::json!(0));
     result.insert("last_reload_mode".into(), serde_json::Value::Null);
     result.insert("total_schedule_systems".into(), serde_json::json!(0));
@@ -213,6 +216,7 @@ mod tests {
         assert!(result.get("memory_growth_mb").is_none());
         assert!(result.get("memory_peak_mb").is_none());
         assert!(result.get("memory_warning").is_none());
+        assert_eq!(result["build"], build_info().to_json());
     }
 
     #[test]
