@@ -13,7 +13,7 @@ use crate::depth_of_field_mode::PyDepthOfFieldMode;
         focal_distance => [finite(view = checked)],
         sensor_height => [finite(view = checked)],
         aperture_f_stops => [finite(view = checked)],
-        max_circle_of_confusion_diameter => [finite(view = checked)],
+        max_circle_of_confusion_diameter => [finite, non_negative],
         max_depth => [finite_or_pos_inf(view = checked)],
     ],
     view_fields = [

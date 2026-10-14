@@ -11,7 +11,8 @@ use pybevy_core::registry::global_registry;
 use pybevy_ecs::shared::{
     observer_registry::{
         LifecycleKind, ObserverEntry as CoreObserverEntry, ObserverEventKey, ObserverFilter,
-        ObserverOrigin, ObserverRegistryCore, ObserverTypeKey, ResolvedObserverComponent,
+        ObserverOrigin, ObserverRegistryCore, ObserverTypeKey, PythonObserver,
+        ResolvedObserverComponent,
     },
     system_runtime::{ErrorPolicy, execute_observer},
 };
@@ -166,7 +167,7 @@ impl ObserverRegistry {
             world.insert_resource(ObserverRegistry::default());
         }
 
-        let observer_entity = world.spawn_empty().id();
+        let observer_entity = world.spawn(PythonObserver).id();
         let entry = ObserverEntry {
             observer_entity,
             prepared: prepared.prepared,

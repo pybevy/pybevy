@@ -1,5 +1,9 @@
 use bevy::sprite::{BorderRect, TextureSlicer};
-use pybevy_core::{BorrowableStorage, FieldStorage, FieldStorageInner, repr::float_repr};
+use pybevy_core::{
+    BorrowableStorage, FieldStorage, FieldStorageInner,
+    domain::{FINITE_NON_NEGATIVE, check_for},
+    repr::float_repr,
+};
 use pyo3::prelude::*;
 
 use crate::{border_rect::PyBorderRect, slice_scale_mode::PySliceScaleMode};
@@ -52,7 +56,11 @@ impl PyTextureSlicer {
             border: border.try_into()?,
             center_scale_mode: center_scale_mode.into(),
             sides_scale_mode: sides_scale_mode.into(),
-            max_corner_scale,
+            max_corner_scale: check_for::<Self, _>(
+                "max_corner_scale",
+                max_corner_scale,
+                FINITE_NON_NEGATIVE,
+            )?,
         }))
     }
 
@@ -74,6 +82,8 @@ impl PyTextureSlicer {
 
     #[setter]
     pub fn set_max_corner_scale(&mut self, max_corner_scale: f32) -> PyResult<()> {
+        let max_corner_scale =
+            check_for::<Self, _>("max_corner_scale", max_corner_scale, FINITE_NON_NEGATIVE)?;
         self.storage.as_mut()?.max_corner_scale = max_corner_scale;
         Ok(())
     }

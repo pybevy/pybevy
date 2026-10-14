@@ -62,6 +62,8 @@ pub enum ArrayError {
     BorrowExpired(String),
     /// A min/max reduction over a zero-size axis (no identity).
     ZeroSizeReduction,
+    /// An `arange` bound or step is NaN, so no length exists.
+    NanRangeLength,
 }
 
 impl fmt::Display for ArrayError {
@@ -153,6 +155,7 @@ impl fmt::Display for ArrayError {
                 f,
                 "zero-size array to reduction operation with no identity (min/max)"
             ),
+            ArrayError::NanRangeLength => write!(f, "arange: cannot compute length"),
         }
     }
 }

@@ -3,7 +3,7 @@ use pybevy_core::{PyResource, ResourceStorage, repr::float_repr, resource_initia
 use pybevy_macros::pyresource;
 use pyo3::prelude::*;
 
-#[pyresource(RemSize, bridge, no_reflect)]
+#[pyresource(RemSize, bridge, no_reflect, domains = [0 as value => [positive]])]
 #[pyclass(name = "RemSize", module = "pybevy.text", extends = PyResource, from_py_object)]
 #[derive(Debug)]
 pub struct PyRemSize {
@@ -14,10 +14,10 @@ pub struct PyRemSize {
 impl PyRemSize {
     #[new]
     #[pyo3(signature = (value = 20.0))]
-    pub fn new(value: f32) -> PyClassInitializer<Self> {
-        resource_initializer(Self {
-            storage: ResourceStorage::owned(RemSize(value)),
-        })
+    pub fn new(value: f32) -> PyResult<PyClassInitializer<Self>> {
+        Ok(resource_initializer(Self {
+            storage: ResourceStorage::owned(RemSize(Self::check_value(value)?)),
+        }))
     }
 
     #[getter]
@@ -27,6 +27,7 @@ impl PyRemSize {
 
     #[setter]
     pub fn set_value(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_value(value)?;
         self.as_mut()?.0 = value;
         Ok(())
     }

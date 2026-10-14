@@ -51,7 +51,7 @@ def flush_user_modules(
     graph_changed_files: set[str] | None = None,
 ) -> list[str]:
     """
-    Remove user project modules from sys.modules.
+    Remove user project modules from sys.modules and their parent packages.
 
     When *graph* and *changed_files* are both provided, only modules whose
     source files are in the transitive dependent set (computed by the import
@@ -137,12 +137,11 @@ def flush_user_modules(
         if fpath.endswith(".py"):
             source_paths[name] = fpath
 
-    from .._internal.reload_modules import record_module_flush
+    from .._internal.reload_modules import evict_modules, record_module_flush
 
     record_module_flush(project_dir, to_remove)
     _FRESH_SOURCE_FINDER.register(source_paths)
-    for name in to_remove:
-        del sys.modules[name]
+    evict_modules(to_remove)
     importlib.invalidate_caches()
 
     if verbose:
@@ -153,25 +152,38 @@ def flush_user_modules(
 
 
 class _LoadedSources:
-    """Digests of the source bytes each reload executed, keyed by real path."""
+    """Digests of the source bytes reloads ran and last tried, keyed by real path.
+
+    Contents are current only when they match what runs and no later attempt
+    failed, so reverting a failed edit still reloads and clears the failure.
+    """
 
     def __init__(self) -> None:
-        self._digests: dict[str, bytes] = {}
+        self._loaded: dict[str, bytes] = {}
+        self._attempted: dict[str, bytes] = {}
         self._lock = threading.Lock()
 
     @staticmethod
     def _digest(data: bytes) -> bytes:
         return hashlib.blake2b(data, digest_size=16).digest()
 
-    def record(self, path: str, data: bytes) -> None:
+    def record_attempt(self, path: str, data: bytes) -> None:
         with self._lock:
-            self._digests[os.path.realpath(path)] = self._digest(data)
+            self._attempted[os.path.realpath(path)] = self._digest(data)
+
+    def record_loaded(self, path: str) -> None:
+        real_path = os.path.realpath(path)
+        with self._lock:
+            attempted = self._attempted.get(real_path)
+            if attempted is not None:
+                self._loaded[real_path] = attempted
 
     def is_loaded(self, path: str) -> bool:
         real_path = os.path.realpath(path)
         with self._lock:
-            loaded = self._digests.get(real_path)
-        if loaded is None:
+            loaded = self._loaded.get(real_path)
+            attempted = self._attempted.get(real_path)
+        if loaded is None or attempted != loaded:
             return False
         try:
             with open(real_path, "rb") as source:
@@ -200,23 +212,22 @@ class _SourceOnlyLoader(importlib.machinery.SourceFileLoader):
     ) -> None:
         super().__init__(fullname, path)
         self._on_success = on_success
-        self._source: bytes | None = None
 
     def get_code(self, fullname: str) -> CodeType:
         try:
-            self._source = self.get_data(self.path)
+            source = self.get_data(self.path)
         except OSError as error:
             raise ImportError(
                 f"no source for scene module {fullname!r}", name=fullname
             ) from error
+        _LOADED_SOURCES.record_attempt(self.path, source)
         return self.source_to_code(
-            importlib.util.decode_source(self._source), self.path
+            importlib.util.decode_source(source), self.path
         )
 
     def exec_module(self, module: ModuleType) -> None:
         super().exec_module(module)
-        if self._source is not None:
-            _LOADED_SOURCES.record(self.path, self._source)
+        _LOADED_SOURCES.record_loaded(self.path)
         if self._on_success is not None:
             self._on_success()
 

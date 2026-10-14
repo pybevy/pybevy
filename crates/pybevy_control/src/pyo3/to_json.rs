@@ -8,7 +8,7 @@ use pybevy_transform::global_transform::PyGlobalTransform;
 use pyo3::ffi;
 use pyo3::{
     prelude::*,
-    types::{PyCFunction, PyDict, PyFloat, PyInt, PyModule, PyType},
+    types::{PyDict, PyFloat, PyInt, PyModule, PyType},
 };
 
 use super::enum_names::{canonical_variant_name, is_enum_type};
@@ -20,7 +20,7 @@ use crate::{
     },
     pyo3::{
         custom,
-        descriptors::{accepts_own_value, is_getset_descriptor},
+        descriptors::{accepts_own_value, constructor_fields, is_getset_descriptor},
         from_json::enums::enum_variant_names,
     },
 };
@@ -404,7 +404,7 @@ fn extract_bridge_fields_with_context(
     }
 
     if map.is_empty()
-        && let Some(fields) = constructor_accessor_fields(bound, &py_type, context)
+        && let Some(fields) = constructor_accessor_fields(bound, context)
     {
         return fields;
     }
@@ -430,31 +430,14 @@ fn extract_bridge_fields_with_context(
 
 fn constructor_accessor_fields(
     bound: &Bound<'_, PyAny>,
-    py_type: &Bound<'_, PyType>,
     context: &mut SerializationContext,
 ) -> Option<serde_json::Map<String, serde_json::Value>> {
-    let signature = PyModule::import(bound.py(), "inspect")
-        .ok()?
-        .call_method1("signature", (py_type,))
-        .ok()?;
-    let names = signature
-        .getattr("parameters")
-        .ok()?
-        .try_iter()
-        .ok()?
-        .map(|name| name.ok()?.extract::<String>().ok())
-        .collect::<Option<Vec<_>>>()?;
-    if names.is_empty() {
-        return None;
-    }
-    let mut map = serde_json::Map::new();
-    for name in names {
-        let accessor = bound.getattr(name.as_str()).ok()?;
-        accessor.cast::<PyCFunction>().ok()?;
-        let value = accessor.call0().ok()?;
-        map.insert(name, py_value_to_json_inner(&value, context));
-    }
-    Some(map)
+    Some(
+        constructor_fields(bound)?
+            .into_iter()
+            .map(|(name, value)| (name, py_value_to_json_inner(&value, context)))
+            .collect(),
+    )
 }
 
 fn unit_enum_variant_name(bound: &Bound<'_, PyAny>, owner: &Bound<'_, PyType>) -> Option<String> {

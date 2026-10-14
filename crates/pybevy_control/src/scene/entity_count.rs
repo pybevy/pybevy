@@ -13,6 +13,7 @@ use bevy::ecs::{
     entity::Entity, entity_disabling::Disabled, observer::Observer, prelude::Without, query::Allow,
     resource::IsResource, world::World,
 };
+use pybevy_ecs::shared::observer_registry::PythonObserver;
 
 use crate::capture::hold::InternalOverlayUi;
 
@@ -20,6 +21,7 @@ type SceneFilter = (
     Without<IsResource>,
     Without<InternalOverlayUi>,
     Without<Observer>,
+    Without<PythonObserver>,
 );
 
 /// All real scene entities, excluding resource backing and internal overlays.
@@ -128,6 +130,7 @@ mod tests {
         world.register_disabling_component::<Disabled>();
         let scene_entity = world.spawn_empty().id();
         let observer = world.add_observer(|_: On<Add, Disabled>| {}).id();
+        let python_observer = world.spawn(PythonObserver).id();
 
         assert_eq!(scene_entities(&mut world), vec![scene_entity]);
         assert_eq!(
@@ -136,6 +139,7 @@ mod tests {
         );
         assert_eq!(scene_entity_count(&mut world), 1);
         assert!(world.get_entity(observer).is_ok());
+        assert!(world.get_entity(python_observer).is_ok());
     }
 
     #[derive(bevy::prelude::Resource)]

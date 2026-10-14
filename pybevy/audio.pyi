@@ -112,8 +112,8 @@ class PlaybackSettings(Component):
         muted: bool = False,
         spatial: bool = False,
         spatial_scale: SpatialScale | None = None,
-        start_position: timedelta | None = None,
-        duration: timedelta | None = None
+        start_position: timedelta | float | int | None = None,
+        duration: timedelta | float | int | None = None
     ) -> None:
         """Create playback settings with optional customization.
 
@@ -124,8 +124,8 @@ class PlaybackSettings(Component):
             paused: Start paused
             muted: Start muted
             spatial: Enable spatial audio
-            start_position: Position to start playback from
-            duration: Limit playback duration
+            start_position: Non-negative position to start playback from
+            duration: Non-negative limit on the playback duration
             spatial_scale: Custom spatial scale
         """
 
@@ -193,7 +193,7 @@ class PlaybackSettings(Component):
         """
 
     @start_position.setter
-    def start_position(self, value: timedelta | None) -> None: ...
+    def start_position(self, value: timedelta | float | int | None) -> None: ...
 
     @property
     def duration(self) -> timedelta | None:
@@ -205,7 +205,7 @@ class PlaybackSettings(Component):
         """
 
     @duration.setter
-    def duration(self, value: timedelta | None) -> None: ...
+    def duration(self, value: timedelta | float | int | None) -> None: ...
 
     def with_volume(self, volume: Volume) -> PlaybackSettings:
         """Helper to set the volume from start of playback."""
@@ -216,10 +216,12 @@ class PlaybackSettings(Component):
     def with_spatial(self, spatial: bool) -> PlaybackSettings:
         """Helper to enable or disable spatial audio."""
 
-    def with_start_position(self, start_position: timedelta) -> PlaybackSettings:
+    def with_start_position(
+        self, start_position: timedelta | float | int
+    ) -> PlaybackSettings:
         """Helper to use a custom playback start position."""
 
-    def with_duration(self, duration: timedelta) -> PlaybackSettings:
+    def with_duration(self, duration: timedelta | float | int) -> PlaybackSettings:
         """Helper to use a custom playback duration."""
 
     def with_spatial_scale(self, spatial_scale: SpatialScale) -> PlaybackSettings:

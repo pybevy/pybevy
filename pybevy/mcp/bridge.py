@@ -951,6 +951,12 @@ class McpBridge:
                 "filesystem read for guide:// URIs."
             )
         instructions += headless_note
+        if key:
+            instructions = (
+                f"confirmation_key {key!r} does not match the key in these "
+                "instructions; read them and call get_started again.\n\n"
+                + instructions
+            )
         return self._success(
             req_id, {"content": [{"type": "text", "text": instructions}]}
         )
@@ -984,6 +990,10 @@ class McpBridge:
         path = os.path.abspath(display_path)
         if not os.path.exists(path):
             return self._error(req_id, -32602, f"File not found: {display_path}")
+        if not os.path.isfile(path) or not path.endswith(".py"):
+            return self._error(
+                req_id, -32602, f"Not a Python scene file: {display_path}"
+            )
 
         self._stop_subprocess()
         self._scene_path = path
@@ -1058,7 +1068,7 @@ class McpBridge:
         stderr_errors = self._check_stderr_for_errors()
         if stderr_errors:
             status_parts.append(
-                f"\nWARNING: Python errors detected during startup:\n{stderr_errors}"
+                f"\nWARNING: Errors logged during startup:\n{stderr_errors}"
             )
 
         if startup_error:

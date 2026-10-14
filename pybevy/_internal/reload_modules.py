@@ -11,7 +11,7 @@ import weakref
 from collections.abc import Callable, Mapping
 from contextvars import ContextVar
 from functools import lru_cache
-from types import ModuleType
+from types import FunctionType, ModuleType
 from typing import TYPE_CHECKING, Protocol, cast
 
 if TYPE_CHECKING:
@@ -31,6 +31,28 @@ _active: ContextVar[ModuleReloadTransaction | None] = ContextVar(
     "pybevy_module_reload", default=None
 )
 _MISSING = object()
+# Members the interpreter sets on every class object; a reload never copies them.
+_CLASS_IDENTITY_MEMBERS = frozenset(
+    {
+        "__dict__",
+        "__weakref__",
+        "__module__",
+        "__qualname__",
+        "__annotations__",
+        "__annotate__",
+        "__annotate_func__",
+        "__annotations_cache__",
+        "__static_attributes__",
+        "__firstlineno__",
+        "__orig_bases__",
+        "__parameters__",
+        "__type_params__",
+    }
+)
+# Members pybevy decorators install; any other one needs a `__pybevy_` name.
+_PYBEVY_CLASS_MEMBERS = frozenset(
+    {"batch", "__view_column_type__", "__new__", "__setattr__"}
+)
 
 
 def _register_annotation_hint_freezer(
@@ -118,6 +140,7 @@ class ModuleReloadTransaction:
         ] = []
         self._resource_aliases: dict[object, _ResourceAssignmentAliases] = {}
         self._component_annotations: dict[type, dict[str, object]] = {}
+        self._class_bodies: dict[type, dict[str, object]] = {}
         self._import_graph_updates: dict[int, tuple[ImportGraph, ImportGraph]] = {}
         self._token = _active.set(self)
 
@@ -140,6 +163,9 @@ class ModuleReloadTransaction:
         self, component_type: type, annotations: Mapping[str, object]
     ) -> None:
         self._component_annotations[component_type] = dict(annotations)
+
+    def stage_class_body(self, target: type, body: Mapping[str, object]) -> None:
+        self._class_bodies[target] = dict(body)
 
     def record_flush(self, project_dir: str, names: list[str]) -> None:
         root = os.path.realpath(project_dir) + os.sep
@@ -164,6 +190,8 @@ class ModuleReloadTransaction:
                     cast(_ResourceValidation, validation).publish(aliases)
                 for component_type, annotations in self._component_annotations.items():
                     type.__setattr__(component_type, "__annotations__", annotations)
+                for target, body in self._class_bodies.items():
+                    _adopt_class_body(target, body)
                 for graph, candidate in self._import_graph_updates.values():
                     graph.publish(candidate)
             else:
@@ -198,6 +226,7 @@ class ModuleReloadTransaction:
             self._resource_alias_preparers.clear()
             self._resource_aliases.clear()
             self._component_annotations.clear()
+            self._class_bodies.clear()
             self._import_graph_updates.clear()
 
     def stage_import_graph(self, graph: ImportGraph, candidate: ImportGraph) -> None:
@@ -210,6 +239,24 @@ def record_module_flush(project_dir: str, names: list[str]) -> None:
     if transaction is not None:
         _freeze_annotation_hints(names)
         transaction.record_flush(project_dir, names)
+
+
+def evict_modules(names: list[str]) -> None:
+    """Remove modules from ``sys.modules`` and from their parent packages.
+
+    ``from pkg import mod`` reads the parent's attribute before ``sys.modules``,
+    so a binding left on a surviving parent keeps serving the evicted module.
+    """
+    for name in names:
+        module = sys.modules.pop(name, None)
+        parent_name, _, child = name.rpartition(".")
+        parent = sys.modules.get(parent_name)
+        if (
+            module is not None
+            and isinstance(parent, ModuleType)
+            and vars(parent).get(child) is module
+        ):
+            del vars(parent)[child]
 
 
 def stage_resource_assignment_alias(
@@ -248,6 +295,60 @@ def stage_component_annotations(
         type.__setattr__(component_type, "__annotations__", dict(annotations))
         return
     transaction.stage_component_annotations(component_type, annotations)
+
+
+def _is_class_body_member(name: str) -> bool:
+    return (
+        name not in _CLASS_IDENTITY_MEMBERS
+        and name not in _PYBEVY_CLASS_MEMBERS
+        and not name.startswith("__pybevy_")
+    )
+
+
+def _functions_of(value: object) -> list[FunctionType]:
+    if isinstance(value, classmethod | staticmethod):
+        value = value.__func__
+    if isinstance(value, property):
+        return [
+            f
+            for f in (value.fget, value.fset, value.fdel)
+            if isinstance(f, FunctionType)
+        ]
+    return [value] if isinstance(value, FunctionType) else []
+
+
+def _adopt_class_body(target: type, body: Mapping[str, object]) -> None:
+    for name, value in list(vars(target).items()):
+        if name not in body and _is_class_body_member(name) and _functions_of(value):
+            type.__delattr__(target, name)
+    for name, value in body.items():
+        for function in _functions_of(value):
+            # Zero-argument super() reads this cell; point it at the kept class.
+            if "__class__" in function.__code__.co_freevars and function.__closure__:
+                cell = function.__closure__[
+                    function.__code__.co_freevars.index("__class__")
+                ]
+                cell.cell_contents = target
+        type.__setattr__(target, name, value)
+
+
+def stage_class_body(target: type, source: type) -> None:
+    """Give a cached class the reloaded class body once the reload commits.
+
+    The cached class keeps its identity for live instances and Bevy
+    registrations; its methods, properties and dataclass members follow the
+    re-executed source.
+    """
+    body = {
+        name: value
+        for name, value in vars(source).items()
+        if _is_class_body_member(name)
+    }
+    transaction = _active.get()
+    if transaction is None:
+        _adopt_class_body(target, body)
+        return
+    transaction.stage_class_body(target, body)
 
 
 def stage_import_graph_update(graph: ImportGraph, candidate: ImportGraph) -> None:

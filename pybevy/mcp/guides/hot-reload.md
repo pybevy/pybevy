@@ -70,6 +70,10 @@ consequences matter during iteration:
 - Changing annotated `@resource` fields escalates to Full and rebuilds the
   resource. Changing only a default value keeps the current instance on Partial;
   use Full to apply the new initial value.
+- Methods, properties and field defaults of `@component` and `@resource`
+  classes follow the edited source on Partial. The class object and existing
+  instances are kept, so a changed default applies to instances created after
+  the reload.
 - When the field layout is compatible, the preserved resource accepts nested
   class and enum values declared by the successfully loaded generation. Existing
   field objects are not migrated: an old enum value remains an old enum value
@@ -148,7 +152,9 @@ shortcut changes the mode used by later file saves.
 
 The watcher skips a save whose file contents a reload has already executed, so
 saving and then calling `reload` loads the edit once, and re-saving unchanged
-contents does nothing. To retry the same contents, call `reload`.
+contents does nothing. To retry the same contents, call `reload`. After a
+failed reload, saving the contents that are still running reloads them and
+clears the failure.
 
 For CLI sessions, `pybevy dev scene.py --full` and `pybevy watch scene.py --full`
 start the watcher in Full mode; without `--full`, both start in Partial mode.

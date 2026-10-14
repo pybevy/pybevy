@@ -983,4 +983,25 @@ mod tests {
         assert_eq!(schedule.len(), 1);
         assert_eq!(schedule[0], 0);
     }
+
+    #[test]
+    fn timeline_waits_while_entity_isolation_is_active() {
+        let mut world = world_with_gizmos();
+        spawn_structurally_valid_headless_camera(&mut world);
+        let ui = world.spawn((Visibility::Visible, Node::default())).id();
+        let (timeline, _rx) = queued_timeline(true);
+        let mut pending = PendingTimelines::default();
+        pending.active.insert(0, timeline);
+        world.insert_resource(pending);
+        world.insert_resource(EntityCaptureIsolationActive);
+
+        process_pending_timelines(&mut world);
+        assert!(!world.resource::<PendingTimelines>().active[&0].is_started());
+        assert_eq!(*world.get::<Visibility>(ui).unwrap(), Visibility::Visible);
+
+        world.remove_resource::<EntityCaptureIsolationActive>();
+        process_pending_timelines(&mut world);
+        assert!(world.resource::<PendingTimelines>().active[&0].is_started());
+        assert_eq!(*world.get::<Visibility>(ui).unwrap(), Visibility::Hidden);
+    }
 }

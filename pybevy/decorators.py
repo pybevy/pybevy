@@ -325,7 +325,10 @@ def resource(cls: type[RT]) -> type[RT]:
         _resource_layout_reload_required.add(key)
     elif _component_cache_enabled and key in _resource_cache:
         cached = _resource_cache[key]
-        from ._internal.reload_modules import stage_resource_assignment_alias
+        from ._internal.reload_modules import (
+            stage_class_body,
+            stage_resource_assignment_alias,
+        )
 
         validation: _ResourceAssignmentValidation[RT] = (
             cached.__pybevy_resource_assignment_validation__  # type: ignore[attr-defined]
@@ -334,6 +337,7 @@ def resource(cls: type[RT]) -> type[RT]:
             validation,
             lambda previous: validation.prepare(cls, previous),
         )
+        stage_class_body(cached, cls)
         return cached  # type: ignore[return-value]
 
     _guard_missing_constructor(cls, "@resource")
@@ -624,11 +628,15 @@ def _register_component(cls: type[CT], *, storage: str | None = None) -> type[CT
         if verbose:
             print(f"Using CACHED component: {key}")
         cached = _component_cache[key]
-        from ._internal.reload_modules import stage_component_annotations
+        from ._internal.reload_modules import (
+            stage_class_body,
+            stage_component_annotations,
+        )
 
         # The Bevy component class and its instances keep their stable identity,
-        # while field annotations follow only a successfully committed module.
+        # while annotations and the class body follow a successfully committed module.
         stage_component_annotations(cached, _component_hints(cls))
+        stage_class_body(cached, cls)
         return cached  # type: ignore
 
     # Mark the component as properly decorated

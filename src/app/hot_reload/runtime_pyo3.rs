@@ -132,12 +132,7 @@ pub(crate) fn annotate_registration_error(
 
 fn reload_error_from_py(error: &PyErr, message_prefix: &str, is_load_failure: bool) -> ReloadError {
     let message = format!("{message_prefix}{error}");
-    let traceback = Python::attach(|py| {
-        error
-            .traceback(py)
-            .and_then(|traceback| traceback.format().ok())
-    })
-    .or_else(|| {
+    let traceback = Python::attach(|py| formatted_exception(py, error)).or_else(|| {
         message.find("File \"").map(|start| {
             message[start..]
                 .lines()
@@ -151,6 +146,17 @@ fn reload_error_from_py(error: &PyErr, message_prefix: &str, is_load_failure: bo
         traceback,
         is_load_failure,
     }
+}
+
+/// The traceback as Python prints it, ending with the exception line and, for
+/// a `SyntaxError`, the offending source line.
+fn formatted_exception(py: Python<'_>, error: &PyErr) -> Option<String> {
+    let lines = py
+        .import("traceback")
+        .and_then(|traceback| traceback.call_method1("format_exception", (error.value(py),)))
+        .and_then(|lines| lines.extract::<Vec<String>>())
+        .ok()?;
+    Some(lines.concat())
 }
 
 /// Print and release a loader exception without `PyErr::print` retaining it in

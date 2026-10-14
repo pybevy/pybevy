@@ -7,7 +7,7 @@
 
 use std::{fmt, marker::PhantomData, num::NonZero, ops::Range, time::Duration};
 
-use bevy::math::{IVec2, Quat, UVec2, UVec3, Vec2, Vec3, Vec3A, Vec4};
+use bevy::math::{DVec2, IVec2, Quat, UVec2, UVec3, Vec2, Vec3, Vec3A, Vec4};
 #[cfg(feature = "text")]
 use bevy::text::FontSize;
 #[cfg(feature = "ui")]
@@ -258,6 +258,7 @@ macro_rules! vector_domain_values {
 
 vector_domain_values! {
     Vec2 => ["x", "y"];
+    DVec2 => ["x", "y"];
     Vec3 => ["x", "y", "z"];
     Vec3A => ["x", "y", "z"];
     Vec4 => ["x", "y", "z", "w"];

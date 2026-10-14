@@ -529,7 +529,7 @@ pub(crate) fn convert_field_value_typed(
         } else {
             current
         };
-        let context = FieldContext::new(
+        return convert_with_current(
             py,
             component,
             field_name,
@@ -537,10 +537,30 @@ pub(crate) fn convert_field_value_typed(
             declared_type,
             current,
         );
-        for rule in RULES {
-            if let Some(value) = rule(&context)? {
-                return Ok(value);
-            }
+    }
+    json_to_py(py, field_value)
+}
+
+/// Convert a JSON value for a field whose current value is already known.
+pub(crate) fn convert_with_current(
+    py: Python<'_>,
+    component: &Bound<'_, PyAny>,
+    field_name: &str,
+    field_value: &serde_json::Value,
+    declared_type: Option<&str>,
+    current: Bound<'_, PyAny>,
+) -> Result<Py<PyAny>, String> {
+    let context = FieldContext::new(
+        py,
+        component,
+        field_name,
+        field_value,
+        declared_type,
+        current,
+    );
+    for rule in RULES {
+        if let Some(value) = rule(&context)? {
+            return Ok(value);
         }
     }
     json_to_py(py, field_value)

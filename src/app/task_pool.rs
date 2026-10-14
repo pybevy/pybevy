@@ -1,11 +1,24 @@
 use bevy::app::{App, TaskPoolOptions, TaskPoolPlugin, TaskPoolThreadAssignmentPolicy};
-use pybevy_core::{FieldStorage, FromBorrowedStorage, Omittable, PluginBuild, PyPlugin};
+use pybevy_core::{
+    FieldStorage, FromBorrowedStorage, Omittable, PluginBuild, PyPlugin,
+    domain::{F32Input, FieldDomain, check_for},
+};
 use pybevy_macros::{pyfield, pyplugin};
 use pyo3::{PyTraverseError, PyVisit, prelude::*};
 
 use crate::app::app::PyApp;
 
-#[pyfield(domains = [percent => [non_negative], ordered(min_threads, max_threads)])]
+// Bevy spawns at least the minimum and panics when the OS refuses a thread.
+const MIN_THREADS_DOMAIN: &[FieldDomain] = &[FieldDomain::RangeInclusive {
+    lo: 0.0,
+    hi: 1024.0,
+}];
+
+#[pyfield(domains = [
+    min_threads => [range_inclusive(0.0, 1024.0)],
+    percent => [non_negative],
+    ordered(min_threads, max_threads)
+])]
 #[pyclass(
     name = "TaskPoolThreadAssignmentPolicy",
     module = "pybevy.app",
@@ -26,9 +39,10 @@ impl PyTaskPoolThreadAssignmentPolicy {
 impl PyTaskPoolThreadAssignmentPolicy {
     #[new]
     #[pyo3(signature = (*, min_threads, max_threads, percent))]
-    pub fn new(min_threads: usize, max_threads: usize, percent: f32) -> PyResult<Self> {
+    pub fn new(min_threads: usize, max_threads: usize, percent: f64) -> PyResult<Self> {
+        let min_threads = Self::check_min_threads(min_threads)?;
         Self::check_min_threads_order(min_threads, max_threads)?;
-        let percent = Self::check_percent(percent)?;
+        let percent = Self::check_percent(F32Input(percent))?.narrowed();
         Ok(Self::from_owned(TaskPoolThreadAssignmentPolicy {
             min_threads,
             max_threads,
@@ -45,6 +59,7 @@ impl PyTaskPoolThreadAssignmentPolicy {
 
     #[setter]
     pub fn set_min_threads(&mut self, min_threads: usize) -> PyResult<()> {
+        let min_threads = Self::check_min_threads(min_threads)?;
         Self::check_min_threads_order(min_threads, self.as_ref()?.max_threads)?;
         self.as_mut()?.min_threads = min_threads;
         Ok(())
@@ -68,14 +83,17 @@ impl PyTaskPoolThreadAssignmentPolicy {
     }
 
     #[setter]
-    pub fn set_percent(&mut self, percent: f32) -> PyResult<()> {
-        let percent = Self::check_percent(percent)?;
+    pub fn set_percent(&mut self, percent: f64) -> PyResult<()> {
+        let percent = Self::check_percent(F32Input(percent))?.narrowed();
         self.as_mut()?.percent = percent;
         Ok(())
     }
 }
 
-#[pyfield(domains = [ordered(min_total_threads, max_total_threads)])]
+#[pyfield(domains = [
+    min_total_threads => [range_inclusive(0.0, 1024.0)],
+    ordered(min_total_threads, max_total_threads)
+])]
 #[pyclass(name = "TaskPoolOptions", module = "pybevy.app", skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyTaskPoolOptions {
@@ -118,6 +136,7 @@ impl PyTaskPoolOptions {
         async_compute: Omittable<Py<PyTaskPoolThreadAssignmentPolicy>>,
         compute: Omittable<Py<PyTaskPoolThreadAssignmentPolicy>>,
     ) -> PyResult<Self> {
+        let min_total_threads = Self::check_min_total_threads(min_total_threads)?;
         Self::check_min_total_threads_order(min_total_threads, max_total_threads)?;
         let defaults = TaskPoolOptions::default();
         Ok(Self::from_owned(TaskPoolOptions {
@@ -130,8 +149,11 @@ impl PyTaskPoolOptions {
     }
 
     #[staticmethod]
-    pub fn with_num_threads(thread_count: usize) -> Self {
-        Self::from_owned(TaskPoolOptions::with_num_threads(thread_count))
+    pub fn with_num_threads(thread_count: usize) -> PyResult<Self> {
+        let thread_count = check_for::<Self, _>("thread_count", thread_count, MIN_THREADS_DOMAIN)?;
+        Ok(Self::from_owned(TaskPoolOptions::with_num_threads(
+            thread_count,
+        )))
     }
 
     #[getter]
@@ -141,6 +163,7 @@ impl PyTaskPoolOptions {
 
     #[setter]
     pub fn set_min_total_threads(&mut self, min_total_threads: usize) -> PyResult<()> {
+        let min_total_threads = Self::check_min_total_threads(min_total_threads)?;
         Self::check_min_total_threads_order(min_total_threads, self.as_ref()?.max_total_threads)?;
         self.as_mut()?.min_total_threads = min_total_threads;
         Ok(())

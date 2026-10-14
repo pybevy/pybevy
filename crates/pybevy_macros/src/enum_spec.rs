@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
-    Attribute, Expr, Field, Fields, Ident, ItemEnum, Lit, LitStr, Meta, Type,
+    Attribute, Expr, Field, Fields, Ident, ItemEnum, Lit, LitStr, Meta, Path, Type,
     punctuated::Punctuated, token::Comma,
 };
 
@@ -72,6 +72,8 @@ pub(crate) struct FieldSpec<'a> {
     pub(crate) writable: bool,
     /// Return a storage-backed Python wrapper borrowing this component field.
     pub(crate) borrowed: bool,
+    /// Value-domain rule list checked by the generated constructor and setter.
+    pub(crate) domain: Option<Path>,
     pub(crate) declaration_index: usize,
 }
 
@@ -290,6 +292,7 @@ fn parse_fields<'a>(
         let writable = unique_marker(&field.attrs, "py_set")?;
         reject_retired_markers(&field.attrs)?;
         let borrowed = unique_marker(&field.attrs, "py_borrow")?;
+        let domain = unique_domain(&field.attrs)?;
         if borrowed && python_type.is_none() {
             return Err(syn::Error::new_spanned(
                 field,
@@ -321,6 +324,7 @@ fn parse_fields<'a>(
             keyword_only,
             writable,
             borrowed,
+            domain,
             declaration_index,
         });
     }
@@ -358,6 +362,21 @@ fn unique_python_type(attrs: &[Attribute]) -> syn::Result<Option<Type>> {
         _ => Err(syn::Error::new_spanned(
             attrs[1],
             "enum fields may declare #[py_type(...)] only once",
+        )),
+    }
+}
+
+fn unique_domain(attrs: &[Attribute]) -> syn::Result<Option<Path>> {
+    let attrs = attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("py_domain"))
+        .collect::<Vec<_>>();
+    match attrs.as_slice() {
+        [] => Ok(None),
+        [attr] => attr.parse_args::<Path>().map(Some),
+        _ => Err(syn::Error::new_spanned(
+            attrs[1],
+            "enum fields may declare #[py_domain(...)] only once",
         )),
     }
 }

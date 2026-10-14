@@ -21,6 +21,7 @@ use pybevy_core::{
     borrowed_array_anchor::{AssetBorrowAnchor, AssetBorrowAnchorMut},
     computed_owned,
     content_hash::CanonicalContentHasher,
+    domain::{FieldDomain, IntegerInput, POSITIVE, check_for},
     numpy_view_guard::{PendingNumpyViewGuard, PyNumpyViewGuard},
     public_error,
 };
@@ -295,12 +296,17 @@ fn validate_target_allocation(width: u32, height: u32, format: TextureFormat) ->
     Ok(())
 }
 
+// The JPEG encoder clamps quality to this range.
+const QUALITY_DOMAIN: &[FieldDomain] = &[FieldDomain::RangeInclusive { lo: 1.0, hi: 100.0 }];
+
+/// A negative coordinate maps past every image, so Bevy's bounds check reports it.
+fn pixel_coordinate(value: i64) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
 fn validate_render_target_dimensions(width: u32, height: u32) -> PyResult<()> {
-    if width == 0 || height == 0 {
-        return Err(PyValueError::new_err(format!(
-            "render target width and height must be greater than zero (got {width}x{height})"
-        )));
-    }
+    check_for::<PyImage, _>("width", width, POSITIVE)?;
+    check_for::<PyImage, _>("height", height, POSITIVE)?;
     checked_bevy_pixel_count(Extent3d {
         width,
         height,
@@ -1526,72 +1532,103 @@ impl PyImage {
         })
     }
 
-    pub fn get_color_at_1d(&self, x: u32, py: Python<'_>) -> PyResult<Py<PyColor>> {
+    pub fn get_color_at_1d(&self, x: i64, py: Python<'_>) -> PyResult<Py<PyColor>> {
         image_with!(self, |image: &Image| {
             check_pixel_layout(image)?;
-            let color = image.get_color_at_1d(x).map_err(|e| {
+            let color = image.get_color_at_1d(pixel_coordinate(x)).map_err(|e| {
                 pixel_access_error(&e, format!("Failed to get color at ({x}): {e}"))
             })?;
             PyColor::from_color(color, py)
         })
     }
 
-    pub fn get_color_at(&self, x: u32, y: u32, py: Python<'_>) -> PyResult<Py<PyColor>> {
+    pub fn get_color_at(&self, x: i64, y: i64, py: Python<'_>) -> PyResult<Py<PyColor>> {
         image_with!(self, |image: &Image| {
             check_pixel_layout(image)?;
-            let color = image.get_color_at(x, y).map_err(|e| {
-                pixel_access_error(&e, format!("Failed to get color at ({x}, {y}): {e}"))
-            })?;
+            let color = image
+                .get_color_at(pixel_coordinate(x), pixel_coordinate(y))
+                .map_err(|e| {
+                    pixel_access_error(&e, format!("Failed to get color at ({x}, {y}): {e}"))
+                })?;
             PyColor::from_color(color, py)
         })
     }
 
-    pub fn get_color_at_3d(&self, x: u32, y: u32, z: u32, py: Python<'_>) -> PyResult<Py<PyColor>> {
+    pub fn get_color_at_3d(&self, x: i64, y: i64, z: i64, py: Python<'_>) -> PyResult<Py<PyColor>> {
         image_with!(self, |image: &Image| {
             check_pixel_layout(image)?;
-            let color = image.get_color_at_3d(x, y, z).map_err(|e| {
-                pixel_access_error(&e, format!("Failed to get color at ({x}, {y}, {z}): {e}"))
-            })?;
+            let color = image
+                .get_color_at_3d(
+                    pixel_coordinate(x),
+                    pixel_coordinate(y),
+                    pixel_coordinate(z),
+                )
+                .map_err(|e| {
+                    pixel_access_error(&e, format!("Failed to get color at ({x}, {y}, {z}): {e}"))
+                })?;
             PyColor::from_color(color, py)
         })
     }
 
-    pub fn set_color_at_1d(&mut self, x: u32, color: PyColor) -> PyResult<()> {
+    pub fn set_color_at_1d(&mut self, x: i64, color: PyColor) -> PyResult<()> {
         let color = color.try_into()?;
         image_with!(self, check_pixel_layout)?;
-        image_with!(self, |image: &Image| image.get_color_at_1d(x))
-            .map_err(|e| pixel_access_error(&e, format!("Failed to set color at ({x}): {e}")))?;
+        image_with!(self, |image: &Image| image
+            .get_color_at_1d(pixel_coordinate(x)))
+        .map_err(|e| pixel_access_error(&e, format!("Failed to set color at ({x}): {e}")))?;
         image_with_mut!(self, |image: &mut Image| {
-            image.set_color_at_1d(x, color)?;
-            round_integer_pixel(image, UVec3::new(x, 0, 0), color)
+            image.set_color_at_1d(pixel_coordinate(x), color)?;
+            round_integer_pixel(image, UVec3::new(pixel_coordinate(x), 0, 0), color)
         })
         .map_err(|e| pixel_access_error(&e, format!("Failed to set color at ({x}): {e}")))?;
         Ok(())
     }
 
-    pub fn set_color_at(&mut self, x: u32, y: u32, color: PyColor) -> PyResult<()> {
+    pub fn set_color_at(&mut self, x: i64, y: i64, color: PyColor) -> PyResult<()> {
         let color = color.try_into()?;
         image_with!(self, check_pixel_layout)?;
-        image_with!(self, |image: &Image| image.get_color_at(x, y)).map_err(|e| {
-            pixel_access_error(&e, format!("Failed to set color at ({x}, {y}): {e}"))
-        })?;
+        image_with!(self, |image: &Image| image
+            .get_color_at(pixel_coordinate(x), pixel_coordinate(y)))
+        .map_err(|e| pixel_access_error(&e, format!("Failed to set color at ({x}, {y}): {e}")))?;
         image_with_mut!(self, |image: &mut Image| {
-            image.set_color_at(x, y, color)?;
-            round_integer_pixel(image, UVec3::new(x, y, 0), color)
+            image.set_color_at(pixel_coordinate(x), pixel_coordinate(y), color)?;
+            round_integer_pixel(
+                image,
+                UVec3::new(pixel_coordinate(x), pixel_coordinate(y), 0),
+                color,
+            )
         })
         .map_err(|e| pixel_access_error(&e, format!("Failed to set color at ({x}, {y}): {e}")))?;
         Ok(())
     }
 
-    pub fn set_color_at_3d(&mut self, x: u32, y: u32, z: u32, color: PyColor) -> PyResult<()> {
+    pub fn set_color_at_3d(&mut self, x: i64, y: i64, z: i64, color: PyColor) -> PyResult<()> {
         let color = color.try_into()?;
         image_with!(self, check_pixel_layout)?;
-        image_with!(self, |image: &Image| image.get_color_at_3d(x, y, z)).map_err(|e| {
+        image_with!(self, |image: &Image| image.get_color_at_3d(
+            pixel_coordinate(x),
+            pixel_coordinate(y),
+            pixel_coordinate(z)
+        ))
+        .map_err(|e| {
             pixel_access_error(&e, format!("Failed to set color at ({x}, {y}, {z}): {e}"))
         })?;
         image_with_mut!(self, |image: &mut Image| {
-            image.set_color_at_3d(x, y, z, color)?;
-            round_integer_pixel(image, UVec3::new(x, y, z), color)
+            image.set_color_at_3d(
+                pixel_coordinate(x),
+                pixel_coordinate(y),
+                pixel_coordinate(z),
+                color,
+            )?;
+            round_integer_pixel(
+                image,
+                UVec3::new(
+                    pixel_coordinate(x),
+                    pixel_coordinate(y),
+                    pixel_coordinate(z),
+                ),
+                color,
+            )
         })
         .map_err(|e| {
             pixel_access_error(&e, format!("Failed to set color at ({x}, {y}, {z}): {e}"))
@@ -1670,7 +1707,13 @@ impl PyImage {
     }
 
     #[pyo3(signature = (format=PyImageFormat::Png, quality=None))]
-    pub fn save_to_buffer(&self, format: PyImageFormat, quality: Option<u8>) -> PyResult<Vec<u8>> {
+    pub fn save_to_buffer(
+        &self,
+        format: PyImageFormat,
+        quality: Option<IntegerInput<u32>>,
+    ) -> PyResult<Vec<u8>> {
+        let quality = check_for::<Self, _>("quality", quality, QUALITY_DOMAIN)?
+            .map(|quality| quality.stored() as u8);
         image_with!(self, |image: &Image| {
             let dynamic_image = export_dynamic_image(image, format)?;
 
@@ -1697,7 +1740,7 @@ impl PyImage {
         &self,
         path: String,
         format: Option<PyImageFormat>,
-        quality: Option<u8>,
+        quality: Option<IntegerInput<u32>>,
     ) -> PyResult<()> {
         let format = match format {
             Some(format) => format,

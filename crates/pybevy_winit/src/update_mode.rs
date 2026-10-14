@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use bevy::winit::UpdateMode;
+use pybevy_core::domain::{FINITE_NON_NEGATIVE, TimedeltaInput, check_for};
 use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
@@ -27,13 +28,15 @@ pub enum PyUpdateMode {
 #[pymethods]
 impl PyUpdateMode {
     #[staticmethod]
-    pub fn reactive(wait: Duration) -> Self {
-        UpdateMode::reactive(wait).into()
+    pub fn reactive(wait: TimedeltaInput) -> PyResult<Self> {
+        let wait = check_for::<Self, _>("wait", wait, FINITE_NON_NEGATIVE)?.stored();
+        Ok(UpdateMode::reactive(wait).into())
     }
 
     #[staticmethod]
-    pub fn reactive_low_power(wait: Duration) -> Self {
-        UpdateMode::reactive_low_power(wait).into()
+    pub fn reactive_low_power(wait: TimedeltaInput) -> PyResult<Self> {
+        let wait = check_for::<Self, _>("wait", wait, FINITE_NON_NEGATIVE)?.stored();
+        Ok(UpdateMode::reactive_low_power(wait).into())
     }
 
     pub fn __repr__(&self, py: Python<'_>) -> PyResult<String> {

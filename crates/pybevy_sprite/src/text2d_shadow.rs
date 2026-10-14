@@ -1,11 +1,11 @@
-use bevy::sprite::Text2dShadow;
+use bevy::{math::Vec2, sprite::Text2dShadow};
 use pybevy_color::color::PyColor;
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
-#[pycomponent(Text2dShadow, bridge)]
+#[pycomponent(Text2dShadow, bridge, domains = [offset => [finite]])]
 #[pyclass(name = "Text2dShadow", module = "pybevy.sprite", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyText2dShadow {
@@ -22,7 +22,7 @@ impl PyText2dShadow {
     ))]
     pub fn new(offset: PyVec2, color: PyColor) -> PyResult<PyClassInitializer<Self>> {
         let shadow = Text2dShadow {
-            offset: offset.try_into()?,
+            offset: Self::check_offset(Vec2::try_from(offset)?)?,
             color: color.try_into()?,
         };
 
@@ -31,12 +31,17 @@ impl PyText2dShadow {
 
     #[getter]
     pub fn offset(&self) -> PyResult<PyVec2> {
-        Ok(self.storage.borrow_field_as(|s| &s.offset)?)
+        Ok(self.storage.borrow_validated_field_as(
+            |s| &s.offset,
+            |s| &mut s.offset,
+            Self::validate_offset,
+        )?)
     }
 
     #[setter]
     pub fn set_offset(&mut self, offset: PyVec2) -> PyResult<()> {
-        self.as_mut()?.offset = offset.try_into()?;
+        let offset = Self::check_offset(Vec2::try_from(offset)?)?;
+        self.as_mut()?.offset = offset;
         Ok(())
     }
 

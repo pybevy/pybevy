@@ -3,6 +3,7 @@ use std::time::Duration;
 use bevy::audio::PlaybackSettings;
 use pybevy_core::{
     ComponentStorage, PyComponent,
+    domain::DurationInput,
     repr::{float_repr, object_repr},
 };
 use pybevy_macros::pycomponent;
@@ -13,7 +14,11 @@ use crate::{playback_mode::PyPlaybackMode, spatial_scale::PySpatialScale, volume
 #[pycomponent(
     PlaybackSettings,
     bridge,
-    domains = [speed => [positive]],
+    domains = [
+        speed => [positive],
+        start_position => [finite, non_negative],
+        duration => [finite, non_negative],
+    ],
     view_fields = [speed, paused, muted, spatial]
 )]
 #[pyclass(name = "PlaybackSettings", module = "pybevy.audio", extends = PyComponent)]
@@ -45,8 +50,8 @@ impl PyPlaybackSettings {
         muted: bool,
         spatial: bool,
         spatial_scale: Option<PySpatialScale>,
-        start_position: Option<Duration>,
-        duration: Option<Duration>,
+        start_position: Option<DurationInput>,
+        duration: Option<DurationInput>,
     ) -> PyResult<PyClassInitializer<Self>> {
         let settings = PlaybackSettings {
             mode: mode.into(),
@@ -55,8 +60,8 @@ impl PyPlaybackSettings {
             paused,
             muted,
             spatial,
-            start_position,
-            duration,
+            start_position: Self::check_start_position(start_position)?.map(DurationInput::stored),
+            duration: Self::check_duration(duration)?.map(DurationInput::stored),
             spatial_scale: spatial_scale.map(|s| s.inner),
         };
         Ok(Self::from_owned(settings).into())
@@ -159,7 +164,8 @@ impl PyPlaybackSettings {
     }
 
     #[setter]
-    pub fn set_start_position(&mut self, pos: Option<Duration>) -> PyResult<()> {
+    pub fn set_start_position(&mut self, pos: Option<DurationInput>) -> PyResult<()> {
+        let pos = Self::check_start_position(pos)?.map(DurationInput::stored);
         self.as_mut()?.start_position = pos;
         Ok(())
     }
@@ -170,7 +176,8 @@ impl PyPlaybackSettings {
     }
 
     #[setter]
-    pub fn set_duration(&mut self, duration: Option<Duration>) -> PyResult<()> {
+    pub fn set_duration(&mut self, duration: Option<DurationInput>) -> PyResult<()> {
+        let duration = Self::check_duration(duration)?.map(DurationInput::stored);
         self.as_mut()?.duration = duration;
         Ok(())
     }
@@ -205,13 +212,19 @@ impl PyPlaybackSettings {
         Py::new(py, Self::from_owned(settings))
     }
 
-    pub fn with_start_position(&self, py: Python, start_position: Duration) -> PyResult<Py<Self>> {
+    pub fn with_start_position(
+        &self,
+        py: Python,
+        start_position: DurationInput,
+    ) -> PyResult<Py<Self>> {
+        let start_position = Self::check_start_position(start_position)?.stored();
         let mut settings = *self.as_ref()?;
         settings.start_position = Some(start_position);
         Py::new(py, Self::from_owned(settings))
     }
 
-    pub fn with_duration(&self, py: Python, duration: Duration) -> PyResult<Py<Self>> {
+    pub fn with_duration(&self, py: Python, duration: DurationInput) -> PyResult<Py<Self>> {
+        let duration = Self::check_duration(duration)?.stored();
         let mut settings = *self.as_ref()?;
         settings.duration = Some(duration);
         Py::new(py, Self::from_owned(settings))

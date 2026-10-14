@@ -10,7 +10,7 @@ use bevy::{
 use pybevy_camera::render_layers::PyRenderLayers;
 use pybevy_core::{
     ComponentStorage, FieldStorage, FromBorrowedStorage, Omittable, PyResource, ResourceStorage,
-    domain::{FieldDomain, check_for},
+    domain::{FINITE_NON_NEGATIVE, FieldDomain, POSITIVE, check, check_for},
     inventory,
     public_error::{
         DEFAULT_GIZMO_CONFIG_MISSING, UNSUPPORTED_GIZMO_LINE_STYLE, missing_gizmo_config_group,
@@ -99,6 +99,24 @@ pub enum PyGizmoLineJoint {
         value: u32,
     },
     Bevel(),
+}
+
+// The shader divides by gap_scale + line_scale.
+fn check_style(style: PyGizmoLineStyle) -> PyResult<GizmoLineStyle> {
+    if let PyGizmoLineStyle::Dashed {
+        gap_scale,
+        line_scale,
+    } = style
+    {
+        check(
+            "GizmoLineStyle.Dashed",
+            "gap_scale",
+            gap_scale,
+            FINITE_NON_NEGATIVE,
+        )?;
+        check("GizmoLineStyle.Dashed", "line_scale", line_scale, POSITIVE)?;
+    }
+    Ok(style.into())
 }
 
 #[pyenum(GizmoLineStyle, manual, empty_tuple, unit_parens)]
@@ -203,7 +221,7 @@ impl PyGizmoLineStyle {
     }
 }
 
-#[pyfield(GizmoLineConfig)]
+#[pyfield(GizmoLineConfig, domains = [width => [finite, non_negative]])]
 #[pyclass(name = "GizmoLineConfig", module = "pybevy.gizmos", from_py_object)]
 #[derive(Debug)]
 pub struct PyGizmoLineConfig {
@@ -233,9 +251,9 @@ impl PyGizmoLineConfig {
         joints: PyGizmoLineJoint,
     ) -> PyResult<Self> {
         Ok(Self::from_owned(GizmoLineConfig {
-            width,
+            width: Self::check_width(width)?,
             perspective,
-            style: style.into(),
+            style: check_style(style)?,
             joints: check_joints(joints)?,
         }))
     }
@@ -247,6 +265,7 @@ impl PyGizmoLineConfig {
 
     #[setter]
     pub fn set_width(&mut self, width: f32) -> PyResult<()> {
+        let width = Self::check_width(width)?;
         self.as_mut()?.width = width;
         Ok(())
     }
@@ -269,7 +288,8 @@ impl PyGizmoLineConfig {
 
     #[setter]
     pub fn set_style(&mut self, style: PyGizmoLineStyle) -> PyResult<()> {
-        self.as_mut()?.style = style.into();
+        let style = check_style(style)?;
+        self.as_mut()?.style = style;
         Ok(())
     }
 
@@ -285,7 +305,8 @@ impl PyGizmoLineConfig {
     }
 }
 
-#[pyfield(GizmoConfig)]
+// Bevy documents depth_bias as a value between -1 and 1.
+#[pyfield(GizmoConfig, domains = [depth_bias => [range_inclusive(-1.0, 1.0)]])]
 #[pyclass(name = "GizmoConfig", module = "pybevy.gizmos", from_py_object)]
 #[derive(Debug)]
 pub struct PyGizmoConfig {
@@ -315,7 +336,7 @@ impl PyGizmoConfig {
         Ok(Self::from_owned(GizmoConfig {
             enabled,
             line: (&line).try_into()?,
-            depth_bias,
+            depth_bias: Self::check_depth_bias(depth_bias)?,
             render_layers,
         }))
     }
@@ -349,6 +370,7 @@ impl PyGizmoConfig {
 
     #[setter]
     pub fn set_depth_bias(&mut self, depth_bias: f32) -> PyResult<()> {
+        let depth_bias = Self::check_depth_bias(depth_bias)?;
         self.as_mut()?.depth_bias = depth_bias;
         Ok(())
     }

@@ -137,7 +137,12 @@ impl DenseArrayCore {
         if step == 0.0 {
             return Err(ArrayError::ZeroStep);
         }
-        let raw_count = ((stop - start) / step).ceil().max(0.0);
+        let raw_count = ((stop - start) / step).ceil();
+        // f64::max would turn a NaN length into an empty array.
+        if raw_count.is_nan() {
+            return Err(ArrayError::NanRangeLength);
+        }
+        let raw_count = raw_count.max(0.0);
         if !raw_count.is_finite() || raw_count > usize::MAX as f64 {
             return Err(ArrayError::Overflow("arange length"));
         }

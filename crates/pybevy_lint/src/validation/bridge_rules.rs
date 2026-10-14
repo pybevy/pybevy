@@ -118,7 +118,7 @@ const BATCH_ONLY_ELIGIBLE_TYPES: &[&str] = &["PyColor", "Color"];
 /// Check whether a constructor parameter type is eligible for view_fields or batch_only_fields.
 /// Returns `Some("view")`, `Some("batch_only")`, or `None`.
 fn field_eligibility(param_type: Option<&str>) -> Option<&'static str> {
-    let ty = param_type?;
+    let ty = stored_type(param_type?);
     if VIEW_ELIGIBLE_TYPES.contains(&ty) {
         Some("view")
     } else if BATCH_ONLY_ELIGIBLE_TYPES.contains(&ty) {
@@ -126,6 +126,21 @@ fn field_eligibility(param_type: Option<&str>) -> Option<&'static str> {
     } else {
         None
     }
+}
+
+/// The field type behind a checked domain input: `IntegerInput<u32>` stores a
+/// `u32` and `F32Input` an `f32`.
+fn stored_type(param_type: &str) -> &str {
+    let compact = param_type.trim();
+    if compact == "F32Input" {
+        return "f32";
+    }
+    compact
+        .strip_prefix("IntegerInput")
+        .map(str::trim_start)
+        .and_then(|rest| rest.strip_prefix('<'))
+        .and_then(|rest| rest.strip_suffix('>'))
+        .map_or(compact, str::trim)
 }
 
 /// Detect component fields that could benefit from view_fields/batch_only_fields exposure

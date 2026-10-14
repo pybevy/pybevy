@@ -502,7 +502,11 @@ mod tests {
     use pybevy_core::public_error::TURNAROUND_CAMERA3D_REQUIRED;
 
     use super::*;
-    use crate::capture::{headless::HeadlessFrameBuffer, hold::OverlaySuppression};
+    use crate::capture::{
+        headless::HeadlessFrameBuffer,
+        hold::OverlaySuppression,
+        lease::{return_capture_lease, take_capture_lease},
+    };
 
     #[test]
     fn compute_viewpoints_default_6_views_with_top() {
@@ -1169,5 +1173,79 @@ mod tests {
             *world.get::<InheritedVisibility>(ui).unwrap(),
             InheritedVisibility::HIDDEN
         );
+    }
+
+    fn world_with_capture_camera_and_ui() -> (World, Entity) {
+        let mut world = World::new();
+        let target = Assets::<Image>::default().add(make_capture_image());
+        world.spawn((
+            Camera3d::default(),
+            Camera::default(),
+            RenderTarget::Image(target.into()),
+            Transform::default(),
+            GlobalTransform::default(),
+        ));
+        let ui = world.spawn((Node::default(), Visibility::Visible)).id();
+        (world, ui)
+    }
+
+    fn queue_turnaround(
+        world: &mut World,
+    ) -> oneshot::Receiver<Result<serde_json::Value, ControlError>> {
+        let (tx, rx) = oneshot::channel();
+        let mut turnaround = make_turnaround(make_viewpoints(2), Vec::new(), 1, None);
+        turnaround.response_tx = Some(tx);
+        turnaround.hide_ui = true;
+        world.insert_resource(PendingTurnarounds {
+            active: vec![turnaround],
+        });
+        rx
+    }
+
+    fn camera_translation(world: &mut World) -> Vec3 {
+        world
+            .query_filtered::<&Transform, With<Camera>>()
+            .single(world)
+            .unwrap()
+            .translation
+    }
+
+    #[test]
+    fn turnaround_waits_behind_another_capture_and_entity_isolation() {
+        let (mut world, ui) = world_with_capture_camera_and_ui();
+        let _rx = queue_turnaround(&mut world);
+        let started = |world: &World| world.resource::<PendingTurnarounds>().active[0].is_started();
+
+        take_capture_lease(&mut world);
+        process_pending_turnarounds(&mut world);
+        assert!(!started(&world));
+        assert_eq!(*world.get::<Visibility>(ui).unwrap(), Visibility::Visible);
+
+        return_capture_lease(&mut world);
+        world.insert_resource(EntityCaptureIsolationActive);
+        process_pending_turnarounds(&mut world);
+        assert!(!started(&world));
+
+        world.remove_resource::<EntityCaptureIsolationActive>();
+        process_pending_turnarounds(&mut world);
+        assert!(started(&world));
+        assert_eq!(*world.get::<Visibility>(ui).unwrap(), Visibility::Hidden);
+    }
+
+    #[test]
+    fn abandoned_turnaround_releases_its_hold_and_restores_the_camera() {
+        let (mut world, ui) = world_with_capture_camera_and_ui();
+        let rx = queue_turnaround(&mut world);
+        process_pending_turnarounds(&mut world);
+        assert!(capture_in_progress(&world));
+        assert_ne!(camera_translation(&mut world), Vec3::ZERO);
+
+        drop(rx);
+        process_pending_turnarounds(&mut world);
+
+        assert!(world.resource::<PendingTurnarounds>().active.is_empty());
+        assert!(!capture_in_progress(&world));
+        assert_eq!(*world.get::<Visibility>(ui).unwrap(), Visibility::Visible);
+        assert_eq!(camera_translation(&mut world), Vec3::ZERO);
     }
 }

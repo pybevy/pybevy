@@ -3,7 +3,10 @@ use bevy::{
     transform::components::Transform,
 };
 use pybevy_core::{
-    ComponentStorage, PyComponent, public_error::direction_argument_type, repr::ReprLiteral,
+    ComponentStorage, PyComponent,
+    domain::{FINITE, check_for},
+    public_error::direction_argument_type,
+    repr::ReprLiteral,
 };
 use pybevy_macros::pycomponent;
 use pybevy_math::{
@@ -42,6 +45,28 @@ impl PartialEq for PyTransform {
             _ => false,
         }
     }
+}
+
+// Per-entity hot paths: a finite argument skips the generic domain check.
+fn finite_angle(angle: f32) -> PyResult<f32> {
+    if angle.is_finite() {
+        return Ok(angle);
+    }
+    Ok(check_for::<PyTransform, _>("angle", angle, FINITE)?)
+}
+
+fn finite_vec3(field: &'static str, value: Vec3) -> PyResult<Vec3> {
+    if value.is_finite() {
+        return Ok(value);
+    }
+    Ok(check_for::<PyTransform, _>(field, value, FINITE)?)
+}
+
+fn finite_rotation(rotation: Quat) -> PyResult<Quat> {
+    if rotation.is_finite() {
+        return Ok(rotation);
+    }
+    Ok(PyTransform::check_rotation(rotation)?)
 }
 
 // Mirror Bevy: a failed TryInto<Dir3> falls back to the default axis instead of raising.
@@ -186,28 +211,33 @@ impl PyTransform {
     }
 
     pub fn rotate_x(&mut self, angle: f32) -> PyResult<()> {
+        let angle = finite_angle(angle)?;
         self.as_mut()?.rotate_x(angle);
         Ok(())
     }
 
     pub fn rotate_y(&mut self, angle: f32) -> PyResult<()> {
+        let angle = finite_angle(angle)?;
         self.as_mut()?.rotate_y(angle);
         Ok(())
     }
 
     pub fn rotate_z(&mut self, angle: f32) -> PyResult<()> {
+        let angle = finite_angle(angle)?;
         self.as_mut()?.rotate_z(angle);
         Ok(())
     }
 
     pub fn rotate(&mut self, rotation: &PyQuat) -> PyResult<()> {
-        self.as_mut()?.rotate(rotation.try_into()?);
+        let rotation = finite_rotation(Quat::try_from(rotation)?)?;
+        self.as_mut()?.rotate(rotation);
         Ok(())
     }
 
     pub fn look_at(&mut self, target: &PyVec3, up: &Bound<'_, PyAny>) -> PyResult<()> {
+        let target = finite_vec3("target", Vec3::try_from(target)?)?;
         let up = extract_dir3_with_fallback(up, Dir3::Y, "up")?;
-        self.as_mut()?.look_at(target.try_into()?, up);
+        self.as_mut()?.look_at(target, up);
         Ok(())
     }
 
@@ -337,44 +367,54 @@ impl PyTransform {
     }
 
     pub fn rotate_axis(&mut self, axis: &PyDir3, angle: f32) -> PyResult<()> {
-        self.as_mut()?.rotate_axis(axis.get()?, angle);
+        let axis = axis.get()?;
+        let angle = finite_angle(angle)?;
+        self.as_mut()?.rotate_axis(axis, angle);
         Ok(())
     }
 
     pub fn rotate_local(&mut self, rotation: &PyQuat) -> PyResult<()> {
-        self.as_mut()?.rotate_local(rotation.try_into()?);
+        let rotation = finite_rotation(Quat::try_from(rotation)?)?;
+        self.as_mut()?.rotate_local(rotation);
         Ok(())
     }
 
     pub fn rotate_local_axis(&mut self, axis: &PyDir3, angle: f32) -> PyResult<()> {
-        self.as_mut()?.rotate_local_axis(axis.get()?, angle);
+        let axis = axis.get()?;
+        let angle = finite_angle(angle)?;
+        self.as_mut()?.rotate_local_axis(axis, angle);
         Ok(())
     }
 
     pub fn rotate_local_x(&mut self, angle: f32) -> PyResult<()> {
+        let angle = finite_angle(angle)?;
         self.as_mut()?.rotate_local_x(angle);
         Ok(())
     }
 
     pub fn rotate_local_y(&mut self, angle: f32) -> PyResult<()> {
+        let angle = finite_angle(angle)?;
         self.as_mut()?.rotate_local_y(angle);
         Ok(())
     }
 
     pub fn rotate_local_z(&mut self, angle: f32) -> PyResult<()> {
+        let angle = finite_angle(angle)?;
         self.as_mut()?.rotate_local_z(angle);
         Ok(())
     }
 
     pub fn translate_around(&mut self, point: &PyVec3, rotation: &PyQuat) -> PyResult<()> {
-        self.as_mut()?
-            .translate_around(point.try_into()?, rotation.try_into()?);
+        let point = finite_vec3("point", Vec3::try_from(point)?)?;
+        let rotation = finite_rotation(Quat::try_from(rotation)?)?;
+        self.as_mut()?.translate_around(point, rotation);
         Ok(())
     }
 
     pub fn rotate_around(&mut self, point: &PyVec3, rotation: &PyQuat) -> PyResult<()> {
-        self.as_mut()?
-            .rotate_around(point.try_into()?, rotation.try_into()?);
+        let point = finite_vec3("point", Vec3::try_from(point)?)?;
+        let rotation = finite_rotation(Quat::try_from(rotation)?)?;
+        self.as_mut()?.rotate_around(point, rotation);
         Ok(())
     }
 
