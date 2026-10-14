@@ -24,21 +24,19 @@ impl PyBorderColor {
     ))]
     pub fn new(
         color: IntoColorValue,
-        top: Omittable<PyRef<'_, PyColor>>,
-        right: Omittable<PyRef<'_, PyColor>>,
-        bottom: Omittable<PyRef<'_, PyColor>>,
-        left: Omittable<PyRef<'_, PyColor>>,
+        top: Omittable<IntoColorValue>,
+        right: Omittable<IntoColorValue>,
+        bottom: Omittable<IntoColorValue>,
+        left: Omittable<IntoColorValue>,
     ) -> PyResult<PyClassInitializer<Self>> {
         let base = color.0;
-        let side = |side: Omittable<PyRef<'_, PyColor>>| -> PyResult<Color> {
-            side.into_option()
-                .map_or(Ok(base), |color| Color::try_from(&*color))
-        };
+        let side =
+            |side: Omittable<IntoColorValue>| side.into_option().map_or(base, |color| color.0);
         let bc = BorderColor {
-            top: side(top)?,
-            right: side(right)?,
-            bottom: side(bottom)?,
-            left: side(left)?,
+            top: side(top),
+            right: side(right),
+            bottom: side(bottom),
+            left: side(left),
         };
         Ok(Self::from_owned(bc).into())
     }

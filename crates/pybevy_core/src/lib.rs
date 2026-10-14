@@ -63,6 +63,7 @@ pub mod borrowed_array_anchor;
 pub mod bridge_inventory;
 pub mod materializable;
 pub mod message;
+pub mod native_resource_origin;
 pub mod native_system_set;
 pub mod numpy_view_guard;
 pub mod optional_features;

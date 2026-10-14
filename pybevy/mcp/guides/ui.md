@@ -88,7 +88,7 @@ def setup(commands: Commands) -> None:
 ```
 
 Use `BorderColor(top=..., right=..., bottom=..., left=...)` when sides need
-different colors. `border.set_all(color)` mutates all sides and returns that same
+different colors; each side accepts any color space, like the positional color. `border.set_all(color)` mutates all sides and returns that same
 border; a queried border still requires `Mut[BorderColor]` and expires with its system.
 Use `BoxShadow([ShadowStyle(color=color), ...])` for layered shadows.
 `BoxShadow.shadows` is a live list: through `Query[Mut[BoxShadow]]`,

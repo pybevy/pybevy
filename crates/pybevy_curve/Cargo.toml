@@ -1,0 +1,21 @@
+[package]
+name = "pybevy_curve"
+version = "0.3.0-rc.1"
+edition = "2024"
+description = "Curves, cubic splines, easing, and intervals for PyBevy"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/pybevy/pybevy"
+homepage = "https://pybevy.com"
+
+[dependencies]
+pyo3 = { workspace = true, features = ["macros"] }
+pybevy_core = { workspace = true }
+pybevy_macros = { workspace = true }
+pybevy_math = { workspace = true }
+
+[dependencies.bevy]
+workspace = true
+features = ["bevy_curve"]
+
+[lints]
+workspace = true

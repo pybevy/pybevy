@@ -382,7 +382,8 @@ impl PyMat3 {
 
     #[setter]
     pub fn set_x_axis(&mut self, value: &PyVec3) -> PyResult<()> {
-        self.storage.as_mut()?.x_axis = value.try_into()?;
+        let x_axis = value.try_into()?;
+        self.storage.update(|mat| mat.x_axis = x_axis)?;
         Ok(())
     }
 
@@ -395,7 +396,8 @@ impl PyMat3 {
 
     #[setter]
     pub fn set_y_axis(&mut self, value: &PyVec3) -> PyResult<()> {
-        self.storage.as_mut()?.y_axis = value.try_into()?;
+        let y_axis = value.try_into()?;
+        self.storage.update(|mat| mat.y_axis = y_axis)?;
         Ok(())
     }
 
@@ -408,7 +410,8 @@ impl PyMat3 {
 
     #[setter]
     pub fn set_z_axis(&mut self, value: &PyVec3) -> PyResult<()> {
-        self.storage.as_mut()?.z_axis = value.try_into()?;
+        let z_axis = value.try_into()?;
+        self.storage.update(|mat| mat.z_axis = z_axis)?;
         Ok(())
     }
 

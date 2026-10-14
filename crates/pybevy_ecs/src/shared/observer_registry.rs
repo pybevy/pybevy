@@ -3,7 +3,8 @@
 //! This module deliberately does not invoke Python. It reads a [`World`] only
 //! to follow `ChildOf` during entity-event propagation. Backend adapters resolve interpreter type objects and component ids before
 //! registration, snapshot entries while the registry is borrowed, and perform
-//! per-callback World checks only after releasing that borrow.
+//! per-callback World checks only after releasing that borrow. Native
+//! relationships retire entity-scoped identities when their targets despawn.
 
 use std::{
     collections::HashMap,
@@ -52,6 +53,16 @@ impl ObserverTypeKey {
 /// marker to tell their entities apart from scene content.
 #[derive(Clone, Copy, Debug, Default, Component)]
 pub struct PythonObserver;
+
+/// Links an observer identity to the entity that owns its registration.
+#[derive(Clone, Copy, Debug, Component)]
+#[relationship(relationship_target = ScopedObservers)]
+pub struct ObserverTarget(pub Entity);
+
+/// Retires scoped observer identities even when native Bevy code despawns their target.
+#[derive(Debug, Component)]
+#[relationship_target(relationship = ObserverTarget, linked_spawn)]
+pub struct ScopedObservers(Vec<Entity>);
 
 /// The component lifecycle transition observed by an entry.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -523,6 +534,43 @@ mod tests {
     use bevy::ecs::{component::ComponentId, entity::Entity};
 
     use super::*;
+
+    #[test]
+    fn native_despawn_retires_scoped_observers_and_preserves_other_registrations() {
+        let mut world = World::new();
+        let parent = world.spawn_empty().id();
+        let child = world.spawn(ChildOf(parent)).id();
+        let other = world.spawn_empty().id();
+        let global = world.spawn(PythonObserver).id();
+        let parent_observer = world.spawn((PythonObserver, ObserverTarget(parent))).id();
+        let child_observer = world.spawn((PythonObserver, ObserverTarget(child))).id();
+        let other_observer = world.spawn((PythonObserver, ObserverTarget(other))).id();
+
+        world.despawn(parent);
+
+        for entity in [parent, child, parent_observer, child_observer] {
+            assert!(world.get_entity(entity).is_err());
+        }
+        for entity in [other, global, other_observer] {
+            assert!(world.get_entity(entity).is_ok());
+        }
+    }
+
+    #[test]
+    fn native_observer_despawn_detaches_its_target_without_retiring_siblings() {
+        let mut world = World::new();
+        let target = world.spawn_empty().id();
+        let first = world.spawn((PythonObserver, ObserverTarget(target))).id();
+        let second = world.spawn((PythonObserver, ObserverTarget(target))).id();
+
+        world.despawn(first);
+
+        assert!(world.get_entity(target).is_ok());
+        assert!(world.get_entity(second).is_ok());
+        assert_eq!(world.get::<ScopedObservers>(target).unwrap().0, [second]);
+        world.despawn(target);
+        assert!(world.get_entity(second).is_err());
+    }
 
     fn entity(index: u32) -> Entity {
         Entity::from_raw_u32(index).expect("test entity index is nonzero")

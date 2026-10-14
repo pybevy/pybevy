@@ -1,6 +1,6 @@
 use bevy::math::IVec2;
 use pybevy_core::{
-    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
+    FromBorrowedStorage, StorageRef, ValueStorage,
     public_error::{
         CLAMP_MIN_EXCEEDS_MAX, UNSUPPORTED_COMPARISON, integer_vector_division_by_zero,
     },
@@ -78,11 +78,6 @@ impl PyIVec2 {
     #[inline(always)]
     fn as_ref(&self) -> PyResult<StorageRef<'_, IVec2>> {
         Ok(self.storage.as_ref()?)
-    }
-
-    #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<StorageMut<'_, IVec2>> {
-        Ok(self.storage.as_mut()?)
     }
 
     pub const ZERO: PyIVec2 = PyIVec2::ivec2(IVec2::ZERO);
@@ -165,7 +160,7 @@ impl PyIVec2 {
 
     #[setter]
     pub fn set_x(&mut self, value: i32) -> PyResult<()> {
-        self.as_mut()?.x = value;
+        self.storage.update(|vec| vec.x = value)?;
         Ok(())
     }
 
@@ -176,7 +171,7 @@ impl PyIVec2 {
 
     #[setter]
     pub fn set_y(&mut self, value: i32) -> PyResult<()> {
-        self.as_mut()?.y = value;
+        self.storage.update(|vec| vec.y = value)?;
         Ok(())
     }
 

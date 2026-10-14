@@ -6,7 +6,7 @@ use pybevy_core::{
     domain::{IntegerInput, check_for},
     repr::float_repr,
 };
-use pybevy_math::primitives::dimension::dimension;
+use pybevy_shape::primitives::dimension::dimension;
 use pyo3::prelude::*;
 
 use super::circle::PyCircle;

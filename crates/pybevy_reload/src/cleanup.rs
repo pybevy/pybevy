@@ -15,7 +15,7 @@ use crate::{BaseEntitySet, Retained, runtime::ReloadRuntime};
 
 /// Snapshot of which bridged native resources existed before any user code ran.
 ///
-/// Captured once (before the first reload) and persists across reloads.
+/// Captured during reload setup and extended before user startup; persists across reloads.
 /// Used to distinguish Bevy-plugin resources (reset to default) from
 /// user-inserted resources (remove entirely) during Full reload.
 #[derive(Resource, Default)]

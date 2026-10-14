@@ -32,12 +32,12 @@ use pybevy_core::{
     custom_component::CustomComponentRegistry,
     custom_resource::CustomResourceRegistry,
     ensure_asset_access_registry,
-    plugin::plugin_registry,
+    plugin::{ensure_plugin_installation_open, plugin_registry},
     public_error::{
         ADD_SYSTEMS_SCHEDULE_TYPE, NATIVE_PLUGIN_LIFECYCLE, PLUGIN_ADDED_QUERY_TYPE,
         PLUGIN_GROUP_BUILD_RESULT, PLUGIN_GROUP_LIFECYCLE, duplicate_native_plugin,
         duplicate_plugin_identity, duplicate_unkeyed_plugin_identity, plugin_build_error,
-        plugin_key_type, plugin_missing_decorator, plugin_not_a_plugin,
+        plugin_key_type, plugin_missing_decorator, plugin_not_a_plugin, python_plugin_execution,
     },
     publish_last_system_error, register_wrapped_reflect_types_for_new_app,
 };
@@ -55,7 +55,7 @@ use pybevy_render::{
 use pyo3::{
     IntoPyObjectExt, PyTraverseError, PyVisit,
     exceptions::{PyAttributeError, PyRuntimeError, PyTypeError, PyValueError},
-    ffi::{PyObject as FfiPyObject, PyTypeObject},
+    ffi::PyTypeObject,
     panic::PanicException,
     prelude::*,
     types::{PyList, PyModule, PyTuple, PyType},
@@ -291,16 +291,10 @@ fn report_native_system_errors(sinks: Res<ObserverRuntimeSinks>) {
     });
 }
 
-fn plugin_qualified_name(type_ptr: *const PyTypeObject, py: Python) -> Option<String> {
-    // SAFETY: registered type pointers live for the interpreter lifetime.
-    let py_type = unsafe { Bound::from_borrowed_ptr(py, type_ptr as *mut FfiPyObject) };
-    if let Ok(cls) = py_type.cast::<PyType>() {
-        let module = cls.getattr("__module__").ok()?.extract::<String>().ok()?;
-        let qualname = cls.getattr("__qualname__").ok()?.extract::<String>().ok()?;
-        Some(format!("{}.{}", module, qualname))
-    } else {
-        None
-    }
+fn plugin_qualified_name(cls: &Bound<'_, PyType>) -> Option<String> {
+    let module = cls.getattr("__module__").ok()?.extract::<String>().ok()?;
+    let qualname = cls.getattr("__qualname__").ok()?.extract::<String>().ok()?;
+    Some(format!("{module}.{qualname}"))
 }
 
 fn plugin_instance_key(
@@ -415,6 +409,7 @@ pub struct PyApp {
     /// by name for hot-reload resilience when Python classes get new type pointers)
     plugin_registry: RefCell<AddedPythonPlugins>,
     group_callback_depth: Cell<u32>,
+    python_plugin_build_depth: Cell<u32>,
     native_configuration: bool,
 
     /// Shared error state for collecting system errors (parameter + execution)
@@ -506,6 +501,7 @@ impl PyApp {
             creation_thread: current().id(),
             plugin_registry: RefCell::new(AddedPythonPlugins::default()),
             group_callback_depth: Cell::new(0),
+            python_plugin_build_depth: Cell::new(0),
             native_configuration: false,
             system_error,
             system_error_buffer,
@@ -731,6 +727,35 @@ impl PyApp {
         Ok(())
     }
 
+    fn ensure_plugin_execution_allowed(&self, operation: &str) -> PyResult<()> {
+        self.ensure_group_configuration()?;
+        if self.python_plugin_build_depth.get() != 0 {
+            return Err(PyRuntimeError::new_err(python_plugin_execution(operation)));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn ensure_plugins_can_be_added(&self) -> PyResult<()> {
+        self.ensure_active()?;
+        if self.is_reload_temp.get() {
+            return Ok(());
+        }
+        self.with_bevy_app_operation(AppOperation::BridgeBuild, ensure_plugin_installation_open)
+    }
+
+    fn with_python_plugin_build<R>(&self, build: impl FnOnce() -> PyResult<R>) -> PyResult<R> {
+        self.python_plugin_build_depth
+            .set(self.python_plugin_build_depth.get() + 1);
+        struct RestoreDepth<'a>(&'a Cell<u32>);
+        impl Drop for RestoreDepth<'_> {
+            fn drop(&mut self) {
+                self.0.set(self.0.get() - 1);
+            }
+        }
+        let _restore = RestoreDepth(&self.python_plugin_build_depth);
+        build()
+    }
+
     /// Internal method to create a temporary app instance for hot reload
     /// This app will skip plugin additions and only collect system definitions
     ///
@@ -749,6 +774,7 @@ impl PyApp {
             creation_thread: current().id(),
             plugin_registry: RefCell::new(AddedPythonPlugins::default()),
             group_callback_depth: Cell::new(0),
+            python_plugin_build_depth: Cell::new(0),
             native_configuration: false,
             system_error: Arc::new(Mutex::new(Vec::new())),
             system_error_buffer: Arc::new(Mutex::new(None)),
@@ -927,6 +953,7 @@ impl PyApp {
         // Create and initialize the Bevy App immediately
         let mut app = App::new();
         app.add_plugins((RenderCacheCleanupPlugin, PipelineCompilationDrainPlugin));
+        // Reload can configure agents without the App, so capture readiness is always present.
 
         // Add LogPlugin only if it hasn't been initialized yet
         // LogPlugin sets up a global logger/tracing subscriber, which can only be set once per process
@@ -1242,7 +1269,7 @@ impl PyApp {
         py: Python,
         plugins: Bound<'_, PyTuple>,
     ) -> PyResult<Py<PyAny>> {
-        pyself.borrow(py).ensure_active()?;
+        pyself.borrow(py).ensure_plugins_can_be_added()?;
 
         // Get the App as a Bound object to pass to plugin.build()
         let app_bound = pyself.bind(py);
@@ -1267,6 +1294,7 @@ impl PyApp {
 
         // Iterate through all plugins and call their build() method
         for plugin_arg in plugins_to_add.iter() {
+            pyself.borrow(py).ensure_plugins_can_be_added()?;
             // Check if it's a type (class) or an instance
             let (plugin_instance, plugin_type) = if plugin_arg.is_instance_of::<PyType>() {
                 // It's a class, instantiate it
@@ -1344,6 +1372,7 @@ impl PyApp {
             }
 
             if is_plugin_group {
+                pyself.borrow(py).ensure_plugins_can_be_added()?;
                 let builder = build_plugin_group(&plugin_instance)?;
                 if !builder.is_instance_of::<PyPluginGroupBuilder>() {
                     return Err(PyTypeError::new_err(PLUGIN_GROUP_BUILD_RESULT));
@@ -1361,7 +1390,7 @@ impl PyApp {
             let type_ptr = plugin_type.as_ptr() as *const PyTypeObject;
             let type_key = type_ptr as usize;
             let qualified_name =
-                plugin_qualified_name(type_ptr, py).unwrap_or_else(|| short_name.clone());
+                plugin_qualified_name(&plugin_type).unwrap_or_else(|| short_name.clone());
             let instance_key = if is_plugin && !is_plugin_group {
                 plugin_instance_key(&plugin_instance, &qualified_name)?
             } else {
@@ -1432,6 +1461,7 @@ impl PyApp {
             // During reload (is_reload_temp), skip built-in/bridge plugins that need
             // BEVY_APPS access (which temp apps lack), but let custom Python plugins
             // run build() so their systems/resources are captured in pending collections.
+            pyself.borrow(py).ensure_plugins_can_be_added()?;
             let build_result = catch_unwind(AssertUnwindSafe(|| -> PyResult<()> {
                 {
                     // Regular Plugin
@@ -1446,7 +1476,10 @@ impl PyApp {
                                 })?;
                         } else {
                             // Fall back to Python build(app) method for custom plugins
-                            plugin_instance.call_method1("build", (app_bound,))?;
+                            let app = pyself.borrow(py);
+                            app.with_python_plugin_build(|| {
+                                plugin_instance.call_method1("build", (app_bound,))
+                            })?;
                         }
                     } else {
                         // Reload: only run build() for custom Python plugins.
@@ -1471,7 +1504,9 @@ impl PyApp {
                         if !has_bridge && !is_native {
                             // Custom Python plugin: call build() to capture
                             // systems/resources in pending collections
-                            plugin_instance.call_method1("build", (app_bound,))?;
+                            pyself.borrow(py).with_python_plugin_build(|| {
+                                plugin_instance.call_method1("build", (app_bound,))
+                            })?;
                         }
                     }
                 }
@@ -1819,7 +1854,7 @@ impl PyApp {
 
     /// Run the app update loop once
     pub fn update(&self, py: Python) -> PyResult<()> {
-        self.ensure_group_configuration()?;
+        self.ensure_plugin_execution_allowed("update")?;
         self.ensure_active()?;
 
         // Clear any previous errors before running
@@ -1914,7 +1949,7 @@ impl PyApp {
     }
 
     fn run(&self, py: Python) -> PyResult<Py<PyAppExit>> {
-        self.ensure_group_configuration()?;
+        self.ensure_plugin_execution_allowed("run")?;
         // Require @entrypoint decorator unless running in test mode
         if !self.entrypoint_set.get() {
             let is_testing = var("PYBEVY_TESTING").is_ok();
@@ -2028,14 +2063,14 @@ impl PyApp {
     }
 
     /// Check if a plugin of a given type has been added to the app
-    pub fn is_plugin_added(&self, py: Python, plugin_type: Bound<'_, PyType>) -> PyResult<bool> {
+    pub fn is_plugin_added(&self, plugin_type: Bound<'_, PyType>) -> PyResult<bool> {
         self.ensure_active()?;
         if !plugin_type.is_subclass_of::<PyPlugin>()? {
             return Err(PyTypeError::new_err(PLUGIN_ADDED_QUERY_TYPE));
         }
 
         let type_ptr = plugin_type.as_ptr() as *const PyTypeObject;
-        let qualified_name = plugin_qualified_name(type_ptr, py).unwrap_or_else(|| {
+        let qualified_name = plugin_qualified_name(&plugin_type).unwrap_or_else(|| {
             plugin_type
                 .name()
                 .and_then(|name| name.extract::<String>())

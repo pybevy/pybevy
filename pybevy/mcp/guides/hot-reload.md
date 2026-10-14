@@ -40,6 +40,9 @@ helpers from the project root.
 - Built-in (engine-plugin) resources survive as resources but are reset to their
   engine defaults, including Time, GlobalVolume and WireframeConfig. The virtual
   Time clock therefore resets to 0
+- Native resources first created by scene code are removed, including values
+  inserted in the initial entrypoint or Startup. Plugin defaults are captured
+  before user startup; later overrides do not turn them into user-only resources
 - `GizmoConfigStore` is the one resource preserved by value, because its contents
   are plugin-populated and cannot be rebuilt from defaults
 - `AssetServer` is never reset. Assets whose last strong handle was dropped by the
@@ -57,7 +60,7 @@ helpers from the project root.
   components appear new; changes since a skipped system last ran remain visible.
 - Does NOT preserve `Local[T]`: reloading a system constructs its locals
   again, so keep surviving state in a `@resource`
-- Only reloads Update/Last system functions
+- Reloads frame-system functions without re-running startup schedules
 - Startup systems are NOT re-run
 - Use for iterating on game logic without resetting scene state
 - Auto-escalates to Full when Startup systems, observers, the set of resource
@@ -530,6 +533,20 @@ per-reload growth use `delta_mb` in `reload_memory_snapshots`.
 Retired views release their bin-unpacking bind groups and cached pipeline keys during render cleanup;
 allocator and driver caching can still keep reported memory above its startup level.
 
+## Reload Schedule Boundary
+
+Reload maintenance runs after `Update`, before `PostUpdate` and `Last`.
+A pending request therefore leaves `PreUpdate` and `Update` in the previous
+generation on the request frame; after a successful commit, `PostUpdate` and
+`Last` use the new generation in that same frame. Full also runs the replacement
+startup schedules during maintenance. Requests made in `PostUpdate` or `Last`
+wait for the next maintenance pass. This boundary prepares replacement scene
+assets before native `PostUpdate` and render extraction.
+
+Failed loader calls keep the previous generation running. Diagnostics preserve
+exception chains and groups, but saved loader exceptions have their traceback
+frames detached so they cannot retain the temporary reload App.
+
 ## System Rename/Removal Detection
 
 After a successful reload, removed or renamed callable names are logged and
@@ -539,9 +556,10 @@ successful reload, so registering the same callable more than once does
 not repeat its name.
 
 Bevy schedule nodes are retained for one rollback generation, then physically
-compacted after `Last` when the next generation commits. This applies even when
-the new generation registers no systems. Generation guards keep predecessor
-nodes from executing. During that bounded window, `get_system_list()` reports:
+compacted during reload maintenance when the next generation commits. This
+applies even when the new generation registers no systems. Generation guards
+keep predecessor nodes from executing. During that bounded window,
+`get_system_list()` reports:
 
 - `active`: a current-generation node;
 - `rollback_retained`: a predecessor occurrence with a matching current

@@ -3,7 +3,7 @@ use bevy::{
     shape::{Cone, Measured3d},
 };
 use pybevy_core::repr::float_repr;
-use pybevy_math::primitives::dimension::dimension;
+use pybevy_shape::primitives::dimension::dimension;
 use pyo3::prelude::*;
 
 use crate::{

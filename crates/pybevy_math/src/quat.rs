@@ -1,7 +1,7 @@
 use bevy::math::{Affine3A, EulerRot, Mat3, Mat4, Quat, Vec2, Vec3, Vec3A};
 use glam::camera::{lh, rh};
 use pybevy_core::{
-    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
+    FromBorrowedStorage, StorageRef, ValueStorage,
     public_error::{
         QUAT_NOT_NORMALIZED, ROTATION_ARC_NOT_NORMALIZED, ROTATION_AXES_NOT_NORMALIZED,
         UNSUPPORTED_COMPARISON,
@@ -121,11 +121,6 @@ impl PyQuat {
     }
 
     #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Quat>> {
-        Ok(self.storage.as_mut()?)
-    }
-
-    #[inline(always)]
     pub fn try_get(&self) -> PyResult<Quat> {
         Ok(self.storage.get()?)
     }
@@ -228,7 +223,7 @@ impl PyQuat {
 
     #[setter]
     pub fn set_x(&mut self, x: f32) -> PyResult<()> {
-        self.as_mut()?.x = x;
+        self.storage.update(|quat| quat.x = x)?;
         Ok(())
     }
 
@@ -239,7 +234,7 @@ impl PyQuat {
 
     #[setter]
     pub fn set_y(&mut self, y: f32) -> PyResult<()> {
-        self.as_mut()?.y = y;
+        self.storage.update(|quat| quat.y = y)?;
         Ok(())
     }
 
@@ -250,7 +245,7 @@ impl PyQuat {
 
     #[setter]
     pub fn set_z(&mut self, z: f32) -> PyResult<()> {
-        self.as_mut()?.z = z;
+        self.storage.update(|quat| quat.z = z)?;
         Ok(())
     }
 
@@ -261,7 +256,7 @@ impl PyQuat {
 
     #[setter]
     pub fn set_w(&mut self, w: f32) -> PyResult<()> {
-        self.as_mut()?.w = w;
+        self.storage.update(|quat| quat.w = w)?;
         Ok(())
     }
 

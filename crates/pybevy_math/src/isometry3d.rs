@@ -103,7 +103,8 @@ impl PyIsometry3d {
 
     #[setter]
     pub fn set_translation(&mut self, value: PyVec3A) -> PyResult<()> {
-        self.storage.as_mut()?.translation = value.try_into()?;
+        let translation = value.try_into()?;
+        self.storage.update(|iso| iso.translation = translation)?;
         Ok(())
     }
 
@@ -114,7 +115,8 @@ impl PyIsometry3d {
 
     #[setter]
     pub fn set_rotation(&mut self, value: PyQuat) -> PyResult<()> {
-        self.storage.as_mut()?.rotation = value.try_into()?;
+        let rotation = value.try_into()?;
+        self.storage.update(|iso| iso.rotation = rotation)?;
         Ok(())
     }
 

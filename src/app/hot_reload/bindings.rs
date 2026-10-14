@@ -11,6 +11,7 @@ use bevy::{
         query::With,
         schedule::{IntoScheduleConfigs, ScheduleLabel, Schedules},
         system::{Query, Res, ResMut},
+        world::World,
     },
     time::{Real, Time},
     window::{PrimaryWindow, Window},
@@ -21,13 +22,15 @@ use pybevy_reload::{
     BaseEntitySet, DefsFingerprint, EscalationTracker, FrameTimeWindow, HotReloadGeneration,
     HotReloadStats, InterpreterDiagnostics, MemoryOverlayVisible, MemoryProfile, PluginTracker,
     ReloadMode, ReloadStartupScheduleOrder, StartPaused, SystemMonitor, SystemProfiler,
-    cleanup::extend_base_entity_set, is_verbose, parse_resolution, render_hot_reload_overlay,
-    spawn_hot_reload_overlay_system, update_system_stats,
+    cleanup::{NativeResourceSnapshot, extend_base_entity_set},
+    is_verbose, parse_resolution, render_hot_reload_overlay, spawn_hot_reload_overlay_system,
+    update_system_stats,
 };
 use pyo3::{prelude::*, types::PyType};
 
 use super::{
     registry::DynamicSystemRegistry,
+    runtime_pyo3::snapshot_native_resources,
     state::{HotReloadResource, HotReloadState},
     systems::{
         PendingScheduleCompaction, check_hot_reload_system, compact_retired_generation_systems,
@@ -57,6 +60,14 @@ fn refresh_interpreter_diagnostics(
         .or_else(|| time.as_ref().map(|time| time.elapsed_secs_f64()))
         .unwrap_or(0.0);
     diagnostics.refresh_gc_objects_if_due(now_secs, get_python_gc_objects);
+}
+
+fn capture_native_resource_baseline(world: &mut World) {
+    let initial = snapshot_native_resources(world);
+    world
+        .get_resource_or_insert_with(NativeResourceSnapshot::default)
+        .initial
+        .extend(initial);
 }
 
 impl PyAppReloadState {
@@ -196,6 +207,16 @@ pub fn add_hot_reload_system(
     if verbose {
         eprintln!("   → Initializing hot reload system...");
     }
+
+    capture_native_resource_baseline(app.world_mut());
+    app.init_schedule(CaptureNativeResourceBaseline);
+    app.world_mut()
+        .resource_mut::<MainScheduleOrder>()
+        .insert_startup_before(PreStartup, CaptureNativeResourceBaseline);
+    app.add_systems(
+        CaptureNativeResourceBaseline,
+        capture_native_resource_baseline,
+    );
 
     // Insert the reload resource
     app.insert_resource(HotReloadResource::new(state.clone(), error_state));
@@ -475,6 +496,9 @@ pub fn add_hot_reload_system(
 /// created at event-loop start into the `BaseEntitySet` baseline.
 #[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
 struct ExtendBaseEntitySet;
+
+#[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
+struct CaptureNativeResourceBaseline;
 
 #[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
 struct HotReloadMaintenance;

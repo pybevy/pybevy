@@ -14,7 +14,6 @@ pybevy_macros = { workspace = true }
 
 [dependencies.bevy]
 workspace = true
-features = ["bevy_curve"]
 
 [dependencies.glam]
 version = "0.33.2"

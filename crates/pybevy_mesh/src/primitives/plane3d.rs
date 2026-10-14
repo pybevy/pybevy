@@ -3,7 +3,8 @@ use bevy::{
     mesh::{MeshBuilder, PlaneMeshBuilder},
 };
 use pybevy_core::PyAsset;
-use pybevy_math::{dir3::PyDir3, primitives::dimension::dimension, vec2::PyVec2};
+use pybevy_math::{dir3::PyDir3, vec2::PyVec2};
+use pybevy_shape::primitives::dimension::dimension;
 use pyo3::prelude::*;
 
 use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder, primitives::validation::vertex_budget};

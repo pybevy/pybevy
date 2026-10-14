@@ -4,7 +4,12 @@ use std::{
 };
 
 use bevy::{
-    ecs::{component::ComponentId, entity::Entity, world::World},
+    ecs::{
+        component::{Component, ComponentId},
+        entity::Entity,
+        lifecycle::HookContext,
+        world::{DeferredWorld, World},
+    },
     prelude::Resource,
 };
 use pybevy_core::{
@@ -14,8 +19,8 @@ use pybevy_core::{
 use pybevy_ecs::shared::{
     observer_registry::{
         LifecycleKind, ObserverEntry as CoreObserverEntry, ObserverEventKey, ObserverFilter,
-        ObserverOrigin, ObserverPropagationState, ObserverRegistryCore, ObserverTypeKey,
-        PythonObserver, ResolvedObserverComponent,
+        ObserverOrigin, ObserverPropagationState, ObserverRegistryCore, ObserverTarget,
+        ObserverTypeKey, PythonObserver, ResolvedObserverComponent,
     },
     system_runtime::{ErrorPolicy, execute_observer},
 };
@@ -30,6 +35,7 @@ use pyo3::{
 use super::{
     PyEntity,
     component_type::{ComponentRegistry, PyComponentType},
+    deferred_drop::defer_observer_drop,
     observer::{EventType, PyObserverPropagation, PyOn, event_auto_propagate},
     resource_type::ResourceRegistry,
     system::{SystemFunction, SystemGcOwners, SystemParamType},
@@ -55,6 +61,20 @@ impl fmt::Debug for ObserverPayload {
 }
 
 pub type ObserverEntry = CoreObserverEntry<ObserverPayload>;
+
+/// Keeps native identity retirement separate from Python handle destruction.
+#[derive(Component)]
+#[component(on_remove = retire_observer)]
+struct ObserverLifetime;
+
+fn retire_observer(mut world: DeferredWorld, context: HookContext) {
+    let removed = world
+        .get_resource_mut::<ObserverRegistry>()
+        .and_then(|mut registry| registry.core.remove(context.entity));
+    if let Some(entry) = removed {
+        defer_observer_drop(entry);
+    }
+}
 
 /// A fully validated observer without a registry entity.
 ///
@@ -186,7 +206,8 @@ impl ObserverRegistry {
             world.insert_resource(ObserverRegistry::default());
         }
 
-        let observer_entity = world.spawn(PythonObserver).id();
+        let observer_entity = world.spawn((PythonObserver, ObserverLifetime)).id();
+        let target = prepared.target;
         let entry = ObserverEntry {
             observer_entity,
             prepared: prepared.prepared,
@@ -198,6 +219,12 @@ impl ObserverRegistry {
 
         let insert_result = world.resource_mut::<ObserverRegistry>().core.insert(entry);
         insert_result.expect("a freshly spawned observer entity is unique");
+
+        if let Some(target) = target {
+            world
+                .entity_mut(observer_entity)
+                .insert(ObserverTarget(target));
+        }
 
         observer_entity
     }
@@ -215,7 +242,7 @@ impl ObserverRegistry {
             .get_resource_mut::<ObserverRegistry>()
             .map(|mut registry| registry.clear_all())
             .unwrap_or_default();
-        let (retired_entries, runtime_entries): (Vec<_>, Vec<_>) = old_entries
+        let (mut retired_entries, runtime_entries): (Vec<_>, Vec<_>) = old_entries
             .into_iter()
             .partition(|entry| clear_runtime || entry.origin == ObserverOrigin::AppDefinition);
 
@@ -233,6 +260,10 @@ impl ObserverRegistry {
             world.insert_resource(ObserverRegistry::default());
         }
         for entry in runtime_entries {
+            if world.get_entity(entry.observer_entity).is_err() {
+                retired_entries.push(entry);
+                continue;
+            }
             world
                 .resource_mut::<ObserverRegistry>()
                 .core

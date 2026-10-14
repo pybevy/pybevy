@@ -365,8 +365,9 @@ class Image(Asset):
             New Image configured as a render target, filled with zeroes
 
         Raises:
-            ValueError: If width or height is zero, width * height exceeds
-                2**32 - 1, or the format cannot be used for a render target.
+            ValueError: If width or height is not a positive 32-bit integer,
+                width * height exceeds 2**32 - 1, or the format cannot be used
+                for a render target.
 
         Example:
             >>> # Create a render target for post-processing
@@ -397,8 +398,8 @@ class Image(Asset):
             New Image configured as a render target, filled with zeroes
 
         Raises:
-            ValueError: If width or height is zero, or width * height exceeds
-                2**32 - 1.
+            ValueError: If width or height is not a positive 32-bit integer,
+                or width * height exceeds 2**32 - 1.
 
         Example:
             >>> # Create render target for headless rendering
@@ -1316,7 +1317,7 @@ class ImageSamplerDescriptor:
             lod_min_clamp: Minimum level-of-detail
             lod_max_clamp: Maximum level-of-detail
             compare: Comparison function for depth testing
-            anisotropy_clamp: Maximum anisotropic filtering level, at least 1
+            anisotropy_clamp: Maximum anisotropic filtering level, 1 to 65535
             border_color: Border color for ClampToBorder mode
             label: Debug label
         """
@@ -1394,7 +1395,10 @@ class ImageSamplerDescriptor:
 
     @property
     def anisotropy_clamp(self) -> int:
-        """Maximum anisotropic filtering level."""
+        """Maximum anisotropic filtering level.
+
+        Accepts 1 to 65535; other values raise `ValueError`.
+        """
 
     @anisotropy_clamp.setter
     def anisotropy_clamp(self, value: int) -> None: ...

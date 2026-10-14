@@ -1,6 +1,6 @@
 use bevy::math::{Dir2, StableInterpolate, Vec2};
 use pybevy_core::{
-    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
+    FromBorrowedStorage, StorageRef, ValueStorage,
     domain::{FINITE, FINITE_NON_NEGATIVE, NON_NEGATIVE, check_for},
     repr::float_repr,
 };
@@ -86,10 +86,6 @@ impl PyDir2 {
 
     fn as_ref(&self) -> PyResult<StorageRef<'_, Dir2>> {
         Ok(self.storage.as_ref()?)
-    }
-
-    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Dir2>> {
-        Ok(self.storage.as_mut()?)
     }
 }
 
@@ -266,7 +262,8 @@ impl PyDir2 {
     pub fn interpolate_stable_assign(&mut self, other: &PyDir2, t: f32) -> PyResult<()> {
         let t = check_for::<Self, _>("t", t, FINITE)?;
         let other = other.get()?;
-        self.as_mut()?.interpolate_stable_assign(&other, t);
+        self.storage
+            .update(|dir| dir.interpolate_stable_assign(&other, t))?;
         Ok(())
     }
 
@@ -278,7 +275,8 @@ impl PyDir2 {
         if delta == 0.0 {
             return Ok(());
         }
-        self.as_mut()?.smooth_nudge(&target, decay_rate, delta);
+        self.storage
+            .update(|dir| dir.smooth_nudge(&target, decay_rate, delta))?;
         Ok(())
     }
 

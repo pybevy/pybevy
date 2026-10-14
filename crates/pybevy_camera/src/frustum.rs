@@ -1,9 +1,9 @@
 use bevy::{camera::primitives::Frustum, shape::ViewFrustum};
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
-use pybevy_math::{
-    affine3a::PyAffine3A,
-    primitives::{half_space::PyHalfSpace, half_spaces::PyHalfSpaces, view_frustum::PyViewFrustum},
+use pybevy_math::affine3a::PyAffine3A;
+use pybevy_shape::primitives::{
+    half_space::PyHalfSpace, half_spaces::PyHalfSpaces, view_frustum::PyViewFrustum,
 };
 use pyo3::{exceptions::PyValueError, prelude::*};
 

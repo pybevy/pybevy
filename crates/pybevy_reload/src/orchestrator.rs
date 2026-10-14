@@ -107,7 +107,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
         profiler.clear();
     }
 
-    // Capture native resources before the first reload clears them, to record defaults vs inserted.
+    // Hosts normally seed this before startup; runtime origin metadata supports the fallback.
     if !world.contains_resource::<NativeResourceSnapshot>() {
         let initial = runtime.snapshot_native_resources(world);
         world.insert_resource(NativeResourceSnapshot { initial });

@@ -6,14 +6,12 @@ use bevy::{
 };
 use pybevy_core::repr::float_repr;
 use pybevy_macros::pyconstructor;
-use pybevy_math::{
-    primitives::{
-        PyArc2d,
-        arc2d::{
-            checked_arc, checked_arc_from_degrees, checked_arc_from_radians, checked_arc_from_turns,
-        },
+use pybevy_math::vec2::PyVec2;
+use pybevy_shape::primitives::{
+    PyArc2d,
+    arc2d::{
+        checked_arc, checked_arc_from_degrees, checked_arc_from_radians, checked_arc_from_turns,
     },
-    vec2::PyVec2,
 };
 use pyo3::prelude::*;
 

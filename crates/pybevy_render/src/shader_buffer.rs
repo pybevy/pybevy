@@ -291,7 +291,7 @@ fn map_array_read_error(error: ArrayError) -> PyErr {
 
 /// wgpu requires buffer sizes in multiples of 4; Bevy 0.20 panics on upload otherwise.
 fn check_size(size: u64) -> PyResult<()> {
-    if size % 4 != 0 {
+    if !size.is_multiple_of(4) {
         return Err(PyValueError::new_err(shader_buffer_size_unaligned(size)));
     }
     Ok(())

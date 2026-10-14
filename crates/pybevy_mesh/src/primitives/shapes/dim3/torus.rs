@@ -4,7 +4,7 @@ use bevy::{
 };
 use pybevy_core::repr::float_repr;
 use pybevy_macros::pyconstructor;
-use pybevy_math::{primitives::dimension::dimension, torus_kind::PyTorusKind};
+use pybevy_shape::{primitives::dimension::dimension, torus_kind::PyTorusKind};
 use pyo3::prelude::*;
 
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyTorusMeshBuilder};

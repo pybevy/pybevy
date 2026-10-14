@@ -6,7 +6,15 @@ use std::{
     sync::Mutex,
 };
 
-use bevy::app::{App, Plugin, PluginGroupBuilder};
+use bevy::app::{App, Plugin, PluginGroupBuilder, PluginsState};
+
+/// Match Bevy's installation phase for native and interpreter-owned plugins.
+pub fn plugins_can_be_added(app: &mut App) -> bool {
+    !matches!(
+        app.plugins_state(),
+        PluginsState::Finished | PluginsState::Cleaned
+    )
+}
 
 /// Public `DefaultPlugins` members that PyBevy can configure or order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -439,6 +447,20 @@ mod tests {
     use std::collections::HashSet;
 
     use super::*;
+
+    #[test]
+    fn installation_closes_after_finish_or_cleanup() {
+        let mut finished = App::new();
+        assert!(plugins_can_be_added(&mut finished));
+        finished.finish();
+        assert!(!plugins_can_be_added(&mut finished));
+        finished.cleanup();
+        assert!(!plugins_can_be_added(&mut finished));
+
+        let mut cleaned = App::new();
+        cleaned.cleanup();
+        assert!(!plugins_can_be_added(&mut cleaned));
+    }
 
     #[test]
     fn retains_target_identity_and_plugin_handle() {

@@ -13,7 +13,10 @@ use bevy::ecs::{
 };
 
 use pybevy_core::{
-    PluginIdentity, ReloadRequestMode, ReloadResult, public_error::reload_schedule_rejected,
+    CustomComponentInfo, CustomResourceInfo, PluginIdentity, ReloadRequestMode, ReloadResult,
+    custom_component::CustomComponentRegistry, custom_resource::CustomResourceRegistry,
+    native_resource_origin::native_resource_baseline, public_error::reload_schedule_rejected,
+    registry::global_registry::all_resource_bridges,
 };
 use pybevy_ecs::shared::{
     condition_reload::{ConditionHandle, ConditionReplacement},
@@ -24,7 +27,12 @@ use pybevy_reload::{
     DefsFingerprint, KEEP_ALIVE_GENERATIONS, PendingSystemError, ReloadError, ReloadMode,
     ReloadRuntime, SystemStage, is_verbose, lock_or_recover,
 };
-use pyo3::{exceptions::PyRuntimeError, prelude::*, types::PyType};
+use pyo3::{
+    PyTypeInfo,
+    exceptions::{PyBaseException, PyBaseExceptionGroup, PyRuntimeError},
+    prelude::*,
+    types::{PyTuple, PyType},
+};
 
 use super::{
     cleanup, fingerprint::InitialDefsFingerprint, registry::DynamicSystemRegistry,
@@ -104,6 +112,15 @@ pub(crate) fn collect_system_names(system: &Bound<'_, PyAny>, names: &mut HashSe
     }
 }
 
+pub(crate) fn snapshot_native_resources(world: &World) -> HashSet<TypeId> {
+    let present = all_resource_bridges()
+        .into_iter()
+        .filter(|bridge| bridge.contains_in_world(world))
+        .map(|bridge| bridge.bevy_type_id())
+        .collect();
+    native_resource_baseline(world, present)
+}
+
 fn system_source_location(system: &Bound<'_, PyAny>) -> Option<String> {
     if let Ok(config) = system.extract::<PySystemConfig>() {
         return system_source_location(config.system.bind(system.py()));
@@ -170,24 +187,52 @@ fn formatted_exception(py: Python<'_>, error: &PyErr) -> Option<String> {
     Some(lines.concat())
 }
 
+fn detach_exception_tracebacks(py: Python<'_>, error: &PyErr) -> PyResult<()> {
+    let base = PyBaseException::type_object(py);
+    let cause = base.getattr("__cause__")?;
+    let context = base.getattr("__context__")?;
+    let traceback = base.getattr("__traceback__")?;
+    let members = PyBaseExceptionGroup::type_object(py).getattr("exceptions")?;
+    let mut pending = vec![error.value(py).clone().into_any()];
+    let mut seen = HashSet::new();
+    let mut exceptions = Vec::new();
+    while let Some(exception) = pending.pop() {
+        if !seen.insert(exception.as_ptr() as usize) {
+            continue;
+        }
+        for descriptor in [&cause, &context] {
+            let next = descriptor.call_method1("__get__", (&exception,))?;
+            if !next.is_none() {
+                pending.push(next);
+            }
+        }
+        if exception.is_instance_of::<PyBaseExceptionGroup>() {
+            let children = members.call_method1("__get__", (&exception,))?;
+            pending.extend(children.cast::<PyTuple>()?.iter());
+        }
+        exceptions.push(exception);
+    }
+    for exception in &exceptions {
+        traceback.call_method1("__set__", (exception, py.None()))?;
+    }
+    Ok(())
+}
+
 /// Print and release a loader exception without `PyErr::print` retaining it in
 /// Python's last-exception state. Loader tracebacks can own the temporary,
 /// `unsendable` PyApp through frame locals, so their final decref must happen
 /// while attached on the thread that created that app.
 fn print_and_drop_loader_error(error: PyErr) {
     Python::attach(move |py| {
-        if let Some(traceback) = error
-            .traceback(py)
-            .and_then(|traceback| traceback.format().ok())
-        {
-            eprintln!("{}\n{error}", traceback.trim_end());
+        if let Some(traceback) = formatted_exception(py, &error) {
+            eprintln!("{}", traceback.trim_end());
         } else {
             eprintln!("{error}");
         }
-        // The exception may also be retained by module globals. Detach its
-        // frames so those external references cannot keep the temporary,
-        // thread-bound PyApp alive past this owning-thread cleanup.
-        error.set_traceback(py, None);
+        // Saved exception graphs must not retain the thread-bound temporary App.
+        if let Err(cleanup_error) = detach_exception_tracebacks(py, &error) {
+            eprintln!("Failed to release loader traceback frames: {cleanup_error}");
+        }
         drop(error);
     });
 }
@@ -742,9 +787,9 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
         defs.entrypoint_changed
     }
 
-    fn system_names(&self, defs: &PendingDefinitions) -> std::collections::HashSet<String> {
+    fn system_names(&self, defs: &PendingDefinitions) -> HashSet<String> {
         Python::attach(|py| {
-            let mut names = std::collections::HashSet::new();
+            let mut names = HashSet::new();
             for (_stage, systems) in &defs.systems {
                 for sys in systems {
                     collect_system_names(sys.bind(py), &mut names);
@@ -1040,7 +1085,7 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
     ) -> Result<(), ReloadError> {
         Python::attach(|py| -> PyResult<()> {
             let resource_types = world
-                .get_resource::<pybevy_core::CustomResourceInfo>()
+                .get_resource::<CustomResourceInfo>()
                 .map(|info| {
                     info.iter()
                         .filter_map(|(_, entry)| {
@@ -1221,14 +1266,10 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
     fn prune_messages(&mut self, world: &mut World, keep_after_generation: u32) {
         let keep_after = keep_after_generation.saturating_sub(KEEP_ALIVE_GENERATIONS);
         prune_python_message_aliases(world, keep_after);
-        if let Some(mut registry) =
-            world.get_resource_mut::<pybevy_core::custom_component::CustomComponentRegistry>()
-        {
+        if let Some(mut registry) = world.get_resource_mut::<CustomComponentRegistry>() {
             registry.prune_aliases(keep_after);
         }
-        if let Some(mut registry) =
-            world.get_resource_mut::<pybevy_core::custom_resource::CustomResourceRegistry>()
-        {
+        if let Some(mut registry) = world.get_resource_mut::<CustomResourceRegistry>() {
             registry.prune_aliases(keep_after);
         }
     }
@@ -1251,7 +1292,7 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
         // Live classes repopulate the table when Startup or registration paths
         // call register_custom_component; Partial reload never clears it.
         let retired_info = world
-            .get_resource_mut::<pybevy_core::CustomComponentInfo>()
+            .get_resource_mut::<CustomComponentInfo>()
             .map(|mut info| std::mem::take(&mut *info));
         // Releasing retained Python classes can run finalization, so do it
         // after the Bevy resource borrow has ended and while attached.
@@ -1259,17 +1300,11 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
     }
 
     fn snapshot_native_resources(&self, world: &World) -> HashSet<TypeId> {
-        let mut initial = HashSet::new();
-        for bridge in pybevy_core::registry::global_registry::all_resource_bridges() {
-            if bridge.contains_in_world(world) {
-                initial.insert(bridge.bevy_type_id());
-            }
-        }
-        initial
+        snapshot_native_resources(world)
     }
 
     fn clear_native_resources(&self, world: &mut World, initial: &HashSet<TypeId>, verbose: bool) {
-        for bridge in pybevy_core::registry::global_registry::all_resource_bridges() {
+        for bridge in all_resource_bridges() {
             let type_id = bridge.bevy_type_id();
             if bridge.preserve_on_reload() {
                 if verbose && bridge.contains_in_world(world) {
@@ -1293,7 +1328,7 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
     fn detect_system_delta(
         &mut self,
         world: &mut World,
-        new_systems: std::collections::HashSet<String>,
+        new_systems: HashSet<String>,
     ) -> Vec<String> {
         if let Some(mut registry) = world.get_resource_mut::<DynamicSystemRegistry>() {
             registry.detect_system_delta(new_systems)

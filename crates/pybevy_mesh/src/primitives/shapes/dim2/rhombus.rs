@@ -5,10 +5,8 @@ use bevy::{
 };
 use pybevy_core::{FromBorrowedStorage, ValueStorage, repr::ReprLiteral};
 use pybevy_macros::{pyconstructor, pyvalue};
-use pybevy_math::{
-    primitives::dimension::{Dimension, dimension},
-    vec2::PyVec2,
-};
+use pybevy_math::vec2::PyVec2;
+use pybevy_shape::primitives::dimension::{Dimension, dimension};
 use pyo3::prelude::*;
 
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyRhombusMeshBuilder};

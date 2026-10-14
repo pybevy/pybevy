@@ -304,15 +304,18 @@ fn pixel_coordinate(value: i64) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
 }
 
-fn validate_render_target_dimensions(width: u32, height: u32) -> PyResult<()> {
-    check_for::<PyImage, _>("width", width, POSITIVE)?;
-    check_for::<PyImage, _>("height", height, POSITIVE)?;
+fn validate_render_target_dimensions(
+    width: IntegerInput<u32>,
+    height: IntegerInput<u32>,
+) -> PyResult<(u32, u32)> {
+    let width = check_for::<PyImage, _>("width", width, POSITIVE)?.stored();
+    let height = check_for::<PyImage, _>("height", height, POSITIVE)?.stored();
     checked_bevy_pixel_count(Extent3d {
         width,
         height,
         depth_or_array_layers: 1,
     })?;
-    Ok(())
+    Ok((width, height))
 }
 
 fn natural_image_shapes(
@@ -1141,11 +1144,11 @@ impl PyImage {
     #[staticmethod]
     pub fn new_target_texture(
         py: Python<'_>,
-        width: u32,
-        height: u32,
+        width: IntegerInput<u32>,
+        height: IntegerInput<u32>,
         format: PyTextureFormat,
     ) -> PyResult<Py<PyImage>> {
-        validate_render_target_dimensions(width, height)?;
+        let (width, height) = validate_render_target_dimensions(width, height)?;
         let format: TextureFormat = format.into();
         // Bevy sizes the target buffer with an expect() on pixel_size, which a
         // block-compressed format has no answer for.
@@ -1166,8 +1169,12 @@ impl PyImage {
     /// This is a convenience method for headless rendering / screenshots.
     /// Use [`new_target_texture`] if you need a custom format.
     #[staticmethod]
-    pub fn new_render_target(py: Python<'_>, width: u32, height: u32) -> PyResult<Py<PyImage>> {
-        validate_render_target_dimensions(width, height)?;
+    pub fn new_render_target(
+        py: Python<'_>,
+        width: IntegerInput<u32>,
+        height: IntegerInput<u32>,
+    ) -> PyResult<Py<PyImage>> {
+        let (width, height) = validate_render_target_dimensions(width, height)?;
         validate_target_allocation(width, height, TextureFormat::Rgba8UnormSrgb)?;
         let mut image =
             Image::new_target_texture(width, height, TextureFormat::Rgba8UnormSrgb, None);

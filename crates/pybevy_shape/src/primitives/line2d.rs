@@ -1,0 +1,61 @@
+use bevy::shape::Line2d;
+use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_math::dir2::PyDir2;
+use pyo3::prelude::*;
+
+#[pyclass(name = "Line2d", module = "pybevy.shape", eq, skip_from_py_object)]
+#[derive(Clone, PartialEq)]
+pub struct PyLine2d {
+    pub(crate) inner: Line2d,
+}
+
+#[pymethods]
+impl PyLine2d {
+    pub fn __copy__(&self) -> PyResult<Self> {
+        Ok(self.clone())
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
+
+    #[new]
+    #[pyo3(signature = (*, direction))]
+    pub fn new(direction: PyDir2) -> PyResult<Self> {
+        Ok(Self {
+            inner: Line2d {
+                direction: direction.into_dir2()?,
+            },
+        })
+    }
+
+    #[getter]
+    pub fn direction(&self) -> PyDir2 {
+        PyDir2::from_borrowed(ValueStorage::read_only_snapshot(self.inner.direction))
+    }
+
+    #[setter]
+    pub fn set_direction(&mut self, direction: PyDir2) -> PyResult<()> {
+        self.inner.direction = direction.into_dir2()?;
+        Ok(())
+    }
+
+    fn __repr__(&self) -> PyResult<String> {
+        Ok(format!(
+            "Line2d(direction={})",
+            PyDir2::from(self.inner.direction).__repr__()?
+        ))
+    }
+}
+
+impl From<Line2d> for PyLine2d {
+    fn from(line: Line2d) -> Self {
+        Self { inner: line }
+    }
+}
+
+impl From<PyLine2d> for Line2d {
+    fn from(line: PyLine2d) -> Self {
+        line.inner
+    }
+}

@@ -4,7 +4,8 @@ use pybevy_core::{
     repr::{ReprLiteral, float_repr},
 };
 use pybevy_macros::pyvalue;
-use pybevy_math::{primitives::dimension::Dimension, vec3a::PyVec3A};
+use pybevy_math::vec3a::PyVec3A;
+use pybevy_shape::primitives::dimension::Dimension;
 use pyo3::prelude::*;
 
 #[pyvalue(domains = [radius => [finite, non_negative]])]

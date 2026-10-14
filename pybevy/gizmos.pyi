@@ -143,7 +143,8 @@ TransformPoint = Transform | GlobalTransform | Isometry3d | Mat4 | Affine3A
 class Gizmos:
     """Immediate-mode debug drawing system parameter.
 
-    Curve methods reject resolutions above 1,048,576 with ValueError.
+    Curve methods accept resolutions from 0 to 1,048,576; other values raise
+    ValueError.
     """
 
     @property

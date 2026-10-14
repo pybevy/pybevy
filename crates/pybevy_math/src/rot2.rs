@@ -2,7 +2,7 @@ use std::f32::consts::TAU;
 
 use bevy::math::{Rot2, StableInterpolate, Vec2};
 use pybevy_core::{
-    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
+    FromBorrowedStorage, StorageRef, ValueStorage,
     domain::{FINITE, FINITE_NON_NEGATIVE, FieldDomain, NON_NEGATIVE, check_for},
     public_error,
     repr::float_repr,
@@ -74,10 +74,6 @@ impl PyRot2 {
 
     fn as_ref(&self) -> PyResult<StorageRef<'_, Rot2>> {
         Ok(self.storage.as_ref()?)
-    }
-
-    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Rot2>> {
-        Ok(self.storage.as_mut()?)
     }
 }
 
@@ -272,7 +268,8 @@ impl PyRot2 {
     pub fn interpolate_stable_assign(&mut self, other: &PyRot2, t: f32) -> PyResult<()> {
         let t = check_for::<Self, _>("t", t, FINITE)?;
         let other = *other.as_ref()?;
-        self.as_mut()?.interpolate_stable_assign(&other, t);
+        self.storage
+            .update(|rot| rot.interpolate_stable_assign(&other, t))?;
         Ok(())
     }
 
@@ -284,7 +281,8 @@ impl PyRot2 {
         if delta == 0.0 {
             return Ok(());
         }
-        self.as_mut()?.smooth_nudge(&target, decay_rate, delta);
+        self.storage
+            .update(|rot| rot.smooth_nudge(&target, decay_rate, delta))?;
         Ok(())
     }
 

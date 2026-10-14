@@ -5,9 +5,9 @@ use bevy::{
 use pybevy_core::{ComponentStorage, FromBorrowedStorage, PyComponent, public_error};
 use pybevy_macros::pycomponent;
 use pybevy_math::{
-    mat4::PyMat4, ray::PyRay3d, rect::PyRect, urect::PyURect, uvec2::PyUVec2, vec2::PyVec2,
-    vec3::PyVec3,
+    mat4::PyMat4, rect::PyRect, urect::PyURect, uvec2::PyUVec2, vec2::PyVec2, vec3::PyVec3,
 };
+use pybevy_shape::ray::PyRay3d;
 use pybevy_transform::global_transform::PyGlobalTransform;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
