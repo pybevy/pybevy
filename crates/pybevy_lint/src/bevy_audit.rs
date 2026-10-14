@@ -328,6 +328,17 @@ fn classified_entries(
             &format!("maps to upstream Bevy type `{bevy}`"),
         ));
     }
+    for python in config.generic_instances.keys() {
+        if let Some((base, _)) = config.generic_instance(python) {
+            adaptations.insert(decision(
+                &format!("pybevy::{python}"),
+                "adaptation",
+                "adapted",
+                "type_mapping",
+                &format!("maps to upstream Bevy type `{base}`"),
+            ));
+        }
+    }
     for path in &config.false_match_types {
         adaptations.insert(decision(
             path,

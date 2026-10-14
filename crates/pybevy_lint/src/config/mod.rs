@@ -296,6 +296,12 @@ pub struct BevyConfig {
     #[serde(default)]
     pub type_mappings: HashMap<String, String>,
 
+    /// Wrappers of one instantiation of a generic Bevy type, keyed by Rust
+    /// wrapper name (`PyCubicCurve3d = "CubicCurve<Vec3>"`). The base names
+    /// the upstream item; the arguments replace its type parameters.
+    #[serde(default)]
+    pub generic_instances: HashMap<String, String>,
+
     /// Explicit crate-qualified rewrites for ambiguous upstream claims
     /// (raw claim name -> qualified claim name), e.g. a generic alias that
     /// exists in several Bevy crates.
@@ -346,6 +352,17 @@ pub struct BevyConfig {
     /// Excluded traits configuration (methods from these traits are skipped)
     #[serde(default)]
     pub excluded_traits: ExcludedTraits,
+
+    /// Traits whose methods every wrapper of an implementing type exposes
+    /// (W041), by short name
+    #[serde(default)]
+    pub contract_traits: Vec<String>,
+
+    /// Traits a Bevy item gains through a blanket impl, which
+    /// cargo-public-api `-ss` omits (`SystemSet` gets `IntoScheduleConfigs`
+    /// from `impl<S: SystemSet> IntoScheduleConfigs<..> for S`)
+    #[serde(default)]
+    pub blanket_impls: HashMap<String, Vec<String>>,
 
     /// Per-type ignore configuration
     #[serde(default)]
@@ -812,11 +829,38 @@ impl BevyConfig {
             .collect()
     }
 
+    /// The generic Bevy base and type arguments a wrapper instantiates.
+    pub fn generic_instance(&self, pybevy_name: &str) -> Option<(&str, Vec<&str>)> {
+        let instance = self.generic_instances.get(pybevy_name)?;
+        let (base, args) = instance.split_once('<')?;
+        let args = args.strip_suffix('>')?;
+        let mut split = Vec::new();
+        let mut depth = 0usize;
+        let mut start = 0;
+        for (index, ch) in args.char_indices() {
+            match ch {
+                '<' => depth += 1,
+                '>' => depth = depth.saturating_sub(1),
+                ',' if depth == 0 => {
+                    split.push(args[start..index].trim());
+                    start = index + 1;
+                }
+                _ => {}
+            }
+        }
+        split.push(args[start..].trim());
+        Some((base.trim(), split))
+    }
+
     /// Map a PyBevy type name to Bevy type name
     pub fn map_type_name(&self, pybevy_name: &str) -> String {
         self.type_mappings
             .get(pybevy_name)
             .cloned()
+            .or_else(|| {
+                self.generic_instance(pybevy_name)
+                    .map(|(base, _)| base.to_string())
+            })
             .unwrap_or_else(|| {
                 if pybevy_name.starts_with("Py") && pybevy_name.len() > 2 {
                     pybevy_name[2..].to_string()

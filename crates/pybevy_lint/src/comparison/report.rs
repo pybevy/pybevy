@@ -20,6 +20,9 @@ pub struct CoverageReport {
     pub signature_mismatches: usize,
     /// Extra methods in PyBevy that don't exist in Bevy
     pub extra_methods: usize,
+    /// Bevy conversions between wrapped types, and how many Python exposes
+    pub total_conversions: usize,
+    pub matched_conversions: usize,
 
     /// Methods only counting implemented types (more meaningful metric)
     pub implemented_type_bevy_methods: usize,
@@ -139,6 +142,9 @@ pub struct TypeCoverage {
 
     /// Extra methods in PyBevy that don't exist in Bevy
     pub extra_methods: Vec<ExtraMethodCoverage>,
+
+    /// Bevy conversions between this type and other wrapped types
+    pub conversions: Vec<ConversionCoverage>,
 
     /// Field coverage
     pub fields: Vec<FieldCoverage>,
@@ -270,6 +276,19 @@ pub struct MethodCoverage {
 
     /// Types required to implement this method that PyBevy doesn't have yet
     pub missing_required_types: Vec<String>,
+
+    /// Bevy trait the method comes from, if any
+    pub bevy_trait: Option<String>,
+}
+
+/// A Bevy conversion between two wrapped types and its Python spelling
+#[derive(Debug)]
+pub struct ConversionCoverage {
+    /// Expected Python member (`from_vec2`, `as_ivec2`)
+    pub pybevy_name: String,
+    /// The Bevy impl or cast it mirrors
+    pub bevy_conversion: String,
+    pub is_implemented: bool,
 }
 
 /// Coverage information for an extra method (exists in PyBevy but not in Bevy)

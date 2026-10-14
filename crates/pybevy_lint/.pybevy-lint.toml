@@ -51,6 +51,21 @@ reflection_unavailable_types = [
     "Underline",
 ]
 
+# Traits whose methods every wrapper of an implementing type must expose (W041).
+contract_traits = [
+    "BoundingVolume",
+    "Curve",
+    "CubicGenerator",
+    "CyclicCubicGenerator",
+    "IntersectsVolume",
+    "StableInterpolate",
+]
+
+# Traits an item gains through a blanket impl, which cargo-public-api -ss
+# omits: `impl<S: SystemSet> IntoScheduleConfigs<InternedSystemSet, ()> for S`.
+[bevy.blanket_impls]
+SystemSet = ["bevy_ecs::schedule::IntoScheduleConfigs"]
+
 # Module placement overrides: types intentionally in a different PyBevy module
 # Format: "bevy_module::Type" = "pybevy_module"
 [bevy.mapping_overrides.VisibleMeshEntities.entities]
@@ -1038,18 +1053,6 @@ PyVec3 = "Vec3"
 PyVec2 = "Vec2"
 PyQuat = "Quat"
 PyMat4 = "Mat4"
-PyCubicBezier2d = "CubicBezier"
-PyCubicBezier3d = "CubicBezier"
-PyCubicBSpline2d = "CubicBSpline"
-PyCubicBSpline3d = "CubicBSpline"
-PyCubicCardinalSpline2d = "CubicCardinalSpline"
-PyCubicCardinalSpline3d = "CubicCardinalSpline"
-PyCubicHermite2d = "CubicHermite"
-PyCubicHermite3d = "CubicHermite"
-PyCubicNurbs2d = "CubicNurbs"
-PyCubicNurbs3d = "CubicNurbs"
-PyLinearSpline2d = "LinearSpline"
-PyLinearSpline3d = "LinearSpline"
 PyMat3 = "Mat3"
 # bevy_pbr::ForwardDecalMaterial<B> aliases ExtendedMaterial<B, ForwardDecalMaterialExt>.
 PyForwardDecalMaterial = "ExtendedMaterial"
@@ -1067,6 +1070,26 @@ PyAnimationNodeIndex = "AnimationNodeIndex"
 PyTimeVirtual = "Time<Virtual>"
 PyTimeReal = "Time<Real>"
 PyTimeFixed = "Time<Fixed>"
+
+# Wrappers of one instantiation of a generic Bevy type: the base resolves the
+# upstream item, the arguments replace its type parameters when comparing.
+[bevy.generic_instances]
+PyCubicBezier2d = "CubicBezier<Vec2>"
+PyCubicBezier3d = "CubicBezier<Vec3>"
+PyCubicBSpline2d = "CubicBSpline<Vec2>"
+PyCubicBSpline3d = "CubicBSpline<Vec3>"
+PyCubicCardinalSpline2d = "CubicCardinalSpline<Vec2>"
+PyCubicCardinalSpline3d = "CubicCardinalSpline<Vec3>"
+PyCubicHermite2d = "CubicHermite<Vec2>"
+PyCubicHermite3d = "CubicHermite<Vec3>"
+PyCubicNurbs2d = "CubicNurbs<Vec2>"
+PyCubicNurbs3d = "CubicNurbs<Vec3>"
+PyLinearSpline2d = "LinearSpline<Vec2>"
+PyLinearSpline3d = "LinearSpline<Vec3>"
+PyCubicCurve2d = "CubicCurve<Vec2>"
+PyCubicCurve3d = "CubicCurve<Vec3>"
+PyRationalCurve2d = "RationalCurve<Vec2>"
+PyRationalCurve3d = "RationalCurve<Vec3>"
 
 [bevy.constructor_functions."pybevy.math.PyAffine2"]
 function = "from_mat2_translation"
@@ -3376,13 +3399,12 @@ path = "animation.AnimationEventData"
 message = "pyclass 'AnimationEventData' holds Python references (event: Py<PyAnimationEvent>) but declares no __traverse__"
 reason = "PyAnimationEvent holds only String fields (name, data); no reference path can reach back to the holder, so no GC cycle can form through this edge"
 
-# API drift (W037-W040) that existed when the checks landed. Each entry names
-# the crate review expected to fix or justify it; delete entries as those
-# reviews merge.
+# API drift (W037-W041) that existed when the checks landed. Delete entries
+# as the drift is fixed or moved to a durable reason.
 
 [[validation.exceptions]]
 code = "W037"
-reason = "Pending the owning crate reviews: Bevy's Default impls for these generic types (impl<M> Default for MeshMaterial3d<M>, impl<S> Default for DespawnOnExit<S>, impl Default for AssetPath<'_>) became visible when the parser started recording generic trait impls"
+reason = "Existing drift found when the parser began recording generic Default impls (impl<M> Default for MeshMaterial3d<M>, impl<S> Default for DespawnOnExit<S>, impl Default for AssetPath<'_>); triage pending"
 paths = [
     "core.AssetPath",
     "ecs.DespawnOnEnter",
@@ -3395,41 +3417,45 @@ paths = [
 
 [[validation.exceptions]]
 code = "W038"
-reason = "Bevy declares these StandardMaterial texture and channel fields behind the pbr_*_textures cargo features, which the pinned API parse leaves off"
+reason = "Pending fix/math-review: existing math drift (Python-only member) found when W038 landed; that review fixes or justifies it"
 paths = [
-    "pbr.StandardMaterial.anisotropy_channel",
-    "pbr.StandardMaterial.anisotropy_texture",
-    "pbr.StandardMaterial.clearcoat_channel",
-    "pbr.StandardMaterial.clearcoat_normal_channel",
-    "pbr.StandardMaterial.clearcoat_normal_texture",
-    "pbr.StandardMaterial.clearcoat_roughness_channel",
-    "pbr.StandardMaterial.clearcoat_roughness_texture",
-    "pbr.StandardMaterial.clearcoat_texture",
-    "pbr.StandardMaterial.diffuse_transmission_channel",
-    "pbr.StandardMaterial.diffuse_transmission_texture",
-    "pbr.StandardMaterial.specular_channel",
-    "pbr.StandardMaterial.specular_texture",
-    "pbr.StandardMaterial.specular_tint_channel",
-    "pbr.StandardMaterial.specular_tint_texture",
-    "pbr.StandardMaterial.specular_transmission_channel",
-    "pbr.StandardMaterial.specular_transmission_texture",
-    "pbr.StandardMaterial.thickness_channel",
-    "pbr.StandardMaterial.thickness_texture",
+    "math.Aabb2d.intersects_aabb",
+    "math.Aabb2d.intersects_circle",
+    "math.Aabb3d.intersects_aabb",
+    "math.Aabb3d.intersects_sphere",
+    "math.BoundingCircle.intersects_aabb",
+    "math.BoundingCircle.intersects_circle",
+    "math.BoundingSphere.intersects_aabb",
+    "math.BoundingSphere.intersects_sphere",
+    "math.CubicCurve2d.segment_count",
+    "math.CubicCurve3d.segment_count",
+    "math.Dir2.as_tuple",
+    "math.Dir3.as_tuple",
+    "math.EaseFunction.ease",
+    "math.InfinitePlane3d.from_dir",
+    "math.Mat3A.mul_mat3a",
+    "math.Plane2d.from_dir",
+    "math.RationalCurve2d.segment_count",
+    "math.RationalCurve3d.segment_count",
+    "math.RayCast2d.intersects_aabb",
+    "math.RayCast2d.intersects_circle",
+    "math.RayCast3d.intersects_aabb",
+    "math.RayCast3d.intersects_sphere",
+    "math.RayCast3d.ray",
+    "math.Rot2.rotate",
+    "math.UVec2.as_tuple",
+    "math.UVec3.as_tuple",
+    "math.Vec2.as_tuple",
+    "math.Vec3.as_tuple",
+    "math.Vec4.as_tuple",
 ]
 
 [[validation.exceptions]]
 code = "W038"
-reason = "crate_trait_sources merges wgpu-types structs without their fields, so Extent3d's public fields are invisible to the member comparison"
+reason = "Existing drift (Python-only member) found when W038 landed; triage pending"
 paths = [
-    "render.Extent3d.depth_or_array_layers",
-    "render.Extent3d.height",
-    "render.Extent3d.width",
-]
-
-[[validation.exceptions]]
-code = "W038"
-reason = "Pending the pybevy crate review: existing drift (Python-only member with no counterpart on the resolved Bevy type) recorded when this check landed"
-paths = [
+    "animation.AnimationEvent.data",
+    "animation.AnimationEvent.name",
     "app.App.clear_scene",
     "app.App.initialize",
     "app.App.run_schedule",
@@ -3438,6 +3464,29 @@ paths = [
     "assets.DependencyLoadState.is_not_loaded",
     "assets.LoadState.is_not_loaded",
     "assets.RecursiveDependencyLoadState.is_not_loaded",
+    "camera.RenderLayers.active_layers",
+    "camera.Visibility.set_hidden",
+    "camera.Visibility.set_inherited",
+    "camera.Visibility.set_visible",
+    "color.Hsla.to_linear",
+    "color.Hsva.to_linear",
+    "color.Hwba.to_linear",
+    "color.Laba.to_linear",
+    "color.Lcha.to_linear",
+    "color.LinearRgba.from_tuple",
+    "color.LinearRgba.to_tuple",
+    "color.Oklaba.to_linear",
+    "color.Oklcha.to_linear",
+    "color.Srgba.to_linear",
+    "color.Xyza.to_linear",
+    "core.AssetId.asset_type_class",
+    "core.AssetId.uuid_from_u128",
+    "core.Children.entities",
+    "core.Entity.from_raw",
+    "core.EntityIndex.from_raw",
+    "core.Handle.asset_type_class",
+    "core.Handle.uuid_from_u128",
+    "core_pipeline.Tonemapping.PbrNeutral",
     "ecs.Commands.despawn",
     "ecs.DespawnOnEnter.state_value",
     "ecs.DespawnOnExit.state_value",
@@ -3446,20 +3495,6 @@ paths = [
     "ecs.Local.current",
     "ecs.Local.get",
     "ecs.Local.value_type",
-    "ecs.MessageMutator.clear",
-    "ecs.MessageMutator.is_empty",
-    "ecs.MessageMutator.len",
-    "ecs.MessageMutator.read",
-    "ecs.MessageMutator.write",
-    "ecs.MessageMutator.write_batch",
-    "ecs.MessageMutator.write_default",
-    "ecs.MessageReader.clear",
-    "ecs.MessageReader.is_empty",
-    "ecs.MessageReader.len",
-    "ecs.MessageReader.read",
-    "ecs.MessageWriter.write",
-    "ecs.MessageWriter.write_batch",
-    "ecs.MessageWriter.write_default",
     "ecs.Messages.send",
     "ecs.Mut.inner_type",
     "ecs.Mut.unwrap",
@@ -3474,93 +3509,9 @@ paths = [
     "ecs.QueryIter.single",
     "ecs.Res.resource_type",
     "ecs.ResMut.resource_type",
-    "ecs.SystemSet.after",
-    "ecs.SystemSet.before",
-    "ecs.SystemSet.in_set",
     "ecs.SystemSet.name",
-    "ecs.SystemSet.run_if",
     "ecs.World.despawn_observer",
     "ecs.World.resource_entity",
-    "ecs.World.run_system_once",
-]
-
-[[validation.exceptions]]
-code = "W038"
-reason = "Pending the pybevy_animation crate review: existing drift (Python-only member with no counterpart on the resolved Bevy type) recorded when this check landed"
-paths = [
-    "animation.AnimationEvent.data",
-    "animation.AnimationEvent.name",
-    "animation.AnimationNodeIndex.index",
-]
-
-[[validation.exceptions]]
-code = "W038"
-reason = "Pending the pybevy_camera crate review: existing drift (Python-only member with no counterpart on the resolved Bevy type) recorded when this check landed"
-paths = [
-    "camera.RenderLayers.active_layers",
-    "camera.Visibility.set_hidden",
-    "camera.Visibility.set_inherited",
-    "camera.Visibility.set_visible",
-]
-
-[[validation.exceptions]]
-code = "W038"
-reason = "Pending the pybevy_color crate review: existing drift (Python-only member with no counterpart on the resolved Bevy type) recorded when this check landed"
-paths = [
-    "color.Hsla.to_linear",
-    "color.Hsla.to_srgba",
-    "color.Hsva.to_linear",
-    "color.Hsva.to_srgba",
-    "color.Hwba.to_linear",
-    "color.Hwba.to_srgba",
-    "color.Laba.to_linear",
-    "color.Laba.to_srgba",
-    "color.Lcha.to_linear",
-    "color.Lcha.to_srgba",
-    "color.LinearRgba.from_tuple",
-    "color.LinearRgba.interpolate_stable_assign",
-    "color.LinearRgba.to_tuple",
-    "color.Oklaba.to_linear",
-    "color.Oklaba.to_srgba",
-    "color.Oklcha.to_linear",
-    "color.Oklcha.to_srgba",
-    "color.Srgba.to_linear",
-    "color.Xyza.to_linear",
-    "color.Xyza.to_srgba",
-]
-
-[[validation.exceptions]]
-code = "W038"
-reason = "Pending the pybevy_core crate review: existing drift (Python-only member with no counterpart on the resolved Bevy type) recorded when this check landed"
-paths = [
-    "core.AssetId.asset_type_class",
-    "core.AssetId.uuid_from_u128",
-    "core.Children.entities",
-    "core.Entity.from_raw",
-    "core.EntityIndex.from_raw",
-    "core.Handle.asset_type_class",
-    "core.Handle.uuid_from_u128",
-]
-
-[[validation.exceptions]]
-code = "W038"
-reason = "Pending the pybevy_core_pipeline crate review: existing drift (Python-only member with no counterpart on the resolved Bevy type) recorded when this check landed"
-paths = [
-    "core_pipeline.Tonemapping.PbrNeutral",
-]
-
-[[validation.exceptions]]
-code = "W038"
-reason = "Pending the pybevy_gltf crate review: existing drift (Python-only member with no counterpart on the resolved Bevy type) recorded when this check landed"
-paths = [
-    "gltf.Gltf.animations",
-    "gltf.Gltf.named_animations",
-]
-
-[[validation.exceptions]]
-code = "W038"
-reason = "Pending the pybevy_image crate review: existing drift (Python-only member with no counterpart on the resolved Bevy type) recorded when this check landed"
-paths = [
     "image.Image.data_copy",
     "image.Image.data_len",
     "image.Image.data_mut",
@@ -3576,71 +3527,10 @@ paths = [
     "image.TextureAtlasSources.indices",
     "image.TextureAtlasSources.is_empty",
     "image.TextureAtlasSources.len",
-]
-
-[[validation.exceptions]]
-code = "W038"
-reason = "Pending the pybevy_input crate review: existing drift (Python-only member with no counterpart on the resolved Bevy type) recorded when this check landed"
-paths = [
     "input.Gamepad.get_axis",
     "input.Gamepad.get_axis_unclamped",
     "input.Gamepad.get_button",
     "input.Gamepad.get_button_unclamped",
-]
-
-[[validation.exceptions]]
-code = "W038"
-reason = "Pending fix/math-review: existing math drift (Python-only member with no counterpart on the resolved Bevy type) that branch fixes; remove when it merges"
-paths = [
-    "math.Aabb2d.intersects_aabb",
-    "math.Aabb2d.intersects_circle",
-    "math.Aabb3d.intersects_aabb",
-    "math.Aabb3d.intersects_sphere",
-    "math.Affine2.into_mat3",
-    "math.BoundingCircle.intersects_aabb",
-    "math.BoundingCircle.intersects_circle",
-    "math.BoundingSphere.intersects_aabb",
-    "math.BoundingSphere.intersects_sphere",
-    "math.Dir2.as_tuple",
-    "math.Dir2.from_vec2",
-    "math.Dir3.as_tuple",
-    "math.Dir3.from_vec3",
-    "math.EaseFunction.ease",
-    "math.InfinitePlane3d.from_dir",
-    "math.Mat2.x_axis",
-    "math.Mat2.y_axis",
-    "math.Mat3A.mul_mat3a",
-    "math.Plane2d.from_dir",
-    "math.Quat.w",
-    "math.Quat.x",
-    "math.Quat.y",
-    "math.Quat.z",
-    "math.RayCast2d.intersects_aabb",
-    "math.RayCast2d.intersects_circle",
-    "math.RayCast3d.intersects_aabb",
-    "math.RayCast3d.intersects_sphere",
-    "math.RayCast3d.ray",
-    "math.Rot2.rotate",
-    "math.UVec2.as_tuple",
-    "math.UVec3.as_tuple",
-    "math.Vec2.as_tuple",
-    "math.Vec2.xy",
-    "math.Vec3.as_tuple",
-    "math.Vec3.xyz",
-    "math.Vec3A.from_vec3",
-    "math.Vec4.as_tuple",
-    "math.Vec4.w",
-    "math.Vec4.x",
-    "math.Vec4.xyzw",
-    "math.Vec4.y",
-    "math.Vec4.z",
-]
-
-[[validation.exceptions]]
-code = "W038"
-reason = "Pending the pybevy_mesh crate review: existing drift (Python-only member with no counterpart on the resolved Bevy type) recorded when this check landed"
-paths = [
-    "mesh.Mesh.generate_tangents",
     "mesh.Mesh.normals",
     "mesh.Mesh.normals_mut",
     "mesh.Mesh.positions",
@@ -3649,34 +3539,12 @@ paths = [
     "mesh.Mesh.set_positions",
     "mesh.Mesh.uvs",
     "mesh.Mesh.uvs_mut",
-    "mesh.Mesh.with_generated_tangents",
     "mesh.MeshVertexAttributeId.value",
     "mesh.MorphWeights.get_weight",
     "mesh.MorphWeights.set_weight",
     "mesh.SkinnedMeshInverseBindposes.get",
     "mesh.SkinnedMeshInverseBindposes.to_list",
-]
-
-[[validation.exceptions]]
-code = "W038"
-reason = "Pending the pybevy_pbr crate review: existing drift (Python-only member with no counterpart on the resolved Bevy type) recorded when this check landed"
-paths = [
-    "pbr.ForwardDecalMaterial.base",
-    "pbr.ForwardDecalMaterial.extension",
-]
-
-[[validation.exceptions]]
-code = "W038"
-reason = "Pending the pybevy_render crate review: existing drift (Python-only member with no counterpart on the resolved Bevy type) recorded when this check landed"
-paths = [
     "render.RenderPlugin.power_preference",
-    "render.TextureDescriptor.usage",
-]
-
-[[validation.exceptions]]
-code = "W038"
-reason = "Pending the pybevy_text crate review: existing drift (Python-only member with no counterpart on the resolved Bevy type) recorded when this check landed"
-paths = [
     "text.Font.try_from_bytes",
     "text.FontAtlasSet.items",
     "text.FontFeatureTag.value",
@@ -3684,12 +3552,6 @@ paths = [
     "text.TextLayout.new_with_justify",
     "text.TextLayout.new_with_linebreak",
     "text.TextLayout.new_with_no_wrap",
-]
-
-[[validation.exceptions]]
-code = "W038"
-reason = "Pending the pybevy_ui crate review: existing drift (Python-only member with no counterpart on the resolved Bevy type) recorded when this check landed"
-paths = [
     "ui.BoxShadow.clear",
     "ui.BoxShadow.is_empty",
     "ui.BoxShadow.pop",
@@ -3707,12 +3569,6 @@ paths = [
     "ui.RelativeCursorPosition.is_cursor_over",
     "ui.UiPosition.anchor_value",
     "ui.UiTransform.identity",
-]
-
-[[validation.exceptions]]
-code = "W038"
-reason = "Pending the pybevy_window crate review: existing drift (Python-only member with no counterpart on the resolved Bevy type) recorded when this check landed"
-paths = [
     "window.CursorIcon.is_system",
     "window.CursorIcon.set_system",
     "window.CursorIcon.system",
@@ -3720,70 +3576,14 @@ paths = [
 
 [[validation.exceptions]]
 code = "W039"
-reason = "Pending the pybevy crate review: existing drift (return type differs from the resolved Bevy method) recorded when this check landed"
+reason = "Pending fix/math-review: existing math drift (return type differs from Bevy) found when W039 landed; that review fixes or justifies it"
 paths = [
-    "app.App.run",
-    "app.App.world",
-    "ecs.Commands.get_entity",
-    "ecs.World.add_observer",
-    "ecs.World.iter_entities",
-    "ecs.World.spawn",
-]
-
-[[validation.exceptions]]
-code = "W039"
-reason = "Pending the pybevy_camera crate review: existing drift (return type differs from the resolved Bevy method) recorded when this check landed"
-paths = [
-    "camera.RenderLayers.iter",
-    "camera.RenderTarget.as_image",
-]
-
-[[validation.exceptions]]
-code = "W039"
-reason = "Pending the pybevy_core crate review: existing drift (return type differs from the resolved Bevy method) recorded when this check landed"
-paths = [
-    "core.Handle.id",
-]
-
-[[validation.exceptions]]
-code = "W039"
-reason = "Pending the pybevy_image crate review: existing drift (return type differs from the resolved Bevy method) recorded when this check landed"
-paths = [
-    "image.Image.pixel_bytes",
-    "image.Image.pixel_data_offset",
-    "image.TextureAtlasBuilder.build",
-]
-
-[[validation.exceptions]]
-code = "W039"
-reason = "Pending the pybevy_input crate review: existing drift (return type differs from the resolved Bevy method) recorded when this check landed"
-paths = [
-    "input.MouseInput.get_just_pressed",
-    "input.MouseInput.get_just_released",
-    "input.MouseInput.get_pressed",
-]
-
-[[validation.exceptions]]
-code = "W039"
-reason = "Pending fix/math-review: existing math drift (return type differs from the resolved Bevy method) that branch fixes; remove when it merges"
-paths = [
+    "math.Aabb3d.center",
     "math.Aabb3d.closest_point",
+    "math.Aabb3d.half_size",
     "math.BoundingSphere.closest_point",
-    "math.CubicBSpline2d.to_curve",
-    "math.CubicBSpline3d.to_curve",
-    "math.CubicBezier2d.to_curve",
-    "math.CubicBezier3d.to_curve",
-    "math.CubicCardinalSpline2d.to_curve",
-    "math.CubicCardinalSpline3d.to_curve",
-    "math.CubicHermite2d.to_curve",
-    "math.CubicHermite3d.to_curve",
-    "math.CubicNurbs2d.to_curve",
-    "math.CubicNurbs3d.to_curve",
-    "math.Interval.spaced_points",
     "math.Isometry3d.inverse_transform_point",
     "math.Isometry3d.transform_point",
-    "math.LinearSpline2d.to_curve",
-    "math.LinearSpline3d.to_curve",
     "math.RayCast3d.direction_recip",
     "math.UVec2.to_array",
     "math.UVec3.to_array",
@@ -3812,112 +3612,122 @@ paths = [
 
 [[validation.exceptions]]
 code = "W039"
-reason = "Pending the pybevy_mesh crate review: existing drift (return type differs from the resolved Bevy method) recorded when this check landed"
+reason = "Existing drift (return type differs from Bevy) found when W039 landed; triage pending"
 paths = [
+    "app.App.run",
+    "app.App.world",
+    "ecs.Commands.get_entity",
+    "ecs.World.add_observer",
+    "ecs.World.iter_entities",
+    "ecs.World.spawn",
+    "image.Image.pixel_bytes",
+    "image.Image.pixel_data_offset",
     "mesh.Mesh.indices",
-]
-
-[[validation.exceptions]]
-code = "W039"
-reason = "Pending the pybevy_sprite crate review: existing drift (return type differs from the resolved Bevy method) recorded when this check landed"
-paths = [
-    "sprite.Sprite.as_asset_id",
-]
-
-[[validation.exceptions]]
-code = "W039"
-reason = "Pending the pybevy_transform crate review: existing drift (return type differs from the resolved Bevy method) recorded when this check landed"
-paths = [
     "transform.GlobalTransform.back",
     "transform.GlobalTransform.down",
     "transform.GlobalTransform.forward",
     "transform.GlobalTransform.left",
     "transform.GlobalTransform.right",
     "transform.GlobalTransform.up",
-]
-
-[[validation.exceptions]]
-code = "W039"
-reason = "Pending the pybevy_world_serialization crate review: existing drift (return type differs from the resolved Bevy method) recorded when this check landed"
-paths = [
     "world_serialization.WorldInstanceSpawner.iter_instance_entities",
 ]
 
 [[validation.exceptions]]
 code = "W040"
-reason = "Pending the pybevy crate review: existing drift (Bevy enum wrapped as an ordinary class) recorded when this check landed"
-paths = [
-    "ecs.NextState",
-]
-
-[[validation.exceptions]]
-code = "W040"
-reason = "Pending the pybevy_camera crate review: existing drift (Bevy enum wrapped as an ordinary class) recorded when this check landed"
-paths = [
-    "camera.Visibility",
-]
-
-[[validation.exceptions]]
-code = "W040"
-reason = "Pending the pybevy_core crate review: existing drift (Bevy enum wrapped as an ordinary class) recorded when this check landed"
-paths = [
-    "core.Handle",
-]
-
-[[validation.exceptions]]
-code = "W040"
-reason = "Pending the pybevy_core_pipeline crate review: existing drift (Bevy enum wrapped as an ordinary class) recorded when this check landed"
-paths = [
-    "core_pipeline.Tonemapping",
-]
-
-[[validation.exceptions]]
-code = "W040"
-reason = "Pending the pybevy_light crate review: existing drift (Bevy enum wrapped as an ordinary class) recorded when this check landed"
-paths = [
-    "light.ShadowFilteringMethod",
-]
-
-[[validation.exceptions]]
-code = "W040"
-reason = "Pending fix/math-review: existing math drift (Bevy enum wrapped as an ordinary class) that branch fixes; remove when it merges"
+reason = "Pending fix/math-review: existing math drift (Bevy enum wrapped as an ordinary class) found when W040 landed; that review fixes or justifies it"
 paths = [
     "math.EaseFunction",
 ]
 
 [[validation.exceptions]]
 code = "W040"
-reason = "Pending the pybevy_mesh crate review: existing drift (Bevy enum wrapped as an ordinary class) recorded when this check landed"
+reason = "Existing drift (Bevy enum wrapped as an ordinary class) found when W040 landed; triage pending"
 paths = [
+    "camera.Visibility",
+    "core.Handle",
+    "core_pipeline.Tonemapping",
+    "ecs.NextState",
+    "light.ShadowFilteringMethod",
     "mesh.Indices",
-]
-
-[[validation.exceptions]]
-code = "W040"
-reason = "Pending the pybevy_pbr crate review: existing drift (Bevy enum wrapped as an ordinary class) recorded when this check landed"
-paths = [
     "pbr.WireframeTopology",
-]
-
-[[validation.exceptions]]
-code = "W040"
-reason = "Pending the pybevy_render crate review: existing drift (Bevy enum wrapped as an ordinary class) recorded when this check landed"
-paths = [
     "render.Msaa",
-]
-
-[[validation.exceptions]]
-code = "W040"
-reason = "Pending the pybevy_ui crate review: existing drift (Bevy enum wrapped as an ordinary class) recorded when this check landed"
-paths = [
     "ui.FocusPolicy",
     "ui.Interaction",
-]
-
-[[validation.exceptions]]
-code = "W040"
-reason = "Pending the pybevy_window crate review: existing drift (Bevy enum wrapped as an ordinary class) recorded when this check landed"
-paths = [
     "window.CursorIcon",
 ]
 
+[[validation.exceptions]]
+code = "W041"
+reason = "Pending fix/math-review: existing math drift (missing contract-trait method) found when W041 landed; that review fixes or justifies it"
+paths = [
+    "math.Aabb2d.rotate_by",
+    "math.Aabb2d.transform_by",
+    "math.Aabb2d.translate_by",
+    "math.Aabb2d.translated_by",
+    "math.Aabb3d.rotate_by",
+    "math.Aabb3d.transform_by",
+    "math.Aabb3d.translate_by",
+    "math.Aabb3d.translated_by",
+    "math.AabbCast2d.intersects",
+    "math.BoundingCircle.half_size",
+    "math.BoundingCircle.rotate_by",
+    "math.BoundingCircle.transform_by",
+    "math.BoundingCircle.translate_by",
+    "math.BoundingCircle.translated_by",
+    "math.BoundingCircleCast.intersects",
+    "math.BoundingSphere.half_size",
+    "math.BoundingSphere.rotate_by",
+    "math.BoundingSphere.transform_by",
+    "math.BoundingSphere.translate_by",
+    "math.BoundingSphere.translated_by",
+    "math.CubicBSpline2d.to_curve_cyclic",
+    "math.CubicBSpline3d.to_curve_cyclic",
+    "math.CubicCardinalSpline2d.to_curve_cyclic",
+    "math.CubicCardinalSpline3d.to_curve_cyclic",
+    "math.CubicCurve2d.domain",
+    "math.CubicCurve2d.sample",
+    "math.CubicCurve2d.sample_clamped",
+    "math.CubicCurve2d.sample_unchecked",
+    "math.CubicCurve3d.domain",
+    "math.CubicCurve3d.sample",
+    "math.CubicCurve3d.sample_clamped",
+    "math.CubicCurve3d.sample_unchecked",
+    "math.CubicHermite2d.to_curve_cyclic",
+    "math.CubicHermite3d.to_curve_cyclic",
+    "math.EaseFunction.domain",
+    "math.EaseFunction.sample",
+    "math.EaseFunction.sample_clamped",
+    "math.EaseFunction.sample_unchecked",
+    "math.LinearSpline2d.to_curve_cyclic",
+    "math.LinearSpline3d.to_curve_cyclic",
+    "math.Quat.interpolate_stable",
+    "math.RationalCurve2d.domain",
+    "math.RationalCurve2d.sample",
+    "math.RationalCurve2d.sample_clamped",
+    "math.RationalCurve2d.sample_unchecked",
+    "math.RationalCurve3d.domain",
+    "math.RationalCurve3d.sample",
+    "math.RationalCurve3d.sample_clamped",
+    "math.RationalCurve3d.sample_unchecked",
+    "math.RayCast2d.intersects",
+    "math.RayCast3d.intersects",
+]
+
+[[validation.exceptions]]
+code = "W041"
+reason = "Existing drift (missing contract-trait method) found when W041 landed; triage pending"
+paths = [
+    "animation.AnimatableKeyframeCurve.domain",
+    "animation.AnimatableKeyframeCurve.sample",
+    "animation.AnimatableKeyframeCurve.sample_clamped",
+    "animation.AnimatableKeyframeCurve.sample_unchecked",
+    "color.Laba.interpolate_stable_assign",
+    "color.Laba.smooth_nudge",
+    "color.LinearRgba.smooth_nudge",
+    "color.Oklaba.interpolate_stable_assign",
+    "color.Oklaba.smooth_nudge",
+    "color.Srgba.interpolate_stable_assign",
+    "color.Srgba.smooth_nudge",
+    "color.Xyza.interpolate_stable_assign",
+    "color.Xyza.smooth_nudge",
+]
