@@ -32,14 +32,16 @@ from ..pbr import (
     StorageShaderMaterial,
 )
 from ..render import ShaderBuffer
-from ._bindings import StorageBuffer as StorageBuffer
-from ._bindings import _partition_storage_fields
+from ._bindings import StorageBinding as StorageBinding
+from ._bindings import Texture as Texture
+from ._bindings import _partition_storage_fields, _partition_texture_fields
 from ._declarations import Storage as Storage
 from ._declarations import _lower_declarations
 from ._layout import (
     _MAX_TEXTURE_SLOTS,
     _compute_layout,
     _generate_wgsl,
+    _validate_binding_names,
 )
 
 _Material = _pybevy.pbr.Material  # type: ignore
@@ -157,7 +159,7 @@ def _read_value(
 
 class _StorageInstance(Protocol):
     _shader_mat: StorageShaderMaterial | None
-    _storage_buffer: Handle[ShaderBuffer] | None
+    _storage_buffers: list[Handle[ShaderBuffer] | None]
 
 
 _SENTINEL = object()
@@ -287,8 +289,12 @@ def material(
         hints, concise_storage, required_storage = _lower_declarations(hints, defaults)
 
         # Compute layout (separates uniform, bool, and texture fields)
-        ordinary_hints, storage_fields = _partition_storage_fields(hints)
+        texture_hints, texture_layouts = _partition_texture_fields(hints)
+        ordinary_hints, storage_fields = _partition_storage_fields(texture_hints)
         layout, bool_fields, texture_fields = _compute_layout(ordinary_hints, defaults)
+        for texture in texture_fields:
+            texture.layout = texture_layouts.get(texture.name)
+        extended_bindings = bool(storage_fields or texture_layouts)
         for field in storage_fields:
             if field.name in {f"{texture.name}_sampler" for texture in texture_fields}:
                 raise TypeError(
@@ -298,7 +304,10 @@ def material(
                 raise TypeError(
                     f"Storage field '{field.name}' must default to None; pass its handle to the material instance"
                 )
-        native_type = StorageShaderMaterial if storage_fields else ShaderMaterial
+        _validate_binding_names(
+            cls.__name__, layout, texture_fields, (field.name for field in storage_fields)
+        )
+        native_type = StorageShaderMaterial if extended_bindings else ShaderMaterial
         layout_signature: _MaterialLayoutSignature = (
             tuple(
                 (
@@ -313,9 +322,17 @@ def material(
             tuple(
                 (field.name, field.bit_index, field.def_name) for field in bool_fields
             ),
-            tuple((field.name, field.slot_index) for field in texture_fields),
             tuple(
-                (field.name, field.binding, "array<vec4<f32>>")
+                (field.name, field.slot_index, field.layout) for field in texture_fields
+            ),
+            tuple(
+                (
+                    field.name,
+                    field.binding,
+                    field.layout.wgsl_type,
+                    field.layout.declarations,
+                    field.layout.stride,
+                )
                 for field in storage_fields
             ),
         )
@@ -329,10 +346,13 @@ def material(
 
         # Generate WGSL binding declarations (injected in-memory, not written to disk)
         wgsl = _generate_wgsl(cls.__name__, layout, texture_fields)
+        wgsl += "\n" + "\n".join(
+            dict.fromkeys(field.layout.declarations for field in storage_fields)
+        )
         for field in storage_fields:
             wgsl += (
                 f"\n@group(3) @binding({field.binding}) "
-                f"var<storage, read> {field.name}: array<vec4<f32>>;\n"
+                f"var<storage, read> {field.name}: array<{field.layout.wgsl_type}>;\n"
             )
 
         # Compute default shader_defs bitmask from bool defaults
@@ -364,7 +384,9 @@ def material(
 
         # Create the __init__ that produces a ShaderMaterial
         def __init__(
-            self: Any, base: StandardMaterial | None = None, **kwargs: Any  # noqa: ANN401
+            self: Any,  # noqa: ANN401
+            base: StandardMaterial | None = None,
+            **kwargs: Any,  # noqa: ANN401
         ) -> None:
             missing = [name for name in required_storage if name not in kwargs]
             if missing:
@@ -402,14 +424,16 @@ def material(
             textures: list[Handle[Image] | None] = [None] * _MAX_TEXTURE_SLOTS
             for tf in texture_fields:
                 value = kwargs.pop(tf.name, None)
+                if extended_bindings:
+                    _pybevy.pbr.StorageShaderMaterial._validate_texture_handle(value)
                 if value is not None:
                     textures[tf.slot_index] = value
 
-            self._storage_buffer = None
-            if storage_fields:
-                value = kwargs.pop(storage_fields[0].name, None)
+            self._storage_buffers = []
+            for field in storage_fields:
+                value = kwargs.pop(field.name, None)
                 _pybevy.pbr.StorageShaderMaterial._validate_storage_handle(value)
-                self._storage_buffer = value
+                self._storage_buffers.append(value)
 
             if kwargs:
                 unknown = sorted(kwargs)
@@ -438,7 +462,7 @@ def material(
             tex_list = (
                 self._textures if any(t is not None for t in self._textures) else None
             )
-            factory = StorageShaderMaterial if storage_fields else ShaderMaterial
+            factory = StorageShaderMaterial if extended_bindings else ShaderMaterial
             shader_material = factory(
                 base=self._base,
                 fragment_shader=_frag_shader,
@@ -452,7 +476,28 @@ def material(
                 prepass_fragment_shader=prepass_fragment_shader,
                 deferred_vertex_shader=deferred_vertex_shader,
                 deferred_fragment_shader=deferred_fragment_shader,
-                **({"storage_buffer": self._storage_buffer} if storage_fields else {}),
+                **(
+                    {
+                        "storage_buffers": self._storage_buffers,
+                        "texture_layouts": [
+                            None
+                            if field.layout is None
+                            else (
+                                field.layout.dimension,
+                                field.layout.sample_type,
+                                field.layout.filterable,
+                                field.layout.sampler,
+                            )
+                            for field in texture_fields
+                        ],
+                        "storage_layouts": [
+                            (field.layout.wgsl_type, field.layout.declarations)
+                            for field in storage_fields
+                        ],
+                    }
+                    if extended_bindings
+                    else {}
+                ),
             )
             cast(Any, shader_material)._set_logical_type_id(material_type_id)
             return shader_material
@@ -558,7 +603,9 @@ def material(
                 return self._textures[slot]  # type: ignore[no-any-return]
 
             def _tex_setter(
-                self: Any, value: Handle[Image] | None, slot: int = _slot  # noqa: ANN401
+                self: Any,  # noqa: ANN401
+                value: Handle[Image] | None,
+                slot: int = _slot,
             ) -> None:
                 if self._shader_mat is not None:
                     if value is not None:
@@ -566,33 +613,38 @@ def material(
                     else:
                         self._shader_mat.clear_texture(slot)
                 else:
+                    if extended_bindings:
+                        _pybevy.pbr.StorageShaderMaterial._validate_texture_handle(value)
                     self._textures[slot] = value
 
             setattr(cls, tf.name, property(_tex_getter, _tex_setter))
 
-        if storage_fields and storage_fields[0].name in concise_storage:
-            descriptor = Storage[object](default=None)
-            descriptor._slot = 0
-            setattr(cls, storage_fields[0].name, descriptor)
-        elif storage_fields:
+        for slot, storage_field in enumerate(storage_fields):
+            if storage_field.name in concise_storage:
+                descriptor = Storage[object](default=None)
+                descriptor._slot = slot
+                setattr(cls, storage_field.name, descriptor)
+                continue
 
-            def _storage_getter(self: _StorageInstance) -> Handle[ShaderBuffer] | None:
+            def _storage_getter(
+                self: _StorageInstance, _slot: int = slot
+            ) -> Handle[ShaderBuffer] | None:
                 if self._shader_mat is not None:
-                    return self._shader_mat.storage_buffer
-                return self._storage_buffer
+                    return self._shader_mat.get_storage_buffer_at(_slot)
+                return self._storage_buffers[_slot]
 
             def _storage_setter(
-                self: _StorageInstance, value: Handle[ShaderBuffer] | None
+                self: _StorageInstance,
+                value: Handle[ShaderBuffer] | None,
+                _slot: int = slot,
             ) -> None:
                 if self._shader_mat is not None:
-                    self._shader_mat.storage_buffer = value
+                    self._shader_mat.set_storage_buffer_at(_slot, value)
                 else:
                     _pybevy.pbr.StorageShaderMaterial._validate_storage_handle(value)
-                    self._storage_buffer = value
+                    self._storage_buffers[_slot] = value
 
-            setattr(
-                cls, storage_fields[0].name, property(_storage_getter, _storage_setter)
-            )
+            setattr(cls, storage_field.name, property(_storage_getter, _storage_setter))
 
         _cls.__init__ = __init__
         _cls.to_shader_material = to_shader_material
@@ -602,7 +654,7 @@ def material(
         # Asset metadata: enables Assets[HologramMaterial], MeshMaterial3d[HologramMaterial]
         _cls.__pybevy_asset_type__ = native_type
         _cls.__pybevy_component_type__ = (
-            MeshMaterial3dStorageShader if storage_fields else MeshMaterial3dShader
+            MeshMaterial3dStorageShader if extended_bindings else MeshMaterial3dShader
         )
         _cls.__pybevy_logical_type_id__ = material_type_id
 

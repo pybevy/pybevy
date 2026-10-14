@@ -1,0 +1,90 @@
+//! Host-shareable storage element validation using the renderer's WGSL compiler.
+
+use bevy::reflect::Reflect;
+use naga::{
+    AddressSpace, TypeInner,
+    front::wgsl,
+    proc::Layouter,
+    valid::{Capabilities, ValidationFlags, Validator},
+};
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Reflect)]
+pub struct StorageElement {
+    pub wgsl: String,
+    pub declarations: String,
+    pub stride: u32,
+    pub alignment: u32,
+}
+
+impl Default for StorageElement {
+    fn default() -> Self {
+        Self {
+            wgsl: "vec4<f32>".into(),
+            declarations: String::new(),
+            stride: 16,
+            alignment: 16,
+        }
+    }
+}
+
+impl StorageElement {
+    pub fn parse_layouts(values: &[(String, String)]) -> Result<Vec<Self>, String> {
+        let mut declarations = Vec::new();
+        for (_, source) in values {
+            if !declarations.contains(&source.as_str()) {
+                declarations.push(source.as_str());
+            }
+        }
+        let shared = declarations.join("\n");
+        values
+            .iter()
+            .map(|(element, source)| {
+                let mut layout = Self::parse(element, &shared)?;
+                layout.declarations = source.clone();
+                Ok(layout)
+            })
+            .collect()
+    }
+
+    pub fn parse(element: &str, declarations: &str) -> Result<Self, String> {
+        let source = format!(
+            "{declarations}\n@group(0) @binding(0) var<storage, read> pybevy_storage_element: array<{element}>;"
+        );
+        let module = wgsl::parse_str(&source).map_err(|error| error.emit_to_string(&source))?;
+        if module.global_variables.len() != 1
+            || !module.functions.is_empty()
+            || !module.entry_points.is_empty()
+            || !module.overrides.is_empty()
+        {
+            return Err("Storage declarations may contain only types and constants".into());
+        }
+        if module
+            .types
+            .iter()
+            .any(|(_, ty)| matches!(ty.inner, TypeInner::Atomic(_)))
+        {
+            return Err("Read-only material storage does not support atomic elements".into());
+        }
+        Validator::new(ValidationFlags::all(), Capabilities::empty())
+            .validate(&module)
+            .map_err(|error| error.emit_to_string(&source))?;
+        let (_, global) = module.global_variables.iter().next().unwrap();
+        if !matches!(global.space, AddressSpace::Storage { .. }) {
+            return Err("Storage elements must be host-shareable WGSL types".into());
+        }
+        let TypeInner::Array { base, stride, .. } = module.types[global.ty].inner else {
+            return Err("Storage elements must form a runtime-sized array".into());
+        };
+        let mut layouter = Layouter::default();
+        layouter
+            .update(module.to_ctx())
+            .map_err(|error| error.to_string())?;
+        let alignment = layouter[base].alignment * 1;
+        Ok(Self {
+            wgsl: element.into(),
+            declarations: declarations.into(),
+            stride,
+            alignment,
+        })
+    }
+}

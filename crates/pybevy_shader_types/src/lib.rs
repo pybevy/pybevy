@@ -5,9 +5,13 @@
 //! supporting types. No Python dependencies.
 
 mod generated_bindings;
+pub mod material_shader_variants;
 pub mod packed_uniform;
 mod shader_def_registry;
+pub mod storage_element;
 pub mod storage_material;
+pub mod texture_binding;
+use material_shader_variants::{MaterialShaderVariants, material_shader_handle};
 pub use storage_material::{
     StorageShaderMaterial, StorageShaderMaterialExtension, StorageShaderMaterialPlugin,
 };
@@ -292,7 +296,11 @@ impl From<&ShaderMaterialExtension> for ShaderMaterialKey {
                 .unwrap_or(0),
             shader_defs: ext.shader_defs,
             def_names_id: ext.logical_type_id.unwrap_or(0),
-            bindings_id: ext.bindings_wgsl.as_deref().map(hash_shader_path),
+            bindings_id: ext
+                .bindings_wgsl
+                .as_deref()
+                .filter(|source| expected_generated_material_import(source).is_some())
+                .map(hash_shader_path),
         }
     }
 }
@@ -423,7 +431,7 @@ impl MaterialExtension for ShaderMaterialExtension {
             (data.vert_shader_id, data.frag_shader_id)
         };
         if fragment_id != 0
-            && let Some(handle) = get_shader_handle(fragment_id)
+            && let Some(handle) = material_shader_handle(fragment_id, data.bindings_id)
         {
             if let Some(fragment) = &mut descriptor.fragment {
                 fragment.shader = handle;
@@ -438,7 +446,7 @@ impl MaterialExtension for ShaderMaterialExtension {
             }
         }
         if vertex_id != 0
-            && let Some(handle) = get_shader_handle(vertex_id)
+            && let Some(handle) = material_shader_handle(vertex_id, data.bindings_id)
         {
             descriptor.vertex.shader = handle;
         }
@@ -506,6 +514,7 @@ pub fn sync_shader_handles(
     mut shaders: ResMut<Assets<Shader>>,
     mut load_failures: MessageReader<AssetLoadFailedEvent<Shader>>,
     mut reported_diagnostics: Local<HashSet<String>>,
+    mut variants: Local<MaterialShaderVariants>,
 ) {
     let extensions: Vec<_> = materials
         .iter()
@@ -586,5 +595,6 @@ pub fn sync_shader_handles(
                 .filter_map(|extension| extension.bindings_wgsl.as_deref()),
         );
     }
+    variants.sync(&mut shaders, &extensions);
     *reported_diagnostics = current_diagnostics;
 }

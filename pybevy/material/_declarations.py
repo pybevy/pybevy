@@ -10,12 +10,12 @@ from .. import _pybevy  # pyright: ignore[reportAttributeAccessIssue]
 from ..assets import Handle
 from ..pbr import StandardMaterial, StorageShaderMaterial
 from ..render import ShaderBuffer
-from ._bindings import StorageBuffer
+from ._bindings import StorageBinding
 
 
 class _StorageInstance(Protocol):
     _shader_mat: StorageShaderMaterial | None
-    _storage_buffer: Handle[ShaderBuffer] | None
+    _storage_buffers: list[Handle[ShaderBuffer] | None]
 
 
 class Storage[Element]:
@@ -40,21 +40,21 @@ class Storage[Element]:
     ) -> Storage[Element] | Handle[ShaderBuffer] | None:
         if instance is None:
             return self
-        self._bound_slot()
+        slot = self._bound_slot()
         material = cast(_StorageInstance, instance)
         if material._shader_mat is not None:
-            return material._shader_mat.storage_buffer
-        return material._storage_buffer
+            return material._shader_mat.get_storage_buffer_at(slot)
+        return material._storage_buffers[slot]
 
     def __set__(self, instance: object, value: Handle[ShaderBuffer] | None) -> None:
-        self._bound_slot()
+        slot = self._bound_slot()
         material = cast(_StorageInstance, instance)
         if material._shader_mat is not None:
-            material._shader_mat.storage_buffer = value
+            material._shader_mat.set_storage_buffer_at(slot, value)
         else:
             # The same validator runs before constructor values are accepted.
             _pybevy.pbr.StorageShaderMaterial._validate_storage_handle(value)
-            material._storage_buffer = value
+            material._storage_buffers[slot] = value
 
     def _bound_slot(self) -> int:
         if self._slot is None:
@@ -91,7 +91,7 @@ def _lower_declarations(
                 required.append(name)
             element = get_args(annotation)[0]
             lowered[name] = Annotated[
-                Handle[ShaderBuffer] | None, StorageBuffer(element=element)
+                Handle[ShaderBuffer] | None, StorageBinding(element=element)
             ]
         elif annotation is Storage:
             raise TypeError(

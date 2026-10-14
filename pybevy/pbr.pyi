@@ -1050,11 +1050,11 @@ class ShaderMaterial(Material):
         """Clear a texture slot (set to None)."""
 
 class StorageShaderMaterialPlugin(Plugin):
-    """Opt into storage materials; also installs ordinary shader material support."""
+    """Opt into storage/custom-texture layouts and ordinary shader material support."""
     def __init__(self) -> None: ...
 
 class StorageShaderMaterial(Material):
-    """Custom 3D material with one read-only array<vec4<f32>> storage binding.
+    """Custom 3D material with typed storage arrays and sampled texture layouts.
 
     Uses the ordinary shader stages, uniform and texture slots. An absent or
     unprepared buffer leaves the material pending. Requires StorageShaderMaterialPlugin.
@@ -1075,6 +1075,9 @@ class StorageShaderMaterial(Material):
         bindings_wgsl: str | None = None,
         *,
         storage_buffer: Handle[ShaderBuffer] | None = None,
+        storage_buffers: list[Handle[ShaderBuffer] | None] | None = None,
+        storage_layouts: list[tuple[str, str]] | None = None,
+        texture_layouts: list[tuple[str, str, bool, str] | None] | None = None,
         prepass_vertex_shader: str | None = None,
         prepass_fragment_shader: str | None = None,
         deferred_vertex_shader: str | None = None,
@@ -1109,6 +1112,8 @@ class StorageShaderMaterial(Material):
         """Clear a texture slot (set to None)."""
 
     storage_buffer: Handle[ShaderBuffer] | None
+    def get_storage_buffer_at(self, slot: int) -> Handle[ShaderBuffer] | None: ...
+    def set_storage_buffer_at(self, slot: int, value: Handle[ShaderBuffer] | None = None) -> None: ...
 
 class MeshMaterial3dStorageShader(Component):
     """Assign a storage material; MeshMaterial3d[DecoratedClass] selects this automatically."""

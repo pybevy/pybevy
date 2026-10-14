@@ -5,14 +5,18 @@ Internal machinery for pybevy.material; not part of the public API.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from types import NoneType, UnionType
-from typing import Any, Union, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Union, get_args, get_origin
 
 from ..assets import Handle
 from ..color import LinearRgba
 from ..image import Image
 from ..math import Vec2, Vec3, Vec4
+
+if TYPE_CHECKING:
+    from ._bindings import Texture
+
 
 _MAX_TEXTURE_SLOTS = 4
 _UNION_ORIGINS = (Union, UnionType)
@@ -70,11 +74,25 @@ def _align_up(offset: int, alignment: int) -> int:
 
 
 class _FieldLayout:
-    __slots__ = ("default", "name", "num_floats", "offset", "python_type", "size", "wgsl_type")
+    __slots__ = (
+        "default",
+        "name",
+        "num_floats",
+        "offset",
+        "python_type",
+        "size",
+        "wgsl_type",
+    )
 
     def __init__(
-        self, name: str, python_type: type, wgsl_type: str,
-        offset: int, size: int, num_floats: int, default: Any,  # noqa: ANN401
+        self,
+        name: str,
+        python_type: type,
+        wgsl_type: str,
+        offset: int,
+        size: int,
+        num_floats: int,
+        default: Any,  # noqa: ANN401
     ) -> None:
         self.name = name
         self.python_type = python_type
@@ -96,7 +114,10 @@ def _annotation_name(typ: object) -> str:
 def _is_texture_annotation(typ: object) -> bool:
     if typ is Handle:
         return True
-    return get_origin(typ) in _UNION_ORIGINS and set(get_args(typ)) == {Handle, NoneType}
+    return get_origin(typ) in _UNION_ORIGINS and set(get_args(typ)) == {
+        Handle,
+        NoneType,
+    }
 
 
 def _check_texture_annotation(name: str, typ: object) -> None:
@@ -116,6 +137,7 @@ def _check_texture_annotation(name: str, typ: object) -> None:
 
 class _BoolFieldInfo:
     """Tracks a bool field that maps to a shader def bit."""
+
     __slots__ = ("bit_index", "def_name", "default", "name")
 
     def __init__(self, name: str, bit_index: int, def_name: str, default: bool) -> None:
@@ -127,18 +149,21 @@ class _BoolFieldInfo:
 
 class _TextureFieldInfo:
     """Tracks a Handle[Image] field that maps to a texture slot."""
-    __slots__ = ("binding_sampler", "binding_texture", "name", "slot_index")
+
+    __slots__ = ("binding_sampler", "binding_texture", "layout", "name", "slot_index")
 
     def __init__(self, name: str, slot_index: int) -> None:
         self.name = name
         self.slot_index = slot_index
+        self.layout: Texture | None = None
         # Binding numbers must match the Rust AsBindGroup attributes
         self.binding_texture = 101 + slot_index * 2
         self.binding_sampler = 102 + slot_index * 2
 
 
 def _compute_layout(
-    hints: Mapping[str, object], defaults: Mapping[str, Any],
+    hints: Mapping[str, object],
+    defaults: Mapping[str, Any],
 ) -> tuple[list[_FieldLayout], list[_BoolFieldInfo], list[_TextureFieldInfo]]:
     """Compute std140-compatible layout for material fields.
 
@@ -158,16 +183,16 @@ def _compute_layout(
         # Bool fields → shader defs, not uniforms
         if typ is bool:
             if len(bool_fields) >= 32:
-                raise TypeError(
-                    f"Too many bool fields (max 32): '{name}' is the 33rd"
-                )
+                raise TypeError(f"Too many bool fields (max 32): '{name}' is the 33rd")
             default = defaults.get(name, False)
-            bool_fields.append(_BoolFieldInfo(
-                name=name,
-                bit_index=len(bool_fields),
-                def_name=name.upper(),
-                default=bool(default),
-            ))
+            bool_fields.append(
+                _BoolFieldInfo(
+                    name=name,
+                    bit_index=len(bool_fields),
+                    def_name=name.upper(),
+                    default=bool(default),
+                )
+            )
             continue
 
         if _is_texture_annotation(typ):
@@ -176,10 +201,12 @@ def _compute_layout(
                 raise TypeError(
                     f"Too many texture fields (max {_MAX_TEXTURE_SLOTS}): '{name}'"
                 )
-            texture_fields.append(_TextureFieldInfo(
-                name=name,
-                slot_index=len(texture_fields),
-            ))
+            texture_fields.append(
+                _TextureFieldInfo(
+                    name=name,
+                    slot_index=len(texture_fields),
+                )
+            )
             continue
 
         _check_texture_annotation(name, typ)
@@ -201,15 +228,17 @@ def _compute_layout(
 
         default = defaults.get(name)
 
-        fields.append(_FieldLayout(
-            name=name,
-            python_type=typ,
-            wgsl_type=wgsl_type,
-            offset=offset,
-            size=size,
-            num_floats=num_floats,
-            default=default,
-        ))
+        fields.append(
+            _FieldLayout(
+                name=name,
+                python_type=typ,
+                wgsl_type=wgsl_type,
+                offset=offset,
+                size=size,
+                num_floats=num_floats,
+                default=default,
+            )
+        )
         offset += size
 
     total = _align_up(offset, 16)  # struct alignment = max member alignment
@@ -224,6 +253,35 @@ def _compute_layout(
         )
 
     return fields, bool_fields, texture_fields
+
+
+def _validate_binding_names(
+    class_name: str,
+    fields: list[_FieldLayout],
+    textures: list[_TextureFieldInfo],
+    storage_names: Iterable[str],
+) -> None:
+    declarations: list[tuple[str, str]] = []
+    if fields:
+        declarations.extend(
+            ((class_name, "uniform type"), ("material", "generated uniform"))
+        )
+    for texture in textures:
+        declarations.extend(
+            (
+                (texture.name, "texture field"),
+                (f"{texture.name}_sampler", "generated sampler"),
+            )
+        )
+    declarations.extend((name, "storage field") for name in storage_names)
+    declared: dict[str, str] = {}
+    for name, kind in declarations:
+        if name in declared:
+            raise TypeError(
+                f"Material {kind} '{name}' conflicts with {declared[name]} in generated WGSL; "
+                "rename the conflicting class or resource field"
+            )
+        declared[name] = kind
 
 
 def _generate_wgsl(
@@ -262,11 +320,11 @@ def _generate_wgsl(
         for tf in texture_fields:
             lines.append(
                 f"@group(3) @binding({tf.binding_texture}) "
-                f"var {tf.name}: texture_2d<f32>;"
+                f"var {tf.name}: {tf.layout.wgsl_type if tf.layout else 'texture_2d<f32>'};"
             )
             lines.append(
                 f"@group(3) @binding({tf.binding_sampler}) "
-                f"var {tf.name}_sampler: sampler;"
+                f"var {tf.name}_sampler: {tf.layout.sampler_type if tf.layout else 'sampler'};"
             )
         lines.append("")
 
