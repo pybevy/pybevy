@@ -9,8 +9,9 @@ use bevy::{
     time::{Fixed, Real, Time, Virtual},
 };
 use pybevy_core::{
-    CustomResourceInfo, ResourceBridge, custom_resource::insert_dynamic_resource_value,
-    public_error, registry::global_registry::all_resource_bridges,
+    CustomResourceInfo, ResourceBridge, ValidityGuard,
+    custom_resource::insert_dynamic_resource_value, public_error,
+    registry::global_registry::all_resource_bridges,
 };
 use pyo3::{
     ffi::PyObject,
@@ -19,6 +20,7 @@ use pyo3::{
 };
 
 use crate::{
+    codec::value::json_kind_name,
     protocol::ControlError,
     pyo3::{
         components::validate_written_fields,
@@ -31,7 +33,7 @@ use crate::{
         inspect::reflected_type_is_enum,
         names::{ResourceTarget, custom_resource_name, qualified_type_name, resolve_resource},
         state_resource,
-        to_json::{dataclass_fields_to_json, extract_bridge_fields, py_value_to_json},
+        to_json::{extract_bridge_fields, python_object_fields_to_json},
     },
 };
 
@@ -138,15 +140,9 @@ pub fn insert_resource(
     match &value {
         serde_json::Value::Object(_) | serde_json::Value::Null => {}
         other => {
-            let kind = match other {
-                serde_json::Value::String(_) => "string",
-                serde_json::Value::Number(_) => "number",
-                serde_json::Value::Bool(_) => "bool",
-                serde_json::Value::Array(_) => "array",
-                _ => "non-object",
-            };
             return Err(ControlError::invalid_params(format!(
-                "set_resource value for '{resource_type}' must be a JSON object (got {kind})"
+                "set_resource value for '{resource_type}' must be a JSON object (got {})",
+                json_kind_name(other)
             )));
         }
     }
@@ -268,11 +264,13 @@ pub fn insert_resource(
     }
 
     // Fallback: check custom Python resources via CustomResourceInfo
-    let custom_entry = world.get_resource::<CustomResourceInfo>().and_then(|info| {
-        info.iter()
-            .find(|(id, _)| matches!(&target, Some(ResourceTarget::Custom(target_id)) if id == target_id))
-            .map(|(id, entry)| (id, entry.type_ptr))
-    });
+    let custom_entry = match &target {
+        Some(ResourceTarget::Custom(id)) => world
+            .get_resource::<CustomResourceInfo>()
+            .and_then(|info| info.get(*id))
+            .map(|entry| (*id, entry.type_ptr)),
+        _ => None,
+    };
 
     if let Some((comp_id, type_ptr)) = custom_entry {
         Python::attach(|py| {
@@ -406,11 +404,13 @@ pub fn remove_resource(
     }
 
     // Fallback: check custom Python resources via CustomResourceInfo
-    let custom_comp_id = world.get_resource::<CustomResourceInfo>().and_then(|info| {
-        info.iter()
-            .find(|(id, _)| matches!(&target, Some(ResourceTarget::Custom(target_id)) if id == target_id))
-            .map(|(id, _)| id)
-    });
+    let custom_comp_id = match &target {
+        Some(ResourceTarget::Custom(id)) => world
+            .get_resource::<CustomResourceInfo>()
+            .and_then(|info| info.get(*id))
+            .map(|_| *id),
+        _ => None,
+    };
 
     if let Some(comp_id) = custom_comp_id {
         let was_present = world.remove_resource_by_id(comp_id);
@@ -445,30 +445,7 @@ fn extract_custom_resource_fields(
         return Some(map);
     }
 
-    // Try dataclass fields first
-    if let Some(fields) = dataclass_fields_to_json(py, bound)
-        && !fields.is_empty()
-    {
-        return Some(fields);
-    }
-
-    let mut map = serde_json::Map::new();
-
-    // Fallback: try __dict__
-    if let Ok(dict) = bound.getattr("__dict__") {
-        #[allow(clippy::collapsible_if)]
-        if let Ok(py_dict) = dict.cast::<PyDict>() {
-            for (key, value) in py_dict.iter() {
-                if let Ok(k) = key.extract::<String>() {
-                    if !k.starts_with('_') {
-                        map.insert(k, py_value_to_json(&value));
-                    }
-                }
-            }
-        }
-    }
-
-    if map.is_empty() { None } else { Some(map) }
+    python_object_fields_to_json(py, bound)
 }
 
 /// Registered resources with their addressable names, in listing order. A
@@ -605,14 +582,11 @@ fn bridge_resource_entry(world: &World, bridge: &Arc<dyn ResourceBridge>) -> ser
     if present {
         let reflected_enum = reflected_type_is_enum(world, bridge.bevy_type_id());
         let fields = Python::attach(|py| {
-            let validity_flag = pybevy_core::ValidityFlag::new_read();
-            let validity = validity_flag.with_access_mode(pybevy_core::AccessMode::Read);
-            let result = bridge
+            let (_read_window, validity) = ValidityGuard::read();
+            bridge
                 .get(world, validity, py)
                 .ok()
-                .map(|py_obj| extract_bridge_fields(py, py_obj.bind(py), reflected_enum));
-            validity_flag.set_invalid();
-            result
+                .map(|py_obj| extract_bridge_fields(py, py_obj.bind(py), reflected_enum))
         });
         if let Some(fields) = fields {
             entry["fields"] = serde_json::Value::Object(fields);
@@ -888,7 +862,10 @@ mod tests {
         let err = result.expect_err("bool value must be rejected");
         assert_eq!(err.code, ErrorCode::InvalidParams);
         assert!(err.message.contains("must be a JSON object"));
-        assert!(err.message.contains("bool"));
+        assert_eq!(
+            err.message,
+            "set_resource value for 'DirectionalLightShadowMap' must be a JSON object (got boolean)"
+        );
     }
 
     #[test]

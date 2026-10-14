@@ -22,7 +22,7 @@ use bevy::{
     world_serialization::WorldAsset,
 };
 #[cfg(feature = "mcp")]
-use pybevy_control::bridge::{InternalOverlayUi, OverlaySuppression};
+use pybevy_control::capture::hold::{InternalOverlayUi, OverlaySuppression};
 use pybevy_core::{
     DebugSnapshot, LastSystemError, ReloadMemorySnapshotInfo, ReloadResult, SystemProfile,
 };
@@ -1239,7 +1239,7 @@ mod stats_gate_tests {
 #[cfg(all(test, feature = "mcp"))]
 mod suppression_tests {
     use bevy::ecs::system::RunSystemOnce;
-    use pybevy_control::bridge::OverlaySuppression;
+    use pybevy_control::capture::hold::OverlaySuppression;
 
     use super::*;
 

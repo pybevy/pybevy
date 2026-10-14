@@ -25,6 +25,7 @@ use crate::{
     protocol::ControlError,
     pyo3::{
         dataclass_fields::dataclass_field_names,
+        descriptors::is_getset_descriptor,
         from_json::field::convert_field_value,
         names::{ComponentTarget, resolve_component},
         to_json::{has_writable_properties, parse_variant_from_repr, py_value_to_json},
@@ -215,13 +216,13 @@ pub fn get_component_schema(
     }
 
     // Fallback: check custom Python components via CustomComponentInfo
-    let custom_entry = world
-        .get_resource::<pybevy_core::CustomComponentInfo>()
-        .and_then(|info| {
-            info.iter()
-                .find(|(id, _)| matches!(&target, Some(ComponentTarget::Custom(target_id)) if id == target_id))
-                .map(|(component_id, entry)| (component_id, entry.clone()))
-        });
+    let custom_entry = match &target {
+        Some(ComponentTarget::Custom(id)) => world
+            .get_resource::<pybevy_core::CustomComponentInfo>()
+            .and_then(|info| info.get(*id))
+            .map(|entry| (*id, entry.clone())),
+        _ => None,
+    };
     if let Some((component_id, entry)) = custom_entry {
         let schema = Python::attach(|py| {
             let annotated_fields = entry
@@ -418,15 +419,12 @@ fn get_class_fields(py: Python<'_>, py_type: &Bound<'_, PyType>) -> serde_json::
             if name.starts_with('_') {
                 continue;
             }
-            if let Ok(attr) = py_type.as_any().getattr(name.as_str()) {
-                let type_name = attr
-                    .get_type()
-                    .name()
-                    .map(|n| n.to_string())
-                    .unwrap_or_default();
-                if type_name == "getset_descriptor" {
-                    fields.insert(name, serde_json::Value::String("property".into()));
-                }
+            if py_type
+                .as_any()
+                .getattr(name.as_str())
+                .is_ok_and(|attr| is_getset_descriptor(&attr))
+            {
+                fields.insert(name, serde_json::Value::String("property".into()));
             }
         }
     }

@@ -1,6 +1,8 @@
 //! Root-crate integration around the shared renderer readback core.
 
 use bevy::prelude::*;
+#[cfg(feature = "mcp")]
+use pybevy_control::capture::headless::HeadlessFrameBuffer;
 pub use pybevy_render::readback::{FrameReceiver, ImageCopier, list_entities, poll_frame};
 
 /// GPU image readback plus the optional control-server screenshot bridge.
@@ -12,8 +14,6 @@ impl Plugin for ImageCopyPlugin {
 
         #[cfg(feature = "mcp")]
         {
-            use pybevy_control::handlers::screenshot::HeadlessFrameBuffer;
-
             app.init_resource::<HeadlessFrameBuffer>();
             app.add_systems(
                 Update,
@@ -26,8 +26,6 @@ impl Plugin for ImageCopyPlugin {
 
 /// Copy the latest renderer frame into the control server's screenshot buffer.
 #[cfg(feature = "mcp")]
-fn update_headless_frame_buffer(
-    mut buffer: ResMut<pybevy_control::handlers::screenshot::HeadlessFrameBuffer>,
-) {
+fn update_headless_frame_buffer(mut buffer: ResMut<HeadlessFrameBuffer>) {
     buffer.sync(pybevy_render::readback::poll_latest_frame_with_sequence());
 }

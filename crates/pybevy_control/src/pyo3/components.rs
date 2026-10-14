@@ -762,10 +762,9 @@ fn set_component_python(
 
     let (owned, replacement_variant) = Python::attach(
         |py| -> Result<(Py<PyAny>, Option<String>), ControlError> {
-            let validity_flag = pybevy_core::ValidityFlag::new_read();
-            let validity = validity_flag.with_access_mode(pybevy_core::AccessMode::Read);
+            let (_read_window, validity) = ValidityGuard::read();
             // SAFETY: `world` is live for this call, the wrapper is fenced by
-            // `validity_flag`, and only read access is requested before copying.
+            // `_read_window`, and only read access is requested before copying.
             let extracted = unsafe {
                 bridge.extract_from_entity_ref(entity, world as *mut World, validity, py)
             };
@@ -779,7 +778,7 @@ fn set_component_python(
                     ControlError::not_found(public_error::mcp_entity_not_found(entity_id))
                 })?;
             let current = extracted.bind(py);
-            let result = if let Some(request) = enum_component_variant_request(current, field_obj) {
+            if let Some(request) = enum_component_variant_request(current, field_obj) {
                 let replacement = construct_enum_variant(
                     py,
                     current,
@@ -817,9 +816,7 @@ fn set_component_python(
                             "Component '{component}' cannot be copied for atomic mutation: {error}"
                         ))
                     })
-            };
-            validity_flag.set_invalid();
-            result
+            }
         },
     )?;
 
@@ -1455,13 +1452,13 @@ pub fn remove_component(
     }
 
     // Fallback: check custom Python components via CustomComponentInfo
-    let custom_component = world
-        .get_resource::<CustomComponentInfo>()
-        .and_then(|info| {
-            info.iter()
-                .find(|(id, _)| matches!(&target, Some(ComponentTarget::Custom(target_id)) if id == target_id))
-                .map(|(id, entry)| (id, entry.type_ptr))
-        });
+    let custom_component = match &target {
+        Some(ComponentTarget::Custom(id)) => world
+            .get_resource::<CustomComponentInfo>()
+            .and_then(|info| info.get(*id))
+            .map(|entry| (*id, entry.type_ptr)),
+        _ => None,
+    };
 
     if let Some((component_id, type_ptr)) = custom_component {
         if let Ok(entity_ref) = world.get_entity(entity) {

@@ -5,12 +5,34 @@ use pyo3::{
 };
 
 use crate::{
-    codec::value::{LINEAR_RGBA_CHANNELS, json_kind_name},
-    pyo3::from_json::{
-        enums::reject_enum_constant,
-        field::{json_number_to_f32, json_to_py},
-    },
+    codec::value::{LINEAR_RGBA_CHANNELS, json_f32, json_kind_name},
+    pyo3::from_json::{enums::reject_enum_constant, field::json_to_py},
 };
+
+/// `Color.srgba(r, g, b, a)` from a four-element JSON array.
+pub(crate) fn srgba_from_array(
+    color: &Bound<'_, PyType>,
+    values: &[serde_json::Value],
+) -> Result<Py<PyAny>, String> {
+    let [red, green, blue, alpha] = values else {
+        return Err(format!(
+            "Color expects [r, g, b, a], got {} elements",
+            values.len()
+        ));
+    };
+    color
+        .call_method1(
+            "srgba",
+            (
+                json_f32(red)?,
+                json_f32(green)?,
+                json_f32(blue)?,
+                json_f32(alpha)?,
+            ),
+        )
+        .map(Bound::unbind)
+        .map_err(|error| error.to_string())
+}
 
 pub(crate) fn construct_color_variant(
     py: Python<'_>,
@@ -84,7 +106,7 @@ pub(crate) fn linear_rgba_from_json(
                 .iter()
                 .zip(values)
                 .map(|(name, value)| {
-                    json_number_to_f32(value).map_err(|error| {
+                    json_f32(value).map_err(|error| {
                         public_error::mcp_linear_rgba_input(format!("LinearRgba.{name}: {error}"))
                     })
                 })
@@ -105,7 +127,7 @@ pub(crate) fn linear_rgba_from_json(
                         "LinearRgba has no field '{name}'"
                     )));
                 }
-                let channel = json_number_to_f32(value).map_err(|error| {
+                let channel = json_f32(value).map_err(|error| {
                     public_error::mcp_linear_rgba_input(format!("LinearRgba.{name}: {error}"))
                 })?;
                 kwargs

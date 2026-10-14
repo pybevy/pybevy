@@ -13,7 +13,7 @@ use crate::{
         depth::{
             PendingDepthAnalysis, PendingDepthSample, PendingDepthSamples, validate_depth_sampling,
         },
-        hold::{GizmoEnabledRestore, prepare_pending_screenshot_gizmos},
+        hold::prepare_pending_screenshot_gizmos,
         queue::{
             CaptureResponseKind, DEFAULT_SCREENSHOT_MAX_WIDTH, DEFAULT_TIMELINE_MAX_WIDTH,
             DebugCameraRequest, PendingScreenshot, PendingScreenshots,
@@ -24,8 +24,8 @@ use crate::{
             compute_schedule,
         },
         turnaround::{
-            ActiveTurnaround, MAX_TURNAROUND_VIEWS, PendingTurnarounds, compute_scene_bounds,
-            compute_viewpoints,
+            ActiveTurnaround, MAX_TURNAROUND_VIEWS, PendingTurnarounds, compute_viewpoints,
+            turnaround_framing,
         },
     },
     engine::channel::ControlRequest,
@@ -128,23 +128,15 @@ pub fn push_pending_screenshot(
         let _ = response_tx.send(Err(error));
         return;
     }
-    let debug_camera = params.position.map(|pos| DebugCameraRequest {
-        position: pos,
-        look_at: params.look_at.unwrap_or([0.0, 0.0, 0.0]),
-    });
+    let defaults = PendingScreenshot::new(response_tx, CaptureResponseKind::Screenshot);
     deferred.push(PendingScreenshot {
-        response_tx,
         frames_remaining: params.delay_frames,
-        required_render_epoch: None,
         with_gizmos,
-        gizmo_restore: GizmoEnabledRestore::new(),
-        max_width: params.max_width.or(Some(DEFAULT_SCREENSHOT_MAX_WIDTH)),
-        debug_camera,
+        max_width: params.max_width.or(defaults.max_width),
+        debug_camera: DebugCameraRequest::from_pose(params.position, params.look_at),
         hide_ui: params.hide_ui,
         entity: params.entity,
-        depth_analysis: None,
-        response_kind: CaptureResponseKind::Screenshot,
-        extra_response: None,
+        ..defaults
     });
 }
 
@@ -170,23 +162,15 @@ pub fn push_pending_stats(
         let _ = response_tx.send(Err(error));
         return;
     }
-    let debug_camera = params.position.map(|position| DebugCameraRequest {
-        position,
-        look_at: params.look_at.unwrap_or([0.0, 0.0, 0.0]),
-    });
+    let defaults = PendingScreenshot::new(response_tx, CaptureResponseKind::Stats(options));
     deferred.push(PendingScreenshot {
-        response_tx,
         frames_remaining: params.delay_frames,
-        required_render_epoch: None,
         with_gizmos: params.gizmos,
-        gizmo_restore: GizmoEnabledRestore::new(),
-        max_width: params.max_width.or(Some(DEFAULT_SCREENSHOT_MAX_WIDTH)),
-        debug_camera,
+        max_width: params.max_width.or(defaults.max_width),
+        debug_camera: DebugCameraRequest::from_pose(params.position, params.look_at),
         hide_ui: params.hide_ui,
         entity: params.entity,
-        depth_analysis: None,
-        response_kind: CaptureResponseKind::Stats(options),
-        extra_response: None,
+        ..defaults
     });
 }
 
@@ -217,10 +201,7 @@ pub fn push_pending_timeline(
         *first += 1;
     }
 
-    let debug_camera = params.position.map(|position| DebugCameraRequest {
-        position,
-        look_at: params.look_at.unwrap_or([0.0, 0.0, 0.0]),
-    });
+    let debug_camera = DebugCameraRequest::from_pose(params.position, params.look_at);
     if debug_camera.is_some()
         && let Some(first) = schedule.front_mut()
     {
@@ -330,22 +311,8 @@ pub fn push_pending_turnaround(
     let elev = params.elevation.unwrap_or(25.0);
     let top = params.include_top.unwrap_or(true);
 
-    let (auto_look_at, auto_distance) = if params.distance.is_none() || params.look_at.is_none() {
-        if let Some((scene_min, scene_max)) = compute_scene_bounds(world) {
-            let center = (scene_min + scene_max) * 0.5;
-            let extent = scene_max - scene_min;
-            let diagonal = (extent.x * extent.x + extent.y * extent.y + extent.z * extent.z).sqrt();
-            let dist = diagonal / (30.0_f32.to_radians().tan() * 2.0);
-            ([center.x, center.y, center.z], dist.max(2.0))
-        } else {
-            ([0.0, 0.0, 0.0], 10.0)
-        }
-    } else {
-        ([0.0, 0.0, 0.0], 10.0)
-    };
-
-    let final_look_at = params.look_at.unwrap_or(auto_look_at);
-    let final_distance = params.distance.unwrap_or(auto_distance);
+    let (final_look_at, final_distance) =
+        turnaround_framing(world, params.look_at, params.distance);
     let viewpoints = compute_viewpoints(final_look_at, final_distance, elev, vc, top);
 
     let mut pending = world.get_resource_or_insert_with(PendingTurnarounds::default);
@@ -400,10 +367,7 @@ pub fn push_pending_depth(
     let df = delay_frames.unwrap_or(2);
     let mw = Some(max_width.unwrap_or(DEFAULT_SCREENSHOT_MAX_WIDTH));
     let hu = hide_ui.unwrap_or(true);
-    let dc = position.as_ref().map(|pos| DebugCameraRequest {
-        position: *pos,
-        look_at: look_at.unwrap_or([0.0, 0.0, 0.0]),
-    });
+    let dc = DebugCameraRequest::from_pose(position, look_at);
     let depth_analysis = PendingDepthAnalysis {
         camera_entity,
         position,
@@ -414,18 +378,12 @@ pub fn push_pending_depth(
 
     if want_rgb {
         deferred.push(PendingScreenshot {
-            response_tx,
             frames_remaining: df,
-            required_render_epoch: None,
-            with_gizmos: false,
-            gizmo_restore: GizmoEnabledRestore::new(),
             max_width: mw,
             debug_camera: dc,
             hide_ui: hu,
-            entity: None,
             depth_analysis: Some(depth_analysis),
-            response_kind: CaptureResponseKind::UnretainedScreenshot,
-            extra_response: None,
+            ..PendingScreenshot::new(response_tx, CaptureResponseKind::UnretainedScreenshot)
         });
     } else {
         world

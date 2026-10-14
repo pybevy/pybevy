@@ -13,11 +13,8 @@ use tokio::sync::oneshot;
 
 use crate::{
     capture::{
-        hold::{GizmoEnabledRestore, prepare_pending_screenshot_gizmos},
-        queue::{
-            CaptureResponseKind, DEFAULT_SCREENSHOT_MAX_WIDTH, DebugCameraRequest,
-            PendingScreenshot, PendingScreenshots,
-        },
+        hold::prepare_pending_screenshot_gizmos,
+        queue::{CaptureResponseKind, DebugCameraRequest, PendingScreenshot, PendingScreenshots},
         readiness::RenderFrameReadiness,
     },
     protocol::{ControlError, ReloadMode},
@@ -445,29 +442,22 @@ fn complete_reload(world: &mut World, reload: PendingReload) {
         return;
     }
 
-    let debug_camera = capture.position.map(|pos| DebugCameraRequest {
-        position: pos,
-        look_at: capture.look_at.unwrap_or([0.0, 0.0, 0.0]),
-    });
+    let defaults =
+        PendingScreenshot::new(reload.response_tx, CaptureResponseKind::ReloadAndCapture);
     let mut screenshot = PendingScreenshot {
-        response_tx: reload.response_tx,
         frames_remaining: capture.delay_frames,
         required_render_epoch: world
             .get_resource::<RenderFrameReadiness>()
             .map(RenderFrameReadiness::request_frame),
-        with_gizmos: false,
-        gizmo_restore: GizmoEnabledRestore::new(),
-        max_width: capture.max_width.or(Some(DEFAULT_SCREENSHOT_MAX_WIDTH)),
-        debug_camera,
+        max_width: capture.max_width.or(defaults.max_width),
+        debug_camera: DebugCameraRequest::from_pose(capture.position, capture.look_at),
         hide_ui: capture.hide_ui,
-        entity: None,
-        depth_analysis: None,
-        response_kind: CaptureResponseKind::ReloadAndCapture,
         extra_response: Some(serde_json::json!({
             "reload": reload_response,
             "errors": null,
             "entity_count": entity_count,
         })),
+        ..defaults
     };
     prepare_pending_screenshot_gizmos(world, &mut screenshot);
     let mut screenshots = world.get_resource_or_insert_with(PendingScreenshots::default);

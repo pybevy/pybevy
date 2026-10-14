@@ -67,28 +67,10 @@ pub fn dispatch(
         ControlOperation::SetTimeScale { scale } => time::set_time_scale(world, scale),
         ControlOperation::GetTimeStatus => time::get_time_status(world),
         ControlOperation::SeekTime(p) => time::seek_time(world, p),
-        ControlOperation::CaptureScreenshot(..)
-        | ControlOperation::CaptureStats(..)
-        | ControlOperation::CaptureWithGizmos(..)
-        | ControlOperation::CaptureTimeline(..) => Err(ControlError::internal(
-            "Screenshot requests should be deferred",
-        )),
         ControlOperation::CompareFrames(params) => world
             .get_resource::<analysis::CapturedFrames>()
             .ok_or_else(|| ControlError::internal("Captured frame cache is unavailable"))?
             .compare(&params.a, &params.b, params.epsilon),
-        ControlOperation::CaptureTurnaround(..) => Err(ControlError::internal(
-            "CaptureTurnaround requests should be deferred",
-        )),
-        ControlOperation::CaptureDepth(..) => Err(ControlError::internal(
-            "CaptureDepth requests should be deferred",
-        )),
-        ControlOperation::Reload(..) => {
-            Err(ControlError::internal("Reload requests should be deferred"))
-        }
-        ControlOperation::ReloadAndCapture(..) => Err(ControlError::internal(
-            "ReloadAndCapture requests should be deferred",
-        )),
         ControlOperation::GetReloadStatus => reload::get_reload_status(world),
         ControlOperation::GetLastError => reload::get_last_error(world),
         ControlOperation::QuerySpatial(p) => spatial::query_spatial(world, p),
@@ -127,9 +109,18 @@ pub fn dispatch(
                 .unwrap_or_default();
             Ok(serde_json::json!(configs))
         }
-        ControlOperation::ScheduleActions(..) => Err(ControlError::internal(
-            "ScheduleActions should be intercepted by control_poll_system",
-        )),
+        ControlOperation::CaptureScreenshot(..)
+        | ControlOperation::CaptureStats(..)
+        | ControlOperation::CaptureWithGizmos(..)
+        | ControlOperation::CaptureTimeline(..)
+        | ControlOperation::CaptureTurnaround(..)
+        | ControlOperation::CaptureDepth(..)
+        | ControlOperation::Reload(..)
+        | ControlOperation::ReloadAndCapture(..)
+        | ControlOperation::ScheduleActions(..) => Err(ControlError::internal(format!(
+            "{} is queued by control_poll_system, not dispatched",
+            tag.name()
+        ))),
     }
 }
 
@@ -330,10 +321,8 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_screenshot_returns_deferred_error() {
-        let mut world = World::new();
-        let result = dispatch(
-            &mut world,
+    fn dispatch_rejects_queued_operations() {
+        let operations = [
             ControlOperation::CaptureScreenshot(CaptureScreenshotParams {
                 entity: None,
                 max_width: None,
@@ -343,17 +332,6 @@ mod tests {
                 hide_ui: false,
                 gizmos: false,
             }),
-            &mut runtime(),
-        );
-        assert!(result.is_err());
-        assert!(result.unwrap_err().message.contains("deferred"));
-    }
-
-    #[test]
-    fn dispatch_turnaround_returns_deferred_error() {
-        let mut world = World::new();
-        let result = dispatch(
-            &mut world,
             ControlOperation::CaptureTurnaround(CaptureTurnaroundParams {
                 look_at: None,
                 distance: None,
@@ -364,17 +342,6 @@ mod tests {
                 max_width: None,
                 hide_ui: None,
             }),
-            &mut runtime(),
-        );
-        assert!(result.is_err());
-        assert!(result.unwrap_err().message.contains("deferred"));
-    }
-
-    #[test]
-    fn dispatch_depth_returns_deferred_error() {
-        let mut world = World::new();
-        let result = dispatch(
-            &mut world,
             ControlOperation::CaptureDepth(CaptureDepthParams {
                 position: None,
                 look_at: None,
@@ -385,10 +352,15 @@ mod tests {
                 hide_ui: None,
                 max_width: None,
             }),
-            &mut runtime(),
-        );
-        assert!(result.is_err());
-        assert!(result.unwrap_err().message.contains("deferred"));
+        ];
+        for operation in operations {
+            let name = operation.tag().name();
+            let error = dispatch(&mut World::new(), operation, &mut runtime()).unwrap_err();
+            assert_eq!(
+                error.message,
+                format!("{name} is queued by control_poll_system, not dispatched")
+            );
+        }
     }
 
     #[test]

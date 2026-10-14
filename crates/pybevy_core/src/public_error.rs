@@ -1495,7 +1495,11 @@ pub fn integer_vector_coordinate_out_of_range(
 
 pub const COMPONENT_FLOAT_REQUIRED: &str =
     "expected a number; null is only valid for optional fields";
-pub const COMPONENT_FLOAT_EXPECTED_NUMBER: &str = "expected a number";
+pub const COMPONENT_FLOAT_OUT_OF_F32_RANGE: &str = "number is outside the f32 range";
+
+pub fn component_float_expected_number(received: impl Display) -> String {
+    format!("expected a number, got {received}")
+}
 pub const COMPONENT_FLOAT_NON_FINITE: &str = "float must be finite";
 
 pub fn physical_camera_parameter(name: &str, value: f32) -> String {

@@ -147,15 +147,7 @@ pub(crate) fn unit_quat_from_json(value: &serde_json::Value) -> Result<Quat, Str
 }
 
 fn vec3_coordinate_from_json(name: &str, value: &serde_json::Value) -> Result<f32, String> {
-    let value = json_f64(value)
-        .map_err(|error| public_error::mcp_vec3_input(format!("Vec3.{name}: {error}")))?;
-    let narrowed = value as f32;
-    if value.is_finite() && !narrowed.is_finite() {
-        return Err(public_error::mcp_vec3_input(format!(
-            "Vec3.{name}: number is outside the f32 range"
-        )));
-    }
-    Ok(narrowed)
+    json_f32(value).map_err(|error| public_error::mcp_vec3_input(format!("Vec3.{name}: {error}")))
 }
 
 pub(crate) fn json_f64(value: &serde_json::Value) -> Result<f64, String> {
@@ -164,13 +156,21 @@ pub(crate) fn json_f64(value: &serde_json::Value) -> Result<f64, String> {
         .or_else(|| nonfinite_float_from_json(value))
         .ok_or_else(|| {
             if value.is_null() {
-                public_error::COMPONENT_FLOAT_REQUIRED
+                public_error::COMPONENT_FLOAT_REQUIRED.to_string()
             } else {
-                public_error::COMPONENT_FLOAT_EXPECTED_NUMBER
+                public_error::component_float_expected_number(value)
             }
-            .to_string()
         })
         .and_then(require_finite_float)
+}
+
+pub(crate) fn json_f32(value: &serde_json::Value) -> Result<f32, String> {
+    let narrowed = json_f64(value)? as f32;
+    if narrowed.is_finite() {
+        Ok(narrowed)
+    } else {
+        Err(public_error::COMPONENT_FLOAT_OUT_OF_F32_RANGE.to_string())
+    }
 }
 
 pub(crate) fn json_kind_name(value: &serde_json::Value) -> &'static str {
@@ -188,7 +188,52 @@ pub(crate) fn json_kind_name(value: &serde_json::Value) -> &'static str {
 mod tests {
     use std::f32::consts::FRAC_1_SQRT_2;
 
-    use super::{EnumPayload, enum_to_json, unit_quat_from_json};
+    use pybevy_core::public_error;
+    use serde_json::json;
+
+    use super::{EnumPayload, enum_to_json, json_f32, json_f64, unit_quat_from_json};
+
+    #[test]
+    fn json_f64_accepts_json_numbers() {
+        for (value, expected) in [
+            (json!(std::f64::consts::PI), std::f64::consts::PI),
+            (json!(42), 42.0),
+            (json!(-7.5), -7.5),
+            (json!(0), 0.0),
+        ] {
+            assert_eq!(json_f64(&value), Ok(expected));
+        }
+    }
+
+    #[test]
+    fn json_f64_names_the_value_it_rejects() {
+        for (value, message) in [
+            (
+                json!("not a number"),
+                r#"expected a number, got "not a number""#,
+            ),
+            (json!(true), "expected a number, got true"),
+            (json!([1, 2, 3]), "expected a number, got [1,2,3]"),
+            (json!(null), public_error::COMPONENT_FLOAT_REQUIRED),
+        ] {
+            assert_eq!(json_f64(&value), Err(message.to_string()));
+        }
+        for spelling in ["NaN", "Infinity", "-Infinity"] {
+            assert_eq!(
+                json_f64(&json!(spelling)),
+                Err(public_error::COMPONENT_FLOAT_NON_FINITE.to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn json_f32_rejects_numbers_outside_the_f32_range() {
+        assert_eq!(json_f32(&json!(1.5)), Ok(1.5));
+        assert_eq!(
+            json_f32(&json!(1e39)),
+            Err(public_error::COMPONENT_FLOAT_OUT_OF_F32_RANGE.to_string())
+        );
+    }
 
     #[test]
     fn quaternion_json_normalizes_arrays_and_objects() {

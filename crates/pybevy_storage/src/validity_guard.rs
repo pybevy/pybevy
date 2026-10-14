@@ -411,6 +411,21 @@ impl ValidityGuard {
         }
     }
 
+    /// Open a read-only window that closes when the guard drops. Unlike
+    /// `new`, the flag never gains write authority.
+    pub fn read() -> (Self, ValidityFlagWithMode) {
+        let flag = ValidityFlag::new_read();
+        let validity = flag.with_access_mode(AccessMode::Read);
+        (
+            Self {
+                flag,
+                world_id: None,
+                _parents: Vec::new(),
+            },
+            validity,
+        )
+    }
+
     /// Activate a callback's window and suspend ancestor callbacks on the same
     /// World. Different Worlds retain independent access.
     pub fn for_world(flag: ValidityFlag, world_id: WorldId) -> Self {
@@ -453,6 +468,16 @@ mod tests {
     use bevy::ecs::world::World;
 
     use super::*;
+
+    #[test]
+    fn read_guard_grants_read_only_until_dropped() {
+        let (guard, validity) = ValidityGuard::read();
+        assert!(validity.check_read().is_ok());
+        assert!(validity.check_write().is_err());
+        assert_eq!(guard.flag.get_mode(), AccessMode::Read);
+        drop(guard);
+        assert!(validity.check_read().is_err());
+    }
 
     #[test]
     fn suspension_rejects_all_modes_and_preserves_read_authority() {

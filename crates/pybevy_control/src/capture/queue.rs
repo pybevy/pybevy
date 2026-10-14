@@ -39,6 +39,30 @@ pub struct PendingScreenshot {
     pub extra_response: Option<serde_json::Value>,
 }
 
+impl PendingScreenshot {
+    /// A capture of the current view with no delay, UI hidden, gizmos off and
+    /// the default width.
+    pub fn new(
+        response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
+        response_kind: CaptureResponseKind,
+    ) -> Self {
+        Self {
+            response_tx,
+            frames_remaining: 0,
+            required_render_epoch: None,
+            with_gizmos: false,
+            gizmo_restore: GizmoEnabledRestore::new(),
+            max_width: Some(DEFAULT_SCREENSHOT_MAX_WIDTH),
+            debug_camera: None,
+            hide_ui: true,
+            entity: None,
+            depth_analysis: None,
+            response_kind,
+            extra_response: None,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum CaptureResponseKind {
     Screenshot,
@@ -62,4 +86,14 @@ impl CaptureResponseKind {
 pub struct DebugCameraRequest {
     pub position: [f32; 3],
     pub look_at: [f32; 3],
+}
+
+impl DebugCameraRequest {
+    /// A camera pose when `position` is given, looking at the origin by default.
+    pub fn from_pose(position: Option<[f32; 3]>, look_at: Option<[f32; 3]>) -> Option<Self> {
+        position.map(|position| Self {
+            position,
+            look_at: look_at.unwrap_or([0.0, 0.0, 0.0]),
+        })
+    }
 }

@@ -4,7 +4,7 @@ use bevy::{
     asset::UntypedAssetId,
     ecs::{entity::Entity, world::World},
 };
-use pybevy_core::{ComponentBridge, PyHandle, ValidityFlag};
+use pybevy_core::{ComponentBridge, PyHandle, ValidityGuard};
 use pyo3::{prelude::*, types::PyType};
 
 use crate::{
@@ -13,6 +13,7 @@ use crate::{
         AssetReferenceValidationError, AssetReferenceValue,
     },
     protocol::{ControlError, EntityRef},
+    pyo3::descriptors::is_getset_descriptor,
     scene::entity::resolve_entity,
 };
 
@@ -93,15 +94,7 @@ pub(crate) fn type_has_handle_property(py_type: &Bound<'_, PyType>) -> bool {
     py_type
         .as_any()
         .getattr(ASSET_REFERENCE_FIELD)
-        .ok()
-        .and_then(|attribute| {
-            attribute
-                .get_type()
-                .name()
-                .ok()
-                .map(|name| name.to_string())
-        })
-        .is_some_and(|name| name == "getset_descriptor")
+        .is_ok_and(|attribute| is_getset_descriptor(&attribute))
 }
 
 fn parse_fields(
@@ -194,9 +187,8 @@ fn extract_handle(
             "Asset reference source component '{component}' is missing"
         )));
     }
-    let validity_flag = ValidityFlag::new_read();
-    let validity = validity_flag.with_access_mode(pybevy_core::AccessMode::Read);
-    let result = Python::attach(|py| {
+    let (_read_window, validity) = ValidityGuard::read();
+    Python::attach(|py| {
         // SAFETY: the live World is borrowed for this synchronous call and the
         // wrapper is invalidated before this function returns.
         let component_value =
@@ -221,9 +213,7 @@ fn extract_handle(
             ))
         })?;
         Ok(handle)
-    });
-    validity_flag.set_invalid();
-    result
+    })
 }
 
 fn validate_live_asset(world: &World, handle: &PyHandle) -> Result<(), ControlError> {

@@ -17,7 +17,7 @@ pub(crate) fn reject_narrowed_nonfinite(request: &Value, written: &Value) -> Res
                 .is_some_and(|number| number.is_finite() && number.abs() > f64::from(f32::MAX))
                 && matches!(value.as_str(), "NaN" | "Infinity" | "-Infinity") =>
         {
-            Err("number is outside the f32 range".to_string())
+            Err(public_error::COMPONENT_FLOAT_OUT_OF_F32_RANGE.to_string())
         }
         (Value::Object(request), Value::Object(written)) => {
             for (name, value) in request {

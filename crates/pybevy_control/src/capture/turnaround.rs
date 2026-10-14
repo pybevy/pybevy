@@ -126,6 +126,31 @@ pub fn compute_viewpoints(
 }
 
 /// Compute scene bounding box for auto-distance calculation.
+/// The look-at point and orbit distance for a turnaround: the given values,
+/// else a frame around the scene bounds, else the origin at distance 10.
+pub fn turnaround_framing(
+    world: &mut World,
+    look_at: Option<[f32; 3]>,
+    distance: Option<f32>,
+) -> ([f32; 3], f32) {
+    if let (Some(look_at), Some(distance)) = (look_at, distance) {
+        return (look_at, distance);
+    }
+    let (auto_look_at, auto_distance) = match compute_scene_bounds(world) {
+        Some((scene_min, scene_max)) => {
+            let center = (scene_min + scene_max) * 0.5;
+            let diagonal = (scene_max - scene_min).length();
+            let distance = diagonal / (30.0_f32.to_radians().tan() * 2.0);
+            ([center.x, center.y, center.z], distance.max(2.0))
+        }
+        None => ([0.0, 0.0, 0.0], 10.0),
+    };
+    (
+        look_at.unwrap_or(auto_look_at),
+        distance.unwrap_or(auto_distance),
+    )
+}
+
 pub fn compute_scene_bounds(world: &mut World) -> Option<(Vec3A, Vec3A)> {
     let mut query_state =
         world.query::<(Entity, &bevy::camera::primitives::Aabb, &GlobalTransform)>();

@@ -15,54 +15,12 @@ pub mod transport;
 
 #[cfg(feature = "pyo3-runtime")]
 use ::pyo3::{exceptions::PyRuntimeError, prelude::*};
-#[doc(hidden)]
-pub use catalog::{resources, tools};
-#[doc(hidden)]
-pub use discovery as api_index;
-#[doc(hidden)]
-pub use engine::runtime;
 #[cfg(feature = "pyo3-runtime")]
 pub use plugin::PyControlPlugin;
-#[cfg(feature = "pyo3-runtime")]
-#[doc(hidden)]
-pub use pyo3::runtime as runtime_pyo3;
 #[cfg(feature = "pyo3-runtime")]
 pub use pyo3::{
     components::register_lifecycle_mutation_hooks, execute::register_world_wrapper_hook,
 };
-#[doc(hidden)]
-pub use transport::{client, server, sse};
-
-#[doc(hidden)]
-pub mod bridge {
-    pub use crate::{
-        capture::{hold::*, queue::*},
-        engine::{channel::*, deferred::*, poll::*},
-        protocol::{entity_ref::*, error::*, operation::*, params::*},
-        reload::{PendingReload, PendingReloads},
-        transport::sse::SseEventBroadcaster,
-    };
-}
-
-#[doc(hidden)]
-pub mod handlers {
-    #[cfg(feature = "pyo3-runtime")]
-    pub use crate::pyo3;
-    pub use crate::{
-        capture::{analysis as frame_analysis, depth, turnaround},
-        codec::reflect as reflect_mutate,
-        engine::dispatch::dispatch,
-        reload,
-        scene::{diagnostics, entity, entity_count, spatial, systems, time as time_control},
-        schedule,
-    };
-
-    pub mod screenshot {
-        pub use crate::capture::{
-            camera::*, headless::*, hold::*, readiness::*, screenshot::*, timeline::*,
-        };
-    }
-}
 
 /// Return MCP tool definitions generated from ControlOperation's JSON schema.
 #[cfg(feature = "pyo3-runtime")]

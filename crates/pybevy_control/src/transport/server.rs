@@ -160,10 +160,7 @@ fn reentrant_control_response() -> ErrorResponse {
 }
 
 pub(super) fn parse_entity_ref(entity: &str) -> EntityRef {
-    match entity.parse::<u64>() {
-        Ok(id) => EntityRef::Id(id),
-        Err(_) => EntityRef::Name(entity.to_string()),
-    }
+    EntityRef::parse(entity)
 }
 
 fn entity_ref_from_value(

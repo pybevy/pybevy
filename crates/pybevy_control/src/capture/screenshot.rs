@@ -690,17 +690,11 @@ fn encode_rgb_screenshot(rgb: &RgbImage) -> Result<serde_json::Value, ControlErr
 
 #[cfg(test)]
 mod tests {
-    use std::any::TypeId;
 
     use bevy::{
-        asset::RenderAssetUsages,
         camera::{RenderTarget, Viewport},
-        gizmos::config::DefaultGizmoConfigGroup,
         image::Image,
-        render::{
-            render_resource::{Extent3d, TextureDimension, TextureFormat},
-            view::window::screenshot::Screenshot,
-        },
+        render::view::window::screenshot::Screenshot,
         ui::Node,
         window::{PrimaryWindow, WindowRef},
     };
@@ -717,36 +711,14 @@ mod tests {
             queue::{
                 CaptureResponseKind, DebugCameraRequest, PendingScreenshot, PendingScreenshots,
             },
+            test_support::{
+                default_group_restore, gizmos_enabled, make_test_image,
+                spawn_structurally_valid_headless_camera, world_with_gizmos,
+            },
         },
         engine::deferred::push_pending_depth,
         protocol::{CaptureDepthParams, EntityRef},
     };
-
-    fn spawn_structurally_valid_headless_camera(world: &mut World) -> Entity {
-        let mut images = Assets::<Image>::default();
-        let target = images.add(make_test_image(1, 1));
-        world
-            .spawn((Camera::default(), RenderTarget::Image(target.into())))
-            .id()
-    }
-
-    fn world_with_gizmos() -> World {
-        let mut world = World::new();
-        let mut store = GizmoConfigStore::default();
-        store.insert(GizmoConfig::default(), DefaultGizmoConfigGroup);
-        world.insert_resource(store);
-        world
-    }
-
-    fn gizmos_enabled(world: &World) -> bool {
-        let store = world.resource::<GizmoConfigStore>();
-        let (config, _) = store.config::<DefaultGizmoConfigGroup>();
-        config.enabled
-    }
-
-    fn default_group_restore(was_enabled: bool) -> GizmoEnabledRestore {
-        vec![(TypeId::of::<DefaultGizmoConfigGroup>(), was_enabled)]
-    }
 
     /// Set up a World with gizmos + PendingScreenshots + a PrimaryWindow entity.
     fn world_with_pending_screenshot(
@@ -801,22 +773,6 @@ mod tests {
             response_kind: CaptureResponseKind::Screenshot,
         };
         (screenshot, rx)
-    }
-
-    fn make_test_image(width: u32, height: u32) -> Image {
-        let size = Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        };
-        let data = vec![255u8; (width * height * 4) as usize];
-        Image::new(
-            size,
-            TextureDimension::D2,
-            data,
-            TextureFormat::Rgba8UnormSrgb,
-            RenderAssetUsages::default(),
-        )
     }
 
     #[test]

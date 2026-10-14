@@ -5,13 +5,11 @@ use pyo3::{
     types::{PyModule, PyTuple},
 };
 
-use crate::{
-    codec::{
-        json_float::nonfinite_float_from_json,
-        math_shape::{CONSTRUCTIBLE, READBACK_ARRAYS, math_shape},
-        value,
-    },
-    pyo3::from_json::field::json_number_to_f32,
+use crate::codec::{
+    json_float::nonfinite_float_from_json,
+    math_shape::{CONSTRUCTIBLE, READBACK_ARRAYS, math_shape},
+    value,
+    value::json_f32,
 };
 
 pub(crate) fn math_readback_array(
@@ -58,7 +56,7 @@ pub(crate) fn math_value_from_json(
         let coordinate = if integral {
             integer_vector_coordinate_to_py(py, type_name, value)
         } else {
-            json_number_to_f32(value).and_then(|number| {
+            json_f32(value).and_then(|number| {
                 number
                     .into_pyobject(py)
                     .map(|number| number.into_any().unbind())
@@ -108,7 +106,7 @@ pub(crate) fn range_from_json(
         {
             nonfinite as f32
         } else {
-            json_number_to_f32(value).map_err(|error| format!("{name}: {error}"))?
+            json_f32(value).map_err(|error| format!("{name}: {error}"))?
         };
     }
     Py::new(py, PyRange::from_range(start, end))

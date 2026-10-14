@@ -5,6 +5,7 @@ pub(crate) mod batch;
 pub(crate) mod components;
 mod custom;
 mod dataclass_fields;
+mod descriptors;
 mod enum_names;
 pub(crate) mod errors;
 pub mod execute;
