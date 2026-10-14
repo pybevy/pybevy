@@ -123,3 +123,56 @@ impl PyMessageId {
         format!("message<{message_type}>#{}", self.id)
     }
 }
+
+/// An enum payload that stores a native message and appears in Python as the
+/// message's own wrapper class; `materialize = path` overrides the projection.
+#[macro_export]
+macro_rules! message_payload {
+    ($payload:ident, $native:ty, $wrapper:ty) => {
+        $crate::message_payload!(@define $payload, $native, $wrapper, |py, event| {
+            ::pyo3::Py::new(py, (<$wrapper>::from(event), $crate::PyMessage))
+                .map(::pyo3::Py::into_any)
+        });
+    };
+    ($payload:ident, $native:ty, $wrapper:ty, materialize = $materialize:path) => {
+        $crate::message_payload!(@define $payload, $native, $wrapper, $materialize);
+    };
+    (@define $payload:ident, $native:ty, $wrapper:ty, $materialize:expr) => {
+        pub struct $payload($native);
+
+        impl From<$native> for $payload {
+            fn from(value: $native) -> Self {
+                Self(value)
+            }
+        }
+
+        impl From<$payload> for $native {
+            fn from(value: $payload) -> Self {
+                value.0
+            }
+        }
+
+        impl<'py> ::pyo3::IntoPyObject<'py> for $payload {
+            type Target = ::pyo3::PyAny;
+            type Output = ::pyo3::Bound<'py, ::pyo3::PyAny>;
+            type Error = ::pyo3::PyErr;
+
+            fn into_pyobject(self, py: ::pyo3::Python<'py>) -> ::pyo3::PyResult<Self::Output> {
+                let materialize: fn(
+                    ::pyo3::Python<'_>,
+                    &$native,
+                ) -> ::pyo3::PyResult<::pyo3::Py<::pyo3::PyAny>> = $materialize;
+                Ok(materialize(py, &self.0)?.into_bound(py))
+            }
+        }
+
+        impl ::pyo3::FromPyObject<'_, '_> for $payload {
+            type Error = ::pyo3::PyErr;
+
+            fn extract(value: ::pyo3::Borrowed<'_, '_, ::pyo3::PyAny>) -> ::pyo3::PyResult<Self> {
+                let wrapper = value.extract::<::pyo3::PyRef<'_, $wrapper>>()?;
+                Ok(Self(<$native>::try_from(&*wrapper)?))
+            }
+        }
+    };
+}

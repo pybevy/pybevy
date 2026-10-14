@@ -20,6 +20,15 @@ impl From<&WindowFocused> for PyWindowFocused {
     }
 }
 
+impl From<&PyWindowFocused> for WindowFocused {
+    fn from(value: &PyWindowFocused) -> Self {
+        WindowFocused {
+            window: value.window.into(),
+            focused: value.focused,
+        }
+    }
+}
+
 #[pymethods]
 impl PyWindowFocused {
     #[new]

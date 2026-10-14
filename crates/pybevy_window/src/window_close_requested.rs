@@ -18,6 +18,14 @@ impl From<&WindowCloseRequested> for PyWindowCloseRequested {
     }
 }
 
+impl From<&PyWindowCloseRequested> for WindowCloseRequested {
+    fn from(value: &PyWindowCloseRequested) -> Self {
+        WindowCloseRequested {
+            window: value.window.into(),
+        }
+    }
+}
+
 #[pymethods]
 impl PyWindowCloseRequested {
     #[new]

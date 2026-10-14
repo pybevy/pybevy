@@ -22,6 +22,16 @@ impl From<&WindowResized> for PyWindowResized {
     }
 }
 
+impl From<&PyWindowResized> for WindowResized {
+    fn from(value: &PyWindowResized) -> Self {
+        WindowResized {
+            window: value.window.into(),
+            width: value.width,
+            height: value.height,
+        }
+    }
+}
+
 #[pymethods]
 impl PyWindowResized {
     #[new]

@@ -837,8 +837,6 @@ pub fn message_copy_type_mismatch(expected: &str, actual: &str) -> String {
     format!("Message copy must return {expected}, got {actual}")
 }
 
-pub const WINDOW_EVENT_NO_DEFAULT: &str =
-    "WindowEvent has no default value; write a variant such as WindowEvent.CursorMoved";
 pub const MESSAGE_RESOURCE_NOT_INITIALIZED: &str = "Messages resource not initialized for this message type. Ensure the plugin providing this message is added before writing.";
 
 pub const RESOURCE_BRIDGE_NOT_FOUND: &str = "Resource bridge not found for dynamic type";

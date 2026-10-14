@@ -20,6 +20,12 @@ impl From<&KeyboardFocusLost> for PyKeyboardFocusLost {
     }
 }
 
+impl From<&PyKeyboardFocusLost> for KeyboardFocusLost {
+    fn from(_value: &PyKeyboardFocusLost) -> Self {
+        KeyboardFocusLost
+    }
+}
+
 #[pymethods]
 impl PyKeyboardFocusLost {
     #[new]

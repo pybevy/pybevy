@@ -833,13 +833,14 @@ pub fn validate_variant_payload_parity(
         else {
             continue;
         };
-        // Manual tuple adapters can flatten native event fields into named payloads.
+        // Manual tuple adapters may name Bevy's positional fields, but not flatten them.
         if matches!(
             rust.macro_info,
             Some(MacroInfo::BevyEnum { manual: true, .. })
         ) && matches!(
             (&upstream.kind, &variant.kind),
-            (BevyVariantKind::Tuple(_), EnumVariantKind::Struct(_))
+            (BevyVariantKind::Tuple(bevy_fields), EnumVariantKind::Struct(fields))
+                if bevy_fields.len() == fields.len()
         ) && !rust.bevy_tuple_variants.contains(&variant.name)
         {
             continue;
