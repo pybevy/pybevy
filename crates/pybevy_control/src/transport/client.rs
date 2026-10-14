@@ -1,19 +1,19 @@
 use std::{error::Error, fmt, time::Duration};
 
-use serde_json::{Map, Value, json};
+use serde_json::Value;
 
-use crate::protocol::OperationTag;
+use crate::{
+    catalog::tools::is_engine_tool_name,
+    transport::image_preview::{MCP_IMAGE_DELIVERY_HEADER, MCP_IMAGE_DELIVERY_VALUE},
+};
 
 const MAX_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_HEADER_BYTES: usize = 64 * 1024;
-const IMAGE_DELIVERY_HEADER: (&str, &str) = ("x-pybevy-image-delivery", "mcp");
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Method {
     Get,
     Post,
-    Put,
-    Delete,
 }
 
 impl Method {
@@ -21,8 +21,6 @@ impl Method {
         match self {
             Self::Get => "GET",
             Self::Post => "POST",
-            Self::Put => "PUT",
-            Self::Delete => "DELETE",
         }
     }
 }
@@ -45,18 +43,9 @@ impl RequestSpec {
         }
     }
 
-    fn delete(path: impl Into<String>) -> Self {
+    fn post(path: impl Into<String>, body: Value) -> Self {
         Self {
-            method: Method::Delete,
-            path: path.into(),
-            body: None,
-            headers: Vec::new(),
-        }
-    }
-
-    fn json(method: Method, path: impl Into<String>, body: Value) -> Self {
-        Self {
-            method,
+            method: Method::Post,
             path: path.into(),
             body: Some(body),
             headers: Vec::new(),
@@ -64,7 +53,8 @@ impl RequestSpec {
     }
 
     fn with_image_delivery(mut self) -> Self {
-        self.headers.push(IMAGE_DELIVERY_HEADER);
+        self.headers
+            .push((MCP_IMAGE_DELIVERY_HEADER, MCP_IMAGE_DELIVERY_VALUE));
         self
     }
 }
@@ -140,50 +130,28 @@ pub fn request_tool(
     arguments: Value,
     timeout: Duration,
 ) -> Result<Value, ClientError> {
-    let arguments = arguments.as_object().ok_or_else(|| {
-        ClientError::new(
-            ClientErrorKind::Validation,
-            "tool arguments must be a JSON object",
-        )
-    })?;
-
-    if tool_name == "get_component"
-        && let Some(Value::String(entity_name)) = arguments.get("entity")
-    {
-        if entity_name.is_empty() {
-            return Err(ClientError::new(
-                ClientErrorKind::Validation,
-                "get_component requires a non-empty entity name or numeric ID",
-            ));
-        }
-        let component =
-            non_empty_string(arguments, "component", "get_component", "component name")?;
-        let lookup = request_json(
-            port,
-            &RequestSpec::get(format!(
-                "/api/v1/entities/{}",
-                encode_path_segment(entity_name)
-            )),
-            timeout,
-        )?;
-        let entity_id = lookup.get("id").and_then(Value::as_u64).ok_or_else(|| {
-            ClientError::new(
-                ClientErrorKind::Validation,
-                "Entity lookup response did not contain a valid numeric id",
-            )
-        })?;
-        return request_json(
-            port,
-            &RequestSpec::get(format!(
-                "/api/v1/entities/{entity_id}/components/{}",
-                encode_path_segment(component)
-            )),
-            timeout,
-        );
-    }
-
     let request = build_tool_request(tool_name, arguments)?;
     request_json(port, &request, timeout)
+}
+
+fn build_tool_request(tool_name: &str, arguments: Value) -> Result<RequestSpec, ClientError> {
+    if !arguments.is_object() {
+        return Err(ClientError::new(
+            ClientErrorKind::Validation,
+            "tool arguments must be a JSON object",
+        ));
+    }
+    if !is_engine_tool_name(tool_name) {
+        return Err(ClientError::new(
+            ClientErrorKind::Validation,
+            format!("Unknown tool: {tool_name}"),
+        ));
+    }
+    Ok(RequestSpec::post(
+        format!("/api/v1/tools/{}", encode_path_segment(tool_name)),
+        arguments,
+    )
+    .with_image_delivery())
 }
 
 pub fn request_scene_resource(
@@ -236,245 +204,6 @@ pub fn control_health(port: u16, timeout: Duration) -> Result<bool, ClientError>
 
 pub fn control_last_error(port: u16, timeout: Duration) -> Result<Value, ClientError> {
     request_json(port, &RequestSpec::get("/api/v1/error"), timeout)
-}
-
-fn build_tool_request(
-    tool_name: &str,
-    arguments: &Map<String, Value>,
-) -> Result<RequestSpec, ClientError> {
-    let arguments_value = Value::Object(arguments.clone());
-    let image_delivery = tool_name == "get_schedule_result"
-        || OperationTag::from_name(tool_name).is_some_and(|tag| tag.spec().image_delivery);
-
-    let mut request = match tool_name {
-        "get_component" => {
-            let component =
-                non_empty_string(arguments, "component", "get_component", "component name")?;
-            let entity = arguments
-                .get("entity")
-                .and_then(Value::as_u64)
-                .ok_or_else(|| {
-                    ClientError::new(
-                        ClientErrorKind::Validation,
-                        "get_component requires an entity name or numeric ID",
-                    )
-                })?;
-            RequestSpec::get(format!(
-                "/api/v1/entities/{entity}/components/{}",
-                encode_path_segment(component)
-            ))
-        }
-        "get_component_schema" => RequestSpec::get(format!(
-            "/api/v1/components/{}/schema",
-            encode_path_segment(&argument_string(arguments, "name"))
-        )),
-        "get_resource" => {
-            let resource =
-                non_empty_string(arguments, "resource_type", "get_resource", "resource_type")?;
-            RequestSpec::get(format!(
-                "/api/v1/resources/{}",
-                encode_path_segment(resource)
-            ))
-        }
-        "get_system_list" => RequestSpec::get(format!(
-            "/api/v1/systems?include_internal={}",
-            arguments
-                .get("include_internal")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)
-        )),
-        "despawn_entity" => RequestSpec::delete(format!(
-            "/api/v1/entities/{}",
-            encode_path_segment(&argument_string(arguments, "entity"))
-        )),
-        "set_component" => RequestSpec::json(
-            Method::Put,
-            format!(
-                "/api/v1/entities/{}/components/{}",
-                encode_path_segment(&argument_string(arguments, "entity")),
-                encode_path_segment(&argument_string(arguments, "component"))
-            ),
-            json!({"fields": arguments.get("fields").cloned().unwrap_or_else(|| json!({}))}),
-        ),
-        "remove_component" => RequestSpec::delete(format!(
-            "/api/v1/entities/{}/components/{}",
-            encode_path_segment(&argument_string(arguments, "entity")),
-            encode_path_segment(&argument_string(arguments, "component"))
-        )),
-        "get_bounding_box" => RequestSpec::get(format!(
-            "/api/v1/entities/{}/bounding_box",
-            encode_path_segment(&argument_string(arguments, "entity"))
-        )),
-        "set_resource" => RequestSpec::json(
-            Method::Put,
-            format!(
-                "/api/v1/resources/{}",
-                encode_path_segment(&argument_string(arguments, "resource_type"))
-            ),
-            json!({"value": arguments.get("value").cloned().unwrap_or_else(|| json!({}))}),
-        ),
-        "remove_resource" => RequestSpec::delete(format!(
-            "/api/v1/resources/{}",
-            encode_path_segment(&argument_string(arguments, "resource_type"))
-        )),
-        "set_asset" => RequestSpec::json(
-            Method::Post,
-            "/api/v1/assets/mutate",
-            json!({
-                "entity": arguments.get("entity").cloned().unwrap_or(Value::Null),
-                "component": argument_string(arguments, "component"),
-                "asset_type": argument_string(arguments, "asset_type"),
-                "fields": arguments.get("fields").cloned().unwrap_or_else(|| json!({})),
-            }),
-        ),
-        "get_schedule_result" => RequestSpec::get(format!(
-            "/api/v1/schedule/{}",
-            encode_path_segment(&argument_string(arguments, "schedule_id"))
-        )),
-        "query_spatial" => {
-            if let Some(radius) = arguments.get("radius") {
-                let mut body = Map::from_iter([
-                    (
-                        "entity".to_string(),
-                        arguments.get("entity").cloned().unwrap_or(Value::Null),
-                    ),
-                    ("radius".to_string(), radius.clone()),
-                ]);
-                copy_if_present(arguments, &mut body, &["max_results"]);
-                RequestSpec::json(
-                    Method::Post,
-                    "/api/v1/spatial/neighborhood",
-                    Value::Object(body),
-                )
-            } else {
-                RequestSpec::json(
-                    Method::Post,
-                    "/api/v1/spatial/query",
-                    json!({
-                        "entity_a": arguments.get("entity_a").cloned().unwrap_or(Value::Null),
-                        "entity_b": arguments.get("entity_b").cloned().unwrap_or(Value::Null),
-                    }),
-                )
-            }
-        }
-        "check_overlaps" => {
-            if arguments
-                .get("entity")
-                .is_some_and(|value| !value.is_null())
-            {
-                let mut body = Map::from_iter([(
-                    "entity".to_string(),
-                    arguments.get("entity").cloned().unwrap_or(Value::Null),
-                )]);
-                copy_if_present(
-                    arguments,
-                    &mut body,
-                    &[
-                        "include_siblings",
-                        "max_float_gap",
-                        "ground_y",
-                        "min_penetration",
-                    ],
-                );
-                RequestSpec::json(
-                    Method::Post,
-                    "/api/v1/spatial/overlaps",
-                    Value::Object(body),
-                )
-            } else {
-                RequestSpec::json(
-                    Method::Post,
-                    "/api/v1/spatial/overlaps/all",
-                    Value::Object(overlap_all_body(arguments)),
-                )
-            }
-        }
-        "query_spatial_neighborhood" => {
-            let mut body = Map::from_iter([
-                (
-                    "entity".to_string(),
-                    arguments.get("entity").cloned().unwrap_or(Value::Null),
-                ),
-                (
-                    "radius".to_string(),
-                    arguments.get("radius").cloned().unwrap_or(Value::Null),
-                ),
-            ]);
-            copy_if_present(arguments, &mut body, &["max_results"]);
-            RequestSpec::json(
-                Method::Post,
-                "/api/v1/spatial/neighborhood",
-                Value::Object(body),
-            )
-        }
-        "check_all_overlaps" => RequestSpec::json(
-            Method::Post,
-            "/api/v1/spatial/overlaps/all",
-            Value::Object(overlap_all_body(arguments)),
-        ),
-        "capture_screenshot" => {
-            let mut body = arguments.clone();
-            let gizmos = body
-                .remove("gizmos")
-                .and_then(|value| value.as_bool())
-                .unwrap_or(false);
-            RequestSpec::json(
-                Method::Post,
-                if gizmos {
-                    "/api/v1/screenshot/gizmos"
-                } else {
-                    "/api/v1/screenshot"
-                },
-                Value::Object(body),
-            )
-        }
-        _ => {
-            let Some((method, path)) = simple_tool_route(tool_name) else {
-                return Err(ClientError::new(
-                    ClientErrorKind::Validation,
-                    format!("Unknown tool: {tool_name}"),
-                ));
-            };
-            match method {
-                Method::Get => RequestSpec::get(path),
-                Method::Post | Method::Put => RequestSpec::json(method, path, arguments_value),
-                Method::Delete => RequestSpec::delete(path),
-            }
-        }
-    };
-
-    if image_delivery {
-        request = request.with_image_delivery();
-    }
-    Ok(request)
-}
-
-fn simple_tool_route(tool_name: &str) -> Option<(Method, &'static str)> {
-    Some(match tool_name {
-        "query_entities" => (Method::Post, "/api/v1/query"),
-        "capture_timeline" => (Method::Post, "/api/v1/screenshot/timeline"),
-        "capture_turnaround" => (Method::Post, "/api/v1/screenshot/turnaround"),
-        "capture_depth" => (Method::Post, "/api/v1/screenshot/depth"),
-        "capture_stats" => (Method::Post, "/api/v1/screenshot/stats"),
-        "compare_frames" => (Method::Post, "/api/v1/screenshot/compare"),
-        "reload" => (Method::Post, "/api/v1/reload"),
-        "get_reload_status" => (Method::Get, "/api/v1/reload/status"),
-        "get_last_error" => (Method::Get, "/api/v1/error"),
-        "spawn_entity" => (Method::Post, "/api/v1/entities"),
-        "batch" => (Method::Post, "/api/v1/batch"),
-        "get_scene_summary" => (Method::Get, "/api/v1/scene/summary"),
-        "reload_and_capture" => (Method::Post, "/api/v1/reload/capture"),
-        "pause_time" => (Method::Post, "/api/v1/time/pause"),
-        "resume_time" => (Method::Post, "/api/v1/time/resume"),
-        "set_time_scale" => (Method::Post, "/api/v1/time/scale"),
-        "get_time_status" => (Method::Get, "/api/v1/time"),
-        "seek_time" => (Method::Post, "/api/v1/time/seek"),
-        "run_code" => (Method::Post, "/api/v1/execute"),
-        "get_performance" => (Method::Get, "/api/v1/performance"),
-        "get_registry" => (Method::Get, "/api/v1/debug/registry"),
-        "schedule_actions" => (Method::Post, "/api/v1/schedule"),
-        _ => return None,
-    })
 }
 
 fn request_json(port: u16, request: &RequestSpec, timeout: Duration) -> Result<Value, ClientError> {
@@ -589,67 +318,6 @@ fn status_message(status: u16, response_body: &str) -> String {
     }
 }
 
-fn non_empty_string<'a>(
-    arguments: &'a Map<String, Value>,
-    key: &str,
-    operation: &str,
-    description: &str,
-) -> Result<&'a str, ClientError> {
-    arguments
-        .get(key)
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            ClientError::new(
-                ClientErrorKind::Validation,
-                format!("{operation} requires a non-empty {description}"),
-            )
-        })
-}
-
-fn argument_string(arguments: &Map<String, Value>, key: &str) -> String {
-    match arguments.get(key) {
-        None | Some(Value::Null) => String::new(),
-        Some(Value::String(value)) => value.clone(),
-        Some(Value::Bool(value)) => {
-            if *value {
-                "True".to_string()
-            } else {
-                "False".to_string()
-            }
-        }
-        Some(value) => value.to_string(),
-    }
-}
-
-fn overlap_all_body(arguments: &Map<String, Value>) -> Map<String, Value> {
-    let mut body = Map::new();
-    copy_if_present(
-        arguments,
-        &mut body,
-        &[
-            "min_penetration",
-            "max_results",
-            "max_float_gap",
-            "ground_y",
-            "include_siblings",
-        ],
-    );
-    body
-}
-
-fn copy_if_present(
-    source: &Map<String, Value>,
-    destination: &mut Map<String, Value>,
-    keys: &[&str],
-) {
-    for key in keys {
-        if let Some(value) = source.get(*key) {
-            destination.insert((*key).to_string(), value.clone());
-        }
-    }
-}
-
 fn encode_path_segment(value: &str) -> String {
     let mut encoded = String::with_capacity(value.len());
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
@@ -747,6 +415,8 @@ mod tests {
         thread,
     };
 
+    use serde_json::json;
+
     use super::*;
 
     fn serve_once(response: &'static [u8]) -> (u16, mpsc::Receiver<String>) {
@@ -770,29 +440,6 @@ mod tests {
         (port, request_receiver)
     }
 
-    fn serve_responses(responses: Vec<&'static [u8]>) -> (u16, mpsc::Receiver<String>) {
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let (request_sender, request_receiver) = mpsc::channel();
-        thread::spawn(move || {
-            for response in responses {
-                let (mut stream, _) = listener.accept().unwrap();
-                let mut request = Vec::new();
-                let mut buffer = [0_u8; 4096];
-                loop {
-                    let read = stream.read(&mut buffer).unwrap();
-                    request.extend_from_slice(&buffer[..read]);
-                    if read == 0 || find_bytes(&request, b"\r\n\r\n").is_some() {
-                        break;
-                    }
-                }
-                let _ = request_sender.send(String::from_utf8_lossy(&request).into_owned());
-                stream.write_all(response).unwrap();
-            }
-        });
-        (port, request_receiver)
-    }
-
     #[test]
     fn percent_encodes_path_segments() {
         assert_eq!(
@@ -802,276 +449,17 @@ mod tests {
     }
 
     #[test]
-    fn routes_tool_requests_and_image_header() {
-        let request = build_tool_request(
-            "capture_screenshot",
-            json!({"gizmos": true, "width": 100}).as_object().unwrap(),
-        )
-        .unwrap();
-        assert_eq!(request.method, Method::Post);
-        assert_eq!(request.path, "/api/v1/screenshot/gizmos");
-        assert_eq!(request.body, Some(json!({"width": 100})));
-        assert_eq!(request.headers, vec![IMAGE_DELIVERY_HEADER]);
-    }
-
-    #[test]
-    fn routes_every_simple_tool() {
-        let routes = [
-            ("query_entities", Method::Post, "/api/v1/query", false),
-            (
-                "capture_timeline",
-                Method::Post,
-                "/api/v1/screenshot/timeline",
-                true,
-            ),
-            (
-                "capture_turnaround",
-                Method::Post,
-                "/api/v1/screenshot/turnaround",
-                true,
-            ),
-            (
-                "capture_depth",
-                Method::Post,
-                "/api/v1/screenshot/depth",
-                true,
-            ),
-            (
-                "capture_stats",
-                Method::Post,
-                "/api/v1/screenshot/stats",
-                false,
-            ),
-            (
-                "compare_frames",
-                Method::Post,
-                "/api/v1/screenshot/compare",
-                false,
-            ),
-            ("reload", Method::Post, "/api/v1/reload", false),
-            (
-                "get_reload_status",
-                Method::Get,
-                "/api/v1/reload/status",
-                false,
-            ),
-            ("get_last_error", Method::Get, "/api/v1/error", false),
-            ("spawn_entity", Method::Post, "/api/v1/entities", false),
-            ("batch", Method::Post, "/api/v1/batch", false),
-            (
-                "get_scene_summary",
-                Method::Get,
-                "/api/v1/scene/summary",
-                false,
-            ),
-            (
-                "reload_and_capture",
-                Method::Post,
-                "/api/v1/reload/capture",
-                true,
-            ),
-            ("pause_time", Method::Post, "/api/v1/time/pause", false),
-            ("resume_time", Method::Post, "/api/v1/time/resume", false),
-            ("set_time_scale", Method::Post, "/api/v1/time/scale", false),
-            ("get_time_status", Method::Get, "/api/v1/time", false),
-            ("seek_time", Method::Post, "/api/v1/time/seek", false),
-            ("run_code", Method::Post, "/api/v1/execute", false),
-            ("get_performance", Method::Get, "/api/v1/performance", false),
-            ("get_registry", Method::Get, "/api/v1/debug/registry", false),
-            ("schedule_actions", Method::Post, "/api/v1/schedule", true),
-        ];
-        let arguments = json!({"probe": true});
-
-        for (tool, method, path, image_delivery) in routes {
-            let request = build_tool_request(tool, arguments.as_object().unwrap()).unwrap();
-            assert_eq!(request.method, method, "wrong method for {tool}");
-            assert_eq!(request.path, path, "wrong path for {tool}");
-            assert_eq!(
-                request.body,
-                (method == Method::Post).then(|| arguments.clone()),
-                "wrong body for {tool}"
-            );
-            assert_eq!(
-                request.headers,
-                if image_delivery {
-                    vec![IMAGE_DELIVERY_HEADER]
-                } else {
-                    Vec::new()
-                },
-                "wrong headers for {tool}"
-            );
-        }
-    }
-
-    #[test]
-    fn routes_argument_dependent_tools() {
-        let cases = vec![
-            (
-                "get_component",
-                json!({"entity": 42, "component": "Spot Light"}),
-                RequestSpec::get("/api/v1/entities/42/components/Spot%20Light"),
-            ),
-            (
-                "get_component_schema",
-                json!({"name": "State[game.Phase]"}),
-                RequestSpec::get("/api/v1/components/State%5Bgame.Phase%5D/schema"),
-            ),
-            (
-                "get_resource",
-                json!({"resource_type": "State[game.Phase]"}),
-                RequestSpec::get("/api/v1/resources/State%5Bgame.Phase%5D"),
-            ),
-            (
-                "get_system_list",
-                json!({"include_internal": true}),
-                RequestSpec::get("/api/v1/systems?include_internal=true"),
-            ),
-            (
-                "despawn_entity",
-                json!({"entity": "named/entity"}),
-                RequestSpec::delete("/api/v1/entities/named%2Fentity"),
-            ),
-            (
-                "set_component",
-                json!({"entity": 42, "component": "Transform", "fields": {"x": 1}}),
-                RequestSpec::json(
-                    Method::Put,
-                    "/api/v1/entities/42/components/Transform",
-                    json!({"fields": {"x": 1}}),
-                ),
-            ),
-            (
-                "remove_component",
-                json!({"entity": 42, "component": "Transform"}),
-                RequestSpec::delete("/api/v1/entities/42/components/Transform"),
-            ),
-            (
-                "get_bounding_box",
-                json!({"entity": "Main Camera"}),
-                RequestSpec::get("/api/v1/entities/Main%20Camera/bounding_box"),
-            ),
-            (
-                "set_resource",
-                json!({"resource_type": "ClearColor", "value": {"color": [1.0, 1.0, 1.0, 1.0]}}),
-                RequestSpec::json(
-                    Method::Put,
-                    "/api/v1/resources/ClearColor",
-                    json!({"value": {"color": [1.0, 1.0, 1.0, 1.0]}}),
-                ),
-            ),
-            (
-                "remove_resource",
-                json!({"resource_type": "ClearColor"}),
-                RequestSpec::delete("/api/v1/resources/ClearColor"),
-            ),
-            (
-                "set_asset",
-                json!({
-                    "entity": "Cube",
-                    "component": "MeshMaterial3d",
-                    "asset_type": "StandardMaterial",
-                    "fields": {"roughness": 0.5},
-                    "ignored": true,
-                }),
-                RequestSpec::json(
-                    Method::Post,
-                    "/api/v1/assets/mutate",
-                    json!({
-                        "entity": "Cube",
-                        "component": "MeshMaterial3d",
-                        "asset_type": "StandardMaterial",
-                        "fields": {"roughness": 0.5},
-                    }),
-                ),
-            ),
-            (
-                "get_schedule_result",
-                json!({"schedule_id": "capture/1"}),
-                RequestSpec::get("/api/v1/schedule/capture%2F1").with_image_delivery(),
-            ),
-            (
-                "query_spatial",
-                json!({"entity_a": "Cube", "entity_b": "Sphere", "ignored": 1}),
-                RequestSpec::json(
-                    Method::Post,
-                    "/api/v1/spatial/query",
-                    json!({"entity_a": "Cube", "entity_b": "Sphere"}),
-                ),
-            ),
-            (
-                "query_spatial",
-                json!({"entity": "Cube", "radius": 10.0, "max_results": 5}),
-                RequestSpec::json(
-                    Method::Post,
-                    "/api/v1/spatial/neighborhood",
-                    json!({"entity": "Cube", "radius": 10.0, "max_results": 5}),
-                ),
-            ),
-            (
-                "query_spatial_neighborhood",
-                json!({"entity": "Cube", "radius": 10.0, "max_results": 5}),
-                RequestSpec::json(
-                    Method::Post,
-                    "/api/v1/spatial/neighborhood",
-                    json!({"entity": "Cube", "radius": 10.0, "max_results": 5}),
-                ),
-            ),
-            (
-                "check_overlaps",
-                json!({
-                    "entity": "Cube",
-                    "include_siblings": true,
-                    "ground_y": 0.0,
-                    "min_penetration": 0.0,
-                }),
-                RequestSpec::json(
-                    Method::Post,
-                    "/api/v1/spatial/overlaps",
-                    json!({
-                        "entity": "Cube",
-                        "include_siblings": true,
-                        "ground_y": 0.0,
-                        "min_penetration": 0.0,
-                    }),
-                ),
-            ),
-            (
-                "check_overlaps",
-                json!({"min_penetration": 0.01, "max_results": 50}),
-                RequestSpec::json(
-                    Method::Post,
-                    "/api/v1/spatial/overlaps/all",
-                    json!({"min_penetration": 0.01, "max_results": 50}),
-                ),
-            ),
-            (
-                "check_all_overlaps",
-                json!({"max_float_gap": 0.5, "include_siblings": false}),
-                RequestSpec::json(
-                    Method::Post,
-                    "/api/v1/spatial/overlaps/all",
-                    json!({"max_float_gap": 0.5, "include_siblings": false}),
-                ),
-            ),
-            (
-                "capture_screenshot",
-                json!({"gizmos": true, "width": 100}),
-                RequestSpec::json(
-                    Method::Post,
-                    "/api/v1/screenshot/gizmos",
-                    json!({"width": 100}),
-                )
-                .with_image_delivery(),
-            ),
-        ];
-
-        for (tool, arguments, expected) in cases {
-            assert_eq!(
-                build_tool_request(tool, arguments.as_object().unwrap()).unwrap(),
-                expected,
-                "wrong request for {tool} with {arguments}"
-            );
-        }
+    fn posts_tool_calls_to_the_tools_endpoint_with_image_delivery() {
+        let request =
+            build_tool_request("get_schedule_result", json!({"schedule_id": "s/1"})).unwrap();
+        assert_eq!(
+            request,
+            RequestSpec::post(
+                "/api/v1/tools/get_schedule_result",
+                json!({"schedule_id": "s/1"})
+            )
+            .with_image_delivery()
+        );
     }
 
     #[test]
@@ -1114,60 +502,40 @@ mod tests {
     }
 
     #[test]
-    fn validates_required_tool_arguments_before_connecting() {
-        let cases = [
-            (
-                "get_component",
-                json!({"entity": 1, "component": ""}),
-                "get_component requires a non-empty component name",
-            ),
-            (
-                "get_component",
-                json!({"entity": true, "component": "Transform"}),
-                "get_component requires an entity name or numeric ID",
-            ),
-            (
-                "get_resource",
-                json!({"resource_type": ""}),
-                "get_resource requires a non-empty resource_type",
-            ),
+    fn validates_tool_calls_before_connecting() {
+        for (tool, arguments, message) in [
             ("unknown", json!({}), "Unknown tool: unknown"),
-        ];
-        for (tool, arguments, message) in cases {
-            let error = build_tool_request(tool, arguments.as_object().unwrap()).unwrap_err();
+            ("get_entity", json!({}), "Unknown tool: get_entity"),
+            (
+                "pause_time",
+                json!([]),
+                "tool arguments must be a JSON object",
+            ),
+        ] {
+            let error = request_tool(1, tool, arguments, Duration::from_millis(1)).unwrap_err();
             assert_eq!(error.kind(), ClientErrorKind::Validation);
             assert_eq!(error.to_string(), message);
         }
     }
 
     #[test]
-    fn resolves_named_entity_before_getting_component() {
-        let (port, requests) = serve_responses(vec![
-            b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n{\"id\":42}",
+    fn sends_arguments_to_the_tools_endpoint() {
+        let (port, requests) = serve_once(
             b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n{\"component\":\"Spot Light\"}",
-        ]);
+        );
 
         let result = request_tool(
             port,
             "get_component",
-            json!({"entity": "Lighthouse / 💡", "component": "Spot Light"}),
+            json!({"entity": "Lighthouse", "component": "Spot Light"}),
             Duration::from_secs(2),
         )
         .unwrap();
 
         assert_eq!(result["component"], "Spot Light");
-        assert!(
-            requests
-                .recv()
-                .unwrap()
-                .starts_with("GET /api/v1/entities/Lighthouse%20%2F%20%F0%9F%92%A1 HTTP/1.1")
-        );
-        assert!(
-            requests
-                .recv()
-                .unwrap()
-                .starts_with("GET /api/v1/entities/42/components/Spot%20Light HTTP/1.1")
-        );
+        let request = requests.recv().unwrap().to_ascii_lowercase();
+        assert!(request.starts_with("post /api/v1/tools/get_component http/1.1"));
+        assert!(request.contains("x-pybevy-image-delivery: mcp"));
     }
 
     #[test]

@@ -5,16 +5,17 @@ use axum::{
     extract::{Path, Query as AxumQuery, State},
     http::{HeaderMap, StatusCode},
     response::{
-        IntoResponse,
+        IntoResponse, Response,
         sse::{Event, KeepAlive, Sse},
     },
     routing::{delete, get, post, put},
 };
-use serde::Deserialize;
+use serde::{Deserialize, de::DeserializeOwned};
 use tokio::sync::oneshot;
 use tokio_stream::StreamExt;
 
 use crate::{
+    catalog::tools::list_tools as catalog_tools,
     discovery::ApiIndex,
     engine::channel::{ControlRequest, ControlSender},
     plugin::ControlConfig,
@@ -32,6 +33,7 @@ use crate::{
             MCP_IMAGE_DELIVERY_HEADER, MCP_IMAGE_DELIVERY_VALUE, prepare_mcp_response_images,
         },
         sse::SseEventBroadcaster,
+        tool_call::call_tool,
     },
 };
 
@@ -63,10 +65,12 @@ impl AppState {
     }
 }
 
-async fn send_operation(
+pub(super) type ErrorResponse = (StatusCode, Json<serde_json::Value>);
+
+pub(super) async fn send_operation(
     sender: &ControlSender,
     operation: ControlOperation,
-) -> Result<serde_json::Value, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<serde_json::Value, ErrorResponse> {
     if sender.exclusive_execution().is_active() {
         return Err(reentrant_control_response());
     }
@@ -99,7 +103,34 @@ async fn send_operation(
     }
 }
 
-fn error_response(status: StatusCode, message: &str) -> (StatusCode, Json<serde_json::Value>) {
+/// Sends one operation and shapes its response: 201 for spawns, 202 for async
+/// schedules, and MCP image delivery for image-returning operations.
+pub(super) async fn respond(
+    state: &AppState,
+    operation: ControlOperation,
+    headers: &HeaderMap,
+) -> Response {
+    if let ControlOperation::ScheduleActions(request) = &operation
+        && let Err(error) = validate_schedule(request)
+    {
+        return error_response(StatusCode::BAD_REQUEST, &error).into_response();
+    }
+    let status = match &operation {
+        ControlOperation::SpawnEntity { .. } => StatusCode::CREATED,
+        ControlOperation::ScheduleActions(request) if request.mode == ScheduleMode::Async => {
+            StatusCode::ACCEPTED
+        }
+        _ => StatusCode::OK,
+    };
+    let image_delivery = operation.spec().image_delivery;
+    match send_operation(&state.sender, operation).await {
+        Ok(value) if image_delivery => image_response(status, value, headers).into_response(),
+        Ok(value) => (status, Json(value)).into_response(),
+        Err(error) => error.into_response(),
+    }
+}
+
+pub(super) fn error_response(status: StatusCode, message: &str) -> ErrorResponse {
     (status, Json(serde_json::json!({ "error": message })))
 }
 
@@ -107,7 +138,7 @@ fn image_response(
     status: StatusCode,
     mut value: serde_json::Value,
     headers: &HeaderMap,
-) -> (StatusCode, Json<serde_json::Value>) {
+) -> ErrorResponse {
     let wants_mcp_delivery = headers
         .get(MCP_IMAGE_DELIVERY_HEADER)
         .and_then(|value| value.to_str().ok())
@@ -118,7 +149,7 @@ fn image_response(
     (status, Json(value))
 }
 
-fn reentrant_control_response() -> (StatusCode, Json<serde_json::Value>) {
+fn reentrant_control_response() -> ErrorResponse {
     (
         StatusCode::CONFLICT,
         Json(serde_json::json!({
@@ -128,12 +159,60 @@ fn reentrant_control_response() -> (StatusCode, Json<serde_json::Value>) {
     )
 }
 
-fn parse_entity_ref(entity: &str) -> EntityRef {
+pub(super) fn parse_entity_ref(entity: &str) -> EntityRef {
     match entity.parse::<u64>() {
         Ok(id) => EntityRef::Id(id),
         Err(_) => EntityRef::Name(entity.to_string()),
     }
 }
+
+fn entity_ref_from_value(
+    value: serde_json::Value,
+    message: &str,
+) -> Result<EntityRef, ErrorResponse> {
+    serde_json::from_value(value).map_err(|_| error_response(StatusCode::BAD_REQUEST, message))
+}
+
+/// A JSON request body that maps to one operation, shared by its REST route
+/// and `POST /api/v1/tools/{name}`.
+pub(super) trait OperationBody: DeserializeOwned {
+    fn operation(self) -> Result<ControlOperation, ErrorResponse>;
+}
+
+async fn body_route<B: OperationBody>(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<B>,
+) -> Response {
+    match body.operation() {
+        Ok(operation) => respond(&state, operation, &headers).await,
+        Err(error) => error.into_response(),
+    }
+}
+
+macro_rules! operation_bodies {
+    ($($body:ty => $variant:ident,)*) => {
+        $(impl OperationBody for $body {
+            fn operation(self) -> Result<ControlOperation, ErrorResponse> {
+                Ok(ControlOperation::$variant(self))
+            }
+        })*
+    };
+}
+
+operation_bodies! {
+    QueryEntitiesParams => QueryEntities,
+    CompareFramesParams => CompareFrames,
+    CaptureTimelineParams => CaptureTimeline,
+    CaptureTurnaroundParams => CaptureTurnaround,
+    CaptureDepthParams => CaptureDepth,
+    ReloadParams => Reload,
+    ReloadAndCaptureParams => ReloadAndCapture,
+    SeekTimeParams => SeekTime,
+    CheckAllOverlapsParams => CheckAllOverlaps,
+    ScheduleRequest => ScheduleActions,
+}
+
 pub fn build_router(state: AppState) -> Router {
     Router::new()
         // Health
@@ -142,7 +221,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/sse", get(handle_sse))
         // Entities
         .route("/api/v1/entities", get(list_entities))
-        .route("/api/v1/entities", post(spawn_entity))
+        .route("/api/v1/entities", post(body_route::<SpawnBody>))
         .route("/api/v1/entities/{entity}", get(get_entity))
         .route("/api/v1/entities/{entity}", delete(despawn_entity))
         .route(
@@ -162,7 +241,7 @@ pub fn build_router(state: AppState) -> Router {
             get(get_bounding_box),
         )
         // Query
-        .route("/api/v1/query", post(query_entities))
+        .route("/api/v1/query", post(body_route::<QueryEntitiesParams>))
         .route("/api/v1/scene/summary", get(scene_summary))
         // Resources
         .route("/api/v1/resources", get(list_resources))
@@ -177,45 +256,69 @@ pub fn build_router(state: AppState) -> Router {
             get(get_component_schema),
         )
         // Screenshot
-        .route("/api/v1/screenshot", post(capture_screenshot))
+        .route("/api/v1/screenshot", post(body_route::<ScreenshotBody>))
         .route("/api/v1/screenshot/gizmos", post(capture_with_gizmos))
-        .route("/api/v1/screenshot/timeline", post(capture_timeline))
-        .route("/api/v1/screenshot/turnaround", post(capture_turnaround))
-        .route("/api/v1/screenshot/depth", post(capture_depth))
-        .route("/api/v1/screenshot/stats", post(capture_stats))
-        .route("/api/v1/screenshot/compare", post(compare_frames))
+        .route(
+            "/api/v1/screenshot/timeline",
+            post(body_route::<CaptureTimelineParams>),
+        )
+        .route(
+            "/api/v1/screenshot/turnaround",
+            post(body_route::<CaptureTurnaroundParams>),
+        )
+        .route(
+            "/api/v1/screenshot/depth",
+            post(body_route::<CaptureDepthParams>),
+        )
+        .route("/api/v1/screenshot/stats", post(body_route::<StatsBody>))
+        .route(
+            "/api/v1/screenshot/compare",
+            post(body_route::<CompareFramesParams>),
+        )
         // Reload
-        .route("/api/v1/reload", post(trigger_reload))
+        .route("/api/v1/reload", post(body_route::<ReloadParams>))
         .route("/api/v1/reload/status", get(get_reload_status))
-        .route("/api/v1/reload/capture", post(reload_and_capture))
+        .route(
+            "/api/v1/reload/capture",
+            post(body_route::<ReloadAndCaptureParams>),
+        )
         // Execute
-        .route("/api/v1/execute", post(execute_python))
+        .route("/api/v1/execute", post(body_route::<ExecuteBody>))
         // Time control
         .route("/api/v1/time", get(get_time_status))
         .route("/api/v1/time/pause", post(pause_time))
         .route("/api/v1/time/resume", post(resume_time))
-        .route("/api/v1/time/scale", post(set_time_scale))
-        .route("/api/v1/time/seek", post(seek_time))
+        .route("/api/v1/time/scale", post(body_route::<TimeScaleBody>))
+        .route("/api/v1/time/seek", post(body_route::<SeekTimeParams>))
         // Asset mutation
-        .route("/api/v1/assets/mutate", post(mutate_asset))
+        .route("/api/v1/assets/mutate", post(body_route::<MutateAssetBody>))
         // Spatial queries
-        .route("/api/v1/spatial/query", post(query_spatial))
+        .route(
+            "/api/v1/spatial/query",
+            post(body_route::<SpatialQueryBody>),
+        )
         .route(
             "/api/v1/spatial/neighborhood",
-            post(query_spatial_neighborhood),
+            post(body_route::<NeighborhoodBody>),
         )
-        .route("/api/v1/spatial/overlaps", post(check_overlaps))
-        .route("/api/v1/spatial/overlaps/all", post(check_all_overlaps))
+        .route(
+            "/api/v1/spatial/overlaps",
+            post(body_route::<CheckOverlapsBody>),
+        )
+        .route(
+            "/api/v1/spatial/overlaps/all",
+            post(body_route::<CheckAllOverlapsParams>),
+        )
         // Performance
         .route("/api/v1/performance", get(get_performance))
         // Error
         .route("/api/v1/error", get(get_last_error))
         // Batch
-        .route("/api/v1/batch", post(batch_mutate))
+        .route("/api/v1/batch", post(body_route::<BatchBody>))
         // Debug
         .route("/api/v1/debug/registry", get(debug_registry))
         // Schedule
-        .route("/api/v1/schedule", post(submit_schedule))
+        .route("/api/v1/schedule", post(body_route::<ScheduleRequest>))
         .route(
             "/api/v1/schedule/{id}",
             get(get_schedule_status).delete(cancel_schedule),
@@ -236,6 +339,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/guides/{name}", get(guides_get))
         .route("/api/v1/instructions", get(get_instructions))
         .route("/api/v1/tools", get(list_tools))
+        .route("/api/v1/tools/{name}", post(call_tool))
         .with_state(state)
 }
 async fn health() -> &'static str {
@@ -252,86 +356,52 @@ async fn handle_sse(
     });
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
-async fn list_entities(State(state): State<AppState>) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::ListEntities).await {
-        Ok(v) => (StatusCode::OK, Json(v)),
-        Err(e) => e,
-    }
+async fn list_entities(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    respond(&state, ControlOperation::ListEntities, &headers).await
 }
 
 async fn get_entity(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(entity): Path<String>,
-) -> impl IntoResponse {
-    match send_operation(
-        &state.sender,
-        ControlOperation::GetEntity {
-            entity: parse_entity_ref(&entity),
-        },
-    )
-    .await
-    {
-        Ok(v) => (StatusCode::OK, Json(v)),
-        Err(e) => e,
-    }
+) -> Response {
+    let entity = parse_entity_ref(&entity);
+    respond(&state, ControlOperation::GetEntity { entity }, &headers).await
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct SpawnBody {
+pub(super) struct SpawnBody {
     components: serde_json::Value,
 }
 
-async fn spawn_entity(
-    State(state): State<AppState>,
-    Json(body): Json<SpawnBody>,
-) -> impl IntoResponse {
-    match send_operation(
-        &state.sender,
-        ControlOperation::SpawnEntity {
-            components: body.components,
-        },
-    )
-    .await
-    {
-        Ok(v) => (StatusCode::CREATED, Json(v)),
-        Err(e) => e,
+impl OperationBody for SpawnBody {
+    fn operation(self) -> Result<ControlOperation, ErrorResponse> {
+        Ok(ControlOperation::SpawnEntity {
+            components: self.components,
+        })
     }
 }
 
 async fn despawn_entity(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(entity): Path<String>,
-) -> impl IntoResponse {
-    match send_operation(
-        &state.sender,
-        ControlOperation::DespawnEntity {
-            entity: parse_entity_ref(&entity),
-        },
-    )
-    .await
-    {
-        Ok(v) => (StatusCode::OK, Json(v)),
-        Err(e) => e,
-    }
+) -> Response {
+    let entity = parse_entity_ref(&entity);
+    respond(&state, ControlOperation::DespawnEntity { entity }, &headers).await
 }
 
 async fn get_component(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path((entity, component)): Path<(String, String)>,
-) -> impl IntoResponse {
-    match send_operation(
-        &state.sender,
-        ControlOperation::GetComponent(GetComponentParams {
-            entity: parse_entity_ref(&entity),
-            component,
-        }),
-    )
-    .await
-    {
-        Ok(v) => (StatusCode::OK, Json(v)),
-        Err(e) => e,
-    }
+) -> Response {
+    let params = GetComponentParams {
+        entity: parse_entity_ref(&entity),
+        component,
+    };
+    respond(&state, ControlOperation::GetComponent(params), &headers).await
 }
 
 #[derive(Deserialize)]
@@ -342,94 +412,58 @@ struct SetComponentBody {
 
 async fn set_component(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path((entity, component)): Path<(String, String)>,
     Json(body): Json<SetComponentBody>,
-) -> impl IntoResponse {
-    match send_operation(
-        &state.sender,
-        ControlOperation::SetComponent(SetComponentParams {
-            entity: parse_entity_ref(&entity),
-            component,
-            fields: body.fields,
-        }),
-    )
-    .await
-    {
-        Ok(v) => (StatusCode::OK, Json(v)),
-        Err(e) => e,
-    }
+) -> Response {
+    let params = SetComponentParams {
+        entity: parse_entity_ref(&entity),
+        component,
+        fields: body.fields,
+    };
+    respond(&state, ControlOperation::SetComponent(params), &headers).await
 }
 
 async fn remove_component(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path((entity, component)): Path<(String, String)>,
-) -> impl IntoResponse {
-    match send_operation(
-        &state.sender,
-        ControlOperation::RemoveComponent(RemoveComponentParams {
-            entity: parse_entity_ref(&entity),
-            component,
-        }),
-    )
-    .await
-    {
-        Ok(v) => (StatusCode::OK, Json(v)),
-        Err(e) => e,
-    }
+) -> Response {
+    let params = RemoveComponentParams {
+        entity: parse_entity_ref(&entity),
+        component,
+    };
+    respond(&state, ControlOperation::RemoveComponent(params), &headers).await
 }
 
 async fn get_bounding_box(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(entity): Path<String>,
-) -> impl IntoResponse {
-    match send_operation(
-        &state.sender,
-        ControlOperation::GetBoundingBox {
-            entity: parse_entity_ref(&entity),
-        },
+) -> Response {
+    let entity = parse_entity_ref(&entity);
+    respond(
+        &state,
+        ControlOperation::GetBoundingBox { entity },
+        &headers,
     )
     .await
-    {
-        Ok(v) => (StatusCode::OK, Json(v)),
-        Err(e) => e,
-    }
-}
-async fn query_entities(
-    State(state): State<AppState>,
-    Json(params): Json<QueryEntitiesParams>,
-) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::QueryEntities(params)).await {
-        Ok(v) => (StatusCode::OK, Json(v)),
-        Err(e) => e,
-    }
 }
 
-async fn scene_summary(State(state): State<AppState>) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::GetSceneSummary).await {
-        Ok(v) => (StatusCode::OK, Json(v)),
-        Err(e) => e,
-    }
+async fn scene_summary(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    respond(&state, ControlOperation::GetSceneSummary, &headers).await
 }
-async fn list_resources(State(state): State<AppState>) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::ListResources).await {
-        Ok(v) => (StatusCode::OK, Json(v)),
-        Err(e) => e,
-    }
+async fn list_resources(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    respond(&state, ControlOperation::ListResources, &headers).await
 }
 
 async fn get_resource(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(resource_type): Path<String>,
-) -> impl IntoResponse {
-    match send_operation(
-        &state.sender,
-        ControlOperation::GetResource(GetResourceParams { resource_type }),
-    )
-    .await
-    {
-        Ok(v) => (StatusCode::OK, Json(v)),
-        Err(e) => e,
-    }
+) -> Response {
+    let params = GetResourceParams { resource_type };
+    respond(&state, ControlOperation::GetResource(params), &headers).await
 }
 
 #[derive(Deserialize)]
@@ -440,36 +474,28 @@ struct InsertResourceBody {
 
 async fn insert_resource(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(resource_type): Path<String>,
     Json(body): Json<InsertResourceBody>,
-) -> impl IntoResponse {
-    match send_operation(
-        &state.sender,
-        ControlOperation::SetResource(SetResourceParams {
-            resource_type,
-            value: body.value,
-        }),
-    )
-    .await
-    {
-        Ok(v) => (StatusCode::OK, Json(v)),
-        Err(e) => e,
-    }
+) -> Response {
+    let params = SetResourceParams {
+        resource_type,
+        value: body.value,
+    };
+    respond(&state, ControlOperation::SetResource(params), &headers).await
 }
 
 async fn remove_resource(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(resource_type): Path<String>,
-) -> impl IntoResponse {
-    match send_operation(
-        &state.sender,
+) -> Response {
+    respond(
+        &state,
         ControlOperation::RemoveResource { resource_type },
+        &headers,
     )
     .await
-    {
-        Ok(v) => (StatusCode::OK, Json(v)),
-        Err(e) => e,
-    }
 }
 #[derive(Default, Deserialize)]
 struct ListSystemsQuery {
@@ -479,33 +505,30 @@ struct ListSystemsQuery {
 
 async fn list_systems(
     State(state): State<AppState>,
+    headers: HeaderMap,
     AxumQuery(query): AxumQuery<ListSystemsQuery>,
-) -> impl IntoResponse {
-    match send_operation(
-        &state.sender,
-        ControlOperation::ListSystems {
-            include_internal: query.include_internal,
-        },
-    )
-    .await
-    {
-        Ok(v) => (StatusCode::OK, Json(v)),
-        Err(e) => e,
-    }
+) -> Response {
+    let operation = ControlOperation::ListSystems {
+        include_internal: query.include_internal,
+    };
+    respond(&state, operation, &headers).await
 }
 
 async fn get_component_schema(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(name): Path<String>,
-) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::GetComponentSchema { name }).await {
-        Ok(v) => (StatusCode::OK, Json(v)),
-        Err(e) => e,
-    }
+) -> Response {
+    respond(
+        &state,
+        ControlOperation::GetComponentSchema { name },
+        &headers,
+    )
+    .await
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ScreenshotBody {
+pub(super) struct ScreenshotBody {
     entity: Option<EntityRef>,
     #[serde(default = "default_delay_frames")]
     delay_frames: i64,
@@ -529,7 +552,7 @@ fn default_true() -> bool {
 fn screenshot_params(
     body: ScreenshotBody,
     force_gizmos: bool,
-) -> Result<CaptureScreenshotParams, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<CaptureScreenshotParams, ErrorResponse> {
     if body.delay_frames < 0 {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
@@ -569,23 +592,21 @@ fn screenshot_params(
     })
 }
 
-async fn capture_screenshot(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(body): Json<ScreenshotBody>,
-) -> impl IntoResponse {
-    let params = match screenshot_params(body, false) {
-        Ok(params) => params,
-        Err(response) => return response,
-    };
-    let op = if params.gizmos {
+pub(super) fn screenshot_operation(
+    body: ScreenshotBody,
+    force_gizmos: bool,
+) -> Result<ControlOperation, ErrorResponse> {
+    let params = screenshot_params(body, force_gizmos)?;
+    Ok(if params.gizmos {
         ControlOperation::CaptureWithGizmos(params)
     } else {
         ControlOperation::CaptureScreenshot(params)
-    };
-    match send_operation(&state.sender, op).await {
-        Ok(value) => image_response(StatusCode::OK, value, &headers),
-        Err(e) => e,
+    })
+}
+
+impl OperationBody for ScreenshotBody {
+    fn operation(self) -> Result<ControlOperation, ErrorResponse> {
+        screenshot_operation(self, false)
     }
 }
 
@@ -593,20 +614,16 @@ async fn capture_with_gizmos(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<ScreenshotBody>,
-) -> impl IntoResponse {
-    let params = match screenshot_params(body, true) {
-        Ok(params) => params,
-        Err(response) => return response,
-    };
-    match send_operation(&state.sender, ControlOperation::CaptureWithGizmos(params)).await {
-        Ok(value) => image_response(StatusCode::OK, value, &headers),
-        Err(e) => e,
+) -> Response {
+    match screenshot_operation(body, true) {
+        Ok(operation) => respond(&state, operation, &headers).await,
+        Err(error) => error.into_response(),
     }
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct StatsBody {
+pub(super) struct StatsBody {
     #[serde(default = "default_stats_grid")]
     grid: u32,
     region: Option<[i64; 4]>,
@@ -627,276 +644,136 @@ fn default_stats_grid() -> u32 {
     1
 }
 
-async fn capture_stats(
-    State(state): State<AppState>,
-    Json(body): Json<StatsBody>,
-) -> impl IntoResponse {
-    let screenshot = ScreenshotBody {
-        entity: body.entity,
-        delay_frames: body.delay_frames,
-        max_width: body.max_width,
-        position: body.position,
-        look_at: body.look_at,
-        hide_ui: body.hide_ui,
-        gizmos: body.gizmos,
-    };
-    let common = match screenshot_params(screenshot, false) {
-        Ok(params) => params,
-        Err(response) => return response,
-    };
-    match send_operation(
-        &state.sender,
-        ControlOperation::CaptureStats(CaptureStatsParams {
+impl OperationBody for StatsBody {
+    fn operation(self) -> Result<ControlOperation, ErrorResponse> {
+        let screenshot = ScreenshotBody {
+            entity: self.entity,
+            delay_frames: self.delay_frames,
+            max_width: self.max_width,
+            position: self.position,
+            look_at: self.look_at,
+            hide_ui: self.hide_ui,
+            gizmos: self.gizmos,
+        };
+        let common = screenshot_params(screenshot, false)?;
+        Ok(ControlOperation::CaptureStats(CaptureStatsParams {
             entity: common.entity,
-            grid: body.grid,
-            region: body.region,
-            sample_points: body.sample_points,
+            grid: self.grid,
+            region: self.region,
+            sample_points: self.sample_points,
             delay_frames: common.delay_frames,
             max_width: common.max_width,
             position: common.position,
             look_at: common.look_at,
             hide_ui: common.hide_ui,
             gizmos: common.gizmos,
-        }),
-    )
-    .await
-    {
-        Ok(value) => (StatusCode::OK, Json(value)),
-        Err(response) => response,
+        }))
     }
 }
 
-async fn compare_frames(
-    State(state): State<AppState>,
-    Json(params): Json<CompareFramesParams>,
-) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::CompareFrames(params)).await {
-        Ok(value) => (StatusCode::OK, Json(value)),
-        Err(response) => response,
-    }
+async fn get_reload_status(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    respond(&state, ControlOperation::GetReloadStatus, &headers).await
 }
 
-async fn capture_timeline(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(params): Json<CaptureTimelineParams>,
-) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::CaptureTimeline(params)).await {
-        Ok(value) => image_response(StatusCode::OK, value, &headers),
-        Err(e) => e,
-    }
-}
-
-async fn capture_turnaround(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(params): Json<CaptureTurnaroundParams>,
-) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::CaptureTurnaround(params)).await {
-        Ok(value) => image_response(StatusCode::OK, value, &headers),
-        Err(e) => e,
-    }
-}
-
-async fn capture_depth(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(params): Json<CaptureDepthParams>,
-) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::CaptureDepth(params)).await {
-        Ok(value) => image_response(StatusCode::OK, value, &headers),
-        Err(e) => e,
-    }
-}
-async fn trigger_reload(
-    State(state): State<AppState>,
-    Json(params): Json<ReloadParams>,
-) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::Reload(params)).await {
-        Ok(value) => (StatusCode::OK, Json(value)),
-        Err(e) => e,
-    }
-}
-
-async fn get_reload_status(State(state): State<AppState>) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::GetReloadStatus).await {
-        Ok(v) => (StatusCode::OK, Json(v)),
-        Err(e) => e,
-    }
-}
-
-async fn reload_and_capture(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(params): Json<ReloadAndCaptureParams>,
-) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::ReloadAndCapture(params)).await {
-        Ok(value) => image_response(StatusCode::OK, value, &headers),
-        Err(e) => e,
-    }
-}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ExecuteBody {
+pub(super) struct ExecuteBody {
     code: String,
 }
 
-async fn execute_python(
-    State(state): State<AppState>,
-    Json(body): Json<ExecuteBody>,
-) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::RunCode { code: body.code }).await {
-        Ok(v) => (StatusCode::OK, Json(v)),
-        Err(e) => e,
-    }
-}
-async fn get_time_status(State(state): State<AppState>) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::GetTimeStatus).await {
-        Ok(v) => (StatusCode::OK, Json(v)),
-        Err(e) => e,
+impl OperationBody for ExecuteBody {
+    fn operation(self) -> Result<ControlOperation, ErrorResponse> {
+        Ok(ControlOperation::RunCode { code: self.code })
     }
 }
 
-async fn pause_time(State(state): State<AppState>) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::PauseTime).await {
-        Ok(v) => (StatusCode::OK, Json(v)),
-        Err(e) => e,
-    }
+async fn get_time_status(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    respond(&state, ControlOperation::GetTimeStatus, &headers).await
 }
 
-async fn resume_time(State(state): State<AppState>) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::ResumeTime).await {
-        Ok(v) => (StatusCode::OK, Json(v)),
-        Err(e) => e,
-    }
+async fn pause_time(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    respond(&state, ControlOperation::PauseTime, &headers).await
+}
+
+async fn resume_time(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    respond(&state, ControlOperation::ResumeTime, &headers).await
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct TimeScaleBody {
+pub(super) struct TimeScaleBody {
     scale: f32,
 }
 
-async fn set_time_scale(
-    State(state): State<AppState>,
-    Json(body): Json<TimeScaleBody>,
-) -> impl IntoResponse {
-    match send_operation(
-        &state.sender,
-        ControlOperation::SetTimeScale { scale: body.scale },
-    )
-    .await
-    {
-        Ok(v) => (StatusCode::OK, Json(v)),
-        Err(e) => e,
+impl OperationBody for TimeScaleBody {
+    fn operation(self) -> Result<ControlOperation, ErrorResponse> {
+        Ok(ControlOperation::SetTimeScale { scale: self.scale })
     }
 }
 
-async fn seek_time(
-    State(state): State<AppState>,
-    Json(params): Json<SeekTimeParams>,
-) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::SeekTime(params)).await {
-        Ok(value) => (StatusCode::OK, Json(value)),
-        Err(e) => e,
-    }
-}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct MutateAssetBody {
-    entity: serde_json::Value,
-    component: String,
-    asset_type: String,
-    fields: serde_json::Value,
+pub(super) struct MutateAssetBody {
+    pub(super) entity: serde_json::Value,
+    pub(super) component: String,
+    pub(super) asset_type: String,
+    pub(super) fields: serde_json::Value,
 }
 
-async fn mutate_asset(
-    State(state): State<AppState>,
-    Json(body): Json<MutateAssetBody>,
-) -> impl IntoResponse {
-    let entity: EntityRef = match serde_json::from_value(body.entity) {
-        Ok(e) => e,
-        Err(_) => return error_response(StatusCode::BAD_REQUEST, "Invalid entity reference"),
-    };
-    match send_operation(
-        &state.sender,
-        ControlOperation::SetAsset(SetAssetParams {
+impl OperationBody for MutateAssetBody {
+    fn operation(self) -> Result<ControlOperation, ErrorResponse> {
+        let entity = entity_ref_from_value(self.entity, "Invalid entity reference")?;
+        Ok(ControlOperation::SetAsset(SetAssetParams {
             entity,
-            component: body.component,
-            asset_type: body.asset_type,
-            fields: body.fields,
-        }),
-    )
-    .await
-    {
-        Ok(v) => (StatusCode::OK, Json(v)),
-        Err(e) => e,
-    }
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SpatialQueryBody {
-    entity_a: serde_json::Value,
-    entity_b: serde_json::Value,
-}
-
-async fn query_spatial(
-    State(state): State<AppState>,
-    Json(body): Json<SpatialQueryBody>,
-) -> impl IntoResponse {
-    let entity_a: EntityRef = match serde_json::from_value(body.entity_a) {
-        Ok(e) => e,
-        Err(_) => return error_response(StatusCode::BAD_REQUEST, "Invalid entity_a reference"),
-    };
-    let entity_b: EntityRef = match serde_json::from_value(body.entity_b) {
-        Ok(e) => e,
-        Err(_) => return error_response(StatusCode::BAD_REQUEST, "Invalid entity_b reference"),
-    };
-    match send_operation(
-        &state.sender,
-        ControlOperation::QuerySpatial(QuerySpatialParams { entity_a, entity_b }),
-    )
-    .await
-    {
-        Ok(v) => (StatusCode::OK, Json(v)),
-        Err(e) => e,
+            component: self.component,
+            asset_type: self.asset_type,
+            fields: self.fields,
+        }))
     }
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct NeighborhoodBody {
+pub(super) struct SpatialQueryBody {
+    pub(super) entity_a: serde_json::Value,
+    pub(super) entity_b: serde_json::Value,
+}
+
+impl OperationBody for SpatialQueryBody {
+    fn operation(self) -> Result<ControlOperation, ErrorResponse> {
+        let entity_a = entity_ref_from_value(self.entity_a, "Invalid entity_a reference")?;
+        let entity_b = entity_ref_from_value(self.entity_b, "Invalid entity_b reference")?;
+        Ok(ControlOperation::QuerySpatial(QuerySpatialParams {
+            entity_a,
+            entity_b,
+        }))
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct NeighborhoodBody {
     entity: serde_json::Value,
     radius: f32,
     max_results: Option<usize>,
 }
 
-async fn query_spatial_neighborhood(
-    State(state): State<AppState>,
-    Json(body): Json<NeighborhoodBody>,
-) -> impl IntoResponse {
-    let entity: EntityRef = match serde_json::from_value(body.entity) {
-        Ok(e) => e,
-        Err(_) => return error_response(StatusCode::BAD_REQUEST, "Invalid entity reference"),
-    };
-    match send_operation(
-        &state.sender,
-        ControlOperation::QuerySpatialNeighborhood(QuerySpatialNeighborhoodParams {
-            entity,
-            radius: body.radius,
-            max_results: body.max_results,
-        }),
-    )
-    .await
-    {
-        Ok(v) => (StatusCode::OK, Json(v)),
-        Err(e) => e,
+impl OperationBody for NeighborhoodBody {
+    fn operation(self) -> Result<ControlOperation, ErrorResponse> {
+        let entity = entity_ref_from_value(self.entity, "Invalid entity reference")?;
+        Ok(ControlOperation::QuerySpatialNeighborhood(
+            QuerySpatialNeighborhoodParams {
+                entity,
+                radius: self.radius,
+                max_results: self.max_results,
+            },
+        ))
     }
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CheckOverlapsBody {
+pub(super) struct CheckOverlapsBody {
     entity: serde_json::Value,
     #[serde(default)]
     include_siblings: bool,
@@ -906,105 +783,54 @@ struct CheckOverlapsBody {
     min_penetration: Option<f32>,
 }
 
-async fn check_overlaps(
-    State(state): State<AppState>,
-    Json(body): Json<CheckOverlapsBody>,
-) -> impl IntoResponse {
-    let entity: EntityRef = match serde_json::from_value(body.entity) {
-        Ok(e) => e,
-        Err(_) => return error_response(StatusCode::BAD_REQUEST, "Invalid entity reference"),
-    };
-    match send_operation(
-        &state.sender,
-        ControlOperation::CheckOverlaps(CheckOverlapsParams {
+impl OperationBody for CheckOverlapsBody {
+    fn operation(self) -> Result<ControlOperation, ErrorResponse> {
+        let entity = entity_ref_from_value(self.entity, "Invalid entity reference")?;
+        Ok(ControlOperation::CheckOverlaps(CheckOverlapsParams {
             entity,
-            include_siblings: body.include_siblings,
-            max_float_gap: body.max_float_gap,
-            ground_y: body.ground_y,
-            min_penetration: body.min_penetration,
-        }),
-    )
-    .await
-    {
-        Ok(v) => (StatusCode::OK, Json(v)),
-        Err(e) => e,
+            include_siblings: self.include_siblings,
+            max_float_gap: self.max_float_gap,
+            ground_y: self.ground_y,
+            min_penetration: self.min_penetration,
+        }))
     }
 }
 
-async fn check_all_overlaps(
-    State(state): State<AppState>,
-    Json(params): Json<CheckAllOverlapsParams>,
-) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::CheckAllOverlaps(params)).await {
-        Ok(value) => (StatusCode::OK, Json(value)),
-        Err(e) => e,
-    }
-}
-async fn get_performance(State(state): State<AppState>) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::GetPerformance).await {
-        Ok(v) => (StatusCode::OK, Json(v)),
-        Err(e) => e,
-    }
+async fn get_performance(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    respond(&state, ControlOperation::GetPerformance, &headers).await
 }
 
-async fn get_last_error(State(state): State<AppState>) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::GetLastError).await {
-        Ok(v) => (StatusCode::OK, Json(v)),
-        Err(e) => e,
-    }
+async fn get_last_error(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    respond(&state, ControlOperation::GetLastError, &headers).await
 }
 
-async fn debug_registry(State(state): State<AppState>) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::GetRegistry).await {
-        Ok(v) => (StatusCode::OK, Json(v)),
-        Err(e) => e,
-    }
+async fn debug_registry(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    respond(&state, ControlOperation::GetRegistry, &headers).await
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct BatchBody {
+pub(super) struct BatchBody {
     operations: Vec<serde_json::Value>,
 }
 
-async fn batch_mutate(
-    State(state): State<AppState>,
-    Json(body): Json<BatchBody>,
-) -> impl IntoResponse {
-    match send_operation(
-        &state.sender,
-        ControlOperation::Batch {
-            operations: body.operations,
-        },
-    )
-    .await
-    {
-        Ok(v) => (StatusCode::OK, Json(v)),
-        Err(e) => e,
+impl OperationBody for BatchBody {
+    fn operation(self) -> Result<ControlOperation, ErrorResponse> {
+        Ok(ControlOperation::Batch {
+            operations: self.operations,
+        })
     }
 }
 
-async fn submit_schedule(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(body): Json<ScheduleRequest>,
-) -> impl IntoResponse {
-    // Validate before sending to engine
-    if let Err(e) = validate_schedule(&body) {
-        return error_response(StatusCode::BAD_REQUEST, &e);
-    }
-
-    let is_async = body.mode == ScheduleMode::Async;
-
-    match send_operation(&state.sender, ControlOperation::ScheduleActions(body)).await {
-        Ok(v) => {
-            let status = if is_async {
-                StatusCode::ACCEPTED
-            } else {
-                StatusCode::OK
-            };
-            image_response(status, v, &headers)
+pub(super) fn schedule_status(state: &AppState, id: &str, headers: &HeaderMap) -> ErrorResponse {
+    match state.schedule_registry.get(id) {
+        Some(status) => {
+            let json = serde_json::to_value(&status).unwrap_or_default();
+            image_response(StatusCode::OK, json, headers)
         }
-        Err(e) => e,
+        None => error_response(
+            StatusCode::NOT_FOUND,
+            &format!("Schedule '{}' not found", id),
+        ),
     }
 }
 
@@ -1013,16 +839,7 @@ async fn get_schedule_status(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    match state.schedule_registry.get(&id) {
-        Some(status) => {
-            let json = serde_json::to_value(&status).unwrap_or_default();
-            image_response(StatusCode::OK, json, &headers)
-        }
-        None => error_response(
-            StatusCode::NOT_FOUND,
-            &format!("Schedule '{}' not found", id),
-        ),
-    }
+    schedule_status(&state, &id, &headers)
 }
 
 async fn cancel_schedule(
@@ -1041,18 +858,16 @@ async fn cancel_schedule(
         )
     }
 }
-async fn list_configs(State(state): State<AppState>) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::ListConfigs).await {
-        Ok(v) => (StatusCode::OK, Json(v)),
-        Err(e) => e,
-    }
+async fn list_configs(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    respond(&state, ControlOperation::ListConfigs, &headers).await
 }
 
-async fn get_config(State(state): State<AppState>, Path(key): Path<String>) -> impl IntoResponse {
-    match send_operation(&state.sender, ControlOperation::GetConfig { key }).await {
-        Ok(v) => (StatusCode::OK, Json(v)),
-        Err(e) => e,
-    }
+async fn get_config(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(key): Path<String>,
+) -> Response {
+    respond(&state, ControlOperation::GetConfig { key }, &headers).await
 }
 #[derive(Deserialize)]
 struct SearchQuery {
@@ -1203,7 +1018,7 @@ async fn get_instructions(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 async fn list_tools() -> Json<Vec<serde_json::Value>> {
-    Json(crate::catalog::tools::list_tools())
+    Json(catalog_tools())
 }
 
 pub fn start_server(host: String, port: u16, state: AppState) {

@@ -21,6 +21,11 @@ pub(crate) fn is_public_tool_name(name: &str) -> bool {
         .contains(name)
 }
 
+/// Tool names served by `POST /api/v1/tools/{name}`.
+pub(crate) fn is_engine_tool_name(name: &str) -> bool {
+    name == "get_schedule_result" || is_public_tool_name(name)
+}
+
 /// Generate the full list of MCP tool definitions from ControlOperation's JSON schema.
 ///
 /// Each tool has: `name`, `description`, `inputSchema`, and `feature_gate`.
