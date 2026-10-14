@@ -620,7 +620,8 @@ mod tests {
 
     #[test]
     fn delayed_depth_camera_validation_reports_identity_breaks() {
-        let cases: &[(fn(&mut World, Entity), &str)] = &[
+        type Case = (fn(&mut World, Entity), &'static str);
+        let cases: &[Case] = &[
             (
                 |world, entity| {
                     world.despawn(entity);

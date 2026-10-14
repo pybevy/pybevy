@@ -38,6 +38,7 @@ fn create_increment_bytecode() -> CompiledBytecode {
             Op::StoreField(0),
         ],
         constants: vec![1.0], // The constant 1.0
+        integers: Vec::new(),
         field_map: vec![FieldId {
             component_id: bevy::ecs::component::ComponentId::new(0),
             offset: 0, // translation.x offset in Transform

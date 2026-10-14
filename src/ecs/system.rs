@@ -138,10 +138,10 @@ fn unwrap_optional_param<'py>(
     } else {
         return Ok((false, annotation.clone()));
     };
-    if let Ok(param) = inner.extract::<PyRef<'_, PyQueryParam>>() {
-        if param.single_entity_enforced {
-            return Ok((true, inner.clone()));
-        }
+    if let Ok(param) = inner.extract::<PyRef<'_, PyQueryParam>>()
+        && param.single_entity_enforced
+    {
+        return Ok((true, inner.clone()));
     }
     let Ok(origin) = inner.getattr("__origin__") else {
         return Ok((false, annotation.clone()));

@@ -10,7 +10,7 @@ use super::{
     cache,
     types::{
         BevyCrate, BevyEnumVariant, BevyField, BevyItem, BevyItemKind, BevyMethod, BevyParameter,
-        BevyVariantKind, SelfKind,
+        BevyVariantKind, SelfKind, foreign_type_key,
     },
 };
 use crate::validation::origin::source_variant_field_order;
@@ -360,6 +360,7 @@ pub fn parse_public_api_output(crate_name: &str, output: &str) -> Result<BevyCra
     // Track current trait impl context: (type_name, trait_name)
     // When we see "impl Trait for Type", subsequent methods for that type come from that trait
     let mut current_trait_context: Option<(String, String)> = None;
+    let mut foreign_methods: HashMap<String, Vec<BevyMethod>> = HashMap::new();
 
     for line in output.lines() {
         let line = line.trim();
@@ -370,6 +371,16 @@ pub fn parse_public_api_output(crate_name: &str, output: &str) -> Result<BevyCra
         if let Some(item) = parse_line(line, crate_name) {
             match item {
                 ParsedLine::Item(bevy_item) => {
+                    if bevy_item.kind == BevyItemKind::TypeAlias
+                        && let Some((ctx_type, ctx_trait)) = &current_trait_context
+                        && !ctx_trait.is_empty()
+                        && let Some((owner, name, target)) = parse_associated_type(line)
+                        && base_name(&owner) == base_name(ctx_type)
+                        && let Some(owner_item) = items.get_mut(base_name(ctx_type))
+                        && !owner_item.associated_types.iter().any(|(n, _)| n == &name)
+                    {
+                        owner_item.associated_types.push((name, target));
+                    }
                     // New type definition resets trait context, but NOT type aliases
                     // (associated types like AudioSource::Decoder don't reset context)
                     if bevy_item.kind != BevyItemKind::TypeAlias {
@@ -403,12 +414,25 @@ pub fn parse_public_api_output(crate_name: &str, output: &str) -> Result<BevyCra
                 }
                 ParsedLine::Method {
                     type_name,
+                    type_path,
                     mut method,
                 } => {
                     if let Some((ctx_type, ctx_trait)) = &current_trait_context
-                        && ctx_type == &type_name
+                        && (ctx_type == &type_name || ctx_type == base_name(&type_name))
                     {
                         method.from_trait = Some(ctx_trait.clone());
+                    }
+
+                    if !items.contains_key(&type_name)
+                        && !type_name.contains('<')
+                        && method.from_trait.as_deref().is_some_and(|t| !t.is_empty())
+                        && !type_path.starts_with(&format!("{crate_name}::"))
+                    {
+                        foreign_methods
+                            .entry(foreign_type_key(&type_path))
+                            .or_default()
+                            .push(method);
+                        continue;
                     }
 
                     // For types with generics, create the item if it doesn't exist
@@ -531,13 +555,65 @@ pub fn parse_public_api_output(crate_name: &str, output: &str) -> Result<BevyCra
     Ok(BevyCrate {
         name: crate_name.to_string(),
         items,
+        foreign_methods,
     })
+}
+
+fn base_name(type_name: &str) -> &str {
+    type_name.split('<').next().unwrap_or(type_name)
+}
+
+/// `pub type path::Owner::Name = Target` inside a trait impl: the owner's
+/// short name, the associated type name and its target.
+fn parse_associated_type(line: &str) -> Option<(String, String, String)> {
+    let rest = strip_outer_attributes(line).strip_prefix("pub type ")?;
+    let (path, target) = rest.split_once(" = ")?;
+    let sep = find_last_path_separator(path)?;
+    let owner_path = &path[..sep];
+    let name = &path[sep + 2..];
+    let owner = owner_path
+        .split('<')
+        .next()?
+        .rsplit("::")
+        .next()?
+        .to_string();
+    Some((owner, name.to_string(), target.trim().to_string()))
+}
+
+/// Public payload types of a tuple struct declaration such as
+/// `bevy_ui::BackgroundColor(pub bevy_color::Color)`.
+fn parse_tuple_fields(rest: &str) -> Vec<String> {
+    let mut depth = 0usize;
+    let mut open = None;
+    for (index, ch) in rest.char_indices() {
+        match ch {
+            '<' => depth += 1,
+            '>' => depth = depth.saturating_sub(1),
+            '(' if depth == 0 => {
+                open = Some(index);
+                break;
+            }
+            ' ' if depth == 0 => return Vec::new(),
+            _ => {}
+        }
+    }
+    let Some(open) = open else {
+        return Vec::new();
+    };
+    let Some(close) = find_matching_paren(rest, open) else {
+        return Vec::new();
+    };
+    split_type_list(&rest[open + 1..close])
+        .into_iter()
+        .filter_map(|field| field.trim().strip_prefix("pub ").map(str::to_string))
+        .collect()
 }
 
 enum ParsedLine {
     Item(BevyItem),
     Method {
         type_name: String,
+        type_path: String,
         method: BevyMethod,
     },
     Constant {
@@ -630,10 +706,9 @@ fn parse_line(line: &str, crate_name: &str) -> Option<ParsedLine> {
         // Validate we can extract a type name
         let _ = extract_type_name(path)?;
 
-        return Some(ParsedLine::Item(BevyItem::new(
-            path.to_string(),
-            BevyItemKind::Struct,
-        )));
+        let mut item = BevyItem::new(path.to_string(), BevyItemKind::Struct);
+        item.tuple_fields = parse_tuple_fields(rest);
+        return Some(ParsedLine::Item(item));
     }
 
     if let Some(rest) = line.strip_prefix("pub enum ") {
@@ -682,9 +757,14 @@ fn parse_line(line: &str, crate_name: &str) -> Option<ParsedLine> {
         return Some(ParsedLine::Skip);
     }
 
-    if line.starts_with("impl ")
-        && line.contains(" for ")
-        && let Some((trait_part, type_part)) = line.strip_prefix("impl ")?.split_once(" for ")
+    let trait_impl = if line.starts_with("impl<") {
+        let close = find_matching_angle(line, "impl".len())?;
+        line[close + 1..].trim_start()
+    } else {
+        line.strip_prefix("impl ").unwrap_or("")
+    };
+    if !trait_impl.is_empty()
+        && let Some((trait_part, type_part)) = trait_impl.split_once(" for ")
     {
         let type_name = extract_type_name(type_part.split(&['<', ' '][..]).next()?)?;
         let trait_name = trait_part.split(&['<', ' '][..]).next()?.to_string();
@@ -791,7 +871,11 @@ fn parse_method_line(line: &str, _crate_name: &str) -> Option<ParsedLine> {
         from_trait: None, // Set later in parse_public_api_output based on context
     };
 
-    Some(ParsedLine::Method { type_name, method })
+    Some(ParsedLine::Method {
+        type_name,
+        type_path: type_path.to_string(),
+        method,
+    })
 }
 
 fn parse_constant_line(line: &str) -> Option<ParsedLine> {
@@ -1068,6 +1152,26 @@ fn parse_parameters(params_str: &str) -> (SelfKind, Vec<BevyParameter>) {
 }
 
 /// Find the position of the matching closing parenthesis
+fn find_matching_angle(s: &str, open_pos: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut previous = ' ';
+    for (index, ch) in s[open_pos..].char_indices() {
+        let arrow = previous == '-';
+        previous = ch;
+        match ch {
+            '<' => depth += 1,
+            '>' if !arrow => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(open_pos + index);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 fn find_matching_paren(s: &str, open_pos: usize) -> Option<usize> {
     let mut depth = 0;
     for (i, c) in s[open_pos..].char_indices() {

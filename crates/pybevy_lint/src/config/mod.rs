@@ -94,7 +94,7 @@ pub struct Config {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ValidationConfig {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "expand_exceptions")]
     pub exceptions: Vec<ValidationException>,
     #[serde(default)]
     pub disabled: Vec<DisabledDiagnostic>,
@@ -147,6 +147,50 @@ pub struct ValidationException {
     pub path: String,
     /// Durable explanation for why the mismatch is intentional.
     pub reason: String,
+}
+
+/// A configured exception covering one `path` or a reviewed group of
+/// `paths` that share a code and reason.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GroupedValidationException {
+    #[serde(default)]
+    message: Option<String>,
+    code: String,
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(default)]
+    paths: Vec<String>,
+    reason: String,
+}
+
+/// Expand grouped exceptions into one entry per path, so each path is
+/// consumed and reported stale on its own.
+fn expand_exceptions<'de, D>(deserializer: D) -> Result<Vec<ValidationException>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let grouped = Vec::<GroupedValidationException>::deserialize(deserializer)?;
+    let mut exceptions = Vec::new();
+    for group in grouped {
+        let paths = match (group.path, group.paths.is_empty()) {
+            (Some(path), true) => vec![path],
+            (None, false) => group.paths,
+            _ => {
+                return Err(serde::de::Error::custom(format!(
+                    "validation exception {} needs exactly one of `path` or a non-empty `paths`",
+                    group.code
+                )));
+            }
+        };
+        exceptions.extend(paths.into_iter().map(|path| ValidationException {
+            message: group.message.clone(),
+            code: group.code.clone(),
+            path,
+            reason: group.reason.clone(),
+        }));
+    }
+    Ok(exceptions)
 }
 
 /// Test coverage configuration

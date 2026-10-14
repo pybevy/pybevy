@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    mem,
+};
 
 use super::report::{
     ConstructorWarning, CoverageReport, CrateCoverage, ExtendsWarning, ExtendsWarningKind,
@@ -132,6 +135,16 @@ pub fn compare_apis(
     }
 
     ComparisonResult { report }
+}
+
+/// Compare one PyBevy class against the Bevy item it resolves to.
+pub fn compare_single_type(
+    bevy_item: &BevyItem,
+    pyclass: &PyClassDef,
+    config: &BevyConfig,
+    bevy_crate: &BevyCrate,
+) -> TypeCoverage {
+    compare_type(bevy_item, pyclass, config, &HashMap::new(), bevy_crate)
 }
 
 /// Find the best matching PyBevy class for a type name
@@ -811,7 +824,9 @@ fn find_extra_methods(
     for prop in &pyclass.properties {
         let name = prop.name.as_str();
 
-        if bevy_field_names.contains(name) {
+        if bevy_field_names.contains(name)
+            || is_keyword_escape_of(name, |base| bevy_field_names.contains(base))
+        {
             continue;
         }
 
@@ -1480,7 +1495,10 @@ fn compare_method_signature(
 
     let bevy_ret = bevy.return_type.as_deref().unwrap_or("()");
     let pybevy_ret = pybevy.return_type.as_deref().unwrap_or("()");
-    if !return_types_compatible(bevy_ret, pybevy_ret, owner) {
+    let generic_return = method_generic_params(&bevy.signature, &bevy.name)
+        .iter()
+        .any(|param| mentions_type_param(bevy_ret, param));
+    if !generic_return && !return_types_compatible(bevy_ret, pybevy_ret, owner) {
         differences.push(SignatureDiff::ReturnTypeMismatch {
             bevy_type: bevy_ret.to_string(),
             pybevy_type: pybevy_ret.to_string(),
@@ -1542,9 +1560,89 @@ fn validate_signature_diff_spec(
     violations
 }
 
+/// Type parameters declared on the method itself (`fn px<T: From<Self>>`).
+fn method_generic_params(signature: &str, name: &str) -> Vec<String> {
+    let Some(start) = signature.find(&format!("::{name}<")) else {
+        return Vec::new();
+    };
+    let open = start + name.len() + 2;
+    let mut depth = 0usize;
+    let mut params = Vec::new();
+    let mut current = String::new();
+    for ch in signature[open..].chars() {
+        match ch {
+            '<' => {
+                depth += 1;
+                if depth > 1 {
+                    current.push(ch);
+                }
+            }
+            '>' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    params.push(mem::take(&mut current));
+                    break;
+                }
+                current.push(ch);
+            }
+            ',' if depth == 1 => params.push(mem::take(&mut current)),
+            _ => current.push(ch),
+        }
+    }
+    params
+        .iter()
+        .map(|param| param.split(':').next().unwrap_or("").trim().to_string())
+        .filter(|param| {
+            !param.is_empty() && !param.starts_with('\'') && !param.starts_with("const ")
+        })
+        .collect()
+}
+
+fn mentions_type_param(ty: &str, param: &str) -> bool {
+    ty.split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .any(|token| token == param)
+}
+
+/// `impl Iterator<Item = T>` (or `ExactSizeIterator`, ...) yields `T`.
+fn iterator_item(ty: &str) -> Option<&str> {
+    let ty = ty.trim();
+    if !ty.starts_with("impl ") {
+        return None;
+    }
+    let start = ty.find("Iterator<Item = ")? + "Iterator<Item = ".len();
+    let mut depth = 0usize;
+    for (index, ch) in ty[start..].char_indices() {
+        match ch {
+            '<' => depth += 1,
+            '>' if depth == 0 => return Some(ty[start..start + index].trim()),
+            '>' => depth -= 1,
+            _ => {}
+        }
+    }
+    None
+}
+
+/// `PyResult<Vec<T>>`, `Vec<T>` -> `T`.
+fn list_element(ty: &str) -> Option<String> {
+    let ty = ty.replace(' ', "");
+    let ty = ty
+        .strip_prefix("PyResult<")
+        .and_then(|rest| rest.strip_suffix('>'))
+        .unwrap_or(&ty);
+    ty.strip_prefix("Vec<")
+        .and_then(|rest| rest.strip_suffix('>'))
+        .map(str::to_string)
+}
+
 /// Return values do not receive input-only conveniences such as Vec2 tuples.
+/// An iterator is returned to Python as a list of its items.
 fn return_types_compatible(bevy: &str, pybevy: &str, owner: &str) -> bool {
     let bevy = bevy.split(" where ").next().unwrap_or(bevy);
+    if let Some(item) = iterator_item(bevy)
+        && let Some(element) = list_element(pybevy)
+    {
+        return return_types_compatible(item, &element, owner);
+    }
     if bevy.starts_with("Self::") {
         return types_compatible(bevy, pybevy);
     }

@@ -1,5 +1,6 @@
 pub mod bridge_rules;
 pub mod class_rules;
+pub mod drift_rules;
 pub mod method_rules;
 pub mod origin;
 pub mod prelude_rules;
@@ -123,32 +124,8 @@ pub fn validate_with_bevy(
             .map(|origin| origin::check_constructor_policy(origin, rust_class))
             .unwrap_or_default();
 
-        // Explicit upstream claims (macro/bridge bevy type or a configured
-        // type mapping) resolve strictly and report W025 on failure; the
-        // implicit Py-strip fallback keeps the legacy silent-skip behavior.
-        let claimed_bevy_name: Option<String> = rust_class
-            .macro_info
-            .as_ref()
-            .map(|MacroInfo::BevyEnum { bevy_type, .. }| bevy_type.clone())
-            .or_else(|| rust_class.bridge_info.as_ref().map(|b| b.bevy_type.clone()))
-            .or_else(|| {
-                config
-                    .bevy
-                    .type_mappings
-                    .get(&rust_class.rust_name)
-                    .cloned()
-            });
-        let fallback_bevy_name = pybevy_bevy_name(rust_class, &config.bevy);
-        let (resolved_bevy, mut resolution_diagnostics) = match &claimed_bevy_name {
-            Some(name) => resolve_claimed_bevy_item(
-                rust_class,
-                bevy_crates,
-                name,
-                &config.bevy.claim_overrides,
-                internal_type_names,
-            ),
-            None => (find_bevy_item(bevy_crates, &fallback_bevy_name), Vec::new()),
-        };
+        let (resolved_bevy, mut resolution_diagnostics) =
+            resolve_bevy_item(rust_class, bevy_crates, config, internal_type_names);
         policy_diagnostics.append(&mut resolution_diagnostics);
 
         if let Some(origin) = &origin
@@ -413,6 +390,48 @@ pub fn validate_with_bevy(
         }
     }
 
+    // W038-W040 compare every public wrapper with a resolved upstream item,
+    // including method-only classes the constructor-policy loop skips.
+    for rust_class in rust_classes {
+        if rust_class.python_name.starts_with('_') {
+            continue;
+        }
+        let (Some((crate_key, bevy_item)), _) =
+            resolve_bevy_item(rust_class, bevy_crates, config, internal_type_names)
+        else {
+            continue;
+        };
+        let path = class_path(rust_class);
+        for finding in drift_rules::check_api_drift(
+            rust_class,
+            bevy_item,
+            crate_key,
+            bevy_crates,
+            &config.bevy,
+        ) {
+            if is_disabled_code(Some(config), finding.diagnostic.code.as_str()) {
+                continue;
+            }
+            let finding_path = match &finding.member {
+                Some(member) => format!("{path}.{member}"),
+                None => path.clone(),
+            };
+            if consume_exception(
+                Some(config),
+                &mut consumed_exceptions,
+                &finding_path,
+                &finding.diagnostic,
+            ) {
+                continue;
+            }
+            diagnostics.push(
+                finding
+                    .diagnostic
+                    .with_note(format!("exception path: {finding_path}")),
+            );
+        }
+    }
+
     // W017 owns inputs whose upstream is not an `Option`: the fix is to reject
     // `None` in Rust, not to advertise it in the stub.
     diagnostics.retain(|diagnostic| {
@@ -466,6 +485,42 @@ pub fn validate_with_bevy(
     }
 
     diagnostics
+}
+
+/// The upstream item a wrapper resolves to: an explicit claim (macro, bridge
+/// or configured type mapping) resolves strictly and reports W025 on
+/// failure; the implicit Py-strip fallback stays silent.
+fn resolve_bevy_item<'a>(
+    rust_class: &PyClassDef,
+    bevy_crates: &'a HashMap<String, BevyCrate>,
+    config: &Config,
+    internal_type_names: &HashSet<String>,
+) -> (Option<(&'a str, &'a BevyItem)>, Vec<Diagnostic>) {
+    let claimed_bevy_name: Option<String> = rust_class
+        .macro_info
+        .as_ref()
+        .map(|MacroInfo::BevyEnum { bevy_type, .. }| bevy_type.clone())
+        .or_else(|| rust_class.bridge_info.as_ref().map(|b| b.bevy_type.clone()))
+        .or_else(|| {
+            config
+                .bevy
+                .type_mappings
+                .get(&rust_class.rust_name)
+                .cloned()
+        });
+    match &claimed_bevy_name {
+        Some(name) => resolve_claimed_bevy_item(
+            rust_class,
+            bevy_crates,
+            name,
+            &config.bevy.claim_overrides,
+            internal_type_names,
+        ),
+        None => (
+            find_bevy_item(bevy_crates, &pybevy_bevy_name(rust_class, &config.bevy)),
+            Vec::new(),
+        ),
+    }
 }
 
 /// Per-variant constructor-policy checks for generated nested classes.

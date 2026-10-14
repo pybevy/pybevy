@@ -3,10 +3,24 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 /// A parsed Bevy crate's public API
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BevyCrate {
     pub name: String,
     pub items: HashMap<String, BevyItem>,
+    /// Trait-impl methods this crate adds to types defined elsewhere, keyed
+    /// by [`foreign_type_key`] (`bevy_mesh` implements `Meshable::mesh` for
+    /// `bevy_math` primitives).
+    #[serde(default)]
+    pub foreign_methods: HashMap<String, Vec<BevyMethod>>,
+}
+
+/// Crate root plus short type name: stable across the re-export paths
+/// cargo-public-api may print for the same type.
+pub fn foreign_type_key(type_path: &str) -> String {
+    let base = type_path.split('<').next().unwrap_or(type_path);
+    let root = base.split("::").next().unwrap_or(base);
+    let name = base.rsplit("::").next().unwrap_or(base);
+    format!("{root}::{name}")
 }
 
 impl BevyCrate {
@@ -109,6 +123,10 @@ pub struct BevyItem {
     /// Generic bases have their methods inherited by specialized types
     #[serde(default)]
     pub is_generic_base: bool,
+
+    /// Public tuple-struct payload types, in declaration order
+    #[serde(default)]
+    pub tuple_fields: Vec<String>,
 }
 
 /// The kind of Bevy item
@@ -219,6 +237,7 @@ impl BevyItem {
             associated_types: Vec::new(),
             constants: Vec::new(),
             is_generic_base: false,
+            tuple_fields: Vec::new(),
         }
     }
 

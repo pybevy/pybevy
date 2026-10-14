@@ -36,7 +36,7 @@ impl PyCameraMainTextureUsages {
     pub fn with_(&self, py: Python<'_>, usages: PyTextureUsages) -> PyResult<Py<Self>> {
         Py::new(
             py,
-            Self::from_owned(self.as_ref()?.clone().with(usages.try_into()?)),
+            Self::from_owned((*self.as_ref()?).with(usages.try_into()?)),
         )
     }
 

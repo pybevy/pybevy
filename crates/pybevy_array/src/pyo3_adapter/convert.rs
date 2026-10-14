@@ -378,7 +378,7 @@ pub fn parse_reshape_shape(obj: &Bound<'_, PyAny>, size: usize) -> PyResult<Vec<
                 "cannot infer reshape dimension when other dimensions multiply to zero",
             ));
         }
-        if size % known_elements != 0 {
+        if !size.is_multiple_of(known_elements) {
             return Err(PyValueError::new_err(format!(
                 "cannot reshape array of size {size} with inferred dimension"
             )));

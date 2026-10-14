@@ -79,7 +79,7 @@ fn extract_transform_point_from_any(value: &Bound<'_, PyAny>) -> PyResult<Mat4> 
         return Ok(Mat4::from(Affine3A::from(Isometry3d::try_from(isometry)?)));
     }
     if let Ok(matrix) = value.cast::<PyMat4>() {
-        return Ok(Mat4::try_from(&*matrix.borrow())?);
+        return Mat4::try_from(&*matrix.borrow());
     }
     if let Ok(affine) = value.cast::<PyAffine3A>() {
         return Ok(Mat4::from(Affine3A::try_from(&*affine.borrow())?));

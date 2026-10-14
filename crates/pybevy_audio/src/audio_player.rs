@@ -19,6 +19,7 @@ pub struct PyAudioPlayerBase;
 #[pymethods]
 impl PyAudioPlayerBase {
     #[new]
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(py: Python<'_>, source: PyHandle) -> PyResult<Py<PyAny>> {
         if source.asset_type_id() == Some(TypeId::of::<Pitch>()) {
             return materialize_pitch_player(

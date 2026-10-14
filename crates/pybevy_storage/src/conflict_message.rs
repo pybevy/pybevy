@@ -55,6 +55,7 @@ pub const CONDITION_READ_ONLY_GUIDANCE: &str = "Run conditions use Bevy's read-o
 mod tests {
     use super::*;
 
+    #[allow(clippy::too_many_arguments)]
     fn message<'a>(
         category: &'a str,
         parameter: usize,

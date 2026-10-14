@@ -1150,7 +1150,6 @@ fn test_conditional_identity_runs_only_transition_and_supersedes_initial_enter()
         .world_mut()
         .resource_mut::<NextState<TransitionContractState>>();
     NextState::set_if_neq(&mut next, TransitionContractState::Alpha);
-    drop(next);
 
     app.update();
 

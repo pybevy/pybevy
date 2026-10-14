@@ -264,7 +264,6 @@ mod tests {
             .changed;
         assert_eq!(ticks_marked, this_run);
         assert_ne!(ticks_marked, ticks_before);
-        drop(access);
 
         let mut builder = QueryBuilder::<FilteredEntityRef>::new(&mut world);
         builder.ref_id(comp_id);

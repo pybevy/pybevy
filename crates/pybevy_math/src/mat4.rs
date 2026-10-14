@@ -288,7 +288,7 @@ impl PyMat4 {
         z_near: f32,
     ) -> PyResult<Self> {
         // glam validates z_near only when its optional assertions are enabled.
-        if !(z_near > 0.0) {
+        if z_near.is_nan() || z_near <= 0.0 {
             return Err(PyValueError::new_err(
                 MAT4_PERSPECTIVE_INFINITE_REVERSE_RH_NEAR,
             ));

@@ -69,6 +69,7 @@ pub struct PyHandle {
 
 // SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
 unsafe impl Send for PyHandle {}
+// SAFETY: the handle is immutable, and the type pointer is only dereferenced under the GIL
 unsafe impl Sync for PyHandle {}
 
 impl PartialEq for PyHandle {
