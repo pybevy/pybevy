@@ -267,9 +267,10 @@ class Window(Component):
 
         @system
         def toggle_fullscreen(
-            window: Single[Mut[Window], With[PrimaryWindow]],
+            window_query: Single[Mut[Window], With[PrimaryWindow]],
             keyboard: Res[ButtonInput[KeyCode]],
         ) -> None:
+            window = window_query.into_inner()
             if keyboard.just_pressed(KeyCode.F11):
                 if window.mode == WindowMode.Windowed():
                     window.mode = WindowMode.Fullscreen(
@@ -728,7 +729,7 @@ class PrimaryWindow(Component):
 
         @system
         def check_window(window: Single[Window, With[PrimaryWindow]]) -> None:
-            print(f"Window: {window.title}")
+            print(f"Window: {window.into_inner().title}")
         ```
     """
 
@@ -790,10 +791,11 @@ class CursorOptions(Component):
 
         @system
         def grab_mouse(
-            cursor_options: Single[Mut[CursorOptions]],
+            cursor_query: Single[Mut[CursorOptions]],
             mouse: Res[ButtonInput[MouseButton]],
         ) -> None:
             if mouse.just_pressed(MouseButton.Left()):
+                cursor_options = cursor_query.into_inner()
                 cursor_options.visible = False
                 cursor_options.grab_mode = CursorGrabMode.Locked
         ```
@@ -1315,7 +1317,7 @@ class VideoMode:
 
         @system
         def list_video_modes(monitor: Single[Monitor, With[PrimaryMonitor]]) -> None:
-            for mode in monitor.video_modes:
+            for mode in monitor.into_inner().video_modes:
                 print(f"{mode.physical_size.x}x{mode.physical_size.y} @ {mode.refresh_rate_millihertz / 1000}Hz")
         ```
     """
@@ -1362,7 +1364,8 @@ class Monitor(Component):
         from pybevy.ecs import Single, With
 
         @system
-        def print_monitor_info(monitor: Single[Monitor, With[PrimaryMonitor]]) -> None:
+        def print_monitor_info(monitor_query: Single[Monitor, With[PrimaryMonitor]]) -> None:
+            monitor = monitor_query.into_inner()
             print(f"Primary monitor: {monitor.name}")
             print(f"Resolution: {monitor.physical_width}x{monitor.physical_height}")
             print(f"Scale factor: {monitor.scale_factor}")

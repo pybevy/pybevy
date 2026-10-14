@@ -1,8 +1,9 @@
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
-    ptr::NonNull,
+    ptr::{NonNull, null_mut},
     sync::Arc,
+    vec::IntoIter,
 };
 
 #[cfg(debug_assertions)]
@@ -16,7 +17,7 @@ use bevy::{
 use pybevy_core::{
     ComponentWriteContext, ExtractFn, FilteredEntityAccess, LogicalTypeId, LogicalTypeMap,
     ensure_asset_access_registry, extract_entity_from_any,
-    public_error::{self, QUERY_ROW_SHAPE_MISMATCH},
+    public_error::{self, QUERY_COMBINATIONS_SIZE, QUERY_ROW_SHAPE_MISMATCH},
     registry::global_registry,
     resource_initializer,
 };
@@ -24,16 +25,16 @@ use pybevy_ecs::shared::{
     cached_query::CachedQueryCore,
     query_builder_ext::{QueryBuildSpec, QueryComponent, QueryFilterBranch},
     query_runtime::{
-        IterationToken, QueryExecutionError, QueryRowShape, QueryRuntimeCore, QueryRuntimeError,
-        RowMaterializer,
+        CombinationCursor, IterationToken, QueryExecutionError, QueryRowShape, QueryRuntimeCore,
+        QueryRuntimeError, RowMaterializer,
     },
 };
 use pyo3::{
     IntoPyObjectExt, PyTraverseError, PyVisit,
-    exceptions::{PyRuntimeError, PyStopIteration, PyTypeError},
-    ffi::PyTypeObject,
+    exceptions::{PyRuntimeError, PyStopIteration, PyTypeError, PyValueError},
+    ffi::{PyObject as FfiPyObject, PyTypeObject},
     prelude::*,
-    types::PyTuple,
+    types::{PyTuple, PyType},
 };
 use smallvec::SmallVec;
 
@@ -42,8 +43,12 @@ use crate::{
     ecs::{
         PyEntity,
         commands::entity_logical_type_matches,
-        component_layout::{ComponentLayoutExt, ComponentStorageType, ComponentStorageTypeExt},
+        component::PyComponent,
+        component_layout::{
+            ComponentLayout, ComponentLayoutExt, ComponentStorageType, ComponentStorageTypeExt,
+        },
         component_type::{PyComponentType, register_component_id},
+        custom_component::PyCustomComponent,
         filter::QueryFilter,
         helpers::validity_guard::{AccessMode, ValidityFlag},
         lazy_wrapper_proxy::{ProxyKind, PyLazyWrapperProxy},
@@ -55,10 +60,7 @@ use crate::{
     },
 };
 
-type LayoutCacheEntry = (
-    ComponentStorageType,
-    Option<Arc<crate::ecs::component_layout::ComponentLayout>>,
-);
+type LayoutCacheEntry = (ComponentStorageType, Option<Arc<ComponentLayout>>);
 type LayoutCache = HashMap<*const PyTypeObject, LayoutCacheEntry>;
 
 /// Rebind a queried component to its logical specialization, such as a custom
@@ -175,6 +177,7 @@ pub struct CachedQuery {
 // while the owning DynamicSystem runs on a single thread. DynamicSystem is already
 // declared Send + Sync; this makes the intent explicit for the standalone type.
 unsafe impl Send for CachedQuery {}
+// SAFETY: cache metadata is immutable; traversal is serialized by its owning system.
 unsafe impl Sync for CachedQuery {}
 
 impl CachedQuery {
@@ -383,9 +386,8 @@ impl CachedQuery {
 ///
 /// SAFETY: This struct erases the lifetimes of both the `UnsafeWorldCell` and the
 /// borrowed `CachedQuery`. It must only be used within the scope of a system
-/// execution and must not escape the Python GIL callback. Python code must not
-/// store references to this object or any iterators derived from it beyond the
-/// system function scope; the shared `ValidityFlag` fences any that leak.
+/// execution. Escaped queries and iterators must pass the shared `ValidityFlag`
+/// check before accessing either the world cell or the borrowed cache.
 #[pyclass(name = "QueryIter", module = "pybevy.ecs")]
 pub struct PyQueryIter {
     /// The query parameter information: an `Arc` handle cloned from the cache at
@@ -426,13 +428,13 @@ pub struct PyQueryIter {
         Option<(
             *const PyTypeObject,
             ComponentStorageType,
-            Option<Arc<crate::ecs::component_layout::ComponentLayout>>,
+            Option<Arc<ComponentLayout>>,
         )>,
     >,
 }
 
 /// Discriminant plus type pointer, enough to distinguish any `PyComponentType`.
-type ComponentTypeKey = (u8, *const pyo3::ffi::PyTypeObject);
+type ComponentTypeKey = (u8, *const PyTypeObject);
 
 // SAFETY: PyQueryIter is only used during system execution on a single thread.
 // QueryRuntimeCore fences the world cell and cached query state with the run's
@@ -460,9 +462,7 @@ unsafe impl Sync for QueryCache {}
 impl QueryCache {
     fn get(&self) -> &CachedQuery {
         match self {
-            // SAFETY: the borrowed pointer comes from `PyQueryIter::new`, whose
-            // contract requires the CachedQuery to outlive this iterator; the
-            // DynamicSystem owns it across every run.
+            // SAFETY: callers check the validity window that keeps this cache live.
             Self::Borrowed(cached) => unsafe { cached.as_ref() },
             Self::Owned(cached) => cached,
         }
@@ -482,7 +482,17 @@ pub struct PyQueryIterator {
 
 enum QueryIteratorState {
     Runtime(IterationToken),
-    Snapshot(std::vec::IntoIter<Entity>),
+    Snapshot(IntoIter<Entity>),
+}
+
+/// Python iterator over the combinations of one Query snapshot, like Bevy's
+/// `QueryCombinationIter`.
+#[pyclass(name = "QueryCombinationIter", module = "pybevy.ecs")]
+pub struct PyQueryCombinationIter {
+    query: Py<PyQueryIter>,
+    entities: Vec<Entity>,
+    cursor: CombinationCursor,
+    read_only: bool,
 }
 
 /// Entity ids that still honor the logical-type predicate.
@@ -598,10 +608,9 @@ impl PyQueryIter {
     /// The heavy per-system work (component-id registration, QueryState
     /// construction) lives in `cached`, built once in `DynamicSystem::initialize`.
     ///
-    /// SAFETY: `cached` must remain valid for the lifetime of this object (it is
-    /// owned by the DynamicSystem, which outlives every run), and `world_cell` must
-    /// reference the World that `cached` was built from. Both are fenced by
-    /// `validity`, which is invalidated when the system finishes.
+    /// SAFETY: `cached` must remain at a stable address while `validity` permits
+    /// access, and `world_cell` must reference its original World. Invalidate
+    /// `validity` before either allocation becomes inaccessible.
     pub unsafe fn new(
         cached: &CachedQuery,
         world_cell: UnsafeWorldCell,
@@ -762,7 +771,65 @@ impl PyQueryIter {
         Ok(entities)
     }
 
-    fn extract_ad_hoc_components(&self, entity: Entity, py: Python) -> PyResult<()> {
+    /// Materialize one entity's row, or None when it no longer matches.
+    fn materialize_entity_by_id(
+        &self,
+        entity: Entity,
+        read_only: bool,
+        py: Python,
+    ) -> PyResult<Option<Py<PyAny>>> {
+        if self.is_ad_hoc() {
+            let matched = self
+                .runtime
+                .get_with(
+                    entity,
+                    &LogicalFilteredEntityIdMaterializer { query: self },
+                    (),
+                )
+                .map_err(query_execution_error_to_py)?;
+            return matched
+                .map(|entity| self.materialize_ad_hoc_entity(entity, read_only, py))
+                .transpose();
+        }
+        let materializer = PyQueryRowMaterializer {
+            query: self,
+            read_only,
+        };
+        self.runtime
+            .get_with(entity, &materializer, py)
+            .map_err(query_execution_error_to_py)
+    }
+
+    fn combinations(
+        slf: Py<Self>,
+        size: isize,
+        read_only: bool,
+        py: Python,
+    ) -> PyResult<Py<PyQueryCombinationIter>> {
+        let size = usize::try_from(size)
+            .ok()
+            .filter(|&size| size > 0)
+            .ok_or_else(|| PyValueError::new_err(QUERY_COMBINATIONS_SIZE))?;
+        let entities = slf.borrow(py).snapshot_entity_ids()?;
+        let cursor = CombinationCursor::new(entities.len(), size);
+        Py::new(
+            py,
+            PyQueryCombinationIter {
+                query: slf,
+                entities,
+                cursor,
+                read_only,
+            },
+        )
+    }
+
+    fn extract_ad_hoc_components(
+        &self,
+        entity: Entity,
+        read_only: bool,
+        py: Python,
+    ) -> PyResult<()> {
+        // SAFETY: this ad-hoc query retains the originating World's exclusive validity.
         let world_ptr = unsafe { self.runtime.world_ptr() }.map_err(query_runtime_error_to_py)?;
         let validity = self.runtime.validity().clone();
         // SAFETY: the runtime validity fence protects world_ptr. Ad-hoc callers
@@ -807,12 +874,9 @@ impl PyQueryIter {
                         // SAFETY: the query parameter retains every custom
                         // class and native registry type objects are stable.
                         let component_type = unsafe {
-                            Bound::from_borrowed_ptr(
-                                py,
-                                type_ptr.cast_mut().cast::<pyo3::ffi::PyObject>(),
-                            )
+                            Bound::from_borrowed_ptr(py, type_ptr.cast_mut().cast::<FfiPyObject>())
                         };
-                        let value = if item.mutable {
+                        let value = if item.mutable && !read_only {
                             world.get_component_mut(py, &PyEntity(entity), component_type)?
                         } else {
                             world.get_component(py, &PyEntity(entity), component_type)?
@@ -853,15 +917,11 @@ impl PyQueryIter {
                         | PyComponentType::Resource(type_ptr)
                         | PyComponentType::Custom(type_ptr) => *type_ptr,
                     };
-                    // SAFETY: registered component type objects remain live for the
-                    // interpreter lifetime and the borrowed Bound does not escape.
+                    // SAFETY: the live query parameter retains this component class.
                     let component_type = unsafe {
-                        Bound::from_borrowed_ptr(
-                            py,
-                            type_ptr.cast_mut().cast::<pyo3::ffi::PyObject>(),
-                        )
+                        Bound::from_borrowed_ptr(py, type_ptr.cast_mut().cast::<FfiPyObject>())
                     };
-                    let value = if *mutable {
+                    let value = if *mutable && !read_only {
                         world.get_component_mut(py, &PyEntity(entity), component_type)?
                     } else {
                         world.get_component(py, &PyEntity(entity), component_type)?
@@ -905,7 +965,7 @@ impl PyQueryIter {
                     values_buffer.push(self.materialize_asset_resource(
                         *retained_param_index,
                         *type_ptr,
-                        *mutable,
+                        *mutable && !read_only,
                         py,
                     )?);
                 }
@@ -914,8 +974,13 @@ impl PyQueryIter {
         Ok(())
     }
 
-    fn materialize_ad_hoc_entity(&self, entity: Entity, py: Python) -> PyResult<Py<PyAny>> {
-        self.extract_ad_hoc_components(entity, py)?;
+    fn materialize_ad_hoc_entity(
+        &self,
+        entity: Entity,
+        read_only: bool,
+        py: Python,
+    ) -> PyResult<Py<PyAny>> {
+        self.extract_ad_hoc_components(entity, read_only, py)?;
         self.materialized_result(py)
     }
 
@@ -1034,10 +1099,7 @@ impl PyQueryIter {
         &self,
         type_ptr: *const PyTypeObject,
         py: Python,
-    ) -> (
-        ComponentStorageType,
-        Option<Arc<crate::ecs::component_layout::ComponentLayout>>,
-    ) {
+    ) -> (ComponentStorageType, Option<Arc<ComponentLayout>>) {
         if let Some((last_ptr, st, layout)) = &*self.last_layout.borrow()
             && *last_ptr == type_ptr
         {
@@ -1050,11 +1112,9 @@ impl PyQueryIter {
             } else {
                 drop(cache);
 
-                // SAFETY: type_ptr is valid for the lifetime of the Python interpreter
-                let py_type = unsafe {
-                    pyo3::Bound::from_borrowed_ptr(py, type_ptr as *mut pyo3::ffi::PyObject)
-                };
-                let st = if let Ok(cls) = py_type.cast::<pyo3::types::PyType>() {
+                // SAFETY: the live query parameter retains this class.
+                let py_type = unsafe { Bound::from_borrowed_ptr(py, type_ptr as *mut FfiPyObject) };
+                let st = if let Ok(cls) = py_type.cast::<PyType>() {
                     ComponentStorageType::from_python_class(cls)
                         .unwrap_or(ComponentStorageType::PyObject)
                 } else {
@@ -1062,12 +1122,11 @@ impl PyQueryIter {
                 };
                 let layout = if let ComponentStorageType::Wrapper(_) = &st {
                     let cls = py_type
-                        .cast::<pyo3::types::PyType>()
+                        .cast::<PyType>()
                         .expect("Type pointer should be valid");
-                    Some(Arc::new(
-                        crate::ecs::component_layout::ComponentLayout::from_annotations(cls)
-                            .expect("Layout should be computable for wrapper components"),
-                    ))
+                    Some(Arc::new(ComponentLayout::from_annotations(cls).expect(
+                        "Layout should be computable for wrapper components",
+                    )))
                 } else {
                     None
                 };
@@ -1132,7 +1191,7 @@ impl PyQueryIter {
                         mutable, // true for Mut[T], false for read-only
                         component_id,
                         entity_id,
-                        std::ptr::null_mut(),
+                        null_mut(),
                         world_cell,
                         Some(self.runtime.run_ticks()),
                         // Query iteration: the cached data_ptr is kept valid by the
@@ -1146,8 +1205,6 @@ impl PyQueryIter {
             }
             ComponentStorageType::PyObject => {
                 // PyObject storage - return borrowed reference to ECS-stored Python object
-                use crate::ecs::custom_component::PyCustomComponent;
-
                 let entity_id = entity.id();
 
                 // Get pointer to the PyAny in ECS storage
@@ -1159,6 +1216,7 @@ impl PyQueryIter {
                     .expect("Custom component should exist on matched entity")
                     .as_ptr();
 
+                // SAFETY: the declared component stores Py<PyAny> and remains valid here.
                 let py_object = unsafe {
                     let py_any_ref = &*(untyped_ptr as *const Py<PyAny>);
                     py_any_ref.clone_ref(py)
@@ -1180,7 +1238,7 @@ impl PyQueryIter {
                     Some(self.runtime.run_ticks()),
                 );
 
-                let py_obj = Py::new(py, (custom_comp, crate::ecs::component::PyComponent))
+                let py_obj = Py::new(py, (custom_comp, PyComponent))
                     .expect("Failed to create PyCustomComponent");
                 Ok(py_obj.into_any())
             }
@@ -1241,6 +1299,7 @@ impl PyQueryIter {
     fn extract_components_from_entity(
         &self,
         entity: &mut FilteredEntityAccess,
+        read_only: bool,
         py: Python,
     ) -> PyResult<()> {
         let mut values_buffer = self.values_buffer.borrow_mut();
@@ -1263,7 +1322,7 @@ impl PyQueryIter {
                             self.extract_query_component(
                                 entity,
                                 item.ty,
-                                item.mutable,
+                                item.mutable && !read_only,
                                 item.logical_type_id,
                                 true,
                                 py,
@@ -1282,7 +1341,7 @@ impl PyQueryIter {
                     let value = self.extract_query_component(
                         entity,
                         *ty,
-                        *mutable,
+                        *mutable && !read_only,
                         *logical_type_id,
                         *optional || logical_type_id.is_some(),
                         py,
@@ -1319,7 +1378,7 @@ impl PyQueryIter {
                     values_buffer.push(self.materialize_asset_resource(
                         *retained_param_index,
                         *type_ptr,
-                        *mutable,
+                        *mutable && !read_only,
                         py,
                     )?);
                 }
@@ -1382,10 +1441,14 @@ impl PyQueryIter {
     }
 
     pub(crate) fn matching_count(&self) -> PyResult<usize> {
+        self.check_valid()?;
         if self.cached().logical_type_map_component_id.is_none() {
             self.runtime.count().map_err(query_runtime_error_to_py)
         } else {
-            let materializer = PyQueryRowMaterializer { query: self };
+            let materializer = PyQueryRowMaterializer {
+                query: self,
+                read_only: false,
+            };
             self.runtime
                 .count_with::<Python<'_>, _>(&materializer)
                 .map_err(query_runtime_error_to_py)
@@ -1401,10 +1464,13 @@ impl PyQueryIter {
                 .runtime
                 .single_with(&LogicalFilteredEntityIdMaterializer { query: self }, ())?;
             return self
-                .materialize_ad_hoc_entity(entity, py)
+                .materialize_ad_hoc_entity(entity, false, py)
                 .map_err(QueryExecutionError::Materialize);
         }
-        let materializer = PyQueryRowMaterializer { query: self };
+        let materializer = PyQueryRowMaterializer {
+            query: self,
+            read_only: false,
+        };
         self.runtime.single_with(&materializer, py)
     }
 }
@@ -1413,6 +1479,8 @@ impl PyQueryIter {
 /// ensures row materialization cannot bypass PyO3's exclusive object borrow.
 struct PyQueryRowMaterializer<'a> {
     query: &'a PyQueryIter,
+    /// Materialize `Mut[...]` items read-only, as `iter_combinations` does.
+    read_only: bool,
 }
 
 impl<'py> RowMaterializer<Python<'py>> for PyQueryRowMaterializer<'_> {
@@ -1428,7 +1496,8 @@ impl<'py> RowMaterializer<Python<'py>> for PyQueryRowMaterializer<'_> {
         entity: &mut FilteredEntityAccess<'_, '_>,
         py: Python<'py>,
     ) -> PyResult<Self::Output> {
-        self.query.extract_components_from_entity(entity, py)?;
+        self.query
+            .extract_components_from_entity(entity, self.read_only, py)?;
         self.query.materialized_result(py)
     }
 }
@@ -1459,7 +1528,9 @@ impl PyQueryIter {
     /// Rejects nested iteration (matching Bevy's borrow-checker prevention).
     fn __iter__(slf: Py<Self>, py: Python) -> PyResult<Py<PyQueryIterator>> {
         let state = {
-            let query = slf.borrow(py);
+            let query = slf
+                .try_borrow(py)
+                .map_err(|_| query_runtime_error_to_py(QueryRuntimeError::ReentrantOperation))?;
             if query.is_ad_hoc() {
                 QueryIteratorState::Snapshot(query.snapshot_entity_ids()?.into_iter())
             } else {
@@ -1486,6 +1557,7 @@ impl PyQueryIter {
     /// Python users calling `len(query)` may expect O(1) but Bevy's
     /// `QueryState` does not cache entity counts.
     fn __len__(&mut self) -> PyResult<usize> {
+        self.check_valid()?;
         if self.runtime.has_unadvanced_iterator() {
             // CPython asks the original iterable for a length hint after
             // `list(query)` has already called `iter(query)`. TypeError means
@@ -1507,10 +1579,14 @@ impl PyQueryIter {
     /// Check if the query has no matching entities.
     /// Returns true if there are no entities matching the query filters.
     fn is_empty(&mut self) -> PyResult<bool> {
+        self.check_valid()?;
         if self.cached().logical_type_map_component_id.is_none() {
             self.runtime.is_empty().map_err(query_runtime_error_to_py)
         } else {
-            let materializer = PyQueryRowMaterializer { query: self };
+            let materializer = PyQueryRowMaterializer {
+                query: self,
+                read_only: false,
+            };
             self.runtime
                 .is_empty_with::<Python<'_>, _>(&materializer)
                 .map_err(query_runtime_error_to_py)
@@ -1544,10 +1620,13 @@ impl PyQueryIter {
                 )
                 .map_err(query_execution_error_to_py)?;
             return matched
-                .map(|entity| self.materialize_ad_hoc_entity(entity, py))
+                .map(|entity| self.materialize_ad_hoc_entity(entity, false, py))
                 .transpose();
         }
-        let materializer = PyQueryRowMaterializer { query: self };
+        let materializer = PyQueryRowMaterializer {
+            query: self,
+            read_only: false,
+        };
         self.runtime
             .get_with(entity.0, &materializer, py)
             .map_err(query_execution_error_to_py)
@@ -1583,10 +1662,13 @@ impl PyQueryIter {
                     )
                     .map_err(query_execution_error_to_py)?
                 {
-                    results.push(self.materialize_ad_hoc_entity(entity, py)?);
+                    results.push(self.materialize_ad_hoc_entity(entity, false, py)?);
                 }
             } else {
-                let materializer = PyQueryRowMaterializer { query: self };
+                let materializer = PyQueryRowMaterializer {
+                    query: self,
+                    read_only: false,
+                };
                 if let Some(row) = self
                     .runtime
                     .get_with(entity_id.0, &materializer, py)
@@ -1598,6 +1680,59 @@ impl PyQueryIter {
         }
 
         Ok(results)
+    }
+
+    /// Every combination of `size` distinct matching entities, as read-only
+    /// rows even for `Mut[...]` data, like Bevy's `Query::iter_combinations`.
+    #[pyo3(signature = (size, /))]
+    fn iter_combinations(
+        slf: Py<Self>,
+        size: isize,
+        py: Python,
+    ) -> PyResult<Py<PyQueryCombinationIter>> {
+        Self::combinations(slf, size, true, py)
+    }
+
+    /// Every combination of `size` distinct matching entities, with `Mut[...]`
+    /// items writable, like Bevy's `Query::iter_combinations_mut`.
+    #[pyo3(signature = (size, /))]
+    fn iter_combinations_mut(
+        slf: Py<Self>,
+        size: isize,
+        py: Python,
+    ) -> PyResult<Py<PyQueryCombinationIter>> {
+        Self::combinations(slf, size, false, py)
+    }
+}
+
+#[pymethods]
+impl PyQueryCombinationIter {
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.query)
+    }
+
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(&mut self, py: Python) -> PyResult<Py<PyAny>> {
+        let query = self.query.borrow(py);
+        query
+            .runtime
+            .check_valid()
+            .map_err(query_runtime_error_to_py)?;
+        'combinations: for indices in self.cursor.by_ref() {
+            let mut rows = Vec::with_capacity(indices.len());
+            for index in indices {
+                match query.materialize_entity_by_id(self.entities[index], self.read_only, py)? {
+                    Some(row) => rows.push(row),
+                    // A World.query entity despawned since the snapshot.
+                    None => continue 'combinations,
+                }
+            }
+            return Ok(PyTuple::new(py, rows)?.into_any().unbind());
+        }
+        Err(PyStopIteration::new_err(""))
     }
 }
 
@@ -1612,10 +1747,16 @@ impl PyQueryIterator {
     }
 
     fn __next__(&mut self, py: Python) -> PyResult<Py<PyAny>> {
-        let query = self.query.borrow(py);
+        let query = self
+            .query
+            .try_borrow(py)
+            .map_err(|_| query_runtime_error_to_py(QueryRuntimeError::ReentrantOperation))?;
         match &mut self.state {
             QueryIteratorState::Runtime(token) => {
-                let materializer = PyQueryRowMaterializer { query: &query };
+                let materializer = PyQueryRowMaterializer {
+                    query: &query,
+                    read_only: false,
+                };
                 match query
                     .runtime
                     .advance_with(token, &materializer, py)
@@ -1626,7 +1767,7 @@ impl PyQueryIterator {
                 }
             }
             QueryIteratorState::Snapshot(entities) => match entities.next() {
-                Some(entity) => query.materialize_ad_hoc_entity(entity, py),
+                Some(entity) => query.materialize_ad_hoc_entity(entity, false, py),
                 None => Err(PyStopIteration::new_err("")),
             },
         }

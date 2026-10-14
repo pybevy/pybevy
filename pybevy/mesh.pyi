@@ -189,7 +189,7 @@ class Mesh(Asset):
         Example:
             ```python
             with mesh.positions_mut() as pos:
-                pos[:, 2] += 1.0  # Move all vertices up by 1
+                pos[:, 1] += 1.0  # Move all vertices up by 1
             ```
         """
 
@@ -726,8 +726,8 @@ class SphereKind:
         @property
         def subdivisions(self) -> int: ...
 
-        def __init__(self, *, subdivisions: int) -> None: ...
-        """Icosphere mesh kind with the given number of subdivisions."""
+        def __init__(self, *, subdivisions: int) -> None:
+            """Icosphere mesh kind with the given number of subdivisions."""
 
     class Uv(SphereKind):
         __match_args__: ClassVar[tuple[Literal["sectors"], Literal["stacks"]]]
@@ -736,8 +736,8 @@ class SphereKind:
         @property
         def stacks(self) -> int: ...
 
-        def __init__(self, *, sectors: int, stacks: int) -> None: ...
-        """UV sphere mesh kind with the given number of sectors and stacks."""
+        def __init__(self, *, sectors: int, stacks: int) -> None:
+            """UV sphere mesh kind with the given number of sectors and stacks."""
 
 class Mesh2d(Component):
     """2D mesh component for sprite rendering."""

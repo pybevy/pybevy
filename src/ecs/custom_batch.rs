@@ -680,7 +680,7 @@ impl BatchComponent for CustomComponentBatchBridge {
         let batch = batch.extract::<PyRef<PyCustomComponentBatch>>()?;
         let registration = batch.prepared_registration(py)?;
         let mut prepared = prepare_custom_batch(py, &batch)?;
-        let component_id = register_prepared_custom_component(world, &registration);
+        let component_id = register_prepared_custom_component(world, &registration)?;
         prepared.insert(component_id, entities, world);
 
         Ok(())

@@ -342,6 +342,7 @@ Custom Python types defined with `@component` or `@resource` survive hot reloads
 - The reload system matches new types to existing `ComponentId`s by qualified name (e.g., `__main__.Player`)
 - If the structure matches (same storage mode, same fields), the existing `ComponentId` is reused - no data loss
 - If the structure changes (e.g., added a field, switched storage mode), a fresh `ComponentId` is allocated
+- Outside a reload, a second same-named `@component` class with different fields raises `TypeError` at spawn or insert, so the first class's entities stay intact
 
 This means `reload` with Full mode handles most `@component`/`@resource` changes. Use `run_scene` only when you need a guaranteed clean-slate restart.
 

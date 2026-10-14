@@ -9,7 +9,7 @@ use pybevy_core::{
     ReaderCursorOp,
     public_error::{
         ASSET_EVENT_NO_DEFAULT, ASSET_EVENT_READ_ONLY, ASSET_LOAD_FAILED_NO_DEFAULT,
-        ASSET_LOAD_FAILED_READ_ONLY, injected_system_parameter,
+        ASSET_LOAD_FAILED_READ_ONLY, injected_system_parameter, read_only_message_attribute,
     },
     registry::global_registry,
 };
@@ -22,8 +22,9 @@ use pybevy_ecs::shared::{
 use pyo3::{
     IntoPyObjectExt, PyTraverseError, PyVisit,
     exceptions::{PyRuntimeError, PyStopIteration, PyTypeError},
+    intern,
     prelude::*,
-    types::PyType,
+    types::{PyDict, PyString, PyType},
 };
 
 use super::{
@@ -39,6 +40,37 @@ use crate::ecs::{
 
 fn store_error(error: MessageStoreError) -> PyErr {
     PyRuntimeError::new_err(error.to_string())
+}
+
+/// A shallow copy of a written custom message, so the writer's object stays its
+/// own after `write()`, as Bevy moves the value into the queue. Builds the copy
+/// like `copy.copy`, whose pickle path rejects `Message`'s native base.
+fn detached_message<'py>(message: &Bound<'py, PyAny>) -> PyResult<Py<PyAny>> {
+    let py = message.py();
+    let class = message.get_type();
+    if let Some(copy) = class.getattr_opt(intern!(py, "__copy__"))? {
+        return copy.call1((message,)).map(Bound::unbind);
+    }
+    let copied = class.call_method1(intern!(py, "__new__"), (&class,))?;
+    if let Some(state) = message.getattr_opt(intern!(py, "__dict__"))? {
+        copied
+            .getattr(intern!(py, "__dict__"))?
+            .call_method1(intern!(py, "update"), (state,))?;
+    }
+    let slot_names = py
+        .import(intern!(py, "copyreg"))?
+        .call_method1(intern!(py, "_slotnames"), (&class,))?;
+    if !slot_names.is_truthy()? {
+        return Ok(copied.unbind());
+    }
+    let set_attribute = py.get_type::<PyAny>().getattr(intern!(py, "__setattr__"))?;
+    for name in slot_names.try_iter()? {
+        let name = name?.cast_into::<PyString>()?;
+        if let Some(value) = message.getattr_opt(&name)? {
+            set_attribute.call1((&copied, name, value))?;
+        }
+    }
+    Ok(copied.unbind())
 }
 
 pub(crate) fn python_message_cursor(
@@ -239,7 +271,10 @@ impl PyMessageWriter {
                 let id = writer
                     .resolved
                     .store
-                    .append(writer.resolved.channel, Arc::new(message))
+                    .append(
+                        writer.resolved.channel,
+                        Arc::new(detached_message(bound_message)?),
+                    )
                     .map_err(store_error)?;
                 self.record_trace_op(trace_operation);
                 Ok(PyMessageId::new(
@@ -297,7 +332,10 @@ impl PyMessageWriter {
                 }
             }
             let channel = &writer.resolved.qualified_name;
-            let values = messages.into_iter().map(Arc::new).collect();
+            let values = messages
+                .iter()
+                .map(|message| detached_message(message.bind(py)).map(Arc::new))
+                .collect::<PyResult<Vec<_>>>()?;
             let ids: Vec<PyMessageId> = writer
                 .resolved
                 .store
@@ -384,10 +422,13 @@ impl PyMessageReader {
         }
     }
 
+    /// `mutable` yields the stored messages themselves (`MessageMutator`);
+    /// otherwise each is a read-only view, as Bevy's reader yields `&M`.
     pub(crate) fn python(
         resolved: ResolvedPythonMessage,
         cursor: SharedMessageCursor,
         validity: ValidityFlag,
+        mutable: bool,
     ) -> Self {
         Self {
             messages: None,
@@ -395,6 +436,7 @@ impl PyMessageReader {
                 resolved,
                 cursor,
                 validity,
+                mutable,
             }),
         }
     }
@@ -424,6 +466,7 @@ struct PythonMessageReader {
     resolved: ResolvedPythonMessage,
     cursor: SharedMessageCursor,
     validity: ValidityFlag,
+    mutable: bool,
 }
 
 impl PythonMessageReader {
@@ -541,6 +584,7 @@ impl PyMessageReader {
                         })
                         .collect(),
                     validity: reader.validity.clone(),
+                    mutable: reader.mutable,
                 }),
             });
         }
@@ -574,6 +618,7 @@ struct PythonMessageIterator {
     cursor: SharedMessageCursor,
     records: Vec<PythonMessageIteratorRecord>,
     validity: ValidityFlag,
+    mutable: bool,
 }
 
 struct PythonMessageIteratorRecord {
@@ -617,8 +662,18 @@ impl PyMessageReaderIter {
                     .consume_snapshot_record(iterator.channel, &iterator.cursor, record.sequence)
                     .map_err(store_error)?
                 {
-                    MessageConsumeOutcome::Consumed => {
+                    MessageConsumeOutcome::Consumed if iterator.mutable => {
                         return Ok(record.value.clone_ref(py));
+                    }
+                    MessageConsumeOutcome::Consumed => {
+                        return Py::new(
+                            py,
+                            PyReadOnlyMessage {
+                                message: record.value.clone_ref(py),
+                                validity: iterator.validity.clone(),
+                            },
+                        )
+                        .map(Py::into_any);
                     }
                     MessageConsumeOutcome::AlreadyConsumed => continue,
                 }
@@ -631,6 +686,82 @@ impl PyMessageReaderIter {
         } else {
             Err(PyStopIteration::new_err(""))
         }
+    }
+}
+
+/// A custom message yielded by `MessageReader`.
+///
+/// Attribute reads, `isinstance`, equality and `repr` forward to the message;
+/// assignment raises. The view expires with the system run that read it.
+#[pyclass(name = "ReadOnlyMessage", module = "pybevy.ecs", frozen)]
+pub struct PyReadOnlyMessage {
+    message: Py<PyAny>,
+    validity: ValidityFlag,
+}
+
+impl PyReadOnlyMessage {
+    fn message<'py>(&self, py: Python<'py>) -> PyResult<&Bound<'py, PyAny>> {
+        self.validity
+            .check_read()
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        Ok(self.message.bind(py))
+    }
+
+    fn reject_write(&self, py: Python<'_>, name: &str) -> PyResult<()> {
+        self.message(py)?;
+        Err(PyTypeError::new_err(read_only_message_attribute(name)))
+    }
+}
+
+#[pymethods]
+impl PyReadOnlyMessage {
+    /// Report held Python objects to the cyclic GC; see docs/safety.md.
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.message)
+    }
+
+    fn __getattribute__<'py>(&self, py: Python<'py>, name: &str) -> PyResult<Bound<'py, PyAny>> {
+        self.message(py)?.getattr(name)
+    }
+
+    fn __setattr__(&self, py: Python<'_>, name: &str, _value: Bound<'_, PyAny>) -> PyResult<()> {
+        self.reject_write(py, name)
+    }
+
+    fn __delattr__(&self, py: Python<'_>, name: &str) -> PyResult<()> {
+        self.reject_write(py, name)
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        self.message(py)?.repr()?.extract()
+    }
+
+    fn __eq__(&self, py: Python<'_>, other: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let message = self.message(py)?;
+        match other.cast::<PyReadOnlyMessage>() {
+            Ok(other) => message.eq(other.get().message(py)?),
+            Err(_) => message.eq(other),
+        }
+    }
+
+    fn __ne__(&self, py: Python<'_>, other: &Bound<'_, PyAny>) -> PyResult<bool> {
+        self.__eq__(py, other).map(|equal| !equal)
+    }
+
+    fn __hash__(&self, py: Python<'_>) -> PyResult<isize> {
+        self.message(py)?.hash()
+    }
+
+    /// An independent, writable shallow copy of the message.
+    fn __copy__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        detached_message(self.message(py)?)
+    }
+
+    fn __deepcopy__(&self, py: Python<'_>, memo: &Bound<'_, PyDict>) -> PyResult<Py<PyAny>> {
+        let message = self.message(py)?;
+        py.import(intern!(py, "copy"))?
+            .call_method1(intern!(py, "deepcopy"), (message, memo))
+            .map(Bound::unbind)
     }
 }
 
@@ -660,7 +791,7 @@ impl PyMessageMutator {
                 validity.clone(),
                 parity_trace,
             ),
-            reader: PyMessageReader::python(resolved, cursor, validity),
+            reader: PyMessageReader::python(resolved, cursor, validity, true),
         }
     }
 }
@@ -744,7 +875,7 @@ fn write_custom_python_message(
     let resolved = resolve_from_world(world, type_ptr)?;
     resolved
         .store
-        .append(resolved.channel, Arc::new(msg.clone().unbind()))
+        .append(resolved.channel, Arc::new(detached_message(msg)?))
         .map_err(store_error)?;
     Ok(())
 }

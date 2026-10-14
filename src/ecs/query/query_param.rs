@@ -4,6 +4,7 @@ use pybevy_core::LogicalTypeId;
 use pybevy_ecs::shared::query_runtime::QueryRowShape;
 use pyo3::{
     PyTraverseError, PyTypeInfo, PyVisit,
+    ffi::PyTypeObject,
     prelude::*,
     types::{PyTuple, PyType},
 };
@@ -204,7 +205,7 @@ pub(crate) enum QueryData {
     },
     /// A parameterized `Assets<T>` resource stored on its Bevy resource entity.
     AssetResource {
-        type_ptr: *const pyo3::ffi::PyTypeObject,
+        type_ptr: *const PyTypeObject,
         retained_param_index: usize,
         name: String,
         mutable: bool,
@@ -220,7 +221,7 @@ pub(crate) enum QueryData {
 // SAFETY: native asset class pointers are stable registry keys, and every
 // logical Python class is strongly retained by `PyQueryParam`.
 unsafe impl Send for QueryData {}
-// SAFETY: QueryData never dereferences its type pointer without the GIL.
+// SAFETY: query data is immutable and its holder retains every referenced class.
 unsafe impl Sync for QueryData {}
 
 #[derive(Debug, Clone, Copy, PartialEq)]

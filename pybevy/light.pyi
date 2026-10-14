@@ -185,7 +185,7 @@ class FogVolume(Component):
 class GlobalAmbientLight(Resource):
     """Global ambient light resource.
 
-    In Bevy 0.18, the global ambient light is a Resource that applies to all cameras
+    Since Bevy 0.18, the global ambient light is a Resource that applies to all cameras
     unless overridden by an AmbientLight component on the camera entity.
     """
     def __init__(
@@ -203,7 +203,7 @@ class GlobalAmbientLight(Resource):
 class AmbientLight(Component):
     """Per-camera ambient light component.
 
-    In Bevy 0.18, AmbientLight is a Component that can be added to camera entities
+    Since Bevy 0.18, AmbientLight is a Component that can be added to camera entities
     to override the GlobalAmbientLight resource for that specific camera.
     """
     def __init__(

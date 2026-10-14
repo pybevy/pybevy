@@ -17,7 +17,7 @@ use crate::ecs::query::{
 /// ```python
 /// @system
 /// def my_system(player: Single[tuple[Mut[Transform], Player]]) -> None:
-///     transform, player_data = player[0], player[1]
+///     transform, player_data = player.into_inner()
 ///     transform.translation.x += 10.0
 /// ```
 #[pyclass(name = "Single", module = "pybevy.ecs", frozen)]

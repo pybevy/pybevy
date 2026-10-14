@@ -8,6 +8,7 @@ Two-mode dispatch:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -697,9 +698,16 @@ class McpBridge:
                 "search_api",
                 "get_type_definition",
             }
-            for action in arguments.get("actions", []):
+            actions = arguments.get("actions", [])
+            if not isinstance(actions, list):
+                return self._error(req_id, -32602, "'actions' must be an array")
+            for i, action in enumerate(actions):
+                if not isinstance(action, dict):
+                    return self._error(
+                        req_id, -32602, f"action[{i}]: must be an object"
+                    )
                 tool = action.get("tool", "")
-                if tool in _bridge_local:
+                if isinstance(tool, str) and tool in _bridge_local:
                     return self._error(
                         req_id,
                         -32602,
@@ -1530,8 +1538,9 @@ class McpBridge:
                 self._subprocess.terminate()
                 self._subprocess.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                self._subprocess.kill()
-                self._subprocess.wait(timeout=2)
+                with contextlib.suppress(Exception):
+                    self._subprocess.kill()
+                    self._subprocess.wait(timeout=2)
             except Exception:
                 pass
 

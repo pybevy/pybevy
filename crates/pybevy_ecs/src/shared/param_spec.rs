@@ -172,6 +172,12 @@ pub enum ParamSpec<K: BackendKeys> {
     MessageMutator {
         key: K::MessageKey,
     },
+    /// Per-parameter cursor over Bevy's removal buffer for one component.
+    /// Resolving the key registers the component id; the parameter reads no
+    /// component values, so, as in Bevy, it declares no access.
+    RemovedComponents {
+        key: K::ComponentKey,
+    },
     World,
     Commands,
     Gizmos {
@@ -179,6 +185,9 @@ pub enum ParamSpec<K: BackendKeys> {
         name: String,
     },
     Local,
+    /// Bevy's `NonSendMarker`: no world access; pins the system to the main
+    /// thread through its flags.
+    NonSendMarker,
     Observer,
 }
 
@@ -428,6 +437,9 @@ pub fn build_declared_access<K: BackendKeys>(
                     push_unique(&mut direct_reads, id);
                 }
             }
+            ParamSpec::RemovedComponents { key } => {
+                let _ = resolver.component_id(world, key);
+            }
             ParamSpec::World => {}
             ParamSpec::Gizmos { .. } => {
                 push_unique(&mut direct_reads, resolver.gizmo_config_id(world));
@@ -436,7 +448,11 @@ pub fn build_declared_access<K: BackendKeys>(
             // queue (applied at apply_deferred); entity reservation goes
             // through the atomic entity allocator. Local and Observer carry no
             // world access. All three declare nothing.
-            ParamSpec::Input | ParamSpec::Commands | ParamSpec::Local | ParamSpec::Observer => {}
+            ParamSpec::Input
+            | ParamSpec::Commands
+            | ParamSpec::Local
+            | ParamSpec::NonSendMarker
+            | ParamSpec::Observer => {}
         }
         for access in build_resource_accesses(&direct_reads, &direct_writes, resource_marker) {
             direct.add(access);
@@ -659,9 +675,12 @@ pub fn to_param_accesses<K: BackendKeys, VK: Hash + Eq + Clone>(
                 exclusive: false,
                 mutable: false,
             },
-            ParamSpec::Input | ParamSpec::Commands | ParamSpec::Local | ParamSpec::Observer => {
-                ParamAccess::None
-            }
+            ParamSpec::Input
+            | ParamSpec::Commands
+            | ParamSpec::Local
+            | ParamSpec::NonSendMarker
+            | ParamSpec::Observer
+            | ParamSpec::RemovedComponents { .. } => ParamAccess::None,
         })
         .collect()
 }
@@ -732,6 +751,7 @@ pub enum ConditionRejection {
     MessageMutator,
     MessageReader,
     OpaqueMessageReader,
+    RemovedComponents,
     ResMut,
     OpaqueResource,
     MutableAssets,
@@ -760,6 +780,7 @@ pub fn condition_param_rejection<K: BackendKeys>(
             ..
         } => Some(ConditionRejection::OpaqueMessageReader),
         ParamSpec::MessageReader { .. } => Some(ConditionRejection::MessageReader),
+        ParamSpec::RemovedComponents { .. } => Some(ConditionRejection::RemovedComponents),
         ParamSpec::Res { mutable: true, .. } => Some(ConditionRejection::ResMut),
         ParamSpec::Res {
             scheduler_access: SchedulerAccess::Exclusive,
@@ -849,10 +870,12 @@ pub fn describe_param_specs<K: BackendKeys>(params: &[ParamSpec<K>]) -> Vec<Stri
             ),
             ParamSpec::MessageWriter { .. } => "message_writer".to_string(),
             ParamSpec::MessageMutator { .. } => "message_mutator".to_string(),
+            ParamSpec::RemovedComponents { .. } => "removed_components".to_string(),
             ParamSpec::World => "world".to_string(),
             ParamSpec::Commands => "commands".to_string(),
             ParamSpec::Gizmos { .. } => "gizmos".to_string(),
             ParamSpec::Local => "local".to_string(),
+            ParamSpec::NonSendMarker => "non_send_marker".to_string(),
             ParamSpec::Observer => "observer".to_string(),
         })
         .collect()
@@ -872,10 +895,11 @@ pub fn describe_param_specs<K: BackendKeys>(params: &[ParamSpec<K>]) -> Vec<Stri
 /// 5. MessageReader
 /// 6. MessageWriter
 /// 7. MessageMutator
-/// 8. World
-/// 9. Commands
-/// 10. Local
-/// 11. On (observer)
+/// 8. RemovedComponents
+/// 9. World
+/// 10. Commands
+/// 11. Local
+/// 12. On (observer)
 ///
 /// The test lowers the list and asserts [`describe_param_specs`] equals this
 /// golden. Both branches carry this file byte-identically, so a change that
@@ -890,6 +914,7 @@ pub const LOWERING_CORPUS_GOLDEN: &[&str] = &[
     "message_reader scheduler=shared",
     "message_writer",
     "message_mutator",
+    "removed_components",
     "world",
     "commands",
     "local",
@@ -1310,6 +1335,21 @@ mod tests {
             let declared = build_declared_access(&mut world, params, &mut resolver);
             assert_eq!(declared.alias_conflict, None);
         }
+    }
+
+    #[test]
+    fn removed_components_resolves_key_but_declares_no_access() {
+        let (mut world, mut resolver) = setup();
+        let t_id = resolver.components["T"];
+        let declared = build_declared_access(
+            &mut world,
+            &[ParamSpec::<MockKeys>::RemovedComponents { key: "T" }],
+            &mut resolver,
+        );
+
+        assert_eq!(resolver.component_calls, ["T"]);
+        assert!(!declared.set.combined_access().has_read(t_id));
+        assert!(!declared.set.combined_access().has_write(t_id));
     }
 
     #[test]
@@ -1917,7 +1957,7 @@ mod tests {
 
     #[test]
     fn condition_rejects_world_commands_messages_and_mut_access() {
-        let rejected: [ParamSpec<MockKeys>; 8] = [
+        let rejected: [ParamSpec<MockKeys>; 9] = [
             ParamSpec::World,
             ParamSpec::Commands,
             ParamSpec::Gizmos {
@@ -1930,6 +1970,7 @@ mod tests {
                 scheduler_access: SchedulerAccess::Shared,
             },
             ParamSpec::MessageMutator { key: "M" },
+            ParamSpec::RemovedComponents { key: "T" },
             ParamSpec::Res {
                 key: "r",
                 vkey: Some(1),

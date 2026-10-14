@@ -219,7 +219,7 @@ loaded directly by Bevy's asset loader.
 | `pause_all()` / `resume_all()` | Pause/resume all |
 | `adjust_speeds(factor)` | Multiply all active animation speeds |
 | `seek_all_by(amount)` | Offset every active animation's `seek_time` |
-| `all_finished` | True when all animations complete (property) |
+| `all_finished` / `all_paused` | True when every active animation has finished / is paused, and also when none are active (properties) |
 | `is_playing_animation(index)` | Check if specific animation is active |
 | `animation(index)` | Get a read-only `ActiveAnimation` reference (None if not playing) |
 | `animation_mut(index)` | Get a mutable `ActiveAnimation` reference (None if not playing) |

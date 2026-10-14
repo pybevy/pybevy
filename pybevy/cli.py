@@ -462,26 +462,29 @@ def _run_script(
         parent_dir = os.path.dirname(abs_path)
         module_name, import_root = scene_module_location(abs_path)
 
+        from .decorators import (  # type: ignore[attr-defined]
+            _component_cache_enabled,  # pyright: ignore[reportAttributeAccessIssue]
+        )
+
+        # changed_files is an empty set, not None, for a partial reload with no edits.
+        if changed_files is not None:
+            if not _component_cache_enabled:
+                setup_component_caching(enabled=True, verbose=verbose)
+            if verbose:
+                _echo("   → Component caching ENABLED (partial reload)")
+        else:
+            # Keep caching on so the next partial reload reuses this load's classes.
+            import pybevy
+
+            pybevy.clear_component_cache(verbose=verbose)
+            if verbose:
+                _echo("   → Component cache CLEARED (full reload)")
+
         module_globals: dict[str, object]
         if import_root != parent_dir:
             # A packaged scene imports from above its top package so relative imports work.
             if import_root not in sys.path:
                 sys.path.insert(0, import_root)
-
-            # Clear module cache based on what changed
-            # Use 'is not None' check because changed_files can be an empty set
-            if changed_files is not None:
-                # Selective reload (partial mode): enable component caching
-                # This keeps component class identity stable across reloads
-                setup_component_caching(enabled=True, verbose=verbose)
-                if verbose:
-                    _echo("   → Component caching ENABLED (partial reload)")
-            else:
-                # Full reload: disable component caching and clear cache
-                # This allows component structure changes to take effect
-                setup_component_caching(enabled=False, verbose=verbose)
-                if verbose:
-                    _echo("   → Component caching disabled (full reload)")
 
             # Flush user modules (selective via import graph when available)
             from .util.hot_reload import flush_user_modules
@@ -506,33 +509,6 @@ def _run_script(
             module_globals = exec_scene_module(module_name, verbose=verbose)
         else:
             # Standalone script without package - use run_path
-            # Handle caching BEFORE reloading module
-            from .decorators import (  # type: ignore[attr-defined]
-                _component_cache_enabled,  # pyright: ignore[reportAttributeAccessIssue]
-            )
-
-            if changed_files is not None:
-                # Selective reload (partial mode): ensure component caching is enabled
-                if not _component_cache_enabled:
-                    setup_component_caching(enabled=True, verbose=verbose)
-                if verbose:
-                    _echo("   → Component caching ENABLED (partial reload, standalone)")
-            else:
-                # Full reload (F5): clear component cache but keep caching enabled if it was on
-                # This invalidates stale components while maintaining workflow preference
-                import pybevy
-
-                pybevy.clear_component_cache(verbose=verbose)
-                if verbose:
-                    if _component_cache_enabled:
-                        _echo(
-                            "   → Component cache CLEARED (full reload, caching still enabled)"
-                        )
-                    else:
-                        _echo(
-                            "   → Component caching DISABLED (full reload, standalone)"
-                        )
-
             # Flush user modules (selective via import graph when available)
             from .util.hot_reload import flush_user_modules
 

@@ -735,6 +735,7 @@ impl PyWorld {
                 entity_id,
                 &components,
                 component_types,
+                true,
             )?;
 
             Ok(PyEntityCommands::with_world(entity_id, pyself))

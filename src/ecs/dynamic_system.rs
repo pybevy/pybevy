@@ -61,6 +61,7 @@ use crate::{
         message::{PyMessageMutator, PyMessageReader, PyMessageWriter, python_message_cursor},
         messages::{CursorStorage, MessageType, MessageWorld, PyMessages},
         mutable::PyMut,
+        non_send_marker::PyNonSendMarker,
         observer::PyOn,
         python_message::{
             PythonMessageClassTable, PythonMessageStore, resolve_from_cell, resolve_from_world,
@@ -70,6 +71,7 @@ use crate::{
             query_runtime::{CachedQuery, PyQueryIter},
             single_runtime::PySingleQuery,
         },
+        removed_components::PyRemovedComponents,
         resource_type::{PyResourceType, ResourceRegistry},
         state::{PyStateMachineRegistry, is_typed_state_resource, untyped_state_resource_kind},
         system::{AssetTypePtr, SystemFunction, SystemParam, SystemParamType},
@@ -478,6 +480,7 @@ pub(crate) fn lower_param_type(ty: &SystemParamType, py: Python<'_>) -> ParamSpe
         }
         SystemParamType::World => ParamSpec::World,
         SystemParamType::Commands => ParamSpec::Commands,
+        SystemParamType::NonSendMarker => ParamSpec::NonSendMarker,
         SystemParamType::Gizmos => {
             let type_obj = PyGizmoConfigStore::type_object(py);
             ParamSpec::Gizmos {
@@ -499,6 +502,9 @@ pub(crate) fn lower_param_type(ty: &SystemParamType, py: Python<'_>) -> ParamSpe
         },
         SystemParamType::MessageMutator { message_type } => ParamSpec::MessageMutator {
             key: message_type.clone(),
+        },
+        SystemParamType::RemovedComponents { param } => ParamSpec::RemovedComponents {
+            key: param.component_type,
         },
         SystemParamType::On { .. } => ParamSpec::Observer,
     }
@@ -815,6 +821,7 @@ pub(crate) unsafe fn build_run_args<'w, 'c1, 'c2>(
     params: &[SystemParam],
     query_caches: &[CachedQuery],
     view_caches: &[Result<Arc<CachedPyView>, Arc<str>>],
+    removed_component_ids: &[ComponentId],
     message_cursor_storage: &[CursorStorage],
     commands_storage: &mut Option<Commands<'c1, 'c2>>,
     args_buffer: &mut SmallVec<[Py<PyAny>; 8]>,
@@ -829,6 +836,7 @@ pub(crate) unsafe fn build_run_args<'w, 'c1, 'c2>(
     let mut message_reader_idx = 0usize;
     let mut query_cache_idx = 0usize;
     let mut view_cache_idx = 0usize;
+    let mut removed_component_idx = 0usize;
     for param in params {
         match &param.ty {
             SystemParamType::PipeInput { .. } => {
@@ -992,6 +1000,10 @@ pub(crate) unsafe fn build_run_args<'w, 'c1, 'c2>(
                 let obj = Py::new(py, py_world).expect("Failed to create PyWorld");
                 args_buffer.push(obj.into_any());
             }
+            SystemParamType::NonSendMarker => {
+                let obj = Py::new(py, PyNonSendMarker).expect("Failed to create NonSendMarker");
+                args_buffer.push(obj.into_any());
+            }
             SystemParamType::Commands => {
                 // Use the pre-created Commands from commands_storage
                 let commands = commands_storage
@@ -1070,7 +1082,8 @@ pub(crate) unsafe fn build_run_args<'w, 'c1, 'c2>(
                         Ok(cursor) => cursor,
                         Err(error) => return Some(error),
                     };
-                    let py_reader = PyMessageReader::python(resolved, cursor, validity.clone());
+                    let py_reader =
+                        PyMessageReader::python(resolved, cursor, validity.clone(), false);
                     let obj = Py::new(py, py_reader).expect("Failed to create PyMessageReader");
                     args_buffer.push(obj.into_any());
                     continue;
@@ -1116,6 +1129,23 @@ pub(crate) unsafe fn build_run_args<'w, 'c1, 'c2>(
                     parity_trace.clone(),
                 );
                 let obj = Py::new(py, py_mutator).expect("Failed to create PyMessageMutator");
+                args_buffer.push(obj.into_any());
+            }
+            SystemParamType::RemovedComponents { .. } => {
+                let cursor = message_cursor_storage
+                    .get(message_reader_idx)
+                    .cloned()
+                    .expect("RemovedComponents parameter has cursor storage");
+                message_reader_idx += 1;
+                let component_id = removed_component_ids[removed_component_idx];
+                removed_component_idx += 1;
+                // SAFETY: initialization resolved `component_id` against this
+                // world; the wrapper reads only Bevy's removal metadata, fenced
+                // by `validity`.
+                let removed = unsafe {
+                    PyRemovedComponents::new(component_id, cursor, world, validity.clone())
+                };
+                let obj = Py::new(py, removed).expect("Failed to create RemovedComponents");
                 args_buffer.push(obj.into_any());
             }
             SystemParamType::On { .. } => {
@@ -1303,6 +1333,10 @@ pub(crate) unsafe fn execute_prepared_observer(
             }
             SystemParamType::On { .. } => {
                 args_buffer.push(on_param.clone_ref(py).into_any());
+            }
+            SystemParamType::NonSendMarker => {
+                let obj = Py::new(py, PyNonSendMarker).expect("Failed to create NonSendMarker");
+                args_buffer.push(obj.into_any());
             }
             SystemParamType::Commands => {
                 // SAFETY: the neutral observer core owns this callback-local
@@ -1551,7 +1585,8 @@ pub(crate) unsafe fn execute_prepared_observer(
                 if let MessageType::Custom(py_type) = message_type {
                     let resolved = resolve_from_world(world, py_type.bind(py).as_type_ptr())?;
                     let cursor = python_message_cursor(cursor)?;
-                    let py_reader = PyMessageReader::python(resolved, cursor, validity.clone());
+                    let py_reader =
+                        PyMessageReader::python(resolved, cursor, validity.clone(), false);
                     let obj = Py::new(py, py_reader).expect("Failed to create PyMessageReader");
                     args_buffer.push(obj.into_any());
                     continue;
@@ -1588,6 +1623,26 @@ pub(crate) unsafe fn execute_prepared_observer(
                     parity_trace.clone(),
                 );
                 let obj = Py::new(py, py_mutator).expect("Failed to create PyMessageMutator");
+                args_buffer.push(obj.into_any());
+            }
+            SystemParamType::RemovedComponents { param } => {
+                let cursor = message_cursor_storage
+                    .get(message_reader_idx)
+                    .cloned()
+                    .expect("RemovedComponents parameter has cursor storage");
+                message_reader_idx += 1;
+                let component_id = param.component_type.register_simple(world, py);
+                // SAFETY: observer dispatch holds an exclusive `&mut World`; the
+                // wrapper reads only removal metadata and is fenced by `validity`.
+                let removed = unsafe {
+                    PyRemovedComponents::new(
+                        component_id,
+                        cursor,
+                        world.as_unsafe_world_cell(),
+                        validity.clone(),
+                    )
+                };
+                let obj = Py::new(py, removed).expect("Failed to create RemovedComponents");
                 args_buffer.push(obj.into_any());
             }
         }

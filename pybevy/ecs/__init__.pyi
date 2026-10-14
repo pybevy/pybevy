@@ -186,6 +186,9 @@ class MessageReader(Generic[M]):
     unread values without consuming them; iteration consumes values as yielded.
     Dropping a partially consumed iterator leaves its remaining values unread.
 
+    Custom Python messages are yielded as read-only views that expire with the
+    system run; ``copy.copy(message)`` returns an owned, writable copy.
+
     Example:
         @system
         def my_system(reader: MessageReader[AppExit]) -> None:
@@ -204,6 +207,43 @@ class MessageReader(Generic[M]):
         """Iterate over messages."""
 
     def __len__(self) -> int: ...
+
+class NonSendMarker:
+    """System parameter that runs its system on the main thread.
+
+    Declare it like any other parameter; the injected value carries no data.
+    Use it for systems that touch thread-affine Python objects, such as a
+    second ``App``.
+
+    Example:
+        @system
+        def drive_viewer(_main_thread: NonSendMarker) -> None:
+            viewer.update()
+    """
+
+class RemovedComponents(Generic[ComponentTypeVar]):
+    """System parameter yielding entities whose component was removed or despawned.
+
+    Each parameter owns an independent cursor. ``len()`` and ``is_empty()``
+    report unread removals without consuming them; ``read()`` and iteration
+    consume entity IDs as they are yielded.
+
+    Example:
+        @system
+        def track_removals(removed: RemovedComponents[Health]) -> None:
+            for entity in removed:
+                print(entity)
+    """
+    def clear(self) -> None:
+        """Mark all currently retained removals read for this parameter only."""
+    def is_empty(self) -> bool:
+        """Check whether this parameter has no unread removals."""
+    def len(self) -> int:
+        """Get this parameter's unread removal count without consuming it."""
+    def read(self) -> Iterator[Entity]:
+        """Iterate over and consume unread removed entity IDs."""
+    def __iter__(self) -> Iterator[Entity]:
+        """Iterate over and consume unread removed entity IDs."""
 
 class MessageMutator(Generic[M]):
     """Combined reader/writer for a custom Python message channel.
@@ -236,6 +276,15 @@ class MessageMutator(Generic[M]):
 
     def __len__(self) -> int: ...
 
+class RemovedComponentsIter(Iterator[Entity]):
+    """Iterator over unread removals from RemovedComponents.
+
+    Internal implementation class returned by RemovedComponents.read(); each
+    yielded entity advances the parameter's cursor.
+    """
+    def __iter__(self) -> RemovedComponentsIter: ...
+    def __next__(self) -> Entity: ...
+
 class MessageReaderIter(Iterator[Any]):
     """Iterator over messages from MessageReader.
 
@@ -244,6 +293,16 @@ class MessageReaderIter(Iterator[Any]):
     """
     def __iter__(self) -> MessageReaderIter: ...
     def __next__(self) -> Any: ...
+
+class ReadOnlyMessage:
+    """Internal read-only view of a custom message yielded by MessageReader.
+
+    Attribute reads, ``isinstance`` and ``match`` see the message's own class.
+    Users typically don't need to reference this type directly.
+    """
+    def __eq__(self, other: object) -> bool: ...
+    def __ne__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
 
 class Messages(Resource, Generic[M]):
     """Bevy's ``Messages<T>`` buffer for a native message type.
@@ -1236,7 +1295,7 @@ class View(Generic[QueryParam_T, *Qs]):
                         x[i] = x[i] * 0.9
 
             @system
-            def wiggle_system(view: View[Mut[Transform], With[Marker]], time: Time) -> None:
+            def wiggle_system(view: View[Mut[Transform], With[Marker]], time: Res[Time]) -> None:
                 # Concrete ViewColumn buffers, scoped to this batch.
                 for batch in view.iter_batches():
                     pos = batch.column_mut(Transform)
@@ -1794,6 +1853,10 @@ class QueryIter:
         """Get a specific entity's components if it matches the query."""
     def iter_many(self, entities: Iterable[Entity]) -> list[Any]:
         """Iterate over specific entities that match the query."""
+    def iter_combinations(self, size: int, /) -> QueryCombinationIter:
+        """Iterate over combinations of ``size`` read-only query rows."""
+    def iter_combinations_mut(self, size: int, /) -> QueryCombinationIter:
+        """Iterate over combinations of ``size`` query rows, writable for ``Mut[T]``."""
 
     def __len__(self) -> int: ...
     def __contains__(self, entity: Entity) -> bool: ...
@@ -1802,6 +1865,11 @@ class QueryIterator(Iterator[Any]):
     """Iterator for one fresh Query traversal."""
     def __iter__(self) -> QueryIterator: ...
     def __next__(self) -> Any: ...
+
+class QueryCombinationIter(Iterator[tuple[Any, ...]]):
+    """Iterator over the combinations of one Query snapshot."""
+    def __iter__(self) -> QueryCombinationIter: ...
+    def __next__(self) -> tuple[Any, ...]: ...
 
 class SingleQuery:
     """Wrapper for Single queries (exactly one matching entity).
@@ -2155,6 +2223,134 @@ class Query(Generic[QueryParam_T, *Qs]):
     def single(self: Query[tuple[Mut[T1], T2], *Qs]) -> tuple[T1, T2]: ...
     @overload
     def single(self: Query[QueryParam_T, *Qs]) -> QueryParam_T: ...
+
+    @overload
+    def iter_combinations(
+        self: Query[AnyOf[tuple[T1, T2]], *Qs], size: int, /
+    ) -> Iterator[tuple[tuple[T1 | None, T2 | None], ...]]: ...
+    @overload
+    def iter_combinations(
+        self: Query[AnyOf[tuple[Mut[T1], T2]], *Qs], size: int, /
+    ) -> Iterator[tuple[tuple[T1 | None, T2 | None], ...]]: ...
+    @overload
+    def iter_combinations(
+        self: Query[AnyOf[tuple[T1, Mut[T2]]], *Qs], size: int, /
+    ) -> Iterator[tuple[tuple[T1 | None, T2 | None], ...]]: ...
+    @overload
+    def iter_combinations(
+        self: Query[AnyOf[tuple[Mut[T1], Mut[T2]]], *Qs], size: int, /
+    ) -> Iterator[tuple[tuple[T1 | None, T2 | None], ...]]: ...
+    @overload
+    def iter_combinations(
+        self: Query[Has[T], *Qs], size: int, /
+    ) -> Iterator[tuple[bool, ...]]: ...
+    @overload
+    def iter_combinations(
+        self: Query[tuple[Has[T], T1], *Qs], size: int, /
+    ) -> Iterator[tuple[tuple[bool, T1], ...]]: ...
+    @overload
+    def iter_combinations(
+        self: Query[tuple[T1, Has[T]], *Qs], size: int, /
+    ) -> Iterator[tuple[tuple[T1, bool], ...]]: ...
+    @overload
+    def iter_combinations(
+        self: Query[Mut[T], *Qs], size: int, /
+    ) -> Iterator[tuple[T, ...]]: ...
+    @overload
+    def iter_combinations(
+        self: Query[T, *Qs], size: int, /
+    ) -> Iterator[tuple[T, ...]]: ...
+    @overload
+    def iter_combinations(
+        self: Query[T | None, *Qs], size: int, /
+    ) -> Iterator[tuple[T | None, ...]]: ...
+    @overload
+    def iter_combinations(
+        self: Query[tuple[Mut[T1], Mut[T2]], *Qs], size: int, /
+    ) -> Iterator[tuple[tuple[T1, T2], ...]]: ...
+    @overload
+    def iter_combinations(
+        self: Query[tuple[T1, Mut[T2]], *Qs], size: int, /
+    ) -> Iterator[tuple[tuple[T1, T2], ...]]: ...
+    @overload
+    def iter_combinations(
+        self: Query[tuple[Mut[T1], T2], *Qs], size: int, /
+    ) -> Iterator[tuple[tuple[T1, T2], ...]]: ...
+    @overload
+    def iter_combinations(
+        self: Query[QueryParam_T, *Qs], size: int, /
+    ) -> Iterator[tuple[QueryParam_T, ...]]:
+        """Iterate over every combination of ``size`` distinct matching entities.
+
+        Mirrors Bevy's ``Query::iter_combinations``: each item is a tuple of
+        ``size`` read-only rows, also for ``Mut[...]`` data, in the order
+        (e1, e2), (e1, e3), ..., (e2, e3), ... A size above the match count
+        yields nothing; a size below one raises ValueError.
+        """
+
+    @overload
+    def iter_combinations_mut(
+        self: Query[AnyOf[tuple[T1, T2]], *Qs], size: int, /
+    ) -> Iterator[tuple[tuple[T1 | None, T2 | None], ...]]: ...
+    @overload
+    def iter_combinations_mut(
+        self: Query[AnyOf[tuple[Mut[T1], T2]], *Qs], size: int, /
+    ) -> Iterator[tuple[tuple[T1 | None, T2 | None], ...]]: ...
+    @overload
+    def iter_combinations_mut(
+        self: Query[AnyOf[tuple[T1, Mut[T2]]], *Qs], size: int, /
+    ) -> Iterator[tuple[tuple[T1 | None, T2 | None], ...]]: ...
+    @overload
+    def iter_combinations_mut(
+        self: Query[AnyOf[tuple[Mut[T1], Mut[T2]]], *Qs], size: int, /
+    ) -> Iterator[tuple[tuple[T1 | None, T2 | None], ...]]: ...
+    @overload
+    def iter_combinations_mut(
+        self: Query[Has[T], *Qs], size: int, /
+    ) -> Iterator[tuple[bool, ...]]: ...
+    @overload
+    def iter_combinations_mut(
+        self: Query[tuple[Has[T], T1], *Qs], size: int, /
+    ) -> Iterator[tuple[tuple[bool, T1], ...]]: ...
+    @overload
+    def iter_combinations_mut(
+        self: Query[tuple[T1, Has[T]], *Qs], size: int, /
+    ) -> Iterator[tuple[tuple[T1, bool], ...]]: ...
+    @overload
+    def iter_combinations_mut(
+        self: Query[Mut[T], *Qs], size: int, /
+    ) -> Iterator[tuple[T, ...]]: ...
+    @overload
+    def iter_combinations_mut(
+        self: Query[T, *Qs], size: int, /
+    ) -> Iterator[tuple[T, ...]]: ...
+    @overload
+    def iter_combinations_mut(
+        self: Query[T | None, *Qs], size: int, /
+    ) -> Iterator[tuple[T | None, ...]]: ...
+    @overload
+    def iter_combinations_mut(
+        self: Query[tuple[Mut[T1], Mut[T2]], *Qs], size: int, /
+    ) -> Iterator[tuple[tuple[T1, T2], ...]]: ...
+    @overload
+    def iter_combinations_mut(
+        self: Query[tuple[T1, Mut[T2]], *Qs], size: int, /
+    ) -> Iterator[tuple[tuple[T1, T2], ...]]: ...
+    @overload
+    def iter_combinations_mut(
+        self: Query[tuple[Mut[T1], T2], *Qs], size: int, /
+    ) -> Iterator[tuple[tuple[T1, T2], ...]]: ...
+    @overload
+    def iter_combinations_mut(
+        self: Query[QueryParam_T, *Qs], size: int, /
+    ) -> Iterator[tuple[QueryParam_T, ...]]:
+        """Iterate over every combination of ``size`` distinct matching entities.
+
+        Mirrors Bevy's ``Query::iter_combinations_mut``: ``Mut[...]`` items are
+        writable and mark the component changed on write; other items stay
+        read-only. An entity appears in several combinations, so keep a row
+        only until the next one, as Bevy's ``fetch_next`` loop requires.
+        """
 
     def __len__(self) -> int:
         """Get the number of entities matching this query."""
