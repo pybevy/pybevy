@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 #[pyenum(ShaderStage)]
 #[pyclass(
     name = "ShaderStage",
-    module = "pybevy.shader",
+    module = "pybevy.render",
     eq,
     hash,
     frozen,

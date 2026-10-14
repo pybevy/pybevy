@@ -774,8 +774,6 @@ class CursorGrabMode:
     Confined: CursorGrabMode
     Locked: CursorGrabMode
 
-    def __hash__(self) -> int: ...
-
 class CursorOptions(Component):
     """
     Cursor options component for window cursor control.

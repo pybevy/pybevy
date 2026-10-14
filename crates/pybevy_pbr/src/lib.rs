@@ -7,6 +7,7 @@ pub mod fog_falloff;
 pub mod forward_decal;
 pub mod lightmap;
 pub mod mesh3d_wireframe;
+pub mod mesh_material_3d;
 pub mod no_wireframe;
 pub mod parallax_mapping_method;
 pub mod plugin;
@@ -30,7 +31,7 @@ use pyo3::prelude::*;
 
 pub mod prelude {
     pub use crate::{
-        distance_fog::PyDistanceFog, fog_falloff::PyFogFalloff,
+        distance_fog::PyDistanceFog, fog_falloff::PyFogFalloff, mesh_material_3d::PyMeshMaterial3d,
         parallax_mapping_method::PyParallaxMappingMethod, plugin::PyPbrPlugin,
         standard_material::PyStandardMaterial,
     };
@@ -51,6 +52,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<atmosphere_settings::PyAtmosphereSettings>()?;
     m.add_class::<parallax_mapping_method::PyParallaxMappingMethod>()?;
     m.add_class::<standard_material::PyStandardMaterial>()?;
+    m.add_class::<mesh_material_3d::PyMeshMaterial3d>()?;
     m.add_class::<wireframe::PyWireframe>()?;
     m.add_class::<wireframe_color::PyWireframeColor>()?;
     m.add_class::<no_wireframe::PyNoWireframe>()?;

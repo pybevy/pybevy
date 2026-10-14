@@ -6,6 +6,7 @@ pub mod config_audit;
 pub mod coverage_json;
 pub mod mappings;
 pub mod model;
+pub mod native_system_set_lint;
 pub mod output;
 pub mod python_parser;
 pub mod rust_parser;

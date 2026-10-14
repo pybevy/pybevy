@@ -785,11 +785,11 @@ class ScatteringMedium(Asset):
         self,
         falloff_resolution: int = 256,
         phase_resolution: int = 256,
-        terms: list[ScatteringTerm] | None = None,
+        terms: list[ScatteringTerm] = ...,
     ) -> None:
         """Create a medium from scattering terms (mirrors ScatteringMedium::new).
 
-        When terms is None, returns bevy's default earth-like medium.
+        When terms is omitted, returns bevy's default earth-like medium.
         """
 
     @property

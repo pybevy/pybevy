@@ -57,7 +57,7 @@ commands.spawn(
 Shadow maps miss the small contact points where objects meet surfaces (feet on ground, cup on table); contact shadows ray-march the depth buffer to darken exactly those spots. Two parts: a `ContactShadows` component on the camera (which needs a `DepthPrepass`), and `contact_shadows_enabled=True` on each participating light.
 
 ```python
-from pybevy.camera import DepthPrepass
+from pybevy.core_pipeline import DepthPrepass
 from pybevy.pbr import ContactShadows
 
 commands.spawn(

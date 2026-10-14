@@ -51,7 +51,7 @@ pub mod prelude {
         projection::{PyOrthographicProjection, PyPerspectiveProjection, PyProjection},
         render_layers::PyRenderLayers,
         scaling_mode::PyScalingMode,
-        unit_markers::PyCamera2d,
+        unit_markers::{PyCamera2d, PyHdr},
         view_visibility::PyViewVisibility,
         viewport::PyViewport,
         visibility::PyVisibility,
@@ -67,10 +67,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<unit_markers::PyNoFrustumCulling>()?;
     m.add_class::<unit_markers::PyCamera2d>()?;
     m.add_class::<unit_markers::PyShadowLodOrigin>()?;
-    m.add_class::<unit_markers::PyDepthPrepass>()?;
-    m.add_class::<unit_markers::PyNormalPrepass>()?;
-    m.add_class::<unit_markers::PyMotionVectorPrepass>()?;
-    m.add_class::<unit_markers::PyDeferredPrepass>()?;
+    m.add_class::<unit_markers::PyHdr>()?;
     m.add_class::<camera::PyCamera>()?;
     m.add_class::<msaa_writeback::PyMsaaWriteback>()?;
     m.add_class::<camera_3d::PyCamera3d>()?;

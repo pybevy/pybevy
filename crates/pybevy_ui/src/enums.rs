@@ -240,15 +240,8 @@ impl PyOverflowAxis {
 }
 
 #[pyenum(BoxSizing)]
-#[pyclass(
-    name = "BoxSizing",
-    module = "pybevy.ui",
-    eq,
-    frozen,
-    from_py_object,
-    hash
-)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[pyclass(name = "BoxSizing", module = "pybevy.ui", eq, frozen, from_py_object)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PyBoxSizing {
     BorderBox,
     ContentBox,
@@ -294,15 +287,8 @@ pub enum PyInterpolationColorSpace {
 }
 
 #[pyenum(VisualBox)]
-#[pyclass(
-    name = "VisualBox",
-    module = "pybevy.ui",
-    eq,
-    frozen,
-    from_py_object,
-    hash
-)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[pyclass(name = "VisualBox", module = "pybevy.ui", eq, frozen, from_py_object)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PyVisualBox {
     ContentBox,
     PaddingBox,

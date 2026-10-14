@@ -1,4 +1,4 @@
-use pyo3::{prelude::*, types::PyDict};
+use pyo3::prelude::*;
 
 use crate::app::chained_systems::chain;
 
@@ -137,22 +137,6 @@ pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     ecs.add_class::<resource::PyIsResource>()?;
     // Re-export PyResource so Python can import it from pybevy.ecs
     ecs.add_class::<resource::PyResource>()?;
-    ecs.add_class::<state::PyState>()?;
-    ecs.add_class::<state::PyNextState>()?;
-    for wrapper_name in ["State", "NextState"] {
-        ecs.getattr(wrapper_name)?
-            .setattr(state::STATE_RESOURCE_TYPE_CACHE_ATTR, PyDict::new(m.py()))?;
-    }
-    ecs.add_class::<state::PyOnEnterSchedule>()?;
-    ecs.add_class::<state::PyOnExitSchedule>()?;
-    ecs.add_class::<state::PyOnTransitionSchedule>()?;
-    ecs.add_class::<state::PyDespawnOnExit>()?;
-    ecs.add_class::<state::PyDespawnOnEnter>()?;
-    ecs.add_function(wrap_pyfunction!(state::state, m)?)?;
-    ecs.add_function(wrap_pyfunction!(state::in_state, m)?)?;
-    ecs.add_function(wrap_pyfunction!(state::on_enter, m)?)?;
-    ecs.add_function(wrap_pyfunction!(state::on_exit, m)?)?;
-    ecs.add_function(wrap_pyfunction!(state::on_transition, m)?)?;
     ecs.add_function(wrap_pyfunction!(reflect_dump::reflect_component_dump, m)?)?;
     ecs.add_class::<world::PyWorld>()?;
     ecs.add_class::<disabled::PyDisabled>()?;

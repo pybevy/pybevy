@@ -1,3 +1,4 @@
+import builtins
 from contextlib import AbstractContextManager
 from typing import ClassVar
 
@@ -335,7 +336,7 @@ class RenderPlugin(Plugin):
         self,
         *,
         power_preference: PowerPreference | None = None,
-        synchronous_pipeline_compilation: bool | None = None
+        synchronous_pipeline_compilation: bool = False
     ) -> None:
         """Create a RenderPlugin with optional configuration.
 
@@ -352,7 +353,7 @@ class RenderPlugin(Plugin):
     def power_preference(self) -> PowerPreference | None: ...
 
     @property
-    def synchronous_pipeline_compilation(self) -> bool | None: ...
+    def synchronous_pipeline_compilation(self) -> bool: ...
 
 class ColorGradingSection:
     """Color grading values applied to a specific tonal range (shadows, midtones, or highlights).
@@ -512,11 +513,6 @@ class ColorGrading(Component):
             ColorGrading with the same section applied to all tonal ranges
         """
 
-class Hdr(Component):
-    """Marker component that enables HDR (High Dynamic Range) rendering for a camera."""
-
-    def __init__(self) -> None: ...
-
 class Msaa(Component):
     """Multi-sample anti-aliasing configuration.
 
@@ -660,3 +656,53 @@ class NoIndirectDrawing(Component):
 
     def __init__(self) -> None:
         """Create a NoIndirectDrawing marker component."""
+
+class ShaderStage:
+    """
+    Stage of the programmable pipeline a GLSL source belongs to.
+
+    Passed to `Shader.from_glsl` to say how the source should be compiled.
+
+    Example:
+        ```python
+        from pybevy.shader import Shader
+        from pybevy.render import ShaderStage
+
+        shader = Shader.from_glsl(source, ShaderStage.Fragment, "custom_shader")
+        ```
+    """
+
+    def __copy__(self) -> ShaderStage: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> ShaderStage: ...
+
+
+    Vertex: ClassVar[ShaderStage]
+    """A vertex shader, in a render pipeline."""
+
+    Task: ClassVar[ShaderStage]
+    """A task shader, in a mesh render pipeline."""
+
+    Mesh: ClassVar[ShaderStage]
+    """A mesh shader, in a mesh render pipeline."""
+
+    Fragment: ClassVar[ShaderStage]
+    """A fragment shader, in a render pipeline."""
+
+    Compute: ClassVar[ShaderStage]
+    """A compute pipeline shader."""
+
+    RayGeneration: ClassVar[ShaderStage]
+    """A ray generation shader, in a ray tracing pipeline."""
+
+    Miss: ClassVar[ShaderStage]
+    """A miss shader, in a ray tracing pipeline."""
+
+    AnyHit: ClassVar[ShaderStage]
+    """An any hit shader, in a ray tracing pipeline."""
+
+    ClosestHit: ClassVar[ShaderStage]
+    """A closest hit shader, in a ray tracing pipeline."""
+
+    def __eq__(self, other: object) -> builtins.bool: ...
+    def __ne__(self, other: object) -> builtins.bool: ...
+    def __hash__(self) -> builtins.int: ...

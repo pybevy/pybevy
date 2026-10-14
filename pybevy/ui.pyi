@@ -725,8 +725,6 @@ class BoxSizing:
     ContentBox: BoxSizing
     """Width/height refer to the content box (excluding padding and border)."""
 
-    def __hash__(self) -> int: ...
-
 class VisualBox:
     """Defines which box is used as the clipping boundary for overflow.
 
@@ -754,8 +752,6 @@ class VisualBox:
 
     BorderBox: VisualBox
     """Clip content outside the border box."""
-
-    def __hash__(self) -> int: ...
 
 class OverflowClipMargin:
     """Margin around the clipping boundary for overflow.

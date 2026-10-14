@@ -15,13 +15,9 @@ pub struct PyGlobalVolume {
 #[pymethods]
 impl PyGlobalVolume {
     #[new]
-    #[pyo3(signature = (volume=None))]
-    pub fn new(volume: Option<PyVolume>) -> PyClassInitializer<Self> {
-        let global_volume = match volume {
-            Some(v) => GlobalVolume::new(v.into()),
-            None => GlobalVolume::default(),
-        };
-        Self::from_owned(global_volume)
+    #[pyo3(signature = (volume = PyVolume::from(GlobalVolume::default().volume)))]
+    pub fn new(volume: PyVolume) -> PyClassInitializer<Self> {
+        Self::from_owned(GlobalVolume::new(volume.into()))
     }
 
     #[getter]

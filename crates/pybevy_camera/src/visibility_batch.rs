@@ -7,7 +7,7 @@ use bevy::{
 use pybevy_core::{
     BatchComponent, PreparedBatchComponent, PreparedNativeBatch, registry::global_registry,
 };
-use pyo3::{PyTypeInfo, prelude::*};
+use pyo3::{PyTraverseError, PyTypeInfo, PyVisit, prelude::*};
 
 use crate::visibility::PyVisibility;
 
@@ -29,6 +29,10 @@ impl Clone for PyVisibilityBatch {
 
 #[pymethods]
 impl PyVisibilityBatch {
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.visibility)
+    }
+
     #[new]
     pub fn new(visibility: Py<PyAny>) -> Self {
         PyVisibilityBatch { visibility }

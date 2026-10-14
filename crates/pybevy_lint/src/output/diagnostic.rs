@@ -111,7 +111,8 @@ pub enum DiagnosticCode {
     /// W026: upstream tuple-payload enum variant exposed with named fields;
     /// tuple payloads must stay positional
     W026,
-    /// W029: wrapper's Python registration module (`module = "pybevy.X"`)
+    /// W029: wrapper's or native system set's Python registration module
+    /// (`module = "pybevy.X"`, `register_native_system_set!(.., module = "X")`)
     /// differs from the canonical Bevy placement derived from
     /// `[bevy.crate_mappings]`
     W029,

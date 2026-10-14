@@ -165,6 +165,7 @@ pub fn init_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     app::add_module(m)?;
     assets::add_module(m)?;
     ecs::add_module(m)?;
+    ecs::state::add_module(m)?;
     render::add_module(m)?;
     world_serialization::add_api(m)?;
     ecs::system_config::register_native_system_sets(m)?;

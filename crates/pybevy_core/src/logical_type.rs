@@ -2,6 +2,7 @@
 
 use pybevy_storage::LogicalTypeId;
 use pyo3::{
+    PyTraverseError, PyVisit,
     prelude::*,
     types::{PyAny, PyType},
 };
@@ -68,6 +69,10 @@ impl PyLogicalComponentParam {
 
 #[pymethods]
 impl PyLogicalComponentParam {
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.component_type)
+    }
+
     #[pyo3(signature = (handle, /))]
     fn __call__(&self, handle: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         let py = handle.py();

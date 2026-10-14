@@ -158,7 +158,8 @@ grading requires `Hdr()` and a `Tonemapping` other than `Tonemapping.None_`.
 component such as `Bloom` that requires `Hdr` also adds `Hdr`:
 
 ```python
-from pybevy.render import ColorGrading, ColorGradingSection, Hdr
+from pybevy.render import ColorGrading, ColorGradingSection
+from pybevy.camera import Hdr
 
 commands.spawn(
     Camera3d(),

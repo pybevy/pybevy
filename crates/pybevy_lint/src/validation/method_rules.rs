@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
 use crate::{
-    config::BevyConfig,
+    config::{BevyConfig, keyword_escape},
     model::{
-        ConstructorOrigin, EnumVariantKind, MethodDef, ParameterKind, PyClassDef, SelfMutability,
-        SourceLocation,
+        ConstructorOrigin, EnumVariantKind, MethodDef, ParameterDef, ParameterKind, PyClassDef,
+        SelfMutability, SourceLocation,
     },
     output::{Diagnostic, DiagnosticCode, Suggestion},
     python_parser::types::{resolve_self, types_compatible},
@@ -460,24 +460,24 @@ fn check_field_order(
     }
 }
 
-/// W017: a constructor input accepts `None` while its upstream field or
-/// mapped function parameter is not an `Option`.
-pub fn check_optional_field_parameters(
-    origin: &ConstructorOrigin,
-    rust_class: &PyClassDef,
-    python_class: Option<&PyClassDef>,
-    field_types: &HashMap<String, String>,
-) -> Vec<Diagnostic> {
-    let upstream_type = origin.upstream_type().unwrap_or(&rust_class.python_name);
+/// A constructor input whose upstream field or mapped function parameter is
+/// not an `Option`, so the Python API must not accept `None` for it.
+pub struct NonOptionUpstream<'a> {
+    pub param: &'a ParameterDef,
+    pub kind: &'static str,
+    pub upstream_type: &'a str,
+}
+
+/// Constructor inputs that map to a non-`Option` upstream field or parameter.
+pub fn non_option_upstream_params<'a>(
+    origin: &'a ConstructorOrigin,
+    rust_class: &'a PyClassDef,
+    field_types: &'a HashMap<String, String>,
+) -> Vec<NonOptionUpstream<'a>> {
     let Some(constructor) = rust_class.constructor.as_ref() else {
         return Vec::new();
     };
-    let stub_params = python_class
-        .and_then(|class| class.constructor.as_ref())
-        .map(|ctor| ctor.parameters.as_slice())
-        .unwrap_or_default();
-
-    let mut diagnostics = Vec::new();
+    let mut params = Vec::new();
     for (index, param) in constructor.parameters.iter().enumerate() {
         let field_type = field_types.get(&param.name);
         let function_type = match origin {
@@ -518,14 +518,18 @@ pub fn check_optional_field_parameters(
             }
             _ => false,
         };
-        let upstream = if let Some(function_type) = function_type {
-            if function_type.trim().is_empty() {
+        if let Some(function_type) = function_type {
+            if function_type.trim().is_empty()
+                || is_option_type(function_type)
+                || field_type.is_some_and(|ty| is_option_type(ty))
+            {
                 continue;
             }
-            if is_option_type(function_type) || field_type.is_some_and(|ty| is_option_type(ty)) {
-                continue;
-            }
-            ("parameter", function_type.as_str())
+            params.push(NonOptionUpstream {
+                param,
+                kind: "parameter",
+                upstream_type: function_type,
+            });
         } else if field_input {
             let field_name = if field_types.contains_key("0") {
                 "0"
@@ -538,10 +542,36 @@ pub fn check_optional_field_parameters(
             if is_option_type(field_type) {
                 continue;
             }
-            ("field", field_type.as_str())
-        } else {
-            continue;
-        };
+            params.push(NonOptionUpstream {
+                param,
+                kind: "field",
+                upstream_type: field_type,
+            });
+        }
+    }
+    params
+}
+
+/// W017: a constructor input accepts `None` while its upstream field or
+/// mapped function parameter is not an `Option`.
+pub fn check_optional_field_parameters(
+    origin: &ConstructorOrigin,
+    rust_class: &PyClassDef,
+    python_class: Option<&PyClassDef>,
+    field_types: &HashMap<String, String>,
+) -> Vec<Diagnostic> {
+    let upstream_type = origin.upstream_type().unwrap_or(&rust_class.python_name);
+    let Some(constructor) = rust_class.constructor.as_ref() else {
+        return Vec::new();
+    };
+    let stub_params = python_class
+        .and_then(|class| class.constructor.as_ref())
+        .map(|ctor| ctor.parameters.as_slice())
+        .unwrap_or_default();
+
+    let mut diagnostics = Vec::new();
+    for upstream in non_option_upstream_params(origin, rust_class, field_types) {
+        let param = upstream.param;
         let stub_accepts_none = stub_params
             .iter()
             .find(|stub| stub.name == param.name)
@@ -556,10 +586,10 @@ pub fn check_optional_field_parameters(
                 "constructor '{}' parameter '{}' accepts None but the upstream {} {}::{} is `{}`; default to Bevy's value and reject None",
                 rust_class.python_name,
                 param.name,
-                upstream.0,
+                upstream.kind,
                 upstream_type,
                 param.name,
-                upstream.1
+                upstream.upstream_type
             ),
         );
         if let Some(loc) = &constructor.location {
@@ -831,21 +861,13 @@ fn defaults_agree(
         if rust_type != stub_type || rust_member == stub_member {
             return rust_type == stub_type;
         }
-        // Reviewed renames (upstream -> alias, e.g. `None` -> `None_`) apply
-        // in either direction.
-        return bevy_config
-            .and_then(|config| config.get_type_ignores(&stub_type))
-            .map(|ignores| {
-                ignores
-                    .renames
-                    .get(&rust_member)
-                    .is_some_and(|alias| alias == &stub_member)
-                    || ignores
-                        .renames
-                        .get(&stub_member)
-                        .is_some_and(|alias| alias == &rust_member)
-            })
-            .unwrap_or(false);
+        // Renames (configured, or a keyword escape such as `None` -> `None_`)
+        // apply in either direction.
+        let renamed = |from: &str, to: &str| match bevy_config {
+            Some(config) => config.get_rename(&stub_type, from).as_deref() == Some(to),
+            None => keyword_escape(from).as_deref() == Some(to),
+        };
+        return renamed(&rust_member, &stub_member) || renamed(&stub_member, &rust_member);
     }
     true
 }
@@ -1495,6 +1517,24 @@ fn returns_self(method: &crate::model::MethodDef) -> bool {
     })
 }
 
+const RUST_ACCEPTS_NONE: &str =
+    "the Rust constructor accepts None, so the stub must spell `| None` (or a None default)";
+
+fn constructor_none_subject(class: &str, param: &str) -> String {
+    format!("constructor parameter '{class}.__init__.{param}'")
+}
+
+/// Whether `diagnostic` is the W036 advice to add `| None` to the stub for
+/// `class.param`. That advice is wrong when W017 applies: the upstream input
+/// is not an `Option`, so the Rust constructor must stop accepting `None`.
+pub fn is_w036_stub_none_advice(diagnostic: &Diagnostic, class: &str, param: &str) -> bool {
+    diagnostic.code == DiagnosticCode::W036
+        && diagnostic.message.ends_with(RUST_ACCEPTS_NONE)
+        && diagnostic
+            .message
+            .starts_with(&format!("{} (", constructor_none_subject(class, param)))
+}
+
 /// W036 constructor arm: a Rust `#[new]` parameter typed `Option<T>` means
 /// the Python API accepts an explicit `None` (PyO3 defaults only apply to
 /// the omitted case, so both value options and `Option<&Bound<...>>`
@@ -1532,15 +1572,18 @@ pub fn validate_constructor_none_parity(rust: &PyClassDef, python: &PyClassDef) 
             continue;
         }
         let expected = if rust_optional {
-            "the Rust constructor accepts None, so the stub must spell `| None` (or a None default)"
+            RUST_ACCEPTS_NONE
         } else {
             "the Rust constructor does not accept None, so the stub must not advertise it"
         };
         let mut diagnostic = Diagnostic::warning(
             DiagnosticCode::W036,
             format!(
-                "constructor parameter '{}.__init__.{}' (Rust '{}', stub '{}'): {}",
-                rust.python_name, rparam.name, rust_type, stub_type, expected
+                "{} (Rust '{}', stub '{}'): {}",
+                constructor_none_subject(&rust.python_name, &rparam.name),
+                rust_type,
+                stub_type,
+                expected
             ),
         );
         if let Some(location) = &python_ctor.location {

@@ -33,16 +33,16 @@ impl PluginBuild for PyTexturePlugin {
 #[derive(Debug, Clone, Default)]
 pub struct PyRenderPlugin {
     pub power_preference: Option<PyPowerPreference>,
-    pub synchronous_pipeline_compilation: Option<bool>,
+    pub synchronous_pipeline_compilation: bool,
 }
 
 #[pymethods]
 impl PyRenderPlugin {
     #[new]
-    #[pyo3(signature = (*, power_preference = None, synchronous_pipeline_compilation = None))]
+    #[pyo3(signature = (*, power_preference = None, synchronous_pipeline_compilation = false))]
     pub fn new(
         power_preference: Option<PyPowerPreference>,
-        synchronous_pipeline_compilation: Option<bool>,
+        synchronous_pipeline_compilation: bool,
     ) -> PyClassInitializer<Self> {
         (
             PyRenderPlugin {
@@ -60,7 +60,7 @@ impl PyRenderPlugin {
     }
 
     #[getter]
-    pub fn synchronous_pipeline_compilation(&self) -> Option<bool> {
+    pub fn synchronous_pipeline_compilation(&self) -> bool {
         self.synchronous_pipeline_compilation
     }
 
@@ -69,10 +69,10 @@ impl PyRenderPlugin {
         if let Some(ref pp) = self.power_preference {
             parts.push(format!("power_preference={}", object_repr(*pp)));
         }
-        if let Some(sync) = self.synchronous_pipeline_compilation {
+        if self.synchronous_pipeline_compilation {
             parts.push(format!(
                 "synchronous_pipeline_compilation={}",
-                sync.repr_literal()
+                true.repr_literal()
             ));
         }
         if parts.is_empty() {
@@ -90,16 +90,13 @@ impl PluginBuild for PyRenderPlugin {
         if let Some(ref pp) = config.power_preference {
             wgpu_settings.power_preference = (*pp).into();
         }
-        let mut render_plugin = bevy::render::RenderPlugin {
+        app.add_plugins(bevy::render::RenderPlugin {
             render_creation: bevy::render::settings::RenderCreation::Automatic(Box::new(
                 wgpu_settings,
             )),
+            synchronous_pipeline_compilation: config.synchronous_pipeline_compilation,
             ..Default::default()
-        };
-        if let Some(sync) = config.synchronous_pipeline_compilation {
-            render_plugin.synchronous_pipeline_compilation = sync;
-        }
-        app.add_plugins(render_plugin);
+        });
         Ok(())
     }
 }

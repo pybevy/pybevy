@@ -5,9 +5,6 @@ from pybevy.ecs import (
     ConditionalSystem,
     Message,
     MessageTypeVar,
-    OnEnterSchedule,
-    OnExitSchedule,
-    OnTransitionSchedule,
     Resource,
     ResourceType,
     SystemConfig,
@@ -15,6 +12,7 @@ from pybevy.ecs import (
     SystemSetConfig,
     SystemSetEnum,
 )
+from pybevy.state import OnEnterSchedule, OnExitSchedule, OnTransitionSchedule
 
 type SystemFn = Callable[..., object]
 type SystemFns = (

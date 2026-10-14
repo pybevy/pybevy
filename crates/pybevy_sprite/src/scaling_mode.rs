@@ -8,10 +8,9 @@ use pyo3::prelude::*;
     module = "pybevy.sprite",
     eq,
     from_py_object,
-    frozen,
-    hash
+    frozen
 )]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PySpriteScalingMode {
     FillCenter,
     FillStart,

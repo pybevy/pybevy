@@ -27,6 +27,7 @@ from . import (
     render,
     shader,
     sprite,
+    state,
     text,
     time,
     transform,
@@ -46,7 +47,7 @@ from .decorators import (
     plugin,
     resource,
 )
-from .ecs import state, system_set
+from .ecs import system_set
 
 _apply_constant_descriptors()
 
@@ -74,7 +75,6 @@ __all__ = [
     "message",
     "resource",
     "plugin",
-    "state",
     "system_set",
     # hot reload utilities
     "clear_component_cache",
@@ -106,6 +106,7 @@ __all__ = [
     "render",
     "shader",
     "sprite",
+    "state",
     "text",
     "time",
     "transform",

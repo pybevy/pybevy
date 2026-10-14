@@ -10,6 +10,7 @@ use pybevy_core::{
 };
 use pybevy_macros::pyasset;
 use pyo3::{
+    PyTraverseError, PyVisit,
     exceptions::{PyMemoryError, PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
     types::PyBytes,
@@ -28,6 +29,10 @@ pub struct ShaderBufferDataContext {
 
 #[pymethods]
 impl ShaderBufferDataContext {
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.array)
+    }
+
     fn __enter__(&self, py: Python<'_>) -> PyResult<Py<PyArray>> {
         match &self.anchor {
             DataAnchor::Read(anchor) => anchor.check_read(),

@@ -96,6 +96,7 @@ pub fn validate_with_bevy(
         })
         .map(|class| class.rust_name.clone())
         .collect();
+    let mut non_option_ctor_params: Vec<(String, String)> = Vec::new();
     for rust_class in rust_classes {
         if rust_class.python_name.starts_with('_') {
             continue;
@@ -167,6 +168,12 @@ pub fn validate_with_bevy(
                 find_matching_python_class(rust_class, python_classes),
                 &field_types,
             ));
+            for upstream in
+                method_rules::non_option_upstream_params(origin, rust_class, &field_types)
+            {
+                non_option_ctor_params
+                    .push((rust_class.python_name.clone(), upstream.param.name.clone()));
+            }
         }
 
         if let Some(python_class) = find_matching_python_class(rust_class, python_classes) {
@@ -398,6 +405,14 @@ pub fn validate_with_bevy(
             diagnostics.push(diagnostic);
         }
     }
+
+    // W017 owns inputs whose upstream is not an `Option`: the fix is to reject
+    // `None` in Rust, not to advertise it in the stub.
+    diagnostics.retain(|diagnostic| {
+        !non_option_ctor_params
+            .iter()
+            .any(|(class, param)| method_rules::is_w036_stub_none_advice(diagnostic, class, param))
+    });
 
     // W030: the curated prelude must mirror the pinned Bevy prelude for
     // every name PyBevy implements.

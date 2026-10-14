@@ -2196,7 +2196,7 @@ class Isometry2d:
     @rotation.setter
     def rotation(self, value: Rot2) -> None: ...
 
-    def __init__(self, translation: Vec2 = ..., rotation: Rot2 | None = None) -> None:
+    def __init__(self, translation: Vec2 = ..., rotation: Rot2 = ...) -> None:
         """Create a 2D isometry.
 
         Args:
@@ -2458,7 +2458,7 @@ class Isometry3d:
     translation: Vec3A
     rotation: Quat
 
-    def __init__(self, translation: Vec3A | Vec3 | None = ..., rotation: Quat = ...) -> None:
+    def __init__(self, translation: Vec3A | Vec3 = ..., rotation: Quat = ...) -> None:
         """Create a new Isometry3d.
 
         Args:
@@ -3299,7 +3299,7 @@ class WindingOrder:
 class Polyline2d(Meshable):
     """A 2D polyline: an open chain of connected line segments."""
 
-    def __init__(self, vertices: list[Vec2] | None = None) -> None:
+    def __init__(self, vertices: list[Vec2] = ...) -> None:
         """Create a polyline through the vertices, or use Bevy's default endpoints."""
 
     @staticmethod
@@ -3317,7 +3317,7 @@ class Polyline2d(Meshable):
 class Polyline3d(Meshable):
     """A 3D polyline: an open chain of connected line segments."""
 
-    def __init__(self, vertices: list[Vec3] | None = None) -> None:
+    def __init__(self, vertices: list[Vec3] = ...) -> None:
         """Create a polyline through the vertices, or use Bevy's default endpoints."""
 
     @staticmethod

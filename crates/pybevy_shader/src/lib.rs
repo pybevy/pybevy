@@ -19,7 +19,6 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<shader_import::PyShaderImport>()?;
     m.add_class::<shader_ref::PyShaderRef>()?;
     m.add_class::<shader_source::PySource>()?;
-    m.add_class::<shader_stage::PyShaderStage>()?;
     m.add_class::<validate_shader::PyValidateShader>()?;
     parent.add_submodule(&m)
 }

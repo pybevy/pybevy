@@ -423,8 +423,6 @@ class MsaaWriteback:
     Auto: MsaaWriteback
     Always: MsaaWriteback
 
-    def __hash__(self) -> int: ...
-
 class Camera(Component):
     """Camera component that configures rendering.
 
@@ -963,7 +961,7 @@ class Frustum(Component):
     @half_spaces.setter
     def half_spaces(self, value: list[HalfSpace]) -> None: ...
 
-    def __init__(self, view_frustum: ViewFrustum | None = None) -> None:
+    def __init__(self, view_frustum: ViewFrustum = ...) -> None:
         """Wrap a ViewFrustum, e.g. `Frustum(ViewFrustum.from_clip_from_world(mat))`."""
 
     def intersects_sphere(self, sphere: Sphere, intersect_far: bool) -> bool:
@@ -1808,23 +1806,7 @@ class NormalizedRenderTarget:
 
     def __eq__(self, other: object) -> bool: ...
 
+class Hdr(Component):
+    """Marker component that enables HDR (High Dynamic Range) rendering for a camera."""
 
-class DepthPrepass(Component):
-    """If added to Camera3d, depth values are copied to a separate texture."""
-    def __init__(self) -> None: ...
-
-class NormalPrepass(Component):
-    """If added to Camera3d, vertex world normals are copied to a separate texture."""
-    def __init__(self) -> None: ...
-
-class MotionVectorPrepass(Component):
-    """If added to Camera3d, screen space motion vectors are copied to a separate texture."""
-    def __init__(self) -> None: ...
-
-class DeferredPrepass(Component):
-    """If added to Camera3d, deferred materials are rendered to the deferred gbuffer texture.
-    Deferred cameras also require Msaa.Off and DepthPrepass. With DepthPrepass
-    but no DeferredPrepass, forced-deferred meshes can panic in Bevy's prepass
-    queue and prevent frame readback.
-    """
     def __init__(self) -> None: ...

@@ -4,8 +4,6 @@ pub mod mesh;
 pub mod mesh2d;
 pub mod mesh3d;
 pub mod mesh_builder;
-pub mod mesh_material_2d;
-pub mod mesh_material_3d;
 pub mod mesh_morph_weights;
 pub mod mesh_tag;
 pub mod meshable;
@@ -24,8 +22,7 @@ use pyo3::prelude::*;
 
 pub mod prelude {
     pub use crate::{
-        mesh::PyMesh, mesh_builder::PyMeshBuilder, mesh_material_2d::PyMeshMaterial2d,
-        mesh_material_3d::PyMeshMaterial3d, mesh2d::PyMesh2d, mesh3d::PyMesh3d,
+        mesh::PyMesh, mesh_builder::PyMeshBuilder, mesh2d::PyMesh2d, mesh3d::PyMesh3d,
         meshable::PyMeshable, morph_weights::PyMorphWeights, plugin::PyMeshPlugin,
         primitive_topology::PyPrimitiveTopology,
     };
@@ -77,8 +74,6 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<mesh::PyMesh>()?;
     m.add_class::<mesh2d::PyMesh2d>()?;
     m.add_class::<mesh3d::PyMesh3d>()?;
-    m.add_class::<mesh_material_2d::PyMeshMaterial2d>()?;
-    m.add_class::<mesh_material_3d::PyMeshMaterial3d>()?;
     m.add_class::<mesh_morph_weights::PyMeshMorphWeights>()?;
     mesh_morph_weights::register_mesh_morph_weights_variants(&m)?;
     m.add_class::<mesh_tag::PyMeshTag>()?;

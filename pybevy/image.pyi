@@ -72,7 +72,6 @@ class ImageFormat:
     """Farbfeld format - simple lossless format with 16-bit RGBA"""
 
     def __eq__(self, other: object) -> bool: ...
-    def __hash__(self) -> int: ...
 
 class ImageCompareFunction:
 
@@ -88,8 +87,6 @@ class ImageCompareFunction:
     GreaterEqual: ImageCompareFunction
     Always: ImageCompareFunction
 
-    def __hash__(self) -> int: ...
-
 class ImageSamplerBorderColor:
 
     def __copy__(self) -> ImageSamplerBorderColor: ...
@@ -99,8 +96,6 @@ class ImageSamplerBorderColor:
     OpaqueBlack: ImageSamplerBorderColor
     OpaqueWhite: ImageSamplerBorderColor
     Zero: ImageSamplerBorderColor
-
-    def __hash__(self) -> int: ...
 
 class ImageFormatSetting:
     class FromExtension(ImageFormatSetting):
@@ -280,10 +275,10 @@ class Image(Asset):
     def __init__(
         self,
         size: Extent3d = Extent3d(width=1, height=1, depth_or_array_layers=1),
-        dimension: TextureDimension | None = None,
+        dimension: TextureDimension = TextureDimension.D2,
         data: Buffer | list[int] | tuple[int, ...] | np.ndarray | Array | None = None,
-        format: TextureFormat | None = None,
-        asset_usage: RenderAssetUsages | None = None,
+        format: TextureFormat = TextureFormat.Rgba8UnormSrgb,
+        asset_usage: RenderAssetUsages = ...,
     ) -> None:
         """Create a new image, mirroring bevy's `Image::new`.
 
@@ -1504,8 +1499,6 @@ class ImageArrayLayout:
         @property
         def tile_height_pixels(self) -> int: ...
         def __init__(self, *, tile_width_pixels: int, tile_height_pixels: int) -> None: ...
-
-    def __hash__(self) -> int: ...
 
 class ImageLoaderSettings:
     """Settings for loading an Image using an ImageLoader.

@@ -5,6 +5,7 @@ from typing import ClassVar, Literal
 
 from pybevy.assets import Asset
 from pybevy.assets import Handle as AssetHandle
+from pybevy.render import ShaderStage
 
 class ShaderImport:
     """
@@ -166,55 +167,6 @@ class ShaderRef:
         def __init__(self, value: str) -> None: ...
 
 
-class ShaderStage:
-    """
-    Stage of the programmable pipeline a GLSL source belongs to.
-
-    Passed to `Shader.from_glsl` to say how the source should be compiled.
-
-    Example:
-        ```python
-        from pybevy.shader import Shader, ShaderStage
-
-        shader = Shader.from_glsl(source, ShaderStage.Fragment, "custom_shader")
-        ```
-    """
-
-    def __copy__(self) -> ShaderStage: ...
-    def __deepcopy__(self, memo: dict[int, object]) -> ShaderStage: ...
-
-
-    Vertex: ClassVar[ShaderStage]
-    """A vertex shader, in a render pipeline."""
-
-    Task: ClassVar[ShaderStage]
-    """A task shader, in a mesh render pipeline."""
-
-    Mesh: ClassVar[ShaderStage]
-    """A mesh shader, in a mesh render pipeline."""
-
-    Fragment: ClassVar[ShaderStage]
-    """A fragment shader, in a render pipeline."""
-
-    Compute: ClassVar[ShaderStage]
-    """A compute pipeline shader."""
-
-    RayGeneration: ClassVar[ShaderStage]
-    """A ray generation shader, in a ray tracing pipeline."""
-
-    Miss: ClassVar[ShaderStage]
-    """A miss shader, in a ray tracing pipeline."""
-
-    AnyHit: ClassVar[ShaderStage]
-    """An any hit shader, in a ray tracing pipeline."""
-
-    ClosestHit: ClassVar[ShaderStage]
-    """A closest hit shader, in a ray tracing pipeline."""
-
-    def __eq__(self, other: object) -> builtins.bool: ...
-    def __ne__(self, other: object) -> builtins.bool: ...
-    def __hash__(self) -> builtins.int: ...
-
 class Source:
     """
     Shader source code format.
@@ -304,8 +256,6 @@ class Source:
         Raises:
             RuntimeError: If source is SPIR-V bytecode (cannot convert to string)
         """
-
-    def __hash__(self) -> int: ...
 
 class Shader(Asset):
     """
@@ -400,7 +350,8 @@ class Shader(Asset):
 
         Example:
             ```python
-            from pybevy.shader import Shader, ShaderStage
+            from pybevy.shader import Shader
+            from pybevy.render import ShaderStage
 
             shader = Shader.from_glsl('''
                 #version 450
@@ -513,7 +464,6 @@ __all__ = [
     "ShaderDefVal",
     "ShaderImport",
     "ShaderRef",
-    "ShaderStage",
     "Source",
     "ValidateShader",
 ]

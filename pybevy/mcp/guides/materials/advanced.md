@@ -262,7 +262,7 @@ foliage = materials.add(StandardMaterial(
 Controls whether the material uses forward or deferred rendering:
 
 ```python
-from pybevy.camera import DeferredPrepass, DepthPrepass
+from pybevy.core_pipeline import DeferredPrepass, DepthPrepass
 from pybevy.material import OpaqueRendererMethod
 
 # Every camera that renders a forced-deferred material needs a deferred phase.

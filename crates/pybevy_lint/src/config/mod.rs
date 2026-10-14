@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
@@ -519,9 +520,9 @@ pub struct TypeIgnores {
     #[serde(default)]
     pub intentional_not_in_constructor: Vec<String>,
 
-    /// Renamed items: Bevy name -> PyBevy name
-    /// Covers variant renames (None -> None_), method renames (with -> with_),
-    /// and field renames (global -> global_).
+    /// Renamed items: Bevy name -> PyBevy name.
+    /// Python keywords need no entry: `None` -> `None_`, `with` -> `with_` and
+    /// `global` -> `global_` are derived by [`BevyConfig::get_rename`].
     /// When a rename is configured, the item won't be reported as both missing and extra.
     #[serde(default)]
     pub renames: HashMap<String, String>,
@@ -868,19 +869,21 @@ impl BevyConfig {
             .unwrap_or(&[])
     }
 
-    /// Check if a Bevy name is renamed in PyBevy (returns the PyBevy name if so)
-    pub fn get_rename(&self, type_name: &str, bevy_name: &str) -> Option<&str> {
+    /// The PyBevy name for a renamed Bevy item: a configured rename, else the
+    /// trailing-underscore escape for a Python keyword (`None` -> `None_`).
+    pub fn get_rename(&self, type_name: &str, bevy_name: &str) -> Option<Cow<'_, str>> {
         self.type_ignores
             .get(type_name)
-            .and_then(|t| t.renames.get(bevy_name).map(|s| s.as_str()))
+            .and_then(|t| t.renames.get(bevy_name))
+            .map(|name| Cow::Borrowed(name.as_str()))
+            .or_else(|| keyword_escape(bevy_name).map(Cow::Owned))
     }
 
-    /// Check if a PyBevy name is the target of a rename (returns the Bevy name if so)
+    /// Whether a PyBevy name is the target of a configured rename.
     pub fn is_rename_target(&self, type_name: &str, pybevy_name: &str) -> bool {
         self.type_ignores
             .get(type_name)
-            .map(|t| t.renames.values().any(|v| v == pybevy_name))
-            .unwrap_or(false)
+            .is_some_and(|t| t.renames.values().any(|v| v == pybevy_name))
     }
 
     /// Check if a missing method is intentional
@@ -1021,4 +1024,29 @@ fn matches_pattern(pattern: &str, text: &str) -> bool {
         // exact match
         pattern == text
     }
+}
+
+const PYTHON_KEYWORDS: &[&str] = &[
+    "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue",
+    "def", "del", "elif", "else", "except", "finally", "for", "from", "global", "if", "import",
+    "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while",
+    "with", "yield",
+];
+
+/// Whether `name` is a Python hard keyword, which PyBevy cannot use as an attribute.
+pub fn is_python_keyword(name: &str) -> bool {
+    PYTHON_KEYWORDS.contains(&name)
+}
+
+/// The PEP 8 trailing-underscore spelling for a Python keyword, if `name` is one.
+pub fn keyword_escape(name: &str) -> Option<String> {
+    is_python_keyword(name).then(|| format!("{name}_"))
+}
+
+/// Whether `pybevy_name` escapes a Python keyword that `upstream_has` contains
+/// (`None_` for an upstream `None`).
+pub fn is_keyword_escape_of(pybevy_name: &str, upstream_has: impl Fn(&str) -> bool) -> bool {
+    pybevy_name
+        .strip_suffix('_')
+        .is_some_and(|base| is_python_keyword(base) && upstream_has(base))
 }

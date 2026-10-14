@@ -9,9 +9,7 @@ from pybevy.app import App, Plugin
 from pybevy.assets import Asset, Handle, RenderAssetUsages
 from pybevy.ecs import Batchable, Component, Entity
 from pybevy.math import Dir3, Quat, Vec2, Vec3
-from pybevy.pbr import StandardMaterial
 from pybevy.render import VertexFormat
-from pybevy.sprite import ColorMaterial
 from pybevy.transform import Transform
 
 class MeshPlugin(Plugin):
@@ -444,26 +442,6 @@ class Mesh3d(Component):
     def __init__(self, mesh: Handle[Mesh]) -> None: ...
     @property
     def handle(self) -> Handle[Mesh]: ...
-
-class MeshMaterial2d(Component):
-    """Material component for 2D meshes."""
-    def __init__(self, material: Handle[ColorMaterial]) -> None: ...
-    @property
-    def handle(self) -> Handle[ColorMaterial]: ...
-
-class MeshMaterial3d(Component):
-    """Material component for 3D meshes.
-
-    For ``@material`` types, use subscript notation to get the matching component::
-
-        MeshMaterial3d[HologramMaterial](handle)
-    """
-    def __class_getitem__(cls, key: type) -> type: ...
-    def __init__(self, material: Handle[StandardMaterial]) -> None: ...
-    @property
-    def handle(self) -> Handle[StandardMaterial]: ...
-    @handle.setter
-    def handle(self, handle: Handle[StandardMaterial]) -> None: ...
 
 class MeshTag(Component):
     """A component that stores an arbitrary index used to identify the mesh instance when rendering."""
