@@ -1,11 +1,10 @@
-use bevy::math::Vec2;
-use bevy::shape::Polygon;
+use bevy::{math::Vec2, shape::Polygon};
 use pybevy_core::{FromBorrowedStorage, ValueStorage, repr::ReprLiteral};
 use pyo3::{prelude::*, types::PyList};
 
 use crate::vec2::PyVec2;
 
-#[pyclass(name = "Polygon", module = "pybevy.math", eq, skip_from_py_object)]
+#[pyclass(name = "Polygon", module = "pybevy.shape", eq, skip_from_py_object)]
 #[derive(Clone, PartialEq)]
 pub struct PyPolygon {
     pub(crate) inner: Polygon,

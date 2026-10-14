@@ -1,5 +1,7 @@
-use bevy::curve::{Curve, cubic_splines::RationalCurve};
-use bevy::math::Vec3;
+use bevy::{
+    curve::{Curve, cubic_splines::RationalCurve},
+    math::Vec3,
+};
 use pyo3::prelude::*;
 
 use super::rational_segment3d::PyRationalSegment3d;
@@ -7,7 +9,7 @@ use crate::{interval::PyInterval, vec3::PyVec3};
 
 #[pyclass(
     name = "RationalCurve3d",
-    module = "pybevy.math",
+    module = "pybevy.curve",
     frozen,
     skip_from_py_object
 )]

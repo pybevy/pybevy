@@ -1,7 +1,5 @@
 """Core rendering pipeline plugin."""
 
-from typing import ClassVar
-
 from pybevy.app import App, Plugin
 from pybevy.ecs import Component
 
@@ -27,26 +25,6 @@ class CorePipelinePlugin(Plugin):
     def __init__(self) -> None:
         """Create a new CorePipelinePlugin."""
     def build(self, app: App) -> None: ...
-
-class Tonemapping(Component):
-    """Tonemapping algorithm for HDR to LDR conversion."""
-
-    def __init__(self) -> None: ...
-    def __hash__(self) -> int: ...
-
-    def is_enabled(self) -> bool:
-        """True unless this is Tonemapping.None_."""
-
-    None_: ClassVar[Tonemapping]
-    Linear: ClassVar[Tonemapping]
-    Reinhard: ClassVar[Tonemapping]
-    ReinhardLuminance: ClassVar[Tonemapping]
-    AcesFitted: ClassVar[Tonemapping]
-    AgX: ClassVar[Tonemapping]
-    SomewhatBoringDisplayTransform: ClassVar[Tonemapping]
-    TonyMcMapface: ClassVar[Tonemapping]
-    BlenderFilmic: ClassVar[Tonemapping]
-    KhronosPbrNeutral: ClassVar[Tonemapping]
 
 class DepthPrepass(Component):
     """If added to Camera3d, depth values are copied to a separate texture."""

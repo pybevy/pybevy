@@ -23,7 +23,7 @@ large meshes.
 
 ## Primitive Meshes
 
-Import primitives such as `Cuboid` and `Circle` from `pybevy.math`; import
+Import primitives such as `Cuboid` and `Circle` from `pybevy.shape`; import
 `Mesh`, `Meshable`, and mesh builders from `pybevy.mesh`.
 
 **Two patterns** for creating meshes:
@@ -87,7 +87,8 @@ Some builders have extra configuration:
 
 ```python
 from math import pi
-from pybevy.math import Capsule3d, Circle, CircularSector, Cone, Cylinder, Plane3d, Range, Sphere, Torus, Vec2, Vec3
+from pybevy.math import Range, Vec2, Vec3
+from pybevy.shape import Capsule3d, Circle, CircularSector, Cone, Cylinder, Plane3d, Sphere, Torus
 from pybevy.mesh import CapsuleUvProfile, CircularMeshUvMode
 
 # Sphere variants - .ico() and .uv() return Mesh directly (no .build())

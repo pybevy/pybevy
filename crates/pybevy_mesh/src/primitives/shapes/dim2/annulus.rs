@@ -21,7 +21,7 @@ fn annulus_closest_point(annulus: &Annulus, point: Vec2) -> Vec2 {
     }
 }
 
-#[pyclass(name = "Annulus", module = "pybevy.math", extends = PyMeshable, eq, skip_from_py_object)]
+#[pyclass(name = "Annulus", module = "pybevy.shape", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyAnnulus(pub(crate) Annulus);
 

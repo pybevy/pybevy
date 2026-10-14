@@ -1479,10 +1479,10 @@ class TextCursorStyle(Component):
     @staticmethod
     def batch(  # type: ignore[override]
         *,
+        selection_radius: np.typing.ArrayLike | None = None,
         color: np.typing.ArrayLike | None = None,
         selection_color: np.typing.ArrayLike | None = None,
         unfocused_selection_color: np.typing.ArrayLike | None = None,
-        selection_radius: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
 
     def __eq__(self, other: object) -> bool: ...

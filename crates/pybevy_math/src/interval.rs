@@ -11,7 +11,7 @@ use pyo3::{basic::CompareOp, exceptions::PyValueError, prelude::*};
 use crate::richcmp::comparison_result;
 
 #[pyvalue]
-#[pyclass(name = "Interval", module = "pybevy.math", from_py_object)]
+#[pyclass(name = "Interval", module = "pybevy.curve", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyInterval {
     pub(crate) storage: ValueStorage<Interval>,

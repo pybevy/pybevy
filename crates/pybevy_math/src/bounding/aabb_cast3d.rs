@@ -1,5 +1,7 @@
-use bevy::math::Dir3;
-use bevy::shape::{AabbCast3d, IntersectsVolume};
+use bevy::{
+    math::Dir3,
+    shape::{AabbCast3d, IntersectsVolume},
+};
 use pybevy_core::{
     FieldStorage, FromBorrowedStorage,
     repr::{ReprLiteral, float_repr, object_repr},
@@ -11,7 +13,7 @@ use super::{aabb3d::PyAabb3d, raycast::PyRayCast3d};
 use crate::{dir3::PyDir3, ray::PyRay3d, vec3a::extract_vec3a_from_any};
 
 #[pyfield]
-#[pyclass(name = "AabbCast3d", module = "pybevy.math", from_py_object)]
+#[pyclass(name = "AabbCast3d", module = "pybevy.shape", from_py_object)]
 #[derive(Debug)]
 pub struct PyAabbCast3d {
     storage: FieldStorage<AabbCast3d>,

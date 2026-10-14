@@ -1,5 +1,7 @@
-use bevy::math::{Isometry3d, Vec3, Vec3A};
-use bevy::shape::{BoundingSphere, BoundingVolume};
+use bevy::{
+    math::{Isometry3d, Vec3, Vec3A},
+    shape::{BoundingSphere, BoundingVolume},
+};
 use pybevy_core::{
     FromBorrowedStorage, ValueStorage,
     domain::{NON_NEGATIVE, check_for},
@@ -32,7 +34,7 @@ fn bounding_sphere_closest_point(sphere: &BoundingSphere, point: Vec3A) -> Vec3A
 }
 
 #[pyvalue]
-#[pyclass(name = "BoundingSphere", module = "pybevy.math", skip_from_py_object)]
+#[pyclass(name = "BoundingSphere", module = "pybevy.shape", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyBoundingSphere {
     storage: ValueStorage<BoundingSphere>,

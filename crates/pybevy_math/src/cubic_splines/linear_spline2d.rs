@@ -1,5 +1,7 @@
-use bevy::curve::cubic_splines::{CubicGenerator, CyclicCubicGenerator, LinearSpline};
-use bevy::math::Vec2;
+use bevy::{
+    curve::cubic_splines::{CubicGenerator, CyclicCubicGenerator, LinearSpline},
+    math::Vec2,
+};
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 use super::cubic_curve::PyCubicCurve2d;
@@ -7,7 +9,7 @@ use crate::vec2::PyVec2;
 
 #[pyclass(
     name = "LinearSpline2d",
-    module = "pybevy.math",
+    module = "pybevy.curve",
     frozen,
     skip_from_py_object
 )]

@@ -33,9 +33,10 @@ from pybevy.app import App, AppExit, DefaultPlugins, Startup, Update
 from pybevy.assets import Assets, Handle
 from pybevy.camera import Camera3d
 from pybevy.ecs import Commands, MessageWriter, Mut, Res, ResMut, View, With, system
-from pybevy.math import Cuboid, Vec3
+from pybevy.math import Vec3
 from pybevy.mesh import Mesh, Mesh3d
 from pybevy.pbr import MeshMaterial3d, StandardMaterial
+from pybevy.shape import Cuboid
 from pybevy.time import Time
 from pybevy.transform import Transform
 from pybevy.window import PresentMode, Window, WindowPlugin

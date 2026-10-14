@@ -148,6 +148,12 @@ pub mod prelude {
 }
 
 pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
+    add_math_module(parent)?;
+    add_shape_module(parent)?;
+    add_curve_module(parent)
+}
+
+fn add_math_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "math")?;
     m.add_class::<affine2::PyAffine2>()?;
     m.add_class::<mat2::PyMat2>()?;
@@ -168,10 +174,20 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<range::PyRange>()?;
     m.add_class::<rect::PyRect>()?;
     m.add_class::<irect::PyIRect>()?;
-    m.add_class::<interval::PyInterval>()?;
     m.add_class::<urect::PyURect>()?;
     m.add_class::<quat::PyQuat>()?;
     m.add_class::<quat::PyEulerRot>()?;
+    m.add_class::<isometry2d::PyIsometry2d>()?;
+    m.add_class::<isometry3d::PyIsometry3d>()?;
+    m.add_class::<rot2::PyRot2>()?;
+    m.add_class::<compass::PyCompassOctant>()?;
+    m.add_class::<compass::PyCompassQuadrant>()?;
+    m.add_class::<float_ord::PyFloatOrd>()?;
+    parent.add_submodule(&m)
+}
+
+fn add_shape_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
+    let m = PyModule::new(parent.py(), "shape")?;
     m.add_class::<bounding::PyAabb2d>()?;
     m.add_class::<bounding::PyAabb3d>()?;
     m.add_class::<bounding::PyAabbCast2d>()?;
@@ -180,17 +196,36 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<bounding::PyBoundingCircleCast>()?;
     m.add_class::<bounding::PyBoundingSphere>()?;
     m.add_class::<bounding::PyBoundingSphereCast>()?;
-    m.add_class::<isometry2d::PyIsometry2d>()?;
-    m.add_class::<isometry3d::PyIsometry3d>()?;
     m.add_class::<ray::PyRay2d>()?;
     m.add_class::<ray::PyRay3d>()?;
     m.add_class::<bounding::PyRayCast2d>()?;
     m.add_class::<bounding::PyRayCast3d>()?;
+    m.add_class::<torus_kind::PyTorusKind>()?;
+    m.add_class::<winding_order::PyWindingOrder>()?;
+    m.add_class::<primitives::PyHalfSpace>()?;
+    m.add_class::<primitives::half_spaces::PyHalfSpaces>()?;
+    m.add_class::<primitives::PyViewFrustum>()?;
+    m.add_class::<primitives::PyLine2d>()?;
+    m.add_class::<primitives::PyLine3d>()?;
+    m.add_class::<primitives::PyPlane2d>()?;
+    m.add_class::<primitives::PyArc2d>()?;
+    m.add_class::<primitives::PyInfinitePlane3d>()?;
+    m.add_class::<primitives::PyPolygon>()?;
+    parent.add_submodule(&m)
+}
+
+fn add_curve_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
+    let m = PyModule::new(parent.py(), "curve")?;
+    m.add_class::<interval::PyInterval>()?;
+    m.add_class::<easing::PyJumpAt>()?;
+    m.add_class::<easing::PyEaseFunction>()?;
     m.add_class::<cubic_splines::cubic_curve::PyCubicCurve2d>()?;
     m.add_class::<cubic_splines::cubic_curve3d::PyCubicCurve3d>()?;
     m.add_class::<cubic_splines::cubic_bezier::PyCubicBezier2d>()?;
     m.add_class::<cubic_splines::cubic_bezier3d::PyCubicBezier3d>()?;
+    m.add_class::<cubic_splines::cubic_cardinal_spline::PyCubicCardinalSpline2d>()?;
     m.add_class::<cubic_splines::cubic_cardinal_spline3d::PyCubicCardinalSpline3d>()?;
+    m.add_class::<cubic_splines::cubic_hermite::PyCubicHermite2d>()?;
     m.add_class::<cubic_splines::cubic_hermite3d::PyCubicHermite3d>()?;
     m.add_class::<cubic_splines::cubic_bspline2d::PyCubicBSpline2d>()?;
     m.add_class::<cubic_splines::cubic_bspline3d::PyCubicBSpline3d>()?;
@@ -204,25 +239,5 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<cubic_splines::PyCubicSegment3d>()?;
     m.add_class::<cubic_splines::PyRationalSegment2d>()?;
     m.add_class::<cubic_splines::PyRationalSegment3d>()?;
-    m.add_class::<cubic_splines::cubic_cardinal_spline::PyCubicCardinalSpline2d>()?;
-    m.add_class::<cubic_splines::cubic_hermite::PyCubicHermite2d>()?;
-    m.add_class::<rot2::PyRot2>()?;
-    m.add_class::<compass::PyCompassOctant>()?;
-    m.add_class::<compass::PyCompassQuadrant>()?;
-    m.add_class::<easing::PyJumpAt>()?;
-    m.add_class::<easing::PyEaseFunction>()?;
-    m.add_class::<float_ord::PyFloatOrd>()?;
-    m.add_class::<torus_kind::PyTorusKind>()?;
-    m.add_class::<winding_order::PyWindingOrder>()?;
-    // Primitives
-    m.add_class::<primitives::PyHalfSpace>()?;
-    m.add_class::<primitives::half_spaces::PyHalfSpaces>()?;
-    m.add_class::<primitives::PyViewFrustum>()?;
-    m.add_class::<primitives::PyLine2d>()?;
-    m.add_class::<primitives::PyLine3d>()?;
-    m.add_class::<primitives::PyPlane2d>()?;
-    m.add_class::<primitives::PyArc2d>()?;
-    m.add_class::<primitives::PyInfinitePlane3d>()?;
-    m.add_class::<primitives::PyPolygon>()?;
     parent.add_submodule(&m)
 }

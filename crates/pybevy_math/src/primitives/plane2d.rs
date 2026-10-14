@@ -1,5 +1,4 @@
-use bevy::math::Dir2;
-use bevy::shape::Plane2d;
+use bevy::{math::Dir2, shape::Plane2d};
 use pybevy_core::{
     FromBorrowedStorage, Omittable, ValueStorage, public_error::UNSUPPORTED_COMPARISON,
 };
@@ -12,7 +11,7 @@ use crate::{
 };
 
 #[pyvalue]
-#[pyclass(name = "Plane2d", module = "pybevy.math", skip_from_py_object)]
+#[pyclass(name = "Plane2d", module = "pybevy.shape", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyPlane2d {
     pub(crate) storage: ValueStorage<Plane2d>,

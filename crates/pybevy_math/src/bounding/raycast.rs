@@ -1,5 +1,7 @@
-use bevy::math::{Dir3, Vec2};
-use bevy::shape::{Aabb2d, Aabb3d, BoundingCircle, BoundingSphere, RayCast2d, RayCast3d};
+use bevy::{
+    math::{Dir3, Vec2},
+    shape::{Aabb2d, Aabb3d, BoundingCircle, BoundingSphere, RayCast2d, RayCast3d},
+};
 use pybevy_core::{
     FieldStorage, FromBorrowedStorage, ValueStorage,
     repr::{ReprLiteral, float_repr},
@@ -23,7 +25,7 @@ use crate::{
 };
 
 #[pyfield]
-#[pyclass(name = "RayCast2d", module = "pybevy.math", skip_from_py_object)]
+#[pyclass(name = "RayCast2d", module = "pybevy.shape", skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyRayCast2d {
     storage: FieldStorage<RayCast2d>,
@@ -106,7 +108,7 @@ impl PyRayCast2d {
 }
 
 #[pyfield]
-#[pyclass(name = "RayCast3d", module = "pybevy.math", skip_from_py_object)]
+#[pyclass(name = "RayCast3d", module = "pybevy.shape", skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyRayCast3d {
     storage: FieldStorage<RayCast3d>,

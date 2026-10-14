@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 #[pyenum(WindingOrder)]
 #[pyclass(
     name = "WindingOrder",
-    module = "pybevy.math",
+    module = "pybevy.shape",
     eq,
     from_py_object,
     frozen

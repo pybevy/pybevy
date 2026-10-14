@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 
 use crate::dir3::PyDir3;
 
-#[pyclass(name = "Line3d", module = "pybevy.math", eq, skip_from_py_object)]
+#[pyclass(name = "Line3d", module = "pybevy.shape", eq, skip_from_py_object)]
 #[derive(Clone, PartialEq)]
 pub struct PyLine3d {
     pub(crate) inner: Line3d,

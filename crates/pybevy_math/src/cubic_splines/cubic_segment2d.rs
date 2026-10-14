@@ -1,5 +1,7 @@
-use bevy::curve::{Curve, cubic_splines::CubicSegment};
-use bevy::math::Vec2;
+use bevy::{
+    curve::{Curve, cubic_splines::CubicSegment},
+    math::Vec2,
+};
 use pybevy_core::{
     FromBorrowedStorage, ValueStorage, public_error::UNSUPPORTED_COMPARISON, repr::ReprLiteral,
 };
@@ -9,7 +11,7 @@ use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 use crate::{interval::PyInterval, richcmp::comparison_result, vec2::PyVec2};
 
 #[pyvalue]
-#[pyclass(name = "CubicSegment2d", module = "pybevy.math", skip_from_py_object)]
+#[pyclass(name = "CubicSegment2d", module = "pybevy.curve", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyCubicSegment2d {
     storage: ValueStorage<CubicSegment<Vec2>>,

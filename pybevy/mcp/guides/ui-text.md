@@ -14,8 +14,7 @@ rendered base pass again. This example assumes the base camera also uses
 from copy import copy
 
 from pybevy.camera import Camera, Camera2d, ClearColorConfig
-from pybevy.core_pipeline import Tonemapping
-from pybevy.render import Msaa
+from pybevy.render import Msaa, Tonemapping
 from pybevy.camera import Hdr
 
 commands.spawn(

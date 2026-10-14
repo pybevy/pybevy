@@ -19,6 +19,7 @@ pub mod texture_format;
 pub mod texture_usages;
 pub mod texture_view_descriptor;
 pub mod texture_view_dimension;
+pub mod tonemapping;
 pub mod unit_markers;
 pub mod vertex_format;
 pub mod wgpu_error_handler;
@@ -38,6 +39,7 @@ pub mod prelude {
         texture_dimension::PyTextureDimension,
         texture_format::PyTextureFormat,
         texture_usages::PyTextureUsages,
+        tonemapping::PyTonemapping,
         vertex_format::PyVertexFormat,
     };
 }
@@ -73,5 +75,6 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<color_grading::PyColorGradingSection>()?;
     m.add_class::<color_grading::PyColorGradingGlobal>()?;
     m.add_class::<shader_buffer::PyShaderBuffer>()?;
+    m.add_class::<tonemapping::PyTonemapping>()?;
     parent.add_submodule(&m)
 }

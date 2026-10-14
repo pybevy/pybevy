@@ -1,5 +1,7 @@
-use bevy::curve::cubic_splines::{CubicGenerator, CubicHermite, CyclicCubicGenerator};
-use bevy::math::Vec3;
+use bevy::{
+    curve::cubic_splines::{CubicGenerator, CubicHermite, CyclicCubicGenerator},
+    math::Vec3,
+};
 use pybevy_core::public_error;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
@@ -8,7 +10,7 @@ use crate::vec3::PyVec3;
 
 #[pyclass(
     name = "CubicHermite3d",
-    module = "pybevy.math",
+    module = "pybevy.curve",
     frozen,
     skip_from_py_object
 )]

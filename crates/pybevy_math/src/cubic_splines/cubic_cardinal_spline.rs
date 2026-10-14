@@ -1,5 +1,7 @@
-use bevy::curve::cubic_splines::{CubicCardinalSpline, CubicGenerator, CyclicCubicGenerator};
-use bevy::math::Vec2;
+use bevy::{
+    curve::cubic_splines::{CubicCardinalSpline, CubicGenerator, CyclicCubicGenerator},
+    math::Vec2,
+};
 use pybevy_core::repr::float_repr;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
@@ -8,7 +10,7 @@ use crate::vec2::PyVec2;
 
 #[pyclass(
     name = "CubicCardinalSpline2d",
-    module = "pybevy.math",
+    module = "pybevy.curve",
     skip_from_py_object
 )]
 #[derive(Debug, Clone)]

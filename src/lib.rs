@@ -188,19 +188,19 @@ pub fn init_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     world_serialization::add_api(m)?;
     ecs::system_config::register_native_system_sets(m)?;
 
-    // Enrich "math" module with meshable primitives from pybevy_mesh.
+    // Enrich "shape" module with meshable primitives from pybevy_mesh.
     //
-    // In Bevy, types like Circle and CircularSector are defined in bevy_math and
+    // In Bevy, types like Circle and CircularSector are defined in bevy_shape and
     // made meshable via `impl Meshable for Circle` in bevy_mesh. Rust's trait
     // system allows this cross-crate impl without moving the type.
     //
     // PyO3 has no equivalent: `#[pyclass(extends = PyMeshable)]` must be on the
     // struct definition itself, so these wrappers must live in pybevy_mesh (where
-    // PyMeshable is defined). But users expect `from pybevy.math import Circle`,
-    // so we inject them into the already-created math module here.
+    // PyMeshable is defined). But users expect `from pybevy.shape import Circle`,
+    // so we inject them into the already-created shape module here.
     {
-        let math = m.getattr("math")?.cast_into::<PyModule>()?;
-        pybevy_mesh::add_math_primitives(&math)?;
+        let shape = m.getattr("shape")?.cast_into::<PyModule>()?;
+        pybevy_mesh::add_shape_primitives(&shape)?;
     }
 
     // Enrich "color" module with materialize monkey-patch

@@ -1,5 +1,7 @@
-use bevy::math::{Isometry2d, Mat2, Vec2};
-use bevy::shape::{Aabb2d, BoundingCircle, BoundingVolume, IntersectsVolume};
+use bevy::{
+    math::{Isometry2d, Mat2, Vec2},
+    shape::{Aabb2d, BoundingCircle, BoundingVolume, IntersectsVolume},
+};
 use pybevy_core::{
     FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
     domain::{NON_NEGATIVE, check_for},
@@ -21,7 +23,7 @@ use crate::{
     vec2::{PyVec2, extract_vec2_from_any},
 };
 
-#[pyclass(name = "Aabb2d", module = "pybevy.math", skip_from_py_object)]
+#[pyclass(name = "Aabb2d", module = "pybevy.shape", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyAabb2d {
     storage: ValueStorage<Aabb2d>,

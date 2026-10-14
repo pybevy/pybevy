@@ -1,5 +1,4 @@
-use bevy::math::Vec3;
-use bevy::shape::Polyline3d;
+use bevy::{math::Vec3, shape::Polyline3d};
 use pybevy_core::{
     domain::{IntegerInput, NON_NEGATIVE, check_for},
     public_error::polyline_mesh_too_short,
@@ -13,7 +12,7 @@ use crate::{
     primitives::{PyPolyline3dMeshBuilder, validation::vertex_budget},
 };
 
-#[pyclass(name = "Polyline3d", module = "pybevy.math", extends = PyMeshable, eq, skip_from_py_object)]
+#[pyclass(name = "Polyline3d", module = "pybevy.shape", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyPolyline3d(pub(crate) Polyline3d);
 

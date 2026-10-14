@@ -52,7 +52,7 @@ pub fn checked_arc_from_turns<O: PyClass>(
 }
 
 #[pyvalue(domains = [radius => [finite, non_negative], half_angle => [finite]])]
-#[pyclass(name = "Arc2d", module = "pybevy.math", eq, from_py_object)]
+#[pyclass(name = "Arc2d", module = "pybevy.shape", eq, from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyArc2d {
     pub(crate) storage: ValueStorage<Arc2d>,

@@ -857,3 +857,22 @@ class NoIndirectDrawing(Component):
     def __init__(self) -> None:
         """Create a NoIndirectDrawing marker component."""
 
+class Tonemapping(Component):
+    """Tonemapping algorithm for HDR to LDR conversion."""
+
+    def __init__(self) -> None: ...
+    def __hash__(self) -> int: ...
+
+    def is_enabled(self) -> bool:
+        """True unless this is Tonemapping.None_."""
+
+    None_: ClassVar[Tonemapping]
+    Linear: ClassVar[Tonemapping]
+    Reinhard: ClassVar[Tonemapping]
+    ReinhardLuminance: ClassVar[Tonemapping]
+    AcesFitted: ClassVar[Tonemapping]
+    AgX: ClassVar[Tonemapping]
+    SomewhatBoringDisplayTransform: ClassVar[Tonemapping]
+    TonyMcMapface: ClassVar[Tonemapping]
+    BlenderFilmic: ClassVar[Tonemapping]
+    KhronosPbrNeutral: ClassVar[Tonemapping]

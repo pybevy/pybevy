@@ -1,5 +1,7 @@
-use bevy::curve::cubic_splines::{CubicBezier, CubicGenerator};
-use bevy::math::Vec3;
+use bevy::{
+    curve::cubic_splines::{CubicBezier, CubicGenerator},
+    math::Vec3,
+};
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 use super::cubic_curve3d::PyCubicCurve3d;
@@ -7,7 +9,7 @@ use crate::vec3::PyVec3;
 
 #[pyclass(
     name = "CubicBezier3d",
-    module = "pybevy.math",
+    module = "pybevy.curve",
     frozen,
     skip_from_py_object
 )]

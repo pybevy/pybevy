@@ -5,7 +5,7 @@ use pyo3::{prelude::*, types::PyList};
 use super::half_space::PyHalfSpace;
 
 /// The six half-spaces of a `ViewFrustum`, assignable by index.
-#[pyclass(name = "_HalfSpaces", module = "pybevy.math", skip_from_py_object)]
+#[pyclass(name = "_HalfSpaces", module = "pybevy.shape", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyHalfSpaces {
     storage: FieldStorage<[HalfSpace; 6]>,

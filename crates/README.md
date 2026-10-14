@@ -33,18 +33,18 @@ PyBevy is split into modular feature crates.
 | [`pybevy_audio`](pybevy_audio/) | Audio sources, sinks, spatial audio |
 | [`pybevy_camera`](pybevy_camera/) | Camera2d/3d, projection, viewports, render targets, visibility |
 | [`pybevy_color`](pybevy_color/) | Color types (LinearRgba, Srgba, etc.) |
-| [`pybevy_core_pipeline`](pybevy_core_pipeline/) | Tonemapping, prepasses |
+| [`pybevy_core_pipeline`](pybevy_core_pipeline/) | Prepasses |
 | [`pybevy_gizmos`](pybevy_gizmos/) | Gizmos |
 | [`pybevy_gltf`](pybevy_gltf/) | GLTF loading |
 | [`pybevy_image`](pybevy_image/) | Image, TextureAtlas, TextureAtlasLayout |
 | [`pybevy_input`](pybevy_input/) | Keyboard, mouse, gamepad, touch input |
 | [`pybevy_light`](pybevy_light/) | Point/Directional/Spot lights, shadows, fog |
 | [`pybevy_material`](pybevy_material/) | Shared material types (AlphaMode, OpaqueRendererMethod) |
-| [`pybevy_math`](pybevy_math/) | Vec2/3/4, Quat, Mat3/4, primitives |
-| [`pybevy_mesh`](pybevy_mesh/) | Mesh, mesh builders, primitives with Meshable |
+| [`pybevy_math`](pybevy_math/) | Vec2/3/4, Quat, Mat3/4 (`pybevy.math`); shapes, bounding volumes, rays (`pybevy.shape`); curves, splines, easing (`pybevy.curve`) |
+| [`pybevy_mesh`](pybevy_mesh/) | Mesh, mesh builders, `pybevy.shape` primitives with Meshable |
 | [`pybevy_pbr`](pybevy_pbr/) | PBR materials, wireframe, fog, decals |
 | [`pybevy_post_process`](pybevy_post_process/) | Bloom, depth of field, motion blur, vignette, lens distortion |
-| [`pybevy_render`](pybevy_render/) | Textures, formats, color grading, MSAA, readback, shader buffers |
+| [`pybevy_render`](pybevy_render/) | Textures, formats, color grading, tonemapping, MSAA, readback, shader buffers |
 | [`pybevy_shader`](pybevy_shader/) | Shader type wrappers (Shader, ShaderRef, ShaderImport, etc.) |
 | [`pybevy_shader_types`](pybevy_shader_types/) | Shared ShaderMaterial types (PyO3-free, for plugin/WASM) |
 | [`pybevy_sprite`](pybevy_sprite/) | Sprite, SpriteSheet |

@@ -1,5 +1,7 @@
-use bevy::math::{Isometry3d, Mat3, Vec3, Vec3A};
-use bevy::shape::{Aabb3d, BoundingSphere, BoundingVolume, IntersectsVolume};
+use bevy::{
+    math::{Isometry3d, Mat3, Vec3, Vec3A},
+    shape::{Aabb3d, BoundingSphere, BoundingVolume, IntersectsVolume},
+};
 use pybevy_core::{
     FromBorrowedStorage, ValueStorage,
     domain::{NON_NEGATIVE, check_for},
@@ -24,7 +26,7 @@ use crate::{
 };
 
 #[pyvalue]
-#[pyclass(name = "Aabb3d", module = "pybevy.math", skip_from_py_object)]
+#[pyclass(name = "Aabb3d", module = "pybevy.shape", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyAabb3d {
     storage: ValueStorage<Aabb3d>,

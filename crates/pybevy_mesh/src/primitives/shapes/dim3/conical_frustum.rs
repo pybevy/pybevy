@@ -12,7 +12,7 @@ use crate::{
     primitives::{PyCircle, PyConicalFrustumMeshBuilder},
 };
 
-#[pyclass(name = "ConicalFrustum", module = "pybevy.math", extends = PyMeshable, eq, skip_from_py_object)]
+#[pyclass(name = "ConicalFrustum", module = "pybevy.shape", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyConicalFrustum(pub(crate) ConicalFrustum);
 

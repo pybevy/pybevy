@@ -5,7 +5,8 @@ import math
 import numpy as np
 from pytest_benchmark.fixture import BenchmarkFixture
 
-from pybevy.math import Cuboid, Quat, Vec3
+from pybevy.math import Quat, Vec3
+from pybevy.shape import Cuboid
 from pybevy.transform import Transform
 
 

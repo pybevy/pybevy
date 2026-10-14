@@ -14,7 +14,7 @@ use pyo3::prelude::*;
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyRhombusMeshBuilder};
 
 #[pyvalue(domains = [half_diagonals => [finite, non_negative]])]
-#[pyclass(name = "Rhombus", module = "pybevy.math", extends = PyMeshable, eq, skip_from_py_object)]
+#[pyclass(name = "Rhombus", module = "pybevy.shape", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyRhombus {
     pub(crate) storage: ValueStorage<Rhombus>,

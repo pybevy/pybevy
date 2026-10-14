@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 use crate::interval::PyInterval;
 
 #[pyenum(JumpAt)]
-#[pyclass(name = "JumpAt", module = "pybevy.math", eq, from_py_object, frozen)]
+#[pyclass(name = "JumpAt", module = "pybevy.curve", eq, from_py_object, frozen)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyJumpAt {
     Start,
@@ -18,7 +18,7 @@ pub enum PyJumpAt {
 #[pyenum(EaseFunction, empty_tuple, unit_parens, non_exhaustive)]
 #[pyclass(
     name = "EaseFunction",
-    module = "pybevy.math",
+    module = "pybevy.curve",
     eq,
     frozen,
     from_py_object

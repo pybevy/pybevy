@@ -145,6 +145,8 @@ ecs = "bevy_ecs"
 app = "bevy_app"
 time = "bevy_time"
 math = "bevy_math"
+shape = "bevy_shape"
+curve = "bevy_curve"
 render = "bevy_render"
 pbr = "bevy_pbr"
 post_process = "bevy_post_process"
@@ -871,95 +873,95 @@ types = [
     "world_serialization::DynamicWorldSerializer",
     "world_serialization::WorldInstanceSpawnError",
 
-    # bevy_math - curve/sampling types not used in examples
-    "math::AabbCast3d",
+    # bevy_math, bevy_shape, bevy_curve - curve/sampling types not used in examples
+    "shape::AabbCast3d",
     "math::Affine3",
     "math::AspectRatio",
-    "math::BackInCurve",
-    "math::BackInOutCurve",
-    "math::BackOutCurve",
-    "math::BounceInCurve",
-    "math::BounceInOutCurve",
-    "math::BounceOutCurve",
-    "math::BoundaryOf",
-    "math::BoundingSphereCast",
-    "math::ChainCurve",
-    "math::ChainError",
-    "math::ChunkedUnevenCore",
-    "math::ChunkedUnevenCoreError",
-    "math::CircularInCurve",
-    "math::CircularInOutCurve",
-    "math::CircularOutCurve",
-    "math::ConstantCurve",
-    "math::ContinuationCurve",
-    "math::ConvexPolygon",
-    "math::ConvexPolygonError",
-    "math::CubicBezierError",
-    "math::CubicInCurve",
-    "math::CubicInOutCurve",
-    "math::CubicNurbsError",
-    "math::CubicOutCurve",
-    "math::CurveReparamCurve",
+    "curve::BackInCurve",
+    "curve::BackInOutCurve",
+    "curve::BackOutCurve",
+    "curve::BounceInCurve",
+    "curve::BounceInOutCurve",
+    "curve::BounceOutCurve",
+    "shape::BoundaryOf",
+    "shape::BoundingSphereCast",
+    "curve::ChainCurve",
+    "curve::ChainError",
+    "curve::ChunkedUnevenCore",
+    "curve::ChunkedUnevenCoreError",
+    "curve::CircularInCurve",
+    "curve::CircularInOutCurve",
+    "curve::CircularOutCurve",
+    "curve::ConstantCurve",
+    "curve::ContinuationCurve",
+    "shape::ConvexPolygon",
+    "shape::ConvexPolygonError",
+    "curve::CubicBezierError",
+    "curve::CubicInCurve",
+    "curve::CubicInOutCurve",
+    "curve::CubicNurbsError",
+    "curve::CubicOutCurve",
+    "curve::CurveReparamCurve",
     "math::Dir3A",
     "math::Dir4",
-    "math::ElasticCurve",
-    "math::ElasticInCurve",
-    "math::ElasticInOutCurve",
-    "math::ElasticOutCurve",
-    "math::EvenCore",
-    "math::EvenCoreError",
-    "math::ExponentialInCurve",
-    "math::ExponentialInOutCurve",
-    "math::ExponentialOutCurve",
-    "math::ForeverCurve",
-    "math::GraphCurve",
-    "math::InsufficientDataError",
-    "math::InteriorOf",
-    "math::InterpolationDatum",
+    "curve::ElasticCurve",
+    "curve::ElasticInCurve",
+    "curve::ElasticInOutCurve",
+    "curve::ElasticOutCurve",
+    "curve::EvenCore",
+    "curve::EvenCoreError",
+    "curve::ExponentialInCurve",
+    "curve::ExponentialInOutCurve",
+    "curve::ExponentialOutCurve",
+    "curve::ForeverCurve",
+    "curve::GraphCurve",
+    "curve::InsufficientDataError",
+    "shape::InteriorOf",
+    "curve::InterpolationDatum",
     "math::InvalidDirectionError",
-    "math::InvalidIntervalError",
-    "math::LinearCurve",
-    "math::LinearReparamCurve",
-    "math::LinearReparamError",
-    "math::MapCurve",
-    "math::PingPongCurve",
-    "math::PingPongError",
-    "math::QuadraticInCurve",
-    "math::QuadraticInOutCurve",
-    "math::QuadraticOutCurve",
-    "math::QuarticInCurve",
-    "math::QuarticInOutCurve",
-    "math::QuarticOutCurve",
-    "math::QuinticInCurve",
-    "math::QuinticInOutCurve",
-    "math::QuinticOutCurve",
-    "math::ReparamCurve",
-    "math::RepeatCurve",
-    "math::RepeatError",
-    "math::ResamplingError",
-    "math::ReverseCurve",
-    "math::ReverseError",
-    "math::SampleAutoCurve",
-    "math::SampleCurve",
-    "math::SampleDerivativeWrapper",
-    "math::SampleTwoDerivativesWrapper",
-    "math::SineInCurve",
-    "math::SineInOutCurve",
-    "math::SineOutCurve",
-    "math::SmoothStepCurve",
-    "math::SmoothStepInCurve",
-    "math::SmoothStepOutCurve",
-    "math::SmootherStepCurve",
-    "math::SmootherStepInCurve",
-    "math::SmootherStepOutCurve",
-    "math::SpacedPointsError",
-    "math::StepsCurve",
-    "math::UnevenCore",
-    "math::UnevenCoreError",
-    "math::UnevenSampleCurve",
+    "curve::InvalidIntervalError",
+    "curve::LinearCurve",
+    "curve::LinearReparamCurve",
+    "curve::LinearReparamError",
+    "curve::MapCurve",
+    "curve::PingPongCurve",
+    "curve::PingPongError",
+    "curve::QuadraticInCurve",
+    "curve::QuadraticInOutCurve",
+    "curve::QuadraticOutCurve",
+    "curve::QuarticInCurve",
+    "curve::QuarticInOutCurve",
+    "curve::QuarticOutCurve",
+    "curve::QuinticInCurve",
+    "curve::QuinticInOutCurve",
+    "curve::QuinticOutCurve",
+    "curve::ReparamCurve",
+    "curve::RepeatCurve",
+    "curve::RepeatError",
+    "curve::ResamplingError",
+    "curve::ReverseCurve",
+    "curve::ReverseError",
+    "curve::SampleAutoCurve",
+    "curve::SampleCurve",
+    "curve::SampleDerivativeWrapper",
+    "curve::SampleTwoDerivativesWrapper",
+    "curve::SineInCurve",
+    "curve::SineInOutCurve",
+    "curve::SineOutCurve",
+    "curve::SmoothStepCurve",
+    "curve::SmoothStepInCurve",
+    "curve::SmoothStepOutCurve",
+    "curve::SmootherStepCurve",
+    "curve::SmootherStepInCurve",
+    "curve::SmootherStepOutCurve",
+    "curve::SpacedPointsError",
+    "curve::StepsCurve",
+    "curve::UnevenCore",
+    "curve::UnevenCoreError",
+    "curve::UnevenSampleCurve",
     "math::WithDerivative",
     "math::WithTwoDerivatives",
-    "math::ZipCurve",
+    "curve::ZipCurve",
 
     # bevy_window - internal window types not used in examples
     "window::ClosingWindow",
@@ -1174,28 +1176,28 @@ reason = "Bevy 0.19.1 bevy_mesh::MeshVertexAttribute::new defines the establishe
 function = "new"
 reason = "Bevy 0.19.1 bevy_mesh::prelude::MorphWeights::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PyCone"]
+[bevy.constructor_functions."pybevy.shape.PyCone"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::primitives::Cone::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PySphere"]
+[bevy.constructor_functions."pybevy.shape.PySphere"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::primitives::Sphere::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PyCapsule3d"]
+[bevy.constructor_functions."pybevy.shape.PyCapsule3d"]
 function = "new"
 field_inputs = ["half_length"]
 reason = "Bevy 0.19.1 bevy_math::primitives::Capsule3d::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PyPlane3d"]
+[bevy.constructor_functions."pybevy.shape.PyPlane3d"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::primitives::Plane3d::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PyCircle"]
+[bevy.constructor_functions."pybevy.shape.PyCircle"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::primitives::Circle::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PyRegularPolygon"]
+[bevy.constructor_functions."pybevy.shape.PyRegularPolygon"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::primitives::RegularPolygon::new defines the established Python constructor inputs"
 
@@ -1333,51 +1335,51 @@ reason = "Bevy 0.19.1 bevy_audio::Pitch::new defines the established Python cons
 function = "new"
 reason = "Bevy 0.19.1 bevy_audio::SpatialScale::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PyCubicNurbs3d"]
+[bevy.constructor_functions."pybevy.curve.PyCubicNurbs3d"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::cubic_splines::CubicNurbs::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PyCubicCardinalSpline2d"]
+[bevy.constructor_functions."pybevy.curve.PyCubicCardinalSpline2d"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::cubic_splines::CubicCardinalSpline::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PyCubicHermite3d"]
+[bevy.constructor_functions."pybevy.curve.PyCubicHermite3d"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::cubic_splines::CubicHermite::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PyCubicCardinalSpline3d"]
+[bevy.constructor_functions."pybevy.curve.PyCubicCardinalSpline3d"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::cubic_splines::CubicCardinalSpline::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PyCubicHermite2d"]
+[bevy.constructor_functions."pybevy.curve.PyCubicHermite2d"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::cubic_splines::CubicHermite::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PyCubicBSpline3d"]
+[bevy.constructor_functions."pybevy.curve.PyCubicBSpline3d"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::cubic_splines::CubicBSpline::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PyCubicBSpline2d"]
+[bevy.constructor_functions."pybevy.curve.PyCubicBSpline2d"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::cubic_splines::CubicBSpline::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PyCubicBezier2d"]
+[bevy.constructor_functions."pybevy.curve.PyCubicBezier2d"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::cubic_splines::CubicBezier::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PyLinearSpline3d"]
+[bevy.constructor_functions."pybevy.curve.PyLinearSpline3d"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::cubic_splines::LinearSpline::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PyCubicNurbs2d"]
+[bevy.constructor_functions."pybevy.curve.PyCubicNurbs2d"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::cubic_splines::CubicNurbs::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PyLinearSpline2d"]
+[bevy.constructor_functions."pybevy.curve.PyLinearSpline2d"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::cubic_splines::LinearSpline::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PyCubicBezier3d"]
+[bevy.constructor_functions."pybevy.curve.PyCubicBezier3d"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::cubic_splines::CubicBezier::new defines the established Python constructor inputs"
 
@@ -1397,43 +1399,43 @@ reason = "glam 0.32.1 glam::IVec2::new defines the established Python constructo
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::Isometry3d::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PyAabb3d"]
+[bevy.constructor_functions."pybevy.shape.PyAabb3d"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::bounding::Aabb3d::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PyBoundingCircle"]
+[bevy.constructor_functions."pybevy.shape.PyBoundingCircle"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::bounding::BoundingCircle::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PyAabbCast2d"]
+[bevy.constructor_functions."pybevy.shape.PyAabbCast2d"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::bounding::AabbCast2d::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PyBoundingSphere"]
+[bevy.constructor_functions."pybevy.shape.PyBoundingSphere"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::bounding::BoundingSphere::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PyRayCast2d"]
+[bevy.constructor_functions."pybevy.shape.PyRayCast2d"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::bounding::RayCast2d::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PyRayCast3d"]
+[bevy.constructor_functions."pybevy.shape.PyRayCast3d"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::bounding::RayCast3d::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PyBoundingCircleCast"]
+[bevy.constructor_functions."pybevy.shape.PyBoundingCircleCast"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::bounding::BoundingCircleCast::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PyAabbCast3d"]
+[bevy.constructor_functions."pybevy.shape.PyAabbCast3d"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::bounding::AabbCast3d::new defines the Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PyBoundingSphereCast"]
+[bevy.constructor_functions."pybevy.shape.PyBoundingSphereCast"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::bounding::BoundingSphereCast::new defines the Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PyAabb2d"]
+[bevy.constructor_functions."pybevy.shape.PyAabb2d"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::bounding::Aabb2d::new defines the established Python constructor inputs"
 
@@ -1457,31 +1459,31 @@ reason = "Bevy 0.19.1 bevy_math::Rect::new defines the established Python constr
 function = "new"
 reason = "glam 0.32.1 glam::Vec3A::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PyRay2d"]
+[bevy.constructor_functions."pybevy.shape.PyRay2d"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::Ray2d::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PyRay3d"]
+[bevy.constructor_functions."pybevy.shape.PyRay3d"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::Ray3d::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PyInfinitePlane3d"]
+[bevy.constructor_functions."pybevy.shape.PyInfinitePlane3d"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::primitives::InfinitePlane3d::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PyArc2d"]
+[bevy.constructor_functions."pybevy.shape.PyArc2d"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::primitives::Arc2d::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PyHalfSpace"]
+[bevy.constructor_functions."pybevy.shape.PyHalfSpace"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::primitives::HalfSpace::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PyPlane2d"]
+[bevy.constructor_functions."pybevy.shape.PyPlane2d"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::primitives::Plane2d::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PyPolygon"]
+[bevy.constructor_functions."pybevy.shape.PyPolygon"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::primitives::Polygon::new defines the established Python constructor inputs"
 
@@ -1489,7 +1491,7 @@ reason = "Bevy 0.19.1 bevy_math::primitives::Polygon::new defines the establishe
 function = "new"
 reason = "glam 0.32.1 glam::Vec2::new defines the established Python constructor inputs"
 
-[bevy.constructor_functions."pybevy.math.PyInterval"]
+[bevy.constructor_functions."pybevy.curve.PyInterval"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::curve::Interval::new defines the established Python constructor inputs"
 
@@ -1581,16 +1583,16 @@ reason = "Bevy 0.19.1 bevy_mesh::Mesh::new maps primitive_topology and asset_usa
 "pybevy.light.PyVolumetricFog" = "Bevy 0.19.1 bevy_light::VolumetricFog fields define the established Python constructor"
 "pybevy.math.PyAffine2" = "glam 0.32.1 Affine2 fields define the Python constructor; Default is IDENTITY"
 "pybevy.math.PyAffine3A" = "Bevy 0.19.1 glam::Affine3A fields define the established Python constructor"
-"pybevy.math.PyCubicSegment2d" = "Bevy 0.19.1 bevy_math::cubic_splines::CubicSegment fields define the Python constructor"
-"pybevy.math.PyCubicSegment3d" = "Bevy 0.19.1 bevy_math::cubic_splines::CubicSegment fields define the Python constructor"
+"pybevy.curve.PyCubicSegment2d" = "Bevy 0.19.1 bevy_math::cubic_splines::CubicSegment fields define the Python constructor"
+"pybevy.curve.PyCubicSegment3d" = "Bevy 0.19.1 bevy_math::cubic_splines::CubicSegment fields define the Python constructor"
 "pybevy.math.PyMat3" = "glam 0.32.1 Mat3 fields define the Python constructor; Default is IDENTITY"
 "pybevy.math.PyMat3A" = "glam 0.32.1 Mat3A fields define the Python constructor; Default is IDENTITY"
 "pybevy.math.PyMat4" = "glam 0.32.1 Mat4 fields define the Python constructor; Default is IDENTITY"
-"pybevy.math.PyRationalSegment2d" = "Bevy 0.19.1 bevy_math::cubic_splines::RationalSegment fields define the Python constructor"
-"pybevy.math.PyRationalSegment3d" = "Bevy 0.19.1 bevy_math::cubic_splines::RationalSegment fields define the Python constructor"
-"pybevy.math.PyLine2d" = "Bevy 0.19.1 bevy_math::primitives::Line2d fields define the established Python constructor"
-"pybevy.math.PyLine3d" = "Bevy 0.19.1 bevy_math::primitives::Line3d fields define the established Python constructor"
-"pybevy.math.PyEllipse" = "Bevy 0.19.1 bevy_math::primitives::Ellipse fields define the established Python constructor"
+"pybevy.curve.PyRationalSegment2d" = "Bevy 0.19.1 bevy_math::cubic_splines::RationalSegment fields define the Python constructor"
+"pybevy.curve.PyRationalSegment3d" = "Bevy 0.19.1 bevy_math::cubic_splines::RationalSegment fields define the Python constructor"
+"pybevy.shape.PyLine2d" = "Bevy 0.19.1 bevy_math::primitives::Line2d fields define the established Python constructor"
+"pybevy.shape.PyLine3d" = "Bevy 0.19.1 bevy_math::primitives::Line3d fields define the established Python constructor"
+"pybevy.shape.PyEllipse" = "Bevy 0.19.1 bevy_math::primitives::Ellipse fields define the established Python constructor"
 "pybevy.mesh.PySkinnedMesh" = "Bevy 0.19.1 bevy_mesh::skinning::SkinnedMesh fields define the established Python constructor"
 "pybevy.pbr.PyAtmosphereSettings" = "Bevy 0.19.1 bevy_pbr::AtmosphereSettings fields define the established Python constructor"
 "pybevy.pbr.PyContactShadows" = "Bevy 0.19.1 bevy_pbr::ContactShadows fields define the established Python constructor"
@@ -1643,68 +1645,68 @@ reason = "Bevy 0.19.1 bevy_mesh::Mesh::new maps primitive_topology and asset_usa
 "pybevy.window.PyWindowResized" = "Bevy 0.19.1 bevy_window::WindowResized fields define the established Python constructor"
 "pybevy.winit.PyWinitSettings" = "Bevy 0.19.1 bevy_winit::WinitSettings fields define the established Python constructor"
 
-[bevy.constructor_functions."pybevy.math.PyTorus"]
+[bevy.constructor_functions."pybevy.shape.PyTorus"]
 function = "new"
 field_inputs = ["minor_radius", "major_radius"]
 reason = "Bevy 0.19.1 bevy_math/src/primitives/dim3.rs:1162; native inner/outer radii with competing minor/major field inputs"
 
-[bevy.constructor_functions."pybevy.math.PyCapsule2d"]
+[bevy.constructor_functions."pybevy.shape.PyCapsule2d"]
 function = "new"
 field_inputs = ["half_length"]
 reason = "Bevy 0.19.1 bevy_math/src/primitives/dim2.rs:2213; native radius/length with a half_length field alternative; radius remains independent"
 
-[bevy.constructor_functions."pybevy.math.PyAnnulus"]
+[bevy.constructor_functions."pybevy.shape.PyAnnulus"]
 function = "new"
 field_inputs = ["inner_circle", "outer_circle"]
 reason = "Bevy 0.19.1 bevy_math/src/primitives/dim2.rs:985; native radii with independently selectable inner/outer circle fields"
 
-[bevy.constructor_functions."pybevy.math.PyCuboid"]
+[bevy.constructor_functions."pybevy.shape.PyCuboid"]
 function = "new"
 field_inputs = ["half_size"]
 reason = "Bevy 0.19.1 bevy_math/src/primitives/dim3.rs:710; native full lengths with a competing half_size field input"
 
-[bevy.constructor_functions."pybevy.math.PyCylinder"]
+[bevy.constructor_functions."pybevy.shape.PyCylinder"]
 function = "new"
 field_inputs = ["half_height"]
 reason = "Bevy 0.19.1 bevy_math/src/primitives/dim3.rs:806; native radius/height with a half_height alternative; radius remains independent"
 
-[bevy.constructor_functions."pybevy.math.PyRectangle"]
+[bevy.constructor_functions."pybevy.shape.PyRectangle"]
 function = "new"
 field_inputs = ["half_size"]
 reason = "Bevy 0.19.1 bevy_math/src/primitives/dim2.rs:1828; native width/height with a competing half_size field input"
 
-[bevy.constructor_functions."pybevy.math.PyRhombus"]
+[bevy.constructor_functions."pybevy.shape.PyRhombus"]
 function = "new"
 field_inputs = ["half_diagonals"]
 reason = "Bevy 0.19.1 bevy_math/src/primitives/dim2.rs:1082; native full diagonals with a competing half_diagonals field input"
 
-[bevy.constructor_functions."pybevy.math.PySegment2d"]
+[bevy.constructor_functions."pybevy.shape.PySegment2d"]
 function = "new"
 field_inputs = ["vertices"]
 reason = "Bevy 0.19.1 bevy_math/src/primitives/dim2.rs:1280; native point1/point2 with a competing vertices field input"
 
-[bevy.constructor_functions."pybevy.math.PyTriangle2d"]
+[bevy.constructor_functions."pybevy.shape.PyTriangle2d"]
 function = "new"
 field_inputs = ["vertices"]
 reason = "Bevy 0.19.1 bevy_math/src/primitives/dim2.rs:1653; native a/b/c with a competing vertices field input"
 
-[bevy.constructor_functions."pybevy.math.PyTriangle3d"]
+[bevy.constructor_functions."pybevy.shape.PyTriangle3d"]
 function = "new"
 field_inputs = ["vertices"]
 reason = "Bevy 0.19.1 bevy_math/src/primitives/dim3.rs:1266; native a/b/c with a competing vertices field input"
 
-[bevy.constructor_functions."pybevy.math.PyTetrahedron"]
+[bevy.constructor_functions."pybevy.shape.PyTetrahedron"]
 function = "new"
 field_inputs = ["vertices"]
 reason = "Bevy 0.19.1 bevy_math/src/primitives/dim3.rs:1465; native a/b/c/d with a competing vertices field input"
 
-[bevy.constructor_functions."pybevy.math.PyCircularSector"]
+[bevy.constructor_functions."pybevy.shape.PyCircularSector"]
 function = "new"
 parameter_renames = { angle = "half_angle" }
 field_inputs = ["arc"]
 reason = "Bevy 0.19.1 bevy_math/src/primitives/dim2.rs:326; preserve the established half_angle spelling for native angle, with a competing arc field input"
 
-[bevy.constructor_functions."pybevy.math.PyCircularSegment"]
+[bevy.constructor_functions."pybevy.shape.PyCircularSegment"]
 function = "new"
 field_inputs = ["arc"]
 reason = "Bevy 0.19.1 bevy_math/src/primitives/dim2.rs:474; native radius/half_angle with a competing arc field input"
@@ -3548,7 +3550,7 @@ path = "text.FontAtlasSet.items"
 code = "W040"
 reason = "Unit-only Bevy enum component: PyO3 enums cannot extend PyComponent, so the variants are compact class attributes of a pywrap struct (the reviewed Visibility/Interaction shape) rather than a #[pyclass] enum"
 paths = [
-    "core_pipeline.Tonemapping",
+    "render.Tonemapping",
     "pbr.WireframeTopology",
     "render.Msaa",
 ]
