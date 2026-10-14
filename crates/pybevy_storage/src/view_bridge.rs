@@ -68,6 +68,21 @@ impl FieldType {
             FieldType::Vec2 | FieldType::Vec3 | FieldType::Vec4 => "f4",
         }
     }
+
+    /// NumPy dtype name for a scalar field type, or `None` for vector types.
+    pub const fn numpy_dtype_name(self) -> Option<&'static str> {
+        match self {
+            FieldType::F32 => Some("float32"),
+            FieldType::F64 => Some("float64"),
+            FieldType::I32 => Some("int32"),
+            FieldType::I64 => Some("int64"),
+            FieldType::U8 => Some("uint8"),
+            FieldType::U32 => Some("uint32"),
+            FieldType::U64 => Some("uint64"),
+            FieldType::Bool => Some("bool"),
+            FieldType::Vec2 | FieldType::Vec3 | FieldType::Vec4 => None,
+        }
+    }
 }
 
 /// Field metadata for View API access.

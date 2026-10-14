@@ -77,8 +77,12 @@ def generate_json_schema(cls: type) -> dict[str, Any]:
 
     # Get dataclass field defaults if available
     defaults: dict[str, Any] = {}
-    if dataclasses.is_dataclass(cls):
-        for field in dataclasses.fields(cls):
+    data_fields = dataclasses.fields(cls) if dataclasses.is_dataclass(cls) else None
+    instance_fields = (
+        {field.name for field in data_fields} if data_fields is not None else None
+    )
+    if data_fields is not None:
+        for field in data_fields:
             if field.default is not dataclasses.MISSING:
                 defaults[field.name] = field.default
             elif field.default_factory is not dataclasses.MISSING:
@@ -86,13 +90,15 @@ def generate_json_schema(cls: type) -> dict[str, Any]:
 
     # Collect field metadata (descriptions) from dataclass fields
     field_meta: dict[str, dict[str, Any]] = {}
-    if dataclasses.is_dataclass(cls):
-        for f in dataclasses.fields(cls):
+    if data_fields is not None:
+        for f in data_fields:
             if f.metadata:
                 field_meta[f.name] = dict(f.metadata)
 
     for name, type_hint in hints.items():
-        if name.startswith("_"):
+        if name.startswith("_") or (
+            instance_fields is not None and name not in instance_fields
+        ):
             continue
 
         prop = _python_type_to_json_schema(type_hint)

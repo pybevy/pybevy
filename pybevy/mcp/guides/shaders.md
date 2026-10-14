@@ -446,6 +446,12 @@ def animate_materials(
 
 `materials.get_mut()` returns a typed wrapper with property accessors.
 Each property set triggers a Rust FFI call to write directly to the GPU buffer.
+`Vec2`, `Vec3`, `Vec4`, and `LinearRgba` fields are live views of the packed
+uniform, so `mat.color.alpha = 0.25` writes through a `get_mut()` material.
+Through `get()` or iteration they are read-only, and every view expires with
+its system. On a material not yet added to `Assets`, or one returned by
+`remove()`, they are read-only snapshots; assign the whole field instead, for
+example `mat.color = LinearRgba(1.0, 0.0, 0.0, 0.25)`.
 
 ## Binding Layout
 

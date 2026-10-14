@@ -1,7 +1,10 @@
 pub mod asset;
 pub(crate) mod asset_reference;
 mod custom_wrapper;
+mod dataclass_fields;
+mod enum_names;
 pub mod execute;
 pub mod mutate;
+mod name_resolution;
 pub mod scene;
 mod state_resource;

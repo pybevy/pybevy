@@ -219,6 +219,19 @@ enum VariantKind<'a> {
     },
 }
 
+pub(crate) fn variant_aliases_method(spec: &EnumSpec<'_>) -> proc_macro2::TokenStream {
+    let aliases = spec.variant_aliases();
+    let pairs = aliases
+        .iter()
+        .map(|(native, python)| quote! { (#native, #python) });
+    quote! {
+        #[classattr]
+        fn __pybevy_variant_aliases__() -> Vec<(&'static str, &'static str)> {
+            vec![#(#pairs),*]
+        }
+    }
+}
+
 pub fn pyenum(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as BevyEnumArgs);
     let mut input = parse_macro_input!(item as Item);
@@ -515,10 +528,13 @@ pub fn pyenum(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
     });
+    let variant_aliases_method = variant_aliases_method(&spec);
     let pymethods_block = quote! {
         #[pymethods]
         impl #py_type {
             #repr_method
+
+            #variant_aliases_method
 
             pub fn __copy__(&self) -> Self {
                 self.clone()

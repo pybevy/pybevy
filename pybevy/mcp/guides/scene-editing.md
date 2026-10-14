@@ -86,6 +86,11 @@ For a class defined inside `run_code`, register it in that same call. Defining
 or decorating a class alone does not retain or register it, and reloading an
 unused class does not change that. After registration, `spawn_entity`,
 `set_component`, `set_resource`, schemas, and queries can address it by name.
+If two registered types share a short name, that name is rejected as ambiguous
+before mutation. Use `module.Class` for a custom type or the built-in wrapper's
+qualified name, such as `pybevy.ecs.Name`. The error lists the available
+spellings. This applies to reads, writes, spawns, removals, schemas, and query
+filters.
 
 ## Modifying Components
 
@@ -94,6 +99,9 @@ unused class does not change that. After registration, `spawn_entity`,
 For custom Python-storage components with declared fields, field names must
 match that declaration. An unknown field rejects the whole `set_component`
 operation, so valid fields in the same request are not changed.
+For dataclasses, only persisted fields from `dataclasses.fields()` are editable.
+`ClassVar` constants and `InitVar` constructor-only parameters are excluded
+from component schemas and from component/resource patches.
 
 Partial updates - only specify fields to change:
 ```
@@ -107,10 +115,18 @@ set_component {
 `set_component` inserts absent components that support insertion. Writable
 newtypes (`ZIndex`, `GlobalZIndex`) use `{"value": ...}`; failed patches
 preserve them. Enum payload fields accept component vector shorthand.
+Quaternion fields such as `Transform.rotation` accept `[x, y, z, w]` or a
+complete `{"x": ..., "y": ..., "z": ..., "w": ...}` object. MCP normalizes
+finite non-zero inputs to unit length before storing them, so rounded values
+such as `[0, 0, 0.7, 0.7]` do not introduce scale. Zero-length and non-finite
+quaternions are rejected. The same conversion applies in `spawn_entity`;
+direct Python `Quat` construction retains Bevy's existing behavior.
 
 Non-finite float fields are reported as the JSON strings `"NaN"`,
 `"Infinity"`, and `"-Infinity"` for diagnostics. Numeric mutation inputs must
 be finite; a rejected value names its field and leaves the component unchanged.
+Finite JSON numbers that overflow a native `f32` field are also rejected before
+the component or resource is committed. Native `f64` fields keep their wider range.
 The exception is a `Range` endpoint: `"Infinity"` and `"-Infinity"` replay
 there, but `"NaN"` remains invalid. JSON `null` is valid
 only for an `Option<T>` field; a required float field needs a JSON number.
@@ -160,11 +176,17 @@ uses `value`, for example `{"variant": "Px", "value": 24.0}`. A unit variant
 is only `{"variant": "Auto"}`. These objects can be replayed unchanged through
 `set_component`, `set_resource`, `set_asset`, and spawn fields. Documented bare
 unit names and one-key objects remain accepted input shorthands, but responses
-always use the tagged form. A one-key object may switch an enum component's
-active variant, for example `{"Orthographic": {"scale": 0.03}}`; omitted
+always use the tagged form. The tagged form also works for a custom optional
+enum field whose current value is `null`. A one-key object may switch an enum
+component's active variant, for example `{"Orthographic": {"scale": 0.03}}`; omitted
 fields use the target payload's defaults, while a partial write to the current
 variant preserves its omitted fields. Enum constants are ordinary values, not
 variants.
+
+Schema and readback variant names use Bevy's canonical spelling. When a Python
+wrapper spells a variant differently, either spelling is accepted on write;
+`Tonemapping.None_` and `Tonemapping.PbrNeutral`, for example, correspond to
+`"None"` and `"KhronosPbrNeutral"` in JSON. Echoes use the canonical spelling.
 
 An unknown field on an enum component reports this synthetic input and the
 accepted variant names. `set_resource` reports the resource type under
@@ -175,6 +197,9 @@ Scalar fields require scalar values: an object such as `{}` is rejected for a
 float, integer, boolean, or string. An empty object applied to a structured
 value, such as `Transform.translation`, leaves that value unchanged. The same
 conversion rules apply to component, resource, and asset writes.
+
+For nested enum writes, wrapping a named or unit variant in `value` is rejected
+before mutation. Use `value` only for a tuple payload.
 
 ### Reusing Existing Asset Handles
 
@@ -227,6 +252,11 @@ to distinct control names:
 | `Time[Fixed]` | `_TimeFixed` |
 | `ButtonInput[KeyCode]` | `ButtonInput` |
 | `ButtonInput[MouseButton]` / `MouseInput` | `MouseInput` |
+
+When a custom resource shares a control name with a native resource, the
+registry lists both by qualified name. For example, a custom `game.Time`
+requires `game.Time`, while native Time becomes `pybevy.time.Time`; bare `Time`
+is rejected as ambiguous.
 
 An absent entry can still be addressable: `get_resource` reports its
 `present` field as `false`. Explicit `world.register_resource(Type)` is only

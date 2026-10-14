@@ -14,13 +14,12 @@ use pybevy_color::linear_rgba::PyLinearRgba;
 use pybevy_core::{
     ComponentBridge, CustomComponentInfo, CustomResourceInfo, PyEntity, ValidityFlag,
     ValidityGuard,
-    custom_component::CustomComponentRegistry,
     custom_resource::{
         hierarchy_contains_resource_entity, insert_dynamic_resource_value, validate_hierarchy_link,
     },
     public_error,
 };
-use pybevy_math::{range::PyRange, vec3::PyVec3};
+use pybevy_math::{quat::PyQuat, range::PyRange, vec3::PyVec3};
 use pyo3::{
     ffi::{PyObject, PyTypeObject},
     prelude::*,
@@ -52,41 +51,20 @@ use crate::{
     handlers::{
         LINEAR_RGBA_CHANNELS,
         entity::resolve_entity,
-        json_float::{nonfinite_float_from_json, require_finite_float},
-        pyo3::{custom_wrapper, execute::create_world_wrapper, state_resource},
+        json_float::{nonfinite_float_from_json, reject_narrowed_nonfinite, require_finite_float},
+        pyo3::{
+            custom_wrapper,
+            dataclass_fields::dataclass_field_names,
+            execute::create_world_wrapper,
+            name_resolution::{
+                ComponentTarget, ResourceTarget, resolve_component, resolve_resource,
+            },
+            state_resource,
+        },
         reflect_mutate::{self, ReflectError},
         value_conversion,
     },
 };
-
-enum SpawnComponent {
-    Native(Arc<dyn ComponentBridge>),
-    Custom(bevy::ecs::component::ComponentId),
-}
-
-fn find_custom_component(world: &World, name: &str) -> Option<bevy::ecs::component::ComponentId> {
-    let info = world.get_resource::<CustomComponentInfo>()?;
-    let registry = world.get_resource::<CustomComponentRegistry>()?;
-    info.iter()
-        .find(|(id, entry)| {
-            (entry.name == name || entry.name.rsplit('.').next() == Some(name))
-                && registry.get(entry.type_ptr as usize) == Some(*id)
-        })
-        .map(|(id, _)| id)
-}
-
-fn find_spawn_component(world: &World, name: &str) -> Option<SpawnComponent> {
-    find_bridge(name)
-        .map(SpawnComponent::Native)
-        .or_else(|| find_custom_component(world, name).map(SpawnComponent::Custom))
-}
-
-/// Find a component bridge by name.
-fn find_bridge(name: &str) -> Option<Arc<dyn ComponentBridge>> {
-    pybevy_core::registry::global_registry::all_component_bridges()
-        .into_iter()
-        .find(|b| b.name() == name)
-}
 
 /// Read written fields back off a live Python object for the `new_values`
 /// response, so callers observe the value the engine actually stored rather
@@ -106,6 +84,31 @@ fn read_back_fields<'a>(
             (name.clone(), value)
         })
         .collect()
+}
+
+fn validate_written_field(
+    instance: &Bound<'_, PyAny>,
+    field_name: &str,
+    request: &serde_json::Value,
+) -> Result<(), String> {
+    let Ok(written) = instance.getattr(field_name) else {
+        return Ok(());
+    };
+    reject_narrowed_nonfinite(request, &super::scene::py_value_to_json(&written))
+        .map_err(|error| format!("{field_name}: {error}"))
+}
+
+fn validate_written_fields(
+    instance: &Bound<'_, PyAny>,
+    fields: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
+    for (name, value) in fields {
+        if name == "variant" {
+            continue;
+        }
+        validate_written_field(instance, name, value)?;
+    }
+    Ok(())
 }
 
 fn canonical_enum_fields(
@@ -143,8 +146,8 @@ pub fn spawn_entity(
     let mut resolved = Vec::with_capacity(obj.len());
     let mut validation_errors = Vec::new();
     for (comp_name, _) in obj {
-        match find_spawn_component(world, comp_name) {
-            Some(SpawnComponent::Native(bridge)) if !bridge.can_insert() => {
+        match resolve_component(world, comp_name)? {
+            Some(ComponentTarget::Native(bridge)) if !bridge.can_insert() => {
                 validation_errors.push(format!("{comp_name}: cannot be spawned from Python"))
             }
             Some(component) => resolved.push(component),
@@ -171,8 +174,8 @@ pub fn spawn_entity(
 
     for ((comp_name, comp_fields), component) in obj.iter().zip(resolved) {
         let bridge = match component {
-            SpawnComponent::Native(bridge) => bridge,
-            SpawnComponent::Custom(component_id) => {
+            ComponentTarget::Native(bridge) => bridge,
+            ComponentTarget::Custom(component_id) => {
                 spawn_custom_component(
                     world,
                     entity,
@@ -204,7 +207,11 @@ pub fn spawn_entity(
         let fields = comp_fields.as_object().cloned().unwrap_or_default();
         if super::asset_reference::contains_reference_field(&fields) {
             match super::asset_reference::spawn_from_reference(
-                world, entity, comp_name, &fields, &bridge,
+                world,
+                entity,
+                bridge.name(),
+                &fields,
+                &bridge,
             ) {
                 Ok(value) => {
                     added_components.push(comp_name.clone());
@@ -412,6 +419,10 @@ fn construct_component_from_fields<'py>(
 /// fields. `None` means the class exposes no supported declaration metadata,
 /// so callers may fall back to instance attribute lookup.
 fn class_declares_component_field(class: &Bound<'_, PyType>, field_name: &str) -> Option<bool> {
+    match dataclass_field_names(class) {
+        Ok(Some(names)) => return Some(names.contains(field_name)),
+        Ok(None) | Err(_) => {}
+    }
     let mut found_metadata = false;
     for attribute in ["__dataclass_fields__", "__annotations__"] {
         let Ok(metadata) = class.getattr(attribute) else {
@@ -491,26 +502,48 @@ fn annotation_enum_type<'py>(
 
 fn convert_declared_enum_field_value(
     py: Python<'_>,
-    class: &Bound<'_, PyType>,
+    instance: &Bound<'_, PyAny>,
     field_name: &str,
     field_value: &serde_json::Value,
 ) -> Result<Option<Py<PyAny>>, String> {
-    let Some(name) = field_value.as_str() else {
-        return Ok(None);
-    };
-    let Some(annotation) = resolved_field_annotation(py, class, field_name) else {
+    let Some(annotation) = resolved_field_annotation(py, &instance.get_type(), field_name) else {
         return Ok(None);
     };
     let Some((owner, optional)) = annotation_enum_type(py, &annotation)? else {
+        return Ok(None);
+    };
+    let request = match field_value {
+        serde_json::Value::String(name) => Some(EnumVariantRequest {
+            name: name.clone(),
+            payload: serde_json::Value::Null,
+            source: VariantSource::Named,
+        }),
+        serde_json::Value::Object(fields) if fields.contains_key("variant") => {
+            let Ok(current) = instance.getattr(field_name) else {
+                return Ok(None);
+            };
+            let current_owner = enum_owner_type(&current);
+            if current_owner.is(&owner) {
+                return Ok(None);
+            }
+            if enum_variant_names(&current_owner).is_empty() {
+                tagged_enum_variant_request(fields)
+            } else {
+                enum_component_variant_request(&current, fields)
+            }
+        }
+        _ => None,
+    };
+    let Some(request) = request else {
         return Ok(None);
     };
     construct_enum_variant_for_owner(
         py,
         owner.as_any(),
         &owner,
-        name,
-        &serde_json::Value::Null,
-        VariantSource::Named,
+        &request.name,
+        &request.payload,
+        request.source,
     )
     .map_err(|error| {
         if optional {
@@ -611,13 +644,74 @@ fn convert_annotated_field_value(
     field_name: &str,
     field_value: &serde_json::Value,
 ) -> Result<Py<PyAny>, String> {
-    if let Some(value) =
-        convert_declared_enum_field_value(py, &instance.get_type(), field_name, field_value)?
-    {
+    if let Some(value) = convert_declared_enum_field_value(py, instance, field_name, field_value)? {
         return Ok(value);
     }
     let value = convert_field_value(py, instance, field_name, field_value)?;
     validate_annotated_field_value(py, &instance.get_type(), field_name, value)
+}
+
+fn convert_committed_resource_enum_field_value(
+    py: Python<'_>,
+    instance: &Bound<'_, PyAny>,
+    field_name: &str,
+    field_value: &serde_json::Value,
+) -> Result<Option<Py<PyAny>>, String> {
+    let Ok(validation) = instance
+        .get_type()
+        .getattr("__pybevy_resource_assignment_validation__")
+    else {
+        return Ok(None);
+    };
+    let current = validation
+        .call_method1("_committed_enum_type", (field_name,))
+        .map_err(|error| error.to_string())?;
+    if current.is_none() {
+        return Ok(None);
+    }
+    let owner = current
+        .cast_into::<PyType>()
+        .map_err(|error| error.to_string())?;
+    let Some(annotation) = resolved_field_annotation(py, &instance.get_type(), field_name) else {
+        return Ok(None);
+    };
+    let Some((_, optional)) = annotation_enum_type(py, &annotation)? else {
+        return Ok(None);
+    };
+    let request = if let Some(name) = field_value.as_str() {
+        Some(EnumVariantRequest {
+            name: name.to_string(),
+            payload: serde_json::Value::Null,
+            source: VariantSource::Named,
+        })
+    } else if let Some(fields) = field_value.as_object()
+        && fields.contains_key("variant")
+    {
+        let current = instance
+            .getattr(field_name)
+            .map_err(|error| error.to_string())?;
+        enum_component_variant_request(&current, fields)
+    } else {
+        None
+    };
+    let Some(request) = request else {
+        return Ok(None);
+    };
+    construct_enum_variant_for_owner(
+        py,
+        owner.as_any(),
+        &owner,
+        &request.name,
+        &request.payload,
+        request.source,
+    )
+    .map_err(|error| {
+        if optional {
+            public_error::mcp_optional_enum_error(&error)
+        } else {
+            error
+        }
+    })
 }
 
 /// Python fallback for spawning a component: create via py_type and apply fields.
@@ -639,6 +733,10 @@ fn spawn_component_python(
             Ok(inst) => match resolve_enum_instance(py, &inst, fields) {
                 Ok(Some(resolved)) => {
                     let bound = resolved.bind(py);
+                    if let Err(error) = validate_written_fields(bound, fields) {
+                        errors.push(format!("{comp_name}.{error}"));
+                        return;
+                    }
                     if let Err(e) = check_relationship_link(world, entity, bound, bridge) {
                         errors.push(format!("{comp_name}: {e}"));
                         return;
@@ -698,6 +796,11 @@ fn spawn_component_python(
                 return;
             }
         };
+
+        if let Err(error) = validate_written_fields(&instance, fields) {
+            errors.push(format!("{comp_name}.{error}"));
+            return;
+        }
 
         if let Err(e) = check_relationship_link(world, entity, &instance, bridge) {
             errors.push(format!("{comp_name}: {e}"));
@@ -813,7 +916,8 @@ pub fn set_component(
         .ok_or_else(|| ControlError::invalid_params("'fields' must be a JSON object"))?;
 
     // Find bridge to get type_id
-    if let Some(bridge) = find_bridge(&component) {
+    let target = resolve_component(world, &component)?;
+    if let Some(ComponentTarget::Native(bridge)) = &target {
         let type_id = bridge.bevy_type_id();
 
         if super::asset_reference::contains_reference_field(field_obj) {
@@ -826,7 +930,11 @@ pub fn set_component(
                 )));
             }
             let new_values = super::asset_reference::set_from_reference(
-                world, entity, &component, field_obj, &bridge,
+                world,
+                entity,
+                bridge.name(),
+                field_obj,
+                bridge,
             )?;
             let mut result = serde_json::json!({
                 "entity_id": entity_id,
@@ -886,12 +994,12 @@ pub fn set_component(
                         | ReflectError::NotAStruct,
                     ) => {
                         return insert_component_python(
-                            world, entity, entity_id, &component, field_obj, &bridge,
+                            world, entity, entity_id, &component, field_obj, bridge,
                         );
                     }
                     Err(ReflectError::FieldError(_)) => {
                         return insert_component_python(
-                            world, entity, entity_id, &component, field_obj, &bridge,
+                            world, entity, entity_id, &component, field_obj, bridge,
                         );
                     }
                     Err(ReflectError::ComponentNotOnEntity) => {
@@ -911,11 +1019,22 @@ pub fn set_component(
         }
 
         // Python fallback for bridge components
-        return set_component_python(world, entity, entity_id, &component, field_obj, &bridge);
+        return set_component_python(world, entity, entity_id, &component, field_obj, bridge);
     }
 
     // Fallback: check custom Python components via CustomComponentInfo
-    set_custom_component(world, entity, entity_id, &component, field_obj)
+    let component_id = match target {
+        Some(ComponentTarget::Custom(id)) => Some(id),
+        _ => None,
+    };
+    set_custom_component(
+        world,
+        entity,
+        entity_id,
+        &component,
+        component_id,
+        field_obj,
+    )
 }
 
 /// Python fallback for set_component: extract via bridge and use setattr.
@@ -1037,6 +1156,9 @@ fn set_component_python(
         |py| -> Result<serde_json::Map<String, serde_json::Value>, ControlError> {
             let instance = owned.bind(py);
             if let Some(variant_name) = replacement_variant {
+                validate_written_fields(instance, field_obj).map_err(|error| {
+                    ControlError::invalid_params(format!("Failed to set '{component}': {error}"))
+                })?;
                 bridge.insert(world, entity, instance).map_err(|error| {
                     ControlError::invalid_params(format!(
                         "Failed to replace component '{component}': {error}"
@@ -1044,8 +1166,12 @@ fn set_component_python(
                 })?;
                 let mut post = canonical_enum_fields(instance)
                     .unwrap_or_else(|| read_back_fields(instance, field_obj.keys()));
-                post.entry("variant".to_string())
-                    .or_insert(serde_json::Value::String(variant_name));
+                post.entry("variant".to_string()).or_insert_with(|| {
+                    serde_json::Value::String(super::enum_names::canonical_variant_name(
+                        &enum_owner_type(instance),
+                        &variant_name,
+                    ))
+                });
                 return Ok(post);
             }
 
@@ -1070,6 +1196,9 @@ fn set_component_python(
                         ))
                     })?;
             }
+            validate_written_fields(instance, field_obj).map_err(|error| {
+                ControlError::invalid_params(format!("Failed to set '{component}': {error}"))
+            })?;
             bridge.insert(world, entity, instance).map_err(|error| {
                 ControlError::invalid_params(format!(
                     "Failed to replace component '{component}': {error}"
@@ -1108,6 +1237,11 @@ fn insert_component_python(
             Ok(instance) => match resolve_enum_instance(py, &instance, field_obj) {
                 Ok(Some(resolved)) => {
                     let bound = resolved.bind(py);
+                    validate_written_fields(bound, field_obj).map_err(|error| {
+                        ControlError::invalid_params(format!(
+                            "Failed to set '{component}': {error}"
+                        ))
+                    })?;
                     check_relationship_link(world, entity, bound, bridge)
                         .map_err(ControlError::invalid_params)?;
                     bridge.insert(world, entity, bound).map_err(|error| {
@@ -1120,7 +1254,10 @@ fn insert_component_python(
                     {
                         post.insert(
                             "variant".to_string(),
-                            serde_json::Value::String(variant_name.clone()),
+                            serde_json::Value::String(super::enum_names::canonical_variant_name(
+                                &py_type,
+                                variant_name,
+                            )),
                         );
                     }
                     return Ok(post);
@@ -1191,6 +1328,10 @@ fn insert_component_python(
             }
         };
 
+        validate_written_fields(&instance, field_obj).map_err(|error| {
+            ControlError::invalid_params(format!("Failed to set '{component}': {error}"))
+        })?;
+
         check_relationship_link(world, entity, &instance, bridge)
             .map_err(ControlError::invalid_params)?;
 
@@ -1218,6 +1359,7 @@ fn set_custom_component(
     entity: bevy::ecs::entity::Entity,
     entity_id: u64,
     component: &str,
+    resolved_id: Option<bevy::ecs::component::ComponentId>,
     field_obj: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<serde_json::Value, ControlError> {
     // Find the custom component's ComponentId: try exact name match first
@@ -1225,7 +1367,7 @@ fn set_custom_component(
         .get_resource::<CustomComponentInfo>()
         .and_then(|info| {
             info.iter()
-                .find(|(_, entry)| entry.name == component)
+                .find(|(id, entry)| Some(*id) == resolved_id || entry.name == component)
                 .map(|(id, entry)| (id, entry.is_pyobject_storage, entry.wrapper_layout.clone()))
         });
 
@@ -1679,21 +1821,22 @@ fn validate_custom_resource_fields(
     fields: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<(), ControlError> {
     let py_type = instance.get_type();
-    let descriptors = py_type
-        .getattr("__dataclass_fields__")
-        .or_else(|_| py_type.getattr("__annotations__"))
-        .ok()
-        .and_then(|value| value.cast_into::<PyDict>().ok());
-
-    let mut declared = descriptors
-        .map(|descriptors| {
-            descriptors
-                .keys()
-                .iter()
-                .filter_map(|key| key.extract::<String>().ok())
-                .collect::<BTreeSet<_>>()
-        })
-        .unwrap_or_default();
+    let mut declared = match dataclass_field_names(&py_type) {
+        Ok(Some(names)) => names,
+        Ok(None) => py_type
+            .getattr("__annotations__")
+            .ok()
+            .and_then(|value| value.cast_into::<PyDict>().ok())
+            .map(|descriptors| {
+                descriptors
+                    .keys()
+                    .iter()
+                    .filter_map(|key| key.extract::<String>().ok())
+                    .collect::<BTreeSet<_>>()
+            })
+            .unwrap_or_default(),
+        Err(error) => return Err(ControlError::internal(error.to_string())),
+    };
     if state_resource::classify(instance).is_some() {
         declared.insert(state_resource::VARIANT.to_string());
     }
@@ -1731,9 +1874,12 @@ pub fn remove_component(
     let entity_id = entity.to_bits();
     let warning = structural_warning(&component);
 
+    let target = resolve_component(world, &component)?;
     // Stripping IsResource runs Bevy's Discard hook, destroying the resource
     // value behind the entity.
-    if component == "IsResource" {
+    if component == "IsResource"
+        || matches!(&target, Some(ComponentTarget::Native(bridge)) if bridge.name() == "IsResource")
+    {
         return Err(ControlError::invalid_params(
             public_error::IS_RESOURCE_COMPONENT_REMOVE,
         ));
@@ -1750,27 +1896,25 @@ pub fn remove_component(
         out
     };
 
-    for bridge in pybevy_core::registry::global_registry::all_component_bridges() {
-        if bridge.name() == component.as_str() {
-            let component_id = bridge.register(world);
-            if let Ok(entity_ref) = world.get_entity(entity) {
-                if !entity_ref.contains_id(component_id) {
-                    return Err(ControlError::not_found(format!(
-                        "Component '{component}' not found on entity {entity_id}"
-                    )));
-                }
-                if let Some(hooks) = LIFECYCLE_MUTATION_HOOKS.get() {
-                    let type_ptr = Python::attach(|py| bridge.py_type(py).as_type_ptr());
-                    (hooks.remove_component)(world, entity, type_ptr);
-                } else if let Ok(mut entity_mut) = world.get_entity_mut(entity) {
-                    entity_mut.remove_by_id(component_id);
-                }
-                return Ok(build_response(&component, &warning));
-            } else {
-                return Err(ControlError::not_found(public_error::mcp_entity_not_found(
-                    entity_id,
+    if let Some(ComponentTarget::Native(bridge)) = &target {
+        let component_id = bridge.register(world);
+        if let Ok(entity_ref) = world.get_entity(entity) {
+            if !entity_ref.contains_id(component_id) {
+                return Err(ControlError::not_found(format!(
+                    "Component '{component}' not found on entity {entity_id}"
                 )));
             }
+            if let Some(hooks) = LIFECYCLE_MUTATION_HOOKS.get() {
+                let type_ptr = Python::attach(|py| bridge.py_type(py).as_type_ptr());
+                (hooks.remove_component)(world, entity, type_ptr);
+            } else if let Ok(mut entity_mut) = world.get_entity_mut(entity) {
+                entity_mut.remove_by_id(component_id);
+            }
+            return Ok(build_response(&component, &warning));
+        } else {
+            return Err(ControlError::not_found(public_error::mcp_entity_not_found(
+                entity_id,
+            )));
         }
     }
 
@@ -1779,7 +1923,7 @@ pub fn remove_component(
         .get_resource::<CustomComponentInfo>()
         .and_then(|info| {
             info.iter()
-                .find(|(_, entry)| entry.name == component)
+                .find(|(id, _)| matches!(&target, Some(ComponentTarget::Custom(target_id)) if id == target_id))
                 .map(|(id, entry)| (id, entry.type_ptr))
         });
 
@@ -1815,6 +1959,7 @@ pub fn insert_resource(
     resource_type: String,
     value: serde_json::Value,
 ) -> Result<serde_json::Value, ControlError> {
+    let target = resolve_resource(world, &resource_type)?;
     // Reject scalar/array values up front; field application requires a JSON object.
     match &value {
         serde_json::Value::Object(_) | serde_json::Value::Null => {}
@@ -1834,35 +1979,82 @@ pub fn insert_resource(
 
     // Try bridge registry first
     let bridge_result = Python::attach(|py| {
-        for bridge in pybevy_core::registry::global_registry::all_resource_bridges() {
-            if bridge.name() == resource_type.as_str() {
-                // Patch semantics: clone the current value into owned storage,
-                // then commit through the existing resource's mutable slot only
-                // after every conversion and setter passes.
-                if bridge.contains_in_world(world) {
-                    if let Some(obj) = value.as_object()
-                        && !obj.is_empty()
-                    {
-                        let py_resource = bridge.clone_owned(world, py).map_err(|e| {
-                            ControlError::internal(format!(
-                                "Failed to copy existing resource for atomic patch: {e}"
-                            ))
-                        })?;
-                        let instance = py_resource.bind(py);
+        if let Some(ResourceTarget::Native(bridge)) = &target {
+            // Patch semantics: clone the current value into owned storage,
+            // then commit through the existing resource's mutable slot only
+            // after every conversion and setter passes.
+            if bridge.contains_in_world(world) {
+                if let Some(obj) = value.as_object()
+                    && !obj.is_empty()
+                {
+                    let py_resource = bridge.clone_owned(world, py).map_err(|e| {
+                        ControlError::internal(format!(
+                            "Failed to copy existing resource for atomic patch: {e}"
+                        ))
+                    })?;
+                    let instance = py_resource.bind(py);
 
-                        let unknown = unknown_set_fields(instance, obj.keys());
-                        if !unknown.is_empty() {
-                            return Err(ControlError::internal(unknown_field_error(
-                                &resource_type,
-                                &unknown,
-                                &writable_field_names(instance),
+                    let unknown = unknown_set_fields(instance, obj.keys());
+                    if !unknown.is_empty() {
+                        return Err(ControlError::internal(unknown_field_error(
+                            &resource_type,
+                            &unknown,
+                            &writable_field_names(instance),
+                        )));
+                    }
+
+                    let mut converted = Vec::with_capacity(obj.len());
+                    for (field_name, field_value) in obj {
+                        match convert_field_value(py, instance, field_name, field_value) {
+                            Ok(py_value) => converted.push((field_name, py_value)),
+                            Err(e) => {
+                                return Err(ControlError::internal(format!(
+                                    "Failed to convert {field_name}: {e}"
+                                )));
+                            }
+                        }
+                    }
+                    for (field_name, py_value) in converted {
+                        if let Err(e) = instance.setattr(field_name.as_str(), py_value) {
+                            return Err(ControlError::internal(format!(
+                                "Failed to set {field_name}: {e}"
                             )));
                         }
+                    }
+                    validate_written_fields(instance, obj).map_err(|error| {
+                        ControlError::invalid_params(format!(
+                            "Failed to set {resource_type}.{error}"
+                        ))
+                    })?;
+                    bridge.commit_owned(world, instance).map_err(|e| {
+                        ControlError::internal(format!(
+                            "Failed to commit atomic resource patch: {e}"
+                        ))
+                    })?;
+                }
+                return Ok(Some(resource_mutation_response(
+                    &resource_type,
+                    false,
+                    false,
+                )));
+            }
 
-                        let mut converted = Vec::with_capacity(obj.len());
+            // Resource doesn't exist yet: create default and apply fields
+            let py_type = bridge.py_type(py);
+            match py_type.call0() {
+                Ok(instance) => {
+                    // Apply field values if provided
+                    if let Some(obj) = value.as_object() {
                         for (field_name, field_value) in obj {
-                            match convert_field_value(py, instance, field_name, field_value) {
-                                Ok(py_value) => converted.push((field_name, py_value)),
+                            match convert_field_value(py, &instance, field_name, field_value) {
+                                Ok(py_value) => {
+                                    if let Err(e) = instance.setattr(field_name.as_str(), py_value)
+                                    {
+                                        return Err(ControlError::internal(format!(
+                                            "Failed to set {field_name}: {e}"
+                                        )));
+                                    }
+                                }
                                 Err(e) => {
                                     return Err(ControlError::internal(format!(
                                         "Failed to convert {field_name}: {e}"
@@ -1870,67 +2062,27 @@ pub fn insert_resource(
                                 }
                             }
                         }
-                        for (field_name, py_value) in converted {
-                            if let Err(e) = instance.setattr(field_name.as_str(), py_value) {
-                                return Err(ControlError::internal(format!(
-                                    "Failed to set {field_name}: {e}"
-                                )));
-                            }
-                        }
-                        bridge.commit_owned(world, instance).map_err(|e| {
-                            ControlError::internal(format!(
-                                "Failed to commit atomic resource patch: {e}"
+                        validate_written_fields(&instance, obj).map_err(|error| {
+                            ControlError::invalid_params(format!(
+                                "Failed to set {resource_type}.{error}"
                             ))
                         })?;
                     }
+                    if let Err(e) = bridge.insert(world, &instance) {
+                        return Err(ControlError::internal(format!(
+                            "Failed to insert resource: {e}"
+                        )));
+                    }
                     return Ok(Some(resource_mutation_response(
                         &resource_type,
-                        false,
+                        true,
                         false,
                     )));
                 }
-
-                // Resource doesn't exist yet: create default and apply fields
-                let py_type = bridge.py_type(py);
-                match py_type.call0() {
-                    Ok(instance) => {
-                        // Apply field values if provided
-                        if let Some(obj) = value.as_object() {
-                            for (field_name, field_value) in obj {
-                                match convert_field_value(py, &instance, field_name, field_value) {
-                                    Ok(py_value) => {
-                                        if let Err(e) =
-                                            instance.setattr(field_name.as_str(), py_value)
-                                        {
-                                            return Err(ControlError::internal(format!(
-                                                "Failed to set {field_name}: {e}"
-                                            )));
-                                        }
-                                    }
-                                    Err(e) => {
-                                        return Err(ControlError::internal(format!(
-                                            "Failed to convert {field_name}: {e}"
-                                        )));
-                                    }
-                                }
-                            }
-                        }
-                        if let Err(e) = bridge.insert(world, &instance) {
-                            return Err(ControlError::internal(format!(
-                                "Failed to insert resource: {e}"
-                            )));
-                        }
-                        return Ok(Some(resource_mutation_response(
-                            &resource_type,
-                            true,
-                            false,
-                        )));
-                    }
-                    Err(e) => {
-                        return Err(ControlError::internal(format!(
-                            "Failed to create default resource: {e}"
-                        )));
-                    }
+                Err(e) => {
+                    return Err(ControlError::internal(format!(
+                        "Failed to create default resource: {e}"
+                    )));
                 }
             }
         }
@@ -1944,7 +2096,7 @@ pub fn insert_resource(
     // Fallback: check custom Python resources via CustomResourceInfo
     let custom_entry = world.get_resource::<CustomResourceInfo>().and_then(|info| {
         info.iter()
-            .find(|(_, entry)| entry.name == resource_type)
+            .find(|(id, _)| matches!(&target, Some(ResourceTarget::Custom(target_id)) if id == target_id))
             .map(|(id, entry)| (id, entry.type_ptr))
     });
 
@@ -1964,13 +2116,30 @@ pub fn insert_resource(
                     }
                     let mut converted = Vec::with_capacity(obj.len());
                     for (field_name, field_value) in obj {
-                        let py_value =
-                            convert_annotated_field_value(py, bound, field_name, field_value)
-                                .map_err(|error| {
-                                    ControlError::invalid_params(format!(
-                                        "Failed to convert {resource_type}.{field_name}: {error}"
-                                    ))
-                                })?;
+                        let py_value = convert_committed_resource_enum_field_value(
+                            py,
+                            bound,
+                            field_name,
+                            field_value,
+                        )
+                        .and_then(|converted| {
+                            converted.map_or_else(
+                                || {
+                                    convert_annotated_field_value(
+                                        py,
+                                        bound,
+                                        field_name,
+                                        field_value,
+                                    )
+                                },
+                                Ok,
+                            )
+                        })
+                        .map_err(|error| {
+                            ControlError::invalid_params(format!(
+                                "Failed to convert {resource_type}.{field_name}: {error}"
+                            ))
+                        })?;
                         converted.push((field_name, py_value));
                     }
                     for (field_name, py_value) in converted {
@@ -2037,34 +2206,33 @@ pub fn remove_resource(
     world: &mut World,
     resource_type: String,
 ) -> Result<serde_json::Value, ControlError> {
-    for bridge in pybevy_core::registry::global_registry::all_resource_bridges() {
-        if bridge.name() == resource_type.as_str() {
-            let type_id = bridge.bevy_type_id();
-            if [
-                TypeId::of::<Time>(),
-                TypeId::of::<Time<Real>>(),
-                TypeId::of::<Time<Virtual>>(),
-                TypeId::of::<Time<Fixed>>(),
-            ]
-            .contains(&type_id)
-            {
-                return Err(ControlError::invalid_params(
-                    public_error::control_resource_remove_forbidden(&resource_type),
-                ));
-            }
-            let was_present = bridge.contains_in_world(world);
-            bridge.remove(world);
-            return Ok(serde_json::json!({
-                "removed": resource_type,
-                "was_present": was_present,
-            }));
+    let target = resolve_resource(world, &resource_type)?;
+    if let Some(ResourceTarget::Native(bridge)) = &target {
+        let type_id = bridge.bevy_type_id();
+        if [
+            TypeId::of::<Time>(),
+            TypeId::of::<Time<Real>>(),
+            TypeId::of::<Time<Virtual>>(),
+            TypeId::of::<Time<Fixed>>(),
+        ]
+        .contains(&type_id)
+        {
+            return Err(ControlError::invalid_params(
+                public_error::control_resource_remove_forbidden(&resource_type),
+            ));
         }
+        let was_present = bridge.contains_in_world(world);
+        bridge.remove(world);
+        return Ok(serde_json::json!({
+            "removed": resource_type,
+            "was_present": was_present,
+        }));
     }
 
     // Fallback: check custom Python resources via CustomResourceInfo
     let custom_comp_id = world.get_resource::<CustomResourceInfo>().and_then(|info| {
         info.iter()
-            .find(|(_, entry)| entry.name == resource_type)
+            .find(|(id, _)| matches!(&target, Some(ResourceTarget::Custom(target_id)) if id == target_id))
             .map(|(id, _)| id)
     });
 
@@ -2342,10 +2510,11 @@ fn enum_field_prototype<'py>(
         .map_err(|error| error.to_string())?;
     let owner_name = owner.name().map_err(|error| error.to_string())?;
     let variant_name = variant.name().map_err(|error| error.to_string())?;
-    let Some(VariantInfo::Struct(fields)) = reflect_mutate::compiled_enum_variant_info(
-        &owner_name.to_string_lossy(),
-        &variant_name.to_string_lossy(),
-    ) else {
+    let native_variant =
+        super::enum_names::canonical_variant_name(&owner, &variant_name.to_string_lossy());
+    let Some(VariantInfo::Struct(fields)) =
+        reflect_mutate::compiled_enum_variant_info(&owner_name.to_string_lossy(), &native_variant)
+    else {
         return Ok(None);
     };
     let Some(type_info) = fields.field(field_name).and_then(|field| field.type_info()) else {
@@ -2383,6 +2552,25 @@ fn enum_component_variant_request(
     current: &Bound<'_, PyAny>,
     fields: &serde_json::Map<String, serde_json::Value>,
 ) -> Option<EnumVariantRequest> {
+    if let Some(request) = tagged_enum_variant_request(fields) {
+        return Some(request);
+    }
+
+    let (name, payload) = fields.iter().next().filter(|_| fields.len() == 1)?;
+    let owner = enum_owner_type(current);
+    super::enum_names::accepted_variant_names(&owner, enum_variant_names(&owner))
+        .iter()
+        .any(|variant| variant == name)
+        .then(|| EnumVariantRequest {
+            name: name.clone(),
+            payload: payload.clone(),
+            source: VariantSource::ObjectKey,
+        })
+}
+
+fn tagged_enum_variant_request(
+    fields: &serde_json::Map<String, serde_json::Value>,
+) -> Option<EnumVariantRequest> {
     if let Some(serde_json::Value::String(name)) = fields.get("variant") {
         let mut payload = fields.clone();
         payload.remove("variant");
@@ -2401,16 +2589,7 @@ fn enum_component_variant_request(
             source: VariantSource::Named,
         });
     }
-
-    let (name, payload) = fields.iter().next().filter(|_| fields.len() == 1)?;
-    enum_variant_names(&enum_owner_type(current))
-        .iter()
-        .any(|variant| variant == name)
-        .then(|| EnumVariantRequest {
-            name: name.clone(),
-            payload: payload.clone(),
-            source: VariantSource::ObjectKey,
-        })
+    None
 }
 
 fn construct_wrapped_variant_payload<'py>(
@@ -2468,11 +2647,13 @@ fn construct_enum_variant_for_owner(
     source: VariantSource,
 ) -> Result<Option<Py<PyAny>>, String> {
     let variants = enum_variant_names(owner);
+    let python_name = super::enum_names::python_variant_name(owner, variant_name);
+    let native_name = super::enum_names::canonical_variant_name(owner, &python_name);
     // Payload fields are attributes too; accept only registered variant names.
     let variant = owner
-        .getattr(variant_name)
+        .getattr(python_name.as_str())
         .ok()
-        .filter(|_| variants.iter().any(|name| name == variant_name));
+        .filter(|_| variants.iter().any(|name| name == &python_name));
     let Some(variant) = variant else {
         if variants.is_empty() {
             return Ok(None);
@@ -2482,18 +2663,19 @@ fn construct_enum_variant_for_owner(
             .map_err(|error| error.to_string())?
             .to_string_lossy()
             .into_owned();
+        let valid_variants = super::enum_names::accepted_variant_names(owner, variants);
         if variant_name == "value" && source == VariantSource::ObjectKey {
             return Err(format!(
                 "a payload needs the variant it belongs to: pass \
                  {{\"variant\": \"<name>\", \"value\": ...}} for {owner_name}. \
                  Valid variants: {}",
-                variants.join(", ")
+                valid_variants.join(", ")
             ));
         }
         return Err(format!(
             "unknown variant '{variant_name}' for {}. Valid variants: {}",
             owner_name,
-            variants.join(", ")
+            valid_variants.join(", ")
         ));
     };
 
@@ -2565,7 +2747,7 @@ fn construct_enum_variant_for_owner(
                     matches!(
                         reflect_mutate::compiled_enum_variant_info(
                             &name.to_string_lossy(),
-                            variant_name
+                            &native_name
                         ),
                         Some(VariantInfo::Struct(_))
                     )
@@ -2853,6 +3035,9 @@ fn has_public_getset_fields(value: &Bound<'_, PyAny>) -> bool {
 
 fn writable_field_names(instance: &Bound<'_, PyAny>) -> Vec<String> {
     let class = instance.get_type();
+    if let Ok(Some(names)) = dataclass_field_names(&class) {
+        return names.into_iter().collect();
+    }
     // Probe a fresh owned copy so a read-only setter error cannot touch the live component.
     let probe = match instance.call_method0("__copy__").or_else(|_| class.call0()) {
         Ok(copy) => copy,
@@ -3008,7 +3193,7 @@ fn component_enum_variant_names(instance: &Bound<'_, PyAny>) -> Vec<String> {
     let owner = enum_owner_type(instance);
     let variants = enum_variant_names(&owner);
     if variants.is_empty() || !owner.is(&current_type) {
-        return variants;
+        return super::enum_names::accepted_variant_names(&owner, variants);
     }
 
     let Ok(owner_name) = owner.name() else {
@@ -3027,7 +3212,7 @@ fn component_enum_variant_names(instance: &Bound<'_, PyAny>) -> Vec<String> {
                     .is_some_and(|rest| rest.starts_with('('))
         })
     }) {
-        variants
+        super::enum_names::accepted_variant_names(&owner, variants)
     } else {
         Vec::new()
     }
@@ -3268,13 +3453,14 @@ fn enum_element_missing_field(
     if fields.is_empty() {
         return None;
     }
+    let python_name = super::enum_names::python_variant_name(owner, variant_name);
     if !enum_variant_names(owner)
         .iter()
-        .any(|name| name == variant_name)
+        .any(|name| name == &python_name)
     {
         return None;
     }
-    let variant = owner.getattr(variant_name).ok()?;
+    let variant = owner.getattr(python_name.as_str()).ok()?;
     let variant_type = variant.cast::<PyType>().ok()?;
     missing_constructor_field(variant_type, fields.keys())
 }
@@ -3386,6 +3572,16 @@ fn math_value_from_json(
     };
     if values.len() != count {
         return None;
+    }
+    if type_name == "Quat" {
+        return Some(
+            value_conversion::unit_quat_from_json(&serde_json::Value::Array(values.to_vec()))
+                .and_then(|quat| {
+                    Py::new(py, PyQuat::from_quat(quat))
+                        .map(Py::into_any)
+                        .map_err(|error| error.to_string())
+                }),
+        );
     }
     let integral = matches!(type_name, "UVec2" | "IVec2" | "UVec3");
     let mut coordinates = Vec::with_capacity(count);
@@ -3531,6 +3727,12 @@ fn convert_field_value_typed(
                 .map(Py::into_any)
                 .map_err(|error| error.to_string());
         }
+        if current.cast_exact::<PyQuat>().is_ok() {
+            let value = value_conversion::unit_quat_from_json(field_value)?;
+            return Py::new(py, PyQuat::from_quat(value))
+                .map(Py::into_any)
+                .map_err(|error| error.to_string());
+        }
         let owner = enum_owner_type(&current);
         let is_color = owner
             .name()
@@ -3672,6 +3874,26 @@ fn convert_field_value_typed(
         if let serde_json::Value::Object(obj) = field_value
             && let Some(serde_json::Value::String(variant_name)) = obj.get("variant")
         {
+            if obj.contains_key("value") {
+                let owner_name = owner.name().map_err(|error| error.to_string())?;
+                let native_name = super::enum_names::canonical_variant_name(&owner, variant_name);
+                match reflect_mutate::compiled_enum_variant_info(
+                    &owner_name.to_string_lossy(),
+                    &native_name,
+                ) {
+                    Some(VariantInfo::Struct(_)) => {
+                        return Err(format!(
+                            "variant '{variant_name}' uses named payload fields; place them beside 'variant', not inside 'value'"
+                        ));
+                    }
+                    Some(VariantInfo::Unit(_)) => {
+                        return Err(format!(
+                            "variant '{variant_name}' has no payload; omit 'value'"
+                        ));
+                    }
+                    _ => {}
+                }
+            }
             let mut payload = obj.clone();
             payload.remove("variant");
             let payload = if payload.is_empty() {
@@ -3729,7 +3951,7 @@ fn convert_field_value_typed(
                 return Err(format!(
                     "unknown variant '{s}' for {}. Valid variants: {}",
                     owner_name,
-                    variants.join(", ")
+                    super::enum_names::accepted_variant_names(&owner, variants).join(", ")
                 ));
             }
         }

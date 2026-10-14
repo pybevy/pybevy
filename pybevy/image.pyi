@@ -241,6 +241,8 @@ class Image(Asset):
     Represents a texture that can be used for rendering, loaded from files,
     or created procedurally. Supports various texture formats, dimensions,
     and mipmap levels.
+    Python set_color_at* methods round normalized channels to the nearest
+    integer in integer texture formats; raw pixel-byte writes are unchanged.
 
     **Common Use Cases:**
     - Loading images from files (PNG, JPEG, etc.)

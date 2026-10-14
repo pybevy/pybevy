@@ -68,6 +68,7 @@ if __name__ == "__main__":
 
 **Key rules:**
 - `@entrypoint` requires a synchronous `def main(app: App) -> App:` that returns the configured App.
+- Return the `app` you were given, not a new `App()`: hot reload and tests read the configuration from the App they pass in.
 - End with `if __name__ == "__main__": main().run()` for direct `python scene.py` execution. The CLI and MCP loaders invoke the entrypoint themselves.
 - `App.run()` returns `AppExit.Success()` or `AppExit.Error(code)`. The `pybevy run`
   and `pybevy dev` commands use an error code as their process status. A direct
@@ -1261,6 +1262,8 @@ object has `variant`; named payload fields keep their native names, one tuple
 payload uses `value`, larger tuples use numeric string keys, and unit variants
 have no payload fields. The returned object is valid mutation input unchanged.
 Class constants are values and are not reported as variants.
+When a Python wrapper renames a Bevy variant, writes accept either spelling;
+reads and mutation echoes use the canonical Bevy spelling.
 
 A custom field annotated `Optional[Enum]` or `Enum | None` accepts a variant
 name even when its current value is `None`. Other custom fields holding `None`

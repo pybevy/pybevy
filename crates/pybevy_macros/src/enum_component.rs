@@ -421,6 +421,7 @@ fn try_expand(
 
     let comparisons =
         (!manual_comparison).then(|| crate::enum_comparison::identity_methods(py_type));
+    let variant_aliases_method = crate::enums::variant_aliases_method(spec);
     Ok(quote! {
         #(#unsupported_type_checks)*
 
@@ -441,6 +442,8 @@ fn try_expand(
                     " is an enum base; construct a nested variant"
                 )))
             }
+
+            #variant_aliases_method
 
             #[classattr]
             fn __pybevy_control_payload_variants__() -> Vec<&'static str> {

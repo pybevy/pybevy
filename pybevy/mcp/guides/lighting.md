@@ -742,8 +742,7 @@ must be a square, power-of-two cubemap no wider than 8192 pixels.
 from pybevy.light import GeneratedEnvironmentMapLight
 
 source_cubemap = asset_server.load_image(
-    "bevy/environment_maps/sky_skybox.ktx2"
-)
+    "bevy/environment_maps/sky_skybox.ktx2")
 commands.spawn(
     Camera3d(),
     GeneratedEnvironmentMapLight(

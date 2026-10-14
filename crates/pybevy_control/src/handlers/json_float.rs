@@ -9,6 +9,34 @@ pub(crate) fn require_finite_float(value: f64) -> Result<f64, String> {
     }
 }
 
+pub(crate) fn reject_narrowed_nonfinite(request: &Value, written: &Value) -> Result<(), String> {
+    match (request, written) {
+        (Value::Number(number), Value::String(value))
+            if number.as_f64().is_some_and(f64::is_finite)
+                && matches!(value.as_str(), "NaN" | "Infinity" | "-Infinity") =>
+        {
+            Err("number is outside the f32 range".to_string())
+        }
+        (Value::Object(request), Value::Object(written)) => {
+            for (name, value) in request {
+                if let Some(stored) = written.get(name) {
+                    reject_narrowed_nonfinite(value, stored)
+                        .map_err(|error| format!("{name}: {error}"))?;
+                }
+            }
+            Ok(())
+        }
+        (Value::Array(request), Value::Array(written)) => {
+            for (index, (value, stored)) in request.iter().zip(written).enumerate() {
+                reject_narrowed_nonfinite(value, stored)
+                    .map_err(|error| format!("{index}: {error}"))?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
 pub(crate) fn float_to_json(value: f64) -> Value {
     if value.is_nan() {
         return Value::String("NaN".to_string());
@@ -56,5 +84,22 @@ mod tests {
     fn finite_values_remain_json_numbers() {
         assert_eq!(float_to_json(1.25), serde_json::json!(1.25));
         assert!(nonfinite_float_from_json(&serde_json::json!(1.25)).is_none());
+    }
+
+    #[test]
+    fn detects_only_new_nonfinite_narrowing_at_matching_paths() {
+        let request = serde_json::json!({"value": {"fov": 1e39}, "untouched": 1.0});
+        let written = serde_json::json!({"value": {"fov": "Infinity"}, "untouched": 1.0});
+        assert_eq!(
+            reject_narrowed_nonfinite(&request, &written).unwrap_err(),
+            "value: fov: number is outside the f32 range"
+        );
+        assert!(
+            reject_narrowed_nonfinite(
+                &serde_json::json!({"elapsed": 1e39}),
+                &serde_json::json!({"elapsed": 1e39, "existing": "Infinity"})
+            )
+            .is_ok()
+        );
     }
 }

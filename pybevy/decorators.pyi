@@ -139,7 +139,8 @@ def entrypoint(func: Callable[[App], App]) -> EntrypointDecoratorResult:
     """Decorator for the main app entry point function.
 
     Automatically injects an App instance when called with no arguments,
-    while still allowing explicit App instances for testing.
+    while still allowing explicit App instances for testing. The function must
+    return the App it was given; returning a new App() raises TypeError.
 
     Unlike @component/@resource/@plugin, this decorator is applied to a FUNCTION,
     not a class. No inheritance is required.

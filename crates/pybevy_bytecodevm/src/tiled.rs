@@ -7,8 +7,9 @@
 
 use crate::{
     bytecode::{
-        CompiledBytecode, FieldType, Op, python_clip, python_maximum, python_minimum,
-        python_remainder, python_round, python_sign,
+        CompiledBytecode, FieldType, Op, numpy_floor_divide, numpy_floor_divide_f32, python_clip,
+        python_maximum, python_minimum, python_remainder, python_remainder_f32, python_round,
+        python_sign,
     },
     columns::{ColumnMut, ColumnRef, load_tile_f32, load_tile_f64, store_tile_f32, store_tile_f64},
 };
@@ -53,19 +54,6 @@ fn sign_f32(value: f32) -> f32 {
         -1.0
     } else {
         value
-    }
-}
-
-#[inline]
-fn remainder_f32(dividend: f32, divisor: f32) -> f32 {
-    let remainder = dividend % divisor;
-    if remainder == 0.0 {
-        return remainder.copysign(divisor);
-    }
-    if (remainder < 0.0) != (divisor < 0.0) {
-        remainder + divisor
-    } else {
-        remainder
     }
 }
 
@@ -341,7 +329,7 @@ fn stack_layout(ops: &[Op]) -> Option<(usize, usize)> {
     let mut maximum = 0usize;
     for op in ops {
         let (pops, pushes) = match op {
-            Op::PushField(_) | Op::PushInput(_) | Op::PushConst(_) | Op::Random => (0, 1),
+            Op::PushField(_) | Op::PushInput(_) | Op::PushConst(_) | Op::Random(_) => (0, 1),
             Op::StoreField(_)
             | Op::Neg
             | Op::Sin
@@ -366,6 +354,7 @@ fn stack_layout(ops: &[Op]) -> Option<(usize, usize)> {
             | Op::Sub
             | Op::Mul
             | Op::Div
+            | Op::FloorDiv
             | Op::Pow
             | Op::Min
             | Op::Max
@@ -378,7 +367,7 @@ fn stack_layout(ops: &[Op]) -> Option<(usize, usize)> {
             | Op::And
             | Op::Or
             | Op::Mod
-            | Op::RandomRange => (2, 1),
+            | Op::RandomRange(_) => (2, 1),
             Op::Clamp | Op::Where | Op::Lerp => (3, 1),
         };
         if depth < pops {
@@ -402,6 +391,7 @@ fn is_supported(op: &Op) -> bool {
             | Op::Sub
             | Op::Mul
             | Op::Div
+            | Op::FloorDiv
             | Op::Neg
             | Op::Sqrt
             | Op::Abs
@@ -500,13 +490,25 @@ fn apply_stack_op(
             stack[depth * TILE..depth * TILE + len].fill(constants[*idx as usize]);
             depth + 1
         }
-        Op::Add | Op::Sub | Op::Mul | Op::Div | Op::Min | Op::Max | Op::Pow | Op::Mod => {
+        Op::Add
+        | Op::Sub
+        | Op::Mul
+        | Op::Div
+        | Op::FloorDiv
+        | Op::Min
+        | Op::Max
+        | Op::Pow
+        | Op::Mod => {
             let (a, b) = two_tiles(stack, depth - 2, depth - 1, len);
             match op {
                 Op::Add => a.iter_mut().zip(&*b).for_each(|(x, y)| *x += *y),
                 Op::Sub => a.iter_mut().zip(&*b).for_each(|(x, y)| *x -= *y),
                 Op::Mul => a.iter_mut().zip(&*b).for_each(|(x, y)| *x *= *y),
                 Op::Div => a.iter_mut().zip(&*b).for_each(|(x, y)| *x /= *y),
+                Op::FloorDiv => a
+                    .iter_mut()
+                    .zip(&*b)
+                    .for_each(|(x, y)| *x = numpy_floor_divide(*x, *y)),
                 Op::Min => a
                     .iter_mut()
                     .zip(&*b)
@@ -674,13 +676,25 @@ fn apply_stack_op_f32(
             stack[depth * TILE..depth * TILE + len].fill(constants[*idx as usize] as f32);
             depth + 1
         }
-        Op::Add | Op::Sub | Op::Mul | Op::Div | Op::Min | Op::Max | Op::Pow | Op::Mod => {
+        Op::Add
+        | Op::Sub
+        | Op::Mul
+        | Op::Div
+        | Op::FloorDiv
+        | Op::Min
+        | Op::Max
+        | Op::Pow
+        | Op::Mod => {
             let (a, b) = two_tiles(stack, depth - 2, depth - 1, len);
             match op {
                 Op::Add => a.iter_mut().zip(&*b).for_each(|(x, y)| *x += *y),
                 Op::Sub => a.iter_mut().zip(&*b).for_each(|(x, y)| *x -= *y),
                 Op::Mul => a.iter_mut().zip(&*b).for_each(|(x, y)| *x *= *y),
                 Op::Div => a.iter_mut().zip(&*b).for_each(|(x, y)| *x /= *y),
+                Op::FloorDiv => a
+                    .iter_mut()
+                    .zip(&*b)
+                    .for_each(|(x, y)| *x = numpy_floor_divide_f32(*x, *y)),
                 Op::Min => a
                     .iter_mut()
                     .zip(&*b)
@@ -693,7 +707,7 @@ fn apply_stack_op_f32(
                 Op::Mod => a
                     .iter_mut()
                     .zip(&*b)
-                    .for_each(|(x, y)| *x = remainder_f32(*x, *y)),
+                    .for_each(|(x, y)| *x = python_remainder_f32(*x, *y)),
                 _ => unreachable!(),
             }
             depth - 1
@@ -1845,7 +1859,7 @@ mod tests {
             });
             depth - 2
         } else if depth >= 2 && choice < 60 {
-            let op = match rng.below(8) {
+            let op = match rng.below(9) {
                 0 => Op::Add,
                 1 => Op::Sub,
                 2 => Op::Mul,
@@ -1853,6 +1867,7 @@ mod tests {
                 4 => Op::Min,
                 5 => Op::Max,
                 6 => Op::Pow,
+                7 => Op::FloorDiv,
                 _ => Op::Mod,
             };
             c.emit(op);
@@ -2392,7 +2407,7 @@ mod tests {
     #[test]
     fn tiled_f32_rejects_unsupported_programs() {
         let unsupported = CompiledBytecode {
-            bytecode: vec![Op::Random, Op::StoreField(0)],
+            bytecode: vec![Op::Random(0), Op::StoreField(0)],
             constants: vec![],
             field_map: vec![],
         };

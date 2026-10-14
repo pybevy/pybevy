@@ -10,6 +10,11 @@ pub struct PyTonemapping(pub(crate) Tonemapping);
 
 #[pymethods]
 impl PyTonemapping {
+    #[classattr]
+    fn __pybevy_variant_aliases__() -> Vec<(&'static str, &'static str)> {
+        vec![("None", "None_"), ("KhronosPbrNeutral", "PbrNeutral")]
+    }
+
     #[new]
     pub fn new() -> PyClassInitializer<Self> {
         Self::from_owned(Tonemapping::TonyMcMapface).into()

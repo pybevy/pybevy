@@ -12,6 +12,13 @@ _READ_ONLY_VIEW_ASSIGNMENT = (
 )
 
 
+def _validate_random_stream(stream: int) -> None:
+    if isinstance(stream, bool) or not isinstance(stream, int):
+        raise TypeError("random stream must be an integer")
+    if not 0 <= stream <= 0xFFFFFFFF:
+        raise ValueError("random stream must be between 0 and 4294967295")
+
+
 def _assignment_parent(parent: Any) -> Any:  # noqa: ANN401
     if parent is None:
         raise RuntimeError(_READ_ONLY_VIEW_ASSIGNMENT)
@@ -80,6 +87,14 @@ class Expr:
         """Right division: other / self"""
         return Expr(op="div", args=[other, self])
 
+    def __floordiv__(self, other: Union["Expr", float, int]) -> "Expr":
+        """Floor division: self // other."""
+        return Expr(op="floordiv", args=[self, other])
+
+    def __rfloordiv__(self, other: Union["Expr", float, int]) -> "Expr":
+        """Right floor division: other // self."""
+        return Expr(op="floordiv", args=[other, self])
+
     def __pow__(self, other: Union["Expr", float, int]) -> "Expr":
         """Power: self ** other"""
         return Expr(op="pow", args=[self, other])
@@ -117,6 +132,10 @@ class Expr:
     def __itruediv__(self, other: Union["Expr", float, int]) -> "Expr":
         """In-place division: self /= other"""
         return self.__truediv__(other)
+
+    def __ifloordiv__(self, other: Union["Expr", float, int]) -> "Expr":
+        """In-place floor division: self //= other."""
+        return self.__floordiv__(other)
 
     def __ipow__(self, other: Union["Expr", float, int]) -> "Expr":
         """In-place power: self **= other"""
@@ -224,35 +243,42 @@ class Expr:
         """Linear interpolation: lerp(self, other, t) = self + t * (other - self)"""
         return Expr(op="lerp", args=[self, other, t])
 
-    def random(self) -> "Expr":
+    def random(self, *, stream: int = 0) -> "Expr":
         """Generate a random float in [0.0, 1.0).
 
-        The value is seeded from the entity id, so an entity keeps it across
-        frames, across archetype moves, and whichever execution path evaluates
-        the expression. Useful for procedural generation.
+        The draw depends on the entity id and stream, not on this expression's
+        value. It stays stable across frames and archetype moves. Calls using
+        the same stream return the same draw for an entity; use different
+        streams for independent coordinates. Stream must be an integer from
+        0 through 2**32 - 1; the default is stream 0.
 
         Example:
-            # Randomize height field
-            view[Transform].translation.y.set(y.random() * 10.0)
+            column = view.column_mut(Transform)
+            column.translation.y = column.translation.x.random(stream=1) * 10.0
         """
-        return Expr(op="random", args=[])
+        _validate_random_stream(stream)
+        return Expr(op="random", args=[] if stream == 0 else [stream])
 
     def random_range(
         self,
         min: Union["Expr", float, int],
         max: Union["Expr", float, int],
+        *,
+        stream: int = 0,
     ) -> "Expr":
         """Generate a random float in [min, max).
 
-        The value is seeded from the entity id, so an entity keeps it across
-        frames, across archetype moves, and whichever execution path evaluates
-        the expression. Useful for procedural generation.
+        The draw depends on the entity id and stream, not on this expression's
+        value or the range. Calls using the same stream reuse one unit draw;
+        use different streams for independent coordinates. Stream must be an
+        integer from 0 through 2**32 - 1; the default is stream 0.
 
         Example:
-            # Randomize scale between 0.5 and 2.0
-            view[Transform].scale.x.set(x.random_range(0.5, 2.0))
+            column = view.column_mut(Transform)
+            column.scale.x = column.scale.x.random_range(0.5, 2.0, stream=2)
         """
-        return Expr(op="random_range", args=[min, max])
+        _validate_random_stream(stream)
+        return Expr(op="random_range", args=[min, max] if stream == 0 else [min, max, stream])
 
     def where(
         self,
@@ -413,6 +439,10 @@ class FieldExpr(Expr):
     ) -> "FieldExpr":
         """In-place division: self /= other."""
         return self.__truediv__(other)
+
+    def __ifloordiv__(self, other: Union["Expr", float, int]) -> "Expr":
+        """In-place floor division: self //= other."""
+        return self.__floordiv__(other)
 
     def __ipow__(self, other: Union["Expr", float, int]) -> "FieldExpr":
         """In-place power: self **= other."""

@@ -31,6 +31,7 @@ from ._layout import (
 )
 
 _Material = _pybevy.pbr.Material  # type: ignore
+_PACKED_VECTOR_TYPES = (Vec2, Vec3, Vec4, LinearRgba)
 MaterialT = TypeVar("MaterialT", bound=_Material)  # type: ignore[valid-type]
 AlphaMode = _pybevy.material.AlphaMode  # type: ignore
 OpaqueRendererMethod = _pybevy.material.OpaqueRendererMethod  # type: ignore
@@ -381,6 +382,11 @@ def material(
             def _getter(
                 self: Any, _fi: int = _float_idx, _t: type = _typ, _n: int = _nf,  # noqa: ANN401
             ) -> Any:  # noqa: ANN401
+                if _t in _PACKED_VECTOR_TYPES:
+                    if self._shader_mat is not None:
+                        return self._shader_mat._uniform_field(_fi, _t)
+                    value = _read_value(self._data, _fi, _t)
+                    return _pybevy.pbr.ShaderMaterial._read_only_uniform(value)
                 if self._shader_mat is not None:
                     floats = self._shader_mat.get_data_floats(_fi, _n)
                     return _read_value(floats, 0, _t)

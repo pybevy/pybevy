@@ -274,11 +274,12 @@ fn message_mutator_clear_is_cursor_local_and_non_destructive() {
     let untouched = world.resource::<Messages<ContractMessage>>().get_cursor();
 
     let mut state = SystemState::<MessageMutator<ContractMessage>>::new(&mut world);
-    let mut mutator = state.get_mut(&mut world).unwrap();
-    assert_eq!(mutator.len(), 2);
-    mutator.clear();
-    assert!(mutator.is_empty());
-    drop(mutator);
+    {
+        let mut mutator = state.get_mut(&mut world).unwrap();
+        assert_eq!(mutator.len(), 2);
+        mutator.clear();
+        assert!(mutator.is_empty());
+    }
 
     let messages = world.resource::<Messages<ContractMessage>>();
     assert_eq!(untouched.len(messages), 2);

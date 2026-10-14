@@ -93,6 +93,10 @@ expression across every matching entity in one step. For a concrete
 zero-copy indexing, and optional JAX copy conversion, with a batch-scoped lifetime. A
 concrete `ViewColumn` refuses direct NumPy conversion (`__array__` raises); a NumPy
 array is a copy built with `to_contiguous_bytes()` and `numpy.frombuffer()`.
+Its eager arithmetic operators and math methods (`col * 2.0`, `col.sin()`) work
+only on float columns. An integer or bool column raises `TypeError` naming the
+operation and dtype; compute integer fields with a lazy View expression or a
+Numba kernel. `set()`, `peek()`, `to_list()`, and indexing work for every dtype.
 
 Entity IDs are available via `batch.entities()` when using `iter_batches()`:
 

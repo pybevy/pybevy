@@ -6,6 +6,7 @@ import threading
 import types
 import weakref
 from collections.abc import Callable, Mapping
+from enum import Enum
 from functools import wraps
 from typing import Any, ClassVar, TypeVar, Union, get_args, get_origin, get_type_hints
 from weakref import WeakValueDictionary
@@ -178,6 +179,7 @@ class _ResourceAssignmentValidation[RT]:
         self._hints_frozen = self._resolved_hints is not None
         self._hints_lock = threading.Lock()
         self._committed: _ResourceAssignmentAliases = types.MappingProxyType({})
+        self._committed_enum_refs: dict[str, weakref.ReferenceType[type]] = {}
         self._publish_lock = threading.Lock()
 
     def freeze_hints(self) -> None:
@@ -229,8 +231,25 @@ class _ResourceAssignmentValidation[RT]:
         return types.MappingProxyType(prepared)
 
     def publish(self, aliases: _ResourceAssignmentAliases) -> None:
+        enum_refs: dict[str, weakref.ReferenceType[type]] = {}
+        for name, references in aliases.items():
+            for reference in reversed(references):
+                candidate = reference()
+                if candidate is not None and issubclass(candidate, Enum):
+                    enum_refs[name] = reference
+                    break
         with self._publish_lock:
             self._committed = aliases
+            self._committed_enum_refs = enum_refs
+
+    def _committed_enum_type(self, name: str) -> type[Enum] | None:
+        with self._publish_lock:
+            reference = self._committed_enum_refs.get(name)
+        if reference is not None:
+            candidate = reference()
+            if candidate is not None and issubclass(candidate, Enum):
+                return candidate
+        return None
 
     def set_value(self, instance: RT, name: str, value: object) -> None:
         cls = self._cls()
@@ -852,6 +871,11 @@ def entrypoint(func: Callable) -> Callable:
                 raise TypeError(
                     f"@entrypoint '{func.__name__}' must return an App, "
                     f"got {type(result).__name__}; return the configured app."
+                )
+            if result is not app:
+                raise TypeError(
+                    f"@entrypoint '{func.__name__}' must return the App it was "
+                    "given; configure and return `app` instead of creating a new App()."
                 )
         except Exception as e:
             from . import _pybevy  # type: ignore

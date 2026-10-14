@@ -58,6 +58,13 @@ use crate::ecs::{
     view::{cached_view::CachedPyView, construct_view_class_item, view_column::PyViewColumn},
 };
 
+fn view_program_error(error: ViewRuntimeError) -> PyErr {
+    match error {
+        ViewRuntimeError::ImplicitFloatToInteger { .. } => PyTypeError::new_err(error.to_string()),
+        _ => PyValueError::new_err(error.to_string()),
+    }
+}
+
 /// View parameter for batch operations
 ///
 /// The run-scoped core owns the World cell and rejects stale or cross-thread
@@ -763,7 +770,7 @@ impl PyViewColMut {
         let program = view
             .runtime
             .prepare_assignment_program(destination, &expr)
-            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+            .map_err(view_program_error)?;
         let lease = view
             .runtime
             .gather_batches()

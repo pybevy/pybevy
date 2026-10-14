@@ -631,6 +631,12 @@ class ViewColumn:
         - view.peek(index) -> float: Read single value (with safety check)
         - view.to_list() -> list: Convert to Python list (with copy)
         - view.is_valid -> bool: Check if view is still valid
+
+    Arithmetic operators and math methods compute eagerly into a new column
+    and accept only float32/float64 columns. On an integer or bool column, or
+    with one as the other operand, they raise TypeError naming the operation
+    and dtype; use a lazy View expression or a Numba kernel instead. set(),
+    peek(), to_list(), and indexing work for every scalar dtype.
     """
 
     @property

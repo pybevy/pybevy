@@ -76,6 +76,17 @@ pub(crate) struct FieldSpec<'a> {
 }
 
 impl<'a> EnumSpec<'a> {
+    pub(crate) fn variant_aliases(&self) -> Vec<(String, String)> {
+        self.variants
+            .iter()
+            .filter(|variant| !variant.unsupported)
+            .filter_map(|variant| {
+                let native = normalized_ident(variant.rust_name);
+                (native != variant.python_name).then(|| (native, variant.python_name.clone()))
+            })
+            .collect()
+    }
+
     pub(crate) fn parse(item: &'a ItemEnum, inner_type: &'a Type) -> syn::Result<Self> {
         if item.variants.is_empty() {
             return Err(syn::Error::new_spanned(
