@@ -2,7 +2,9 @@ use std::{io::Cursor, path::Path, sync::Arc};
 
 use bevy::{
     asset::RenderAssetUsages,
-    image::{Image, ImageSampler, TextureFormatPixelInfo},
+    color::{Color, ColorToComponents, Gray, LinearRgba, Srgba, Xyza},
+    image::{Image, ImageSampler, TextureAccessError, TextureFormatPixelInfo},
+    math::UVec3,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages},
 };
 use half::f16;
@@ -79,6 +81,107 @@ fn extract_u8_data_from_any(data: &Bound<'_, PyAny>) -> PyResult<ExtractedU8Data
 fn pixel_size_of(format: TextureFormat) -> Option<usize> {
     format.block_copy_size(None)?;
     format.pixel_size().ok()
+}
+
+fn rounded_u8(value: f32) -> u8 {
+    (value * u8::MAX as f32).round() as u8
+}
+
+fn rounded_u16(value: f32) -> u16 {
+    (value * u16::MAX as f32).round() as u16
+}
+
+fn rounded_u32(value: f32) -> u32 {
+    (value as f64 * u32::MAX as f64).round() as u32
+}
+
+fn write_u8_channels<const N: usize>(bytes: &mut [u8], values: [f32; N]) {
+    for (byte, value) in bytes.iter_mut().zip(values) {
+        *byte = rounded_u8(value);
+    }
+}
+
+fn write_u16_channels<const N: usize>(bytes: &mut [u8], values: [f32; N]) {
+    for (chunk, value) in bytes.chunks_exact_mut(2).zip(values) {
+        chunk.copy_from_slice(&rounded_u16(value).to_le_bytes());
+    }
+}
+
+fn write_u32_channels<const N: usize>(bytes: &mut [u8], values: [f32; N]) {
+    for (chunk, value) in bytes.chunks_exact_mut(4).zip(values) {
+        chunk.copy_from_slice(&rounded_u32(value).to_le_bytes());
+    }
+}
+
+fn round_integer_pixel(
+    image: &mut Image,
+    coords: UVec3,
+    color: Color,
+) -> Result<(), TextureAccessError> {
+    let format = image.texture_descriptor.format;
+    match format {
+        TextureFormat::Rgba8UnormSrgb => {
+            write_u8_channels(
+                image.pixel_bytes_mut(coords)?,
+                Srgba::from(color).to_f32_array(),
+            );
+        }
+        TextureFormat::Rgba8Unorm | TextureFormat::Rgba8Uint => {
+            write_u8_channels(
+                image.pixel_bytes_mut(coords)?,
+                LinearRgba::from(color).to_f32_array(),
+            );
+        }
+        TextureFormat::Bgra8UnormSrgb | TextureFormat::Bgra8Unorm => {
+            let [r, g, b, a] = if format == TextureFormat::Bgra8UnormSrgb {
+                Srgba::from(color).to_f32_array()
+            } else {
+                LinearRgba::from(color).to_f32_array()
+            };
+            write_u8_channels(image.pixel_bytes_mut(coords)?, [b, g, r, a]);
+        }
+        TextureFormat::Rgba16Unorm | TextureFormat::Rgba16Uint => {
+            write_u16_channels(
+                image.pixel_bytes_mut(coords)?,
+                LinearRgba::from(color).to_f32_array(),
+            );
+        }
+        TextureFormat::Rgba32Uint => {
+            write_u32_channels(
+                image.pixel_bytes_mut(coords)?,
+                LinearRgba::from(color).to_f32_array(),
+            );
+        }
+        TextureFormat::R8Unorm | TextureFormat::R8Uint => {
+            let luminance = Xyza::from(LinearRgba::from(color)).y;
+            let gray = LinearRgba::gray(luminance).to_f32_array()[0];
+            write_u8_channels(image.pixel_bytes_mut(coords)?, [gray]);
+        }
+        TextureFormat::R16Unorm | TextureFormat::R16Uint => {
+            let luminance = Xyza::from(LinearRgba::from(color)).y;
+            let gray = LinearRgba::gray(luminance).to_f32_array()[0];
+            write_u16_channels(image.pixel_bytes_mut(coords)?, [gray]);
+        }
+        TextureFormat::R32Uint => {
+            let luminance = Xyza::from(LinearRgba::from(color)).y;
+            let gray = LinearRgba::gray(luminance).to_f32_array()[0];
+            write_u32_channels(image.pixel_bytes_mut(coords)?, [gray]);
+        }
+        TextureFormat::Rg8Unorm | TextureFormat::Rg8Uint => {
+            let [r, g, _, _] = LinearRgba::from(color).to_f32_array();
+            write_u8_channels(image.pixel_bytes_mut(coords)?, [r, g]);
+        }
+        TextureFormat::Rg16Unorm | TextureFormat::Rg16Uint => {
+            let [r, g, _, _] = LinearRgba::from(color).to_f32_array();
+            write_u16_channels(image.pixel_bytes_mut(coords)?, [r, g]);
+        }
+        TextureFormat::Rg32Uint => {
+            let [r, g, _, _] = LinearRgba::from(color).to_f32_array();
+            write_u32_channels(image.pixel_bytes_mut(coords)?, [r, g]);
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 fn reject_aspect_dependent_format(format: TextureFormat) -> PyResult<()> {
@@ -1316,8 +1419,11 @@ impl PyImage {
         let color = color.try_into()?;
         image_with!(self, |image: &Image| image.get_color_at_1d(x))
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to set color at ({x}): {e}")))?;
-        image_with_mut!(self, |image: &mut Image| image.set_color_at_1d(x, color))
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to set color at ({x}): {e}")))?;
+        image_with_mut!(self, |image: &mut Image| {
+            image.set_color_at_1d(x, color)?;
+            round_integer_pixel(image, UVec3::new(x, 0, 0), color)
+        })
+        .map_err(|e| PyRuntimeError::new_err(format!("Failed to set color at ({x}): {e}")))?;
         Ok(())
     }
 
@@ -1326,9 +1432,11 @@ impl PyImage {
         image_with!(self, |image: &Image| image.get_color_at(x, y)).map_err(|e| {
             PyRuntimeError::new_err(format!("Failed to set color at ({x}, {y}): {e}"))
         })?;
-        image_with_mut!(self, |image: &mut Image| image.set_color_at(x, y, color)).map_err(
-            |e| PyRuntimeError::new_err(format!("Failed to set color at ({x}, {y}): {e}")),
-        )?;
+        image_with_mut!(self, |image: &mut Image| {
+            image.set_color_at(x, y, color)?;
+            round_integer_pixel(image, UVec3::new(x, y, 0), color)
+        })
+        .map_err(|e| PyRuntimeError::new_err(format!("Failed to set color at ({x}, {y}): {e}")))?;
         Ok(())
     }
 
@@ -1337,8 +1445,10 @@ impl PyImage {
         image_with!(self, |image: &Image| image.get_color_at_3d(x, y, z)).map_err(|e| {
             PyRuntimeError::new_err(format!("Failed to set color at ({x}, {y}, {z}): {e}"))
         })?;
-        image_with_mut!(self, |image: &mut Image| image
-            .set_color_at_3d(x, y, z, color))
+        image_with_mut!(self, |image: &mut Image| {
+            image.set_color_at_3d(x, y, z, color)?;
+            round_integer_pixel(image, UVec3::new(x, y, z), color)
+        })
         .map_err(|e| {
             PyRuntimeError::new_err(format!("Failed to set color at ({x}, {y}, {z}): {e}"))
         })?;

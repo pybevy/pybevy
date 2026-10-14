@@ -21,6 +21,12 @@ pub const SCREENSHOT_CAMERA3D_REQUIRED: &str = "position/look_at screenshot over
 pub const TURNAROUND_CAMERA3D_REQUIRED: &str =
     "capture_turnaround requires a Camera3d; Camera2d-only scenes cannot produce orbit views";
 
+pub fn view_column_float_only(operation: &str, dtype: &str) -> String {
+    format!(
+        "{operation} is not supported for ViewColumn dtype {dtype}; use a float field, or compute with a lazy View expression (view.column_mut(T)) or a Numba kernel"
+    )
+}
+
 pub fn capture_no_camera(operation: &str) -> String {
     format!("{operation} requires an active Camera, but the scene has no Camera entities")
 }
@@ -555,6 +561,23 @@ pub const TIMER_ELAPSED_PAST_DURATION: &str = "the remaining time is undefined w
 
 pub fn too_many_shader_def_names(actual: usize) -> String {
     format!("shader_def_names accepts at most 32 entries; got {actual}")
+}
+
+pub fn packed_uniform_misaligned(type_name: &str, float_index: usize, alignment: usize) -> String {
+    format!(
+        "{type_name} uniform float index {float_index} is not aligned; it must be a multiple of {alignment}"
+    )
+}
+
+pub fn packed_uniform_out_of_range(type_name: &str, float_index: usize, count: usize) -> String {
+    format!(
+        "{type_name} uniform float range {float_index}..{} exceeds buffer (max 256)",
+        float_index.saturating_add(count)
+    )
+}
+
+pub fn unsupported_packed_uniform_type(actual: impl Display) -> String {
+    format!("packed uniform type must be Vec2, Vec3, Vec4, or LinearRgba, got {actual}")
 }
 
 pub const DESIRED_MAXIMUM_FRAME_LATENCY_AT_LEAST_ONE: &str =

@@ -188,6 +188,61 @@ fn is_constant(value: StackValue) -> bool {
     matches!(value, StackValue::Constant(_))
 }
 
+macro_rules! signed_floor_divmod {
+    ($name:ident, $ty:ty) => {
+        #[inline]
+        fn $name(a: $ty, b: $ty) -> ($ty, $ty) {
+            if b == 0 {
+                return (0, 0);
+            }
+            let quotient = a.wrapping_div(b);
+            let remainder = a.wrapping_rem(b);
+            if remainder != 0 && (remainder < 0) != (b < 0) {
+                (quotient - 1, remainder + b)
+            } else {
+                (quotient, remainder)
+            }
+        }
+    };
+}
+
+signed_floor_divmod!(floor_divmod_i32, i32);
+signed_floor_divmod!(floor_divmod_i64, i64);
+
+#[inline]
+fn floor_divide(a: StackValue, b: StackValue) -> StackValue {
+    let (a, b) = specialize_constants(a, b);
+    match (a, b) {
+        (StackValue::I32(a), StackValue::I32(b)) => StackValue::I32(floor_divmod_i32(a, b).0),
+        (StackValue::I64(a), StackValue::I64(b)) => StackValue::I64(floor_divmod_i64(a, b).0),
+        (StackValue::U8(a), StackValue::U8(b)) => StackValue::U8(a.checked_div(b).unwrap_or(0)),
+        (StackValue::U32(a), StackValue::U32(b)) => StackValue::U32(a.checked_div(b).unwrap_or(0)),
+        (StackValue::U64(a), StackValue::U64(b)) => StackValue::U64(a.checked_div(b).unwrap_or(0)),
+        (StackValue::F32(a), StackValue::F32(b)) => StackValue::F32(numpy_floor_divide_f32(a, b)),
+        (a, b) => numeric_result(
+            is_constant(a) && is_constant(b),
+            numpy_floor_divide(a.as_float(), b.as_float()),
+        ),
+    }
+}
+
+#[inline]
+fn remainder(a: StackValue, b: StackValue) -> StackValue {
+    let (a, b) = specialize_constants(a, b);
+    match (a, b) {
+        (StackValue::I32(a), StackValue::I32(b)) => StackValue::I32(floor_divmod_i32(a, b).1),
+        (StackValue::I64(a), StackValue::I64(b)) => StackValue::I64(floor_divmod_i64(a, b).1),
+        (StackValue::U8(a), StackValue::U8(b)) => StackValue::U8(a.checked_rem(b).unwrap_or(0)),
+        (StackValue::U32(a), StackValue::U32(b)) => StackValue::U32(a.checked_rem(b).unwrap_or(0)),
+        (StackValue::U64(a), StackValue::U64(b)) => StackValue::U64(a.checked_rem(b).unwrap_or(0)),
+        (StackValue::F32(a), StackValue::F32(b)) => StackValue::F32(python_remainder_f32(a, b)),
+        (a, b) => numeric_result(
+            is_constant(a) && is_constant(b),
+            python_remainder(a.as_float(), b.as_float()),
+        ),
+    }
+}
+
 macro_rules! integer_binary {
     ($a:expr, $b:expr, $method:ident, $float:expr) => {{
         let (a, b) = specialize_constants($a, $b);
@@ -330,6 +385,9 @@ pub enum Op {
     /// Pop two values, divide (stack[n-1] / stack[n]), push result
     Div,
 
+    /// Pop two values, floor-divide (stack[n-1] // stack[n]), push result
+    FloorDiv,
+
     /// Pop two values, raise to power (stack[n-1] ** stack[n]), push result
     Pow,
 
@@ -443,13 +501,13 @@ pub enum Op {
     Mod,
 
     /// Generate random float in [0.0, 1.0)
-    /// Uses entity index as seed for deterministic per-entity randomness
-    Random,
+    /// Uses entity identity and the stream for deterministic per-entity randomness
+    Random(u32),
 
     /// Generate random float in [min, max)
     /// Stack before: [max: float, min: float]
     /// Stack after: [result: float]
-    RandomRange,
+    RandomRange(u32),
 }
 
 pub use pybevy_storage::FieldType;
@@ -668,7 +726,7 @@ pub fn python_remainder(dividend: f64, divisor: f64) -> f64 {
 }
 
 #[inline]
-fn python_remainder_f32(dividend: f32, divisor: f32) -> f32 {
+pub fn python_remainder_f32(dividend: f32, divisor: f32) -> f32 {
     let remainder = dividend % divisor;
     if remainder == 0.0 {
         return remainder.copysign(divisor);
@@ -679,6 +737,42 @@ fn python_remainder_f32(dividend: f32, divisor: f32) -> f32 {
         remainder
     }
 }
+
+macro_rules! numpy_float_floor_divide {
+    ($(#[$meta:meta])* $name:ident, $ty:ty) => {
+        $(#[$meta])*
+        #[inline]
+        pub fn $name(dividend: $ty, divisor: $ty) -> $ty {
+            if divisor == 0.0 {
+                return dividend / divisor;
+            }
+            let remainder = dividend % divisor;
+            let mut quotient = (dividend - remainder) / divisor;
+            if remainder != 0.0 && (divisor < 0.0) != (remainder < 0.0) {
+                quotient -= 1.0;
+            }
+            if quotient == 0.0 {
+                return (0.0 as $ty).copysign(dividend / divisor);
+            }
+            let floor = quotient.floor();
+            if quotient - floor > 0.5 { floor + 1.0 } else { floor }
+        }
+    };
+}
+
+numpy_float_floor_divide!(
+    /// Return NumPy's `floor_divide` result for floating-point operands.
+    ///
+    /// The quotient is snapped from `(a - a % b) / b` so it agrees with
+    /// [`python_remainder`]; a zero divisor yields `a / b` (signed infinity or NaN).
+    numpy_floor_divide,
+    f64
+);
+numpy_float_floor_divide!(
+    /// `f32` lane of [`numpy_floor_divide`].
+    numpy_floor_divide_f32,
+    f32
+);
 
 /// Round to the nearest integer using Python's ties-to-even convention.
 #[inline]
@@ -983,15 +1077,16 @@ impl VM {
     /// Simple hash-based random number generator for deterministic per-entity randomness
     /// Uses the entity index as seed to ensure reproducibility
     #[inline]
-    fn random(&self) -> f64 {
-        // Simple LCG-style hash for deterministic randomness
-        let mut x = self.entity_index as u32;
-        x = x.wrapping_mul(747796405).wrapping_add(2891336453);
-        x = (x ^ (x >> 13)).wrapping_mul(1597334677);
-        x = x ^ (x >> 16);
+    fn random(&self, stream: u32) -> f64 {
+        // Counter-based draw: the (entity seed, stream) pair is one injective
+        // 64-bit input to the SplitMix64 finalizer.
+        let mut x = (u64::from(self.entity_index as u32) << 32) | u64::from(stream);
+        x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        x ^= x >> 31;
 
-        // Convert to [0.0, 1.0); dividing by 2^32 keeps x == u32::MAX below 1.
-        f64::from(x) / 4_294_967_296.0
+        // Convert to [0.0, 1.0); dividing by 2^32 keeps u32::MAX below 1.
+        f64::from((x >> 32) as u32) / 4_294_967_296.0
     }
 
     /// Dispatch a single stack-only operation (everything except external loads/stores).
@@ -1036,6 +1131,11 @@ impl VM {
                 self.stack
                     .push(float_binary!(a, b, |a, b| a / b, |a, b| a / b));
             }
+            Op::FloorDiv => {
+                let b = self.stack.pop().expect("Stack underflow on FloorDiv");
+                let a = self.stack.pop().expect("Stack underflow on FloorDiv");
+                self.stack.push(floor_divide(a, b));
+            }
             Op::Pow => {
                 let b = self.stack.pop().expect("Stack underflow on Pow");
                 let a = self.stack.pop().expect("Stack underflow on Pow");
@@ -1045,8 +1145,7 @@ impl VM {
             Op::Mod => {
                 let b = self.stack.pop().expect("Stack underflow on Mod");
                 let a = self.stack.pop().expect("Stack underflow on Mod");
-                self.stack
-                    .push(float_binary!(a, b, python_remainder_f32, python_remainder));
+                self.stack.push(remainder(a, b));
             }
             Op::Neg => {
                 let a = self.stack.pop().expect("Stack underflow on Neg");
@@ -1348,16 +1447,16 @@ impl VM {
             }
 
             // Random
-            Op::Random => {
-                let random = self.random();
+            Op::Random(stream) => {
+                let random = self.random(*stream);
                 self.stack.push(if self.native_f32 {
                     StackValue::F32(random as f32)
                 } else {
                     StackValue::Float(random)
                 });
             }
-            Op::RandomRange => {
-                let rand = self.random();
+            Op::RandomRange(stream) => {
+                let rand = self.random(*stream);
                 let max = self.stack.pop().expect("Stack underflow on RandomRange");
                 let min = self.stack.pop().expect("Stack underflow on RandomRange");
                 self.stack.push(if self.native_f32 {
@@ -2004,7 +2103,7 @@ mod tests {
         assert_eq!(hash(worst), u32::MAX);
 
         let mut compiler = Compiler::new();
-        compiler.emit(Op::Random);
+        compiler.emit(Op::Random(0));
         let bytecode = compiler.finalize();
         let mut vm = VM::new();
         unsafe { vm.execute(&bytecode, &[], worst as usize) };
@@ -2013,6 +2112,26 @@ mod tests {
             (0.0..1.0).contains(&value),
             "random() must stay in [0.0, 1.0), got {value}"
         );
+    }
+
+    #[test]
+    fn random_streams_select_distinct_deterministic_draws() {
+        for entity_index in [0, 1, 37, u32::MAX as usize] {
+            let mut values = Vec::new();
+            for stream in [0, 1, 2] {
+                let mut compiler = Compiler::new();
+                compiler.emit(Op::Random(stream));
+                let bytecode = compiler.finalize();
+                let mut vm = VM::new();
+                // SAFETY: this stack-only program reads no component fields.
+                unsafe { vm.execute(&bytecode, &[], entity_index) };
+                values.push(vm.stack[0].as_float());
+            }
+            assert_eq!(values.len(), 3);
+            assert_ne!(values[0], values[1]);
+            assert_ne!(values[0], values[2]);
+            assert_ne!(values[1], values[2]);
+        }
     }
 
     #[test]
@@ -2859,6 +2978,60 @@ mod tests {
         let negative_zero = python_remainder(4.0, -2.0);
         assert_eq!(negative_zero, 0.0);
         assert!(negative_zero.is_sign_negative());
+    }
+
+    #[test]
+    fn integer_floor_division_and_modulo_preserve_large_signed_values() {
+        for (numerator, denominator) in [(-7, 2), (7, -2), (-7, -2), ((1 << 60) + 1, 3)] {
+            let (StackValue::I64(quotient), StackValue::I64(remainder)) = (
+                floor_divide(StackValue::I64(numerator), StackValue::I64(denominator)),
+                remainder(StackValue::I64(numerator), StackValue::I64(denominator)),
+            ) else {
+                panic!("integer operands must retain the i64 lane");
+            };
+            assert_eq!(quotient * denominator + remainder, numerator);
+            assert!(remainder == 0 || (remainder < 0) == (denominator < 0));
+            assert!(remainder.abs() < denominator.abs());
+        }
+    }
+
+    #[test]
+    fn integer_zero_divisor_and_minimum_quotient_follow_numpy() {
+        let pairs = [
+            (StackValue::I64(5), StackValue::I64(0), 0, 0),
+            (StackValue::I64(i64::MIN), StackValue::I64(-1), i64::MIN, 0),
+            (
+                StackValue::I32(i32::MIN),
+                StackValue::I32(-1),
+                i64::from(i32::MIN),
+                0,
+            ),
+            (StackValue::U32(5), StackValue::U32(0), 0, 0),
+        ];
+        for (a, b, quotient, modulus) in pairs {
+            assert_eq!(floor_divide(a, b).as_float(), quotient as f64);
+            assert_eq!(remainder(a, b).as_float(), modulus as f64);
+        }
+    }
+
+    #[test]
+    fn float_floor_division_matches_numpy() {
+        let cases = [
+            (7.0, -2.0, -4.0),
+            (-7.0, 2.0, -4.0),
+            (7.5, -2.0, -4.0),
+            (1.0, 0.0, f64::INFINITY),
+            (-1.0, 0.0, f64::NEG_INFINITY),
+            (1.0, -0.0, f64::NEG_INFINITY),
+        ];
+        for (a, b, expected) in cases {
+            assert_eq!(numpy_floor_divide(a, b), expected);
+            assert_eq!(numpy_floor_divide_f32(a as f32, b as f32), expected as f32);
+        }
+        assert!(numpy_floor_divide(0.0, 0.0).is_nan());
+        assert!(numpy_floor_divide(f64::INFINITY, 2.0).is_nan());
+        assert!(numpy_floor_divide(0.0, -2.0).is_sign_negative());
+        assert!(python_remainder(1.0, 0.0).is_nan());
     }
 
     #[test]

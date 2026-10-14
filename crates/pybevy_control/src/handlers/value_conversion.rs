@@ -1,4 +1,4 @@
-use bevy::math::Vec3;
+use bevy::math::{Quat, Vec3};
 use pybevy_core::public_error;
 
 use crate::handlers::json_float::{nonfinite_float_from_json, require_finite_float};
@@ -85,6 +85,64 @@ pub(crate) fn vec3_from_json(value: &serde_json::Value) -> Result<Vec3, String> 
     Ok(Vec3::new(values[0], values[1], values[2]))
 }
 
+pub(crate) fn unit_quat_from_json(value: &serde_json::Value) -> Result<Quat, String> {
+    const COORDINATES: [&str; 4] = ["x", "y", "z", "w"];
+    let values: Vec<&serde_json::Value> = match value {
+        serde_json::Value::Array(values) if values.len() == COORDINATES.len() => {
+            values.iter().collect()
+        }
+        serde_json::Value::Array(values) => {
+            return Err(format!(
+                "Quat expects [x, y, z, w], got {} elements",
+                values.len()
+            ));
+        }
+        serde_json::Value::Object(fields) => {
+            if let Some(name) = fields
+                .keys()
+                .find(|name| !COORDINATES.contains(&name.as_str()))
+            {
+                return Err(format!("Quat has unknown coordinate '{name}'"));
+            }
+            COORDINATES
+                .iter()
+                .map(|name| {
+                    fields
+                        .get(*name)
+                        .ok_or_else(|| format!("Quat is missing coordinate '{name}'"))
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        }
+        _ => return Err("Quat expects [x, y, z, w] or an x/y/z/w object".to_string()),
+    };
+    let values = COORDINATES
+        .iter()
+        .zip(values)
+        .map(|(name, value)| {
+            let value = json_f64(value).map_err(|error| format!("Quat.{name}: {error}"))?;
+            let narrowed = value as f32;
+            if !narrowed.is_finite() {
+                return Err(format!("Quat.{name}: number is outside the f32 range"));
+            }
+            Ok(narrowed)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let length = values
+        .iter()
+        .map(|value| f64::from(*value).powi(2))
+        .sum::<f64>()
+        .sqrt();
+    if length == 0.0 || !length.is_finite() {
+        return Err("Quat rotation must have finite, non-zero length".to_string());
+    }
+    Ok(Quat::from_xyzw(
+        (f64::from(values[0]) / length) as f32,
+        (f64::from(values[1]) / length) as f32,
+        (f64::from(values[2]) / length) as f32,
+        (f64::from(values[3]) / length) as f32,
+    ))
+}
+
 fn vec3_coordinate_from_json(name: &str, value: &serde_json::Value) -> Result<f32, String> {
     let value = json_f64(value)
         .map_err(|error| public_error::mcp_vec3_input(format!("Vec3.{name}: {error}")))?;
@@ -125,7 +183,30 @@ fn json_kind_name(value: &serde_json::Value) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{EnumPayload, enum_to_json};
+    use std::f32::consts::FRAC_1_SQRT_2;
+
+    use super::{EnumPayload, enum_to_json, unit_quat_from_json};
+
+    #[test]
+    fn quaternion_json_normalizes_arrays_and_objects() {
+        for value in [
+            serde_json::json!([0.0, 0.0, 0.7, 0.7]),
+            serde_json::json!({"x": 0.0, "y": 0.0, "z": 0.7, "w": 0.7}),
+        ] {
+            let quat = unit_quat_from_json(&value).unwrap();
+            assert!((quat.length() - 1.0).abs() < 1e-6);
+            assert!((quat.z - FRAC_1_SQRT_2).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn quaternion_json_rejects_zero_and_nonfinite_lengths() {
+        assert_eq!(
+            unit_quat_from_json(&serde_json::json!([0, 0, 0, 0])).unwrap_err(),
+            "Quat rotation must have finite, non-zero length"
+        );
+        assert!(unit_quat_from_json(&serde_json::json!([0, 0, 0, "Infinity"])).is_err());
+    }
 
     #[test]
     fn enum_json_uses_one_shape_for_every_payload_kind() {

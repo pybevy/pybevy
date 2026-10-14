@@ -6,6 +6,7 @@ use bevy::{
         reflect::{AppTypeRegistry, ReflectComponent},
         world::World,
     },
+    math::Quat,
     prelude::ReflectDefault,
     reflect::{
         PartialReflect, ReflectMut, ReflectRef, TypeInfo, TypeRegistry,
@@ -21,7 +22,7 @@ use serde_json::{Map, Value};
 
 use super::{
     json_float::{float_to_json, nonfinite_float_from_json, require_finite_float},
-    value_conversion::{EnumPayload, enum_to_json},
+    value_conversion::{EnumPayload, enum_to_json, unit_quat_from_json},
 };
 
 /// Errors from reflection-based mutation
@@ -634,6 +635,10 @@ fn json_to_reflect(
         && is_option_enum(enum_info)
     {
         return convert_option(value, enum_info, target_type_info, registry);
+    }
+
+    if target_type_id == TypeId::of::<Quat>() {
+        return Ok(Box::new(unit_quat_from_json(value)?));
     }
 
     match value {

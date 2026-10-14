@@ -8,6 +8,7 @@ repository = "https://github.com/pybevy/pybevy"
 homepage = "https://pybevy.com"
 
 [dependencies]
+bytemuck = "1.24"
 tracing = "0.1"
 
 [dependencies.bevy]

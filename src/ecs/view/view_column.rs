@@ -22,7 +22,7 @@ use pybevy_bytecodevm::{
     },
     view_runtime::{BatchColumn, ViewOperationGuard, validate_contiguous_field_bytes},
 };
-use pybevy_core::FieldType;
+use pybevy_core::{FieldType, public_error};
 use pyo3::{
     exceptions::{PyIndexError, PyRuntimeError, PyTypeError},
     prelude::*,
@@ -282,6 +282,18 @@ impl PyViewColumn {
         }
     }
 
+    /// Check that this column holds float values an arithmetic `operation` can compute from.
+    fn check_float(&self, operation: &str) -> PyResult<FieldType> {
+        let ft = self.check_numeric()?;
+        if matches!(ft, FieldType::F32 | FieldType::F64) {
+            return Ok(ft);
+        }
+        Err(PyTypeError::new_err(public_error::view_column_float_only(
+            operation,
+            ft.numpy_dtype_name().unwrap_or(self.dtype_str()),
+        )))
+    }
+
     /// Create an owned ViewColumn from an f64 iterator.
     fn from_f64_iter(
         iter: impl Iterator<Item = f64>,
@@ -314,9 +326,9 @@ impl PyViewColumn {
     }
 
     /// Apply a unary f64-to-f64 function element-wise, returning an owned ViewColumn.
-    fn unary_op(&self, f: impl Fn(f64) -> f64) -> PyResult<Self> {
+    fn unary_op(&self, operation: &str, f: impl Fn(f64) -> f64) -> PyResult<Self> {
         let _operation = self.enter_operation()?;
-        let ft = self.check_numeric()?;
+        let ft = self.check_float(operation)?;
         Self::from_f64_iter(
             (0..self.len).map(|i| f(self.read_f64_at(i))),
             self.len,
@@ -327,10 +339,15 @@ impl PyViewColumn {
     }
 
     /// Apply a binary function to two columns element-wise.
-    fn binary_op_col(&self, other: &Self, f: impl Fn(f64, f64) -> f64) -> PyResult<Self> {
+    fn binary_op_col(
+        &self,
+        operation: &str,
+        other: &Self,
+        f: impl Fn(f64, f64) -> f64,
+    ) -> PyResult<Self> {
         let _operations = self.enter_pair_operation(other)?;
-        let ft = self.check_numeric()?;
-        other.check_numeric()?;
+        let ft = self.check_float(operation)?;
+        other.check_float(operation)?;
         if self.len != other.len {
             return Err(PyRuntimeError::new_err(format!(
                 "ViewColumn length mismatch: {} vs {}",
@@ -347,9 +364,14 @@ impl PyViewColumn {
     }
 
     /// Apply a binary function to a column and scalar element-wise.
-    fn binary_op_scalar(&self, scalar: f64, f: impl Fn(f64, f64) -> f64) -> PyResult<Self> {
+    fn binary_op_scalar(
+        &self,
+        operation: &str,
+        scalar: f64,
+        f: impl Fn(f64, f64) -> f64,
+    ) -> PyResult<Self> {
         let _operation = self.enter_operation()?;
-        let ft = self.check_numeric()?;
+        let ft = self.check_float(operation)?;
         Self::from_f64_iter(
             (0..self.len).map(|i| f(self.read_f64_at(i), scalar)),
             self.len,
@@ -360,9 +382,14 @@ impl PyViewColumn {
     }
 
     /// Apply a binary function to a scalar and column element-wise.
-    fn binary_op_scalar_left(&self, scalar: f64, f: impl Fn(f64, f64) -> f64) -> PyResult<Self> {
+    fn binary_op_scalar_left(
+        &self,
+        operation: &str,
+        scalar: f64,
+        f: impl Fn(f64, f64) -> f64,
+    ) -> PyResult<Self> {
         let _operation = self.enter_operation()?;
-        let ft = self.check_numeric()?;
+        let ft = self.check_float(operation)?;
         Self::from_f64_iter(
             (0..self.len).map(|i| f(scalar, self.read_f64_at(i))),
             self.len,
@@ -839,11 +866,11 @@ impl PyViewColumn {
 
     fn __mul__(&self, py: Python, other: &Bound<PyAny>) -> PyResult<Py<PyAny>> {
         if let Ok(col) = other.cast::<PyViewColumn>() {
-            let result = self.binary_op_col(&col.borrow(), |a, b| a * b)?;
+            let result = self.binary_op_col("multiply", &col.borrow(), |a, b| a * b)?;
             return Ok(Py::new(py, result)?.into());
         }
         let scalar: f64 = other.extract()?;
-        let result = self.binary_op_scalar(scalar, |a, b| a * b)?;
+        let result = self.binary_op_scalar("multiply", scalar, |a, b| a * b)?;
         Ok(Py::new(py, result)?.into())
     }
 
@@ -853,11 +880,11 @@ impl PyViewColumn {
 
     fn __add__(&self, py: Python, other: &Bound<PyAny>) -> PyResult<Py<PyAny>> {
         if let Ok(col) = other.cast::<PyViewColumn>() {
-            let result = self.binary_op_col(&col.borrow(), |a, b| a + b)?;
+            let result = self.binary_op_col("add", &col.borrow(), |a, b| a + b)?;
             return Ok(Py::new(py, result)?.into());
         }
         let scalar: f64 = other.extract()?;
-        let result = self.binary_op_scalar(scalar, |a, b| a + b)?;
+        let result = self.binary_op_scalar("add", scalar, |a, b| a + b)?;
         Ok(Py::new(py, result)?.into())
     }
 
@@ -867,33 +894,33 @@ impl PyViewColumn {
 
     fn __sub__(&self, py: Python, other: &Bound<PyAny>) -> PyResult<Py<PyAny>> {
         if let Ok(col) = other.cast::<PyViewColumn>() {
-            let result = self.binary_op_col(&col.borrow(), |a, b| a - b)?;
+            let result = self.binary_op_col("subtract", &col.borrow(), |a, b| a - b)?;
             return Ok(Py::new(py, result)?.into());
         }
         let scalar: f64 = other.extract()?;
-        let result = self.binary_op_scalar(scalar, |a, b| a - b)?;
+        let result = self.binary_op_scalar("subtract", scalar, |a, b| a - b)?;
         Ok(Py::new(py, result)?.into())
     }
 
     fn __rsub__(&self, py: Python, other: &Bound<PyAny>) -> PyResult<Py<PyAny>> {
         let scalar: f64 = other.extract()?;
-        let result = self.binary_op_scalar_left(scalar, |a, b| a - b)?;
+        let result = self.binary_op_scalar_left("subtract", scalar, |a, b| a - b)?;
         Ok(Py::new(py, result)?.into())
     }
 
     fn __truediv__(&self, py: Python, other: &Bound<PyAny>) -> PyResult<Py<PyAny>> {
         if let Ok(col) = other.cast::<PyViewColumn>() {
-            let result = self.binary_op_col(&col.borrow(), |a, b| a / b)?;
+            let result = self.binary_op_col("divide", &col.borrow(), |a, b| a / b)?;
             return Ok(Py::new(py, result)?.into());
         }
         let scalar: f64 = other.extract()?;
-        let result = self.binary_op_scalar(scalar, |a, b| a / b)?;
+        let result = self.binary_op_scalar("divide", scalar, |a, b| a / b)?;
         Ok(Py::new(py, result)?.into())
     }
 
     fn __rtruediv__(&self, py: Python, other: &Bound<PyAny>) -> PyResult<Py<PyAny>> {
         let scalar: f64 = other.extract()?;
-        let result = self.binary_op_scalar_left(scalar, |a, b| a / b)?;
+        let result = self.binary_op_scalar_left("divide", scalar, |a, b| a / b)?;
         Ok(Py::new(py, result)?.into())
     }
 
@@ -904,11 +931,11 @@ impl PyViewColumn {
         _modulo: Option<&Bound<PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         if let Ok(col) = other.cast::<PyViewColumn>() {
-            let result = self.binary_op_col(&col.borrow(), |a, b| a.powf(b))?;
+            let result = self.binary_op_col("power", &col.borrow(), |a, b| a.powf(b))?;
             return Ok(Py::new(py, result)?.into());
         }
         let scalar: f64 = other.extract()?;
-        let result = self.binary_op_scalar(scalar, |a, b| a.powf(b))?;
+        let result = self.binary_op_scalar("power", scalar, |a, b| a.powf(b))?;
         Ok(Py::new(py, result)?.into())
     }
 
@@ -919,154 +946,154 @@ impl PyViewColumn {
         _modulo: Option<&Bound<PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         let scalar: f64 = other.extract()?;
-        let result = self.binary_op_scalar_left(scalar, |a, b| a.powf(b))?;
+        let result = self.binary_op_scalar_left("power", scalar, |a, b| a.powf(b))?;
         Ok(Py::new(py, result)?.into())
     }
 
     fn __mod__(&self, py: Python, other: &Bound<PyAny>) -> PyResult<Py<PyAny>> {
         if let Ok(col) = other.cast::<PyViewColumn>() {
-            let result = self.binary_op_col(&col.borrow(), python_remainder)?;
+            let result = self.binary_op_col("mod", &col.borrow(), python_remainder)?;
             return Ok(Py::new(py, result)?.into());
         }
         let scalar: f64 = other.extract()?;
-        let result = self.binary_op_scalar(scalar, python_remainder)?;
+        let result = self.binary_op_scalar("mod", scalar, python_remainder)?;
         Ok(Py::new(py, result)?.into())
     }
 
     fn __rmod__(&self, py: Python, other: &Bound<PyAny>) -> PyResult<Py<PyAny>> {
         let scalar: f64 = other.extract()?;
-        let result = self.binary_op_scalar_left(scalar, python_remainder)?;
+        let result = self.binary_op_scalar_left("mod", scalar, python_remainder)?;
         Ok(Py::new(py, result)?.into())
     }
 
     fn __neg__(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let result = self.unary_op(|a| -a)?;
+        let result = self.unary_op("negative", |a| -a)?;
         Ok(Py::new(py, result)?.into())
     }
 
     fn __abs__(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let result = self.unary_op(|a| a.abs())?;
+        let result = self.unary_op("abs", |a| a.abs())?;
         Ok(Py::new(py, result)?.into())
     }
 
     fn sin(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let result = self.unary_op(f64::sin)?;
+        let result = self.unary_op("sin", f64::sin)?;
         Ok(Py::new(py, result)?.into())
     }
 
     fn cos(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let result = self.unary_op(f64::cos)?;
+        let result = self.unary_op("cos", f64::cos)?;
         Ok(Py::new(py, result)?.into())
     }
 
     fn tan(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let result = self.unary_op(f64::tan)?;
+        let result = self.unary_op("tan", f64::tan)?;
         Ok(Py::new(py, result)?.into())
     }
 
     fn asin(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let result = self.unary_op(f64::asin)?;
+        let result = self.unary_op("asin", f64::asin)?;
         Ok(Py::new(py, result)?.into())
     }
 
     fn acos(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let result = self.unary_op(f64::acos)?;
+        let result = self.unary_op("acos", f64::acos)?;
         Ok(Py::new(py, result)?.into())
     }
 
     fn atan(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let result = self.unary_op(f64::atan)?;
+        let result = self.unary_op("atan", f64::atan)?;
         Ok(Py::new(py, result)?.into())
     }
 
     fn sqrt(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let result = self.unary_op(f64::sqrt)?;
+        let result = self.unary_op("sqrt", f64::sqrt)?;
         Ok(Py::new(py, result)?.into())
     }
 
     #[pyo3(name = "abs")]
     fn abs_method(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let result = self.unary_op(f64::abs)?;
+        let result = self.unary_op("abs", f64::abs)?;
         Ok(Py::new(py, result)?.into())
     }
 
     fn floor(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let result = self.unary_op(f64::floor)?;
+        let result = self.unary_op("floor", f64::floor)?;
         Ok(Py::new(py, result)?.into())
     }
 
     fn ceil(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let result = self.unary_op(f64::ceil)?;
+        let result = self.unary_op("ceil", f64::ceil)?;
         Ok(Py::new(py, result)?.into())
     }
 
     fn round(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let result = self.unary_op(python_round)?;
+        let result = self.unary_op("round", python_round)?;
         Ok(Py::new(py, result)?.into())
     }
 
     fn exp(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let result = self.unary_op(f64::exp)?;
+        let result = self.unary_op("exp", f64::exp)?;
         Ok(Py::new(py, result)?.into())
     }
 
     fn ln(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let result = self.unary_op(f64::ln)?;
+        let result = self.unary_op("ln", f64::ln)?;
         Ok(Py::new(py, result)?.into())
     }
 
     fn log10(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let result = self.unary_op(f64::log10)?;
+        let result = self.unary_op("log10", f64::log10)?;
         Ok(Py::new(py, result)?.into())
     }
 
     fn log2(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let result = self.unary_op(f64::log2)?;
+        let result = self.unary_op("log2", f64::log2)?;
         Ok(Py::new(py, result)?.into())
     }
 
     fn sign(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let result = self.unary_op(python_sign)?;
+        let result = self.unary_op("sign", python_sign)?;
         Ok(Py::new(py, result)?.into())
     }
 
     fn fract(&self, py: Python) -> PyResult<Py<PyAny>> {
-        let result = self.unary_op(f64::fract)?;
+        let result = self.unary_op("fract", f64::fract)?;
         Ok(Py::new(py, result)?.into())
     }
 
     fn min(&self, py: Python, other: &Bound<PyAny>) -> PyResult<Py<PyAny>> {
         if let Ok(col) = other.cast::<PyViewColumn>() {
-            let result = self.binary_op_col(&col.borrow(), python_minimum)?;
+            let result = self.binary_op_col("min", &col.borrow(), python_minimum)?;
             return Ok(Py::new(py, result)?.into());
         }
         let scalar: f64 = other.extract()?;
-        let result = self.binary_op_scalar(scalar, python_minimum)?;
+        let result = self.binary_op_scalar("min", scalar, python_minimum)?;
         Ok(Py::new(py, result)?.into())
     }
 
     fn max(&self, py: Python, other: &Bound<PyAny>) -> PyResult<Py<PyAny>> {
         if let Ok(col) = other.cast::<PyViewColumn>() {
-            let result = self.binary_op_col(&col.borrow(), python_maximum)?;
+            let result = self.binary_op_col("max", &col.borrow(), python_maximum)?;
             return Ok(Py::new(py, result)?.into());
         }
         let scalar: f64 = other.extract()?;
-        let result = self.binary_op_scalar(scalar, python_maximum)?;
+        let result = self.binary_op_scalar("max", scalar, python_maximum)?;
         Ok(Py::new(py, result)?.into())
     }
 
     fn clamp(&self, py: Python, min_val: f64, max_val: f64) -> PyResult<Py<PyAny>> {
-        let result = self.unary_op(|a| python_clip(a, min_val, max_val))?;
+        let result = self.unary_op("clamp", |a| python_clip(a, min_val, max_val))?;
         Ok(Py::new(py, result)?.into())
     }
 
     fn lerp(&self, py: Python, other: &Bound<PyAny>, t: f64) -> PyResult<Py<PyAny>> {
         if let Ok(col) = other.cast::<PyViewColumn>() {
-            let result = self.binary_op_col(&col.borrow(), |a, b| a + (b - a) * t)?;
+            let result = self.binary_op_col("lerp", &col.borrow(), |a, b| a + (b - a) * t)?;
             return Ok(Py::new(py, result)?.into());
         }
         let scalar: f64 = other.extract()?;
-        let result = self.binary_op_scalar(scalar, |a, b| a + (b - a) * t)?;
+        let result = self.binary_op_scalar("lerp", scalar, |a, b| a + (b - a) * t)?;
         Ok(Py::new(py, result)?.into())
     }
 

@@ -4,6 +4,7 @@
 //! (`ExtendedMaterial<StandardMaterial, ShaderMaterialExtension>`) and
 //! supporting types. No Python dependencies.
 
+pub mod packed_uniform;
 mod shader_def_registry;
 
 use std::{

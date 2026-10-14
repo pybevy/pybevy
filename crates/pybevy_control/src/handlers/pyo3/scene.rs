@@ -1,7 +1,7 @@
 use std::{
     alloc::Layout,
     any::TypeId,
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     sync::Arc,
 };
 
@@ -41,7 +41,15 @@ use crate::{
     handlers::{
         entity::resolve_entity,
         json_float::float_to_json,
-        pyo3::{custom_wrapper, state_resource},
+        pyo3::{
+            custom_wrapper,
+            dataclass_fields::dataclass_field_names,
+            name_resolution::{
+                ComponentTarget, ResourceTarget, custom_component_name, custom_resource_name,
+                qualified_type_name, resolve_component, resolve_resource,
+            },
+            state_resource,
+        },
         value_conversion::{EnumPayload, enum_to_json},
     },
 };
@@ -440,6 +448,7 @@ fn extract_bridge_fields_with_context(
         } else {
             EnumPayload::Named(map)
         };
+        let variant = super::enum_names::canonical_variant_name(&py_type, &variant);
         return enum_to_json(variant, payload).as_object().unwrap().clone();
     }
 
@@ -464,6 +473,7 @@ fn extract_bridge_fields_with_context(
         && let Ok(repr_str) = repr.extract::<String>()
     {
         if let Some(variant) = parse_variant_from_repr(&repr_str) {
+            let variant = super::enum_names::canonical_variant_name(&py_type, &variant);
             return enum_to_json(variant, EnumPayload::Unit)
                 .as_object()
                 .unwrap()
@@ -760,6 +770,16 @@ pub fn debug_registry(world: &mut World) -> Result<serde_json::Value, ControlErr
         .get_resource::<pybevy_core::CustomComponentInfo>()
         .map(|info| info.iter().map(|(_, entry)| entry.name.clone()).collect())
         .unwrap_or_default();
+    let custom_qualified_names: Vec<String> = world
+        .get_resource::<pybevy_core::CustomComponentInfo>()
+        .map(|info| {
+            info.iter()
+                .map(|(id, entry)| {
+                    custom_component_name(world, id).unwrap_or_else(|| entry.name.clone())
+                })
+                .collect()
+        })
+        .unwrap_or_default();
 
     let entity_count = crate::handlers::entity_count::scene_entity_count(world) as usize;
 
@@ -799,6 +819,7 @@ pub fn debug_registry(world: &mut World) -> Result<serde_json::Value, ControlErr
         "component_bridge_names": bridge_names,
         "custom_component_count": custom_names.len(),
         "custom_component_names": custom_names,
+        "custom_component_qualified_names": custom_qualified_names,
         "resource_bridge_count": resource_bridges.len(),
         "total_entities": entity_count,
         "entity_samples": samples,
@@ -968,16 +989,14 @@ pub fn get_component(
     let entity = resolve_entity(world, &entity_ref)?;
     let entity_id = entity.to_bits();
     let label = crate::handlers::spatial::entity_label(world, entity);
+    let target = resolve_component(world, &component)?;
 
     // Try bridge components first
     let bridge_result = Python::attach(|py| -> Option<serde_json::Value> {
         let validity_flag = pybevy_core::ValidityFlag::new_read();
         let validity = validity_flag.with_access_mode(pybevy_core::AccessMode::Read);
 
-        for bridge in all_component_bridges() {
-            if bridge.name() != component {
-                continue;
-            }
+        if let Some(ComponentTarget::Native(bridge)) = &target {
             let contains = match world.get_entity(entity) {
                 Ok(eref) => bridge.entity_contains(&eref),
                 Err(_) => return None,
@@ -1001,7 +1020,10 @@ pub fn get_component(
             .map(|py_obj| {
                 let bound = py_obj.bind(py);
                 if let Some(fields) = super::asset_reference::reference_fields_for_value(
-                    world, entity, &component, bound,
+                    world,
+                    entity,
+                    bridge.name(),
+                    bound,
                 ) {
                     return fields.as_object().cloned().unwrap_or_default();
                 }
@@ -1038,7 +1060,7 @@ pub fn get_component(
     {
         for component_id in eref.archetype().components() {
             if let Some(entry) = info.get(*component_id) {
-                if entry.name != component {
+                if !matches!(&target, Some(ComponentTarget::Custom(id)) if id == component_id) {
                     continue;
                 }
                 let descriptor_layout = world
@@ -1090,17 +1112,20 @@ pub fn query_entities(
     }
 
     let bridges = all_component_bridges();
-
-    let mut registered_names: HashSet<&str> = bridges.iter().map(|bridge| bridge.name()).collect();
-    if let Some(info) = world.get_resource::<pybevy_core::CustomComponentInfo>() {
-        registered_names.extend(info.iter().map(|(_, entry)| entry.name.as_str()));
+    let mut resolved_with = Vec::new();
+    let mut resolved_without = Vec::new();
+    let mut unknown_filters = Vec::new();
+    for (names, targets) in [
+        (&with_filters, &mut resolved_with),
+        (&without_filters, &mut resolved_without),
+    ] {
+        for name in names {
+            match resolve_component(world, name)? {
+                Some(target) => targets.push(target),
+                None => unknown_filters.push(name.as_str()),
+            }
+        }
     }
-    let mut unknown_filters: Vec<&str> = with_filters
-        .iter()
-        .chain(&without_filters)
-        .map(String::as_str)
-        .filter(|name| !registered_names.contains(name))
-        .collect();
     unknown_filters.sort_unstable();
     unknown_filters.dedup();
     if !unknown_filters.is_empty() {
@@ -1111,7 +1136,9 @@ pub fn query_entities(
         )));
     }
 
-    let all_entities = if with_filters.iter().any(|name| name == "Disabled") {
+    let all_entities = if resolved_with.iter().any(
+        |target| matches!(target, ComponentTarget::Native(bridge) if bridge.name() == "Disabled"),
+    ) {
         crate::handlers::entity_count::scene_entities_including_disabled(world)
     } else {
         crate::handlers::entity_count::scene_entities(world)
@@ -1149,14 +1176,16 @@ pub fn query_entities(
         has_components.extend(custom_names.iter().cloned());
 
         // Check With filters
-        let has_all_with = with_filters
-            .iter()
-            .all(|f| has_components.iter().any(|c| c == f));
+        let has_all_with = resolved_with.iter().all(|target| match target {
+            ComponentTarget::Native(bridge) => bridge.entity_contains(&entity_ref),
+            ComponentTarget::Custom(id) => entity_ref.contains_id(*id),
+        });
 
         // Check Without filters
-        let has_none_without = without_filters
-            .iter()
-            .all(|f| !has_components.iter().any(|c| c == f));
+        let has_none_without = resolved_without.iter().all(|target| match target {
+            ComponentTarget::Native(bridge) => !bridge.entity_contains(&entity_ref),
+            ComponentTarget::Custom(id) => !entity_ref.contains_id(*id),
+        });
 
         if has_all_with && has_none_without {
             total_count += 1;
@@ -1269,32 +1298,48 @@ fn extract_custom_resource_fields(
 /// List all registered resources
 pub fn list_resources(world: &mut World) -> Result<serde_json::Value, ControlError> {
     let mut resources = Vec::new();
-
-    // Built-in resources (from bridge registry)
-    for bridge in all_resource_bridges() {
-        resources.push(bridge_resource_entry(world, &bridge));
-    }
-
-    // Custom Python resources (from CustomResourceInfo)
-    let bridge_names: HashSet<String> = resources
-        .iter()
-        .filter_map(|r| r["name"].as_str().map(String::from))
-        .collect();
-
-    // Collect custom resource entries before reading dynamic resource values.
+    let bridges = all_resource_bridges();
     let custom_entries: Vec<(ComponentId, String)> = world
         .get_resource::<pybevy_core::CustomResourceInfo>()
         .map(|custom_info| {
             custom_info
                 .iter()
-                .filter(|(_, entry)| !bridge_names.contains(&entry.name))
                 .map(|(comp_id, entry)| (comp_id, entry.name.clone()))
                 .collect()
         })
         .unwrap_or_default();
+    let mut name_counts: HashMap<String, usize> = HashMap::new();
+    for bridge in &bridges {
+        *name_counts.entry(bridge.name().to_string()).or_default() += 1;
+    }
+    for (_, name) in &custom_entries {
+        *name_counts.entry(name.clone()).or_default() += 1;
+    }
+
+    for bridge in bridges {
+        let mut entry = bridge_resource_entry(world, &bridge);
+        if name_counts
+            .get(bridge.name())
+            .is_some_and(|count| *count > 1)
+        {
+            let full_name = Python::attach(|py| qualified_type_name(&bridge.py_type(py)));
+            if let Some(full_name) = full_name {
+                entry["name"] = serde_json::json!(full_name);
+            }
+        }
+        resources.push(entry);
+    }
 
     for (comp_id, name) in custom_entries {
-        resources.push(custom_resource_entry(world, comp_id, name));
+        let display_name = if name_counts
+            .get(name.as_str())
+            .is_some_and(|count| *count > 1)
+        {
+            custom_resource_name(world, comp_id).unwrap_or(name)
+        } else {
+            name
+        };
+        resources.push(custom_resource_entry(world, comp_id, display_name));
     }
 
     Ok(serde_json::json!({
@@ -1308,25 +1353,15 @@ pub fn get_resource(
     world: &mut World,
     resource_type: String,
 ) -> Result<serde_json::Value, ControlError> {
+    match resolve_resource(world, &resource_type)? {
+        Some(ResourceTarget::Native(bridge)) => return Ok(bridge_resource_entry(world, &bridge)),
+        Some(ResourceTarget::Custom(component_id)) => {
+            return Ok(custom_resource_entry(world, component_id, resource_type));
+        }
+        None => {}
+    }
+
     let resource_bridges = all_resource_bridges();
-    if let Some(bridge) = resource_bridges
-        .iter()
-        .find(|bridge| bridge.name() == resource_type)
-    {
-        return Ok(bridge_resource_entry(world, bridge));
-    }
-
-    let custom = world
-        .get_resource::<pybevy_core::CustomResourceInfo>()
-        .and_then(|info| {
-            info.iter()
-                .find(|(_, entry)| entry.name == resource_type)
-                .map(|(component_id, entry)| (component_id, entry.name.clone()))
-        });
-    if let Some((component_id, name)) = custom {
-        return Ok(custom_resource_entry(world, component_id, name));
-    }
-
     if let Some(bridge) = native_resource_control_name(&resource_type, &resource_bridges) {
         return Err(ControlError::not_found(
             public_error::mcp_native_resource_control_name(&resource_type, bridge.name()),
@@ -1624,101 +1659,101 @@ pub fn get_component_schema(
         }));
     }
 
-    // Find the component bridge by name
-    for bridge in all_component_bridges() {
-        if bridge.name() == name {
-            // Try to get Bevy reflection type info for richer schema
-            let reflection_info = world.get_resource::<AppTypeRegistry>().and_then(|reg| {
-                let type_registry = reg.read();
-                let type_id = bridge.bevy_type_id();
-                type_registry.get(type_id).map(|registration| {
-                    let type_info = registration.type_info();
-                    let has_reflect_component = registration.data::<ReflectComponent>().is_some();
-                    let is_editable_kind =
-                        matches!(type_info, TypeInfo::Struct(_) | TypeInfo::Enum(_));
-                    // NOTE: This misses components that have settable Python properties
-                    // (e.g. Text2d). A more complete check would inspect for @property
-                    // setters on the Python type, but that requires further investigation.
-                    let editable = has_reflect_component && is_editable_kind;
+    let target = resolve_component(world, &name)?;
+    if let Some(ComponentTarget::Native(bridge)) = &target {
+        // Try to get Bevy reflection type info for richer schema
+        let reflection_info = world.get_resource::<AppTypeRegistry>().and_then(|reg| {
+            let type_registry = reg.read();
+            let type_id = bridge.bevy_type_id();
+            type_registry.get(type_id).map(|registration| {
+                let type_info = registration.type_info();
+                let has_reflect_component = registration.data::<ReflectComponent>().is_some();
+                let is_editable_kind = matches!(type_info, TypeInfo::Struct(_) | TypeInfo::Enum(_));
+                // NOTE: This misses components that have settable Python properties
+                // (e.g. Text2d). A more complete check would inspect for @property
+                // setters on the Python type, but that requires further investigation.
+                let editable = has_reflect_component && is_editable_kind;
 
-                    let mut field_types = serde_json::Map::new();
-                    if let TypeInfo::Struct(info) = type_info {
-                        for i in 0..info.field_len() {
-                            if let Some(field) = info.field_at(i) {
-                                field_types.insert(
-                                    field.name().to_string(),
-                                    serde_json::json!(field.type_path_table().short_path()),
-                                );
-                            }
+                let mut field_types = serde_json::Map::new();
+                if let TypeInfo::Struct(info) = type_info {
+                    for i in 0..info.field_len() {
+                        if let Some(field) = info.field_at(i) {
+                            field_types.insert(
+                                field.name().to_string(),
+                                serde_json::json!(field.type_path_table().short_path()),
+                            );
                         }
-                    } else if let TypeInfo::Enum(info) = type_info {
-                        let variants = (0..info.variant_len())
-                            .filter_map(|index| {
-                                info.variant_at(index).map(|variant| variant.name())
-                            })
-                            .collect::<Vec<_>>()
-                            .join(" | ");
-                        field_types.insert("variant".to_string(), serde_json::json!(variants));
                     }
+                } else if let TypeInfo::Enum(info) = type_info {
+                    let variants = (0..info.variant_len())
+                        .filter_map(|index| info.variant_at(index).map(|variant| variant.name()))
+                        .collect::<Vec<_>>()
+                        .join(" | ");
+                    field_types.insert("variant".to_string(), serde_json::json!(variants));
+                }
 
-                    (editable, field_types, type_info_kind_name(type_info))
-                })
-            });
+                (editable, field_types, type_info_kind_name(type_info))
+            })
+        });
 
-            let schema = Python::attach(|py| {
-                let py_type = bridge.py_type(py);
-                let type_name = py_type
+        let schema = Python::attach(|py| {
+            let py_type = bridge.py_type(py);
+            let type_name = if name.contains('.') {
+                name.clone()
+            } else {
+                py_type
                     .name()
                     .map(|n| n.to_string())
-                    .unwrap_or_else(|_| name.clone());
-                let mut fields = get_class_fields(py, &py_type);
-                let is_asset_handle = super::asset_reference::type_has_handle_property(&py_type);
-                if is_asset_handle {
-                    fields.as_object_mut().unwrap().insert(
-                        crate::asset_reference::ASSET_REFERENCE_FIELD.to_string(),
-                        serde_json::json!("AssetReference"),
+                    .unwrap_or_else(|_| name.clone())
+            };
+            let mut fields = get_class_fields(py, &py_type);
+            let is_asset_handle = super::asset_reference::type_has_handle_property(&py_type);
+            if is_asset_handle {
+                fields.as_object_mut().unwrap().insert(
+                    crate::asset_reference::ASSET_REFERENCE_FIELD.to_string(),
+                    serde_json::json!("AssetReference"),
+                );
+            }
+
+            let mut result = serde_json::json!({
+                "name": &type_name,
+                "fields": fields,
+                "registered": true,
+            });
+
+            let reflected_editable = reflection_info
+                .as_ref()
+                .is_some_and(|(editable, _, _)| *editable);
+            let effective_editable = bridge.can_insert()
+                && (is_asset_handle
+                    || bridge.relationship_field().is_some()
+                    || reflected_editable
+                    || has_writable_properties(py, &py_type));
+            result
+                .as_object_mut()
+                .unwrap()
+                .insert("editable".into(), serde_json::json!(effective_editable));
+
+            if let Some((_, field_types, type_kind)) = &reflection_info {
+                let obj = result.as_object_mut().unwrap();
+                obj.insert("type_kind".into(), serde_json::json!(type_kind));
+                if !field_types.is_empty() {
+                    if let Some(fields) = obj
+                        .get_mut("fields")
+                        .and_then(serde_json::Value::as_object_mut)
+                    {
+                        fields.extend(field_types.clone());
+                    }
+                    obj.insert(
+                        "field_types".into(),
+                        serde_json::Value::Object(field_types.clone()),
                     );
                 }
+            }
 
-                let mut result = serde_json::json!({
-                    "name": &type_name,
-                    "fields": fields,
-                    "registered": true,
-                });
-
-                let reflected_editable = reflection_info
-                    .as_ref()
-                    .is_some_and(|(editable, _, _)| *editable);
-                let effective_editable = bridge.can_insert()
-                    && (is_asset_handle
-                        || bridge.relationship_field().is_some()
-                        || reflected_editable
-                        || has_writable_properties(py, &py_type));
-                result
-                    .as_object_mut()
-                    .unwrap()
-                    .insert("editable".into(), serde_json::json!(effective_editable));
-
-                if let Some((_, field_types, type_kind)) = &reflection_info {
-                    let obj = result.as_object_mut().unwrap();
-                    obj.insert("type_kind".into(), serde_json::json!(type_kind));
-                    if !field_types.is_empty() {
-                        if let Some(fields) = obj
-                            .get_mut("fields")
-                            .and_then(serde_json::Value::as_object_mut)
-                        {
-                            fields.extend(field_types.clone());
-                        }
-                        obj.insert(
-                            "field_types".into(),
-                            serde_json::Value::Object(field_types.clone()),
-                        );
-                    }
-                }
-
-                if is_asset_handle {
-                    let obj = result.as_object_mut().unwrap();
-                    obj.insert(
+            if is_asset_handle {
+                let obj = result.as_object_mut().unwrap();
+                obj.insert(
                         "asset_reference".into(),
                         serde_json::json!({
                             "read": "Call get_component on a live entity with this component and replay fields.handle unchanged.",
@@ -1735,27 +1770,26 @@ pub fn get_component_schema(
                             }
                         }),
                     );
-                }
+            }
 
-                if effective_editable
-                    && !is_asset_handle
-                    && let Some(defaults) = default_component_fields(&py_type, &result["fields"])
-                {
-                    let spawn_example = serde_json::json!({
-                        "components": {
-                            &type_name: &defaults,
-                        },
-                    });
-                    let obj = result.as_object_mut().unwrap();
-                    obj.insert("defaults".into(), serde_json::Value::Object(defaults));
-                    obj.insert("spawn_example".into(), spawn_example);
-                }
+            if effective_editable
+                && !is_asset_handle
+                && let Some(defaults) = default_component_fields(&py_type, &result["fields"])
+            {
+                let spawn_example = serde_json::json!({
+                    "components": {
+                        &type_name: &defaults,
+                    },
+                });
+                let obj = result.as_object_mut().unwrap();
+                obj.insert("defaults".into(), serde_json::Value::Object(defaults));
+                obj.insert("spawn_example".into(), spawn_example);
+            }
 
-                result
-            });
+            result
+        });
 
-            return Ok(schema);
-        }
+        return Ok(schema);
     }
 
     // Fallback: check custom Python components via CustomComponentInfo
@@ -1763,7 +1797,7 @@ pub fn get_component_schema(
         .get_resource::<pybevy_core::CustomComponentInfo>()
         .and_then(|info| {
             info.iter()
-                .find(|(_, entry)| entry.name == name)
+                .find(|(id, _)| matches!(&target, Some(ComponentTarget::Custom(target_id)) if id == target_id))
                 .map(|(component_id, entry)| (component_id, entry.clone()))
         });
     if let Some((component_id, entry)) = custom_entry {
@@ -1783,7 +1817,7 @@ pub fn get_component_schema(
                 !fields.is_empty() && (entry.is_pyobject_storage || entry.wrapper_layout.is_some());
 
             serde_json::json!({
-                "name": entry.name,
+                "name": name,
                 "fields": fields,
                 "registered": true,
                 "custom": true,
@@ -1835,10 +1869,17 @@ fn normalize_type_repr(s: &str) -> String {
 /// Extract field information from a Python class
 fn get_annotated_fields(py_type: &Bound<'_, PyType>) -> serde_json::Map<String, serde_json::Value> {
     let mut fields = serde_json::Map::new();
+    let allowed = match dataclass_field_names(py_type) {
+        Ok(names) => names,
+        Err(_) => return fields,
+    };
 
     if let Ok(dict) = declared_annotations(py_type) {
         for (key, value) in dict.iter() {
             if let Ok(k) = key.extract::<String>() {
+                if allowed.as_ref().is_some_and(|names| !names.contains(&k)) {
+                    continue;
+                }
                 let v = value
                     .repr()
                     .map(|r| normalize_type_repr(&r.to_string()))
@@ -1940,6 +1981,9 @@ fn live_instance_field_types(instance: &Bound<'_, PyAny>) -> BTreeMap<String, St
 
 fn get_class_fields(py: Python<'_>, py_type: &Bound<'_, PyType>) -> serde_json::Value {
     let mut fields = get_annotated_fields(py_type);
+    if dataclass_field_names(py_type).ok().flatten().is_some() {
+        return serde_json::Value::Object(fields);
+    }
 
     // Try PyO3 getset_descriptor detection via dir()
     if fields.is_empty()

@@ -657,7 +657,7 @@ fn program_uses_random(bytecode: &CompiledBytecode) -> bool {
     bytecode
         .bytecode
         .iter()
-        .any(|op| matches!(op, Op::Random | Op::RandomRange))
+        .any(|op| matches!(op, Op::Random(_) | Op::RandomRange(_)))
 }
 
 /// Execute bytecode assignment across all entities in all batches (fast path).
@@ -1101,6 +1101,11 @@ fn compile_expr(expr: &RustExpr, c: &mut Compiler) {
             compile_expr(b, c);
             c.emit(Op::Div);
         }
+        RustExpr::FloorDiv(a, b) => {
+            compile_expr(a, c);
+            compile_expr(b, c);
+            c.emit(Op::FloorDiv);
+        }
         RustExpr::Neg(a) => {
             compile_expr(a, c);
             c.emit(Op::Neg);
@@ -1256,13 +1261,13 @@ fn compile_expr(expr: &RustExpr, c: &mut Compiler) {
             compile_expr(false_expr, c);
             c.emit(Op::Where);
         }
-        RustExpr::Random => {
-            c.emit(Op::Random);
+        RustExpr::Random(stream) => {
+            c.emit(Op::Random(*stream));
         }
-        RustExpr::RandomRange(min, max) => {
+        RustExpr::RandomRange(min, max, stream) => {
             compile_expr(min, c);
             compile_expr(max, c);
-            c.emit(Op::RandomRange);
+            c.emit(Op::RandomRange(*stream));
         }
     }
 }
@@ -1672,12 +1677,12 @@ mod tests {
             offset: 0,
             field_type: FieldType::F64,
         });
-        compiler.emit(Op::Random);
+        compiler.emit(Op::Random(0));
         compiler.emit(Op::StoreField(field));
         let assignment = compiler.finalize();
 
         let mut read_only = Compiler::new();
-        read_only.emit(Op::Random);
+        read_only.emit(Op::Random(0));
         let read_only = read_only.finalize();
 
         // More than one 32768-row chunk, so a chunk-local seed would restart.
@@ -1760,7 +1765,7 @@ mod tests {
             offset: 0,
             field_type: FieldType::F64,
         });
-        compiler.emit(Op::Random);
+        compiler.emit(Op::Random(0));
         compiler.emit(Op::StoreField(field));
         let assignment = compiler.finalize();
 

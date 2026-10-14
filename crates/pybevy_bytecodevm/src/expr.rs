@@ -10,6 +10,7 @@ use pybevy_storage::storage_error::{EXPRESSION_MAX_DEPTH, expression_too_deep};
 use pyo3::{
     exceptions::{PyTypeError, PyValueError},
     prelude::*,
+    types::{PyBool, PyInt},
 };
 
 use super::bytecode::{CompiledBytecode, Compiler, FieldId, FieldType, Op};
@@ -30,6 +31,15 @@ fn expect_args<'py, const N: usize>(
     })
 }
 
+fn parse_random_stream(value: &Bound<'_, PyAny>) -> PyResult<u32> {
+    if value.is_instance_of::<PyBool>() || !value.is_instance_of::<PyInt>() {
+        return Err(PyTypeError::new_err("random stream must be an integer"));
+    }
+    value
+        .extract::<u32>()
+        .map_err(|_| PyValueError::new_err("random stream must be between 0 and 4294967295"))
+}
+
 /// Abstract Syntax Tree node for lazy expressions
 #[derive(Debug, Clone)]
 pub enum RustExpr {
@@ -44,6 +54,9 @@ pub enum RustExpr {
 
     /// Binary division: left / right
     Div(Box<RustExpr>, Box<RustExpr>),
+
+    /// Binary floor division: left // right
+    FloorDiv(Box<RustExpr>, Box<RustExpr>),
 
     /// Binary power: left ** right
     Pow(Box<RustExpr>, Box<RustExpr>),
@@ -147,11 +160,11 @@ pub enum RustExpr {
     /// Linear interpolation: lerp(a, b, t)
     Lerp(Box<RustExpr>, Box<RustExpr>, Box<RustExpr>),
 
-    /// Random float in [0.0, 1.0): random()
-    Random,
+    /// Random float in [0.0, 1.0): random(stream=0)
+    Random(u32),
 
-    /// Random float in [min, max): random_range(min, max)
-    RandomRange(Box<RustExpr>, Box<RustExpr>),
+    /// Random float in [min, max): random_range(min, max, stream=0)
+    RandomRange(Box<RustExpr>, Box<RustExpr>, u32),
 
     /// Component field access (e.g., pos.x, vel.y)
     Field {
@@ -180,6 +193,7 @@ impl RustExpr {
             | (Sub(a1, a2), Sub(b1, b2))
             | (Mul(a1, a2), Mul(b1, b2))
             | (Div(a1, a2), Div(b1, b2))
+            | (FloorDiv(a1, a2), FloorDiv(b1, b2))
             | (Pow(a1, a2), Pow(b1, b2))
             | (Min(a1, a2), Min(b1, b2))
             | (Max(a1, a2), Max(b1, b2))
@@ -191,9 +205,9 @@ impl RustExpr {
             | (Ge(a1, a2), Ge(b1, b2))
             | (And(a1, a2), And(b1, b2))
             | (Or(a1, a2), Or(b1, b2))
-            | (Mod(a1, a2), Mod(b1, b2))
-            | (RandomRange(a1, a2), RandomRange(b1, b2)) => {
-                a1.canonical_eq(b1) && a2.canonical_eq(b2)
+            | (Mod(a1, a2), Mod(b1, b2)) => a1.canonical_eq(b1) && a2.canonical_eq(b2),
+            (RandomRange(a1, a2, as_), RandomRange(b1, b2, bs)) => {
+                as_ == bs && a1.canonical_eq(b1) && a2.canonical_eq(b2)
             }
             (Neg(a), Neg(b))
             | (Sin(a), Sin(b))
@@ -219,7 +233,7 @@ impl RustExpr {
             | (Lerp(a1, a2, a3), Lerp(b1, b2, b3)) => {
                 a1.canonical_eq(b1) && a2.canonical_eq(b2) && a3.canonical_eq(b3)
             }
-            (Random, Random) => true,
+            (Random(a), Random(b)) => a == b,
             (
                 Field {
                     component_id: ac,
@@ -365,6 +379,14 @@ impl RustExpr {
                 let left = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
                 let right = Self::from_py_object_at(py, &args_list[1], resolver, depth + 1)?;
                 Ok(RustExpr::Div(Box::new(left), Box::new(right)))
+            }
+
+            "floordiv" => {
+                let [left, right] = expect_args::<2>("FloorDiv", &args)?;
+                Ok(RustExpr::FloorDiv(
+                    Box::new(Self::from_py_object_at(py, &left, resolver, depth + 1)?),
+                    Box::new(Self::from_py_object_at(py, &right, resolver, depth + 1)?),
+                ))
             }
 
             "pow" => {
@@ -707,20 +729,37 @@ impl RustExpr {
                 Ok(RustExpr::Lerp(Box::new(a), Box::new(b), Box::new(t)))
             }
 
-            "random" => Ok(RustExpr::Random),
+            "random" => {
+                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
+                let stream = match args_list.as_slice() {
+                    [] => 0,
+                    [stream] => parse_random_stream(stream)?,
+                    _ => {
+                        return Err(PyTypeError::new_err(
+                            "Random operation requires 0 or 1 arguments",
+                        ));
+                    }
+                };
+                Ok(RustExpr::Random(stream))
+            }
 
             "random_range" => {
                 let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                if args_list.len() != 2 {
+                if args_list.len() != 2 && args_list.len() != 3 {
                     return Err(PyTypeError::new_err(format!(
-                        "RandomRange operation requires 2 arguments (min, max), got {}",
+                        "RandomRange operation requires 2 or 3 arguments (min, max, stream), got {}",
                         args_list.len()
                     )));
                 }
 
                 let min = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
                 let max = Self::from_py_object_at(py, &args_list[1], resolver, depth + 1)?;
-                Ok(RustExpr::RandomRange(Box::new(min), Box::new(max)))
+                let stream = if args_list.len() == 3 {
+                    parse_random_stream(&args_list[2])?
+                } else {
+                    0
+                };
+                Ok(RustExpr::RandomRange(Box::new(min), Box::new(max), stream))
             }
 
             "field" => {
@@ -806,6 +845,11 @@ impl RustExpr {
                 left.compile(compiler);
                 right.compile(compiler);
                 compiler.emit(Op::Div);
+            }
+            RustExpr::FloorDiv(left, right) => {
+                left.compile(compiler);
+                right.compile(compiler);
+                compiler.emit(Op::FloorDiv);
             }
 
             RustExpr::Pow(left, right) => {
@@ -998,14 +1042,14 @@ impl RustExpr {
                 compiler.emit(Op::Lerp);
             }
 
-            RustExpr::Random => {
-                compiler.emit(Op::Random);
+            RustExpr::Random(stream) => {
+                compiler.emit(Op::Random(*stream));
             }
 
-            RustExpr::RandomRange(min, max) => {
+            RustExpr::RandomRange(min, max, stream) => {
                 min.compile(compiler);
                 max.compile(compiler);
-                compiler.emit(Op::RandomRange);
+                compiler.emit(Op::RandomRange(*stream));
             }
 
             RustExpr::Field {
@@ -1167,7 +1211,8 @@ mod tests {
         assert!(!ternary.canonical_eq(&RustExpr::Clamp(c(1.0), c(9.0), c(3.0))));
         assert!(!ternary.canonical_eq(&RustExpr::Clamp(c(1.0), c(2.0), c(9.0))));
 
-        assert!(RustExpr::Random.canonical_eq(&RustExpr::Random));
+        assert!(RustExpr::Random(0).canonical_eq(&RustExpr::Random(0)));
+        assert!(!RustExpr::Random(0).canonical_eq(&RustExpr::Random(1)));
 
         let field = RustExpr::Field {
             component_id: ComponentId::new(1),
@@ -1567,18 +1612,32 @@ mod tests {
 
     #[test]
     fn test_compile_random() {
-        let expr = RustExpr::Random;
+        let expr = RustExpr::Random(0);
         let bytecode = compile_expr(&expr);
         assert_eq!(bytecode.bytecode.len(), 1);
-        assert!(matches!(bytecode.bytecode[0], Op::Random));
+        assert!(matches!(bytecode.bytecode[0], Op::Random(0)));
     }
 
     #[test]
     fn test_compile_random_range() {
-        let expr = RustExpr::RandomRange(c(0.0), c(100.0));
+        let expr = RustExpr::RandomRange(c(0.0), c(100.0), 0);
         let bytecode = compile_expr(&expr);
         // PushConst(0), PushConst(100), RandomRange
         assert_eq!(bytecode.bytecode.len(), 3);
+    }
+
+    #[test]
+    fn random_stream_protocol_preserves_and_validates_stream() {
+        Python::attach(|py| {
+            let args = PyList::new(py, [17]).unwrap();
+            let expr = RustExpr::from_py_object(py, &named_expr(py, "random", &args)).unwrap();
+            assert!(matches!(expr, RustExpr::Random(17)));
+
+            let bad_args = PyList::new(py, [-1]).unwrap();
+            let error = RustExpr::from_py_object(py, &named_expr(py, "random", &bad_args))
+                .expect_err("negative streams must be rejected");
+            assert!(error.is_instance_of::<PyValueError>(py));
+        });
     }
 
     #[test]

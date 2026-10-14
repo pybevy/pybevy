@@ -536,6 +536,8 @@ fn test_no_entity_duplication_across_archetypes() {
 }
 
 #[test]
+// The drop is the test: it proves the items outlive the iterator, not the other way around.
+#[allow(clippy::drop_non_drop)]
 fn test_world_lifetime_not_iterator_lifetime() {
     //! CRITICAL: Items yielded by QueryIter are tied to world lifetime ('w),
     //! not iterator lifetime. This is the foundation for system-scoped validity.

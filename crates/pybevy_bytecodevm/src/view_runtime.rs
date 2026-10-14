@@ -1462,6 +1462,8 @@ pub enum ViewRuntimeError {
         instruction: &'static str,
         field_types: Vec<FieldType>,
     },
+    /// A floating result would be silently narrowed into an integer field.
+    ImplicitFloatToInteger { destination: FieldType },
     /// A program leaves the wrong number of values after execution.
     InvalidFinalStackDepth {
         /// Program intent whose result shape was checked.
@@ -1668,6 +1670,10 @@ impl fmt::Display for ViewRuntimeError {
                 f,
                 "View bytecode instruction {instruction_index} ({instruction}) mixes integer \
                  field types {field_types:?}; cast fields to one shared width first"
+            ),
+            Self::ImplicitFloatToInteger { destination } => write!(
+                f,
+                "Cannot assign a float expression to integer View field {destination:?}"
             ),
             Self::InvalidFinalStackDepth {
                 intent,
@@ -2034,6 +2040,11 @@ pub(crate) fn validate_stack_effects(
                     &[StackKind::Float, StackKind::Float],
                     Some(StackKind::Float),
                 ),
+                Op::FloorDiv => (
+                    "FloorDiv",
+                    &[StackKind::Float, StackKind::Float],
+                    Some(StackKind::Float),
+                ),
                 Op::Pow => (
                     "Pow",
                     &[StackKind::Float, StackKind::Float],
@@ -2128,11 +2139,11 @@ pub(crate) fn validate_stack_effects(
                     &[StackKind::Float, StackKind::Float, StackKind::Float],
                     Some(StackKind::Float),
                 ),
-                Op::Random => {
+                Op::Random(_) => {
                     stack.push(StackKind::Float);
                     continue;
                 }
-                Op::RandomRange => (
+                Op::RandomRange(_) => (
                     "RandomRange",
                     &[StackKind::Float, StackKind::Float],
                     Some(StackKind::Float),
@@ -2254,11 +2265,27 @@ fn validate_integer_arithmetic_types(bytecode: &CompiledBytecode) -> Result<(), 
                     TrackedValue::Numeric(field_type_mask(field_type))
                 });
             }
-            Op::PushConst(_) | Op::Random => stack.push(TrackedValue::Numeric(0)),
-            Op::StoreField(_) => {
-                stack.pop();
+            Op::PushConst(index) => {
+                let value = bytecode.constants[usize::from(index)];
+                let integer_like = value.is_finite() && value.fract() == 0.0;
+                stack.push(TrackedValue::Numeric(if integer_like {
+                    0
+                } else {
+                    TYPE_F64
+                }));
             }
-            Op::Add | Op::Sub | Op::Mul | Op::Min | Op::Max => {
+            Op::Random(_) => stack.push(TrackedValue::Numeric(TYPE_F64)),
+            Op::StoreField(index) => {
+                let value = stack.pop().expect("stack already validated");
+                let destination = bytecode.field_map[usize::from(index)].field_type;
+                if let TrackedValue::Numeric(mask) = value
+                    && field_type_mask(destination) & INTEGER_TYPES != 0
+                    && mask & (TYPE_F32 | TYPE_F64) != 0
+                {
+                    return Err(ViewRuntimeError::ImplicitFloatToInteger { destination });
+                }
+            }
+            Op::Add | Op::Sub | Op::Mul | Op::Min | Op::Max | Op::FloorDiv | Op::Mod => {
                 let TrackedValue::Numeric(right) = stack.pop().expect("stack already validated")
                 else {
                     unreachable!("numeric operation stack type already validated")
@@ -2273,6 +2300,8 @@ fn validate_integer_arithmetic_types(bytecode: &CompiledBytecode) -> Result<(), 
                     Op::Mul => "Mul",
                     Op::Min => "Min",
                     Op::Max => "Max",
+                    Op::FloorDiv => "FloorDiv",
+                    Op::Mod => "Mod",
                     _ => unreachable!(),
                 };
                 stack.push(TrackedValue::Numeric(preserving_numeric_result(
@@ -2306,7 +2335,6 @@ fn validate_integer_arithmetic_types(bytecode: &CompiledBytecode) -> Result<(), 
             Op::Neg | Op::Abs | Op::Floor | Op::Ceil | Op::Round | Op::Sign => {}
             Op::Div
             | Op::Pow
-            | Op::Mod
             | Op::Sin
             | Op::Cos
             | Op::Tan
@@ -2320,10 +2348,10 @@ fn validate_integer_arithmetic_types(bytecode: &CompiledBytecode) -> Result<(), 
             | Op::Log2
             | Op::Fract
             | Op::Lerp
-            | Op::RandomRange => {
+            | Op::RandomRange(_) => {
                 let arity = if matches!(op, Op::Lerp) {
                     3
-                } else if matches!(op, Op::Div | Op::Pow | Op::Mod | Op::RandomRange) {
+                } else if matches!(op, Op::Div | Op::Pow | Op::RandomRange(_)) {
                     2
                 } else {
                     1

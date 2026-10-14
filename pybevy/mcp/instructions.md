@@ -95,6 +95,12 @@ native hot reload is currently rejected.
 
 ## Critical Rules
 
+View expression `random()` and `random_range()` use the same deterministic draw
+for each entity by default, regardless of the receiver field. Pass distinct
+`stream=` integers for independent coordinates, for example
+`column.translation.x.random_range(-5, 5, stream=1)` and
+`column.translation.x.random_range(-5, 5, stream=2)`.
+
 Numeric entity arguments use the packed generation-bearing IDs returned by MCP
 responses, which are the same values as Python `Entity.to_bits()`. Never pass
 the `EntityIndex` returned by `Entity.index()` or its raw `.index()` integer;
@@ -163,7 +169,14 @@ from `resource_names` unchanged to `get_resource`. Control names are exact and
 may differ from Python generic spellings: `Time[Real]`, `Time[Virtual]`, and
 `Time[Fixed]` are `_TimeReal`, `_TimeVirtual`, and `_TimeFixed`; keyboard
 `ButtonInput[KeyCode]` is `ButtonInput`, while mouse
-`ButtonInput[MouseButton]` is `MouseInput`. `Time` keeps the name `Time`.
+`ButtonInput[MouseButton]` is `MouseInput`. `Time` keeps the name `Time` unless
+a custom `Time` is registered. When a short component or resource name matches
+multiple types, control tools reject it and list the exact qualified names to
+use, such as `pybevy.ecs.Name` and `game.Name`. Query filters and schemas accept
+the same qualified component names. `resource_names` lists qualified spellings
+for colliding resources.
+`get_registry.custom_component_qualified_names` lists addressable custom
+component names alongside the existing short-name inventory.
 
 `world.commands()` queues mutations. Call `world.flush()` before inspecting
 their results in the same `run_code` call, or use direct `world.spawn()` and
@@ -179,8 +192,10 @@ When using `set_component`, `spawn_entity`, `set_resource`, or `set_asset`, fiel
 - **Color shorthand**: `[1.0, 0.5, 0.0, 1.0]` means sRGBA for `Color`
 - **LinearRgba**: `[r, g, b, a]` is linear and accepts HDR channels above 1; the canonical object form is `{"red": r, "green": g, "blue": b, "alpha": a}`
 - **Vec2/Vec3/Vec4**: `[x, y]`, `[x, y, z]`, `[x, y, z, w]`; Vec3 also accepts the complete coordinate object `{"x": x, "y": y, "z": z}`
+- **Quat rotations**: `[x, y, z, w]` or a complete coordinate object; MCP normalizes finite, non-zero inputs to unit length before storing them. Zero-length and non-finite rotations are rejected.
 - **Option fields**: `null` for None, value directly for Some
 - **Nested structs**: `{"x": 1.0, "y": 2.0, "z": 3.0}`; a Vec3 coordinate object requires exactly `x`, `y`, and `z` with finite numeric values
+- **Native scalar floats**: finite JSON numbers must also fit the destination `f32` field; `f64` fields retain their wider range
 - **Existing asset handles**: read a live handle component such as `Mesh3d` or `MeshMaterial3d`, then replay its complete `fields.handle.asset_ref` object through `set_component` or `spawn_entity`. This engine-issued reference is typed and session-scoped; raw asset IDs and indexes are not accepted.
 - **Resources**: `set_resource` patches existing fields - only provided fields are updated, others preserved. Native-resource patches validate all conversions and setters on a detached value; failure leaves the resource unchanged. Types that cannot safely stage a copy reject patches without mutation. Its response returns `resource` with the type name and `inserted: true` for a newly created value or `inserted: false` for a patch.
 

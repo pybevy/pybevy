@@ -250,6 +250,11 @@ Key View rules:
 - `from pybevy import expr` for math functions: `sin`, `cos`, `sqrt`, `clamp`, etc.
 - Numeric expressions follow Python array conventions: `%` uses the divisor's
   sign, `round()` uses ties-to-even, and `min()`/`max()` propagate NaN.
+  Division follows NumPy: `/` is float64 true division; `//` with `%` gives a
+  matching floor quotient and remainder, exact for integer fields. Assigning a
+  float expression (including a `/` result) to an integer field raises
+  `TypeError`; use `//` instead. Zero divisors never raise: floats give
+  inf/-inf/NaN, integers give 0, and no warning is emitted.
 - `clamp(min, max)` propagates NaN and returns `max` when the bounds are
   reversed. `fract()` is the signed fractional part (`x - trunc(x)`), so it
   differs from floor-based `mod(x, 1.0)` for negative non-integers. Native

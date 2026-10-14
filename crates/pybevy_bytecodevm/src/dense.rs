@@ -228,9 +228,15 @@ fn stack_effect(op: &Op) -> Result<(&'static [StackKind], StackKind), &'static s
     const F: StackKind = Float;
     const B: StackKind = Bool;
     Ok(match op {
-        Op::Add | Op::Sub | Op::Mul | Op::Div | Op::Pow | Op::Min | Op::Max | Op::Mod => {
-            (&[F, F], Float)
-        }
+        Op::Add
+        | Op::Sub
+        | Op::Mul
+        | Op::Div
+        | Op::FloorDiv
+        | Op::Pow
+        | Op::Min
+        | Op::Max
+        | Op::Mod => (&[F, F], Float),
         Op::Neg
         | Op::Sin
         | Op::Cos
@@ -258,8 +264,8 @@ fn stack_effect(op: &Op) -> Result<(&'static [StackKind], StackKind), &'static s
         // bottom-to-top order is [condition: bool, true: float, false: float].
         Op::Where => (&[B, F, F], Float),
         Op::StoreField(_) => return Err("StoreField"),
-        Op::Random => return Err("Random"),
-        Op::RandomRange => return Err("RandomRange"),
+        Op::Random(_) => return Err("Random"),
+        Op::RandomRange(_) => return Err("RandomRange"),
         Op::PushInput(_) | Op::PushConst(_) => unreachable!("handled before stack_effect"),
         Op::PushField(_) => return Err("PushField"),
     })
@@ -727,7 +733,7 @@ mod tests {
             })
         ));
         assert!(matches!(
-            DenseProgram::new(vec![Op::Random], vec![], 0),
+            DenseProgram::new(vec![Op::Random(0)], vec![], 0),
             Err(DenseError::UnsupportedOp { op: "Random", .. })
         ));
     }
@@ -771,11 +777,11 @@ mod tests {
     #[test]
     fn rejects_random_ops_and_empty_programs() {
         assert!(matches!(
-            DenseProgram::new(vec![Op::Random], vec![], 0),
+            DenseProgram::new(vec![Op::Random(0)], vec![], 0),
             Err(DenseError::UnsupportedOp { .. })
         ));
         assert!(matches!(
-            DenseProgram::new(vec![Op::RandomRange], vec![], 0),
+            DenseProgram::new(vec![Op::RandomRange(0)], vec![], 0),
             Err(DenseError::UnsupportedOp { .. })
         ));
         assert!(matches!(

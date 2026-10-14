@@ -1,28 +1,40 @@
 use bevy::{
     app::{App, Last},
     asset::Handle,
+    color::LinearRgba,
     image::Image,
+    math::{Vec2, Vec3, Vec4},
     pbr::{MaterialPlugin, MeshMaterial3d, StandardMaterial},
 };
+use pybevy_color::linear_rgba::PyLinearRgba;
 use pybevy_core::{
-    AssetInputConverter, AssetStorage, ComponentStorage, LogicalTypeId, NativeAsset, PluginBuild,
-    PyComponent, PyHandle, PyMaterial, PyPlugin,
+    AssetInputConverter, AssetStorage, ComponentStorage, FieldStorage, FromBorrowedStorage,
+    LogicalTypeId, NativeAsset, PluginBuild, PyComponent, PyHandle, PyMaterial, PyPlugin,
+    ValueStorage,
     asset_path::parse_asset_path,
     ensure_asset_type, extract_handle_from_any,
     public_error::{
         SHADER_DEFS_WITHOUT_NAMES, expected_float_sequence, non_negative_argument,
-        too_many_shader_def_names,
+        packed_uniform_misaligned, packed_uniform_out_of_range, too_many_shader_def_names,
+        unsupported_packed_uniform_type,
     },
 };
 use pybevy_macros::{pyasset, pycomponent, pyplugin};
+use pybevy_math::{vec2::PyVec2, vec3::PyVec3, vec4::PyVec4};
 use pyo3::{
     exceptions::{PyIndexError, PyTypeError, PyValueError},
     prelude::*,
-    types::PyList,
+    types::{PyList, PyType},
 };
 
 use crate::{
-    shader_material::{MAX_TEXTURE_SLOTS, ShaderMaterial, ShaderMaterialExtension, ShaderParams},
+    shader_material::{
+        MAX_TEXTURE_SLOTS, ShaderMaterial, ShaderMaterialExtension, ShaderParams,
+        packed_uniform::{
+            PackedUniform, UniformData, UniformIndexError, check_uniform_index, uniform_mut,
+            uniform_ref,
+        },
+    },
     standard_material::PyStandardMaterial,
 };
 
@@ -57,6 +69,19 @@ fn checked_index(value: isize, name: &str) -> PyResult<usize> {
     usize::try_from(value).map_err(|_| PyIndexError::new_err(non_negative_argument(name, value)))
 }
 
+fn check_packed_uniform<F: PackedUniform>(float_index: usize) -> PyResult<()> {
+    check_uniform_index::<F>(float_index).map_err(|error| match error {
+        UniformIndexError::Misaligned => PyValueError::new_err(packed_uniform_misaligned(
+            F::NAME,
+            float_index,
+            F::ALIGNMENT_FLOATS,
+        )),
+        UniformIndexError::OutOfRange => {
+            PyIndexError::new_err(packed_uniform_out_of_range(F::NAME, float_index, F::FLOATS))
+        }
+    })
+}
+
 fn validate_shader_defs(shader_defs: u32, shader_def_names: &[String]) -> PyResult<()> {
     let name_count = shader_def_names.len();
     if name_count > u32::BITS as usize {
@@ -71,6 +96,25 @@ fn validate_shader_defs(shader_defs: u32, shader_def_names: &[String]) -> PyResu
         return Err(PyValueError::new_err(SHADER_DEFS_WITHOUT_NAMES));
     }
     Ok(())
+}
+
+impl PyShaderMaterial {
+    fn uniform_field<F, W>(&self, float_index: usize) -> PyResult<W>
+    where
+        F: PackedUniform + 'static,
+        W: FromBorrowedStorage<ValueStorage<F>>,
+    {
+        check_packed_uniform::<F>(float_index)?;
+        let data: FieldStorage<UniformData> = self.storage.borrow_field(
+            |material| &material.extension.params.data,
+            |material| &mut material.extension.params.data,
+        )?;
+        Ok(data.borrow_resolved_index_as::<F, ValueStorage<F>, W>(
+            float_index,
+            uniform_ref::<F>,
+            uniform_mut::<F>,
+        )?)
+    }
 }
 
 #[pymethods]
@@ -267,6 +311,61 @@ impl PyShaderMaterial {
             mat.extension.params.data[idx / 4][idx % 4] = val;
         }
         Ok(())
+    }
+
+    fn _uniform_field(
+        &self,
+        py: Python<'_>,
+        float_index: isize,
+        value_type: &Bound<'_, PyType>,
+    ) -> PyResult<Py<PyAny>> {
+        let index = checked_index(float_index, "float index")?;
+        if value_type.is(py.get_type::<PyVec2>()) {
+            let value: PyVec2 = self.uniform_field::<Vec2, _>(index)?;
+            return Ok(Py::new(py, value)?.into_any());
+        }
+        if value_type.is(py.get_type::<PyVec3>()) {
+            let value: PyVec3 = self.uniform_field::<Vec3, _>(index)?;
+            return Ok(Py::new(py, value)?.into_any());
+        }
+        if value_type.is(py.get_type::<PyVec4>()) {
+            let value: PyVec4 = self.uniform_field::<Vec4, _>(index)?;
+            return Ok(Py::new(py, value)?.into_any());
+        }
+        if value_type.is(py.get_type::<PyLinearRgba>()) {
+            let value: PyLinearRgba = self.uniform_field::<LinearRgba, _>(index)?;
+            return Ok(Py::new(py, value)?.into_any());
+        }
+        Err(PyTypeError::new_err(unsupported_packed_uniform_type(
+            value_type.name()?,
+        )))
+    }
+
+    #[staticmethod]
+    fn _read_only_uniform(py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        if let Ok(value) = value.extract::<PyRef<'_, PyVec2>>() {
+            let raw: Vec2 = (&*value).try_into()?;
+            let snapshot = PyVec2::from_borrowed(ValueStorage::read_only_snapshot(raw));
+            return Ok(Py::new(py, snapshot)?.into_any());
+        }
+        if let Ok(value) = value.extract::<PyRef<'_, PyVec3>>() {
+            let raw: Vec3 = (&*value).try_into()?;
+            let snapshot = PyVec3::from_borrowed(ValueStorage::read_only_snapshot(raw));
+            return Ok(Py::new(py, snapshot)?.into_any());
+        }
+        if let Ok(value) = value.extract::<PyRef<'_, PyVec4>>() {
+            let raw: Vec4 = (&*value).try_into()?;
+            let snapshot = PyVec4::from_borrowed(ValueStorage::read_only_snapshot(raw));
+            return Ok(Py::new(py, snapshot)?.into_any());
+        }
+        if let Ok(value) = value.extract::<PyRef<'_, PyLinearRgba>>() {
+            let raw: LinearRgba = (&*value).try_into()?;
+            let snapshot = PyLinearRgba::from_borrowed(ValueStorage::read_only_snapshot(raw));
+            return Ok(Py::new(py, snapshot)?.into_any());
+        }
+        Err(PyTypeError::new_err(unsupported_packed_uniform_type(
+            value.get_type().name()?,
+        )))
     }
 
     fn get_data_floats(&self, start: isize, count: isize) -> PyResult<Vec<f32>> {

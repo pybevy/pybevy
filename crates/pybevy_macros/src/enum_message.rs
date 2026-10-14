@@ -63,6 +63,7 @@ fn try_expand(
     let register = format_ident!("register_{}_variants", stem);
     let module = class.module;
     let python_name = class.name;
+    let variant_aliases_method = crate::enums::variant_aliases_method(spec);
 
     let mut variant_items = Vec::new();
     let mut register_items = Vec::new();
@@ -302,6 +303,8 @@ fn try_expand(
 
         #[pyo3::pymethods]
         impl #py_type {
+            #variant_aliases_method
+
             pub fn __repr__(&self) -> String {
                 match &self.inner {
                     #(#repr_arms,)*

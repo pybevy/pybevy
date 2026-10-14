@@ -244,6 +244,9 @@ sprite.custom_size = Vec2(new_width, new_height)
 ## Procedural Sprite Sheets
 
 Generate sprite sheets from code using the `Image` API - no image files needed.
+`Image.set_color_at()` rounds each normalized channel to the nearest integer
+in integer texture formats, so `Color.WHITE` writes byte value 255 and sRGB
+0.5 writes 128. Direct pixel-byte writes use the bytes you supply.
 
 ```python
 from pybevy.image import ImageSampler, TextureAtlas, TextureAtlasLayout
