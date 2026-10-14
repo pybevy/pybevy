@@ -96,6 +96,8 @@ mat = GlowMaterial(
 | `LinearRgba`   | `vec4<f32>`    | 16 bytes, 16-byte aligned      |
 | `bool`         | shader def     | `#ifdef FIELD_NAME` in WGSL    |
 | `Handle[Image] \| None` | texture slot | `texture_2d<f32>` + `sampler` |
+| `Storage[Vec4]` | read-only storage | concise typed binding; opt-in plugin |
+| `Annotated[Handle[ShaderBuffer] \| None, StorageBuffer()]` | read-only storage | one `array<vec4<f32>>`; opt-in plugin |
 
 ## How It Works
 
@@ -107,7 +109,8 @@ The decorator:
 5. Registers metadata for `Assets[YourMaterial]` and `MeshMaterial3d[YourMaterial]`
 
 Each decorated class keeps a distinct logical identity even though the engine stores
-all of them as `ShaderMaterial`. `Assets[GlowMaterial]` rejects handles from another
+them as `ShaderMaterial` or, for classes with a storage field,
+`StorageShaderMaterial`. `Assets[GlowMaterial]` rejects handles from another
 custom material class, and `Query[MeshMaterial3d[GlowMaterial]]` only matches entities
 using `GlowMaterial`. In optional query data, a different custom material class is
 treated as absent and yields `None`; it does not remove the entity from the query.
@@ -128,10 +131,12 @@ scenes.
 `get_mut()`, iteration, and `remove()`. Iterated materials are read-only and
 expire with the system; removed materials are independent owned values.
 
-All custom material collections share Bevy's underlying `Assets[ShaderMaterial]`
-resource. A system therefore cannot request two mutable custom-material collections at
-once, such as both `ResMut[Assets[A]]` and `ResMut[Assets[B]]`; split those mutations
-across ordered systems.
+Custom material collections with the same native layout share one underlying
+resource: `Assets[ShaderMaterial]` for ordinary materials and
+`Assets[StorageShaderMaterial]` for storage materials. A system cannot request
+two mutable collections backed by the same resource, such as two storage
+classes; split those mutations across ordered systems. An ordinary collection
+and a storage collection have distinct native resource identities.
 
 ## Raw Shader Buffers
 
@@ -142,15 +147,102 @@ Use `with buffer.data() as data` for read-only CPU bytes, `data_mut()` for
 scoped writes, and `data_copy()` for an independent copy. Views block conflicting
 asset mutations and expire on context exit or system completion. `data_len()`
 returns the current CPU byte count or `None`, not GPU allocation size.
-Bevy consumes CPU upload data during render extraction; these accessors do not
-read back GPU writes. `set_data()` takes already encoded bytes (including shader
+Render extraction may consume CPU upload data; its retention depends on the
+asset path. These accessors never read back GPU writes. `set_data()` takes already encoded bytes (including shader
 layout padding), not Bevy's typed shader serialization; `None` clears CPU data.
+
+## Read-only Material Storage
+
+Use `Storage[Vec4]` to bind an existing `ShaderBuffer` asset as a read-only
+vec4 array. The field value remains a typed handle. `Storage` describes the
+binding; it does not allocate or serialize the buffer.
+`StorageShaderMaterialPlugin()` enables storage materials and ordinary shader
+materials. Add it after `DefaultPlugins`; you do not also need
+`ShaderMaterialPlugin()`.
+
+<!-- pybevy-snippet: typecheck -->
+```python
+import struct
+
+from pybevy.assets import Assets, Handle
+from pybevy.ecs import ResMut
+from pybevy.material import Storage, material
+from pybevy.math import Vec4
+from pybevy.pbr import Material, StorageShaderMaterialPlugin
+from pybevy.render import ShaderBuffer
+
+@material(fragment_shader="shaders/palette.wgsl")
+class Palette(Material):
+    colors: Storage[Vec4]
+
+def make_palette(
+    buffers: ResMut[Assets[ShaderBuffer]],
+    materials: ResMut[Assets[Palette]],
+) -> Handle[Palette]:
+    values = struct.pack("<8f", 1, 0, 0, 1, 0, 1, 0, 1)
+    surface = Palette(colors=buffers.add(ShaderBuffer(values)))
+    return materials.add(surface)
+```
+
+Bare `Storage[Vec4]` requires a constructor argument. Pass `None` explicitly
+to leave the material pending; `Storage(default=None)` makes omission valid.
+The instance field and constructor argument are `Handle[ShaderBuffer] | None`.
+Pyright/Pylance and mypy infer these types from the declaration. Binding 109
+is assigned automatically; the explicit `Annotated[..., StorageBuffer()]`
+form remains available.
+
+To pass a custom StandardMaterial as `base=` with a typed constructor, add
+`base: InitVar[StandardMaterial | None] = None`. The base is constructor input,
+not a shader binding. Ordinary materials create their base automatically.
+
+`assets/shaders/palette.wgsl` can read the array directly in a vertex or
+fragment stage, including custom prepass/deferred shaders:
+
+```wgsl
+#import pybevy::gen::Palette as params
+
+@fragment
+fn fragment() -> @location(0) vec4<f32> {
+    return params::colors[0];
+}
+```
+
+The generated declaration is `@group(3) @binding(109) var<storage, read>
+colors: array<vec4<f32>>`. `arrayLength(&params::colors)` gives its current row
+count. Existing uniform, texture, bool-definition and pass-hook syntax works
+alongside the storage field. For per-instance lookup, use `MeshTag` and Bevy's
+`mesh_functions::get_tag(instance_index)`, as in
+[the storage-buffer example](../../../examples/bevy/shaders/storage_buffer.py).
+
+Update bytes through `buffers.get_mut(handle).set_data(...)`, or assign a new
+handle through a mutable material. Allocation changes, including resize,
+refresh the material binding automatically. A field set to `None`, a removed
+buffer, or an upload still awaiting preparation leaves the material pending
+and suppresses its draw. Restoring a valid handle/upload makes it drawable.
+There is no fallback storage buffer. Material and nested uniform accesses keep
+the usual asset authority, change tracking and system lifetime rules.
+
+This first layout accepts exactly one nonempty array of 16-byte `Vec4` rows.
+Only `element=Vec4` is supported. Encode float32 values and padding yourself;
+`int` uniforms still mean `f32`, not integer storage elements. The renderer
+rejects a byte count not divisible by 16, missing `STORAGE` usage, or a range
+over the device's storage binding limit; it logs the reason and keeps the
+material pending. Handle assignment rejects other asset types immediately.
+
+Storage requires vertex and fragment storage-buffer support and adequate
+combined material binding limits. The opt-in plugin reports unsupported
+capabilities and disables storage draws. No new Cargo feature flag is needed.
+This path is tested on native Vulkan; WebGL and other backends/devices are not
+qualified by that result. Ordinary materials retain their existing layout.
+Multiple storage fields, arbitrary element structs, writable storage, custom
+texture dimensions/samplers and general dynamic binding layouts remain outside
+this API. Bevy 0.20's changing buffer/shader APIs still require a separate port.
 
 ## WGSL Shader Side
 
 Both vertex and fragment shaders can read the material uniforms at
 `@group(3) @binding(100)`. The decorator generates a WGSL module containing
-the matching uniform, texture, and sampler declarations. Import that module by
+the matching uniform, texture, sampler, and optional storage declarations. Import that module by
 the material class name:
 
 Independent classes with the same short name can keep this import spelling.
@@ -538,7 +630,8 @@ def animate_materials(
 ```
 
 `materials.get_mut()` returns a typed wrapper with property accessors.
-Each property set triggers a Rust FFI call to write directly to the GPU buffer.
+Each property set writes the native material asset; Bevy uploads changed data
+during render preparation.
 `Vec2`, `Vec3`, `Vec4`, and `LinearRgba` fields are live views of the packed
 uniform, so `mat.color.alpha = 0.25` writes through a `get_mut()` material.
 Through `get()` or iteration they are read-only, and every view expires with
@@ -559,6 +652,7 @@ example `mat.color = LinearRgba(1.0, 0.0, 0.0, 0.25)`.
 | 106     | sampler_2    | `sampler`                 |
 | 107     | texture_3    | `texture_2d<f32>`         |
 | 108     | sampler_3    | `sampler`                 |
+| 109     | opt-in storage | `var<storage, read>` vec4 array |
 
 All bindings are at `@group(3)` (the material bind group).
 Unused texture slots automatically get Bevy's 1x1 white fallback texture.

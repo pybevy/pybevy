@@ -13,8 +13,8 @@ class ShaderBuffer(Asset):
     """A storage-buffer asset uploaded for shader access.
 
     Data is supplied as raw bytes or a bounded uint8 ``Array``; callers provide
-    shader layout and padding. CPU data is consumed by render extraction and
-    is not a GPU readback. Use ``with_size`` to reserve GPU allocation size.
+    shader layout and padding. CPU data may be consumed by render extraction;
+    these accessors do not perform GPU readback. Use ``with_size`` to reserve GPU allocation size.
     """
 
     def __copy__(self) -> ShaderBuffer: ...

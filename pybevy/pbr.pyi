@@ -10,7 +10,7 @@ from pybevy.image import Image
 from pybevy.material import AlphaMode, OpaqueRendererMethod
 from pybevy.math import Affine2, Range, Rect, UVec2, UVec3, Vec3
 from pybevy.mesh import UvChannel
-from pybevy.render import Face
+from pybevy.render import Face, ShaderBuffer
 
 class PbrPlugin(Plugin):
     def __init__(self) -> None: ...
@@ -1048,6 +1048,74 @@ class ShaderMaterial(Material):
 
     def clear_texture(self, slot: int) -> None:
         """Clear a texture slot (set to None)."""
+
+class StorageShaderMaterialPlugin(Plugin):
+    """Opt into storage materials; also installs ordinary shader material support."""
+    def __init__(self) -> None: ...
+
+class StorageShaderMaterial(Material):
+    """Custom 3D material with one read-only array<vec4<f32>> storage binding.
+
+    Uses the ordinary shader stages, uniform and texture slots. An absent or
+    unprepared buffer leaves the material pending. Requires StorageShaderMaterialPlugin.
+    """
+
+    def __copy__(self) -> StorageShaderMaterial: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> StorageShaderMaterial: ...
+
+    def __init__(
+        self,
+        base: StandardMaterial,
+        fragment_shader: str | None = None,
+        vertex_shader: str | None = None,
+        data: list[float] | None = None,
+        shader_defs: int = 0,
+        shader_def_names: list[str] | None = None,
+        textures: list[Handle[Image] | None] | None = None,
+        bindings_wgsl: str | None = None,
+        *,
+        storage_buffer: Handle[ShaderBuffer] | None = None,
+        prepass_vertex_shader: str | None = None,
+        prepass_fragment_shader: str | None = None,
+        deferred_vertex_shader: str | None = None,
+        deferred_fragment_shader: str | None = None,
+    ) -> None: ...
+
+    def set_data_float(self, index: int, value: float) -> None:
+        """Set a single float in the uniform data buffer (index 0-255)."""
+
+    def get_data_float(self, index: int) -> float:
+        """Get a single float from the uniform data buffer (index 0-255)."""
+
+    def set_data_floats(self, start: int, values: list[float]) -> None:
+        """Set multiple floats starting at the given index."""
+
+    def get_data_floats(self, start: int, count: int) -> list[float]:
+        """Get multiple floats starting at the given index."""
+
+    def get_shader_defs(self) -> int:
+        """Get the shader defs bitmask."""
+
+    def set_shader_defs(self, defs: int) -> None:
+        """Set the shader defs bitmask."""
+
+    def get_texture(self, slot: int) -> Handle[Image] | None:
+        """Get the texture handle in a given slot (0-3), or None if the slot is empty."""
+
+    def set_texture(self, slot: int, handle: Handle[Image]) -> None:
+        """Set a texture handle for a given slot (0-3)."""
+
+    def clear_texture(self, slot: int) -> None:
+        """Clear a texture slot (set to None)."""
+
+    storage_buffer: Handle[ShaderBuffer] | None
+
+class MeshMaterial3dStorageShader(Component):
+    """Assign a storage material; MeshMaterial3d[DecoratedClass] selects this automatically."""
+    def __init__(self, handle: Handle[StorageShaderMaterial]) -> None: ...
+    handle: Handle[StorageShaderMaterial]
+    def __eq__(self, other: object) -> bool: ...
+
 
 class ForwardDecal(Component):
     """Marker component for forward-rendered decals."""

@@ -17,14 +17,25 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable
 from threading import Lock
-from typing import Any, TypeVar, cast, get_type_hints
+from typing import Any, Protocol, TypeVar, cast, dataclass_transform, get_type_hints
 
 from .. import _pybevy  # type: ignore
 from ..assets import Handle
 from ..color import LinearRgba
 from ..image import Image
 from ..math import Vec2, Vec3, Vec4
-from ..pbr import MeshMaterial3dShader, ShaderMaterial, StandardMaterial
+from ..pbr import (
+    MeshMaterial3dShader,
+    MeshMaterial3dStorageShader,
+    ShaderMaterial,
+    StandardMaterial,
+    StorageShaderMaterial,
+)
+from ..render import ShaderBuffer
+from ._bindings import StorageBuffer as StorageBuffer
+from ._bindings import _partition_storage_fields
+from ._declarations import Storage as Storage
+from ._declarations import _lower_declarations
 from ._layout import (
     _MAX_TEXTURE_SLOTS,
     _compute_layout,
@@ -83,7 +94,10 @@ def _logical_material_type_id(
 
 
 def _pack_value(
-    data: list[float], float_index: int, value: Any, typ: type,  # noqa: ANN401
+    data: list[float],
+    float_index: int,
+    value: Any,  # noqa: ANN401
+    typ: type,
 ) -> None:
     """Pack a Python value into the flat float buffer at the given index."""
     if typ is float:
@@ -111,7 +125,9 @@ def _pack_value(
 
 
 def _read_value(
-    data: list[float], float_index: int, typ: type,
+    data: list[float],
+    float_index: int,
+    typ: type,
 ) -> Any:  # noqa: ANN401
     """Read a Python value from the flat float buffer."""
     if typ is float:
@@ -123,16 +139,28 @@ def _read_value(
     if typ is Vec3:
         return Vec3(data[float_index], data[float_index + 1], data[float_index + 2])
     if typ is Vec4:
-        return Vec4(data[float_index], data[float_index + 1],
-                    data[float_index + 2], data[float_index + 3])
+        return Vec4(
+            data[float_index],
+            data[float_index + 1],
+            data[float_index + 2],
+            data[float_index + 3],
+        )
     if typ is LinearRgba:
-        return LinearRgba(data[float_index], data[float_index + 1],
-                          data[float_index + 2], data[float_index + 3])
+        return LinearRgba(
+            data[float_index],
+            data[float_index + 1],
+            data[float_index + 2],
+            data[float_index + 3],
+        )
     return None
 
 
-_SENTINEL = object()
+class _StorageInstance(Protocol):
+    _shader_mat: StorageShaderMaterial | None
+    _storage_buffer: Handle[ShaderBuffer] | None
 
+
+_SENTINEL = object()
 
 
 def _is_native_material(cls: type) -> bool:
@@ -144,6 +172,10 @@ def _inherited_material_default(cls: type, name: str, typ: type) -> object:
     for base in cls.__mro__[1:]:
         if name not in base.__dict__:
             continue
+        declarations = base.__dict__.get("_material_storage_declarations", {})
+        if name in declarations:
+            annotation, default = declarations[name]
+            return default if annotation == typ else _SENTINEL
         fields = base.__dict__.get("_material_field_map", {})
         if name in fields and fields[name].python_type is typ:
             return fields[name].default
@@ -154,6 +186,7 @@ def _inherited_material_default(cls: type, name: str, typ: type) -> object:
     return _SENTINEL
 
 
+@dataclass_transform(kw_only_default=True, eq_default=False, field_specifiers=(Storage,))
 def material(
     fragment_shader: str | None = None,
     vertex_shader: str | None = None,
@@ -239,18 +272,33 @@ def material(
         qualified_name = f"{cls.__module__}.{cls.__qualname__}"
 
         # Collect type hints and defaults
-        hints = get_type_hints(cls)
+        hints = get_type_hints(cls, include_extras=True)
         defaults: dict[str, Any] = {}
         for name, typ in hints.items():
             if hasattr(cls, name):
                 value = getattr(cls, name)
-                if isinstance(value, property) and name not in cls.__dict__:
+                if isinstance(value, property | Storage) and name not in cls.__dict__:
                     value = _inherited_material_default(cls, name, typ)
                 if value is not _SENTINEL:
                     defaults[name] = value
 
+        declared_types = dict(hints)
+        declared_defaults = dict(defaults)
+        hints, concise_storage, required_storage = _lower_declarations(hints, defaults)
+
         # Compute layout (separates uniform, bool, and texture fields)
-        layout, bool_fields, texture_fields = _compute_layout(hints, defaults)
+        ordinary_hints, storage_fields = _partition_storage_fields(hints)
+        layout, bool_fields, texture_fields = _compute_layout(ordinary_hints, defaults)
+        for field in storage_fields:
+            if field.name in {f"{texture.name}_sampler" for texture in texture_fields}:
+                raise TypeError(
+                    f"Storage field '{field.name}' conflicts with a generated sampler"
+                )
+            if defaults.get(field.name) is not None:
+                raise TypeError(
+                    f"Storage field '{field.name}' must default to None; pass its handle to the material instance"
+                )
+        native_type = StorageShaderMaterial if storage_fields else ShaderMaterial
         layout_signature: _MaterialLayoutSignature = (
             tuple(
                 (
@@ -263,12 +311,12 @@ def material(
                 for field in layout
             ),
             tuple(
-                (field.name, field.bit_index, field.def_name)
-                for field in bool_fields
+                (field.name, field.bit_index, field.def_name) for field in bool_fields
             ),
+            tuple((field.name, field.slot_index) for field in texture_fields),
             tuple(
-                (field.name, field.slot_index)
-                for field in texture_fields
+                (field.name, field.binding, "array<vec4<f32>>")
+                for field in storage_fields
             ),
         )
         material_type_id = _logical_material_type_id(
@@ -281,21 +329,31 @@ def material(
 
         # Generate WGSL binding declarations (injected in-memory, not written to disk)
         wgsl = _generate_wgsl(cls.__name__, layout, texture_fields)
+        for field in storage_fields:
+            wgsl += (
+                f"\n@group(3) @binding({field.binding}) "
+                f"var<storage, read> {field.name}: array<vec4<f32>>;\n"
+            )
 
         # Compute default shader_defs bitmask from bool defaults
         default_shader_defs: int = 0
         for bf in bool_fields:
             if bf.default:
-                default_shader_defs |= (1 << bf.bit_index)
+                default_shader_defs |= 1 << bf.bit_index
         shader_def_names = [bf.def_name for bf in bool_fields]
 
         # Store metadata on the class
+        _cls._material_storage_declarations = {
+            name: (declared_types[name], declared_defaults.get(name, _SENTINEL))
+            for name in concise_storage
+        }
         _cls._material_layout = layout
         _cls._material_field_map = field_map
         _cls._material_bool_fields = bool_fields
         _cls._material_bool_field_map = bool_field_map
         _cls._material_texture_fields = texture_fields
         _cls._material_texture_field_map = texture_field_map
+        _cls._material_storage_fields = storage_fields
         _cls._material_fragment_shader = fragment_shader
         _cls._material_vertex_shader = vertex_shader
         _cls._material_wgsl = wgsl
@@ -305,10 +363,19 @@ def material(
         _base_overrides = base_overrides
 
         # Create the __init__ that produces a ShaderMaterial
-        def __init__(self: Any, base: StandardMaterial | None = None, **kwargs: Any) -> None:  # noqa: ANN401
+        def __init__(
+            self: Any, base: StandardMaterial | None = None, **kwargs: Any  # noqa: ANN401
+        ) -> None:
+            missing = [name for name in required_storage if name not in kwargs]
+            if missing:
+                raise TypeError(f"Missing required storage fields: {', '.join(missing)}")
             # Auto-construct base StandardMaterial with decorator defaults if not provided
             if base is None:
-                base = StandardMaterial(**_base_overrides) if _base_overrides else StandardMaterial()
+                base = (
+                    StandardMaterial(**_base_overrides)
+                    if _base_overrides
+                    else StandardMaterial()
+                )
 
             # Start with defaults, override with kwargs
             data = [0.0] * 256
@@ -327,7 +394,7 @@ def material(
                 value = kwargs.pop(bf.name, None)
                 if value is not None:
                     if value:
-                        shader_defs |= (1 << bf.bit_index)
+                        shader_defs |= 1 << bf.bit_index
                     else:
                         shader_defs &= ~(1 << bf.bit_index)
 
@@ -338,11 +405,18 @@ def material(
                 if value is not None:
                     textures[tf.slot_index] = value
 
+            self._storage_buffer = None
+            if storage_fields:
+                value = kwargs.pop(storage_fields[0].name, None)
+                _pybevy.pbr.StorageShaderMaterial._validate_storage_handle(value)
+                self._storage_buffer = value
+
             if kwargs:
                 unknown = sorted(kwargs)
                 valid = [f.name for f in layout]
                 valid += [bf.name for bf in bool_fields]
                 valid += [tf.name for tf in texture_fields]
+                valid += [sf.name for sf in storage_fields]
                 message = f"Unknown material fields: {', '.join(unknown)}"
                 hint = _pybevy._keyword_hint(cls.__name__, unknown[0], valid)
                 if hint:
@@ -359,10 +433,13 @@ def material(
         _vert_shader = vertex_shader
         _wgsl = wgsl
 
-        def to_shader_material(self: Any) -> ShaderMaterial:  # noqa: ANN401
+        def to_shader_material(self: Any) -> ShaderMaterial | StorageShaderMaterial:  # noqa: ANN401
             """Convert to the underlying ShaderMaterial for adding to Assets."""
-            tex_list = self._textures if any(t is not None for t in self._textures) else None
-            shader_material = ShaderMaterial(
+            tex_list = (
+                self._textures if any(t is not None for t in self._textures) else None
+            )
+            factory = StorageShaderMaterial if storage_fields else ShaderMaterial
+            shader_material = factory(
                 base=self._base,
                 fragment_shader=_frag_shader,
                 vertex_shader=_vert_shader,
@@ -375,12 +452,14 @@ def material(
                 prepass_fragment_shader=prepass_fragment_shader,
                 deferred_vertex_shader=deferred_vertex_shader,
                 deferred_fragment_shader=deferred_fragment_shader,
+                **({"storage_buffer": self._storage_buffer} if storage_fields else {}),
             )
             cast(Any, shader_material)._set_logical_type_id(material_type_id)
             return shader_material
 
         def _from_borrowed(
-            klass: type, shader_mat: ShaderMaterial | None,
+            klass: type,
+            shader_mat: ShaderMaterial | StorageShaderMaterial | None,
         ) -> Any:  # noqa: ANN401
             if shader_mat is None:
                 return None
@@ -392,13 +471,15 @@ def material(
             return inst
 
         def from_ref(
-            klass: type, shader_mat: ShaderMaterial | None,
+            klass: type,
+            shader_mat: ShaderMaterial | StorageShaderMaterial | None,
         ) -> Any:  # noqa: ANN401
             """Wrap a read-only borrowed ShaderMaterial."""
             return _from_borrowed(klass, shader_mat)
 
         def from_mut(
-            klass: type, shader_mat: ShaderMaterial | None,
+            klass: type,
+            shader_mat: ShaderMaterial | StorageShaderMaterial | None,
         ) -> Any:  # noqa: ANN401
             """Wrap a mutable borrowed ShaderMaterial."""
             return _from_borrowed(klass, shader_mat)
@@ -411,7 +492,10 @@ def material(
             _nf = field.num_floats
 
             def _getter(
-                self: Any, _fi: int = _float_idx, _t: type = _typ, _n: int = _nf,  # noqa: ANN401
+                self: Any,  # noqa: ANN401
+                _fi: int = _float_idx,
+                _t: type = _typ,
+                _n: int = _nf,
             ) -> Any:  # noqa: ANN401
                 if _t in _PACKED_VECTOR_TYPES:
                     if self._shader_mat is not None:
@@ -424,7 +508,11 @@ def material(
                 return _read_value(self._data, _fi, _t)
 
             def _setter(
-                self: Any, value: Any, _fi: int = _float_idx, _t: type = _typ, _n: int = _nf,  # noqa: ANN401
+                self: Any,  # noqa: ANN401
+                value: Any,  # noqa: ANN401
+                _fi: int = _float_idx,
+                _t: type = _typ,
+                _n: int = _nf,
             ) -> None:
                 if self._shader_mat is not None:
                     temp = [0.0] * _n
@@ -448,13 +536,13 @@ def material(
                 if self._shader_mat is not None:
                     defs = self._shader_mat.get_shader_defs()
                     if value:
-                        defs |= (1 << bit)
+                        defs |= 1 << bit
                     else:
                         defs &= ~(1 << bit)
                     self._shader_mat.set_shader_defs(defs)
                 else:
                     if value:
-                        self._shader_defs |= (1 << bit)
+                        self._shader_defs |= 1 << bit
                     else:
                         self._shader_defs &= ~(1 << bit)
 
@@ -469,7 +557,9 @@ def material(
                     return self._shader_mat.get_texture(slot)  # type: ignore[no-any-return]
                 return self._textures[slot]  # type: ignore[no-any-return]
 
-            def _tex_setter(self: Any, value: Handle[Image] | None, slot: int = _slot) -> None:  # noqa: ANN401
+            def _tex_setter(
+                self: Any, value: Handle[Image] | None, slot: int = _slot  # noqa: ANN401
+            ) -> None:
                 if self._shader_mat is not None:
                     if value is not None:
                         self._shader_mat.set_texture(slot, value)
@@ -480,14 +570,40 @@ def material(
 
             setattr(cls, tf.name, property(_tex_getter, _tex_setter))
 
+        if storage_fields and storage_fields[0].name in concise_storage:
+            descriptor = Storage[object](default=None)
+            descriptor._slot = 0
+            setattr(cls, storage_fields[0].name, descriptor)
+        elif storage_fields:
+
+            def _storage_getter(self: _StorageInstance) -> Handle[ShaderBuffer] | None:
+                if self._shader_mat is not None:
+                    return self._shader_mat.storage_buffer
+                return self._storage_buffer
+
+            def _storage_setter(
+                self: _StorageInstance, value: Handle[ShaderBuffer] | None
+            ) -> None:
+                if self._shader_mat is not None:
+                    self._shader_mat.storage_buffer = value
+                else:
+                    _pybevy.pbr.StorageShaderMaterial._validate_storage_handle(value)
+                    self._storage_buffer = value
+
+            setattr(
+                cls, storage_fields[0].name, property(_storage_getter, _storage_setter)
+            )
+
         _cls.__init__ = __init__
         _cls.to_shader_material = to_shader_material
         _cls.from_ref = classmethod(from_ref)
         _cls.from_mut = classmethod(from_mut)
 
         # Asset metadata: enables Assets[HologramMaterial], MeshMaterial3d[HologramMaterial]
-        _cls.__pybevy_asset_type__ = ShaderMaterial
-        _cls.__pybevy_component_type__ = MeshMaterial3dShader
+        _cls.__pybevy_asset_type__ = native_type
+        _cls.__pybevy_component_type__ = (
+            MeshMaterial3dStorageShader if storage_fields else MeshMaterial3dShader
+        )
         _cls.__pybevy_logical_type_id__ = material_type_id
 
         return cls

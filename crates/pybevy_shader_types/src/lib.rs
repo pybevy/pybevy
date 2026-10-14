@@ -7,6 +7,10 @@
 mod generated_bindings;
 pub mod packed_uniform;
 mod shader_def_registry;
+pub mod storage_material;
+pub use storage_material::{
+    StorageShaderMaterial, StorageShaderMaterialExtension, StorageShaderMaterialPlugin,
+};
 
 use std::{
     collections::{HashMap, HashSet},
@@ -157,13 +161,13 @@ fn sync_shader_path(path: &str, asset_server: &AssetServer) -> Result<(), String
 }
 
 fn stage_uses_shader(
-    materials: &Assets<ShaderMaterial>,
+    materials: &[&ShaderMaterialExtension],
     stage: ShaderStage,
     shader_id: AssetId<Shader>,
 ) -> bool {
-    materials.iter().any(|(_, material)| {
+    materials.iter().any(|material| {
         stage
-            .path(&material.extension)
+            .path(material)
             .and_then(|path| get_shader_handle(hash_shader_path(path)))
             .is_some_and(|handle| handle.id() == shader_id)
     })
@@ -469,18 +473,52 @@ impl MaterialExtension for ShaderMaterialExtension {
 /// The complete material type: StandardMaterial + ShaderMaterialExtension.
 pub type ShaderMaterial = ExtendedMaterial<StandardMaterial, ShaderMaterialExtension>;
 
+/// Shared material data projection for adapters; rendering owns no interpreter values.
+pub trait ShaderMaterialData: Asset {
+    fn shader_extension(&self) -> &ShaderMaterialExtension;
+    fn shader_extension_mut(&mut self) -> &mut ShaderMaterialExtension;
+}
+
+impl ShaderMaterialData for ShaderMaterial {
+    fn shader_extension(&self) -> &ShaderMaterialExtension {
+        &self.extension
+    }
+    fn shader_extension_mut(&mut self) -> &mut ShaderMaterialExtension {
+        &mut self.extension
+    }
+}
+
+impl ShaderMaterialData for StorageShaderMaterial {
+    fn shader_extension(&self) -> &ShaderMaterialExtension {
+        &self.extension.inner
+    }
+    fn shader_extension_mut(&mut self) -> &mut ShaderMaterialExtension {
+        &mut self.extension.inner
+    }
+}
+
 // Runs in `Last` (after Update, before extraction) so specialize() finds the loaded shaders.
 
 pub fn sync_shader_handles(
     materials: Res<Assets<ShaderMaterial>>,
+    storage_materials: Option<Res<Assets<StorageShaderMaterial>>>,
     asset_server: Res<AssetServer>,
     mut shaders: ResMut<Assets<Shader>>,
     mut load_failures: MessageReader<AssetLoadFailedEvent<Shader>>,
     mut reported_diagnostics: Local<HashSet<String>>,
 ) {
+    let extensions: Vec<_> = materials
+        .iter()
+        .map(|(_, material)| &material.extension)
+        .chain(
+            storage_materials
+                .iter()
+                .flat_map(|assets| assets.iter().map(|(_, material)| &material.extension.inner)),
+        )
+        .collect();
     for failure in load_failures.read() {
         for stage in ShaderStage::ALL {
-            if stage_uses_shader(&materials, stage, failure.id) {
+            if stage_uses_shader(&extensions, stage, failure.id) {
                 error!(
                     "Custom {} shader '{}' failed to load: {}",
                     stage.label(),
@@ -492,9 +530,9 @@ pub fn sync_shader_handles(
     }
 
     let mut current_diagnostics = HashSet::new();
-    for (_, material) in materials.iter() {
+    for extension in &extensions {
         for stage in ShaderStage::ALL {
-            if let Some(path) = stage.path(&material.extension)
+            if let Some(path) = stage.path(extension)
                 && let Err(parse_error) = sync_shader_path(path, &asset_server)
             {
                 let message = format!(
@@ -515,14 +553,13 @@ pub fn sync_shader_handles(
         // still arrive later. A typo that names another generated material is
         // already available, though, and can silently compile against the
         // wrong binding layout. Check it against this material's own module.
-        if let Some(expected) = material
-            .extension
+        if let Some(expected) = extension
             .bindings_wgsl
             .as_deref()
             .and_then(expected_generated_material_import)
         {
             for stage in ShaderStage::ALL {
-                if let Some(path) = stage.path(&material.extension) {
+                if let Some(path) = stage.path(extension) {
                     validate_material_shader_import(
                         stage,
                         path,
@@ -534,19 +571,19 @@ pub fn sync_shader_handles(
                 }
             }
         }
-        if let Some(type_id) = material.extension.logical_type_id
-            && !material.extension.shader_def_names.is_empty()
+        if let Some(type_id) = extension.logical_type_id
+            && !extension.shader_def_names.is_empty()
         {
-            register_shader_def_names(type_id, material.extension.shader_def_names.clone());
+            register_shader_def_names(type_id, extension.shader_def_names.clone());
         }
     }
     if let Ok(mut registry) = bindings_registry().write() {
         sync_generated_bindings(
             &mut registry,
             &mut shaders,
-            materials
+            extensions
                 .iter()
-                .filter_map(|(_, material)| material.extension.bindings_wgsl.as_deref()),
+                .filter_map(|extension| extension.bindings_wgsl.as_deref()),
         );
     }
     *reported_diagnostics = current_diagnostics;
