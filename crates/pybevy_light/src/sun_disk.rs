@@ -3,7 +3,7 @@ use pybevy_core::{ComponentStorage, PyComponent, repr::float_repr};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[pycomponent(SunDisk, bridge, no_reflect, view_fields = [angular_size, intensity])]
+#[pycomponent(SunDisk, bridge, no_reflect, view_fields = [angular_size, intensity], domains = [angular_size => [finite], intensity => [finite]])]
 #[pyclass(name = "SunDisk", module = "pybevy.light", extends = PyComponent)]
 pub struct PySunDisk {
     pub(crate) storage: ComponentStorage<SunDisk>,
@@ -25,12 +25,14 @@ impl PySunDisk {
 
     #[new]
     #[pyo3(signature = (*, angular_size = SunDisk::EARTH.angular_size, intensity = SunDisk::EARTH.intensity))]
-    pub fn new(angular_size: f32, intensity: f32) -> PyClassInitializer<Self> {
-        Self::from_owned(SunDisk {
+    pub fn new(angular_size: f32, intensity: f32) -> PyResult<PyClassInitializer<Self>> {
+        let angular_size = Self::check_angular_size(angular_size)?;
+        let intensity = Self::check_intensity(intensity)?;
+        Ok(Self::from_owned(SunDisk {
             angular_size,
             intensity,
         })
-        .into()
+        .into())
     }
 
     #[getter]
@@ -40,6 +42,7 @@ impl PySunDisk {
 
     #[setter]
     pub fn set_angular_size(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_angular_size(value)?;
         self.as_mut()?.angular_size = value;
         Ok(())
     }
@@ -51,6 +54,7 @@ impl PySunDisk {
 
     #[setter]
     pub fn set_intensity(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_intensity(value)?;
         self.as_mut()?.intensity = value;
         Ok(())
     }

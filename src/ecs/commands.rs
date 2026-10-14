@@ -20,7 +20,7 @@ use pybevy_core::{
     custom_resource::validate_hierarchy_link,
     ensure_no_live_asset_access, extract_entity_from_any,
     public_error::{
-        ASSET_SERVER_MANUAL_INSERT, ASSET_SERVER_MANUAL_REMOVE, BORROWED_COMPONENT_INSERT,
+        self, ASSET_SERVER_MANUAL_INSERT, ASSET_SERVER_MANUAL_REMOVE, BORROWED_COMPONENT_INSERT,
         IS_RESOURCE_COMPONENT_REMOVE, RESOURCE_COMPONENT_INSERT, RESOURCE_COMPONENT_REMOVE,
         RESOURCE_COMPONENT_SPAWN, RESOURCE_ENTITY_DESPAWN,
     },
@@ -46,6 +46,7 @@ use super::{
         PreparedCustomComponentRegistration, PyComponentType, ValidationIdentity,
         register_prepared_custom_component,
     },
+    custom_component::PyCustomComponent,
     entity_commands::PyEntityCommands,
     helpers::validity_guard::ValidityFlag,
     lazy_wrapper_proxy::PyLazyWrapperProxy,
@@ -195,9 +196,7 @@ fn resolve_component_bundle(
     let mut component_types = ResolvedComponentTypes::with_capacity(components.len());
     let mut identities = SmallVec::<[ValidationIdentity; 8]>::with_capacity(components.len());
     for component in components.iter() {
-        if component.is_instance_of::<PyLazyWrapperProxy>() {
-            return Err(PyTypeError::new_err(BORROWED_COMPONENT_INSERT));
-        }
+        reject_borrowed_component_proxy(&component)?;
         let (component_type, identity) =
             PyComponentType::resolve_with_identity(&component.get_type(), py)?;
         if reject_resources && matches!(component_type, PyComponentType::Resource(_)) {
@@ -208,6 +207,17 @@ fn resolve_component_bundle(
     }
     reject_duplicate_components(components, identities)?;
     Ok(component_types)
+}
+
+/// Rejects a query row of either custom storage: it is a view of another
+/// entity's component, not an insertable value.
+pub(crate) fn reject_borrowed_component_proxy(component: &Bound<'_, PyAny>) -> PyResult<()> {
+    if component.is_instance_of::<PyLazyWrapperProxy>()
+        || component.is_instance_of::<PyCustomComponent>()
+    {
+        return Err(PyTypeError::new_err(BORROWED_COMPONENT_INSERT));
+    }
+    Ok(())
 }
 
 fn reject_duplicate_components<K: Eq + Hash>(
@@ -233,6 +243,7 @@ pub(crate) struct CommandErrorSink {
     error_buffer: SystemErrorBuffer,
     error_report: SystemErrorReport,
     retain_exception: bool,
+    owner: String,
 }
 
 impl CommandErrorSink {
@@ -241,27 +252,34 @@ impl CommandErrorSink {
         error_buffer: SystemErrorBuffer,
         error_report: SystemErrorReport,
         retain_exception: bool,
+        owner: &str,
     ) -> Self {
         Self {
             error_state,
             error_buffer,
             error_report,
             retain_exception,
+            owner: owner.to_string(),
         }
     }
 
     fn record(&self, error: PyErr) {
         Python::attach(|py| {
             let message = error.to_string();
-            let traceback = error.traceback(py).map(|traceback| {
-                traceback
-                    .format()
-                    .unwrap_or_else(|_| "(traceback format failed)".into())
-            });
+            // Bevy applies the command after the queuing system returned, so its
+            // own line is gone; name the system or observer that queued it.
+            let traceback = error
+                .traceback(py)
+                .map(|traceback| {
+                    traceback
+                        .format()
+                        .unwrap_or_else(|_| "(traceback format failed)".into())
+                })
+                .or_else(|| Some(public_error::deferred_command_queued_by(&self.owner)));
             if !self.retain_exception {
                 print_reported_system_error_once(
                     &self.error_report,
-                    "deferred Python command",
+                    &format!("deferred Python command from `{}`", self.owner),
                     &message,
                     traceback.as_deref(),
                 );

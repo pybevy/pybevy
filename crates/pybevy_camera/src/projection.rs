@@ -41,7 +41,7 @@ fn check_projection_size<O: PyClass>(width: f32, height: f32) -> PyResult<()> {
 }
 
 // Bevy's reverse-Z perspective matrix needs a near plane above zero.
-#[pyfield(domains = [near => [positive]])]
+#[pyfield(domains = [near => [positive], fov => [finite], aspect_ratio => [finite], far => [finite_or_pos_inf]])]
 #[pyclass(
     name = "PerspectiveProjection",
     module = "pybevy.camera",
@@ -57,6 +57,9 @@ impl PyPerspectiveProjection {
     #[new]
     #[pyo3(signature = (*, fov = FRAC_PI_4, aspect_ratio = 1.0, near = 0.1, far = 1000.0))]
     pub fn new(fov: f32, aspect_ratio: f32, near: f32, far: f32) -> PyResult<Self> {
+        let fov = Self::check_fov(fov)?;
+        let aspect_ratio = Self::check_aspect_ratio(aspect_ratio)?;
+        let far = Self::check_far(far)?;
         Ok(Self::from_owned(PerspectiveProjection {
             fov,
             aspect_ratio,
@@ -84,6 +87,7 @@ impl PyPerspectiveProjection {
 
     #[setter]
     pub fn set_fov(&mut self, fov: f32) -> PyResult<()> {
+        let fov = Self::check_fov(fov)?;
         self.as_mut()?.fov = fov;
         Ok(())
     }
@@ -95,6 +99,7 @@ impl PyPerspectiveProjection {
 
     #[setter]
     pub fn set_aspect_ratio(&mut self, aspect_ratio: f32) -> PyResult<()> {
+        let aspect_ratio = Self::check_aspect_ratio(aspect_ratio)?;
         self.as_mut()?.aspect_ratio = aspect_ratio;
         Ok(())
     }
@@ -117,6 +122,7 @@ impl PyPerspectiveProjection {
 
     #[setter]
     pub fn set_far(&mut self, far: f32) -> PyResult<()> {
+        let far = Self::check_far(far)?;
         self.as_mut()?.far = far;
         Ok(())
     }
@@ -178,7 +184,7 @@ impl PyPerspectiveProjection {
     }
 }
 
-#[pyfield]
+#[pyfield(domains = [near => [finite], far => [finite], scale => [finite]])]
 #[pyclass(
     name = "OrthographicProjection",
     module = "pybevy.camera",
@@ -209,6 +215,9 @@ impl PyOrthographicProjection {
         scale: f32,
         area: PyRect,
     ) -> PyResult<Self> {
+        let near = Self::check_near(near)?;
+        let far = Self::check_far(far)?;
+        let scale = Self::check_scale(scale)?;
         Ok(Self::from_owned(OrthographicProjection {
             near,
             far,
@@ -249,6 +258,7 @@ impl PyOrthographicProjection {
 
     #[setter]
     pub fn set_near(&mut self, near: f32) -> PyResult<()> {
+        let near = Self::check_near(near)?;
         self.as_mut()?.near = near;
         Ok(())
     }
@@ -260,6 +270,7 @@ impl PyOrthographicProjection {
 
     #[setter]
     pub fn set_far(&mut self, far: f32) -> PyResult<()> {
+        let far = Self::check_far(far)?;
         self.as_mut()?.far = far;
         Ok(())
     }
@@ -295,6 +306,7 @@ impl PyOrthographicProjection {
 
     #[setter]
     pub fn set_scale(&mut self, scale: f32) -> PyResult<()> {
+        let scale = Self::check_scale(scale)?;
         self.as_mut()?.scale = scale;
         Ok(())
     }

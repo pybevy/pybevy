@@ -10,8 +10,7 @@ use pyo3::prelude::*;
     IrradianceVolume,
     bridge,
     no_spawn_example,
-    view_fields = [intensity, affects_lightmapped_meshes]
-)]
+    view_fields = [intensity, affects_lightmapped_meshes], domains = [intensity => [finite]])]
 #[pyclass(name = "IrradianceVolume", module = "pybevy.light", extends = PyComponent)]
 pub struct PyIrradianceVolume {
     pub(crate) storage: ComponentStorage<IrradianceVolume>,
@@ -26,6 +25,7 @@ impl PyIrradianceVolume {
         intensity: f32,
         affects_lightmapped_meshes: bool,
     ) -> PyResult<PyClassInitializer<Self>> {
+        let intensity = Self::check_intensity(intensity)?;
         Ok(Self::from_owned(IrradianceVolume {
             voxels: voxels.into_handle()?,
             intensity,
@@ -52,6 +52,7 @@ impl PyIrradianceVolume {
 
     #[setter]
     pub fn set_intensity(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_intensity(value)?;
         self.as_mut()?.intensity = value;
         Ok(())
     }

@@ -52,17 +52,14 @@ use crate::ecs::{
     resource::PyResource, resource_type::register_custom_resource,
 };
 
-pub(crate) const STATE_RESOURCE_TYPE_CACHE_ATTR: &str = "__pybevy_state_resource_cache__";
+/// Per-`@state`-class dict of its generated `State[T]`/`NextState[T]` descriptors,
+/// so the cycle with the class is collectable once the scene drops it.
+const STATE_RESOURCE_TYPE_CACHE_ATTR: &str = "__pybevy_state_resource_cache__";
 
 pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let state = PyModule::new(m.py(), "state")?;
     state.add_class::<PyState>()?;
     state.add_class::<PyNextState>()?;
-    for wrapper_name in ["State", "NextState"] {
-        state
-            .getattr(wrapper_name)?
-            .setattr(STATE_RESOURCE_TYPE_CACHE_ATTR, PyDict::new(m.py()))?;
-    }
     state.add_class::<PyOnEnterSchedule>()?;
     state.add_class::<PyOnExitSchedule>()?;
     state.add_class::<PyOnTransitionSchedule>()?;
@@ -137,6 +134,7 @@ pub fn state(py: Python, cls: Bound<PyType>) -> PyResult<Py<PyType>> {
 
     // Mark as state type - metadata will be read directly from the class when needed
     cls.setattr("__pybevy_state__", true)?;
+    cls.setattr(STATE_RESOURCE_TYPE_CACHE_ATTR, PyDict::new(py))?;
 
     Ok(cls.unbind())
 }
@@ -157,7 +155,7 @@ impl PyState {
         cls: &Bound<'_, PyType>,
         state_type: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyType>> {
-        typed_state_resource_type(cls.py(), cls, state_type, StateResourceKind::Current)
+        typed_state_resource_type(cls.py(), state_type, StateResourceKind::Current)
     }
 
     /// Create a new State resource
@@ -286,7 +284,7 @@ impl PyNextState {
         cls: &Bound<'_, PyType>,
         state_type: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyType>> {
-        typed_state_resource_type(cls.py(), cls, state_type, StateResourceKind::Next)
+        typed_state_resource_type(cls.py(), state_type, StateResourceKind::Next)
     }
 
     /// Queue a state transition
@@ -519,30 +517,8 @@ fn state_member_qualified_name(state: &Bound<'_, PyAny>) -> PyResult<String> {
     Ok(format!("{qualified_type}.{member}"))
 }
 
-/// Drop the generated `State[T]` / `NextState[T]` descriptors on full reload.
-///
-/// The cache is a dict on the module-level `State`/`NextState` types, keyed by
-/// the user's `@state` enum, so every entry keeps that class alive for the rest
-/// of the process. A `WeakKeyDictionary` would not help: the cached descriptor
-/// holds the same class through `__pybevy_state_type__`, so the value keeps the
-/// key alive. Since one enum is minted per reload, the cache pinned a scene
-/// generation each time.
-///
-/// Descriptors are cheap to rebuild, and an annotation still holding one keeps
-/// working because it owns the state class itself.
-pub(crate) fn clear_state_resource_type_caches(py: Python<'_>) -> PyResult<()> {
-    for wrapper in [PyState::type_object(py), PyNextState::type_object(py)] {
-        wrapper
-            .getattr(STATE_RESOURCE_TYPE_CACHE_ATTR)?
-            .cast_into::<PyDict>()?
-            .clear();
-    }
-    Ok(())
-}
-
 fn typed_state_resource_type(
     py: Python<'_>,
-    wrapper_type: &Bound<'_, PyType>,
     state_type: &Bound<'_, PyAny>,
     kind: StateResourceKind,
 ) -> PyResult<Py<PyType>> {
@@ -551,10 +527,10 @@ fn typed_state_resource_type(
     })?;
     PyState::validate_state_type(py, &state_type.clone().unbind())?;
 
-    let cache = wrapper_type
+    let cache = state_type
         .getattr(STATE_RESOURCE_TYPE_CACHE_ATTR)?
         .cast_into::<PyDict>()?;
-    if let Some(cached) = cache.get_item(state_type)? {
+    if let Some(cached) = cache.get_item(kind.name())? {
         return Ok(cached.cast_into::<PyType>()?.unbind());
     }
 
@@ -578,7 +554,7 @@ fn typed_state_resource_type(
     // set_default_with_result is the canonicalization point: concurrent cache
     // misses may build short-lived candidates, but every caller receives the
     // single descriptor stored for this exact state class.
-    let (_, canonical) = cache.set_default_with_result(state_type, &descriptor)?;
+    let (_, canonical) = cache.set_default_with_result(kind.name(), &descriptor)?;
     Ok(canonical.cast_into::<PyType>()?.unbind())
 }
 
@@ -783,18 +759,9 @@ fn bind_state_machine_resource_channels(
     next_state: Py<PyNextState>,
     machine_count: usize,
 ) -> PyResult<()> {
-    let typed_state = typed_state_resource_type(
-        py,
-        &PyState::type_object(py),
-        state_type.as_any(),
-        StateResourceKind::Current,
-    )?;
-    let typed_next = typed_state_resource_type(
-        py,
-        &PyNextState::type_object(py),
-        state_type.as_any(),
-        StateResourceKind::Next,
-    )?;
+    let typed_state =
+        typed_state_resource_type(py, state_type.as_any(), StateResourceKind::Current)?;
+    let typed_next = typed_state_resource_type(py, state_type.as_any(), StateResourceKind::Next)?;
 
     let typed_state_bound = typed_state.bind(py);
     let typed_next_bound = typed_next.bind(py);

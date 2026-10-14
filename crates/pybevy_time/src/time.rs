@@ -4,7 +4,7 @@ use bevy::time::{Fixed, Real, Time, Virtual};
 use pybevy_core::{
     PyResource, ResourceStorage,
     domain::{DurationInput, FINITE_NON_NEGATIVE, POSITIVE, TimedeltaInput, check, check_for},
-    public_error::{DURATION_OVERFLOW, TIME_CONTEXT_TYPE_REQUIRED, time_moved_backwards},
+    public_error::{self, DURATION_OVERFLOW, TIME_CONTEXT_TYPE_REQUIRED, time_moved_backwards},
     relative_speed,
     repr::float_repr,
     resource_initializer, timestep_from_hz,
@@ -148,6 +148,18 @@ impl PyTime {
     }
 }
 
+/// Every frame runs `FixedUpdate` once per elapsed timestep, so a tiny one stalls the loop.
+const MIN_FIXED_TIMESTEP: Duration = Duration::from_micros(100);
+
+fn playable_timestep(timestep: Duration) -> PyResult<Duration> {
+    if timestep < MIN_FIXED_TIMESTEP {
+        return Err(PyValueError::new_err(
+            public_error::fixed_timestep_too_small(timestep.as_secs_f64()),
+        ));
+    }
+    Ok(timestep)
+}
+
 #[pyresource(Time<Fixed>, bridge, "_TimeFixed")]
 #[pyclass(name = "_TimeFixed", extends = PyResource, from_py_object)]
 #[derive(Debug)]
@@ -164,7 +176,7 @@ impl PyTimeFixed {
 
     #[staticmethod]
     pub fn from_duration(py: Python<'_>, timestep: TimedeltaInput) -> PyResult<Py<PyTimeFixed>> {
-        let timestep = check(FIXED, "timestep", timestep, POSITIVE)?.stored();
+        let timestep = playable_timestep(check(FIXED, "timestep", timestep, POSITIVE)?.stored())?;
         Py::new(
             py,
             resource_initializer(Time::<Fixed>::from_duration(timestep).into()),
@@ -173,7 +185,7 @@ impl PyTimeFixed {
 
     #[staticmethod]
     pub fn from_hz(py: Python<'_>, hz: f64) -> PyResult<Py<PyTimeFixed>> {
-        let timestep = timestep_from_hz(FIXED, hz)?;
+        let timestep = playable_timestep(timestep_from_hz(FIXED, hz)?)?;
         Py::new(
             py,
             resource_initializer(Time::<Fixed>::from_duration(timestep).into()),
@@ -182,8 +194,9 @@ impl PyTimeFixed {
 
     #[staticmethod]
     pub fn from_seconds(py: Python<'_>, seconds: f64) -> PyResult<Py<PyTimeFixed>> {
-        let timestep =
-            check(FIXED, "timestep", DurationInput::Seconds(seconds), POSITIVE)?.stored();
+        let timestep = playable_timestep(
+            check(FIXED, "timestep", DurationInput::Seconds(seconds), POSITIVE)?.stored(),
+        )?;
         Py::new(
             py,
             resource_initializer(Time::<Fixed>::from_duration(timestep).into()),
@@ -195,20 +208,21 @@ impl PyTimeFixed {
     }
 
     pub fn set_timestep(&mut self, timestep: TimedeltaInput) -> PyResult<()> {
-        let timestep = check(FIXED, "timestep", timestep, POSITIVE)?.stored();
+        let timestep = playable_timestep(check(FIXED, "timestep", timestep, POSITIVE)?.stored())?;
         self.as_mut()?.set_timestep(timestep);
         Ok(())
     }
 
     pub fn set_timestep_seconds(&mut self, seconds: f64) -> PyResult<()> {
-        let timestep =
-            check(FIXED, "timestep", DurationInput::Seconds(seconds), POSITIVE)?.stored();
+        let timestep = playable_timestep(
+            check(FIXED, "timestep", DurationInput::Seconds(seconds), POSITIVE)?.stored(),
+        )?;
         self.as_mut()?.set_timestep(timestep);
         Ok(())
     }
 
     pub fn set_timestep_hz(&mut self, hz: f64) -> PyResult<()> {
-        let timestep = timestep_from_hz(FIXED, hz)?;
+        let timestep = playable_timestep(timestep_from_hz(FIXED, hz)?)?;
         self.as_mut()?.set_timestep(timestep);
         Ok(())
     }

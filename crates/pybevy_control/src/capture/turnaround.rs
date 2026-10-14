@@ -722,6 +722,7 @@ mod tests {
             debug_entity: Entity::PLACEHOLDER,
             reused_state: None,
             original_cameras: Vec::new(),
+            temporary_image: None,
         });
         world.insert_resource(PendingTurnarounds {
             active: vec![turnaround],
@@ -763,6 +764,7 @@ mod tests {
             debug_entity: camera,
             reused_state: None,
             original_cameras: Vec::new(),
+            temporary_image: None,
         });
         world.insert_resource(PendingTurnarounds {
             active: vec![turnaround],
@@ -798,6 +800,7 @@ mod tests {
             debug_entity: Entity::PLACEHOLDER,
             reused_state: None,
             original_cameras: Vec::new(),
+            temporary_image: None,
         });
         world.insert_resource(PendingTurnarounds {
             active: vec![turnaround],

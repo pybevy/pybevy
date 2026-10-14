@@ -22,6 +22,8 @@ commands.spawn(
 Global resources control shadow map texture size. Higher = sharper shadows, more VRAM.
 
 ```python
+from pybevy.light import DirectionalLightShadowMap, PointLightShadowMap
+
 commands.insert_resource(DirectionalLightShadowMap(size=4096))  # Default: 2048
 commands.insert_resource(PointLightShadowMap(size=2048))        # Default: 1024
 ```
@@ -79,6 +81,11 @@ commands.spawn(
 `PointLight`, `SpotLight`, and `DirectionalLight` all have the `contact_shadows_enabled` flag (default `False`). Keep `length` short: this is a small-scale grounding effect layered on top of shadow maps, not a replacement for them.
 
 Use forward rendering with ContactShadows; deferred rendering is unsupported.
+
+**MSAA check:** contact shadows with MSAA4 have produced black stipple on flat
+lit surfaces in headless captures, clean with `Msaa.Off`. Compare crops with
+contact shadows on and off. If the stipple appears, use `Msaa.Off` with a larger
+render target for smooth edges, or leave contact shadows off.
 
 ## Bias Tuning
 
@@ -185,6 +192,8 @@ commands.spawn(Mesh3d(leaf_mesh), MeshMaterial3d(leaf_mat), TransmittedShadowRec
 
 **Fix:** Increase shadow map resolution and/or tighten cascade bounds:
 ```python
+from pybevy.light import DirectionalLightShadowMap, PointLightShadowMap
+
 commands.insert_resource(DirectionalLightShadowMap(size=4096))
 CascadeShadowConfig(bounds=[5.0, 15.0, 40.0, 80.0])  # Tighter = more pixels per unit
 ```

@@ -389,11 +389,12 @@ mod tests {
     use serde_json::Value;
 
     use super::*;
+    use crate::test_python::initialize_python;
 
     static INIT: Once = Once::new();
     fn init_python() {
         INIT.call_once(|| {
-            pyo3::Python::initialize();
+            initialize_python();
         });
     }
 

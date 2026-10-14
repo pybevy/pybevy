@@ -97,14 +97,19 @@ but still requires mesh tangents.
 Add surface detail without extra geometry. The texture encodes per-pixel surface normals.
 
 ```python
+from pybevy.image import ImageLoaderSettings
+
+normal_tex = asset_server.load_builder().with_settings(
+    ImageLoaderSettings(is_srgb=False)
+).load("bevy/textures/parallax_example/cube_normal.png")
 wall = materials.add(StandardMaterial(
     base_color_texture=asset_server.load_image("bevy/textures/parallax_example/cube_color.png"),
-    normal_map_texture=asset_server.load_image("bevy/textures/parallax_example/cube_normal.png"),
+    normal_map_texture=normal_tex,
     perceptual_roughness=0.7,
 ))
 ```
 
-**`flip_normal_map_y`**: Set to `True` if your normal map uses OpenGL convention (green channel points up). Bevy expects DirectX convention by default.
+**`flip_normal_map_y`**: Set to `True` for DirectX-authored normal maps to convert their flipped Y component to Bevy's right-handed convention. Leave it `False` for OpenGL-style maps. Normal maps are vector data: load them with `ImageLoaderSettings(is_srgb=False)` so they decode linearly.
 
 **Tangents required:** Normal maps need tangent data, and no primitive ships it: `Cuboid`, `Sphere` and the rest carry position, normal and UV only. Call `mesh.generate_tangents()` on the built mesh (positions, normals, UVs and indices must already be set), or the normal map is silently ignored and the surface renders flat.
 
@@ -113,10 +118,17 @@ wall = materials.add(StandardMaterial(
 Adds depth illusion to flat surfaces using a height/depth map.
 
 ```python
+from pybevy.image import ImageLoaderSettings
+
+linear_settings = ImageLoaderSettings(is_srgb=False)
+normal_tex = asset_server.load_builder().with_settings(linear_settings).load(
+    "bevy/textures/parallax_example/cube_normal.png")
+depth_tex = asset_server.load_builder().with_settings(linear_settings).load(
+    "bevy/textures/parallax_example/cube_depth.png")
 parallax_surface = materials.add(StandardMaterial(
     base_color_texture=asset_server.load_image("bevy/textures/parallax_example/cube_color.png"),
-    normal_map_texture=asset_server.load_image("bevy/textures/parallax_example/cube_normal.png"),
-    depth_map=asset_server.load_image("bevy/textures/parallax_example/cube_depth.png"),
+    normal_map_texture=normal_tex,
+    depth_map=depth_tex,
     parallax_depth_scale=0.05,       # Depth intensity (keep low to avoid artifacts)
     max_parallax_layer_count=16.0,   # Quality (higher = better but slower)
 ))
@@ -201,18 +213,15 @@ from pybevy.image import (
 )
 from pybevy.math import Affine2
 
-# Create repeat sampler settings (reuse for all tiling textures)
-repeat_settings = ImageLoaderSettings(sampler=ImageSampler.Descriptor(
-    ImageSamplerDescriptor(
-        address_mode_u=ImageAddressMode.Repeat,
-        address_mode_v=ImageAddressMode.Repeat,
-    )
+# Share the sampler, but decode colors and vector data differently.
+repeat_sampler = ImageSampler.Descriptor(ImageSamplerDescriptor(
+    address_mode_u=ImageAddressMode.Repeat,
+    address_mode_v=ImageAddressMode.Repeat,
 ))
-
-# Load textures with repeat enabled
-loader = asset_server.load_builder().with_settings(repeat_settings)
-color_tex = loader.load("textures/brick.png")
-normal_tex = loader.load("textures/brick_normal.png")
+color_settings = ImageLoaderSettings(sampler=repeat_sampler)
+linear_settings = ImageLoaderSettings(is_srgb=False, sampler=repeat_sampler)
+color_tex = asset_server.load_builder().with_settings(color_settings).load("textures/brick.png")
+normal_tex = asset_server.load_builder().with_settings(linear_settings).load("textures/brick_normal.png")
 
 # Combine with uv_transform to control tiling count
 wall_mat = materials.add(StandardMaterial(
@@ -236,7 +245,7 @@ wall_mat = materials.add(StandardMaterial(
   filtering matters.
 - `ImageAddressMode.ClampToEdge` - default, stretches edge pixels
 - `uv_transform` scales UVs but does **not** change the sampler - you need both for tiling
-- Create `repeat_settings` once and reuse for all textures in the same material (color, normal, depth)
+- Reuse sampler settings, but keep color textures sRGB and normal/depth/roughness/occlusion data linear. Generate mesh tangents before using normal maps.
 
 | Address Mode | Effect | Use case |
 |---|---|---|

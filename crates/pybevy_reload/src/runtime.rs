@@ -29,6 +29,8 @@ pub struct DefsFingerprint {
     /// A custom resource was redefined with a different field layout. Partial
     /// reloads keep the live instance, which no longer matches the new code.
     pub resource_layout_changed: bool,
+    /// Custom component classes a re-executed module no longer defines.
+    pub removed_components: Vec<String>,
     pub has_startup: bool,
     pub has_resources: bool,
     pub has_observers: bool,

@@ -4,7 +4,7 @@ use pybevy_macros::pycomponent;
 use pybevy_math::quat::PyQuat;
 use pyo3::prelude::*;
 
-#[pycomponent(GeneratedEnvironmentMapLight, bridge, view_fields = [intensity, affects_lightmapped_mesh_diffuse])]
+#[pycomponent(GeneratedEnvironmentMapLight, bridge, view_fields = [intensity, affects_lightmapped_mesh_diffuse], domains = [intensity => [finite]])]
 #[pyclass(name = "GeneratedEnvironmentMapLight", module = "pybevy.light", extends = PyComponent)]
 pub struct PyGeneratedEnvironmentMapLight {
     pub(crate) storage: ComponentStorage<GeneratedEnvironmentMapLight>,
@@ -40,6 +40,7 @@ impl PyGeneratedEnvironmentMapLight {
         rotation: PyQuat,
         affects_lightmapped_mesh_diffuse: bool,
     ) -> PyResult<PyClassInitializer<Self>> {
+        let intensity = Self::check_intensity(intensity)?;
         Ok(Self::from_owned(GeneratedEnvironmentMapLight {
             environment_map: environment_map.into_handle()?,
             intensity,
@@ -67,6 +68,7 @@ impl PyGeneratedEnvironmentMapLight {
 
     #[setter]
     pub fn set_intensity(&mut self, intensity: f32) -> PyResult<()> {
+        let intensity = Self::check_intensity(intensity)?;
         self.as_mut()?.intensity = intensity;
         Ok(())
     }

@@ -327,7 +327,18 @@ class McpBridge:
 
     def _dispatch(self, request: JsonDict) -> JsonDict | None:
         t0 = time.monotonic()
-        response = self._dispatch_inner(request)
+        # A failing request is answered and the session serves the next one.
+        try:
+            response = self._dispatch_inner(request)
+        except UnicodeEncodeError:
+            response = self._request_error(
+                request, -32602, "String arguments must be valid UTF-8"
+            )
+        except Exception as error:
+            _log(
+                f"[MCP Bridge] request dispatch failed: {type(error).__name__}: {error}"
+            )
+            response = self._request_error(request, -32603, "Internal error")
         duration_ms = (time.monotonic() - t0) * 1000
 
         if self._recorder:
@@ -1843,6 +1854,14 @@ class McpBridge:
             f"Unknown parameter(s) for tool '{tool_name}': {', '.join(unknown)}. "
             f"Accepted parameters: {accepted}"
         )
+
+    def _request_error(
+        self, request: JsonDict, code: int, message: str
+    ) -> JsonDict | None:
+        """An error reply to `request`, or None for a notification."""
+        if "id" not in request:
+            return None
+        return self._error(request["id"], code, message)
 
     def _error(self, req_id: JsonId, code: int, message: str) -> JsonDict:
         return {

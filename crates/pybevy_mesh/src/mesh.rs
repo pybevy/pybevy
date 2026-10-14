@@ -10,8 +10,8 @@ use bevy::{
 };
 use numpy::{PyReadonlyArray2, PyUntypedArrayMethods};
 use pybevy_array::{
-    ArrayDType, BorrowProbe, PyArray, borrowed_read_only_f32, borrowed_read_only_u16,
-    borrowed_read_only_u32, owned_contiguous_le_bytes,
+    ArrayDType, BorrowProbe, PyArray, borrowed_read_only_f32, borrowed_read_only_u8,
+    borrowed_read_only_u16, borrowed_read_only_u32, owned_contiguous_le_bytes,
 };
 use pybevy_core::{
     AssetInputConverter, AssetStorage, Omittable, PyAsset,
@@ -117,11 +117,59 @@ pub struct PyMesh {
     pub(crate) storage: AssetStorage<Mesh>,
 }
 
+/// Rejects vertex data the GPU upload would truncate, index out of range, or draw as nothing.
+fn validate_mesh_data(mesh: &Mesh) -> PyResult<()> {
+    let positions = mesh.attribute(Mesh::ATTRIBUTE_POSITION);
+    if let Some(VertexAttributeValues::Float32x3(positions)) = positions
+        && let Some(index) = positions
+            .iter()
+            .position(|position| !position.iter().all(|value| value.is_finite()))
+    {
+        return Err(PyValueError::new_err(
+            public_error::mesh_position_not_finite(index),
+        ));
+    }
+    let vertex_count = positions.map(VertexAttributeValues::len);
+    if let Some(expected) = vertex_count {
+        for (attribute, values) in mesh.attributes() {
+            if values.len() != expected {
+                return Err(PyValueError::new_err(
+                    public_error::mesh_attribute_vertex_count(
+                        attribute.name,
+                        values.len(),
+                        expected,
+                    ),
+                ));
+            }
+        }
+    }
+    let Some(indices) = mesh.indices() else {
+        return Ok(());
+    };
+    let Some(vertex_count) = vertex_count else {
+        return Err(PyValueError::new_err(
+            public_error::MESH_INDICES_WITHOUT_POSITIONS,
+        ));
+    };
+    if let Some(index) = indices.iter().find(|&index| index >= vertex_count) {
+        return Err(PyValueError::new_err(
+            public_error::mesh_index_out_of_range("Assets[Mesh].add", index, vertex_count),
+        ));
+    }
+    Ok(())
+}
+
 impl AssetInputConverter for PyMesh {
     fn try_convert_input<'py>(
         asset: &Bound<'py, PyAny>,
         py: Python<'py>,
     ) -> PyResult<Option<Bound<'py, PyAny>>> {
+        if let Ok(mesh) = asset.cast::<PyMesh>() {
+            let mesh = mesh.borrow();
+            let mesh: &PyMesh = &mesh;
+            validate_mesh_data(&*mesh.as_ref()?)?;
+            return Ok(None);
+        }
         if asset.is_instance_of::<PyMeshBuilder>() {
             return Ok(Some(asset.call_method0("build")?));
         }
@@ -851,6 +899,29 @@ impl PyMesh {
                 }
             }
         };
+        Ok(Some(Py::new(py, array)?))
+    }
+
+    /// The index buffer's raw bytes as a read-only `uint8` view, borrowed
+    /// like `indices()`.
+    pub fn get_index_buffer_bytes(
+        slf: &Bound<'_, Self>,
+        py: Python<'_>,
+    ) -> PyResult<Option<Py<PyArray>>> {
+        let this = slf.borrow();
+        let claim = this.storage.prepare_read_view()?;
+        let guard = PyNumpyViewGuard::from_acquired(claim, slf.clone().unbind().into_any());
+        let validity = this.storage.validity_flag();
+        let mesh = this.storage.as_ref()?;
+        let Some(bytes) = mesh.get_index_buffer_bytes() else {
+            return Ok(None);
+        };
+        let probe: Arc<dyn BorrowProbe> = Arc::new(AssetBorrowAnchor::new(validity, guard));
+        // SAFETY: as in `indices()`: a live contiguous slice of the index
+        // buffer, read through `as_ref()`; the probe holds the validity flag
+        // and the read-view claim for the array's lifetime.
+        let array =
+            unsafe { borrowed_read_only_u8(bytes.as_ptr(), bytes.len(), &[bytes.len()], probe)? };
         Ok(Some(Py::new(py, array)?))
     }
 

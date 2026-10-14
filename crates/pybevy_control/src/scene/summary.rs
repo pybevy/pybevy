@@ -717,8 +717,6 @@ mod runtime_tests {
         },
         prelude::{Camera3d, Transform},
     };
-    use pyo3::Python;
-
     // Force linker to include inventory entries needed by these handler tests.
     extern crate pybevy_camera;
     extern crate pybevy_transform;
@@ -729,13 +727,14 @@ mod runtime_tests {
     use crate::{
         protocol::{ErrorCode, MAX_QUERY_ENTITY_LIMIT, QueryEntitiesParams},
         pyo3::runtime::Pyo3ControlRuntime,
+        test_python::initialize_python,
     };
 
     static INIT: Once = Once::new();
 
     fn setup() {
         INIT.call_once(|| {
-            Python::initialize();
+            initialize_python();
             collect_all();
         });
     }

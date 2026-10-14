@@ -26,6 +26,8 @@ check `get_logs(errors_only=true)` for rejection errors and move the file under
 `pybevy.assets`; `LoadState.Failed(value)` carries the error text in `.value`.
 Use `dependency_load_state()` or `recursive_dependency_load_state()` to inspect
 dependency failures, with the corresponding load-state enum family.
+A path that leaves the asset directory, such as `../model.glb`, raises
+`ValueError` from `load` instead of returning a handle that never loads.
 
 ```python
 from pybevy.prelude import *

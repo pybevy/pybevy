@@ -46,7 +46,11 @@ pub fn dispatch(
         ControlOperation::GetComponentSchema { name } => runtime.get_component_schema(world, name),
         ControlOperation::GetComponent(p) => runtime.get_component(world, p),
         ControlOperation::GetResource(p) => runtime.get_resource(world, p),
-        ControlOperation::GetSceneSummary => scene_summary(world, runtime),
+        ControlOperation::GetSceneSummary => {
+            let mut summary = scene_summary(world, runtime)?;
+            reload::add_reload_failure_state(world, &mut summary);
+            Ok(summary)
+        }
         ControlOperation::GetBoundingBox { entity } => get_bounding_box(world, entity),
         ControlOperation::GetRegistry => debug_registry(world, runtime),
         ControlOperation::SpawnEntity { components } => runtime.spawn_entity(world, components),

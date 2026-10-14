@@ -1,6 +1,7 @@
 # Custom Shaders with `@material`
 
 `@material` generates WGSL bindings, packs GPU data, and integrates Python materials with Bevy PBR.
+Always call it: `@material()` with no options, or `@material(fragment_shader=...)`.
 Uniform and texture field names and the material class name become WGSL
 identifiers. WGSL keywords and reserved words such as `loop`, `module`, and
 `static` are rejected when the class is decorated; use a trailing underscore
@@ -824,6 +825,12 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 The quoted path is relative to `assets/`, like material shader paths, and the
 helper file needs no `#define_import_path`. Helper files may import other
 helper files the same way.
+
+A named import such as `#import lab::common::tint` resolves only once a shader
+declaring `#define_import_path lab::common` is loaded; nothing loads it for you.
+Until then Bevy keeps the material's pipeline waiting and the mesh draws nothing,
+and `get_last_error.shader_errors` names the missing module. Prefer the quoted
+asset-path form above, which loads the helper automatically.
 
 ## One File for Vertex and Fragment Stages
 

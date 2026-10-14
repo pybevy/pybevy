@@ -81,6 +81,8 @@ def material(
 ) -> Callable[[type[MaterialT]], type[MaterialT]]:
     """Decorator to define a custom shader material.
 
+    Always called: ``@material()`` with no options, or ``@material(...)``.
+
     Shader paths must name WGSL assets. Prepass hooks cover depth, normals,
     motion vectors and shadows; deferred hooks write the G-buffer. Omitted
     paths keep native defaults. Forward stages are not reused automatically.

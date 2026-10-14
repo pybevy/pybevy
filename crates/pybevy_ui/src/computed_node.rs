@@ -4,7 +4,7 @@ use pybevy_macros::pycomponent;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
-#[pycomponent(ComputedNode, bridge)]
+#[pycomponent(ComputedNode, bridge, domains = [outline_width => [finite], outline_offset => [finite], inverse_scale_factor => [finite]])]
 #[pyclass(name = "ComputedNode", module = "pybevy.ui", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyComputedNode {
@@ -64,6 +64,7 @@ impl PyComputedNode {
 
     #[setter]
     pub fn set_outline_width(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_outline_width(value)?;
         self.as_mut()?.outline_width = value;
         Ok(())
     }
@@ -75,6 +76,7 @@ impl PyComputedNode {
 
     #[setter]
     pub fn set_outline_offset(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_outline_offset(value)?;
         self.as_mut()?.outline_offset = value;
         Ok(())
     }
@@ -91,6 +93,7 @@ impl PyComputedNode {
 
     #[setter]
     pub fn set_inverse_scale_factor(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_inverse_scale_factor(value)?;
         self.as_mut()?.inverse_scale_factor = value;
         Ok(())
     }

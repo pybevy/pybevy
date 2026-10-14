@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 
 use crate::ssao_quality_level::PyScreenSpaceAmbientOcclusionQualityLevel;
 
-#[pycomponent(ScreenSpaceAmbientOcclusion, bridge, view_fields = [constant_object_thickness])]
+#[pycomponent(ScreenSpaceAmbientOcclusion, bridge, view_fields = [constant_object_thickness], domains = [constant_object_thickness => [finite]])]
 #[pyclass(name = "ScreenSpaceAmbientOcclusion", module = "pybevy.pbr", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyScreenSpaceAmbientOcclusion {
@@ -23,12 +23,14 @@ impl PyScreenSpaceAmbientOcclusion {
     pub fn new(
         quality_level: PyScreenSpaceAmbientOcclusionQualityLevel,
         constant_object_thickness: f32,
-    ) -> PyClassInitializer<Self> {
-        Self::from_owned(ScreenSpaceAmbientOcclusion {
+    ) -> PyResult<PyClassInitializer<Self>> {
+        let constant_object_thickness =
+            Self::check_constant_object_thickness(constant_object_thickness)?;
+        Ok(Self::from_owned(ScreenSpaceAmbientOcclusion {
             quality_level: quality_level.into(),
             constant_object_thickness,
         })
-        .into()
+        .into())
     }
 
     #[getter]
@@ -52,6 +54,7 @@ impl PyScreenSpaceAmbientOcclusion {
 
     #[setter]
     pub fn set_constant_object_thickness(&mut self, thickness: f32) -> PyResult<()> {
+        let thickness = Self::check_constant_object_thickness(thickness)?;
         self.as_mut()?.constant_object_thickness = thickness;
         Ok(())
     }

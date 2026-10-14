@@ -56,7 +56,7 @@ fn convert_optional_handle(handle: Option<&Bound<'_, PyAny>>) -> PyResult<Option
     }
 }
 
-#[pyasset(StandardMaterial, bridge, input_converter, material)]
+#[pyasset(StandardMaterial, bridge, input_converter, material, domains = [emissive_exposure_weight => [finite], perceptual_roughness => [finite], metallic => [finite], reflectance => [finite], diffuse_transmission => [finite], specular_transmission => [finite], thickness => [finite], ior => [finite], attenuation_distance => [finite_or_pos_inf], clearcoat => [finite], clearcoat_perceptual_roughness => [finite], anisotropy_strength => [finite], anisotropy_rotation => [finite], depth_bias => [finite], parallax_depth_scale => [finite], max_parallax_layer_count => [finite], lightmap_exposure => [finite]])]
 #[pyclass(name = "StandardMaterial", module = "pybevy.pbr", extends = PyMaterial, skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyStandardMaterial {
@@ -204,6 +204,26 @@ impl PyStandardMaterial {
         deferred_lighting_pass_id: u8,
         uv_transform: PyAffine2,
     ) -> PyResult<PyClassInitializer<Self>> {
+        let emissive_exposure_weight =
+            Self::check_emissive_exposure_weight(emissive_exposure_weight)?;
+        let perceptual_roughness = Self::check_perceptual_roughness(perceptual_roughness)?;
+        let metallic = Self::check_metallic(metallic)?;
+        let reflectance = Self::check_reflectance(reflectance)?;
+        let diffuse_transmission = Self::check_diffuse_transmission(diffuse_transmission)?;
+        let specular_transmission = Self::check_specular_transmission(specular_transmission)?;
+        let thickness = Self::check_thickness(thickness)?;
+        let ior = Self::check_ior(ior)?;
+        let attenuation_distance = Self::check_attenuation_distance(attenuation_distance)?;
+        let clearcoat = Self::check_clearcoat(clearcoat)?;
+        let clearcoat_perceptual_roughness =
+            Self::check_clearcoat_perceptual_roughness(clearcoat_perceptual_roughness)?;
+        let anisotropy_strength = Self::check_anisotropy_strength(anisotropy_strength)?;
+        let anisotropy_rotation = Self::check_anisotropy_rotation(anisotropy_rotation)?;
+        let depth_bias = Self::check_depth_bias(depth_bias)?;
+        let parallax_depth_scale = Self::check_parallax_depth_scale(parallax_depth_scale)?;
+        let max_parallax_layer_count =
+            Self::check_max_parallax_layer_count(max_parallax_layer_count)?;
+        let lightmap_exposure = Self::check_lightmap_exposure(lightmap_exposure)?;
         let emissive_linear = match emissive.into_option() {
             Some(ref emissive_val) => extract_linear_rgba(emissive_val)?,
             None => LinearRgba::from(Color::BLACK),
@@ -405,6 +425,7 @@ impl PyStandardMaterial {
 
     #[setter]
     pub fn set_emissive_exposure_weight(&mut self, weight: f32) -> PyResult<()> {
+        let weight = Self::check_emissive_exposure_weight(weight)?;
         self.as_mut()?.emissive_exposure_weight = weight;
         Ok(())
     }
@@ -438,6 +459,7 @@ impl PyStandardMaterial {
 
     #[setter]
     pub fn set_perceptual_roughness(&mut self, roughness: f32) -> PyResult<()> {
+        let roughness = Self::check_perceptual_roughness(roughness)?;
         self.as_mut()?.perceptual_roughness = roughness;
         Ok(())
     }
@@ -449,6 +471,7 @@ impl PyStandardMaterial {
 
     #[setter]
     pub fn set_metallic(&mut self, metallic: f32) -> PyResult<()> {
+        let metallic = Self::check_metallic(metallic)?;
         self.as_mut()?.metallic = metallic;
         Ok(())
     }
@@ -489,6 +512,7 @@ impl PyStandardMaterial {
 
     #[setter]
     pub fn set_reflectance(&mut self, reflectance: f32) -> PyResult<()> {
+        let reflectance = Self::check_reflectance(reflectance)?;
         self.as_mut()?.reflectance = reflectance;
         Ok(())
     }
@@ -516,6 +540,7 @@ impl PyStandardMaterial {
 
     #[setter]
     pub fn set_diffuse_transmission(&mut self, transmission: f32) -> PyResult<()> {
+        let transmission = Self::check_diffuse_transmission(transmission)?;
         self.as_mut()?.diffuse_transmission = transmission;
         Ok(())
     }
@@ -527,6 +552,7 @@ impl PyStandardMaterial {
 
     #[setter]
     pub fn set_specular_transmission(&mut self, transmission: f32) -> PyResult<()> {
+        let transmission = Self::check_specular_transmission(transmission)?;
         self.as_mut()?.specular_transmission = transmission;
         Ok(())
     }
@@ -538,6 +564,7 @@ impl PyStandardMaterial {
 
     #[setter]
     pub fn set_thickness(&mut self, thickness: f32) -> PyResult<()> {
+        let thickness = Self::check_thickness(thickness)?;
         self.as_mut()?.thickness = thickness;
         Ok(())
     }
@@ -549,6 +576,7 @@ impl PyStandardMaterial {
 
     #[setter]
     pub fn set_ior(&mut self, ior: f32) -> PyResult<()> {
+        let ior = Self::check_ior(ior)?;
         self.as_mut()?.ior = ior;
         Ok(())
     }
@@ -560,6 +588,7 @@ impl PyStandardMaterial {
 
     #[setter]
     pub fn set_attenuation_distance(&mut self, distance: f32) -> PyResult<()> {
+        let distance = Self::check_attenuation_distance(distance)?;
         self.as_mut()?.attenuation_distance = distance;
         Ok(())
     }
@@ -650,6 +679,7 @@ impl PyStandardMaterial {
 
     #[setter]
     pub fn set_anisotropy_strength(&mut self, strength: f32) -> PyResult<()> {
+        let strength = Self::check_anisotropy_strength(strength)?;
         self.as_mut()?.anisotropy_strength = strength;
         Ok(())
     }
@@ -661,6 +691,7 @@ impl PyStandardMaterial {
 
     #[setter]
     pub fn set_anisotropy_rotation(&mut self, rotation: f32) -> PyResult<()> {
+        let rotation = Self::check_anisotropy_rotation(rotation)?;
         self.as_mut()?.anisotropy_rotation = rotation;
         Ok(())
     }
@@ -1327,6 +1358,7 @@ impl PyStandardMaterial {
 
     #[setter]
     pub fn set_depth_bias(&mut self, bias: f32) -> PyResult<()> {
+        let bias = Self::check_depth_bias(bias)?;
         self.as_mut()?.depth_bias = bias;
         Ok(())
     }
@@ -1349,6 +1381,7 @@ impl PyStandardMaterial {
 
     #[setter]
     pub fn set_parallax_depth_scale(&mut self, scale: f32) -> PyResult<()> {
+        let scale = Self::check_parallax_depth_scale(scale)?;
         self.as_mut()?.parallax_depth_scale = scale;
         Ok(())
     }
@@ -1371,6 +1404,7 @@ impl PyStandardMaterial {
 
     #[setter]
     pub fn set_max_parallax_layer_count(&mut self, count: f32) -> PyResult<()> {
+        let count = Self::check_max_parallax_layer_count(count)?;
         self.as_mut()?.max_parallax_layer_count = count;
         Ok(())
     }
@@ -1382,6 +1416,7 @@ impl PyStandardMaterial {
 
     #[setter]
     pub fn set_lightmap_exposure(&mut self, exposure: f32) -> PyResult<()> {
+        let exposure = Self::check_lightmap_exposure(exposure)?;
         self.as_mut()?.lightmap_exposure = exposure;
         Ok(())
     }
@@ -1430,6 +1465,7 @@ impl PyStandardMaterial {
 
     #[setter]
     pub fn set_clearcoat(&mut self, clearcoat: f32) -> PyResult<()> {
+        let clearcoat = Self::check_clearcoat(clearcoat)?;
         self.as_mut()?.clearcoat = clearcoat;
         Ok(())
     }
@@ -1441,6 +1477,7 @@ impl PyStandardMaterial {
 
     #[setter]
     pub fn set_clearcoat_perceptual_roughness(&mut self, roughness: f32) -> PyResult<()> {
+        let roughness = Self::check_clearcoat_perceptual_roughness(roughness)?;
         self.as_mut()?.clearcoat_perceptual_roughness = roughness;
         Ok(())
     }

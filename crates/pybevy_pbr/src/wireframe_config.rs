@@ -9,7 +9,7 @@ use pyo3::prelude::*;
 
 use crate::wireframe_topology::PyWireframeTopology;
 
-#[pyresource(WireframeConfig, bridge)]
+#[pyresource(WireframeConfig, bridge, domains = [default_line_width => [finite]])]
 #[pyclass(name = "WireframeConfig", module = "pybevy.pbr", extends = PyResource, from_py_object)]
 #[derive(Debug)]
 pub struct PyWireframeConfig {
@@ -32,6 +32,7 @@ impl PyWireframeConfig {
         default_line_width: f32,
         default_topology: Omittable<PyRef<'_, PyWireframeTopology>>,
     ) -> PyResult<PyClassInitializer<Self>> {
+        let default_line_width = Self::check_default_line_width(default_line_width)?;
         let default_color = default_color.try_into()?;
         Ok(Self::from_owned(WireframeConfig {
             global: global_,
@@ -74,6 +75,7 @@ impl PyWireframeConfig {
 
     #[setter]
     pub fn set_default_line_width(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_default_line_width(value)?;
         self.as_mut()?.default_line_width = value;
         Ok(())
     }

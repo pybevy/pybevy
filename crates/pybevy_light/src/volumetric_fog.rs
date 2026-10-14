@@ -10,7 +10,7 @@ use pyo3::prelude::*;
     bridge,
     view_fields = [ambient_intensity, step_count, jitter],
     batch_only_fields = [ambient_color],
-    domains = [step_count => [range_inclusive(0.0, 1024.0)]]
+    domains = [step_count => [range_inclusive(0.0, 1024.0)], ambient_intensity => [finite], jitter => [finite]]
 )]
 #[pyclass(name = "VolumetricFog", module = "pybevy.light", extends = PyComponent)]
 #[derive(Debug)]
@@ -52,6 +52,8 @@ impl PyVolumetricFog {
         jitter: f32,
         step_count: u32,
     ) -> PyResult<PyClassInitializer<Self>> {
+        let ambient_intensity = Self::check_ambient_intensity(ambient_intensity)?;
+        let jitter = Self::check_jitter(jitter)?;
         let ambient_color = Color::try_from(ambient_color)?;
         Ok(Self::from_owned(VolumetricFog {
             ambient_color,
@@ -81,6 +83,7 @@ impl PyVolumetricFog {
 
     #[setter]
     pub fn set_ambient_intensity(&mut self, intensity: f32) -> PyResult<()> {
+        let intensity = Self::check_ambient_intensity(intensity)?;
         self.as_mut()?.ambient_intensity = intensity;
         Ok(())
     }
@@ -103,6 +106,7 @@ impl PyVolumetricFog {
 
     #[setter]
     pub fn set_jitter(&mut self, jitter: f32) -> PyResult<()> {
+        let jitter = Self::check_jitter(jitter)?;
         self.as_mut()?.jitter = jitter;
         Ok(())
     }

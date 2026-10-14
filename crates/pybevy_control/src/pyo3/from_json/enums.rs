@@ -452,6 +452,7 @@ mod tests {
     use std::{ffi::CString, sync::Once};
 
     use super::*;
+    use crate::test_python::initialize_python;
 
     static INIT: Once = Once::new();
 
@@ -485,7 +486,7 @@ mod tests {
 
     fn setup_python() {
         INIT.call_once(|| {
-            Python::initialize();
+            initialize_python();
         });
     }
 

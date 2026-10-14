@@ -79,6 +79,57 @@ pub(crate) fn math_value_from_json(
     })())
 }
 
+/// Builds a readback math value from its array or complete object form.
+pub(crate) fn math_value_from_any_json(
+    py: Python<'_>,
+    type_name: &str,
+    value: &serde_json::Value,
+) -> Option<Result<Py<PyAny>, String>> {
+    let shape = math_shape(READBACK_ARRAYS, type_name)?;
+    let values = match value {
+        serde_json::Value::Array(values) => values.clone(),
+        serde_json::Value::Object(fields) => {
+            if let Some(name) = fields
+                .keys()
+                .find(|name| !shape.coordinates.contains(&name.as_str()))
+            {
+                return Some(Err(shape.input_error(format!(
+                    "{type_name} object has unknown coordinate '{name}'"
+                ))));
+            }
+            if let Some(name) = shape
+                .coordinates
+                .iter()
+                .find(|name| !fields.contains_key(**name))
+            {
+                return Some(Err(shape.input_error(format!(
+                    "{type_name} object is missing coordinate '{name}'"
+                ))));
+            }
+            shape
+                .coordinates
+                .iter()
+                .map(|name| fields[*name].clone())
+                .collect()
+        }
+        other => {
+            return Some(Err(shape.input_error(format!(
+                "{type_name} expects {}, got {}",
+                shape.label(),
+                value::json_kind_name(other)
+            ))));
+        }
+    };
+    if values.len() != shape.coordinates.len() {
+        return Some(Err(shape.input_error(format!(
+            "{type_name} expects {}, got {} elements",
+            shape.label(),
+            values.len()
+        ))));
+    }
+    math_value_from_json(py, type_name, &values)
+}
+
 pub(crate) fn range_from_json(
     py: Python<'_>,
     current: &Bound<'_, PyRange>,

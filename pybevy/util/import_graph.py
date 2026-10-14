@@ -25,10 +25,10 @@ _DYNAMIC_IMPORT_CALLS = frozenset(
         "run_path",
         "run_module",
         "spec_from_file_location",
-        "exec",
-        "compile",
     }
 )
+# Builtins sharing a name with common methods such as `re.compile`.
+_DYNAMIC_BUILTINS = frozenset({"exec", "compile"})
 
 _IGNORED_DIRS: frozenset[str] = frozenset(_FileWatcher.default_ignore_patterns())
 
@@ -37,6 +37,15 @@ def _prunes_directory(directory: str) -> bool:
     return bool(_FileWatcher.is_python_environment(directory)) or is_external_module_path(
         os.path.join(directory, "__init__.py")
     )
+
+
+def _is_dynamic_call(function: ast.expr) -> bool:
+    match function:
+        case ast.Name(id=name) | ast.Attribute(value=ast.Name(id="builtins"), attr=name):
+            return name in _DYNAMIC_IMPORT_CALLS or name in _DYNAMIC_BUILTINS
+        case ast.Attribute(attr=name):
+            return name in _DYNAMIC_IMPORT_CALLS
+    return False
 
 
 class ImportGraph:
@@ -307,15 +316,8 @@ class ImportGraph:
                         if resolved:
                             imports.add(resolved)
 
-            elif isinstance(node, ast.Call):
-                function = node.func
-                call_name = (
-                    function.id
-                    if isinstance(function, ast.Name)
-                    else function.attr if isinstance(function, ast.Attribute) else None
-                )
-                if call_name in _DYNAMIC_IMPORT_CALLS:
-                    self._dynamic_importers.add(filepath)
+            elif isinstance(node, ast.Call) and _is_dynamic_call(node.func):
+                self._dynamic_importers.add(filepath)
 
         self._forward[filepath] = imports
         for imp in imports:

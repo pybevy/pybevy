@@ -9,7 +9,7 @@ use pyo3::prelude::*;
     range,
     width,
     height
-], batch_only_fields = [color])]
+], batch_only_fields = [color], domains = [intensity => [finite], range => [finite], width => [finite], height => [finite]])]
 #[pyclass(name = "RectLight", module = "pybevy.light", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyRectLight {
@@ -56,6 +56,10 @@ impl PyRectLight {
         width: f32,
         height: f32,
     ) -> PyResult<PyClassInitializer<Self>> {
+        let intensity = Self::check_intensity(intensity)?;
+        let range = Self::check_range(range)?;
+        let width = Self::check_width(width)?;
+        let height = Self::check_height(height)?;
         let color = Color::try_from(color)?;
         Ok(Self::from_owned(RectLight {
             color,
@@ -86,6 +90,7 @@ impl PyRectLight {
 
     #[setter]
     pub fn set_intensity(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_intensity(value)?;
         self.as_mut()?.intensity = value;
         Ok(())
     }
@@ -97,6 +102,7 @@ impl PyRectLight {
 
     #[setter]
     pub fn set_range(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_range(value)?;
         self.as_mut()?.range = value;
         Ok(())
     }
@@ -108,6 +114,7 @@ impl PyRectLight {
 
     #[setter]
     pub fn set_width(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_width(value)?;
         self.as_mut()?.width = value;
         Ok(())
     }
@@ -119,6 +126,7 @@ impl PyRectLight {
 
     #[setter]
     pub fn set_height(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_height(value)?;
         self.as_mut()?.height = value;
         Ok(())
     }

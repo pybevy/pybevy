@@ -8,7 +8,7 @@ use pyo3::prelude::*;
 
 use crate::enums::PyVisualBox;
 
-#[pyvalue]
+#[pyvalue(domains = [margin => [finite]])]
 #[pyclass(name = "OverflowClipMargin", module = "pybevy.ui", eq, from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyOverflowClipMargin {
@@ -47,11 +47,12 @@ impl TryFrom<&PyOverflowClipMargin> for OverflowClipMargin {
 impl PyOverflowClipMargin {
     #[new]
     #[pyo3(signature = (*, visual_box = PyVisualBox::PaddingBox, margin = 0.0))]
-    pub fn new(visual_box: PyVisualBox, margin: f32) -> Self {
-        Self::from_owned(OverflowClipMargin {
+    pub fn new(visual_box: PyVisualBox, margin: f32) -> PyResult<Self> {
+        let margin = Self::check_margin(margin)?;
+        Ok(Self::from_owned(OverflowClipMargin {
             visual_box: visual_box.into(),
             margin,
-        })
+        }))
     }
 
     #[staticmethod]
@@ -70,6 +71,7 @@ impl PyOverflowClipMargin {
     }
 
     pub fn with_margin(&self, margin: f32) -> PyResult<Self> {
+        let margin = Self::check_margin(margin)?;
         Ok(Self::from_owned(self.as_ref()?.with_margin(margin)))
     }
 
@@ -91,6 +93,7 @@ impl PyOverflowClipMargin {
 
     #[setter]
     pub fn set_margin(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_margin(value)?;
         self.as_mut()?.margin = value;
         Ok(())
     }

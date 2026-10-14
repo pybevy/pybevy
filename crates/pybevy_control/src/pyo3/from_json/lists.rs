@@ -16,8 +16,8 @@ use crate::{
         enum_names,
         from_json::{
             enums::{
-                VariantSource, construct_enum_variant, enum_owner_type, enum_variant_names,
-                same_type_class_attributes,
+                VariantSource, construct_enum_variant_for_owner, enum_owner_type,
+                enum_variant_names, same_type_class_attributes,
             },
             field::{convert_field_value, json_to_py},
             math::math_value_from_json,
@@ -51,9 +51,11 @@ pub(crate) fn convert_list_elements<'py>(
         .to_string_lossy()
         .into_owned();
     let vector_shape = math_shape(FLOAT_VECTORS, &class_name).map(MathShape::label);
-    let is_enum = instance
-        .as_ref()
-        .is_some_and(|instance| !enum_variant_names(&enum_owner_type(instance)).is_empty());
+    let enum_owner = match &instance {
+        Some(instance) => enum_owner_type(instance),
+        None => class.clone(),
+    };
+    let is_enum = !enum_variant_names(&enum_owner).is_empty();
     let items = arr
         .iter()
         .enumerate()
@@ -76,10 +78,7 @@ pub(crate) fn convert_list_elements<'py>(
             match value {
                 serde_json::Value::Object(fields) => {
                     if is_enum {
-                        let instance = instance.as_ref().ok_or_else(|| {
-                            format!("element {index}: expected a {class_name} element")
-                        })?;
-                        convert_enum_element(py, instance, index, fields)
+                        convert_enum_element(py, &enum_owner, instance.as_ref(), index, fields)
                     } else {
                         convert_struct_element(py, &class, instance.as_ref(), index, fields)
                     }
@@ -295,36 +294,51 @@ fn enum_element_missing_field(
 
 fn convert_enum_element(
     py: Python<'_>,
-    instance: &Bound<'_, PyAny>,
+    owner: &Bound<'_, PyType>,
+    instance: Option<&Bound<'_, PyAny>>,
     index: usize,
     fields: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<Py<PyAny>, String> {
-    let owner = enum_owner_type(instance);
+    let current = instance.unwrap_or(owner.as_any());
     let owner_name = owner
         .name()
         .map_err(|error| error.to_string())?
         .to_string_lossy()
         .into_owned();
     if let Some((variant_name, payload)) = enum_payload::normalize(fields) {
-        if let Some(field) = enum_element_missing_field(&owner, variant_name, &payload) {
+        // `value` may wrap either the variant's fields or its single tuple payload.
+        let mut wrapped = fields.clone();
+        wrapped.remove("variant");
+        let wrapped = serde_json::Value::Object(wrapped);
+        if let Some(field) = enum_element_missing_field(owner, variant_name, &payload)
+            && enum_element_missing_field(owner, variant_name, &wrapped).is_some()
+        {
             return Err(format!(
                 "element {index}: variant '{variant_name}' requires field '{field}'"
             ));
         }
-        return construct_enum_variant(py, instance, variant_name, &payload, VariantSource::Named)
-            .map_err(|error| format!("element {index}: {error}"))?
-            .ok_or_else(|| format!("element {index}: expected a {owner_name} element"));
+        return construct_enum_variant_for_owner(
+            py,
+            current,
+            owner,
+            variant_name,
+            &payload,
+            VariantSource::Named,
+        )
+        .map_err(|error| format!("element {index}: {error}"))?
+        .ok_or_else(|| format!("element {index}: expected a {owner_name} element"));
     }
     if fields.len() == 1 {
         let (variant_name, variant_value) = fields.iter().next().unwrap();
-        if let Some(field) = enum_element_missing_field(&owner, variant_name, variant_value) {
+        if let Some(field) = enum_element_missing_field(owner, variant_name, variant_value) {
             return Err(format!(
                 "element {index}: variant '{variant_name}' requires field '{field}'"
             ));
         }
-        return construct_enum_variant(
+        return construct_enum_variant_for_owner(
             py,
-            instance,
+            current,
+            owner,
             variant_name,
             variant_value,
             VariantSource::ObjectKey,

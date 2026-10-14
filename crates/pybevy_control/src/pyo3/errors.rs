@@ -5,7 +5,7 @@ use pyo3::{prelude::*, types::PyType};
 
 use crate::pyo3::{
     dataclass_fields::dataclass_field_names,
-    descriptors::{accepts_own_value, is_field_descriptor},
+    descriptors::{accepts_own_value, is_field_descriptor, rejects_attribute_write},
     enum_names::accepted_variant_names,
     from_json::enums::{enum_owner_type, enum_variant_names},
 };
@@ -48,6 +48,27 @@ fn declares_component_field(py_type: &Bound<'_, PyType>, name: &str) -> bool {
     py_type
         .getattr(name)
         .is_ok_and(|attr| is_field_descriptor(&attr))
+}
+
+/// Drops fields that repeat a read-only value unchanged, so a read result can be
+/// written back; a changed read-only field is rejected by name.
+pub(crate) fn drop_read_only_echoes(
+    instance: &Bound<'_, PyAny>,
+    fields: &serde_json::Map<String, serde_json::Value>,
+    read: &serde_json::Map<String, serde_json::Value>,
+) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    let mut kept = serde_json::Map::new();
+    for (name, value) in fields {
+        let current = read.get(name);
+        let settable =
+            instance.getattr(name.as_str()).is_ok() && !rejects_attribute_write(instance, name);
+        if current.is_none() || settable {
+            kept.insert(name.clone(), value.clone());
+        } else if current != Some(value) {
+            return Err(public_error::mcp_read_only_field(name));
+        }
+    }
+    Ok(kept)
 }
 
 pub(crate) fn unknown_set_fields<'a>(
@@ -130,7 +151,7 @@ pub(crate) fn unknown_field_error(
         );
     }
     format!(
-        "Failed to set '{component}': {subject}. See GET /api/v1/components/{component}/schema for the writable fields."
+        "Failed to set '{component}': {subject}. See get_component_schema(\"{component}\") for the writable fields."
     )
 }
 
@@ -258,7 +279,7 @@ mod tests {
         let unknown = vec!["bogus".to_string()];
         assert_eq!(
             unknown_field_error("Node", &unknown, &writable),
-            "Failed to set 'Node': unknown field 'bogus'. See GET /api/v1/components/Node/schema for the writable fields."
+            "Failed to set 'Node': unknown field 'bogus'. See get_component_schema(\"Node\") for the writable fields."
         );
     }
 

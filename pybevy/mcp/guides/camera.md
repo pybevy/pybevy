@@ -410,12 +410,15 @@ commands.spawn(Camera3d(), Msaa.Sample4)  # Default - good balance
 | `Msaa.Off` | Required for SSAO, SSR, deferred rendering |
 | `Msaa.Sample2` | Light AA, better performance |
 | `Msaa.Sample4` | Default - smooth edges |
-| `Msaa.Sample8` | Maximum quality, higher GPU cost |
+| `Msaa.Sample8` | More geometry-edge samples, higher GPU cost |
 
 **Compatibility note:** SSAO and screen-space reflections require `Msaa.Off`;
 `MotionBlur` and `DepthOfField` support every MSAA setting.
 PyBevy does not yet expose Bevy's TAA, FXAA, or SMAA components, so there is no
-supported edge-anti-aliasing replacement for these effects yet.
+supported edge-anti-aliasing component replacement for these effects yet.
+For smooth high-detail captures, render to a larger target and downsample; see
+`guide://headless`. Preserve native pixel structure for pixel-art styles.
+Contact shadows also need a visual MSAA compatibility check; see `guide://shadows`.
 
 ### RenderLayers
 

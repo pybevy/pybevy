@@ -1,4 +1,4 @@
-use std::any::TypeId;
+use std::{any::TypeId, sync::Arc};
 
 use bevy::{
     ecs::{
@@ -10,7 +10,7 @@ use bevy::{
     reflect::{ReflectFromPtr, ReflectRef, TypeInfo},
 };
 use pybevy_core::{
-    ValidityGuard,
+    ComponentBridge, ValidityGuard,
     registry::global_registry::{all_component_bridges, all_resource_bridges},
     source_location::SourceLocation,
 };
@@ -283,6 +283,32 @@ fn native_value_fields(
     fields
 }
 
+/// The fields `get_component` reports for a native component value.
+pub(crate) fn native_component_fields(
+    py: Python<'_>,
+    world: &mut World,
+    entity: Entity,
+    bridge: &Arc<dyn ComponentBridge>,
+    value: &Bound<'_, PyAny>,
+) -> serde_json::Map<String, serde_json::Value> {
+    let reflected_enum = reflected_type_is_enum(world, bridge.bevy_type_id());
+    let reflected_variant = if reflected_enum {
+        reflected_enum_variant_name(world, entity, bridge.bevy_type_id())
+    } else {
+        None
+    };
+    native_value_fields(
+        py,
+        world,
+        entity,
+        bridge.bevy_type_id(),
+        bridge.name(),
+        value,
+        reflected_enum,
+        reflected_variant,
+    )
+}
+
 pub fn get_component(
     world: &mut World,
     entity_ref: EntityRef,
@@ -305,30 +331,13 @@ pub fn get_component(
             if !contains {
                 return None;
             }
-            let reflected_enum = reflected_type_is_enum(world, bridge.bevy_type_id());
-            let reflected_variant = if reflected_enum {
-                reflected_enum_variant_name(world, entity, bridge.bevy_type_id())
-            } else {
-                None
-            };
             // SAFETY: `world` is a live &mut World; the pointer is valid for this call.
             let fields = unsafe {
                 bridge.extract_from_entity_ref(entity, world as *mut World, validity.clone(), py)
             }
             .ok()
             .flatten()
-            .map(|py_obj| {
-                native_value_fields(
-                    py,
-                    world,
-                    entity,
-                    bridge.bevy_type_id(),
-                    bridge.name(),
-                    py_obj.bind(py),
-                    reflected_enum,
-                    reflected_variant,
-                )
-            });
+            .map(|py_obj| native_component_fields(py, world, entity, bridge, py_obj.bind(py)));
 
             return Some(serde_json::json!({
                 "entity_id": entity_id,
@@ -459,13 +468,13 @@ mod tests {
     use pybevy_core::bridge_inventory::collect_all;
 
     use super::*;
-    use crate::protocol::ErrorCode;
+    use crate::{protocol::ErrorCode, test_python::initialize_python};
 
     static INIT: Once = Once::new();
 
     fn setup() {
         INIT.call_once(|| {
-            Python::initialize();
+            initialize_python();
             collect_all();
         });
     }

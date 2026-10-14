@@ -556,13 +556,13 @@ mod tests {
     use pybevy_core::bridge_inventory::collect_all;
 
     use super::*;
-    use crate::protocol::ErrorCode;
+    use crate::{protocol::ErrorCode, test_python::initialize_python};
 
     static INIT: Once = Once::new();
 
     fn setup() {
         INIT.call_once(|| {
-            Python::initialize();
+            initialize_python();
             collect_all();
         });
     }

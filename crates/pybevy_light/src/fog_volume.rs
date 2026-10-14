@@ -8,7 +8,7 @@ use pyo3::prelude::*;
 #[pycomponent(
     FogVolume,
     bridge,
-    domains = [scattering_asymmetry => [range_inclusive(-1.0, 1.0)]],
+    domains = [scattering_asymmetry => [range_inclusive(-1.0, 1.0)], density_factor => [finite], absorption => [finite], scattering => [finite], light_intensity => [finite]],
     view_fields = [
         density_factor,
         absorption,
@@ -84,6 +84,10 @@ impl PyFogVolume {
         light_tint: PyColor,
         light_intensity: f32,
     ) -> PyResult<PyClassInitializer<Self>> {
+        let density_factor = Self::check_density_factor(density_factor)?;
+        let absorption = Self::check_absorption(absorption)?;
+        let scattering = Self::check_scattering(scattering)?;
+        let light_intensity = Self::check_light_intensity(light_intensity)?;
         Self::check_scattering_asymmetry(scattering_asymmetry)?;
         let fog_color = Color::try_from(fog_color)?;
         let light_tint = Color::try_from(light_tint)?;
@@ -124,6 +128,7 @@ impl PyFogVolume {
 
     #[setter]
     pub fn set_density_factor(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_density_factor(value)?;
         self.as_mut()?.density_factor = value;
         Ok(())
     }
@@ -162,6 +167,7 @@ impl PyFogVolume {
 
     #[setter]
     pub fn set_absorption(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_absorption(value)?;
         self.as_mut()?.absorption = value;
         Ok(())
     }
@@ -173,6 +179,7 @@ impl PyFogVolume {
 
     #[setter]
     pub fn set_scattering(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_scattering(value)?;
         self.as_mut()?.scattering = value;
         Ok(())
     }
@@ -208,6 +215,7 @@ impl PyFogVolume {
 
     #[setter]
     pub fn set_light_intensity(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_light_intensity(value)?;
         self.as_mut()?.light_intensity = value;
         Ok(())
     }

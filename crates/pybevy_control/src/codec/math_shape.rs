@@ -10,6 +10,17 @@ impl MathShape {
     pub(crate) fn label(&self) -> String {
         format!("[{}]", self.coordinates.join(", "))
     }
+
+    /// Appends the accepted array and object forms to an input error.
+    pub(crate) fn input_error(&self, detail: impl std::fmt::Display) -> String {
+        let object = self
+            .coordinates
+            .iter()
+            .map(|name| format!("\"{name}\": {name}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("{detail}; accepted forms: {} or {{{object}}}", self.label())
+    }
 }
 
 const XY: &[&str] = &["x", "y"];
