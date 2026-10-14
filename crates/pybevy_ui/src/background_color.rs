@@ -26,9 +26,8 @@ impl PyBackgroundColor {
     }
 
     #[setter]
-    pub fn set_color(&mut self, color: PyColor) -> PyResult<()> {
-        let color = Color::try_from(color)?;
-        self.as_mut()?.0 = color;
+    pub fn set_color(&mut self, color: IntoColorValue) -> PyResult<()> {
+        self.as_mut()?.0 = color.0;
         Ok(())
     }
 

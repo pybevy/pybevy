@@ -157,6 +157,9 @@ def OnTransition(exited: StateType, entered: StateType) -> OnTransitionSchedule:
 class DespawnOnExit(Component, Generic[StateType]):
     """Component that marks an entity to be despawned when exiting a state.
 
+    Cleanup delivers lifecycle observers and releases entity-scoped observers,
+    including those belonging to descendants.
+
     Example:
         commands.spawn(Transform(), DespawnOnExit(GameState.MENU))
     """
@@ -167,6 +170,9 @@ class DespawnOnExit(Component, Generic[StateType]):
 
 class DespawnOnEnter(Component, Generic[StateType]):
     """Component that marks an entity to be despawned when entering a state.
+
+    Cleanup delivers lifecycle observers and releases entity-scoped observers,
+    including those belonging to descendants.
 
     Example:
         commands.spawn(Transform(), DespawnOnEnter(GameState.PAUSE_MENU))

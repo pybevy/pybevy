@@ -130,7 +130,7 @@ def control_audio(query: Query[AudioSink]) -> None:
         sink.unmute()
         sink.toggle_mute()
 
-        # Seeking (see limitation note below)
+        # Seeking (see limitation note below); seconds or a timedelta
         from datetime import timedelta
         sink.try_seek(timedelta(seconds=5.0))
         pos = sink.position()
@@ -210,6 +210,10 @@ SpatialListener(
 )
 ```
 
+The ears must stay at different positions. Constructor, setter, and nested
+writes such as `listener.left_ear_offset.x = 2.0` raise `ValueError` when they
+would make the ears coincide.
+
 ### Default Spatial Scale
 
 Control how distance affects volume falloff globally:
@@ -247,8 +251,9 @@ def play_tone(commands: Commands, pitches: ResMut[Assets[Pitch]]) -> None:
 ```
 
 `Pitch.frequency` must be finite and positive; `Pitch.duration` must be finite
-and non-negative. Invalid numeric values raise `ValueError` in both the
-constructor and setters. A zero duration is valid.
+and non-negative. The duration accepts float or int seconds or a `timedelta` and
+reads back as float seconds. Invalid numeric values raise `ValueError` in both
+the constructor and setters. A zero duration is valid.
 
 Use `Query[AudioPlayer[Pitch]]` to read procedural players and
 `Query[Mut[AudioPlayer[Pitch]]]` to change their source. The replacement handle

@@ -89,7 +89,8 @@ use crate::{
             PyNextState, PyOnEnterSchedule, PyOnExitSchedule, PyOnTransitionSchedule, PyState,
             canonicalize_state_schedule_label, canonicalize_transition_schedule_label,
             ensure_state_transition_system_registered, insert_state_machine_resources,
-            registered_state_machine_count, state_machine_is_registered, state_member_type,
+            register_state_schedule_identity, registered_state_machine_count,
+            state_machine_is_registered, state_member_type, state_schedule_qualified_name,
         },
         system::SystemGcRegistry,
         system_config::{
@@ -1038,19 +1039,32 @@ impl PyApp {
                     return Ok(pyself.into());
                 }
 
+                let qualified_name = state_schedule_qualified_name(&schedule)?;
                 pyself.with_bevy_app(|app| {
                     let state_machine_count = Some(registered_state_machine_count(app.world()));
+                    let type_key = match &schedule_type {
+                        ScheduleType::OnEnter(label, _) | ScheduleType::OnExit(label, _) => {
+                            label.machine_id().get()
+                        }
+                        ScheduleType::OnTransition(label, _) => label.machine_id().get(),
+                        ScheduleType::Stage(_) => unreachable!("state schedule branch"),
+                    };
+                    register_state_schedule_identity(app.world_mut(), type_key, &qualified_name);
                     let schedule_type = match schedule_type {
                         ScheduleType::OnEnter(label, name) => ScheduleType::OnEnter(
-                            canonicalize_state_schedule_label(app.world(), label),
+                            canonicalize_state_schedule_label(app.world(), label, &qualified_name),
                             name,
                         ),
                         ScheduleType::OnExit(label, name) => ScheduleType::OnExit(
-                            canonicalize_state_schedule_label(app.world(), label),
+                            canonicalize_state_schedule_label(app.world(), label, &qualified_name),
                             name,
                         ),
                         ScheduleType::OnTransition(label, name) => ScheduleType::OnTransition(
-                            canonicalize_transition_schedule_label(app.world(), label),
+                            canonicalize_transition_schedule_label(
+                                app.world(),
+                                label,
+                                &qualified_name,
+                            ),
                             name,
                         ),
                         ScheduleType::Stage(stage) => ScheduleType::Stage(stage),
@@ -1646,7 +1660,7 @@ impl PyApp {
                 .iter()
                 .any(|definition| definition.state_type.bind(py).is(&state_type))
         } else {
-            pyself.with_bevy_app(|app| Ok(state_machine_is_registered(app.world(), &state_type)))?
+            pyself.with_bevy_app(|app| state_machine_is_registered(app.world(), &state_type))?
         };
         if already_initialized {
             return Ok(pyself.into());

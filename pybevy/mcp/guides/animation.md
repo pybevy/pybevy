@@ -105,8 +105,8 @@ GLB files use index-based naming:
 - `GltfAssetLabel.Animation(1)` → second animation
 - `GltfAssetLabel.Animation(2)` → third animation
 
-Load the root `Gltf` asset to discover its clips. `gltf.animations` lists every
-`Handle[AnimationClip]`; `gltf.named_animations` maps source names to handles
+Load the root `Gltf` asset to discover its clips. `gltf.animations` is a live
+list of every `Handle[AnimationClip]`; `gltf.named_animations` maps source names to handles
 for clips that have names in the source file. Use the index-based labels when
 the file has unnamed clips.
 
@@ -177,7 +177,7 @@ def switch_animation(
     query: Query[tuple[Mut[AnimationPlayer], Mut[AnimationTransitions]]],
 ) -> None:
     for player, transitions in query:
-        transitions.play(player, run_index, 0.3)  # 0.3s cross-fade
+        transitions.play(player, run_index, 0.3)  # 0.3s cross-fade; a timedelta also works
 ```
 
 **Important:** When using `AnimationTransitions`, always play animations through `transitions.play()`, not `player.play()`. Direct player manipulation will confuse the transition system.

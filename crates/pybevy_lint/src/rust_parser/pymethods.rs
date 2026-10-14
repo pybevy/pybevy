@@ -80,6 +80,7 @@ fn uses_borrow_field_pattern(method: &syn::ImplItemFn) -> bool {
         || body.contains("borrow_read_only_accessor")
         || body.contains("borrow_resolved")
         || body.contains("borrow_validated_field")
+        || body.contains("borrow_validated_optional_field")
         || body.contains("borrow_asset_field")
         || body.contains("from_component_field")
         || body.contains("from_resource_field")
@@ -220,6 +221,7 @@ fn process_method(method: &syn::ImplItemFn, class: &mut PyClassDef, file_path: &
                 has_getter: true,
                 has_setter: false,
                 getter_mutability: self_mutability,
+                setter_mutability: SelfMutability::None,
                 getter_location: Some(location),
                 setter_location: None,
                 getter_uses_borrow: uses_borrow,
@@ -230,6 +232,7 @@ fn process_method(method: &syn::ImplItemFn, class: &mut PyClassDef, file_path: &
         let prop_name = python_name.clone();
         if let Some(prop) = class.properties.iter_mut().find(|p| p.name == prop_name) {
             prop.has_setter = true;
+            prop.setter_mutability = self_mutability;
             prop.setter_location = Some(location);
         } else {
             let setter_type = method_def
@@ -243,6 +246,7 @@ fn process_method(method: &syn::ImplItemFn, class: &mut PyClassDef, file_path: &
                 has_getter: false,
                 has_setter: true,
                 getter_mutability: SelfMutability::None,
+                setter_mutability: self_mutability,
                 getter_location: None,
                 setter_location: Some(location),
                 getter_uses_borrow: false, // No getter yet

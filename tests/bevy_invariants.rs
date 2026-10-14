@@ -23,6 +23,8 @@ struct TestComponent {
     value: f32,
 }
 
+type TestTickFilters = Or<(Changed<TestComponent>, Added<TestComponent>)>;
+
 #[derive(Component)]
 struct Marker;
 
@@ -53,6 +55,75 @@ enum TransitionContractState {
     Alpha,
     Beta,
     Gamma,
+}
+
+#[derive(States, Clone, Debug, Default, Eq, Hash, PartialEq)]
+enum SecondTransitionState {
+    #[default]
+    Alpha,
+    Beta,
+}
+
+#[derive(Resource, Default)]
+struct MultipleTransitionTrace(Vec<(&'static str, bool, bool)>);
+
+fn record_first_machine_exit(
+    first: Res<State<TransitionContractState>>,
+    second: Res<State<SecondTransitionState>>,
+    mut trace: ResMut<MultipleTransitionTrace>,
+) {
+    trace.0.push((
+        "first",
+        *first.get() == TransitionContractState::Beta,
+        *second.get() == SecondTransitionState::Beta,
+    ));
+}
+
+fn record_second_machine_exit(
+    first: Res<State<TransitionContractState>>,
+    second: Res<State<SecondTransitionState>>,
+    mut trace: ResMut<MultipleTransitionTrace>,
+) {
+    trace.0.push((
+        "second",
+        *first.get() == TransitionContractState::Beta,
+        *second.get() == SecondTransitionState::Beta,
+    ));
+}
+
+#[test]
+fn state_pass_commits_all_machines_before_any_exit_schedule() {
+    for reverse in [false, true] {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, StatesPlugin));
+        if reverse {
+            app.init_state::<SecondTransitionState>()
+                .init_state::<TransitionContractState>();
+        } else {
+            app.init_state::<TransitionContractState>()
+                .init_state::<SecondTransitionState>();
+        }
+        app.init_resource::<MultipleTransitionTrace>()
+            .add_systems(
+                OnExit(TransitionContractState::Alpha),
+                record_first_machine_exit,
+            )
+            .add_systems(
+                OnExit(SecondTransitionState::Alpha),
+                record_second_machine_exit,
+            );
+        app.update();
+        app.world_mut()
+            .resource_mut::<NextState<TransitionContractState>>()
+            .set(TransitionContractState::Beta);
+        app.world_mut()
+            .resource_mut::<NextState<SecondTransitionState>>()
+            .set(SecondTransitionState::Beta);
+        app.update();
+        let mut trace = app.world().resource::<MultipleTransitionTrace>().0.clone();
+        trace.sort();
+        assert_eq!(trace, [("first", true, true), ("second", true, true)]);
+    }
 }
 
 #[derive(Resource, Debug, Default)]
@@ -919,6 +990,30 @@ fn test_anyof_is_optional_query_data_with_a_presence_requirement() {
     assert!(rows.contains(&(true, false)));
     assert!(rows.contains(&(false, true)));
     assert!(rows.contains(&(true, true)));
+}
+
+#[test]
+fn mutable_query_and_param_set_can_read_their_own_or_filter_ticks() {
+    let mut world = World::new();
+    let entity = world.spawn(TestComponent { value: 1.0 }).id();
+    let mut query = world.query_filtered::<&mut TestComponent, TestTickFilters>();
+    let mut rows = 0;
+    for mut value in query.iter_mut(&mut world) {
+        value.value += 1.0;
+        rows += 1;
+    }
+    assert_eq!(rows, 1);
+    assert_eq!(world.get::<TestComponent>(entity).unwrap().value, 2.0);
+
+    let mut schedule = Schedule::default();
+    schedule.add_systems(
+        |mut set: ParamSet<(Query<&mut TestComponent, TestTickFilters>,)>| {
+            let mut query = set.p0();
+            query.single_mut().unwrap().value *= 2.0;
+        },
+    );
+    schedule.run(&mut world);
+    assert_eq!(world.get::<TestComponent>(entity).unwrap().value, 4.0);
 }
 
 #[test]

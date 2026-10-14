@@ -1,6 +1,6 @@
 use bevy::{audio::SpatialListener, math::Vec3};
 use pybevy_core::{
-    ComponentStorage, Omittable, PyComponent,
+    ComponentStorage, Omittable, PyComponent, StorageError,
     domain::{NON_ZERO, check_for},
     public_error::SPATIAL_EARS_COINCIDE,
     repr::ReprLiteral,
@@ -22,6 +22,10 @@ fn validate_listener(listener: &SpatialListener) -> Result<(), &'static str> {
         return Err(SPATIAL_EARS_COINCIDE);
     }
     Ok(())
+}
+
+fn check_listener(listener: &SpatialListener) -> Result<(), StorageError> {
+    validate_listener(listener).map_err(|message| StorageError::InvalidValue(message.into()))
 }
 
 #[pycomponent(SpatialListener, bridge, reflect_validate = validate_listener)]
@@ -57,7 +61,11 @@ impl PySpatialListener {
 
     #[getter]
     pub fn left_ear_offset(&self) -> PyResult<PyVec3> {
-        Ok(self.storage.borrow_field_as(|l| &l.left_ear_offset)?)
+        Ok(self.storage.borrow_field_validated_by_owner_as(
+            |l| &l.left_ear_offset,
+            |l| &mut l.left_ear_offset,
+            check_listener,
+        )?)
     }
 
     #[setter]
@@ -70,7 +78,11 @@ impl PySpatialListener {
 
     #[getter]
     pub fn right_ear_offset(&self) -> PyResult<PyVec3> {
-        Ok(self.storage.borrow_field_as(|l| &l.right_ear_offset)?)
+        Ok(self.storage.borrow_field_validated_by_owner_as(
+            |l| &l.right_ear_offset,
+            |l| &mut l.right_ear_offset,
+            check_listener,
+        )?)
     }
 
     #[setter]

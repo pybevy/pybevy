@@ -1,8 +1,8 @@
 use bevy::window::WindowPosition;
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, ValueStorage, public_error::enum_base_construction};
 use pybevy_macros::pyenum;
 use pybevy_math::ivec2::PyIVec2;
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyTypeError, prelude::*};
 
 use crate::monitor_selection::PyMonitorSelection;
 
@@ -34,9 +34,9 @@ impl From<PyWindowPosition> for WindowPosition {
 impl PyWindowPosition {
     #[new]
     pub fn new() -> PyResult<Self> {
-        Err(pyo3::exceptions::PyTypeError::new_err(
-            "WindowPosition is an enum base; construct a nested variant",
-        ))
+        Err(PyTypeError::new_err(enum_base_construction(
+            "WindowPosition",
+        )))
     }
 
     pub fn __repr__(&self) -> String {

@@ -306,6 +306,12 @@ static/class methods, and common special methods through Query and World access.
 and `InitVar` annotations are not stored or exposed as View columns. Use
 `@component(storage="python")` for frozen dataclasses.
 
+Both component storage modes support `bool(query_item)`. The component's
+`__bool__` takes precedence over `__len__`; a component defining neither is
+truthy. Escaped proxies reject truth testing after their system ends.
+Truth testing a Python-storage `Mut[T]` component conservatively marks it
+changed because its callback can mutate the live value.
+
 ```python
 from dataclasses import dataclass, field
 
@@ -528,13 +534,18 @@ def track_frames(stats: Local[Stats]) -> None:
 ```
 
 For an immutable value, update the whole value through the typed `current`
-property. `get()` and `set()` are equivalent explicit aliases:
+property:
 
 ```python
 @system
 def count_frames(counter: Local[int]) -> None:
     counter.current += 1
 ```
+
+`current` requires the same concrete type as the local. Default construction
+and per-registration deep copies of seeded values enforce that type too;
+a different result raises `TypeError`. Property and copy callbacks may reenter
+the proxy. A replaced value's finalizer sees the newly installed `current`.
 
 Every hot reload, partial included, rebuilds the system, so the local is
 constructed again and this counter restarts at zero. Keep state that must
@@ -748,6 +759,9 @@ components, resource proxies, and other run-scoped wrappers expire when their
 source stage returns; passing one onward does not extend its validity. If a
 stage raises or returns a value that is not an instance of the next stage's
 `In[T]`, downstream stages are skipped and the original error is reported.
+Union inputs match each alternative, including parameterized alternatives such
+as `In[list[int] | str]`. Generic checks use the origin type, so list element
+types are not checked.
 
 ### Queries
 
@@ -852,6 +866,9 @@ Query[Entity, Or[tuple[With[Sprite], With[Mesh3d]]]]
 ```
 
 Multiple Query filters belong in one second-position `tuple[...]`.
+`Or` may contain `Changed[T]` or `Added[T]` for a component in the same query's
+mutable data, including inside a ParamSet member. Those tick reads still
+conflict with a writer in another parameter.
 Use builtin `tuple[...]`, not `typing.Tuple[...]`, for direct Query/Single/View
 data or filter-group slots. Nested marker inputs such as
 `AnyOf[typing.Tuple[A, B]]` keep their own accepted forms. `AnyOf[...]` belongs
@@ -1082,6 +1099,8 @@ after reinserting the resource.
 
 When a custom resource defines `__len__` or `__iter__`, those protocols work
 through both `Res[T]` and `ResMut[T]`. The iterator expires with the system.
+Truth testing follows `__bool__`, then `__len__`, otherwise true, and also
+expires with the system.
 `Res[T]` still rejects direct field assignment, while values yielded by a
 custom resource retain the same shallow live-alias behavior as its other nested
 Python values. Merely choosing iteration does not change the existing custom
@@ -1276,6 +1295,8 @@ triggers for events targeting that component. `On[EventType, tuple[A, B]]`
 observes events targeting either component in the tuple.
 Tuple component filters are for custom entity events; lifecycle observers
 such as `On[Add, Transform]` require a single component type.
+Lifecycle observers for resources are unsupported and raise `TypeError` at
+registration. This includes native and custom resource types.
 
 Lifecycle emissions follow Bevy 0.19 ordering. A first insertion emits `Add`
 then `Insert`; replacement emits `Discard` then `Insert`; explicit removal
@@ -1283,6 +1304,10 @@ emits `Discard` then `Remove`; despawn emits `Despawn`, `Discard`, then
 `Remove` for each component. The old component/entity remains readable during
 the pre-removal callbacks, and `trigger.event()` returns the corresponding
 marker instance.
+
+Nested same-kind lifecycle events reach independent observers. A callback
+already executing for the same World, event, entity and component is skipped
+for that nested event, bounding recursive cycles between observers.
 
 Commands queued by an observer are applied after that callback's borrowed
 parameters are invalidated and before the next observer. An immediate

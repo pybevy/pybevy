@@ -233,6 +233,11 @@ impl CustomResourceInfo {
         self.entries.iter().map(|(&id, entry)| (id, entry))
     }
 
+    /// Retire metadata so its class can be released after the resource borrow.
+    pub fn remove(&mut self, id: ComponentId) -> Option<CustomResourceEntry> {
+        self.entries.remove(&id)
+    }
+
     /// Clear all entries (used during full reload)
     pub fn clear(&mut self) {
         self.entries.clear();

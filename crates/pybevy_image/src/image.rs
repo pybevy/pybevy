@@ -1,4 +1,4 @@
-use std::{io::Cursor, path::Path, sync::Arc};
+use std::{fs, io::Cursor, path::Path, sync::Arc};
 
 use bevy::{
     asset::RenderAssetUsages,
@@ -1747,7 +1747,7 @@ impl PyImage {
             None => format_from_path(&path)?.unwrap_or(PyImageFormat::Png),
         };
         let buffer = self.save_to_buffer(format, quality)?;
-        std::fs::write(&path, buffer).map_err(|e| {
+        fs::write(&path, buffer).map_err(|e| {
             PyRuntimeError::new_err(format!("Failed to write image to {path}: {e}"))
         })?;
         Ok(())

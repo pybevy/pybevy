@@ -11,7 +11,9 @@
 //! - DespawnOnExit/DespawnOnEnter - automatic entity cleanup
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
+    ffi::CString,
+    mem::replace,
     sync::{Arc, Mutex},
 };
 
@@ -23,8 +25,8 @@ use bevy::{
     },
 };
 use pybevy_core::{
-    CustomComponentInfo,
-    custom_resource::insert_dynamic_resource_value,
+    CustomComponentInfo, CustomResourceInfo,
+    custom_resource::{CustomResourceRegistry, insert_dynamic_resource_value},
     public_error::{
         NEXT_STATE_CONSTRUCTION, expected_state_member, expected_state_member_got_state_type,
         typed_state_descriptor_construction,
@@ -36,23 +38,29 @@ use pybevy_ecs::shared::{
         StateMachineId, StateMemberKey, StateScheduleKind, StateScheduleLabel,
         TransitionScheduleLabel,
     },
-    state_machine_registry::{
-        StateMachineIdentityRegistry, StateMachineRegisterOutcome, StateResourceKind, StateTypeKey,
-    },
+    state_machine_registry::{StateMachineIdentityRegistry, StateResourceKind, StateTypeKey},
     state_transition::{
         StateTransitionGate, StateTransitionPassGuard, StateTransitionPlan, StateTransitionStep,
+        run_state_transition_pass,
     },
 };
+use pybevy_reload::HotReloadGeneration;
 use pyo3::{
     PyTraverseError, PyTypeInfo, PyVisit,
     exceptions::{PyRuntimeError, PyTypeError, PyValueError},
+    ffi::PyTypeObject,
     prelude::*,
     types::{PyCFunction, PyDict, PyTuple, PyType},
 };
 
 use crate::ecs::{
-    component::PyComponent, component_type::ComponentRegistry, dynamic_system::lock_or_recover,
-    resource::PyResource, resource_type::register_custom_resource,
+    component::PyComponent,
+    component_type::ComponentRegistry,
+    dynamic_system::{BufferedSystemError, lock_or_recover},
+    lifecycle_mutation::despawn_recursive,
+    resource::PyResource,
+    resource_type::register_custom_resource,
+    system_interpreter::ObserverRuntimeSinks,
 };
 
 /// Per-`@state`-class dict of its generated `State[T]`/`NextState[T]` descriptors,
@@ -94,7 +102,23 @@ pub(crate) fn ensure_state_transition_system_registered(world: &mut World) {
             // PERF: In the future, a Rust-side pending flag could skip this attach when idle.
             Python::attach(|py| {
                 if let Err(error) = apply_state_transitions(py, world) {
-                    eprintln!("State transition error: {error}");
+                    let message = error.to_string();
+                    let traceback = error
+                        .traceback(py)
+                        .and_then(|traceback| traceback.format().ok());
+                    if let Some(sinks) = world.get_resource::<ObserverRuntimeSinks>() {
+                        *lock_or_recover(&sinks.error_buffer) = Some(BufferedSystemError {
+                            error: message,
+                            traceback,
+                        });
+                        if world.contains_resource::<HotReloadGeneration>() {
+                            eprintln!("State transition error: {error}");
+                        } else {
+                            lock_or_recover(&sinks.error_state).push(error);
+                        }
+                    } else {
+                        eprintln!("State transition error: {message}");
+                    }
                 }
             });
         });
@@ -230,7 +254,7 @@ impl PyState {
     pub fn set_value(&self, new_value: Py<PyAny>) {
         let old_value = {
             let mut current = lock_or_recover(&self.current);
-            std::mem::replace(&mut *current, new_value)
+            replace(&mut *current, new_value)
         };
         drop(old_value);
     }
@@ -330,7 +354,7 @@ impl PyNextState {
                     return Ok(());
                 }
                 slot.revision = slot.revision.wrapping_add(1);
-                std::mem::replace(&mut slot.request, NextStateInner::PendingIfNeq(state))
+                replace(&mut slot.request, NextStateInner::PendingIfNeq(state))
             };
             drop(old_request);
             return Ok(());
@@ -419,7 +443,7 @@ impl PyNextState {
         let old_request = {
             let mut slot = lock_or_recover(&self.inner);
             slot.revision = slot.revision.wrapping_add(1);
-            std::mem::replace(&mut slot.request, request)
+            replace(&mut slot.request, request)
         };
         drop(old_request);
     }
@@ -446,7 +470,7 @@ impl PyNextState {
         let request = {
             let mut slot = lock_or_recover(&self.inner);
             slot.revision = slot.revision.wrapping_add(1);
-            std::mem::replace(&mut slot.request, NextStateInner::Unchanged)
+            replace(&mut slot.request, NextStateInner::Unchanged)
         };
         match request {
             NextStateInner::Pending(state) => Some((state, true)),
@@ -482,7 +506,7 @@ impl PyNextState {
 
         let old_state_type = {
             let mut current_type = lock_or_recover(&self.state_type);
-            std::mem::replace(&mut *current_type, state_type)
+            replace(&mut *current_type, state_type)
         };
         drop(old_state_type);
         if let Some((value, allow_same)) = migrated {
@@ -497,7 +521,7 @@ impl PyNextState {
     }
 }
 
-fn state_type_qualified_name(state_type: &Bound<'_, PyType>) -> PyResult<String> {
+pub(crate) fn state_type_qualified_name(state_type: &Bound<'_, PyType>) -> PyResult<String> {
     let module = state_type
         .getattr("__module__")?
         .extract::<String>()
@@ -601,7 +625,28 @@ fn typed_state_descriptor_new<'py>(
     )
 }
 
+#[derive(Clone, Copy)]
+struct StateResourceChannels {
+    current: ComponentId,
+    next: ComponentId,
+    bare_current: ComponentId,
+    bare_next: ComponentId,
+}
+
+impl StateResourceChannels {
+    fn current_present(self, world: &World, machine_count: usize) -> bool {
+        world.get_resource_by_id(self.current).is_some()
+            && (machine_count != 1 || world.get_resource_by_id(self.bare_current).is_some())
+    }
+
+    fn next_present(self, world: &World, machine_count: usize) -> bool {
+        world.get_resource_by_id(self.next).is_some()
+            && (machine_count != 1 || world.get_resource_by_id(self.bare_next).is_some())
+    }
+}
+
 struct PyStateMachineEntry {
+    channels: StateResourceChannels,
     state: Py<PyState>,
     next_state: Py<PyNextState>,
 }
@@ -619,23 +664,37 @@ impl PyStateMachineRegistry {
         self.entries.len()
     }
 
-    fn snapshots(&self, py: Python<'_>) -> Vec<(StateMachineId, Py<PyState>, Py<PyNextState>)> {
+    fn snapshots(
+        &self,
+        py: Python<'_>,
+        world: &World,
+    ) -> Vec<(StateMachineId, Py<PyState>, Py<PyNextState>)> {
         self.order
             .iter()
             .filter_map(|machine_id| {
-                self.entries.get(machine_id).map(|entry| {
-                    (
-                        *machine_id,
-                        entry.state.clone_ref(py),
-                        entry.next_state.clone_ref(py),
-                    )
-                })
+                self.entries
+                    .get(machine_id)
+                    .filter(|entry| {
+                        entry.channels.current_present(world, self.len())
+                            && entry.channels.next_present(world, self.len())
+                    })
+                    .map(|entry| {
+                        (
+                            *machine_id,
+                            entry.state.clone_ref(py),
+                            entry.next_state.clone_ref(py),
+                        )
+                    })
             })
             .collect()
     }
 
-    pub(crate) fn canonical_id(&self, type_key: StateTypeKey) -> Option<StateMachineId> {
-        self.identities.get(type_key)
+    pub(crate) fn canonical_id(
+        &self,
+        type_key: StateTypeKey,
+        qualified_name: &str,
+    ) -> Option<StateMachineId> {
+        self.identities.get(type_key, qualified_name)
     }
 
     fn begin_transition_pass(&self) -> Option<StateTransitionPassGuard> {
@@ -649,11 +708,56 @@ pub(crate) fn registered_state_machine_count(world: &World) -> usize {
         .map_or(0, PyStateMachineRegistry::len)
 }
 
-pub(crate) fn state_machine_is_registered(world: &World, state_type: &Bound<'_, PyType>) -> bool {
-    world
-        .get_resource::<PyStateMachineRegistry>()
-        .and_then(|registry| registry.canonical_id(state_type_key(state_type)))
-        .is_some()
+pub(crate) fn state_machine_is_registered(
+    world: &World,
+    state_type: &Bound<'_, PyType>,
+) -> PyResult<bool> {
+    let qualified_name = state_type_qualified_name(state_type)?;
+    let Some(registry) = world.get_resource::<PyStateMachineRegistry>() else {
+        return Ok(false);
+    };
+    Ok(registry
+        .canonical_id(state_type_key(state_type), &qualified_name)
+        .and_then(|id| registry.entries.get(&id))
+        .is_some_and(|entry| entry.channels.current_present(world, registry.len())))
+}
+
+pub(crate) fn retain_reloaded_state_machines(world: &mut World, qualified_names: &HashSet<String>) {
+    let retired = {
+        let Some(mut registry) = world.get_resource_mut::<PyStateMachineRegistry>() else {
+            return;
+        };
+        registry.identities.retain(qualified_names);
+        let retained: HashSet<_> = qualified_names
+            .iter()
+            .filter_map(|name| registry.identities.get_by_qualified_name(name))
+            .collect();
+        let removed: Vec<_> = registry
+            .order
+            .iter()
+            .copied()
+            .filter(|id| !retained.contains(id))
+            .collect();
+        let retired: Vec<_> = removed
+            .into_iter()
+            .filter_map(|id| registry.entries.remove(&id))
+            .collect();
+        registry.order.retain(|id| retained.contains(id));
+        retired
+    };
+    for entry in retired {
+        for id in [entry.channels.current, entry.channels.next] {
+            world.remove_resource_by_id(id);
+            if let Some(mut registry) = world.get_resource_mut::<CustomResourceRegistry>() {
+                registry.unregister(id);
+            }
+            let metadata = world
+                .get_resource_mut::<CustomResourceInfo>()
+                .and_then(|mut info| info.remove(id));
+            drop(metadata);
+        }
+        drop(entry);
+    }
 }
 
 pub(crate) fn retained_state_member_missing(
@@ -714,16 +818,16 @@ fn remap_state_value(
 }
 
 fn state_values_match(left: &Bound<'_, PyAny>, right: &Bound<'_, PyAny>) -> PyResult<bool> {
+    let left_type = left.get_type();
+    let right_type = right.get_type();
+    if !left_type.is(&right_type)
+        && state_type_qualified_name(&left_type)? != state_type_qualified_name(&right_type)?
+    {
+        return Ok(false);
+    }
     if left.eq(right)? {
         return Ok(true);
     }
-
-    let left_type = left.get_type();
-    let right_type = right.get_type();
-    if state_type_qualified_name(&left_type)? != state_type_qualified_name(&right_type)? {
-        return Ok(false);
-    }
-
     Ok(state_member_key(left)? == state_member_key(right)?)
 }
 
@@ -765,6 +869,18 @@ pub(crate) fn insert_state_machine_resources(
         .machine_id();
 
     let machine_count = {
+        let registry = world.resource::<PyStateMachineRegistry>();
+        registry.len() + usize::from(!registry.entries.contains_key(&machine_id))
+    };
+    let channels = bind_state_machine_resource_channels(
+        py,
+        world,
+        state_type_bound,
+        state.clone_ref(py),
+        next_state.clone_ref(py),
+        machine_count,
+    )?;
+    let retired = {
         let mut registry = world.resource_mut::<PyStateMachineRegistry>();
         if !registry.entries.contains_key(&machine_id) {
             registry.order.push(machine_id);
@@ -772,21 +888,14 @@ pub(crate) fn insert_state_machine_resources(
         registry.entries.insert(
             machine_id,
             PyStateMachineEntry {
-                state: state.clone_ref(py),
-                next_state: next_state.clone_ref(py),
+                channels,
+                state,
+                next_state,
             },
-        );
-        registry.len()
+        )
     };
-
-    bind_state_machine_resource_channels(
-        py,
-        world,
-        state_type_bound,
-        state,
-        next_state,
-        machine_count,
-    )
+    drop(retired);
+    Ok(())
 }
 
 fn bind_state_machine_resource_channels(
@@ -796,7 +905,7 @@ fn bind_state_machine_resource_channels(
     state: Py<PyState>,
     next_state: Py<PyNextState>,
     machine_count: usize,
-) -> PyResult<()> {
+) -> PyResult<StateResourceChannels> {
     let typed_state =
         typed_state_resource_type(py, state_type.as_any(), StateResourceKind::Current)?;
     let typed_next = typed_state_resource_type(py, state_type.as_any(), StateResourceKind::Next)?;
@@ -827,7 +936,12 @@ fn bind_state_machine_resource_channels(
         world.remove_resource_by_id(legacy_next_id);
     }
 
-    Ok(())
+    Ok(StateResourceChannels {
+        current: typed_state_id,
+        next: typed_next_id,
+        bare_current: legacy_state_id,
+        bare_next: legacy_next_id,
+    })
 }
 
 /// Attach a state class produced by hot reload to its stable logical machine.
@@ -859,7 +973,11 @@ pub(crate) fn register_reloaded_state_machine(
         .register(state_type_key(state_type_bound), &qualified_name);
     let machine_id = outcome.machine_id();
 
-    if matches!(outcome, StateMachineRegisterOutcome::Registered(_)) {
+    if !world
+        .resource::<PyStateMachineRegistry>()
+        .entries
+        .contains_key(&machine_id)
+    {
         let state = PyState::new(py, initial_state)?;
         let next_state = PyNextState::new(py, state_type.clone_ref(py))?;
         return insert_state_machine_resources(py, world, state_type, state, next_state);
@@ -885,14 +1003,21 @@ pub(crate) fn register_reloaded_state_machine(
         .migrate_state_type(py, state_type.clone_ref(py))?;
     state.bind(py).borrow().set_value(migrated_current);
 
-    bind_state_machine_resource_channels(
+    let channels = bind_state_machine_resource_channels(
         py,
         world,
         state_type_bound,
         state,
         next_state,
         machine_count,
-    )
+    )?;
+    world
+        .resource_mut::<PyStateMachineRegistry>()
+        .entries
+        .get_mut(&machine_id)
+        .expect("registered state entry")
+        .channels = channels;
+    Ok(())
 }
 
 /// Schedule label for systems that run when entering a state
@@ -913,8 +1038,7 @@ impl PyOnEnterSchedule {
     }
 
     fn __eq__(&self, py: Python, other: &Bound<PyAny>) -> PyResult<bool> {
-        // CRITICAL: Use 'is' semantics (pointer equality) instead of Python's __eq__
-        // to avoid deadlock when called from systems in py.detach() context (app.rs:1192)
+        // Schedule identity must not invoke user equality methods.
         if let Ok(other_schedule) = other.extract::<PyRef<Self>>() {
             Ok(self
                 .state_value
@@ -944,8 +1068,7 @@ impl PyOnExitSchedule {
     }
 
     fn __eq__(&self, py: Python, other: &Bound<PyAny>) -> PyResult<bool> {
-        // CRITICAL: Use 'is' semantics (pointer equality) instead of Python's __eq__
-        // to avoid deadlock when called from systems in py.detach() context (app.rs:1192)
+        // Schedule identity must not invoke user equality methods.
         if let Ok(other_schedule) = other.extract::<PyRef<Self>>() {
             Ok(self
                 .state_value
@@ -978,8 +1101,7 @@ impl PyOnTransitionSchedule {
     }
 
     fn __eq__(&self, py: Python, other: &Bound<PyAny>) -> PyResult<bool> {
-        // CRITICAL: Use 'is' semantics (pointer equality) instead of Python's __eq__
-        // to avoid deadlock when called from systems in py.detach() context (app.rs:1192)
+        // Schedule identity must not invoke user equality methods.
         if let Ok(other_schedule) = other.extract::<PyRef<Self>>() {
             let exited_eq = self.exited.bind(py).is(other_schedule.exited.bind(py));
             let entered_eq = self.entered.bind(py).is(other_schedule.entered.bind(py));
@@ -998,13 +1120,25 @@ fn state_machine_id(state_type: &Bound<'_, PyType>) -> StateMachineId {
     StateMachineId::new(state_type_key(state_type))
 }
 
+pub(crate) fn register_state_schedule_identity(
+    world: &mut World,
+    type_key: StateTypeKey,
+    qualified_name: &str,
+) {
+    world
+        .get_resource_or_insert_with(PyStateMachineRegistry::default)
+        .identities
+        .register(type_key, qualified_name);
+}
+
 pub(crate) fn canonicalize_state_schedule_label(
     world: &World,
     label: StateScheduleLabel,
+    qualified_name: &str,
 ) -> StateScheduleLabel {
     let machine_id = world
         .get_resource::<PyStateMachineRegistry>()
-        .and_then(|registry| registry.canonical_id(label.machine_id().get()))
+        .and_then(|registry| registry.canonical_id(label.machine_id().get(), qualified_name))
         .unwrap_or(label.machine_id());
     match label.kind() {
         StateScheduleKind::Enter => StateScheduleLabel::on_enter(machine_id, label.member()),
@@ -1015,12 +1149,29 @@ pub(crate) fn canonicalize_state_schedule_label(
 pub(crate) fn canonicalize_transition_schedule_label(
     world: &World,
     label: TransitionScheduleLabel,
+    qualified_name: &str,
 ) -> TransitionScheduleLabel {
     let machine_id = world
         .get_resource::<PyStateMachineRegistry>()
-        .and_then(|registry| registry.canonical_id(label.machine_id().get()))
+        .and_then(|registry| registry.canonical_id(label.machine_id().get(), qualified_name))
         .unwrap_or(label.machine_id());
     TransitionScheduleLabel::new(machine_id, label.exit_member(), label.enter_member())
+}
+
+pub(crate) fn state_schedule_qualified_name(schedule: &Bound<'_, PyAny>) -> PyResult<String> {
+    let state_type = if let Ok(label) = schedule.cast::<PyOnEnterSchedule>() {
+        label.borrow().state_value.bind(schedule.py()).get_type()
+    } else if let Ok(label) = schedule.cast::<PyOnExitSchedule>() {
+        label.borrow().state_value.bind(schedule.py()).get_type()
+    } else {
+        schedule
+            .cast::<PyOnTransitionSchedule>()?
+            .borrow()
+            .exited
+            .bind(schedule.py())
+            .get_type()
+    };
+    state_type_qualified_name(&state_type)
 }
 
 /// Helper methods for Python schedule types to get their Bevy labels
@@ -1152,10 +1303,10 @@ fn state_scoped_component_alias(
 ///
 /// # Example
 /// ```python
-/// commands.spawn((
+/// commands.spawn(
 ///     Player(),
 ///     DespawnOnExit(GameState.IN_GAME)
-/// ))
+/// )
 /// ```
 #[pyclass(name = "DespawnOnExit", module = "pybevy.state", frozen, extends = PyComponent)]
 pub struct PyDespawnOnExit {
@@ -1198,10 +1349,10 @@ impl PyDespawnOnExit {
 ///
 /// # Example
 /// ```python
-/// commands.spawn((
+/// commands.spawn(
 ///     MenuUI(),
 ///     DespawnOnEnter(GameState.IN_GAME)
-/// ))
+/// )
 /// ```
 #[pyclass(name = "DespawnOnEnter", module = "pybevy.state", frozen, extends = PyComponent)]
 pub struct PyDespawnOnEnter {
@@ -1253,12 +1404,13 @@ pub fn in_state(py: Python, state: Py<PyAny>) -> PyResult<Py<PyAny>> {
     // Create a Python function that checks if current State == state
     // The function has an exact State[T] resource annotation so multiple
     // independent state machines remain unambiguous.
-    use std::ffi::CString;
-
-    use pyo3::types::PyDict;
-
     // Create globals dict with required imports
     let globals = PyDict::new(py);
+    globals.set_item("Enum", py.import("enum")?.getattr("Enum")?)?;
+    globals.set_item(
+        "Callable",
+        py.import("collections.abc")?.getattr("Callable")?,
+    )?;
     globals.set_item("Res", py.import("pybevy.ecs")?.getattr("Res")?)?;
     globals.set_item("State", py.import("pybevy.state")?.getattr("State")?)?;
     globals.set_item("StateType", state_type)?;
@@ -1268,7 +1420,7 @@ pub fn in_state(py: Python, state: Py<PyAny>) -> PyResult<Py<PyAny>> {
 
     let code = CString::new(
         r#"
-def _make_in_state_condition(target):
+def _make_in_state_condition(target: Enum) -> Callable[..., bool]:
     """Factory that creates a condition checking for a specific state."""
     def in_state_condition(current: Res[State[StateType]] | None) -> bool:
         """Check if current State matches the target state."""
@@ -1293,120 +1445,98 @@ result = _make_in_state_condition(target_state)
         .unbind())
 }
 
-/// Apply pending state transitions for all registered state types
-/// System function that processes state transitions for a specific state type
-///
-/// This is called automatically in the StateTransition schedule to handle
-/// NextState -> State updates and trigger OnExit/OnEnter schedules.
-///
-/// Returns true if a transition occurred, false otherwise.
-fn apply_transition_for_state(
-    py: Python,
-    world: &mut World,
+struct PreparedStateTransition {
     machine_id: StateMachineId,
-    state_py: Py<PyState>,
-    next_state_py: Py<PyNextState>,
-) -> PyResult<bool> {
-    use bevy::ecs::schedule::Schedules;
+    state: Py<PyState>,
+    current: Py<PyAny>,
+    entered: Py<PyAny>,
+    old_member: StateMemberKey,
+    new_member: StateMemberKey,
+    plan: StateTransitionPlan,
+}
 
-    // Check if there's a pending transition and take it
-    let next_state_borrow = next_state_py.bind(py).borrow();
-    let pending_transition = next_state_borrow.take_pending();
-    let initial_enter_pending = next_state_borrow.take_initial_enter_pending();
-    let initial_enter = pending_transition.is_none() && initial_enter_pending;
-    drop(next_state_borrow); // Drop borrow
-
-    // If this is the initial enter (no explicit transition queued), just fire OnEnter
-    // for the current state. This matches Bevy's behavior where OnEnter fires for
-    // the state set via insert_state() on the first frame.
-    if initial_enter {
-        let current_state = {
-            let state = state_py.bind(py).borrow();
-            state.current_value(py)
+impl PreparedStateTransition {
+    fn prepare(
+        py: Python<'_>,
+        machine_id: StateMachineId,
+        state: Py<PyState>,
+        next_state: Py<PyNextState>,
+    ) -> PyResult<Option<Self>> {
+        let next = next_state.bind(py).borrow();
+        let pending = next.take_pending();
+        let initial = next.take_initial_enter_pending();
+        if pending.is_none() && !initial {
+            return Ok(None);
+        }
+        let current = state.bind(py).borrow().current_value(py);
+        let (entered, plan) = if let Some((entered, allow_same)) = pending {
+            let plan = if !allow_same && state_values_match(current.bind(py), entered.bind(py))? {
+                StateTransitionPlan::conditional_identity()
+            } else {
+                StateTransitionPlan::change()
+            };
+            (entered, plan)
+        } else if initial {
+            (current.clone_ref(py), StateTransitionPlan::initial_enter())
+        } else {
+            return Ok(None);
         };
-        let member = state_member_key(current_state.bind(py))?;
-        StateTransitionPlan::initial_enter().run(|step| {
-            match step {
-                StateTransitionStep::RunEnter => {
-                    let enter_label = StateScheduleLabel::on_enter(machine_id, &member);
-                    if world.resource::<Schedules>().contains(enter_label.clone()) {
-                        world.try_run_schedule(enter_label).ok();
-                    }
-                }
-                StateTransitionStep::CleanupEntered => {
-                    despawn_matching_entities(py, world, StateScopedMarker::Enter, &current_state)?;
-                }
-                _ => unreachable!("invalid step in initial-enter plan"),
-            }
-            Ok::<(), PyErr>(())
-        })?;
-        return Ok(true);
+        let old_member = state_member_key(current.bind(py))?;
+        let new_member = state_member_key(entered.bind(py))?;
+        Ok(Some(Self {
+            machine_id,
+            state,
+            current,
+            entered,
+            old_member,
+            new_member,
+            plan,
+        }))
     }
 
-    let (pending_transition, allow_same_state_transitions) = match pending_transition {
-        Some(request) => request,
-        None => return Ok(false), // No pending transition
-    };
-
-    // Get current state
-    let current_state = {
-        let state = state_py.bind(py).borrow();
-        state.current_value(py)
-    };
-    let old_member = state_member_key(current_state.bind(py))?;
-    let new_member = state_member_key(pending_transition.bind(py))?;
-    let conditional_identity = !allow_same_state_transitions
-        && state_values_match(current_state.bind(py), pending_transition.bind(py))?;
-    let plan = if conditional_identity {
-        StateTransitionPlan::conditional_identity()
-    } else {
-        StateTransitionPlan::change()
-    };
-
-    plan.run(|step| {
+    fn execute(
+        &self,
+        py: Python<'_>,
+        world: &mut World,
+        step: StateTransitionStep,
+    ) -> PyResult<()> {
         match step {
-            StateTransitionStep::CommitNew => {
-                let state = state_py.bind(py).borrow();
-                state.set_value(pending_transition.clone_ref(py));
-            }
+            StateTransitionStep::CommitNew => self
+                .state
+                .bind(py)
+                .borrow()
+                .set_value(self.entered.clone_ref(py)),
             StateTransitionStep::RunExit => {
-                let exit_label = StateScheduleLabel::on_exit(machine_id, &old_member);
-                if world.resource::<Schedules>().contains(exit_label.clone()) {
-                    world.try_run_schedule(exit_label).ok();
+                let label = StateScheduleLabel::on_exit(self.machine_id, &self.old_member);
+                if world.resource::<Schedules>().contains(label.clone()) {
+                    world.try_run_schedule(label).ok();
                 }
             }
             StateTransitionStep::CleanupExited => {
-                despawn_matching_entities(py, world, StateScopedMarker::Exit, &current_state)?;
+                despawn_matching_entities(py, world, StateScopedMarker::Exit, &self.current)?
             }
             StateTransitionStep::RunTransition => {
-                let transition_label =
-                    TransitionScheduleLabel::new(machine_id, &old_member, &new_member);
-                if world
-                    .resource::<Schedules>()
-                    .contains(transition_label.clone())
-                {
-                    world.try_run_schedule(transition_label).ok();
+                let label = TransitionScheduleLabel::new(
+                    self.machine_id,
+                    &self.old_member,
+                    &self.new_member,
+                );
+                if world.resource::<Schedules>().contains(label.clone()) {
+                    world.try_run_schedule(label).ok();
                 }
             }
             StateTransitionStep::RunEnter => {
-                let enter_label = StateScheduleLabel::on_enter(machine_id, &new_member);
-                if world.resource::<Schedules>().contains(enter_label.clone()) {
-                    world.try_run_schedule(enter_label).ok();
+                let label = StateScheduleLabel::on_enter(self.machine_id, &self.new_member);
+                if world.resource::<Schedules>().contains(label.clone()) {
+                    world.try_run_schedule(label).ok();
                 }
             }
             StateTransitionStep::CleanupEntered => {
-                despawn_matching_entities(
-                    py,
-                    world,
-                    StateScopedMarker::Enter,
-                    &pending_transition,
-                )?;
+                despawn_matching_entities(py, world, StateScopedMarker::Enter, &self.entered)?
             }
         }
-        Ok::<(), PyErr>(())
-    })?;
-
-    Ok(true)
+        Ok(())
+    }
 }
 
 /// The two state-scoped despawn markers, resolved by type identity.
@@ -1417,7 +1547,7 @@ enum StateScopedMarker {
 }
 
 impl StateScopedMarker {
-    fn type_ptr(self, py: Python<'_>) -> *mut pyo3::ffi::PyTypeObject {
+    fn type_ptr(self, py: Python<'_>) -> *mut PyTypeObject {
         match self {
             Self::Exit => PyDespawnOnExit::type_object(py).as_type_ptr(),
             Self::Enter => PyDespawnOnEnter::type_object(py).as_type_ptr(),
@@ -1473,7 +1603,7 @@ fn despawn_matching_entities(
         let py_obj: &Py<PyAny> = unsafe { &*(ptr.as_ptr() as *const Py<PyAny>) };
         let state_value = py_obj.bind(py).getattr("state")?;
         if state_values_match(&state_value, target_state.bind(py))? {
-            world.despawn(entity);
+            despawn_recursive(world, entity);
         }
     }
     Ok(())
@@ -1487,7 +1617,7 @@ fn despawn_matching_entities(
 ///
 /// State machines are snapshotted from the exact-type registry before any
 /// transition schedule runs, so callbacks never execute while it is borrowed.
-pub fn apply_state_transitions(py: Python, world: &mut bevy::ecs::world::World) -> PyResult<()> {
+pub fn apply_state_transitions(py: Python, world: &mut World) -> PyResult<()> {
     // Guard only this World's transition pass. A process-global guard would
     // incorrectly suppress another App running on a different thread.
     let Some((guard, machines)) =
@@ -1496,16 +1626,26 @@ pub fn apply_state_transitions(py: Python, world: &mut bevy::ecs::world::World) 
             .and_then(|registry| {
                 registry
                     .begin_transition_pass()
-                    .map(|guard| (guard, registry.snapshots(py)))
+                    .map(|guard| (guard, registry.snapshots(py, world)))
             })
     else {
         return Ok(());
     };
     let _guard = guard;
 
+    let mut transitions = Vec::new();
     for (machine_id, state, next_state) in machines {
-        apply_transition_for_state(py, world, machine_id, state, next_state)?;
+        if let Some(transition) =
+            PreparedStateTransition::prepare(py, machine_id, state, next_state)?
+        {
+            transitions.push(transition);
+        }
     }
-
-    Ok(())
+    let plans: Vec<_> = transitions
+        .iter()
+        .map(|transition| transition.plan)
+        .collect();
+    run_state_transition_pass(&plans, |index, step| {
+        transitions[index].execute(py, world, step)
+    })
 }

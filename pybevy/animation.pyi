@@ -1,4 +1,5 @@
 from collections.abc import Iterable
+from datetime import timedelta
 from typing import ClassVar, Literal
 from uuid import UUID
 
@@ -191,7 +192,7 @@ class AnimationTransitions(Component):
         self,
         player: AnimationPlayer,
         new_animation: AnimationNodeIndex,
-        transition_duration: float,
+        transition_duration: timedelta | float | int,
     ) -> ActiveAnimation:
         """Plays a new animation on the given AnimationPlayer, fading out any
         existing animations that were already playing over the transition_duration.
@@ -202,7 +203,7 @@ class AnimationTransitions(Component):
         Args:
             player: The AnimationPlayer component to play the animation on
             new_animation: The index of the animation to play
-            transition_duration: Duration in seconds for the cross-fade transition
+            transition_duration: Cross-fade duration as a timedelta or seconds
 
         Returns:
             ActiveAnimation reference for the newly started animation

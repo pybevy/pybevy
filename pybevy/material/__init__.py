@@ -349,7 +349,7 @@ def material(
             texture.layout = texture_layouts.get(texture.name)
         try:
             _pybevy.pbr.ShaderMaterial._validate_shader_def_names([field.def_name for field in bool_fields])
-        except TypeError as error:
+        except ValueError as error:
             raise TypeError(f"Material {cls.__name__}: {error}") from error
         extended_bindings = bool(storage_fields or texture_layouts or sampler_fields)
         for field in storage_fields:
@@ -421,7 +421,7 @@ def material(
 
         try:
             _pybevy.pbr.ShaderMaterial._validate_bindings(wgsl)
-        except TypeError as error:
+        except ValueError as error:
             resources = ", ".join(field.name for field in storage_fields)
             raise TypeError(f"Material {qualified_name}, storage fields [{resources}]: {error}") from error
 

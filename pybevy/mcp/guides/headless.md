@@ -201,7 +201,7 @@ with its depth rays.
 - **Shadow LOD warning**: Add `ShadowLodOrigin()` to an offscreen camera when using point or spot light shadows
 - **Low resolution**: The render target size (`width`, `height` in `Image.new_render_target`) determines output resolution, not window size
 
-Image readback returns one `width * height` frame at the size the readback was requested with. For an array-texture source it copies layer zero only and logs a warning once; additional layers are not concatenated into the frame. If the render target is later resized, the copy stays inside the frame that was requested instead of overrunning it.
+Image readback returns one `width * height` frame at the size the readback was requested with. For an array-texture source it copies layer zero only and logs a warning once; additional layers are not concatenated into the frame. When the camera's `RenderTarget` later switches to another image, its image is resized or reformatted, or it stops targeting an image, readback is rebuilt for the new target and frames of the old one are discarded, so the next frames use the new size. A copy never overruns the frame size its readback was built for.
 
 A camera's first readback frame can be blank (all zeros), because Bevy does not draw a newly added camera on its first frame; judge the image from a later frame. After the camera producing headless frames is despawned, headless captures fail immediately with "no frame yet" instead of waiting for the capture deadline.
 

@@ -48,6 +48,7 @@ use bevy::{
 
 use crate::{
     ShaderMaterial, ShaderMaterialExtension, ShaderMaterialKey, clear_shader_registries,
+    expected_generated_material_import,
     sampler_binding::{MaterialSamplerBinding, MaterialSamplerCache, MaterialSamplerKind},
     storage_element::{StorageElement, generated_bindings_wgsl},
     sync_shader_handles,
@@ -817,7 +818,7 @@ fn refresh_storage_bindings(
                 let label = extension
                     .bindings_wgsl
                     .as_deref()
-                    .and_then(crate::expected_generated_material_import)
+                    .and_then(expected_generated_material_import)
                     .or(extension.fragment_shader_path.as_deref())
                     .unwrap_or("<raw material>");
                 let field = binding_field_name(extension, 101 + 2 * slot as u32);
@@ -943,7 +944,7 @@ fn refresh_storage_bindings(
                         .inner
                         .bindings_wgsl
                         .as_deref()
-                        .and_then(crate::expected_generated_material_import)
+                        .and_then(expected_generated_material_import)
                         .unwrap_or_else(|| dependency
                             .material
                             .extension

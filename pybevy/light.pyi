@@ -8,7 +8,7 @@ from pybevy.assets import Asset, Handle
 from pybevy.camera import CubemapLayout
 from pybevy.collections import LiveList
 from pybevy.color import Color
-from pybevy.ecs import Batchable, Component, Resource
+from pybevy.ecs import Batchable, Component, Entity, Resource
 from pybevy.gizmos import GizmoConfigGroup
 from pybevy.image import Image
 from pybevy.math import Mat4, Quat, UVec2, Vec3
@@ -440,6 +440,7 @@ class VolumetricFog(Component):
     ambient_color: Color
     ambient_intensity: float
     step_count: int
+    """Raymarch samples per pixel. Accepts 0 to 1024; other values raise `ValueError`."""
     jitter: float
 
     @staticmethod
@@ -510,7 +511,8 @@ class Cascades(Component):
     def __init__(self) -> None:
         """Bevy's default: no views."""
     @property
-    def cascades(self) -> dict[int, list[Cascade]]: ...
+    def cascades(self) -> dict[Entity, list[Cascade]]:
+        """Cascades for each camera view, keyed by the view's Entity (a computed copy)."""
 
 class LightProbe(Component):
     """A component for a light probe.

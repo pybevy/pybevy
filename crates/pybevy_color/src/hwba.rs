@@ -192,12 +192,12 @@ impl PyHwba {
 
     pub fn to_vec4(&self) -> PyResult<PyVec4> {
         let color = self.as_ref()?;
-        Ok(bevy::math::Vec4::new(color.hue, color.whiteness, color.blackness, color.alpha).into())
+        Ok(Vec4::new(color.hue, color.whiteness, color.blackness, color.alpha).into())
     }
 
     pub fn to_vec3(&self) -> PyResult<PyVec3> {
         let color = self.as_ref()?;
-        Ok(bevy::math::Vec3::new(color.hue, color.whiteness, color.blackness).into())
+        Ok(Vec3::new(color.hue, color.whiteness, color.blackness).into())
     }
 
     #[staticmethod]

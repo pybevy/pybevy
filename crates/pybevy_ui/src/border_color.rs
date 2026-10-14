@@ -55,9 +55,8 @@ impl PyBorderColor {
     }
 
     #[setter]
-    pub fn set_top(&mut self, color: PyColor) -> PyResult<()> {
-        let color = Color::try_from(color)?;
-        self.as_mut()?.top = color;
+    pub fn set_top(&mut self, top: IntoColorValue) -> PyResult<()> {
+        self.as_mut()?.top = top.0;
         Ok(())
     }
 
@@ -67,9 +66,8 @@ impl PyBorderColor {
     }
 
     #[setter]
-    pub fn set_right(&mut self, color: PyColor) -> PyResult<()> {
-        let color = Color::try_from(color)?;
-        self.as_mut()?.right = color;
+    pub fn set_right(&mut self, right: IntoColorValue) -> PyResult<()> {
+        self.as_mut()?.right = right.0;
         Ok(())
     }
 
@@ -79,9 +77,8 @@ impl PyBorderColor {
     }
 
     #[setter]
-    pub fn set_bottom(&mut self, color: PyColor) -> PyResult<()> {
-        let color = Color::try_from(color)?;
-        self.as_mut()?.bottom = color;
+    pub fn set_bottom(&mut self, bottom: IntoColorValue) -> PyResult<()> {
+        self.as_mut()?.bottom = bottom.0;
         Ok(())
     }
 
@@ -91,9 +88,8 @@ impl PyBorderColor {
     }
 
     #[setter]
-    pub fn set_left(&mut self, color: PyColor) -> PyResult<()> {
-        let color = Color::try_from(color)?;
-        self.as_mut()?.left = color;
+    pub fn set_left(&mut self, left: IntoColorValue) -> PyResult<()> {
+        self.as_mut()?.left = left.0;
         Ok(())
     }
 

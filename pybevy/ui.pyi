@@ -1627,7 +1627,7 @@ class BackgroundColor(Component):
         """The background color."""
 
     @color.setter
-    def color(self, value: Color) -> None: ...
+    def color(self, value: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza) -> None: ...
 
     def __eq__(self, other: object) -> bool: ...
 
@@ -1688,28 +1688,28 @@ class BorderColor(Component):
         """Top border color."""
 
     @top.setter
-    def top(self, value: Color) -> None: ...
+    def top(self, value: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza) -> None: ...
 
     @property
     def right(self) -> Color:
         """Right border color."""
 
     @right.setter
-    def right(self, value: Color) -> None: ...
+    def right(self, value: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza) -> None: ...
 
     @property
     def bottom(self) -> Color:
         """Bottom border color."""
 
     @bottom.setter
-    def bottom(self, value: Color) -> None: ...
+    def bottom(self, value: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza) -> None: ...
 
     @property
     def left(self) -> Color:
         """Left border color."""
 
     @left.setter
-    def left(self, value: Color) -> None: ...
+    def left(self, value: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza) -> None: ...
 
     def set_all(self, color: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza | Okhsla | Okhsva | Okhwba) -> BorderColor:
         """Set all border sides to the same color and return this border.

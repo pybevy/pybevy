@@ -17,7 +17,14 @@ use pybevy_render::face::PyFace;
 use pybevy_transform::transform::PyTransform;
 use pyo3::prelude::*;
 
-use crate::{gltf_primitives::PyGltfPrimitives, label::PyGltfAssetLabel};
+use crate::{
+    gltf_primitives::PyGltfPrimitives,
+    handle_lists::{
+        PyAnimationClipHandles, PyGltfMaterialHandles, PyGltfMeshHandles, PyGltfNodeHandles,
+        PyGltfSceneHandles, PyGltfSkinHandles,
+    },
+    label::PyGltfAssetLabel,
+};
 
 fn extract_handle<A: Asset>(handle: PyHandle) -> PyResult<Handle<A>> {
     handle.try_into()
@@ -568,9 +575,10 @@ pub struct PyGltf {
 #[pymethods]
 impl PyGltf {
     #[getter]
-    pub fn scenes(&self) -> PyResult<Vec<PyHandle>> {
-        let gltf = self.storage.as_ref()?;
-        Ok(gltf.scenes.iter().map(PyHandle::from).collect())
+    pub fn scenes(&self) -> PyResult<PyGltfSceneHandles> {
+        Ok(self
+            .storage
+            .borrow_field_as(|gltf| &gltf.scenes, |gltf| &mut gltf.scenes)?)
     }
 
     #[setter]
@@ -596,9 +604,10 @@ impl PyGltf {
     }
 
     #[getter]
-    pub fn meshes(&self) -> PyResult<Vec<PyHandle>> {
-        let gltf = self.storage.as_ref()?;
-        Ok(gltf.meshes.iter().map(PyHandle::from).collect())
+    pub fn meshes(&self) -> PyResult<PyGltfMeshHandles> {
+        Ok(self
+            .storage
+            .borrow_field_as(|gltf| &gltf.meshes, |gltf| &mut gltf.meshes)?)
     }
 
     #[setter]
@@ -624,9 +633,10 @@ impl PyGltf {
     }
 
     #[getter]
-    pub fn materials(&self) -> PyResult<Vec<PyHandle>> {
-        let gltf = self.storage.as_ref()?;
-        Ok(gltf.materials.iter().map(PyHandle::from).collect())
+    pub fn materials(&self) -> PyResult<PyGltfMaterialHandles> {
+        Ok(self
+            .storage
+            .borrow_field_as(|gltf| &gltf.materials, |gltf| &mut gltf.materials)?)
     }
 
     #[setter]
@@ -652,9 +662,10 @@ impl PyGltf {
     }
 
     #[getter]
-    pub fn nodes(&self) -> PyResult<Vec<PyHandle>> {
-        let gltf = self.storage.as_ref()?;
-        Ok(gltf.nodes.iter().map(PyHandle::from).collect())
+    pub fn nodes(&self) -> PyResult<PyGltfNodeHandles> {
+        Ok(self
+            .storage
+            .borrow_field_as(|gltf| &gltf.nodes, |gltf| &mut gltf.nodes)?)
     }
 
     #[setter]
@@ -692,9 +703,10 @@ impl PyGltf {
     }
 
     #[getter]
-    pub fn skins(&self) -> PyResult<Vec<PyHandle>> {
-        let gltf = self.storage.as_ref()?;
-        Ok(gltf.skins.iter().map(PyHandle::from).collect())
+    pub fn skins(&self) -> PyResult<PyGltfSkinHandles> {
+        Ok(self
+            .storage
+            .borrow_field_as(|gltf| &gltf.skins, |gltf| &mut gltf.skins)?)
     }
 
     #[setter]
@@ -720,9 +732,10 @@ impl PyGltf {
     }
 
     #[getter]
-    pub fn animations(&self) -> PyResult<Vec<PyHandle>> {
-        let gltf = self.storage.as_ref()?;
-        Ok(gltf.animations.iter().map(PyHandle::from).collect())
+    pub fn animations(&self) -> PyResult<PyAnimationClipHandles> {
+        Ok(self
+            .storage
+            .borrow_field_as(|gltf| &gltf.animations, |gltf| &mut gltf.animations)?)
     }
 
     #[setter]
@@ -847,9 +860,10 @@ impl PyGltfNode {
     }
 
     #[getter]
-    pub fn children(&self) -> PyResult<Vec<PyHandle>> {
-        let node = self.storage.as_ref()?;
-        Ok(node.children.iter().map(PyHandle::from).collect())
+    pub fn children(&self) -> PyResult<PyGltfNodeHandles> {
+        Ok(self
+            .storage
+            .borrow_field_as(|node| &node.children, |node| &mut node.children)?)
     }
 
     #[setter]
@@ -1046,9 +1060,10 @@ impl PyGltfSkin {
     }
 
     #[getter]
-    pub fn joints(&self) -> PyResult<Vec<PyHandle>> {
-        let skin = self.storage.as_ref()?;
-        Ok(skin.joints.iter().map(PyHandle::from).collect())
+    pub fn joints(&self) -> PyResult<PyGltfNodeHandles> {
+        Ok(self
+            .storage
+            .borrow_field_as(|skin| &skin.joints, |skin| &mut skin.joints)?)
     }
 
     #[setter]

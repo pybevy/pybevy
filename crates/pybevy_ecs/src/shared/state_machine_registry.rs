@@ -1,12 +1,12 @@
 //! Interpreter-neutral state-machine identity and hot-reload aliasing.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::schedule::StateMachineId;
 
 /// Interpreter-neutral exact identity for one Python state class.
 ///
-/// Adapters supply a stable integer identity for each state class.
+/// Adapters supply an address paired with its current qualified name.
 pub type StateTypeKey = usize;
 
 /// The two resource channels exposed by one state machine.
@@ -63,19 +63,29 @@ impl StateMachineRegisterOutcome {
 
 /// App-local mapping from interpreter class identities to stable state machines.
 ///
-/// The full `module.qualname` is used only when an exact identity is new. This
-/// preserves one machine across class redefinition without conflating unrelated
-/// classes that happen to share a bare name.
+/// Every address lookup checks `module.qualname` before reuse. Qualified names
+/// preserve logical machines across class redefinition; monotonic IDs prevent
+/// a recycled address from replacing an existing machine.
 #[derive(Debug, Default)]
 pub struct StateMachineIdentityRegistry {
-    by_type: HashMap<StateTypeKey, StateMachineId>,
+    by_type: HashMap<StateTypeKey, (String, StateMachineId)>,
+    next_id: usize,
     by_qualified_name: HashMap<String, StateMachineId>,
 }
 
 impl StateMachineIdentityRegistry {
     #[must_use]
-    pub fn get(&self, type_key: StateTypeKey) -> Option<StateMachineId> {
-        self.by_type.get(&type_key).copied()
+    pub fn get(&self, type_key: StateTypeKey, qualified_name: &str) -> Option<StateMachineId> {
+        self.by_type
+            .get(&type_key)
+            .and_then(|(name, id)| (name == qualified_name).then_some(*id))
+    }
+
+    pub fn retain(&mut self, qualified_names: &HashSet<String>) {
+        self.by_type
+            .retain(|_, (name, _)| qualified_names.contains(name));
+        self.by_qualified_name
+            .retain(|name, _| qualified_names.contains(name));
     }
 
     #[must_use]
@@ -88,17 +98,20 @@ impl StateMachineIdentityRegistry {
         type_key: StateTypeKey,
         qualified_name: &str,
     ) -> StateMachineRegisterOutcome {
-        if let Some(id) = self.get(type_key) {
+        if let Some(id) = self.get(type_key, qualified_name) {
             return StateMachineRegisterOutcome::Reused(id);
         }
 
         if let Some(id) = self.get_by_qualified_name(qualified_name) {
-            self.by_type.insert(type_key, id);
+            self.by_type
+                .insert(type_key, (qualified_name.to_owned(), id));
             return StateMachineRegisterOutcome::Aliased(id);
         }
 
-        let id = StateMachineId::new(type_key);
-        self.by_type.insert(type_key, id);
+        self.next_id += 1;
+        let id = StateMachineId::new(self.next_id);
+        self.by_type
+            .insert(type_key, (qualified_name.to_owned(), id));
         self.by_qualified_name.insert(qualified_name.to_owned(), id);
         StateMachineRegisterOutcome::Registered(id)
     }
@@ -112,7 +125,7 @@ mod tests {
     fn exact_identity_is_idempotent() {
         let mut registry = StateMachineIdentityRegistry::default();
         let first = registry.register(0x1000, "game.Phase");
-        let second = registry.register(0x1000, "changed.Phase");
+        let second = registry.register(0x1000, "game.Phase");
 
         assert_eq!(
             second,
@@ -130,7 +143,7 @@ mod tests {
             second,
             StateMachineRegisterOutcome::Aliased(first.machine_id())
         );
-        assert_eq!(registry.get(0x2000), Some(first.machine_id()));
+        assert_eq!(registry.get(0x2000, "game.Phase"), Some(first.machine_id()));
     }
 
     #[test]
@@ -141,6 +154,30 @@ mod tests {
 
         assert!(matches!(second, StateMachineRegisterOutcome::Registered(_)));
         assert_ne!(first.machine_id(), second.machine_id());
+    }
+
+    #[test]
+    fn recycled_addresses_do_not_reuse_machine_ids() {
+        let mut registry = StateMachineIdentityRegistry::default();
+        let first = registry.register(0x1000, "game.Phase").machine_id();
+        registry.register(0x2000, "game.Phase");
+        assert_eq!(registry.get(0x1000, "foreign.Phase"), None);
+        let foreign = registry.register(0x1000, "foreign.Phase").machine_id();
+        assert_ne!(first, foreign);
+        assert_eq!(registry.get(0x2000, "game.Phase"), Some(first));
+        assert_eq!(registry.get(0x1000, "foreign.Phase"), Some(foreign));
+    }
+
+    #[test]
+    fn removing_machines_prunes_aliases_without_reusing_ids() {
+        let mut registry = StateMachineIdentityRegistry::default();
+        let first = registry.register(0x1000, "game.Phase").machine_id();
+        registry.register(0x2000, "game.Phase");
+        registry.retain(&HashSet::new());
+        assert_eq!(registry.get_by_qualified_name("game.Phase"), None);
+        assert_eq!(registry.get(0x2000, "game.Phase"), None);
+        let second = registry.register(0x1000, "game.Phase").machine_id();
+        assert_ne!(first, second);
     }
 
     #[test]

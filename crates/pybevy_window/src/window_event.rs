@@ -1,4 +1,5 @@
 use bevy::{
+    input::touch::ForceTouch,
     math::{IVec2, Vec2},
     window::{FileDragAndDrop, Ime, WindowEvent},
 };
@@ -274,12 +275,12 @@ impl PyWindowEvent {
             WindowEvent::PanGesture(e) => PyWindowEvent::PanGesture { x: e.0.x, y: e.0.y },
             WindowEvent::TouchInput(e) => {
                 let force = e.force.map(|f| match f {
-                    bevy::input::touch::ForceTouch::Calibrated {
+                    ForceTouch::Calibrated {
                         force,
                         max_possible_force,
                         ..
                     } => force / max_possible_force,
-                    bevy::input::touch::ForceTouch::Normalized(n) => n,
+                    ForceTouch::Normalized(n) => n,
                 });
                 PyWindowEvent::TouchInput {
                     phase: e.phase.into(),

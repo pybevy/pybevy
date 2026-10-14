@@ -354,6 +354,11 @@ fn parse_struct_field_properties(fields: &Fields, file_path: &Path) -> Vec<Prope
                 has_getter,
                 has_setter,
                 getter_mutability: SelfMutability::Ref, // Struct field getters use &self
+                setter_mutability: if has_setter {
+                    SelfMutability::RefMut
+                } else {
+                    SelfMutability::None
+                },
                 getter_location: Some(location.clone()),
                 setter_location: if has_setter { Some(location) } else { None },
                 getter_uses_borrow: false,

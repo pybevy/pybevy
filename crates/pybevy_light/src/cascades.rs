@@ -1,5 +1,5 @@
 use bevy::light::Cascades;
-use pybevy_core::{ComponentStorage, PyComponent, computed_owned};
+use pybevy_core::{ComponentStorage, PyComponent, PyEntity, computed_owned};
 use pybevy_macros::pycomponent;
 use pyo3::{
     prelude::*,
@@ -30,7 +30,7 @@ impl PyCascades {
         for (entity, cascade_vec) in cascades.cascades.iter() {
             let py_cascades: Vec<PyCascade> = cascade_vec.iter().map(PyCascade::from).collect();
             let py_list = PyList::new(py, py_cascades)?;
-            dict.set_item(entity.index_u32(), py_list)?;
+            dict.set_item(PyEntity(*entity), py_list)?;
         }
 
         Ok(computed_owned(dict.into()))

@@ -15,7 +15,7 @@ use bevy::{
         render_asset::RenderAssets,
         render_resource::{
             Buffer, BufferDescriptor, BufferUsages, CommandEncoderDescriptor, Extent3d, MapMode,
-            PollType, TexelCopyBufferInfo, TexelCopyBufferLayout, TextureUsages,
+            PollType, TexelCopyBufferInfo, TexelCopyBufferLayout, TextureFormat, TextureUsages,
         },
         renderer::{RenderContext, RenderDevice, RenderGraph, RenderGraphSystems, RenderQueue},
         texture::GpuImage,
@@ -60,6 +60,20 @@ pub fn poll_latest_frame_with_sequence() -> Option<(Vec<u8>, u32, u32, u64)> {
 /// Take the bytes without copying when this is the last reference.
 fn unwrap_frame(frame: Arc<Vec<u8>>) -> Vec<u8> {
     Arc::try_unwrap(frame).unwrap_or_else(|shared| shared.as_ref().clone())
+}
+
+/// Drop a camera's buffered frames once its readback source is replaced.
+fn discard_camera_frames(entity_bits: u64) {
+    if let Ok(mut map) = frames_map().lock() {
+        map.remove(&entity_bits);
+    }
+    if let Ok(mut latest) = latest_frame_slot().lock()
+        && latest
+            .as_ref()
+            .is_some_and(|(.., source_bits)| *source_bits == entity_bits)
+    {
+        *latest = None;
+    }
 }
 
 /// Called from Python to get the latest readback frame for a camera entity.
@@ -277,10 +291,19 @@ impl Plugin for ImageCopyPlugin {
             return;
         }
 
-        // Main-world systems:
-        // 1. Auto-attach readback to render-target cameras
-        // 2. Collect frames from FrameReceivers into global buffer for Python
-        app.add_systems(Update, (auto_attach_readback, collect_readback_frames));
+        // Main-world systems, in order:
+        // 1. Detach auto-attached copiers whose camera target changed
+        // 2. Auto-attach readback to render-target cameras, rebuilding those
+        // 3. Collect frames from FrameReceivers into global buffer for Python
+        app.add_systems(
+            Update,
+            (
+                detach_stale_readback,
+                auto_attach_readback,
+                collect_readback_frames,
+            )
+                .chain(),
+        );
 
         let render_app = app.sub_app_mut(RenderApp);
 
@@ -302,6 +325,63 @@ impl Plugin for ImageCopyPlugin {
     }
 }
 
+/// Readback source an auto-attached copier was built for.
+#[derive(Component, Clone, Debug, PartialEq, Eq)]
+struct AutoReadbackSource {
+    image: AssetId<Image>,
+    width: u32,
+    height: u32,
+    bytes_per_pixel: u32,
+}
+
+/// Texel size of a format a copy buffer can address row by row.
+fn readback_bytes_per_pixel(format: TextureFormat) -> Option<u32> {
+    // A block-compressed or planar target has no single texel size.
+    format
+        .block_copy_size(None)
+        .filter(|_| format.block_dimensions() == (1, 1))
+}
+
+/// The source a camera's current target would give a fresh copier, if any.
+fn current_readback_source(
+    target: Option<&RenderTarget>,
+    images: &Assets<Image>,
+) -> Option<AutoReadbackSource> {
+    let RenderTarget::Image(image_target) = target? else {
+        return None;
+    };
+    let image = images.get(&image_target.handle)?;
+    Some(AutoReadbackSource {
+        image: image_target.handle.id(),
+        width: image.width(),
+        height: image.height(),
+        bytes_per_pixel: readback_bytes_per_pixel(image.texture_descriptor.format)?,
+    })
+}
+
+/// Detach an auto-attached copier once its camera targets another image, a
+/// resized or reformatted one, or no image, so `auto_attach_readback` rebuilds
+/// it. Copiers attached by hand carry no `AutoReadbackSource` and are kept.
+fn detach_stale_readback(
+    mut commands: Commands,
+    copiers: Query<(Entity, &AutoReadbackSource, Option<&RenderTarget>)>,
+    images: Res<Assets<Image>>,
+) {
+    for (entity, source, target) in &copiers {
+        if current_readback_source(target, &images).as_ref() == Some(source) {
+            continue;
+        }
+        debug!(
+            "[detach_stale_readback] Camera {:?} no longer renders to {:?} at {}x{}; detaching readback",
+            entity, source.image, source.width, source.height
+        );
+        commands
+            .entity(entity)
+            .try_remove::<(ImageCopier, FrameReceiver, AutoReadbackSource)>();
+        discard_camera_frames(entity.to_bits());
+    }
+}
+
 /// Auto-attach `ImageCopier` + `FrameReceiver` to any camera entity that has
 /// `RenderTarget::Image` but no `ImageCopier` yet.
 // Bevy's system signature needs the query inline; a lifetime alias does not register.
@@ -317,43 +397,36 @@ fn auto_attach_readback(
     };
 
     for (entity, target) in cameras.iter() {
-        if let RenderTarget::Image(image_target) = target {
-            let handle = &image_target.handle;
-            // Get image dimensions from the asset
-            let Some(image) = images.get(handle) else {
-                continue;
-            };
-            let width = image.width();
-            let height = image.height();
-            let format = image.texture_descriptor.format;
-            // The copy buffer and the row-padding strip must both use the real
-            // texel size; a block-compressed or planar target has none.
-            let Some(bytes_per_pixel) = format
-                .block_copy_size(None)
-                .filter(|_| format.block_dimensions() == (1, 1))
-            else {
-                warn!(
-                    "[auto_attach_readback] Skipping entity {:?}: render target format {:?} \
-                     has no single texel size, so its frames cannot be read back",
-                    entity, format
-                );
-                continue;
-            };
+        let RenderTarget::Image(image_target) = target else {
+            continue;
+        };
+        let handle = &image_target.handle;
+        let Some(image) = images.get(handle) else {
+            continue;
+        };
+        let Some(source) = current_readback_source(Some(target), &images) else {
+            warn!(
+                "[auto_attach_readback] Skipping entity {:?}: render target format {:?} \
+                 has no single texel size, so its frames cannot be read back",
+                entity, image.texture_descriptor.format
+            );
+            continue;
+        };
 
-            debug!(
-                "[auto_attach_readback] Attaching readback to entity {:?} ({}x{}, {} bytes/pixel)",
-                entity, width, height, bytes_per_pixel
-            );
-            attach_image_copier(
-                &mut commands,
-                entity,
-                handle.clone(),
-                width,
-                height,
-                bytes_per_pixel,
-                &render_device,
-            );
-        }
+        debug!(
+            "[auto_attach_readback] Attaching readback to entity {:?} ({}x{}, {} bytes/pixel)",
+            entity, source.width, source.height, source.bytes_per_pixel
+        );
+        attach_image_copier(
+            &mut commands,
+            entity,
+            handle.clone(),
+            source.width,
+            source.height,
+            source.bytes_per_pixel,
+            &render_device,
+        );
+        commands.entity(entity).insert(source);
     }
 }
 

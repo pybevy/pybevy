@@ -281,6 +281,40 @@ impl<T: Component> ComponentStorage<T> {
         Ok(W::from_borrowed(S::revalidating_source(source)))
     }
 
+    /// Borrow a field whose every nested write must keep the whole component
+    /// valid, for invariants spanning several fields.
+    ///
+    /// Each child write is staged on a copy of the component and committed
+    /// only when `validate` accepts it, so a rejected write neither changes
+    /// the value nor marks the owner changed. Owned storage yields a
+    /// read-only snapshot.
+    pub fn borrow_field_validated_by_owner_as<F: Clone + 'static, S, W>(
+        &self,
+        read: ReadField<T, F>,
+        write: WriteField<T, F>,
+        validate: ValidateField<T>,
+    ) -> Result<W, StorageError>
+    where
+        T: Clone,
+        S: BorrowableStorage<F>,
+        W: FromBorrowedStorage<S>,
+    {
+        let source = match &self.inner {
+            ComponentStorageInner::Source(source) => {
+                read(&*source.resolve_ref()?);
+                source.validated(validate).field(read, write)
+            }
+            _ => {
+                read(&*self.as_ref()?);
+                match RevalidatingSource::from_borrowed_component(self) {
+                    Some(source) => source.owner_validated_field(read, write, validate),
+                    None => return self.snapshot_field_as(read),
+                }
+            }
+        };
+        Ok(W::from_borrowed(S::revalidating_source(source)))
+    }
+
     /// Create a second handle to the same component data.
     ///
     /// Borrowed storage shares the same pointer and validity flag, preserving its
@@ -503,6 +537,40 @@ impl<T: Component> ComponentStorage<T> {
                 };
                 match RevalidatingSource::from_borrowed_component(self) {
                     Some(source) => source.optional(name, read, write),
+                    None => return Ok(Some(S::snapshot(value))),
+                }
+            }
+        };
+        Ok(Some(S::revalidating_source(child)))
+    }
+
+    /// Borrow an `Option` field like [`Self::borrow_optional_field`], staging
+    /// every nested write through `validate` like
+    /// [`Self::borrow_validated_field_as`].
+    pub fn borrow_validated_optional_field<F: Clone + 'static, S>(
+        &self,
+        name: &'static str,
+        read: ReadField<T, Option<F>>,
+        write: WriteField<T, Option<F>>,
+        validate: ValidateField<F>,
+    ) -> Result<Option<S>, StorageError>
+    where
+        S: BorrowableStorage<F>,
+    {
+        let child = match &self.inner {
+            ComponentStorageInner::Source(source) => {
+                if read(&*source.resolve_ref()?).is_none() {
+                    return Ok(None);
+                }
+                source.optional(name, read, write).validated(validate)
+            }
+            _ => {
+                let current = self.as_ref()?;
+                let Some(value) = read(&current) else {
+                    return Ok(None);
+                };
+                match RevalidatingSource::from_borrowed_component(self) {
+                    Some(source) => source.validated_optional(name, read, write, validate),
                     None => return Ok(Some(S::snapshot(value))),
                 }
             }
@@ -1394,5 +1462,125 @@ mod tests {
         assert!(matches!(child.as_mut(), Err(StorageError::ReadOnly)));
         validity.set_invalid();
         assert!(matches!(child.get(), Err(StorageError::InvalidAccess)));
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Component)]
+    struct Ears {
+        left: [f32; 2],
+        right: [f32; 2],
+    }
+
+    struct Ear(ValueStorage<[f32; 2]>);
+
+    impl FromBorrowedStorage<ValueStorage<[f32; 2]>> for Ear {
+        fn from_borrowed(storage: ValueStorage<[f32; 2]>) -> Self {
+            Self(storage)
+        }
+    }
+
+    fn distinct_ears(ears: &Ears) -> Result<(), StorageError> {
+        if ears.left == ears.right {
+            return Err(StorageError::InvalidValue("ears coincide".into()));
+        }
+        Ok(())
+    }
+
+    fn finite_size(size: &[f32; 2]) -> Result<(), StorageError> {
+        if !size.iter().all(|value| value.is_finite()) {
+            return Err(StorageError::InvalidValue("size must be finite".into()));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn owner_validated_child_checks_the_whole_component() {
+        let mut ears = Ears {
+            left: [-1.0, 0.0],
+            right: [1.0, 0.0],
+        };
+        let validity = ValidityFlag::new_write();
+        // SAFETY: ears outlives every access below on this thread.
+        let parent = unsafe { ComponentStorage::borrowed_mut(&mut ears, validity.clone()) };
+        let Ear(mut left) = parent
+            .borrow_field_validated_by_owner_as::<_, ValueStorage<[f32; 2]>, Ear>(
+                |ears| &ears.left,
+                |ears| &mut ears.left,
+                distinct_ears,
+            )
+            .unwrap();
+        assert!(matches!(
+            left.update(|left| left[0] = 1.0),
+            Err(StorageError::InvalidValue(_))
+        ));
+        assert!(matches!(
+            left.as_mut(),
+            Err(StorageError::ValidatedFieldWrite)
+        ));
+        assert_eq!(left.get().unwrap(), [-1.0, 0.0]);
+        left.update(|left| left[1] = 2.0).unwrap();
+        assert_eq!(left.get().unwrap(), [-1.0, 2.0]);
+        validity.set_invalid();
+        assert!(matches!(left.get(), Err(StorageError::InvalidAccess)));
+        drop((left, parent));
+        assert_eq!(ears.left, [-1.0, 2.0]);
+    }
+
+    #[test]
+    fn owned_owner_validated_child_is_a_read_only_snapshot() {
+        let parent = ComponentStorage::owned(Ears {
+            left: [-1.0, 0.0],
+            right: [1.0, 0.0],
+        });
+        let Ear(mut left) = parent
+            .borrow_field_validated_by_owner_as::<_, ValueStorage<[f32; 2]>, Ear>(
+                |ears| &ears.left,
+                |ears| &mut ears.left,
+                distinct_ears,
+            )
+            .unwrap();
+        assert!(matches!(
+            left.update(|left| left[0] = 3.0),
+            Err(StorageError::OwnedFieldReadOnly)
+        ));
+        assert_eq!(parent.as_ref().unwrap().left, [-1.0, 0.0]);
+    }
+
+    #[test]
+    fn validated_optional_child_rejects_invalid_writes_and_tracks_none() {
+        let mut component = Sized2 {
+            size: Some([3.0, 4.0]),
+        };
+        let validity = ValidityFlag::new_write();
+        // SAFETY: component outlives every access below on this thread.
+        let mut parent =
+            unsafe { ComponentStorage::borrowed_mut(&mut component, validity.clone()) };
+        let mut child: ValueStorage<[f32; 2]> = parent
+            .borrow_validated_optional_field("Sized2.size", size_field, size_field_mut, finite_size)
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            child.update(|size| size[0] = f32::NAN),
+            Err(StorageError::InvalidValue(_))
+        ));
+        assert_eq!(child.get().unwrap(), [3.0, 4.0]);
+        child.update(|size| size[0] = 5.0).unwrap();
+        assert_eq!(child.get().unwrap(), [5.0, 4.0]);
+        parent.as_mut().unwrap().size = None;
+        assert!(matches!(
+            child.get(),
+            Err(StorageError::VariantChanged("Sized2.size"))
+        ));
+        assert!(
+            parent
+                .borrow_validated_optional_field::<[f32; 2], ValueStorage<[f32; 2]>>(
+                    "Sized2.size",
+                    size_field,
+                    size_field_mut,
+                    finite_size,
+                )
+                .unwrap()
+                .is_none()
+        );
+        validity.set_invalid();
     }
 }

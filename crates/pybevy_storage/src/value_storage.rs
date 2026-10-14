@@ -301,6 +301,7 @@ impl<T: Copy> ValueStorage<T> {
     /// Wrappers that can sit under a validated field write through this
     /// instead of `as_mut`, which rejects validated paths. `mutate` must depend
     /// only on the value it receives.
+    #[inline(always)]
     pub fn update<R>(&mut self, mut mutate: impl FnMut(&mut T) -> R) -> Result<R, StorageError> {
         match &self.inner {
             ValueStorageInner::Source(source) => source.update(mutate),

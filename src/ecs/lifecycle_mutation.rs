@@ -28,14 +28,11 @@ use super::{
 };
 
 type NoStructuralInsert = fn(&mut World) -> bool;
-type ActiveLifecycleKey = (WorldId, LifecycleEvent, Entity, usize);
+type ActiveLifecycleKey = (WorldId, LifecycleEvent, Entity, usize, Entity);
 type ResolvedComponentIds = SmallVec<[(PyComponentType, ComponentId); 8]>;
 
 thread_local! {
-    /// Prevent one callback from recursively re-emitting the exact lifecycle
-    /// event that is already delivering it in the same World. Other Worlds
-    /// and event kinds remain fully reentrant (for example Despawn -> explicit
-    /// remove -> Discard/Remove).
+    // Bound same-key recursion per observer without dropping independent callbacks.
     static ACTIVE_LIFECYCLE_CALLBACKS: RefCell<HashSet<ActiveLifecycleKey>> =
         RefCell::new(HashSet::new());
 }
@@ -106,8 +103,15 @@ impl<'a, F: FnOnce(&mut World) -> bool> MainLifecycleAdapter<'a, F> {
         event: LifecycleEvent,
         entity: Entity,
         component: PyComponentType,
+        observer_entity: Entity,
     ) -> ActiveLifecycleKey {
-        (self.world.id(), event, entity, component_key(component))
+        (
+            self.world.id(),
+            event,
+            entity,
+            component_key(component),
+            observer_entity,
+        )
     }
 }
 
@@ -135,10 +139,6 @@ impl<F: FnOnce(&mut World) -> bool> LifecycleMutationAdapter for MainLifecycleAd
         entity: Entity,
         component: PyComponentType,
     ) -> Vec<ObserverEntry> {
-        let key = self.active_key(event, entity, component);
-        if ACTIVE_LIFECYCLE_CALLBACKS.with(|active| active.borrow().contains(&key)) {
-            return Vec::new();
-        }
         let Some(component_id) = self.component_id(component) else {
             return Vec::new();
         };
@@ -157,7 +157,7 @@ impl<F: FnOnce(&mut World) -> bool> LifecycleMutationAdapter for MainLifecycleAd
         entity: Entity,
         component: PyComponentType,
     ) {
-        let key = self.active_key(event, entity, component);
+        let key = self.active_key(event, entity, component, observer.observer_entity);
         let inserted = ACTIVE_LIFECYCLE_CALLBACKS.with(|active| active.borrow_mut().insert(key));
         if !inserted {
             return;

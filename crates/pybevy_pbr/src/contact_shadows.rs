@@ -1,5 +1,5 @@
 use bevy::pbr::ContactShadows;
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, PyComponent, domain::IntegerInput};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
@@ -22,19 +22,20 @@ impl PyContactShadows {
     #[new]
     #[pyo3(signature = (
         *,
-        linear_steps = 16,
+        linear_steps = IntegerInput::new(16),
         thickness = 0.1,
         length = 0.3
     ))]
     pub fn new(
-        linear_steps: u32,
+        linear_steps: IntegerInput<u32>,
         thickness: f32,
         length: f32,
     ) -> PyResult<PyClassInitializer<Self>> {
+        let linear_steps = Self::check_linear_steps(linear_steps)?.stored();
         let length = Self::check_length(length)?;
         let thickness = Self::check_thickness(thickness)?;
         Ok(Self::from_owned(ContactShadows {
-            linear_steps: Self::check_linear_steps(linear_steps)?,
+            linear_steps,
             thickness,
             length,
         })
@@ -47,8 +48,9 @@ impl PyContactShadows {
     }
 
     #[setter]
-    pub fn set_linear_steps(&mut self, value: u32) -> PyResult<()> {
-        self.as_mut()?.linear_steps = Self::check_linear_steps(value)?;
+    pub fn set_linear_steps(&mut self, value: IntegerInput<u32>) -> PyResult<()> {
+        let value = Self::check_linear_steps(value)?.stored();
+        self.as_mut()?.linear_steps = value;
         Ok(())
     }
 

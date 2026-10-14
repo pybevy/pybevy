@@ -43,14 +43,11 @@ pub struct PyTimer {
 #[pymethods]
 impl PyTimer {
     #[new]
-    #[pyo3(signature = (duration = None, mode = PyTimerMode::Once))]
-    pub fn new(duration: Option<DurationInput>, mode: PyTimerMode) -> PyResult<Self> {
-        let dur = match duration {
-            Some(d) => check_for::<Self, _>("duration", d, FINITE_NON_NEGATIVE)?.stored(),
-            None => Duration::ZERO,
-        };
+    #[pyo3(signature = (duration = DurationInput::Exact(Duration::ZERO), mode = PyTimerMode::Once))]
+    pub fn new(duration: DurationInput, mode: PyTimerMode) -> PyResult<Self> {
+        let duration = check_for::<Self, _>("duration", duration, FINITE_NON_NEGATIVE)?.stored();
         Ok(Self {
-            timer: Timer::new(dur, mode.into()),
+            timer: Timer::new(duration, mode.into()),
             count_overflowed: false,
         })
     }

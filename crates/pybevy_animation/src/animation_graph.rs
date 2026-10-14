@@ -9,7 +9,8 @@ use pybevy_core::{
     domain::{FINITE, IntegerInput, MASK_BIT_DOMAIN, check_for},
     extract_handle_from_any,
     public_error::{
-        ANIMATION_GRAPH_CYCLE, ANIMATION_GRAPH_NODE_MISSING, ANIMATION_GRAPH_NODE_READ_ONLY,
+        ANIMATION_GRAPH_CYCLE, ANIMATION_GRAPH_IN_USE, ANIMATION_GRAPH_NODE_MISSING,
+        ANIMATION_GRAPH_NODE_READ_ONLY,
     },
     repr::{float_repr, object_repr},
 };
@@ -25,6 +26,21 @@ use crate::animation_node_index::PyAnimationNodeIndex;
 
 const CLIP_CANNOT_BE_NONE: &str = "clip cannot be None";
 const MAX_REACHABLE_DEPTH: usize = 512;
+
+// Reentrant Python or another thread may hold the graph; raise instead of panicking.
+fn graph_ref<'py>(graph: &Bound<'py, PyAnimationGraph>) -> PyResult<PyRef<'py, PyAnimationGraph>> {
+    graph
+        .try_borrow()
+        .map_err(|_| PyRuntimeError::new_err(ANIMATION_GRAPH_IN_USE))
+}
+
+fn graph_mut<'py>(
+    graph: &Bound<'py, PyAnimationGraph>,
+) -> PyResult<PyRefMut<'py, PyAnimationGraph>> {
+    graph
+        .try_borrow_mut()
+        .map_err(|_| PyRuntimeError::new_err(ANIMATION_GRAPH_IN_USE))
+}
 
 fn validate_node(graph: &AnimationGraph, index: AnimationNodeIndex) -> PyResult<()> {
     if graph.get(index).is_none() {
@@ -231,9 +247,8 @@ impl PyAnimationGraph {
         slf: &Bound<'_, Self>,
         animation: &PyAnimationNodeIndex,
     ) -> PyResult<Option<PyAnimationGraphNode>> {
-        let present = PyAnimationGraph::as_ref(&slf.borrow())?
-            .get(animation.0)
-            .is_some();
+        let graph = graph_ref(slf)?;
+        let present = PyAnimationGraph::as_ref(&graph)?.get(animation.0).is_some();
         Ok(present.then(|| PyAnimationGraphNode::view(slf.clone().unbind(), animation.0, false)))
     }
 
@@ -241,9 +256,8 @@ impl PyAnimationGraph {
         slf: &Bound<'_, Self>,
         animation: &PyAnimationNodeIndex,
     ) -> PyResult<Option<PyAnimationGraphNode>> {
-        let present = PyAnimationGraph::as_ref(&slf.borrow())?
-            .get(animation.0)
-            .is_some();
+        let graph = graph_ref(slf)?;
+        let present = PyAnimationGraph::as_ref(&graph)?.get(animation.0).is_some();
         Ok(present.then(|| PyAnimationGraphNode::view(slf.clone().unbind(), animation.0, true)))
     }
 
@@ -316,7 +330,7 @@ impl PyAnimationGraphNode {
         py: Python<'_>,
         read: impl FnOnce(&AnimationGraphNode) -> R,
     ) -> PyResult<R> {
-        let graph = self.graph.borrow(py);
+        let graph = graph_ref(self.graph.bind(py))?;
         let graph = PyAnimationGraph::as_ref(&graph)?;
         let node = graph
             .get(self.index)
@@ -332,7 +346,7 @@ impl PyAnimationGraphNode {
         if !self.mutable {
             return Err(PyRuntimeError::new_err(ANIMATION_GRAPH_NODE_READ_ONLY));
         }
-        let mut graph = self.graph.borrow_mut(py);
+        let mut graph = graph_mut(self.graph.bind(py))?;
         PyAnimationGraph::as_ref(&graph)?
             .get(self.index)
             .ok_or_else(|| PyValueError::new_err(ANIMATION_GRAPH_NODE_MISSING))?;

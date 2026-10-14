@@ -7,7 +7,10 @@ use bevy::{
     ecs::{component::ComponentId, entity::Entity, world::World},
     prelude::Resource,
 };
-use pybevy_core::{public_error::EVENT_PROPAGATION_REQUIRES_TARGET, registry::global_registry};
+use pybevy_core::{
+    public_error::{EVENT_PROPAGATION_REQUIRES_TARGET, RESOURCE_LIFECYCLE_OBSERVERS_UNSUPPORTED},
+    registry::global_registry,
+};
 use pybevy_ecs::shared::{
     observer_registry::{
         LifecycleKind, ObserverEntry as CoreObserverEntry, ObserverEventKey, ObserverFilter,
@@ -544,6 +547,16 @@ fn lower_registration(
             Vec::new(),
         ),
     };
+
+    if matches!(event, ObserverEventKey::Lifecycle(_))
+        && components
+            .iter()
+            .any(|component| matches!(component, PyComponentType::Resource(_)))
+    {
+        return Err(PyTypeError::new_err(
+            RESOURCE_LIFECYCLE_OBSERVERS_UNSUPPORTED,
+        ));
+    }
 
     let mut resolved = Vec::with_capacity(components.len());
     for component in components {

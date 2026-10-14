@@ -16,12 +16,13 @@ use pybevy_core::{
     asset_path::parse_asset_path,
     ensure_asset_type, extract_handle_from_any,
     public_error::{
-        shader_data_too_long, shader_texture_slot_out_of_range, unsupported_packed_uniform_type,
+        MATERIAL_TYPE_MISMATCH, shader_data_too_long, shader_texture_slot_out_of_range,
+        unsupported_packed_uniform_type,
     },
 };
 use pybevy_macros::{pyasset, pycomponent, pyplugin};
 use pybevy_math::{vec2::PyVec2, vec3::PyVec3, vec4::PyVec4};
-use pybevy_shader_types::ShaderMaterialPlugin;
+use pybevy_shader_types::{ShaderMaterialPlugin, shader_def_registry, storage_element};
 use pyo3::{
     PyTypeInfo,
     exceptions::{PyIndexError, PyTypeError, PyValueError},
@@ -189,8 +190,7 @@ impl PyShaderMaterial {
 
     #[staticmethod]
     fn _validate_shader_def_names(names: Vec<String>) -> PyResult<()> {
-        pybevy_shader_types::shader_def_registry::validate_names(&names)
-            .map_err(PyTypeError::new_err)
+        shader_def_registry::validate_names(&names).map_err(PyValueError::new_err)
     }
 
     #[staticmethod]
@@ -200,8 +200,7 @@ impl PyShaderMaterial {
             .filter(|line| !line.trim().starts_with('#'))
             .collect::<Vec<_>>()
             .join("\n");
-        pybevy_shader_types::storage_element::validate_bindings(&source)
-            .map_err(PyTypeError::new_err)
+        storage_element::validate_bindings(&source).map_err(PyValueError::new_err)
     }
     #[classattr]
     fn __pybevy_component_type__(py: Python<'_>) -> Bound<'_, PyType> {
@@ -399,9 +398,7 @@ impl PyMeshMaterial3dShader {
         if let Some(expected) = self.logical_type_id
             && logical_type_id != Some(expected)
         {
-            return Err(PyTypeError::new_err(
-                "Material type mismatch: the handle is untyped or belongs to a different @material class",
-            ));
+            return Err(PyTypeError::new_err(MATERIAL_TYPE_MISMATCH));
         }
         self.as_mut()?.0 = handle;
         Ok(())
@@ -419,9 +416,7 @@ impl PyMeshMaterial3dShader {
     ) -> PyResult<Py<Self>> {
         let logical_type_id = LogicalTypeId::new(logical_type_id);
         if slf.borrow(py).logical_type_id != Some(logical_type_id) {
-            return Err(PyTypeError::new_err(
-                "Material type mismatch: the handle is untyped or belongs to a different @material class",
-            ));
+            return Err(PyTypeError::new_err(MATERIAL_TYPE_MISMATCH));
         }
         Ok(slf)
     }

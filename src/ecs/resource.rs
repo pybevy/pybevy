@@ -242,6 +242,11 @@ impl PyRes {
         self.value.bind(py).len()
     }
 
+    pub fn __bool__(&self, py: Python<'_>) -> PyResult<bool> {
+        self.check_valid()?;
+        self.value.bind(py).is_truthy()
+    }
+
     pub fn __iter__(&self, py: Python<'_>) -> PyResult<PyResourceIterator> {
         PyResourceIterator::new(py, &self.value, self.validity.clone())
     }
@@ -403,6 +408,11 @@ impl PyResMut {
     pub fn __len__(&self, py: Python<'_>) -> PyResult<usize> {
         self.check_valid()?;
         self.value.bind(py).len()
+    }
+
+    pub fn __bool__(&self, py: Python<'_>) -> PyResult<bool> {
+        self.check_valid()?;
+        self.value.bind(py).is_truthy()
     }
 
     pub fn __iter__(&self, py: Python<'_>) -> PyResult<PyResourceIterator> {

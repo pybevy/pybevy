@@ -910,6 +910,19 @@ impl<T: Send + Sync + 'static> BorrowedRootSource<T> {
         self.extend(&[field_step(read, write), validated_step(validate)])
     }
 
+    /// Project a field whose staged writes must keep the whole root valid.
+    pub(crate) fn owner_validated_field<Field: 'static>(
+        &self,
+        read: ReadField<T, Field>,
+        write: WriteField<T, Field>,
+        validate: ValidateField<T>,
+    ) -> RevalidatingSource<Field>
+    where
+        T: Clone,
+    {
+        self.extend(&[validated_step(validate), field_step(read, write)])
+    }
+
     pub(crate) fn variant<Field: 'static>(
         &self,
         name: &'static str,
@@ -926,6 +939,16 @@ impl<T: Send + Sync + 'static> BorrowedRootSource<T> {
         write: WriteField<T, Option<Field>>,
     ) -> RevalidatingSource<Field> {
         self.extend(&[optional_step(name, read, write)])
+    }
+
+    pub(crate) fn validated_optional<Field: Clone + 'static>(
+        &self,
+        name: &'static str,
+        read: ReadField<T, Option<Field>>,
+        write: WriteField<T, Option<Field>>,
+        validate: ValidateField<Field>,
+    ) -> RevalidatingSource<Field> {
+        self.extend(&[optional_step(name, read, write), validated_step(validate)])
     }
 
     pub(crate) fn read_only_accessor<Field: 'static>(
@@ -1200,6 +1223,7 @@ impl<T> RevalidatingSource<T> {
     /// path accepts the result, once to the live value. A rejected write
     /// leaves the value and its change ticks untouched. `mutate` must depend
     /// only on the value it receives.
+    #[inline]
     pub fn update<R>(&self, mut mutate: impl FnMut(&mut T) -> R) -> Result<R, StorageError> {
         let mut stage = |value: *mut u8| {
             // SAFETY: the staged pointer addresses this path's output type.

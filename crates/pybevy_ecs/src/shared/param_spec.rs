@@ -613,6 +613,7 @@ impl<K: BackendKeys, VK: Hash + Eq + Clone> AccessLowerer<'_, K, VK> {
                 let mut accesses = spec
                     .components
                     .iter()
+                    .filter(|c| c.materializes)
                     .map(|c| ComponentAccess {
                         key: (self.component_vkey)(&c.key),
                         name: c.name.clone(),
@@ -626,6 +627,18 @@ impl<K: BackendKeys, VK: Hash + Eq + Clone> AccessLowerer<'_, K, VK> {
                     exclusive: asset.mutable,
                     mutable: asset.mutable,
                 }));
+                for component in spec.components.iter().filter(|c| !c.materializes) {
+                    let key = (self.component_vkey)(&component.key);
+                    // A query's data access already covers its tick reads.
+                    if !accesses.iter().any(|access| access.key == key) {
+                        accesses.push(ComponentAccess {
+                            key,
+                            name: component.name.clone(),
+                            exclusive: component.scheduler_access.is_exclusive(),
+                            mutable: component.mutable,
+                        });
+                    }
+                }
 
                 let mut filters = QueryFilters::default();
                 let mut markers = Vec::new();
@@ -1789,6 +1802,107 @@ mod tests {
             components: vec![comp(key, true, false)],
             ..extra
         })
+    }
+
+    #[test]
+    fn tick_reads_share_the_same_query_data_access() {
+        for opaque in [false, true] {
+            for grouped in [false, true] {
+                let data = if opaque {
+                    opaque_comp("T", false)
+                } else {
+                    comp("T", true, false)
+                };
+                let tick = || {
+                    let mut component = comp("T", false, true);
+                    component.materializes = false;
+                    component
+                };
+                let query = ParamSpec::<MockKeys>::Query(QuerySpec {
+                    components: vec![data, tick(), tick()],
+                    ..Default::default()
+                });
+                let params = if grouped {
+                    vec![ParamSpec::ParamSet(vec![query])]
+                } else {
+                    vec![query]
+                };
+                let accesses = to_param_accesses(
+                    &params,
+                    |k| *k,
+                    |k| *k,
+                    |k| *k,
+                    "resource marker",
+                    |k| ((*k).to_string(), (*k).to_string()),
+                );
+                assert!(validate_access(&accesses).is_ok());
+                let (mut world, mut resolver) = setup();
+                let declared = build_declared_access(&mut world, &params, &mut resolver);
+                assert!(
+                    declared
+                        .set
+                        .combined_access()
+                        .has_write(resolver.components["T"])
+                );
+                assert!(declared.alias_conflict.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn tick_only_reads_still_conflict_with_other_writers() {
+        let mut tick = comp("T", false, true);
+        tick.materializes = false;
+        let params = [
+            ParamSpec::<MockKeys>::Query(QuerySpec {
+                components: vec![tick],
+                ..Default::default()
+            }),
+            mut_query("T", QuerySpec::default()),
+        ];
+        let accesses = to_param_accesses(
+            &params,
+            |k| *k,
+            |k| *k,
+            |k| *k,
+            "resource marker",
+            |k| ((*k).to_string(), (*k).to_string()),
+        );
+        let conflict = validate_access(&accesses).unwrap_err();
+        assert_eq!(conflict.param_idx, 1);
+        let (mut world, mut resolver) = setup();
+        let declared = build_declared_access(&mut world, &params[..1], &mut resolver);
+        assert!(
+            declared
+                .set
+                .combined_access()
+                .has_read(resolver.components["T"])
+        );
+        let native = world.query::<&mut T>();
+        assert!(
+            !declared
+                .set
+                .is_compatible(&set_of(native.component_access().clone()))
+        );
+    }
+
+    #[test]
+    fn duplicate_data_is_not_folded_into_a_tick_read() {
+        let mut tick = comp("T", false, true);
+        tick.materializes = false;
+        let params = [ParamSpec::<MockKeys>::Query(QuerySpec {
+            components: vec![comp("T", true, false), tick, comp("T", false, false)],
+            ..Default::default()
+        })];
+        let accesses = to_param_accesses(
+            &params,
+            |k| *k,
+            |k| *k,
+            |k| *k,
+            "resource marker",
+            |k| ((*k).to_string(), (*k).to_string()),
+        );
+        assert!(validate_access(&accesses).is_err());
     }
 
     #[test]

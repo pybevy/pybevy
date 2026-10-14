@@ -1,6 +1,6 @@
 use bevy::{color::Color, light::VolumetricFog};
 use pybevy_color::color::PyColor;
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, PyComponent, domain::IntegerInput};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
@@ -27,8 +27,8 @@ impl PyVolumetricFog {
         VolumetricFog::default().ambient_intensity
     }
 
-    fn default_step_count() -> u32 {
-        VolumetricFog::default().step_count
+    fn default_step_count() -> IntegerInput<u32> {
+        IntegerInput::new(VolumetricFog::default().step_count.into())
     }
 
     fn default_jitter() -> f32 {
@@ -50,15 +50,16 @@ impl PyVolumetricFog {
         ambient_color: PyColor,
         ambient_intensity: f32,
         jitter: f32,
-        step_count: u32,
+        step_count: IntegerInput<u32>,
     ) -> PyResult<PyClassInitializer<Self>> {
         let ambient_intensity = Self::check_ambient_intensity(ambient_intensity)?;
         let jitter = Self::check_jitter(jitter)?;
+        let step_count = Self::check_step_count(step_count)?.stored();
         let ambient_color = Color::try_from(ambient_color)?;
         Ok(Self::from_owned(VolumetricFog {
             ambient_color,
             ambient_intensity,
-            step_count: Self::check_step_count(step_count)?,
+            step_count,
             jitter,
         })
         .into())
@@ -94,8 +95,9 @@ impl PyVolumetricFog {
     }
 
     #[setter]
-    pub fn set_step_count(&mut self, count: u32) -> PyResult<()> {
-        self.as_mut()?.step_count = Self::check_step_count(count)?;
+    pub fn set_step_count(&mut self, count: IntegerInput<u32>) -> PyResult<()> {
+        let count = Self::check_step_count(count)?.stored();
+        self.as_mut()?.step_count = count;
         Ok(())
     }
 

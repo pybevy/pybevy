@@ -1,5 +1,7 @@
 use std::{
+    mem::transmute,
     ptr::NonNull,
+    slice::from_ref,
     sync::{Arc, Mutex, Weak},
 };
 
@@ -124,8 +126,7 @@ impl PyParamSet {
         parity_trace: Option<ParityRunHandle>,
     ) -> Self {
         // SAFETY: the validity flag fences every use of the erased cell.
-        let world =
-            unsafe { std::mem::transmute::<UnsafeWorldCell<'_>, UnsafeWorldCell<'static>>(world) };
+        let world = unsafe { transmute::<UnsafeWorldCell<'_>, UnsafeWorldCell<'static>>(world) };
         debug_assert_eq!(descriptors.len(), members.len());
         Self {
             descriptors: Arc::downgrade(descriptors),
@@ -173,12 +174,12 @@ impl PyParamSet {
             .query_cache
             // SAFETY: `validity`, checked above, is still open, so the
             // scheduled run state this points into is in place (see `new`).
-            .map(|cache| std::slice::from_ref(unsafe { cache.as_ref() }))
+            .map(|cache| from_ref(unsafe { cache.as_ref() }))
             .unwrap_or_default();
         let view_caches = member
             .view_cache
             // SAFETY: as above.
-            .map(|cache| std::slice::from_ref(unsafe { cache.as_ref() }))
+            .map(|cache| from_ref(unsafe { cache.as_ref() }))
             .unwrap_or_default();
         let cursors = member.message_cursor.as_slice();
         let mut commands: Option<Commands<'_, '_>> = None;
@@ -188,7 +189,7 @@ impl PyParamSet {
         let error = unsafe {
             build_run_args(
                 py,
-                std::slice::from_ref(param),
+                from_ref(param),
                 query_caches,
                 view_caches,
                 &[],

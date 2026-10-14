@@ -450,6 +450,7 @@ class ScreenSpaceTransmission(Component):
         """Pass count, roughly one transmissive layer per texture copy.
 
         `0` disables screen-space refraction and uses the environment map.
+        Accepts 0 to 1024; other values raise `ValueError`.
         """
 
     @steps.setter
@@ -720,7 +721,10 @@ class ScreenSpaceReflections(Component):
 
     @property
     def linear_steps(self) -> int:
-        """Number of linear steps in ray march."""
+        """Number of linear steps in ray march.
+
+        Accepts 0 to 1024; other values raise `ValueError`.
+        """
     @linear_steps.setter
     def linear_steps(self, value: int) -> None: ...
 
@@ -732,7 +736,10 @@ class ScreenSpaceReflections(Component):
 
     @property
     def bisection_steps(self) -> int:
-        """Number of bisection refinement steps."""
+        """Number of bisection refinement steps.
+
+        Accepts 0 to 64; other values raise `ValueError`.
+        """
     @bisection_steps.setter
     def bisection_steps(self, value: int) -> None: ...
 
@@ -772,7 +779,11 @@ class ContactShadows(Component):
     ) -> None: ...
 
     @property
-    def linear_steps(self) -> int: ...
+    def linear_steps(self) -> int:
+        """Steps taken at regular intervals to find an initial intersection.
+
+        Accepts 0 to 1024; other values raise `ValueError`.
+        """
     @linear_steps.setter
     def linear_steps(self, value: int) -> None: ...
 
@@ -927,31 +938,46 @@ class AtmosphereSettings(Component):
 
     @property
     def transmittance_lut_samples(self) -> int:
-        """Sample count for transmittance LUT computation."""
+        """Sample count for transmittance LUT computation.
+
+        Accepts 0 to 1024; other values raise `ValueError`.
+        """
     @transmittance_lut_samples.setter
     def transmittance_lut_samples(self, value: int) -> None: ...
 
     @property
     def multiscattering_lut_dirs(self) -> int:
-        """Number of ray directions for multiscattering LUT."""
+        """Number of ray directions for multiscattering LUT.
+
+        Accepts 0 to 1024; other values raise `ValueError`.
+        """
     @multiscattering_lut_dirs.setter
     def multiscattering_lut_dirs(self, value: int) -> None: ...
 
     @property
     def multiscattering_lut_samples(self) -> int:
-        """Sample count for multiscattering ray integration."""
+        """Sample count for multiscattering ray integration.
+
+        Accepts 0 to 1024; other values raise `ValueError`.
+        """
     @multiscattering_lut_samples.setter
     def multiscattering_lut_samples(self, value: int) -> None: ...
 
     @property
     def sky_view_lut_samples(self) -> int:
-        """Sample count for sky view LUT computation."""
+        """Sample count for sky view LUT computation.
+
+        Accepts 0 to 1024; other values raise `ValueError`.
+        """
     @sky_view_lut_samples.setter
     def sky_view_lut_samples(self, value: int) -> None: ...
 
     @property
     def aerial_view_lut_samples(self) -> int:
-        """Sample count for aerial view LUT computation."""
+        """Sample count for aerial view LUT computation.
+
+        Accepts 0 to 1024; other values raise `ValueError`.
+        """
     @aerial_view_lut_samples.setter
     def aerial_view_lut_samples(self, value: int) -> None: ...
 
@@ -963,7 +989,10 @@ class AtmosphereSettings(Component):
 
     @property
     def sky_max_samples(self) -> int:
-        """Maximum samples for raymarched sky rendering."""
+        """Maximum samples for raymarched sky rendering.
+
+        Accepts 0 to 1024; other values raise `ValueError`.
+        """
     @sky_max_samples.setter
     def sky_max_samples(self, value: int) -> None: ...
 

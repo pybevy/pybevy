@@ -535,11 +535,21 @@ impl MainInterpreter {
         if expected.is(&typing.getattr("Any")?) {
             return Ok(true);
         }
+        let origin = typing.call_method1("get_origin", (expected,))?;
+        if origin.is(&typing.getattr("Union")?)
+            || origin.is(&py.import("types")?.getattr("UnionType")?)
+        {
+            for alternative in typing.call_method1("get_args", (expected,))?.try_iter()? {
+                if Self::pipe_input_matches(py, input, &alternative?)? {
+                    return Ok(true);
+                }
+            }
+            return Ok(false);
+        }
         let isinstance = py.import("builtins")?.getattr("isinstance")?;
         match isinstance.call1((input, expected)) {
             Ok(result) => result.extract::<bool>(),
             Err(direct_error) => {
-                let origin = typing.call_method1("get_origin", (expected,))?;
                 if origin.is_none() {
                     return Err(direct_error);
                 }

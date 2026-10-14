@@ -21,7 +21,7 @@ use crate::{
     screen_edge::PyScreenEdge,
     window_level::PyWindowLevel,
     window_mode::PyWindowMode,
-    window_position::PyWindowPosition,
+    window_position::{PyWindowPosition, materialize_window_position},
     window_resolution::{PyWindowResolution, validate_scale_factors},
     window_theme::PyWindowTheme,
 };
@@ -537,9 +537,10 @@ impl PyWindow {
 
     #[getter]
     pub fn position(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        Ok(computed_owned(
-            crate::window_position::materialize_window_position(py, self.as_ref()?.position)?,
-        ))
+        Ok(computed_owned(materialize_window_position(
+            py,
+            self.as_ref()?.position,
+        )?))
     }
 
     #[setter]

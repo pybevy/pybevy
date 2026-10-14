@@ -4,7 +4,10 @@ use pybevy_macros::pyasset;
 use pyo3::prelude::*;
 
 use crate::{
-    shader_def_val::PyShaderDefVal, shader_import::PyShaderImport, shader_source::PySource,
+    shader_def_val::PyShaderDefVal,
+    shader_import::PyShaderImport,
+    shader_lists::{PyShaderDefs, PyShaderImports},
+    shader_source::PySource,
     validate_shader::PyValidateShader,
 };
 
@@ -81,13 +84,10 @@ impl PyShader {
     }
 
     #[getter]
-    pub fn imports(&self) -> PyResult<Vec<PyShaderImport>> {
+    pub fn imports(&self) -> PyResult<PyShaderImports> {
         Ok(self
-            .as_ref()?
-            .imports
-            .iter()
-            .map(|i| i.clone().into())
-            .collect())
+            .storage
+            .borrow_field_as(|shader| &shader.imports, |shader| &mut shader.imports)?)
     }
 
     #[setter]
@@ -97,13 +97,11 @@ impl PyShader {
     }
 
     #[getter]
-    pub fn shader_defs(&self) -> PyResult<Vec<PyShaderDefVal>> {
-        Ok(self
-            .as_ref()?
-            .shader_defs
-            .iter()
-            .map(|d| d.clone().into())
-            .collect())
+    pub fn shader_defs(&self) -> PyResult<PyShaderDefs> {
+        Ok(self.storage.borrow_field_as(
+            |shader| &shader.shader_defs,
+            |shader| &mut shader.shader_defs,
+        )?)
     }
 
     #[setter]

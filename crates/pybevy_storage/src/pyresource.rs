@@ -269,6 +269,7 @@ impl<T: Resource> ResourceStorage<T> {
 
     /// Borrow a read-only value reached through a projection that may not be an
     /// inline field of the resource.
+    /// Owned storage returns a read-only snapshot.
     ///
     /// # Safety
     /// The projected value must remain at the returned address while this
@@ -285,10 +286,7 @@ impl<T: Resource> ResourceStorage<T> {
         match &self.inner {
             ResourceStorageInner::Owned { data, validity } => {
                 validity.check_read()?;
-                let ptr = project(&**data) as *const F;
-                // SAFETY: the caller guarantees the projection stays at this
-                // address for the shared validity window.
-                Ok(unsafe { S::borrowed_ref(ptr, validity.clone()) })
+                Ok(S::snapshot(project(data)))
             }
             ResourceStorageInner::BorrowedRef(resource) => {
                 resource.validity().check_read()?;
@@ -315,6 +313,7 @@ impl<T: Resource> ResourceStorage<T> {
 
     /// Borrow a mutable value reached through a projection that may not be an
     /// inline field of the resource.
+    /// Owned storage returns a read-only snapshot; mutate its parent directly.
     ///
     /// # Safety
     /// The projected value must remain at the returned address while this
@@ -330,10 +329,7 @@ impl<T: Resource> ResourceStorage<T> {
         match &mut self.inner {
             ResourceStorageInner::Owned { data, validity } => {
                 validity.check_write()?;
-                let ptr = project(&mut **data) as *mut F;
-                // SAFETY: the pointer derives from the unique parent value and
-                // the caller guarantees that the projection remains stable.
-                Ok(unsafe { S::borrowed_mut(ptr, validity.clone()) })
+                Ok(S::snapshot(project(data)))
             }
             ResourceStorageInner::BorrowedRef(resource) => {
                 resource.validity().check_read()?;
@@ -631,10 +627,14 @@ mod tests {
     }
 
     #[test]
-    fn projected_mutation_reaches_non_inline_resource_value() {
-        let mut storage = ResourceStorage::owned(ProjectedResource {
+    fn projected_mutation_reaches_borrowed_resource_value() {
+        let mut resource = ProjectedResource {
             value: "before".to_string(),
-        });
+        };
+        let validity = ValidityFlag::new_write();
+        let guard = ValidityGuard::new(validity.clone());
+        // SAFETY: the resource outlives the storage and all accesses are sequential.
+        let mut storage = unsafe { ResourceStorage::borrowed_mut(&mut resource, validity) };
 
         let mut projected: FieldStorage<String> =
             // SAFETY: The projection stays inside the live owner; no other mutable guard overlaps.
@@ -642,11 +642,38 @@ mod tests {
         projected.as_mut().unwrap().push_str(" after");
 
         assert_eq!(storage.as_ref().unwrap().value.as_str(), "before after");
-        drop(storage);
+        drop(guard);
         assert!(matches!(
             projected.as_ref(),
             Err(StorageError::InvalidAccess)
         ));
+    }
+
+    #[test]
+    fn owned_projections_are_independent_read_only_snapshots() {
+        let mut storage = ResourceStorage::owned(ProjectedResource {
+            value: "before".to_string(),
+        });
+        // SAFETY: the projected field is inline and the accesses are sequential.
+        let mut read: FieldStorage<String> =
+            unsafe { storage.borrow_projected_ref(|resource| &resource.value) }.unwrap();
+        // SAFETY: the projected field is inline and the accesses are sequential.
+        let mut write: FieldStorage<String> =
+            unsafe { storage.borrow_projected_mut(|resource| &mut resource.value) }.unwrap();
+
+        storage.as_mut().unwrap().value.push_str(" parent");
+        assert_eq!(storage.as_ref().unwrap().value, "before parent");
+        assert!(matches!(
+            read.as_mut(),
+            Err(StorageError::OwnedFieldReadOnly)
+        ));
+        assert!(matches!(
+            write.as_mut(),
+            Err(StorageError::OwnedFieldReadOnly)
+        ));
+        drop(storage);
+        assert_eq!(read.as_ref().unwrap(), "before");
+        assert_eq!(write.as_ref().unwrap(), "before");
     }
 
     #[test]
