@@ -653,10 +653,10 @@ class Sprite(Component):
             @system
             def setup(commands: Commands, assets: Res[AssetServer]):
                 image = assets.load_image("character.png")
-                commands.spawn((
+                commands.spawn(
                     Sprite.from_image(image),
                     Transform.from_xyz(0.0, 0.0, 0.0),
-                ))
+                )
             ```
         """
 
@@ -681,10 +681,10 @@ class Sprite(Component):
             def setup(commands: Commands, assets: Res[AssetServer]):
                 image = assets.load_image("sprites.png")
                 atlas = TextureAtlas(index=0, layout=layout_handle)
-                commands.spawn((
+                commands.spawn(
                     Sprite.from_atlas_image(image, atlas),
                     Transform.from_xyz(0.0, 0.0, 0.0),
-                ))
+                )
             ```
         """
 

@@ -265,6 +265,14 @@ impl AppStoreCore {
             .ok_or(AppStoreError::Missing(id))
     }
 
+    /// Inspect an idle App without changing its ownership state.
+    pub fn active_app(&self, id: AppId) -> Option<&App> {
+        match self.slots.get(&id) {
+            Some(AppSlot::Active(app)) => Some(app),
+            _ => None,
+        }
+    }
+
     /// Access an App only for code proven not to enter an interpreter or recurse.
     pub fn with_app_leaf<R>(
         &mut self,

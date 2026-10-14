@@ -24,6 +24,10 @@ type; its `value` property and `with_` builder use `TextureUsages`.
 - Server-side rendering
 - Integration tests
 
+Python-owned Apps retain their registered values and callbacks while live.
+Unreachable cycles through resources or scheduled closures can be collected after
+the App is dropped; collection waits until native execution is idle.
+
 ## Loading Image Files
 
 Creating `Image` values in memory only needs `AssetPlugin` and `ImagePlugin`

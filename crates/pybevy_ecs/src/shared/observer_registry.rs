@@ -358,6 +358,13 @@ impl<H> ObserverRegistryCore<H> {
         Ok(())
     }
 
+    /// Inspect each retained registration without cloning its payload.
+    pub fn entries(&self) -> impl Iterator<Item = &ObserverEntry<H>> {
+        self.by_observer
+            .values()
+            .map(|registered| &registered.entry)
+    }
+
     /// Snapshot entries for an event and target in registration order.
     ///
     /// Bundle/lifecycle component checks intentionally happen later, once per

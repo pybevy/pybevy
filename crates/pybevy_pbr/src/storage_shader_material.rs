@@ -1,17 +1,16 @@
 use bevy::{
-    app::App,
     asset::Handle,
     image::{Image, ImageSamplerDescriptor},
     pbr::MeshMaterial3d,
     render::storage::ShaderBuffer,
 };
 use pybevy_core::{
-    AssetInputConverter, AssetStorage, ComponentStorage, FieldStorage, LogicalTypeId, PluginBuild,
-    PyComponent, PyHandle, PyMaterial, PyPlugin, ensure_asset_type, extract_handle_from_any,
+    AssetInputConverter, AssetStorage, ComponentStorage, FieldStorage, LogicalTypeId, PyComponent,
+    PyHandle, PyMaterial, ensure_asset_type, extract_handle_from_any,
     public_error::shader_texture_slot_out_of_range,
 };
 use pybevy_image::sampler_descriptor::PyImageSamplerDescriptor;
-use pybevy_macros::{pyasset, pycomponent, pyplugin};
+use pybevy_macros::{pyasset, pycomponent};
 use pybevy_shader_types::{
     MAX_TEXTURE_SLOTS,
     sampler_binding::{MaterialSamplerBinding, MaterialSamplerKind},
@@ -28,9 +27,7 @@ use pyo3::{
 
 use crate::{
     material_access,
-    shader_material::{
-        StorageShaderMaterial, StorageShaderMaterialExtension, StorageShaderMaterialPlugin,
-    },
+    shader_material::{StorageShaderMaterial, StorageShaderMaterialExtension},
     shader_material_py::build_shader_material,
     standard_material::PyStandardMaterial,
 };
@@ -366,27 +363,6 @@ impl PyStorageShaderMaterial {
             return Err(PyIndexError::new_err("Storage buffer slot out of range"));
         }
         self.as_mut()?.extension.buffers[slot].handle = handle;
-        Ok(())
-    }
-}
-
-#[pyplugin(StorageShaderMaterialPlugin)]
-#[pyclass(name = "StorageShaderMaterialPlugin", module = "pybevy.pbr", extends = PyPlugin, frozen, skip_from_py_object)]
-#[derive(Debug, Clone)]
-pub struct PyStorageShaderMaterialPlugin;
-
-#[pymethods]
-impl PyStorageShaderMaterialPlugin {
-    #[new]
-    pub fn new() -> PyClassInitializer<Self> {
-        (Self, PyPlugin).into()
-    }
-}
-impl PluginBuild for PyStorageShaderMaterialPlugin {
-    fn build(_plugin: &Bound<'_, PyAny>, app: &mut App) -> PyResult<()> {
-        if !app.is_plugin_added::<StorageShaderMaterialPlugin>() {
-            app.add_plugins(StorageShaderMaterialPlugin);
-        }
         Ok(())
     }
 }

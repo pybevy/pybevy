@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from pybevy.image import ImageSampler
 from pybevy.material import TextureBinding
-from pybevy.pbr import StorageShaderMaterialPlugin
+from pybevy.pbr import ShaderMaterialPlugin
 from pybevy.prelude import *
 from pybevy.render import Extent3d, TextureViewDescriptor, TextureViewDimension
 
@@ -85,7 +85,7 @@ def animate(
 def main(app: App) -> App:
     return (
         app.add_plugins(DefaultPlugins)
-        .add_plugins(StorageShaderMaterialPlugin())
+        .add_plugins(ShaderMaterialPlugin())
         .add_systems(Startup, setup)
         .add_systems(Startup, setup_camera)
         .add_systems(Update, animate)

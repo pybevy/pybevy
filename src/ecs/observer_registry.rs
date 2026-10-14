@@ -17,6 +17,7 @@ use pybevy_ecs::shared::{
     system_runtime::{ErrorPolicy, execute_observer},
 };
 use pyo3::{
+    PyTraverseError, PyVisit,
     exceptions::{PyRuntimeError, PyTypeError},
     ffi,
     prelude::*,
@@ -28,7 +29,7 @@ use super::{
     component_type::{ComponentRegistry, PyComponentType},
     observer::{EventType, PyObserverPropagation, PyOn, event_auto_propagate},
     resource_type::ResourceRegistry,
-    system::{SystemFunction, SystemParamType},
+    system::{SystemFunction, SystemGcOwners, SystemParamType},
     system_interpreter::{MainPreparedObserver, ObserverRuntimeSinks, new_main_observer},
 };
 
@@ -71,6 +72,20 @@ pub struct ObserverRegistry {
 }
 
 impl ObserverRegistry {
+    pub(crate) fn traverse(
+        &self,
+        owners: &mut SystemGcOwners,
+        visit: &PyVisit<'_>,
+    ) -> Result<(), PyTraverseError> {
+        for entry in self.core.entries() {
+            for class in &entry.prepared._retained_types {
+                visit.call(class)?;
+            }
+            owners.traverse_handle(&entry.prepared.prepared.retained, visit)?;
+        }
+        Ok(())
+    }
+
     /// Register a global observer and return its observer entity.
     pub fn register_observer(
         py: Python,
@@ -366,7 +381,7 @@ impl ObserverRegistry {
     fn extract_event_type_from_params(
         system_func: &SystemFunction,
     ) -> PyResult<(EventType, Option<Vec<PyComponentType>>)> {
-        for param in &system_func.params {
+        for param in system_func.params.iter() {
             if let SystemParamType::On {
                 event_type,
                 bundle_filter,

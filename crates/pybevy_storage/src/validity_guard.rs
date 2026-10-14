@@ -82,6 +82,10 @@ struct ValidityInner {
     owned_world: Option<WorldId>,
     has_invalidation_observers: AtomicBool,
     invalidation_observers: Mutex<Vec<Weak<dyn InvalidationObserver>>>,
+    /// The enclosing window of a child flag, which must also admit every access.
+    parent: Option<ValidityFlag>,
+    /// Keeps this child's registration on `parent` alive.
+    _parent_link: Option<Arc<ChildInvalidation>>,
 }
 
 impl fmt::Debug for ValidityInner {
@@ -97,6 +101,12 @@ impl fmt::Debug for ValidityInner {
 /// when its validity window closes.
 pub(crate) trait InvalidationObserver: Send + Sync {
     fn invalidated(&self);
+
+    /// Whether notification is no longer needed, so registering another
+    /// observer may drop this one.
+    fn retired(&self) -> bool {
+        false
+    }
 }
 
 impl ValidityInner {
@@ -113,7 +123,28 @@ impl ValidityInner {
             owned_world: None,
             has_invalidation_observers: AtomicBool::new(false),
             invalidation_observers: Mutex::new(Vec::new()),
+            parent: None,
+            _parent_link: None,
         }
+    }
+}
+
+/// Invalidates a child window when its parent window closes.
+struct ChildInvalidation(Weak<ValidityInner>);
+
+impl InvalidationObserver for ChildInvalidation {
+    fn invalidated(&self) {
+        if let Some(child) = self.0.upgrade() {
+            ValidityFlag(child).set_invalid();
+        }
+    }
+
+    /// A child closed on its own, such as an earlier `ParamSet` member,
+    /// needs no notice from its parent.
+    fn retired(&self) -> bool {
+        self.0
+            .upgrade()
+            .is_none_or(|child| ValidityFlag(child).get_mode() == AccessMode::Invalid)
     }
 }
 
@@ -203,6 +234,25 @@ impl ValidityFlag {
         Self(Arc::new(ValidityInner::new(AccessMode::Write)))
     }
 
+    /// A window nested inside this one, with the same access mode. It admits
+    /// an access only when this window does too, closes when this window
+    /// closes, and can be closed alone while this window stays open.
+    pub fn new_child(&self) -> Self {
+        let mode = self.get_mode();
+        let parent = self.clone();
+        let child = Arc::new_cyclic(|weak: &Weak<ValidityInner>| {
+            let mut inner = ValidityInner::new(mode);
+            inner.parent = Some(parent);
+            inner._parent_link = Some(Arc::new(ChildInvalidation(weak.clone())));
+            inner
+        });
+        if let Some(link) = &child._parent_link {
+            let link: Arc<dyn InvalidationObserver> = link.clone();
+            self.observe_invalidation(&link);
+        }
+        Self(child)
+    }
+
     /// Whole-World authority retained by a standalone owned World wrapper.
     pub fn new_owned_world(world_id: WorldId) -> Self {
         let mut inner = ValidityInner::new(AccessMode::Write);
@@ -237,17 +287,30 @@ impl ValidityFlag {
             return;
         }
 
+        // Upgraded entries drop after the lock is released.
+        let mut checked = Vec::new();
         {
             let mut observers = self
                 .0
                 .invalidation_observers
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
+            // Drop dead and retired registrations so repeated child windows
+            // keep the list bounded by the observers still waiting.
+            observers.retain(|registered| {
+                let Some(live) = registered.upgrade() else {
+                    return false;
+                };
+                let keep = !live.retired();
+                checked.push(live);
+                keep
+            });
             observers.push(Arc::downgrade(observer));
             self.0
                 .has_invalidation_observers
                 .store(true, Ordering::Release);
         }
+        drop(checked);
 
         if matches!(self.get_mode(), AccessMode::Invalid) {
             observer.invalidated();
@@ -296,8 +359,12 @@ impl ValidityFlag {
     /// from the owning thread; Err otherwise.
     pub fn check_read(&self) -> Result<(), StorageError> {
         match self.get_mode() {
-            AccessMode::Read | AccessMode::Write => self.check_thread(),
-            AccessMode::Invalid => Err(StorageError::InvalidAccess),
+            AccessMode::Read | AccessMode::Write => self.check_thread()?,
+            AccessMode::Invalid => return Err(StorageError::InvalidAccess),
+        }
+        match &self.0.parent {
+            Some(parent) => parent.check_read(),
+            None => Ok(()),
         }
     }
 
@@ -307,9 +374,13 @@ impl ValidityFlag {
     /// the owning thread; Err otherwise.
     pub fn check_write(&self) -> Result<(), StorageError> {
         match self.get_mode() {
-            AccessMode::Write => self.check_thread(),
-            AccessMode::Read => Err(StorageError::ReadOnly),
-            AccessMode::Invalid => Err(StorageError::InvalidAccess),
+            AccessMode::Write => self.check_thread()?,
+            AccessMode::Read => return Err(StorageError::ReadOnly),
+            AccessMode::Invalid => return Err(StorageError::InvalidAccess),
+        }
+        match &self.0.parent {
+            Some(parent) => parent.check_write(),
+            None => Ok(()),
         }
     }
 
@@ -501,6 +572,78 @@ mod tests {
         }
         assert!(flag.check_read().is_ok());
         assert!(matches!(flag.check_write(), Err(StorageError::ReadOnly)));
+    }
+
+    #[test]
+    fn child_window_closes_alone_or_with_its_parent() {
+        let parent = ValidityFlag::new_write();
+        let first = parent.new_child();
+        assert!(first.check_write().is_ok());
+        first.set_invalid();
+        assert!(matches!(first.check(), Err(StorageError::InvalidAccess)));
+        assert!(parent.check_write().is_ok());
+
+        let second = parent.new_child();
+        let read = second.with_access_mode(AccessMode::Read);
+        assert!(read.check_read().is_ok());
+        parent.set_invalid();
+        assert_eq!(second.get_mode(), AccessMode::Invalid);
+        assert!(matches!(
+            read.check_read(),
+            Err(StorageError::InvalidAccess)
+        ));
+    }
+
+    #[test]
+    fn repeated_child_windows_keep_parent_observers_bounded() {
+        let parent = ValidityFlag::new_write();
+        let mut escaped = Vec::new();
+        let mut active: Option<ValidityFlag> = None;
+        for _ in 0..64 {
+            let child = parent.new_child();
+            if let Some(previous) = active.replace(child.clone()) {
+                previous.set_invalid();
+            }
+            escaped.push(child);
+        }
+        let registered = parent
+            .0
+            .invalidation_observers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .len();
+        assert_eq!(registered, 2);
+
+        let last = escaped.last().unwrap();
+        assert!(last.check_write().is_ok());
+        parent.set_invalid();
+        assert_eq!(last.get_mode(), AccessMode::Invalid);
+        assert!(
+            escaped
+                .iter()
+                .all(|child| matches!(child.check(), Err(StorageError::InvalidAccess)))
+        );
+    }
+
+    #[test]
+    fn child_window_follows_parent_suspension_and_mode() {
+        let parent = ValidityFlag::new_read();
+        let child = parent.new_child();
+        assert!(matches!(child.check_write(), Err(StorageError::ReadOnly)));
+        {
+            let _suspension = parent.suspend().unwrap();
+            assert!(matches!(
+                child.check_read(),
+                Err(StorageError::NestedExecution)
+            ));
+        }
+        assert!(child.check_read().is_ok());
+
+        let closed = ValidityFlag::new();
+        assert!(matches!(
+            closed.new_child().check(),
+            Err(StorageError::InvalidAccess)
+        ));
     }
 
     #[test]

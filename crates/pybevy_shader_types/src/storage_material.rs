@@ -578,17 +578,6 @@ impl Plugin for ShaderMaterialPlugin {
     }
 }
 
-#[derive(Default)]
-pub struct StorageShaderMaterialPlugin;
-
-impl Plugin for StorageShaderMaterialPlugin {
-    fn build(&self, app: &mut App) {
-        if !app.is_plugin_added::<MaterialBackendsPlugin>() {
-            app.add_plugins(MaterialBackendsPlugin);
-        }
-    }
-}
-
 struct MaterialBackendsPlugin;
 
 impl Plugin for MaterialBackendsPlugin {

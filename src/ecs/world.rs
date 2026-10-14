@@ -21,7 +21,7 @@ use bevy::{
         component::ComponentId,
         ptr::OwningPtr,
         system::{RunSystemError, System},
-        world::World,
+        world::{World, unsafe_world_cell::UnsafeWorldCell},
     },
     prelude::*,
 };
@@ -55,6 +55,7 @@ use crate::{
     app::{
         PyStage,
         app::{catch_schedule_build_failure, raise_collected_errors_since},
+        hot_reload::registry::DynamicSystemRegistry,
     },
     assets::{asset_type::PyAssetTypeParam, assets::PyAssets},
     ecs::{
@@ -78,7 +79,9 @@ use crate::{
         messages::{MessageType, MessageWorld, PyMessageType, PyMessageTypeParam, PyMessages},
         observer::PyEvent,
         observer_registry::ObserverRegistry,
-        python_message::{python_message_is_registered, resolve_from_world},
+        python_message::{
+            python_message_is_registered, resolve_from_world, traverse_python_messages,
+        },
         query::{query_param::PyQueryParam, query_runtime::PyQueryIter},
         resource::{PyRes, PyResMut, PyResParam, hierarchy_contains_resource_entity},
         resource_type::{
@@ -89,6 +92,7 @@ use crate::{
             PyOnEnterSchedule, PyOnExitSchedule, PyOnTransitionSchedule,
             canonicalize_state_schedule_label, canonicalize_transition_schedule_label,
         },
+        system::{SystemGcOwners, SystemGcRegistry},
         system_interpreter::{ObserverRuntimeSinks, new_main_one_shot_system},
         world_commands::{self, WorldCommandState},
         world_gc::WorldGcState,
@@ -627,6 +631,72 @@ impl PyWorld {
     }
 }
 
+/// Report Python storage only while its owning World/App mutation gate is held.
+pub(crate) fn traverse_world_python(
+    world: UnsafeWorldCell<'_>,
+    visit: PyVisit<'_>,
+) -> Result<(), PyTraverseError> {
+    // SAFETY: the mutation gate excludes changes to the pending command owner.
+    if let Some(commands) = unsafe { world.get_resource::<WorldCommandState>() } {
+        commands.traverse(visit.clone())?;
+    }
+    // SAFETY: the gate excludes registration writes to this resource.
+    if let Some(info) = unsafe { world.get_resource::<pybevy_core::CustomComponentInfo>() } {
+        let mut owners = HashSet::new();
+        for (_, entry) in info.iter() {
+            if let Some(class) = &entry.retained_type
+                && owners.insert(Arc::as_ptr(class))
+            {
+                visit.call(class.as_ref())?;
+            }
+        }
+    }
+    // SAFETY: the gate excludes registration writes to this resource.
+    if let Some(info) = unsafe { world.get_resource::<pybevy_core::CustomResourceInfo>() } {
+        for (_, entry) in info.iter() {
+            visit.call(&entry.type_object)?;
+        }
+    }
+    for component in world.components().iter_registered() {
+        if component.layout() != Layout::new::<Py<PyAny>>()
+            || !component
+                .drop()
+                .is_some_and(|drop| fn_addr_eq(drop, drop_py_object as unsafe fn(OwningPtr<'_>)))
+        {
+            continue;
+        }
+        for archetype in world.archetypes().iter() {
+            for entity in archetype.entities() {
+                let Ok(entity) = world.get_entity(entity.id()) else {
+                    continue;
+                };
+                // SAFETY: the gate excludes writes to Python object storage slots.
+                if let Some(value) = unsafe { entity.get_by_id(component.id()) } {
+                    // SAFETY: layout and drop identify the exact Python storage type.
+                    visit.call(unsafe { value.deref::<Py<PyAny>>() })?;
+                }
+            }
+        }
+    }
+    traverse_python_messages(world, &visit)?;
+    let mut owners = SystemGcOwners::default();
+    // SAFETY: the owner gate excludes schedule and observer registration changes.
+    if let Some(registry) = unsafe { world.get_resource::<DynamicSystemRegistry>() } {
+        for handle in registry.handles() {
+            owners.traverse_handle(handle, &visit)?;
+        }
+    }
+    // SAFETY: the owner gate excludes schedule cache and condition registration.
+    if let Some(registry) = unsafe { world.get_resource::<SystemGcRegistry>() } {
+        registry.traverse(&mut owners, &visit)?;
+    }
+    // SAFETY: the owner gate excludes observer registry mutation.
+    if let Some(registry) = unsafe { world.get_resource::<ObserverRegistry>() } {
+        registry.traverse(&mut owners, &visit)?;
+    }
+    Ok(())
+}
+
 #[pymethods]
 impl PyWorld {
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
@@ -645,48 +715,7 @@ impl PyWorld {
         };
         // SAFETY: the gate preserves the allocation; this reference only constructs a cell.
         let world = unsafe { (&*storage.get()).as_unsafe_world_cell_readonly() };
-        // SAFETY: the mutation gate excludes changes to the pending command owner.
-        if let Some(commands) = unsafe { world.get_resource::<WorldCommandState>() } {
-            commands.traverse(visit.clone())?;
-        }
-        // SAFETY: the gate excludes registration writes to this resource.
-        if let Some(info) = unsafe { world.get_resource::<pybevy_core::CustomComponentInfo>() } {
-            let mut owners = HashSet::new();
-            for (_, entry) in info.iter() {
-                if let Some(class) = &entry.retained_type
-                    && owners.insert(Arc::as_ptr(class))
-                {
-                    visit.call(class.as_ref())?;
-                }
-            }
-        }
-        // SAFETY: the gate excludes registration writes to this resource.
-        if let Some(info) = unsafe { world.get_resource::<pybevy_core::CustomResourceInfo>() } {
-            for (_, entry) in info.iter() {
-                visit.call(&entry.type_object)?;
-            }
-        }
-        for component in world.components().iter_registered() {
-            if component.layout() != Layout::new::<Py<PyAny>>()
-                || !component.drop().is_some_and(|drop| {
-                    fn_addr_eq(drop, drop_py_object as unsafe fn(OwningPtr<'_>))
-                })
-            {
-                continue;
-            }
-            for archetype in world.archetypes().iter() {
-                for entity in archetype.entities() {
-                    let Ok(entity) = world.get_entity(entity.id()) else {
-                        continue;
-                    };
-                    // SAFETY: the gate excludes writes to Python object storage slots.
-                    if let Some(value) = unsafe { entity.get_by_id(component.id()) } {
-                        // SAFETY: layout and drop identify the exact Python storage type.
-                        visit.call(unsafe { value.deref::<Py<PyAny>>() })?;
-                    }
-                }
-            }
-        }
+        traverse_world_python(world, visit)?;
         Ok(())
     }
 

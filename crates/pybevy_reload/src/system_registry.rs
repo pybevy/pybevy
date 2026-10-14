@@ -74,6 +74,11 @@ impl<H: Send + Sync + 'static> SystemGenerationRegistry<H> {
         self.generations.entry(generation).or_default();
     }
 
+    /// Inspect handles without cloning interpreter references.
+    pub fn handles(&self) -> impl Iterator<Item = &H> {
+        self.generations.values().flatten()
+    }
+
     /// Record a system handle under its reload generation.
     pub fn register(&mut self, generation: u32, handle: H) {
         self.generations.entry(generation).or_default().push(handle);

@@ -47,7 +47,10 @@ use pybevy_ecs::shared::schedule::{
 use pybevy_reload::{
     HotReloadGeneration, PluginTracker, SystemStage, count_schedule_systems, is_verbose,
 };
-use pybevy_render::cache_cleanup::RenderCacheCleanupPlugin;
+use pybevy_render::{
+    cache_cleanup::RenderCacheCleanupPlugin,
+    pipeline_drain::{PipelineCompilationDrainPlugin, drain_app_pipeline_compilation},
+};
 use pyo3::{
     IntoPyObjectExt, PyTraverseError, PyVisit,
     exceptions::{PyAttributeError, PyRuntimeError, PyTypeError, PyValueError},
@@ -89,13 +92,15 @@ use crate::{
             ensure_state_transition_system_registered, insert_state_machine_resources,
             registered_state_machine_count, state_machine_is_registered, state_member_type,
         },
+        system::SystemGcRegistry,
         system_config::{
             InstalledSystemSetConfigs, build_set_config, build_system_unit,
             system_set_config_identity,
         },
         system_interpreter::ObserverRuntimeSinks,
-        world::PyWorld,
+        world::{PyWorld, traverse_world_python},
         world_commands,
+        world_gc::{WorldGcGuard, WorldGcState},
     },
 };
 
@@ -133,7 +138,10 @@ thread_local! {
 pub(crate) fn cleanup_apps_on_shutdown() {
     let outcome = BEVY_APPS.with(|apps_cell| apps_cell.borrow_mut().drain_active());
     let (apps, borrowed) = outcome.into_parts();
-    drop(apps);
+    for (_, mut app) in apps {
+        drain_app_pipeline_compilation(&mut app);
+        drop(app);
+    }
     for (app_id, operation) in borrowed {
         eprintln!("WARNING: App {app_id} is still executing {operation} during shutdown");
     }
@@ -351,14 +359,17 @@ fn begin_main_app_operation(
     let app = BEVY_APPS
         .with(|apps_cell| apps_cell.borrow_mut().begin_operation(app_id, operation))
         .map_err(app_store_error)?;
+    let gc = WorldGcState::for_world(app.world().id()).map(|state| state.suspend());
     Ok(MainAppOperationGuard {
         app_id,
+        gc,
         app: Some(app),
     })
 }
 
 struct MainAppOperationGuard {
     app_id: AppId,
+    gc: Option<WorldGcGuard>,
     app: Option<App>,
 }
 
@@ -380,6 +391,7 @@ impl MainAppOperationGuard {
             panic!("failed to consume App {app_id}: {error}");
         }
         drop(app);
+        drop(self.gc.take());
         forget(self);
     }
 }
@@ -402,6 +414,7 @@ impl Drop for MainAppOperationGuard {
 
 #[pyclass(name = "App", module = "pybevy.app", unsendable)]
 pub struct PyApp {
+    gc_state: Option<WorldGcState>,
     /// Unique identifier for this PyApp instance.
     app_id: AppId,
 
@@ -496,7 +509,10 @@ impl PyApp {
         system_error: Arc<Mutex<Vec<PyErr>>>,
         system_error_buffer: SystemErrorBuffer,
     ) -> Self {
+        let world_id =
+            BEVY_APPS.with(|apps| apps.borrow().active_app(app_id).map(|app| app.world().id()));
         Self {
+            gc_state: world_id.map(WorldGcState::new),
             app_id,
             creation_thread: current().id(),
             plugin_registry: RefCell::new(AddedPythonPlugins::default()),
@@ -739,6 +755,7 @@ impl PyApp {
         let app_id = consume_unstored_id(allocate_id().expect("App ID space exhausted"));
 
         PyApp {
+            gc_state: None,
             app_id,
             creation_thread: current().id(),
             plugin_registry: RefCell::new(AddedPythonPlugins::default()),
@@ -831,6 +848,19 @@ impl PyApp {
     /// lives behind a shared `Arc`/`Mutex` with several Rust owners, and
     /// `__traverse__` must neither double-count nor block (docs/safety.md).
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        if !self.native_configuration
+            && let Some(_gc) = self.gc_state.as_ref().and_then(WorldGcState::try_traverse)
+        {
+            BEVY_APPS.with(|apps| {
+                let Ok(apps) = apps.try_borrow() else {
+                    return Ok(());
+                };
+                let Some(app) = apps.active_app(self.app_id) else {
+                    return Ok(());
+                };
+                traverse_world_python(app.world().as_unsafe_world_cell_readonly(), visit.clone())
+            })?;
+        }
         // Skip any field mid-mutation: traverse must not panic or block.
         if let Ok(staged) = self.pending_systems.try_borrow() {
             for (_, systems) in staged.iter() {
@@ -906,7 +936,7 @@ impl PyApp {
 
         // Create and initialize the Bevy App immediately
         let mut app = App::new();
-        app.add_plugins(RenderCacheCleanupPlugin);
+        app.add_plugins((RenderCacheCleanupPlugin, PipelineCompilationDrainPlugin));
 
         // Add LogPlugin only if it hasn't been initialized yet
         // LogPlugin sets up a global logger/tracing subscriber, which can only be set once per process
@@ -1079,7 +1109,7 @@ impl PyApp {
 
                     // Add each system or chain to the schedule.
                     for unit in &units {
-                        let (config, _, registrations) = build_system_unit(
+                        let (config, handles, registrations) = build_system_unit(
                             unit,
                             current_generation,
                             error_state.clone(),
@@ -1097,6 +1127,9 @@ impl PyApp {
                             ScheduleType::OnTransition(lbl, _) => lbl.intern(),
                             _ => unreachable!(),
                         };
+                        app.world_mut()
+                            .get_resource_or_insert_with(SystemGcRegistry::default)
+                            .register_handles(&handles);
                         {
                             let mut registry = app
                                 .world_mut()
@@ -1161,7 +1194,7 @@ impl PyApp {
                 pyself.with_bevy_app(|app| {
                     let state_machine_count = Some(registered_state_machine_count(app.world()));
                     for unit in units {
-                        let (config, _, registrations) = build_system_unit(
+                        let (config, handles, registrations) = build_system_unit(
                             &unit,
                             current_generation,
                             error_state.clone(),
@@ -1172,6 +1205,9 @@ impl PyApp {
                             &|_, error| error,
                         )?;
                         add_to_schedule!(app, stage, config);
+                        app.world_mut()
+                            .get_resource_or_insert_with(SystemGcRegistry::default)
+                            .register_handles(&handles);
                         let mut registry = app
                             .world_mut()
                             .get_resource_or_insert_with(DynamicSystemRegistry::default);
@@ -2164,13 +2200,17 @@ impl PyApp {
                     let mut identities = Vec::new();
                     for member in chained.sets.bind(set.py()).iter() {
                         identities.push(system_set_config_identity(&member)?);
-                        configs.push(build_set_config(
+                        let (config, handles) = build_set_config(
                             &member,
                             generation,
                             error_state.clone(),
                             error_buffer.clone(),
                             system_stage,
-                        )?);
+                        )?;
+                        app.world_mut()
+                            .get_resource_or_insert_with(SystemGcRegistry::default)
+                            .register_handles(&handles);
+                        configs.push(config);
                     }
                     if configs.is_empty() {
                         return Err(PyValueError::new_err(
@@ -2193,7 +2233,7 @@ impl PyApp {
                     }
                 } else {
                     let identity = system_set_config_identity(&set)?;
-                    let config = build_set_config(
+                    let (config, handles) = build_set_config(
                         &set,
                         generation,
                         error_state.clone(),
@@ -2201,6 +2241,9 @@ impl PyApp {
                         system_stage,
                     )?;
                     app.configure_sets(label, config);
+                    app.world_mut()
+                        .get_resource_or_insert_with(SystemGcRegistry::default)
+                        .register_handles(&handles);
                     app.world_mut()
                         .get_resource_or_insert_with(InstalledSystemSetConfigs::default)
                         .insert(schedule, identity);
@@ -2218,6 +2261,9 @@ impl PyApp {
 impl Drop for PyApp {
     fn drop(&mut self) {
         if !self.is_reload_temp.get() {
+            if let Some(state) = &self.gc_state {
+                state.close();
+            }
             // Check if we're on the same thread where the PyApp was created
             let current_thread = current().id();
             if current_thread != self.creation_thread {
@@ -2272,7 +2318,8 @@ impl Drop for PyApp {
                     }
                 }
             });
-            if let Some(app) = app_to_drop {
+            if let Some(mut app) = app_to_drop {
+                drain_app_pipeline_compilation(&mut app);
                 drop(app);
                 // Dropping the App tears down its World and retires every
                 // stored Python component/resource value into the deferred

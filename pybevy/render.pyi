@@ -724,10 +724,10 @@ class Msaa(Component):
         from pybevy.render import Msaa
 
         # Disable MSAA for maximum performance
-        commands.spawn((Camera3d(), Msaa.Off))
+        commands.spawn(Camera3d(), Msaa.Off)
 
         # Use 4x MSAA (default)
-        commands.spawn((Camera3d(), Msaa.Sample4))
+        commands.spawn(Camera3d(), Msaa.Sample4)
         ```
     """
 

@@ -1054,13 +1054,13 @@ class Text(Component):
             top=Val.Px(10.0),
             left=Val.Px(10.0),
         )
-        commands.spawn((
+        commands.spawn(
             Text("Hello, UI!"),
             node,
             TextFont.from_font_size(24.0),
             TextColor(Color.WHITE),
             TextLayout().with_justify(Justify.Center),
-        ))
+        )
         ```
 
     Args:
@@ -1090,14 +1090,14 @@ class Node(Component):
         from pybevy.ui import Node, Text, FlexDirection, Display, PositionType, Val
 
         # Default node (relative positioning)
-        commands.spawn((Node(), Text("Centered")))
+        commands.spawn(Node(), Text("Centered"))
 
         # Absolutely positioned node
         node = Node()
         node.position_type = PositionType.Absolute
         node.top = Val.Px(10.0)
         node.left = Val.Px(10.0)
-        commands.spawn((node, Text("Top Left")))
+        commands.spawn(node, Text("Top Left"))
 
         # Flexbox layout
         node = Node(
@@ -1114,7 +1114,7 @@ class Node(Component):
             top=Val.Px(50.0),
             left=Val.Px(100.0),
         )
-        commands.spawn((node, Text("Custom Position")))
+        commands.spawn(node, Text("Custom Position"))
         ```
 
     Attributes:
@@ -1525,10 +1525,10 @@ class BackgroundColor(Component):
         from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
 
         # Create a red panel
-        commands.spawn((
+        commands.spawn(
             Node(),
             BackgroundColor(Color.srgb(1.0, 0.0, 0.0)),
-        ))
+        )
 
         # Change color dynamically
         @system
@@ -1564,10 +1564,10 @@ class BorderColor(Component):
         from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
 
         # Create node with same border color on all sides
-        commands.spawn((
+        commands.spawn(
             Node(),
             BorderColor(Color.srgb(0.0, 1.0, 0.0)),  # Green border all sides
-        ))
+        )
 
         # Different colors per side
         @system
@@ -1792,10 +1792,10 @@ class Outline(Component):
         from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
 
         # 2px solid red outline
-        commands.spawn((
+        commands.spawn(
             Node(),
             Outline(Val.Px(2.0), Val.Px(0.0), Color.srgb(1.0, 0.0, 0.0)),
-        ))
+        )
 
         # Outline with offset (space between border and outline)
         outline = Outline(
@@ -1803,7 +1803,7 @@ class Outline(Component):
             Val.Px(5.0),           # offset from border
             Color.srgb(0.0, 0.0, 1.0)  # color
         )
-        commands.spawn((Node(), outline))
+        commands.spawn(Node(), outline)
 
         # Modify at runtime
         @system
@@ -1861,11 +1861,11 @@ class ZIndex(Component):
         from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
 
         # Create UI element with z-index
-        commands.spawn((
+        commands.spawn(
             Node(),
             ZIndex(10),
             BackgroundColor(Color.srgb(1.0, 0.0, 0.0)),
-        ))
+        )
 
         # Modify at runtime
         @system
@@ -1966,10 +1966,10 @@ class ImageNode(Component):
         def setup(commands: Commands, asset_server: Res[AssetServer]) -> None:
             # Load image and create UI node with image
             texture = asset_server.load_image("bevy/textures/icon.png")
-            commands.spawn((
+            commands.spawn(
                 Node(),
                 ImageNode(texture),
-            ))
+            )
 
         # Change texture at runtime
         @system
@@ -2067,18 +2067,18 @@ class FocusPolicy(Component):
         from pybevy.ui import Node, FocusPolicy, Button, Interaction
 
         # Button that blocks input (default for interactive elements)
-        commands.spawn((
+        commands.spawn(
             Node(),
             Button(),
             Interaction.None_,
             FocusPolicy.Block,  # Blocks input, doesn't pass to nodes behind
-        ))
+        )
 
         # Transparent panel that passes input through
-        commands.spawn((
+        commands.spawn(
             Node(),
             FocusPolicy.Pass,  # Allows input to pass to nodes behind
-        ))
+        )
 
         # Change policy at runtime
         @system
@@ -2118,11 +2118,11 @@ class Interaction(Component):
         from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
 
         # Create interactive button
-        commands.spawn((
+        commands.spawn(
             Node(),
             Interaction.None_,
             BackgroundColor(Color.srgb(0.5, 0.5, 0.5)),
-        ))
+        )
 
         # Respond to interactions
         @system
@@ -2168,12 +2168,12 @@ class Button(Component):
         from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
 
         # Create a button
-        commands.spawn((
+        commands.spawn(
             Node(),
             Button(),
             Interaction.None_,
             BackgroundColor(Color.srgb(0.2, 0.2, 0.2)),
-        ))
+        )
 
         # React to button clicks
         @system
@@ -2203,11 +2203,11 @@ class Label(Component):
         from pybevy.ui import Node, Text, Label
 
         # Create a text label
-        commands.spawn((
+        commands.spawn(
             Node(),
             Text("Username:"),
             Label(),  # Marks this as an accessibility label
-        ))
+        )
         ```
     """
     def __init__(self) -> None: ...
@@ -2225,7 +2225,7 @@ class InteractionDisabled(Component):
         from pybevy.ui import Node, Button, InteractionDisabled
 
         # Create a disabled button
-        commands.spawn((Node(), Button(), InteractionDisabled()))
+        commands.spawn(Node(), Button(), InteractionDisabled())
         ```
     """
     def __init__(self) -> None: ...
@@ -2263,7 +2263,7 @@ class Checked(Component):
         from pybevy.ecs import Commands
 
         # Create a checked checkbox
-        commands.spawn((Node(), Checked()))
+        commands.spawn(Node(), Checked())
         ```
     """
     def __init__(self) -> None: ...
@@ -2393,10 +2393,10 @@ class GlobalZIndex(Component):
         from pybevy.ui import Node, GlobalZIndex
 
         # Render on top of everything
-        commands.spawn((Node(), GlobalZIndex(100)))
+        commands.spawn(Node(), GlobalZIndex(100))
 
         # Render below default (0)
-        commands.spawn((Node(), GlobalZIndex(-10)))
+        commands.spawn(Node(), GlobalZIndex(-10))
         ```
 
     Args:
@@ -2696,7 +2696,7 @@ class IsDefaultUiCamera(Component):
         from pybevy.camera import Camera2d
 
         # Mark a camera as the default UI camera
-        commands.spawn((Camera2d(), IsDefaultUiCamera()))
+        commands.spawn(Camera2d(), IsDefaultUiCamera())
         ```
     """
     def __init__(self) -> None: ...
@@ -2749,11 +2749,11 @@ class RelativeCursorPosition(Component):
 
         @system
         def setup(commands: Commands) -> None:
-            commands.spawn((
+            commands.spawn(
                 Node(),
                 Interaction.None_,
                 RelativeCursorPosition(),
-            ))
+            )
 
         @system
         def check_cursor(query: Query[RelativeCursorPosition]) -> None:
@@ -3341,10 +3341,10 @@ class LinearGradient:
         ])
 
         # Use with BackgroundGradient component
-        commands.spawn((
+        commands.spawn(
             Node(),
             BackgroundGradient([Gradient.Linear(gradient)]),
-        ))
+        )
         ```
     """
 
@@ -3805,10 +3805,10 @@ class BackgroundGradient(Component):
                 ColorStop.auto(Color.linear_rgb(0.8, 0.2, 0.2)),
             ])
 
-            commands.spawn((
+            commands.spawn(
                 Node(),
                 BackgroundGradient([Gradient.Linear(gradient)]),
-            ))
+            )
         ```
     """
 
@@ -3843,14 +3843,14 @@ class TextShadow(Component):
 
         @system
         def setup(commands: Commands) -> None:
-            commands.spawn((
+            commands.spawn(
                 Node(),
                 Text("Hello World"),
                 TextShadow(
                     offset=Vec2(2.0, 2.0),
                     color=Color.srgba(0.0, 0.0, 0.0, 0.5),
                 ),
-            ))
+            )
         ```
     """
 

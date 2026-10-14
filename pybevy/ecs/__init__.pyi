@@ -244,6 +244,40 @@ class RemovedComponents(Generic[ComponentTypeVar]):
         """Iterate over and consume unread removed entity IDs."""
     def __iter__(self) -> Iterator[Entity]:
         """Iterate over and consume unread removed entity IDs."""
+class ParamSet[ParamSetT]:
+    """System parameter holding parameters that conflict with each other.
+
+    Annotate as ``ParamSet[tuple[P0, P1, ...]]`` with one to eight Query,
+    Single, View, Res, ResMut, Assets or message parameters. ``pN()`` borrows
+    member N and ends the borrow returned by the previous call, so values from
+    an earlier member, and rows read from them, raise ``RuntimeError`` once
+    another member is borrowed. Parameters outside the set conflict with every
+    member as usual.
+
+    Example:
+        @system
+        def adjust(params: ParamSet[tuple[Query[Mut[Transform]], Query[Transform]]]) -> None:
+            for transform in params.p0():
+                transform.translation.x += 1.0
+            for transform in params.p1():
+                print(transform.translation)
+    """
+    def p0[P0, *Rest](self: ParamSet[tuple[P0, *Rest]]) -> P0: ...
+    def p1[P0, P1, *Rest](self: ParamSet[tuple[P0, P1, *Rest]]) -> P1: ...
+    def p2[P0, P1, P2, *Rest](self: ParamSet[tuple[P0, P1, P2, *Rest]]) -> P2: ...
+    def p3[P0, P1, P2, P3, *Rest](self: ParamSet[tuple[P0, P1, P2, P3, *Rest]]) -> P3: ...
+    def p4[P0, P1, P2, P3, P4, *Rest](
+        self: ParamSet[tuple[P0, P1, P2, P3, P4, *Rest]],
+    ) -> P4: ...
+    def p5[P0, P1, P2, P3, P4, P5, *Rest](
+        self: ParamSet[tuple[P0, P1, P2, P3, P4, P5, *Rest]],
+    ) -> P5: ...
+    def p6[P0, P1, P2, P3, P4, P5, P6, *Rest](
+        self: ParamSet[tuple[P0, P1, P2, P3, P4, P5, P6, *Rest]],
+    ) -> P6: ...
+    def p7[P0, P1, P2, P3, P4, P5, P6, P7](
+        self: ParamSet[tuple[P0, P1, P2, P3, P4, P5, P6, P7]],
+    ) -> P7: ...
 
 class MessageMutator(Generic[M]):
     """Combined reader/writer for a custom Python message channel.

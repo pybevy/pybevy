@@ -932,6 +932,10 @@ where
 pub struct DynamicConditionCore<B: SystemInterpreter>(DynamicSystemCore<B, BoolOutput>);
 
 impl<B: SystemInterpreter> DynamicConditionCore<B> {
+    pub fn handle(&self) -> &SystemHandle<B> {
+        self.0.handle()
+    }
+
     pub fn history(&self) -> SystemRunHistory {
         self.0.history()
     }

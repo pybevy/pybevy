@@ -409,6 +409,22 @@ impl<V: Send + Sync + 'static> MessageStore<V> {
         true
     }
 
+    /// Inspect retained values without blocking or cloning interpreter handles.
+    pub fn try_visit_values<E>(
+        &self,
+        mut visit: impl FnMut(&V) -> Result<(), E>,
+    ) -> Option<Result<(), E>> {
+        let log = self.inner.try_lock().ok()?;
+        Some((|| {
+            for channel in log.channels.values() {
+                for record in channel.previous.iter().chain(channel.current.iter()) {
+                    visit(&record.value)?;
+                }
+            }
+            Ok(())
+        })())
+    }
+
     #[must_use]
     pub fn contains_channel(&self, channel: MessageChannelId) -> bool {
         self.lock_log().channels.contains_key(&channel)

@@ -1,6 +1,7 @@
 use pybevy_core::public_error::{
-    ANY_OF_VIEW_UNSUPPORTED, OR_VIEW_UNSUPPORTED, QUERY_BUILTIN_TUPLE_REQUIRED, RESOURCE_VIEW_DATA,
-    RESOURCE_VIEW_FILTER, parenthesized_filter_tuple,
+    ANY_OF_VIEW_UNSUPPORTED, OR_VIEW_UNSUPPORTED, QUERY_BUILTIN_TUPLE_REQUIRED,
+    QUERY_DATA_TUPLE_REQUIRED, RESOURCE_VIEW_DATA, RESOURCE_VIEW_FILTER, VIEW_DATA_REQUIRED,
+    parenthesized_filter_tuple, variadic_filters,
 };
 use pyo3::{
     IntoPyObjectExt,
@@ -16,8 +17,8 @@ use crate::ecs::{
     query::{
         ParamType,
         query_helpers::{
-            extract_param_type_from_query_param, is_parenthesized_filter_tuple,
-            is_typing_tuple_alias,
+            extract_param_type_from_query_param, is_filter_position_argument,
+            is_parenthesized_filter_tuple, is_typing_tuple_alias,
         },
     },
 };
@@ -57,14 +58,30 @@ pub(crate) fn construct_view_class_item(
     {
         return Err(PyTypeError::new_err(parenthesized_filter_tuple("View")));
     }
+    if let Ok(items) = key.cast::<PyTuple>()
+        && items.len() > 2
+        && items
+            .iter()
+            .skip(1)
+            .all(|item| is_filter_position_argument(py, &item))
+    {
+        return Err(PyTypeError::new_err(variadic_filters("View")));
+    }
 
     let param_types = match key.try_iter() {
         Ok(iter) => {
             // Multiple parameters (tuple)
             let mut components = Vec::new();
-            for item in iter {
+            for (index, item) in iter.enumerate() {
                 let item = item?;
                 let (_single, new_components) = extract_param_type_from_query_param(py, &item)?;
+                if index > 0
+                    && new_components
+                        .iter()
+                        .any(|component| !matches!(component, ParamType::Filter(_)))
+                {
+                    return Err(PyTypeError::new_err(QUERY_DATA_TUPLE_REQUIRED));
+                }
                 components.extend(new_components);
             }
             components
@@ -160,6 +177,10 @@ pub(crate) fn construct_view_class_item(
                 has_entity = true;
             }
         }
+    }
+
+    if components.is_empty() {
+        return Err(PyTypeError::new_err(VIEW_DATA_REQUIRED));
     }
 
     PyViewParam {

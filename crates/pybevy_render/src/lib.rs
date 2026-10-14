@@ -5,6 +5,7 @@ pub mod extent3d;
 pub mod face;
 pub mod mip_bias;
 pub mod msaa;
+pub mod pipeline_drain;
 pub mod plugin;
 pub mod power_preference;
 pub mod readback;

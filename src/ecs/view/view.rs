@@ -576,6 +576,46 @@ pub(crate) fn get_component_field_info(
     }
 }
 
+fn ensure_batch_column_supported(
+    component_type: &Bound<'_, PyType>,
+    resolved_type: &PyComponentType,
+) -> PyResult<()> {
+    let name = component_type.name()?;
+    match resolved_type {
+        PyComponentType::Custom(_) => {
+            let ComponentStorageType::Wrapper(_) =
+                ComponentStorageType::from_python_class(component_type)?
+            else {
+                return Err(PyTypeError::new_err(format!(
+                    "Component type {name} uses Python-object storage, which is not supported by View batches"
+                )));
+            };
+            let layout = ComponentLayout::from_annotations(component_type)?;
+            if !layout
+                .fields
+                .iter()
+                .any(|field| field.field_type.to_field_type().is_some())
+            {
+                return Err(PyTypeError::new_err(format!(
+                    "Component type {name} has no View-compatible fields"
+                )));
+            }
+        }
+        PyComponentType::Dynamic(type_ptr) => {
+            let supports_view = global_registry::get_bridge_by_py_type(*type_ptr)
+                .and_then(|bridge| bridge.view_bridge())
+                .is_some();
+            if !supports_view {
+                return Err(PyTypeError::new_err(format!(
+                    "Component type {name} does not support View batches"
+                )));
+            }
+        }
+        PyComponentType::Resource(_) => unreachable!("resources are rejected in View parameters"),
+    }
+    Ok(())
+}
+
 /// The owner, field and domain that a checked View write to `field_name` must
 /// satisfy, or `None` when View writes to it are unchecked.
 pub(crate) fn native_view_field_domains(
@@ -910,6 +950,7 @@ impl PyBatch {
                 component_type.name()?
             )));
         }
+        ensure_batch_column_supported(component_type, &comp_type)?;
 
         let component_id = self.get_component_id(&comp_type, py)?;
         let column = self
@@ -917,8 +958,8 @@ impl PyBatch {
             .column(component_id, false)
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         let view_column = match comp_type {
-            PyComponentType::Custom(type_ptr) => {
-                PyViewColumn::from_batch_column_with_type(column, type_ptr)
+            PyComponentType::Custom(_) => {
+                PyViewColumn::from_batch_column_with_type(column, component_type)
             }
             PyComponentType::Dynamic(_) => {
                 PyViewColumn::from_batch_column_with_builtin_type(column, comp_type)
@@ -965,6 +1006,7 @@ impl PyBatch {
                 component_type.name()?
             )));
         }
+        ensure_batch_column_supported(component_type, &comp_type)?;
 
         let component_id = self.get_component_id(&comp_type, py)?;
         let column = self
@@ -972,8 +1014,8 @@ impl PyBatch {
             .column(component_id, true)
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         let view_column = match comp_type {
-            PyComponentType::Custom(type_ptr) => {
-                PyViewColumn::from_batch_column_with_type(column, type_ptr)
+            PyComponentType::Custom(_) => {
+                PyViewColumn::from_batch_column_with_type(column, component_type)
             }
             PyComponentType::Dynamic(_) => {
                 PyViewColumn::from_batch_column_with_builtin_type(column, comp_type)

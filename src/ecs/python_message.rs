@@ -1,6 +1,10 @@
 //! PyO3 adapter state for the interpreter-neutral Python message store.
 
-use std::{alloc::Layout, collections::HashMap, sync::Arc};
+use std::{
+    alloc::Layout,
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use bevy::{
     app::{App, First},
@@ -17,6 +21,7 @@ use pybevy_ecs::shared::message_store::{
     MessageTypeKey, WeakMessageStore,
 };
 use pyo3::{
+    PyTraverseError, PyVisit,
     exceptions::{PyRuntimeError, PyTypeError},
     ffi::PyTypeObject,
     prelude::*,
@@ -87,6 +92,38 @@ impl Clone for ResolvedPythonMessage {
             class: self.class.clone_ref(py),
         })
     }
+}
+
+pub(crate) fn traverse_python_messages(
+    world: UnsafeWorldCell<'_>,
+    visit: &PyVisit<'_>,
+) -> Result<(), PyTraverseError> {
+    // SAFETY: the World/App owner holds its GC traversal gate.
+    if let Some(table) = unsafe { world.get_resource::<PythonMessageClassTable>() } {
+        let mut owners = HashSet::new();
+        for class in table
+            .by_type
+            .values()
+            .chain(table.newest_by_channel.values())
+        {
+            if owners.insert(Arc::as_ptr(class)) {
+                visit.call(class.as_ref())?;
+            }
+        }
+    }
+    // SAFETY: the gate excludes message-store writes, including detached schedules.
+    if let Some(store) = unsafe { world.get_resource::<PythonMessageStore>() } {
+        let mut owners = HashSet::new();
+        if let Some(result) = store.try_visit_values(|value| {
+            if owners.insert(Arc::as_ptr(value)) {
+                visit.call(value.as_ref())?;
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+    }
+    Ok(())
 }
 
 fn type_key(type_ptr: *const PyTypeObject) -> MessageTypeKey {

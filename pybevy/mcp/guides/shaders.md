@@ -337,8 +337,7 @@ array of vec4 elements. The field value remains a typed buffer handle; PyBevy
 assigns binding numbers and generates matching WGSL declarations. `StorageBinding`
 is a declaration, not a buffer allocation or CPU data serializer.
 `ShaderMaterialPlugin()` enables all custom material layouts. Add it once after
-`DefaultPlugins`. The existing `StorageShaderMaterialPlugin()` remains supported;
-there is no need to add both.
+`DefaultPlugins`.
 
 <!-- pybevy-snippet: typecheck -->
 ```python

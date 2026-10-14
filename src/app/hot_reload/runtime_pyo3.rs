@@ -47,6 +47,7 @@ use crate::{
             ensure_state_transition_system_registered, register_reloaded_state_machine,
             registered_state_machine_count, retained_state_member_missing,
         },
+        system::SystemGcRegistry,
         system_config::{
             InstalledSystemSetConfigs, PySystemConfig, SystemSetConfigIdentity, build_set_config,
             build_system_unit, planned_set_node, planned_system_node, system_set_config_identity,
@@ -76,6 +77,7 @@ struct PreparedSystemSetConfig {
     schedule: PyStage,
     config: ScheduleConfigs<InternedSystemSet>,
     identities: Vec<SystemSetConfigIdentity>,
+    handles: Vec<DynamicSystemHandle>,
 }
 
 pub(crate) fn collect_system_names(system: &Bound<'_, PyAny>, names: &mut HashSet<String>) {
@@ -437,6 +439,7 @@ impl Pyo3ReloadRuntime {
                         let mut configs = Vec::new();
                         let mut identities = Vec::new();
                         let mut existing = 0usize;
+                        let mut handles = Vec::new();
                         for member in members.iter() {
                             let identity = system_set_config_identity(&member)?;
                             if let Some(installed) =
@@ -447,13 +450,15 @@ impl Pyo3ReloadRuntime {
                                 }
                                 existing += 1;
                             }
-                            configs.push(build_set_config(
+                            let (config, condition_handles) = build_set_config(
                                 &member,
                                 generation,
                                 self.error_state.clone(),
                                 error_buffer.clone(),
                                 system_stage,
-                            )?);
+                            )?;
+                            configs.push(config);
+                            handles.extend(condition_handles);
                             identities.push(identity);
                         }
                         if existing == identities.len() {
@@ -472,6 +477,7 @@ impl Pyo3ReloadRuntime {
                                 metadata: Chain::Chained(Default::default()),
                             },
                             identities,
+                            handles,
                         });
                     } else {
                         let identity = system_set_config_identity(value)?;
@@ -483,7 +489,7 @@ impl Pyo3ReloadRuntime {
                             }
                             continue;
                         }
-                        let config = build_set_config(
+                        let (config, handles) = build_set_config(
                             value,
                             generation,
                             self.error_state.clone(),
@@ -494,6 +500,7 @@ impl Pyo3ReloadRuntime {
                             schedule,
                             config,
                             identities: vec![identity],
+                            handles,
                         });
                     }
                 }
@@ -859,6 +866,9 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
             world.schedule_scope(label, |_world, schedule| {
                 schedule.configure_sets(prepared.config);
             });
+            world
+                .get_resource_or_insert_with(SystemGcRegistry::default)
+                .register_handles(&prepared.handles);
             let mut installed =
                 world.get_resource_or_insert_with(InstalledSystemSetConfigs::default);
             for identity in prepared.identities {
