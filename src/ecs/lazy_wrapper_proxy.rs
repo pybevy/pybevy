@@ -260,6 +260,34 @@ impl PyLazyWrapperProxy {
         }
     }
 
+    /// Effective base pointer for a write, resolved with mutable authority.
+    ///
+    /// Same contract as [`Self::resolved_ptr`]; callers must already have
+    /// checked that this proxy is writable.
+    #[inline]
+    fn resolved_write_ptr(&self) -> PyResult<*mut u8> {
+        match self.kind {
+            ProxyKind::WorldGet => {
+                // SAFETY: the world cell is valid while `validity` is active, the
+                // proxy holds write access, and no other reference to this
+                // component is live during synchronous attribute assignment.
+                unsafe {
+                    pybevy_ecs::shared::change_tracking::reresolve_wrapper_ptr_mut(
+                        self.entity,
+                        self.world_cell,
+                        self.component_id,
+                    )
+                }
+                .ok_or_else(|| {
+                    PyRuntimeError::new_err(
+                        "Component no longer available (entity despawned or component removed)",
+                    )
+                })
+            }
+            ProxyKind::QueryItem => Ok(self.data_ptr),
+        }
+    }
+
     /// Attach lazy Bevy change tracking to a borrowed query field.
     fn query_field_validity(&self, offset: usize) -> ValidityFlagWithMode {
         let validity = self.validity.clone();
@@ -308,35 +336,43 @@ impl PyLazyWrapperProxy {
         // Read bytes at the field's offset. For long-lived proxies this re-resolves
         // the component's current address (the cached data_ptr may dangle after a
         // structural mutation); for query iteration it is the cached pointer.
+        // SAFETY: validity is checked and the registered layout bounds the live component field.
         let bytes_ptr = unsafe { self.resolved_ptr()?.add(field.offset) };
 
         // Deserialize based on field type
         let value: Py<PyAny> = match field.field_type {
             PrimitiveType::F32 => {
+                // SAFETY: the validated layout identifies an aligned live f32 field.
                 let val = unsafe { *(bytes_ptr as *const f32) };
                 val.into_pyobject(py)?.unbind().into()
             }
             PrimitiveType::F64 => {
+                // SAFETY: the validated layout identifies an aligned live f64 field.
                 let val = unsafe { *(bytes_ptr as *const f64) };
                 val.into_pyobject(py)?.unbind().into()
             }
             PrimitiveType::I32 => {
+                // SAFETY: the validated layout identifies an aligned live i32 field.
                 let val = unsafe { *(bytes_ptr as *const i32) };
                 val.into_pyobject(py)?.unbind().into()
             }
             PrimitiveType::I64 => {
+                // SAFETY: the validated layout identifies an aligned live i64 field.
                 let val = unsafe { *(bytes_ptr as *const i64) };
                 val.into_pyobject(py)?.unbind().into()
             }
             PrimitiveType::U32 => {
+                // SAFETY: the validated layout identifies an aligned live u32 field.
                 let val = unsafe { *(bytes_ptr as *const u32) };
                 val.into_pyobject(py)?.unbind().into()
             }
             PrimitiveType::U64 => {
+                // SAFETY: the validated layout identifies an aligned live u64 field.
                 let val = unsafe { *(bytes_ptr as *const u64) };
                 val.into_pyobject(py)?.unbind().into()
             }
             PrimitiveType::Bool => {
+                // SAFETY: the validated layout identifies a live initialized bool field.
                 let val = unsafe { *(bytes_ptr as *const bool) };
                 Py::from(pyo3::types::PyBool::new(py, val)).into()
             }
@@ -443,7 +479,8 @@ impl PyLazyWrapperProxy {
         // between. For long-lived proxies this fetches the component's current address
         // (erroring if the entity was despawned or the component removed since
         // construction); for query iteration it is the cached pointer.
-        let bytes_ptr = unsafe { self.resolved_ptr()?.add(offset) };
+        // SAFETY: writable validity and the registered layout bound the re-resolved field.
+        let bytes_ptr = unsafe { self.resolved_write_ptr()?.add(offset) };
         // SAFETY: bytes_ptr is the field's current address; `write` matches field_type.
         unsafe { write.write_to_ptr(bytes_ptr) };
 

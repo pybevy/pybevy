@@ -80,6 +80,7 @@ mod tests {
         let asset_id = Handle::<TestAsset>::default().id().untyped();
         let ptr = Box::into_raw(Box::new(TestAsset));
         let world_cell = world.as_unsafe_world_cell_readonly();
+        // SAFETY: The Box and read-only World outlive storage; the pointer is only read.
         let storage = unsafe {
             crate::AssetStorage::borrowed_readonly_tracked(
                 ptr,
@@ -98,6 +99,7 @@ mod tests {
         drop(storage);
         assert!(ensure_no_live_asset_access(&world, "world.spawn()").is_ok());
 
+        // SAFETY: The storage borrow is gone; this is the unique Box::into_raw allocation.
         unsafe { drop(Box::from_raw(ptr)) };
     }
 

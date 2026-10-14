@@ -1110,7 +1110,7 @@ fn generate_bridge_tokens(
                 if let Some(arr) = kwargs.get_item(#name_str)? {
                     // Integer inputs are checked before the f32 normalization can saturate them.
                     if let Some(column) = pybevy_core::batch_integer_column_of(&default_val #accessor) {
-                        pybevy_core::check_integer_batch_column(&arr, #qualified_name, column)?;
+                        pybevy_core::check_f32_integer_batch_column(&arr, #qualified_name, column)?;
                     }
                     if let Some((shape, portable_values)) =
                         pybevy_core::portable_f32_batch_column(&arr)?

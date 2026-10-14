@@ -168,34 +168,42 @@ impl WrapperSize {
     ) -> *mut u8 {
         match self {
             WrapperSize::W8 => {
+                // SAFETY: The caller guarantees this wrapper type; the input borrow supplies authority.
                 let wrapper = unsafe { untyped.as_mut().deref_mut::<ComponentWrapper8>() };
                 wrapper.data.as_mut_ptr()
             }
             WrapperSize::W16 => {
+                // SAFETY: The caller guarantees this wrapper type; the input borrow supplies authority.
                 let wrapper = unsafe { untyped.as_mut().deref_mut::<ComponentWrapper16>() };
                 wrapper.data.as_mut_ptr()
             }
             WrapperSize::W32 => {
+                // SAFETY: The caller guarantees this wrapper type; the input borrow supplies authority.
                 let wrapper = unsafe { untyped.as_mut().deref_mut::<ComponentWrapper32>() };
                 wrapper.data.as_mut_ptr()
             }
             WrapperSize::W64 => {
+                // SAFETY: The caller guarantees this wrapper type; the input borrow supplies authority.
                 let wrapper = unsafe { untyped.as_mut().deref_mut::<ComponentWrapper64>() };
                 wrapper.data.as_mut_ptr()
             }
             WrapperSize::W128 => {
+                // SAFETY: The caller guarantees this wrapper type; the input borrow supplies authority.
                 let wrapper = unsafe { untyped.as_mut().deref_mut::<ComponentWrapper128>() };
                 wrapper.data.as_mut_ptr()
             }
             WrapperSize::W256 => {
+                // SAFETY: The caller guarantees this wrapper type; the input borrow supplies authority.
                 let wrapper = unsafe { untyped.as_mut().deref_mut::<ComponentWrapper256>() };
                 wrapper.data.as_mut_ptr()
             }
             WrapperSize::W512 => {
+                // SAFETY: The caller guarantees this wrapper type; the input borrow supplies authority.
                 let wrapper = unsafe { untyped.as_mut().deref_mut::<ComponentWrapper512>() };
                 wrapper.data.as_mut_ptr()
             }
             WrapperSize::W1024 => {
+                // SAFETY: The caller guarantees this wrapper type; the input borrow supplies authority.
                 let wrapper = unsafe { untyped.as_mut().deref_mut::<ComponentWrapper1024>() };
                 wrapper.data.as_mut_ptr()
             }
@@ -251,34 +259,42 @@ impl WrapperSize {
     pub unsafe fn get_ref_ptr_as_mut(&self, untyped: bevy::ecs::ptr::Ptr) -> *mut u8 {
         match self {
             WrapperSize::W8 => {
+                // SAFETY: The caller guarantees this wrapper type; the input borrow supplies authority.
                 let wrapper = unsafe { untyped.deref::<ComponentWrapper8>() };
                 wrapper.data.as_ptr() as *mut u8
             }
             WrapperSize::W16 => {
+                // SAFETY: The caller guarantees this wrapper type; the input borrow supplies authority.
                 let wrapper = unsafe { untyped.deref::<ComponentWrapper16>() };
                 wrapper.data.as_ptr() as *mut u8
             }
             WrapperSize::W32 => {
+                // SAFETY: The caller guarantees this wrapper type; the input borrow supplies authority.
                 let wrapper = unsafe { untyped.deref::<ComponentWrapper32>() };
                 wrapper.data.as_ptr() as *mut u8
             }
             WrapperSize::W64 => {
+                // SAFETY: The caller guarantees this wrapper type; the input borrow supplies authority.
                 let wrapper = unsafe { untyped.deref::<ComponentWrapper64>() };
                 wrapper.data.as_ptr() as *mut u8
             }
             WrapperSize::W128 => {
+                // SAFETY: The caller guarantees this wrapper type; the input borrow supplies authority.
                 let wrapper = unsafe { untyped.deref::<ComponentWrapper128>() };
                 wrapper.data.as_ptr() as *mut u8
             }
             WrapperSize::W256 => {
+                // SAFETY: The caller guarantees this wrapper type; the input borrow supplies authority.
                 let wrapper = unsafe { untyped.deref::<ComponentWrapper256>() };
                 wrapper.data.as_ptr() as *mut u8
             }
             WrapperSize::W512 => {
+                // SAFETY: The caller guarantees this wrapper type; the input borrow supplies authority.
                 let wrapper = unsafe { untyped.deref::<ComponentWrapper512>() };
                 wrapper.data.as_ptr() as *mut u8
             }
             WrapperSize::W1024 => {
+                // SAFETY: The caller guarantees this wrapper type; the input borrow supplies authority.
                 let wrapper = unsafe { untyped.deref::<ComponentWrapper1024>() };
                 wrapper.data.as_ptr() as *mut u8
             }
@@ -298,41 +314,49 @@ impl WrapperSize {
         match self {
             WrapperSize::W8 => {
                 let data_slice =
+                    // SAFETY: The caller guarantees the selected wrapper type and initialized row count.
                     unsafe { column.get_data_slice::<ComponentWrapper8>(entity_count) };
                 data_slice.as_ptr() as *const u8
             }
             WrapperSize::W16 => {
                 let data_slice =
+                    // SAFETY: The caller guarantees the selected wrapper type and initialized row count.
                     unsafe { column.get_data_slice::<ComponentWrapper16>(entity_count) };
                 data_slice.as_ptr() as *const u8
             }
             WrapperSize::W32 => {
                 let data_slice =
+                    // SAFETY: The caller guarantees the selected wrapper type and initialized row count.
                     unsafe { column.get_data_slice::<ComponentWrapper32>(entity_count) };
                 data_slice.as_ptr() as *const u8
             }
             WrapperSize::W64 => {
                 let data_slice =
+                    // SAFETY: The caller guarantees the selected wrapper type and initialized row count.
                     unsafe { column.get_data_slice::<ComponentWrapper64>(entity_count) };
                 data_slice.as_ptr() as *const u8
             }
             WrapperSize::W128 => {
                 let data_slice =
+                    // SAFETY: The caller guarantees the selected wrapper type and initialized row count.
                     unsafe { column.get_data_slice::<ComponentWrapper128>(entity_count) };
                 data_slice.as_ptr() as *const u8
             }
             WrapperSize::W256 => {
                 let data_slice =
+                    // SAFETY: The caller guarantees the selected wrapper type and initialized row count.
                     unsafe { column.get_data_slice::<ComponentWrapper256>(entity_count) };
                 data_slice.as_ptr() as *const u8
             }
             WrapperSize::W512 => {
                 let data_slice =
+                    // SAFETY: The caller guarantees the selected wrapper type and initialized row count.
                     unsafe { column.get_data_slice::<ComponentWrapper512>(entity_count) };
                 data_slice.as_ptr() as *const u8
             }
             WrapperSize::W1024 => {
                 let data_slice =
+                    // SAFETY: The caller guarantees the selected wrapper type and initialized row count.
                     unsafe { column.get_data_slice::<ComponentWrapper1024>(entity_count) };
                 data_slice.as_ptr() as *const u8
             }

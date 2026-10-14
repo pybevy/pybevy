@@ -2620,6 +2620,7 @@ mod tests {
         let validity = ValidityFlag::new_read();
         let id = test_id();
 
+        // SAFETY: The local value outlives storage and is only read through this borrow.
         let storage = unsafe {
             AssetStorage::borrowed_readonly(
                 &asset as *const TestAsset,
@@ -2642,6 +2643,7 @@ mod tests {
         let validity = ValidityFlag::new_read();
         let id = test_id();
 
+        // SAFETY: The local value outlives storage and is only read through this borrow.
         let mut storage = unsafe {
             AssetStorage::borrowed_readonly(
                 &asset as *const TestAsset,
@@ -2666,6 +2668,7 @@ mod tests {
         let validity = ValidityFlag::new_write();
         let id = test_id();
 
+        // SAFETY: The local value outlives storage; all guarded accesses are sequential.
         let mut storage = unsafe {
             AssetStorage::borrowed_mut(
                 &mut asset as *mut TestAsset,
@@ -2690,6 +2693,7 @@ mod tests {
         let validity = ValidityFlag::new_read();
         let id = test_id();
 
+        // SAFETY: The local value outlives storage and is only read through this borrow.
         let storage = unsafe {
             AssetStorage::borrowed_readonly(
                 &asset as *const TestAsset,
@@ -2721,6 +2725,7 @@ mod tests {
         let validity = ValidityFlag::new_read();
         let id = test_id();
 
+        // SAFETY: The local value outlives storage and is only read through this borrow.
         let storage = unsafe {
             AssetStorage::borrowed_readonly(
                 &asset as *const TestAsset,
@@ -2755,6 +2760,7 @@ mod tests {
         let validity = ValidityFlag::new_read();
         let id = test_id();
 
+        // SAFETY: The local value outlives storage and is only read through this borrow.
         let mut storage = unsafe {
             AssetStorage::borrowed_readonly(
                 &asset as *const TestAsset,
@@ -2772,6 +2778,7 @@ mod tests {
         let validity = ValidityFlag::new_write();
         let id = test_id();
 
+        // SAFETY: The local value outlives storage; all guarded accesses are sequential.
         let mut storage = unsafe {
             AssetStorage::borrowed_mut(
                 &mut asset as *mut TestAsset,

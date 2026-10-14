@@ -18,7 +18,7 @@ use std::{
 
 use bevy::{
     ecs::{
-        change_detection::{CheckChangeTicks, Tick},
+        change_detection::{CheckChangeTicks, MAX_CHANGE_AGE, Tick},
         entity::Entity,
         query::FilteredAccessSet,
         schedule::{BoxedCondition, InternedSystemSet},
@@ -284,6 +284,9 @@ pub enum CallOutcome<Value = ()> {
     Unit,
     Bool(bool),
     Value(Value),
+    /// Parameter validation skipped the callback before it ran, like Bevy's
+    /// `SystemParamValidationError::skipped`; no run is recorded.
+    Skipped,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -309,6 +312,9 @@ pub struct ErrorReport {
 pub struct InterpreterFailure<Token> {
     pub report: ErrorReport,
     pub exception: Option<Token>,
+    /// False when the failure happened while building arguments, before the
+    /// callback ran; like a failed Bevy parameter fetch, no run is recorded.
+    pub reached_callback: bool,
 }
 
 pub enum CallablePreflight<Call, Token> {
@@ -498,6 +504,7 @@ impl<Value> OutputPolicy<Value> for BoolOutput {
     fn finish(outcome: CallOutcome<Value>) -> Self::Out {
         match outcome {
             CallOutcome::Bool(value) => value,
+            CallOutcome::Skipped => false,
             CallOutcome::Unit => {
                 panic!("SystemInterpreter returned unit output for a bool condition")
             }
@@ -523,6 +530,7 @@ impl<Value: 'static> OutputPolicy<Value> for OptionalValueOutput {
     fn finish(outcome: CallOutcome<Value>) -> Self::Out {
         match outcome {
             CallOutcome::Value(value) => Some(value),
+            CallOutcome::Skipped => None,
             CallOutcome::Unit => {
                 panic!("SystemInterpreter returned unit output for a value stage")
             }
@@ -769,8 +777,14 @@ where
             }
         };
 
-        world.increment_change_tick();
-        let this_run = world.change_tick();
+        // Mirror Bevy: function systems run at the pre-increment tick; exclusive
+        // systems run at the current tick and advance it after their flush.
+        let exclusive = self.flags.needs_exclusive;
+        let this_run = if exclusive {
+            world.change_tick()
+        } else {
+            world.increment_change_tick()
+        };
         let ticks = RunTicks {
             last_run: self.last_run,
             this_run,
@@ -788,7 +802,7 @@ where
         };
         let started = Instant::now();
 
-        let call_result = {
+        let call = |world: UnsafeWorldCell<'_>| {
             let validity = ValidityFlag::new();
             let validity_guard = ValidityGuard::for_world(validity.clone(), world.id());
             let state = self
@@ -820,19 +834,22 @@ where
                 )
             };
             drop(validity_guard);
-            result
+            (result, started.elapsed())
         };
-        let duration = started.elapsed();
+        let ((call_result, duration), command_failure, finished_run) = if exclusive {
+            // SAFETY: the exclusive flag grants whole-World access for the run.
+            let world = unsafe { world.world_mut() };
+            world.last_change_tick_scope(self.last_run, |world| {
+                let outcome = call(world.as_unsafe_world_cell());
+                world.flush();
+                let failure = self.interpreter.take_world_command_failure(world);
+                (outcome, failure, world.increment_change_tick())
+            })
+        } else {
+            (call(world), None, this_run)
+        };
 
         self.command_queue.append(&mut local_queue);
-        let command_failure = if self.flags.needs_exclusive {
-            // SAFETY: the exclusive flag grants whole-World access after arguments expire.
-            let world = unsafe { world.world_mut() };
-            world.flush();
-            self.interpreter.take_world_command_failure(world)
-        } else {
-            None
-        };
         if let Some(trace_run) = trace_run {
             self.pending_trace_runs.push(trace_run);
         }
@@ -858,8 +875,8 @@ where
             profiler.record(&self.metadata.name, duration, self.stage, app_time_seconds);
         }
 
-        self.last_run = this_run;
-        self.history.record(this_run);
+        self.last_run = finished_run;
+        self.history.record(finished_run);
         Ok(output)
     }
 
@@ -998,6 +1015,28 @@ impl<B: SystemInterpreter> System for DynamicConditionCore<B> {
 // generation/profiling infrastructure accesses are reads.
 unsafe impl<B: SystemInterpreter> ReadOnlySystem for DynamicConditionCore<B> {}
 
+/// Last-run tick of one observer registration, shared by its registry snapshots.
+#[derive(Clone, Debug, Default)]
+pub struct ObserverRunHistory(Arc<AtomicU32>);
+
+impl ObserverRunHistory {
+    /// The change window start for a run at `this_run`, aged like Bevy's
+    /// `check_change_ticks` so a long-idle observer never wraps around.
+    #[must_use]
+    pub fn last_run(&self, this_run: Tick) -> Tick {
+        let last_run = self.0.load(Ordering::Relaxed);
+        if this_run.get().wrapping_sub(last_run) > MAX_CHANGE_AGE {
+            Tick::new(this_run.get().wrapping_sub(MAX_CHANGE_AGE))
+        } else {
+            Tick::new(last_run)
+        }
+    }
+
+    pub fn record(&self, tick: Tick) {
+        self.0.store(tick.get(), Ordering::Relaxed);
+    }
+}
+
 pub type ObserverDispatchResult<B> =
     Result<(), InterpreterFailure<<B as SystemInterpreter>::ExceptionToken>>;
 
@@ -1013,6 +1052,7 @@ pub unsafe fn execute_observer<B: SystemInterpreter>(
     retained: &SystemHandle<B>,
     params: &B::ParamPlan,
     persistent: &B::ObserverPersistentState,
+    history: &ObserverRunHistory,
     failure_sink: &B::FailureSink,
     metadata: &CallMetadata,
     current_generation: Option<u32>,
@@ -1031,9 +1071,10 @@ pub unsafe fn execute_observer<B: SystemInterpreter>(
         }
     };
     let mut state = interpreter.make_observer_run_state(params, persistent, world);
+    let this_run = world.increment_change_tick();
     let ticks = RunTicks {
-        last_run: Tick::new(0),
-        this_run: world.change_tick(),
+        last_run: history.last_run(this_run),
+        this_run,
     };
     let mut local_queue = CommandQueue::default();
     let trace_sink = parity_trace_sink(world);
@@ -1061,6 +1102,14 @@ pub unsafe fn execute_observer<B: SystemInterpreter>(
         let result =
             unsafe { interpreter.build_args_and_call_observer(prepared, params, &mut state, ctx) };
         drop(validity_guard);
+        let ran = match &result {
+            Ok(CallOutcome::Skipped) => false,
+            Ok(_) => true,
+            Err(failure) => failure.reached_callback,
+        };
+        if ran {
+            history.record(this_run);
+        }
         result
     };
 
@@ -1247,6 +1296,7 @@ mod tests {
         sink: FailureLog,
         last_validity: Arc<Mutex<Option<ValidityFlag>>>,
         last_ticks: Arc<Mutex<Option<RunTicks>>>,
+        last_world_window: Arc<Mutex<Option<(Tick, Tick)>>>,
         observer_state_ids: Arc<Mutex<Vec<usize>>>,
         next_observer_state: AtomicUsize,
         observer_depth: AtomicUsize,
@@ -1259,6 +1309,7 @@ mod tests {
                 sink,
                 last_validity,
                 last_ticks: Arc::new(Mutex::new(None)),
+                last_world_window: Arc::new(Mutex::new(None)),
                 observer_state_ids: Arc::new(Mutex::new(Vec::new())),
                 next_observer_state: AtomicUsize::new(0),
                 observer_depth: AtomicUsize::new(0),
@@ -1273,6 +1324,7 @@ mod tests {
                     traceback: Some("fake traceback".to_string()),
                 },
                 exception: Some(format!("token: {message}")),
+                reached_callback: true,
             }
         }
 
@@ -1372,6 +1424,11 @@ mod tests {
                 .last_ticks
                 .lock()
                 .unwrap_or_else(|poison| poison.into_inner()) = Some(ctx.ticks);
+            *self
+                .last_world_window
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner()) =
+                Some((ctx.world.last_change_tick(), ctx.world.change_tick()));
             state.runs += 1;
             if params.queue_world_counter {
                 let validity = ctx.validity.clone();
@@ -1411,6 +1468,10 @@ mod tests {
         ) -> Result<CallOutcome<Self::ValueToken>, InterpreterFailure<Self::ExceptionToken>>
         {
             self.assert_retained_unlocked();
+            *self
+                .last_ticks
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner()) = Some(ctx.ticks);
             self.observer_state_ids
                 .lock()
                 .unwrap_or_else(|poison| poison.into_inner())
@@ -1446,6 +1507,7 @@ mod tests {
                         &handle,
                         params,
                         &(),
+                        &ObserverRunHistory::default(),
                         &self.sink,
                         &metadata,
                         None,
@@ -1491,6 +1553,7 @@ mod tests {
         validity: Arc<Mutex<Option<ValidityFlag>>>,
         observer_ids: Arc<Mutex<Vec<usize>>>,
         ticks: Arc<Mutex<Option<RunTicks>>>,
+        world_window: Arc<Mutex<Option<(Tick, Tick)>>>,
     }
 
     fn fixture(call: FakeCall, params: FakePlan, kind: InvocationKind) -> FakeFixture {
@@ -1499,6 +1562,7 @@ mod tests {
         let interpreter = FakeInterpreter::new(sink.clone(), validity.clone());
         let observer_ids = interpreter.observer_state_ids.clone();
         let ticks = interpreter.last_ticks.clone();
+        let world_window = interpreter.last_world_window.clone();
         let retained = Arc::new(Mutex::new(FakeRetained::Ready(call)));
         *interpreter
             .observer_handle
@@ -1521,6 +1585,7 @@ mod tests {
             validity,
             observer_ids,
             ticks,
+            world_window,
         }
     }
 
@@ -1641,7 +1706,7 @@ mod tests {
     }
 
     #[test]
-    fn run_uses_the_freshly_incremented_tick_as_this_run_and_last_run() {
+    fn function_system_runs_at_the_pre_increment_tick() {
         let mut world = World::new();
         let fixture = fixture(FakeCall::Unit, FakePlan::default(), InvocationKind::System);
         let ticks = fixture.ticks.clone();
@@ -1650,12 +1715,40 @@ mod tests {
 
         let before = world.change_tick();
         system.run((), &mut world).unwrap();
-        let after = world.change_tick();
         let captured = ticks.lock().unwrap().expect("run ticks captured");
 
-        assert_ne!(after, before);
-        assert_eq!(captured.this_run, after);
-        assert_eq!(system.get_last_run(), after);
+        assert_eq!(captured.this_run, before);
+        assert_eq!(system.get_last_run(), before);
+        assert_eq!(world.change_tick(), Tick::new(before.get() + 1));
+    }
+
+    #[test]
+    fn exclusive_system_scopes_last_change_tick_and_advances_after_flush() {
+        let mut world = World::new();
+        let mut fixture = fixture(FakeCall::Unit, FakePlan::default(), InvocationKind::System);
+        fixture.prepared.flags.needs_exclusive = true;
+        let ticks = fixture.ticks.clone();
+        let window = fixture.world_window.clone();
+        let mut system = DynamicSystemCore::<_, UnitOutput>::new(fixture.prepared);
+        system.initialize(&mut world);
+        for _ in 0..5 {
+            world.increment_change_tick();
+        }
+        system.set_last_run(Tick::new(2));
+        world.clear_trackers();
+
+        let before = world.change_tick();
+        let outer_last_change = world.last_change_tick();
+        // SAFETY: the test owns the World exclusively and initialized this system.
+        unsafe { system.run_unsafe((), world.as_unsafe_world_cell()) }.unwrap();
+        let captured = ticks.lock().unwrap().expect("run ticks captured");
+
+        assert_eq!(captured.this_run, before);
+        assert_eq!(captured.last_run, Tick::new(2));
+        assert_eq!(*window.lock().unwrap(), Some((Tick::new(2), before)));
+        assert_eq!(system.get_last_run(), before);
+        assert_eq!(world.change_tick(), Tick::new(before.get() + 1));
+        assert_eq!(world.last_change_tick(), outer_last_change);
     }
 
     #[test]
@@ -1781,6 +1874,7 @@ mod tests {
                     &retained,
                     &params,
                     &(),
+                    &ObserverRunHistory::default(),
                     &fixture.sink,
                     &metadata,
                     None,
@@ -1836,6 +1930,7 @@ mod tests {
                 &retained,
                 &params,
                 &(),
+                &ObserverRunHistory::default(),
                 &fixture.sink,
                 &metadata,
                 None,
@@ -1859,6 +1954,65 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert!(lines[0].contains("\"record\":\"observer_entry\""));
         assert!(lines[1].contains("\"record\":\"observer_flush\""));
+    }
+
+    #[test]
+    fn observer_change_window_starts_at_its_previous_run() {
+        let mut world = World::new();
+        let fixture = fixture(
+            FakeCall::Unit,
+            FakePlan::default(),
+            InvocationKind::Observer,
+        );
+        let ticks = fixture.ticks.clone();
+        let history = ObserverRunHistory::default();
+        let PreparedSystem {
+            interpreter,
+            retained,
+            params,
+            metadata,
+            ..
+        } = fixture.prepared;
+        let dispatch = |world: &mut World| {
+            // SAFETY: the fake plan/handle describe this interpreter and the
+            // test owns the World exclusively.
+            unsafe {
+                execute_observer(
+                    &interpreter,
+                    &retained,
+                    &params,
+                    &(),
+                    &history,
+                    &fixture.sink,
+                    &metadata,
+                    None,
+                    &(),
+                    None,
+                    ErrorPolicy::ReportAndContinue,
+                    world,
+                )
+            }
+            .unwrap();
+            ticks.lock().unwrap().expect("observer ticks captured")
+        };
+
+        let before = world.change_tick();
+        let first = dispatch(&mut world);
+        assert_eq!(first.this_run, before);
+        assert_eq!(world.change_tick(), Tick::new(before.get() + 1));
+        world.increment_change_tick();
+        let second = dispatch(&mut world);
+        assert_eq!(second.last_run, first.this_run);
+        assert_eq!(second.this_run, Tick::new(before.get() + 2));
+    }
+
+    #[test]
+    fn observer_history_ages_like_bevy_change_ticks() {
+        let history = ObserverRunHistory::default();
+        let this_run = Tick::new(MAX_CHANGE_AGE.wrapping_add(50));
+        assert_eq!(history.last_run(this_run), Tick::new(50));
+        history.record(Tick::new(70));
+        assert_eq!(history.last_run(this_run), Tick::new(70));
     }
 
     #[test]
@@ -1887,6 +2041,7 @@ mod tests {
                 &retained,
                 &params,
                 &(),
+                &ObserverRunHistory::default(),
                 &fixture.sink,
                 &metadata,
                 None,

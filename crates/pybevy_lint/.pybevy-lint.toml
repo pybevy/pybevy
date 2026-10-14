@@ -26,6 +26,10 @@ reason = "with_children holds the receiver borrow across the user callback, whic
 path = "ecs.RelatedSpawnerCommands"
 reason = "its &self spawn methods hold the receiver borrow across component conversion, which is arbitrary Python and receives the spawner"
 
+[[validation.shared_borrow_types]]
+path = "ecs.ResMut"
+reason = "attribute getters and setters call arbitrary Python that can re-enter the same proxy"
+
 [[validation.specialized_receivers]]
 path = "time.Time[Virtual]"
 rust_type = "PyTimeVirtual"
@@ -1105,12 +1109,6 @@ PyCubicSegment3d = "CubicSegment<Vec3>"
 PyRationalSegment2d = "RationalSegment<Vec2>"
 PyRationalSegment3d = "RationalSegment<Vec3>"
 
-[bevy.constructor_functions."pybevy.render.PyShaderBuffer"]
-function = "new"
-internal_parameters = ["asset_usage"]
-field_inputs = ["copy_on_resize"]
-reason = "ShaderBuffer maps Bevy 0.19.1 ShaderBuffer::new(data, asset_usage); Python exposes the native data prefix, supplies default asset usage, and keeps the independent copy_on_resize field keyword-only"
-
 [bevy.constructor_functions."pybevy.ui.PyImageNode"]
 function = "new"
 parameter_renames = { texture = "handle" }
@@ -1772,6 +1770,7 @@ reason = "Bevy 0.19.1 bevy_audio::SpatialListener::new defines the gap prefix fo
 "pybevy.world_serialization.PyWorldAssetRoot" = "Bevy 0.19.1 bevy_world_serialization::WorldAssetRoot is a tuple struct/newtype; Python construction preserves its positional payload contract"
 
 [bevy.constructor_adapters]
+"pybevy.render.PyShaderBuffer" = "Python encodes raw bytes or typed array data using the Python-only element layout hint before calling ShaderBuffer::new with default asset usage; omitted data constructs ShaderBuffer::default and copy_on_resize configures the independent native field"
 "pybevy.mesh.PyMeshable" = "Bevy Meshable is an open trait, not a constructible type; this Python base exists so user subclasses can supply mesh()"
 "pybevy.mesh.PyMeshBuilder" = "Bevy MeshBuilder is an open trait, not a constructible type; this Python base exists so user subclasses can supply build()"
 "pybevy.math.PyMat2" = "glam 0.32.1 Mat2 is a SIMD newtype whose x_axis and y_axis columns are reached through Deref, so its fields have no declaration to audit; the keyword-only constructor mirrors those columns with the IDENTITY defaults"
@@ -2880,6 +2879,12 @@ code = "E002"
 path = "array.Array"
 message = "method 'Array::__matmul__' not found in Python stub"
 reason = "Deliberate TypeError-only rejection hook; declaring it would advertise unsupported matrix multiplication"
+
+[[validation.exceptions]]
+code = "E003"
+path = "core.Material"
+message = "property 'Material::base' in Python stub not found in Rust"
+reason = "The @material decorator installs the base field on custom Python material classes; the native PyMaterial base deliberately has no property, and raw shader material wrappers expose their own base descriptors."
 
 [[validation.exceptions]]
 code = "E002"

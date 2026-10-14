@@ -219,6 +219,7 @@ impl ComponentBridge for ChildOfBridge {
             .get_by_id(component_id)
             .ok_or_else(|| PyRuntimeError::new_err("ChildOf not found"))?;
 
+        // SAFETY: Bridge dispatch supplies this native component ID; filtered access grants a read.
         let component = unsafe { ptr.deref::<ChildOf>() };
         let py_component = hierarchy::PyChildOf::try_from(component)?;
         let obj = Py::new(py, (py_component, PyComponent))?;
@@ -268,6 +269,7 @@ impl ComponentBridge for ChildOfBridge {
                 .get_by_id(component_id)
                 .ok_or_else(|| PyRuntimeError::new_err("ChildOf not found"))?;
 
+            // SAFETY: Bridge dispatch supplies this native component ID; filtered access grants a read.
             let component = unsafe { ptr.deref::<ChildOf>() };
             let py_component = crate::hierarchy::PyChildOf::try_from(component)?;
             let obj = Py::new(py, (py_component, crate::component::PyComponent))?;
@@ -363,6 +365,7 @@ impl ComponentBridge for ChildrenBridge {
             .get_by_id(component_id)
             .ok_or_else(|| PyRuntimeError::new_err("Children not found"))?;
 
+        // SAFETY: Bridge dispatch supplies this native component ID; filtered access grants a read.
         let component = unsafe { ptr.deref::<Children>() };
         let py_component = hierarchy::PyChildren::try_from(component)?;
         let obj = Py::new(py, (py_component, PyComponent))?;
@@ -402,6 +405,7 @@ impl ComponentBridge for ChildrenBridge {
                 .get_by_id(component_id)
                 .ok_or_else(|| PyRuntimeError::new_err("Children not found"))?;
 
+            // SAFETY: Bridge dispatch supplies this native component ID; filtered access grants a read.
             let component = unsafe { ptr.deref::<Children>() };
             let py_component = crate::hierarchy::PyChildren::try_from(component)?;
             let obj = Py::new(py, (py_component, crate::component::PyComponent))?;
@@ -505,8 +509,8 @@ pub use registry::{
     PreparedBatchComponent, PreparedNativeBatch, PreparedNativeUniform, PreparedNativeUniformWith,
     PreparedUniformComponent, PreparedUniformFn, PyRustComponentBatch, ReaderCursorOp,
     ResourceBridge, apply_cursor_op, apply_reader_cursor, batch_field_meta_for,
-    batch_integer_column_of, check_batch_field, check_integer_batch_column, field_type_of,
-    portable_f32_batch_column, set_field_from_numpy,
+    batch_integer_column_of, check_batch_field, check_f32_integer_batch_column,
+    check_integer_batch_column, field_type_of, portable_f32_batch_column, set_field_from_numpy,
 };
 pub use reload_request::{
     CustomComponentEntry, CustomComponentInfo, CustomResourceEntry, CustomResourceInfo,

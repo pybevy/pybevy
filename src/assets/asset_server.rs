@@ -69,7 +69,9 @@ pub struct PyAssetServer {
     validity: ValidityFlag,
 }
 
+// SAFETY: cell access checks thread-bound validity and reads only the declared AssetServer.
 unsafe impl Send for PyAssetServer {}
+// SAFETY: shared access follows the same validity and scheduler read restrictions.
 unsafe impl Sync for PyAssetServer {}
 
 impl PyAssetServer {

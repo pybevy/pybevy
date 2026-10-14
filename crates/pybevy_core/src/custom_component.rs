@@ -443,6 +443,7 @@ mod tests {
     impl PythonObjectDescriptor for TestObjectDescriptor {
         fn create(name: String) -> ComponentDescriptor {
             // Use a simple u64 layout for testing
+            // SAFETY: The test stores initialized u64 values with this exact layout and no drop hook.
             unsafe {
                 ComponentDescriptor::new_with_layout(
                     name,

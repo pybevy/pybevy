@@ -4,20 +4,21 @@ use bevy::{
     ecs::{
         change_detection::Tick, component::ComponentId, world::unsafe_world_cell::UnsafeWorldCell,
     },
+    log::debug,
     prelude::*,
 };
 /// Main/PyO3 name for the backend-neutral custom-resource identity registry.
 pub use pybevy_core::custom_resource::CustomResourceRegistry as ResourceRegistry;
 use pybevy_core::{
-    ComponentWriteContext, PyComponent,
+    ComponentWriteContext, CustomResourceEntry, CustomResourceInfo, PyComponent,
     custom_resource::{
         ResourceRegisterOutcome, insert_dynamic_resource_value, register_custom_resource_guarded,
     },
     public_error::{
         ASSET_SERVER_MANUAL_INSERT, ASSET_SERVER_MANUAL_REMOVE, BUTTON_INPUT_REQUIRES_BUTTON_TYPE,
         RESOURCE_BRIDGE_NOT_FOUND, component_passed_as_resource, expected_resource_subclass,
-        resource_counterpart_of_component, resource_decorator_required, resource_not_present,
-        resource_type_not_found, resource_user_remove_forbidden,
+        native_resource_not_found, resource_counterpart_of_component, resource_decorator_required,
+        resource_not_present, resource_type_not_found, resource_user_remove_forbidden,
         state_resource_descriptor_required,
     },
     registry::global_registry,
@@ -27,7 +28,7 @@ use pybevy_input::button_input::PyButtonInput;
 use pyo3::{
     PyTypeInfo,
     exceptions::{PyRuntimeError, PyTypeError},
-    ffi::PyTypeObject,
+    ffi::{PyObject as CPyObject, PyTypeObject},
     prelude::*,
     types::PyType,
 };
@@ -55,8 +56,9 @@ pub enum PyResourceType {
     Custom(*const PyTypeObject),
 }
 
-// SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
+// SAFETY: holders retain custom resource classes; native classes are module-owned.
 unsafe impl Send for PyResourceType {}
+// SAFETY: dereferencing a retained class requires an attached Python thread.
 unsafe impl Sync for PyResourceType {}
 
 /// Require a concrete `ButtonInput` specialization at resource lookup sites.
@@ -97,6 +99,13 @@ impl PyResourceType {
         py: Python,
         validity: ValidityFlag,
     ) -> PyResult<Py<PyAny>> {
+        validity.check()?;
+        // SAFETY: callers declare AssetServer read/write access; validity fences the cell.
+        if unsafe { cell.get_resource::<AssetServer>() }.is_none() {
+            return Err(PyRuntimeError::new_err(native_resource_not_found(
+                "AssetServer",
+            )));
+        }
         // SAFETY: `cell` references the world the AssetServer belongs to and stays
         // valid while `validity` is active; PyAssetServer reads only the declared
         // AssetServer resource through it.
@@ -357,9 +366,8 @@ impl PyResourceType {
             PyResourceType::Custom(type_ptr) => {
                 // Get the resource name from the Python type. The neutral
                 // registration path is idempotent and handles reload aliases.
-                // SAFETY: registered type pointers live for the interpreter lifetime.
-                let type_obj =
-                    unsafe { Bound::from_borrowed_ptr(py, *type_ptr as *mut pyo3::ffi::PyObject) };
+                // SAFETY: the calling registration or resource holder retains this class.
+                let type_obj = unsafe { Bound::from_borrowed_ptr(py, *type_ptr as *mut CPyObject) };
                 type_obj.cast::<PyType>()?;
                 let component_id = register_custom_resource(world, *type_ptr, py);
 
@@ -444,9 +452,7 @@ impl PyResourceType {
     /// Returns None if the resource hasn't been registered/inserted yet
     pub fn get_component_id(&self, world: &World) -> Option<ComponentId> {
         match self {
-            PyResourceType::AssetServer => world
-                .components()
-                .component_id::<bevy::asset::AssetServer>(),
+            PyResourceType::AssetServer => world.components().component_id::<AssetServer>(),
             PyResourceType::Dynamic(type_ptr) => {
                 global_registry::get_resource_bridge_by_py_type(*type_ptr)
                     .and_then(|bridge| bridge.resource_id(world))
@@ -470,9 +476,7 @@ impl PyResourceType {
     /// `get_component_id`'s behavior for that unreachable-at-runtime case.
     pub fn register_component_id(&self, world: &mut World, py: Python) -> Option<ComponentId> {
         match self {
-            PyResourceType::AssetServer => {
-                Some(world.register_component::<bevy::asset::AssetServer>())
-            }
+            PyResourceType::AssetServer => Some(world.register_component::<AssetServer>()),
             PyResourceType::Dynamic(type_ptr) => {
                 global_registry::get_resource_bridge_by_py_type(*type_ptr)
                     .map(|bridge| bridge.register_resource_id(world))
@@ -493,10 +497,9 @@ impl PyResourceType {
 /// This matches the format used by `pybevy/decorators.py`:
 ///   `f"{cls.__module__}.{cls.__qualname__}"`
 fn get_python_qualified_name(py: Python, type_ptr: *const PyTypeObject) -> Option<String> {
-    // SAFETY: registered type pointers live for the interpreter lifetime
-    let type_obj =
-        unsafe { pyo3::Bound::from_borrowed_ptr(py, type_ptr as *mut pyo3::ffi::PyObject) };
-    let cls = type_obj.cast::<pyo3::types::PyType>().ok()?;
+    // SAFETY: the calling registration or resource holder retains this class.
+    let type_obj = unsafe { Bound::from_borrowed_ptr(py, type_ptr as *mut CPyObject) };
+    let cls = type_obj.cast::<PyType>().ok()?;
     let module = cls.getattr("__module__").ok()?.extract::<String>().ok()?;
     let qualname = cls.getattr("__qualname__").ok()?.extract::<String>().ok()?;
     Some(format!("{}.{}", module, qualname))
@@ -532,35 +535,29 @@ pub(crate) fn register_custom_resource(
     match outcome {
         ResourceRegisterOutcome::Reused(_) => {}
         ResourceRegisterOutcome::Aliased(id) => {
-            if let Some(mut custom_info) =
-                world.get_resource_mut::<pybevy_core::CustomResourceInfo>()
-            {
+            if let Some(mut custom_info) = world.get_resource_mut::<CustomResourceInfo>() {
                 custom_info.update_type_ptr(id, type_ptr, retained_type_object(py, type_ptr));
             }
 
             if let Some(qualified_name) = qualified_name {
-                bevy::log::debug!(
+                debug!(
                     "Hot reload: aliased resource '{}' (new ptr {:p}) to existing ComponentId {:?}",
-                    qualified_name,
-                    type_ptr,
-                    id,
+                    qualified_name, type_ptr, id,
                 );
             }
         }
         ResourceRegisterOutcome::Registered(id) => {
-            if !world.contains_resource::<pybevy_core::CustomResourceInfo>() {
-                world.insert_resource(pybevy_core::CustomResourceInfo::default());
+            if !world.contains_resource::<CustomResourceInfo>() {
+                world.insert_resource(CustomResourceInfo::default());
             }
-            world
-                .resource_mut::<pybevy_core::CustomResourceInfo>()
-                .insert(
-                    id,
-                    pybevy_core::CustomResourceEntry {
-                        type_ptr,
-                        type_object: retained_type_object(py, type_ptr),
-                        name,
-                    },
-                );
+            world.resource_mut::<CustomResourceInfo>().insert(
+                id,
+                CustomResourceEntry {
+                    type_ptr,
+                    type_object: retained_type_object(py, type_ptr),
+                    name,
+                },
+            );
         }
     }
 
@@ -575,8 +572,7 @@ fn retained_type_object(py: Python, type_ptr: *const PyTypeObject) -> Option<Py<
     }
     // SAFETY: callers pass a live class pointer obtained from a bound type
     // object earlier in the same attached scope.
-    let bound =
-        unsafe { Bound::from_borrowed_ptr_or_opt(py, type_ptr as *mut pyo3::ffi::PyObject) };
+    let bound = unsafe { Bound::from_borrowed_ptr_or_opt(py, type_ptr as *mut CPyObject) };
     bound.map(Bound::unbind)
 }
 

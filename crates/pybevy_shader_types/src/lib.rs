@@ -11,14 +11,6 @@ pub mod shader_def_registry;
 pub mod storage_element;
 pub mod storage_material;
 pub mod texture_binding;
-pub use material_shader_variants::material_shader_path_id;
-use material_shader_variants::{
-    MaterialShaderLifetimes, MaterialShaderSources, MaterialShaderVariants, material_shader_handle,
-};
-pub use storage_material::{
-    ShaderMaterialPlugin, StorageShaderMaterial, StorageShaderMaterialExtension,
-};
-
 use std::{
     collections::{HashMap, HashSet},
     hash::{DefaultHasher, Hash, Hasher},
@@ -47,6 +39,13 @@ use bevy::{
     shader::{Shader, ShaderDefVal, ShaderImport, ShaderRef},
 };
 use generated_bindings::{BindingsRegistry, binding_definition, sync_generated_bindings};
+pub use material_shader_variants::material_shader_path_id;
+use material_shader_variants::{
+    MaterialShaderLifetimes, MaterialShaderSources, MaterialShaderVariants, material_shader_handle,
+};
+pub use storage_material::{
+    ShaderMaterialPlugin, StorageShaderMaterial, StorageShaderMaterialExtension,
+};
 use tracing::error;
 
 static SHADER_REGISTRY: OnceLock<RwLock<HashMap<u64, Handle<Shader>>>> = OnceLock::new();
@@ -244,17 +243,9 @@ fn validate_material_shader_import(
 
 // @material packs fields here and generates the matching WGSL struct at @group(3) @binding(100).
 
-#[derive(ShaderType, Reflect, Clone, Debug)]
+#[derive(ShaderType, Reflect, Clone, Debug, Default)]
 pub struct ShaderParams {
     pub data: packed_uniform::UniformData,
-}
-
-impl Default for ShaderParams {
-    fn default() -> Self {
-        Self {
-            data: packed_uniform::UniformData::default(),
-        }
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default, Debug)]
@@ -541,18 +532,24 @@ impl ShaderMaterialData for StorageShaderMaterial {
 
 // Runs in `Last` (after Update, before extraction) so specialize() finds the loaded shaders.
 
+type ShaderHandleSyncLocals<'s> = (
+    Local<'s, HashSet<String>>,
+    Local<'s, MaterialShaderVariants>,
+    Local<'s, MaterialShaderLifetimes>,
+    Local<'s, MessageCursor<AssetEvent<StorageShaderMaterial>>>,
+);
+
 pub fn sync_shader_handles(
-    materials: Res<Assets<ShaderMaterial>>,
-    storage_materials: Option<Res<Assets<StorageShaderMaterial>>>,
+    (materials, storage_materials): (
+        Res<Assets<ShaderMaterial>>,
+        Option<Res<Assets<StorageShaderMaterial>>>,
+    ),
     asset_server: Res<AssetServer>,
     mut shaders: ResMut<Assets<Shader>>,
     mut load_failures: MessageReader<AssetLoadFailedEvent<Shader>>,
-    mut reported_diagnostics: Local<HashSet<String>>,
-    mut variants: Local<MaterialShaderVariants>,
-    mut lifetimes: Local<MaterialShaderLifetimes>,
+    (mut reported_diagnostics, mut variants, mut lifetimes, mut storage_cursor): ShaderHandleSyncLocals,
     mut material_events: MessageReader<AssetEvent<ShaderMaterial>>,
     storage_events: Option<Res<Messages<AssetEvent<StorageShaderMaterial>>>>,
-    mut storage_cursor: Local<MessageCursor<AssetEvent<StorageShaderMaterial>>>,
 ) {
     for event in material_events.read() {
         if let AssetEvent::Unused { id } = event {

@@ -12,11 +12,13 @@ use std::{
     any::TypeId,
     cell::UnsafeCell,
     collections::{HashMap, HashSet},
+    mem::take,
     ptr::fn_addr_eq,
     sync::{Arc, Mutex},
 };
 
 use bevy::{
+    asset::AssetServer,
     ecs::{
         component::ComponentId,
         ptr::OwningPtr,
@@ -26,12 +28,14 @@ use bevy::{
     prelude::*,
 };
 use pybevy_core::{
-    AssetAccessRegistry, AssetBorrowCounter, ensure_asset_access_registry,
-    ensure_no_live_asset_access, extract_entity_from_any,
+    AssetAccessRegistry, AssetBorrowCounter, CustomComponentInfo, CustomResourceInfo,
+    LastSystemError, ensure_asset_access_registry, ensure_no_live_asset_access,
+    extract_entity_from_any,
     public_error::{
         COMPONENT_BRIDGE_NOT_FOUND, CUSTOM_MESSAGES_RESOURCE, RESOURCE_BRIDGE_NOT_FOUND,
         RESOURCE_ENTITY_DESPAWN, WORLD_BATCH_ARGUMENTS, WORLD_CALLBACK_COMMAND_ERRORS,
-        native_resource_not_found, one_shot_parameter_validation_skip, unregistered_message_write,
+        entity_does_not_exist, native_resource_not_found, one_shot_parameter_validation_skip,
+        registered_component_layout_changed, unregistered_message_write,
         world_query_param_required, world_resource_param_wrapper,
     },
     registry::global_registry,
@@ -45,10 +49,10 @@ use pybevy_ecs::shared::{
 use pybevy_reload::{HotReloadGeneration, SystemStage};
 use pyo3::{
     PyTraverseError, PyTypeInfo, PyVisit,
-    exceptions::{PyRuntimeError, PyTypeError},
+    exceptions::{PyRuntimeError, PyTypeError, PyValueError},
     ffi::PyTypeObject,
     prelude::*,
-    types::{PyList, PyTuple, PyType, PyTypeMethods},
+    types::{PyList, PyString, PyTuple, PyType, PyTypeMethods},
 };
 
 use crate::{
@@ -61,9 +65,12 @@ use crate::{
     ecs::{
         PyEntity,
         batch_spawn::{SpawnBatchCommand, prepare_iter_batch},
-        commands::PyCommands,
+        commands::{
+            PyCommands, insert_resolved_components_to_entity, normalize_spawn_components,
+            resolve_spawn_bundle,
+        },
         component::{PyComponent, PyComponentId},
-        component_layout::{ComponentLayoutExt, ComponentStorageType, ComponentStorageTypeExt},
+        component_layout::{ComponentStorageType, cached_storage_and_layout_match},
         component_type::{
             ComponentRegistry, PyComponentType, drop_py_object, register_custom_component,
         },
@@ -75,6 +82,7 @@ use crate::{
         entity_commands::PyEntityCommands,
         helpers::validity_guard::{AccessMode, ValidityFlag, ValidityFlagWithMode, ValidityGuard},
         lazy_wrapper_proxy::{ProxyKind, PyLazyWrapperProxy},
+        lifecycle_mutation::despawn_recursive,
         message::{PyMessageId, PyMessageWriter},
         messages::{MessageType, MessageWorld, PyMessageType, PyMessageTypeParam, PyMessages},
         observer::PyEvent,
@@ -133,17 +141,9 @@ pub struct PyWorld {
     _deferred_flush: deferred_drop::MutationFlushGuard,
 }
 
-// SAFETY: PyWorld is Send because:
-// - The raw pointer is protected by the ValidityFlag (Arc<AtomicBool>)
-// - ValidityFlag::check() ensures the pointer is only dereferenced when valid
-// - The validity flag is set to false when the system execution completes
-// - Owned worlds use UnsafeCell but access is controlled by &mut methods
+// SAFETY: validity enforces origin-thread access under exclusive World authority.
 unsafe impl Send for PyWorld {}
-
-// SAFETY: PyWorld is Sync because:
-// - Access to the underlying World is controlled by validity checking
-// - The ValidityFlag uses atomic operations for thread-safe access
-// - We only allow access when the validity flag is true (during system execution)
+// SAFETY: shared receivers retain the same thread and exclusive-access validity fence.
 unsafe impl Sync for PyWorld {}
 
 impl Drop for PyWorld {
@@ -189,7 +189,7 @@ impl PyWorld {
                     && error.to_string().contains("required")
                 {
                     let type_name = type_obj.name().unwrap_or_else(|_| {
-                        pyo3::types::PyString::new(py, "Resource")
+                        PyString::new(py, "Resource")
                     });
                     PyTypeError::new_err(format!(
                         "Cannot initialize resource `{type_name}` with default values: resource requires constructor arguments. Use `insert_resource()` instead."
@@ -268,7 +268,9 @@ impl PyWorld {
         self.check_valid()?;
         let gc = self.gc_state.as_ref().map(WorldGcState::suspend);
         let world = match &self.storage {
+            // SAFETY: the wrapper owns this live box and callers enforce exclusive world access.
             WorldStorage::Owned(boxed) => unsafe { &mut *boxed.get() },
+            // SAFETY: validity fences the borrowed world and callers enforce its exclusive access.
             WorldStorage::Borrowed(ptr) => unsafe { &mut **ptr },
         };
         Ok(deferred_drop::WorldMutGuard::with_gc(world, gc))
@@ -301,6 +303,7 @@ impl PyWorld {
 
     fn check_native_asset_access(&self, operation: &str) -> PyResult<()> {
         self.check_valid()?;
+        // SAFETY: checked validity fences this synchronous shared world inspection.
         let world = unsafe { &*self.world_ptr() };
         ensure_no_live_asset_access(world, operation)
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))
@@ -403,6 +406,7 @@ impl PyWorld {
         // fenced by the same `validity` flag. PyAssets only reaches the `Assets<T>` resource.
         let cell = unsafe { (*world_ptr).as_unsafe_world_cell() };
         let borrow_counter = self.asset_borrow_counter(type_ptr)?;
+        // SAFETY: the checked world, retained asset class, and borrow counter fence the asset wrapper.
         let py_assets = unsafe {
             Py::new(
                 py,
@@ -463,41 +467,63 @@ impl PyWorld {
         &self,
         py: Python,
         entity_id: Entity,
-        type_ptr: *const pyo3::ffi::PyTypeObject,
+        cls: &Bound<'_, PyType>,
         validity: ValidityFlagWithMode,
     ) -> PyResult<Option<Py<PyAny>>> {
-        let mut world = self.world_mut()?;
-
-        let component_id = {
-            // No ComponentRegistry resource => no custom components registered in
-            // this world, so the entity cannot have this one. Match Bevy's
-            // `World::get`, which returns `None` (not an error) for a missing or
-            // unregistered component type.
+        let type_ptr = cls.as_type_ptr();
+        let name = cls.name()?.to_string();
+        let layout_error = || PyValueError::new_err(registered_component_layout_changed(&name));
+        let (component_id, storage_type, layout, schema) = {
+            let world = self.world_ref()?;
             let Some(registry) = world.get_resource::<ComponentRegistry>() else {
                 return Ok(None);
             };
-            match registry.get(type_ptr as usize) {
-                Some(id) => id,
-                None => return Ok(None),
+            let Some(component_id) = registry.get(type_ptr as usize) else {
+                return Ok(None);
+            };
+            let Ok(entity_ref) = world.get_entity(entity_id) else {
+                return Ok(None);
+            };
+            if entity_ref.get_by_id(component_id).is_err() {
+                return Ok(None);
             }
+            let storage = registry
+                .storage_type(component_id)
+                .ok_or_else(layout_error)?;
+            let layout = world
+                .get_resource::<CustomComponentInfo>()
+                .and_then(|info| info.get(component_id))
+                .and_then(|entry| entry.wrapper_layout.clone());
+            let schema = registry.wrapper_schema(component_id).cloned();
+            (component_id, storage, layout, schema)
         };
 
-        let entity_ref = world.entity(entity_id);
+        if matches!(storage_type, ComponentStorageType::Wrapper(_))
+            && (layout.is_none() || layout.as_ref().map(|layout| layout.schema()) != schema)
+        {
+            return Err(layout_error());
+        }
+        // Metadata may run Python; retain no World borrow or component pointer across it.
+        if !cached_storage_and_layout_match(cls, storage_type, layout.as_deref())? {
+            return Err(layout_error());
+        }
+
+        let mut world = self.world_mut()?;
+        let registry = world
+            .get_resource::<ComponentRegistry>()
+            .ok_or_else(layout_error)?;
+        if registry.get(type_ptr as usize) != Some(component_id)
+            || registry.storage_type(component_id) != Some(storage_type)
+            || registry.wrapper_schema(component_id) != schema.as_ref()
+        {
+            return Err(layout_error());
+        }
+        let Ok(entity_ref) = world.get_entity(entity_id) else {
+            return Ok(None);
+        };
         if entity_ref.get_by_id(component_id).is_err() {
             return Ok(None);
         }
-
-        let storage_type = {
-            // SAFETY: registered type pointers live for the interpreter lifetime
-            let py_type =
-                unsafe { pyo3::Bound::from_borrowed_ptr(py, type_ptr as *mut pyo3::ffi::PyObject) };
-            if let Ok(cls) = py_type.cast::<pyo3::types::PyType>() {
-                ComponentStorageType::from_python_class(cls)
-                    .unwrap_or(ComponentStorageType::PyObject)
-            } else {
-                ComponentStorageType::PyObject
-            }
-        };
 
         match storage_type {
             ComponentStorageType::Wrapper(wrapper_size) => {
@@ -506,24 +532,16 @@ impl PyWorld {
                     let untyped = entity_ref
                         .get_by_id(component_id)
                         .expect("Component existence already verified");
+                    // SAFETY: the registry pairs this wrapper size with the verified live component.
                     unsafe { wrapper_size.get_ref_ptr_as_mut(untyped) }
                 };
 
-                // SAFETY: registered type pointers live for the interpreter lifetime
-                let py_type = unsafe {
-                    pyo3::Bound::from_borrowed_ptr(py, type_ptr as *mut pyo3::ffi::PyObject)
-                };
-                let cls = py_type
-                    .cast::<pyo3::types::PyType>()
-                    .expect("Type pointer should be valid");
-                let layout = std::sync::Arc::new(
-                    crate::ecs::component_layout::ComponentLayout::from_annotations(cls)
-                        .expect("Layout should be computable for wrapper components"),
-                );
+                let layout = layout.ok_or_else(layout_error)?;
 
                 let mutable = validity.access_mode() == AccessMode::Write;
                 let world_ptr = self.world_ptr();
                 let world_cell = world.as_unsafe_world_cell();
+                // SAFETY: the verified component and retained class share the world's access validity.
                 let proxy = unsafe {
                     PyLazyWrapperProxy::new(
                         data_ptr,
@@ -552,6 +570,7 @@ impl PyWorld {
                     .expect("Component existence already verified")
                     .as_ptr();
 
+                // SAFETY: PyObject storage registers this component as an initialized Py<PyAny>.
                 let py_object = unsafe {
                     let py_any_ref = &*(untyped_ptr as *const Py<PyAny>);
                     py_any_ref.clone_ref(py)
@@ -567,7 +586,7 @@ impl PyWorld {
                     None,
                 );
 
-                let py_obj = Py::new(py, (custom_comp, crate::ecs::component::PyComponent))
+                let py_obj = Py::new(py, (custom_comp, PyComponent))
                     .expect("Failed to create PyCustomComponent");
                 Ok(Some(py_obj.into_any()))
             }
@@ -578,7 +597,7 @@ impl PyWorld {
         &self,
         py: Python,
         entity_id: Entity,
-        type_ptr: *const pyo3::ffi::PyTypeObject,
+        type_ptr: *const PyTypeObject,
         mutable: bool,
     ) -> PyResult<Option<Py<PyAny>>> {
         let mut world = self.world_mut()?;
@@ -641,7 +660,7 @@ pub(crate) fn traverse_world_python(
         commands.traverse(visit.clone())?;
     }
     // SAFETY: the gate excludes registration writes to this resource.
-    if let Some(info) = unsafe { world.get_resource::<pybevy_core::CustomComponentInfo>() } {
+    if let Some(info) = unsafe { world.get_resource::<CustomComponentInfo>() } {
         let mut owners = HashSet::new();
         for (_, entry) in info.iter() {
             if let Some(class) = &entry.retained_type
@@ -652,7 +671,7 @@ pub(crate) fn traverse_world_python(
         }
     }
     // SAFETY: the gate excludes registration writes to this resource.
-    if let Some(info) = unsafe { world.get_resource::<pybevy_core::CustomResourceInfo>() } {
+    if let Some(info) = unsafe { world.get_resource::<CustomResourceInfo>() } {
         for (_, entry) in info.iter() {
             visit.call(&entry.type_object)?;
         }
@@ -743,8 +762,8 @@ impl PyWorld {
     ) -> PyResult<PyEntityCommands> {
         world_commands::ErrorBoundary::new(pyself.world_ref()?).run(|| {
             pyself.check_valid()?;
-            let components = crate::ecs::commands::normalize_spawn_components(components)?;
-            let component_types = crate::ecs::commands::resolve_spawn_bundle(py, &components)?;
+            let components = normalize_spawn_components(components)?;
+            let component_types = resolve_spawn_bundle(py, &components)?;
             pyself.check_native_asset_access("world.spawn()")?;
 
             let entity_id = pyself.world_mut()?.spawn_empty().id();
@@ -759,7 +778,7 @@ impl PyWorld {
 
             // The shared insertion helper owns Discard -> mutation -> Add ->
             // Insert ordering for both spawn and later insert paths.
-            crate::ecs::commands::insert_resolved_components_to_entity(
+            insert_resolved_components_to_entity(
                 &temp_commands,
                 entity_id,
                 &components,
@@ -782,9 +801,7 @@ impl PyWorld {
             }
             ensure_no_live_asset_access(&world, "world.despawn()")
                 .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-            Ok(crate::ecs::lifecycle_mutation::despawn_recursive(
-                &mut world, entity.0,
-            ))
+            Ok(despawn_recursive(&mut world, entity.0))
         })
     }
 
@@ -808,7 +825,7 @@ impl PyWorld {
         reject_unparameterized_button_input(&type_obj)?;
         let py_resource_type = PyResourceType::try_from((&type_obj, py))?;
 
-        // Get the world reference
+        // SAFETY: validity was checked before resolving the resource and fences this shared read.
         let world = unsafe { &*self.world_ptr() };
 
         // Get validity flag (use a new one if this is an owned world)
@@ -965,6 +982,16 @@ impl PyWorld {
         let type_obj: Bound<'_, PyType> = resource.extract()?;
         let py_resource_type = PyResourceType::try_from((&type_obj, py))?;
 
+        let existing_id = {
+            let world = self.world_ref()?;
+            py_resource_type
+                .get_component_id(world)
+                .filter(|&id| world.contains_resource_by_id(id))
+        };
+        if let Some(component_id) = existing_id {
+            return Ok(Py::new(py, PyComponentId(component_id))?.into_any());
+        }
+
         // Create a default instance by calling the type with no arguments
         let resource_instance = Self::default_resource_instance(py, &type_obj)?;
         self.check_native_asset_access("world.init_resource()")?;
@@ -981,7 +1008,7 @@ impl PyWorld {
                 "Resource type {} was inserted but ComponentId not found. This is a bug.",
                 type_obj
                     .name()
-                    .unwrap_or_else(|_| pyo3::types::PyString::new(py, "Resource"))
+                    .unwrap_or_else(|_| PyString::new(py, "Resource"))
             ))
         })?;
 
@@ -1013,21 +1040,18 @@ impl PyWorld {
         let type_obj: Bound<'_, PyType> = resource.extract()?;
         let py_resource_type = PyResourceType::try_from((&type_obj, py))?;
 
+        // SAFETY: checked validity fences the shared resource-presence inspection.
         let world = unsafe { &*self.world_ptr() };
 
         match py_resource_type {
-            PyResourceType::AssetServer => {
-                Ok(world.contains_resource::<bevy::asset::AssetServer>())
-            }
+            PyResourceType::AssetServer => Ok(world.contains_resource::<AssetServer>()),
             PyResourceType::Custom(type_ptr) => Ok(world
                 .get_resource::<ResourceRegistry>()
                 .and_then(|registry| registry.get(type_ptr as usize))
                 .is_some_and(|component_id| world.contains_resource_by_id(component_id))),
             PyResourceType::Dynamic(type_ptr) => {
                 // Check via bridge
-                if let Some(bridge) =
-                    pybevy_core::registry::global_registry::get_resource_bridge_by_py_type(type_ptr)
-                {
+                if let Some(bridge) = global_registry::get_resource_bridge_by_py_type(type_ptr) {
                     Ok(bridge.contains_in_world(world))
                 } else {
                     Ok(false)
@@ -1068,6 +1092,7 @@ impl PyWorld {
 
         let type_obj: Bound<'_, PyType> = resource.extract()?;
         let resource_type = PyResourceType::try_from((&type_obj, py))?;
+        // SAFETY: checked validity fences the shared resource-entity lookup.
         let world = unsafe { &*self.world_ptr() };
 
         Ok(resource_type
@@ -1079,6 +1104,7 @@ impl PyWorld {
     /// Iterate over every resource component ID with an allocated Bevy entity.
     pub fn resource_entities<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
         self.check_valid()?;
+        // SAFETY: checked validity fences the shared resource-entity iteration.
         let world = unsafe { &*self.world_ptr() };
         let entries = world
             .resource_entities()
@@ -1095,8 +1121,9 @@ impl PyWorld {
     #[pyo3(name = "_get_last_error")]
     pub fn get_last_error(&self) -> PyResult<Option<(String, Option<String>)>> {
         self.check_valid()?;
+        // SAFETY: checked validity fences the shared error-resource read.
         let world = unsafe { &*self.world_ptr() };
-        match world.get_resource::<pybevy_core::LastSystemError>() {
+        match world.get_resource::<LastSystemError>() {
             Some(last_error) if last_error.error.is_some() => Ok(Some((
                 last_error.error.clone().unwrap(),
                 last_error.traceback.clone(),
@@ -1107,6 +1134,7 @@ impl PyWorld {
 
     pub fn iter_entities(&self) -> PyResult<Vec<PyEntity>> {
         self.check_valid()?;
+        // SAFETY: checked validity fences this synchronous shared entity iteration.
         let world = unsafe { &*self.world_ptr() };
         Ok(world
             .iter_entities()
@@ -1121,9 +1149,9 @@ impl PyWorld {
         let entity = &extract_entity_from_any(entity)?;
         pyself.check_valid()?;
         let world = pyself.world_mut()?;
-        world.get_entity(entity.0).map_err(|_| {
-            PyRuntimeError::new_err(pybevy_core::public_error::entity_does_not_exist(entity.0))
-        })?;
+        world
+            .get_entity(entity.0)
+            .map_err(|_| PyRuntimeError::new_err(entity_does_not_exist(entity.0)))?;
         drop(world);
         Ok(PyEntityCommands::with_world(entity.0, pyself))
     }
@@ -1265,6 +1293,7 @@ impl PyWorld {
         // For custom components, look in the ComponentRegistry
         match py_component_type {
             PyComponentType::Custom(type_ptr) => {
+                // SAFETY: checked validity fences the shared component-registry lookup.
                 let world = unsafe { &*self.world_ptr() };
                 if let Some(registry) = world.get_resource::<ComponentRegistry>() {
                     // Look up the component ID in the registry
@@ -1275,9 +1304,7 @@ impl PyWorld {
                 Ok(None)
             }
             PyComponentType::Dynamic(type_ptr) => {
-                if let Some(bridge) =
-                    pybevy_core::registry::global_registry::get_bridge_by_py_type(type_ptr)
-                {
+                if let Some(bridge) = global_registry::get_bridge_by_py_type(type_ptr) {
                     let mut world = self.world_mut()?;
                     let component_id = bridge.register(&mut world);
                     Ok(Some(PyComponentId(component_id)))
@@ -1489,6 +1516,7 @@ impl PyWorld {
                 .map_or(0, |state| lock_or_recover(state).len());
             let world_addr = &mut *world as *mut World as usize;
             py.detach(move || {
+                // SAFETY: detach is synchronous and the enclosing exclusive world guard remains live.
                 let world = unsafe { &mut *(world_addr as *mut World) };
                 let result = catch_schedule_build_failure(|| match schedule {
                     EitherStateSchedule::State(label) => world.try_run_schedule(label),
@@ -1602,7 +1630,7 @@ impl PyWorld {
 
         // Check for any errors that occurred during system execution
         lock_or_recover(&error_state).extend(world_commands::take_errors(&world, py));
-        let errors = std::mem::take(&mut *lock_or_recover(&error_state));
+        let errors = take(&mut *lock_or_recover(&error_state));
         world_commands::raise_collected(py, errors, WORLD_CALLBACK_COMMAND_ERRORS)?;
 
         // Check for system execution errors
@@ -1624,6 +1652,7 @@ pub fn create_world_wrapper(
     validity: ValidityFlag,
     py: Python,
 ) -> PyResult<Py<PyAny>> {
+    // SAFETY: the registered control caller supplies its live world and matching validity window.
     let py_world = unsafe { PyWorld::new(&mut *world_ptr, validity) };
     let obj = Py::new(py, py_world)?;
     Ok(obj.into_any())
@@ -1633,12 +1662,8 @@ pub fn create_world_wrapper(
 impl PyWorld {
     /// Get all known component types on an entity.
     /// This checks for all built-in component types that the entity has.
-    pub(crate) fn get_entity_data_names(
-        world: &World,
-        entity: bevy::ecs::entity::Entity,
-    ) -> Vec<PyComponentType> {
-        let mut component_types: Vec<(bevy::ecs::component::ComponentId, PyComponentType)> =
-            Vec::new();
+    pub(crate) fn get_entity_data_names(world: &World, entity: Entity) -> Vec<PyComponentType> {
+        let mut component_types: Vec<(ComponentId, PyComponentType)> = Vec::new();
 
         // Get entity reference
         let Ok(entity_ref) = world.get_entity(entity) else {
@@ -1646,7 +1671,7 @@ impl PyWorld {
         };
 
         // Check all registered component bridges
-        for bridge in pybevy_core::registry::global_registry::all_component_bridges() {
+        for bridge in global_registry::all_component_bridges() {
             if bridge.entity_contains(&entity_ref)
                 && let Some(component_id) = world.components().get_id(bridge.bevy_type_id())
             {
@@ -1655,7 +1680,7 @@ impl PyWorld {
             }
         }
 
-        for bridge in pybevy_core::registry::global_registry::all_resource_bridges() {
+        for bridge in global_registry::all_resource_bridges() {
             if bridge.entity_contains(&entity_ref)
                 && let Some(component_id) = bridge.resource_id(world)
             {
@@ -1669,7 +1694,7 @@ impl PyWorld {
         // Check all registered custom Python components.
         // Without this, `On[Despawn, MyCustomComponent]` observers would never
         // fire because the dispatcher iterates this list to build event keys.
-        if let Some(custom_info) = world.get_resource::<pybevy_core::CustomComponentInfo>() {
+        if let Some(custom_info) = world.get_resource::<CustomComponentInfo>() {
             for (component_id, entry) in custom_info.iter() {
                 if entity_ref.contains_id(component_id) {
                     component_types.push((component_id, PyComponentType::Custom(entry.type_ptr)));
@@ -1677,7 +1702,7 @@ impl PyWorld {
             }
         }
 
-        if let Some(custom_info) = world.get_resource::<pybevy_core::CustomResourceInfo>() {
+        if let Some(custom_info) = world.get_resource::<CustomResourceInfo>() {
             for (component_id, entry) in custom_info.iter() {
                 if entity_ref.contains_id(component_id) {
                     component_types.push((component_id, PyComponentType::Resource(entry.type_ptr)));
@@ -1706,15 +1731,13 @@ impl PyWorld {
         component_type: Bound<'_, PyAny>,
     ) -> PyResult<Option<Py<PyAny>>> {
         self.check_valid()?;
-        let world = self.world_mut()?;
-
-        if world.entities().get_spawned(entity.0).is_err() {
+        if self.world_ref()?.entities().get_spawned(entity.0).is_err() {
             return Ok(None);
         }
 
         // Get component type
-        let comp_type =
-            PyComponentType::try_from((component_type.cast::<pyo3::types::PyType>()?, py))?;
+        let cls = component_type.cast::<PyType>()?;
+        let comp_type = PyComponentType::try_from((cls, py))?;
 
         // Create validity flag for the borrowed component
         let validity = self
@@ -1725,6 +1748,7 @@ impl PyWorld {
 
         match comp_type {
             PyComponentType::Dynamic(type_ptr) => {
+                let _world = self.world_mut()?;
                 // Unregistered dynamic component type => the entity can't have it.
                 // Match Bevy's `World::get`, which returns `None` for a missing or
                 // unregistered component type.
@@ -1737,6 +1761,7 @@ impl PyWorld {
                 unsafe { bridge.extract_from_entity_ref(entity.0, self.world_ptr(), validity, py) }
             }
             PyComponentType::Resource(type_ptr) => {
+                let _world = self.world_mut()?;
                 if let Some(bridge) = global_registry::get_resource_bridge_by_py_type(type_ptr) {
                     // SAFETY: world_ptr comes from this live PyWorld, and the returned
                     // handle is fenced by the validity mode supplied above.
@@ -1747,8 +1772,8 @@ impl PyWorld {
                     self.extract_custom_resource_component(py, entity.0, type_ptr, false)
                 }
             }
-            PyComponentType::Custom(type_ptr) => {
-                self.extract_custom_component(py, entity.0, type_ptr, validity)
+            PyComponentType::Custom(_) => {
+                self.extract_custom_component(py, entity.0, cls, validity)
             }
         }
     }
@@ -1760,14 +1785,12 @@ impl PyWorld {
         component_type: Bound<'_, PyAny>,
     ) -> PyResult<Option<Py<PyAny>>> {
         self.check_valid()?;
-        let world = self.world_mut()?;
-
-        if world.entities().get_spawned(entity.0).is_err() {
+        if self.world_ref()?.entities().get_spawned(entity.0).is_err() {
             return Ok(None);
         }
 
-        let comp_type =
-            PyComponentType::try_from((component_type.cast::<pyo3::types::PyType>()?, py))?;
+        let cls = component_type.cast::<PyType>()?;
+        let comp_type = PyComponentType::try_from((cls, py))?;
 
         let validity = self
             .validity
@@ -1777,6 +1800,7 @@ impl PyWorld {
 
         match comp_type {
             PyComponentType::Dynamic(type_ptr) => {
+                let _world = self.world_mut()?;
                 // Unregistered dynamic component type => the entity can't have it.
                 // Match Bevy's `World::get`, which returns `None` for a missing or
                 // unregistered component type.
@@ -1789,6 +1813,7 @@ impl PyWorld {
                 unsafe { bridge.extract_from_entity_mut(entity.0, self.world_ptr(), validity, py) }
             }
             PyComponentType::Resource(type_ptr) => {
+                let _world = self.world_mut()?;
                 if let Some(bridge) = global_registry::get_resource_bridge_by_py_type(type_ptr) {
                     // SAFETY: world_ptr comes from this live PyWorld, and the returned
                     // mutable handle is fenced by the write validity mode supplied above.
@@ -1799,8 +1824,8 @@ impl PyWorld {
                     self.extract_custom_resource_component(py, entity.0, type_ptr, true)
                 }
             }
-            PyComponentType::Custom(type_ptr) => {
-                self.extract_custom_component(py, entity.0, type_ptr, validity)
+            PyComponentType::Custom(_) => {
+                self.extract_custom_component(py, entity.0, cls, validity)
             }
         }
     }

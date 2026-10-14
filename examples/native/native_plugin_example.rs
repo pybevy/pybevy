@@ -55,7 +55,7 @@ fn spawn_with_health(mut commands: Commands) {
 /// Rust Update: read Health values (modified by Python each frame)
 fn print_health(query: Query<&Health>, mut frame_count: Local<u32>) {
     *frame_count += 1;
-    if *frame_count % 60 == 0 {
+    if (*frame_count).is_multiple_of(60) {
         for health in &query {
             println!("[Rust] Health: {:.1}/{:.1}", health.value, health.max);
         }

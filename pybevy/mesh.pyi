@@ -107,8 +107,8 @@ class Mesh(Asset):
     ) -> Mesh: ...
     def generate_skinned_mesh_bounds(self) -> None:
         """Compute the bounds from the position, joint index and joint weight
-        attributes; raises ValueError when they are missing or no joint is
-        skinned to a vertex."""
+        attributes; raises ValueError for missing or incompatible attributes
+        or an out-of-range weighted vertex. All-zero weights produce empty bounds."""
 
     def with_generated_skinned_mesh_bounds(self) -> Mesh: ...
     def contains_attribute(self, attribute: MeshVertexAttribute) -> bool: ...

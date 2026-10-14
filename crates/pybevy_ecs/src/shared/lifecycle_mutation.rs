@@ -118,10 +118,6 @@ impl<E, C> RecursiveDespawnSnapshot<E, C> {
 }
 
 /// Orders lifecycle callbacks around structural mutations.
-///
-/// This first slice is exercised only with fake adapters. Binding adapters are
-/// intentionally not migrated until the ordering and reentrancy contract has
-/// received architectural review.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct LifecycleMutationCore;
 

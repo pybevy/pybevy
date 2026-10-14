@@ -395,7 +395,7 @@ impl PyResMut {
     }
 
     /// Proxy attribute setting to the wrapped resource
-    pub fn __setattr__(&mut self, py: Python, name: &str, value: Bound<'_, PyAny>) -> PyResult<()> {
+    pub fn __setattr__(&self, py: Python, name: &str, value: Bound<'_, PyAny>) -> PyResult<()> {
         self.check_valid()?;
         self.value.bind(py).setattr(name, value)
     }

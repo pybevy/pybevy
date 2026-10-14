@@ -255,33 +255,55 @@ pub enum StateScheduleKind {
     Exit,
 }
 
+/// Exact identity of one state value within its machine.
+///
+/// Named members use their name. Unnamed values, such as a `Flag`'s zero
+/// value, use a value representation; the tag keeps the two forms disjoint.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum StateMemberKey {
+    Named(String),
+    Unnamed(String),
+}
+
+impl From<&str> for StateMemberKey {
+    fn from(name: &str) -> Self {
+        Self::Named(name.to_owned())
+    }
+}
+
+impl From<&StateMemberKey> for StateMemberKey {
+    fn from(key: &StateMemberKey) -> Self {
+        key.clone()
+    }
+}
+
 /// Interpreter-neutral label for `OnEnter` and `OnExit` schedules.
 ///
-/// The machine id prevents equal enum-member hashes from aliasing schedules
-/// belonging to different state types.
+/// The machine id prevents equal member keys from aliasing schedules that
+/// belong to different state types. The member key survives class redefinition.
 #[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct StateScheduleLabel {
     machine_id: StateMachineId,
     kind: StateScheduleKind,
-    state_hash: u64,
+    member: StateMemberKey,
 }
 
 impl StateScheduleLabel {
     #[must_use]
-    pub const fn on_enter(machine_id: StateMachineId, state_hash: u64) -> Self {
+    pub fn on_enter(machine_id: StateMachineId, member: impl Into<StateMemberKey>) -> Self {
         Self {
             machine_id,
             kind: StateScheduleKind::Enter,
-            state_hash,
+            member: member.into(),
         }
     }
 
     #[must_use]
-    pub const fn on_exit(machine_id: StateMachineId, state_hash: u64) -> Self {
+    pub fn on_exit(machine_id: StateMachineId, member: impl Into<StateMemberKey>) -> Self {
         Self {
             machine_id,
             kind: StateScheduleKind::Exit,
-            state_hash,
+            member: member.into(),
         }
     }
 
@@ -296,8 +318,8 @@ impl StateScheduleLabel {
     }
 
     #[must_use]
-    pub const fn state_hash(&self) -> u64 {
-        self.state_hash
+    pub fn member(&self) -> &StateMemberKey {
+        &self.member
     }
 }
 
@@ -305,17 +327,21 @@ impl StateScheduleLabel {
 #[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TransitionScheduleLabel {
     machine_id: StateMachineId,
-    exit_hash: u64,
-    enter_hash: u64,
+    exit_member: StateMemberKey,
+    enter_member: StateMemberKey,
 }
 
 impl TransitionScheduleLabel {
     #[must_use]
-    pub const fn new(machine_id: StateMachineId, exit_hash: u64, enter_hash: u64) -> Self {
+    pub fn new(
+        machine_id: StateMachineId,
+        exit_member: impl Into<StateMemberKey>,
+        enter_member: impl Into<StateMemberKey>,
+    ) -> Self {
         Self {
             machine_id,
-            exit_hash,
-            enter_hash,
+            exit_member: exit_member.into(),
+            enter_member: enter_member.into(),
         }
     }
 
@@ -325,13 +351,13 @@ impl TransitionScheduleLabel {
     }
 
     #[must_use]
-    pub const fn exit_hash(&self) -> u64 {
-        self.exit_hash
+    pub fn exit_member(&self) -> &StateMemberKey {
+        &self.exit_member
     }
 
     #[must_use]
-    pub const fn enter_hash(&self) -> u64 {
-        self.enter_hash
+    pub fn enter_member(&self) -> &StateMemberKey {
+        &self.enter_member
     }
 }
 
@@ -550,16 +576,16 @@ mod tests {
         let second = StateMachineId::new(2);
 
         assert_eq!(
-            StateScheduleLabel::on_enter(first, 42),
-            StateScheduleLabel::on_enter(first, 42)
+            StateScheduleLabel::on_enter(first, "READY"),
+            StateScheduleLabel::on_enter(first, "READY")
         );
         assert_ne!(
-            StateScheduleLabel::on_enter(first, 42),
-            StateScheduleLabel::on_enter(second, 42)
+            StateScheduleLabel::on_enter(first, "READY"),
+            StateScheduleLabel::on_enter(second, "READY")
         );
         assert_ne!(
-            StateScheduleLabel::on_enter(first, 42),
-            StateScheduleLabel::on_exit(first, 42)
+            StateScheduleLabel::on_enter(first, "READY"),
+            StateScheduleLabel::on_exit(first, "READY")
         );
     }
 
@@ -628,23 +654,23 @@ mod tests {
         let second = StateMachineId::new(2);
 
         assert_eq!(
-            TransitionScheduleLabel::new(first, 10, 20),
-            TransitionScheduleLabel::new(first, 10, 20)
+            TransitionScheduleLabel::new(first, "READY", "RUNNING"),
+            TransitionScheduleLabel::new(first, "READY", "RUNNING")
         );
         assert_ne!(
-            TransitionScheduleLabel::new(first, 10, 20),
-            TransitionScheduleLabel::new(second, 10, 20)
+            TransitionScheduleLabel::new(first, "READY", "RUNNING"),
+            TransitionScheduleLabel::new(second, "READY", "RUNNING")
         );
         assert_ne!(
-            TransitionScheduleLabel::new(first, 10, 20),
-            TransitionScheduleLabel::new(first, 10, 30)
+            TransitionScheduleLabel::new(first, "READY", "RUNNING"),
+            TransitionScheduleLabel::new(first, "READY", "PAUSED")
         );
     }
 
     #[test]
     fn schedule_display_names_use_exact_labels_and_owned_values() {
-        let first = StateScheduleLabel::on_enter(StateMachineId::new(1), 42).intern();
-        let second = StateScheduleLabel::on_enter(StateMachineId::new(2), 42).intern();
+        let first = StateScheduleLabel::on_enter(StateMachineId::new(1), "READY").intern();
+        let second = StateScheduleLabel::on_enter(StateMachineId::new(2), "READY").intern();
         let mut registry = ScheduleDisplayNameRegistry::default();
         let mut name = String::from("OnEnter(game.First.READY)");
 

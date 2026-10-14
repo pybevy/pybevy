@@ -50,6 +50,7 @@ fn get_rss_bytes() -> usize {
 }
 
 fn page_size() -> usize {
+    // SAFETY: sysconf takes this valid constant and requires no pointer arguments.
     unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }
 }
 

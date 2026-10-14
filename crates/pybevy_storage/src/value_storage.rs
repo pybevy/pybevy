@@ -530,10 +530,12 @@ mod tests {
     fn write_access_preflight_checks_authority_without_mutating() {
         let mut value = TestValue { x: 1.0, y: 2.0 };
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
+        // SAFETY: The local value outlives storage and is only read through this borrow.
         let writable = unsafe { ValueStorage::borrowed(&mut value, validity.clone()) };
         assert!(writable.check_write_access().is_ok());
         assert_eq!(value.x, 1.0);
 
+        // SAFETY: The local value outlives storage and is only read through this borrow.
         let readonly = unsafe { ValueStorage::borrowed_ref(&value, validity.flag.clone()) };
         assert!(matches!(
             readonly.check_write_access(),
@@ -562,6 +564,7 @@ mod tests {
         let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
 
         let storage =
+            // SAFETY: The local value outlives storage; all guarded accesses are sequential.
             unsafe { ValueStorage::borrowed(&mut value as *mut TestValue, validity.clone()) };
 
         assert!(!storage.is_owned());
@@ -575,6 +578,7 @@ mod tests {
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
 
         let mut storage =
+            // SAFETY: The local value outlives storage; all guarded accesses are sequential.
             unsafe { ValueStorage::borrowed(&mut value as *mut TestValue, validity.clone()) };
 
         storage.as_mut().unwrap().x = 42.0;
@@ -588,6 +592,7 @@ mod tests {
         let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
 
         let storage =
+            // SAFETY: The local value outlives storage; all guarded accesses are sequential.
             unsafe { ValueStorage::borrowed(&mut value as *mut TestValue, validity.clone()) };
 
         // Should work while valid (with guard active)
@@ -606,6 +611,7 @@ mod tests {
         let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read); // Read-only borrow!
 
         let mut storage =
+            // SAFETY: The local value outlives storage; all guarded accesses are sequential.
             unsafe { ValueStorage::borrowed(&mut value as *mut TestValue, validity.clone()) };
 
         // Read should work (with guard active)
@@ -631,6 +637,7 @@ mod tests {
         let mut value = TestValue { x: 1.0, y: 2.0 };
         let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
 
+        // SAFETY: The local value outlives storage; all guarded accesses are sequential.
         let storage = unsafe { ValueStorage::borrowed(&mut value as *mut TestValue, validity) };
 
         let copied = storage.get().unwrap();
@@ -722,6 +729,7 @@ mod tests {
         let mut value = TestValue { x: 1.0, y: 2.0 };
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
         let storage =
+            // SAFETY: The local value outlives storage and is only read through this borrow.
             unsafe { ValueStorage::borrowed(&mut value as *mut TestValue, validity.clone()) };
         let field: ValueStorage<f32> = storage.borrow_field(|v| &v.x).unwrap();
         assert!(field.is_borrowed());
@@ -732,6 +740,7 @@ mod tests {
         let value = TestValue { x: 1.0, y: 2.0 };
         let validity = ValidityFlag::new_read();
         let storage =
+            // SAFETY: The local value outlives storage and is only read through this borrow.
             unsafe { ValueStorage::borrowed_ref(&value as *const TestValue, validity.clone()) };
 
         let mut field: ValueStorage<f32> = storage.borrow_field(|v| &v.x).unwrap();
@@ -760,6 +769,7 @@ mod tests {
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
         // Handle to v[1]: offset = one f32 = 4 bytes.
         let mut storage: ValueStorage<f32> =
+            // SAFETY: The registered type/offset match; the live World is accessed sequentially.
             unsafe { ValueStorage::revalidating(cell, e, cid, 4, validity) };
 
         assert_eq!(storage.get().unwrap(), 2.0);
@@ -777,6 +787,7 @@ mod tests {
 
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
         let mut storage: ValueStorage<f32> =
+            // SAFETY: The registered type/offset match; the live World is accessed sequentially.
             unsafe { ValueStorage::revalidating(cell, e, cid, 0, validity) };
 
         // Insert a second component: moves the entity to a new archetype/table, which
@@ -797,6 +808,7 @@ mod tests {
 
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
         let mut storage: ValueStorage<f32> =
+            // SAFETY: The registered type/offset match; the live World is accessed sequentially.
             unsafe { ValueStorage::revalidating(cell, e, cid, 0, validity) };
 
         assert!(storage.as_ref().is_ok());
@@ -815,6 +827,7 @@ mod tests {
 
         let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
         let mut storage: ValueStorage<f32> =
+            // SAFETY: The registered type/offset match; the live World is accessed sequentially.
             unsafe { ValueStorage::revalidating(cell, e, cid, 0, validity) };
 
         assert!(storage.as_ref().is_ok());

@@ -61,6 +61,7 @@ pub(crate) struct MessageWorld {
 // SAFETY: mirrors PyQueryIter's discipline. The cell is only touched while the
 // owning system runs on a single thread, fenced by `validity`.
 unsafe impl Send for MessageWorld {}
+// SAFETY: shared access checks the same owning-thread validity and scheduler permissions.
 unsafe impl Sync for MessageWorld {}
 
 impl MessageWorld {
@@ -470,8 +471,9 @@ impl MessageType {
     }
 }
 
-// SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
+// SAFETY: holders retain custom message classes; native classes are module-owned.
 unsafe impl Send for MessageType {}
+// SAFETY: dereferencing a retained class requires an attached Python thread.
 unsafe impl Sync for MessageType {}
 
 impl PartialEq for MessageType {

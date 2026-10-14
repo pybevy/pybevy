@@ -2015,6 +2015,7 @@ mod tests {
         let mut vm = VM::new();
 
         // No field access, just check the stack
+        // SAFETY: This program has no field access; no raw storage is dereferenced.
         unsafe {
             vm.execute(&bytecode, &[], 0);
         }
@@ -2069,6 +2070,7 @@ mod tests {
         let mut field_value = 5.0_f32;
         let field_ptr = &mut field_value as *mut f32 as *mut u8;
 
+        // SAFETY: Field pointers match live local values and declared types; accesses are sequential.
         unsafe {
             vm.execute(&bytecode, &[field_ptr], 0);
         }
@@ -2089,6 +2091,7 @@ mod tests {
         let bytecode = compiler.finalize();
         let mut vm = VM::new();
 
+        // SAFETY: This program has no field access; no raw storage is dereferenced.
         unsafe {
             vm.execute(&bytecode, &[], 0);
         }
@@ -2109,6 +2112,7 @@ mod tests {
         let bytecode = compiler.finalize();
         let mut vm = VM::new();
 
+        // SAFETY: This program has no field access; no raw storage is dereferenced.
         unsafe {
             vm.execute(&bytecode, &[], 0);
         }
@@ -2129,6 +2133,7 @@ mod tests {
         let bytecode = compiler.finalize();
         let mut vm = VM::new();
 
+        // SAFETY: This program has no field access; no raw storage is dereferenced.
         unsafe {
             vm.execute(&bytecode, &[], 0);
         }
@@ -2151,6 +2156,7 @@ mod tests {
         let bytecode = compiler.finalize();
         let mut vm = VM::new();
 
+        // SAFETY: This program has no field access; no raw storage is dereferenced.
         unsafe {
             vm.execute(&bytecode, &[], 0);
         }
@@ -2175,6 +2181,7 @@ mod tests {
         let bytecode = compiler.finalize();
         let mut vm = VM::new();
 
+        // SAFETY: This program has no field access; no raw storage is dereferenced.
         unsafe {
             vm.execute(&bytecode, &[], 0);
         }
@@ -2200,6 +2207,7 @@ mod tests {
         let bytecode = compiler.finalize();
         let mut vm = VM::new();
 
+        // SAFETY: This program has no field access; no raw storage is dereferenced.
         unsafe {
             vm.execute(&bytecode, &[], 0);
         }
@@ -2223,6 +2231,7 @@ mod tests {
         let bytecode = compiler.finalize();
         let mut vm = VM::new();
 
+        // SAFETY: This program has no field access; no raw storage is dereferenced.
         unsafe {
             vm.execute(&bytecode, &[], 0);
         }
@@ -2242,6 +2251,7 @@ mod tests {
         let bytecode = compiler.finalize();
         let mut vm = VM::new();
 
+        // SAFETY: This program has no field access; no raw storage is dereferenced.
         unsafe {
             vm.execute(&bytecode, &[], 0);
         }
@@ -2261,6 +2271,7 @@ mod tests {
         let bytecode = compiler.finalize();
         let mut vm = VM::new();
 
+        // SAFETY: This program has no field access; no raw storage is dereferenced.
         unsafe {
             vm.execute(&bytecode, &[], 0);
         }
@@ -2289,6 +2300,7 @@ mod tests {
         let bytecode = compiler.finalize();
         let mut vm = VM::new();
 
+        // SAFETY: This program has no field access; no raw storage is dereferenced.
         unsafe {
             vm.execute(&bytecode, &[], 0);
         }
@@ -2313,6 +2325,7 @@ mod tests {
         let bytecode = compiler.finalize();
         let mut vm = VM::new();
 
+        // SAFETY: This program has no field access; no raw storage is dereferenced.
         unsafe {
             vm.execute(&bytecode, &[], 0);
         }
@@ -2342,6 +2355,7 @@ mod tests {
         let bytecode = compiler.finalize();
         let mut vm = VM::new();
 
+        // SAFETY: This program has no field access; no raw storage is dereferenced.
         unsafe {
             vm.execute(&bytecode, &[], 0);
         }
@@ -2368,6 +2382,7 @@ mod tests {
         let bytecode = compiler.finalize();
         let mut vm = VM::new();
 
+        // SAFETY: This program has no field access; no raw storage is dereferenced.
         unsafe {
             vm.execute(&bytecode, &[], 0);
         }
@@ -2388,6 +2403,7 @@ mod tests {
         let bytecode = compiler.finalize();
         let mut vm = VM::new();
 
+        // SAFETY: This program has no field access; no raw storage is dereferenced.
         unsafe {
             vm.execute(&bytecode, &[], 0);
         }
@@ -2423,6 +2439,7 @@ mod tests {
         let bytecode = compiler.finalize();
         let mut vm = VM::new();
 
+        // SAFETY: This program has no field access; no raw storage is dereferenced.
         unsafe {
             vm.execute(&bytecode, &[], 0);
         }
@@ -2565,6 +2582,7 @@ mod tests {
             let mut pooled = PooledVM::acquire();
             let vm = pooled.get_mut();
             vm.reset();
+            // SAFETY: Field pointers match live local values and declared types; accesses are sequential.
             unsafe {
                 vm.execute(&bytecode, &[ptr], 0);
             }
@@ -2577,6 +2595,7 @@ mod tests {
             let mut pooled = PooledVM::acquire();
             let vm = pooled.get_mut();
             vm.reset();
+            // SAFETY: Field pointers match live local values and declared types; accesses are sequential.
             unsafe {
                 vm.execute(&bytecode, &[ptr], 0);
             }
@@ -2612,6 +2631,7 @@ mod tests {
             let vm = pooled.get_mut();
             vm.reset();
             let ptr = value as *mut f32 as *mut u8;
+            // SAFETY: Field pointers match live local values and declared types; accesses are sequential.
             unsafe {
                 vm.execute(&bytecode, &[ptr], i as u64);
             }
@@ -2664,6 +2684,7 @@ mod tests {
         let mut field_value = 5.0_f64;
         let field_ptr = &mut field_value as *mut f64 as *mut u8;
 
+        // SAFETY: Field pointers match live local values and declared types; accesses are sequential.
         unsafe {
             vm.execute(&bytecode, &[field_ptr], 0);
         }
@@ -2697,6 +2718,7 @@ mod tests {
         let mut field_value = 0.0_f64;
         let field_ptr = &mut field_value as *mut f64 as *mut u8;
 
+        // SAFETY: Field pointers match live local values and declared types; accesses are sequential.
         unsafe {
             vm.execute(&bytecode, &[field_ptr], 0);
         }
@@ -2745,6 +2767,7 @@ mod tests {
             let mut field_value = original;
             let field_ptr = &mut field_value as *mut f32 as *mut u8;
 
+            // SAFETY: Field pointers match live local values and declared types; accesses are sequential.
             unsafe {
                 vm.reset();
                 vm.execute(&bytecode, &[field_ptr], 0);
@@ -2781,6 +2804,7 @@ mod tests {
         let mut field_value = 42_i64;
         let field_ptr = &mut field_value as *mut i64 as *mut u8;
 
+        // SAFETY: Field pointers match live local values and declared types; accesses are sequential.
         unsafe {
             vm.execute(&bytecode, &[field_ptr], 0);
         }
@@ -2808,6 +2832,7 @@ mod tests {
         let mut field_value = true;
         let field_ptr = &mut field_value as *mut bool as *mut u8;
 
+        // SAFETY: Field pointers match live local values and declared types; accesses are sequential.
         unsafe {
             vm.execute(&bytecode, &[field_ptr], 0);
         }
@@ -2828,12 +2853,14 @@ mod tests {
 
             let mut field_value = !expected;
             let field_ptr = &mut field_value as *mut bool as *mut u8;
+            // SAFETY: The pointer is to the live exclusive bool and matches the declared field type.
             unsafe {
                 VM::new().execute(&bytecode, &[field_ptr], 0);
             }
             assert_eq!(field_value, expected, "{value}");
 
             let mut eager = !expected;
+            // SAFETY: The live typed allocation covers the batch count and stride; writes are exclusive.
             unsafe { write_field_value((&mut eager as *mut bool).cast(), value, FieldType::Bool) };
             assert_eq!(eager, expected, "{value}");
         }
@@ -2865,6 +2892,7 @@ mod tests {
         let mut values: Vec<f64> = (0..count).map(|i| i as f64).collect();
         let base_ptr = values.as_mut_ptr() as *mut u8;
 
+        // SAFETY: The live typed allocation covers the batch count and stride; writes are exclusive.
         unsafe {
             vm.execute_batch_multi(
                 &bytecode,
@@ -2910,6 +2938,7 @@ mod tests {
         let mut values: Vec<f64> = (1..=count).map(|i| i as f64).collect();
         let base_ptr = values.as_mut_ptr() as *mut u8;
 
+        // SAFETY: The live typed allocation covers the batch count and stride; writes are exclusive.
         unsafe {
             vm.execute_batch_multi(
                 &bytecode,
@@ -2953,6 +2982,7 @@ mod tests {
         let mut values: Vec<f64> = vec![0.0; count];
         let base_ptr = values.as_mut_ptr() as *mut u8;
 
+        // SAFETY: The live typed allocation covers the batch count and stride; writes are exclusive.
         unsafe {
             vm.execute_batch_multi(
                 &bytecode,
@@ -2994,6 +3024,7 @@ mod tests {
         let mut values: Vec<f32> = (0..count).map(|i| i as f32).collect();
         let base_ptr = values.as_mut_ptr() as *mut u8;
 
+        // SAFETY: The live typed allocation covers the batch count and stride; writes are exclusive.
         unsafe {
             vm.execute_batch_multi(
                 &bytecode,
@@ -3037,6 +3068,7 @@ mod tests {
         let mut field_value = 7.0_f64;
         let field_ptr = &mut field_value as *mut f64 as *mut u8;
 
+        // SAFETY: Field pointers match live local values and declared types; accesses are sequential.
         let result = unsafe { vm.execute_and_reduce(&bytecode, &[field_ptr], 0) };
 
         assert_eq!(result, 21.0);
@@ -3054,6 +3086,7 @@ mod tests {
         // Find a 4-byte-aligned-but-not-8-byte-aligned address within buf
         let base = buf.as_mut_ptr() as usize;
         let offset = if base.is_multiple_of(8) { 4 } else { 0 };
+        // SAFETY: The offset is at most four bytes inside the 32-byte allocation.
         let misaligned_ptr = unsafe { buf.as_mut_ptr().add(offset) };
         assert_eq!(
             misaligned_ptr as usize % 8,
@@ -3062,11 +3095,13 @@ mod tests {
         );
 
         // Write a known f64 value at the misaligned address
+        // SAFETY: The live byte buffer covers every field; accesses use unaligned operations.
         unsafe {
             write_field_value(misaligned_ptr, 123.456, FieldType::F64);
         }
 
         // Read it back - must not panic
+        // SAFETY: The live byte buffer covers every field; accesses use unaligned operations.
         let read_back = unsafe { read_field_value(misaligned_ptr as *const u8, FieldType::F64) };
         assert_eq!(read_back, 123.456);
 
@@ -3088,10 +3123,12 @@ mod tests {
         let bytecode = compiler.finalize();
         let mut vm = VM::new();
 
+        // SAFETY: The live byte buffer covers every field; accesses use unaligned operations.
         unsafe {
             vm.execute(&bytecode, &[misaligned_ptr], 0);
         }
 
+        // SAFETY: The live byte buffer covers every field; accesses use unaligned operations.
         let result = unsafe { read_field_value(misaligned_ptr as *const u8, FieldType::F64) };
         assert_eq!(result, 124.456);
     }
@@ -3101,20 +3138,25 @@ mod tests {
         let mut buf = vec![0u8; 32];
         let base = buf.as_mut_ptr() as usize;
         let offset = if base.is_multiple_of(8) { 4 } else { 0 };
+        // SAFETY: The offset is at most four bytes inside the 32-byte allocation.
         let misaligned_ptr = unsafe { buf.as_mut_ptr().add(offset) };
         assert_eq!(misaligned_ptr as usize % 8, 4);
 
         // i64
+        // SAFETY: The live byte buffer covers every field; accesses use unaligned operations.
         unsafe {
             write_field_value(misaligned_ptr, 42.0, FieldType::I64);
         }
+        // SAFETY: The live byte buffer covers every field; accesses use unaligned operations.
         let v = unsafe { read_field_value(misaligned_ptr as *const u8, FieldType::I64) };
         assert_eq!(v, 42.0);
 
         // u64
+        // SAFETY: The live byte buffer covers every field; accesses use unaligned operations.
         unsafe {
             write_field_value(misaligned_ptr, 99.0, FieldType::U64);
         }
+        // SAFETY: The live byte buffer covers every field; accesses use unaligned operations.
         let v = unsafe { read_field_value(misaligned_ptr as *const u8, FieldType::U64) };
         assert_eq!(v, 99.0);
     }
@@ -3148,11 +3190,13 @@ mod tests {
         let count = 10;
         let stride = 5;
         let mut buf = vec![0u8; count * stride + 1];
+        // SAFETY: The allocation includes the leading byte plus every strided f32.
         let base_ptr = unsafe { buf.as_mut_ptr().add(1) };
         assert_ne!(base_ptr as usize % 4, 0, "base pointer must be misaligned");
 
         let read_all = |buf: &[u8]| -> Vec<f32> {
             (0..count)
+                // SAFETY: The live byte buffer covers every field; accesses use unaligned operations.
                 .map(|i| unsafe {
                     (buf.as_ptr().add(1 + i * stride) as *const f32).read_unaligned()
                 })
@@ -3163,6 +3207,7 @@ mod tests {
 
         // field = const
         let assign = compile(&[Op::PushConst(0), Op::StoreField(0)], 2.0);
+        // SAFETY: The live byte buffer covers every field; accesses use unaligned operations.
         unsafe {
             vm.execute_batch_multi(&assign, &[base_ptr], &[stride], count, None);
         }
@@ -3178,6 +3223,7 @@ mod tests {
             ],
             1.5,
         );
+        // SAFETY: The live byte buffer covers every field; accesses use unaligned operations.
         unsafe {
             vm.execute_batch_multi(&add, &[base_ptr], &[stride], count, None);
         }
@@ -3193,6 +3239,7 @@ mod tests {
             ],
             2.0,
         );
+        // SAFETY: The live byte buffer covers every field; accesses use unaligned operations.
         unsafe {
             vm.execute_batch_multi(&mul, &[base_ptr], &[stride], count, None);
         }
@@ -3213,6 +3260,7 @@ mod tests {
 
         let bytecode = compiler.finalize();
         let mut vm = VM::new();
+        // SAFETY: This program has no field access; no raw storage is dereferenced.
         unsafe { vm.execute(&bytecode, &[], 0) };
 
         assert!(!vm.stack[0].as_bool(), "1.0 != 1.0+EPSILON (exact)");
@@ -3230,6 +3278,7 @@ mod tests {
 
         let bytecode = compiler.finalize();
         let mut vm = VM::new();
+        // SAFETY: This program has no field access; no raw storage is dereferenced.
         unsafe { vm.execute(&bytecode, &[], 0) };
 
         assert!(vm.stack[0].as_bool(), "3.0 != 4.0");
@@ -3245,6 +3294,7 @@ mod tests {
 
         let bytecode = compiler.finalize();
         let mut vm = VM::new();
+        // SAFETY: This program has no field access; no raw storage is dereferenced.
         unsafe { vm.execute(&bytecode, &[], 0) };
 
         assert!(!vm.stack[0].as_bool(), "5.0 == 5.0 so Ne is false");
@@ -3261,6 +3311,7 @@ mod tests {
 
         let bytecode = compiler.finalize();
         let mut vm = VM::new();
+        // SAFETY: This program has no field access; no raw storage is dereferenced.
         unsafe { vm.execute(&bytecode, &[], 0) };
 
         assert!(vm.stack[0].as_float().is_nan());
@@ -3275,6 +3326,7 @@ mod tests {
         compiler.emit(Op::Sign);
         let bytecode = compiler.finalize();
         let mut vm = VM::new();
+        // SAFETY: This program has no field access; no raw storage is dereferenced.
         unsafe { vm.execute(&bytecode, &[], 0) };
         assert_eq!(vm.stack[0].as_float(), 1.0);
 
@@ -3285,6 +3337,7 @@ mod tests {
         compiler.emit(Op::Sign);
         let bytecode = compiler.finalize();
         let mut vm = VM::new();
+        // SAFETY: This program has no field access; no raw storage is dereferenced.
         unsafe { vm.execute(&bytecode, &[], 0) };
         assert_eq!(vm.stack[0].as_float(), -1.0);
 
@@ -3295,6 +3348,7 @@ mod tests {
         compiler.emit(Op::Sign);
         let bytecode = compiler.finalize();
         let mut vm = VM::new();
+        // SAFETY: This program has no field access; no raw storage is dereferenced.
         unsafe { vm.execute(&bytecode, &[], 0) };
         assert_eq!(vm.stack[0].as_float(), 0.0);
 
@@ -3305,6 +3359,7 @@ mod tests {
         compiler.emit(Op::Sign);
         let bytecode = compiler.finalize();
         let mut vm = VM::new();
+        // SAFETY: This program has no field access; no raw storage is dereferenced.
         unsafe { vm.execute(&bytecode, &[], 0) };
         let result = vm.stack[0].as_float();
         assert_eq!(result, 0.0);
@@ -3423,6 +3478,7 @@ mod tests {
         let mut value = (1_i64 << 53) + 1;
         let pointers = [(&mut value as *mut i64).cast::<u8>()];
         let mut vm = VM::new();
+        // SAFETY: Field pointers match live local values and declared types; accesses are sequential.
         unsafe { vm.execute(&bytecode, &pointers, 0) };
 
         assert_eq!(value, (1_i64 << 53) + 1);
@@ -3446,6 +3502,7 @@ mod tests {
         let mut value = 250_u8;
         let pointers = [(&mut value as *mut u8).cast::<u8>()];
         let mut vm = VM::new();
+        // SAFETY: Field pointers match live local values and declared types; accesses are sequential.
         unsafe { vm.execute(&bytecode, &pointers, 0) };
 
         assert_eq!(value, 4);
@@ -3897,6 +3954,7 @@ mod tests {
             (&mut right_value as *mut i64).cast::<u8>(),
         ];
         let mut vm = VM::new();
+        // SAFETY: Field pointers match live local values and declared types; accesses are sequential.
         unsafe { vm.execute(&bytecode, &pointers, 0) };
 
         assert!(vm.stack[0].as_bool());

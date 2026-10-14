@@ -22,10 +22,9 @@ use pybevy_core::public_error::{
     CONDITION_MESSAGE_READER, CONDITION_MESSAGE_WRITER, CONDITION_MUTABLE_ASSETS,
     CONDITION_MUTABLE_QUERY, CONDITION_MUTABLE_VIEW, CONDITION_OBSERVER,
     CONDITION_OPAQUE_MESSAGE_READER, CONDITION_OPAQUE_QUERY, CONDITION_OPAQUE_RESOURCE,
-    CONDITION_OPAQUE_VIEW, CONDITION_REMOVED_COMPONENTS, CONDITION_RES_MUT,
-    CONDITION_RETURNED_CALLABLE, CONDITION_WORLD, REQUIRED_SINGLE_MULTIPLE_MATCHES,
-    REQUIRED_SINGLE_NO_MATCHES, observer_parameter_outside_observer, pipe_input_type_mismatch,
-    resolved_access_conflict,
+    CONDITION_OPAQUE_VIEW, CONDITION_RES_MUT, CONDITION_RETURNED_CALLABLE, CONDITION_WORLD,
+    REQUIRED_SINGLE_MULTIPLE_MATCHES, REQUIRED_SINGLE_NO_MATCHES,
+    observer_parameter_outside_observer, pipe_input_type_mismatch, resolved_access_conflict,
 };
 #[cfg(debug_assertions)]
 use pybevy_ecs::shared::access_audit::assert_query_access_declared;
@@ -41,8 +40,9 @@ use pybevy_ecs::shared::{
     system_runtime::{
         CallMetadata, CallOutcome, CallablePreflight, DynamicConditionCore, DynamicSystemCore,
         ErrorReport, InitializedRunState, InterpreterCallContext, InterpreterFailure,
-        InvocationKind, OptionalValueInput, OptionalValueOutput, OutputMode, PreparedSystem,
-        StoredErrorPolicy, SystemFlags, SystemHandle, SystemInterpreter, UnitOutput,
+        InvocationKind, ObserverRunHistory, OptionalValueInput, OptionalValueOutput, OutputMode,
+        PreparedSystem, StoredErrorPolicy, SystemFlags, SystemHandle, SystemInterpreter,
+        UnitOutput,
     },
 };
 use pybevy_reload::{HotReloadGeneration, SystemStage};
@@ -58,7 +58,7 @@ use super::{
     commands::CommandErrorSink,
     component_type::PyComponentType,
     dynamic_system::{
-        BufferedSystemError, DynamicSystemHandle, DynamicSystemInner, MainResolver,
+        BufferedSystemError, DynamicSystemHandle, DynamicSystemInner, MainResolver, ObserverCall,
         SystemErrorBuffer, SystemErrorReport, SystemErrorReportState, asset_validation_identity,
         build_run_args, execute_prepared_observer, lock_or_recover, lower_param_type, lower_params,
         print_reported_system_error_once, resource_marker_validation_identity,
@@ -89,7 +89,6 @@ fn condition_rejection_reason(rejection: ConditionRejection) -> &'static str {
         ConditionRejection::MessageMutator => CONDITION_MESSAGE_MUTATOR,
         ConditionRejection::MessageReader => CONDITION_MESSAGE_READER,
         ConditionRejection::OpaqueMessageReader => CONDITION_OPAQUE_MESSAGE_READER,
-        ConditionRejection::RemovedComponents => CONDITION_REMOVED_COMPONENTS,
         ConditionRejection::ResMut => CONDITION_RES_MUT,
         ConditionRejection::OpaqueResource => CONDITION_OPAQUE_RESOURCE,
         ConditionRejection::MutableAssets => CONDITION_MUTABLE_ASSETS,
@@ -157,6 +156,7 @@ pub(crate) struct MainPreparedObserver {
     pub(crate) retained: SystemHandle<MainInterpreter>,
     pub(crate) params: MainParamPlan,
     pub(crate) persistent: (),
+    pub(crate) history: ObserverRunHistory,
     pub(crate) failure_sink: MainFailureSink,
     pub(crate) metadata: CallMetadata,
 }
@@ -495,6 +495,7 @@ pub(crate) fn new_main_observer(
         retained: prepared.retained,
         params: prepared.params,
         persistent: (),
+        history: ObserverRunHistory::default(),
         failure_sink,
         metadata: prepared.metadata,
     }
@@ -614,6 +615,7 @@ impl MainInterpreter {
         InterpreterFailure {
             report: ErrorReport { message, traceback },
             exception: Some(error),
+            reached_callback: true,
         }
     }
 
@@ -1137,6 +1139,7 @@ unsafe impl SystemInterpreter for MainInterpreter {
                     callable.bind(py),
                     &params,
                     ctx.world,
+                    ctx.ticks,
                     ctx.commands,
                     trigger.event.clone_ref(py),
                     ctx.validity,
@@ -1156,8 +1159,15 @@ unsafe impl SystemInterpreter for MainInterpreter {
             drop(message_cursors);
 
             result
-                .map(|()| CallOutcome::Unit)
-                .map_err(|error| Self::failure(py, error))
+                .map_err(|error| InterpreterFailure {
+                    reached_callback: false,
+                    ..Self::failure(py, error)
+                })
+                .and_then(|call| match call {
+                    ObserverCall::Ran => Ok(CallOutcome::Unit),
+                    ObserverCall::Skipped => Ok(CallOutcome::Skipped),
+                    ObserverCall::Raised(error) => Err(Self::failure(py, error)),
+                })
         })
     }
 

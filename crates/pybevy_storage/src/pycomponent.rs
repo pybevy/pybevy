@@ -644,6 +644,7 @@ mod tests {
         let mut component = TestComponent { value: 42 };
         let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
 
+        // SAFETY: The local value outlives storage; all guarded accesses are sequential.
         let storage = unsafe {
             ComponentStorage::borrowed(&mut component as *mut TestComponent, validity.clone())
         };
@@ -658,6 +659,7 @@ mod tests {
         let mut component = TestComponent { value: 42 };
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
 
+        // SAFETY: The local value outlives storage; all guarded accesses are sequential.
         let mut storage = unsafe {
             ComponentStorage::borrowed(&mut component as *mut TestComponent, validity.clone())
         };
@@ -672,6 +674,7 @@ mod tests {
         let mut component = TestComponent { value: 42 };
         let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
 
+        // SAFETY: The local value outlives storage; all guarded accesses are sequential.
         let storage = unsafe {
             ComponentStorage::borrowed(&mut component as *mut TestComponent, validity.clone())
         };
@@ -691,6 +694,7 @@ mod tests {
         let mut component = TestComponent { value: 42 };
         let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read); // Read-only borrow!
 
+        // SAFETY: The local value outlives storage; all guarded accesses are sequential.
         let mut storage = unsafe {
             ComponentStorage::borrowed(&mut component as *mut TestComponent, validity.clone())
         };
@@ -718,6 +722,7 @@ mod tests {
         let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
 
         let storage =
+            // SAFETY: The local value outlives storage; all guarded accesses are sequential.
             unsafe { ComponentStorage::borrowed(&mut component as *mut TestComponent, validity) };
 
         let owned = storage.into_owned().unwrap();
@@ -730,6 +735,7 @@ mod tests {
         let validity_flag = ValidityFlag::new_read();
         let validity = validity_flag.with_access_mode(AccessMode::Read);
 
+        // SAFETY: The local value outlives storage; all guarded accesses are sequential.
         let storage = unsafe {
             ComponentStorage::borrowed(&mut component as *mut TestComponent, validity.clone())
         };
@@ -788,6 +794,7 @@ mod tests {
         let mut component = NestedComponent { x: 5.0, y: 6.0 };
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
         let storage =
+            // SAFETY: The local value outlives storage and is only read through this borrow.
             unsafe { ComponentStorage::borrowed(&mut component as *mut NestedComponent, validity) };
 
         let field: ValueStorage<f32> = storage.borrow_field(|c| &c.x).unwrap();
@@ -798,6 +805,7 @@ mod tests {
     fn test_read_only_borrowed_field_stays_validity_bound() {
         let component = NestedComponent { x: 5.0, y: 6.0 };
         let validity = ValidityFlag::new_read();
+        // SAFETY: The local value outlives storage and is only read through this borrow.
         let storage = unsafe {
             ComponentStorage::borrowed_ref(&component as *const NestedComponent, validity.clone())
         };
@@ -814,6 +822,7 @@ mod tests {
         let component = TestComponent { value: 7 };
         let validity = ValidityFlag::new_read();
         let mut storage =
+            // SAFETY: The local value outlives storage and is only read through this borrow.
             unsafe { ComponentStorage::borrowed_ref(&component as *const TestComponent, validity) };
         assert!(storage.as_ref().is_ok());
         assert!(matches!(storage.as_mut(), Err(StorageError::ReadOnly)));
@@ -823,6 +832,7 @@ mod tests {
     fn test_borrowed_mut_allows_writes() {
         let mut component = TestComponent { value: 7 };
         let validity = ValidityFlag::new_write();
+        // SAFETY: The local value outlives storage; all guarded accesses are sequential.
         let mut storage = unsafe {
             ComponentStorage::borrowed_mut(&mut component as *mut TestComponent, validity)
         };
@@ -966,6 +976,7 @@ mod tests {
         let component = TestComponent { value: 3 };
         let validity = ValidityFlag::new_read();
         let storage =
+            // SAFETY: The local value outlives storage and is only read through this borrow.
             unsafe { ComponentStorage::borrowed_ref(&component as *const TestComponent, validity) };
         let mut shared = storage.share_borrow();
         assert!(shared.as_ref().is_ok());
@@ -977,6 +988,7 @@ mod tests {
         // Sharing a mutable borrow keeps it mutable.
         let mut component = TestComponent { value: 3 };
         let validity = ValidityFlag::new_write();
+        // SAFETY: The local value outlives storage; all guarded accesses are sequential.
         let storage = unsafe {
             ComponentStorage::borrowed_mut(&mut component as *mut TestComponent, validity)
         };
@@ -1003,6 +1015,7 @@ mod tests {
         // Mutable parent -> mutable child field.
         let mut component = NestedComponent { x: 1.0, y: 2.0 };
         let validity = ValidityFlag::new_write();
+        // SAFETY: The local value outlives storage and is only read through this borrow.
         let storage = unsafe {
             ComponentStorage::borrowed_mut(&mut component as *mut NestedComponent, validity)
         };
@@ -1013,6 +1026,7 @@ mod tests {
         // Read-only parent -> live read-only child borrow.
         let component = NestedComponent { x: 1.0, y: 2.0 };
         let validity = ValidityFlag::new_read();
+        // SAFETY: The registered type/offset match; the live World is accessed sequentially.
         let storage = unsafe {
             ComponentStorage::borrowed_ref(&component as *const NestedComponent, validity)
         };
@@ -1029,6 +1043,7 @@ mod tests {
 
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
         let mut storage =
+            // SAFETY: The registered type/offset match; the live World is accessed sequentially.
             unsafe { ComponentStorage::<TestComponent>::revalidating(cell, e, cid, validity) };
 
         assert!(storage.is_borrowed());
@@ -1046,6 +1061,7 @@ mod tests {
 
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
         let mut storage =
+            // SAFETY: The registered type/offset match; the live World is accessed sequentially.
             unsafe { ComponentStorage::<TestComponent>::revalidating(cell, e, cid, validity) };
 
         // Insert a second component: relocates the entity, dangling a cached pointer.
@@ -1067,6 +1083,7 @@ mod tests {
 
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
         let mut storage =
+            // SAFETY: The registered type/offset match; the live World is accessed sequentially.
             unsafe { ComponentStorage::<TestComponent>::revalidating(cell, e, cid, validity) };
 
         assert!(storage.as_ref().is_ok());
@@ -1084,6 +1101,7 @@ mod tests {
 
         let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
         let mut storage =
+            // SAFETY: The registered type/offset match; the live World is accessed sequentially.
             unsafe { ComponentStorage::<TestComponent>::revalidating(cell, e, cid, validity) };
 
         assert!(storage.as_ref().is_ok());
@@ -1099,6 +1117,7 @@ mod tests {
 
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
         let storage =
+            // SAFETY: The registered type/offset match; the live World is accessed sequentially.
             unsafe { ComponentStorage::<NestedComponent>::revalidating(cell, e, cid, validity) };
 
         // A sub-field of a re-resolving component re-resolves too (composed offset).
@@ -1122,6 +1141,7 @@ mod tests {
 
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
         let storage =
+            // SAFETY: The registered type/offset match; the live World is accessed sequentially.
             unsafe { ComponentStorage::<TestComponent>::revalidating(cell, e, cid, validity) };
         let mut shared = storage.share_borrow();
         assert!(shared.is_borrowed());

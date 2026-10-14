@@ -9,7 +9,7 @@ import sys
 import sysconfig
 import threading
 import weakref
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, MutableMapping
 from contextvars import ContextVar
 from functools import lru_cache
 from types import CodeType, FunctionType, ModuleType
@@ -150,6 +150,7 @@ class ModuleReloadTransaction:
         self._flushed: set[str] = set()
         self._components_defined: set[str] = set()
         self._components_removed: list[str] = []
+        self._registry_undo: dict[tuple[int, str], Callable[[], None]] = {}
         self._token = _active.set(self)
 
     def stage_resource_assignment_alias(
@@ -221,6 +222,8 @@ class ModuleReloadTransaction:
                 if self._entrypoint_fingerprint is not None:
                     _committed_entrypoint[0] = self._entrypoint_fingerprint
             else:
+                for restore in reversed(self._registry_undo.values()):
+                    restore()
                 for graph, candidate in self._import_graph_updates.values():
                     graph.remember_failed_candidate(candidate)
                 for name, module in list(sys.modules.items()):
@@ -259,6 +262,7 @@ class ModuleReloadTransaction:
             self._flushed.clear()
             self._components_defined.clear()
             self._components_removed = []
+            self._registry_undo.clear()
 
     def stage_import_graph(self, graph: ImportGraph, candidate: ImportGraph) -> None:
         """Publish a candidate dependency graph only if this reload commits."""
@@ -279,10 +283,52 @@ def register_component_forgetter(forget: Callable[[list[str]], None]) -> None:
 
 
 def note_component_defined(key: str, module: str) -> None:
+    record_mapping_entry(_component_modules, key)
     _component_modules[key] = module
     transaction = _active.get()
     if transaction is not None:
         transaction.note_component_defined(key)
+
+
+def record_mapping_entry[T](mapping: MutableMapping[str, T], key: str) -> None:
+    """Retain the first value a reload attempt displaces until it commits."""
+    transaction = _active.get()
+    if transaction is None or (id(mapping), key) in transaction._registry_undo:
+        return
+    if key in mapping:
+        previous = mapping[key]
+
+        def restore() -> None:
+            mapping[key] = previous
+
+    else:
+
+        def restore() -> None:
+            mapping.pop(key, None)
+
+    transaction._registry_undo[id(mapping), key] = restore
+
+
+def record_mapping_entries[T](mapping: MutableMapping[str, T]) -> None:
+    """Record the entries a candidate's cache clear will remove."""
+    for key in mapping:
+        record_mapping_entry(mapping, key)
+
+
+def record_set_member(values: set[str], key: str) -> None:
+    """Restore a reload flag's previous membership if its candidate fails."""
+    transaction = _active.get()
+    if transaction is None or (id(values), key) in transaction._registry_undo:
+        return
+    present = key in values
+
+    def restore() -> None:
+        if present:
+            values.add(key)
+        else:
+            values.discard(key)
+
+    transaction._registry_undo[id(values), key] = restore
 
 
 def removed_component_names() -> list[str]:

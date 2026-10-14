@@ -348,6 +348,11 @@ def resource(cls: type[RT]) -> type[RT]:
 
     key = f"{cls.__module__}.{cls.__qualname__}"
     layout_signature = _resource_layout_signature(cls)
+    from ._internal.reload_modules import record_mapping_entry, record_set_member
+
+    record_mapping_entry(_resource_layout_signatures, key)
+    record_mapping_entry(_resource_cache, key)
+    record_set_member(_resource_layout_reload_required, key)
 
     # Full reload drops classes, but the next Partial still needs their layouts.
     previous_signature = _resource_layout_signatures.get(key)
@@ -416,6 +421,11 @@ class _ComponentAnnotationState:
 def clear_component_cache(verbose: bool = False) -> None:
     """Clear cached ECS classes, retaining layout signatures for reload comparison."""
     global _component_cache, _resource_cache
+    from ._internal.reload_modules import record_mapping_entries
+
+    record_mapping_entries(_component_cache)
+    record_mapping_entries(_resource_cache)
+    record_mapping_entries(_event_cache)
     if verbose:
         print(
             "🗑️  Clearing ECS type cache "
@@ -642,9 +652,15 @@ def _register_component(cls: type[CT], *, storage: str | None = None) -> type[CT
     key = f"{cls.__module__}.{cls.__qualname__}"
     from ._internal.reload_modules import (
         note_component_defined,
+        record_mapping_entry,
+        record_set_member,
         register_component_forgetter,
     )
 
+    record_mapping_entry(_component_layout_signatures, key)
+    record_mapping_entry(_component_cache, key)
+    record_mapping_entry(_component_classes_by_name, key)
+    record_set_member(_component_layout_reload_required, key)
     register_component_forgetter(_forget_components)
     note_component_defined(key, cls.__module__)
     field_hints = _component_field_hints(cls)

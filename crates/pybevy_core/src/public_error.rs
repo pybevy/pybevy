@@ -136,6 +136,10 @@ pub fn queued_component_layout_changed(name: &str) -> String {
     format!("Component '{name}' changed storage or layout after command preparation")
 }
 
+pub fn registered_component_layout_changed(name: &str) -> String {
+    format!("Component '{name}' changed storage or layout after registration")
+}
+
 pub fn component_identity_clash(qualified_name: &str, first: &str, second: &str) -> String {
     format!(
         "@component classes {first} and {second} share the identity '{qualified_name}' with \
@@ -940,7 +944,6 @@ pub const REMOVED_COMPONENTS_EXPECTS_COMPONENT: &str =
     "RemovedComponents[...] expects a Component class";
 pub const REMOVED_COMPONENTS_NOT_RESOURCE: &str =
     "RemovedComponents[...] expects a Component class, not a Resource class";
-pub const CONDITION_REMOVED_COMPONENTS: &str = "RemovedComponents (advancing the removal cursor mutates reader state; read removals in a regular system instead)";
 pub const CONDITION_OPAQUE_MESSAGE_READER: &str =
     "MessageReader for a custom Python message (opaque Python access is exclusive)";
 pub const CONDITION_RES_MUT: &str = "ResMut (mutable resource access)";

@@ -318,6 +318,8 @@ requesting `np.asarray(positions, copy=False)` raises.
 Basic integer and slice indexing returns live views when at least one axis
 remains. Writes through `positions[row]`, `positions[:, lane]`, and nested
 slices reach the mesh and expire with the surrounding `with` block.
+Empty attribute arrays also support offset and reversed slices; they retain the
+same read/write and lifetime rules without selecting any elements.
 
 `reshape()` and `ravel()` share C-contiguous mesh storage and expire with the
 surrounding `with` block. Use `.copy()` for independent data.

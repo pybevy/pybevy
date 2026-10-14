@@ -171,6 +171,7 @@ fn bench_dynamic_query_by_id(c: &mut Criterion) {
                         // Use get_mut_by_id like the actual View code does
                         if let Some(mut untyped) = entity.get_mut_by_id(component_id) {
                             let ptr = untyped.as_mut().as_ptr() as *mut Transform;
+                            // SAFETY: the query declares mutable Transform access and registered this exact type.
                             unsafe {
                                 (*ptr).translation.x += 1.0;
                                 (*ptr).translation.y += 1.0;

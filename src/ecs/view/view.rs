@@ -792,7 +792,9 @@ pub struct PyViewColMut {
     validity: ValidityFlag,
 }
 
+// SAFETY: parent access checks owning-thread validity before dereferencing the run-bound pointer.
 unsafe impl Send for PyViewColMut {}
+// SAFETY: writes use the parent's validated scheduler access and execution lease.
 unsafe impl Sync for PyViewColMut {}
 
 #[pymethods]

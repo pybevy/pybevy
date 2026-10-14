@@ -82,16 +82,21 @@ unsafe fn run_scalar(bc: &CompiledBytecode, buf: &mut [f32], n: usize) {
     let mut vm = VM::new();
     let base = buf.as_mut_ptr() as *mut u8;
     for i in 0..n {
+        // SAFETY: The caller provides n live exclusive two-f32 rows and a matching kernel.
         let xp = unsafe { base.add(i * 8) };
+        // SAFETY: The caller provides n live exclusive two-f32 rows and a matching kernel.
         let vp = unsafe { base.add(i * 8 + 4) };
+        // SAFETY: The caller provides n live exclusive two-f32 rows and a matching kernel.
         unsafe { vm.execute(bc, &[xp, vp], i as u64) };
     }
 }
 
 unsafe fn run_tiled(bc: &CompiledBytecode, buf: &mut [f32], n: usize, scratch: &mut TiledScratch) {
     let base = buf.as_mut_ptr() as *mut u8;
+    // SAFETY: The caller provides n live exclusive two-f32 rows and a matching kernel.
     let bases = [base, unsafe { base.add(4) }];
     let strides = [8usize, 8usize];
+    // SAFETY: The caller provides n live exclusive two-f32 rows and a matching kernel.
     unsafe { execute_assignment_tiled(bc, &bases, &strides, n, scratch).unwrap() };
 }
 
@@ -102,8 +107,10 @@ unsafe fn run_tiled_f32(
     scratch: &mut TiledScratch,
 ) {
     let base = buf.as_mut_ptr() as *mut u8;
+    // SAFETY: The caller provides n live exclusive two-f32 rows and a matching kernel.
     let bases = [base, unsafe { base.add(4) }];
     let strides = [8usize, 8usize];
+    // SAFETY: The caller provides n live exclusive two-f32 rows and a matching kernel.
     unsafe { execute_assignment_tiled_f32(bc, &bases, &strides, n, scratch).unwrap() };
 }
 
@@ -115,6 +122,7 @@ fn bench_kernel(c: &mut Criterion, name: &str, bc: &CompiledBytecode) {
     group.bench_with_input(BenchmarkId::new("scalar_per_entity", n), &n, |b, &n| {
         b.iter_batched_ref(
             || make_data(n),
+            // SAFETY: make_data provides n exclusive two-f32 rows matching this kernel.
             |buf| unsafe { run_scalar(black_box(bc), buf, n) },
             criterion::BatchSize::LargeInput,
         );
@@ -124,6 +132,7 @@ fn bench_kernel(c: &mut Criterion, name: &str, bc: &CompiledBytecode) {
     group.bench_with_input(BenchmarkId::new("tiled_f64", n), &n, |b, &n| {
         b.iter_batched_ref(
             || make_data(n),
+            // SAFETY: make_data provides n exclusive two-f32 rows matching this kernel.
             |buf| unsafe { run_tiled(black_box(bc), buf, n, &mut scratch) },
             criterion::BatchSize::LargeInput,
         );
@@ -133,6 +142,7 @@ fn bench_kernel(c: &mut Criterion, name: &str, bc: &CompiledBytecode) {
     group.bench_with_input(BenchmarkId::new("tiled_f32", n), &n, |b, &n| {
         b.iter_batched_ref(
             || make_data(n),
+            // SAFETY: make_data provides n exclusive two-f32 rows matching this kernel.
             |buf| unsafe { run_tiled_f32(black_box(bc), buf, n, &mut scratch_f32) },
             criterion::BatchSize::LargeInput,
         );
@@ -152,8 +162,11 @@ unsafe fn run_scalar_dense(bc: &CompiledBytecode, x: &mut [f32], v: &[f32], n: u
     let xb = x.as_mut_ptr() as *mut u8;
     let vb = v.as_ptr() as *mut u8;
     for i in 0..n {
+        // SAFETY: Both columns cover n f32 rows; this kernel writes only the exclusive x column.
         let xp = unsafe { xb.add(i * 4) };
+        // SAFETY: Both columns cover n f32 rows; this kernel writes only the exclusive x column.
         let vp = unsafe { vb.add(i * 4) };
+        // SAFETY: Both columns cover n f32 rows; this kernel writes only the exclusive x column.
         unsafe { vm.execute(bc, &[xp, vp], i as u64) };
     }
 }
@@ -169,8 +182,10 @@ unsafe fn run_tiled_dense(
     let bases = [x.as_mut_ptr() as *mut u8, v.as_ptr() as *mut u8];
     let strides = [4usize, 4usize];
     if f32_mode {
+        // SAFETY: Both columns cover n f32 rows; this kernel writes only the exclusive x column.
         unsafe { execute_assignment_tiled_f32(bc, &bases, &strides, n, scratch).unwrap() };
     } else {
+        // SAFETY: Both columns cover n f32 rows; this kernel writes only the exclusive x column.
         unsafe { execute_assignment_tiled(bc, &bases, &strides, n, scratch).unwrap() };
     }
 }
@@ -185,6 +200,7 @@ fn bench_kernel_dense(c: &mut Criterion, name: &str, bc: &CompiledBytecode) {
     group.bench_with_input(BenchmarkId::new("scalar_per_entity", n), &n, |b, &n| {
         b.iter_batched_ref(
             x0,
+            // SAFETY: Both columns cover n f32 rows; this kernel writes only the exclusive x column.
             |x| unsafe { run_scalar_dense(black_box(bc), x, &v0, n) },
             criterion::BatchSize::LargeInput,
         );
@@ -194,6 +210,7 @@ fn bench_kernel_dense(c: &mut Criterion, name: &str, bc: &CompiledBytecode) {
     group.bench_with_input(BenchmarkId::new("tiled_f64", n), &n, |b, &n| {
         b.iter_batched_ref(
             x0,
+            // SAFETY: Both columns cover n f32 rows; this kernel writes only the exclusive x column.
             |x| unsafe { run_tiled_dense(black_box(bc), x, &v0, n, false, &mut s64) },
             criterion::BatchSize::LargeInput,
         );
@@ -203,6 +220,7 @@ fn bench_kernel_dense(c: &mut Criterion, name: &str, bc: &CompiledBytecode) {
     group.bench_with_input(BenchmarkId::new("tiled_f32", n), &n, |b, &n| {
         b.iter_batched_ref(
             x0,
+            // SAFETY: Both columns cover n f32 rows; this kernel writes only the exclusive x column.
             |x| unsafe { run_tiled_dense(black_box(bc), x, &v0, n, true, &mut s32) },
             criterion::BatchSize::LargeInput,
         );
@@ -211,6 +229,7 @@ fn bench_kernel_dense(c: &mut Criterion, name: &str, bc: &CompiledBytecode) {
     group.bench_with_input(BenchmarkId::new("tiled_parallel_f64", n), &n, |b, &n| {
         b.iter_batched_ref(
             x0,
+            // SAFETY: Both columns cover n f32 rows; this kernel writes only the exclusive x column.
             |x| unsafe {
                 let bases = [x.as_mut_ptr() as *mut u8, v0.as_ptr() as *mut u8];
                 execute_assignment_tiled_parallel(black_box(bc), &bases, &[4, 4], n, false)
@@ -223,6 +242,7 @@ fn bench_kernel_dense(c: &mut Criterion, name: &str, bc: &CompiledBytecode) {
     group.bench_with_input(BenchmarkId::new("tiled_parallel_f32", n), &n, |b, &n| {
         b.iter_batched_ref(
             x0,
+            // SAFETY: Both columns cover n f32 rows; this kernel writes only the exclusive x column.
             |x| unsafe {
                 let bases = [x.as_mut_ptr() as *mut u8, v0.as_ptr() as *mut u8];
                 execute_assignment_tiled_parallel(black_box(bc), &bases, &[4, 4], n, true).unwrap();
@@ -260,6 +280,7 @@ unsafe fn run_scalar_u64(bytecode: &CompiledBytecode, values: &mut [u64]) {
     let mut vm = VM::new();
     for (index, value) in values.iter_mut().enumerate() {
         let pointers = [(value as *mut u64).cast::<u8>()];
+        // SAFETY: The live exclusive u64 slice matches the kernel field type and row count.
         unsafe { vm.execute(bytecode, &pointers, index as u64) };
     }
 }
@@ -271,6 +292,7 @@ unsafe fn run_tiled_u64(
 ) {
     let bases = [values.as_mut_ptr().cast::<u8>()];
     let strides = [size_of::<u64>()];
+    // SAFETY: The live exclusive u64 slice matches the kernel field type and row count.
     unsafe { execute_assignment_tiled(bytecode, &bases, &strides, values.len(), scratch).unwrap() };
 }
 
@@ -283,6 +305,7 @@ fn bench_integer_u64(c: &mut Criterion) {
     group.bench_with_input(BenchmarkId::new("scalar_per_entity", n), &n, |b, &n| {
         b.iter_batched_ref(
             || make_u64_data(n),
+            // SAFETY: The live exclusive u64 slice matches the kernel field type and row count.
             |values| unsafe { run_scalar_u64(black_box(&bytecode), values) },
             criterion::BatchSize::LargeInput,
         );
@@ -292,6 +315,7 @@ fn bench_integer_u64(c: &mut Criterion) {
     group.bench_with_input(BenchmarkId::new("tiled", n), &n, |b, &n| {
         b.iter_batched_ref(
             || make_u64_data(n),
+            // SAFETY: The live exclusive u64 slice matches the kernel field type and row count.
             |values| unsafe { run_tiled_u64(black_box(&bytecode), values, &mut scratch) },
             criterion::BatchSize::LargeInput,
         );

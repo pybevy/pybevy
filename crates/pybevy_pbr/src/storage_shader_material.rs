@@ -5,8 +5,8 @@ use bevy::{
     render::storage::ShaderBuffer,
 };
 use pybevy_core::{
-    AssetInputConverter, AssetStorage, ComponentStorage, FieldStorage, LogicalTypeId, PyComponent,
-    PyHandle, PyMaterial, ensure_asset_type, extract_handle_from_any,
+    AssetInputConverter, AssetStorage, ComponentStorage, FieldStorage, HandleArg, LogicalTypeId,
+    PyComponent, PyHandle, PyMaterial, ensure_asset_type, extract_handle_from_any,
     public_error::shader_texture_slot_out_of_range,
 };
 use pybevy_image::sampler_descriptor::PyImageSamplerDescriptor;
@@ -389,9 +389,13 @@ fn extract_storage_material_handle(
 #[pymethods]
 impl PyMeshMaterial3dStorageShader {
     #[new]
-    pub fn new(handle: &Bound<'_, PyAny>) -> PyResult<PyClassInitializer<Self>> {
-        let (handle, logical_type_id) = extract_storage_material_handle(handle)?;
-        let (mut component, base) = Self::from_owned(MeshMaterial3d(handle));
+    #[pyo3(signature = (handle = HandleArg::default()))]
+    pub fn new(handle: HandleArg) -> PyResult<PyClassInitializer<Self>> {
+        let logical_type_id = match &handle {
+            HandleArg::Supplied(handle) => handle.logical_type_id(),
+            HandleArg::Omitted => None,
+        };
+        let (mut component, base) = Self::from_owned(MeshMaterial3d(handle.into_handle()?));
         component.logical_type_id = logical_type_id;
         Ok((component, base).into())
     }

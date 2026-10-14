@@ -5045,7 +5045,7 @@ class Arc2d:
         """Create a new arc from a radius and half-angle.
 
         Defaults to Bevy's: radius 0.5 and a half-angle of ``2 * pi / 3``,
-        covering one third of a circle.
+        covering two thirds of a circle.
 
         Args:
             radius: The radius of the circle

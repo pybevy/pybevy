@@ -297,9 +297,9 @@ mod tests {
     #[test]
     fn list_systems_uses_registered_state_schedule_names() {
         let mut world = World::new();
-        let first_enter = StateScheduleLabel::on_enter(StateMachineId::new(1), 7);
-        let second_exit = StateScheduleLabel::on_exit(StateMachineId::new(2), 7);
-        let transition = TransitionScheduleLabel::new(StateMachineId::new(1), 7, 8);
+        let first_enter = StateScheduleLabel::on_enter(StateMachineId::new(1), "READY");
+        let second_exit = StateScheduleLabel::on_exit(StateMachineId::new(2), "READY");
+        let transition = TransitionScheduleLabel::new(StateMachineId::new(1), "READY", "RUNNING");
         let mut schedules = Schedules::default();
         for label in [
             first_enter.intern(),
@@ -335,7 +335,7 @@ mod tests {
         assert!(
             stages
                 .keys()
-                .all(|name| !name.contains("StateMachineId") && !name.contains("state_hash"))
+                .all(|name| !name.contains("StateMachineId") && !name.contains("member:"))
         );
     }
 

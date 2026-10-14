@@ -974,6 +974,7 @@ mod tests {
 
     #[test]
     fn list_resources_includes_custom_resources() {
+        setup();
         let mut world = World::new();
 
         let baseline = list_resources(&mut world).unwrap();

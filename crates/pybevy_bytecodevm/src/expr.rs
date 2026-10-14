@@ -1261,6 +1261,7 @@ mod tests {
     fn eval_const_expr(expr: &RustExpr) -> f64 {
         let bytecode = compile_expr(expr);
         let mut vm = VM::new();
+        // SAFETY: This program has no field access; no raw storage is dereferenced.
         unsafe { vm.execute(&bytecode, &[], 0) };
         vm.stack[0].as_float()
     }
@@ -1677,31 +1678,37 @@ mod tests {
     fn test_compile_comparisons() {
         let bytecode = compile_expr(&RustExpr::Eq(c(5.0), c(5.0)));
         let mut vm = VM::new();
+        // SAFETY: This program has no field access; no raw storage is dereferenced.
         unsafe { vm.execute(&bytecode, &[], 0) };
         assert!(vm.stack[0].as_bool());
 
         let bytecode = compile_expr(&RustExpr::Ne(c(5.0), c(3.0)));
         let mut vm = VM::new();
+        // SAFETY: This program has no field access; no raw storage is dereferenced.
         unsafe { vm.execute(&bytecode, &[], 0) };
         assert!(vm.stack[0].as_bool());
 
         let bytecode = compile_expr(&RustExpr::Lt(c(3.0), c(5.0)));
         let mut vm = VM::new();
+        // SAFETY: This program has no field access; no raw storage is dereferenced.
         unsafe { vm.execute(&bytecode, &[], 0) };
         assert!(vm.stack[0].as_bool());
 
         let bytecode = compile_expr(&RustExpr::Le(c(5.0), c(5.0)));
         let mut vm = VM::new();
+        // SAFETY: This program has no field access; no raw storage is dereferenced.
         unsafe { vm.execute(&bytecode, &[], 0) };
         assert!(vm.stack[0].as_bool());
 
         let bytecode = compile_expr(&RustExpr::Gt(c(5.0), c(3.0)));
         let mut vm = VM::new();
+        // SAFETY: This program has no field access; no raw storage is dereferenced.
         unsafe { vm.execute(&bytecode, &[], 0) };
         assert!(vm.stack[0].as_bool());
 
         let bytecode = compile_expr(&RustExpr::Ge(c(3.0), c(5.0)));
         let mut vm = VM::new();
+        // SAFETY: This program has no field access; no raw storage is dereferenced.
         unsafe { vm.execute(&bytecode, &[], 0) };
         assert!(!vm.stack[0].as_bool());
     }
@@ -1715,6 +1722,7 @@ mod tests {
         );
         let bytecode = compile_expr(&expr);
         let mut vm = VM::new();
+        // SAFETY: This program has no field access; no raw storage is dereferenced.
         unsafe { vm.execute(&bytecode, &[], 0) };
         assert!(!vm.stack[0].as_bool());
 
@@ -1725,6 +1733,7 @@ mod tests {
         );
         let bytecode = compile_expr(&expr);
         let mut vm = VM::new();
+        // SAFETY: This program has no field access; no raw storage is dereferenced.
         unsafe { vm.execute(&bytecode, &[], 0) };
         assert!(vm.stack[0].as_bool());
 
@@ -1732,6 +1741,7 @@ mod tests {
         let expr = RustExpr::Not(Box::new(RustExpr::Gt(c(5.0), c(3.0))));
         let bytecode = compile_expr(&expr);
         let mut vm = VM::new();
+        // SAFETY: This program has no field access; no raw storage is dereferenced.
         unsafe { vm.execute(&bytecode, &[], 0) };
         assert!(!vm.stack[0].as_bool());
     }

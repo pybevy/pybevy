@@ -58,10 +58,8 @@ pub unsafe fn mark_component_changed_explicit(
 /// are `#[repr(C)]` with `data: [u8; N]` as their sole field at offset 0, so the
 /// component base pointer is also the data-array pointer the proxy reads and writes.
 ///
-/// This mirrors the derivation at proxy construction (an immutable `get_by_id` whose
-/// const pointer is cast to `*mut u8`); write-back change tracking stays separate, via
-/// `mark_component_changed_explicit`, so no `&mut World` and no read-time change
-/// detection is involved here.
+/// This resolves read access only. Writes must use
+/// [`reresolve_wrapper_ptr_mut`], which establishes mutable authority.
 ///
 /// # Safety
 /// - `world_ptr` must point to a valid `World` (protected by `ValidityFlag`).
@@ -82,6 +80,30 @@ pub unsafe fn reresolve_wrapper_ptr(
         let ptr = entity_ref.get_by_id(component_id).ok()?;
         Some(ptr.as_ptr())
     }
+}
+
+/// Re-resolve the current data pointer of a wrapper component for a write.
+///
+/// The mutable counterpart of [`reresolve_wrapper_ptr`]: the address comes from
+/// a mutable lookup on the caller's world cell. It does not mark the component
+/// changed; writers report the change through `mark_component_changed_explicit`
+/// once the write has happened.
+///
+/// # Safety
+/// - `world` must be the live cell protected by the caller's `ValidityFlag`.
+/// - The caller must hold mutable access to `component_id` on `entity`, with no
+///   overlapping reference to it.
+/// - The returned pointer is invalidated by the next structural mutation.
+pub unsafe fn reresolve_wrapper_ptr_mut(
+    entity: Entity,
+    world: UnsafeWorldCell<'_>,
+    component_id: ComponentId,
+) -> Option<*mut u8> {
+    let entity_cell = world.get_entity(entity).ok()?;
+    // SAFETY: the caller guarantees mutable access to this exact component and no
+    // overlapping reference to it.
+    let mut component = unsafe { entity_cell.get_mut_by_id(component_id) }.ok()?;
+    Some(component.bypass_change_detection().as_ptr())
 }
 
 #[cfg(test)]
@@ -112,8 +134,8 @@ mod tests {
             .unwrap();
         assert!(!ticks.is_changed(last_run, this_run));
 
-        // Mark it
         let cell = world.as_unsafe_world_cell();
+        // SAFETY: the local world is exclusively borrowed and contains this component.
         unsafe { mark_component_changed_explicit(entity, cell, component_id, None) };
 
         // Now it should appear changed
@@ -145,6 +167,7 @@ mod tests {
         assert_ne!(world.read_change_tick(), this_run);
 
         let cell = world.as_unsafe_world_cell();
+        // SAFETY: the local world is exclusively borrowed and the captured ticks belong to it.
         unsafe {
             mark_component_changed_explicit(
                 entity,
@@ -168,7 +191,7 @@ mod tests {
         let entity = Entity::from_bits(9999);
 
         let cell = world.as_unsafe_world_cell();
-        // Should silently do nothing
+        // SAFETY: the local world is exclusively borrowed; absent entities are handled before access.
         unsafe { mark_component_changed_explicit(entity, cell, component_id, None) };
     }
 
@@ -180,7 +203,7 @@ mod tests {
         let entity = world.spawn_empty().id();
 
         let cell = world.as_unsafe_world_cell();
-        // Should silently do nothing
+        // SAFETY: the local world is exclusively borrowed; absent components are handled before access.
         unsafe { mark_component_changed_explicit(entity, cell, component_id, None) };
     }
 
@@ -206,10 +229,11 @@ mod tests {
             .as_ptr();
 
         let world_ptr: *mut World = &mut world;
+        // SAFETY: the local world remains live without competing borrows or structural changes.
         let resolved = unsafe { reresolve_wrapper_ptr(entity, world_ptr, component_id) };
         assert_eq!(resolved, Some(expected));
 
-        // The pointer reads the field back correctly (offset 0).
+        // SAFETY: the live Pos component has an aligned f32 at offset zero.
         let x = unsafe { *(resolved.unwrap() as *const f32) };
         assert_eq!(x, 1.5);
     }
@@ -222,8 +246,41 @@ mod tests {
         world.despawn(entity);
 
         let world_ptr: *mut World = &mut world;
+        // SAFETY: the local world remains live; the resolver checks the despawned entity.
         let resolved = unsafe { reresolve_wrapper_ptr(entity, world_ptr, component_id) };
         assert_eq!(resolved, None);
+    }
+
+    #[test]
+    fn mutable_reresolve_writes_without_marking_changed() {
+        let mut world = World::new();
+        let component_id = world.register_component::<Pos>();
+        let entity = world.spawn(Pos { x: 1.0 }).id();
+        world.entity_mut(entity).insert(Health);
+        let last_run = world.change_tick();
+        world.increment_change_tick();
+
+        let cell = world.as_unsafe_world_cell();
+        // SAFETY: the local world is exclusively borrowed and contains this component.
+        let ptr = unsafe { reresolve_wrapper_ptr_mut(entity, cell, component_id) }
+            .expect("component present");
+        // SAFETY: `Pos` is repr(C) with its f32 at offset 0 and nothing else borrows it.
+        unsafe { *(ptr as *mut f32) = 4.5 };
+
+        assert_eq!(world.get::<Pos>(entity).unwrap().x, 4.5);
+        let ticks = world
+            .entity(entity)
+            .get_change_ticks_by_id(component_id)
+            .unwrap();
+        assert!(!ticks.is_changed(last_run, world.change_tick()));
+
+        world.despawn(entity);
+        let cell = world.as_unsafe_world_cell();
+        assert_eq!(
+            // SAFETY: the local world is exclusively borrowed; the entity is gone.
+            unsafe { reresolve_wrapper_ptr_mut(entity, cell, component_id) },
+            None
+        );
     }
 
     #[test]
@@ -234,6 +291,7 @@ mod tests {
         let entity = world.spawn_empty().id();
 
         let world_ptr: *mut World = &mut world;
+        // SAFETY: the local world remains live; the resolver checks the absent component.
         let resolved = unsafe { reresolve_wrapper_ptr(entity, world_ptr, component_id) };
         assert_eq!(resolved, None);
     }
@@ -253,11 +311,11 @@ mod tests {
         world.entity_mut(entity).insert(Health);
 
         let world_ptr: *mut World = &mut world;
+        // SAFETY: re-resolution uses the live local world after the structural mutation.
         let resolved =
             unsafe { reresolve_wrapper_ptr(entity, world_ptr, pos_id) }.expect("still present");
 
-        // Reading through the re-resolved pointer yields the preserved value,
-        // regardless of whether the underlying storage address changed.
+        // SAFETY: re-resolution returned the live aligned Pos payload, with no subsequent mutation.
         let x = unsafe { *(resolved as *const f32) };
         assert_eq!(x, 3.25);
         // Sanity: the resolved pointer is the one the world reports now, which may or

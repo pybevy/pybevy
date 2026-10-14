@@ -1,11 +1,11 @@
 //! Validation shared by raw and decorated material shader definitions.
 
-use bevy::{render::render_resource::RenderPipelineDescriptor, shader::ShaderDefVal};
-
 use std::{
     collections::{HashMap, HashSet},
     sync::{OnceLock, RwLock},
 };
+
+use bevy::{render::render_resource::RenderPipelineDescriptor, shader::ShaderDefVal};
 
 #[derive(Default)]
 struct Registry {
