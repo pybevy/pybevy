@@ -7,7 +7,7 @@ use bevy::{
 };
 
 use super::entity::resolve_entity;
-use crate::bridge::{
+use crate::protocol::{
     CheckAllOverlapsParams, CheckOverlapsParams, ControlError, QuerySpatialNeighborhoodParams,
     QuerySpatialParams,
 };
@@ -542,7 +542,7 @@ pub fn check_overlaps(
 
         let other_aabb = match compute_world_aabb(world, *entity) {
             Ok(aabb) => aabb,
-            Err(error) if error.code == crate::bridge::ErrorCode::InvalidParams => {
+            Err(error) if error.code == crate::protocol::ErrorCode::InvalidParams => {
                 invalid_entities.push(entity_label(world, *entity));
                 continue;
             }
@@ -655,7 +655,7 @@ pub fn check_all_overlaps(
     for entity in &entities {
         match compute_world_aabb(world, *entity) {
             Ok(aabb) => aabbs.push(aabb),
-            Err(error) if error.code == crate::bridge::ErrorCode::InvalidParams => {
+            Err(error) if error.code == crate::protocol::ErrorCode::InvalidParams => {
                 invalid_entities.push(entity_label(world, *entity));
             }
             Err(_) => {}
@@ -784,7 +784,7 @@ mod tests {
     use bevy::{camera::primitives::Aabb, ecs::entity::Entity, math::Vec3A};
 
     use super::*;
-    use crate::bridge::{EntityRef, ErrorCode};
+    use crate::protocol::{EntityRef, ErrorCode};
 
     fn make_aabb(entity_bits: u64, min: [f32; 3], max: [f32; 3]) -> WorldAabb {
         WorldAabb {

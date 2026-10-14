@@ -1,5 +1,4 @@
 pub mod asset_reference;
-pub mod bridge;
 pub mod capture;
 pub mod catalog;
 pub mod codec;
@@ -26,6 +25,17 @@ pub use pyo3::runtime as runtime_pyo3;
 pub use pyo3::{execute::register_world_wrapper_hook, mutate::register_lifecycle_mutation_hooks};
 #[doc(hidden)]
 pub use transport::{client, server, sse};
+
+#[doc(hidden)]
+pub mod bridge {
+    pub use crate::{
+        capture::{hold::*, queue::*},
+        engine::{channel::*, deferred::*, poll::*},
+        protocol::{entity_ref::*, error::*, operation::*, params::*},
+        reload::{PendingReloadResponse, PendingReloadResponses},
+        transport::sse::SseEventBroadcaster,
+    };
+}
 
 #[doc(hidden)]
 pub mod handlers {

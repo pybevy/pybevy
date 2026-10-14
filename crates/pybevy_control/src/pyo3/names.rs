@@ -9,7 +9,7 @@ use pybevy_core::{
 };
 use pyo3::{prelude::*, types::PyType};
 
-use crate::bridge::ControlError;
+use crate::protocol::ControlError;
 
 pub(super) enum ComponentTarget {
     Native(Arc<dyn ComponentBridge>),

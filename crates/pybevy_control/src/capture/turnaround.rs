@@ -14,7 +14,8 @@ use super::screenshot::{
     restore_ui_nodes, setup_debug_camera_with_up,
 };
 use crate::{
-    bridge::{ControlError, DebugCameraRequest, InternalOverlayUi},
+    capture::{hold::InternalOverlayUi, queue::DebugCameraRequest},
+    protocol::ControlError,
     scene::spatial::compute_world_aabb,
 };
 
@@ -852,7 +853,12 @@ mod tests {
         assert_eq!(error.message, TURNAROUND_CAMERA3D_REQUIRED);
         assert!(world.resource::<PendingTurnarounds>().active.is_empty());
         assert!(world.get::<Camera>(camera).unwrap().is_active);
-        assert_eq!(world.resource::<crate::bridge::OverlaySuppression>().0, 0);
+        assert_eq!(
+            world
+                .resource::<crate::capture::hold::OverlaySuppression>()
+                .0,
+            0
+        );
     }
 
     fn make_capture_image() -> bevy::image::Image {
@@ -957,7 +963,7 @@ mod tests {
     #[test]
     fn stalled_turnaround_fails_with_error_and_restored_state() {
         let mut world = World::new();
-        world.insert_resource(crate::bridge::OverlaySuppression(1));
+        world.insert_resource(crate::capture::hold::OverlaySuppression(1));
         let ui = world
             .spawn((Visibility::Hidden, bevy::ui::Node::default()))
             .id();
@@ -983,7 +989,12 @@ mod tests {
         assert!(error.message.contains("deadline"));
         assert!(world.resource::<PendingTurnarounds>().active.is_empty());
         assert!(world.resource::<TurnaroundCaptures>().map.is_empty());
-        assert_eq!(world.resource::<crate::bridge::OverlaySuppression>().0, 0);
+        assert_eq!(
+            world
+                .resource::<crate::capture::hold::OverlaySuppression>()
+                .0,
+            0
+        );
         assert_eq!(*world.get::<Visibility>(ui).unwrap(), Visibility::Visible);
         assert!(world.get_entity(screenshot_entity).is_err());
     }

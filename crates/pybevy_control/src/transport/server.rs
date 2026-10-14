@@ -15,20 +15,23 @@ use tokio::sync::oneshot;
 use tokio_stream::StreamExt;
 
 use crate::{
-    bridge::{
+    discovery::ApiIndex,
+    engine::channel::{ControlRequest, ControlSender},
+    plugin::ControlConfig,
+    protocol::{
         CaptureDepthParams, CaptureScreenshotParams, CaptureStatsParams, CaptureTimelineParams,
         CaptureTurnaroundParams, CheckAllOverlapsParams, CheckOverlapsParams, CompareFramesParams,
-        ControlOperation, ControlRequest, ControlSender, EntityRef, ErrorCode, GetComponentParams,
-        GetResourceParams, QueryEntitiesParams, QuerySpatialNeighborhoodParams, QuerySpatialParams,
+        ControlOperation, EntityRef, ErrorCode, GetComponentParams, GetResourceParams,
+        QueryEntitiesParams, QuerySpatialNeighborhoodParams, QuerySpatialParams,
         ReloadAndCaptureParams, ReloadParams, RemoveComponentParams, SeekTimeParams,
-        SetAssetParams, SetComponentParams, SetResourceParams, SseEventBroadcaster,
-        default_max_float_gap,
+        SetAssetParams, SetComponentParams, SetResourceParams, default_max_float_gap,
     },
-    discovery::ApiIndex,
-    plugin::ControlConfig,
     schedule::{ScheduleMode, ScheduleRequest, SharedScheduleRegistry, validate_schedule},
-    transport::image_preview::{
-        MCP_IMAGE_DELIVERY_HEADER, MCP_IMAGE_DELIVERY_VALUE, prepare_mcp_response_images,
+    transport::{
+        image_preview::{
+            MCP_IMAGE_DELIVERY_HEADER, MCP_IMAGE_DELIVERY_VALUE, prepare_mcp_response_images,
+        },
+        sse::SseEventBroadcaster,
     },
 };
 
@@ -1238,8 +1241,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        bridge::{ControlError, ControlReceiver, create_channel},
+        engine::channel::{ControlReceiver, create_channel},
         handlers::schedule::SharedScheduleRegistry,
+        protocol::ControlError,
     };
 
     #[test]

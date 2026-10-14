@@ -51,13 +51,13 @@ pub fn register_lifecycle_mutation_hooks(
 }
 
 use crate::{
-    bridge::{ControlError, EntityRef},
     codec::{
         json_float::{nonfinite_float_from_json, reject_narrowed_nonfinite, require_finite_float},
         reflect::{self as reflect_mutate, ReflectError},
         value::{self as value_conversion, json_kind_name},
     },
     engine::dispatch::{LINEAR_RGBA_CHANNELS, batch_response},
+    protocol::{ControlError, EntityRef},
     pyo3::{
         custom as custom_wrapper,
         dataclass_fields::dataclass_field_names,
@@ -4373,7 +4373,7 @@ mod tests {
     use pyo3::types::PyInt;
 
     use super::*;
-    use crate::bridge::ErrorCode;
+    use crate::protocol::ErrorCode;
 
     static INIT: Once = Once::new();
 

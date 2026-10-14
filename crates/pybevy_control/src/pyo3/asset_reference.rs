@@ -12,7 +12,7 @@ use crate::{
         ASSET_REFERENCE_FIELD, ASSET_REFERENCE_KEY, AssetReference, AssetReferenceSession,
         AssetReferenceValidationError, AssetReferenceValue,
     },
-    bridge::{ControlError, EntityRef},
+    protocol::{ControlError, EntityRef},
     scene::entity::resolve_entity,
 };
 

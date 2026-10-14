@@ -4,9 +4,9 @@ use bevy::ecs::world::World;
 use pybevy_core::ensure_no_live_asset_access;
 
 use crate::{
-    bridge::{ControlError, ControlOperation, SharedExclusiveExecution},
     capture::analysis,
-    engine::runtime::ControlRuntime,
+    engine::{channel::SharedExclusiveExecution, runtime::ControlRuntime},
+    protocol::{ControlError, ControlOperation},
     pyo3::mutate::despawn_entity,
     reload,
     scene::{diagnostics, spatial, time, transform_sync::propagate_transforms},
@@ -212,7 +212,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        bridge::{
+        protocol::{
             CaptureDepthParams, CaptureScreenshotParams, CaptureTurnaroundParams,
             CheckAllOverlapsParams, EntityRef, ErrorCode, RemoveComponentParams,
             SetComponentParams, SetResourceParams,

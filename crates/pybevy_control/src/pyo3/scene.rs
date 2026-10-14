@@ -37,13 +37,13 @@ use pyo3::{
 };
 
 use crate::{
-    bridge::{ControlError, EntityRef},
     codec::{
         json_float::float_to_json,
         reflect as reflect_mutate,
         value::{EnumPayload, enum_to_json},
     },
     engine::dispatch::LINEAR_RGBA_CHANNELS,
+    protocol::{ControlError, EntityRef},
     pyo3::{
         custom as custom_wrapper,
         dataclass_fields::dataclass_field_names,
@@ -1175,10 +1175,10 @@ pub fn query_entities(
     without_filters: Vec<String>,
     limit: usize,
 ) -> Result<serde_json::Value, ControlError> {
-    if limit > crate::bridge::MAX_QUERY_ENTITY_LIMIT {
+    if limit > crate::protocol::MAX_QUERY_ENTITY_LIMIT {
         return Err(ControlError::invalid_params(format!(
             "limit must be at most {}",
-            crate::bridge::MAX_QUERY_ENTITY_LIMIT
+            crate::protocol::MAX_QUERY_ENTITY_LIMIT
         )));
     }
 
@@ -2542,7 +2542,7 @@ mod tests {
     extern crate pybevy_transform;
 
     use super::*;
-    use crate::bridge::ErrorCode;
+    use crate::protocol::ErrorCode;
 
     static INIT: Once = Once::new();
 
@@ -3366,7 +3366,7 @@ mod tests {
             &mut world,
             vec![],
             vec![],
-            crate::bridge::MAX_QUERY_ENTITY_LIMIT + 1,
+            crate::protocol::MAX_QUERY_ENTITY_LIMIT + 1,
         )
         .unwrap_err();
 

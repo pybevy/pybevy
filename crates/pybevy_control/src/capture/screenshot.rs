@@ -32,17 +32,16 @@ use pybevy_ecs::shared::system_runtime::HotReloadGeneration;
 use tokio::sync::oneshot;
 
 use crate::{
-    bridge::{
-        CaptureResponseKind, ControlError, DebugCameraRequest, EntityRef, InternalOverlayUi,
-        OverlaySuppression, PendingScreenshot, PendingScreenshots,
-    },
     capture::{
         analysis::{CapturedFrameMetadata, CapturedFrames, analyze_frame, resize_rgb_image_linear},
         depth::{
             CaptureViewport, PendingDepthAnalysis, prepare_depth_capture,
             validate_depth_capture_camera,
         },
+        hold::{InternalOverlayUi, OverlaySuppression},
+        queue::{CaptureResponseKind, DebugCameraRequest, PendingScreenshot, PendingScreenshots},
     },
+    protocol::{ControlError, EntityRef},
     scene::entity::resolve_entity,
 };
 
@@ -2051,11 +2050,13 @@ mod tests {
 
     use super::*;
     use crate::{
-        bridge::{CaptureDepthParams, PendingScreenshot, push_pending_depth},
+        capture::queue::PendingScreenshot,
+        engine::deferred::push_pending_depth,
         handlers::{
             frame_analysis::FrameStatsOptions,
             turnaround::{PendingTurnarounds, TurnaroundCaptures},
         },
+        protocol::CaptureDepthParams,
     };
 
     fn spawn_structurally_valid_headless_camera(world: &mut World) -> Entity {
@@ -2683,7 +2684,7 @@ mod tests {
         let ui = world.spawn((Visibility::Visible, Node::default())).id();
         let (response_tx, mut response_rx) = oneshot::channel();
         world.insert_resource(PendingScreenshots {
-            pending: vec![crate::bridge::PendingScreenshot {
+            pending: vec![crate::capture::queue::PendingScreenshot {
                 response_tx,
                 frames_remaining: 0,
                 required_render_epoch: None,

@@ -4,12 +4,11 @@ use serde_json::Value;
 
 use super::{assets, execute, mutate, scene};
 use crate::{
-    bridge::{
-        ControlError, ControlRequest, EntityRef, GetComponentParams, GetResourceParams,
-        QueryEntitiesParams, RemoveComponentParams, SetAssetParams, SetComponentParams,
-        SetResourceParams,
+    engine::{channel::ControlRequest, dispatch::dispatch, runtime::ControlRuntime},
+    protocol::{
+        ControlError, EntityRef, GetComponentParams, GetResourceParams, QueryEntitiesParams,
+        RemoveComponentParams, SetAssetParams, SetComponentParams, SetResourceParams,
     },
-    engine::{dispatch::dispatch, runtime::ControlRuntime},
 };
 
 /// PyO3-based implementation of `ControlRuntime`.

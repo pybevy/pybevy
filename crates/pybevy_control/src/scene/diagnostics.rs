@@ -1,7 +1,7 @@
 use bevy::{ecs::world::World, time::Time};
 use pybevy_core::build_info::build_info;
 
-use crate::bridge::ControlError;
+use crate::protocol::ControlError;
 
 /// Get performance metrics from the debug overlay snapshot.
 /// Falls back to basic Time-based metrics if DebugSnapshot is not populated.

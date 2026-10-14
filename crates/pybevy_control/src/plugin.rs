@@ -12,10 +12,10 @@ use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 use crate::{
-    bridge::{self, SseEventBroadcaster},
     capture::analysis::CapturedFrames,
     discovery::ApiIndex,
-    transport::server::AppState,
+    engine::{channel::create_channel, poll::control_poll_system},
+    transport::{server::AppState, sse::SseEventBroadcaster},
 };
 
 #[pyplugin(ControlBevyPlugin)]
@@ -149,7 +149,7 @@ impl Plugin for ControlBevyPlugin {
         };
 
         // Create the channel
-        let (sender, receiver) = bridge::create_channel();
+        let (sender, receiver) = create_channel();
         let exclusive_execution = sender.exclusive_execution();
 
         // Create SSE broadcaster
@@ -195,11 +195,11 @@ impl Plugin for ControlBevyPlugin {
         app.add_systems(bevy::app::Startup, configure_mcp_update_mode);
 
         // Register the exclusive poll system in First schedule
-        app.add_systems(First, bridge::control_poll_system);
+        app.add_systems(First, control_poll_system);
         // Schedule processor runs after control_poll_system (also in First)
         app.add_systems(
             First,
-            crate::schedule::process_active_schedules.after(bridge::control_poll_system),
+            crate::schedule::process_active_schedules.after(control_poll_system),
         );
 
         // Register screenshot and reload processing systems (runs after render)
