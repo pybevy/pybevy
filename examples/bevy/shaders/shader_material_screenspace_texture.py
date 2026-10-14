@@ -17,7 +17,7 @@ Bevy (Rust):
 PyBevy:
     @material(fragment_shader="shaders/examples/screenspace_texture.wgsl")
     class ScreenspaceMaterial(Material):
-        texture: Image  # automatically gets bindings 101 (texture) / 102 (sampler)
+        texture: Handle[Image] | None = None  # bindings 101 (texture) / 102 (sampler)
 """
 
 from pybevy.pbr import ShaderMaterialPlugin
@@ -29,7 +29,7 @@ SHADER_ASSET_PATH = "shaders/examples/screenspace_texture.wgsl"
 @material(fragment_shader=SHADER_ASSET_PATH)
 class ScreenspaceMaterial(Material):
     """Material that maps a texture using screen-space coordinates."""
-    texture: Image
+    texture: Handle[Image] | None = None
 
 
 @component

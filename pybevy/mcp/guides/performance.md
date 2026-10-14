@@ -265,6 +265,16 @@ Key View rules:
   float expression (including a `/` result) to an integer field raises
   `TypeError`; use `//` instead. Zero divisors never raise: floats give
   inf/-inf/NaN, integers give 0, and no warning is emitted.
+- Literals follow NumPy: an `int` literal takes the field's type, a `float`
+  literal makes an integer expression float64. `int_field * 2` stays integer;
+  `int_field * 2.0` (or `int_field = 2.0`) cannot be assigned to an integer
+  field. Integer `**` stays integer and wraps on overflow; a negative literal
+  exponent (`int_field ** -1`) raises `ValueError`, so write `** -1.0` for a
+  float result. A negative exponent read from a field raises `ValueError`
+  after the single pass, so rows already processed may have been written.
+  An `int` literal outside the integer field's range (`u32_field + -1`,
+  `i32_field = 2**31`) raises `OverflowError` before any write; literals
+  inside it stay exact, even above 2**53. Array lenses follow the same rules.
 - `clamp(min, max)` propagates NaN and returns `max` when the bounds are
   reversed. `fract()` is the signed fractional part (`x - trunc(x)`), so it
   differs from floor-based `mod(x, 1.0)` for negative non-integers. Native

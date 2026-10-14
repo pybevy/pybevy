@@ -8,6 +8,10 @@ class Expr:
     Arithmetic follows NumPy element-wise semantics: `/` is float true
     division; `//` is floor division and pairs with `%` (divisor's sign).
     Zero divisors give inf/NaN for floats and 0 for integers, without warnings.
+    An `int` literal takes the field's type and a `float` literal promotes an
+    integer field to float64. Integer `**` wraps; a negative exponent raises
+    `ValueError`. An int literal outside an integer field's range raises
+    `OverflowError`.
     """
 
     op: str

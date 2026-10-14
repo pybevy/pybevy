@@ -2,7 +2,8 @@
 
 use pybevy_bytecodevm::{
     buffer_lens::{
-        BufferKey, alloc_buffer_key, execute_buffer_assignment, validate_buffer_program,
+        BufferKey, BufferLensError, alloc_buffer_key, execute_buffer_assignment,
+        validate_buffer_program,
     },
     bytecode::FieldType,
     expr::RustExpr,
@@ -10,7 +11,7 @@ use pybevy_bytecodevm::{
 };
 use pyo3::{
     PyTraverseError, PyVisit,
-    exceptions::{PyIndexError, PyRuntimeError, PyTypeError, PyValueError},
+    exceptions::{PyIndexError, PyOverflowError, PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
 };
 
@@ -133,8 +134,14 @@ impl ArrayLens {
         let expression = RustExpr::from_py_object(py, value)?;
         let bytecode = compile_assignment(self.key, destination, self.field_type, &expression);
         let validated =
-            validate_buffer_program(&bytecode, self.key, self.stride, &[self.field_type])
-                .map_err(|error| PyValueError::new_err(error.to_string()))?;
+            validate_buffer_program(&bytecode, self.key, self.stride, &[self.field_type]).map_err(
+                |error| match error {
+                    BufferLensError::IntegerLiteralOutOfBounds(_) => {
+                        PyOverflowError::new_err(error.to_string())
+                    }
+                    _ => PyValueError::new_err(error.to_string()),
+                },
+            )?;
 
         let owner = self.owner.bind(py).borrow_mut();
         let mut storage = owner.core.write_storage().map_err(map_array_err)?;
@@ -144,8 +151,8 @@ impl ArrayLens {
         // SAFETY: the backing write guard keeps exclusive storage access for
         // this synchronous call. The writable check gates borrowed storage,
         // and validation proves every lane is aligned and contained in `stride`.
-        unsafe { execute_buffer_assignment(&validated, base, self.count) };
-        Ok(())
+        unsafe { execute_buffer_assignment(&validated, base, self.count) }
+            .map_err(|error| PyValueError::new_err(error.to_string()))
     }
 }
 

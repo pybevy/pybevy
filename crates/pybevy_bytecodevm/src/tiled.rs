@@ -295,7 +295,7 @@ fn has_constant_only_operation(bytecode: &CompiledBytecode) -> bool {
     for op in &bytecode.bytecode {
         match op {
             Op::PushField(_) | Op::PushInput(_) => constant.push(false),
-            Op::PushConst(_) => constant.push(true),
+            Op::PushConst(_) | Op::PushFloatConst(_) | Op::PushInt(_) => constant.push(true),
             Op::StoreField(_) => {
                 constant.pop();
             }
@@ -329,7 +329,12 @@ fn stack_layout(ops: &[Op]) -> Option<(usize, usize)> {
     let mut maximum = 0usize;
     for op in ops {
         let (pops, pushes) = match op {
-            Op::PushField(_) | Op::PushInput(_) | Op::PushConst(_) | Op::Random(_) => (0, 1),
+            Op::PushField(_)
+            | Op::PushInput(_)
+            | Op::PushConst(_)
+            | Op::PushFloatConst(_)
+            | Op::PushInt(_)
+            | Op::Random(_) => (0, 1),
             Op::StoreField(_)
             | Op::Neg
             | Op::Sin
@@ -386,6 +391,7 @@ fn is_supported(op: &Op) -> bool {
         Op::PushField(_)
             | Op::PushInput(_)
             | Op::PushConst(_)
+            | Op::PushFloatConst(_)
             | Op::StoreField(_)
             | Op::Add
             | Op::Sub
@@ -486,7 +492,7 @@ fn apply_stack_op(
     len: usize,
 ) -> usize {
     match op {
-        Op::PushConst(idx) => {
+        Op::PushConst(idx) | Op::PushFloatConst(idx) => {
             stack[depth * TILE..depth * TILE + len].fill(constants[*idx as usize]);
             depth + 1
         }
@@ -672,7 +678,7 @@ fn apply_stack_op_f32(
     len: usize,
 ) -> usize {
     match op {
-        Op::PushConst(idx) => {
+        Op::PushConst(idx) | Op::PushFloatConst(idx) => {
             stack[depth * TILE..depth * TILE + len].fill(constants[*idx as usize] as f32);
             depth + 1
         }
@@ -880,7 +886,7 @@ pub unsafe fn run_map(
         || !out.covers(count)
         || ops.iter().any(|op| match op {
             Op::PushInput(index) => *index as usize >= srcs.len(),
-            Op::PushConst(index) => *index as usize >= constants.len(),
+            Op::PushConst(index) | Op::PushFloatConst(index) => *index as usize >= constants.len(),
             _ => false,
         })
     {
@@ -1044,7 +1050,7 @@ pub unsafe fn run_map_f32(
         || !out.supports_native_f32(count)
         || ops.iter().any(|op| match op {
             Op::PushInput(index) => *index as usize >= srcs.len(),
-            Op::PushConst(index) => *index as usize >= constants.len(),
+            Op::PushConst(index) | Op::PushFloatConst(index) => *index as usize >= constants.len(),
             _ => false,
         })
     {
@@ -2382,6 +2388,7 @@ mod tests {
         let missing_field = CompiledBytecode {
             bytecode: vec![Op::PushField(0), Op::StoreField(0)],
             constants: vec![],
+            integers: Vec::new(),
             field_map: vec![],
         };
         assert!(!supported_program(&missing_field));
@@ -2399,6 +2406,7 @@ mod tests {
                 Op::StoreField(0),
             ],
             constants: vec![],
+            integers: Vec::new(),
             field_map: vec![field],
         };
         assert!(!supported_program(&missing_constant));
@@ -2409,6 +2417,7 @@ mod tests {
         let unsupported = CompiledBytecode {
             bytecode: vec![Op::Random(0), Op::StoreField(0)],
             constants: vec![],
+            integers: Vec::new(),
             field_map: vec![],
         };
         let mut scratch = TiledScratch::new();
@@ -2420,6 +2429,7 @@ mod tests {
         let non_f32_field = CompiledBytecode {
             bytecode: vec![Op::PushField(0), Op::StoreField(0)],
             constants: vec![],
+            integers: Vec::new(),
             field_map: vec![FieldId {
                 component_id: ComponentId::new(0),
                 offset: 0,
@@ -2431,5 +2441,35 @@ mod tests {
         let result =
             unsafe { execute_assignment_tiled_f32(&non_f32_field, &[], &[], 0, &mut scratch) };
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn float_literal_keeps_integer_programs_off_the_integer_lane() {
+        let program = |field_type: FieldType, constant: Op| CompiledBytecode {
+            bytecode: vec![Op::PushField(0), constant, Op::Add, Op::StoreField(0)],
+            constants: vec![2.0],
+            integers: Vec::new(),
+            field_map: vec![FieldId {
+                component_id: ComponentId::new(0),
+                offset: 0,
+                field_type,
+            }],
+        };
+        assert!(supported_program(&program(
+            FieldType::I64,
+            Op::PushConst(0)
+        )));
+        assert!(!supported_program(&program(
+            FieldType::I64,
+            Op::PushFloatConst(0)
+        )));
+        assert!(supported_program(&program(
+            FieldType::F32,
+            Op::PushFloatConst(0)
+        )));
+        assert!(supported_program(&program(
+            FieldType::F64,
+            Op::PushFloatConst(0)
+        )));
     }
 }
