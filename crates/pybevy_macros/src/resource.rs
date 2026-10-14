@@ -554,14 +554,22 @@ pub(crate) fn generate_resource_bridge_tokens(
                 // SAFETY: initialize declared write access to this resource and the
                 // executor prevents any concurrent access, so this unchecked
                 // resource borrow is unique.
-                let resource = unsafe { cell.get_resource_mut::<#bevy_type>() }.ok_or_else(|| {
+                let mut resource = unsafe { cell.get_resource_mut::<#bevy_type>() }.ok_or_else(|| {
                     pyo3::exceptions::PyRuntimeError::new_err(concat!(#resource_name, " resource not found"))
                 })?;
 
-                let ptr = resource.into_inner() as *mut #bevy_type;
-                // SAFETY: ptr is from a valid Bevy resource mutable borrow; validity flag invalidates storage when borrow expires.
+                // A write context defers the change mark to the first real write.
+                let ptr = if validity.component_write_context().is_some() {
+                    bevy::ecs::change_detection::DetectChangesMut::bypass_change_detection(&mut resource)
+                        as *mut #bevy_type
+                } else {
+                    resource.into_inner() as *mut #bevy_type
+                };
+                // SAFETY: ptr is from a valid Bevy resource mutable borrow; validity flag
+                // invalidates storage when borrow expires, and any write context names
+                // this resource component.
                 let storage = unsafe {
-                    pybevy_core::ResourceStorage::borrowed_mut(ptr, validity.flag)
+                    pybevy_core::ResourceStorage::borrowed(ptr, validity)
                 };
 
                 #wrapped

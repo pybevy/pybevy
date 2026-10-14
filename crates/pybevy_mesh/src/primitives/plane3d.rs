@@ -1,6 +1,9 @@
-use bevy::mesh::{MeshBuilder, PlaneMeshBuilder};
+use bevy::{
+    math::Vec2,
+    mesh::{MeshBuilder, PlaneMeshBuilder},
+};
 use pybevy_core::PyAsset;
-use pybevy_math::{dir3::PyDir3, vec2::PyVec2};
+use pybevy_math::{dir3::PyDir3, primitives::dimension::dimension, vec2::PyVec2};
 use pyo3::prelude::*;
 
 use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder, primitives::validation::vertex_budget};
@@ -20,19 +23,21 @@ impl PyPlaneMeshBuilder {
     #[staticmethod]
     #[allow(clippy::new_ret_no_self)]
     pub fn new(py: Python, normal: PyDir3, size: PyVec2) -> PyResult<Py<PyAny>> {
-        let builder = PlaneMeshBuilder::new(normal.try_into()?, size.try_into()?);
+        let size: Vec2 = dimension("size", size.try_into()?)?;
+        let builder = PlaneMeshBuilder::new(normal.try_into()?, size);
         Ok(Py::new(py, (Self(builder), PyMeshBuilder))?.into_any())
     }
 
     #[staticmethod]
     pub fn from_size(py: Python, size: PyVec2) -> PyResult<Py<PyAny>> {
-        let builder = PlaneMeshBuilder::from_size(size.try_into()?);
+        let size: Vec2 = dimension("size", size.try_into()?)?;
+        let builder = PlaneMeshBuilder::from_size(size);
         Ok(Py::new(py, (Self(builder), PyMeshBuilder))?.into_any())
     }
 
     #[staticmethod]
     pub fn from_length(py: Python, length: f32) -> PyResult<Py<PyAny>> {
-        let builder = PlaneMeshBuilder::from_length(length);
+        let builder = PlaneMeshBuilder::from_length(dimension("length", length)?);
         Ok(Py::new(py, (Self(builder), PyMeshBuilder))?.into_any())
     }
 
@@ -41,6 +46,8 @@ impl PyPlaneMeshBuilder {
     }
 
     pub fn size(&self, py: Python<'_>, width: f32, height: f32) -> PyResult<Py<Self>> {
+        let width = dimension("width", width)?;
+        let height = dimension("height", height)?;
         Py::new(py, (Self(self.0.size(width, height)), PyMeshBuilder))
     }
 

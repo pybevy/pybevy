@@ -6,7 +6,7 @@ use bevy::{
     mesh::Meshable,
 };
 use pybevy_core::{FromBorrowedStorage, ValueStorage};
-use pybevy_math::vec2::PyVec2;
+use pybevy_math::{primitives::dimension::dimension, vec2::PyVec2};
 use pyo3::prelude::*;
 
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyCircleMeshBuilder};
@@ -35,8 +35,9 @@ impl FromBorrowedStorage<ValueStorage<Circle>> for PyCircle {
 impl PyCircle {
     #[new]
     #[pyo3(signature = (radius=0.5))]
-    pub fn new(radius: f32) -> PyClassInitializer<Self> {
-        (Self(ValueStorage::owned(Circle::new(radius))), PyMeshable).into()
+    pub fn new(radius: f32) -> PyResult<PyClassInitializer<Self>> {
+        let circle = Circle::new(dimension("radius", radius)?);
+        Ok((Self(ValueStorage::owned(circle)), PyMeshable).into())
     }
 
     #[getter]
@@ -46,7 +47,8 @@ impl PyCircle {
 
     #[setter]
     pub fn set_radius(&mut self, value: f32) -> PyResult<()> {
-        self.0.as_mut()?.radius = value;
+        let mut circle = self.0.as_mut()?;
+        circle.radius = dimension("radius", value)?;
         Ok(())
     }
 

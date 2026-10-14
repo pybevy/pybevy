@@ -49,6 +49,11 @@ meshes.add(Circle(0.5).mesh().resolution(64).build())
 | `Triangle3d` | `Triangle3d(a, b, c)` | From Vec3 points |
 | `Tetrahedron` | `Tetrahedron(a, b, c, d)` | From Vec3 points |
 
+Primitive dimensions (radii, lengths, heights, half-sizes) must be finite and
+non-negative; constructors, `from_*` constructors, and setters raise
+`ValueError` otherwise, such as `radius must be finite and non-negative (got -1)`.
+Zero is allowed. Bevy accepts any value; PyBevy rejects these on purpose.
+
 ### Mesh Builder Options
 
 Some builders have extra configuration:

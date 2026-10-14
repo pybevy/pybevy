@@ -117,6 +117,7 @@ Vector payloads of messages, `WindowEvent` variants, `TextEdit` point variants, 
 
 - Primitive dimensions and their corresponding field alternative are mutually exclusive: use `Cuboid(x_length=..., y_length=..., z_length=...)` or `Cuboid(half_size=...)`, not both, even when dimensions equal their defaults.
 - For these dual-form constructors, omit defaulted arguments instead of passing `None`.
+- Primitive dimensions must be finite and non-negative (zero is allowed); a negative or NaN radius, length, or half-size raises `ValueError`.
 - Supply both `minor_radius` and `major_radius` for Torus's field form, or both `cos` and `sin` for Rot2. Omit both Rot2 inputs for identity; explicit `None` is invalid.
 
 - **Canonical entrypoint structure** - every scene file must follow this exact pattern:

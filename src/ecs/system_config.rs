@@ -9,14 +9,16 @@ use bevy::{
         resource::Resource,
         schedule::{
             BoxedCondition, InternedSystemSet, IntoScheduleConfigs, ScheduleConfigs,
-            SystemCondition, common_conditions::not,
+            SystemCondition, SystemSet, common_conditions::not,
         },
         system::{BoxedSystem, PipeSystem, ScheduleSystem},
     },
     prelude::DebugName,
 };
+use pybevy_core::public_error;
 use pybevy_ecs::shared::{
     schedule::{ConditionExpr, DynamicSetLabel, ScheduleOrdering, SystemSetTarget},
+    schedule_check::PlannedNode,
     system_runtime::{ErasedConditionSystem, ErasedSystem},
     system_ticks::{SystemRegistrationIdentity, SystemTickRegistration},
 };
@@ -406,6 +408,96 @@ pub(crate) fn callable_set(callable: &Bound<'_, PyAny>) -> PyResult<DynamicSetLa
     )?))
 }
 
+struct ScheduledSystemParts {
+    callable: Py<PyAny>,
+    pipe_stages: Vec<Py<PyAny>>,
+    ordering: ScheduleOrdering,
+    conditions: Vec<Py<PyAny>>,
+    combined_condition: Option<ConditionExpr<Py<PyAny>>>,
+}
+
+fn scheduled_system_parts(value: &Bound<'_, PyAny>) -> ScheduledSystemParts {
+    if let Ok(config) = value.extract::<PySystemConfig>() {
+        ScheduledSystemParts {
+            callable: config.system,
+            pipe_stages: config.pipe_stages,
+            ordering: config.ordering,
+            conditions: config.conditions,
+            combined_condition: None,
+        }
+    } else if let Ok(conditional) = value.extract::<PyConditionalSystem>() {
+        ScheduledSystemParts {
+            callable: conditional.system,
+            pipe_stages: Vec::new(),
+            ordering: ScheduleOrdering::default(),
+            conditions: Vec::new(),
+            combined_condition: Some(conditional.condition),
+        }
+    } else {
+        ScheduledSystemParts {
+            callable: value.clone().unbind(),
+            pipe_stages: Vec::new(),
+            ordering: ScheduleOrdering::default(),
+            conditions: Vec::new(),
+            combined_condition: None,
+        }
+    }
+}
+
+fn planned_node(
+    name: String,
+    set: Option<InternedSystemSet>,
+    mut in_sets: Vec<InternedSystemSet>,
+    ordering: &ScheduleOrdering,
+) -> PlannedNode {
+    in_sets.extend(ordering.in_sets.iter().map(SystemSetTarget::intern));
+    PlannedNode {
+        name,
+        set,
+        in_sets,
+        before: ordering
+            .before
+            .iter()
+            .map(SystemSetTarget::intern)
+            .collect(),
+        after: ordering.after.iter().map(SystemSetTarget::intern).collect(),
+    }
+}
+
+/// The scheduling edges `build_scheduled_system` gives this system.
+pub(crate) fn planned_system_node(
+    value: &Bound<'_, PyAny>,
+    generation: u32,
+) -> PyResult<PlannedNode> {
+    let py = value.py();
+    let parts = scheduled_system_parts(value);
+    let identity = callable_set(parts.callable.bind(py))?;
+    let mut in_sets = vec![
+        ReloadGenerationSet(generation).intern(),
+        identity.clone().intern(),
+    ];
+    for stage in &parts.pipe_stages {
+        in_sets.push(callable_set(stage.bind(py))?.intern());
+    }
+    Ok(planned_node(
+        identity.qualified_name().to_owned(),
+        None,
+        in_sets,
+        &parts.ordering,
+    ))
+}
+
+/// The scheduling edges `build_set_config` gives this set configuration.
+pub(crate) fn planned_set_node(identity: &SystemSetConfigIdentity) -> PlannedNode {
+    let set = identity.set.intern();
+    planned_node(
+        format!("{set:?}"),
+        Some(set),
+        Vec::new(),
+        &identity.ordering,
+    )
+}
+
 /// Build one Main/PyO3 system config from a plain callable or public wrapper.
 ///
 /// Generation gating, user conditions, callable identity, and explicit
@@ -426,32 +518,13 @@ pub(crate) fn build_scheduled_system(
     SystemTickRegistration,
 )> {
     let py = value.py();
-    let (callable, pipe_stages, ordering, conditions, combined_condition) =
-        if let Ok(config) = value.extract::<PySystemConfig>() {
-            (
-                config.system,
-                config.pipe_stages,
-                config.ordering,
-                config.conditions,
-                None,
-            )
-        } else if let Ok(conditional) = value.extract::<PyConditionalSystem>() {
-            (
-                conditional.system,
-                Vec::new(),
-                ScheduleOrdering::default(),
-                Vec::new(),
-                Some(conditional.condition),
-            )
-        } else {
-            (
-                value.clone().unbind(),
-                Vec::new(),
-                ScheduleOrdering::default(),
-                Vec::new(),
-                None,
-            )
-        };
+    let ScheduledSystemParts {
+        callable,
+        pipe_stages,
+        ordering,
+        conditions,
+        combined_condition,
+    } = scheduled_system_parts(value);
 
     let identity = callable_set(callable.bind(py))?;
     let mut ticks = SystemTickRegistration {
@@ -466,6 +539,17 @@ pub(crate) fn build_scheduled_system(
         .iter()
         .map(|stage| callable_set(stage.bind(py)))
         .collect::<PyResult<Vec<_>>>()?;
+    let mut members = pipe_identities.clone();
+    members.push(identity.clone());
+    if let Some((relation, target)) = ordering.relation_to_member(&members) {
+        return Err(PyValueError::new_err(
+            public_error::callable_ordered_against_own_set(
+                identity.qualified_name(),
+                relation,
+                target.qualified_name(),
+            ),
+        ));
+    }
     let (schedule_system, handles) = if pipe_stages.is_empty() {
         let dynamic_system = new_main_system(
             callable,

@@ -16,6 +16,7 @@ pub mod query_builder_ext;
 pub mod query_runtime;
 pub mod run_ticks;
 pub mod schedule;
+pub mod schedule_check;
 pub mod state_machine_registry;
 pub mod state_transition;
 pub mod system_flags;

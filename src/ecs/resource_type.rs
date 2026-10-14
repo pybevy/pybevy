@@ -1,12 +1,15 @@
 use core::fmt;
 
 use bevy::{
-    ecs::{component::ComponentId, world::unsafe_world_cell::UnsafeWorldCell},
+    ecs::{
+        change_detection::Tick, component::ComponentId, world::unsafe_world_cell::UnsafeWorldCell,
+    },
     prelude::*,
 };
 /// Main/PyO3 name for the backend-neutral custom-resource identity registry.
 pub use pybevy_core::custom_resource::CustomResourceRegistry as ResourceRegistry;
 use pybevy_core::{
+    ComponentWriteContext,
     custom_resource::{
         ResourceRegisterOutcome, insert_dynamic_resource_value, register_custom_resource_guarded,
     },
@@ -222,17 +225,31 @@ impl PyResourceType {
         cell: UnsafeWorldCell,
         py: Python,
         validity: ValidityFlag,
+        last_run: Tick,
+        this_run: Tick,
     ) -> PyResult<Py<PyAny>> {
         match self {
             PyResourceType::AssetServer => Self::get_asset_server_cell(cell, py, validity),
             PyResourceType::Dynamic(type_ptr) => {
                 let bridge = global_registry::get_resource_bridge_by_py_type(*type_ptr)
                     .ok_or_else(|| PyTypeError::new_err(RESOURCE_BRIDGE_NOT_FOUND))?;
+                let mut validity = validity.with_access_mode(AccessMode::Write);
+                let component_id = cell.components().get_valid_id(bridge.bevy_type_id());
+                // SAFETY: write access to this resource is declared, which covers
+                // reading its resource-entity cache entry.
+                let entity = component_id
+                    .and_then(|id| unsafe { cell.resource_entities() }.get(id).map(|e| (id, e)));
+                if let Some((component_id, entity)) = entity {
+                    // SAFETY: the declared write access covers this resource
+                    // component, and the context is fenced by `validity`.
+                    let context = unsafe {
+                        ComponentWriteContext::new(cell, entity, component_id, last_run, this_run)
+                    };
+                    validity = validity.with_component_write_context(context);
+                }
                 // SAFETY: write access to this resource is declared; the executor
                 // prevents any concurrent access, so the cell borrow is unique.
-                unsafe {
-                    bridge.get_mut_from_cell(cell, validity.with_access_mode(AccessMode::Write), py)
-                }
+                unsafe { bridge.get_mut_from_cell(cell, validity, py) }
             }
             PyResourceType::Custom(type_ptr) => {
                 // Custom mutable access returns the same Python object as the read

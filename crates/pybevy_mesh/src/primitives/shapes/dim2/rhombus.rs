@@ -1,10 +1,10 @@
 use bevy::{
-    math::{prelude::Measured2d, primitives::Rhombus},
+    math::{Vec2, prelude::Measured2d, primitives::Rhombus},
     mesh::Meshable,
 };
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, StorageError, ValueStorage};
 use pybevy_macros::{pyconstructor, pyvalue};
-use pybevy_math::vec2::PyVec2;
+use pybevy_math::{primitives::dimension::dimension, vec2::PyVec2};
 use pyo3::prelude::*;
 
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyRhombusMeshBuilder};
@@ -47,6 +47,10 @@ impl From<Rhombus> for PyRhombus {
     }
 }
 
+fn check_half_diagonals(value: &Vec2) -> Result<(), StorageError> {
+    dimension("half_diagonals", *value).map(drop)
+}
+
 #[pyconstructor(
     "Rhombus",
     keyword_only(half_diagonals),
@@ -61,45 +65,43 @@ impl PyRhombus {
         #[expected("Vec2")] half_diagonals: Option<PyVec2>,
     ) -> PyResult<PyClassInitializer<Self>> {
         if let Some(hd) = half_diagonals {
-            return Ok((
-                Self::from_owned(Rhombus {
-                    half_diagonals: hd.try_into()?,
-                }),
-                PyMeshable,
-            )
-                .into());
+            let half_diagonals = dimension("half_diagonals", hd.try_into()?)?;
+            return Ok((Self::from_owned(Rhombus { half_diagonals }), PyMeshable).into());
         }
-        Ok((
-            Self::from_owned(Rhombus::new(horizontal_diagonal, vertical_diagonal)),
-            PyMeshable,
-        )
-            .into())
+        let rhombus = Rhombus::new(
+            dimension("horizontal_diagonal", horizontal_diagonal)?,
+            dimension("vertical_diagonal", vertical_diagonal)?,
+        );
+        Ok((Self::from_owned(rhombus), PyMeshable).into())
     }
 
     #[staticmethod]
     pub fn from_side(py: Python, side: f32) -> PyResult<Py<Self>> {
-        Py::new(py, (Self::from_owned(Rhombus::from_side(side)), PyMeshable))
+        let rhombus = Rhombus::from_side(dimension("side", side)?);
+        Py::new(py, (Self::from_owned(rhombus), PyMeshable))
     }
 
     #[staticmethod]
     pub fn from_inradius(py: Python, inradius: f32) -> PyResult<Py<Self>> {
-        Py::new(
-            py,
-            (
-                Self::from_owned(Rhombus::from_inradius(inradius)),
-                PyMeshable,
-            ),
-        )
+        let rhombus = Rhombus::from_inradius(dimension("inradius", inradius)?);
+        check_half_diagonals(&rhombus.half_diagonals)?;
+        Py::new(py, (Self::from_owned(rhombus), PyMeshable))
     }
 
     #[getter]
     pub fn half_diagonals(&self) -> PyResult<PyVec2> {
-        Ok(self.storage.borrow_field_as(|s| &s.half_diagonals)?)
+        Ok(self.storage.borrow_validated_field_as(
+            |s| &s.half_diagonals,
+            |s| &mut s.half_diagonals,
+            check_half_diagonals,
+        )?)
     }
 
     #[setter]
     pub fn set_half_diagonals(&mut self, value: PyVec2) -> PyResult<()> {
-        self.as_mut()?.half_diagonals = value.try_into()?;
+        let half_diagonals = value.try_into()?;
+        let mut rhombus = self.as_mut()?;
+        rhombus.half_diagonals = dimension("half_diagonals", half_diagonals)?;
         Ok(())
     }
 

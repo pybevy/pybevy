@@ -3,7 +3,7 @@ use bevy::{
     mesh::Meshable,
 };
 use pybevy_macros::pyconstructor;
-use pybevy_math::torus_kind::PyTorusKind;
+use pybevy_math::{primitives::dimension::dimension, torus_kind::PyTorusKind};
 use pyo3::prelude::*;
 
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyTorusMeshBuilder};
@@ -41,10 +41,17 @@ impl PyTorus {
     ) -> PyResult<PyClassInitializer<Self>> {
         let torus = match (minor_radius, major_radius) {
             (Some(minor_radius), Some(major_radius)) => Torus {
-                minor_radius,
-                major_radius,
+                minor_radius: dimension("minor_radius", minor_radius)?,
+                major_radius: dimension("major_radius", major_radius)?,
             },
-            _ => Torus::new(inner_radius, outer_radius),
+            _ => {
+                let torus = Torus::new(
+                    dimension("inner_radius", inner_radius)?,
+                    dimension("outer_radius", outer_radius)?,
+                );
+                dimension("minor_radius", torus.minor_radius)?;
+                torus
+            }
         };
         Ok((Self(torus), PyMeshable).into())
     }
@@ -55,8 +62,9 @@ impl PyTorus {
     }
 
     #[setter]
-    pub fn set_minor_radius(&mut self, value: f32) {
-        self.0.minor_radius = value;
+    pub fn set_minor_radius(&mut self, value: f32) -> PyResult<()> {
+        self.0.minor_radius = dimension("minor_radius", value)?;
+        Ok(())
     }
 
     #[getter]
@@ -65,8 +73,9 @@ impl PyTorus {
     }
 
     #[setter]
-    pub fn set_major_radius(&mut self, value: f32) {
-        self.0.major_radius = value;
+    pub fn set_major_radius(&mut self, value: f32) -> PyResult<()> {
+        self.0.major_radius = dimension("major_radius", value)?;
+        Ok(())
     }
 
     pub fn inner_radius(&self) -> f32 {

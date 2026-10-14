@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use bevy::ecs::{component::ComponentId, entity::Entity, ptr::OwningPtr, world::World};
+use bevy::{
+    ecs::{component::ComponentId, entity::Entity, ptr::OwningPtr, world::World},
+    math::{Vec2, Vec3},
+};
 use numpy::{PyReadonlyArray1, PyReadonlyArray2};
 use pybevy_array::{ArrayDType, owned_contiguous_le_bytes_from_any};
 use pybevy_core::{
@@ -11,11 +14,13 @@ use pybevy_core::{
     component_batch::{FieldColumn, build_wrapper_rows, column_dtype_for, field_column_for},
     registry::global_registry,
 };
+use pybevy_math::{vec2::PyVec2, vec3::PyVec3};
 use pyo3::{
     PyTraverseError, PyVisit,
     exceptions::{PyModuleNotFoundError, PyTypeError, PyValueError},
+    intern,
     prelude::*,
-    types::{PyDict, PyList, PyTuple, PyType},
+    types::{PyBool, PyBytes, PyDict, PyList, PyTuple, PyType},
 };
 
 use super::{
@@ -90,12 +95,8 @@ fn field_default<'py>(
     )))
 }
 
-fn default_column(
-    field_type: PrimitiveType,
-    source: &FieldDefault<'_>,
-    count: usize,
-) -> PyResult<ColumnData> {
-    let mut column = match field_type {
+fn empty_column(field_type: PrimitiveType) -> ColumnData {
+    match field_type {
         PrimitiveType::F32 | PrimitiveType::Vec2 | PrimitiveType::Vec3 => {
             ColumnData::F32(Vec::new())
         }
@@ -105,32 +106,126 @@ fn default_column(
         PrimitiveType::U32 => ColumnData::U32(Vec::new()),
         PrimitiveType::U64 => ColumnData::U64(Vec::new()),
         PrimitiveType::Bool => ColumnData::Bool(Vec::new()),
-    };
+    }
+}
 
+fn push_value(column: &mut ColumnData, value: PrimitiveValue) {
+    match (column, value) {
+        (ColumnData::F32(values), PrimitiveValue::F32(value)) => values.push(value),
+        (ColumnData::F64(values), PrimitiveValue::F64(value)) => values.push(value),
+        (ColumnData::I32(values), PrimitiveValue::I32(value)) => values.push(value),
+        (ColumnData::I64(values), PrimitiveValue::I64(value)) => values.push(value),
+        (ColumnData::U32(values), PrimitiveValue::U32(value)) => values.push(value),
+        (ColumnData::U64(values), PrimitiveValue::U64(value)) => values.push(value),
+        (ColumnData::Bool(values), PrimitiveValue::Bool(value)) => values.push(u8::from(value)),
+        (ColumnData::F32(values), PrimitiveValue::Vec2(value)) => {
+            values.extend([value.x, value.y]);
+        }
+        (ColumnData::F32(values), PrimitiveValue::Vec3(value)) => {
+            values.extend([value.x, value.y, value.z]);
+        }
+        _ => unreachable!("primitive extraction returned a different field type"),
+    }
+}
+
+fn default_column(
+    field_type: PrimitiveType,
+    source: &FieldDefault<'_>,
+    count: usize,
+) -> PyResult<ColumnData> {
+    let mut column = empty_column(field_type);
     for _ in 0..count {
         let value = source.next_value()?;
-        let value = extract_primitive_from_py(field_type, &value)?;
-        match (&mut column, value) {
-            (ColumnData::F32(values), PrimitiveValue::F32(value)) => values.push(value),
-            (ColumnData::F64(values), PrimitiveValue::F64(value)) => values.push(value),
-            (ColumnData::I32(values), PrimitiveValue::I32(value)) => values.push(value),
-            (ColumnData::I64(values), PrimitiveValue::I64(value)) => values.push(value),
-            (ColumnData::U32(values), PrimitiveValue::U32(value)) => values.push(value),
-            (ColumnData::U64(values), PrimitiveValue::U64(value)) => values.push(value),
-            (ColumnData::Bool(values), PrimitiveValue::Bool(value)) => {
-                values.push(u8::from(value));
-            }
-            (ColumnData::F32(values), PrimitiveValue::Vec2(value)) => {
-                values.extend([value.x, value.y]);
-            }
-            (ColumnData::F32(values), PrimitiveValue::Vec3(value)) => {
-                values.extend([value.x, value.y, value.z]);
-            }
-            _ => unreachable!("primitive extraction returned a different field type"),
+        push_value(&mut column, extract_primitive_from_py(field_type, &value)?);
+    }
+    Ok(column)
+}
+
+/// Whether batch rows must run the class's own initializer: anything other
+/// than a dataclass-generated `__init__` without `__post_init__`.
+fn constructs_rows(cls: &Bound<'_, PyType>) -> PyResult<bool> {
+    if cls.hasattr(intern!(cls.py(), "__post_init__"))? {
+        return Ok(true);
+    }
+    let Some(code) = cls
+        .getattr(intern!(cls.py(), "__init__"))?
+        .getattr_opt(intern!(cls.py(), "__code__"))?
+    else {
+        return Ok(false);
+    };
+    let qualname: String = code.getattr(intern!(cls.py(), "co_qualname"))?.extract()?;
+    let generated = qualname == DATACLASS_INIT_QUALNAME
+        && cls.hasattr(intern!(cls.py(), "__dataclass_fields__"))?;
+    Ok(!generated)
+}
+
+const DATACLASS_INIT_QUALNAME: &str = "__create_fn__.<locals>.__init__";
+
+fn numpy_column(field_type: PrimitiveType, array: &Bound<'_, PyAny>) -> PyResult<ColumnData> {
+    let bytes = array.call_method0(intern!(array.py(), "tobytes"))?;
+    ColumnData::from_le_bytes(
+        column_dtype_for(field_type).0,
+        bytes.cast::<PyBytes>()?.as_bytes(),
+    )
+    .ok_or_else(|| PyValueError::new_err("custom batch column has incomplete elements"))
+}
+
+fn column_value<'py>(
+    py: Python<'py>,
+    field_type: PrimitiveType,
+    column: &ColumnData,
+    row: usize,
+) -> PyResult<Bound<'py, PyAny>> {
+    Ok(match (field_type, column) {
+        (PrimitiveType::Vec3, ColumnData::F32(values)) => {
+            let base = row * 3;
+            let value = Vec3::new(values[base], values[base + 1], values[base + 2]);
+            Bound::new(py, PyVec3::from(value))?.into_any()
+        }
+        (PrimitiveType::Vec2, ColumnData::F32(values)) => {
+            let base = row * 2;
+            Bound::new(py, PyVec2::from(Vec2::new(values[base], values[base + 1])))?.into_any()
+        }
+        (_, ColumnData::F32(values)) => values[row].into_pyobject(py)?.into_any(),
+        (_, ColumnData::F64(values)) => values[row].into_pyobject(py)?.into_any(),
+        (_, ColumnData::I32(values)) => values[row].into_pyobject(py)?.into_any(),
+        (_, ColumnData::I64(values)) => values[row].into_pyobject(py)?.into_any(),
+        (_, ColumnData::U32(values)) => values[row].into_pyobject(py)?.into_any(),
+        (_, ColumnData::U64(values)) => values[row].into_pyobject(py)?.into_any(),
+        (_, ColumnData::Bool(values)) => PyBool::new(py, values[row] != 0).to_owned().into_any(),
+    })
+}
+
+/// Build every row through the class constructor, as `cls(**row)` would, and
+/// read the stored fields back with the single-component extraction rules.
+fn construct_rows(
+    cls: &Bound<'_, PyType>,
+    layout: &ComponentLayout,
+    provided: &[(usize, ColumnData)],
+    count: usize,
+) -> PyResult<Vec<(usize, ColumnData)>> {
+    let py = cls.py();
+    let mut columns: Vec<ColumnData> = layout
+        .fields
+        .iter()
+        .map(|field| empty_column(field.field_type))
+        .collect();
+    for row in 0..count {
+        let kwargs = PyDict::new(py);
+        for (field_idx, column) in provided {
+            let field = &layout.fields[*field_idx];
+            kwargs.set_item(
+                &field.name,
+                column_value(py, field.field_type, column, row)?,
+            )?;
+        }
+        let instance = cls.call((), Some(&kwargs))?;
+        for (field, column) in layout.fields.iter().zip(&mut columns) {
+            let value = instance.getattr(field.name.as_str())?;
+            push_value(column, extract_primitive_from_py(field.field_type, &value)?);
         }
     }
-
-    Ok(column)
+    Ok(columns.into_iter().enumerate().collect())
 }
 
 impl PyCustomComponentBatch {
@@ -279,7 +374,10 @@ impl PyCustomComponentBatch {
                 let target_dtype = field_info.field_type.to_numpy_dtype();
                 let dtype_obj = np.call_method1("dtype", (target_dtype,))?;
                 let arr = np.call_method1("ascontiguousarray", (&value,))?;
-                let arr = arr.call_method1("astype", (&dtype_obj,))?;
+                let mut arr = arr.call_method1("astype", (&dtype_obj,))?;
+                if field_info.field_type == PrimitiveType::Bool {
+                    arr = arr.call_method1("view", ("u1",))?;
+                }
                 field_arrays.push((field_idx, arr.unbind()));
             }
         }
@@ -287,29 +385,40 @@ impl PyCustomComponentBatch {
         // kwargs is non-empty, so at least one column was observed.
         let count = agree.count().unwrap_or(0);
 
-        let mut specified = vec![false; layout.fields.len()];
-        for (field_idx, _) in &field_arrays {
-            specified[*field_idx] = true;
-        }
-        for (field_idx, _) in &field_values {
-            specified[*field_idx] = true;
-        }
-        if specified.iter().any(|present| !present) {
-            let dataclass_fields = cls.getattr_opt("__dataclass_fields__")?;
-            let dataclass_fields = dataclass_fields
-                .as_ref()
-                .map(|fields| fields.cast::<PyDict>())
-                .transpose()?;
-            let missing = py.import("dataclasses")?.getattr("MISSING")?;
-            for (field_idx, field) in layout.fields.iter().enumerate() {
-                if specified[field_idx] {
-                    continue;
-                }
-                let source = field_default(cls, dataclass_fields, &missing, &field.name)?;
-                let column = default_column(field.field_type, &source, count)?;
-                field_values.push((field_idx, column));
+        let (field_arrays, field_values) = if constructs_rows(cls)? {
+            let mut provided = field_values;
+            for (field_idx, array) in field_arrays {
+                let field_type = layout.fields[field_idx].field_type;
+                provided.push((field_idx, numpy_column(field_type, array.bind(py))?));
             }
-        }
+            (Vec::new(), construct_rows(cls, &layout, &provided, count)?)
+        } else {
+            let mut field_values = field_values;
+            let mut specified = vec![false; layout.fields.len()];
+            for (field_idx, _) in &field_arrays {
+                specified[*field_idx] = true;
+            }
+            for (field_idx, _) in &field_values {
+                specified[*field_idx] = true;
+            }
+            if specified.iter().any(|present| !present) {
+                let dataclass_fields = cls.getattr_opt("__dataclass_fields__")?;
+                let dataclass_fields = dataclass_fields
+                    .as_ref()
+                    .map(|fields| fields.cast::<PyDict>())
+                    .transpose()?;
+                let missing = py.import("dataclasses")?.getattr("MISSING")?;
+                for (field_idx, field) in layout.fields.iter().enumerate() {
+                    if specified[field_idx] {
+                        continue;
+                    }
+                    let source = field_default(cls, dataclass_fields, &missing, &field.name)?;
+                    let column = default_column(field.field_type, &source, count)?;
+                    field_values.push((field_idx, column));
+                }
+            }
+            (field_arrays, field_values)
+        };
 
         // Qualified name for registration
         let module = cls
@@ -349,7 +458,7 @@ fn portable_dtype_for(dtype: ColumnDType) -> Option<ArrayDType> {
         ColumnDType::I64 => ArrayDType::Int64,
         ColumnDType::U32 => ArrayDType::Uint32,
         ColumnDType::U64 => return None,
-        ColumnDType::Bool => ArrayDType::Uint8,
+        ColumnDType::Bool => ArrayDType::Bool,
     })
 }
 

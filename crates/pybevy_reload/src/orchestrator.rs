@@ -63,27 +63,12 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
             if runtime.load_error_is_deferred(&e) {
                 return Err(e);
             }
-            runtime.print_error(&e);
-
-            let current_time = world
-                .get_resource::<bevy::time::Time>()
-                .map(|t| t.elapsed_secs_f64())
-                .unwrap_or(0.0);
-            let current_frame = world
-                .get_resource::<bevy::diagnostic::FrameCount>()
-                .map(|f| f.0)
-                .unwrap_or(0);
-            if let Some(mut stats) = world.get_resource_mut::<HotReloadStats>() {
-                stats.reload_count += 1;
-                stats.last_mode = Some(mode);
-                stats.last_reload_time = current_time;
-                stats.last_reload_frame = current_frame;
-            }
-            publish_reload_failure(world, e.message.clone(), e.traceback.clone(), true);
-
-            return Err(e);
+            return Err(reject_candidate(world, runtime, mode, e));
         }
     };
+    if let Err(e) = runtime.check_schedules(world, &defs, next_generation) {
+        return Err(reject_candidate(world, runtime, mode, e));
+    }
     emit_reload_progress(
         world,
         ReloadProgress::new(ReloadProgressPhase::DefinitionsReady, next_generation, mode),
@@ -666,6 +651,33 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
     tracker.full_reload_required = false;
 
     Ok(())
+}
+
+/// Report a candidate rejected before commit; the running generation is untouched.
+fn reject_candidate<R: ReloadRuntime>(
+    world: &mut World,
+    runtime: &R,
+    mode: ReloadMode,
+    error: ReloadError,
+) -> ReloadError {
+    runtime.print_error(&error);
+
+    let current_time = world
+        .get_resource::<bevy::time::Time>()
+        .map(|t| t.elapsed_secs_f64())
+        .unwrap_or(0.0);
+    let current_frame = world
+        .get_resource::<bevy::diagnostic::FrameCount>()
+        .map(|f| f.0)
+        .unwrap_or(0);
+    if let Some(mut stats) = world.get_resource_mut::<HotReloadStats>() {
+        stats.reload_count += 1;
+        stats.last_mode = Some(mode);
+        stats.last_reload_time = current_time;
+        stats.last_reload_frame = current_frame;
+    }
+    publish_reload_failure(world, error.message.clone(), error.traceback.clone(), true);
+    error
 }
 
 /// Roll the generation back and mark `ReloadResult` as failed before

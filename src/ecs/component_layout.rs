@@ -66,7 +66,7 @@ impl PrimitiveTypeExt for PrimitiveType {
             PrimitiveType::I64 => "i8",
             PrimitiveType::U32 => "u4",
             PrimitiveType::U64 => "u8",
-            PrimitiveType::Bool => "u1",
+            PrimitiveType::Bool => "?",
             PrimitiveType::Vec3 => "f4", // individual element dtype (used with 2D arrays)
             PrimitiveType::Vec2 => "f4",
         }

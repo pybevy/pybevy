@@ -4,7 +4,12 @@ use bevy::{
 };
 use pybevy_core::{FromBorrowedStorage, ValueStorage};
 use pybevy_macros::pyvalue;
-use pybevy_math::{dir3::PyDir3, vec2::PyVec2, vec3::PyVec3};
+use pybevy_math::{
+    dir3::PyDir3,
+    primitives::dimension::{check_half_size2, dimension},
+    vec2::PyVec2,
+    vec3::PyVec3,
+};
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyPlaneMeshBuilder};
@@ -37,7 +42,7 @@ impl PyPlane3d {
         Ok((
             Self::from_owned(Plane3d {
                 normal,
-                half_size: half_size.try_into()?,
+                half_size: dimension("half_size", half_size.try_into()?)?,
             }),
             PyMeshable,
         )
@@ -70,7 +75,11 @@ impl PyPlane3d {
 
     #[getter]
     pub fn half_size(&self) -> PyResult<PyVec2> {
-        Ok(self.storage.borrow_field_as(|s| &s.half_size)?)
+        Ok(self.storage.borrow_validated_field_as(
+            |s| &s.half_size,
+            |s| &mut s.half_size,
+            check_half_size2,
+        )?)
     }
 
     #[getter]
@@ -86,7 +95,9 @@ impl PyPlane3d {
 
     #[setter]
     pub fn set_half_size(&mut self, value: PyVec2) -> PyResult<()> {
-        self.as_mut()?.half_size = value.try_into()?;
+        let half_size = value.try_into()?;
+        let mut shape = self.as_mut()?;
+        shape.half_size = dimension("half_size", half_size)?;
         Ok(())
     }
 

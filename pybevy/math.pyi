@@ -1051,6 +1051,12 @@ class Interval:
     def __ge__(self, other: object) -> bool: ...
 
 class Circle(Meshable):
+    """A 2D circle primitive.
+
+    Raises ValueError from constructors and setters for a negative, NaN, or
+    infinite dimension; zero is allowed. Bevy accepts any value.
+    """
+
     def __init__(self, radius: float = 0.5) -> None: ...
     @property
     def radius(self) -> float: ...
@@ -1507,6 +1513,12 @@ class Affine3A:
     def __ne__(self, other: object) -> bool: ...
 
 class Cone(Meshable):
+    """A 3D cone primitive with its tip on +Y.
+
+    Raises ValueError from constructors and setters for a negative, NaN, or
+    infinite dimension; zero is allowed. Bevy accepts any value.
+    """
+
     def __init__(self, radius: float = 0.5, height: float = 1.0) -> None: ...
     @property
     def radius(self) -> float: ...
@@ -1525,6 +1537,12 @@ class Cone(Meshable):
     def mesh(self) -> ConeMeshBuilder: ...
 
 class ConicalFrustum(Meshable):
+    """A 3D conical frustum primitive.
+
+    Raises ValueError from constructors and setters for a negative, NaN, or
+    infinite dimension; zero is allowed. Bevy accepts any value.
+    """
+
     def __init__(self, *, radius_top: float = 0.25, radius_bottom: float = 0.5, height: float = 0.5) -> None: ...
     @property
     def radius_top(self) -> float: ...
@@ -1549,6 +1567,12 @@ class ConicalFrustum(Meshable):
     def mesh(self) -> ConicalFrustumMeshBuilder: ...
 
 class Rectangle(Meshable):
+    """A 2D rectangle primitive.
+
+    Raises ValueError from constructors and setters for a negative, NaN, or
+    infinite dimension; zero is allowed. Bevy accepts any value.
+    """
+
     def __init__(
         self,
         width: float = 1.0,
@@ -1575,6 +1599,12 @@ class Rectangle(Meshable):
     def mesh(self) -> RectangleMeshBuilder: ...
 
 class Sphere(Meshable):
+    """A 3D sphere primitive.
+
+    Raises ValueError from constructors and setters for a negative, NaN, or
+    infinite dimension; zero is allowed. Bevy accepts any value.
+    """
+
     def __init__(self, radius: float = 0.5) -> None: ...
     @property
     def radius(self) -> float: ...
@@ -1602,6 +1632,9 @@ class Plane3d(Meshable):
 
         # Landscape screen, 6.4 wide x 2.6 tall, facing +Z
         screen = meshes.add(Plane3d(Vec3(0.0, 0.0, 1.0), half_size=Vec2(3.2, 1.3)))
+
+    Raises ValueError from constructors and setters for a negative, NaN, or
+    infinite dimension; zero is allowed. Bevy accepts any value.
     """
 
     def __init__(
@@ -1709,6 +1742,12 @@ class ViewFrustum:
     def __eq__(self, other: object) -> bool: ...
 
 class Cylinder(Meshable):
+    """A 3D cylinder primitive aligned with the Y axis.
+
+    Raises ValueError from constructors and setters for a negative, NaN, or
+    infinite dimension; zero is allowed. Bevy accepts any value.
+    """
+
     def __init__(
         self,
         radius: float = 0.5,
@@ -1732,6 +1771,12 @@ class Cylinder(Meshable):
     def mesh(self) -> CylinderMeshBuilder: ...
 
 class Cuboid(Meshable):
+    """A 3D cuboid primitive.
+
+    Raises ValueError from constructors and setters for a negative, NaN, or
+    infinite dimension; zero is allowed. Bevy accepts any value.
+    """
+
     def __init__(
         self,
         x_length: float = 1.0,
@@ -3137,6 +3182,9 @@ class Capsule2d(Meshable):
         >>> # Create a capsule with radius 5.0 and length 20.0
         >>> capsule = Capsule2d(5.0, 20.0)
         >>> mesh = capsule.mesh().build()  # Create mesh from primitive
+
+    Raises ValueError from constructors and setters for a negative, NaN, or
+    infinite dimension; zero is allowed. Bevy accepts any value.
     """
 
     @property
@@ -3187,6 +3235,9 @@ class Ellipse(Meshable):
         >>> # Create an ellipse with semi-axes of 3.0 and 2.0
         >>> ellipse = Ellipse(half_size=Vec2(3.0, 2.0))
         >>> mesh = ellipse.mesh().build()  # Create mesh from primitive
+
+    Raises ValueError from constructors and setters for a negative, NaN, or
+    infinite dimension; zero is allowed. Bevy accepts any value.
     """
 
     @property
@@ -3363,6 +3414,9 @@ class Capsule3d(Meshable):
         >>> # Create a capsule with radius 0.5 and length 2.0
         >>> capsule = Capsule3d(0.5, 2.0)
         >>> mesh = capsule.mesh().build()  # Create mesh from primitive
+
+    Raises ValueError from constructors and setters for a negative, NaN, or
+    infinite dimension; zero is allowed. Bevy accepts any value.
     """
 
     @property
@@ -3484,6 +3538,9 @@ class RegularPolygon(Meshable):
         >>> # Create a hexagon with circumradius 1.0
         >>> hexagon = RegularPolygon(1.0, 6)
         >>> mesh = hexagon.mesh().build()  # Create mesh from primitive
+
+    Raises ValueError from constructors and setters for a negative, NaN, or
+    infinite dimension; zero is allowed. Bevy accepts any value.
     """
 
     @property
@@ -3551,6 +3608,9 @@ class Rhombus(Meshable):
         >>> # Create a rhombus with horizontal diagonal 2.0 and vertical diagonal 3.0
         >>> rhombus = Rhombus(2.0, 3.0)
         >>> mesh = rhombus.mesh().build()  # Create mesh from primitive
+
+    Raises ValueError from constructors and setters for a negative, NaN, or
+    infinite dimension; zero is allowed. Bevy accepts any value.
     """
 
     @property
@@ -3627,6 +3687,9 @@ class Annulus(Meshable):
         >>> # Create an annulus with inner radius 0.5 and outer radius 1.0
         >>> ring = Annulus(0.5, 1.0)
         >>> mesh = ring.mesh().build()  # Create mesh from primitive
+
+    Raises ValueError from constructors and setters for a negative, NaN, or
+    infinite dimension; zero is allowed. Bevy accepts any value.
     """
 
     inner_circle: Circle
@@ -3931,6 +3994,9 @@ class Arc2d:
         >>> arc = Arc2d.from_degrees(1.0, 90.0)
         >>> # Create an arc covering one quarter turn
         >>> arc = Arc2d.from_turns(1.0, 0.25)
+
+    Raises ValueError from constructors and setters for a negative, NaN, or
+    infinite radius or a non-finite angle; zero is allowed. Bevy accepts any value.
     """
 
     radius: float
@@ -4111,6 +4177,9 @@ class CircularSector:
         >>> sector = CircularSector.from_degrees(1.0, 90.0)
         >>> # Create a sector covering one third of a circle
         >>> sector = CircularSector.from_turns(1.0, 0.333)
+
+    Raises ValueError from constructors and setters for a negative, NaN, or
+    infinite radius or a non-finite angle; zero is allowed. Bevy accepts any value.
     """
 
     arc: Arc2d
@@ -4285,6 +4354,9 @@ class CircularSegment:
         >>> segment = CircularSegment.from_degrees(1.0, 90.0)
         >>> # Create a segment covering one quarter turn
         >>> segment = CircularSegment.from_turns(1.0, 0.25)
+
+    Raises ValueError from constructors and setters for a negative, NaN, or
+    infinite radius or a non-finite angle; zero is allowed. Bevy accepts any value.
     """
 
     arc: Arc2d
@@ -4487,6 +4559,10 @@ class Torus(Meshable):
         >>> # Create a torus with inner radius 0.5 and outer radius 1.5
         >>> torus = Torus(0.5, 1.5)
         >>> mesh = torus.mesh().build()  # Create mesh from primitive
+
+    Raises ValueError from constructors and setters for a negative, NaN, or
+    infinite dimension, including an inner radius above the outer radius;
+    zero is allowed. Bevy accepts any value.
     """
 
     @property

@@ -59,6 +59,22 @@ type LayoutCacheEntry = (
 );
 type LayoutCache = HashMap<*const PyTypeObject, LayoutCacheEntry>;
 
+/// Rebind a queried component to its logical specialization, such as a custom
+/// material's handle identity.
+fn materialize_logical_type(
+    value: Py<PyAny>,
+    logical_type_id: Option<LogicalTypeId>,
+    py: Python<'_>,
+) -> PyResult<Py<PyAny>> {
+    match logical_type_id {
+        Some(logical_type_id) => Ok(value
+            .bind(py)
+            .call_method1("_materialize_logical_type_id", (logical_type_id.get(),))?
+            .unbind()),
+        None => Ok(value),
+    }
+}
+
 fn resolve_or_branch(
     world: &mut World,
     filter: &QueryFilter,
@@ -799,6 +815,9 @@ impl PyQueryIter {
                         } else {
                             world.get_component(py, &PyEntity(entity), component_type)?
                         };
+                        let value = value
+                            .map(|value| materialize_logical_type(value, item.logical_type_id, py))
+                            .transpose()?;
                         values.push(value.unwrap_or_else(|| py.None()));
                     }
                     values_buffer.push(PyTuple::new(py, values)?.into_any().unbind());
@@ -846,7 +865,11 @@ impl PyQueryIter {
                         world.get_component(py, &PyEntity(entity), component_type)?
                     };
                     match value {
-                        Some(value) => values_buffer.push(value),
+                        Some(value) => values_buffer.push(materialize_logical_type(
+                            value,
+                            *logical_type_id,
+                            py,
+                        )?),
                         None if *optional => values_buffer.push(py.None()),
                         None => {
                             return Err(PyRuntimeError::new_err(
@@ -1205,14 +1228,8 @@ impl PyQueryIter {
             validity = validity.with_component_write_context(context);
         }
 
-        let mut value = ty.extract_from_entity(entity, component_id, validity, py, self)?;
-        if let Some(logical_type_id) = logical_type_id {
-            value = value
-                .bind(py)
-                .call_method1("_materialize_logical_type_id", (logical_type_id.get(),))?
-                .unbind();
-        }
-        Ok(Some(value))
+        let value = ty.extract_from_entity(entity, component_id, validity, py, self)?;
+        Ok(Some(materialize_logical_type(value, logical_type_id, py)?))
     }
 
     /// Extract component data from an entity and populate values_buffer

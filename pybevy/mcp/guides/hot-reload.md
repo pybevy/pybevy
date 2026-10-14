@@ -239,7 +239,13 @@ If a reload introduces a Python error:
    back the active code generation but cannot restore the previous world. In
    that case old generation-gated systems can run against the emptied World,
    while `running_previous_generation` is false because the prior scene is not
-   intact.
+   intact. A candidate whose `before`/`after`, `chain`, `in_set`, or
+   `configure_sets` ordering would stop a schedule from building, such as a
+   cycle, is rejected before cleanup in both modes. The previous world keeps
+   running and the error names the cycle. The previous generation's systems
+   stay scheduled beside the candidate's, so reversing the order of two
+   existing systems in one reload is reported as a cycle; use `run_scene` for
+   that edit.
 2. Call `get_last_error` to see the traceback
 3. Fix the Python source
 4. Call `reload {"mode": "full"}` to retry
@@ -465,6 +471,7 @@ The entity count is unreliable in both directions, so never use it to judge whet
 | Reload failed while | Entities |
 |---|---|
 | importing the module | previous run's entities still there |
+| checking the candidate's schedule ordering | previous run's entities still there |
 | registering a non-escalated Partial reload | previous run's entities still there |
 | registering a Full reload | scene emptied - entities were already cleared |
 | running a Full-reload Startup system | scene emptied - entities are cleared *before* Startup re-runs |

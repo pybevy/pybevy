@@ -2,6 +2,7 @@ use bevy::{
     math::primitives::{Measured2d, RegularPolygon},
     mesh::Meshable,
 };
+use pybevy_math::primitives::dimension::dimension;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 use super::circle::PyCircle;
@@ -30,7 +31,7 @@ impl PyRegularPolygon {
     #[new]
     #[pyo3(signature = (circumradius = 0.5, sides = 6))]
     pub fn new(circumradius: f32, sides: u32) -> PyResult<PyClassInitializer<Self>> {
-        validate_circumradius(circumradius)?;
+        let circumradius = dimension("circumradius", circumradius)?;
         validate_sides(sides)?;
         Ok((Self(RegularPolygon::new(circumradius, sides)), PyMeshable).into())
     }
@@ -45,8 +46,8 @@ impl PyRegularPolygon {
 
     #[setter]
     pub fn set_circumcircle(&mut self, value: &PyCircle) -> PyResult<()> {
-        let circle = value.try_get()?;
-        validate_circumradius(circle.radius)?;
+        let mut circle = value.try_get()?;
+        circle.radius = dimension("circumradius", circle.radius)?;
         self.0.circumcircle = circle;
         Ok(())
     }
@@ -116,15 +117,6 @@ impl PyRegularPolygon {
             self.0.sides
         )
     }
-}
-
-fn validate_circumradius(circumradius: f32) -> PyResult<()> {
-    if !circumradius.is_finite() || circumradius.is_sign_negative() {
-        return Err(PyValueError::new_err(format!(
-            "circumradius must be finite and non-negative (got {circumradius})"
-        )));
-    }
-    Ok(())
 }
 
 fn validate_sides(sides: u32) -> PyResult<()> {

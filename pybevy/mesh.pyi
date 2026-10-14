@@ -331,6 +331,8 @@ class SphereMeshBuilder(MeshBuilder):
     def uv(self, sectors: int, stacks: int) -> Mesh: ...
 
 class PlaneMeshBuilder(MeshBuilder):
+    """Raises ValueError for a negative, NaN, or infinite size; zero is allowed."""
+
     @staticmethod
     def new(normal: Dir3, size: Vec2) -> PlaneMeshBuilder: ...
     @staticmethod

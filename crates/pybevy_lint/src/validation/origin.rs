@@ -1180,6 +1180,30 @@ pub fn source_field_types(
     struct_field_types_in_items(&file.items, type_name)
 }
 
+/// Whether the pinned source declares the struct with type parameters.
+pub fn source_struct_is_generic(full_path: &str, bevy_path: Option<&Path>) -> Option<bool> {
+    let bevy_path = bevy_path?;
+    let crate_name = full_path.split("::").next()?;
+    let source = find_type_source_file(full_path, crate_name, bevy_path)?;
+    let text = std::fs::read_to_string(&source).ok()?;
+    let type_name = full_path.rsplit("::").next()?.split('<').next()?;
+    let file = syn::parse_file(&text).ok()?;
+    struct_is_generic_in_items(&file.items, type_name)
+}
+
+fn struct_is_generic_in_items(items: &[syn::Item], type_name: &str) -> Option<bool> {
+    items.iter().find_map(|item| match item {
+        syn::Item::Struct(item) if item.ident == type_name => {
+            Some(item.generics.type_params().next().is_some())
+        }
+        syn::Item::Mod(module) => module
+            .content
+            .as_ref()
+            .and_then(|(_, items)| struct_is_generic_in_items(items, type_name)),
+        _ => None,
+    })
+}
+
 fn struct_field_types_in_items(
     items: &[syn::Item],
     type_name: &str,

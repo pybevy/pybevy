@@ -887,7 +887,15 @@ pub(crate) unsafe fn build_run_args<'w, 'c1, 'c2>(
                     // ResourceRegistry read for Custom);
                     // the executor prevents a conflicting system from running
                     // concurrently, so the cell's unchecked borrow is unique.
-                    match unsafe { resource_type.get_from_cell_mut(world, py, validity.clone()) } {
+                    match unsafe {
+                        resource_type.get_from_cell_mut(
+                            world,
+                            py,
+                            validity.clone(),
+                            last_run,
+                            this_run,
+                        )
+                    } {
                         Ok(r) => r,
                         Err(_e) => {
                             return Some(missing_resource_error(type_bound, func_name));

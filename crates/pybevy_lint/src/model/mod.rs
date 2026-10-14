@@ -51,6 +51,10 @@ pub struct PyClassDef {
     pub bridge_info: Option<ComponentBridgeInfo>,
     /// Storage macro attribute on the struct, independent of the `bridge` keyword
     pub storage_macro: Option<String>,
+    /// Any PyBevy wrapper-generating macro on the struct, including plugins and messages
+    pub wrapper_macro: Option<String>,
+    /// Rust struct fields as (name, type); unnamed fields use their index
+    pub struct_fields: Vec<(String, String)>,
     /// Wildcard match arms in bevy -> Python conversions that substitute a value
     pub silent_fallbacks: Vec<SilentFallbackInfo>,
     /// Whether this is an enum (vs struct)

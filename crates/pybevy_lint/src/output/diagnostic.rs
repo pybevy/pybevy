@@ -86,6 +86,12 @@ pub enum DiagnosticCode {
     /// W018: stub spells a builtin tuple/list/number where the Bevy field or
     /// payload type has a PyBevy wrapper
     W018,
+    /// W019: stub spells a builtin tuple/list/number where the Bevy field or
+    /// payload type is a Bevy struct or enum that PyBevy does not wrap
+    W019,
+    /// W020: public value class copies a Bevy struct's fields instead of
+    /// holding storage or using a generated wrapper
+    W020,
 
     // Test coverage info (T-codes)
     /// T001: Class has no test coverage
@@ -133,6 +139,8 @@ impl DiagnosticCode {
             DiagnosticCode::W016 => "W016",
             DiagnosticCode::W017 => "W017",
             DiagnosticCode::W018 => "W018",
+            DiagnosticCode::W019 => "W019",
+            DiagnosticCode::W020 => "W020",
             DiagnosticCode::T001 => "T001",
             DiagnosticCode::T002 => "T002",
             DiagnosticCode::T003 => "T003",
@@ -175,7 +183,9 @@ impl DiagnosticCode {
             | DiagnosticCode::W015
             | DiagnosticCode::W016
             | DiagnosticCode::W017
-            | DiagnosticCode::W018 => DiagnosticSeverity::Warning,
+            | DiagnosticCode::W018
+            | DiagnosticCode::W019
+            | DiagnosticCode::W020 => DiagnosticSeverity::Warning,
 
             DiagnosticCode::T001 | DiagnosticCode::T002 | DiagnosticCode::T003 => {
                 DiagnosticSeverity::Info
@@ -238,6 +248,12 @@ impl DiagnosticCode {
             }
             DiagnosticCode::W018 => {
                 "stub uses a tuple/builtin where the Bevy field or payload type has a PyBevy wrapper"
+            }
+            DiagnosticCode::W019 => {
+                "stub uses a tuple/builtin where the Bevy field or payload type is an unwrapped Bevy struct or enum"
+            }
+            DiagnosticCode::W020 => {
+                "value class hand-mirrors Bevy struct fields instead of using storage or a generated wrapper"
             }
             DiagnosticCode::T001 => "class has no test coverage",
             DiagnosticCode::T002 => "constructor not tested",

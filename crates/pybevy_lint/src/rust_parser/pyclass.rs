@@ -28,6 +28,19 @@ pub fn parse_struct(item: &ItemStruct, file_path: &Path) -> Option<PyClassDef> {
     let macro_info = macros::parse_macro_attrs(&item.attrs);
     let bridge_info = macros::parse_bridge_attrs(&item.attrs, location.clone());
     let storage_macro = macros::parse_storage_macro(&item.attrs);
+    let wrapper_macro = macros::parse_wrapper_macro(&item.attrs);
+    let struct_fields = item
+        .fields
+        .iter()
+        .enumerate()
+        .map(|(index, field)| {
+            let name = field
+                .ident
+                .as_ref()
+                .map_or_else(|| index.to_string(), ToString::to_string);
+            (name, type_to_string(&field.ty))
+        })
+        .collect();
 
     let properties = parse_struct_field_properties(&item.fields, file_path);
 
@@ -46,6 +59,8 @@ pub fn parse_struct(item: &ItemStruct, file_path: &Path) -> Option<PyClassDef> {
         macro_info,
         bridge_info,
         storage_macro,
+        wrapper_macro,
+        struct_fields,
         is_enum: false,
         properties,
         methods: Vec::new(),
