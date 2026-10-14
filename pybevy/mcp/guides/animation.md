@@ -205,7 +205,7 @@ and `add_clip()` also reject node indices not present in the graph.
 `AnimationNodeIndex` rejects values above the 32-bit index range, and graph-node
 mask-group methods accept positions 0 through 63 only.
 Python graph mutations reject reachable paths longer than 512 nodes because
-Bevy 0.19 builds its threaded graph recursively. This does not protect graphs
+Bevy 0.20 builds its threaded graph recursively. This does not protect graphs
 loaded directly by Bevy's asset loader.
 
 ## AnimationPlayer Methods

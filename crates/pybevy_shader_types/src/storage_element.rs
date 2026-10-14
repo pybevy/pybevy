@@ -42,25 +42,7 @@ pub fn generated_bindings_wgsl(source: &str) -> String {
 
 pub fn validate_bindings(source: &str) -> Result<(), String> {
     let source = generated_bindings_wgsl(source);
-    let module = wgsl::parse_str(&source).map_err(|error| error.emit_to_string(&source))?;
-    validate_member_names(&module)
-}
-
-fn validate_member_names(module: &Module) -> Result<(), String> {
-    for (_, ty) in module.types.iter() {
-        if let TypeInner::Struct { members, .. } = &ty.inner {
-            for member in members {
-                if let Some(name) = &member.name
-                    && name.chars().last().is_some_and(|c| c.is_ascii_digit())
-                {
-                    return Err(format!(
-                        "Storage struct {} member '{name}' ends in a digit; WGSL shader composition cannot round-trip it. Rename it to end in a letter or underscore.",
-                        ty.name.as_deref().unwrap_or("<unnamed>")
-                    ));
-                }
-            }
-        }
-    }
+    wgsl::parse_str(&source).map_err(|error| error.emit_to_string(&source))?;
     Ok(())
 }
 
@@ -102,7 +84,6 @@ impl StorageElement {
             "{declarations}\n@group(0) @binding(0) var<storage, read> pybevy_storage_element: array<{element}>;"
         );
         let module = wgsl::parse_str(&source).map_err(|error| error.emit_to_string(&source))?;
-        validate_member_names(&module)?;
         if module.global_variables.len() != 1
             || !module.functions.is_empty()
             || !module.entry_points.is_empty()

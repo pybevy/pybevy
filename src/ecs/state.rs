@@ -291,7 +291,7 @@ pub struct PyNextState {
 enum NextStateInner {
     Unchanged,
     Pending(Py<PyAny>),
-    PendingIfNeq(Py<PyAny>),
+    PendingIfDifferent(Py<PyAny>),
 }
 
 struct NextStateSlot {
@@ -327,7 +327,7 @@ impl PyNextState {
     ///
     /// A same-state `OnTransition` schedule still runs, matching Bevy. If an
     /// equal unconditional `set()` request is already pending, it is preserved.
-    fn set_if_neq(&self, py: Python, state: Py<PyAny>) -> PyResult<()> {
+    fn set_if_different(&self, py: Python, state: Py<PyAny>) -> PyResult<()> {
         self.validate_pending_state(py, &state)?;
 
         loop {
@@ -335,7 +335,7 @@ impl PyNextState {
                 let slot = lock_or_recover(&self.inner);
                 let pending = match &slot.request {
                     NextStateInner::Pending(value) => Some(value.clone_ref(py)),
-                    NextStateInner::Unchanged | NextStateInner::PendingIfNeq(_) => None,
+                    NextStateInner::Unchanged | NextStateInner::PendingIfDifferent(_) => None,
                 };
                 (slot.revision, pending)
             };
@@ -354,7 +354,7 @@ impl PyNextState {
                     return Ok(());
                 }
                 slot.revision = slot.revision.wrapping_add(1);
-                replace(&mut slot.request, NextStateInner::PendingIfNeq(state))
+                replace(&mut slot.request, NextStateInner::PendingIfDifferent(state))
             };
             drop(old_request);
             return Ok(());
@@ -386,7 +386,7 @@ impl PyNextState {
     /// Get the pending state without consuming it (for inspection)
     fn peek_pending(&self, py: Python) -> Option<Py<PyAny>> {
         match &lock_or_recover(&self.inner).request {
-            NextStateInner::Pending(state) | NextStateInner::PendingIfNeq(state) => {
+            NextStateInner::Pending(state) | NextStateInner::PendingIfDifferent(state) => {
                 Some(state.clone_ref(py))
             }
             NextStateInner::Unchanged => None,
@@ -396,7 +396,9 @@ impl PyNextState {
     fn __repr__(&self, py: Python) -> PyResult<String> {
         let pending = match &lock_or_recover(&self.inner).request {
             NextStateInner::Pending(state) => Some(("Pending", state.clone_ref(py))),
-            NextStateInner::PendingIfNeq(state) => Some(("PendingIfNeq", state.clone_ref(py))),
+            NextStateInner::PendingIfDifferent(state) => {
+                Some(("PendingIfDifferent", state.clone_ref(py)))
+            }
             NextStateInner::Unchanged => None,
         };
         match pending {
@@ -474,7 +476,7 @@ impl PyNextState {
         };
         match request {
             NextStateInner::Pending(state) => Some((state, true)),
-            NextStateInner::PendingIfNeq(state) => Some((state, false)),
+            NextStateInner::PendingIfDifferent(state) => Some((state, false)),
             NextStateInner::Unchanged => None,
         }
     }
@@ -494,7 +496,7 @@ impl PyNextState {
     fn migrate_state_type(&self, py: Python<'_>, state_type: Py<PyType>) -> PyResult<()> {
         let pending = match &lock_or_recover(&self.inner).request {
             NextStateInner::Pending(value) => Some((value.clone_ref(py), true)),
-            NextStateInner::PendingIfNeq(value) => Some((value.clone_ref(py), false)),
+            NextStateInner::PendingIfDifferent(value) => Some((value.clone_ref(py), false)),
             NextStateInner::Unchanged => None,
         };
         let migrated = pending
@@ -513,7 +515,7 @@ impl PyNextState {
             let request = if allow_same {
                 NextStateInner::Pending(value)
             } else {
-                NextStateInner::PendingIfNeq(value)
+                NextStateInner::PendingIfDifferent(value)
             };
             self.replace_request(request);
         }
@@ -780,7 +782,7 @@ pub(crate) fn retained_state_member_missing(
         let next_state = entry.next_state.bind(py).borrow();
         let slot = lock_or_recover(&next_state.inner);
         match &slot.request {
-            NextStateInner::Pending(value) | NextStateInner::PendingIfNeq(value) => {
+            NextStateInner::Pending(value) | NextStateInner::PendingIfDifferent(value) => {
                 Some(value.clone_ref(py))
             }
             NextStateInner::Unchanged => None,

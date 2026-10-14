@@ -917,16 +917,15 @@ class Image(Asset):
         """
 
     def convert(self, new_format: TextureFormat) -> Image | None:
-        """Convert through Bevy 0.19's limited image conversion bridge.
+        """Convert through Bevy's limited image conversion bridge.
 
         Supported source formats are ``R8Unorm``, ``Rg8Unorm``,
         ``Rgba8UnormSrgb``, ``Bgra8UnormSrgb``, and ``Bgra8Unorm``. The only
         accepted requested targets are ``R8Unorm``, ``Rg8Unorm``, and
         ``Rgba8UnormSrgb``.
 
-        Bevy expands requested ``R8Unorm`` and ``Rg8Unorm`` conversions back
-        to ``Rgba8Unorm``, with four bytes per pixel. The returned format can
-        therefore differ from ``new_format``.
+        ``R8Unorm`` returns one luma byte per pixel and ``Rg8Unorm`` two bytes,
+        luma then alpha, in the requested format.
 
         Args:
             new_format: Requested target texture format.

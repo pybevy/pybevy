@@ -1,5 +1,14 @@
+use std::sync::Arc;
+
 use filters::{PyAdded, PyChanged, PyOr, PyWith, PyWithout};
-use pyo3::{prelude::*, types::PyAny};
+use pybevy_core::public_error::{
+    multi_component_filter_tuple_required, parenthesized_component_filter,
+};
+use pyo3::{
+    exceptions::PyTypeError,
+    prelude::*,
+    types::{PyAny, PyTuple, PyType},
+};
 use smallvec::{SmallVec, smallvec};
 
 use crate::ecs::{
@@ -38,6 +47,37 @@ impl QueryFilter {
             Self::Added(filter) => smallvec![filter.component_type],
         }
     }
+
+    /// Raw-only copy for holders whose owner retains the classes separately.
+    /// Or flattens detached nested filters so no marker in the copy holds increfs.
+    pub(crate) fn clone_detached(&self) -> Self {
+        match self {
+            Self::With(filter) => Self::With(filter.detached()),
+            Self::Without(filter) => Self::Without(filter.detached()),
+            Self::Changed(filter) => Self::Changed(filter.detached()),
+            Self::Added(filter) => Self::Added(filter.detached()),
+            Self::Or(filter) => Self::Or(PyOr {
+                values: filter.values.iter().map(Self::clone_detached).collect(),
+            }),
+        }
+    }
+
+    /// Every strongly retained class reference in this filter, in declaration
+    /// order. Each reference is owned by the nested marker that created it;
+    /// holders of this value must traverse exactly these edges.
+    pub(crate) fn retained_classes(&self) -> SmallVec<[&Arc<Py<PyType>>; 4]> {
+        match self {
+            Self::With(filter) => filter.retained.iter().collect(),
+            Self::Without(filter) => filter.retained.iter().collect(),
+            Self::Or(filter) => filter
+                .values
+                .iter()
+                .flat_map(Self::retained_classes)
+                .collect(),
+            Self::Changed(filter) => filter.retained.iter().collect(),
+            Self::Added(filter) => filter.retained.iter().collect(),
+        }
+    }
 }
 
 /// Helper function to parse multiple component types from a filter parameter.
@@ -54,7 +94,11 @@ pub(crate) fn parse_multi_component_filter(
     filter_name: &str,
 ) -> PyResult<SmallVec<[PyComponentType; 4]>> {
     if let Ok(args) = key.getattr("__args__") {
-        // This is a GenericAlias like tuple[A, B] - extract from __args__
+        if !key.getattr("__origin__")?.is(py.get_type::<PyTuple>()) {
+            return Err(PyTypeError::new_err(multi_component_filter_tuple_required(
+                filter_name,
+            )));
+        }
         let mut components = SmallVec::new();
         for item in args.try_iter()? {
             let item = item?;
@@ -62,12 +106,9 @@ pub(crate) fn parse_multi_component_filter(
             components.push(component);
         }
         Ok(components)
-    } else if key.is_instance_of::<pyo3::types::PyTuple>() {
-        // Plain tuple (A, B) is not supported - require explicit tuple[] syntax
-        Err(pyo3::exceptions::PyTypeError::new_err(format!(
-            "Use {}[tuple[...]] for multiple components, not {}[(...)]. \
-            Example: {}[tuple[ComponentA, ComponentB]]",
-            filter_name, filter_name, filter_name
+    } else if key.is_instance_of::<PyTuple>() {
+        Err(PyTypeError::new_err(parenthesized_component_filter(
+            filter_name,
         )))
     } else {
         // Single component type

@@ -25,7 +25,7 @@ Pre-create handles in Startup and store them in a resource:
 
 ```python
 from dataclasses import dataclass
-from pybevy.ecs import system
+from pybevy.prelude import *
 
 @resource
 @dataclass

@@ -310,7 +310,9 @@ raise `ValueError` before insertion or assignment.
 
 Wrapper-storage components support properties, property setters (with `Mut[T]`),
 static/class methods, and common special methods through Query and World access.
-`vars(query_item)` is a snapshot of stored fields, not a live writable dictionary;
+`vars(query_item)` and `query_item.__dict__` copy stored fields into independent
+snapshots, including vectors, quaternions and matrices. Editing them leaves the
+component and its change ticks unchanged; snapshots outlive the query.
 `cached_property` values are recomputed on later accesses. Dataclass `ClassVar`
 and `InitVar` annotations are not stored or exposed as View columns. Use
 `@component(storage="python")` for frozen dataclasses.
@@ -1316,11 +1318,12 @@ The `On` parameter supports filtering: `On[EventType, ComponentType]` only
 triggers for events targeting that component. `On[EventType, tuple[A, B]]`
 observes events targeting either component in the tuple.
 Tuple component filters are for custom entity events; lifecycle observers
-such as `On[Add, Transform]` require a single component type.
+such as `On[Add, Transform]` take a single component type and raise
+`TypeError` for a tuple, although Bevy 0.20 also accepts a bundle there.
 Lifecycle observers for resources are unsupported and raise `TypeError` at
 registration. This includes native and custom resource types.
 
-Lifecycle emissions follow Bevy 0.19 ordering. A first insertion emits `Add`
+Lifecycle emissions follow Bevy 0.20 ordering. A first insertion emits `Add`
 then `Insert`; replacement emits `Discard` then `Insert`; explicit removal
 emits `Discard` then `Remove`; despawn emits `Despawn`, `Discard`, then
 `Remove` for each component. The old component/entity remains readable during

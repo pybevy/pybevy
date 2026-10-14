@@ -17,7 +17,7 @@ impl PyScreenSpaceAmbientOcclusion {
     #[new]
     #[pyo3(signature = (
         *,
-        quality_level = PyScreenSpaceAmbientOcclusionQualityLevel::Medium(),
+        quality_level = PyScreenSpaceAmbientOcclusionQualityLevel::High(),
         radius = 0.7285,
         constant_object_thickness = 0.25
     ))]

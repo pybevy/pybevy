@@ -7,7 +7,7 @@ use pyo3::{
 };
 
 use super::{Omittable, check_complete_form, check_conflict};
-use crate::public_error;
+use crate::{domain::DurationInput, public_error};
 
 pub fn reject_explicit_none(obj: &Borrowed<'_, '_, PyAny>, expected: &str) -> PyResult<()> {
     if obj.is_none() {
@@ -78,6 +78,10 @@ where
 pub trait OmittableArg {
     /// What explicit `None` is rejected in favour of.
     const EXPECTED: &'static str;
+}
+
+impl OmittableArg for DurationInput {
+    const EXPECTED: &'static str = "Duration, float (seconds), or int (seconds)";
 }
 
 impl<'a, 'py, T> FromPyObject<'a, 'py> for Omittable<T>

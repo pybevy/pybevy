@@ -36,7 +36,7 @@ fn parameter_names(py: Python<'_>, callable: &Bound<'_, PyAny>) -> Option<Vec<St
 ///
 /// Checked against `__name__` so a shadowing local cannot produce a confident
 /// hint about the wrong class. Nothing is cached: hot reload rebuilds Python
-/// types, and stale type pointers are exactly what CLAUDE.md forbids holding.
+/// types, so this lookup retains no type pointers.
 pub(crate) fn resolve_callable<'py>(
     py: Python<'py>,
     traceback: Option<&Bound<'py, PyAny>>,
@@ -51,19 +51,37 @@ pub(crate) fn resolve_callable<'py>(
                 .is_some_and(|n| n == name)
     };
 
-    // The frame that raised is the one that knows which `RectLight` it meant.
-    let mut frame = traceback.and_then(|tb| tb.getattr("tb_frame").ok());
-    while let Some(current) = frame {
+    let mut frames = Vec::new();
+    let mut cursor = traceback.cloned();
+    while let Some(current) = cursor {
+        if let Ok(frame) = current.getattr("tb_frame") {
+            frames.push(frame);
+        }
+        cursor = current.getattr("tb_next").ok().filter(|tb| !tb.is_none());
+    }
+    // The innermost traceback frame identifies the failing constructor's binding.
+    for current in frames.into_iter().rev() {
         for namespace in ["f_locals", "f_globals"] {
-            if let Ok(scope) = current.getattr(namespace)
-                && let Ok(dict) = scope.cast_into::<PyDict>()
-                && let Ok(Some(found)) = dict.get_item(name)
+            let Ok(scope) = current.getattr(namespace) else {
+                continue;
+            };
+            if let Ok(found) = scope.get_item(name)
                 && matches(&found)
             {
                 return Some(found);
             }
+            // Optimized frames expose a locals proxy on Python 3.13 and later.
+            if let Ok(values) = scope.call_method0("values")
+                && let Ok(values) = values.try_iter()
+            {
+                let mut aliases = values.filter_map(Result::ok).filter(|value| matches(value));
+                if let Some(found) = aliases.next()
+                    && aliases.all(|alias| alias.is(&found))
+                {
+                    return Some(found);
+                }
+            }
         }
-        frame = current.getattr("f_back").ok().filter(|f| !f.is_none());
     }
 
     // Aliased imports (`from pybevy.light import RectLight as RL`) leave no
@@ -119,17 +137,30 @@ pub(crate) fn hint_for(
 /// result reads exactly like CPython's built-in suggestion and every consumer
 /// of the message (stderr, the re-raise from `app.run()`, `LastSystemError`,
 /// MCP `get_last_error`) picks it up without special-casing notes.
-pub(crate) fn enrich_value(py: Python<'_>, value: &Bound<'_, PyAny>) {
+fn enrich_with_traceback(
+    py: Python<'_>,
+    value: &Bound<'_, PyAny>,
+    traceback: Option<&Bound<'_, PyAny>>,
+) {
     let Some(current) = value.str().ok().and_then(|s| s.extract::<String>().ok()) else {
         return;
     };
-    let traceback = traceback_of(value);
-    let hint = hint_for(py, traceback.as_ref(), &current)
-        .or_else(|| crate::ecs::variant_hint::hint_for(py, traceback.as_ref(), &current));
+    let hint = hint_for(py, traceback, &current)
+        .or_else(|| crate::ecs::variant_hint::hint_for(py, traceback, &current));
     let Some(hint) = hint else { return };
     let _ = value.setattr("args", (format!("{current}. {hint}"),));
 }
 
+pub(crate) fn enrich_value(py: Python<'_>, value: &Bound<'_, PyAny>) {
+    let traceback = traceback_of(value);
+    enrich_with_traceback(py, value, traceback.as_ref());
+}
+
 pub(crate) fn enrich(py: Python<'_>, error: &PyErr) {
-    enrich_value(py, error.value(py));
+    let traceback = error.traceback(py);
+    enrich_with_traceback(
+        py,
+        error.value(py),
+        traceback.as_ref().map(|tb| tb.as_any()),
+    );
 }

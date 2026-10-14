@@ -130,7 +130,7 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--hot-reload",
         action="store_true",
-        help="Enable hot reloading by restarting the app on file changes.",
+        help="Reload changed files in the running app, as `pybevy dev` does (Partial: Startup is not rerun).",
     )
     run_parser.add_argument(
         "--verbose",

@@ -307,6 +307,13 @@ impl SystemGcOwners {
             for class in &param.retained_types {
                 visit.call(class.as_ref())?;
             }
+            // Filters hold their own retained class references; this system's
+            // descriptor copy is their traversing owner.
+            for filter in &param.filters {
+                for class in filter.retained_classes() {
+                    visit.call(class.as_ref())?;
+                }
+            }
             for value in &param.retained_asset_params {
                 visit.call(value)?;
             }

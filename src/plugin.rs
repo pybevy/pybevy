@@ -24,11 +24,12 @@
 //! Then in your Python module (`my_game/systems.py`):
 //!
 //! ```python
-//! from pybevy.ecs import Mut, Query, Res
+//! from pybevy.ecs import Mut, Query, Res, system
 //! from pybevy.math import Quat
 //! from pybevy.time import Time
 //! from pybevy.transform import Transform
 //!
+//! @system
 //! def rotate_cubes(query: Query[Mut[Transform]], time: Res[Time]) -> None:
 //!     for transform in query:
 //!         transform.rotation *= Quat.from_rotation_y(time.delta_secs())
@@ -36,10 +37,7 @@
 
 #[cfg(feature = "native-hot-reload")]
 use std::path::PathBuf;
-use std::{
-    ffi::CString,
-    sync::{Arc, Mutex, OnceLock},
-};
+use std::sync::{Arc, Mutex, OnceLock};
 
 #[cfg(feature = "native-hot-reload")]
 use bevy::prelude::{Res, Resource};
@@ -59,11 +57,7 @@ use pybevy_reload::FileWatcher;
 use pybevy_reload::{
     HotReloadGeneration, ReloadGenerationSet, SystemStage, generation_matches, startup_or_reload,
 };
-use pyo3::{
-    exceptions::PyImportError,
-    prelude::*,
-    types::{PyDict, PyList},
-};
+use pyo3::{exceptions::PyImportError, prelude::*, types::PyList};
 
 use crate::{
     _pybevy,
@@ -77,6 +71,7 @@ use crate::{
     },
     ecs::{
         decorated_callable::{CallableKind, unwrap_decorated},
+        dynamic_system::SystemErrorBuffer,
         system_interpreter::{MainDynamicSystem as DynamicSystem, new_main_system},
     },
 };
@@ -193,16 +188,12 @@ impl PySystemBuilder {
         self
     }
 
-    /// Build the DynamicSystem with default generation (0) and a fresh error state
-    fn build(self) -> Result<(DynamicSystem, PyStage), SystemLoadError> {
-        self.build_with(0, Arc::new(Mutex::new(Vec::new())))
-    }
-
     /// Build the DynamicSystem with a specific generation and shared error state
     fn build_with(
         self,
         generation: u32,
         error_state: Arc<Mutex<Vec<PyErr>>>,
+        error_buffer: SystemErrorBuffer,
     ) -> Result<(DynamicSystem, PyStage), SystemLoadError> {
         ensure_python_initialized();
 
@@ -229,13 +220,11 @@ impl PySystemBuilder {
                 SystemStage::UpdateOrLast
             };
 
-            // Native-plugin systems run on a separate mini-app with no LastSystemError
-            // drain; a throwaway buffer keeps the error path off the world.
             let dynamic_system = new_main_system(
                 func.unbind(),
                 generation,
                 error_state,
-                Arc::new(Mutex::new(None)),
+                error_buffer,
                 system_stage,
                 None,
             )
@@ -245,98 +234,6 @@ impl PySystemBuilder {
         })
     }
 }
-
-/// Python source for the native plugin hot reload loader.
-///
-/// Loads the scene module via `importlib.util.spec_from_file_location` so it is
-/// registered in `sys.modules` (unlike `runpy.run_path`, which only
-/// returns a globals dict). This makes `import <stem>` work, keeps
-/// pickle round-trips functional, and preserves reload identity.
-///
-/// Protocol (matches `perform_reload` in hot_reload.rs):
-///   1. `loader()` re-imports the module from source and returns `configurator`.
-///   2. `configurator(app)` adds the selected plugins and systems.
-const NATIVE_LOADER_PY: &str = r#"
-def _make_native_loader(module_name, systems, plugins=()):
-    import importlib, importlib.util, os, sys
-    from pybevy._internal.reload_modules import (
-        evict_modules,
-        is_external_module_path,
-        record_module_flush,
-    )
-
-    def _flush_user_modules(project_dir):
-        """Remove all user project modules from sys.modules."""
-        project_prefix = os.path.realpath(project_dir) + os.sep
-        to_remove = []
-        for name, mod in list(sys.modules.items()):
-            if name in ('pybevy', '_pybevy', '__main__') or name.startswith(('pybevy.', '_pybevy.')):
-                continue
-            fpath = getattr(mod, '__file__', None)
-            if fpath is None:
-                continue
-            fpath = os.path.realpath(fpath)
-            if not fpath.startswith(project_prefix):
-                continue
-            if is_external_module_path(fpath):
-                continue
-            to_remove.append(name)
-        record_module_flush(project_dir, to_remove)
-        evict_modules(to_remove)
-        importlib.invalidate_caches()
-
-    def loader():
-        spec = importlib.util.find_spec(module_name)
-        if spec is None or spec.origin is None:
-            raise ImportError(f"Cannot find source for module '{module_name}'")
-
-        # Flush all user modules under the module's parent directory
-        project_dir = os.path.dirname(os.path.realpath(spec.origin))
-        _flush_user_modules(project_dir)
-
-        # Re-resolve the spec after flushing so importlib re-reads the source
-        # file from disk rather than reusing a cached spec.
-        fresh_spec = importlib.util.spec_from_file_location(module_name, spec.origin)
-        if fresh_spec is None or fresh_spec.loader is None:
-            raise ImportError(
-                f"Cannot build spec for module '{module_name}' at {spec.origin}"
-            )
-
-        module = importlib.util.module_from_spec(fresh_spec)
-        # Register in sys.modules BEFORE exec_module so that the module can
-        # reference itself during execution (e.g. dataclasses, pickle, and
-        # circular intra-module imports all rely on this).
-        sys.modules[module_name] = module
-        try:
-            # Compile the current source directly instead of delegating to
-            # exec_module(), which may reuse timestamp-based bytecode for a
-            # same-second, same-size hot-reload edit.
-            source = fresh_spec.loader.get_source(module_name)
-            if source is None:
-                raise ImportError(
-                    f"Cannot read source for module '{module_name}' at {spec.origin}"
-                )
-            code = compile(source, fresh_spec.origin, "exec")
-            exec(code, module.__dict__)
-        except BaseException:
-            # If execution fails, leave no half-initialised module behind.
-            sys.modules.pop(module_name, None)
-            raise
-
-        mod_globals = module.__dict__
-
-        def configurator(app):
-            for plugin_name in plugins:
-                app.add_plugins(getattr(module, plugin_name))
-            for func_name, stage in systems:
-                func = mod_globals.get(func_name)
-                if func is not None:
-                    app.add_systems(stage, (func,))
-            return app
-        return configurator
-
-    return loader
-"#;
 
 #[cfg(feature = "native-hot-reload")]
 #[derive(Resource)]
@@ -699,15 +596,18 @@ impl PyBevyPlugin {
         py: Python<'_>,
         systems: &[PySystemBuilder],
     ) -> PyResult<Py<PyAny>> {
-        let locals = PyDict::new(py);
-        let code = CString::new(NATIVE_LOADER_PY).expect("loader code contains null byte");
-        py.run(&code, None, Some(&locals))?;
-        let make_loader = locals
-            .get_item("_make_native_loader")?
-            .expect("native loader factory was defined");
+        let make_loader = py
+            .import("pybevy._internal.native_loader")?
+            .getattr("make_native_loader")?;
         let systems: Vec<_> = systems
             .iter()
-            .map(|builder| (builder.function_name.clone(), builder.stage))
+            .map(|builder| {
+                (
+                    builder.function_name.clone(),
+                    builder.stage,
+                    builder.optional,
+                )
+            })
             .collect();
         Ok(make_loader
             .call1((&self.module_name, systems, &self.plugins))?
@@ -749,13 +649,14 @@ impl PyBevyPlugin {
 
     /// Build without hot reload: current behavior, systems added directly
     fn build_without_hot_reload(&self, app: &mut App, systems_to_add: Vec<PySystemBuilder>) {
+        let (errors, buffer) = PyApp::install_native_runtime(app);
         for builder in systems_to_add {
             let (module, function, optional) = (
                 builder.module_name.clone(),
                 builder.function_name.clone(),
                 builder.optional,
             );
-            match builder.build() {
+            match builder.build_with(0, errors.clone(), buffer.clone()) {
                 Ok((dynamic_system, stage)) => {
                     add_dynamic_system_to_schedule(app, dynamic_system, stage);
                 }
@@ -773,7 +674,7 @@ impl PyBevyPlugin {
 
         // Create shared reload state and error state
         let reload_state = HotReloadState::new();
-        let error_state: Arc<Mutex<Vec<PyErr>>> = Arc::new(Mutex::new(Vec::new()));
+        let (error_state, error_buffer) = PyApp::install_native_runtime(app);
 
         // Insert hot reload resources
         let generation_counter = reload_state.generation();
@@ -796,10 +697,11 @@ impl PyBevyPlugin {
         // Add initial systems with generation-based run conditions
         let initial_generation = 0u32;
         for builder in systems_to_add {
-            match builder
-                .clone()
-                .build_with(initial_generation, error_state.clone())
-            {
+            match builder.clone().build_with(
+                initial_generation,
+                error_state.clone(),
+                error_buffer.clone(),
+            ) {
                 Ok((dynamic_system, stage)) => {
                     add_dynamic_system_to_schedule_with_run_condition(
                         app,

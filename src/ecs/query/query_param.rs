@@ -79,7 +79,11 @@ impl PyQueryParam {
             data: self.data.clone(),
             row_shape: self.row_shape.clone(),
             single: self.single,
-            filters: self.filters.clone(),
+            filters: self
+                .filters
+                .iter()
+                .map(QueryFilter::clone_detached)
+                .collect(),
             single_entity_enforced: self.single_entity_enforced,
             optional_single: self.optional_single,
             retained_types: SmallVec::new(),
@@ -175,6 +179,13 @@ impl PyQueryParam {
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
         for class in &self.retained_types {
             visit.call(class.as_ref())?;
+        }
+        // Filters hold their own retained class references; this param is
+        // their traversing owner while they are stored here.
+        for filter in &self.filters {
+            for class in filter.retained_classes() {
+                visit.call(class.as_ref())?;
+            }
         }
         for param in &self.retained_asset_params {
             visit.call(param)?;

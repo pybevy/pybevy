@@ -52,10 +52,7 @@ fn despawn_entity_for_control(world: &mut World, entity: Entity) {
 
 #[pyfunction]
 fn _color_materialize(color: &pybevy_color::color::PyColor, py: Python<'_>) -> PyResult<Py<PyAny>> {
-    let material = bevy::pbr::StandardMaterial {
-        base_color: color.resolved_copy()?,
-        ..Default::default()
-    };
+    let material = bevy::pbr::StandardMaterial::from(color.resolved_copy()?);
     let py_material: Py<pybevy_pbr::standard_material::PyStandardMaterial> = Py::new(
         py,
         pybevy_pbr::standard_material::PyStandardMaterial::from_owned(material),
@@ -124,6 +121,7 @@ pub fn init_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Collect all inventory-registered bridges from feature crates
     pybevy_core::bridge_inventory::collect_all();
+    pybevy_core::live_sequence::register_sequence_abcs(m.py())?;
     m.add_function(wrap_pyfunction!(features, m)?)?;
     m.add_function(wrap_pyfunction!(_require_optional_feature, m)?)?;
 

@@ -8,7 +8,7 @@ use bevy::{
 };
 use tokio::sync::oneshot;
 
-use super::camera::select_capture_camera_3d;
+use super::camera::{select_capture_camera_3d, spawn_order};
 use crate::{
     protocol::ControlError,
     scene::spatial::{self, compute_world_aabb},
@@ -394,7 +394,7 @@ pub fn compute_depth_samples_for_camera(
         .map(|(entity, pass_camera, _, name)| {
             (
                 pass_camera.order,
-                entity.to_bits(),
+                spawn_order(entity),
                 serde_json::json!({
                     "camera_entity_id": entity.to_bits(),
                     "camera_name": name.map(|name| name.as_str()),
@@ -404,7 +404,7 @@ pub fn compute_depth_samples_for_camera(
             )
         })
         .collect::<Vec<_>>();
-    target_camera_passes.sort_by_key(|(order, entity, _)| (*order, *entity));
+    target_camera_passes.sort_by_key(|(order, spawn, _)| (*order, *spawn));
     let target_camera_passes = target_camera_passes
         .into_iter()
         .map(|(_, _, pass)| pass)

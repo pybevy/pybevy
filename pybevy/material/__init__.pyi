@@ -88,11 +88,6 @@ def material(
     or conditional compilation. Prepass hooks cover depth, normals,
     motion vectors and shadows; deferred hooks write the G-buffer. Omitted
     paths keep native defaults. Forward stages are not reused automatically.
-
-    A uniform field name must not end in a digit: upstream WGSL composition
-    escapes such a struct member (``tint2`` becomes ``tint2_``) without
-    patching the references, so the decorator rejects it. End the name in a
-    letter or an underscore instead.
     """
 
 class StorageBinding(Generic[_Element]):

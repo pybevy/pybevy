@@ -1,6 +1,6 @@
 use bevy::gltf::GltfPrimitive;
 use pybevy_core::FieldStorage;
-use pyo3::{prelude::*, types::PyList};
+use pyo3::prelude::*;
 
 use crate::assets::PyGltfPrimitive;
 

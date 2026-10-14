@@ -509,7 +509,7 @@ class WireframeTopology(Component):
     """Controls whether wireframe edges follow triangle or quad topology.
 
     ``Quads`` uses Bevy's wide-wireframe shader even at a one-pixel line width.
-    In Bevy 0.19, that shader can fill a triangle that crosses the camera
+    In Bevy 0.20, that shader can fill a triangle that crosses the camera
     plane, with vertices both in front of and behind the camera. Use
     ``Triangles`` with a line width of 1.0 for geometry that can cross behind
     the camera.
@@ -524,7 +524,7 @@ class WireframeTopology(Component):
 class WireframeLineWidth(Component):
     """Per-entity wireframe line width in screen-space pixels.
 
-    Widths above 1.0 use Bevy's wide-wireframe shader. In Bevy 0.19, that
+    Widths above 1.0 use Bevy's wide-wireframe shader. In Bevy 0.20, that
     shader can fill a triangle that crosses the camera plane, with vertices
     both in front of and behind the camera. Keep the width at 1.0 for such
     geometry, or split and bound the mesh so every triangle remains in front
@@ -1043,10 +1043,10 @@ class ShaderMaterial(Material):
             the Python @material constructor alone does not consume it.
         fragment_shader: Asset path to a custom fragment shader.
         vertex_shader: Asset path to a custom vertex shader.
-        prepass_vertex_shader: WGSL vertex path for depth, normals, motion and shadows.
-        prepass_fragment_shader: WGSL fragment path for those prepasses, including discard.
-        deferred_vertex_shader: WGSL vertex path for the deferred G-buffer pass.
-        deferred_fragment_shader: WGSL fragment path writing deferred PBR/G-buffer data.
+        prepass_vertex_shader: Vertex shader path for depth, normals, motion and shadows.
+        prepass_fragment_shader: Fragment shader path for those prepasses, including discard.
+        deferred_vertex_shader: Vertex shader path for the deferred G-buffer pass.
+        deferred_fragment_shader: Fragment shader path writing deferred PBR/G-buffer data.
         data: Flat list of up to 256 floats for the uniform buffer at binding 100.
         shader_defs: Bitmask of active shader defs (up to 32 bits).
         shader_def_names: Names for each bit (bit 0 = names[0], etc.).
@@ -1062,14 +1062,14 @@ class ShaderMaterial(Material):
         from pybevy.pbr import Material, ShaderMaterial, StandardMaterial
 
         # Prefer using @material decorator instead of this directly:
-        @material(fragment_shader="shaders/hologram.wgsl")
+        @material(fragment_shader="shaders/hologram.wesl")
         class HologramMaterial(Material):
             energy: float = 1.0
 
         # Direct use:
         mat = ShaderMaterial(
             base=StandardMaterial(base_color=Color.srgb(1.0, 0.0, 0.0)),
-            fragment_shader="shaders/hologram.wgsl",
+            fragment_shader="shaders/hologram.wesl",
             data=[1.5, 0.0, 0.0, 0.7],
         )
         ```

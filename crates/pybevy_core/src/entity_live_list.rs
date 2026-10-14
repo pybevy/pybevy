@@ -49,8 +49,8 @@ mod tests {
     fn value_list_protocol_mutates_and_reads_back() {
         let mut joints = list(vec![entity(1), entity(2)]);
         assert_eq!(joints.__len__().unwrap(), 2);
-        assert_eq!(joints.__getitem__(-1).unwrap().0, entity(2));
-        assert!(joints.__getitem__(2).is_err());
+        assert_eq!(joints.item(-1).unwrap().0, entity(2));
+        assert!(joints.item(2).is_err());
 
         joints.__setitem__(0, PyEntity(entity(7))).unwrap();
         joints.append(PyEntity(entity(3))).unwrap();

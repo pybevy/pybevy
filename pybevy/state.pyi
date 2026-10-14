@@ -60,7 +60,7 @@ class NextState(Generic[StateType], Resource):
     def set(self, state: StateType) -> None:
         """Queue a transition, including full same-state lifecycle schedules."""
 
-    def set_if_neq(self, state: StateType) -> None:
+    def set_if_different(self, state: StateType) -> None:
         """Queue a transition that skips same-state exit and enter schedules.
 
         A same-state ``OnTransition`` schedule still runs. An equal transition

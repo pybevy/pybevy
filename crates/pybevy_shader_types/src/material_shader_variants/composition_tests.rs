@@ -312,6 +312,17 @@ fn cases() -> Vec<Case> {
             Some(bindings("AlphaCutoff", &[], &[])),
         ),
         case(
+            "shaders/test/digit_fields.wesl",
+            Some(bindings(
+                "DigitSurface",
+                &[("gain2", "f32"), ("tint1", "vec4<f32>")],
+                &[
+                    (0, "struct Pair { p2: vec2<f32>, w1: f32, }"),
+                    (109, "var<storage, read> pairs3: array<Pair>"),
+                ],
+            )),
+        ),
+        case(
             "shaders/test/i32_uniform_correctness.wesl",
             Some(bindings("IntegerGpuSurface", &integer_surface, &[])),
         ),

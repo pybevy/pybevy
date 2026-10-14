@@ -18,6 +18,9 @@ One-liner materials for common surfaces:
 | Car paint | `metallic=0.8, perceptual_roughness=0.3, clearcoat=1.0, clearcoat_perceptual_roughness=0.1` |
 | Water | `specular_transmission=0.9, ior=1.33, perceptual_roughness=0.0, base_color=Color.srgb(0.3, 0.5, 0.7), alpha_mode=AlphaMode.Opaque()` |
 
+Glass and water also need `ScreenSpaceTransmission()` (pybevy.pbr) on the camera;
+without it they render dark and opaque.
+
 ## Which Sub-Guide Do I Need?
 
 | I want to... | Read |

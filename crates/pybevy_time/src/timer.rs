@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use bevy::time::{Timer, TimerMode};
 use pybevy_core::{
+    constructor::Omittable,
     domain::{DurationInput, FINITE_NON_NEGATIVE, check_for},
     public_error::{TIMER_ALMOST_FINISH_NO_REMAINING, TIMER_ELAPSED_PAST_DURATION},
 };
@@ -43,8 +44,11 @@ pub struct PyTimer {
 #[pymethods]
 impl PyTimer {
     #[new]
-    #[pyo3(signature = (duration = DurationInput::Exact(Duration::ZERO), mode = PyTimerMode::Once))]
-    pub fn new(duration: DurationInput, mode: PyTimerMode) -> PyResult<Self> {
+    #[pyo3(signature = (duration = Omittable::Omitted, mode = PyTimerMode::Once))]
+    pub fn new(duration: Omittable<DurationInput>, mode: PyTimerMode) -> PyResult<Self> {
+        let duration = duration
+            .into_option()
+            .unwrap_or(DurationInput::Exact(Duration::ZERO));
         let duration = check_for::<Self, _>("duration", duration, FINITE_NON_NEGATIVE)?.stored();
         Ok(Self {
             timer: Timer::new(duration, mode.into()),

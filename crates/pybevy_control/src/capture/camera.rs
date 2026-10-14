@@ -317,12 +317,17 @@ fn setup_debug_camera_with_up_for_entity(
     }
 }
 
+/// Spawn order of live entities; `Entity::to_bits` and `Ord` store the index inverted.
+pub(crate) fn spawn_order(entity: Entity) -> (u32, u32) {
+    (entity.index_u32(), entity.generation().to_bits())
+}
+
 pub(crate) fn select_capture_camera_3d(world: &mut World) -> Option<Entity> {
     let mut query = world.query_filtered::<(Entity, &Camera), With<Camera3d>>();
     query
         .iter(world)
         .filter(|(_, camera)| camera.is_active)
-        .min_by_key(|(entity, camera)| (Reverse(camera.order), entity.to_bits()))
+        .min_by_key(|(entity, camera)| (Reverse(camera.order), spawn_order(*entity)))
         .map(|(entity, _)| entity)
 }
 
@@ -331,7 +336,7 @@ fn select_capture_camera_2d(world: &mut World) -> Option<Entity> {
     query
         .iter(world)
         .filter(|(_, camera)| camera.is_active)
-        .min_by_key(|(entity, camera)| (Reverse(camera.order), entity.to_bits()))
+        .min_by_key(|(entity, camera)| (Reverse(camera.order), spawn_order(*entity)))
         .map(|(entity, _)| entity)
 }
 
@@ -339,7 +344,7 @@ fn select_any_camera_3d(world: &mut World) -> Option<Entity> {
     let mut query = world.query_filtered::<(Entity, &Camera), With<Camera3d>>();
     query
         .iter(world)
-        .min_by_key(|(entity, camera)| (Reverse(camera.order), entity.to_bits()))
+        .min_by_key(|(entity, camera)| (Reverse(camera.order), spawn_order(*entity)))
         .map(|(entity, _)| entity)
 }
 
@@ -519,10 +524,8 @@ mod tests {
         ));
 
         assert_ne!(low, first_high);
-        let expected = [first_high, second_high]
-            .into_iter()
-            .min_by_key(|entity| entity.to_bits());
-        assert_eq!(select_capture_camera_3d(&mut world), expected);
+        assert!(first_high.index_u32() < second_high.index_u32());
+        assert_eq!(select_capture_camera_3d(&mut world), Some(first_high));
     }
 
     #[test]

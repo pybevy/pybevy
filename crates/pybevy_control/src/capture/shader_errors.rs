@@ -8,12 +8,12 @@ use bevy::{
     asset::UntypedAssetId,
     prelude::*,
     render::render_resource::{CachedPipelineState, PipelineCache, PipelineDescriptor},
-    shader::{Shader, ShaderCacheError, ShaderImport},
+    shader::{Shader, ShaderCacheError, ShaderImport, Source},
 };
 use pybevy_core::public_error;
 use pybevy_shader_types::{
     ShaderMaterial, ShaderMaterialExtension, StorageShaderMaterial, hash_shader_path,
-    material_shader_path_id,
+    material_shader_path_id, rejected_define_conflict,
 };
 
 /// One failing render pipeline: its compile error and the `hash_shader_path`
@@ -116,6 +116,13 @@ pub fn publish_shader_errors(
                 continue;
             }
             _ => continue,
+        };
+        // The rejection placeholder's own compile error does not name the define.
+        let message = match &pipeline.descriptor {
+            PipelineDescriptor::RenderPipelineDescriptor(render) => {
+                rejected_define_conflict(render).unwrap_or(message)
+            }
+            _ => message,
         };
         failing.push(PipelineShaderError {
             message,
@@ -299,10 +306,114 @@ pub fn report_material_shader_errors(world: &World, mut reported: Local<Vec<Pipe
     }
 }
 
-/// Custom `#import`s no loaded shader defines. Bevy keeps such pipelines queued
+/// WESL imports no loaded shader defines. Bevy keeps such pipelines queued
 /// without an error, so the shader silently draws nothing.
 #[derive(Resource, Default)]
 pub struct UnresolvedShaderImports(Vec<String>);
+
+/// A WESL module path: a package path such as `bevy_pbr::render`, or an asset
+/// path under `package::` when `package` is `None`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct ModulePath {
+    package: Option<String>,
+    components: Vec<String>,
+}
+
+impl ModulePath {
+    fn of(import: &ShaderImport) -> Option<Self> {
+        match import {
+            ShaderImport::Custom(path) => {
+                let mut segments = path.split("::");
+                let package = segments.next().filter(|segment| !segment.is_empty())?;
+                let components = segments
+                    .map(|segment| (!segment.is_empty()).then(|| segment.to_owned()))
+                    .collect::<Option<Vec<_>>>()?;
+                Some(Self {
+                    package: Some(package.to_owned()),
+                    components,
+                })
+            }
+            ShaderImport::AssetPath(path) => Some(Self {
+                package: None,
+                components: path
+                    .split('/')
+                    .filter(|component| !component.is_empty())
+                    .map(str::to_owned)
+                    .collect(),
+            }),
+        }
+    }
+
+    fn parent(&self) -> Option<Self> {
+        let (_, components) = self.components.split_last()?;
+        Some(Self {
+            package: self.package.clone(),
+            components: components.to_vec(),
+        })
+    }
+
+    fn is_constants(&self) -> bool {
+        self.package.as_deref() == Some("constants") && self.components.is_empty()
+    }
+
+    fn describe(&self) -> String {
+        iter::once(self.package.as_deref().unwrap_or("package"))
+            .chain(self.components.iter().map(String::as_str))
+            .collect::<Vec<_>>()
+            .join("::")
+    }
+
+    fn message(&self, shader: &str) -> String {
+        match self.package {
+            Some(_) => public_error::shader_import_unresolved(shader, &self.describe()),
+            None => public_error::shader_asset_import_unresolved(
+                shader,
+                &self.describe(),
+                &format!("{}.wesl", self.components.join("/")),
+            ),
+        }
+    }
+}
+
+/// Bevy lists each WESL import as its module beside the module joined with the
+/// imported name, which may itself be a module. An import resolves when either
+/// is a loaded WESL module; otherwise the module is reported, or the import
+/// itself when its module is a bare package.
+fn unresolved_imports(shaders: &[&Shader]) -> Vec<String> {
+    let provided: HashSet<ModulePath> = shaders
+        .iter()
+        .filter(|shader| matches!(shader.source, Source::Wesl(_)))
+        .filter_map(|shader| ModulePath::of(&shader.import_path))
+        .collect();
+    let resolves = |path: &ModulePath| path.is_constants() || provided.contains(path);
+    // Engine shaders import modules of pipelines that may never be built.
+    let mut missing: Vec<String> = shaders
+        .iter()
+        .filter(|shader| !shader.path.starts_with("embedded://"))
+        .flat_map(|shader| {
+            let imported: Vec<ModulePath> =
+                shader.imports.iter().filter_map(ModulePath::of).collect();
+            imported
+                .iter()
+                .filter_map(|path| {
+                    let module = path.parent().filter(|parent| imported.contains(parent))?;
+                    if resolves(path) || resolves(&module) {
+                        return None;
+                    }
+                    let reported = if module.components.is_empty() {
+                        path
+                    } else {
+                        &module
+                    };
+                    Some(reported.message(&shader.path))
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    missing.sort_unstable();
+    missing.dedup();
+    missing
+}
 
 pub fn track_unresolved_shader_imports(
     mut events: MessageReader<AssetEvent<Shader>>,
@@ -312,42 +423,8 @@ pub fn track_unresolved_shader_imports(
     if events.read().count() == 0 {
         return;
     }
-    let provided: HashSet<&str> = shaders
-        .iter()
-        .filter_map(|(_, shader)| match &shader.import_path {
-            ShaderImport::Custom(path) => Some(path.as_str()),
-            ShaderImport::AssetPath(_) => None,
-        })
-        .collect();
-    // Engine shaders import modules of pipelines that may never be built.
-    let mut missing: Vec<String> = shaders
-        .iter()
-        .filter(|(_, shader)| !shader.path.starts_with("embedded://"))
-        .flat_map(|(_, shader)| {
-            let imported: HashSet<&str> = shader
-                .imports
-                .iter()
-                .filter_map(|import| match import {
-                    ShaderImport::Custom(path) => Some(path.as_str()),
-                    ShaderImport::AssetPath(_) => None,
-                })
-                .collect();
-            // WESL lists each imported item beside its module; report the module once.
-            imported
-                .iter()
-                .filter(|path| {
-                    !path
-                        .rsplit_once("::")
-                        .is_some_and(|(module, _)| imported.contains(module))
-                })
-                .filter(|path| !provided.contains(**path))
-                .map(|path| public_error::shader_import_unresolved(&shader.path, path))
-                .collect::<Vec<_>>()
-        })
-        .collect();
-    missing.sort_unstable();
-    missing.dedup();
-    unresolved.0 = missing;
+    let shaders: Vec<&Shader> = shaders.iter().map(|(_, shader)| shader).collect();
+    unresolved.0 = unresolved_imports(&shaders);
 }
 
 /// Compile errors and unresolved imports, as `get_last_error.shader_errors` reports them.
@@ -361,11 +438,25 @@ pub fn current_shader_errors(world: &World) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use bevy::{asset::AssetId, prelude::*};
+    use bevy::{
+        asset::AssetId,
+        prelude::*,
+        shader::{Shader, ShaderImport},
+    };
     use pybevy_shader_types::{ShaderMaterial, ShaderMaterialExtension, hash_shader_path};
     use uuid::Uuid;
 
-    use super::{PipelineShaderError, attribute};
+    use super::{PipelineShaderError, attribute, unresolved_imports};
+
+    fn module(path: &str, source: &str) -> Shader {
+        let mut shader = Shader::from_wesl(source.to_owned(), path.to_owned());
+        shader.import_path = ShaderImport::Custom(path.to_owned());
+        shader
+    }
+
+    fn asset(path: &str, source: &str) -> Shader {
+        Shader::from_wesl(source.to_owned(), path.to_owned())
+    }
 
     fn extension(class_name: &str, fragment: &str) -> ShaderMaterialExtension {
         ShaderMaterialExtension {
@@ -419,5 +510,72 @@ mod tests {
         };
 
         assert_eq!(attribute(&error, &[], &[]), "expected `;`");
+    }
+
+    #[test]
+    fn module_item_material_and_relative_imports_of_loaded_modules_resolve() {
+        let shaders = [
+            module("pybevy::gen::Glow", "struct Glow { color: vec4<f32>, }"),
+            module("bevy_render::maths", "const PI: f32 = 3.14159;"),
+            asset("shaders/common/tint.wesl", "fn tint() {}"),
+            asset(
+                "shaders/glow.wesl",
+                "import pybevy::gen::Glow as params;\n\
+                 import bevy_render::maths;\n\
+                 import bevy_render::{maths::PI};\n\
+                 import constants::MATERIAL_BIND_GROUP;\n\
+                 import super::common::tint::tint;\n\
+                 fn f() {}",
+            ),
+        ];
+
+        assert_eq!(
+            unresolved_imports(&shaders.each_ref()),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn missing_modules_are_named_once_per_shader() {
+        let shaders = [asset(
+            "shaders/broken.wesl",
+            "import lab::common::{tint, shade};\n\
+             import lab_root::missing;\n\
+             import super::common::nope::tint;\n\
+             fn f() {}",
+        )];
+
+        assert_eq!(
+            unresolved_imports(&shaders.each_ref()),
+            vec![
+                "shaders/broken.wesl imports `lab::common`, which no loaded shader provides; \
+                 load the shader that defines module `lab::common` as a Shader asset and keep its handle",
+                "shaders/broken.wesl imports `lab_root::missing`, which no loaded shader provides; \
+                 load the shader that defines module `lab_root::missing` as a Shader asset and keep its handle",
+                "shaders/broken.wesl imports `package::shaders::common::nope`, \
+                 but no shader asset `shaders/common/nope.wesl` is loaded",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_wgsl_shader_does_not_provide_a_wesl_module() {
+        let mut helper = Shader::from_wgsl("fn tint() {}", "shaders/common/tint.wgsl");
+        helper.import_path = ShaderImport::AssetPath("/shaders/common/tint".to_owned());
+        let shaders = [
+            helper,
+            asset(
+                "shaders/uses_wgsl.wesl",
+                "import super::common::tint::tint;\nfn f() {}",
+            ),
+        ];
+
+        assert_eq!(
+            unresolved_imports(&shaders.each_ref()),
+            vec![
+                "shaders/uses_wgsl.wesl imports `package::shaders::common::tint`, \
+                 but no shader asset `shaders/common/tint.wesl` is loaded"
+            ]
+        );
     }
 }

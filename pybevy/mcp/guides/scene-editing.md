@@ -831,13 +831,15 @@ Why this matters:
 ## Animation Verification
 
 For systems that recompute their output from `Time.elapsed_secs()` each frame,
-use `schedule_actions` to seek to an exact virtual time and inspect deterministically:
+use `schedule_actions` to seek to an exact virtual time and inspect deterministically.
+`Time` observes a seek on the next frame, so give the inspection an `at_frame`
+of 2 or more:
 
 ```
 schedule_actions {"actions": [
     {"tool": "pause_time"},
     {"tool": "seek_time", "args": {"seconds": 2.5}},
-    {"tool": "run_code", "args": {"code": "from pybevy.prelude import Name, Query, Time, Transform\nt = world.resource(Time).elapsed_secs()\nfor tr, name in world.query(Query[tuple[Transform, Name]]):\n  print(f'{name}: y={tr.translation.y:.3f} at t={t:.2f}')"}},
+    {"tool": "run_code", "args": {"code": "from pybevy.prelude import Name, Query, Time, Transform\nt = world.resource(Time).elapsed_secs()\nfor tr, name in world.query(Query[tuple[Transform, Name]]):\n  print(f'{name}: y={tr.translation.y:.3f} at t={t:.2f}')"}, "at_frame": 3},
     {"tool": "capture_screenshot", "label": "at_2.5s"},
     {"tool": "resume_time"}
 ]}

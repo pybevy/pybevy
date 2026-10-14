@@ -1,6 +1,10 @@
 use pybevy_storage::{FieldStorage, StorageError};
 use pyo3::{
-    IntoPyObjectExt, exceptions::PyValueError, prelude::*, pyclass::CompareOp, types::PyList,
+    IntoPyObjectExt,
+    exceptions::PyValueError,
+    prelude::*,
+    pyclass::CompareOp,
+    types::{PyByteArray, PyBytes, PyList, PyString, PyTuple, PyType},
 };
 
 use crate::public_error;
@@ -27,6 +31,105 @@ pub fn compare_live_sequence(
         !equal
     })
     .into_py_any(py)
+}
+
+/// A generated live collection class, registered with `collections.abc` at import.
+pub struct LiveSequenceType {
+    pub type_object: for<'py> fn(Python<'py>) -> Bound<'py, PyType>,
+    pub mutable: bool,
+}
+
+inventory::collect!(LiveSequenceType);
+
+/// Register every live collection as a `Sequence`, or a `MutableSequence` when it resizes.
+pub fn register_sequence_abcs(py: Python<'_>) -> PyResult<()> {
+    let abc = py.import("collections.abc")?;
+    for entry in inventory::iter::<LiveSequenceType> {
+        let name = if entry.mutable {
+            "MutableSequence"
+        } else {
+            "Sequence"
+        };
+        abc.getattr(name)?
+            .call_method1("register", ((entry.type_object)(py),))?;
+    }
+    Ok(())
+}
+
+fn concatenable(other: &Bound<'_, PyAny>) -> PyResult<bool> {
+    if other.is_instance_of::<PyList>() {
+        return Ok(true);
+    }
+    if other.is_instance_of::<PyTuple>()
+        || other.is_instance_of::<PyString>()
+        || other.is_instance_of::<PyBytes>()
+        || other.is_instance_of::<PyByteArray>()
+    {
+        return Ok(false);
+    }
+    let sequence = other.py().import("collections.abc")?.getattr("Sequence")?;
+    other.is_instance(&sequence)
+}
+
+/// `items + other` (or `other + items` when `reflected`) as a new list; a tuple or
+/// string operand is not concatenated, as with `list`.
+pub fn concat_items<'py>(
+    items: &Bound<'py, PyList>,
+    other: &Bound<'py, PyAny>,
+    reflected: bool,
+) -> PyResult<Py<PyAny>> {
+    let py = other.py();
+    if !concatenable(other)? {
+        return Ok(py.NotImplemented());
+    }
+    let other = PyList::new(py, other.try_iter()?.collect::<PyResult<Vec<_>>>()?)?;
+    let (left, right) = if reflected {
+        (other, items.clone())
+    } else {
+        (items.clone(), other)
+    };
+    Ok(left.as_any().add(right)?.unbind())
+}
+
+/// The index of the first item equal to `value`, raising `ValueError` as `list.remove` does.
+pub fn remove_index(items: &Bound<'_, PyList>, value: &Bound<'_, PyAny>) -> PyResult<usize> {
+    for (index, item) in items.iter().enumerate() {
+        if item.eq(value)? {
+            return Ok(index);
+        }
+    }
+    Err(PyValueError::new_err(
+        public_error::LIVE_LIST_REMOVE_MISSING,
+    ))
+}
+
+/// The stable `list.sort` order of `items`, as source indices.
+pub fn sort_order(
+    items: &Bound<'_, PyList>,
+    key: Option<&Bound<'_, PyAny>>,
+    reverse: bool,
+) -> PyResult<Vec<usize>> {
+    let py = items.py();
+    let keys = match key {
+        Some(key) => PyList::new(
+            py,
+            items
+                .iter()
+                .map(|item| key.call1((item,)))
+                .collect::<PyResult<Vec<_>>>()?,
+        )?,
+        None => items.clone(),
+    };
+    let kwargs = pyo3::types::PyDict::new(py);
+    kwargs.set_item("key", keys.getattr("__getitem__")?)?;
+    kwargs.set_item("reverse", reverse)?;
+    py.import("builtins")?
+        .getattr("sorted")?
+        .call(
+            (pyo3::types::PyRange::new(py, 0, items.len() as isize)?,),
+            Some(&kwargs),
+        )?
+        .extract()
 }
 
 /// Normalize a Python sequence index, including negative indexing.
@@ -87,6 +190,7 @@ macro_rules! impl_live_scalar_list {
         $crate::__live_sequence!(@value_item $py_name, $elem);
         $crate::__live_sequence!(@read $py_name, $py_class_name, $elem);
         $crate::__live_sequence!(@resizable $py_name, $elem, $elem, validate_resize);
+        $crate::__live_sequence!(@register $py_name, true);
     };
 }
 
@@ -108,6 +212,7 @@ macro_rules! impl_live_value_list {
         $crate::__live_sequence!(@value_item $py_name, $py_elem);
         $crate::__live_sequence!(@read $py_name, $py_class_name, $py_elem);
         $crate::__live_sequence!(@resizable $py_name, $py_elem, $py_elem);
+        $crate::__live_sequence!(@register $py_name, true);
     };
     (
         $py_name:ident,
@@ -124,6 +229,7 @@ macro_rules! impl_live_value_list {
         $crate::__live_sequence!(
             @resizable $py_name, $py_elem, pyo3::Bound<'_, pyo3::PyAny>
         );
+        $crate::__live_sequence!(@register $py_name, true);
     };
 }
 
@@ -146,6 +252,7 @@ macro_rules! impl_live_value_array {
         $crate::__live_sequence!(@value_item $py_name, $py_elem);
         $crate::__live_sequence!(@read $py_name, $py_class_name, $py_elem);
         $crate::__live_sequence!(@fixed $py_name, $py_elem, $field);
+        $crate::__live_sequence!(@register $py_name, false);
     };
 }
 
@@ -166,12 +273,25 @@ macro_rules! impl_live_field_list {
         $crate::__live_sequence!(@field_item $py_name, $native_elem, $py_elem, $elem_storage);
         $crate::__live_sequence!(@read $py_name, $py_class_name, $py_elem);
         $crate::__live_sequence!(@resizable $py_name, $py_elem, $py_elem);
+        $crate::__live_sequence!(@register $py_name, true);
     };
 }
 
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __live_sequence {
+    (@register $py_name:ident, $mutable:literal) => {
+        const _: () = {
+            fn live_type(py: pyo3::Python<'_>) -> pyo3::Bound<'_, pyo3::types::PyType> {
+                py.get_type::<$py_name>()
+            }
+            $crate::inventory::submit!($crate::live_sequence::LiveSequenceType {
+                type_object: live_type,
+                mutable: $mutable,
+            });
+        };
+    };
+
     (@from_borrowed $py_name:ident, $collection:ty) => {
         impl $crate::FromBorrowedStorage<$crate::FieldStorage<$collection>> for $py_name {
             fn from_borrowed(storage: $crate::FieldStorage<$collection>) -> Self {
@@ -226,23 +346,66 @@ macro_rules! __live_sequence {
     };
 
     (@read $py_name:ident, $py_class_name:literal, $py_elem:ty) => {
+        impl $py_name {
+            fn live_items<'py>(
+                &self,
+                py: Python<'py>,
+            ) -> PyResult<pyo3::Bound<'py, pyo3::types::PyList>> {
+                let items = (0..self.storage.as_ref()?.len())
+                    .map(|index| {
+                        pyo3::IntoPyObjectExt::into_py_any(self.item(index as isize)?, py)
+                    })
+                    .collect::<PyResult<Vec<_>>>()?;
+                pyo3::types::PyList::new(py, items)
+            }
+        }
+
         #[pyo3::pymethods]
         impl $py_name {
             fn __len__(&self) -> PyResult<usize> {
                 Ok(self.storage.as_ref()?.len())
             }
 
-            fn __getitem__(&self, index: isize) -> PyResult<$py_elem> {
-                self.item(index)
+            fn __getitem__(&self, index: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+                let py = index.py();
+                if index.is_instance_of::<pyo3::types::PySlice>() {
+                    return Ok(self.live_items(py)?.as_any().get_item(index)?.unbind());
+                }
+                pyo3::IntoPyObjectExt::into_py_any(self.item(index.extract()?)?, py)
             }
 
             fn __iter__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-                let items = (0..self.__len__()?)
-                    .map(|index| {
-                        pyo3::IntoPyObjectExt::into_py_any(self.item(index as isize)?, py)
-                    })
-                    .collect::<PyResult<Vec<_>>>()?;
-                Ok(PyList::new(py, items)?.call_method0("__iter__")?.unbind())
+                Ok(self.live_items(py)?.call_method0("__iter__")?.unbind())
+            }
+
+            fn __reversed__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+                Ok(self.live_items(py)?.call_method0("__reversed__")?.unbind())
+            }
+
+            #[pyo3(signature = (value, start = 0, stop = isize::MAX))]
+            fn index(&self, value: &Bound<'_, PyAny>, start: isize, stop: isize) -> PyResult<usize> {
+                self.live_items(value.py())?
+                    .call_method1("index", (value, start, stop))?
+                    .extract()
+            }
+
+            fn count(&self, value: &Bound<'_, PyAny>) -> PyResult<usize> {
+                self.live_items(value.py())?
+                    .call_method1("count", (value,))?
+                    .extract()
+            }
+
+            fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+                $crate::live_sequence::concat_items(&self.live_items(other.py())?, other, false)
+            }
+
+            fn __radd__(&self, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+                $crate::live_sequence::concat_items(&self.live_items(other.py())?, other, true)
+            }
+
+            /// Detached owned copies, as `copy.copy` of a list gives.
+            fn __copy__(&self) -> PyResult<Vec<$py_elem>> {
+                self.to_list()
             }
 
             fn __richcmp__(
@@ -359,6 +522,63 @@ macro_rules! __live_sequence {
                 self.storage.as_mut()?.clear();
                 Ok(())
             }
+
+            fn __iadd__(
+                mut slf: pyo3::PyRefMut<'_, Self>,
+                values: &Bound<'_, PyAny>,
+            ) -> PyResult<()> {
+                let values = if values.as_ptr() == slf.as_ptr() {
+                    slf.storage.as_ref()?.to_vec()
+                } else {
+                    values
+                        .try_iter()?
+                        .map(|item| Self::live_element(item?.extract::<$arg>()?))
+                        .collect::<PyResult<Vec<_>>>()?
+                };
+                let len = slf.storage.as_ref()?.len();
+                slf.live_resize(len + values.len())?;
+                slf.storage.as_mut()?.extend(values);
+                Ok(())
+            }
+
+            fn remove(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+                let index =
+                    $crate::live_sequence::remove_index(&self.live_items(value.py())?, value)?;
+                self.__delitem__(index as isize)
+            }
+
+            fn reverse(&mut self) -> PyResult<()> {
+                self.storage.as_ref()?;
+                self.storage.as_mut()?.reverse();
+                Ok(())
+            }
+
+            #[pyo3(signature = (*, key = None, reverse = false))]
+            fn sort(
+                &mut self,
+                py: Python<'_>,
+                key: Option<Bound<'_, PyAny>>,
+                reverse: bool,
+            ) -> PyResult<()> {
+                let snapshot = pyo3::types::PyList::new(py, self.to_list()?)?;
+                let order = $crate::live_sequence::sort_order(&snapshot, key.as_ref(), reverse)?;
+                let values = self.storage.as_ref()?.to_vec();
+                if values.len() != order.len() {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        $crate::public_error::LIVE_LIST_MODIFIED_DURING_SORT,
+                    ));
+                }
+                let mut target = self.storage.as_mut()?;
+                for (slot, index) in target.iter_mut().zip(order) {
+                    *slot = values[index].clone();
+                }
+                Ok(())
+            }
+
+            /// Detached owned copies of the current elements, as `list.copy()` gives.
+            fn copy(&self) -> PyResult<Vec<$py_elem>> {
+                self.to_list()
+            }
         }
     };
 
@@ -420,21 +640,67 @@ macro_rules! impl_live_asset_sequence {
             }
         }
 
+        impl $py_name {
+            fn item(&self, index: isize, py: Python<'_>) -> PyResult<Py<$py_elem>> {
+                Py::new(py, <$py_elem>::from_borrowed(self.item_storage(index)?))
+            }
+
+            fn live_items<'py>(
+                &self,
+                py: Python<'py>,
+            ) -> PyResult<pyo3::Bound<'py, pyo3::types::PyList>> {
+                let items = (0..self.storage.as_ref()?.len())
+                    .map(|index| self.item(index as isize, py))
+                    .collect::<PyResult<Vec<_>>>()?;
+                pyo3::types::PyList::new(py, items)
+            }
+        }
+
         #[pyo3::pymethods]
         impl $py_name {
             fn __len__(&self) -> PyResult<usize> {
                 Ok(self.storage.as_ref()?.len())
             }
 
-            fn __getitem__(&self, index: isize, py: Python<'_>) -> PyResult<Py<$py_elem>> {
-                Py::new(py, <$py_elem>::from_borrowed(self.item_storage(index)?))
+            fn __getitem__(&self, index: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+                let py = index.py();
+                if index.is_instance_of::<pyo3::types::PySlice>() {
+                    return Ok(self.live_items(py)?.as_any().get_item(index)?.unbind());
+                }
+                Ok(self.item(index.extract()?, py)?.into_any())
             }
 
             fn __iter__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-                let items = (0..self.__len__()?)
-                    .map(|index| self.__getitem__(index as isize, py))
-                    .collect::<PyResult<Vec<_>>>()?;
-                Ok(PyList::new(py, items)?.call_method0("__iter__")?.unbind())
+                Ok(self.live_items(py)?.call_method0("__iter__")?.unbind())
+            }
+            fn __reversed__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+                Ok(self.live_items(py)?.call_method0("__reversed__")?.unbind())
+            }
+
+            #[pyo3(signature = (value, start = 0, stop = isize::MAX))]
+            fn index(&self, value: &Bound<'_, PyAny>, start: isize, stop: isize) -> PyResult<usize> {
+                self.live_items(value.py())?
+                    .call_method1("index", (value, start, stop))?
+                    .extract()
+            }
+
+            fn count(&self, value: &Bound<'_, PyAny>) -> PyResult<usize> {
+                self.live_items(value.py())?
+                    .call_method1("count", (value,))?
+                    .extract()
+            }
+
+            fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+                $crate::live_sequence::concat_items(&self.live_items(other.py())?, other, false)
+            }
+
+            fn __radd__(&self, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+                $crate::live_sequence::concat_items(&self.live_items(other.py())?, other, true)
+            }
+
+            /// Detached owned copies, as `copy.copy` of a list gives.
+            fn __copy__(&self, py: Python<'_>) -> PyResult<Vec<Py<$py_elem>>> {
+                self.to_list(py)
             }
 
             fn to_list(&self, py: Python<'_>) -> PyResult<Vec<Py<$py_elem>>> {
@@ -452,6 +718,8 @@ macro_rules! impl_live_asset_sequence {
                 ))
             }
         }
+
+        $crate::__live_sequence!(@register $py_name, false);
     };
 }
 
