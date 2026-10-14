@@ -1,5 +1,5 @@
 use bevy::world_serialization::{DynamicWorld, DynamicWorldRoot};
-use pybevy_core::{PyComponent, PyHandle, ensure_asset_type, extract_handle_from_any};
+use pybevy_core::{HandleArg, PyComponent, PyHandle};
 use pybevy_macros::pyhandle;
 use pyo3::prelude::*;
 
@@ -25,12 +25,9 @@ impl From<&DynamicWorldRoot> for PyDynamicWorldRoot {
 #[pymethods]
 impl PyDynamicWorldRoot {
     #[new]
-    pub fn new(value: &Bound<'_, PyAny>) -> PyResult<PyClassInitializer<Self>> {
-        let value = extract_handle_from_any(value)?;
-
-        ensure_asset_type::<DynamicWorld>(&value)?;
-
-        Ok((Self(value), PyComponent).into())
+    #[pyo3(signature = (value = HandleArg::default()))]
+    pub fn new(value: HandleArg) -> PyResult<PyClassInitializer<Self>> {
+        Ok((Self(value.into_py_handle::<DynamicWorld>()?), PyComponent).into())
     }
 
     #[getter]

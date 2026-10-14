@@ -20,6 +20,8 @@ float32: dtype
 float64: dtype
 int64: dtype
 int32: dtype
+int16: dtype
+int8: dtype
 uint32: dtype
 uint16: dtype
 uint8: dtype

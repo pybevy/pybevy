@@ -10,6 +10,8 @@ pub enum ArrayDType {
     Float64,
     Int64,
     Int32,
+    Int16,
+    Int8,
     Uint32,
     Uint16,
     Uint8,
@@ -37,6 +39,8 @@ impl ArrayDType {
             ArrayDType::Float64 => (2, 64),
             ArrayDType::Int64 => (0, 64),
             ArrayDType::Int32 => (0, 32),
+            ArrayDType::Int16 => (0, 16),
+            ArrayDType::Int8 => (0, 8),
             ArrayDType::Uint32 => (1, 32),
             ArrayDType::Uint16 => (1, 16),
             ArrayDType::Uint8 => (1, 8),
@@ -57,6 +61,8 @@ impl ArrayDType {
             ArrayDType::Float64 => 8,
             ArrayDType::Int64 => 8,
             ArrayDType::Int32 => 4,
+            ArrayDType::Int16 => 2,
+            ArrayDType::Int8 => 1,
             ArrayDType::Uint32 => 4,
             ArrayDType::Uint16 => 2,
             ArrayDType::Uint8 => 1,
@@ -72,6 +78,8 @@ impl ArrayDType {
             ArrayDType::Float64 => "float64",
             ArrayDType::Int64 => "int64",
             ArrayDType::Int32 => "int32",
+            ArrayDType::Int16 => "int16",
+            ArrayDType::Int8 => "int8",
             ArrayDType::Uint32 => "uint32",
             ArrayDType::Uint16 => "uint16",
             ArrayDType::Uint8 => "uint8",
@@ -91,6 +99,8 @@ impl ArrayDType {
             self,
             ArrayDType::Int64
                 | ArrayDType::Int32
+                | ArrayDType::Int16
+                | ArrayDType::Int8
                 | ArrayDType::Uint32
                 | ArrayDType::Uint16
                 | ArrayDType::Uint8
@@ -98,7 +108,10 @@ impl ArrayDType {
     }
 
     pub const fn is_signed_integer(self) -> bool {
-        matches!(self, ArrayDType::Int64 | ArrayDType::Int32)
+        matches!(
+            self,
+            ArrayDType::Int64 | ArrayDType::Int32 | ArrayDType::Int16 | ArrayDType::Int8
+        )
     }
 
     pub const fn is_bool(self) -> bool {
@@ -118,6 +131,8 @@ impl ArrayDType {
             | ArrayDType::Int64
             | ArrayDType::Bool => true,
             ArrayDType::Int32 => i32::try_from(value).is_ok(),
+            ArrayDType::Int16 => i16::try_from(value).is_ok(),
+            ArrayDType::Int8 => i8::try_from(value).is_ok(),
             ArrayDType::Uint32 => u32::try_from(value).is_ok(),
             ArrayDType::Uint16 => u16::try_from(value).is_ok(),
             ArrayDType::Uint8 => u8::try_from(value).is_ok(),
@@ -133,6 +148,8 @@ impl ArrayDType {
             "float64" => ArrayDType::Float64,
             "int64" => ArrayDType::Int64,
             "int32" => ArrayDType::Int32,
+            "int16" => ArrayDType::Int16,
+            "int8" => ArrayDType::Int8,
             "uint32" => ArrayDType::Uint32,
             "uint16" => ArrayDType::Uint16,
             "uint8" => ArrayDType::Uint8,

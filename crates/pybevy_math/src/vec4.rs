@@ -196,6 +196,7 @@ impl PyVec4 {
     }
 
     #[new]
+    #[pyo3(signature = (x=0.0, y=0.0, z=0.0, w=0.0))]
     pub fn new(x: f32, y: f32, z: f32, w: f32) -> Self {
         PyVec4::vec4(Vec4::new(x, y, z, w))
     }

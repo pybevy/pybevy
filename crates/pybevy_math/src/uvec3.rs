@@ -84,6 +84,7 @@ impl PyUVec3 {
 #[pymethods]
 impl PyUVec3 {
     #[new]
+    #[pyo3(signature = (x=0, y=0, z=0))]
     pub fn new(x: u32, y: u32, z: u32) -> Self {
         PyUVec3::from_uvec3(UVec3::new(x, y, z))
     }

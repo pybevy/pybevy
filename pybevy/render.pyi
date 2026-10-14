@@ -81,7 +81,7 @@ class TextureUsages:
 class Extent3d:
     """3D texture extent (width, height, depth_or_array_layers)."""
 
-    def __init__(self, *, width: int, height: int, depth_or_array_layers: int) -> None: ...
+    def __init__(self, *, width: int = 1, height: int = 1, depth_or_array_layers: int = 1) -> None: ...
     @property
     def width(self) -> int:
         """Width of the texture."""

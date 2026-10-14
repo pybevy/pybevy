@@ -13,6 +13,7 @@ pub struct PyText2d {
 #[pymethods]
 impl PyText2d {
     #[new]
+    #[pyo3(signature = (text = String::new()))]
     pub fn new(text: String) -> PyClassInitializer<Self> {
         (Text2d(text).into(), PyComponent).into()
     }

@@ -289,6 +289,12 @@ pub struct BevyConfig {
     #[serde(default)]
     pub crate_enum_sources: HashMap<String, Vec<String>>,
 
+    /// Dependency crates whose re-exported structs contribute only their kind
+    /// and trait contracts (for example `Default`); fields are dropped because
+    /// cargo-public-api lists them sorted rather than in declaration order.
+    #[serde(default)]
+    pub crate_trait_sources: HashMap<String, Vec<String>>,
+
     /// Excluded methods configuration
     #[serde(default)]
     pub excluded_methods: ExcludedMethods,

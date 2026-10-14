@@ -45,7 +45,7 @@ impl From<URect> for PyURect {
 #[pymethods]
 impl PyURect {
     #[new]
-    #[pyo3(signature = (x0, y0, x1, y1))]
+    #[pyo3(signature = (x0=0, y0=0, x1=0, y1=0))]
     pub fn new(x0: u32, y0: u32, x1: u32, y1: u32) -> Self {
         URect::new(x0, y0, x1, y1).into()
     }

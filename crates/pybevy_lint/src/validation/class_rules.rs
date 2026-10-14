@@ -877,6 +877,79 @@ pub fn validate_module_placement(
     vec![diagnostic]
 }
 
+/// W037: a struct whose Bevy type implements `Default` must be constructible
+/// with no arguments, as `Type()` is the Python spelling of `Type::default()`.
+/// Enums keep their non-constructible base contract and are out of scope.
+pub fn validate_default_constructor(rust: &PyClassDef, bevy: &BevyItem) -> Vec<Diagnostic> {
+    if rust.is_enum || bevy.kind != BevyItemKind::Struct || bevy.is_generic_base {
+        return Vec::new();
+    }
+    let implements_default = bevy
+        .trait_impls
+        .iter()
+        .any(|name| name == "Default" || name.ends_with("::Default"));
+    let Some(constructor) = rust.constructor.as_ref() else {
+        return Vec::new();
+    };
+    if !implements_default {
+        return Vec::new();
+    }
+    let variadic = variadic_parameter_names(constructor);
+    let required: Vec<&str> = constructor
+        .parameters
+        .iter()
+        .filter(|parameter| parameter.default_value.is_none())
+        .filter(|parameter| !variadic.contains(parameter.name.as_str()))
+        .map(|parameter| parameter.name.as_str())
+        .collect();
+    if required.is_empty() {
+        return Vec::new();
+    }
+
+    let mut diagnostic = Diagnostic::warning(
+        DiagnosticCode::W037,
+        format!(
+            "constructor '{}' requires {} but Bevy '{}' implements Default",
+            rust.python_name,
+            required
+                .iter()
+                .map(|name| format!("'{name}'"))
+                .collect::<Vec<_>>()
+                .join(", "),
+            bevy.full_path
+        ),
+    )
+    .with_note("`Type()` must build `Type::default()`: give every constructor input the default Bevy's Default fills in")
+    .with_suggestion(Suggestion::new(
+        "add signature defaults (or Omittable) that reproduce Default::default(), or record a reasoned [[validation.exceptions]] entry",
+    ));
+    if let Some(location) = constructor.location.as_ref().or(rust.location.as_ref()) {
+        diagnostic = diagnostic.with_location(location.clone());
+    }
+    vec![diagnostic]
+}
+
+/// `*args`/`**kwargs` names from a `#[pyo3(signature = (...))]`; never required.
+fn variadic_parameter_names(constructor: &MethodDef) -> HashSet<&str> {
+    constructor
+        .signature_str
+        .as_deref()
+        .map(|signature| {
+            signature
+                .split(',')
+                .filter_map(|part| part.trim().trim_start_matches('(').strip_prefix('*'))
+                .map(|name| {
+                    name.trim_start_matches('*')
+                        .trim()
+                        .trim_end_matches(')')
+                        .trim()
+                })
+                .filter(|name| !name.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// W031: every exposed variant of a resolved upstream enum must exist
 /// upstream. A PyBevy variant name that is neither an upstream variant name
 /// nor a configured rename target is a renamed/misspelled variant or an

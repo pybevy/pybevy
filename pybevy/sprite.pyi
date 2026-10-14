@@ -792,7 +792,7 @@ class Text2d(Component):
         >>> )
     """
 
-    def __init__(self, text: str) -> None:
+    def __init__(self, text: str = "") -> None:
         """Create a 2D text component.
 
         Args:

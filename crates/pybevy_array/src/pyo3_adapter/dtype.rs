@@ -151,6 +151,8 @@ fn narrow_int(v: i64, dtype: ArrayDType) -> i64 {
     match dtype {
         ArrayDType::Int64 => v,
         ArrayDType::Int32 => v as i32 as i64,
+        ArrayDType::Int16 => v as i16 as i64,
+        ArrayDType::Int8 => v as i8 as i64,
         ArrayDType::Uint32 => v as u32 as i64,
         ArrayDType::Uint16 => v as u16 as i64,
         ArrayDType::Uint8 => v as u8 as i64,

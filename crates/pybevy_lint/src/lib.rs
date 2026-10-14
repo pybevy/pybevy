@@ -19,7 +19,9 @@ use std::{
 };
 
 use anyhow::Result;
-pub use bevy_parser::{BevyCrate, merge_reexported_enums, merge_reexported_types};
+pub use bevy_parser::{
+    BevyCrate, merge_reexported_enums, merge_reexported_trait_contracts, merge_reexported_types,
+};
 pub use comparison::{ComparisonResult, CoverageReport, compare_apis, pybevy_bevy_name};
 pub use config::Config;
 use model::PyClassDef;
@@ -49,6 +51,13 @@ pub fn merge_reexported_bevy_types(
         bevy_crates,
         bevy_path,
         &config.crate_enum_sources,
+        &wanted,
+        use_cache,
+    );
+    merge_reexported_trait_contracts(
+        bevy_crates,
+        bevy_path,
+        &config.crate_trait_sources,
         &wanted,
         use_cache,
     );

@@ -614,7 +614,7 @@ class Mesh3dWireframe(Component):
     a specific entity in wireframe mode.
     """
 
-    def __init__(self, material: Handle[WireframeMaterial]) -> None: ...
+    def __init__(self, material: Handle[WireframeMaterial] = ...) -> None: ...
 
     @property
     def handle(self) -> Handle[WireframeMaterial]:

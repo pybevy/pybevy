@@ -431,6 +431,25 @@ pub fn mesh_operation_failed(operation: impl Display, error: impl Display) -> St
     format!("Mesh.{operation}() failed: {error}")
 }
 
+pub const MESH_COLOR_ATTRIBUTE_SHAPE: &str = "Color attribute must have shape (N, 4)";
+pub const MESH_UINT16X4_ATTRIBUTE_SHAPE: &str = "Uint16x4 attribute values require a contiguous uint16 array of shape (N, 4) or nested integer rows";
+pub const MESH_ATTRIBUTE_LAYOUT_CHANGED: &str =
+    "Mesh attribute layout changed during view acquisition";
+
+pub fn mesh_tangents_failed(error: impl Display) -> String {
+    format!("Failed to generate tangents: {error}")
+}
+
+pub fn morph_weights_creation_failed(error: impl Debug) -> String {
+    format!("Failed to create MorphWeights: {error:?}")
+}
+
+pub fn icosphere_subdivisions_too_many(subdivisions: u32, vertices: u128) -> String {
+    format!(
+        "Cannot create an icosphere of {subdivisions} subdivisions due to there being too many vertices being generated: {vertices}. (Limited to 65535 vertices or 79 subdivisions)"
+    )
+}
+
 pub fn mesh_merge_missing_attribute(side: &str, name: &str) -> String {
     format!("Mesh.merge() requires matching vertex attributes; {side} mesh is missing {name}")
 }

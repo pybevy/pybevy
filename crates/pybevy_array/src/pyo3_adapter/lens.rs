@@ -26,7 +26,11 @@ fn field_type(dtype: ArrayDType) -> Option<(FieldType, &'static str)> {
         ArrayDType::Int32 => (FieldType::I32, "I32"),
         ArrayDType::Uint32 => (FieldType::U32, "U32"),
         ArrayDType::Uint8 => (FieldType::U8, "U8"),
-        ArrayDType::Float16 | ArrayDType::Uint16 | ArrayDType::Bool => return None,
+        ArrayDType::Float16
+        | ArrayDType::Int16
+        | ArrayDType::Int8
+        | ArrayDType::Uint16
+        | ArrayDType::Bool => return None,
     })
 }
 

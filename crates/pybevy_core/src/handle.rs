@@ -543,6 +543,17 @@ impl HandleArg {
             Self::Supplied(handle) => handle.try_into(),
         }
     }
+
+    /// The supplied handle checked against `A`, or `Handle::<A>::default()`.
+    pub fn into_py_handle<A: Asset>(self) -> PyResult<PyHandle> {
+        match self {
+            Self::Omitted => Ok(PyHandle::from(Handle::<A>::default())),
+            Self::Supplied(handle) => {
+                ensure_asset_type::<A>(&handle)?;
+                Ok(handle)
+            }
+        }
+    }
 }
 
 #[cfg(test)]

@@ -785,9 +785,13 @@ fn is_default_number(value: &str) -> bool {
 }
 
 /// The content of a quoted literal, tolerating Rust owned-string spellings
-/// (`.to_string()`, `.to_owned()`, `.into()`, `String::from(...)`) and
+/// (`.to_string()`, `.to_owned()`, `.into()`, `String::from(...)`,
+/// `String::new()`) and
 /// either Python quote style.
 fn default_string_literal(value: &str) -> Option<&str> {
+    if value == "String::new()" {
+        return Some("");
+    }
     let value = value
         .strip_prefix("String::from(")
         .and_then(|inner| inner.strip_suffix(')'))

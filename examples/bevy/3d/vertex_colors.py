@@ -29,7 +29,7 @@ def setup(
     colorful_cube = Cuboid().mesh().build()
 
     # Get vertex positions (zero-copy bounded array, converted to numpy for the math)
-    positions = colorful_cube.attribute(Mesh.ATTRIBUTE_POSITION).to_numpy()
+    positions = colorful_cube.positions().to_numpy()
     # Convert positions to colors: map [-0.5, 0.5] to [0, 1]
     colors = np.zeros((len(positions), 4), dtype=np.float32)
     colors[:, 0] = (1.0 - positions[:, 0]) / 2.0  # R from x

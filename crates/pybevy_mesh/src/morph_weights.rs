@@ -2,9 +2,12 @@ use bevy::{
     asset::Handle,
     mesh::{Mesh, morph::MorphWeights},
 };
-use pybevy_core::{ComponentStorage, PyComponent, PyHandle, repr::float_list_repr};
+use pybevy_core::{ComponentStorage, PyComponent, PyHandle, public_error, repr::float_list_repr};
 use pybevy_macros::pycomponent;
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pyo3::{
+    exceptions::{PyIndexError, PyValueError},
+    prelude::*,
+};
 
 #[pycomponent(MorphWeights, bridge)]
 #[pyclass(name = "MorphWeights", module = "pybevy.mesh", extends = PyComponent)]
@@ -15,7 +18,7 @@ pub struct PyMorphWeights {
 #[pymethods]
 impl PyMorphWeights {
     #[new]
-    #[pyo3(signature = (weights, first_mesh = None))]
+    #[pyo3(signature = (weights = Vec::new(), first_mesh = None))]
     pub fn new(
         weights: Vec<f32>,
         first_mesh: Option<PyHandle>,
@@ -24,9 +27,8 @@ impl PyMorphWeights {
             Some(h) => Some(Handle::<Mesh>::try_from(&h)?),
             None => None,
         };
-        let morph = MorphWeights::new(weights, handle).map_err(|e| {
-            PyValueError::new_err(format!("Failed to create MorphWeights: {:?}", e))
-        })?;
+        let morph = MorphWeights::new(weights, handle)
+            .map_err(|e| PyValueError::new_err(public_error::morph_weights_creation_failed(e)))?;
         Ok(Self::from_owned(morph).into())
     }
 
@@ -62,7 +64,7 @@ impl PyMorphWeights {
         let morph = self.as_ref()?;
         let weights = morph.weights();
         weights.get(index).copied().ok_or_else(|| {
-            PyValueError::new_err(format!(
+            PyIndexError::new_err(format!(
                 "Index {} out of bounds for {} weights",
                 index,
                 weights.len()
@@ -74,7 +76,7 @@ impl PyMorphWeights {
         let mut morph = self.as_mut()?;
         let weights = morph.weights_mut();
         if index >= weights.len() {
-            return Err(PyValueError::new_err(format!(
+            return Err(PyIndexError::new_err(format!(
                 "Index {} out of bounds for {} weights",
                 index,
                 weights.len()
@@ -82,10 +84,6 @@ impl PyMorphWeights {
         }
         weights[index] = value;
         Ok(())
-    }
-
-    pub fn __len__(&self) -> PyResult<usize> {
-        Ok(self.as_ref()?.weights().len())
     }
 
     pub fn __repr__(&self) -> PyResult<String> {
