@@ -492,7 +492,8 @@ Volumetric fog renders light shafts (god rays) and localized fog volumes. Requir
 
 **Performance warning:** the pass raymarches every pixel against every shadowed
 `VolumetricLight`. A scene-sized `FogVolume` with 2-3 shadowed volumetric lights can
-drop mid-range GPUs below 30 FPS at high resolutions. Start with `step_count=16-32`,
+drop mid-range GPUs below 30 FPS at high resolutions. `step_count` must be in
+`0..=1024` (`ValueError` otherwise). Start with `step_count=16-32`,
 ONE volumetric light, and small volumes; verify with `get_performance` before adding
 more. For cheap fake light shafts, use tall additive unlit cones instead
 (`AlphaMode.Add()`, `unlit=True`, alpha 0.02-0.05).

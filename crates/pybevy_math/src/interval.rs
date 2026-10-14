@@ -1,6 +1,8 @@
 use bevy::math::curve::{Interval, interval};
 use pybevy_core::{
-    FromBorrowedStorage, ValueStorage, domain::check_ordered_for, public_error::INVALID_INTERVAL,
+    FromBorrowedStorage, ValueStorage,
+    domain::{FieldDomain, IntegerInput, check_for, check_ordered_for},
+    public_error::INVALID_INTERVAL,
     repr::float_repr,
 };
 use pybevy_macros::pyvalue;
@@ -36,6 +38,11 @@ impl From<Interval> for PyInterval {
         PyInterval::from_owned(interval)
     }
 }
+
+const SPACED_POINTS_DOMAIN: &[FieldDomain] = &[FieldDomain::RangeInclusive {
+    lo: 0.0,
+    hi: 1_000_000.0,
+}];
 
 fn invalid_interval_error() -> PyErr {
     PyValueError::new_err(INVALID_INTERVAL)
@@ -116,9 +123,10 @@ impl PyInterval {
         Ok(self.to_bevy()?.clamp(value))
     }
 
-    pub fn spaced_points(&self, points: usize) -> PyResult<Vec<f32>> {
+    pub fn spaced_points(&self, points: IntegerInput<u64>) -> PyResult<Vec<f32>> {
+        let points = check_for::<Self, _>("points", points, SPACED_POINTS_DOMAIN)?.stored();
         self.to_bevy()?
-            .spaced_points(points)
+            .spaced_points(points as usize)
             .map(|points| points.collect())
             .map_err(|e| PyValueError::new_err(format!("{e}")))
     }

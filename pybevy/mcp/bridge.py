@@ -11,10 +11,12 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import subprocess
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any, TypeVar
@@ -39,6 +41,8 @@ type JsonDict = dict[str, Any]
 _ControlConnectError = _rust_mcp._ControlConnectError
 _ControlHttpStatusError = _rust_mcp._ControlHttpStatusError
 _ControlTimeoutError = _rust_mcp._ControlTimeoutError
+_control_engine_activity = _rust_mcp._control_engine_activity
+_control_set_session_token = _rust_mcp._control_set_session_token
 _control_health = _rust_mcp._control_health
 _control_last_error = _rust_mcp._control_last_error
 _control_request_scene_resource = _rust_mcp._control_request_scene_resource
@@ -126,6 +130,8 @@ LOAD_SCENE_TOOL: JsonDict = {
 
 # Retain startup warnings through the DefaultPlugins output burst.
 _MAX_CAPTURED_OUTPUT_LINES = 500
+# A scene's parent-death signal fires when its spawning thread exits, not the process.
+_SPAWNER = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pybevy-mcp-spawn")
 _STARTUP_TIMEOUT = 60.0
 
 _MAX_REPORTED_WARN_LINES = 25
@@ -688,11 +694,8 @@ class McpBridge:
                         -32602,
                         f"Tool '{tool}' cannot be used inside a schedule (bridge-local tool)",
                     )
-            # Dynamic timeout based on max 'at' value in actions
-            max_at = max(
-                (a.get("at", 0) for a in arguments.get("actions", [])), default=0
-            )
-            timeout = max(max_at + 60.0, 120.0)
+            # The server ends sync schedules after 120 wall-clock seconds.
+            timeout = 30.0 if arguments.get("mode") == "async" else 125.0
         elif tool_name in _LONG_TIMEOUT_TOOLS:
             timeout = 120.0
         else:
@@ -747,20 +750,8 @@ class McpBridge:
 
             return self._success(req_id, {"content": content})
         except _ControlTimeoutError:
-            hint = ""
-            _time_tools = {
-                "pause_time",
-                "resume_time",
-                "set_time_scale",
-                "get_time_status",
-                "seek_time",
-            }
-            if tool_name not in _time_tools:
-                hint = " Hint: if scene time is paused or the window is minimized, the engine may stop processing requests. Try resume_time or focus the window."
             return self._error(
-                req_id,
-                -32603,
-                f"Engine timeout ({timeout:.0f}s) for {tool_name}.{hint}",
+                req_id, -32603, self._engine_timeout_message(tool_name, timeout)
             )
         except _ControlConnectError:
             return self._error(
@@ -770,6 +761,33 @@ class McpBridge:
             return self._error(req_id, -32603, str(e))
         except Exception as e:
             return self._error(req_id, -32603, f"HTTP error: {e}")
+
+    def _engine_timeout_message(self, tool_name: str, timeout: float) -> str:
+        message = f"Engine timeout ({timeout:.0f}s) for {tool_name}."
+        try:
+            activity = _control_engine_activity(self._engine_port, 2.0)
+        except Exception:
+            activity = None
+        if isinstance(activity, dict) and activity.get("in_frame"):
+            return (
+                f"{message} The scene's main thread has been inside one frame for "
+                f"{activity.get('secs', 0.0):.0f}s: a system, an observer or a hot-reload "
+                "module import is still running, for example a loop that never ends. "
+                "Python on that thread cannot be interrupted; fix the code and call "
+                "run_scene to restart the scene."
+            )
+        if tool_name in {
+            "pause_time",
+            "resume_time",
+            "set_time_scale",
+            "get_time_status",
+            "seek_time",
+        }:
+            return message
+        return (
+            f"{message} Hint: if scene time is paused or the window is minimized, "
+            "the engine may stop processing requests. Try resume_time or focus the window."
+        )
 
     def _coerce_arguments(self, tool_name: str, arguments: JsonDict) -> JsonDict:
         """Coerce string arguments to their schema types (MCP clients may send strings)."""
@@ -1433,7 +1451,9 @@ class McpBridge:
     def _start_subprocess(self, path: str) -> None:
         port = find_free_port()
         self._subprocess_port = port
-        env = build_engine_env(port=port)
+        token = secrets.token_urlsafe(32)
+        _control_set_session_token(port, token)
+        env = build_engine_env(port=port, token=token)
 
         display = env.get("DISPLAY", "")
         wayland = env.get("WAYLAND_DISPLAY", "")
@@ -1452,13 +1472,14 @@ class McpBridge:
             self._output_lines.clear()
             self._output_repeat_counts.clear()
 
-        self._subprocess = subprocess.Popen(
+        self._subprocess = _SPAWNER.submit(
+            subprocess.Popen,
             [sys.executable, "-m", "pybevy", "dev", path],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=env,
-        )
+        ).result()
 
         self._stdout_thread = threading.Thread(
             target=self._read_subprocess_stdout,
@@ -1504,6 +1525,8 @@ class McpBridge:
                 pass
 
             self._subprocess = None
+            if self._subprocess_port is not None:
+                _control_set_session_token(self._subprocess_port, None)
             self._subprocess_port = None
             with self._output_lock:
                 self._control_listening = False

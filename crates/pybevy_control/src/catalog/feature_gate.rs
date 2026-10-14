@@ -76,6 +76,7 @@ mod tests {
             manipulation,
             execute_python,
             api_discovery: true,
+            token: None,
         }
     }
 

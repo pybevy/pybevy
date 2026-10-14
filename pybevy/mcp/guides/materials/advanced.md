@@ -38,7 +38,9 @@ wet_stone = materials.add(StandardMaterial(
 Makes reflections stretch in one direction - for brushed metal, hair, silk.
 The mesh must have tangents whenever `anisotropy_strength` is nonzero, even
 when no anisotropy texture is used. Built-in primitive meshes do not include
-tangents; build the mesh first and generate them before adding it to `Assets`:
+tangents. Without them, the mesh still renders but anisotropy is silently
+ignored: there is no Python error or render-log warning. Build the mesh first
+and generate tangents before adding it to `Assets`:
 
 ```python
 mesh_data = Sphere(1.4).mesh().uv(64, 36)
@@ -151,7 +153,10 @@ by the baker. The lightmap contribution is multiplied by the material's
 `base_color`, so a black or very dark base colour renders black at any
 `lightmap_exposure`. Do not attach `Lightmap` to a mesh without `ATTRIBUTE_UV_1`:
 Bevy 0.19 selects its lightmap shader from the component and that pipeline is
-invalid without the corresponding vertex attribute.
+invalid without the corresponding vertex attribute. Spawn succeeds and
+`get_last_error` stays null, but the mesh can appear flat white. Look for a
+`bevy_render::render_resource::pipeline_cache` shader error mentioning `uv_b`
+in the Rust logs; it may appear only once per material specialization.
 
 ## UV Transform (Tiling)
 
@@ -287,7 +292,9 @@ mat = materials.add(StandardMaterial(
 
 Forcing a material to `OpaqueRendererMethod.Deferred` requires cameras with
 `Msaa.Off`, `DepthPrepass()`, and `DeferredPrepass()`;
-incomplete setup can panic upstream. For an app-wide default, use
-`DefaultOpaqueRendererMethod.deferred()`; see `guide://camera`.
+without the prepass markers, affected meshes can disappear while other objects
+render normally, with no error or warning. `Msaa.Off` alone does not add the
+prepasses. Other incomplete combinations may panic upstream. For an app-wide
+default, use `DefaultOpaqueRendererMethod.deferred()`; see `guide://camera`.
 
 **For all parameters:** `get_type_definition('StandardMaterial')`

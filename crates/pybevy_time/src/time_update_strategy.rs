@@ -5,7 +5,7 @@ use pybevy_core::repr::float_repr;
 use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
-#[pyenum(TimeUpdateStrategy, resource, no_reflect)]
+#[pyenum(TimeUpdateStrategy, resource, no_reflect, no_user_remove)]
 #[pyclass(name = "TimeUpdateStrategy", module = "pybevy.time")]
 pub enum PyTimeUpdateStrategy {
     Automatic(),

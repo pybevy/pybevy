@@ -1,6 +1,7 @@
 use bevy::{prelude::InColorSpace, ui::LinearGradient};
 use pybevy_core::{
     ValueStorage,
+    domain::{FINITE, check_for},
     repr::{float_repr, object_repr},
 };
 use pyo3::prelude::*;
@@ -59,7 +60,7 @@ impl PyLinearGradient {
         Ok(PyLinearGradient {
             read_only: false,
             inner: LinearGradient::new(
-                angle,
+                check_for::<Self, _>("angle", angle, FINITE)?,
                 stops
                     .into_iter()
                     .map(|s| s.to_bevy())
@@ -73,7 +74,7 @@ impl PyLinearGradient {
         Ok(PyLinearGradient {
             read_only: false,
             inner: LinearGradient::degrees(
-                degrees,
+                check_for::<Self, _>("degrees", degrees, FINITE)?,
                 stops
                     .into_iter()
                     .map(|s| s.to_bevy())
@@ -234,7 +235,7 @@ impl PyLinearGradient {
     #[setter]
     pub fn set_angle(&mut self, value: f32) -> PyResult<()> {
         self.ensure_writable()?;
-        self.inner.angle = value;
+        self.inner.angle = check_for::<Self, _>("angle", value, FINITE)?;
         Ok(())
     }
 

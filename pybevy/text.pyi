@@ -608,7 +608,7 @@ class FontSize:
 
     Wherever a FontSize is accepted, a plain float is also accepted and
     treated as `FontSize.Px` (mirrors bevy's `From<f32> for FontSize`).
-    TextFont requires the value to be finite and non-negative.
+    TextFont requires the value to be in [0, 4096] in every unit.
     """
 
     class Px(FontSize):
@@ -813,11 +813,11 @@ class TextFont(Component):
         font_smoothing: FontSmoothing = FontSmoothing.AntiAliased,
         font_features: FontFeatures = ...
     ) -> None:
-        """Create a text font component. Defaults to FontSize.Px(20.0); supplied sizes must be finite and non-negative."""
+        """Create a text font component. Defaults to FontSize.Px(20.0); supplied sizes must be in [0, 4096]."""
 
     @staticmethod
     def from_font_size(font_size: FontSize | float) -> TextFont:
-        """Create TextFont with a finite, non-negative font size and defaults."""
+        """Create TextFont with a font size in [0, 4096] and defaults."""
 
     @staticmethod
     def from_font_weight(weight: FontWeight) -> TextFont:
@@ -830,7 +830,7 @@ class TextFont(Component):
         """Return a new TextFont with the font resolved by family name."""
 
     def with_font_size(self, font_size: FontSize | float) -> TextFont:
-        """Return a new TextFont with the specified finite, non-negative font size."""
+        """Return a new TextFont with the specified font size in [0, 4096]."""
 
     def with_font_smoothing(self, font_smoothing: FontSmoothing) -> TextFont:
         """Return a new TextFont with the specified font smoothing."""

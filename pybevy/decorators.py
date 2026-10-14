@@ -27,6 +27,7 @@ _component_layout_reload_required: set[str] = set()
 _resource_cache: dict[str, type[Resource]] = {}
 _resource_layout_signatures: dict[str, tuple[object, ...]] = {}
 _resource_layout_reload_required: set[str] = set()
+_event_cache: dict[str, type[Event]] = {}
 _component_cache_enabled = False
 
 # Decorated component classes by `module.qualname`. Weak so a reloaded scene
@@ -92,8 +93,18 @@ def event(cls: type[ET]) -> type[ET]:
     """
     if not issubclass(cls, Event):
         raise TypeError(f"{cls.__name__} must inherit from Event.")
+    key = f"{cls.__module__}.{cls.__qualname__}"
+    if _component_cache_enabled and key in _event_cache:
+        from ._internal.reload_modules import stage_class_body
+
+        # Runtime observers are keyed by the event class, so it keeps its identity.
+        cached = _event_cache[key]
+        stage_class_body(cached, cls)
+        return cached  # type: ignore[return-value]
     _guard_missing_constructor(cls, "@event")
     cls.__pybevy_event_decorated__ = True
+    if _component_cache_enabled:
+        _event_cache[key] = cls
     return cls
 
 
@@ -393,6 +404,7 @@ def clear_component_cache(verbose: bool = False) -> None:
         )
     _component_cache.clear()
     _resource_cache.clear()
+    _event_cache.clear()
     # Avoid importing pybevy.material eagerly (it imports native rendering types).
     # If it has been used, a full reload must invalidate its logical class aliases too.
     material_module = sys.modules.get("pybevy.material")
@@ -875,6 +887,12 @@ def entrypoint(func: Callable) -> Callable:
             app = AppClass()
 
         app._mark_entrypoint()
+        from ._internal.reload_modules import (
+            code_fingerprint,
+            stage_entrypoint_fingerprint,
+        )
+
+        stage_entrypoint_fingerprint(code_fingerprint(func.__code__))
 
         # Redirect stdout to stderr when in pipe mode to protect JSON-RPC pipe
         if os.environ.get("PYBEVY_MCP_PIPE") == "1":
@@ -911,13 +929,16 @@ def entrypoint(func: Callable) -> Callable:
             from .mcp import McpPlugin
 
             port = int(os.environ.get("PYBEVY_CONTROL_PORT", "8420"))
+            token = os.environ.get("PYBEVY_CONTROL_TOKEN") or None
             if result.is_plugin_added(McpPlugin):
                 raise RuntimeError(
                     f"`pybevy mcp` adds McpPlugin itself (port {port}); remove "
                     f"McpPlugin from '{func.__name__}()', or add it only when "
                     "PYBEVY_MCP is not set."
                 )
-            result = result.add_plugins(McpPlugin(port=port, execute_python=True))
+            result = result.add_plugins(
+                McpPlugin(port=port, execute_python=True, token=token)
+            )
 
             # Auto-inject ImageCopyPlugin for headless screenshot support
             from ._internal.render_readback import (

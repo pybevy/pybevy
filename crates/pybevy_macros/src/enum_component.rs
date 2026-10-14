@@ -18,7 +18,10 @@ struct PythonClassName {
 #[derive(Clone, Copy)]
 enum StorageBase {
     Component,
-    Resource { no_reflect: bool },
+    Resource {
+        no_reflect: bool,
+        no_user_remove: bool,
+    },
 }
 
 pub(crate) fn expand(
@@ -44,12 +47,16 @@ pub(crate) fn expand_resource(
     spec: &EnumSpec<'_>,
     resource_type: &syn::Type,
     no_reflect: bool,
+    no_user_remove: bool,
 ) -> TokenStream {
     match try_expand(
         input,
         spec,
         resource_type,
-        StorageBase::Resource { no_reflect },
+        StorageBase::Resource {
+            no_reflect,
+            no_user_remove,
+        },
         false,
     ) {
         Ok(tokens) => tokens,
@@ -78,6 +85,22 @@ fn try_expand(
     let clone_supported = format_ident!("clone_supported_{}", stem);
     let module = class.module;
     let python_name = class.name;
+    let validate = format_ident!("validate_{}_domains", stem);
+    let domain_arms = domain_validate_arms(spec, inner_type, &python_name);
+    let validate_fn = (!domain_arms.is_empty()).then(|| {
+        quote! {
+            fn #validate(value: &#inner_type) -> Result<(), pybevy_core::domain::DomainViolation> {
+                match value {
+                    #(#domain_arms)*
+                    _ => {}
+                }
+                Ok(())
+            }
+        }
+    });
+    let reflect_validate = validate_fn
+        .as_ref()
+        .map(|_| quote! { , reflect_validate = #validate });
     let (
         base_type,
         base_initializer,
@@ -91,38 +114,36 @@ fn try_expand(
             quote! { pybevy_core::PyComponent },
             quote! { pyo3::PyClassInitializer::from(pybevy_core::PyComponent) },
             quote! { pybevy_core::ComponentStorage },
-            quote! { #[pybevy_macros::pycomponent(#inner_type, bridge, materialize = #materialize)] },
+            quote! {
+                #[pybevy_macros::pycomponent(#inner_type, bridge, materialize = #materialize #reflect_validate)]
+            },
             quote! { subclass },
             TokenStream::new(),
             quote! { pybevy_core::registry::global_registry::register_component_bridge_alias },
         ),
-        StorageBase::Resource { no_reflect } => (
+        StorageBase::Resource {
+            no_reflect,
+            no_user_remove,
+        } => (
             quote! { pybevy_core::PyResource },
             quote! {
                 pyo3::PyClassInitializer::from(pybevy_core::PyComponent)
                     .add_subclass(pybevy_core::PyResource)
             },
             quote! { pybevy_core::ResourceStorage },
-            if no_reflect {
+            {
+                let no_reflect = no_reflect.then(|| quote! { , no_reflect });
+                let no_user_remove = no_user_remove.then(|| quote! { , no_user_remove });
                 quote! {
                     #[pybevy_macros::pyresource(
                         #inner_type,
                         no_clone,
                         bridge,
                         materialize = #materialize,
-                        clone_with = #clone_supported,
-                        no_reflect
+                        clone_with = #clone_supported
+                        #no_reflect
+                        #no_user_remove
                     )]
-                }
-            } else {
-                quote! {
-                #[pybevy_macros::pyresource(
-                    #inner_type,
-                    no_clone,
-                    bridge,
-                    materialize = #materialize,
-                    clone_with = #clone_supported
-                )]
                 }
             },
             quote! { subclass, frozen },
@@ -426,6 +447,7 @@ fn try_expand(
     let variant_aliases_method = crate::enums::variant_aliases_method(spec);
     Ok(quote! {
         #(#unsupported_type_checks)*
+        #validate_fn
 
         #storage_attribute
         #[pyo3::pyclass(name = #python_name, module = #module, extends = #base_type, #base_options)]
@@ -493,6 +515,51 @@ fn try_expand(
             Ok(())
         }
     })
+}
+
+/// Match arms re-checking each variant's `#[py_domain]` payloads on a native value,
+/// for writes that bypass the Python constructors.
+fn domain_validate_arms(
+    spec: &EnumSpec<'_>,
+    inner_type: &syn::Type,
+    python_name: &str,
+) -> Vec<TokenStream> {
+    spec.variants
+        .iter()
+        .filter(|variant| !variant.unsupported)
+        .filter_map(|variant| {
+            let fields = match &variant.shape {
+                VariantShape::Struct(fields) => fields.as_slice(),
+                _ => return None,
+            };
+            if fields.iter().all(|field| field.domain.is_none()) {
+                return None;
+            }
+            let qualname = format!("{python_name}.{}", variant.python_name);
+            let bindings = (0..fields.len())
+                .map(|index| format_ident!("__pybevy_domain_{index}"))
+                .collect::<Vec<_>>();
+            let checks = fields.iter().zip(&bindings).filter_map(|(field, binding)| {
+                let domain = field.domain.as_ref()?;
+                let field_name = &field.python_name;
+                Some(quote! {
+                    pybevy_core::domain::check(#qualname, #field_name, *#binding, #domain)?;
+                })
+            });
+            let rust_name = variant.rust_name;
+            let pattern = match variant.bevy_shape {
+                BevyVariantShape::Tuple => quote! { #inner_type::#rust_name(#(#bindings),*) },
+                BevyVariantShape::Struct => {
+                    let names = fields
+                        .iter()
+                        .map(|field| field.rust_name.expect("named field"));
+                    quote! { #inner_type::#rust_name { #(#names: #bindings),* } }
+                }
+                BevyVariantShape::Unit => return None,
+            };
+            Some(quote! { #pattern => { #(#checks)* } })
+        })
+        .collect()
 }
 
 /// Checks a payload against its `#[py_domain]` rules, named `Enum.Variant.field`.

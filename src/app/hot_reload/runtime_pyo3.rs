@@ -69,6 +69,7 @@ pub(crate) struct PendingDefinitions {
     pub plugins: Vec<PluginIdentity>,
     pub component_layout_changes: Vec<String>,
     pub resource_layout_changes: Vec<String>,
+    pub entrypoint_changed: bool,
 }
 
 struct PreparedSystemSetConfig {
@@ -418,6 +419,10 @@ impl Pyo3ReloadRuntime {
         pending: Vec<(PyStage, Vec<Py<PyAny>>)>,
         generation: u32,
     ) -> Result<(), ReloadError> {
+        let error_buffer = world
+            .get_resource::<LastErrorBuffer>()
+            .map(|r| r.buffer.clone())
+            .unwrap_or_default();
         Python::attach(|py| -> PyResult<()> {
             for (schedule, values) in pending {
                 let system_stage = if schedule.is_startup() {
@@ -446,6 +451,7 @@ impl Pyo3ReloadRuntime {
                                 &member,
                                 generation,
                                 self.error_state.clone(),
+                                error_buffer.clone(),
                                 system_stage,
                             )?);
                             identities.push(identity);
@@ -481,6 +487,7 @@ impl Pyo3ReloadRuntime {
                             value,
                             generation,
                             self.error_state.clone(),
+                            error_buffer.clone(),
                             system_stage,
                         )?;
                         self.pending_set_configs.push(PreparedSystemSetConfig {
@@ -527,6 +534,11 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
                 .getattr("_resource_layout_reload_names")?
                 .call0()?
                 .extract::<Vec<String>>()?;
+            let entrypoint_changed = py
+                .import("pybevy._internal.reload_modules")?
+                .getattr("entrypoint_changed")?
+                .call0()?
+                .extract::<bool>()?;
 
             let temp_app_ref = temp_app_py.borrow(py);
             Ok(PendingDefinitions {
@@ -540,6 +552,7 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
                 plugins: temp_app_ref.take_pending_plugins(),
                 component_layout_changes,
                 resource_layout_changes,
+                entrypoint_changed,
             })
         });
         let result = result.map_err(|e| {
@@ -613,6 +626,10 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
 
     fn plugin_names(&self, defs: &PendingDefinitions) -> Vec<PluginIdentity> {
         defs.plugins.clone()
+    }
+
+    fn entrypoint_changed(&self, defs: &PendingDefinitions) -> bool {
+        defs.entrypoint_changed
     }
 
     fn system_names(&self, defs: &PendingDefinitions) -> std::collections::HashSet<String> {

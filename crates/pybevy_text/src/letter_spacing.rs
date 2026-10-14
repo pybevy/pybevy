@@ -1,9 +1,18 @@
 use bevy::text::LetterSpacing;
 use pybevy_core::{
-    ComponentStorage, domain::FINITE, enum_comparison::compare_values, repr::float_repr,
+    ComponentStorage, domain::FieldDomain, enum_comparison::compare_values, repr::float_repr,
 };
 use pybevy_macros::pyenum;
 use pyo3::{prelude::*, pyclass::CompareOp};
+
+const LETTER_SPACING_PX: &[FieldDomain] = &[FieldDomain::RangeInclusive {
+    lo: -65536.0,
+    hi: 65536.0,
+}];
+const LETTER_SPACING_REM: &[FieldDomain] = &[FieldDomain::RangeInclusive {
+    lo: -4096.0,
+    hi: 4096.0,
+}];
 
 #[pyenum(LetterSpacing, component, manual_comparison)]
 #[pyclass(name = "LetterSpacing", module = "pybevy.text")]
@@ -11,13 +20,13 @@ pub enum PyLetterSpacing {
     #[py_bevy(tuple)]
     Px {
         #[py_set]
-        #[py_domain(FINITE)]
+        #[py_domain(LETTER_SPACING_PX)]
         value: f32,
     },
     #[py_bevy(tuple)]
     Rem {
         #[py_set]
-        #[py_domain(FINITE)]
+        #[py_domain(LETTER_SPACING_REM)]
         value: f32,
     },
 }

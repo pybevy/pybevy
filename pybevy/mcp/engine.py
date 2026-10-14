@@ -56,12 +56,16 @@ def _read_env_from_session(var: str, *, platform: str | None = None) -> str | No
 
 
 def build_engine_env(
-    port: int | None = None, *, platform: str | None = None
+    port: int | None = None,
+    *,
+    platform: str | None = None,
+    token: str | None = None,
 ) -> dict[str, str]:
     """Build environment for the engine subprocess with display vars and MCP injection.
 
     Args:
         port: Control server port. If set, passed via PYBEVY_CONTROL_PORT env var.
+        token: Control session token. If set, passed via PYBEVY_CONTROL_TOKEN.
     """
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
@@ -70,6 +74,9 @@ def build_engine_env(
 
     if port is not None:
         env["PYBEVY_CONTROL_PORT"] = str(port)
+    env.pop("PYBEVY_CONTROL_TOKEN", None)
+    if token is not None:
+        env["PYBEVY_CONTROL_TOKEN"] = token
 
     if _is_linux(platform):
         for var in (

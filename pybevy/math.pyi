@@ -1474,9 +1474,11 @@ class Interval:
         """Get exactly `points` evenly spaced values, including both endpoints.
 
         Zero returns an empty list and one returns only the start endpoint.
+        At most 1,000,000 points.
 
         Raises:
-            ValueError: if the interval is unbounded.
+            ValueError: if the interval is unbounded or `points` is outside
+                [0, 1000000].
         """
 
     def __eq__(self, other: object) -> bool: ...
@@ -6045,6 +6047,9 @@ class Rot2:
 
     Rot2 stores the cosine and sine of the rotation angle, enabling
     efficient rotation operations without trigonometric calculations.
+    Angle getters return a signed principal angle, so they need not return
+    the original constructor argument. For example, a 0.75-turn rotation
+    reads back as -0.25 turn; both describe the same rotation.
 
     Example:
         ```python
@@ -6108,7 +6113,9 @@ class Rot2:
         """Create a rotation from a fraction of a full turn.
 
         Args:
-            fraction: Fraction of a full turn (0.5 = 180 degrees)
+            fraction: Fraction of a full turn (0.5 represents a half-turn).
+
+        Readback uses a signed principal fraction, not necessarily this input.
         """
 
     @staticmethod
@@ -6119,13 +6126,24 @@ class Rot2:
         """
 
     def as_radians(self) -> float:
-        """Get the rotation angle in radians."""
+        """Get a signed principal angle, approximately in [-pi, pi] radians.
+
+        A half-turn lies on the branch cut and may use either signed endpoint.
+        """
 
     def as_degrees(self) -> float:
-        """Get the rotation angle in degrees."""
+        """Get a signed principal angle, approximately in [-180, 180] degrees.
+
+        A half-turn lies on the branch cut and may use either signed endpoint.
+        """
 
     def as_turn_fraction(self) -> float:
-        """Get the rotation as a fraction of a full turn."""
+        """Get a signed principal fraction, approximately in [-0.5, 0.5].
+
+        This is not an inverse of turn_fraction for arguments outside the
+        principal range: 0.75 turn reads back as -0.25 turn. A half-turn may
+        use either signed endpoint due to floating-point rounding.
+        """
 
     def inverse(self) -> Rot2:
         """Get the inverse rotation (negated angle)."""

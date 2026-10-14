@@ -43,7 +43,6 @@ native-hot-reload = ["native-plugin"]
 [workspace]
 resolver = "2"
 members = ["crates/*"]
-exclude = ["examples/rust/*", "crates/pybevy_browser", "crates/pybevy_replicon"]
 
 [workspace.lints.clippy]
 undocumented_unsafe_blocks = "warn"
@@ -67,6 +66,7 @@ uuid = { version = "1.17.0", features = ["v4"] }
 inventory = "0.3"
 smallvec = "1.0"
 sha2 = "0.10"
+pybevy_bytecodevm = { path = "./crates/pybevy_bytecodevm", version = "=0.3.0-rc.1" }
 pybevy_core = { path = "./crates/pybevy_core", version = "=0.3.0-rc.1" }
 pybevy_math = { path = "./crates/pybevy_math", version = "=0.3.0-rc.1" }
 pybevy_color = { path = "./crates/pybevy_color", version = "=0.3.0-rc.1" }
@@ -102,8 +102,8 @@ pybevy_reload = { path = "./crates/pybevy_reload", version = "=0.3.0-rc.1" }
 pybevy_array = { path = "./crates/pybevy_array", version = "=0.3.0-rc.1", default-features = false }
 
 [dependencies]
-pybevy_bytecodevm = { path = "./crates/pybevy_bytecodevm", version = "=0.3.0-rc.1", features = ["parallel"] }
-pybevy_core = { path = "./crates/pybevy_core", version = "=0.3.0-rc.1" }
+pybevy_bytecodevm = { workspace = true, features = ["parallel"] }
+pybevy_core = { workspace = true }
 pybevy_math = { workspace = true }
 pybevy_color = { workspace = true }
 pybevy_audio = { workspace = true }
@@ -177,7 +177,7 @@ bevy = { workspace = true, features = [
 
 accesskit = { version = "0.24", default-features = false }
 
-pybevy_macros = { path = "./crates/pybevy_macros", version = "=0.3.0-rc.1" }
+pybevy_macros = { workspace = true }
 
 smallvec = { workspace = true }
 uuid = { workspace = true }

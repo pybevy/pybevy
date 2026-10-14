@@ -11,8 +11,9 @@ fn clone_ui_scale(value: &UiScale) -> PyResult<UiScale> {
     UiScale,
     no_clone,
     bridge,
+    no_user_remove,
     clone_with = clone_ui_scale,
-    domains = [0 as scale => [positive]]
+    domains = [0 as scale => [positive, range_inclusive(0.0, 64.0)]]
 )]
 #[pyclass(name = "UiScale", module = "pybevy.ui", extends = PyResource)]
 #[derive(Debug)]

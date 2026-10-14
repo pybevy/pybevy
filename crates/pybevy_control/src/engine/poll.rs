@@ -158,6 +158,7 @@ mod tests {
             manipulation: true,
             execute_python: true,
             api_discovery: true,
+            token: None,
         }
     }
     #[test]

@@ -8,7 +8,7 @@ use bevy::{
 use pybevy_core::{
     PendingReloadRequest, ReloadRequestMode, ReloadResult,
     gpu_validation::{WgpuValidationEntry, WgpuValidationErrorState},
-    public_error::{WGPU_VALIDATION_FRAME_HINT, reload_error_hint},
+    public_error::{self, WGPU_VALIDATION_FRAME_HINT, reload_error_hint},
 };
 use pybevy_ecs::shared::system_runtime::HotReloadGeneration;
 use tokio::sync::oneshot;
@@ -188,6 +188,12 @@ pub fn get_reload_status(world: &mut World) -> Result<serde_json::Value, Control
         }
         if let Some(ref removed) = reload_result.systems_removed {
             result.insert("systems_removed".into(), serde_json::json!(removed));
+        }
+        if reload_result.entrypoint_changed {
+            result.insert(
+                "entrypoint_changed".into(),
+                serde_json::json!(public_error::RELOAD_ENTRYPOINT_CHANGED),
+            );
         }
         if reload_result.definition_fetch_in_progress {
             result.insert(
@@ -535,6 +541,7 @@ mod tests {
             plugins_added: None,
             plugins_removed: None,
             systems_removed: None,
+            entrypoint_changed: false,
             definition_fetch_in_progress: false,
         });
         let result = get_reload_status(&mut world).unwrap();
@@ -558,6 +565,7 @@ mod tests {
             plugins_added: None,
             plugins_removed: None,
             systems_removed: Some(vec!["update_scoreboard".to_string()]),
+            entrypoint_changed: false,
             definition_fetch_in_progress: false,
         });
         let result = get_reload_status(&mut world).unwrap();
@@ -571,6 +579,7 @@ mod tests {
         let mut world = World::new();
         world.insert_resource(ReloadResult {
             systems_removed: None,
+            entrypoint_changed: false,
             definition_fetch_in_progress: false,
             ..ReloadResult::default()
         });

@@ -215,6 +215,10 @@ pub fn validate_hierarchy_link(
     if child == parent {
         return Err(HierarchyLinkError::SelfParent);
     }
+    // A child without children cannot be an ancestor of its new parent.
+    if world.get::<Children>(child).is_none() {
+        return Ok(());
+    }
 
     let mut ancestor = parent;
     let mut visited = HashSet::new();

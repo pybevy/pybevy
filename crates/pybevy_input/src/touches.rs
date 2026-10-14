@@ -9,7 +9,7 @@ use pyo3::prelude::*;
 
 use crate::force_touch::PyForceTouch;
 
-#[pyresource(Touches, no_clone, bridge, default_insert, no_reflect)]
+#[pyresource(Touches, no_clone, bridge, default_insert, no_reflect, no_user_remove)]
 #[pyclass(name = "Touches", module = "pybevy.input", extends = PyResource)]
 pub struct PyTouches {
     pub(crate) storage: ResourceStorage<Touches>,

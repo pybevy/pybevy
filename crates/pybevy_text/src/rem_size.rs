@@ -3,7 +3,13 @@ use pybevy_core::{PyResource, ResourceStorage, repr::float_repr, resource_initia
 use pybevy_macros::pyresource;
 use pyo3::prelude::*;
 
-#[pyresource(RemSize, bridge, no_reflect, domains = [0 as value => [positive]])]
+#[pyresource(
+    RemSize,
+    bridge,
+    no_reflect,
+    no_user_remove,
+    domains = [0 as value => [positive, range_inclusive(0.0, 4096.0)]]
+)]
 #[pyclass(name = "RemSize", module = "pybevy.text", extends = PyResource, from_py_object)]
 #[derive(Debug)]
 pub struct PyRemSize {

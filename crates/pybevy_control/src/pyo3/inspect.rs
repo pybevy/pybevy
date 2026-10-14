@@ -7,7 +7,7 @@ use bevy::{
         reflect::{AppTypeRegistry, ReflectComponent},
         world::{EntityRef as BevyEntityRef, World},
     },
-    reflect::{ReflectRef, TypeInfo},
+    reflect::{ReflectFromPtr, ReflectRef, TypeInfo},
 };
 use pybevy_core::{
     ValidityGuard,
@@ -17,6 +17,7 @@ use pybevy_core::{
 use pyo3::prelude::*;
 
 use crate::{
+    codec::reflect::reflect_to_json,
     engine::runtime::{ComponentCatalog, ComponentFilter, EntityComponentNames},
     protocol::{ControlError, EntityRef},
     pyo3::{
@@ -124,6 +125,7 @@ pub fn get_entity(
                         py,
                         world,
                         entity,
+                        bridge.bevy_type_id(),
                         &name,
                         py_obj.bind(py),
                         reflected_enum,
@@ -220,13 +222,44 @@ pub fn get_entity(
     Ok(result)
 }
 
-/// Get a single component's field values from an entity
+/// The reflected fields of a native value whose wrapper exposes no readable
+/// properties, from `entity`'s component or, without one, the resource.
+pub(crate) fn opaque_value_fields(
+    world: &World,
+    type_id: TypeId,
+    entity: Option<Entity>,
+    fields: &serde_json::Map<String, serde_json::Value>,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    if fields.len() != 1 || !fields.contains_key("repr") {
+        return None;
+    }
+    let component_id = world.components().get_id(type_id)?;
+    let ptr = match entity {
+        Some(entity) => world
+            .get_entity(entity)
+            .ok()?
+            .get_by_id(component_id)
+            .ok()?,
+        None => world.get_resource_by_id(component_id)?,
+    };
+    let registry = world.get_resource::<AppTypeRegistry>()?.read();
+    let from_ptr = registry.get_type_data::<ReflectFromPtr>(type_id)?;
+    // SAFETY: `ptr` holds the value registered under `type_id`, the type `from_ptr` reads.
+    let value = unsafe { from_ptr.as_reflect(ptr) };
+    match reflect_to_json(value.as_partial_reflect()) {
+        serde_json::Value::Object(map) => Some(map),
+        _ => None,
+    }
+}
+
 /// A native component value's fields: its asset reference when it has one,
-/// else its getter fields, plus `variant` for a reflected enum.
+/// else its getter fields, or its reflected fields when it has no getters,
+/// plus `variant` for a reflected enum.
 fn native_value_fields(
     py: Python<'_>,
     world: &mut World,
     entity: Entity,
+    type_id: TypeId,
     component: &str,
     value: &Bound<'_, PyAny>,
     reflected_enum: bool,
@@ -238,6 +271,9 @@ fn native_value_fields(
         return fields;
     }
     let mut fields = extract_bridge_fields(py, value, reflected_enum);
+    if let Some(reflected) = opaque_value_fields(world, type_id, Some(entity), &fields) {
+        fields = reflected;
+    }
     if let Some(variant) = reflected_variant {
         if value.call_method0("__copy__").is_err() {
             fields.clear();
@@ -286,6 +322,7 @@ pub fn get_component(
                     py,
                     world,
                     entity,
+                    bridge.bevy_type_id(),
                     bridge.name(),
                     py_obj.bind(py),
                     reflected_enum,

@@ -128,6 +128,11 @@ impl HotReloadState {
         self.requests.is_pending()
     }
 
+    /// Re-import every user module for the attempt in progress, whatever mode was requested.
+    pub(crate) fn import_all_modules(&self) {
+        self.requests.set_last_mode(ReloadMode::Full);
+    }
+
     /// Check if reload is pending and get the loader function and mode if available.
     /// A request taken before any loader is installed is intentionally consumed and dropped.
     pub fn take_pending_reload(&self, py: Python) -> Option<(Py<PyAny>, ReloadMode)> {

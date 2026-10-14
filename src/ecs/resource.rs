@@ -37,7 +37,7 @@ impl PyIsResource {
 ///
 /// Provides `__origin__` and `__args__` for annotation parser compatibility,
 /// and `__repr__` using `T.__name__` (not `__qualname__`) for clean display.
-#[pyclass(name = "ResParam", frozen)]
+#[pyclass(name = "ResParam", module = "pybevy.ecs", frozen)]
 pub struct PyResParam {
     mutable: bool,
     type_obj: Py<PyAny>,
@@ -110,7 +110,7 @@ impl PyResParam {
 }
 
 /// Read-only access to a Bevy resource
-#[pyclass(name = "Res")]
+#[pyclass(name = "Res", module = "pybevy.ecs")]
 pub struct PyRes {
     ty: Py<PyType>,
 
@@ -303,7 +303,7 @@ impl PyRes {
 }
 
 /// Mutable access to a Bevy resource
-#[pyclass(name = "ResMut")]
+#[pyclass(name = "ResMut", module = "pybevy.ecs")]
 pub struct PyResMut {
     ty: Py<PyType>,
 

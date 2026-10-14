@@ -27,6 +27,8 @@ pub(crate) struct BevyEnumArgs {
     resource: bool,
     /// Skip Bevy reflection registration for a generated storage-backed enum.
     no_reflect: bool,
+    /// Refuse removal of the generated resource through public Python and MCP APIs.
+    no_user_remove: bool,
     /// Only declare the Bevy enum relationship; the adapter supplies its own implementation.
     manual: bool,
     /// Emit a struct-backed hierarchy extending PyMessage.
@@ -56,6 +58,7 @@ impl Parse for BevyEnumArgs {
         let mut component = false;
         let mut resource = false;
         let mut no_reflect = false;
+        let mut no_user_remove = false;
         let mut manual = false;
         let mut message = false;
         let mut writable = false;
@@ -75,6 +78,7 @@ impl Parse for BevyEnumArgs {
                 "component" => component = true,
                 "resource" => resource = true,
                 "no_reflect" => no_reflect = true,
+                "no_user_remove" => no_user_remove = true,
                 "manual" => manual = true,
                 "message" => message = true,
                 "writable" => writable = true,
@@ -91,7 +95,7 @@ impl Parse for BevyEnumArgs {
                     return Err(syn::Error::new_spanned(
                         option,
                         format!(
-                            "unknown option '{}', expected: empty_tuple, unit_parens, no_repr, no_reflect, manual, message, writable, no_bridge, no_eq, no_debug, manual_comparison, non_exhaustive, component, resource, or mirror = Type",
+                            "unknown option '{}', expected: empty_tuple, unit_parens, no_repr, no_reflect, no_user_remove, manual, message, writable, no_bridge, no_eq, no_debug, manual_comparison, non_exhaustive, component, resource, or mirror = Type",
                             other
                         ),
                     ));
@@ -164,6 +168,12 @@ impl Parse for BevyEnumArgs {
                 "no_reflect currently requires the struct-backed resource pyenum mode",
             ));
         }
+        if no_user_remove && !resource {
+            return Err(syn::Error::new_spanned(
+                bevy_type,
+                "no_user_remove requires the struct-backed resource pyenum mode",
+            ));
+        }
 
         Ok(BevyEnumArgs {
             manual_comparison,
@@ -177,6 +187,7 @@ impl Parse for BevyEnumArgs {
             component,
             resource,
             no_reflect,
+            no_user_remove,
             manual,
             message,
             writable,
@@ -300,8 +311,14 @@ pub fn pyenum(attr: TokenStream, item: TokenStream) -> TokenStream {
             .into();
     }
     if args.resource {
-        return crate::enum_component::expand_resource(&input, &spec, bevy_type, args.no_reflect)
-            .into();
+        return crate::enum_component::expand_resource(
+            &input,
+            &spec,
+            bevy_type,
+            args.no_reflect,
+            args.no_user_remove,
+        )
+        .into();
     }
     if let Some(field) = spec
         .variants

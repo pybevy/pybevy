@@ -58,8 +58,8 @@ if __name__ == "__main__":
 | `rotate_sensitivity` | float | 0.003 | Mouse rotation sensitivity |
 | `pan_sensitivity` | float | 0.001 | Mouse pan sensitivity multiplier |
 | `zoom_sensitivity` | float | 0.1 | Zoom fraction per scroll line; pixel events use 100 pixels per line |
-| `min_distance` | float | 5.0 | Minimum zoom distance |
-| `max_distance` | float | 1000.0 | Maximum zoom distance |
+| `min_distance` | float | 5.0 | Minimum zoom distance; above zero |
+| `max_distance` | float | 1000.0 | Maximum zoom distance; finite, at least `min_distance` |
 
 ### Coordinate System
 

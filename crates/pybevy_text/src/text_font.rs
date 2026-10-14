@@ -16,7 +16,11 @@ use crate::{
     font_width::PyFontWidth,
 };
 
-#[pycomponent(TextFont, bridge, domains = [font_size => [finite, non_negative]])]
+#[pycomponent(
+    TextFont,
+    bridge,
+    domains = [font_size => [range_inclusive(0.0, 4096.0)]]
+)]
 #[pyclass(name = "TextFont", module = "pybevy.text", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyTextFont {

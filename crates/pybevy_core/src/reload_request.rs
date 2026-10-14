@@ -287,6 +287,8 @@ pub struct ReloadResult {
     /// Their disabled schedule nodes remain for one rollback generation, then
     /// the normal post-Last compaction removes them.
     pub systems_removed: Option<Vec<String>>,
+    /// Whether this successful reload's `@entrypoint` code differs from the previous generation's.
+    pub entrypoint_changed: bool,
     /// Whether the current reload attempt is still fetching definition files
     /// asynchronously; a reload response must not be built while this is set.
     pub definition_fetch_in_progress: bool,

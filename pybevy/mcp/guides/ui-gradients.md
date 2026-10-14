@@ -42,6 +42,9 @@ bg = LinearGradient.degrees(135.0, [
 
 **Direction helpers:** `.to_top()`, `.to_bottom()`, `.to_left()`, `.to_right()`, `.to_top_left()`, `.to_top_right()`, `.to_bottom_left()`, `.to_bottom_right()`
 
+Gradient angles (`LinearGradient.angle`, `ConicGradient.start`,
+`AngularColorStop.angle`) must be finite; negative angles are allowed.
+
 ## RadialGradient
 
 `UiPosition.CENTER`, `TOP_LEFT`, and the other Bevy position constants have

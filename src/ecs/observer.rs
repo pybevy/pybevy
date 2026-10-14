@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use pybevy_core::PyMessage;
 use pyo3::{
     PyTraverseError, PyTypeInfo, PyVisit, exceptions::PyTypeError, prelude::*, types::PyType,
 };
@@ -9,6 +8,7 @@ use smallvec::SmallVec;
 use super::{
     PyEntity,
     component_type::{PyComponentType, clone_retained_classes, retain_custom_classes},
+    messages::PyMessageType,
 };
 
 /// Base class for all events in PyBevy.
@@ -383,9 +383,9 @@ impl EventType {
         // Check if it's a subclass of Event
         if ty.is_subclass_of::<PyEvent>()? {
             Ok(EventType::Custom(ty.clone().unbind()))
-        } else if ty.is_subclass_of::<PyMessage>()? {
+        } else if PyMessageType::is_message_class(ty)? {
             Err(PyTypeError::new_err(format!(
-                "{} is a Message subclass; observers require Event subclasses",
+                "{} is a message type; observers require Event subclasses. Use MessageReader[T] to read messages",
                 ty.name()?
             )))
         } else {

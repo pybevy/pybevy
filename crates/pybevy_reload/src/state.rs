@@ -73,6 +73,11 @@ impl ReloadRequestState {
     pub fn last_mode(&self) -> ReloadMode {
         lock_or_recover(&self.inner).last_mode
     }
+
+    /// Make the loader import with `mode` for the attempt in progress.
+    pub fn set_last_mode(&self, mode: ReloadMode) {
+        lock_or_recover(&self.inner).last_mode = mode;
+    }
 }
 
 #[cfg(test)]

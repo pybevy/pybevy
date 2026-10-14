@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import site
 import sys
@@ -11,7 +12,7 @@ import weakref
 from collections.abc import Callable, Mapping
 from contextvars import ContextVar
 from functools import lru_cache
-from types import FunctionType, ModuleType
+from types import CodeType, FunctionType, ModuleType
 from typing import TYPE_CHECKING, Protocol, cast
 
 if TYPE_CHECKING:
@@ -142,6 +143,7 @@ class ModuleReloadTransaction:
         self._component_annotations: dict[type, dict[str, object]] = {}
         self._class_bodies: dict[type, dict[str, object]] = {}
         self._import_graph_updates: dict[int, tuple[ImportGraph, ImportGraph]] = {}
+        self._entrypoint_fingerprint: str | None = None
         self._token = _active.set(self)
 
     def stage_resource_assignment_alias(
@@ -194,6 +196,8 @@ class ModuleReloadTransaction:
                     _adopt_class_body(target, body)
                 for graph, candidate in self._import_graph_updates.values():
                     graph.publish(candidate)
+                if self._entrypoint_fingerprint is not None:
+                    _committed_entrypoint[0] = self._entrypoint_fingerprint
             else:
                 for name, module in list(sys.modules.items()):
                     if (
@@ -357,3 +361,42 @@ def stage_import_graph_update(graph: ImportGraph, candidate: ImportGraph) -> Non
         graph.publish(candidate)
     else:
         transaction.stage_import_graph(graph, candidate)
+
+
+_committed_entrypoint: list[str | None] = [None]
+
+
+def _code_shape(code: CodeType) -> tuple[object, ...]:
+    return (
+        code.co_code,
+        code.co_names,
+        code.co_varnames,
+        tuple(
+            _code_shape(const) if isinstance(const, CodeType) else repr(const)
+            for const in code.co_consts
+        ),
+    )
+
+
+def code_fingerprint(code: CodeType) -> str:
+    """Hash a function's code, ignoring line positions so comment edits do not count."""
+    return hashlib.sha256(repr(_code_shape(code)).encode()).hexdigest()
+
+
+def stage_entrypoint_fingerprint(fingerprint: str) -> None:
+    transaction = _active.get()
+    if transaction is None:
+        _committed_entrypoint[0] = fingerprint
+    else:
+        transaction._entrypoint_fingerprint = fingerprint
+
+
+def entrypoint_changed() -> bool:
+    """Whether the reloading entrypoint differs from the last committed one."""
+    transaction = _active.get()
+    if transaction is None:
+        return False
+    candidate = transaction._entrypoint_fingerprint
+    committed = _committed_entrypoint[0]
+    return candidate is not None and committed is not None and candidate != committed
+

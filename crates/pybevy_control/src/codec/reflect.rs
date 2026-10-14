@@ -1,4 +1,4 @@
-use std::{any::TypeId, fmt::Debug, ops::Range, sync::OnceLock};
+use std::{any::TypeId, fmt::Debug, ops::Range, sync::OnceLock, time::Duration};
 
 use bevy::{
     ecs::{
@@ -682,6 +682,9 @@ pub fn reflect_to_json(value: &dyn PartialReflect) -> Value {
     if let Some(v) = value.try_downcast_ref::<String>() {
         return Value::String(v.clone());
     }
+    if let Some(duration) = value.try_downcast_ref::<Duration>() {
+        return float_to_json(duration.as_secs_f64());
+    }
     if let Some(range) = value.try_downcast_ref::<Range<f32>>() {
         let mut fields = Map::new();
         fields.insert("start".to_string(), float_to_json(f64::from(range.start)));
@@ -735,6 +738,22 @@ pub fn reflect_to_json(value: &dyn PartialReflect) -> Value {
             for i in 0..a.len() {
                 arr.push(a.get(i).map(reflect_to_json).unwrap_or(Value::Null));
             }
+            Value::Array(arr)
+        }
+        // Hash collections have no order, so sort for stable output.
+        ReflectRef::Set(s) => {
+            let mut arr: Vec<Value> = s.iter().map(reflect_to_json).collect();
+            arr.sort_by_key(Value::to_string);
+            Value::Array(arr)
+        }
+        ReflectRef::Map(m) => {
+            let mut arr: Vec<Value> = m
+                .iter()
+                .map(|(key, value)| {
+                    serde_json::json!({"key": reflect_to_json(key), "value": reflect_to_json(value)})
+                })
+                .collect();
+            arr.sort_by_key(Value::to_string);
             Value::Array(arr)
         }
         ReflectRef::Enum(e) => {
@@ -1655,6 +1674,24 @@ mod tests {
         let n = serde_json::Number::from(255);
         let stored = convert_number(&n, TypeId::of::<u8>(), None).unwrap();
         assert_eq!(stored.try_downcast_ref::<u8>(), Some(&255));
+    }
+
+    #[test]
+    fn reflect_to_json_sorts_hash_collections_and_renders_durations_in_seconds() {
+        let set: bevy::platform::collections::HashSet<u32> = [3, 1, 2].into_iter().collect();
+        assert_eq!(reflect_to_json(&set), serde_json::json!([1, 2, 3]));
+
+        let map: bevy::platform::collections::HashMap<u32, f32> =
+            [(2, 0.5), (1, 0.25)].into_iter().collect();
+        assert_eq!(
+            reflect_to_json(&map),
+            serde_json::json!([{"key": 1, "value": 0.25}, {"key": 2, "value": 0.5}])
+        );
+
+        assert_eq!(
+            reflect_to_json(&Duration::from_millis(1500)),
+            serde_json::json!(1.5)
+        );
     }
 
     #[test]

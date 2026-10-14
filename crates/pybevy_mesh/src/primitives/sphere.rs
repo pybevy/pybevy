@@ -8,14 +8,14 @@ use pyo3::{exceptions::PyValueError, prelude::*};
 use crate::{
     mesh::PyMesh,
     mesh_builder::PyMeshBuilder,
-    primitives::validation::{AT_LEAST_ONE, vertex_budget},
+    primitives::validation::{AT_LEAST_THREE, AT_LEAST_TWO, vertex_budget},
     sphere_kind::PySphereKind,
 };
 
-/// A UV sphere divides by both counts, so zero would give NaN positions.
+/// Fewer than 3 sectors or 2 stacks builds a sphere with no visible triangles.
 fn validate_uv(sectors: u32, stacks: u32) -> PyResult<()> {
-    check_for::<PySphereMeshBuilder, _>("sectors", sectors, AT_LEAST_ONE)?;
-    check_for::<PySphereMeshBuilder, _>("stacks", stacks, AT_LEAST_ONE)?;
+    check_for::<PySphereMeshBuilder, _>("sectors", sectors, AT_LEAST_THREE)?;
+    check_for::<PySphereMeshBuilder, _>("stacks", stacks, AT_LEAST_TWO)?;
     let vertices = (u128::from(sectors) + 1) * (u128::from(stacks) + 1);
     vertex_budget("SphereMeshBuilder", vertices)
 }
@@ -73,8 +73,8 @@ impl PySphereMeshBuilder {
         sectors: IntegerInput<u32>,
         stacks: IntegerInput<u32>,
     ) -> PyResult<Py<PyMesh>> {
-        let sectors = check_for::<Self, _>("sectors", sectors, AT_LEAST_ONE)?.stored();
-        let stacks = check_for::<Self, _>("stacks", stacks, AT_LEAST_ONE)?.stored();
+        let sectors = check_for::<Self, _>("sectors", sectors, AT_LEAST_THREE)?.stored();
+        let stacks = check_for::<Self, _>("stacks", stacks, AT_LEAST_TWO)?.stored();
         validate_uv(sectors, stacks)?;
         Py::new(py, (self.0.uv(sectors, stacks).into(), PyAsset))
     }

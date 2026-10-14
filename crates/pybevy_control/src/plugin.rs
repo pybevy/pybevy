@@ -14,8 +14,9 @@ use bevy::{
     winit::{UpdateMode, WinitSettings},
 };
 use bevy::{
-    app::{App, First, Last, Plugin},
-    prelude::{IntoScheduleConfigs, Resource},
+    app::{App, First, Last, MainScheduleOrder, Plugin},
+    ecs::schedule::ScheduleLabel,
+    prelude::{IntoScheduleConfigs, Res, Resource},
     render::{Render, RenderApp, RenderSystems},
 };
 #[cfg(feature = "pyo3-runtime")]
@@ -43,7 +44,7 @@ use crate::{
     },
     discovery::ApiIndex,
     engine::{
-        channel::{ControlSender, create_channel},
+        channel::{ControlSender, FrameHeartbeat, create_channel},
         poll::control_poll_system,
         runtime::ControlRuntime,
     },
@@ -69,6 +70,7 @@ pub struct PyControlPlugin {
     pub manipulation: bool,
     pub execute_python: bool,
     pub api_discovery: bool,
+    pub token: Option<String>,
 }
 
 #[cfg(feature = "pyo3-runtime")]
@@ -82,6 +84,7 @@ impl PyControlPlugin {
         manipulation = true,
         execute_python = false,
         api_discovery = true,
+        token = None,
     ))]
     pub fn new(
         port: u16,
@@ -90,6 +93,7 @@ impl PyControlPlugin {
         manipulation: bool,
         execute_python: bool,
         api_discovery: bool,
+        token: Option<String>,
     ) -> PyClassInitializer<Self> {
         (
             PyControlPlugin {
@@ -99,6 +103,7 @@ impl PyControlPlugin {
                 manipulation,
                 execute_python,
                 api_discovery,
+                token,
             },
             PyPlugin,
         )
@@ -129,6 +134,7 @@ impl Default for PyControlPlugin {
             manipulation: true,
             execute_python: false,
             api_discovery: true,
+            token: None,
         }
     }
 }
@@ -153,6 +159,20 @@ pub struct ControlConfig {
     pub manipulation: bool,
     pub execute_python: bool,
     pub api_discovery: bool,
+    /// Bearer token every request except `/health` must carry, when set.
+    pub token: Option<String>,
+}
+
+/// Runs after `Last`, so a frame counts as finished only once every user system has returned.
+#[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
+struct ControlFrameEnd;
+
+fn mark_frame_started(heartbeat: Res<FrameHeartbeat>) {
+    heartbeat.mark_started();
+}
+
+fn mark_frame_finished(heartbeat: Res<FrameHeartbeat>) {
+    heartbeat.mark_finished();
 }
 
 /// Installs the control channel, schedule state and per-frame systems that
@@ -168,6 +188,13 @@ pub fn install_control_runtime(
 
     app.insert_resource(receiver);
     app.insert_resource(exclusive_execution);
+    app.insert_resource(sender.heartbeat());
+    app.init_schedule(ControlFrameEnd);
+    app.world_mut()
+        .resource_mut::<MainScheduleOrder>()
+        .insert_after(Last, ControlFrameEnd);
+    app.add_systems(First, mark_frame_started.before(control_poll_system));
+    app.add_systems(ControlFrameEnd, mark_frame_finished);
     app.init_resource::<ActiveSchedules>();
     app.insert_resource(SharedScheduleRegistryResource(schedule_registry.clone()));
     app.init_resource::<AssetReferenceSession>();
@@ -298,6 +325,7 @@ impl Plugin for ControlBevyPlugin {
             manipulation: config.manipulation,
             execute_python: config.execute_python,
             api_discovery: config.api_discovery,
+            token: config.token.clone(),
         };
         build_control_plugin(app, control_config, api_index, Box::new(Pyo3ControlRuntime));
     }
@@ -356,6 +384,7 @@ mod tests {
             manipulation: true,
             execute_python: true,
             api_discovery: true,
+            token: None,
         };
         let (sender, _) = install_control_runtime(&mut app, config, Box::new(FakeRuntime));
         let goblin = app

@@ -994,6 +994,9 @@ with the system.
 Messages provide buffered inter-system communication. An ordered reader can see values written earlier in the same schedule pass; retained values expire after two admitted message-update cycles.
 
 TimePlugin admits message updates after fixed steps; use ManualDuration for deterministic headless timing.
+As in Bevy, a message nobody reads therefore lasts about two fixed steps: 2 to 4 frames at 60 fps with
+the default 64 Hz fixed rate, and indefinitely in a tight `app.update()` loop that advances too little real
+time for `FixedUpdate` to run.
 
 ```python
 from datetime import timedelta
@@ -1178,7 +1181,7 @@ transform.rotation = Quat.from_euler(EulerRot.XYZ, 0.0, speed * time.elapsed_sec
 `Interval.spaced_points(points=N)` returns exactly `N` evenly spaced values,
 including both endpoints when `N >= 2`. Zero returns an empty list and one
 returns only the start endpoint. The argument is a point count, not a maximum
-spacing.
+spacing, of at most 1,000,000.
 
 ### Query Iteration with `enumerate()`
 

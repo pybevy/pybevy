@@ -277,6 +277,15 @@ pub fn register_asset_bridge_arc(bridge: Arc<dyn AssetBridge>) {
     guard.by_type_id.insert(type_id, bridge);
 }
 
+/// Get all unique registered asset bridges.
+pub fn all_asset_bridges() -> Vec<Arc<dyn AssetBridge>> {
+    let registry = get_global_asset_registry();
+    let guard = registry
+        .read()
+        .expect("Global asset registry lock poisoned");
+    guard.by_type_id.values().cloned().collect()
+}
+
 /// Check if a Python type pointer is registered as an asset in the global registry
 ///
 /// Returns the bridge if found, None otherwise.

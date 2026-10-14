@@ -2121,6 +2121,7 @@ impl PyApp {
 
         let generation = pyself.hot_reload_state.current_generation();
         let error_state = pyself.system_error.clone();
+        let error_buffer = pyself.system_error_buffer.clone();
         let system_stage = Self::get_system_stage(schedule);
         pyself.with_bevy_app(|app| {
             let label = schedule.intern_label();
@@ -2137,6 +2138,7 @@ impl PyApp {
                             &member,
                             generation,
                             error_state.clone(),
+                            error_buffer.clone(),
                             system_stage,
                         )?);
                     }
@@ -2161,8 +2163,13 @@ impl PyApp {
                     }
                 } else {
                     let identity = system_set_config_identity(&set)?;
-                    let config =
-                        build_set_config(&set, generation, error_state.clone(), system_stage)?;
+                    let config = build_set_config(
+                        &set,
+                        generation,
+                        error_state.clone(),
+                        error_buffer.clone(),
+                        system_stage,
+                    )?;
                     app.configure_sets(label, config);
                     app.world_mut()
                         .get_resource_or_insert_with(InstalledSystemSetConfigs::default)

@@ -12,7 +12,8 @@ use crate::font_atlas::{PyFontAtlas, PyFontAtlasKey};
     no_mut,
     no_insert,
     no_default,
-    no_reflect
+    no_reflect,
+    no_user_remove
 )]
 #[pyclass(name = "FontAtlasSet", module = "pybevy.text", extends = pybevy_core::PyResource)]
 pub struct PyFontAtlasSet {

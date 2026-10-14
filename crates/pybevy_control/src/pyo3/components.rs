@@ -1313,6 +1313,38 @@ fn checked_wrapper_layout(
     Ok(layout)
 }
 
+/// A component on `entity` whose required components include `required`.
+fn requiring_component(world: &World, entity: Entity, required: ComponentId) -> Option<String> {
+    let entity_ref = world.get_entity(entity).ok()?;
+    entity_ref
+        .archetype()
+        .components()
+        .iter()
+        .filter(|&&id| id != required)
+        .filter_map(|&id| world.components().get_info(id))
+        .find(|info| {
+            info.required_components()
+                .iter_ids()
+                .any(|id| id == required)
+        })
+        .map(|info| info.name().shortname().to_string())
+}
+
+fn reject_required_removal(
+    world: &World,
+    entity: Entity,
+    component_id: ComponentId,
+    component: &str,
+) -> Result<(), ControlError> {
+    match requiring_component(world, entity, component_id) {
+        Some(requirer) => Err(ControlError::invalid_params(format!(
+            "Component '{component}' is required by '{requirer}' on entity {}; remove '{requirer}' first or despawn the entity",
+            entity.to_bits()
+        ))),
+        None => Ok(()),
+    }
+}
+
 fn structural_warning(component: &str) -> Option<String> {
     if STRUCTURAL_COMPONENTS.contains(&component) {
         Some(format!(
@@ -1365,6 +1397,7 @@ pub fn remove_component(
                     "Component '{component}' not found on entity {entity_id}"
                 )));
             }
+            reject_required_removal(world, entity, component_id, &component)?;
             if let Some(hook) = REMOVE_COMPONENT_HOOK.get() {
                 let type_ptr = Python::attach(|py| bridge.py_type(py).as_type_ptr());
                 hook(world, entity, type_ptr);
@@ -1395,6 +1428,7 @@ pub fn remove_component(
                     "Component '{component}' not found on entity {entity_id}"
                 )));
             }
+            reject_required_removal(world, entity, component_id, &component)?;
             if let Some(hook) = REMOVE_COMPONENT_HOOK.get() {
                 hook(world, entity, type_ptr);
             } else if let Ok(mut entity_mut) = world.get_entity_mut(entity) {
@@ -1452,6 +1486,7 @@ mod tests {
         },
         prelude::With,
         ptr::OwningPtr,
+        transform::components::{GlobalTransform, Transform},
     };
     use pybevy_core::{
         CustomComponentEntry,
@@ -1564,6 +1599,20 @@ mod tests {
         );
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().code, ErrorCode::NotFound);
+    }
+
+    #[test]
+    fn requiring_component_names_the_component_that_requires_the_target() {
+        let mut world = World::new();
+        let global = world.register_component::<GlobalTransform>();
+        let with_transform = world.spawn(Transform::default()).id();
+        let alone = world.spawn(GlobalTransform::default()).id();
+
+        assert_eq!(
+            requiring_component(&world, with_transform, global).as_deref(),
+            Some("Transform")
+        );
+        assert_eq!(requiring_component(&world, alone, global), None);
     }
 
     #[test]

@@ -20,6 +20,7 @@ import uuid
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
+from urllib.parse import urlsplit
 
 from .bridge import McpBridge
 
@@ -29,6 +30,9 @@ logger = logging.getLogger("pybevy.mcp.http")
 
 _SESSION_EXPIRY_SECONDS = 30 * 60  # 30 minutes
 _SWEEP_INTERVAL_SECONDS = 60
+_MAX_BODY_BYTES = 2 * 1024 * 1024
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+_UNSPECIFIED_HOSTS = frozenset({"0.0.0.0", "::", ""})
 
 
 @dataclass
@@ -93,6 +97,20 @@ class SessionStore:
             self.remove(sid)
 
 
+def _origin_allowed(origin: str, bind_host: str) -> bool:
+    """Whether a browser page at ``origin`` may call a server bound to ``bind_host``."""
+    try:
+        host = urlsplit(origin).hostname
+    except ValueError:
+        return False
+    if not host:
+        return False
+    bound = bind_host.strip("[]").lower()
+    if host in _LOOPBACK_HOSTS:
+        return True
+    return bound not in _UNSPECIFIED_HOSTS and host == bound
+
+
 def _format_sse_event(data: JsonDict) -> str:
     """Format a JSON-RPC message as an SSE event."""
     payload = json.dumps(data, separators=(",", ":"))
@@ -103,11 +121,22 @@ class McpHttpHandler(BaseHTTPRequestHandler):
     """HTTP handler implementing MCP Streamable HTTP transport."""
 
     store: SessionStore
+    bind_host: str = "127.0.0.1"
 
     def log_message(self, format: str, *args: object) -> None:
         logger.debug(format, *args)
 
+    def _reject_foreign_origin(self) -> bool:
+        # MCP clients send no Origin; a browser page, including a DNS-rebound one, does.
+        origin = self.headers.get("Origin")
+        if origin is None or _origin_allowed(origin, self.bind_host):
+            return False
+        self._error(403, f"Origin '{origin}' is not allowed")
+        return True
+
     def do_POST(self) -> None:
+        if self._reject_foreign_origin():
+            return
         if self.path != "/mcp":
             self._error(404, "Not found")
             return
@@ -121,9 +150,8 @@ class McpHttpHandler(BaseHTTPRequestHandler):
         if content_length == 0:
             self._error(400, "Empty body")
             return
-        max_body = 10 * 1024 * 1024  # 10 MB
-        if content_length > max_body:
-            self._error(413, f"Request body too large (max {max_body} bytes)")
+        if content_length > _MAX_BODY_BYTES:
+            self._error(413, f"Request body too large (max {_MAX_BODY_BYTES} bytes)")
             return
 
         try:
@@ -199,12 +227,16 @@ class McpHttpHandler(BaseHTTPRequestHandler):
         self.wfile.flush()
 
     def do_GET(self) -> None:
+        if self._reject_foreign_origin():
+            return
         if self.path == "/mcp":
             self._error(405, "GET not supported; use POST")
         else:
             self._error(404, "Not found")
 
     def do_DELETE(self) -> None:
+        if self._reject_foreign_origin():
+            return
         if self.path != "/mcp":
             self._error(404, "Not found")
             return
@@ -251,6 +283,7 @@ def run_mcp_http(host: str = "127.0.0.1", port: int = 8080, *, record: bool = Fa
 
     store = SessionStore(record=record)
     McpHttpHandler.store = store
+    McpHttpHandler.bind_host = host
 
     stop_event = threading.Event()
 

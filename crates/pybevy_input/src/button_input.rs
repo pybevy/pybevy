@@ -22,7 +22,14 @@ const KEY_CODE_SPECIALIZATION_NAME: &str = "ButtonInput[KeyCode]";
 /// Attribute on `ButtonInput` holding that class.
 const KEY_CODE_SPECIALIZATION_ATTR: &str = "__pybevy_button_input_key_code__";
 
-#[pyresource(ButtonInput<KeyCode>, no_clone, bridge, "ButtonInput", default_insert)]
+#[pyresource(
+    ButtonInput<KeyCode>,
+    no_clone,
+    bridge,
+    "ButtonInput",
+    default_insert,
+    no_user_remove
+)]
 #[pyclass(name = "ButtonInput", module = "pybevy.input", extends = PyResource, subclass)]
 pub struct PyButtonInput {
     pub(crate) storage: ResourceStorage<ButtonInput<KeyCode>>,

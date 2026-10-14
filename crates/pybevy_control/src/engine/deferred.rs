@@ -193,6 +193,12 @@ pub fn push_pending_timeline(
         ))));
         return;
     }
+    if !(1..=MAX_TIMELINE_CAPTURES).contains(&params.columns) {
+        let _ = response_tx.send(Err(ControlError::invalid_params(format!(
+            "columns must be between 1 and {MAX_TIMELINE_CAPTURES}"
+        ))));
+        return;
+    }
     if params.total_frames > MAX_TIMELINE_FRAMES {
         let _ = response_tx.send(Err(ControlError::invalid_params(format!(
             "total_frames must be at most {MAX_TIMELINE_FRAMES}"
@@ -325,6 +331,17 @@ pub fn push_pending_turnaround(
     let (final_look_at, final_distance) =
         turnaround_framing(world, params.look_at, params.distance);
     let viewpoints = compute_viewpoints(final_look_at, final_distance, elev, vc, top);
+    // Also catches a non-finite elevation, center or auto-fit distance.
+    if viewpoints
+        .iter()
+        .flat_map(|view| view.position)
+        .any(|coordinate| !coordinate.is_finite())
+    {
+        let _ = response_tx.send(Err(ControlError::invalid_params(
+            "elevation, look_at and distance must give finite camera positions",
+        )));
+        return;
+    }
 
     let mut pending = world.get_resource_or_insert_with(PendingTurnarounds::default);
     pending.active.push(ActiveTurnaround {
@@ -676,6 +693,23 @@ mod tests {
     }
 
     #[test]
+    fn push_pending_timeline_rejects_out_of_range_columns() {
+        for bad in [0, MAX_TIMELINE_CAPTURES + 1, u32::MAX] {
+            let mut world = World::new();
+            let (tx, mut rx) = oneshot::channel();
+            let mut params = timeline_params(6);
+            params.columns = bad;
+            push_pending_timeline(params, tx, &mut world);
+            let err = rx
+                .try_recv()
+                .expect("caller should receive a response")
+                .expect_err("out-of-range columns must be an error");
+            assert_eq!(err.message, "columns must be between 1 and 20");
+            assert!(world.get_resource::<PendingTimelines>().is_none());
+        }
+    }
+
+    #[test]
     fn push_pending_timeline_accepts_valid_capture_count() {
         let mut world = World::new();
         spawn_structurally_valid_headless_camera(&mut world);
@@ -797,6 +831,48 @@ mod tests {
             let mut world = World::new();
             let (tx, mut rx) = oneshot::channel();
             push_pending_turnaround(turnaround_params(distance), tx, &mut world);
+
+            assert!(rx.try_recv().is_err(), "response should remain deferred");
+            assert_eq!(world.resource::<PendingTurnarounds>().active.len(), 1);
+        }
+    }
+
+    #[test]
+    fn push_pending_turnaround_rejects_nonfinite_camera_positions() {
+        for (elevation, look_at, distance) in [
+            (f32::NAN, None, 10.0),
+            (f32::INFINITY, None, 10.0),
+            (0.0, Some([f32::INFINITY, 0.0, 0.0]), 10.0),
+            (0.0, Some([f32::MAX, 0.0, 0.0]), f32::MAX),
+        ] {
+            let mut world = World::new();
+            let (tx, mut rx) = oneshot::channel();
+            let mut params = turnaround_params(Some(distance));
+            params.elevation = Some(elevation);
+            params.look_at = look_at;
+            push_pending_turnaround(params, tx, &mut world);
+
+            let error = rx
+                .try_recv()
+                .expect("caller should receive a response")
+                .expect_err("non-finite camera position must be an error");
+            assert_eq!(error.code, ErrorCode::InvalidParams);
+            assert_eq!(
+                error.message,
+                "elevation, look_at and distance must give finite camera positions"
+            );
+            assert!(!world.contains_resource::<PendingTurnarounds>());
+        }
+    }
+
+    #[test]
+    fn push_pending_turnaround_accepts_finite_elevations_past_the_poles() {
+        for elevation in [-270.0, 90.0, 450.0, 1e30] {
+            let mut world = World::new();
+            let (tx, mut rx) = oneshot::channel();
+            let mut params = turnaround_params(Some(10.0));
+            params.elevation = Some(elevation);
+            push_pending_turnaround(params, tx, &mut world);
 
             assert!(rx.try_recv().is_err(), "response should remain deferred");
             assert_eq!(world.resource::<PendingTurnarounds>().active.len(), 1);

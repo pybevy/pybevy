@@ -30,7 +30,7 @@ use crate::{
             convert_annotated_field_value, convert_committed_resource_enum_field_value,
             convert_field_value,
         },
-        inspect::reflected_type_is_enum,
+        inspect::{opaque_value_fields, reflected_type_is_enum},
         names::{ResourceTarget, custom_resource_name, qualified_type_name, resolve_resource},
         state_resource,
         to_json::{extract_bridge_fields, python_object_fields_to_json},
@@ -587,6 +587,9 @@ fn bridge_resource_entry(world: &World, bridge: &Arc<dyn ResourceBridge>) -> ser
                 .get(world, validity, py)
                 .ok()
                 .map(|py_obj| extract_bridge_fields(py, py_obj.bind(py), reflected_enum))
+        })
+        .map(|fields| {
+            opaque_value_fields(world, bridge.bevy_type_id(), None, &fields).unwrap_or(fields)
         });
         if let Some(fields) = fields {
             entry["fields"] = serde_json::Value::Object(fields);

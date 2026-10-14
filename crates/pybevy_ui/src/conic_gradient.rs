@@ -1,6 +1,7 @@
 use bevy::{prelude::InColorSpace, ui::ConicGradient};
 use pybevy_core::{
     ValueStorage,
+    domain::{FINITE, check_for},
     repr::{float_repr, object_repr},
 };
 use pyo3::prelude::*;
@@ -71,11 +72,12 @@ impl PyConicGradient {
         })
     }
 
-    pub fn with_start(&self, start: f32) -> Self {
-        PyConicGradient {
+    pub fn with_start(&self, start: f32) -> PyResult<Self> {
+        let start = check_for::<Self, _>("start", start, FINITE)?;
+        Ok(PyConicGradient {
             read_only: false,
             inner: self.inner.clone().with_start(start),
-        }
+        })
     }
 
     pub fn with_position(&self, position: PyUiPosition) -> PyResult<Self> {
@@ -133,7 +135,7 @@ impl PyConicGradient {
     #[setter]
     pub fn set_start(&mut self, value: f32) -> PyResult<()> {
         self.ensure_writable()?;
-        self.inner.start = value;
+        self.inner.start = check_for::<Self, _>("start", value, FINITE)?;
         Ok(())
     }
 

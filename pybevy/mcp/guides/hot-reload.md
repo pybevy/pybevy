@@ -21,6 +21,12 @@ When a scene imports another module's `@entrypoint` and defines its own, the
 launchers select the scene's own entrypoint. An imported entrypoint is used only
 if the scene defines none.
 
+Custom launchers using `load_entrypoint_function` can load a scene inside a
+Python package that uses relative imports such as `from .helper import setup`;
+the scene runs under its package module name. `project_dir` is both the
+module-flush root and an import root, so a scene in a subdirectory can import
+helpers from the project root.
+
 ### Full Reload
 - Clears all entities and custom Python resources
 - Built-in (engine-plugin) resources survive as resources but are reset to their
@@ -272,6 +278,11 @@ If a reload introduces a Python error:
 3. Fix the Python source
 4. Call `reload {"mode": "full"}` to retry
 
+After a failed Full reload, the next reload is a Full recovery whatever was
+requested or saved, and it re-imports every project module, including ones the
+failed attempt had rolled back. Fixing a different file than the one that broke
+the reload is therefore enough.
+
 Failed reloads restore the previous scene namespace and helper module
 registrations, so `run_code` can inspect the previous generation's definitions.
 The previous world survives only when failure occurs before Full cleanup or on
@@ -291,6 +302,14 @@ registered system generation. Successful calls between repeats do not reset
 this suppression. `get_last_error` exposes the latest failure even after a
 failed reload, while `get_reload_status` retains that reload attempt's result.
 SSE events (`/mcp/v1/sse`) broadcast errors in real-time.
+
+Code that never returns, such as `while True:` in a system, an observer or a
+module imported by a reload, holds the scene's main thread. No reload, fix or
+control call can interrupt it, and tools time out. The timeout then says
+`The scene's main thread has been inside one frame for Ns`, which the bridge
+reads from `GET /api/v1/engine/activity`; that endpoint answers from the control
+server's own thread. Fix the code and call `run_scene` to restart. `run_code`
+has its own deadline and does not need this.
 
 ## Type Re-aliasing (`@component` / `@resource`)
 
@@ -329,8 +348,12 @@ Startup creates the replacement entities.
 Partial reload replaces only observers declared by `app.add_observer` in the
 entrypoint. Their callable and custom-event class therefore follow the committed
 scene generation without duplicate registrations. Observers registered later by
-`world.add_observer` or `entity.observe` remain attached to their existing event
-class and target, just as their runtime entities remain in the World.
+`world.add_observer` or `entity.observe` remain attached to their target, just as
+their runtime entities remain in the World, and keep receiving their custom
+event: an `@event` class keeps its identity across partial reloads and takes the
+reloaded class body, as `@component` and `@resource` classes do. An `Event`
+subclass without `@event` is a new class after each reload, so runtime observers
+of it stop firing.
 
 Entity-targeted dispatch indexes observers by event and target, so unrelated
 entity observers are not scanned for each trigger. Global observers still run
@@ -348,6 +371,13 @@ The delta compares with the last successfully committed generation, starting
 with the initial App declarations, and is reported once. An unchanged reload
 reports neither field, and a failed candidate does not publish or advance the
 comparison baseline.
+
+A reload whose `@entrypoint` code changed reports `entrypoint_changed` once, with
+an explanation. Python plugins, systems and observers declared there follow the
+reload, but native plugin settings such as `ScheduleRunnerPlugin.run_loop(8)`,
+`WindowPlugin` and other App configuration apply only at startup, so call
+`run_scene` for them. Comment and blank-line edits that only move the entrypoint
+do not count.
 
 New bridge-backed Rust plugins cannot be installed into an App that has already
 started. If `plugins_added` includes one, use `run_scene` before relying on its

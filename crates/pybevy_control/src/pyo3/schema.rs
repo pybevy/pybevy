@@ -157,6 +157,12 @@ pub fn get_component_schema(
                         "components": { &type_name: "<packed entity id>" }
                     }),
                 );
+                obj.insert(
+                    "spawn_example_placeholders".into(),
+                    serde_json::json!({
+                        "<packed entity id>": "the related entity's packed ID from spawn_entity or query_entities"
+                    }),
+                );
             }
 
             if is_asset_handle {
@@ -193,6 +199,7 @@ pub fn get_component_schema(
                     );
                 }
                 if bridge.can_insert()
+                    && bridge.offers_spawn_example()
                     && bridge.can_offer_hook_free_default_spawn()
                     && let Some(registry) = world.get_resource::<AppTypeRegistry>()
                     && let Some(spawn_fields) = reflect::replayable_enum_default_fields(
@@ -218,7 +225,9 @@ pub fn get_component_schema(
             {
                 let obj = result.as_object_mut().unwrap();
                 obj.insert("defaults".into(), serde_json::Value::Object(defaults));
-                if let Some(spawn_fields) = spawn_fields {
+                if let Some(spawn_fields) = spawn_fields
+                    && bridge.offers_spawn_example()
+                {
                     let spawn_example = serde_json::json!({
                         "components": {
                             &type_name: &spawn_fields,

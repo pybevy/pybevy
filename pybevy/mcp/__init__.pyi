@@ -13,6 +13,8 @@ class McpPlugin(Plugin):
         manipulation: Enable entity/resource manipulation tools (default True)
         execute_python: Enable arbitrary Python execution (default False, opt-in for safety)
         api_discovery: Enable API stub discovery tools (default True)
+        token: When set, every request except /health must send
+            ``Authorization: Bearer <token>``; ``pybevy mcp`` sets one per scene
     """
 
     def __init__(
@@ -23,6 +25,7 @@ class McpPlugin(Plugin):
         manipulation: bool = True,
         execute_python: bool = False,
         api_discovery: bool = True,
+        token: str | None = None,
     ) -> None: ...
 
 class ApiIndex:

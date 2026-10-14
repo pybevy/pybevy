@@ -81,7 +81,7 @@ When geometry looks wrong (wrong size, shape, missing, or occluded), follow this
 
 ## Batched Schedules
 
-- `schedule_actions` - Submit batched, timed tool calls that execute inside the engine frame loop. Same-`at` actions fire in the same frame (atomic). Supports time offsets (`at`), frame offsets (`at_frame`), `stop_on_error`, `skip_if_error`, and sync/async modes. Actions run in order; results report `late_by_frames` or `late_by_seconds` when an earlier capture held an action past its offset. A schedule naming a tool that `McpPlugin` disables (for example `run_code` without `execute_python=True`) is rejected before any action runs.
+- `schedule_actions` - Submit batched, timed tool calls that execute inside the engine frame loop. Same-`at` actions fire in the same frame (atomic). Supports time offsets (`at`, at most 60 virtual seconds in sync mode or 3600 in async mode; sync requests end after 120 wall-clock seconds), frame offsets (`at_frame`), `stop_on_error`, `skip_if_error`, and sync/async modes. Actions run in order; results report `late_by_frames` or `late_by_seconds` when an earlier capture held an action past its offset. A schedule naming a tool that `McpPlugin` disables (for example `run_code` without `execute_python=True`) is rejected before any action runs.
 - `get_schedule_result` - Poll status of an async schedule.
 
 **Use `schedule_actions` instead of sequential tool calls** when you need atomic multi-step operations (pause → seek → screenshot → resume), time-lapse captures, or any workflow where intermediate frames between tool calls would cause drift. See `guide://scene-editing` for examples.
@@ -195,6 +195,9 @@ multiple types, control tools reject it and list the exact qualified names to
 use, such as `pybevy.ecs.Name` and `game.Name`. Query filters and schemas accept
 the same qualified component names. `resource_names` lists qualified spellings
 for colliding resources.
+Native values whose wrapper has no Python properties, such as Time, input
+resources and `Gamepad`, read back as Bevy's reflected fields; readable does
+not mean writable through `set_resource`.
 `get_registry.custom_component_qualified_names` lists addressable custom
 component names alongside the existing short-name inventory.
 

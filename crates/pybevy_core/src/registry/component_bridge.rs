@@ -68,6 +68,11 @@ pub trait ComponentBridge: Send + Sync + 'static {
         false
     }
 
+    /// Whether schemas may offer the default value as a spawn example at all.
+    fn offers_spawn_example(&self) -> bool {
+        true
+    }
+
     /// Value domains the wrapper declares, for write paths outside its setters.
     fn field_domains(&self) -> &'static [FieldDomainEntry] {
         &[]

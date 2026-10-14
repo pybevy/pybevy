@@ -355,6 +355,7 @@ pub(crate) fn new_main_condition(
     func: Py<PyAny>,
     generation: u32,
     error_state: Arc<Mutex<Vec<PyErr>>>,
+    error_buffer: SystemErrorBuffer,
     stage: pybevy_reload::SystemStage,
     state_machine_count: Option<usize>,
 ) -> PyResult<MainDynamicCondition> {
@@ -363,7 +364,7 @@ pub(crate) fn new_main_condition(
         generation,
         stage,
         error_state,
-        Arc::new(Mutex::new(None)),
+        error_buffer,
         InvocationKind::Condition,
         false,
         false,
@@ -382,6 +383,7 @@ pub(crate) fn new_main_persistent_condition(
     func: Py<PyAny>,
     generation: u32,
     error_state: Arc<Mutex<Vec<PyErr>>>,
+    error_buffer: SystemErrorBuffer,
     stage: pybevy_reload::SystemStage,
     state_machine_count: Option<usize>,
 ) -> PyResult<MainDynamicCondition> {
@@ -390,7 +392,7 @@ pub(crate) fn new_main_persistent_condition(
         generation,
         stage,
         error_state,
-        Arc::new(Mutex::new(None)),
+        error_buffer,
         InvocationKind::Condition,
         false,
         false,

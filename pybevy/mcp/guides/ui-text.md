@@ -43,8 +43,13 @@ world positions into the viewport.
 
 `TextBounds` for world-space text rejects NaN width and height values before
 they reach layout. Use `None` for an unbounded dimension. `TextFont.font_size`
-must be finite and non-negative in every `FontSize` unit, including through
-MCP component writes.
+must be in [0, 4096] in every `FontSize` unit, including through MCP component
+writes. `RemSize` must be in (0, 4096] and `UiScale` in (0, 64].
+`LineHeight.Px` and `LetterSpacing.Px` take values in [-65536, 65536],
+`LineHeight.RelativeToFont` in [-1000, 1000] and `LetterSpacing.Rem` in
+[-4096, 4096]. The rendered glyph size is the font size times `UiScale` and the
+window scale factor; keep that product in the low thousands, since Bevy
+rasterizes each glyph at that size.
 
 ## UI Text vs World Text
 
