@@ -1,5 +1,5 @@
 use bevy::ui::auto_directional_navigation::AutoDirectionalNavigation;
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, PyComponent, repr::object_repr};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
@@ -35,7 +35,15 @@ impl PyAutoDirectionalNavigation {
         Ok(())
     }
 
-    fn __eq__(&self, other: &Self) -> PyResult<bool> {
+    pub fn __eq__(&self, other: &Self) -> PyResult<bool> {
         Ok(self.as_ref()? == other.as_ref()?)
+    }
+
+    pub fn __repr__(&self) -> PyResult<String> {
+        let value = self.as_ref()?.respect_tab_order;
+        Ok(format!(
+            "AutoDirectionalNavigation(respect_tab_order={})",
+            object_repr(value)
+        ))
     }
 }

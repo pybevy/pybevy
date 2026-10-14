@@ -800,7 +800,7 @@ class DefaultOpaqueRendererMethod(Resource):
     used for opaque materials that specify OpaqueRendererMethod.Auto.
     """
 
-    def __init__(self, method: OpaqueRendererMethod = ...) -> None: ...
+    def __init__(self) -> None: ...
 
     @staticmethod
     def forward() -> DefaultOpaqueRendererMethod:

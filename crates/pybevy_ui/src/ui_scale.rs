@@ -41,8 +41,4 @@ impl PyUiScale {
             Err(_) => "UiScale(<invalid>)".to_string(),
         }
     }
-
-    pub fn __float__(&self) -> PyResult<f64> {
-        Ok(self.as_ref()?.0 as f64)
-    }
 }

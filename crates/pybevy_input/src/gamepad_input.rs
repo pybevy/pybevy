@@ -9,10 +9,11 @@ use crate::{gamepad_axis::PyGamepadAxis, gamepad_button::PyGamepadButton};
     name = "GamepadInput",
     module = "pybevy.input",
     eq,
+    hash,
     frozen,
     from_py_object
 )]
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyGamepadInput {
     #[py_bevy(tuple)]
     Axis {

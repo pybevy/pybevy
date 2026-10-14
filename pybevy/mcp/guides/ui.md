@@ -62,7 +62,7 @@ def setup(commands: Commands) -> None:
             Val.Px(3.0),
             Color.srgba(0.4, 0.7, 1.0, 0.7),
         ),
-        BoxShadow.single(
+        BoxShadow.new(
             Color.srgba(0.0, 0.0, 0.0, 0.45),
             Val.Px(6.0),
             Val.Px(8.0),
@@ -95,6 +95,9 @@ def inspect_layout(query: Query[tuple[ComputedNode, UiGlobalTransform]]) -> None
 
 `UiGlobalTransform` is engine-computed and cannot be inserted directly. Change
 `UiTransform` when you need to translate, rotate, or scale a UI node.
+Nested `Node.border_radius`, `Node.overflow_clip_margin`, and
+`UiTransform.translation` values write through when reached through `Query[Mut[T]]`.
+Their fields reject writes from read-only queries and expire with the system.
 
 Bevy permits explicit `ComputedNode` adjustments after layout, for example
 for scrollbar geometry. Use `Query[Mut[ComputedNode]]` to assign its fields

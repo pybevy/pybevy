@@ -1,5 +1,5 @@
 use bevy::ui::widget::Text;
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, PyComponent, repr::str_repr};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
@@ -27,5 +27,13 @@ impl PyText {
     pub fn set_text(&mut self, value: String) -> PyResult<()> {
         self.as_mut()?.0 = value;
         Ok(())
+    }
+
+    pub fn __eq__(&self, other: &Self) -> PyResult<bool> {
+        Ok(self.as_ref()? == other.as_ref()?)
+    }
+
+    pub fn __repr__(&self) -> PyResult<String> {
+        Ok(format!("Text({})", str_repr(&self.as_ref()?.0)))
     }
 }

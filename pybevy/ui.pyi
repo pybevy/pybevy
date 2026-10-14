@@ -810,9 +810,15 @@ class OverflowClipMargin:
     def visual_box(self) -> VisualBox:
         """The visible unclipped area box."""
 
+    @visual_box.setter
+    def visual_box(self, value: VisualBox) -> None: ...
+
     @property
     def margin(self) -> float:
         """The margin width on each edge in logical pixels."""
+
+    @margin.setter
+    def margin(self, value: float) -> None: ...
 
     def __eq__(self, other: object) -> bool: ...
 
@@ -839,7 +845,7 @@ class Val2:
     """
 
 
-    ZERO: Val2
+    ZERO: ClassVar[Val2]
     """A zero-valued Val2."""
 
     def __init__(self, x: Val = ..., y: Val = ...) -> None:
@@ -857,9 +863,15 @@ class Val2:
     def x(self) -> Val:
         """The x component."""
 
+    @x.setter
+    def x(self, value: Val) -> None: ...
+
     @property
     def y(self) -> Val:
         """The y component."""
+
+    @y.setter
+    def y(self, value: Val) -> None: ...
 
     def __eq__(self, other: object) -> bool: ...
 
@@ -1004,15 +1016,12 @@ class BorderGradient(Component):
 
         # Create border with gradient
         gradient = LinearGradient(...)
-        border = BorderGradient([Gradient.linear(gradient)])
+        border = BorderGradient([Gradient.Linear(gradient)])
         ```
     """
 
     def __init__(self, gradients: list[Gradient] = ...) -> None:
         """Create a BorderGradient with the given gradients."""
-
-    def add_gradient(self, gradient: Gradient) -> None:
-        """Add a gradient to the border."""
 
     @property
     def gradients(self) -> list[Gradient]:
@@ -1021,15 +1030,7 @@ class BorderGradient(Component):
     @gradients.setter
     def gradients(self, value: list[Gradient]) -> None: ...
 
-    def len(self) -> int:
-        """Number of gradients."""
-
-    def is_empty(self) -> bool:
-        """Check if empty."""
-
     def __eq__(self, other: object) -> bool: ...
-
-    def __len__(self) -> int: ...
 
 
 class Text(Component):
@@ -1071,6 +1072,8 @@ class Text(Component):
 
     @text.setter
     def text(self, value: str) -> None: ...
+
+    def __eq__(self, other: object) -> bool: ...
 
 
 class Node(Component):
@@ -1481,6 +1484,8 @@ class Node(Component):
     @grid_auto_rows.setter
     def grid_auto_rows(self, value: list[GridTrack]) -> None: ...
 
+    def __eq__(self, other: object) -> bool: ...
+
 
 class BackgroundColor(Component):
     """Background color component for UI nodes.
@@ -1508,7 +1513,7 @@ class BackgroundColor(Component):
     Args:
         color: The background color (optional, defaults to transparent)
     """
-    def __init__(self, color: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza | None = None) -> None: ...
+    def __init__(self, color: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza = ...) -> None: ...
 
     @property
     def color(self) -> Color:
@@ -1558,7 +1563,7 @@ class BorderColor(Component):
     """
     def __init__(
         self,
-        color: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza | None = None,
+        color: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza = ...,
         *,
         top: Color = ...,
         right: Color = ...,
@@ -1612,7 +1617,7 @@ class BorderColor(Component):
 class BorderRadius:
     """Border radius for rounded corners on UI nodes.
 
-    BorderRadius is a frozen data class (not a Component). It is used to set
+    BorderRadius is a mutable data value (not a Component). It is used to set
     the radius of each corner independently. All corners use Val sizing,
     supporting pixels, percentages, auto-sizing, and viewport-relative units.
 
@@ -1632,7 +1637,7 @@ class BorderRadius:
         # Per-corner via constructor kwargs
         br = BorderRadius(Val.Px(5.0), top_left=Val.Px(20.0))
 
-        # Access corner values (read-only properties)
+        # Access corner values
         print(br.top_left)   # Val.Px(20.0)
         print(br.top_right)  # Val.Px(5.0)
         ```
@@ -1649,20 +1654,20 @@ class BorderRadius:
         ``BorderRadius(top_left=Val.Px(10.0))``.
     """
 
-    ZERO: BorderRadius
+    ZERO: ClassVar[BorderRadius]
     """Zero curvature. All corners will be right-angled."""
 
-    MAX: BorderRadius
+    MAX: ClassVar[BorderRadius]
     """Maximum curvature. Creates capsule/circular shape."""
 
     def __init__(
         self,
         radius: Val = ...,
         *,
-        top_left: Val | None = None,
-        top_right: Val | None = None,
-        bottom_left: Val | None = None,
-        bottom_right: Val | None = None,
+        top_left: Val = ...,
+        top_right: Val = ...,
+        bottom_right: Val = ...,
+        bottom_left: Val = ...,
     ) -> None: ...
 
     @staticmethod
@@ -1683,6 +1688,18 @@ class BorderRadius:
         """
 
     @staticmethod
+    def left(radius: Val) -> BorderRadius: ...
+
+    @staticmethod
+    def right(radius: Val) -> BorderRadius: ...
+
+    @staticmethod
+    def top(radius: Val) -> BorderRadius: ...
+
+    @staticmethod
+    def bottom(radius: Val) -> BorderRadius: ...
+
+    @staticmethod
     def px(
         top_left: float, top_right: float, bottom_right: float, bottom_left: float
     ) -> BorderRadius:
@@ -1698,17 +1715,31 @@ class BorderRadius:
     def top_left(self) -> Val:
         """Top-left corner radius."""
 
+    @top_left.setter
+    def top_left(self, value: Val) -> None: ...
+
     @property
     def top_right(self) -> Val:
         """Top-right corner radius."""
+
+    @top_right.setter
+    def top_right(self, value: Val) -> None: ...
 
     @property
     def bottom_left(self) -> Val:
         """Bottom-left corner radius."""
 
+    @bottom_left.setter
+    def bottom_left(self, value: Val) -> None: ...
+
     @property
     def bottom_right(self) -> Val:
         """Bottom-right corner radius."""
+
+    @bottom_right.setter
+    def bottom_right(self, value: Val) -> None: ...
+
+    def __eq__(self, other: object) -> bool: ...
 
     # Builder methods
     def with_top_left(self, radius: Val) -> BorderRadius: ...
@@ -1762,7 +1793,7 @@ class Outline(Component):
         self,
         width: Val = ...,
         offset: Val = ...,
-        color: Color | None = None,
+        color: Color = ...,
     ) -> None: ...
 
     @property
@@ -1785,6 +1816,8 @@ class Outline(Component):
 
     @color.setter
     def color(self, value: Color) -> None: ...
+
+    def __eq__(self, other: object) -> bool: ...
 
 
 class ZIndex(Component):
@@ -1929,6 +1962,16 @@ class ImageNode(Component):
         image_mode = NodeImageMode.Stretch() to cover the Node exactly. An
         unsized Node adopts the texture's intrinsic 1-by-1 size.
         """
+
+    def with_color(self, color: Color) -> ImageNode: ...
+
+    def with_flip_x(self) -> ImageNode: ...
+
+    def with_flip_y(self) -> ImageNode: ...
+
+    def with_rect(self, rect: Rect) -> ImageNode: ...
+
+    def with_mode(self, mode: NodeImageMode) -> ImageNode: ...
 
     @property
     def image(self) -> Handle[Image]:
@@ -2790,40 +2833,26 @@ class ScrollPosition(Component):
     Example:
         ```python
         from pybevy.ui import Node, ScrollPosition, Overflow
+        from pybevy.math import Vec2
         from pybevy.ecs import Commands, Query, Mut
 
         # Create a scrollable container
         def setup(commands: Commands) -> None:
             commands.spawn(
                 Node(overflow=Overflow.scroll_y()),
-                ScrollPosition(0.0, 0.0),
+                ScrollPosition(Vec2.ZERO),
             )
 
         # Read/modify scroll position
         def scroll_system(query: Query[Mut[ScrollPosition]]) -> None:
             for scroll in query:
-                scroll.y += 10.0  # Scroll down
+                scroll.offset.y += 10.0  # Scroll down
         ```
 
     Args:
-        x: Horizontal scroll offset (default: 0.0)
-        y: Vertical scroll offset (default: 0.0)
+        offset: Scroll offset (default: Vec2.ZERO)
     """
-    def __init__(self, x: float = 0.0, y: float = 0.0) -> None: ...
-
-    @property
-    def x(self) -> float:
-        """Horizontal scroll offset."""
-
-    @x.setter
-    def x(self, value: float) -> None: ...
-
-    @property
-    def y(self) -> float:
-        """Vertical scroll offset."""
-
-    @y.setter
-    def y(self, value: float) -> None: ...
+    def __init__(self, offset: Vec2 = Vec2.ZERO) -> None: ...
 
     @property
     def offset(self) -> Vec2:
@@ -2834,7 +2863,7 @@ class ScrollPosition(Component):
 
     @staticmethod
     def batch(  # type: ignore[override]
-        *, x: np.typing.ArrayLike | None = None, y: np.typing.ArrayLike | None = None
+        *, offset: np.typing.ArrayLike | None = None
     ) -> Batchable: ...
 
 
@@ -2974,9 +3003,6 @@ class UiScale(Resource):
     @scale.setter
     def scale(self, value: float) -> None: ...
 
-    def __float__(self) -> float:
-        """Float conversion returns the scale value."""
-
 
 class ColorStop:
     """A color stop for gradients.
@@ -2997,7 +3023,7 @@ class ColorStop:
 
     def __init__(
         self,
-        color: Color | None = None,
+        color: Color = ...,
         point: Val = ...,
         *,
         hint: float = 0.5
@@ -3064,7 +3090,7 @@ class AngularColorStop:
 
     def __init__(
         self,
-        color: Color | None = None,
+        color: Color = ...,
         angle: float | None = None,
         *,
         hint: float = 0.5
@@ -3124,11 +3150,24 @@ class UiPosition:
         ```python
         from pybevy.ui import UiPosition
 
-        pos = UiPosition.center()
-        pos = UiPosition.top_left()
-        pos = UiPosition.center().at_px(10.0, 20.0)
+        pos = UiPosition.CENTER
+        pos = UiPosition.TOP_LEFT
+        pos = UiPosition.CENTER.at_px(10.0, 20.0)
         ```
+
+    Bevy constants use zero pixel offsets. Pass both offsets to methods such as
+    `center(x, y)` when a different value is needed.
     """
+
+    CENTER: ClassVar[UiPosition]
+    TOP: ClassVar[UiPosition]
+    BOTTOM: ClassVar[UiPosition]
+    LEFT: ClassVar[UiPosition]
+    RIGHT: ClassVar[UiPosition]
+    TOP_LEFT: ClassVar[UiPosition]
+    TOP_RIGHT: ClassVar[UiPosition]
+    BOTTOM_LEFT: ClassVar[UiPosition]
+    BOTTOM_RIGHT: ClassVar[UiPosition]
 
     def __init__(self, anchor: Vec2, x: Val, y: Val) -> None:
         """Create a position with explicit anchor and offsets."""
@@ -3142,40 +3181,40 @@ class UiPosition:
         """
 
     @staticmethod
-    def center(x: Val | None = None, y: Val | None = None) -> UiPosition:
-        """Center position, with optional offsets."""
+    def center(x: Val, y: Val) -> UiPosition:
+        """Center position with explicit offsets."""
 
     @staticmethod
-    def top(x: Val | None = None, y: Val | None = None) -> UiPosition:
-        """Top center position, with optional offsets."""
+    def top(x: Val, y: Val) -> UiPosition:
+        """Top center position with explicit offsets."""
 
     @staticmethod
-    def bottom(x: Val | None = None, y: Val | None = None) -> UiPosition:
-        """Bottom center position, with optional offsets."""
+    def bottom(x: Val, y: Val) -> UiPosition:
+        """Bottom center position with explicit offsets."""
 
     @staticmethod
-    def left(x: Val | None = None, y: Val | None = None) -> UiPosition:
-        """Left center position, with optional offsets."""
+    def left(x: Val, y: Val) -> UiPosition:
+        """Left center position with explicit offsets."""
 
     @staticmethod
-    def right(x: Val | None = None, y: Val | None = None) -> UiPosition:
-        """Right center position, with optional offsets."""
+    def right(x: Val, y: Val) -> UiPosition:
+        """Right center position with explicit offsets."""
 
     @staticmethod
-    def top_left(x: Val | None = None, y: Val | None = None) -> UiPosition:
-        """Top-left corner position, with optional offsets."""
+    def top_left(x: Val, y: Val) -> UiPosition:
+        """Top-left corner position with explicit offsets."""
 
     @staticmethod
-    def top_right(x: Val | None = None, y: Val | None = None) -> UiPosition:
-        """Top-right corner position, with optional offsets."""
+    def top_right(x: Val, y: Val) -> UiPosition:
+        """Top-right corner position with explicit offsets."""
 
     @staticmethod
-    def bottom_left(x: Val | None = None, y: Val | None = None) -> UiPosition:
-        """Bottom-left corner position, with optional offsets."""
+    def bottom_left(x: Val, y: Val) -> UiPosition:
+        """Bottom-left corner position with explicit offsets."""
 
     @staticmethod
-    def bottom_right(x: Val | None = None, y: Val | None = None) -> UiPosition:
-        """Bottom-right corner position, with optional offsets."""
+    def bottom_right(x: Val, y: Val) -> UiPosition:
+        """Bottom-right corner position with explicit offsets."""
 
     def at(self, x: Val, y: Val) -> UiPosition:
         """Set offsets from anchor."""
@@ -3221,37 +3260,43 @@ class RadialGradientShape:
         ```python
         from pybevy.ui import RadialGradientShape, Val
 
-        shape = RadialGradientShape.circle(Val.Px(50.0))
-        shape = RadialGradientShape.ellipse(Val.Px(100.0), Val.Px(50.0))
-        shape = RadialGradientShape.farthest_corner()
+        shape = RadialGradientShape.Circle(Val.Px(50.0))
+        shape = RadialGradientShape.Ellipse(Val.Px(100.0), Val.Px(50.0))
+        shape = RadialGradientShape.FarthestCorner()
         ```
     """
 
-    def __init__(self) -> None: ...
+    class ClosestSide(RadialGradientShape):
+        __match_args__: ClassVar[tuple[()]] = ()
+        def __init__(self) -> None: ...
 
-    @staticmethod
-    def closest_side() -> RadialGradientShape:
-        """Circle with radius to closest side."""
+    class FarthestSide(RadialGradientShape):
+        __match_args__: ClassVar[tuple[()]] = ()
+        def __init__(self) -> None: ...
 
-    @staticmethod
-    def farthest_side() -> RadialGradientShape:
-        """Circle with radius to farthest side."""
+    class ClosestCorner(RadialGradientShape):
+        __match_args__: ClassVar[tuple[()]] = ()
+        def __init__(self) -> None: ...
 
-    @staticmethod
-    def closest_corner() -> RadialGradientShape:
-        """Ellipse with extents to closest corner."""
+    class FarthestCorner(RadialGradientShape):
+        __match_args__: ClassVar[tuple[()]] = ()
+        def __init__(self) -> None: ...
 
-    @staticmethod
-    def farthest_corner() -> RadialGradientShape:
-        """Ellipse with extents to farthest corner."""
+    class Circle(RadialGradientShape):
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> Val: ...
+        def __init__(self, value: Val) -> None: ...
 
-    @staticmethod
-    def circle(radius: Val) -> RadialGradientShape:
-        """Circle with explicit radius."""
+    class Ellipse(RadialGradientShape):
+        __match_args__: ClassVar[tuple[Literal["width"], Literal["height"]]] = ("width", "height")
+        @property
+        def width(self) -> Val: ...
+        @property
+        def height(self) -> Val: ...
+        def __init__(self, width: Val, height: Val) -> None: ...
 
-    @staticmethod
-    def ellipse(width: Val, height: Val) -> RadialGradientShape:
-        """Ellipse with explicit dimensions."""
+    def __eq__(self, other: object) -> bool: ...
 
 
 class LinearGradient:
@@ -3271,7 +3316,7 @@ class LinearGradient:
         # Use with BackgroundGradient component
         commands.spawn((
             Node(),
-            BackgroundGradient([Gradient.linear(gradient)]),
+            BackgroundGradient([Gradient.Linear(gradient)]),
         ))
         ```
     """
@@ -3358,8 +3403,8 @@ class RadialGradient:
         from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
 
         gradient = RadialGradient(
-            UiPosition.center(),
-            RadialGradientShape.farthest_corner(),
+            UiPosition.CENTER,
+            RadialGradientShape.FarthestCorner(),
             [ColorStop.auto(Color.WHITE), ColorStop.auto(Color.BLACK)],
         )
         ```
@@ -3425,7 +3470,7 @@ class ConicGradient:
         from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
 
         gradient = ConicGradient(
-            UiPosition.center(),
+            UiPosition.CENTER,
             [AngularColorStop.auto(Color.srgb(1.0, 0.0, 0.0)), AngularColorStop.auto(Color.srgb(0.0, 0.0, 1.0))],
         )
         ```
@@ -3501,21 +3546,27 @@ class Gradient:
             ColorStop.auto(Color.srgb(1.0, 0.0, 0.0)),
             ColorStop.auto(Color.srgb(0.0, 0.0, 1.0)),
         ])
-        gradient = Gradient.linear(linear)
+        gradient = Gradient.Linear(linear)
         ```
     """
 
-    @staticmethod
-    def linear(gradient: LinearGradient) -> Gradient:
-        """Create from a linear gradient."""
+    class Linear(Gradient):
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> LinearGradient: ...
+        def __init__(self, value: LinearGradient) -> None: ...
 
-    @staticmethod
-    def radial(gradient: RadialGradient) -> Gradient:
-        """Create from a radial gradient."""
+    class Radial(Gradient):
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> RadialGradient: ...
+        def __init__(self, value: RadialGradient) -> None: ...
 
-    @staticmethod
-    def conic(gradient: ConicGradient) -> Gradient:
-        """Create from a conic gradient."""
+    class Conic(Gradient):
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> ConicGradient: ...
+        def __init__(self, value: ConicGradient) -> None: ...
 
     def is_empty(self) -> bool:
         """Check if gradient has no stops."""
@@ -3619,7 +3670,7 @@ class BoxShadow(Component):
 
         def setup(commands: Commands) -> None:
             # Single shadow using convenience method
-            shadow = BoxShadow.single(
+            shadow = BoxShadow.new(
                 color=Color.srgba(0.0, 0.0, 0.0, 0.5),
                 x_offset=Val.Px(4.0),
                 y_offset=Val.Px(4.0),
@@ -3646,7 +3697,7 @@ class BoxShadow(Component):
         ```
     """
 
-    def __init__(self, shadows: list[ShadowStyle] | None = None) -> None:
+    def __init__(self, shadows: list[ShadowStyle] = ...) -> None:
         """Create a BoxShadow with multiple shadow styles.
 
         Args:
@@ -3654,7 +3705,7 @@ class BoxShadow(Component):
         """
 
     @staticmethod
-    def single(
+    def new(
         color: Color,
         x_offset: Val,
         y_offset: Val,
@@ -3702,6 +3753,8 @@ class BoxShadow(Component):
     def __setitem__(self, index: int, style: ShadowStyle) -> None:
         """Set shadow style by index."""
 
+    def __eq__(self, other: object) -> bool: ...
+
 
 class BackgroundGradient(Component):
     """Component for displaying gradients on UI nodes.
@@ -3719,16 +3772,13 @@ class BackgroundGradient(Component):
 
             commands.spawn((
                 Node(),
-                BackgroundGradient([Gradient.linear(gradient)]),
+                BackgroundGradient([Gradient.Linear(gradient)]),
             ))
         ```
     """
 
     def __init__(self, gradients: list[Gradient] = ...) -> None:
         """Create with a list of gradients."""
-
-    def add_gradient(self, gradient: Gradient) -> None:
-        """Add a gradient to the list."""
 
     @property
     def gradients(self) -> list[Gradient]:
@@ -3737,15 +3787,7 @@ class BackgroundGradient(Component):
     @gradients.setter
     def gradients(self, value: list[Gradient]) -> None: ...
 
-    def len(self) -> int:
-        """Number of gradients."""
-
-    def is_empty(self) -> bool:
-        """Check if no gradients."""
-
     def __eq__(self, other: object) -> bool: ...
-
-    def __len__(self) -> int: ...
 
 
 class TextShadow(Component):

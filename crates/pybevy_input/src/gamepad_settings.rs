@@ -1,19 +1,24 @@
 use std::collections::HashMap;
 
 use bevy::input::gamepad::{AxisSettings, ButtonAxisSettings, ButtonSettings, GamepadSettings};
-use pybevy_core::{ComponentStorage, PyComponent, public_error};
+use pybevy_core::{ComponentStorage, PyComponent, public_error, repr::float_repr};
 use pybevy_macros::pycomponent;
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pyo3::{
+    exceptions::PyValueError,
+    prelude::*,
+    types::{PyDict, PyModule},
+};
 
 use crate::{gamepad_axis::PyGamepadAxis, gamepad_button::PyGamepadButton};
 
 #[pyclass(
     name = "ButtonSettings",
     module = "pybevy.input",
+    eq,
     frozen,
     from_py_object
 )]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PyButtonSettings {
     pub(crate) inner: ButtonSettings,
 }
@@ -56,15 +61,21 @@ impl PyButtonSettings {
 
     fn __repr__(&self) -> String {
         format!(
-            "ButtonSettings(press={:.2}, release={:.2})",
-            self.inner.press_threshold(),
-            self.inner.release_threshold()
+            "ButtonSettings(press_threshold={}, release_threshold={})",
+            float_repr(self.inner.press_threshold()),
+            float_repr(self.inner.release_threshold())
         )
     }
 }
 
-#[pyclass(name = "AxisSettings", module = "pybevy.input", frozen, from_py_object)]
-#[derive(Debug, Clone)]
+#[pyclass(
+    name = "AxisSettings",
+    module = "pybevy.input",
+    eq,
+    frozen,
+    from_py_object
+)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PyAxisSettings {
     pub(crate) inner: AxisSettings,
 }
@@ -136,12 +147,12 @@ impl PyAxisSettings {
 
     fn __repr__(&self) -> String {
         format!(
-            "AxisSettings(deadzone=[{:.2}, {:.2}], livezone=[{:.2}, {:.2}], threshold={:.2})",
-            self.inner.deadzone_lowerbound(),
-            self.inner.deadzone_upperbound(),
-            self.inner.livezone_lowerbound(),
-            self.inner.livezone_upperbound(),
-            self.inner.threshold()
+            "AxisSettings(livezone_lowerbound={}, deadzone_lowerbound={}, deadzone_upperbound={}, livezone_upperbound={}, threshold={})",
+            float_repr(self.inner.livezone_lowerbound()),
+            float_repr(self.inner.deadzone_lowerbound()),
+            float_repr(self.inner.deadzone_upperbound()),
+            float_repr(self.inner.livezone_upperbound()),
+            float_repr(self.inner.threshold())
         )
     }
 }
@@ -196,8 +207,10 @@ impl PyButtonAxisSettings {
 
     fn __repr__(&self) -> String {
         format!(
-            "ButtonAxisSettings(high={:.2}, low={:.2}, threshold={:.2})",
-            self.inner.high, self.inner.low, self.inner.threshold
+            "ButtonAxisSettings(high={}, low={}, threshold={})",
+            float_repr(self.inner.high),
+            float_repr(self.inner.low),
+            float_repr(self.inner.threshold)
         )
     }
 }
@@ -331,37 +344,118 @@ impl PyGamepadSettings {
         Ok((&settings.default_button_axis_settings).into())
     }
 
-    #[getter]
-    pub fn button_settings(&self) -> PyResult<HashMap<PyGamepadButton, PyButtonSettings>> {
+    #[pyo3(name = "get_button_settings")]
+    pub fn lookup_button_settings(&self, button: PyGamepadButton) -> PyResult<PyButtonSettings> {
+        Ok(self.as_ref()?.get_button_settings(button.into()).into())
+    }
+
+    #[pyo3(name = "get_axis_settings")]
+    pub fn lookup_axis_settings(&self, axis: PyGamepadAxis) -> PyResult<PyAxisSettings> {
+        Ok(self.as_ref()?.get_axis_settings(axis.into()).into())
+    }
+
+    #[pyo3(name = "get_button_axis_settings")]
+    pub fn lookup_button_axis_settings(
+        &self,
+        button: PyGamepadButton,
+    ) -> PyResult<PyButtonAxisSettings> {
+        Ok(self
+            .as_ref()?
+            .get_button_axis_settings(button.into())
+            .into())
+    }
+
+    #[getter(button_settings)]
+    pub fn button_settings_snapshot<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let settings = self.as_ref()?;
-        Ok(settings
+        let values = PyDict::new(py);
+        for (button, value) in &settings.button_settings {
+            values.set_item(
+                PyGamepadButton::from(*button),
+                PyButtonSettings::from(value),
+            )?;
+        }
+        PyModule::import(py, "types")?
+            .getattr("MappingProxyType")?
+            .call1((values,))
+    }
+
+    #[getter(axis_settings)]
+    pub fn axis_settings_snapshot<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let settings = self.as_ref()?;
+        let values = PyDict::new(py);
+        for (axis, value) in &settings.axis_settings {
+            values.set_item(PyGamepadAxis::from(*axis), PyAxisSettings::from(value))?;
+        }
+        PyModule::import(py, "types")?
+            .getattr("MappingProxyType")?
+            .call1((values,))
+    }
+
+    #[getter(button_axis_settings)]
+    pub fn button_axis_settings_snapshot<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let settings = self.as_ref()?;
+        let values = PyDict::new(py);
+        for (button, value) in &settings.button_axis_settings {
+            values.set_item(
+                PyGamepadButton::from(*button),
+                PyButtonAxisSettings::from(value),
+            )?;
+        }
+        PyModule::import(py, "types")?
+            .getattr("MappingProxyType")?
+            .call1((values,))
+    }
+
+    fn __repr__(&self) -> PyResult<String> {
+        let settings = self.as_ref()?;
+        let mut buttons: Vec<String> = settings
             .button_settings
             .iter()
-            .map(|(k, v)| ((*k).into(), v.into()))
-            .collect())
-    }
-
-    #[getter]
-    pub fn axis_settings(&self) -> PyResult<HashMap<PyGamepadAxis, PyAxisSettings>> {
-        let settings = self.as_ref()?;
-        Ok(settings
+            .map(|(key, value)| {
+                format!(
+                    "{}: {}",
+                    PyGamepadButton::from(*key).__repr__(),
+                    PyButtonSettings::from(value).__repr__()
+                )
+            })
+            .collect();
+        buttons.sort();
+        let mut axes: Vec<String> = settings
             .axis_settings
             .iter()
-            .map(|(k, v)| ((*k).into(), v.into()))
-            .collect())
-    }
-
-    #[getter]
-    pub fn button_axis_settings(&self) -> PyResult<HashMap<PyGamepadButton, PyButtonAxisSettings>> {
-        let settings = self.as_ref()?;
-        Ok(settings
+            .map(|(key, value)| {
+                format!(
+                    "{}: {}",
+                    PyGamepadAxis::from(*key).__repr__(),
+                    PyAxisSettings::from(value).__repr__()
+                )
+            })
+            .collect();
+        axes.sort();
+        let mut button_axes: Vec<String> = settings
             .button_axis_settings
             .iter()
-            .map(|(k, v)| ((*k).into(), v.into()))
-            .collect())
-    }
-
-    fn __repr__(&self) -> &'static str {
-        "GamepadSettings"
+            .map(|(key, value)| {
+                format!(
+                    "{}: {}",
+                    PyGamepadButton::from(*key).__repr__(),
+                    PyButtonAxisSettings::from(value).__repr__()
+                )
+            })
+            .collect();
+        button_axes.sort();
+        Ok(format!(
+            "GamepadSettings(default_button_settings={}, default_axis_settings={}, default_button_axis_settings={}, button_settings={{{}}}, axis_settings={{{}}}, button_axis_settings={{{}}})",
+            PyButtonSettings::from(&settings.default_button_settings).__repr__(),
+            PyAxisSettings::from(&settings.default_axis_settings).__repr__(),
+            PyButtonAxisSettings::from(&settings.default_button_axis_settings).__repr__(),
+            buttons.join(", "),
+            axes.join(", "),
+            button_axes.join(", ")
+        ))
     }
 }

@@ -1,5 +1,5 @@
 use bevy::input::keyboard::Key;
-use pybevy_core::repr::str_repr;
+use pybevy_core::{public_error, repr::str_repr};
 use pybevy_macros::pyenum;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
@@ -645,7 +645,9 @@ impl TryFrom<&Key> for PyKey {
             Key::F33 => Ok(Self::F33()),
             Key::F34 => Ok(Self::F34()),
             Key::F35 => Ok(Self::F35()),
-            _ => Err(PyValueError::new_err("unsupported logical key variant")),
+            _ => Err(PyValueError::new_err(
+                public_error::UNSUPPORTED_LOGICAL_KEY_VARIANT,
+            )),
         }
     }
 }
@@ -970,7 +972,7 @@ impl From<PyKey> for Key {
 
 #[pymethods]
 impl PyKey {
-    fn __repr__(&self) -> String {
+    pub(crate) fn __repr__(&self) -> String {
         match self {
             Self::Character { value } => format!("Key.Character({})", str_repr(value)),
             Self::Unidentified { value } => {

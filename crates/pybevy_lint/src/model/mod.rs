@@ -159,6 +159,8 @@ pub enum ConstructorOrigin {
         function: String,
         /// Upstream constructor parameter names in declaration order.
         function_params: Vec<String>,
+        /// Upstream constructor parameter types in declaration order.
+        function_param_types: Vec<String>,
     },
     /// Initializes upstream public fields: every supplied field is
     /// keyword-only in upstream field declaration order.
@@ -177,6 +179,8 @@ pub enum ConstructorOrigin {
         /// Upstream constructor parameter names in declaration order (the
         /// positional-or-keyword native prefix mirrors these).
         function_params: Vec<String>,
+        /// Types of the mapped positional prefix.
+        function_param_types: Vec<String>,
         /// Fields supplied by the keyword-only tail, in declaration order.
         tail_fields: Vec<String>,
     },
@@ -217,6 +221,8 @@ pub enum ConstructorOrigin {
     },
     /// Reviewed Python-specific adapter with an individual exception.
     PythonAdapter {
+        /// Full upstream path for field checks on reviewed adapters.
+        upstream_type: String,
         /// Individual justification recorded beside the adapter.
         justification: String,
     },
@@ -252,8 +258,8 @@ impl ConstructorOrigin {
             | ConstructorOrigin::EnumVariant { upstream_type, .. }
             | ConstructorOrigin::Factory { upstream_type, .. }
             | ConstructorOrigin::NonConstructible { upstream_type }
-            | ConstructorOrigin::ZeroArg { upstream_type } => Some(upstream_type),
-            ConstructorOrigin::PythonAdapter { .. } => None,
+            | ConstructorOrigin::ZeroArg { upstream_type }
+            | ConstructorOrigin::PythonAdapter { upstream_type, .. } => Some(upstream_type),
         }
     }
 }

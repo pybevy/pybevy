@@ -1,79 +1,41 @@
-use bevy::ui::Gradient;
+use bevy::ui::{ConicGradient, Gradient, LinearGradient, RadialGradient};
 use pybevy_color::color::PyColor;
-use pybevy_core::repr::object_repr;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
-use crate::{
-    conic_gradient::PyConicGradient, linear_gradient::PyLinearGradient,
-    radial_gradient::PyRadialGradient,
-};
+use crate::gradient_snapshot::Snapshot;
 
+#[pyenum(Gradient, empty_tuple)]
 #[pyclass(name = "Gradient", module = "pybevy.ui", eq, frozen, from_py_object)]
 #[derive(Clone, Debug, PartialEq)]
-pub struct PyGradient {
-    pub inner: Gradient,
-}
-
-impl From<Gradient> for PyGradient {
-    fn from(gradient: Gradient) -> Self {
-        PyGradient { inner: gradient }
-    }
-}
-
-impl From<PyGradient> for Gradient {
-    fn from(py_gradient: PyGradient) -> Self {
-        py_gradient.inner
-    }
+pub enum PyGradient {
+    #[py_bevy(tuple)]
+    Linear {
+        #[py_type(Snapshot<LinearGradient>)]
+        value: LinearGradient,
+    },
+    #[py_bevy(tuple)]
+    Radial {
+        #[py_type(Snapshot<RadialGradient>)]
+        value: RadialGradient,
+    },
+    #[py_bevy(tuple)]
+    Conic {
+        #[py_type(Snapshot<ConicGradient>)]
+        value: ConicGradient,
+    },
 }
 
 #[pymethods]
 impl PyGradient {
-    #[staticmethod]
-    pub fn linear(gradient: PyLinearGradient) -> Self {
-        PyGradient {
-            inner: Gradient::Linear(gradient.into()),
-        }
-    }
-
-    #[staticmethod]
-    pub fn radial(gradient: PyRadialGradient) -> Self {
-        PyGradient {
-            inner: Gradient::Radial(gradient.into()),
-        }
-    }
-
-    #[staticmethod]
-    pub fn conic(gradient: PyConicGradient) -> Self {
-        PyGradient {
-            inner: Gradient::Conic(gradient.into()),
-        }
-    }
-
     pub fn is_empty(&self) -> bool {
-        self.inner.is_empty()
+        Gradient::from(self.clone()).is_empty()
     }
 
     pub fn get_single(&self, py: Python) -> PyResult<Option<Py<PyColor>>> {
-        match self.inner.get_single() {
-            Some(c) => Ok(Some(PyColor::from_color(c, py)?)),
+        match Gradient::from(self.clone()).get_single() {
+            Some(color) => Ok(Some(PyColor::from_color(color, py)?)),
             None => Ok(None),
-        }
-    }
-
-    pub fn __repr__(&self) -> String {
-        match &self.inner {
-            Gradient::Linear(g) => format!(
-                "Gradient.linear({})",
-                object_repr(PyLinearGradient::from(g.clone()))
-            ),
-            Gradient::Radial(g) => format!(
-                "Gradient.radial({})",
-                object_repr(PyRadialGradient::from(g.clone()))
-            ),
-            Gradient::Conic(g) => format!(
-                "Gradient.conic({})",
-                object_repr(PyConicGradient::from(g.clone()))
-            ),
         }
     }
 }

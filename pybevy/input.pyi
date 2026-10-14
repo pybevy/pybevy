@@ -1,5 +1,6 @@
 """Input handling for PyBevy - keyboard, mouse, and gamepad input."""
 
+from collections.abc import Mapping
 from datetime import timedelta
 from typing import ClassVar, Final, Generic, Literal, TypeVar
 
@@ -2311,6 +2312,8 @@ class GamepadInput:
         def button(self) -> GamepadButton: ...
         def __init__(self, button: GamepadButton) -> None: ...
 
+    def __hash__(self) -> int: ...
+
 class Gamepad(Component):
     """
     Gamepad component that tracks button and axis state for a connected gamepad.
@@ -2419,7 +2422,7 @@ class GamepadButtonChangedEvent(Message):
     """
 
     def __init__(
-        self, entity: Entity | None, button: GamepadButton, state: ButtonState, value: float
+        self, entity: Entity, button: GamepadButton, state: ButtonState, value: float
     ) -> None: ...
     @property
     def entity(self) -> Entity:
@@ -2466,7 +2469,7 @@ class GamepadAxisChangedEvent(Message):
     """
 
     def __init__(
-        self, entity: Entity | None, axis: GamepadAxis, value: float
+        self, entity: Entity, axis: GamepadAxis, value: float
     ) -> None: ...
     @property
     def entity(self) -> Entity:
@@ -2706,7 +2709,7 @@ class AccumulatedMouseMotion(Resource):
     The delta values are reset each frame, so they represent only the current frame's motion.
     """
 
-    def __init__(self) -> None: ...
+    def __init__(self, *, delta: Vec2 = ...) -> None: ...
     @property
     def delta(self) -> Vec2:
         """Accumulated mouse movement this frame as a Vec2."""
@@ -2718,7 +2721,7 @@ class AccumulatedMouseMotion(Resource):
 class AccumulatedMouseScroll(Resource):
     """Resource that accumulates mouse scroll delta per frame."""
 
-    def __init__(self, *, unit: MouseScrollUnit = ...) -> None: ...
+    def __init__(self, *, unit: MouseScrollUnit = ..., delta: Vec2 = ...) -> None: ...
     @property
     def delta(self) -> Vec2:
         """Accumulated scroll this frame as a Vec2."""
@@ -2794,23 +2797,11 @@ class PanGesture(Message):
     def value(self) -> Vec2:
         """Pan delta as a Vec2."""
 
-    @property
-    def x(self) -> float:
-        """Horizontal pan delta."""
-
-    @property
-    def y(self) -> float:
-        """Vertical pan delta."""
-
-    @property
-    def delta(self) -> Vec2:
-        """Pan delta as a Vec2."""
-
 class GamepadButtonStateChangedEvent(Message):
     """Gamepad button state change event."""
 
     def __init__(
-        self, entity: Entity | None, button: GamepadButton, state: ButtonState
+        self, entity: Entity, button: GamepadButton, state: ButtonState
     ) -> None: ...
     @property
     def entity(self) -> Entity:
@@ -3242,29 +3233,34 @@ class GamepadSettings(Component):
 
     @default_button_axis_settings.setter
     def default_button_axis_settings(self, value: ButtonAxisSettings) -> None: ...
+
+    def get_button_settings(self, button: GamepadButton) -> ButtonSettings: ...
+    def get_axis_settings(self, axis: GamepadAxis) -> AxisSettings: ...
+    def get_button_axis_settings(self, button: GamepadButton) -> ButtonAxisSettings: ...
+
     @property
-    def button_settings(self) -> dict[GamepadButton, ButtonSettings]:
+    def button_settings(self) -> Mapping[GamepadButton, ButtonSettings]:
         """Per-button overrides of `default_button_settings`.
 
-        Reading returns a copy, so assign the whole mapping back to change it:
+        Reading returns a read-only snapshot; assign the whole mapping to change it:
 
             settings.button_settings = {GamepadButton.South(): ButtonSettings(0.9, 0.1)}
 
         For the value bevy would actually apply, fall back to the default:
 
-            settings.button_settings.get(button, settings.default_button_settings)
+            settings.get_button_settings(button)
         """
 
     @button_settings.setter
     def button_settings(self, value: dict[GamepadButton, ButtonSettings]) -> None: ...
     @property
-    def axis_settings(self) -> dict[GamepadAxis, AxisSettings]:
+    def axis_settings(self) -> Mapping[GamepadAxis, AxisSettings]:
         """Per-axis overrides of `default_axis_settings`."""
 
     @axis_settings.setter
     def axis_settings(self, value: dict[GamepadAxis, AxisSettings]) -> None: ...
     @property
-    def button_axis_settings(self) -> dict[GamepadButton, ButtonAxisSettings]:
+    def button_axis_settings(self) -> Mapping[GamepadButton, ButtonAxisSettings]:
         """Per-button overrides of `default_button_axis_settings`."""
 
     @button_axis_settings.setter

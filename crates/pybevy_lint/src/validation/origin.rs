@@ -267,6 +267,7 @@ fn resolve_with_item(
             return None;
         }
         return Some(ConstructorOrigin::PythonAdapter {
+            upstream_type: item.full_path.clone(),
             justification: reason.clone(),
         });
     }
@@ -347,6 +348,12 @@ fn resolve_with_item(
                     .clone()
             })
             .collect();
+        let function_param_types: Vec<String> = function
+            .parameters
+            .iter()
+            .filter(|parameter| !mapping.internal_parameters.contains(&parameter.name))
+            .map(|parameter| parameter.param_type.clone())
+            .collect();
         let mut expected = function_params.clone();
         expected.extend(mapping.field_inputs.iter().cloned());
         if !unique_names(&expected) {
@@ -374,6 +381,7 @@ fn resolve_with_item(
                 upstream_type: item.full_path.clone(),
                 function: mapping.function.clone(),
                 function_params,
+                function_param_types,
                 tail_fields: field_order
                     .into_iter()
                     .filter(|name| mapping.field_inputs.contains(name))
@@ -384,6 +392,7 @@ fn resolve_with_item(
             upstream_type: item.full_path.clone(),
             function: mapping.function.clone(),
             function_params,
+            function_param_types,
         });
     }
 
@@ -426,6 +435,7 @@ fn resolve_with_item(
         BevyItemKind::Trait => {
             if is_varargs_rejection_base(constructor) {
                 Some(ConstructorOrigin::PythonAdapter {
+                    upstream_type: item.full_path.clone(),
                     justification: "variadic *_args/**_kwargs trait-marker subclassing/rejection base; constructor raises"
                         .to_string(),
                 })
@@ -493,6 +503,7 @@ fn resolve_struct_constructor(
     // record — never a fake BevyNew mapping.
     if is_varargs_rejection_base(constructor) {
         return Some(ConstructorOrigin::PythonAdapter {
+            upstream_type: bevy_type,
             justification:
                 "variadic *_args/**_kwargs subclassing/rejection base; constructor raises"
                     .to_string(),
@@ -540,6 +551,15 @@ fn resolve_struct_constructor(
             .map(|parameter| parameter.name.clone())
             .collect()
     });
+    let function_param_types: Vec<String> = mapped_new
+        .map(|method| {
+            method
+                .parameters
+                .iter()
+                .map(|parameter| parameter.param_type.clone())
+                .collect()
+        })
+        .unwrap_or_default();
 
     // Tuple structs: a mapped `new` over the tuple stays positional (the
     // flattened mirror keeps positional-or-keyword callers); without one the
@@ -549,6 +569,7 @@ fn resolve_struct_constructor(
             upstream_type: bevy_type,
             function: "new".to_string(),
             function_params: function_params.unwrap_or_default(),
+            function_param_types,
         });
     }
 
@@ -580,6 +601,7 @@ fn resolve_struct_constructor(
                 upstream_type: bevy_type,
                 function: "new".to_string(),
                 function_params: function_params.clone(),
+                function_param_types: function_param_types.clone(),
             });
         }
         // The mapped `new` is the positional prefix even when its parameter
@@ -613,6 +635,7 @@ fn resolve_struct_constructor(
                 upstream_type: bevy_type,
                 function: "new".to_string(),
                 function_params: function_params.clone(),
+                function_param_types: function_param_types.clone(),
                 tail_fields: tail,
             });
         }
@@ -646,6 +669,7 @@ fn resolve_struct_constructor(
             upstream_type: bevy_type,
             function: "new".to_string(),
             function_params: function_params.clone(),
+            function_param_types,
         });
     }
 
@@ -1209,11 +1233,8 @@ fn struct_field_types_in_items(
     type_name: &str,
 ) -> Option<HashMap<String, String>> {
     items.iter().find_map(|item| match item {
-        syn::Item::Struct(item) if item.ident == type_name => {
-            let syn::Fields::Named(fields) = &item.fields else {
-                return None;
-            };
-            Some(
+        syn::Item::Struct(item) if item.ident == type_name => match &item.fields {
+            syn::Fields::Named(fields) => Some(
                 fields
                     .named
                     .iter()
@@ -1226,8 +1247,20 @@ fn struct_field_types_in_items(
                         ))
                     })
                     .collect(),
-            )
-        }
+            ),
+            syn::Fields::Unnamed(fields) => Some(
+                fields
+                    .unnamed
+                    .iter()
+                    .enumerate()
+                    .map(|(index, field)| {
+                        let ty = &field.ty;
+                        (index.to_string(), quote::quote!(#ty).to_string())
+                    })
+                    .collect(),
+            ),
+            syn::Fields::Unit => Some(HashMap::new()),
+        },
         syn::Item::Mod(module) => module
             .content
             .as_ref()

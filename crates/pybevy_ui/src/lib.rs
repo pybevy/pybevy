@@ -13,6 +13,7 @@ pub mod conic_gradient;
 pub mod enums;
 pub mod focus_policy;
 pub mod gradient;
+mod gradient_snapshot;
 pub mod grid_placement;
 pub mod grid_track;
 pub mod grid_track_repetition;

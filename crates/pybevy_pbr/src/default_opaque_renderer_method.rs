@@ -1,7 +1,6 @@
-use bevy::{material::OpaqueRendererMethod, pbr::DefaultOpaqueRendererMethod};
+use bevy::pbr::DefaultOpaqueRendererMethod;
 use pybevy_core::{PyResource, ResourceStorage};
 use pybevy_macros::pyresource;
-use pybevy_material::opaque_renderer_method::PyOpaqueRendererMethod;
 use pyo3::prelude::*;
 
 #[pyresource(DefaultOpaqueRendererMethod, bridge)]
@@ -14,15 +13,8 @@ pub struct PyDefaultOpaqueRendererMethod {
 #[pymethods]
 impl PyDefaultOpaqueRendererMethod {
     #[new]
-    #[pyo3(signature = (method = PyOpaqueRendererMethod::Forward))]
-    pub fn new(method: PyOpaqueRendererMethod) -> PyClassInitializer<Self> {
-        let bevy_method: OpaqueRendererMethod = method.into();
-        let resource = match bevy_method {
-            OpaqueRendererMethod::Forward => DefaultOpaqueRendererMethod::forward(),
-            OpaqueRendererMethod::Deferred => DefaultOpaqueRendererMethod::deferred(),
-            OpaqueRendererMethod::Auto => DefaultOpaqueRendererMethod::forward(),
-        };
-        Self::from_owned(resource)
+    pub fn new() -> PyClassInitializer<Self> {
+        Self::from_owned(DefaultOpaqueRendererMethod::default())
     }
 
     #[staticmethod]

@@ -1,5 +1,5 @@
 use bevy::ui::{Val, percent, px, vh, vmax, vmin, vw};
-use pybevy_core::StorageError;
+use pybevy_core::{StorageError, public_error};
 use pybevy_macros::pyenum;
 use pyo3::{
     exceptions::{PyTypeError, PyValueError},
@@ -90,7 +90,7 @@ impl FromPyObject<'_, '_> for IntoVal {
         } else if let Ok(value) = value.extract::<f32>() {
             Ok(Self(Val::Px(value)))
         } else {
-            Err(PyTypeError::new_err("expected Val or float"))
+            Err(PyTypeError::new_err(public_error::UI_EXPECTED_VAL_OR_FLOAT))
         }
     }
 }

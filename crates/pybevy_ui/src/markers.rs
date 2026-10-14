@@ -41,10 +41,6 @@ impl PyLabel {
     pub fn __repr__(&self) -> &'static str {
         "Label()"
     }
-
-    pub fn __str__(&self) -> &'static str {
-        "Label()"
-    }
 }
 
 #[pycomponent(Checked, unit, bridge)]
@@ -80,10 +76,6 @@ impl PyChecked {
     }
 
     pub fn __repr__(&self) -> &'static str {
-        "Checked()"
-    }
-
-    pub fn __str__(&self) -> &'static str {
         "Checked()"
     }
 }
@@ -123,10 +115,6 @@ impl PyPressed {
     pub fn __repr__(&self) -> &'static str {
         "Pressed()"
     }
-
-    pub fn __str__(&self) -> &'static str {
-        "Pressed()"
-    }
 }
 
 #[pycomponent(InteractionDisabled, unit, bridge)]
@@ -162,10 +150,6 @@ impl PyInteractionDisabled {
     }
 
     pub fn __repr__(&self) -> &'static str {
-        "InteractionDisabled()"
-    }
-
-    pub fn __str__(&self) -> &'static str {
         "InteractionDisabled()"
     }
 }

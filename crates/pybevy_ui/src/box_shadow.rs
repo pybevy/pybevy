@@ -3,7 +3,7 @@ use bevy::{
     ui::{BoxShadow, ShadowStyle},
 };
 use pybevy_color::color::PyColor;
-use pybevy_core::{ComponentStorage, PyComponent, ValueStorage};
+use pybevy_core::{ComponentStorage, PyComponent, ValueStorage, public_error, repr::object_repr};
 use pybevy_macros::pycomponent;
 use pyo3::{exceptions::PyIndexError, prelude::*};
 
@@ -16,24 +16,31 @@ pub struct PyBoxShadow {
     pub(crate) storage: ComponentStorage<BoxShadow>,
 }
 
+fn shadow_index(index: isize, length: usize) -> PyResult<usize> {
+    let normalized = if index >= 0 {
+        usize::try_from(index).ok()
+    } else {
+        length.checked_sub(index.unsigned_abs())
+    };
+    normalized
+        .filter(|position| *position < length)
+        .ok_or_else(|| PyIndexError::new_err(public_error::UI_SHADOW_INDEX_OUT_OF_RANGE))
+}
+
 #[pymethods]
 impl PyBoxShadow {
     #[new]
-    #[pyo3(signature = (shadows = None))]
-    pub fn new(shadows: Option<Vec<PyShadowStyle>>) -> PyResult<PyClassInitializer<Self>> {
+    #[pyo3(signature = (shadows = Vec::new()))]
+    pub fn new(shadows: Vec<PyShadowStyle>) -> PyResult<PyClassInitializer<Self>> {
         let shadow_styles = shadows
-            .map(|styles| {
-                styles
-                    .into_iter()
-                    .map(ShadowStyle::try_from)
-                    .collect::<PyResult<Vec<_>>>()
-            })
-            .transpose()?
-            .unwrap_or_default();
+            .into_iter()
+            .map(ShadowStyle::try_from)
+            .collect::<PyResult<Vec<_>>>()?;
         Ok(Self::from_owned(BoxShadow(shadow_styles)).into())
     }
 
     #[staticmethod]
+    #[pyo3(name = "new")]
     pub fn single(
         py: Python,
         color: PyColor,
@@ -87,6 +94,10 @@ impl PyBoxShadow {
         Ok(self.as_ref()?.0.len())
     }
 
+    pub fn __eq__(&self, other: &Self) -> PyResult<bool> {
+        Ok(self.as_ref()? == other.as_ref()?)
+    }
+
     pub fn is_empty(&self) -> PyResult<bool> {
         Ok(self.as_ref()?.0.is_empty())
     }
@@ -96,28 +107,23 @@ impl PyBoxShadow {
         Ok(())
     }
 
-    pub fn __getitem__(&self, index: usize) -> PyResult<PyShadowStyle> {
+    pub fn __getitem__(&self, index: isize) -> PyResult<PyShadowStyle> {
         let inner = self.as_ref()?;
-        if index >= inner.0.len() {
-            return Err(PyIndexError::new_err("shadow index out of range"));
-        }
+        let index = shadow_index(index, inner.0.len())?;
         Ok(PyShadowStyle::from_borrowed(
             ValueStorage::read_only_snapshot(inner.0[index]),
         ))
     }
 
-    pub fn __setitem__(&mut self, index: usize, style: PyShadowStyle) -> PyResult<()> {
+    pub fn __setitem__(&mut self, index: isize, style: PyShadowStyle) -> PyResult<()> {
         let style = style.try_into()?;
         let mut inner = self.as_mut()?;
-        if index >= inner.0.len() {
-            return Err(PyIndexError::new_err("shadow index out of range"));
-        }
+        let index = shadow_index(index, inner.0.len())?;
         inner.0[index] = style;
         Ok(())
     }
 
     pub fn __repr__(&self) -> PyResult<String> {
-        let len = self.as_ref()?.0.len();
-        Ok(format!("BoxShadow({} shadow(s))", len))
+        Ok(format!("BoxShadow({})", object_repr(self.shadows()?)))
     }
 }

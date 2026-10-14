@@ -1,4 +1,5 @@
 use bevy::ui::GridTrackRepetition;
+use pybevy_core::public_error;
 use pybevy_macros::pyenum;
 use pyo3::{exceptions::PyTypeError, prelude::*};
 
@@ -36,8 +37,7 @@ pub fn extract_grid_track_repetition_from_any(
     if let Ok(count) = obj.extract::<u16>() {
         return Ok(GridTrackRepetition::Count(count));
     }
-    Err(PyTypeError::new_err(format!(
-        "Expected int or GridTrackRepetition, got {:?}",
-        obj.get_type()
-    )))
+    Err(PyTypeError::new_err(
+        public_error::ui_grid_track_repetition_type(obj.get_type().name()?),
+    ))
 }

@@ -16,16 +16,9 @@ pub struct PyOutline {
 #[pymethods]
 impl PyOutline {
     #[new]
-    #[pyo3(signature = (width = PyVal::px_unchecked(1.0), offset = PyVal::zero(), color = None))]
-    pub fn new(
-        width: PyVal,
-        offset: PyVal,
-        color: Option<PyColor>,
-    ) -> PyResult<PyClassInitializer<Self>> {
-        let color = color
-            .map(Color::try_from)
-            .transpose()?
-            .unwrap_or(Color::WHITE);
+    #[pyo3(signature = (width = PyVal::px_unchecked(1.0), offset = PyVal::zero(), color = PyColor::from(Color::WHITE)))]
+    pub fn new(width: PyVal, offset: PyVal, color: PyColor) -> PyResult<PyClassInitializer<Self>> {
+        let color = Color::try_from(color)?;
         Ok(Self::from_owned(Outline {
             width: width.into(),
             offset: offset.into(),
@@ -76,5 +69,9 @@ impl PyOutline {
             object_repr(PyVal::from(outline.offset)),
             object_repr(PyColor::from(outline.color))
         ))
+    }
+
+    pub fn __eq__(&self, other: &Self) -> PyResult<bool> {
+        Ok(self.as_ref()? == other.as_ref()?)
     }
 }

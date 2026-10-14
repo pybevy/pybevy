@@ -31,7 +31,7 @@ impl PyUiTransform {
         rotation: PyRot2,
     ) -> PyResult<PyClassInitializer<Self>> {
         Ok(Self::from_owned(UiTransform {
-            translation: translation.into(),
+            translation: translation.try_into()?,
             scale: scale.try_into()?,
             rotation: rotation.try_into()?,
         })
@@ -47,7 +47,7 @@ impl PyUiTransform {
     pub fn from_translation(py: Python, translation: PyVal2) -> PyResult<Py<Self>> {
         Py::new(
             py,
-            Self::from_owned(UiTransform::from_translation(translation.into())),
+            Self::from_owned(UiTransform::from_translation(translation.try_into()?)),
         )
     }
 
@@ -69,12 +69,14 @@ impl PyUiTransform {
 
     #[getter]
     pub fn translation(&self) -> PyResult<PyVal2> {
-        Ok(self.as_ref()?.translation.into())
+        Ok(self
+            .storage
+            .borrow_field_as(|transform| &transform.translation)?)
     }
 
     #[setter]
     pub fn set_translation(&mut self, value: PyVal2) -> PyResult<()> {
-        self.as_mut()?.translation = value.into();
+        self.as_mut()?.translation = value.try_into()?;
         Ok(())
     }
 

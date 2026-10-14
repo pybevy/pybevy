@@ -1685,7 +1685,6 @@ reason = "Bevy 0.19.1 bevy_audio::SpatialListener::new defines the gap prefix fo
 "pybevy.mesh.PyMeshMaterial3d" = "Bevy 0.19.1 bevy_pbr::MeshMaterial3d is a tuple struct/newtype; Python construction preserves its positional payload contract"
 "pybevy.mesh.PyMeshTag" = "Bevy 0.19.1 bevy_mesh::MeshTag is a tuple struct/newtype; Python construction preserves its positional payload contract"
 "pybevy.mesh.PySkinnedMeshInverseBindposes" = "Bevy 0.19.1 bevy_mesh::SkinnedMeshInverseBindposes is a tuple struct/newtype; Python construction preserves its positional payload contract"
-"pybevy.pbr.PyDefaultOpaqueRendererMethod" = "Bevy 0.19.1 bevy_pbr::DefaultOpaqueRendererMethod is a tuple struct/newtype; Python construction preserves its positional payload contract"
 "pybevy.pbr.PyMesh3dWireframe" = "Bevy 0.19.1 bevy_pbr::wireframe::Mesh3dWireframe is a tuple struct/newtype; Python construction preserves its positional payload contract"
 "pybevy.pbr.PyMeshMaterial3dForwardDecal" = "Bevy 0.19.1 bevy_pbr::MeshMaterial3d is a tuple struct/newtype; Python construction preserves its positional payload contract"
 "pybevy.pbr.PyMeshMaterial3dShader" = "Bevy 0.19.1 bevy_pbr::MeshMaterial3d is a tuple struct/newtype; Python construction preserves its positional payload contract"
@@ -1920,13 +1919,6 @@ intentional_extra_methods = [
 ]
 ignore_extends_warnings = true
 notes = "Methods exist in Bevy's impl<T> ButtonInput<T> - lint skips generic bases during iteration"
-
-# GamepadSettings: Renamed methods to avoid PyO3 getter conflict
-# Bevy's get_button_settings() conflicts with PyO3's internal getter for button_settings property
-[bevy.type_ignores.GamepadSettings]
-intentional_missing_methods = ["get_button_settings", "get_axis_settings", "get_button_axis_settings"]
-intentional_extra_methods = ["button_settings_for", "axis_settings_for", "button_axis_settings_for"]
-notes = "Methods renamed to *_for() to avoid conflict with PyO3 property getter naming"
 
 # Assets: Generic type in Bevy (Assets<T>) - false positive from linter
 # The linter sees Assets implementing Resource but PyAssets can't express the generic
@@ -2946,6 +2938,24 @@ reason = "private generated indexed adapter structurally implements the public L
 
 [[validation.exceptions]]
 code = "E006"
+path = "input.GamepadSettings"
+message = "property 'GamepadSettings::button_settings' type mismatch: Rust='HashMap < PyGamepadButton , Py < PyButtonSettings > >' vs Python='Mapping[GamepadButton, ButtonSettings]'"
+reason = "getter wraps a fresh dictionary in MappingProxyType; setter retains the concrete dictionary input contract"
+
+[[validation.exceptions]]
+code = "E006"
+path = "input.GamepadSettings"
+message = "property 'GamepadSettings::axis_settings' type mismatch: Rust='HashMap < PyGamepadAxis , Py < PyAxisSettings > >' vs Python='Mapping[GamepadAxis, AxisSettings]'"
+reason = "getter wraps a fresh dictionary in MappingProxyType; setter retains the concrete dictionary input contract"
+
+[[validation.exceptions]]
+code = "E006"
+path = "input.GamepadSettings"
+message = "property 'GamepadSettings::button_axis_settings' type mismatch: Rust='HashMap < PyGamepadButton , Py < PyButtonAxisSettings > >' vs Python='Mapping[GamepadButton, ButtonAxisSettings]'"
+reason = "getter wraps a fresh dictionary in MappingProxyType; setter retains the concrete dictionary input contract"
+
+[[validation.exceptions]]
+code = "E006"
 path = "render.ShaderBuffer"
 reason = "data returns private ShaderBufferDataContext implementing AbstractContextManager[Array]; public runtime tests cover enter, close, and expiry"
 
@@ -3010,6 +3020,12 @@ reason = "color became visible to W009 when its constructor default stopped acce
 code = "W009"
 path = "ui.TextShadow"
 message = "'TextShadow' has eligible fields not in bridge view_fields: batch_only_fields candidates: color"
+reason = "color became visible to W009 when its constructor default stopped accepting None; columnar color batching is a separate feature with its own batch-path coverage"
+
+[[validation.exceptions]]
+code = "W009"
+path = "ui.Outline"
+message = "'Outline' has eligible fields not in bridge view_fields: batch_only_fields candidates: color"
 reason = "color became visible to W009 when its constructor default stopped accepting None; columnar color batching is a separate feature with its own batch-path coverage"
 
 [[validation.exceptions]]
@@ -3366,6 +3382,78 @@ code = "W017"
 path = "core.AssetPath"
 message = "constructor 'AssetPath' parameter 'source' accepts None but the upstream field bevy_asset::AssetPath::source is `AssetSourceId < 'a >`; default to Bevy's value and reject None"
 reason = "AssetSourceId is Option-shaped; Python models AssetSourceId::Default as None on the constructor, getter, and repr"
+
+[[validation.exceptions]]
+code = "W017"
+path = "render.RenderPlugin"
+message = "constructor 'RenderPlugin' parameter 'synchronous_pipeline_compilation' accepts None but the upstream field bevy_render::RenderPlugin::synchronous_pipeline_compilation is `bool`; default to Bevy's value and reject None"
+reason = "synchronous_pipeline_compilation uses None as a Python adapter sentinel; review bool parity separately from the W017 rule rollout (lint-018)"
+
+[[validation.exceptions]]
+code = "W017"
+path = "mesh.Polyline3d"
+message = "constructor 'Polyline3d' parameter 'vertices' accepts None but the upstream parameter bevy_math::primitives::Polyline3d::vertices is `impl core::iter::traits::collect::IntoIterator<Item = glam::f32::vec3::Vec3>`; default to Bevy's value and reject None"
+reason = "vertices accepts None as a constructor convenience; replace or justify with a mesh runtime review (lint-018)"
+
+[[validation.exceptions]]
+code = "W017"
+path = "mesh.Polyline2d"
+message = "constructor 'Polyline2d' parameter 'vertices' accepts None but the upstream parameter bevy_math::primitives::Polyline2d::vertices is `impl core::iter::traits::collect::IntoIterator<Item = glam::f32::vec2::Vec2>`; default to Bevy's value and reject None"
+reason = "vertices accepts None as a constructor convenience; replace or justify with a mesh runtime review (lint-018)"
+
+[[validation.exceptions]]
+code = "W017"
+path = "math.Isometry3d"
+message = "constructor 'Isometry3d' parameter 'translation' accepts None but the upstream parameter bevy_math::Isometry3d::translation is `impl core::convert::Into<glam::f32::sse2::vec3a::Vec3A>`; default to Bevy's value and reject None"
+reason = "translation accepts None as a constructor convenience; replace or justify with a math runtime review (lint-018)"
+
+[[validation.exceptions]]
+code = "W017"
+path = "math.Isometry2d"
+message = "constructor 'Isometry2d' parameter 'rotation' accepts None but the upstream parameter bevy_math::Isometry2d::rotation is `bevy_math::Rot2`; default to Bevy's value and reject None"
+reason = "rotation accepts None as a constructor convenience; replace or justify with a math runtime review (lint-018)"
+
+[[validation.exceptions]]
+code = "W017"
+path = "light.ScatteringMedium"
+message = "constructor 'ScatteringMedium' parameter 'terms' accepts None but the upstream parameter bevy_light::atmosphere::ScatteringMedium::terms is `impl core::iter::traits::collect::IntoIterator<Item = bevy_light::atmosphere::ScatteringTerm>`; default to Bevy's value and reject None"
+reason = "terms accepts None as a constructor convenience; replace or justify with a light runtime review (lint-018)"
+
+[[validation.exceptions]]
+code = "W017"
+path = "image.Image"
+message = "constructor 'Image' parameter 'dimension' accepts None but the upstream parameter bevy_image::Image::dimension is `wgpu_types::texture::TextureDimension`; default to Bevy's value and reject None"
+reason = "dimension accepts None as a constructor convenience; replace or justify with an image runtime review (lint-018)"
+
+[[validation.exceptions]]
+code = "W017"
+path = "image.Image"
+message = "constructor 'Image' parameter 'format' accepts None but the upstream parameter bevy_image::Image::format is `wgpu_types::texture::format::TextureFormat`; default to Bevy's value and reject None"
+reason = "format accepts None as a constructor convenience; replace or justify with an image runtime review (lint-018)"
+
+[[validation.exceptions]]
+code = "W017"
+path = "image.Image"
+message = "constructor 'Image' parameter 'asset_usage' accepts None but the upstream parameter bevy_image::Image::asset_usage is `bevy_asset::render_asset::RenderAssetUsages`; default to Bevy's value and reject None"
+reason = "asset_usage accepts None as a constructor convenience; replace or justify with an image runtime review (lint-018)"
+
+[[validation.exceptions]]
+code = "W017"
+path = "camera.Frustum"
+message = "constructor 'Frustum' parameter 'view_frustum' accepts None but the upstream field bevy_camera::Frustum::view_frustum is `ViewFrustum`; default to Bevy's value and reject None"
+reason = "view_frustum accepts None as a constructor convenience; replace or justify with a camera runtime review (lint-018)"
+
+[[validation.exceptions]]
+code = "W017"
+path = "audio.GlobalVolume"
+message = "constructor 'GlobalVolume' parameter 'volume' accepts None but the upstream parameter bevy_audio::GlobalVolume::volume is `bevy_audio::Volume`; default to Bevy's value and reject None"
+reason = "volume accepts None as a constructor convenience; replace or justify with an audio runtime review (lint-018)"
+
+[[validation.exceptions]]
+code = "W017"
+path = "audio.DefaultSpatialScale"
+message = "constructor 'DefaultSpatialScale' parameter 'scale' accepts None but the upstream field bevy_audio::DefaultSpatialScale::scale is `SpatialScale`; default to Bevy's value and reject None"
+reason = "scale accepts None as a constructor convenience; replace or justify with an audio runtime review (lint-018)"
 
 [[validation.exceptions]]
 code = "W006"
