@@ -106,8 +106,8 @@ pub fn field_column_for(field_type: PrimitiveType, data: &ColumnData) -> Option<
 
 /// Materialize `count` wrapper-sized, zero-initialized rows and write every
 /// provided `(field index into layout.fields, column)` pair at the field's
-/// `PrimitiveType`-keyed offset. Unspecified fields stay zero bytes (pyo3
-/// semantics: partial `batch` leaves the rest of the wrapper zeroed).
+/// `PrimitiveType`-keyed offset. Unspecified fields stay zero bytes; adapters
+/// must supply columns for declared defaults before calling this writer.
 pub fn build_wrapper_rows(
     layout: &ComponentLayout,
     columns: &[(usize, FieldColumn<'_>)],

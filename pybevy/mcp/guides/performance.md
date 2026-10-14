@@ -174,7 +174,11 @@ def setup(
 - Custom `@component` classes with wrapper storage also support `batch()`.
   Their columns can be plain lists or tuples, `pybevy.array` arrays, or NumPy
   arrays when NumPy is installed. Batch creation copies column values, so later
-  changes to the inputs do not alter a queued spawn.
+  changes to the inputs do not alter a queued spawn. Omitted fields use their
+  declared dataclass or class defaults; default factories run once per row,
+  while omitted required fields raise `TypeError` at batch creation.
+  Scalars, generators, and ranges are not batch columns; materialize a list
+  for those inputs.
 - Use View API afterwards for bulk per-entity updates (see below)
 - To keep one shared material while varying a small shader-side integer, batch
   `MeshTag.batch(value=...)`; see `guide://shaders`.
@@ -246,6 +250,12 @@ Key View rules:
   For a concrete `ViewColumn` buffer use `iter_batches()` then
   `batch.column(T)`/`batch.column_mut(T)` (see `guide://numba` and `guide://jax`).
 - Expressions operate on ALL matching entities at once (SIMD-like)
+- Writes to native fields with a declared domain (such as
+  `Bloom.max_mip_dimension >= 1` or a `CascadeShadowConfig` range) are checked
+  before any row is written and raise `ValueError`. Other fields, including
+  `Transform`, are not validated: `inf` and `nan` are written as NumPy would.
+  Named `ViewColumn` item, `set()`, and buffer writes follow the same rule;
+  `at_offset()` reinterpretation and Numba pointer writes are unchecked.
 - Cross-component expressions supported
 - `from pybevy import expr` for math functions: `sin`, `cos`, `sqrt`, `clamp`, etc.
 - Numeric expressions follow Python array conventions: `%` uses the divisor's

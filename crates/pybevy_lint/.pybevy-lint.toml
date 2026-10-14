@@ -992,9 +992,6 @@ types = [
     "input::AxisSettingsError",
     "input::ButtonSettingsError",
     "input::ForceTouch",
-    "input::RawGamepadAxisChangedEvent",
-    "input::RawGamepadButtonChangedEvent",
-    "input::RawGamepadEvent",
 
     # bevy_gltf - internal gltf types not used in examples
     "gltf::DefaultGltfImageSampler",
@@ -1177,6 +1174,16 @@ reason = "Bevy 0.19.1 bevy_input::gamepad::GamepadButtonChangedEvent::new define
 [bevy.constructor_functions."pybevy.input.PyGamepadAxisChangedEvent"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_input::gamepad::GamepadAxisChangedEvent::new defines the established Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.input.PyRawGamepadButtonChangedEvent"]
+function = "new"
+parameter_renames = { button_type = "button" }
+reason = "Bevy 0.19.1 bevy_input::gamepad::RawGamepadButtonChangedEvent::new defines the Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.input.PyRawGamepadAxisChangedEvent"]
+function = "new"
+parameter_renames = { axis_type = "axis" }
+reason = "Bevy 0.19.1 bevy_input::gamepad::RawGamepadAxisChangedEvent::new defines the Python constructor inputs"
 
 [bevy.constructor_functions."pybevy.input.PyGamepadConnectionEvent"]
 function = "new"

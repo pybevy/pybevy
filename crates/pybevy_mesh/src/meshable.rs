@@ -5,6 +5,7 @@ use crate::primitives::{
     PyAnnulus, PyCapsule2d, PyCapsule3d, PyCircle, PyCircularSector, PyCircularSegment, PyCone,
     PyCuboid, PyCylinder, PyEllipse, PyPlane3d, PyRectangle, PyRegularPolygon, PyRhombus,
     PySegment2d, PySphere, PyTetrahedron, PyTorus, PyTriangle2d, PyTriangle3d,
+    validation::vertex_budget,
 };
 
 #[pyclass(
@@ -65,7 +66,9 @@ pub fn meshable_to_mesh(asset: &Bound<'_, PyAny>) -> PyResult<Mesh> {
         return Ok(PyRectangle::as_ref(&v.borrow())?.mesh().build());
     }
     if let Ok(v) = asset.cast::<PyRegularPolygon>() {
-        return Ok(v.borrow().0.mesh().build());
+        let polygon = v.borrow();
+        vertex_budget("RegularPolygonMeshBuilder", u128::from(polygon.0.sides))?;
+        return Ok(polygon.0.mesh().build());
     }
     if let Ok(v) = asset.cast::<PyRhombus>() {
         return Ok(PyRhombus::as_ref(&v.borrow())?.mesh().build());

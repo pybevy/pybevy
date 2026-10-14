@@ -66,6 +66,7 @@ def _guard_missing_constructor(cls: type[DT], decorator_name: str) -> None:
             )
         return original_new(value_type)
 
+    guarded_new.__pybevy_missing_constructor_guard__ = True  # type: ignore[attr-defined]
     cls.__new__ = staticmethod(guarded_new)  # type: ignore[method-assign]
 
 
@@ -492,7 +493,12 @@ def _has_undeclared_component_state(
 ) -> bool:
     if field_hints:
         return False
-    if "__new__" in cls.__dict__ or bool(cls.__dict__.get("__slots__")):
+    constructor = cls.__dict__.get("__new__")
+    if constructor is not None:
+        function = getattr(constructor, "__func__", constructor)
+        if not getattr(function, "__pybevy_missing_constructor_guard__", False):
+            return True
+    if bool(cls.__dict__.get("__slots__")):
         return True
     initializer = cls.__dict__.get("__init__")
     if initializer is None:
@@ -670,6 +676,9 @@ def _register_component(cls: type[CT], *, storage: str | None = None) -> type[CT
     else:
         if verbose:
             print(f"Using FRESH component (caching disabled): {key}")
+
+    if cls.__new__ is Component.__new__:
+        _guard_missing_constructor(cls, "@component")
 
     return cls
 

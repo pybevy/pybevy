@@ -2,6 +2,16 @@
 
 Full vs partial reload, what persists across reloads, error recovery, and diagnostics.
 
+The file watcher ignores build/cache directories by exact directory name below
+the watch root, including `target`, `.venv`, `__pycache__`, `.git`, and
+`node_modules`, plus any Python environment (a directory containing `pyvenv.cfg`
+or `conda-meta/`, such as a project-local `venv/`). Project and helper names that
+merely contain those words are watched. Reload cleanup similarly
+protects actual installed package directories, not project paths that happen to
+contain `site-packages` or `dist-packages`.
+The native-plugin loader uses the same boundary for PyBevy's module name, so a
+user helper named `pybevy_helpers` is not protected from reload.
+
 ## Reload Modes
 
 When a scene imports another module's `@entrypoint` and defines its own, the

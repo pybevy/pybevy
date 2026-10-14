@@ -180,7 +180,15 @@ fn empty_layout_has_undeclared_instance_state(cls: &Bound<'_, PyType>) -> PyResu
     }
     let class_dict = cls.getattr("__dict__")?;
     if class_dict.contains("__new__")? {
-        return Ok(true);
+        let constructor = class_dict.get_item("__new__")?;
+        let function = constructor.getattr_opt("__func__")?.unwrap_or(constructor);
+        let guarded = match function.getattr_opt("__pybevy_missing_constructor_guard__")? {
+            Some(marker) => marker.is_truthy()?,
+            None => false,
+        };
+        if !guarded {
+            return Ok(true);
+        }
     }
     if class_dict.contains("__slots__")? && class_dict.get_item("__slots__")?.is_truthy()? {
         return Ok(true);

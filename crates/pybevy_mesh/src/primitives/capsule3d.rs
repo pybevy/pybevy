@@ -2,7 +2,11 @@ use bevy::mesh::{Capsule3dMeshBuilder, MeshBuilder};
 use pybevy_core::PyAsset;
 use pyo3::prelude::*;
 
-use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder, primitives::validation::minimum_count};
+use crate::{
+    mesh::PyMesh,
+    mesh_builder::PyMeshBuilder,
+    primitives::validation::{minimum_count, vertex_budget},
+};
 
 #[pyclass(name = "Capsule3dMeshBuilder", module = "pybevy.mesh", extends = PyMeshBuilder)]
 #[derive(Debug)]
@@ -39,6 +43,11 @@ impl PyCapsule3dMeshBuilder {
     pub fn build(&self, py: Python) -> PyResult<Py<PyMesh>> {
         minimum_count("Capsule3dMeshBuilder.longitudes", self.0.longitudes, 1)?;
         minimum_count("Capsule3dMeshBuilder.latitudes", self.0.latitudes, 4)?;
+        let longitudes = u128::from(self.0.longitudes);
+        let latitude_rings = 2 * u128::from(self.0.latitudes / 2);
+        let vertices =
+            2 * longitudes + (longitudes + 1) * (latitude_rings + u128::from(self.0.rings));
+        vertex_budget("Capsule3dMeshBuilder", vertices)?;
         Py::new(py, (self.0.build().into(), PyAsset))
     }
 }

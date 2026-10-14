@@ -3,7 +3,7 @@ use pybevy_core::PyAsset;
 use pybevy_math::{dir3::PyDir3, vec2::PyVec2};
 use pyo3::prelude::*;
 
-use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder};
+use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder, primitives::validation::vertex_budget};
 
 #[pyclass(name = "PlaneMeshBuilder", module = "pybevy.mesh", extends = PyMeshBuilder)]
 #[derive(Debug)]
@@ -49,6 +49,9 @@ impl PyPlaneMeshBuilder {
     }
 
     pub fn build(&self, py: Python) -> PyResult<Py<PyMesh>> {
+        let vertices =
+            (u128::from(self.0.subdivisions_x) + 2) * (u128::from(self.0.subdivisions_z) + 2);
+        vertex_budget("PlaneMeshBuilder", vertices)?;
         Py::new(py, (self.0.build().into(), PyAsset))
     }
 }

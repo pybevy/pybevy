@@ -129,7 +129,7 @@ class McpHttpHandler(BaseHTTPRequestHandler):
         try:
             raw = self.rfile.read(content_length)
             body = json.loads(raw)
-        except (json.JSONDecodeError, ValueError) as e:
+        except (json.JSONDecodeError, ValueError, RecursionError) as e:
             self._json_response(
                 200,
                 {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": f"Parse error: {e}"}},

@@ -20,6 +20,7 @@ from threading import Lock
 from typing import Any, TypeVar, cast, get_type_hints
 
 from .. import _pybevy  # type: ignore
+from ..assets import Handle
 from ..color import LinearRgba
 from ..image import Image
 from ..math import Vec2, Vec3, Vec4
@@ -139,6 +140,20 @@ def _is_native_material(cls: type) -> bool:
     return cls.__module__ == _Material.__module__
 
 
+def _inherited_material_default(cls: type, name: str, typ: type) -> object:
+    for base in cls.__mro__[1:]:
+        if name not in base.__dict__:
+            continue
+        fields = base.__dict__.get("_material_field_map", {})
+        if name in fields and fields[name].python_type is typ:
+            return fields[name].default
+        bool_fields = base.__dict__.get("_material_bool_field_map", {})
+        if typ is bool and name in bool_fields:
+            return bool_fields[name].default
+        break
+    return _SENTINEL
+
+
 def material(
     fragment_shader: str | None = None,
     vertex_shader: str | None = None,
@@ -218,9 +233,13 @@ def material(
         # Collect type hints and defaults
         hints = get_type_hints(cls)
         defaults: dict[str, Any] = {}
-        for name in hints:
+        for name, typ in hints.items():
             if hasattr(cls, name):
-                defaults[name] = getattr(cls, name)
+                value = getattr(cls, name)
+                if isinstance(value, property) and name not in cls.__dict__:
+                    value = _inherited_material_default(cls, name, typ)
+                if value is not _SENTINEL:
+                    defaults[name] = value
 
         # Compute layout (separates uniform, bool, and texture fields)
         layout, bool_fields, texture_fields = _compute_layout(hints, defaults)
@@ -305,7 +324,7 @@ def material(
                         shader_defs &= ~(1 << bf.bit_index)
 
             # Process texture fields -> list of handles (or None)
-            textures: list[Image | None] = [None] * _MAX_TEXTURE_SLOTS
+            textures: list[Handle[Image] | None] = [None] * _MAX_TEXTURE_SLOTS
             for tf in texture_fields:
                 value = kwargs.pop(tf.name, None)
                 if value is not None:
@@ -433,13 +452,12 @@ def material(
         for tf in texture_fields:
             _slot = tf.slot_index
 
-            def _tex_getter(self: Any, slot: int = _slot) -> Image | None:  # noqa: ANN401
+            def _tex_getter(self: Any, slot: int = _slot) -> Handle[Image] | None:  # noqa: ANN401
                 if self._shader_mat is not None:
-                    # Texture reads not supported in borrowed mode
-                    return None
+                    return self._shader_mat.get_texture(slot)  # type: ignore[no-any-return]
                 return self._textures[slot]  # type: ignore[no-any-return]
 
-            def _tex_setter(self: Any, value: Image | None, slot: int = _slot) -> None:  # noqa: ANN401
+            def _tex_setter(self: Any, value: Handle[Image] | None, slot: int = _slot) -> None:  # noqa: ANN401
                 if self._shader_mat is not None:
                     if value is not None:
                         self._shader_mat.set_texture(slot, value)

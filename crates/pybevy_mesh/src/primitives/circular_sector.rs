@@ -2,7 +2,11 @@ use bevy::mesh::{CircularSectorMeshBuilder, MeshBuilder};
 use pybevy_core::PyAsset;
 use pyo3::prelude::*;
 
-use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder, primitives::validation::minimum_count};
+use crate::{
+    mesh::PyMesh,
+    mesh_builder::PyMeshBuilder,
+    primitives::validation::{minimum_count, vertex_budget},
+};
 
 #[pyclass(name = "CircularSectorMeshBuilder", module = "pybevy.mesh", extends = PyMeshBuilder)]
 #[derive(Debug)]
@@ -25,6 +29,10 @@ impl PyCircularSectorMeshBuilder {
 
     pub fn build(&self, py: Python) -> PyResult<Py<PyMesh>> {
         minimum_count("CircularSectorMeshBuilder.resolution", self.0.resolution, 2)?;
+        vertex_budget(
+            "CircularSectorMeshBuilder",
+            u128::from(self.0.resolution) + 1,
+        )?;
         Py::new(py, (self.0.build().into(), PyAsset))
     }
 }

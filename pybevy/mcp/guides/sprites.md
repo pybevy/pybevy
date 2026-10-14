@@ -90,6 +90,9 @@ To pack separate images instead of slicing an existing sheet, use
 `TextureAtlasBuilder`. Pass each source handle to `add_texture` so the returned
 `TextureAtlasSources` can resolve its index. The builder snapshots source
 pixels; later edits to a source image do not change an already built atlas.
+If a source format cannot be converted to the atlas format, `build()` raises
+`ValueError` instead of leaving a blank rectangle. Set a compatible atlas
+format or supply a compatible source image.
 The `Assets[TextureAtlasLayout]` collection needs `SpritePlugin` (included in
 `DefaultPlugins`).
 
@@ -137,7 +140,9 @@ if layout is not None:
 
 `layout.textures.extend(...)` accepts any iterable of `URect`, including a
 generator or the live list itself. The latter appends a snapshot of its current
-rectangles. Live lists compare by contents with other sequences.
+rectangles. Live lists compare by contents with other sequences. For an owned
+layout, nested writes are read-only; replace all rectangles with
+`layout.textures = [URect(0, 0, 16, 16), ...]` instead.
 
 A corner assigned this way is not normalised the way the `URect` constructor
 normalises, so pushing `min.x` past `max.x` inverts the rectangle instead of

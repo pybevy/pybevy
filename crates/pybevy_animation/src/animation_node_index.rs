@@ -1,5 +1,5 @@
 use bevy::animation::graph::AnimationNodeIndex;
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyValueError, prelude::*};
 
 #[pyclass(
     name = "AnimationNodeIndex",
@@ -14,8 +14,13 @@ pub struct PyAnimationNodeIndex(pub AnimationNodeIndex);
 #[pymethods]
 impl PyAnimationNodeIndex {
     #[new]
-    pub fn new(index: usize) -> Self {
-        Self(AnimationNodeIndex::new(index))
+    pub fn new(index: usize) -> PyResult<Self> {
+        u32::try_from(index).map_err(|_| {
+            PyValueError::new_err(format!(
+                "AnimationNodeIndex index must fit in u32 (got {index})"
+            ))
+        })?;
+        Ok(Self(AnimationNodeIndex::new(index)))
     }
 
     pub fn index(&self) -> usize {

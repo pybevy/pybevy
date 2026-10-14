@@ -100,7 +100,13 @@ impl PyRegularPolygon {
     }
 
     pub fn mesh(&self, py: Python) -> PyResult<Py<PyRegularPolygonMeshBuilder>> {
-        Py::new(py, (self.0.mesh().into(), PyMeshBuilder))
+        Py::new(
+            py,
+            (
+                PyRegularPolygonMeshBuilder::new(self.0.mesh(), self.0.sides),
+                PyMeshBuilder,
+            ),
+        )
     }
 
     fn __repr__(&self) -> String {

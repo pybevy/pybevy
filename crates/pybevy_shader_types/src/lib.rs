@@ -327,6 +327,30 @@ pub struct ShaderMaterialExtension {
     pub bindings_wgsl: Option<String>,
 }
 
+impl ShaderMaterialExtension {
+    /// The texture slot at `slot`, or `None` past [`MAX_TEXTURE_SLOTS`].
+    pub fn texture_slot(&self, slot: usize) -> Option<&Option<Handle<Image>>> {
+        match slot {
+            0 => Some(&self.texture_0),
+            1 => Some(&self.texture_1),
+            2 => Some(&self.texture_2),
+            3 => Some(&self.texture_3),
+            _ => None,
+        }
+    }
+
+    /// The mutable texture slot at `slot`, or `None` past [`MAX_TEXTURE_SLOTS`].
+    pub fn texture_slot_mut(&mut self, slot: usize) -> Option<&mut Option<Handle<Image>>> {
+        match slot {
+            0 => Some(&mut self.texture_0),
+            1 => Some(&mut self.texture_1),
+            2 => Some(&mut self.texture_2),
+            3 => Some(&mut self.texture_3),
+            _ => None,
+        }
+    }
+}
+
 impl MaterialExtension for ShaderMaterialExtension {
     fn fragment_shader() -> ShaderRef {
         // Default PBR - overridden per-instance in specialize()

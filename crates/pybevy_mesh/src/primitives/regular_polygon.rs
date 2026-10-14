@@ -2,21 +2,25 @@ use bevy::mesh::{MeshBuilder, RegularPolygonMeshBuilder};
 use pybevy_core::PyAsset;
 use pyo3::prelude::*;
 
-use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder};
+use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder, primitives::validation::vertex_budget};
 
 #[pyclass(name = "RegularPolygonMeshBuilder", module = "pybevy.mesh", extends = PyMeshBuilder, frozen)]
 #[derive(Debug)]
-pub struct PyRegularPolygonMeshBuilder(pub(crate) RegularPolygonMeshBuilder);
+pub struct PyRegularPolygonMeshBuilder {
+    builder: RegularPolygonMeshBuilder,
+    sides: u32,
+}
 
-impl From<RegularPolygonMeshBuilder> for PyRegularPolygonMeshBuilder {
-    fn from(builder: RegularPolygonMeshBuilder) -> Self {
-        Self(builder)
+impl PyRegularPolygonMeshBuilder {
+    pub(crate) fn new(builder: RegularPolygonMeshBuilder, sides: u32) -> Self {
+        Self { builder, sides }
     }
 }
 
 #[pymethods]
 impl PyRegularPolygonMeshBuilder {
     pub fn build(&self, py: Python) -> PyResult<Py<PyMesh>> {
-        Py::new(py, (self.0.build().into(), PyAsset))
+        vertex_budget("RegularPolygonMeshBuilder", u128::from(self.sides))?;
+        Py::new(py, (self.builder.build().into(), PyAsset))
     }
 }

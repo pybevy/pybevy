@@ -42,6 +42,17 @@ fn validate_rect(rect: UiRect, parameter: &str, non_negative: bool) -> PyResult<
     Ok(rect)
 }
 
+fn validate_aspect_ratio(value: Option<f32>) -> PyResult<Option<f32>> {
+    if let Some(ratio) = value
+        && !ratio.is_finite()
+    {
+        return Err(PyValueError::new_err(format!(
+            "aspect_ratio must be finite (got {ratio})"
+        )));
+    }
+    Ok(value)
+}
+
 #[pycomponent(Node, bridge, view_fields = [scrollbar_width, flex_grow, flex_shrink])]
 #[pyclass(name = "Node", module = "pybevy.ui", extends = PyComponent)]
 #[derive(Debug)]
@@ -162,7 +173,7 @@ impl PyNode {
             min_height: val(min_height, Val::Auto, "min_height")?,
             max_width: val(max_width, Val::Auto, "max_width")?,
             max_height: val(max_height, Val::Auto, "max_height")?,
-            aspect_ratio,
+            aspect_ratio: validate_aspect_ratio(aspect_ratio)?,
             align_items: align_items.into(),
             justify_items: justify_items.into(),
             align_self: align_self.into(),
@@ -556,7 +567,7 @@ impl PyNode {
 
     #[setter]
     pub fn set_aspect_ratio(&mut self, value: Option<f32>) -> PyResult<()> {
-        self.as_mut()?.aspect_ratio = value;
+        self.as_mut()?.aspect_ratio = validate_aspect_ratio(value)?;
         Ok(())
     }
 

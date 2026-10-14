@@ -22,6 +22,9 @@ enum BatchFieldConstraint {
     NonNegative {
         message: Path,
     },
+    Positive {
+        message: Path,
+    },
 }
 
 impl Parse for BatchFieldConstraint {
@@ -50,9 +53,16 @@ impl Parse for BatchFieldConstraint {
                     message: content.parse()?,
                 })
             }
+            "positive" => {
+                let content;
+                syn::parenthesized!(content in input);
+                Ok(Self::Positive {
+                    message: content.parse()?,
+                })
+            }
             _ => Err(syn::Error::new_spanned(
                 ident,
-                "unknown batch field constraint, expected: finite, range, non_negative",
+                "unknown batch field constraint, expected: finite, range, non_negative, positive",
             )),
         }
     }
@@ -70,6 +80,9 @@ impl BatchFieldConstraint {
             }
             Self::NonNegative { message } => {
                 quote! { pybevy_core::batch_columns::BatchValueConstraint::NonNegative { message: #message } }
+            }
+            Self::Positive { message } => {
+                quote! { pybevy_core::batch_columns::BatchValueConstraint::Positive { message: #message } }
             }
             Self::Finite => {
                 quote! { pybevy_core::batch_columns::BatchValueConstraint::Finite }

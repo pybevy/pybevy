@@ -195,6 +195,8 @@ def update_score_display(
 selection, and clipboard are handled by the engine; click the field to focus it.
 There is no built-in submit event: read `.value` from a system, then call
 `.clear()` through a mutable query to reset the field.
+After clearing, you may queue another `TextEdit` in the same frame: the cursor
+and selection are reset before that edit is applied.
 
 Use `DefaultPlugins` for editable UI text. Adding `TextPlugin` alone installs
 the queued-edit application system, but not the UI layout systems that shape the

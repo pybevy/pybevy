@@ -194,14 +194,19 @@ fn reject_aspect_dependent_format(format: TextureFormat) -> PyResult<()> {
     Ok(())
 }
 
+fn checked_bevy_pixel_count(extent: Extent3d) -> PyResult<usize> {
+    (extent.width as usize)
+        .checked_mul(extent.height as usize)
+        .and_then(|count| count.checked_mul(extent.depth_or_array_layers as usize))
+        .filter(|&count| count <= u32::MAX as usize)
+        .ok_or_else(|| PyValueError::new_err(public_error::IMAGE_PIXEL_COUNT_EXCEEDS_U32))
+}
+
 fn checked_image_byte_len(extent: Extent3d, format: TextureFormat) -> PyResult<Option<usize>> {
+    let pixel_count = checked_bevy_pixel_count(extent)?;
     let Some(pixel_size) = pixel_size_of(format) else {
         return Ok(None);
     };
-    let pixel_count = (extent.width as usize)
-        .checked_mul(extent.height as usize)
-        .and_then(|count| count.checked_mul(extent.depth_or_array_layers as usize))
-        .ok_or_else(|| PyValueError::new_err("image extent element count overflows usize"))?;
     pixel_count
         .checked_mul(pixel_size)
         .map(Some)
@@ -214,6 +219,11 @@ fn validate_render_target_dimensions(width: u32, height: u32) -> PyResult<()> {
             "render target width and height must be greater than zero (got {width}x{height})"
         )));
     }
+    checked_bevy_pixel_count(Extent3d {
+        width,
+        height,
+        depth_or_array_layers: 1,
+    })?;
     Ok(())
 }
 
@@ -1456,23 +1466,29 @@ impl PyImage {
     }
 
     pub fn resize(&mut self, size: PyExtent3d) -> PyResult<()> {
+        let size: Extent3d = size.into();
+        checked_bevy_pixel_count(size)?;
         image_with_mut!(self, |image: &mut Image| {
-            image.resize(size.into());
+            image.resize(size);
             Ok(())
         })
     }
 
     pub fn resize_in_place(&mut self, size: PyExtent3d) -> PyResult<()> {
+        let size: Extent3d = size.into();
+        checked_bevy_pixel_count(size)?;
         image_with_mut!(self, |image: &mut Image| {
-            image.resize_in_place(size.into());
+            image.resize_in_place(size);
             Ok(())
         })
     }
 
     pub fn reinterpret_size(&mut self, size: PyExtent3d) -> PyResult<()> {
+        let size: Extent3d = size.into();
+        checked_bevy_pixel_count(size)?;
         let mut candidate = image_with!(self, |image: &Image| image.clone());
         candidate
-            .reinterpret_size(size.into())
+            .reinterpret_size(size)
             .map_err(|e| PyValueError::new_err(format!("{e:?}")))?;
         image_with_mut!(self, |image: &mut Image| *image = candidate);
         Ok(())

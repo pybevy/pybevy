@@ -253,16 +253,15 @@ impl PySystemBuilder {
 ///   2. `configurator(app)` adds the selected plugins and systems.
 const NATIVE_LOADER_PY: &str = r#"
 def _make_native_loader(module_name, systems, plugins=()):
-    import importlib, importlib.util, os, sys, sysconfig
-    from pybevy._internal.reload_modules import record_module_flush
+    import importlib, importlib.util, os, sys
+    from pybevy._internal.reload_modules import is_external_module_path, record_module_flush
 
     def _flush_user_modules(project_dir):
         """Remove all user project modules from sys.modules."""
         project_prefix = os.path.realpath(project_dir) + os.sep
-        stdlib_prefix = os.path.realpath(sysconfig.get_paths()['stdlib']) + os.sep
         to_remove = []
         for name, mod in list(sys.modules.items()):
-            if name.startswith(('pybevy.', '_pybevy', 'pybevy')):
+            if name in ('pybevy', '_pybevy', '__main__') or name.startswith(('pybevy.', '_pybevy.')):
                 continue
             fpath = getattr(mod, '__file__', None)
             if fpath is None:
@@ -270,9 +269,7 @@ def _make_native_loader(module_name, systems, plugins=()):
             fpath = os.path.realpath(fpath)
             if not fpath.startswith(project_prefix):
                 continue
-            if 'site-packages' in fpath or 'dist-packages' in fpath:
-                continue
-            if fpath.startswith(stdlib_prefix):
+            if is_external_module_path(fpath):
                 continue
             to_remove.append(name)
         record_module_flush(project_dir, to_remove)

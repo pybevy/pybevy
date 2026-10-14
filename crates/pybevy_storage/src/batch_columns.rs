@@ -228,6 +228,9 @@ impl std::error::Error for BatchColumnError {}
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BatchValueConstraint {
     Finite,
+    Positive {
+        message: &'static str,
+    },
     Range {
         start: f32,
         end: f32,
@@ -390,10 +393,74 @@ pub fn validate_f32_values(
                     return Err(BatchColumnError::Constraint { message });
                 }
             }
+            BatchValueConstraint::Positive { message } => {
+                if values
+                    .iter()
+                    .any(|value| !value.is_finite() || *value <= 0.0)
+                {
+                    return Err(BatchColumnError::Constraint { message });
+                }
+            }
             BatchValueConstraint::Finite => {}
         }
     }
     Ok(())
+}
+
+/// Whether View writes to a field with these constraints need a preflight.
+///
+/// View arithmetic follows NumPy semantics, so `Finite` is not enforced there;
+/// only the domain constraints of native settings fields are.
+pub fn has_view_assignment_checks(constraints: &[BatchValueConstraint]) -> bool {
+    constraints
+        .iter()
+        .any(|constraint| !matches!(constraint, BatchValueConstraint::Finite))
+}
+
+/// Validate values bound for a View field before any selected row is written.
+pub fn validate_view_assignment_values(
+    values: &[f64],
+    field_type: crate::FieldType,
+    constraints: &[BatchValueConstraint],
+) -> Result<(), BatchColumnError> {
+    for constraint in constraints {
+        let violates = match constraint {
+            BatchValueConstraint::Finite => false,
+            BatchValueConstraint::Range { start, end, .. } => values.iter().any(|value| {
+                let value = stored_value(*value, field_type);
+                value < f64::from(*start) || value >= f64::from(*end) || value.is_nan()
+            }),
+            BatchValueConstraint::NonNegative { .. } => values.iter().any(|value| {
+                let value = stored_value(*value, field_type);
+                value.is_nan() || value < 0.0
+            }),
+            BatchValueConstraint::Positive { .. } => values.iter().any(|value| {
+                let value = stored_value(*value, field_type);
+                !value.is_finite() || value <= 0.0
+            }),
+        };
+        if violates
+            && let BatchValueConstraint::Range { message, .. }
+            | BatchValueConstraint::NonNegative { message }
+            | BatchValueConstraint::Positive { message } = constraint
+        {
+            return Err(BatchColumnError::Constraint { message });
+        }
+    }
+    Ok(())
+}
+
+/// The value a write of `value` leaves in a field of `field_type`.
+fn stored_value(value: f64, field_type: crate::FieldType) -> f64 {
+    use crate::FieldType;
+
+    match field_type {
+        FieldType::F32 => (value as f32).into(),
+        FieldType::I32 => (value as i32).into(),
+        FieldType::U8 => (value as u8).into(),
+        FieldType::U32 => (value as u32).into(),
+        _ => value,
+    }
 }
 
 /// Validate a column's shape against `cols` and return its row (entity) count.
@@ -723,6 +790,49 @@ mod tests {
             );
         }
         assert!(validate_f32_values("unconstrained", &[f32::NAN], &[]).is_ok());
+    }
+
+    #[test]
+    fn view_assignments_skip_finite_but_check_domain_constraints() {
+        let finite = [BatchValueConstraint::Finite];
+        assert!(!has_view_assignment_checks(&finite));
+        assert!(
+            validate_view_assignment_values(&[f64::NAN], crate::FieldType::F32, &finite).is_ok()
+        );
+
+        let positive = [
+            BatchValueConstraint::Finite,
+            BatchValueConstraint::Positive {
+                message: "positive",
+            },
+        ];
+        assert!(has_view_assignment_checks(&positive));
+        assert!(validate_view_assignment_values(&[1.0], crate::FieldType::U32, &positive).is_ok());
+        for value in [0.0, 0.5, -3.0, f64::NAN] {
+            assert_eq!(
+                validate_view_assignment_values(&[value], crate::FieldType::U32, &positive)
+                    .unwrap_err()
+                    .to_string(),
+                "positive"
+            );
+        }
+    }
+
+    #[test]
+    fn view_constraints_check_the_value_the_field_stores() {
+        let range = [BatchValueConstraint::Range {
+            start: 0.0,
+            end: 1.0,
+            message: "range",
+        }];
+        assert!(
+            validate_view_assignment_values(&[0.999_999_999_9], crate::FieldType::F64, &range)
+                .is_ok()
+        );
+        assert!(
+            validate_view_assignment_values(&[0.999_999_999_9], crate::FieldType::F32, &range)
+                .is_err()
+        );
     }
 
     #[test]

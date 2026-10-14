@@ -1019,6 +1019,9 @@ class ShaderMaterial(Material):
     def set_shader_defs(self, defs: int) -> None:
         """Set the shader defs bitmask."""
 
+    def get_texture(self, slot: int) -> Handle[Image] | None:
+        """Get the texture handle in a given slot (0-3), or None if the slot is empty."""
+
     def set_texture(self, slot: int, handle: Handle[Image]) -> None:
         """Set a texture handle for a given slot (0-3)."""
 
