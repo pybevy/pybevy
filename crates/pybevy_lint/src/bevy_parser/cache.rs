@@ -14,7 +14,7 @@ use anyhow::{Context, Result};
 use super::types::BevyCrate;
 
 // Bump when parser semantics change, even if the serialized shape is unchanged.
-const PARSER_CACHE_VERSION: u32 = 3;
+const PARSER_CACHE_VERSION: u32 = 5;
 
 /// Get the git commit hash for a Bevy checkout.
 pub fn get_bevy_git_ref(bevy_path: &Path) -> Result<String> {

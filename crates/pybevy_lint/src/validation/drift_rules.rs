@@ -1,8 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    bevy_parser::types::{BevyCrate, BevyItem, BevyItemKind, BevyVariantKind, foreign_type_key},
-    comparison::{SignatureDiff, compare_single_type},
+    bevy_parser::types::{
+        BevyCrate, BevyField, BevyItem, BevyItemKind, BevyVariantKind, foreign_type_key,
+    },
+    comparison::{ConversionIndex, SignatureDiff, compare_single_type},
     config::BevyConfig,
     model::PyClassDef,
     output::{Diagnostic, DiagnosticCode},
@@ -16,20 +18,22 @@ pub struct DriftFinding {
     pub diagnostic: Diagnostic,
 }
 
-/// W038/W039/W040: members, return types and enum shape that drift from the
-/// resolved upstream Bevy item.
+/// W038-W041: members, return types, enum shape and contract-trait methods
+/// that drift from the resolved upstream Bevy item.
 pub fn check_api_drift(
     class: &PyClassDef,
     bevy_item: &BevyItem,
     crate_key: &str,
     bevy_crates: &HashMap<String, BevyCrate>,
     config: &BevyConfig,
+    conversions: &ConversionIndex,
 ) -> Vec<DriftFinding> {
+    let (bevy_item, crate_key) = resolve_alias(bevy_item, crate_key, bevy_crates);
     let Some(bevy_crate) = bevy_crates.get(crate_key) else {
         return Vec::new();
     };
-    let bevy_item = &with_foreign_methods(bevy_item, bevy_crates);
-    let coverage = compare_single_type(bevy_item, class, config, bevy_crate);
+    let bevy_item = &drift_view(bevy_item, bevy_crates, config);
+    let coverage = compare_single_type(bevy_item, class, config, bevy_crate, conversions);
     let variant_names: Vec<&str> = bevy_item
         .variants
         .iter()
@@ -96,7 +100,9 @@ pub fn check_api_drift(
                 SignatureDiff::ReturnTypeMismatch {
                     bevy_type,
                     pybevy_type,
-                } if !bevy_type.starts_with("Self::") => (bevy_type.as_str(), pybevy_type.as_str()),
+                } if !bevy_type.starts_with("Self::") && !mentions_type_parameter(bevy_type) => {
+                    (bevy_type.as_str(), pybevy_type.as_str())
+                }
                 SignatureDiff::ExpectedTypeMismatch {
                     context,
                     expected,
@@ -123,6 +129,36 @@ pub fn check_api_drift(
                 ),
             });
         }
+    }
+
+    for method in &coverage.methods {
+        if method.is_implemented {
+            continue;
+        }
+        let Some(trait_path) = method.bevy_trait.as_deref() else {
+            continue;
+        };
+        let trait_name = trait_path.rsplit("::").next().unwrap_or(trait_path);
+        if !config
+            .contract_traits
+            .iter()
+            .any(|contract| contract == trait_name)
+        {
+            continue;
+        }
+        findings.push(DriftFinding {
+            member: Some(method.bevy_name.clone()),
+            diagnostic: located(
+                Diagnostic::warning(
+                    DiagnosticCode::W041,
+                    format!(
+                        "'{}' lacks '{}' from Bevy trait {trait_name}, which '{}' implements",
+                        class.python_name, method.bevy_name, bevy_item.full_path
+                    ),
+                ),
+                class,
+            ),
+        });
     }
 
     if coverage.enum_representation_matches == Some(false) {
@@ -154,6 +190,132 @@ pub fn check_api_drift(
     findings
 }
 
+/// A type alias compares as the type it names (`ForwardDecalMaterial<B>`
+/// is `ExtendedMaterial<B, ForwardDecalMaterialExt>`).
+fn resolve_alias<'a>(
+    item: &'a BevyItem,
+    crate_key: &'a str,
+    bevy_crates: &'a HashMap<String, BevyCrate>,
+) -> (&'a BevyItem, &'a str) {
+    if item.kind != BevyItemKind::TypeAlias {
+        return (item, crate_key);
+    }
+    item.alias_of
+        .as_deref()
+        .and_then(|target| find_deref_target(target, crate_key, bevy_crates))
+        .map(|(target_crate, target)| (target, target_crate))
+        .unwrap_or((item, crate_key))
+}
+
+/// The item as Rust callers see it: plus trait-impl methods other crates
+/// declare for it, provided methods of the traits it implements (wherever
+/// they are declared), blanket-impl traits from `bevy.blanket_impls`, and
+/// field names a contract-only merge kept out of `fields`.
+fn drift_view(
+    item: &BevyItem,
+    bevy_crates: &HashMap<String, BevyCrate>,
+    config: &BevyConfig,
+) -> BevyItem {
+    let mut view = with_foreign_methods(item, bevy_crates);
+    for template in unmarked_templates(item, bevy_crates) {
+        view.methods.extend(template.methods.iter().cloned());
+    }
+    view.fields
+        .extend(item.unordered_field_names.iter().map(|name| BevyField {
+            name: name.clone(),
+            field_type: String::new(),
+            is_public: true,
+        }));
+    let blanket = config
+        .blanket_impls
+        .get(item.name.split('<').next().unwrap_or(&item.name))
+        .into_iter()
+        .flatten();
+    let traits: Vec<String> = item
+        .trait_impls
+        .iter()
+        .cloned()
+        .chain(blanket.cloned())
+        .collect();
+    for trait_path in traits {
+        let Some(trait_item) = find_trait(&trait_path, bevy_crates) else {
+            continue;
+        };
+        for method in &trait_item.methods {
+            if !view
+                .methods
+                .iter()
+                .any(|existing| existing.name == method.name)
+            {
+                let mut method = method.clone();
+                method.from_trait = Some(trait_path.clone());
+                view.methods.push(method);
+            }
+        }
+    }
+    view
+}
+
+/// Generic impls the parser did not mark as templates because their
+/// parameters have descriptive names (`NodeIndex<Ix>`,
+/// `GizmoBuffer<Config, Clear>`): same base name, and no argument names a
+/// known type, so it is not a specialization such as `Time<Virtual>`.
+fn unmarked_templates<'a>(
+    item: &BevyItem,
+    bevy_crates: &'a HashMap<String, BevyCrate>,
+) -> Vec<&'a BevyItem> {
+    if item.name.contains('<') {
+        return Vec::new();
+    }
+    let known = |name: &str| {
+        name.chars().next().is_some_and(char::is_lowercase)
+            || bevy_crates
+                .values()
+                .any(|bevy_crate| bevy_crate.items.contains_key(name))
+    };
+    bevy_crates
+        .values()
+        .flat_map(|bevy_crate| bevy_crate.items.values())
+        .filter(|candidate| !candidate.is_generic_base)
+        .filter(|candidate| {
+            let Some((base, args)) = candidate.name.split_once('<') else {
+                return false;
+            };
+            base == item.name
+                && candidate.full_path.split("::").next() == item.full_path.split("::").next()
+                && args
+                    .trim_end_matches('>')
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|arg| !arg.is_empty() && !arg.starts_with('\''))
+                    .all(|arg| !known(arg))
+        })
+        .collect()
+}
+
+fn find_trait<'a>(
+    trait_path: &str,
+    bevy_crates: &'a HashMap<String, BevyCrate>,
+) -> Option<&'a BevyItem> {
+    let short_name = trait_path.rsplit("::").next().unwrap_or(trait_path);
+    let root = trait_path.split("::").next().unwrap_or(trait_path);
+    let matches: Vec<(&str, &BevyItem)> = bevy_crates
+        .iter()
+        .filter_map(|(crate_name, bevy_crate)| {
+            bevy_crate
+                .items
+                .get(short_name)
+                .filter(|item| item.kind == BevyItemKind::Trait)
+                .map(|item| (crate_name.as_str(), item))
+        })
+        .collect();
+    matches
+        .iter()
+        .find(|(crate_name, _)| *crate_name == root)
+        .or_else(|| (matches.len() == 1).then(|| &matches[0]))
+        .map(|(_, item)| *item)
+}
+
 /// The item plus trait-impl methods other crates declare for it.
 fn with_foreign_methods(item: &BevyItem, bevy_crates: &HashMap<String, BevyCrate>) -> BevyItem {
     let key = foreign_type_key(&item.full_path);
@@ -179,10 +341,14 @@ fn deref_members(
         let Some((_, target)) = current
             .associated_types
             .iter()
-            .find(|(name, _)| name == "Target")
+            .find(|(name, _)| name == "Deref::Target")
         else {
             break;
         };
+        if let Some(fields) = glam_deref_fields(target) {
+            members.extend(fields.iter().map(|field| field.to_string()));
+            break;
+        }
         let Some((target_crate, target_item)) =
             find_deref_target(target, &current_crate, bevy_crates)
         else {
@@ -210,6 +376,21 @@ fn deref_members(
     members
 }
 
+/// glam's SIMD types deref to its `deref` helper structs, which
+/// cargo-public-api files under the same short names as the real vectors
+/// (glam 0.32.1 `src/deref.rs`).
+fn glam_deref_fields(target: &str) -> Option<&'static [&'static str]> {
+    let base = target.split('<').next().unwrap_or(target);
+    match base.strip_prefix("glam::deref::")? {
+        "Vec3" => Some(&["x", "y", "z"]),
+        "Vec4" => Some(&["x", "y", "z", "w"]),
+        "Cols2" => Some(&["x_axis", "y_axis"]),
+        "Cols3" => Some(&["x_axis", "y_axis", "z_axis"]),
+        "Cols4" => Some(&["x_axis", "y_axis", "z_axis", "w_axis"]),
+        _ => None,
+    }
+}
+
 fn find_deref_target<'a>(
     target: &str,
     preferred_crate: &str,
@@ -232,6 +413,13 @@ fn find_deref_target<'a>(
         .find(|(crate_name, _)| *crate_name == preferred_crate)
         .or_else(|| (matches.len() == 1).then(|| &matches[0]))
         .copied()
+}
+
+/// An unresolved generic parameter (`T` in a provided `Curve<T>` method)
+/// cannot be compared without the impl's arguments.
+fn mentions_type_parameter(ty: &str) -> bool {
+    ty.split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .any(|token| token.len() == 1 && token.chars().all(|ch| ch.is_ascii_uppercase()))
 }
 
 fn located(diagnostic: Diagnostic, class: &PyClassDef) -> Diagnostic {

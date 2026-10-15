@@ -17,7 +17,7 @@ use std::{
 
 use crate::{
     bevy_parser::types::{BevyCrate, BevyItem},
-    comparison::pybevy_bevy_name,
+    comparison::{ConversionIndex, pybevy_bevy_name},
     config::Config,
     model::{
         ConstructorOrigin, EnumVariantDef, EnumVariantKind, MacroInfo, MethodDef, ParameterDef,
@@ -390,8 +390,9 @@ pub fn validate_with_bevy(
         }
     }
 
-    // W038-W040 compare every public wrapper with a resolved upstream item,
+    // W038-W041 compare every public wrapper with a resolved upstream item,
     // including method-only classes the constructor-policy loop skips.
+    let conversions = ConversionIndex::build(bevy_crates.values());
     for rust_class in rust_classes {
         if rust_class.python_name.starts_with('_') {
             continue;
@@ -408,6 +409,7 @@ pub fn validate_with_bevy(
             crate_key,
             bevy_crates,
             &config.bevy,
+            &conversions,
         ) {
             if is_disabled_code(Some(config), finding.diagnostic.code.as_str()) {
                 continue;
@@ -507,6 +509,12 @@ fn resolve_bevy_item<'a>(
                 .type_mappings
                 .get(&rust_class.rust_name)
                 .cloned()
+        })
+        .or_else(|| {
+            config
+                .bevy
+                .generic_instance(&rust_class.rust_name)
+                .map(|(base, _)| base.to_string())
         });
     match &claimed_bevy_name {
         Some(name) => resolve_claimed_bevy_item(

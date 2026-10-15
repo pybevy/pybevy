@@ -27,13 +27,33 @@ pub fn merge_source_types(
         if !matches!(item.kind, BevyItemKind::Struct | BevyItemKind::Enum) {
             continue;
         }
-        if !wanted_names.contains(name) || target.items.contains_key(name) {
+        let base = name.split('<').next().unwrap_or(name);
+        if !(wanted_names.contains(name) || wanted_names.contains(base))
+            || target.items.contains_key(name)
+        {
             continue;
         }
         target.items.insert(name.clone(), item.clone());
         merged += 1;
+        merge_implemented_traits(target, source, item);
     }
     merged
+}
+
+/// Bring along the source traits a merged type implements, so their provided
+/// methods (glam's identity swizzles such as `Vec3::xyz`) stay visible.
+fn merge_implemented_traits(target: &mut BevyCrate, source: &BevyCrate, item: &BevyItem) {
+    for trait_path in &item.trait_impls {
+        let short_name = trait_path.rsplit("::").next().unwrap_or(trait_path);
+        if let Some(trait_item) = source.items.get(short_name)
+            && trait_item.kind == BevyItemKind::Trait
+            && !target.items.contains_key(short_name)
+        {
+            target
+                .items
+                .insert(short_name.to_string(), trait_item.clone());
+        }
+    }
 }
 
 /// Merge only enum definitions from a re-export source crate.
@@ -72,7 +92,7 @@ pub fn merge_source_trait_contracts(
             continue;
         }
         let mut item = item.clone();
-        item.fields.clear();
+        item.unordered_field_names = item.fields.drain(..).map(|field| field.name).collect();
         target.items.insert(name.clone(), item);
         merged += 1;
     }
@@ -312,7 +332,17 @@ const CRATE_FEATURES: &[(&str, &[&str])] = &[
         &["gamepad", "gestures", "keyboard", "mouse", "touch"],
     ),
     ("bevy_light", &["bevy_gizmos"]),
-    ("bevy_mesh", &["morph"]),
+    ("bevy_gltf", &["bevy_animation"]),
+    ("bevy_mesh", &["bevy_mikktspace", "morph"]),
+    (
+        "bevy_pbr",
+        &[
+            "pbr_anisotropy_texture",
+            "pbr_multi_layer_material_textures",
+            "pbr_specular_textures",
+            "pbr_transmission_textures",
+        ],
+    ),
     ("bevy_sprite", &["bevy_text"]),
 ];
 
@@ -377,9 +407,12 @@ pub fn parse_public_api_output(crate_name: &str, output: &str) -> Result<BevyCra
                         && let Some((owner, name, target)) = parse_associated_type(line)
                         && base_name(&owner) == base_name(ctx_type)
                         && let Some(owner_item) = items.get_mut(base_name(ctx_type))
-                        && !owner_item.associated_types.iter().any(|(n, _)| n == &name)
                     {
-                        owner_item.associated_types.push((name, target));
+                        let trait_name = ctx_trait.rsplit("::").next().unwrap_or(ctx_trait);
+                        let name = format!("{trait_name}::{name}");
+                        if !owner_item.associated_types.iter().any(|(n, _)| n == &name) {
+                            owner_item.associated_types.push((name, target));
+                        }
                     }
                     // New type definition resets trait context, but NOT type aliases
                     // (associated types like AudioSource::Decoder don't reset context)
@@ -557,6 +590,26 @@ pub fn parse_public_api_output(crate_name: &str, output: &str) -> Result<BevyCra
         items,
         foreign_methods,
     })
+}
+
+/// `&mut bevy_ecs::world::World` -> `bevy_ecs::world::World`: trait impls
+/// for references (`impl RunSystemOnce for &mut World`) belong to the type.
+fn strip_reference(type_path: &str) -> &str {
+    let Some(rest) = type_path.trim_start().strip_prefix('&') else {
+        return type_path;
+    };
+    let rest = rest.trim_start();
+    let rest = match rest.strip_prefix('\'') {
+        Some(lifetime) => lifetime
+            .split_once(' ')
+            .map(|(_, rest)| rest)
+            .unwrap_or(lifetime),
+        None => rest,
+    };
+    rest.trim_start()
+        .strip_prefix("mut ")
+        .unwrap_or(rest)
+        .trim_start()
 }
 
 fn base_name(type_name: &str) -> &str {
@@ -766,6 +819,7 @@ fn parse_line(line: &str, crate_name: &str) -> Option<ParsedLine> {
     if !trait_impl.is_empty()
         && let Some((trait_part, type_part)) = trait_impl.split_once(" for ")
     {
+        let type_part = strip_reference(type_part);
         let type_name = extract_type_name(type_part.split(&['<', ' '][..]).next()?)?;
         let trait_name = trait_part.split(&['<', ' '][..]).next()?.to_string();
 
@@ -806,10 +860,11 @@ fn parse_line(line: &str, crate_name: &str) -> Option<ParsedLine> {
     if let Some(rest) = line.strip_prefix("pub type ") {
         let path = rest.split(&['<', ' ', '='][..]).next()?;
 
-        return Some(ParsedLine::Item(BevyItem::new(
-            path.to_string(),
-            BevyItemKind::TypeAlias,
-        )));
+        let mut item = BevyItem::new(path.to_string(), BevyItemKind::TypeAlias);
+        item.alias_of = rest
+            .split_once(" = ")
+            .map(|(_, target)| target.trim().to_string());
+        return Some(ParsedLine::Item(item));
     }
 
     Some(ParsedLine::Skip)
@@ -836,7 +891,7 @@ fn parse_method_line(line: &str, _crate_name: &str) -> Option<ParsedLine> {
     // Use find_last_path_separator to avoid splitting on :: inside generic bounds
     // e.g., "Srgba::hex<T: core::convert::AsRef<str>>" should split at Srgba::hex, not AsRef<str>
     let sep_pos = find_last_path_separator(path)?;
-    let type_path = &path[..sep_pos];
+    let type_path = strip_reference(&path[..sep_pos]);
     let method_with_generics = &path[sep_pos + 2..]; // Skip the "::"
 
     let method_name = method_with_generics

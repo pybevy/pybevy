@@ -74,11 +74,28 @@ impl BevyCrate {
                 methods.extend(generic_base.methods.iter());
             }
         } else if !item.name.contains('<') {
-            // cargo-public-api can emit a bare exported type (`AssetPath`) plus
-            // its inherent impl under a lifetime-specialized item
-            // (`AssetPath<'a>`). Treat that impl as the bare type's method set.
-            if let Some(generic_base) = self.find_generic_base(&item.name) {
-                methods.extend(generic_base.methods.iter());
+            // cargo-public-api emits a bare exported type (`MessageReader`)
+            // and files each impl under its own generic spelling
+            // (`MessageReader<'w, 's, M>` for the inherent methods,
+            // `MessageReader<'_, '_, M>` for SystemParam). The bare type has
+            // them all, primary impl first.
+            let mut bases: Vec<&BevyItem> = self
+                .items
+                .values()
+                .filter(|base| {
+                    base.is_generic_base
+                        && base.name.contains('<')
+                        && base.name.split('<').next() == Some(item.name.as_str())
+                })
+                .collect();
+            bases.sort_by(|a, b| {
+                b.methods
+                    .len()
+                    .cmp(&a.methods.len())
+                    .then_with(|| a.name.cmp(&b.name))
+            });
+            for base in bases {
+                methods.extend(base.methods.iter());
             }
         }
 
@@ -113,7 +130,7 @@ pub struct BevyItem {
     /// Trait implementations
     pub trait_impls: Vec<String>,
 
-    /// Associated types
+    /// Associated types from trait impls, named `Trait::Name`
     pub associated_types: Vec<(String, String)>,
 
     /// Constants
@@ -127,6 +144,15 @@ pub struct BevyItem {
     /// Public tuple-struct payload types, in declaration order
     #[serde(default)]
     pub tuple_fields: Vec<String>,
+
+    /// Target of a type alias (`pub type Layer = usize`)
+    #[serde(default)]
+    pub alias_of: Option<String>,
+
+    /// Public field names of a struct merged without its fields, whose
+    /// cargo-public-api order is sorted rather than declared
+    #[serde(default)]
+    pub unordered_field_names: Vec<String>,
 }
 
 /// The kind of Bevy item
@@ -238,6 +264,8 @@ impl BevyItem {
             constants: Vec::new(),
             is_generic_base: false,
             tuple_fields: Vec::new(),
+            alias_of: None,
+            unordered_field_names: Vec::new(),
         }
     }
 

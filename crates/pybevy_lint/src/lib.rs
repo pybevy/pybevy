@@ -19,6 +19,7 @@ use std::{
 };
 
 use anyhow::Result;
+use bevy_parser::BevyItemKind;
 pub use bevy_parser::{
     BevyCrate, merge_reexported_enums, merge_reexported_trait_contracts, merge_reexported_types,
 };
@@ -36,10 +37,21 @@ pub fn merge_reexported_bevy_types(
     pybevy_classes: &[PyClassDef],
     use_cache: bool,
 ) {
-    let wanted: HashSet<String> = pybevy_classes
+    let mut wanted: HashSet<String> = pybevy_classes
         .iter()
         .map(|c| pybevy_bevy_name(c, config))
         .collect();
+    let alias_targets: Vec<String> = bevy_crates
+        .values()
+        .flat_map(|bevy_crate| bevy_crate.items.values())
+        .filter(|item| item.kind == BevyItemKind::TypeAlias && wanted.contains(&item.name))
+        .filter_map(|item| item.alias_of.as_deref())
+        .map(|target| {
+            let base = target.split('<').next().unwrap_or(target);
+            base.rsplit("::").next().unwrap_or(base).to_string()
+        })
+        .collect();
+    wanted.extend(alias_targets);
     merge_reexported_types(
         bevy_crates,
         bevy_path,

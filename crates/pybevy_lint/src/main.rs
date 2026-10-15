@@ -2289,6 +2289,12 @@ fn print_coverage_text_with_usage(
             report.enum_representation_mismatches
         );
     }
+    if report.total_conversions > 0 {
+        println!(
+            "  Conversions: {}/{} between wrapped types (From/TryFrom and as_* casts)",
+            report.matched_conversions, report.total_conversions
+        );
+    }
     println!();
 
     let mut crates: Vec<_> = report.crates.iter().collect();
@@ -2492,6 +2498,23 @@ fn print_coverage_text_with_usage(
                             "·".yellow(),
                             method.pybevy_name.yellow(),
                             suffix.dimmed()
+                        );
+                    }
+                }
+
+                let missing_conversions: Vec<_> = type_cov
+                    .conversions
+                    .iter()
+                    .filter(|conversion| !conversion.is_implemented)
+                    .collect();
+                if !missing_conversions.is_empty() {
+                    println!("        {} Missing conversions:", "✗".red());
+                    for conversion in missing_conversions {
+                        println!(
+                            "          {} {} ({})",
+                            "·".red(),
+                            conversion.pybevy_name.red(),
+                            conversion.bevy_conversion.dimmed()
                         );
                     }
                 }

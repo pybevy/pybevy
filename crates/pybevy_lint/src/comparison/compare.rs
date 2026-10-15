@@ -3,10 +3,15 @@ use std::{
     mem,
 };
 
-use super::report::{
-    ConstructorWarning, CoverageReport, CrateCoverage, ExtendsWarning, ExtendsWarningKind,
-    ExtraMethodCoverage, FieldCoverage, MethodCoverage, SignatureDiff, TypeCoverage,
-    VariantCoverage,
+use regex::Regex;
+
+use super::{
+    conversions::{ConversionIndex, snake_case},
+    report::{
+        ConstructorWarning, ConversionCoverage, CoverageReport, CrateCoverage, ExtendsWarning,
+        ExtendsWarningKind, ExtraMethodCoverage, FieldCoverage, MethodCoverage, SignatureDiff,
+        TypeCoverage, VariantCoverage,
+    },
 };
 use crate::{
     bevy_parser::{BevyCrate, BevyItem, BevyItemKind, BevyMethod, SelfKind},
@@ -62,6 +67,7 @@ pub fn compare_apis(
     config: &BevyConfig,
 ) -> ComparisonResult {
     let mut report = CoverageReport::new();
+    let conversions = ConversionIndex::build(bevy_crates.values());
 
     // Use Vec to support multiple classes with the same name (from different modules)
     let mut pybevy_by_bevy_name: HashMap<String, Vec<&PyClassDef>> = HashMap::new();
@@ -89,6 +95,7 @@ pub fn compare_apis(
             &pybevy_by_bevy_name,
             &pybevy_by_python_name,
             config,
+            &conversions,
         );
 
         report.total_bevy_types += crate_coverage.bevy_type_count;
@@ -112,6 +119,12 @@ pub fn compare_apis(
                 report.implemented_type_bevy_methods += type_cov.bevy_method_count;
                 report.implemented_type_matched_methods += type_cov.matched_method_count;
                 report.extra_methods += type_cov.extra_method_count;
+                report.total_conversions += type_cov.conversions.len();
+                report.matched_conversions += type_cov
+                    .conversions
+                    .iter()
+                    .filter(|conversion| conversion.is_implemented)
+                    .count();
 
                 // Track field coverage (only for implemented types)
                 report.total_bevy_fields += type_cov.bevy_field_count;
@@ -143,8 +156,16 @@ pub fn compare_single_type(
     pyclass: &PyClassDef,
     config: &BevyConfig,
     bevy_crate: &BevyCrate,
+    conversions: &ConversionIndex,
 ) -> TypeCoverage {
-    compare_type(bevy_item, pyclass, config, &HashMap::new(), bevy_crate)
+    compare_type_with(
+        bevy_item,
+        pyclass,
+        config,
+        &HashMap::new(),
+        bevy_crate,
+        conversions,
+    )
 }
 
 /// Find the best matching PyBevy class for a type name
@@ -219,6 +240,7 @@ fn compare_crate(
     pybevy_by_bevy_name: &HashMap<String, Vec<&PyClassDef>>,
     pybevy_by_python_name: &HashMap<&str, Vec<&PyClassDef>>,
     config: &BevyConfig,
+    conversions: &ConversionIndex,
 ) -> CrateCoverage {
     let pybevy_module: Option<String> = config
         .crate_mappings
@@ -262,7 +284,14 @@ fn compare_crate(
         let type_coverage = if let Some(pyclass) = pybevy_class {
             coverage.matched_count += 1;
             coverage.pybevy_type_count += 1;
-            let mut tc = compare_type(bevy_item, pyclass, config, pybevy_by_bevy_name, bevy_crate);
+            let mut tc = compare_type_with(
+                bevy_item,
+                pyclass,
+                config,
+                pybevy_by_bevy_name,
+                bevy_crate,
+                conversions,
+            );
 
             // Check module placement: does the PyBevy module match the expected Bevy crate?
             if let Some(ref expected_module) = pybevy_module
@@ -293,6 +322,7 @@ fn compare_crate(
                 is_implemented: false,
                 methods: Vec::new(),
                 extra_methods: Vec::new(),
+                conversions: Vec::new(),
                 fields: Vec::new(),
                 variants: Vec::new(),
                 enum_representation_matches: None,
@@ -381,13 +411,16 @@ fn should_skip_trait_method(method_name: &str, pyclass: &PyClassDef, config: &Be
     }
 }
 
-fn compare_type(
+fn compare_type_with(
     bevy_item: &BevyItem,
     pyclass: &PyClassDef,
     config: &BevyConfig,
     pybevy_types: &HashMap<String, Vec<&PyClassDef>>,
     bevy_crate: &BevyCrate,
+    conversions: &ConversionIndex,
 ) -> TypeCoverage {
+    let resolved = resolve_item(bevy_item, bevy_crate, config, &pyclass.rust_name);
+    let bevy_item = &resolved;
     let pybevy_methods: HashMap<&str, &MethodDef> = pyclass
         .methods
         .iter()
@@ -542,6 +575,9 @@ fn compare_type(
             bevy_param_count: bevy_method.parameters.len(),
             pybevy_param_count,
             missing_required_types,
+            bevy_trait: effective_trait
+                .filter(|trait_name| !trait_name.is_empty())
+                .map(str::to_string),
         };
 
         method_coverages.push(method_coverage);
@@ -607,7 +643,10 @@ fn compare_type(
     let constructor_settable_field_count =
         field_coverages.iter().filter(|f| f.in_constructor).count();
 
-    let extra_method_coverages = find_extra_methods(bevy_item, pyclass, config, bevy_crate);
+    let extra_method_coverages =
+        find_extra_methods(bevy_item, pyclass, config, bevy_crate, conversions);
+    let conversion_coverages =
+        conversion_coverage(bevy_item, pyclass, pybevy_types, &all_methods, conversions);
     let extra_method_count = extra_method_coverages.len();
 
     let (
@@ -629,6 +668,7 @@ fn compare_type(
         is_implemented: true,
         methods: method_coverages,
         extra_methods: extra_method_coverages,
+        conversions: conversion_coverages,
         fields: field_coverages,
         variants: variant_coverages,
         enum_representation_matches: (bevy_item.kind == BevyItemKind::Enum)
@@ -668,8 +708,10 @@ fn find_extra_methods(
     pyclass: &PyClassDef,
     config: &BevyConfig,
     bevy_crate: &BevyCrate,
+    conversions: &ConversionIndex,
 ) -> Vec<ExtraMethodCoverage> {
     let mut extra_methods = Vec::new();
+    let owner = bevy_item.name.split('<').next().unwrap_or(&bevy_item.name);
 
     let all_bevy_methods = bevy_crate.get_methods_for_item(bevy_item);
     let mut bevy_method_names: HashSet<&str> =
@@ -779,7 +821,10 @@ fn find_extra_methods(
             continue;
         }
 
-        if !bevy_method_names.contains(name) && !bevy_field_names.contains(name) {
+        if !bevy_method_names.contains(name)
+            && !bevy_field_names.contains(name)
+            && !conversions.explains(owner, name)
+        {
             extra_methods.push(ExtraMethodCoverage {
                 pybevy_name: name.to_string(),
                 is_static: method.is_static,
@@ -812,7 +857,7 @@ fn find_extra_methods(
             continue;
         }
 
-        if !bevy_method_names.contains(name) {
+        if !bevy_method_names.contains(name) && !conversions.explains(owner, name) {
             extra_methods.push(ExtraMethodCoverage {
                 pybevy_name: name.to_string(),
                 is_static: true,
@@ -863,6 +908,282 @@ fn find_extra_methods(
 
     extra_methods.sort_by(|a, b| a.pybevy_name.cmp(&b.pybevy_name));
     extra_methods
+}
+
+/// The item's full method set (inherent, generic base and implemented trait
+/// defaults) with its associated types (`Self::Translation`) resolved, a
+/// generic instance's type parameters replaced by the wrapper's arguments
+/// (`CubicCurve<P>` as `CubicCurve<Vec3>`), and every configured generic
+/// instance spelled as its wrapper so returns compare by class.
+fn resolve_item(
+    item: &BevyItem,
+    bevy_crate: &BevyCrate,
+    config: &BevyConfig,
+    rust_name: &str,
+) -> BevyItem {
+    let args = config
+        .generic_instance(rust_name)
+        .map(|(_, args)| args)
+        .unwrap_or_default();
+    let params: Vec<String> = bevy_crate
+        .find_generic_base(&item.name)
+        .filter(|_| !args.is_empty())
+        .and_then(|base| {
+            let (_, params) = base.name.split_once('<')?;
+            Some(
+                split_by_comma(params.strip_suffix('>')?)
+                    .into_iter()
+                    .map(|param| param.split(':').next().unwrap_or("").trim().to_string())
+                    .collect(),
+            )
+        })
+        .unwrap_or_default();
+    let mut instances: Vec<(Regex, &str)> = config
+        .generic_instances
+        .iter()
+        .filter_map(|(wrapper, instance)| {
+            let (base, _) = instance.split_once('<')?;
+            let pattern = format!(
+                r"(?:\b[A-Za-z_][A-Za-z0-9_]*::)*{}<\s*(?:[A-Za-z_][A-Za-z0-9_]*::)*{}\s*>",
+                regex::escape(base.trim()),
+                regex::escape(instance[base.len() + 1..instance.len() - 1].trim()),
+            );
+            Some((Regex::new(&pattern).ok()?, wrapper.as_str()))
+        })
+        .collect();
+    instances.sort_by(|a, b| a.1.cmp(b.1));
+    let all_aliases: Vec<(&str, &str)> = bevy_crate
+        .items
+        .values()
+        .filter(|alias| alias.kind == BevyItemKind::TypeAlias && !alias.name.contains('<'))
+        .filter_map(|alias| Some((alias.full_path.as_str(), alias.alias_of.as_deref()?)))
+        .collect();
+    let aliases: Vec<(&str, &str)> = all_aliases
+        .iter()
+        .copied()
+        .filter(|(_, target)| {
+            !target.contains("::") && target.chars().next().is_some_and(char::is_lowercase)
+        })
+        .collect();
+    let generic_aliases: Vec<(&str, &str)> = all_aliases
+        .iter()
+        .copied()
+        .filter(|(_, target)| target.starts_with("core::result::Result<"))
+        .collect();
+    let substitute = |ty: &str, from_trait: Option<&str>| -> String {
+        let mut ty = ty.to_string();
+        for (path, target) in &generic_aliases {
+            ty = expand_result_alias(&ty, path, target);
+        }
+        for (path, target) in &aliases {
+            if ty.contains(path)
+                && let Ok(pattern) = Regex::new(&format!(r"\b{}\b", regex::escape(path)))
+            {
+                ty = pattern.replace_all(&ty, *target).into_owned();
+            }
+        }
+        for (name, target) in associated_types_for(item, from_trait) {
+            if let Ok(pattern) = Regex::new(&format!(r"\bSelf::{}\b", regex::escape(name))) {
+                ty = pattern.replace_all(&ty, target).into_owned();
+            }
+        }
+        for (param, arg) in params.iter().zip(&args) {
+            if let Ok(token) = Regex::new(&format!(r"\b{}\b", regex::escape(param))) {
+                ty = token.replace_all(&ty, *arg).into_owned();
+            }
+        }
+        for (pattern, wrapper) in &instances {
+            ty = pattern.replace_all(&ty, *wrapper).into_owned();
+        }
+        ty
+    };
+
+    let mut methods: Vec<BevyMethod> = bevy_crate
+        .get_methods_for_item(item)
+        .into_iter()
+        .cloned()
+        .collect();
+    for trait_impl in &item.trait_impls {
+        let trait_short_name = trait_impl.rsplit("::").next().unwrap_or(trait_impl);
+        if let Some(trait_item) = bevy_crate.items.get(trait_short_name)
+            && trait_item.kind == BevyItemKind::Trait
+        {
+            for trait_method in &trait_item.methods {
+                if !methods
+                    .iter()
+                    .any(|method| method.name == trait_method.name)
+                {
+                    let mut method = trait_method.clone();
+                    method.from_trait = Some(trait_impl.clone());
+                    methods.push(method);
+                }
+            }
+        }
+    }
+
+    let mut resolved = item.clone();
+    resolved.methods = methods
+        .into_iter()
+        .map(|mut method| {
+            let from_trait = method.from_trait.clone();
+            let from_trait = from_trait.as_deref();
+            method.return_type = method
+                .return_type
+                .as_deref()
+                .map(|ty| substitute(ty, from_trait));
+            for parameter in &mut method.parameters {
+                parameter.param_type = substitute(&parameter.param_type, from_trait);
+            }
+            method
+        })
+        .collect();
+    resolved
+}
+
+/// Associated types a method's `Self::Name` can mean: those of the trait
+/// that declares the method, or for an inherent method, names only one
+/// implemented trait declares.
+fn associated_types_for<'a>(
+    item: &'a BevyItem,
+    from_trait: Option<&str>,
+) -> Vec<(&'a str, &'a str)> {
+    let split = |qualified: &'a str| qualified.split_once("::").unwrap_or(("", qualified));
+    match from_trait.filter(|trait_path| !trait_path.is_empty()) {
+        Some(trait_path) => {
+            let trait_name = trait_path.rsplit("::").next().unwrap_or(trait_path);
+            item.associated_types
+                .iter()
+                .filter_map(|(qualified, target)| {
+                    let (owner, name) = split(qualified);
+                    (owner == trait_name).then_some((name, target.as_str()))
+                })
+                .collect()
+        }
+        None => item
+            .associated_types
+            .iter()
+            .filter_map(|(qualified, target)| {
+                let (_, name) = split(qualified);
+                let unique = item
+                    .associated_types
+                    .iter()
+                    .filter(|(other, _)| split(other).1 == name)
+                    .count()
+                    == 1;
+                unique.then_some((name, target.as_str()))
+            })
+            .collect(),
+    }
+}
+
+/// `bevy_image::TextureAtlasBuilderResult<X>` with alias target
+/// `core::result::Result<T, E>` -> `core::result::Result<X, E>`.
+fn expand_result_alias(ty: &str, path: &str, target: &str) -> String {
+    let Some(start) = ty.find(&format!("{path}<")) else {
+        return ty.to_string();
+    };
+    let open = start + path.len();
+    let mut depth = 0usize;
+    let mut close = None;
+    for (index, ch) in ty[open..].char_indices() {
+        match ch {
+            '<' => depth += 1,
+            '>' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    close = Some(open + index);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(close) = close else {
+        return ty.to_string();
+    };
+    let Some(param) = result_success(target) else {
+        return ty.to_string();
+    };
+    let argument = &ty[open + 1..close];
+    let expanded = target.replacen(param, argument, 1);
+    format!("{}{}{}", &ty[..start], expanded, &ty[close + 1..])
+}
+
+/// Bevy conversions between this type and other wrapped types: `From`/
+/// `TryFrom` impls into this type and glam's `as_*` casts, each exposed in
+/// Python as `from_<src>`, `<src>.into_<dst>`/`to_<dst>` or the cast itself.
+fn conversion_coverage(
+    bevy_item: &BevyItem,
+    pyclass: &PyClassDef,
+    pybevy_types: &HashMap<String, Vec<&PyClassDef>>,
+    bevy_methods: &[(&BevyMethod, Option<&str>)],
+    conversions: &ConversionIndex,
+) -> Vec<ConversionCoverage> {
+    let owner = bevy_item.name.split('<').next().unwrap_or(&bevy_item.name);
+    let has_member = |class: &PyClassDef, name: &str| {
+        class
+            .methods
+            .iter()
+            .chain(&class.static_methods)
+            .any(|method| method.name == name)
+            || class
+                .properties
+                .iter()
+                .any(|property| property.name == name)
+    };
+    let mut coverages = Vec::new();
+
+    let mut sources: Vec<&str> = conversions
+        .sources_of(owner)
+        .filter(|source| pybevy_types.contains_key(*source))
+        .collect();
+    sources.sort_unstable();
+    for source in sources {
+        let from_name = format!("from_{}", snake_case(source));
+        let target = snake_case(owner);
+        let is_implemented = has_member(pyclass, &from_name)
+            || pybevy_types[source].iter().any(|class| {
+                has_member(class, &format!("into_{target}"))
+                    || has_member(class, &format!("to_{target}"))
+            });
+        coverages.push(ConversionCoverage {
+            pybevy_name: from_name,
+            bevy_conversion: format!("From<{source}> for {owner}"),
+            is_implemented,
+        });
+    }
+
+    let mut casts: Vec<&BevyMethod> = bevy_methods
+        .iter()
+        .map(|(method, _)| *method)
+        .filter(|method| method.name.starts_with("as_") && method.self_kind != SelfKind::None)
+        .filter(|method| {
+            method.return_type.as_deref().is_some_and(|ret| {
+                let ret = ret.split('<').next().unwrap_or(ret);
+                pybevy_types.contains_key(ret.rsplit("::").next().unwrap_or(ret))
+            })
+        })
+        .collect();
+    casts.sort_by(|a, b| a.name.cmp(&b.name));
+    casts.dedup_by(|a, b| a.name == b.name);
+    for cast in casts {
+        coverages.push(ConversionCoverage {
+            pybevy_name: cast.name.clone(),
+            bevy_conversion: cast
+                .return_type
+                .clone()
+                .map(|ret| {
+                    format!(
+                        "{owner}::{} -> {}",
+                        cast.name,
+                        simplify_type_for_display(&ret)
+                    )
+                })
+                .unwrap_or_default(),
+            is_implemented: has_member(pyclass, &cast.name),
+        });
+    }
+    coverages
 }
 
 /// Check if PyBevy constructor parameters match Bevy field optionality
@@ -1622,6 +1943,56 @@ fn iterator_item(ty: &str) -> Option<&str> {
     None
 }
 
+/// `Result<T, E>` -> `T`: a Rust error becomes a raised Python exception.
+fn result_success(ty: &str) -> Option<&str> {
+    let inner = ty
+        .strip_prefix("core::result::Result<")
+        .or_else(|| ty.strip_prefix("Result<"))?
+        .strip_suffix('>')?;
+    let mut depth = 0usize;
+    for (index, ch) in inner.char_indices() {
+        match ch {
+            '<' | '(' | '[' => depth += 1,
+            '>' | ')' | ']' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => return Some(inner[..index].trim()),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// PyBevy exposes every `Handle<A>` as one `Handle` class and every
+/// `AssetId<A>` as one `AssetId` class.
+fn erase_asset_type_arguments(ty: &str) -> String {
+    let mut out = String::new();
+    let mut rest = ty;
+    while let Some(start) = ["Handle<", "AssetId<"]
+        .iter()
+        .filter_map(|marker| rest.find(marker).map(|index| index + marker.len() - 1))
+        .min()
+    {
+        out.push_str(&rest[..start]);
+        let mut depth = 0usize;
+        let mut end = rest.len();
+        for (index, ch) in rest[start..].char_indices() {
+            match ch {
+                '<' => depth += 1,
+                '>' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        end = start + index + 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
 /// `PyResult<Vec<T>>`, `Vec<T>` -> `T`.
 fn list_element(ty: &str) -> Option<String> {
     let ty = ty.replace(' ', "");
@@ -1637,7 +2008,21 @@ fn list_element(ty: &str) -> Option<String> {
 /// Return values do not receive input-only conveniences such as Vec2 tuples.
 /// An iterator is returned to Python as a list of its items.
 fn return_types_compatible(bevy: &str, pybevy: &str, owner: &str) -> bool {
-    let bevy = bevy.split(" where ").next().unwrap_or(bevy);
+    let bevy = bevy.split(" where ").next().unwrap_or(bevy).trim();
+    let compact = pybevy.replace(' ', "");
+    if let Some(success) = result_success(bevy)
+        && compact.starts_with("PyResult<")
+        && !compact.starts_with("PyResult<Option<")
+    {
+        return return_types_compatible(success, pybevy, owner);
+    }
+    let erased;
+    let bevy = if bevy.contains("Handle<") || bevy.contains("AssetId<") {
+        erased = erase_asset_type_arguments(bevy);
+        erased.as_str()
+    } else {
+        bevy
+    };
     if let Some(item) = iterator_item(bevy)
         && let Some(element) = list_element(pybevy)
     {
