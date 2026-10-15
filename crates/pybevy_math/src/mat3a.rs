@@ -105,22 +105,13 @@ impl PyMat3A {
     }
 
     #[new]
-    #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (m00=1.0, m01=0.0, m02=0.0, m10=0.0, m11=1.0, m12=0.0, m20=0.0, m21=0.0, m22=1.0))]
-    pub fn new(
-        m00: f32,
-        m01: f32,
-        m02: f32,
-        m10: f32,
-        m11: f32,
-        m12: f32,
-        m20: f32,
-        m21: f32,
-        m22: f32,
-    ) -> Self {
-        PyMat3A::mat3a(Mat3A::from_cols_array(&[
-            m00, m01, m02, m10, m11, m12, m20, m21, m22,
-        ]))
+    #[pyo3(signature = (*, x_axis = PyVec3A::vec3a(Vec3A::X), y_axis = PyVec3A::vec3a(Vec3A::Y), z_axis = PyVec3A::vec3a(Vec3A::Z)))]
+    pub fn new(x_axis: PyVec3A, y_axis: PyVec3A, z_axis: PyVec3A) -> PyResult<Self> {
+        Ok(PyMat3A::mat3a(Mat3A::from_cols(
+            x_axis.try_into()?,
+            y_axis.try_into()?,
+            z_axis.try_into()?,
+        )))
     }
 
     #[staticmethod]

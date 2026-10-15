@@ -220,11 +220,6 @@ impl PyDir3 {
         ))
     }
 
-    pub fn as_tuple(&self) -> PyResult<(f32, f32, f32)> {
-        let value = self.as_ref()?;
-        Ok((value.x, value.y, value.z))
-    }
-
     pub fn __neg__(&self) -> PyResult<PyDir3> {
         Ok(PyDir3::dir3(-self.get()?))
     }
@@ -265,4 +260,19 @@ impl PyDir3 {
             .map(|(direction, length)| (PyDir3::dir3(direction), length))
             .map_err(|e| PyValueError::new_err(e.to_string()))
     }
+}
+
+/// Accept a Dir3 or a Vec3 that normalizes to one.
+pub fn extract_dir3_from_any(obj: &Bound<'_, PyAny>) -> PyResult<Dir3> {
+    if let Ok(direction) = obj.cast::<PyDir3>() {
+        return direction.try_borrow()?.get();
+    }
+    if let Ok(vector) = obj.cast::<PyVec3>() {
+        return Dir3::new(vector.try_borrow()?.try_get()?)
+            .map_err(|e| PyValueError::new_err(e.to_string()));
+    }
+    Err(PyTypeError::new_err(format!(
+        "expected Dir3 or Vec3, got {}",
+        obj.get_type().name()?
+    )))
 }

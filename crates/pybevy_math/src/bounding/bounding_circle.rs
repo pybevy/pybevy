@@ -244,4 +244,33 @@ impl PyBoundingCircle {
             float_repr(circle.radius())
         ))
     }
+
+    pub fn translated_by(&self, translation: &Bound<'_, PyAny>) -> PyResult<PyBoundingCircle> {
+        let translation = extract_vec2_from_any(translation)?;
+        Ok(BoundingCircle::try_from(self)?
+            .translated_by(translation)
+            .into())
+    }
+
+    pub fn translate_by(&mut self, translation: &Bound<'_, PyAny>) -> PyResult<()> {
+        let translation = extract_vec2_from_any(translation)?;
+        self.as_mut()?.translate_by(translation);
+        Ok(())
+    }
+
+    pub fn rotate_by(&mut self, rotation: &Bound<'_, PyAny>) -> PyResult<()> {
+        let rotated = BoundingCircle::try_from(&self.rotated_by(rotation)?)?;
+        *self.as_mut()? = rotated;
+        Ok(())
+    }
+
+    pub fn transform_by(
+        &mut self,
+        translation: &Bound<'_, PyAny>,
+        rotation: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        let transformed = BoundingCircle::try_from(&self.transformed_by(translation, rotation)?)?;
+        *self.as_mut()? = transformed;
+        Ok(())
+    }
 }

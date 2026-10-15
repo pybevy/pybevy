@@ -204,7 +204,7 @@ impl PyURect {
     pub fn __repr__(&self) -> PyResult<String> {
         let rect = self.to_bevy()?;
         Ok(format!(
-            "URect(min=UVec2({}, {}), max=UVec2({}, {}))",
+            "URect({}, {}, {}, {})",
             rect.min.x, rect.min.y, rect.max.x, rect.max.y
         ))
     }

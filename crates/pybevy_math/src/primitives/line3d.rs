@@ -1,5 +1,5 @@
 use bevy::math::primitives::Line3d;
-use pybevy_core::{FromBorrowedStorage, ValueStorage, repr::float_list_repr};
+use pybevy_core::{FromBorrowedStorage, ValueStorage};
 use pyo3::prelude::*;
 
 use crate::dir3::PyDir3;
@@ -41,9 +41,11 @@ impl PyLine3d {
         Ok(())
     }
 
-    fn __repr__(&self) -> String {
-        let d = self.inner.direction;
-        format!("Line3d(direction={})", float_list_repr(&d.to_array()))
+    fn __repr__(&self) -> PyResult<String> {
+        Ok(format!(
+            "Line3d(direction={})",
+            PyDir3::from(self.inner.direction).__repr__()?
+        ))
     }
 }
 

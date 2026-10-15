@@ -260,10 +260,37 @@ impl PyAabb2d {
     fn __repr__(&self) -> PyResult<String> {
         let aabb = self.as_ref()?;
         Ok(format!(
-            "Aabb2d(min={}, max={})",
-            aabb.min.repr_literal(),
-            aabb.max.repr_literal()
+            "Aabb2d(center={}, half_size={})",
+            aabb.center().repr_literal(),
+            aabb.half_size().repr_literal()
         ))
+    }
+
+    pub fn translated_by(&self, translation: &Bound<'_, PyAny>) -> PyResult<PyAabb2d> {
+        let translation = extract_vec2_from_any(translation)?;
+        Ok(Aabb2d::try_from(self)?.translated_by(translation).into())
+    }
+
+    pub fn translate_by(&mut self, translation: &Bound<'_, PyAny>) -> PyResult<()> {
+        let translation = extract_vec2_from_any(translation)?;
+        self.as_mut()?.translate_by(translation);
+        Ok(())
+    }
+
+    pub fn rotate_by(&mut self, rotation: &Bound<'_, PyAny>) -> PyResult<()> {
+        let rotated = Aabb2d::try_from(&self.rotated_by(rotation)?)?;
+        *self.as_mut()? = rotated;
+        Ok(())
+    }
+
+    pub fn transform_by(
+        &mut self,
+        translation: &Bound<'_, PyAny>,
+        rotation: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        let transformed = Aabb2d::try_from(&self.transformed_by(translation, rotation)?)?;
+        *self.as_mut()? = transformed;
+        Ok(())
     }
 }
 

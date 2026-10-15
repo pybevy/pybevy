@@ -1,7 +1,8 @@
-use bevy::math::{Vec3, cubic_splines::RationalCurve};
+use bevy::math::{Vec3, cubic_splines::RationalCurve, curve::Curve};
 use pyo3::prelude::*;
 
-use crate::vec3::PyVec3;
+use super::rational_segment3d::PyRationalSegment3d;
+use crate::{interval::PyInterval, vec3::PyVec3};
 
 #[pyclass(
     name = "RationalCurve3d",
@@ -34,12 +35,28 @@ impl PyRationalCurve3d {
         PyVec3::from_vec3(self.curve.acceleration(t))
     }
 
-    #[getter]
-    pub fn segment_count(&self) -> usize {
-        self.curve.segments().len()
+    pub fn segments(&self) -> Vec<PyRationalSegment3d> {
+        self.curve
+            .segments()
+            .iter()
+            .copied()
+            .map(PyRationalSegment3d::from)
+            .collect()
+    }
+
+    pub fn domain(&self) -> PyInterval {
+        self.curve.domain().into()
+    }
+
+    pub fn sample(&self, t: f32) -> Option<PyVec3> {
+        self.curve.sample(t).map(PyVec3::from_vec3)
+    }
+
+    pub fn sample_clamped(&self, t: f32) -> PyVec3 {
+        PyVec3::from_vec3(self.curve.sample_clamped(t))
     }
 
     fn __repr__(&self) -> String {
-        format!("RationalCurve3d({} segments)", self.segment_count())
+        format!("RationalCurve3d({} segments)", self.curve.segments().len())
     }
 }

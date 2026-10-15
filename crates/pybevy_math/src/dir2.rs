@@ -1,6 +1,9 @@
 use bevy::math::{Dir2, StableInterpolate, Vec2};
 use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage, repr::float_repr};
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pyo3::{
+    exceptions::{PyTypeError, PyValueError},
+    prelude::*,
+};
 
 use super::{rot2::PyRot2, vec2::PyVec2};
 
@@ -271,11 +274,6 @@ impl PyDir2 {
         ))
     }
 
-    pub fn as_tuple(&self) -> PyResult<(f32, f32)> {
-        let value = self.as_ref()?;
-        Ok((value.x, value.y))
-    }
-
     pub fn __neg__(&self) -> PyResult<PyDir2> {
         Ok(PyDir2::dir2(-self.get()?))
     }
@@ -301,4 +299,19 @@ impl PyDir2 {
             .map(|(direction, length)| (PyDir2::dir2(direction), length))
             .map_err(|e| PyValueError::new_err(e.to_string()))
     }
+}
+
+/// Accept a Dir2 or a Vec2 that normalizes to one.
+pub fn extract_dir2_from_any(obj: &Bound<'_, PyAny>) -> PyResult<Dir2> {
+    if let Ok(direction) = obj.cast::<PyDir2>() {
+        return direction.try_borrow()?.get();
+    }
+    if let Ok(vector) = obj.cast::<PyVec2>() {
+        return Dir2::new(vector.try_borrow()?.try_get()?)
+            .map_err(|e| PyValueError::new_err(e.to_string()));
+    }
+    Err(PyTypeError::new_err(format!(
+        "expected Dir2 or Vec2, got {}",
+        obj.get_type().name()?
+    )))
 }

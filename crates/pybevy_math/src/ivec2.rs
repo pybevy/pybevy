@@ -182,7 +182,7 @@ impl PyIVec2 {
 
     pub fn __repr__(&self) -> PyResult<String> {
         let vec = self.as_ref()?;
-        Ok(format!("IVec2(x={}, y={})", vec.x, vec.y))
+        Ok(format!("IVec2({}, {})", vec.x, vec.y))
     }
 
     pub fn __richcmp__(

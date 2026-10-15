@@ -7,7 +7,7 @@ use pybevy_core::{
         affine_transform_last_row, euler_axes_not_normalized, mat4_perspective_depth_planes,
         mat4_perspective_near, mat4_projection_not_finite, matrix_decomposition_singular,
     },
-    repr::float_repr,
+    repr::ReprLiteral,
 };
 use pyo3::{
     basic::CompareOp,
@@ -193,29 +193,14 @@ impl PyMat4 {
     }
 
     #[new]
-    #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (m00=1.0, m01=0.0, m02=0.0, m03=0.0, m10=0.0, m11=1.0, m12=0.0, m13=0.0, m20=0.0, m21=0.0, m22=1.0, m23=0.0, m30=0.0, m31=0.0, m32=0.0, m33=1.0))]
-    pub fn new(
-        m00: f32,
-        m01: f32,
-        m02: f32,
-        m03: f32,
-        m10: f32,
-        m11: f32,
-        m12: f32,
-        m13: f32,
-        m20: f32,
-        m21: f32,
-        m22: f32,
-        m23: f32,
-        m30: f32,
-        m31: f32,
-        m32: f32,
-        m33: f32,
-    ) -> Self {
-        PyMat4::mat4(Mat4::from_cols_array(&[
-            m00, m01, m02, m03, m10, m11, m12, m13, m20, m21, m22, m23, m30, m31, m32, m33,
-        ]))
+    #[pyo3(signature = (*, x_axis = PyVec4::X, y_axis = PyVec4::Y, z_axis = PyVec4::Z, w_axis = PyVec4::W))]
+    pub fn new(x_axis: PyVec4, y_axis: PyVec4, z_axis: PyVec4, w_axis: PyVec4) -> PyResult<Self> {
+        Ok(PyMat4::mat4(Mat4::from_cols(
+            x_axis.try_into()?,
+            y_axis.try_into()?,
+            z_axis.try_into()?,
+            w_axis.try_into()?,
+        )))
     }
 
     #[staticmethod]
@@ -533,25 +518,12 @@ impl PyMat4 {
 
     fn __repr__(&self) -> PyResult<String> {
         let mat = *self.as_ref()?;
-        let arr = mat.to_cols_array().map(float_repr);
         Ok(format!(
-            "Mat4([{}, {}, {}, {}], [{}, {}, {}, {}], [{}, {}, {}, {}], [{}, {}, {}, {}])",
-            arr[0],
-            arr[1],
-            arr[2],
-            arr[3],
-            arr[4],
-            arr[5],
-            arr[6],
-            arr[7],
-            arr[8],
-            arr[9],
-            arr[10],
-            arr[11],
-            arr[12],
-            arr[13],
-            arr[14],
-            arr[15]
+            "Mat4(x_axis={}, y_axis={}, z_axis={}, w_axis={})",
+            mat.x_axis.repr_literal(),
+            mat.y_axis.repr_literal(),
+            mat.z_axis.repr_literal(),
+            mat.w_axis.repr_literal()
         ))
     }
 

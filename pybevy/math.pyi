@@ -144,7 +144,6 @@ class Vec3:
     def __rmul__(self, other: float | Vec3) -> Vec3: ...
     def __eq__(self, other: object) -> bool: ...
     def __ne__(self, other: object) -> bool: ...
-    def as_tuple(self) -> tuple[float, float, float]: ...
     def is_normalized(self) -> bool: ...
     def floor(self) -> Vec3: ...
     def ceil(self) -> Vec3: ...
@@ -369,6 +368,7 @@ class Vec3A:
     NEG_X: ClassVar[Vec3A]
     NEG_Y: ClassVar[Vec3A]
     NEG_Z: ClassVar[Vec3A]
+    AXES: ClassVar[tuple[Vec3A, Vec3A, Vec3A]]
 
     def __init__(self, x: float = 0.0, y: float = 0.0, z: float = 0.0) -> None: ...
     @staticmethod
@@ -406,6 +406,185 @@ class Vec3A:
 
     def __deepcopy__(self, memo: dict[int, object]) -> Vec3A:
         """Return an independent copy; the value holds no Python objects."""
+
+    def xy(self) -> Vec2: ...
+    def xz(self) -> Vec2: ...
+    def yz(self) -> Vec2: ...
+    def yx(self) -> Vec2: ...
+    def zx(self) -> Vec2: ...
+    def zy(self) -> Vec2: ...
+    def xx(self) -> Vec2: ...
+    def yy(self) -> Vec2: ...
+    def zz(self) -> Vec2: ...
+    def with_x(self, x: float) -> Vec3A: ...
+    def with_y(self, y: float) -> Vec3A: ...
+    def with_z(self, z: float) -> Vec3A: ...
+    def truncate(self) -> Vec2: ...
+    def extend(self, w: float) -> Vec4: ...
+    @staticmethod
+    def from_array(a: tuple[float, float, float]) -> Vec3A: ...
+    def to_array(self) -> tuple[float, float, float]: ...
+    def signum(self) -> Vec3A: ...
+    def copysign(self, rhs: Vec3A) -> Vec3A: ...
+    def is_finite(self) -> bool: ...
+    def is_nan(self) -> bool: ...
+    def abs_diff_eq(self, rhs: Vec3A, max_abs_diff: float) -> bool: ...
+    def round(self) -> Vec3A:
+        """Round each component to nearest, with ties away from zero."""
+    def trunc(self) -> Vec3A: ...
+    def fract(self) -> Vec3A:
+        """Signed fractional part, x - trunc(x)."""
+    def fract_gl(self) -> Vec3A:
+        """GLSL-style fractional part, x - floor(x), in [0, 1)."""
+    def exp(self) -> Vec3A: ...
+    def powf(self, n: float) -> Vec3A: ...
+    def recip(self) -> Vec3A: ...
+    def move_towards(self, rhs: Vec3A, d: float) -> Vec3A: ...
+    def midpoint(self, rhs: Vec3A) -> Vec3A: ...
+    def project_onto(self, rhs: Vec3A) -> Vec3A: ...
+    def reject_from(self, rhs: Vec3A) -> Vec3A: ...
+    def try_normalize(self) -> Vec3A | None: ...
+    def clamp(self, min: Vec3A, max: Vec3A) -> Vec3A: ...
+    def element_sum(self) -> float: ...
+    def element_product(self) -> float: ...
+    def is_normalized(self) -> bool: ...
+    def floor(self) -> Vec3A: ...
+    def ceil(self) -> Vec3A: ...
+    def zxy(self) -> Vec3A: ...
+    def xyz(self) -> Vec3A: ...
+    def xzy(self) -> Vec3A: ...
+    def yxz(self) -> Vec3A: ...
+    def yzx(self) -> Vec3A: ...
+    def zyx(self) -> Vec3A: ...
+    def xxx(self) -> Vec3A: ...
+    def xxy(self) -> Vec3A: ...
+    def xxz(self) -> Vec3A: ...
+    def xyx(self) -> Vec3A: ...
+    def xyy(self) -> Vec3A: ...
+    def xzx(self) -> Vec3A: ...
+    def xzz(self) -> Vec3A: ...
+    def yxx(self) -> Vec3A: ...
+    def yxy(self) -> Vec3A: ...
+    def yyx(self) -> Vec3A: ...
+    def yyy(self) -> Vec3A: ...
+    def yyz(self) -> Vec3A: ...
+    def yzy(self) -> Vec3A: ...
+    def yzz(self) -> Vec3A: ...
+    def zxx(self) -> Vec3A: ...
+    def zxz(self) -> Vec3A: ...
+    def zyy(self) -> Vec3A: ...
+    def zyz(self) -> Vec3A: ...
+    def zzx(self) -> Vec3A: ...
+    def zzy(self) -> Vec3A: ...
+    def zzz(self) -> Vec3A: ...
+    def min_element(self) -> float: ...
+    def max_element(self) -> float: ...
+    def angle_between(self, other: Vec3A) -> float: ...
+    def any_orthogonal_vector(self) -> Vec3A: ...
+    def any_orthonormal_vector(self) -> Vec3A:
+        """Return one perpendicular unit vector; self must be normalized.
+
+        Raises ValueError for a non-unit or non-finite input.
+        """
+    def any_orthonormal_pair(self) -> tuple[Vec3A, Vec3A]:
+        """Return two perpendicular unit vectors; self must be normalized.
+
+        Raises ValueError for a non-unit or non-finite input.
+        """
+    def length_recip(self) -> float:
+        """Returns the reciprocal (inverse) of the vector's length."""
+    def slerp(self, rhs: Vec3A, s: float) -> Vec3A:
+        """Spherical linear interpolation between two vectors.
+
+        Args:
+            rhs: The target vector
+            s: Interpolation parameter (0.0 to 1.0)
+
+        Returns:
+            Interpolated vector
+        """
+    def clamp_length(self, min: float, max: float) -> Vec3A:
+        """Clamps the vector's length to be within the specified range."""
+    def clamp_length_min(self, min: float) -> Vec3A:
+        """Clamps the vector's length to be at least the specified minimum."""
+    def clamp_length_max(self, max: float) -> Vec3A:
+        """Clamps the vector's length to be at most the specified maximum."""
+    def project_onto_normalized(self, rhs: Vec3A) -> Vec3A:
+        """Projects this vector onto a normalized vector.
+
+        More efficient than project_onto when rhs is already normalized.
+        Raises ValueError if rhs is not unit length or is non-finite.
+        """
+    def reject_from_normalized(self, rhs: Vec3A) -> Vec3A:
+        """Rejects this vector from a normalized vector.
+
+        More efficient than reject_from when rhs is already normalized.
+        Raises ValueError if rhs is not unit length or is non-finite.
+        """
+    @staticmethod
+    def select(mask: tuple[bool, bool, bool], if_true: Vec3A, if_false: Vec3A) -> Vec3A:
+        """Component-wise selection based on mask.
+
+        Args:
+            mask: Boolean tuple for x, y, z components
+            if_true: Vector to use when mask is True
+            if_false: Vector to use when mask is False
+
+        Returns:
+            Vector with selected components
+        """
+    def cmpeq(self, rhs: Vec3A) -> tuple[bool, bool, bool]:
+        """Component-wise equality comparison."""
+    def cmpne(self, rhs: Vec3A) -> tuple[bool, bool, bool]:
+        """Component-wise inequality comparison."""
+    def cmpge(self, rhs: Vec3A) -> tuple[bool, bool, bool]:
+        """Component-wise greater-than-or-equal comparison."""
+    def cmpgt(self, rhs: Vec3A) -> tuple[bool, bool, bool]:
+        """Component-wise greater-than comparison."""
+    def cmple(self, rhs: Vec3A) -> tuple[bool, bool, bool]:
+        """Component-wise less-than-or-equal comparison."""
+    def cmplt(self, rhs: Vec3A) -> tuple[bool, bool, bool]:
+        """Component-wise less-than comparison."""
+    @staticmethod
+    def from_slice(slice: list[float]) -> Vec3A:
+        """Creates a Vec3A from a list of floats.
+
+        Args:
+            slice: List with at least 3 elements
+
+        Returns:
+            Vec3A created from first 3 elements
+
+        Raises:
+            ValueError: If slice has fewer than 3 elements
+        """
+    def as_uvec3(self) -> UVec3:
+        """Cast each component to u32, as glam's `as_uvec3`."""
+    def reflect(self, normal: Vec3A) -> Vec3A:
+        """Reflect this vector about `normal`.
+
+        Raises:
+            ValueError: If `normal` is not normalized.
+        """
+    def refract(self, normal: Vec3A, eta: float) -> Vec3A:
+        """Refract this incident direction through a surface with ratio `eta`.
+
+        Raises:
+            ValueError: If this vector or `normal` is not normalized.
+        """
+    def normalize_and_length(self) -> tuple[Vec3A, float]:
+        """The normalized vector and the original length; `(X, 0.0)` when not normalizable."""
+    def rotate_towards(self, rhs: Vec3A, max_angle: float) -> Vec3A:
+        """Rotate towards `rhs` by at most `max_angle` radians."""
+    def rotate_x(self, angle: float) -> Vec3A: ...
+    def rotate_y(self, angle: float) -> Vec3A: ...
+    def rotate_z(self, angle: float) -> Vec3A: ...
+    def rotate_axis(self, axis: Vec3A, angle: float) -> Vec3A:
+        """Rotate about `axis` by `angle` radians.
+
+        Raises:
+            ValueError: If `axis` is not normalized.
+        """
 
 class Vec2:
     x: float
@@ -509,7 +688,6 @@ class Vec2:
     def __rmul__(self, other: float | Vec2) -> Vec2: ...
     def __eq__(self, other: object) -> bool: ...
     def __ne__(self, other: object) -> bool: ...
-    def as_tuple(self) -> tuple[float, float]: ...
     def __radd__(self, other: float) -> Vec2: ...
     def __rsub__(self, other: float) -> Vec2: ...
     def __rtruediv__(self, other: float) -> Vec2: ...
@@ -707,7 +885,6 @@ class UVec2:
     def with_x(self, x: int) -> UVec2: ...
     def with_y(self, y: int) -> UVec2: ...
     def to_array(self) -> tuple[int, int]: ...
-    def as_tuple(self) -> tuple[int, int]: ...
 
     def __add__(self, other: UVec2) -> UVec2:
         """Componentwise integer arithmetic.
@@ -964,7 +1141,6 @@ class UVec3:
     def with_y(self, y: int) -> UVec3: ...
     def with_z(self, z: int) -> UVec3: ...
     def to_array(self) -> tuple[int, int, int]: ...
-    def as_tuple(self) -> tuple[int, int, int]: ...
 
     def __add__(self, other: UVec3) -> UVec3:
         """Componentwise integer arithmetic.
@@ -1559,7 +1735,6 @@ class Dir3:
     def __repr__(self) -> str: ...
     def __eq__(self, other: object) -> bool: ...
     def __ne__(self, other: object) -> bool: ...
-    def as_tuple(self) -> tuple[float, float, float]: ...
     def __neg__(self) -> Dir3: ...
     def __mul__(self, other: float) -> Vec3: ...
     def __rmul__(self, other: float) -> Vec3: ...
@@ -1731,10 +1906,7 @@ class Mat3A:
     NAN: ClassVar[Mat3A]
 
     def __init__(
-        self,
-        m00: float = 1.0, m01: float = 0.0, m02: float = 0.0,
-        m10: float = 0.0, m11: float = 1.0, m12: float = 0.0,
-        m20: float = 0.0, m21: float = 0.0, m22: float = 1.0,
+        self, *, x_axis: Vec3A = Vec3A.X, y_axis: Vec3A = Vec3A.Y, z_axis: Vec3A = Vec3A.Z
     ) -> None: ...
 
     @staticmethod
@@ -2078,10 +2250,12 @@ class Plane3d(Meshable):
 class InfinitePlane3d:
     """An infinite 3D plane defined by its normal direction."""
 
-    def __init__(self, *, normal: Vec3 = Dir3.Y.as_vec3()) -> None: ...
-    @staticmethod
-    def from_dir(normal: Dir3) -> InfinitePlane3d:
-        """Create an infinite plane from a direction."""
+    def __init__(self, *, normal: Dir3 | Vec3 = ...) -> None:
+        """Create a plane through the origin; `normal` defaults to `Dir3.Y`.
+
+        Raises:
+            ValueError: If a `Vec3` normal is zero, near zero, or non-finite
+        """
     @staticmethod
     def from_points(a: Vec3, b: Vec3, c: Vec3) -> tuple[InfinitePlane3d, Vec3]:
         """Create the plane through three points, returning it with its center."""
@@ -2290,7 +2464,6 @@ class Vec4:
         mask: tuple[bool, bool, bool, bool], if_true: Vec4, if_false: Vec4
     ) -> Vec4: ...
     def to_array(self) -> tuple[float, float, float, float]: ...
-    def as_tuple(self) -> tuple[float, float, float, float]: ...
     def abs(self) -> Vec4: ...
     def signum(self) -> Vec4: ...
     def copysign(self, rhs: Vec4) -> Vec4: ...
@@ -2395,10 +2568,7 @@ class Mat3:
     NAN: ClassVar[Mat3]
 
     def __init__(
-        self,
-        m00: float = 1.0, m01: float = 0.0, m02: float = 0.0,
-        m10: float = 0.0, m11: float = 1.0, m12: float = 0.0,
-        m20: float = 0.0, m21: float = 0.0, m22: float = 1.0,
+        self, *, x_axis: Vec3 = Vec3.X, y_axis: Vec3 = Vec3.Y, z_axis: Vec3 = Vec3.Z
     ) -> None: ...
 
     @staticmethod
@@ -2547,10 +2717,11 @@ class Mat4:
 
     def __init__(
         self,
-        m00: float = 1.0, m01: float = 0.0, m02: float = 0.0, m03: float = 0.0,
-        m10: float = 0.0, m11: float = 1.0, m12: float = 0.0, m13: float = 0.0,
-        m20: float = 0.0, m21: float = 0.0, m22: float = 1.0, m23: float = 0.0,
-        m30: float = 0.0, m31: float = 0.0, m32: float = 0.0, m33: float = 1.0,
+        *,
+        x_axis: Vec4 = Vec4.X,
+        y_axis: Vec4 = Vec4.Y,
+        z_axis: Vec4 = Vec4.Z,
+        w_axis: Vec4 = Vec4.W,
     ) -> None: ...
 
     @staticmethod
@@ -2948,6 +3119,15 @@ class Aabb2d:
     def __deepcopy__(self, memo: dict[int, object]) -> Aabb2d:
         """Return an independent copy; the value holds no Python objects."""
 
+    def translated_by(self, translation: Vec2) -> Aabb2d:
+        """A copy moved by `translation`."""
+    def translate_by(self, translation: Vec2) -> None:
+        """Move this volume in place by `translation`."""
+    def rotate_by(self, rotation: Rot2 | float) -> None:
+        """Rotate this volume in place around the origin, as `rotated_by` does."""
+    def transform_by(self, translation: Vec2, rotation: Rot2 | float) -> None:
+        """Rotate this volume around the origin, then translate it, in place."""
+
 class BoundingCircle:
     """Bounding circle in 2D space.
 
@@ -3049,6 +3229,15 @@ class BoundingCircle:
     def __deepcopy__(self, memo: dict[int, object]) -> BoundingCircle:
         """Return an independent copy; the value holds no Python objects."""
 
+    def translated_by(self, translation: Vec2) -> BoundingCircle:
+        """A copy moved by `translation`."""
+    def translate_by(self, translation: Vec2) -> None:
+        """Move this volume in place by `translation`."""
+    def rotate_by(self, rotation: Rot2 | float) -> None:
+        """Rotate this volume in place around the origin, as `rotated_by` does."""
+    def transform_by(self, translation: Vec2, rotation: Rot2 | float) -> None:
+        """Rotate this volume around the origin, then translate it, in place."""
+
 class Isometry3d:
     """3D isometry (rotation + translation) for bounding volume transformations.
 
@@ -3144,13 +3333,13 @@ class Aabb3d:
             >>> aabb = Aabb3d.from_min_max(Vec3(0.0, 0.0, 0.0), Vec3(100.0, 100.0, 100.0))
         """
 
-    def center(self) -> Vec3:
+    def center(self) -> Vec3A:
         """Center of the bounding box."""
 
-    def half_size(self) -> Vec3:
+    def half_size(self) -> Vec3A:
         """Half-extents of the bounding box."""
 
-    def closest_point(self, point: Vec3A | Vec3) -> Vec3:
+    def closest_point(self, point: Vec3A | Vec3) -> Vec3A:
         """Find the closest point on the AABB to the given point."""
 
     def contains(self, other: Aabb3d) -> bool:
@@ -3229,6 +3418,15 @@ class Aabb3d:
     def __deepcopy__(self, memo: dict[int, object]) -> Aabb3d:
         """Return an independent copy; the value holds no Python objects."""
 
+    def translated_by(self, translation: Vec3A | Vec3) -> Aabb3d:
+        """A copy moved by `translation`."""
+    def translate_by(self, translation: Vec3A | Vec3) -> None:
+        """Move this volume in place by `translation`."""
+    def rotate_by(self, rotation: Quat) -> None:
+        """Rotate this volume in place around the origin, as `rotated_by` does."""
+    def transform_by(self, translation: Vec3A | Vec3, rotation: Quat) -> None:
+        """Rotate this volume around the origin, then translate it, in place."""
+
 class BoundingSphere:
     """Bounding sphere in 3D space."""
 
@@ -3251,7 +3449,7 @@ class BoundingSphere:
     def radius(self) -> float:
         """Radius of the bounding sphere."""
 
-    def closest_point(self, point: Vec3A | Vec3) -> Vec3:
+    def closest_point(self, point: Vec3A | Vec3) -> Vec3A:
         """Find the closest point on the sphere to the given point.
 
         Exterior points are projected onto the surface along the direction from
@@ -3326,6 +3524,15 @@ class BoundingSphere:
     def __deepcopy__(self, memo: dict[int, object]) -> BoundingSphere:
         """Return an independent copy; the value holds no Python objects."""
 
+    def translated_by(self, translation: Vec3A | Vec3) -> BoundingSphere:
+        """A copy moved by `translation`."""
+    def translate_by(self, translation: Vec3A | Vec3) -> None:
+        """Move this volume in place by `translation`."""
+    def rotate_by(self, rotation: Quat) -> None:
+        """Rotate this volume in place around the origin, as `rotated_by` does."""
+    def transform_by(self, translation: Vec3A | Vec3, rotation: Quat) -> None:
+        """Rotate this volume around the origin, then translate it, in place."""
+
 class Dir2:
     """A normalized 2D direction vector."""
 
@@ -3375,8 +3582,6 @@ class Dir2:
     def slerp(self, rhs: Dir2, s: float) -> Dir2:
         """Spherical linear interpolation between two directions."""
 
-    def as_tuple(self) -> tuple[float, float]:
-        """Convert to tuple."""
 
     def rotation_to(self, other: Dir2) -> Rot2:
         """Get the rotation from self to other."""
@@ -3630,7 +3835,7 @@ class RayCast3d:
     @direction.setter
     def direction(self, value: Dir3) -> None: ...
 
-    def __init__(self, origin: Vec3, direction: Dir3, max: float) -> None:
+    def __init__(self, origin: Vec3A | Vec3, direction: Dir3, max: float) -> None:
         """Create a new RayCast3d.
 
         Args:
@@ -4537,22 +4742,14 @@ class Plane2d:
     @normal.setter
     def normal(self, value: Dir2) -> None: ...
 
-    def __init__(self, normal: Vec2 = ...) -> None:
-        """Create a new plane from a normal vector.
+    def __init__(self, normal: Dir2 | Vec2 = ...) -> None:
+        """Create a new plane; `normal` defaults to `Dir2.Y`.
 
         Args:
-            normal: The normal direction (will be normalized)
+            normal: A direction, or a vector that is normalized
 
         Raises:
-            ValueError: If the normal is zero or non-finite
-        """
-
-    @staticmethod
-    def from_dir(normal: Dir2) -> Plane2d:
-        """Create a plane from a normalized direction.
-
-        Args:
-            normal: The normal direction (already normalized)
+            ValueError: If a `Vec2` normal is zero or non-finite
         """
 
     def __eq__(self, other: object) -> bool: ...
@@ -5502,15 +5699,11 @@ class CubicCurve2d:
         >>> curve = bezier.to_curve()
     """
 
-    @property
-    def segment_count(self) -> int:
-        """The number of cubic segments in this curve."""
-
     def position(self, t: float) -> Vec2:
         """Compute the position on the curve at parameter t.
 
         Args:
-            t: Parameter value (0 to segment_count)
+            t: Parameter value (0 to the number of segments)
 
         Returns:
             The position on the curve at t
@@ -5520,7 +5713,7 @@ class CubicCurve2d:
         """Compute the velocity (first derivative) on the curve at parameter t.
 
         Args:
-            t: Parameter value (0 to segment_count)
+            t: Parameter value (0 to the number of segments)
 
         Returns:
             The velocity vector at t
@@ -5530,7 +5723,7 @@ class CubicCurve2d:
         """Compute the acceleration (second derivative) on the curve at parameter t.
 
         Args:
-            t: Parameter value (0 to segment_count)
+            t: Parameter value (0 to the number of segments)
 
         Returns:
             The acceleration vector at t
@@ -5565,6 +5758,15 @@ class CubicCurve2d:
         Returns:
             List of acceleration vectors sampled along the curve
         """
+
+    def segments(self) -> list[CubicSegment2d]:
+        """Independent copies of the segments that make up this curve."""
+    def domain(self) -> Interval:
+        """The parameter interval the curve is defined over."""
+    def sample(self, t: float) -> Vec2 | None:
+        """The position at `t`, or None when `t` lies outside the domain."""
+    def sample_clamped(self, t: float) -> Vec2:
+        """The position at `t` after clamping `t` into the domain."""
 
 class CubicBezier2d:
     """A 2D cubic Bezier curve.
@@ -5973,10 +6175,6 @@ class Rot2:
 class CubicCurve3d:
     """A 3D cubic curve composed of cubic segments."""
 
-    @property
-    def segment_count(self) -> int:
-        """The number of cubic segments in this curve."""
-
     def position(self, t: float) -> Vec3:
         """Compute the position on the curve at parameter t."""
 
@@ -5994,6 +6192,15 @@ class CubicCurve3d:
 
     def iter_accelerations(self, subdivisions: int) -> list[Vec3]:
         """Sample accelerations along the curve."""
+
+    def segments(self) -> list[CubicSegment3d]:
+        """Independent copies of the segments that make up this curve."""
+    def domain(self) -> Interval:
+        """The parameter interval the curve is defined over."""
+    def sample(self, t: float) -> Vec3 | None:
+        """The position at `t`, or None when `t` lies outside the domain."""
+    def sample_clamped(self, t: float) -> Vec3:
+        """The position at `t` after clamping `t` into the domain."""
 
 class CubicBezier3d:
     """A 3D cubic Bezier curve defined by control point segments.
@@ -6215,10 +6422,6 @@ class CubicNurbs3d:
 class RationalCurve2d:
     """A 2D rational curve produced by `CubicNurbs2d.to_curve`."""
 
-    @property
-    def segment_count(self) -> int:
-        """The number of rational segments."""
-
     def position(self, t: float) -> Vec2:
         """Compute the position on the curve at parameter t."""
 
@@ -6228,12 +6431,17 @@ class RationalCurve2d:
     def acceleration(self, t: float) -> Vec2:
         """Compute the acceleration on the curve at parameter t."""
 
+    def segments(self) -> list[RationalSegment2d]:
+        """Independent copies of the segments that make up this curve."""
+    def domain(self) -> Interval:
+        """The parameter interval the curve is defined over."""
+    def sample(self, t: float) -> Vec2 | None:
+        """The position at `t`, or None when `t` lies outside the domain."""
+    def sample_clamped(self, t: float) -> Vec2:
+        """The position at `t` after clamping `t` into the domain."""
+
 class RationalCurve3d:
     """A 3D rational curve produced by `CubicNurbs3d.to_curve`."""
-
-    @property
-    def segment_count(self) -> int:
-        """The number of rational segments."""
 
     def position(self, t: float) -> Vec3:
         """Compute the position on the curve at parameter t."""
@@ -6243,6 +6451,15 @@ class RationalCurve3d:
 
     def acceleration(self, t: float) -> Vec3:
         """Compute the acceleration on the curve at parameter t."""
+
+    def segments(self) -> list[RationalSegment3d]:
+        """Independent copies of the segments that make up this curve."""
+    def domain(self) -> Interval:
+        """The parameter interval the curve is defined over."""
+    def sample(self, t: float) -> Vec3 | None:
+        """The position at `t`, or None when `t` lies outside the domain."""
+    def sample_clamped(self, t: float) -> Vec3:
+        """The position at `t` after clamping `t` into the domain."""
 
 class AabbCast2d:
     """A 2D AABB swept along a ray for collision testing."""
@@ -6319,7 +6536,7 @@ class BoundingCircleCast:
 class AabbCast3d:
     """A 3D AABB swept along a ray for collision testing."""
 
-    def __init__(self, aabb: Aabb3d, origin: Vec3, direction: Dir3, max: float) -> None:
+    def __init__(self, aabb: Aabb3d, origin: Vec3A | Vec3, direction: Dir3, max: float) -> None:
         """Cast an `Aabb3d` from an origin along a direction for at most `max` distance."""
 
     @staticmethod
@@ -6355,7 +6572,9 @@ class AabbCast3d:
 class BoundingSphereCast:
     """A 3D sphere swept along a ray for collision testing."""
 
-    def __init__(self, sphere: BoundingSphere, origin: Vec3, direction: Dir3, max: float) -> None:
+    def __init__(
+        self, sphere: BoundingSphere, origin: Vec3A | Vec3, direction: Dir3, max: float
+    ) -> None:
         """Cast a `BoundingSphere` from an origin along a direction for at most `max` distance."""
 
     @staticmethod
@@ -6387,3 +6606,105 @@ class BoundingSphereCast:
 
     def __deepcopy__(self, memo: dict[int, object]) -> BoundingSphereCast:
         """Return an independent copy; the value holds no Python objects."""
+
+class CubicSegment2d:
+    """One polynomial segment of a cubic curve, with domain `[0, 1]`."""
+
+    def __init__(self, *, coeff: list[Vec2] = ...) -> None:
+        """Create a segment from its four polynomial coefficients (default all zero)."""
+    @staticmethod
+    def new_bezier(points: list[Vec2]) -> CubicSegment2d:
+        """The segment of the Bezier curve through four control points."""
+    @property
+    def coeff(self) -> list[Vec2]:
+        """Read-only snapshots of the coefficients; assign a list to replace them."""
+    @coeff.setter
+    def coeff(self, value: list[Vec2]) -> None: ...
+    def position(self, t: float) -> Vec2: ...
+    def velocity(self, t: float) -> Vec2: ...
+    def acceleration(self, t: float) -> Vec2: ...
+    def domain(self) -> Interval: ...
+    def sample(self, t: float) -> Vec2 | None: ...
+    def sample_clamped(self, t: float) -> Vec2: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __copy__(self) -> CubicSegment2d: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> CubicSegment2d: ...
+
+class RationalSegment2d:
+    """One rational segment of a NURBS curve, with domain `[0, 1]`."""
+
+    def __init__(
+        self,
+        *,
+        coeff: list[Vec2] = ...,
+        weight_coeff: list[float] = ...,
+        knot_span: float = 0.0,
+    ) -> None:
+        """Create a segment from its coefficients, weights, and knot span (default all zero)."""
+    @property
+    def coeff(self) -> list[Vec2]:
+        """Read-only snapshots of the coefficients; assign a list to replace them."""
+    @coeff.setter
+    def coeff(self, value: list[Vec2]) -> None: ...
+    weight_coeff: list[float]
+    knot_span: float
+    def position(self, t: float) -> Vec2: ...
+    def velocity(self, t: float) -> Vec2: ...
+    def acceleration(self, t: float) -> Vec2: ...
+    def domain(self) -> Interval: ...
+    def sample(self, t: float) -> Vec2 | None: ...
+    def sample_clamped(self, t: float) -> Vec2: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __copy__(self) -> RationalSegment2d: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> RationalSegment2d: ...
+
+class CubicSegment3d:
+    """One polynomial segment of a cubic curve, with domain `[0, 1]`."""
+
+    def __init__(self, *, coeff: list[Vec3] = ...) -> None:
+        """Create a segment from its four polynomial coefficients (default all zero)."""
+    @staticmethod
+    def new_bezier(points: list[Vec3]) -> CubicSegment3d:
+        """The segment of the Bezier curve through four control points."""
+    @property
+    def coeff(self) -> list[Vec3]:
+        """Read-only snapshots of the coefficients; assign a list to replace them."""
+    @coeff.setter
+    def coeff(self, value: list[Vec3]) -> None: ...
+    def position(self, t: float) -> Vec3: ...
+    def velocity(self, t: float) -> Vec3: ...
+    def acceleration(self, t: float) -> Vec3: ...
+    def domain(self) -> Interval: ...
+    def sample(self, t: float) -> Vec3 | None: ...
+    def sample_clamped(self, t: float) -> Vec3: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __copy__(self) -> CubicSegment3d: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> CubicSegment3d: ...
+
+class RationalSegment3d:
+    """One rational segment of a NURBS curve, with domain `[0, 1]`."""
+
+    def __init__(
+        self,
+        *,
+        coeff: list[Vec3] = ...,
+        weight_coeff: list[float] = ...,
+        knot_span: float = 0.0,
+    ) -> None:
+        """Create a segment from its coefficients, weights, and knot span (default all zero)."""
+    @property
+    def coeff(self) -> list[Vec3]:
+        """Read-only snapshots of the coefficients; assign a list to replace them."""
+    @coeff.setter
+    def coeff(self, value: list[Vec3]) -> None: ...
+    weight_coeff: list[float]
+    knot_span: float
+    def position(self, t: float) -> Vec3: ...
+    def velocity(self, t: float) -> Vec3: ...
+    def acceleration(self, t: float) -> Vec3: ...
+    def domain(self) -> Interval: ...
+    def sample(self, t: float) -> Vec3 | None: ...
+    def sample_clamped(self, t: float) -> Vec3: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __copy__(self) -> RationalSegment3d: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> RationalSegment3d: ...

@@ -675,8 +675,6 @@ impl PyVec4 {
     ) -> PyResult<Py<PyAny>> {
         let equal = if let Ok(other_vec) = other.extract::<PyVec4>() {
             *self.as_ref()? == *other_vec.as_ref()?
-        } else if let Ok(tuple) = other.extract::<(f32, f32, f32, f32)>() {
-            self.as_tuple()? == tuple
         } else {
             return Ok(py.NotImplemented());
         };
@@ -686,11 +684,6 @@ impl PyVec4 {
             _ => return Err(PyTypeError::new_err(UNSUPPORTED_COMPARISON)),
         };
         Ok(comparison_result(py, result))
-    }
-
-    fn as_tuple(&self) -> PyResult<(f32, f32, f32, f32)> {
-        let v = *self.as_ref()?;
-        Ok((v.x, v.y, v.z, v.w))
     }
 
     pub fn reflect(&self, normal: &PyVec4) -> PyResult<PyVec4> {

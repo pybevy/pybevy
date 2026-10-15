@@ -1,5 +1,5 @@
 use bevy::math::primitives::Line2d;
-use pybevy_core::{FromBorrowedStorage, ValueStorage, repr::float_list_repr};
+use pybevy_core::{FromBorrowedStorage, ValueStorage};
 use pyo3::prelude::*;
 
 use crate::dir2::PyDir2;
@@ -41,9 +41,11 @@ impl PyLine2d {
         Ok(())
     }
 
-    fn __repr__(&self) -> String {
-        let d = self.inner.direction;
-        format!("Line2d(direction={})", float_list_repr(&d.to_array()))
+    fn __repr__(&self) -> PyResult<String> {
+        Ok(format!(
+            "Line2d(direction={})",
+            PyDir2::from(self.inner.direction).__repr__()?
+        ))
     }
 }
 

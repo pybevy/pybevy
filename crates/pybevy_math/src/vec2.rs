@@ -331,8 +331,6 @@ impl PyVec2 {
     ) -> PyResult<Py<PyAny>> {
         let equal = if let Ok(other_vec) = other.extract::<PyVec2>() {
             self.try_get()? == other_vec.try_get()?
-        } else if let Ok(tuple) = other.extract::<(f32, f32)>() {
-            self.as_tuple()? == tuple
         } else {
             return Ok(py.NotImplemented());
         };
@@ -342,11 +340,6 @@ impl PyVec2 {
             _ => return Err(PyTypeError::new_err(UNSUPPORTED_COMPARISON)),
         };
         Ok(comparison_result(py, result))
-    }
-
-    fn as_tuple(&self) -> PyResult<(f32, f32)> {
-        let v = self.as_ref()?;
-        Ok((v.x, v.y))
     }
 
     pub fn is_normalized(&self) -> PyResult<bool> {

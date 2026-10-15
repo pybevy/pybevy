@@ -1,5 +1,8 @@
 use bevy::math::bounding::{AabbCast2d, IntersectsVolume};
-use pybevy_core::{FieldStorage, FromBorrowedStorage, repr::object_repr};
+use pybevy_core::{
+    FieldStorage, FromBorrowedStorage,
+    repr::{ReprLiteral, float_repr, object_repr},
+};
 use pybevy_macros::pyfield;
 use pyo3::prelude::*;
 
@@ -75,9 +78,11 @@ impl PyAabbCast2d {
     fn __repr__(&self) -> PyResult<String> {
         let cast = self.as_ref()?;
         Ok(format!(
-            "AabbCast2d(aabb={}, ray={})",
+            "AabbCast2d(aabb={}, origin={}, direction={}, max={})",
             object_repr(PyAabb2d::from(cast.aabb)),
-            object_repr(PyRayCast2d::from_owned(cast.ray.clone()))
+            cast.ray.ray.origin.repr_literal(),
+            PyDir2::from(cast.ray.ray.direction).__repr__()?,
+            float_repr(cast.ray.max)
         ))
     }
 }

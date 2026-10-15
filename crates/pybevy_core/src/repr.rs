@@ -177,7 +177,7 @@ impl ReprLiteral for Vec4 {
 impl ReprLiteral for Quat {
     fn repr_literal(&self) -> String {
         format!(
-            "Quat({}, {}, {}, {})",
+            "Quat.from_xyzw({}, {}, {}, {})",
             float_repr(self.x),
             float_repr(self.y),
             float_repr(self.z),

@@ -270,9 +270,11 @@ impl PyRot2 {
     }
 
     pub fn __repr__(&self) -> PyResult<String> {
+        let rotation = self.as_ref()?;
         Ok(format!(
-            "Rot2(radians={})",
-            float_repr(self.as_ref()?.as_radians())
+            "Rot2(cos={}, sin={})",
+            float_repr(rotation.cos),
+            float_repr(rotation.sin)
         ))
     }
 }

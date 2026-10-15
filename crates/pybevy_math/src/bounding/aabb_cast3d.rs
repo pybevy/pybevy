@@ -1,13 +1,16 @@
 use bevy::math::{
-    Dir3, Vec3,
+    Dir3,
     bounding::{AabbCast3d, IntersectsVolume},
 };
-use pybevy_core::{FieldStorage, FromBorrowedStorage, repr::object_repr};
+use pybevy_core::{
+    FieldStorage, FromBorrowedStorage,
+    repr::{ReprLiteral, float_repr, object_repr},
+};
 use pybevy_macros::pyfield;
 use pyo3::prelude::*;
 
 use super::{aabb3d::PyAabb3d, raycast::PyRayCast3d};
-use crate::{dir3::PyDir3, ray::PyRay3d, vec3::PyVec3};
+use crate::{dir3::PyDir3, ray::PyRay3d, vec3a::extract_vec3a_from_any};
 
 #[pyfield]
 #[pyclass(name = "AabbCast3d", module = "pybevy.math", from_py_object)]
@@ -27,10 +30,15 @@ impl PyAabbCast3d {
     }
 
     #[new]
-    pub fn new(aabb: &PyAabb3d, origin: PyVec3, direction: PyDir3, max: f32) -> PyResult<Self> {
+    pub fn new(
+        aabb: &PyAabb3d,
+        origin: &Bound<'_, PyAny>,
+        direction: PyDir3,
+        max: f32,
+    ) -> PyResult<Self> {
         Ok(Self::from_owned(AabbCast3d::new(
             aabb.try_into()?,
-            Vec3::try_from(origin)?,
+            extract_vec3a_from_any(origin)?,
             Dir3::try_from(direction)?,
             max,
         )))
@@ -78,9 +86,11 @@ impl PyAabbCast3d {
     fn __repr__(&self) -> PyResult<String> {
         let cast = self.as_ref()?;
         Ok(format!(
-            "AabbCast3d(aabb={}, ray={})",
+            "AabbCast3d(aabb={}, origin={}, direction={}, max={})",
             object_repr(PyAabb3d::from(cast.aabb)),
-            object_repr(PyRayCast3d::from_owned(cast.ray.clone()))
+            cast.ray.origin.repr_literal(),
+            PyDir3::from(Dir3::from(cast.ray.direction)).__repr__()?,
+            float_repr(cast.ray.max)
         ))
     }
 }

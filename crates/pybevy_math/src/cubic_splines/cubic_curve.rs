@@ -1,7 +1,8 @@
-use bevy::math::{Vec2, cubic_splines::CubicCurve};
+use bevy::math::{Vec2, cubic_splines::CubicCurve, curve::Curve};
 use pyo3::prelude::*;
 
-use crate::vec2::PyVec2;
+use super::cubic_segment2d::PyCubicSegment2d;
+use crate::{interval::PyInterval, vec2::PyVec2};
 
 #[pyclass(
     name = "CubicCurve2d",
@@ -55,12 +56,28 @@ impl PyCubicCurve2d {
             .collect()
     }
 
-    #[getter]
-    pub fn segment_count(&self) -> usize {
-        self.curve.segments().len()
+    pub fn segments(&self) -> Vec<PyCubicSegment2d> {
+        self.curve
+            .segments()
+            .iter()
+            .copied()
+            .map(PyCubicSegment2d::from)
+            .collect()
+    }
+
+    pub fn domain(&self) -> PyInterval {
+        self.curve.domain().into()
+    }
+
+    pub fn sample(&self, t: f32) -> Option<PyVec2> {
+        self.curve.sample(t).map(PyVec2::from_vec2)
+    }
+
+    pub fn sample_clamped(&self, t: f32) -> PyVec2 {
+        PyVec2::from_vec2(self.curve.sample_clamped(t))
     }
 
     fn __repr__(&self) -> String {
-        format!("CubicCurve2d({} segments)", self.segment_count())
+        format!("CubicCurve2d({} segments)", self.curve.segments().len())
     }
 }
