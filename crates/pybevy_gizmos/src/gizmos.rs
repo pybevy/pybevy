@@ -6,11 +6,8 @@ use bevy::{
 use pybevy_color::color::PyColor;
 use pybevy_core::{FieldStorage, ValidityFlag};
 use pybevy_math::{
-    affine3a::PyAffine3A,
-    bounding::{PyAabb3d, PyIsometry2d, PyIsometry3d},
-    mat4::PyMat4,
-    vec2::PyVec2,
-    vec3::PyVec3,
+    affine3a::PyAffine3A, bounding::PyAabb3d, isometry2d::PyIsometry2d, isometry3d::PyIsometry3d,
+    mat4::PyMat4, vec2::PyVec2, vec3::PyVec3,
 };
 use pybevy_transform::{global_transform::PyGlobalTransform, transform::PyTransform};
 use pyo3::{

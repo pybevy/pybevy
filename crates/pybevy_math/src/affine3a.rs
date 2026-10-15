@@ -78,20 +78,23 @@ impl PyAffine3A {
 
 #[pymethods]
 impl PyAffine3A {
-    #[classattr]
-    pub const IDENTITY: PyAffine3A = PyAffine3A {
-        storage: ValueStorage::read_only_snapshot(Affine3A::IDENTITY),
-    };
+    #[staticmethod]
+    #[pyo3(name = "IDENTITY")]
+    fn const_identity() -> Self {
+        PyAffine3A::affine3a(Affine3A::IDENTITY)
+    }
 
-    #[classattr]
-    pub const ZERO: PyAffine3A = PyAffine3A {
-        storage: ValueStorage::read_only_snapshot(Affine3A::ZERO),
-    };
+    #[staticmethod]
+    #[pyo3(name = "ZERO")]
+    fn const_zero() -> Self {
+        PyAffine3A::affine3a(Affine3A::ZERO)
+    }
 
-    #[classattr]
-    pub const NAN: PyAffine3A = PyAffine3A {
-        storage: ValueStorage::read_only_snapshot(Affine3A::NAN),
-    };
+    #[staticmethod]
+    #[pyo3(name = "NAN")]
+    fn const_nan() -> Self {
+        PyAffine3A::affine3a(Affine3A::NAN)
+    }
 
     #[new]
     #[pyo3(signature = (

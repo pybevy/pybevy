@@ -7,8 +7,8 @@ pub mod bounding_sphere;
 pub mod raycast;
 
 pub use aabb_cast2d::PyAabbCast2d;
-pub use aabb2d::{PyAabb2d, PyIsometry2d};
-pub use aabb3d::{PyAabb3d, PyIsometry3d};
+pub use aabb2d::PyAabb2d;
+pub use aabb3d::PyAabb3d;
 pub use bounding_circle::PyBoundingCircle;
 pub use bounding_circle_cast::PyBoundingCircleCast;
 pub use bounding_sphere::PyBoundingSphere;

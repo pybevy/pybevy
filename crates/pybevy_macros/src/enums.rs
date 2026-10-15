@@ -42,6 +42,8 @@ pub(crate) struct BevyEnumArgs {
     /// Skip the Debug derive (native types without Debug).
     no_debug: bool,
     manual_comparison: bool,
+    /// The Bevy enum is `#[non_exhaustive]`; convert from it fallibly.
+    non_exhaustive: bool,
 }
 
 impl Parse for BevyEnumArgs {
@@ -62,6 +64,7 @@ impl Parse for BevyEnumArgs {
         let mut no_eq = false;
         let mut no_debug = false;
         let mut manual_comparison = false;
+        let mut non_exhaustive = false;
         while input.peek(Token![,]) {
             input.parse::<Token![,]>()?;
             let option: Ident = input.parse()?;
@@ -79,6 +82,7 @@ impl Parse for BevyEnumArgs {
                 "no_eq" => no_eq = true,
                 "no_debug" => no_debug = true,
                 "manual_comparison" => manual_comparison = true,
+                "non_exhaustive" => non_exhaustive = true,
                 "mirror" => {
                     input.parse::<Token![=]>()?;
                     mirror = Some(input.parse()?);
@@ -87,7 +91,7 @@ impl Parse for BevyEnumArgs {
                     return Err(syn::Error::new_spanned(
                         option,
                         format!(
-                            "unknown option '{}', expected: empty_tuple, unit_parens, no_repr, no_reflect, manual, message, writable, no_bridge, no_eq, no_debug, manual_comparison, component, resource, or mirror = Type",
+                            "unknown option '{}', expected: empty_tuple, unit_parens, no_repr, no_reflect, manual, message, writable, no_bridge, no_eq, no_debug, manual_comparison, non_exhaustive, component, resource, or mirror = Type",
                             other
                         ),
                     ));
@@ -148,6 +152,12 @@ impl Parse for BevyEnumArgs {
                 "a no_bridge message cannot request generated writing",
             ));
         }
+        if non_exhaustive && (manual || message || component || resource) {
+            return Err(syn::Error::new_spanned(
+                bevy_type,
+                "non_exhaustive is available only for native pyclass enum generation",
+            ));
+        }
         if no_reflect && !resource {
             return Err(syn::Error::new_spanned(
                 bevy_type,
@@ -157,6 +167,7 @@ impl Parse for BevyEnumArgs {
 
         Ok(BevyEnumArgs {
             manual_comparison,
+            non_exhaustive,
             no_eq,
             no_debug,
             bevy_type,
@@ -604,16 +615,36 @@ pub fn pyenum(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
 
-    let expanded = quote! {
-        #emitted_input
+    let bevy_to_py_impl = if args.non_exhaustive {
+        let unknown = format!("unsupported {} variant", quote!(#bevy_type));
+        quote! {
+            impl TryFrom<#bevy_type> for #py_type {
+                type Error = PyErr;
 
-        impl From<#bevy_type> for #py_type {
-            fn from(value: #bevy_type) -> Self {
-                match value {
-                    #(#from_bevy_arms,)*
+                fn try_from(value: #bevy_type) -> PyResult<Self> {
+                    Ok(match value {
+                        #(#from_bevy_arms,)*
+                        _ => return Err(pyo3::exceptions::PyValueError::new_err(#unknown)),
+                    })
                 }
             }
         }
+    } else {
+        quote! {
+            impl From<#bevy_type> for #py_type {
+                fn from(value: #bevy_type) -> Self {
+                    match value {
+                        #(#from_bevy_arms,)*
+                    }
+                }
+            }
+        }
+    };
+
+    let expanded = quote! {
+        #emitted_input
+
+        #bevy_to_py_impl
 
         #py_to_bevy_impl
 

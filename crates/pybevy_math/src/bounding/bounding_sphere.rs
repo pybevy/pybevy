@@ -15,6 +15,7 @@ use pyo3::{
 
 use super::aabb3d::PyAabb3d;
 use crate::{
+    isometry3d::PyIsometry3d,
     quat::extract_quat_from_any,
     vec3::PyVec3,
     vec3a::{PyVec3A, extract_vec3a_from_any},
@@ -70,7 +71,6 @@ impl From<BoundingSphere> for PyBoundingSphere {
 impl PyBoundingSphere {
     #[new]
     pub fn new(center: &Bound<'_, PyAny>, radius: f32) -> PyResult<Self> {
-        // Reject inputs that fail Bevy nonnegative radius precondition.
         if radius.is_nan() || radius < 0.0 {
             return Err(PyValueError::new_err(bounding_radius(
                 "BoundingSphere",
@@ -220,7 +220,7 @@ impl PyBoundingSphere {
 
     #[staticmethod]
     pub fn from_point_cloud(
-        isometry: super::aabb3d::PyIsometry3d,
+        isometry: PyIsometry3d,
         points: Vec<PyVec3>,
     ) -> PyResult<PyBoundingSphere> {
         if points.is_empty() {

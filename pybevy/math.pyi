@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from typing import ClassVar, overload
+from typing import ClassVar, Literal, overload
 
 from pybevy.mesh import (
     AnnulusMeshBuilder,
@@ -1247,9 +1247,7 @@ class Mat2:
     IDENTITY: ClassVar[Mat2]
     ZERO: ClassVar[Mat2]
     NAN: ClassVar[Mat2]
-    def __init__(
-        self, x_axis: Vec2 | None = None, y_axis: Vec2 | None = None
-    ) -> None: ...
+    def __init__(self, *, x_axis: Vec2 = Vec2.X, y_axis: Vec2 = Vec2.Y) -> None: ...
     @staticmethod
     def from_cols(x_axis: Vec2, y_axis: Vec2) -> Mat2: ...
     @staticmethod
@@ -1315,7 +1313,7 @@ class Affine2:
     ZERO: ClassVar[Affine2]
     NAN: ClassVar[Affine2]
     def __init__(
-        self, matrix2: Mat2 | None = None, translation: Vec2 | None = None
+        self, *, matrix2: Mat2 = Mat2.IDENTITY, translation: Vec2 = Vec2.ZERO
     ) -> None: ...
     @staticmethod
     def from_cols(x_axis: Vec2, y_axis: Vec2, z_axis: Vec2) -> Affine2: ...
@@ -2197,7 +2195,9 @@ class Isometry2d:
     @rotation.setter
     def rotation(self, value: Rot2) -> None: ...
 
-    def __init__(self, translation: Vec2 = ..., rotation: Rot2 = ...) -> None:
+    def __init__(
+        self, translation: Vec2 = Vec2.ZERO, rotation: Rot2 = ...
+    ) -> None:
         """Create a 2D isometry.
 
         Args:
@@ -3022,155 +3022,274 @@ class JumpAt:
     def __eq__(self, other: object) -> bool: ...
 
 class EaseFunction:
-    """Easing functions for smooth interpolation and animation.
-    
-    These functions map a linear input (0.0 to 1.0) to an eased output,
-    providing various animation curves like ease-in, ease-out, and ease-in-out.
-    
-    Example:
-        >>> from pybevy.math import EaseFunction
-        >>> # Linear interpolation (no easing)
-        >>> t = 0.5
-        >>> eased = EaseFunction.Linear.ease(t)  # Returns 0.5
-        >>> 
-        >>> # Ease in with quadratic curve (slow start, fast end)
-        >>> eased = EaseFunction.QuadraticIn.ease(0.5)  # Returns 0.25
-        >>> 
-        >>> # Ease in-out with cubic curve (slow start and end)
-        >>> eased = EaseFunction.CubicInOut.ease(0.5)  # Returns 0.5
-        >>> 
-        >>> # Elastic easing with visible oscillation
-        >>> eased = EaseFunction.Elastic(omega=12.0).ease(0.8)  # Greater than 1.0
-        >>> 
-        >>> # Stepped easing
-        >>> from pybevy.math import JumpAt
-        >>> eased = EaseFunction.Steps(5, JumpAt.End).ease(0.6)
-    """
-    
-    Linear: ClassVar[EaseFunction]
-    """Linear interpolation (no easing)"""
-    QuadraticIn: ClassVar[EaseFunction]
-    """Quadratic ease-in (slow start)"""
-    QuadraticOut: ClassVar[EaseFunction]
-    """Quadratic ease-out (slow end)"""
-    QuadraticInOut: ClassVar[EaseFunction]
-    """Quadratic ease-in-out (slow start and end)"""
-    CubicIn: ClassVar[EaseFunction]
-    """Cubic ease-in"""
-    CubicOut: ClassVar[EaseFunction]
-    """Cubic ease-out"""
-    CubicInOut: ClassVar[EaseFunction]
-    """Cubic ease-in-out"""
-    QuarticIn: ClassVar[EaseFunction]
-    """Quartic ease-in"""
-    QuarticOut: ClassVar[EaseFunction]
-    """Quartic ease-out"""
-    QuarticInOut: ClassVar[EaseFunction]
-    """Quartic ease-in-out"""
-    QuinticIn: ClassVar[EaseFunction]
-    """Quintic ease-in"""
-    QuinticOut: ClassVar[EaseFunction]
-    """Quintic ease-out"""
-    QuinticInOut: ClassVar[EaseFunction]
-    """Quintic ease-in-out"""
-    SineIn: ClassVar[EaseFunction]
-    """Sine ease-in"""
-    SineOut: ClassVar[EaseFunction]
-    """Sine ease-out"""
-    SineInOut: ClassVar[EaseFunction]
-    """Sine ease-in-out"""
-    CircularIn: ClassVar[EaseFunction]
-    """Circular ease-in"""
-    CircularOut: ClassVar[EaseFunction]
-    """Circular ease-out"""
-    CircularInOut: ClassVar[EaseFunction]
-    """Circular ease-in-out"""
-    ExponentialIn: ClassVar[EaseFunction]
-    """Exponential ease-in"""
-    ExponentialOut: ClassVar[EaseFunction]
-    """Exponential ease-out"""
-    ExponentialInOut: ClassVar[EaseFunction]
-    """Exponential ease-in-out"""
-    ElasticIn: ClassVar[EaseFunction]
-    """Elastic ease-in"""
-    ElasticOut: ClassVar[EaseFunction]
-    """Elastic ease-out"""
-    ElasticInOut: ClassVar[EaseFunction]
-    """Elastic ease-in-out"""
-    BackIn: ClassVar[EaseFunction]
-    """Back ease-in (overshoots then returns)"""
-    BackOut: ClassVar[EaseFunction]
-    """Back ease-out"""
-    BackInOut: ClassVar[EaseFunction]
-    """Back ease-in-out"""
-    BounceIn: ClassVar[EaseFunction]
-    """Bounce ease-in"""
-    BounceOut: ClassVar[EaseFunction]
-    """Bounce ease-out"""
-    BounceInOut: ClassVar[EaseFunction]
-    """Bounce ease-in-out"""
-    SmoothStep: ClassVar[EaseFunction]
-    """Smooth step function"""
-    SmoothStepIn: ClassVar[EaseFunction]
-    """Smooth step ease-in"""
-    SmoothStepOut: ClassVar[EaseFunction]
-    """Smooth step ease-out"""
-    SmootherStep: ClassVar[EaseFunction]
-    """Smoother step function (5th order)"""
-    SmootherStepIn: ClassVar[EaseFunction]
-    """Smoother step ease-in"""
-    SmootherStepOut: ClassVar[EaseFunction]
-    """Smoother step ease-out"""
-    
-    @staticmethod
-    def Elastic(omega: float) -> EaseFunction:
-        """Create an elastic easing function with custom angular frequency.
-        
-        Args:
-            omega: Angular frequency of the oscillation in radians per unit input
-            
-        Returns:
-            An elastic easing function
-        """
-    
-    @staticmethod
-    def Steps(steps: int, jump: JumpAt) -> EaseFunction:
-        """Create a stepped easing function.
-        
-        Args:
-            steps: Number of steps
-            jump: Where jumps should occur (Start, End, None, or Both)
-            
-        Returns:
-            A stepped easing function
-        """
-    
-    def ease(self, t: float) -> float:
-        """Evaluate the easing function at time t.
-        
-        Values of t outside [0.0, 1.0] are clamped into the domain.
-        
-        Args:
-            t: Time parameter, clamped to [0.0, 1.0]
-            
-        Returns:
-            Eased value
-            
-        Example:
-            >>> from pybevy.math import EaseFunction
-            >>> # Linear: input = output
-            >>> assert EaseFunction.Linear.ease(0.5) == 0.5
-            >>> # QuadraticIn: t^2
-            >>> assert abs(EaseFunction.QuadraticIn.ease(0.5) - 0.25) < 0.001
-            >>> # Animate a value
-            >>> start = 0.0
-            >>> end = 100.0
-            >>> progress = 0.3  # 30% through animation
-            >>> eased_progress = EaseFunction.CubicInOut.ease(progress)
-            >>> current_value = start + (end - start) * eased_progress
-        """
+    """Easing curves over the unit interval, as Bevy's `EaseFunction` curve.
 
+    Every variant is a nested class; construct it before use.
+
+    Example:
+        >>> from pybevy.math import EaseFunction, JumpAt
+        >>> EaseFunction.Linear().sample_clamped(0.5)
+        0.5
+        >>> EaseFunction.QuadraticIn().sample(0.5)
+        0.25
+        >>> EaseFunction.QuadraticIn().sample(1.5) is None
+        True
+        >>> EaseFunction.Steps(4, JumpAt.End).sample_clamped(0.5)
+        0.5
+    """
+
+    def domain(self) -> Interval:
+        """The curve's domain, `Interval.UNIT`."""
+
+    def sample(self, t: float) -> float | None:
+        """Sample the curve at `t`, or return None when `t` lies outside the domain."""
+
+    def sample_clamped(self, t: float) -> float:
+        """Sample the curve at `t` after clamping `t` into the domain."""
+
+    def __copy__(self) -> EaseFunction: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> EaseFunction: ...
     def __eq__(self, other: object) -> bool: ...
+
+    class Linear(EaseFunction):
+        """Linear interpolation (no easing)"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class QuadraticIn(EaseFunction):
+        """Quadratic ease-in (slow start)"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class QuadraticOut(EaseFunction):
+        """Quadratic ease-out (slow end)"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class QuadraticInOut(EaseFunction):
+        """Quadratic ease-in-out (slow start and end)"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class CubicIn(EaseFunction):
+        """Cubic ease-in"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class CubicOut(EaseFunction):
+        """Cubic ease-out"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class CubicInOut(EaseFunction):
+        """Cubic ease-in-out"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class QuarticIn(EaseFunction):
+        """Quartic ease-in"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class QuarticOut(EaseFunction):
+        """Quartic ease-out"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class QuarticInOut(EaseFunction):
+        """Quartic ease-in-out"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class QuinticIn(EaseFunction):
+        """Quintic ease-in"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class QuinticOut(EaseFunction):
+        """Quintic ease-out"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class QuinticInOut(EaseFunction):
+        """Quintic ease-in-out"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class SmoothStepIn(EaseFunction):
+        """Smooth step ease-in"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class SmoothStepOut(EaseFunction):
+        """Smooth step ease-out"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class SmoothStep(EaseFunction):
+        """Smooth step function"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class SmootherStepIn(EaseFunction):
+        """Smoother step ease-in"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class SmootherStepOut(EaseFunction):
+        """Smoother step ease-out"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class SmootherStep(EaseFunction):
+        """Smoother step function (5th order)"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class SineIn(EaseFunction):
+        """Sine ease-in"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class SineOut(EaseFunction):
+        """Sine ease-out"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class SineInOut(EaseFunction):
+        """Sine ease-in-out"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class CircularIn(EaseFunction):
+        """Circular ease-in"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class CircularOut(EaseFunction):
+        """Circular ease-out"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class CircularInOut(EaseFunction):
+        """Circular ease-in-out"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class ExponentialIn(EaseFunction):
+        """Exponential ease-in"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class ExponentialOut(EaseFunction):
+        """Exponential ease-out"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class ExponentialInOut(EaseFunction):
+        """Exponential ease-in-out"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class ElasticIn(EaseFunction):
+        """Elastic ease-in"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class ElasticOut(EaseFunction):
+        """Elastic ease-out"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class ElasticInOut(EaseFunction):
+        """Elastic ease-in-out"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class BackIn(EaseFunction):
+        """Back ease-in (overshoots then returns)"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class BackOut(EaseFunction):
+        """Back ease-out"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class BackInOut(EaseFunction):
+        """Back ease-in-out"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class BounceIn(EaseFunction):
+        """Bounce ease-in"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class BounceOut(EaseFunction):
+        """Bounce ease-out"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class BounceInOut(EaseFunction):
+        """Bounce ease-in-out"""
+
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Steps(EaseFunction):
+        """`steps` steps connecting the start and the end, jumping as `jump` selects."""
+
+        __match_args__: ClassVar[tuple[Literal["steps"], Literal["jump"]]]
+        @property
+        def steps(self) -> int: ...
+        @property
+        def jump(self) -> JumpAt: ...
+        def __init__(self, steps: int, jump: JumpAt) -> None: ...
+
+    class Elastic(EaseFunction):
+        """`f(omega, t) = 1 - (1 - t)^2 (2 sin(omega t) / omega + cos(omega t))`."""
+
+        __match_args__: ClassVar[tuple[Literal["omega"]]]
+        @property
+        def omega(self) -> float: ...
+        def __init__(self, omega: float) -> None: ...
 
 class Capsule2d(Meshable):
     """A 2D capsule primitive (pill shape).

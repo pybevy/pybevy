@@ -12,7 +12,7 @@ use pyo3::{
     prelude::*,
 };
 
-use super::{integer::checked, ivec2::PyIVec2};
+use super::{integer::checked, ivec2::PyIVec2, rect::PyRect, urect::PyURect};
 use crate::richcmp::comparison_result;
 
 #[pyvalue]
@@ -182,11 +182,11 @@ impl PyIRect {
         Ok(self.to_bevy()?.intersect(other.to_bevy()?).into())
     }
 
-    pub fn as_rect(&self) -> PyResult<super::rect::PyRect> {
+    pub fn as_rect(&self) -> PyResult<PyRect> {
         Ok(self.to_bevy()?.as_rect().into())
     }
 
-    pub fn as_urect(&self) -> PyResult<super::urect::PyURect> {
+    pub fn as_urect(&self) -> PyResult<PyURect> {
         Ok(self.to_bevy()?.as_urect().into())
     }
 

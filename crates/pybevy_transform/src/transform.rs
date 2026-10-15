@@ -7,7 +7,7 @@ use pybevy_core::{
 };
 use pybevy_macros::pycomponent;
 use pybevy_math::{
-    affine3a::PyAffine3A, bounding::PyIsometry3d, dir3::PyDir3, mat4::PyMat4, quat::PyQuat,
+    affine3a::PyAffine3A, dir3::PyDir3, isometry3d::PyIsometry3d, mat4::PyMat4, quat::PyQuat,
     vec3::PyVec3,
 };
 use pyo3::{exceptions::PyTypeError, prelude::*};

@@ -15,7 +15,7 @@ use pyo3::{
 };
 
 use super::{mat3::PyMat3, quat::PyQuat, vec3::PyVec3, vec4::PyVec4};
-use crate::{require_invertible, richcmp::comparison_result};
+use crate::{matrix_index, require_invertible, richcmp::comparison_result};
 
 #[pyclass(name = "Mat4", module = "pybevy.math", from_py_object)]
 #[derive(Debug, Clone)]
@@ -133,14 +133,23 @@ fn look_at_inputs(eye: &PyVec3, center: &PyVec3, up: &PyVec3) -> PyResult<(Vec3,
 
 #[pymethods]
 impl PyMat4 {
-    #[classattr]
-    pub const IDENTITY: PyMat4 = PyMat4::mat4(Mat4::IDENTITY);
+    #[staticmethod]
+    #[pyo3(name = "IDENTITY")]
+    fn const_identity() -> Self {
+        PyMat4::mat4(Mat4::IDENTITY)
+    }
 
-    #[classattr]
-    pub const ZERO: PyMat4 = PyMat4::mat4(Mat4::ZERO);
+    #[staticmethod]
+    #[pyo3(name = "ZERO")]
+    fn const_zero() -> Self {
+        PyMat4::mat4(Mat4::ZERO)
+    }
 
-    #[classattr]
-    pub const NAN: PyMat4 = PyMat4::mat4(Mat4::NAN);
+    #[staticmethod]
+    #[pyo3(name = "NAN")]
+    fn const_nan() -> Self {
+        PyMat4::mat4(Mat4::NAN)
+    }
 
     #[new]
     #[allow(clippy::too_many_arguments)]
@@ -354,12 +363,12 @@ impl PyMat4 {
     }
 
     pub fn col(&self, index: isize) -> PyResult<PyVec4> {
-        let index = crate::matrix_index("Column", index, "Mat4", 4)?;
+        let index = matrix_index("Column", index, "Mat4", 4)?;
         Ok(self.as_ref()?.col(index).into())
     }
 
     pub fn row(&self, index: isize) -> PyResult<PyVec4> {
-        let index = crate::matrix_index("Row", index, "Mat4", 4)?;
+        let index = matrix_index("Row", index, "Mat4", 4)?;
         Ok(self.as_ref()?.row(index).into())
     }
 

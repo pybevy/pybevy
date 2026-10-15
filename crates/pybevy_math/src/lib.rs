@@ -10,7 +10,10 @@ pub mod float_ord;
 mod integer;
 pub mod interval;
 pub mod irect;
+pub mod isometry2d;
+pub mod isometry3d;
 pub mod ivec2;
+pub mod mat2;
 pub mod mat3;
 pub mod mat3a;
 pub mod mat4;
@@ -71,8 +74,6 @@ pub(crate) fn matrix_index(
 pub mod prelude {
     #[doc(hidden)]
     pub use crate::{
-        affine2::PyMat2,
-        bounding::{PyIsometry2d, PyIsometry3d},
         cubic_splines::{
             PyCubicBSpline2d, PyCubicBSpline3d, PyCubicBezier2d, PyCubicBezier3d,
             PyCubicCardinalSpline2d, PyCubicCardinalSpline3d, PyCubicCurve2d, PyCubicCurve3d,
@@ -83,7 +84,10 @@ pub mod prelude {
         dir3::PyDir3,
         interval::PyInterval,
         irect::PyIRect,
+        isometry2d::PyIsometry2d,
+        isometry3d::PyIsometry3d,
         ivec2::PyIVec2,
+        mat2::PyMat2,
         mat3::PyMat3,
         mat3a::PyMat3A,
         mat4::PyMat4,
@@ -110,7 +114,7 @@ pub mod prelude {
 pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "math")?;
     m.add_class::<affine2::PyAffine2>()?;
-    m.add_class::<affine2::PyMat2>()?;
+    m.add_class::<mat2::PyMat2>()?;
     m.add_class::<affine3a::PyAffine3A>()?;
     m.add_class::<vec2::PyVec2>()?;
     m.add_class::<vec3::PyVec3>()?;
@@ -137,8 +141,8 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<bounding::PyBoundingCircle>()?;
     m.add_class::<bounding::PyBoundingCircleCast>()?;
     m.add_class::<bounding::PyBoundingSphere>()?;
-    m.add_class::<bounding::PyIsometry2d>()?;
-    m.add_class::<bounding::PyIsometry3d>()?;
+    m.add_class::<isometry2d::PyIsometry2d>()?;
+    m.add_class::<isometry3d::PyIsometry3d>()?;
     m.add_class::<ray::PyRay2d>()?;
     m.add_class::<ray::PyRay3d>()?;
     m.add_class::<bounding::PyRayCast2d>()?;
