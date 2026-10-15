@@ -3,7 +3,7 @@ use bevy::{
     pbr::wireframe::{WireframeConfig, WireframeTopology},
 };
 use pybevy_color::color::PyColor;
-use pybevy_core::{PyResource, ResourceStorage};
+use pybevy_core::{Omittable, PyResource, ResourceStorage};
 use pybevy_macros::pyresource;
 use pyo3::prelude::*;
 
@@ -24,13 +24,13 @@ impl PyWireframeConfig {
         global_ = false,
         default_color = Color::WHITE.into(),
         default_line_width = 1.0,
-        default_topology = None
+        default_topology = Omittable::default()
     ))]
     pub fn new(
         global_: bool,
         default_color: PyColor,
         default_line_width: f32,
-        default_topology: Option<PyRef<'_, PyWireframeTopology>>,
+        default_topology: Omittable<PyRef<'_, PyWireframeTopology>>,
     ) -> PyResult<PyClassInitializer<Self>> {
         let default_color = default_color.try_into()?;
         Ok(Self::from_owned(WireframeConfig {
@@ -38,6 +38,7 @@ impl PyWireframeConfig {
             default_color,
             default_line_width,
             default_topology: default_topology
+                .into_option()
                 .map(|topology| topology.0)
                 .unwrap_or(WireframeTopology::Triangles),
         }))

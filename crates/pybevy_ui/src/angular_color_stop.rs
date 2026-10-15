@@ -56,12 +56,9 @@ impl TryFrom<&PyAngularColorStop> for AngularColorStop {
 #[pymethods]
 impl PyAngularColorStop {
     #[new]
-    #[pyo3(signature = (color = None, angle = None, *, hint = 0.5))]
-    pub fn new(color: Option<PyColor>, angle: Option<f32>, hint: f32) -> PyResult<Self> {
-        let color = color
-            .map(Color::try_from)
-            .transpose()?
-            .unwrap_or(Color::WHITE);
+    #[pyo3(signature = (color = PyColor::from(Color::WHITE), angle = None, *, hint = 0.5))]
+    pub fn new(color: PyColor, angle: Option<f32>, hint: f32) -> PyResult<Self> {
+        let color = Color::try_from(color)?;
         Ok(Self::from_owned(AngularColorStop {
             color,
             angle,

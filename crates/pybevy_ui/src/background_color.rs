@@ -14,9 +14,9 @@ pub struct PyBackgroundColor {
 #[pymethods]
 impl PyBackgroundColor {
     #[new]
-    #[pyo3(signature = (color = None))]
-    pub fn new(color: Option<IntoColorValue>) -> PyResult<PyClassInitializer<Self>> {
-        let color = color.map(|color| color.0).unwrap_or(Color::NONE);
+    #[pyo3(signature = (color = IntoColorValue(Color::NONE)))]
+    pub fn new(color: IntoColorValue) -> PyResult<PyClassInitializer<Self>> {
+        let color = color.0;
         Ok(Self::from_owned(BackgroundColor(color)).into())
     }
 

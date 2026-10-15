@@ -14,8 +14,8 @@ use pybevy_core::public_error::SPECULAR_TEXTURES_UNAVAILABLE;
 #[cfg(not(feature = "pbr_transmission_textures"))]
 use pybevy_core::public_error::TRANSMISSION_TEXTURES_UNAVAILABLE;
 use pybevy_core::{
-    AssetInputConverter, AssetStorage, PyHandle, PyMaterial, PyMaterializable, ValueStorage,
-    extract_handle_from_any,
+    AssetInputConverter, AssetStorage, Omittable, PyHandle, PyMaterial, PyMaterializable,
+    ValueStorage, extract_handle_from_any,
 };
 use pybevy_macros::pyasset;
 use pybevy_material::{alpha_mode::PyAlphaMode, opaque_renderer_method::PyOpaqueRendererMethod};
@@ -80,7 +80,7 @@ impl PyStandardMaterial {
         base_color = Color::WHITE.into(),
         base_color_channel = PyUvChannel::Uv0,
         base_color_texture = None,
-        emissive = None,
+        emissive = Omittable::default(),
         emissive_exposure_weight = 0.0,
         emissive_channel = PyUvChannel::Uv0,
         emissive_texture = None,
@@ -143,7 +143,7 @@ impl PyStandardMaterial {
         base_color: PyColor,
         base_color_channel: PyUvChannel,
         base_color_texture: Option<&Bound<'_, PyAny>>,
-        emissive: Option<Bound<'_, PyAny>>,
+        emissive: Omittable<Bound<'_, PyAny>>,
         emissive_exposure_weight: f32,
         emissive_channel: PyUvChannel,
         emissive_texture: Option<&Bound<'_, PyAny>>,
@@ -201,7 +201,7 @@ impl PyStandardMaterial {
         deferred_lighting_pass_id: u8,
         uv_transform: PyAffine2,
     ) -> PyResult<PyClassInitializer<Self>> {
-        let emissive_linear = match emissive {
+        let emissive_linear = match emissive.into_option() {
             Some(ref emissive_val) => extract_linear_rgba(emissive_val)?,
             None => LinearRgba::from(Color::BLACK),
         };

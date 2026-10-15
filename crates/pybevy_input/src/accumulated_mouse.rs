@@ -4,23 +4,30 @@ use bevy::{
 };
 use pybevy_core::{PyResource, ResourceStorage, repr::ReprLiteral, resource_initializer};
 use pybevy_macros::pyresource;
-use pybevy_math::vec2::PyVec2;
+use pybevy_math::{snapshot::Snapshot, vec2::PyVec2};
 use pyo3::prelude::*;
 
 use crate::mouse_scroll_unit::PyMouseScrollUnit;
 
 #[pyresource(AccumulatedMouseMotion, no_clone, bridge)]
-#[pyclass(name = "AccumulatedMouseMotion", module = "pybevy.input", extends = PyResource)]
+#[pyclass(name = "AccumulatedMouseMotion", module = "pybevy.input", extends = PyResource, eq)]
 pub struct PyAccumulatedMouseMotion {
     pub(crate) storage: ResourceStorage<AccumulatedMouseMotion>,
+}
+
+impl PartialEq for PyAccumulatedMouseMotion {
+    fn eq(&self, other: &Self) -> bool {
+        matches!((self.as_ref(), other.as_ref()), (Ok(left), Ok(right)) if left == right)
+    }
 }
 
 #[pymethods]
 impl PyAccumulatedMouseMotion {
     #[new]
-    fn new() -> PyClassInitializer<Self> {
+    #[pyo3(signature = (*, delta = Snapshot(Vec2::ZERO)))]
+    fn new(delta: Snapshot<Vec2>) -> PyClassInitializer<Self> {
         resource_initializer(Self {
-            storage: ResourceStorage::owned(AccumulatedMouseMotion { delta: Vec2::ZERO }),
+            storage: ResourceStorage::owned(AccumulatedMouseMotion { delta: delta.0 }),
         })
     }
 
@@ -65,11 +72,11 @@ impl PyAccumulatedMouseScroll {
 #[pymethods]
 impl PyAccumulatedMouseScroll {
     #[new]
-    #[pyo3(signature = (*, unit = PyMouseScrollUnit::Line))]
-    fn new(unit: PyMouseScrollUnit) -> PyClassInitializer<Self> {
+    #[pyo3(signature = (*, unit = PyMouseScrollUnit::Line, delta = Snapshot(Vec2::ZERO)))]
+    fn new(unit: PyMouseScrollUnit, delta: Snapshot<Vec2>) -> PyClassInitializer<Self> {
         resource_initializer(
             AccumulatedMouseScroll {
-                delta: Vec2::ZERO,
+                delta: delta.0,
                 unit: unit.into(),
             }
             .into(),

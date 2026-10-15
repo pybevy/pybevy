@@ -174,6 +174,11 @@ def gamepad_system(query: Query[Gamepad]) -> None:
 ```
 
 See `pybevy.input` stubs for the full API including `GamepadAxis`, `GamepadSettings`, `Touches`, and gesture events.
+`GamepadSettings.get_button_settings(button)`, `get_axis_settings(axis)`, and
+`get_button_axis_settings(button)` return the configured value or its default.
+The per-input mappings are read-only snapshots; assign a whole mapping through
+`Query[Mut[GamepadSettings]]` to change them. `PanGesture` exposes its vector
+through `value` (`value.x` and `value.y`), not separate coordinate aliases.
 
 ## Simulating Input
 

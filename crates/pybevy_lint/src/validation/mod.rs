@@ -107,8 +107,15 @@ pub fn validate_with_bevy(
             .unwrap_or_default();
 
         if let Some(origin) = &origin
-            && let Some(upstream_type) = origin.upstream_type()
-            && let Some(field_types) = origin::source_field_types(upstream_type, bevy_path)
+            && let Some(upstream_type) = origin.upstream_type().map(str::to_string).or_else(|| {
+                matches!(
+                    origin,
+                    crate::model::ConstructorOrigin::Unresolved
+                        | crate::model::ConstructorOrigin::PythonAdapter { .. }
+                )
+                .then(|| crate::comparison::pybevy_bevy_name(rust_class, &config.bevy))
+            })
+            && let Some(field_types) = origin::source_field_types(&upstream_type, bevy_path)
         {
             policy_diagnostics.extend(method_rules::check_optional_field_parameters(
                 origin,

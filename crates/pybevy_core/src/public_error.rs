@@ -20,6 +20,17 @@ pub const WORLD_BATCH_ARGUMENTS: &str =
 pub const SCREENSHOT_CAMERA3D_REQUIRED: &str = "position/look_at screenshot overrides require a Camera3d; omit them when capturing a Camera2d scene";
 pub const TURNAROUND_CAMERA3D_REQUIRED: &str =
     "capture_turnaround requires a Camera3d; Camera2d-only scenes cannot produce orbit views";
+pub const BUTTON_INPUT_TYPE_REQUIRED: &str =
+    "ButtonInput[...] requires a button type, for example ButtonInput[KeyCode]";
+pub const UNSUPPORTED_LOGICAL_KEY_VARIANT: &str = "unsupported logical key variant";
+
+pub fn button_input_unsupported_type(name: &str) -> String {
+    format!(
+        "ButtonInput[{name}] is not available; supported button types are KeyCode and \
+         MouseButton. Bevy also registers ButtonInput<Key> for logical keys, which PyBevy \
+         does not wrap yet."
+    )
+}
 
 pub fn view_column_float_only(operation: &str, dtype: &str) -> String {
     format!(
@@ -630,6 +641,22 @@ pub fn packed_uniform_out_of_range(type_name: &str, float_index: usize, count: u
         "{type_name} uniform float range {float_index}..{} exceeds buffer (max 256)",
         float_index.saturating_add(count)
     )
+}
+
+pub fn shader_data_too_long(actual: usize, maximum: usize) -> String {
+    format!("data has {actual} floats, max is {maximum}")
+}
+
+pub fn shader_texture_slot_out_of_range(slot: usize, maximum: usize) -> String {
+    format!("texture slot {slot} out of range (max {maximum})")
+}
+
+pub fn shader_float_index_out_of_range(index: usize, maximum: usize) -> String {
+    format!("float index {index} out of range (max {maximum})")
+}
+
+pub fn shader_float_range_out_of_range(start: usize, end: usize, maximum: usize) -> String {
+    format!("float range {start}..{end} exceeds buffer (max {maximum})")
 }
 
 pub fn unsupported_packed_uniform_type(actual: impl Display) -> String {
@@ -1366,6 +1393,13 @@ pub const CASCADE_MINIMUM_DISTANCE: &str = "minimum_distance must be non-negativ
 
 pub const CONTROL_SERIALIZATION_CYCLE: &str = "cyclic Python value";
 pub const CONTROL_SERIALIZATION_DEPTH: &str = "Python value exceeds the serialization depth limit";
+
+pub const UI_SHADOW_INDEX_OUT_OF_RANGE: &str = "shadow index out of range";
+pub const UI_EXPECTED_VAL_OR_FLOAT: &str = "expected Val or float";
+
+pub fn ui_grid_track_repetition_type(actual: impl Display) -> String {
+    format!("Expected int or GridTrackRepetition, got {actual}")
+}
 
 pub fn image_extension_unknown(extension: impl Display) -> String {
     format!(

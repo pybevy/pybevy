@@ -46,7 +46,7 @@ impl PyForwardDecal {
     }
 
     fn __repr__(&self) -> &'static str {
-        "ForwardDecal"
+        "ForwardDecal()"
     }
 }
 

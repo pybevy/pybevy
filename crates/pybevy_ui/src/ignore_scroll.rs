@@ -1,5 +1,5 @@
 use bevy::{math::BVec2, ui::IgnoreScroll};
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, PyComponent, repr::object_repr};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
@@ -56,5 +56,14 @@ impl PyIgnoreScroll {
 
     fn __eq__(&self, other: &Self) -> PyResult<bool> {
         Ok(self.as_ref()?.0 == other.as_ref()?.0)
+    }
+
+    pub fn __repr__(&self) -> PyResult<String> {
+        let value = self.as_ref()?;
+        Ok(format!(
+            "IgnoreScroll(ignore_x={}, ignore_y={})",
+            object_repr(value.0.x),
+            object_repr(value.0.y)
+        ))
     }
 }

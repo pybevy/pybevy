@@ -58,12 +58,9 @@ impl TryFrom<&PyColorStop> for ColorStop {
 #[pymethods]
 impl PyColorStop {
     #[new]
-    #[pyo3(signature = (color = None, point = PyVal::default(), *, hint = 0.5))]
-    pub fn new(color: Option<PyColor>, point: PyVal, hint: f32) -> PyResult<Self> {
-        let color = color
-            .map(Color::try_from)
-            .transpose()?
-            .unwrap_or(Color::WHITE);
+    #[pyo3(signature = (color = PyColor::from(Color::WHITE), point = PyVal::default(), *, hint = 0.5))]
+    pub fn new(color: PyColor, point: PyVal, hint: f32) -> PyResult<Self> {
+        let color = Color::try_from(color)?;
         Ok(Self::from_owned(ColorStop {
             color,
             point: point.into(),

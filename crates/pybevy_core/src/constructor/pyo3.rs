@@ -36,6 +36,15 @@ impl<'a, 'py, T: PyClass> FromPyObject<'a, 'py> for Omittable<PyRef<'py, T>> {
     }
 }
 
+impl<'a, 'py> FromPyObject<'a, 'py> for Omittable<Bound<'py, PyAny>> {
+    type Error = PyErr;
+
+    fn extract(obj: Borrowed<'a, 'py, PyAny>) -> Result<Self, Self::Error> {
+        reject_explicit_none(&obj, "a value")?;
+        Ok(Self::Supplied(obj.to_owned()))
+    }
+}
+
 pub enum RawArg<'py> {
     Missing,
     Supplied(Bound<'py, PyAny>),

@@ -89,12 +89,13 @@ impl PyTouchInput {
 
     pub fn __repr__(&self) -> String {
         format!(
-            "TouchInput(phase={}, position={}, id={}, force={})",
+            "TouchInput(phase={}, position={}, window={}, force={}, id={})",
             self.phase.__repr__(),
             self.position.repr_literal(),
-            self.id,
+            self.window.__repr__(),
             self.force
-                .map_or_else(|| "None".to_string(), |force| force.__repr__())
+                .map_or_else(|| "None".to_string(), |force| force.__repr__()),
+            self.id
         )
     }
 

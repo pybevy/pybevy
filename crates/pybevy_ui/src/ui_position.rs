@@ -40,6 +40,60 @@ impl TryFrom<&PyUiPosition> for UiPosition {
 
 #[pymethods]
 impl PyUiPosition {
+    #[staticmethod]
+    #[pyo3(name = "CENTER")]
+    pub fn center_constant() -> Self {
+        Self::from_owned(UiPosition::CENTER)
+    }
+
+    #[staticmethod]
+    #[pyo3(name = "TOP")]
+    pub fn top_constant() -> Self {
+        Self::from_owned(UiPosition::TOP)
+    }
+
+    #[staticmethod]
+    #[pyo3(name = "BOTTOM")]
+    pub fn bottom_constant() -> Self {
+        Self::from_owned(UiPosition::BOTTOM)
+    }
+
+    #[staticmethod]
+    #[pyo3(name = "LEFT")]
+    pub fn left_constant() -> Self {
+        Self::from_owned(UiPosition::LEFT)
+    }
+
+    #[staticmethod]
+    #[pyo3(name = "RIGHT")]
+    pub fn right_constant() -> Self {
+        Self::from_owned(UiPosition::RIGHT)
+    }
+
+    #[staticmethod]
+    #[pyo3(name = "TOP_LEFT")]
+    pub fn top_left_constant() -> Self {
+        Self::from_owned(UiPosition::TOP_LEFT)
+    }
+
+    #[staticmethod]
+    #[pyo3(name = "TOP_RIGHT")]
+    pub fn top_right_constant() -> Self {
+        Self::from_owned(UiPosition::TOP_RIGHT)
+    }
+
+    #[staticmethod]
+    #[pyo3(name = "BOTTOM_LEFT")]
+    pub fn bottom_left_constant() -> Self {
+        Self::from_owned(UiPosition::BOTTOM_LEFT)
+    }
+
+    #[staticmethod]
+    #[pyo3(name = "BOTTOM_RIGHT")]
+    pub fn bottom_right_constant() -> Self {
+        Self::from_owned(UiPosition::BOTTOM_RIGHT)
+    }
+
     #[new]
     #[pyo3(signature = (anchor, x, y))]
     pub fn new(anchor: PyVec2, x: PyVal, y: PyVal) -> PyResult<Self> {
@@ -56,55 +110,46 @@ impl PyUiPosition {
     }
 
     #[staticmethod]
-    #[pyo3(signature = (x=PyVal::default(), y=PyVal::default()))]
     pub fn center(x: PyVal, y: PyVal) -> Self {
         Self::from_owned(UiPosition::center(x.into(), y.into()))
     }
 
     #[staticmethod]
-    #[pyo3(signature = (x=PyVal::default(), y=PyVal::default()))]
     pub fn top(x: PyVal, y: PyVal) -> Self {
         Self::from_owned(UiPosition::top(x.into(), y.into()))
     }
 
     #[staticmethod]
-    #[pyo3(signature = (x=PyVal::default(), y=PyVal::default()))]
     pub fn bottom(x: PyVal, y: PyVal) -> Self {
         Self::from_owned(UiPosition::bottom(x.into(), y.into()))
     }
 
     #[staticmethod]
-    #[pyo3(signature = (x=PyVal::default(), y=PyVal::default()))]
     pub fn left(x: PyVal, y: PyVal) -> Self {
         Self::from_owned(UiPosition::left(x.into(), y.into()))
     }
 
     #[staticmethod]
-    #[pyo3(signature = (x=PyVal::default(), y=PyVal::default()))]
     pub fn right(x: PyVal, y: PyVal) -> Self {
         Self::from_owned(UiPosition::right(x.into(), y.into()))
     }
 
     #[staticmethod]
-    #[pyo3(signature = (x=PyVal::default(), y=PyVal::default()))]
     pub fn top_left(x: PyVal, y: PyVal) -> Self {
         Self::from_owned(UiPosition::top_left(x.into(), y.into()))
     }
 
     #[staticmethod]
-    #[pyo3(signature = (x=PyVal::default(), y=PyVal::default()))]
     pub fn top_right(x: PyVal, y: PyVal) -> Self {
         Self::from_owned(UiPosition::top_right(x.into(), y.into()))
     }
 
     #[staticmethod]
-    #[pyo3(signature = (x=PyVal::default(), y=PyVal::default()))]
     pub fn bottom_left(x: PyVal, y: PyVal) -> Self {
         Self::from_owned(UiPosition::bottom_left(x.into(), y.into()))
     }
 
     #[staticmethod]
-    #[pyo3(signature = (x=PyVal::default(), y=PyVal::default()))]
     pub fn bottom_right(x: PyVal, y: PyVal) -> Self {
         Self::from_owned(UiPosition::bottom_right(x.into(), y.into()))
     }

@@ -3,7 +3,7 @@ use bevy::{
     pbr::wireframe::{WireframeMaterial, WireframeTopology},
 };
 use pybevy_color::color::PyColor;
-use pybevy_core::{AssetStorage, PyAsset, ValueStorage};
+use pybevy_core::{AssetStorage, Omittable, PyAsset, ValueStorage};
 use pybevy_macros::pyasset;
 use pyo3::prelude::*;
 
@@ -23,18 +23,19 @@ impl PyWireframeMaterial {
         *,
         color = Color::WHITE.into(),
         line_width = 1.0,
-        topology = None
+        topology = Omittable::default()
     ))]
     pub fn new(
         color: PyColor,
         line_width: f32,
-        topology: Option<PyRef<'_, PyWireframeTopology>>,
+        topology: Omittable<PyRef<'_, PyWireframeTopology>>,
     ) -> PyResult<PyClassInitializer<Self>> {
         let color = color.try_into()?;
         let material = WireframeMaterial {
             color,
             line_width,
             topology: topology
+                .into_option()
                 .map(|topology| topology.0)
                 .unwrap_or(WireframeTopology::Triangles),
         };

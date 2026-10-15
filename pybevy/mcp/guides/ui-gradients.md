@@ -44,11 +44,15 @@ bg = LinearGradient.degrees(135.0, [
 
 ## RadialGradient
 
+`UiPosition.CENTER`, `TOP_LEFT`, and the other Bevy position constants have
+zero-pixel offsets. Position constructors such as `UiPosition.center(x, y)`
+require both offsets.
+
 ```python
 # Center-outward circular gradient
 bg = RadialGradient(
-    UiPosition.center(),
-    RadialGradientShape.farthest_corner(),
+    UiPosition.CENTER,
+    RadialGradientShape.FarthestCorner(),
     [
         ColorStop.auto(Color.srgb(1.0, 1.0, 1.0)),
         ColorStop.auto(Color.srgb(0.2, 0.2, 0.3)),
@@ -57,8 +61,8 @@ bg = RadialGradient(
 
 # Fixed-size circle
 bg = RadialGradient(
-    UiPosition.center(),
-    RadialGradientShape.circle(Val.Px(50.0)),
+    UiPosition.CENTER,
+    RadialGradientShape.Circle(Val.Px(50.0)),
     [
         ColorStop.auto(Color.srgb(1.0, 0.8, 0.0)),
         ColorStop.auto(Color.srgba(1.0, 0.8, 0.0, 0.0)),
@@ -66,14 +70,20 @@ bg = RadialGradient(
 )
 ```
 
-**Shapes:** `.closest_side()`, `.farthest_side()`, `.closest_corner()`, `.farthest_corner()`, `.circle(radius)`, `.ellipse(width, height)`
+**Shapes:** `RadialGradientShape.ClosestSide()`,
+`RadialGradientShape.FarthestSide()`,
+`RadialGradientShape.ClosestCorner()`,
+`RadialGradientShape.FarthestCorner()`,
+`RadialGradientShape.Circle(value)`, and
+`RadialGradientShape.Ellipse(width, height)`.
+Circle and ellipse payloads are available as `.value` and `.width`/`.height`.
 
 ## ConicGradient
 
 ```python
 # Color wheel
 bg = ConicGradient(
-    UiPosition.center(),
+    UiPosition.CENTER,
     [
         AngularColorStop.auto(Color.srgb(1.0, 0.0, 0.0)),
         AngularColorStop.auto(Color.srgb(1.0, 1.0, 0.0)),
@@ -85,13 +95,29 @@ bg = ConicGradient(
 
 ## Applying Gradients to UI Nodes
 
-Wrap gradients in `Gradient.linear()`/`.radial()`/`.conic()` and use `BackgroundGradient` or `BorderGradient`:
+Wrap gradients in `Gradient.Linear(value)`, `Gradient.Radial(value)`, or
+`Gradient.Conic(value)` and use `BackgroundGradient` or `BorderGradient`.
+Each variant exposes its payload through `.value` and supports `match`:
+
+```python
+from pybevy.ui import BackgroundGradient, Gradient, LinearGradient
+
+background_gradient = BackgroundGradient([Gradient.Linear(LinearGradient.to_bottom([]))])
+for gradient in background_gradient.gradients:
+    match gradient:
+        case Gradient.Linear(linear):
+            assert linear.stops == []
+        case Gradient.Radial(radial):
+            assert radial.shape is not None
+        case Gradient.Conic(conic):
+            assert conic.start == 0.0
+```
 
 ```python
 # Background gradient on a node
 commands.spawn(
     Node(),
-    BackgroundGradient([Gradient.linear(
+    BackgroundGradient([Gradient.Linear(
         LinearGradient.to_bottom([
             ColorStop.auto(Color.srgb(0.2, 0.5, 0.9)),
             ColorStop.auto(Color.srgb(0.1, 0.2, 0.4)),
@@ -104,7 +130,7 @@ border_node = Node()
 border_node.border = UiRect.all(Val.Px(2.0))
 commands.spawn(
     border_node,
-    BorderGradient([Gradient.linear(
+    BorderGradient([Gradient.Linear(
         LinearGradient.to_right([
             ColorStop.auto(Color.srgb(1.0, 0.0, 0.5)),
             ColorStop.auto(Color.srgb(0.5, 0.0, 1.0)),
@@ -121,7 +147,7 @@ Standalone gradients and stops support whole-field assignment. Child values
 returned by `stops`, `position`, `color`, and `anchor_value` are read-only
 snapshots: replace the parent's field instead of mutating a returned child.
 For example, assign `linear.stops = [ColorStop.auto(Color.WHITE)]` or
-`radial.position = UiPosition.top_left()`. Replace a component's entire
+`radial.position = UiPosition.TOP_LEFT`. Replace a component's entire
 `gradients` list through `Query[Mut[BackgroundGradient]]` or
 `Query[Mut[BorderGradient]]`; a plain `Query` remains read-only.
 
@@ -168,13 +194,13 @@ def spawn_button(commands: Commands) -> None:
     commands.spawn(
         Button(),
         button_node,
-        BackgroundGradient([Gradient.linear(
+        BackgroundGradient([Gradient.Linear(
             LinearGradient.to_bottom([
                 ColorStop.auto(Color.srgb(0.3, 0.6, 1.0)),
                 ColorStop.auto(Color.srgb(0.15, 0.3, 0.7)),
             ]).in_oklaba()
         )]),
-        BorderGradient([Gradient.linear(
+        BorderGradient([Gradient.Linear(
             LinearGradient.to_bottom([
                 ColorStop.auto(Color.srgba(1.0, 1.0, 1.0, 0.3)),
                 ColorStop.auto(Color.srgba(1.0, 1.0, 1.0, 0.05)),

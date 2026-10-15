@@ -15,7 +15,7 @@ pub struct PyBorderColor {
 impl PyBorderColor {
     #[new]
     #[pyo3(signature = (
-        color=None,
+        color=IntoColorValue(Color::NONE),
         *,
         top=Omittable::default(),
         right=Omittable::default(),
@@ -23,13 +23,13 @@ impl PyBorderColor {
         left=Omittable::default(),
     ))]
     pub fn new(
-        color: Option<IntoColorValue>,
+        color: IntoColorValue,
         top: Omittable<PyRef<'_, PyColor>>,
         right: Omittable<PyRef<'_, PyColor>>,
         bottom: Omittable<PyRef<'_, PyColor>>,
         left: Omittable<PyRef<'_, PyColor>>,
     ) -> PyResult<PyClassInitializer<Self>> {
-        let base = color.map(|color| color.0).unwrap_or(Color::NONE);
+        let base = color.0;
         let side = |side: Omittable<PyRef<'_, PyColor>>| -> PyResult<Color> {
             side.into_option()
                 .map_or(Ok(base), |color| Color::try_from(&*color))

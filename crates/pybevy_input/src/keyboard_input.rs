@@ -2,7 +2,7 @@ use bevy::{
     ecs::entity::Entity,
     input::keyboard::{Key, KeyboardInput},
 };
-use pybevy_core::{PyEntity, PyMessage};
+use pybevy_core::{PyEntity, PyMessage, repr::ReprLiteral};
 use pybevy_macros::pymessage;
 use pyo3::prelude::*;
 
@@ -40,6 +40,8 @@ impl PyKeyboardInput {
 impl TryFrom<&PyKeyboardInput> for KeyboardInput {
     type Error = PyErr;
 
+    // Bevy's text type differs across feature sets.
+    #[allow(clippy::useless_conversion)]
     fn try_from(value: &PyKeyboardInput) -> PyResult<Self> {
         Ok(KeyboardInput {
             key_code: value.key_code,
@@ -60,14 +62,14 @@ pub fn materialize_keyboard_input(py: Python<'_>, event: &KeyboardInput) -> PyRe
 #[pymethods]
 impl PyKeyboardInput {
     #[new]
-    #[pyo3(signature = (*, key_code, logical_key, state, text=None, repeat=false, window=None))]
+    #[pyo3(signature = (*, key_code, logical_key, state, text=None, repeat=false, window=PyEntity::from(Entity::PLACEHOLDER)))]
     fn new(
         key_code: &PyKeyCode,
         logical_key: PyKey,
         state: PyButtonState,
         text: Option<String>,
         repeat: bool,
-        window: Option<PyEntity>,
+        window: PyEntity,
     ) -> PyClassInitializer<Self> {
         (
             PyKeyboardInput {
@@ -76,7 +78,7 @@ impl PyKeyboardInput {
                 state,
                 text,
                 repeat,
-                window: window.unwrap_or(Entity::PLACEHOLDER.into()),
+                window,
             },
             PyMessage,
         )
@@ -145,9 +147,13 @@ impl PyKeyboardInput {
 
     fn __repr__(&self) -> String {
         format!(
-            "KeyboardInput(key_code={}, state={})",
+            "KeyboardInput(key_code={}, logical_key={}, state={}, text={}, repeat={}, window={})",
             PyKeyCode::from_bevy(self.key_code).__repr__(),
-            self.state.__repr__()
+            self.logical_key.__repr__(),
+            self.state.__repr__(),
+            self.text.repr_literal(),
+            self.repeat.repr_literal(),
+            self.window.__repr__()
         )
     }
 }

@@ -171,7 +171,7 @@ impl PyNode {
             position_type: position_type.into(),
             overflow: overflow.try_into()?,
             scrollbar_width,
-            overflow_clip_margin: overflow_clip_margin.into(),
+            overflow_clip_margin: overflow_clip_margin.try_into()?,
             left: validate_finite_val(left.0, "left")?,
             right: validate_finite_val(right.0, "right")?,
             top: validate_finite_val(top.0, "top")?,
@@ -193,7 +193,7 @@ impl PyNode {
             margin: validate_rect(margin.try_into()?, "margin", false)?,
             padding: validate_rect(padding.try_into()?, "padding", true)?,
             border: validate_rect(border.try_into()?, "border", true)?,
-            border_radius: border_radius.into(),
+            border_radius: border_radius.try_into()?,
             flex_direction: flex_direction.into(),
             flex_wrap: flex_wrap.into(),
             flex_grow,
@@ -699,18 +699,20 @@ impl PyNode {
 
     #[getter]
     pub fn overflow_clip_margin(&self) -> PyResult<PyOverflowClipMargin> {
-        Ok(self.as_ref()?.overflow_clip_margin.into())
+        Ok(self
+            .storage
+            .borrow_field_as(|node| &node.overflow_clip_margin)?)
     }
 
     #[setter]
     pub fn set_overflow_clip_margin(&mut self, value: PyOverflowClipMargin) -> PyResult<()> {
-        self.as_mut()?.overflow_clip_margin = value.into();
+        self.as_mut()?.overflow_clip_margin = value.try_into()?;
         Ok(())
     }
 
     #[getter]
     pub fn border_radius(&self) -> PyResult<crate::border_radius::PyBorderRadius> {
-        Ok(self.as_ref()?.border_radius.into())
+        Ok(self.storage.borrow_field_as(|node| &node.border_radius)?)
     }
 
     #[setter]
@@ -718,7 +720,11 @@ impl PyNode {
         &mut self,
         value: crate::border_radius::PyBorderRadius,
     ) -> PyResult<()> {
-        self.as_mut()?.border_radius = value.into();
+        self.as_mut()?.border_radius = value.try_into()?;
         Ok(())
+    }
+
+    pub fn __eq__(&self, other: &Self) -> PyResult<bool> {
+        Ok(self.as_ref()? == other.as_ref()?)
     }
 }

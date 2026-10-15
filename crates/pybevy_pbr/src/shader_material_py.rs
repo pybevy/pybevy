@@ -1,3 +1,5 @@
+use std::mem::size_of;
+
 use bevy::{
     app::{App, Last},
     asset::Handle,
@@ -15,7 +17,9 @@ use pybevy_core::{
     ensure_asset_type, extract_handle_from_any,
     public_error::{
         SHADER_DEFS_WITHOUT_NAMES, expected_float_sequence, non_negative_argument,
-        packed_uniform_misaligned, packed_uniform_out_of_range, too_many_shader_def_names,
+        packed_uniform_misaligned, packed_uniform_out_of_range, shader_data_too_long,
+        shader_float_index_out_of_range, shader_float_range_out_of_range,
+        shader_texture_slot_out_of_range, too_many_shader_def_names,
         unsupported_packed_uniform_type,
     },
 };
@@ -37,6 +41,8 @@ use crate::{
     },
     standard_material::PyStandardMaterial,
 };
+
+const MAX_DATA_FLOATS: usize = size_of::<UniformData>() / size_of::<f32>();
 
 #[pyasset(
     ShaderMaterial,
@@ -72,10 +78,9 @@ fn checked_index(value: isize, name: &str) -> PyResult<usize> {
 fn checked_texture_slot(slot: isize) -> PyResult<usize> {
     let slot = checked_index(slot, "texture slot")?;
     if slot >= MAX_TEXTURE_SLOTS {
-        return Err(PyIndexError::new_err(format!(
-            "texture slot {} out of range (max {})",
+        return Err(PyIndexError::new_err(shader_texture_slot_out_of_range(
             slot,
-            MAX_TEXTURE_SLOTS - 1
+            MAX_TEXTURE_SLOTS - 1,
         )));
     }
     Ok(slot)
@@ -164,10 +169,10 @@ impl PyShaderMaterial {
         let mut params = ShaderParams::default();
 
         if let Some(data) = data {
-            if data.len() > 256 {
-                return Err(PyTypeError::new_err(format!(
-                    "data has {} floats, max is 256 (64 vec4s)",
-                    data.len()
+            if data.len() > MAX_DATA_FLOATS {
+                return Err(PyValueError::new_err(shader_data_too_long(
+                    data.len(),
+                    MAX_DATA_FLOATS,
                 )));
             }
             for (i, &val) in data.iter().enumerate() {
@@ -184,9 +189,9 @@ impl PyShaderMaterial {
             let list = tex_list.bind(py);
             for (i, item) in list.iter().enumerate() {
                 if i >= MAX_TEXTURE_SLOTS {
-                    return Err(PyIndexError::new_err(format!(
-                        "texture slot {} exceeds max ({})",
-                        i, MAX_TEXTURE_SLOTS
+                    return Err(PyIndexError::new_err(shader_texture_slot_out_of_range(
+                        i,
+                        MAX_TEXTURE_SLOTS - 1,
                     )));
                 }
                 if !item.is_none() {
@@ -266,10 +271,10 @@ impl PyShaderMaterial {
 
     fn set_data_float(&mut self, index: isize, value: f32) -> PyResult<()> {
         let index = checked_index(index, "data index")?;
-        if index >= 256 {
-            return Err(PyIndexError::new_err(format!(
-                "float index {} out of range (max 255)",
-                index
+        if index >= MAX_DATA_FLOATS {
+            return Err(PyIndexError::new_err(shader_float_index_out_of_range(
+                index,
+                MAX_DATA_FLOATS - 1,
             )));
         }
         let mut mat = self.as_mut()?;
@@ -279,10 +284,10 @@ impl PyShaderMaterial {
 
     fn get_data_float(&self, index: isize) -> PyResult<f32> {
         let index = checked_index(index, "data index")?;
-        if index >= 256 {
-            return Err(PyIndexError::new_err(format!(
-                "float index {} out of range (max 255)",
-                index
+        if index >= MAX_DATA_FLOATS {
+            return Err(PyIndexError::new_err(shader_float_index_out_of_range(
+                index,
+                MAX_DATA_FLOATS - 1,
             )));
         }
         let mat = self.as_ref()?;
@@ -299,10 +304,11 @@ impl PyShaderMaterial {
             PyTypeError::new_err(expected_float_sequence(actual))
         })?;
         let end = start.saturating_add(values.len());
-        if end > 256 {
-            return Err(PyIndexError::new_err(format!(
-                "float range {}..{} exceeds buffer (max 256)",
-                start, end
+        if end > MAX_DATA_FLOATS {
+            return Err(PyIndexError::new_err(shader_float_range_out_of_range(
+                start,
+                end,
+                MAX_DATA_FLOATS,
             )));
         }
         let mut mat = self.as_mut()?;
@@ -372,10 +378,11 @@ impl PyShaderMaterial {
         let start = checked_index(start, "start")?;
         let count = checked_index(count, "count")?;
         let end = start.saturating_add(count);
-        if end > 256 {
-            return Err(PyIndexError::new_err(format!(
-                "float range {}..{} exceeds buffer (max 256)",
-                start, end
+        if end > MAX_DATA_FLOATS {
+            return Err(PyIndexError::new_err(shader_float_range_out_of_range(
+                start,
+                end,
+                MAX_DATA_FLOATS,
             )));
         }
         let mat = self.as_ref()?;

@@ -1,5 +1,7 @@
 use bevy::input::{ButtonInput, keyboard::KeyCode};
-use pybevy_core::{PyResource, ResourceStorage, registry::global_registry, resource_initializer};
+use pybevy_core::{
+    PyResource, ResourceStorage, public_error, registry::global_registry, resource_initializer,
+};
 use pybevy_macros::pyresource;
 use pyo3::{
     PyTypeInfo,
@@ -65,11 +67,9 @@ impl PyButtonInput {
         key: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyType>> {
         let py = cls.py();
-        let key_type = key.cast::<PyType>().map_err(|_| {
-            PyTypeError::new_err(
-                "ButtonInput[...] requires a button type, for example ButtonInput[KeyCode]",
-            )
-        })?;
+        let key_type = key
+            .cast::<PyType>()
+            .map_err(|_| PyTypeError::new_err(public_error::BUTTON_INPUT_TYPE_REQUIRED))?;
 
         if key_type.is(PyKeyCode::type_object(py)) {
             return Ok(PyButtonInput::type_object(py)
@@ -84,11 +84,9 @@ impl PyButtonInput {
         let name = key_type
             .name()
             .map_or_else(|_| "the given type".to_string(), |name| name.to_string());
-        Err(PyTypeError::new_err(format!(
-            "ButtonInput[{name}] is not available; supported button types are KeyCode and \
-             MouseButton. Bevy also registers ButtonInput<Key> for logical keys, which PyBevy \
-             does not wrap yet."
-        )))
+        Err(PyTypeError::new_err(
+            public_error::button_input_unsupported_type(&name),
+        ))
     }
 
     #[new]
@@ -121,9 +119,8 @@ impl PyButtonInput {
     }
 
     pub fn all_pressed(&self, inputs: Vec<PyKeyCode>) -> PyResult<bool> {
-        let button_input = self.as_ref()?;
         let bevy_keys: Vec<KeyCode> = inputs.iter().map(|k| k.to_bevy()).collect();
-        Ok(bevy_keys.iter().all(|k| button_input.pressed(*k)))
+        Ok(self.as_ref()?.all_pressed(bevy_keys))
     }
 
     pub fn get_just_pressed(&self, py: Python<'_>) -> PyResult<Vec<Py<PyAny>>> {

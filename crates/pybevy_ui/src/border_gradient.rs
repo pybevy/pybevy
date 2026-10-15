@@ -1,5 +1,5 @@
-use bevy::ui::BorderGradient;
-use pybevy_core::{ComponentStorage, PyComponent};
+use bevy::ui::{BorderGradient, Gradient};
+use pybevy_core::{ComponentStorage, PyComponent, repr::object_repr};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
@@ -18,14 +18,9 @@ impl PyBorderGradient {
     #[pyo3(signature = (gradients = vec![]))]
     pub fn new(gradients: Vec<PyGradient>) -> PyClassInitializer<Self> {
         Self::from_owned(BorderGradient(
-            gradients.into_iter().map(|g| g.inner).collect(),
+            gradients.into_iter().map(Gradient::from).collect(),
         ))
         .into()
-    }
-
-    pub fn add_gradient(&mut self, gradient: PyGradient) -> PyResult<()> {
-        self.as_mut()?.0.push(gradient.inner);
-        Ok(())
     }
 
     #[getter]
@@ -35,27 +30,22 @@ impl PyBorderGradient {
 
     #[setter]
     pub fn set_gradients(&mut self, gradients: Vec<PyGradient>) -> PyResult<()> {
-        self.as_mut()?.0 = gradients
-            .into_iter()
-            .map(|gradient| gradient.inner)
-            .collect();
+        self.as_mut()?.0 = gradients.into_iter().map(Gradient::from).collect();
         Ok(())
-    }
-
-    fn __len__(&self) -> PyResult<usize> {
-        self.len()
-    }
-
-    pub fn len(&self) -> PyResult<usize> {
-        Ok(self.as_ref()?.0.len())
-    }
-
-    pub fn is_empty(&self) -> PyResult<bool> {
-        Ok(self.as_ref()?.0.is_empty())
     }
 
     pub fn __repr__(&self) -> PyResult<String> {
         let inner = self.as_ref()?;
-        Ok(format!("BorderGradient(gradients={})", inner.0.len()))
+        Ok(format!(
+            "BorderGradient(gradients={})",
+            object_repr(
+                inner
+                    .0
+                    .iter()
+                    .cloned()
+                    .map(PyGradient::from)
+                    .collect::<Vec<_>>()
+            )
+        ))
     }
 }

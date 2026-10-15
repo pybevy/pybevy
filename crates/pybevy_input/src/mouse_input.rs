@@ -43,9 +43,8 @@ impl PyMouseInput {
     }
 
     pub fn all_pressed(&self, buttons: Vec<PyMouseButton>) -> PyResult<bool> {
-        let input = self.as_ref()?;
         let bevy_buttons: Vec<MouseButton> = buttons.into_iter().map(|b| b.into()).collect();
-        Ok(bevy_buttons.iter().all(|b| input.pressed(*b)))
+        Ok(self.as_ref()?.all_pressed(bevy_buttons))
     }
 
     pub fn get_just_pressed(&self) -> PyResult<Vec<PyMouseButton>> {

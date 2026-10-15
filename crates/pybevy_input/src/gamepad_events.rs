@@ -1,9 +1,6 @@
-use bevy::{
-    ecs::entity::Entity,
-    input::gamepad::{
-        GamepadAxisChangedEvent, GamepadButtonChangedEvent, GamepadButtonStateChangedEvent,
-        GamepadConnection, GamepadConnectionEvent,
-    },
+use bevy::input::gamepad::{
+    GamepadAxisChangedEvent, GamepadButtonChangedEvent, GamepadButtonStateChangedEvent,
+    GamepadConnection, GamepadConnectionEvent,
 };
 pub use pybevy_core::PyMessage;
 use pybevy_core::{
@@ -70,14 +67,14 @@ impl PyGamepadButtonChangedEvent {
     #[new]
     #[pyo3(signature = (entity, button, state, value))]
     fn new(
-        entity: Option<PyEntity>,
+        entity: PyEntity,
         button: PyGamepadButton,
         state: PyButtonState,
         value: f32,
     ) -> PyClassInitializer<Self> {
         (
             PyGamepadButtonChangedEvent {
-                entity: entity.unwrap_or(Entity::PLACEHOLDER.into()),
+                entity,
                 button,
                 state,
                 value,
@@ -129,8 +126,10 @@ impl PyGamepadButtonChangedEvent {
 
     fn __repr__(&self) -> String {
         format!(
-            "GamepadButtonChangedEvent(button={}, value={})",
+            "GamepadButtonChangedEvent(entity={}, button={}, state={}, value={})",
+            self.entity.__repr__(),
             self.button.__repr__(),
+            self.state.__repr__(),
             float_repr(self.value)
         )
     }
@@ -184,10 +183,10 @@ impl TryFrom<&PyGamepadAxisChangedEvent> for GamepadAxisChangedEvent {
 impl PyGamepadAxisChangedEvent {
     #[new]
     #[pyo3(signature = (entity, axis, value))]
-    fn new(entity: Option<PyEntity>, axis: PyGamepadAxis, value: f32) -> PyClassInitializer<Self> {
+    fn new(entity: PyEntity, axis: PyGamepadAxis, value: f32) -> PyClassInitializer<Self> {
         (
             PyGamepadAxisChangedEvent {
-                entity: entity.unwrap_or(Entity::PLACEHOLDER.into()),
+                entity,
                 axis,
                 value,
             },
@@ -228,7 +227,8 @@ impl PyGamepadAxisChangedEvent {
 
     fn __repr__(&self) -> String {
         format!(
-            "GamepadAxisChangedEvent(axis={}, value={})",
+            "GamepadAxisChangedEvent(entity={}, axis={}, value={})",
+            self.entity.__repr__(),
             self.axis.__repr__(),
             float_repr(self.value)
         )
@@ -411,13 +411,13 @@ impl PyGamepadButtonStateChangedEvent {
     #[new]
     #[pyo3(signature = (entity, button, state))]
     fn new(
-        entity: Option<PyEntity>,
+        entity: PyEntity,
         button: PyGamepadButton,
         state: PyButtonState,
     ) -> PyClassInitializer<Self> {
         (
             PyGamepadButtonStateChangedEvent {
-                entity: entity.unwrap_or(Entity::PLACEHOLDER.into()),
+                entity,
                 button,
                 state,
             },
@@ -458,7 +458,8 @@ impl PyGamepadButtonStateChangedEvent {
 
     fn __repr__(&self) -> String {
         format!(
-            "GamepadButtonStateChangedEvent(button={}, state={})",
+            "GamepadButtonStateChangedEvent(entity={}, button={}, state={})",
+            self.entity.__repr__(),
             self.button.__repr__(),
             self.state.__repr__()
         )

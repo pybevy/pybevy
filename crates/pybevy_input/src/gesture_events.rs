@@ -135,21 +135,6 @@ impl PyPanGesture {
         Snapshot(self.0)
     }
 
-    #[getter]
-    fn x(&self) -> f32 {
-        self.0.x
-    }
-
-    #[getter]
-    fn y(&self) -> f32 {
-        self.0.y
-    }
-
-    #[getter]
-    fn delta(&self) -> Snapshot<Vec2> {
-        Snapshot(self.0)
-    }
-
     fn __repr__(&self) -> String {
         format!("PanGesture(value={})", self.0.repr_literal())
     }

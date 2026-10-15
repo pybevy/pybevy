@@ -124,9 +124,38 @@ impl PyImageNode {
         Ok(())
     }
 
+    pub fn with_color(&self, py: Python, color: PyColor) -> PyResult<Py<Self>> {
+        Py::new(
+            py,
+            Self::from_owned(self.as_ref()?.clone().with_color(color.try_into()?)),
+        )
+    }
+
+    pub fn with_flip_x(&self, py: Python) -> PyResult<Py<Self>> {
+        Py::new(py, Self::from_owned(self.as_ref()?.clone().with_flip_x()))
+    }
+
+    pub fn with_flip_y(&self, py: Python) -> PyResult<Py<Self>> {
+        Py::new(py, Self::from_owned(self.as_ref()?.clone().with_flip_y()))
+    }
+
+    pub fn with_rect(&self, py: Python, rect: PyRect) -> PyResult<Py<Self>> {
+        Py::new(
+            py,
+            Self::from_owned(self.as_ref()?.clone().with_rect(rect.try_into()?)),
+        )
+    }
+
+    pub fn with_mode(&self, py: Python, mode: PyNodeImageMode) -> PyResult<Py<Self>> {
+        Py::new(
+            py,
+            Self::from_owned(self.as_ref()?.clone().with_mode(mode.try_into()?)),
+        )
+    }
+
     pub fn __repr__(&self) -> PyResult<String> {
         Ok(format!(
-            "ImageNode(image={})",
+            "ImageNode({})",
             object_repr(PyHandle::from(&self.as_ref()?.image))
         ))
     }

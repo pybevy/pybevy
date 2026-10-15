@@ -64,17 +64,17 @@ impl TryFrom<&PyMouseButtonInput> for MouseButtonInput {
 #[pymethods]
 impl PyMouseButtonInput {
     #[new]
-    #[pyo3(signature = (*, button, state, window=None))]
+    #[pyo3(signature = (*, button, state, window=PyEntity::from(Entity::PLACEHOLDER)))]
     fn new(
         button: PyMouseButton,
         state: PyButtonState,
-        window: Option<PyEntity>,
+        window: PyEntity,
     ) -> PyClassInitializer<Self> {
         (
             PyMouseButtonInput {
                 button,
                 state,
-                window: window.unwrap_or(Entity::PLACEHOLDER.into()),
+                window,
             },
             PyMessage,
         )
@@ -113,9 +113,10 @@ impl PyMouseButtonInput {
 
     fn __repr__(&self) -> String {
         format!(
-            "MouseButtonInput(button={}, state={})",
+            "MouseButtonInput(button={}, state={}, window={})",
             self.button.__repr__(),
-            self.state.__repr__()
+            self.state.__repr__(),
+            self.window.__repr__()
         )
     }
 }
@@ -216,12 +217,12 @@ impl TryFrom<&PyMouseWheel> for MouseWheel {
 #[pymethods]
 impl PyMouseWheel {
     #[new]
-    #[pyo3(signature = (*, unit = PyMouseScrollUnit::Line, x, y, window=None, phase = PyTouchPhase::Moved))]
+    #[pyo3(signature = (*, unit = PyMouseScrollUnit::Line, x, y, window=PyEntity::from(Entity::PLACEHOLDER), phase = PyTouchPhase::Moved))]
     fn new(
         unit: PyMouseScrollUnit,
         x: f32,
         y: f32,
-        window: Option<PyEntity>,
+        window: PyEntity,
         phase: PyTouchPhase,
     ) -> PyClassInitializer<Self> {
         (
@@ -229,7 +230,7 @@ impl PyMouseWheel {
                 x,
                 y,
                 unit,
-                window: window.unwrap_or(Entity::PLACEHOLDER.into()),
+                window,
                 phase,
             },
             PyMessage,
@@ -289,10 +290,11 @@ impl PyMouseWheel {
 
     fn __repr__(&self) -> String {
         format!(
-            "MouseWheel(x={}, y={}, unit={}, phase={})",
+            "MouseWheel(x={}, y={}, unit={}, window={}, phase={})",
             float_repr(self.x),
             float_repr(self.y),
             self.unit.__repr__(),
+            self.window.__repr__(),
             self.phase.__repr__()
         )
     }
