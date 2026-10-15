@@ -7,8 +7,9 @@ use bevy::{
     image::TextureAtlasLayout,
     text::{FontAtlas, FontAtlasKey},
 };
-use pybevy_core::PyHandle;
+use pybevy_core::{AssetStorage, FromBorrowedStorage, PyHandle, ValueStorage};
 use pybevy_image::texture_atlas_layout::PyTextureAtlasLayout;
+use pybevy_macros::pyvalue;
 use pyo3::prelude::*;
 
 use crate::{font_hinting::PyFontHinting, font_smoothing::PyFontSmoothing};
@@ -40,7 +41,9 @@ impl PyFontAtlas {
     pub fn texture_atlas(&self, py: Python<'_>) -> PyResult<Py<PyTextureAtlasLayout>> {
         Py::new(
             py,
-            PyTextureAtlasLayout::from_owned(self.texture_atlas.clone()),
+            PyTextureAtlasLayout::from_borrowed(AssetStorage::read_only_snapshot(
+                self.texture_atlas.clone(),
+            )),
         )
     }
 
@@ -59,6 +62,7 @@ impl PyFontAtlas {
     }
 }
 
+#[pyvalue]
 #[pyclass(
     name = "FontAtlasKey",
     module = "pybevy.text",
@@ -66,81 +70,71 @@ impl PyFontAtlas {
     eq,
     skip_from_py_object
 )]
-#[derive(Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct PyFontAtlasKey {
-    id: u32,
-    index: u32,
-    font_size_bits: u32,
-    variations_hash: u64,
-    hinting: PyFontHinting,
-    font_smoothing: PyFontSmoothing,
+    pub(crate) storage: ValueStorage<FontAtlasKey>,
+}
+
+impl PartialEq for PyFontAtlasKey {
+    fn eq(&self, other: &Self) -> bool {
+        matches!((self.to_bevy(), other.to_bevy()), (Ok(a), Ok(b)) if a == b)
+    }
 }
 
 impl From<&FontAtlasKey> for PyFontAtlasKey {
     fn from(key: &FontAtlasKey) -> Self {
-        PyFontAtlasKey {
-            id: key.id,
-            index: key.index,
-            font_size_bits: key.font_size_bits,
-            variations_hash: key.variations_hash,
-            hinting: key.hinting.into(),
-            font_smoothing: key.font_smoothing.into(),
-        }
+        Self::from_owned(*key)
     }
 }
 
 #[pymethods]
 impl PyFontAtlasKey {
     #[getter]
-    pub fn id(&self) -> u32 {
-        self.id
+    pub fn id(&self) -> PyResult<u32> {
+        Ok(self.as_ref()?.id)
     }
 
     #[getter]
-    pub fn index(&self) -> u32 {
-        self.index
+    pub fn index(&self) -> PyResult<u32> {
+        Ok(self.as_ref()?.index)
     }
 
     #[getter]
-    pub fn font_size_bits(&self) -> u32 {
-        self.font_size_bits
+    pub fn font_size_bits(&self) -> PyResult<u32> {
+        Ok(self.as_ref()?.font_size_bits)
     }
 
     #[getter]
-    pub fn variations_hash(&self) -> u64 {
-        self.variations_hash
+    pub fn variations_hash(&self) -> PyResult<u64> {
+        Ok(self.as_ref()?.variations_hash)
     }
 
     #[getter]
-    pub fn hinting(&self) -> PyFontHinting {
-        self.hinting
+    pub fn hinting(&self) -> PyResult<PyFontHinting> {
+        Ok(self.as_ref()?.hinting.into())
     }
 
     #[getter]
-    pub fn font_smoothing(&self) -> PyFontSmoothing {
-        self.font_smoothing
+    pub fn font_smoothing(&self) -> PyResult<PyFontSmoothing> {
+        Ok(self.as_ref()?.font_smoothing.into())
     }
 
-    pub fn __hash__(&self) -> u64 {
+    pub fn __hash__(&self) -> PyResult<u64> {
         let mut hasher = DefaultHasher::new();
-        self.id.hash(&mut hasher);
-        self.index.hash(&mut hasher);
-        self.font_size_bits.hash(&mut hasher);
-        self.variations_hash.hash(&mut hasher);
-        self.hinting.hash(&mut hasher);
-        self.font_smoothing.hash(&mut hasher);
-        hasher.finish()
+        self.to_bevy()?.hash(&mut hasher);
+        Ok(hasher.finish())
     }
 
-    pub fn __repr__(&self) -> String {
-        format!(
+    pub fn __repr__(&self) -> PyResult<String> {
+        let key = self.to_bevy()?;
+        Ok(format!(
             "FontAtlasKey(id={}, index={}, font_size_bits={}, variations_hash={}, hinting={:?}, font_smoothing={:?})",
-            self.id,
-            self.index,
-            self.font_size_bits,
-            self.variations_hash,
-            self.hinting,
-            self.font_smoothing
-        )
+            key.id,
+            key.index,
+            key.font_size_bits,
+            key.variations_hash,
+            PyFontHinting::from(key.hinting),
+            PyFontSmoothing::from(key.font_smoothing)
+        ))
     }
 }

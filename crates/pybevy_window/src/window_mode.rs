@@ -25,6 +25,7 @@ pub enum PyWindowMode {
         #[py_type(PyMonitorSelection)]
         monitor: MonitorSelection,
         #[py_type(PyVideoModeSelection)]
+        #[py_try_into]
         video_mode: VideoModeSelection,
     },
 }
@@ -37,8 +38,8 @@ impl Default for PyWindowMode {
 
 #[pymethods]
 impl PyWindowMode {
-    pub fn __repr__(&self) -> String {
-        match self {
+    pub fn __repr__(&self) -> PyResult<String> {
+        Ok(match self {
             PyWindowMode::Windowed() => "WindowMode.Windowed()".to_string(),
             PyWindowMode::BorderlessFullscreen { monitor } => {
                 format!("WindowMode.BorderlessFullscreen({:?})", monitor)
@@ -48,10 +49,11 @@ impl PyWindowMode {
                 video_mode,
             } => {
                 format!(
-                    "WindowMode.Fullscreen(monitor={:?}, video_mode={:?})",
-                    monitor, video_mode
+                    "WindowMode.Fullscreen(monitor={:?}, video_mode={})",
+                    monitor,
+                    video_mode.__repr__()?
                 )
             }
-        }
+        })
     }
 }

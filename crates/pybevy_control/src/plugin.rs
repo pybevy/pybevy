@@ -206,6 +206,7 @@ impl Plugin for ControlBevyPlugin {
         app.add_systems(
             Last,
             (
+                crate::handlers::screenshot::hold_capture_pose,
                 crate::handlers::screenshot::process_pending_screenshots,
                 crate::handlers::screenshot::process_pending_timelines,
                 crate::handlers::reload::process_pending_reloads,

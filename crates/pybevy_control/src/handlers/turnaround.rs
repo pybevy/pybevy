@@ -250,32 +250,8 @@ pub fn process_pending_turnarounds(world: &mut World) {
             continue;
         }
 
-        // Clean up previous debug camera if any.
         if let Some(cleanup) = turnaround.debug_cleanup.take() {
-            if let Some((orig_transform, orig_global_transform, was_active)) = cleanup.reused_state
-            {
-                // Reused camera: restore original transform, global transform, and active state
-                if let Some(mut t) = world.get_mut::<Transform>(cleanup.debug_entity) {
-                    *t = orig_transform;
-                }
-                if let Some(mut gt) = world.get_mut::<GlobalTransform>(cleanup.debug_entity) {
-                    *gt = orig_global_transform;
-                }
-                if let Some(mut cam) = world.get_mut::<Camera>(cleanup.debug_entity) {
-                    cam.is_active = was_active;
-                }
-            } else {
-                // Spawned camera: despawn immediately (not via commands) so
-                // setup_debug_camera won't include it in the next original_cameras list.
-                if let Ok(entity_mut) = world.get_entity_mut(cleanup.debug_entity) {
-                    entity_mut.despawn();
-                }
-            }
-            for (cam_entity, was_active) in cleanup.original_cameras {
-                if let Some(mut cam) = world.get_mut::<Camera>(cam_entity) {
-                    cam.is_active = was_active;
-                }
-            }
+            cleanup_debug_camera_world(cleanup, world);
         }
 
         // Are we done?

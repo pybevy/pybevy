@@ -112,6 +112,11 @@ set_component {
 }
 ```
 
+A JSON list replaces a list field with exactly the supplied elements, in
+`set_component`, `batch`, and `spawn_entity`: writing `{"bounds": [15.0, 50.0]}`
+to a `CascadeShadowConfig` with four bounds leaves two. Object fields still
+merge, so omitted struct fields keep their values.
+
 `set_component` inserts absent components that support insertion. Writable
 newtypes (`ZIndex`, `GlobalZIndex`) use `{"value": ...}`; failed patches
 preserve them. Enum payload fields accept component vector shorthand.
@@ -151,6 +156,15 @@ components, such as the `AccessibilityNode`
 `role`, `label`, and `value` properties, are included on read and rejected
 with a field-named error when written. Derived enum predicates such as `is_*`
 are omitted.
+
+Numeric fields with a declared value range reject values outside it in
+`set_component`, `batch`, and `spawn_entity`, with the Python setter's message:
+`CascadeShadowConfig.overlap_proportion` must be in `[0.0, 1.0)`,
+`minimum_distance` must be non-negative, and `Bloom.max_mip_dimension` must be
+at least 1. A rejected write, for example
+`Failed to set 'CascadeShadowConfig': overlap_proportion: overlap_proportion must be in range [0.0, 1.0)`,
+leaves the component unchanged. Other setter checks, such as a nonempty
+`CascadeShadowConfig.bounds`, are not yet applied to these writes.
 
 A request that applies nothing fails with 400 rather than reporting success:
 a rejected field value, or a spawn whose components could not be built, is an
@@ -634,6 +648,22 @@ schedule_actions {"actions": [
     {"tool": "capture_screenshot", "at": 2, "label": "2sec_later"},
     {"tool": "capture_screenshot", "at": 4, "label": "4sec_later"}
 ]}
+```
+
+Actions run in order, so a capture holds the schedule until its image arrives
+and a later action whose offset has already passed runs right after it. Each
+result reports `fired_at_game_time` and `fired_at_frame`, the virtual time and
+schedule frame when the action was dispatched. A capture or other deferred
+action adds `completed_at_game_time`. An action that ran after its offset
+because an earlier action held the schedule adds `late_by_frames` (for
+`at_frame`) or `late_by_seconds` (for `at`):
+```
+schedule_actions {"actions": [
+    {"tool": "capture_screenshot", "args": {"delay_frames": 30}, "at_frame": 0},
+    {"tool": "get_time_status", "at_frame": 5}
+]}
+→ results[0]: {"fired_at_frame": 0, "completed_at_game_time": 0.80, ...}
+  results[1]: {"at_frame": 5, "fired_at_frame": 34, "late_by_frames": 29, ...}
 ```
 
 ### Error Handling

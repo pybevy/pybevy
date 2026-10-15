@@ -335,8 +335,10 @@ class TaskPoolPlugin(Plugin):
     """Install Bevy's process-global pools with the supplied options.
 
     The first built plugin initializes the pools; later apps cannot resize them.
-    The options and nested assignment-policy properties are live configuration
-    objects, so field edits made before adding the plugin are preserved.
+    `task_pool_options` is the retained options object, so its field edits made
+    before adding the plugin are preserved. Its `io`, `async_compute`, and
+    `compute` properties return read-only snapshots; replace a policy by
+    assigning a new `TaskPoolThreadAssignmentPolicy`.
     """
 
     def __init__(self, *, task_pool_options: TaskPoolOptions = ...) -> None: ...

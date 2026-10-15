@@ -1,15 +1,11 @@
-use bevy::{
-    ecs::entity::Entity,
-    input::touch::{ForceTouch, TouchInput},
-    math::Vec2,
-};
+use bevy::{ecs::entity::Entity, input::touch::TouchInput, math::Vec2};
 use pybevy_core::PyEntity;
 pub use pybevy_core::PyMessage;
 use pybevy_macros::pymessage;
 use pybevy_math::snapshot::Snapshot;
 use pyo3::prelude::*;
 
-use crate::touch_phase::PyTouchPhase;
+use crate::{force_touch::PyForceTouch, touch_phase::PyTouchPhase};
 
 #[pymessage(TouchInput, writable)]
 #[pyclass(name = "TouchInput", module = "pybevy.input", extends = PyMessage, frozen, skip_from_py_object)]
@@ -24,7 +20,7 @@ pub struct PyTouchInput {
     pub id: u64,
 
     #[pyo3(get)]
-    pub force: Option<f64>,
+    pub force: Option<PyForceTouch>,
 
     #[pyo3(get)]
     pub window: PyEntity,
@@ -38,20 +34,11 @@ impl PyTouchInput {
 
 impl From<&TouchInput> for PyTouchInput {
     fn from(event: &TouchInput) -> Self {
-        let force = event.force.map(|f| match f {
-            bevy::input::touch::ForceTouch::Calibrated {
-                force,
-                max_possible_force,
-                altitude_angle: _,
-            } => force / max_possible_force,
-            bevy::input::touch::ForceTouch::Normalized(normalized) => normalized,
-        });
-
         PyTouchInput {
             phase: event.phase.into(),
             position: event.position,
             id: event.id,
-            force,
+            force: event.force.map(Into::into),
             window: event.window.into(),
         }
     }
@@ -65,7 +52,7 @@ impl TryFrom<&PyTouchInput> for TouchInput {
             phase: value.phase.into(),
             position: value.position,
             window: value.window.into(),
-            force: value.force.map(ForceTouch::Normalized),
+            force: value.force.map(Into::into),
             id: value.id,
         })
     }
@@ -79,7 +66,7 @@ impl PyTouchInput {
         phase: PyTouchPhase,
         position: Snapshot<Vec2>,
         window: PyEntity,
-        force: Option<f64>,
+        force: Option<PyForceTouch>,
         id: u64,
     ) -> PyClassInitializer<Self> {
         (
@@ -102,12 +89,13 @@ impl PyTouchInput {
 
     pub fn __repr__(&self) -> String {
         format!(
-            "TouchInput(phase={}, position=Vec2(x={:.2}, y={:.2}), id={}, force={:?})",
+            "TouchInput(phase={}, position=Vec2(x={:.2}, y={:.2}), id={}, force={})",
             self.phase.__repr__(),
             self.position.x,
             self.position.y,
             self.id,
             self.force
+                .map_or_else(|| "None".to_string(), |force| force.__repr__())
         )
     }
 

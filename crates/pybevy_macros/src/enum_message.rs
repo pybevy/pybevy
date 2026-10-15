@@ -88,7 +88,7 @@ fn try_expand(
         };
         if let Some(field) = fields
             .iter()
-            .find(|field| field.try_into || field.materialize || field.borrowed)
+            .find(|field| field.materialize || field.borrowed)
         {
             return Err(syn::Error::new_spanned(
                 field.rust_type,
@@ -101,11 +101,15 @@ fn try_expand(
         let conversions = fields.iter().filter_map(|field| {
             let name = parameter_name(field);
             let stored = field.rust_type;
-            field
-                .python_type
-                .as_ref()
-                .map(|_| quote! { let #name: #stored = #name.into(); })
+            field.python_type.as_ref().map(|_| {
+                if field.try_into {
+                    quote! { let #name: #stored = #name.try_into()?; }
+                } else {
+                    quote! { let #name: #stored = #name.into(); }
+                }
+            })
         });
+        let fallible = fields.iter().any(|field| field.try_into);
         let stored_names = fields
             .iter()
             .map(|field| {
@@ -185,6 +189,23 @@ fn try_expand(
             }
         });
 
+        let constructor = if fallible {
+            quote! {
+                pub fn new(#(#parameters),*) -> pyo3::PyResult<pyo3::PyClassInitializer<Self>> {
+                    #(#conversions)*
+                    Ok(#initializer(#inner_constructor).add_subclass(Self))
+                }
+            }
+        } else {
+            quote! {
+                pub fn new(#(#parameters),*) -> pyo3::PyClassInitializer<Self> {
+                    #(#conversions)*
+                    #initializer(#inner_constructor)
+                        .add_subclass(Self)
+                }
+            }
+        };
+
         variant_items.push(quote! {
             #[pyo3::pyclass(name = #variant_name, module = #module, extends = #py_type, frozen)]
             pub struct #variant_type;
@@ -199,11 +220,7 @@ fn try_expand(
 
                 #[new]
                 #signature
-                pub fn new(#(#parameters),*) -> pyo3::PyClassInitializer<Self> {
-                    #(#conversions)*
-                    #initializer(#inner_constructor)
-                        .add_subclass(Self)
-                }
+                #constructor
 
                 #(#getters)*
             }

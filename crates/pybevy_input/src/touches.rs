@@ -1,11 +1,13 @@
 use bevy::{
-    input::touch::{ForceTouch, Touch, Touches},
+    input::touch::{Touch, Touches},
     math::Vec2,
 };
 use pybevy_core::{PyResource, ResourceStorage, resource_initializer};
 use pybevy_macros::pyresource;
 use pybevy_math::{snapshot::Snapshot, vec2::PyVec2};
 use pyo3::prelude::*;
+
+use crate::force_touch::PyForceTouch;
 
 #[pyresource(Touches, no_clone, bridge, default_insert, no_reflect)]
 #[pyclass(name = "Touches", module = "pybevy.input", extends = PyResource)]
@@ -132,11 +134,11 @@ impl PyTouches {
 pub struct PyTouch {
     id: u64,
     start_position: Vec2,
-    start_force: Option<f64>,
+    start_force: Option<PyForceTouch>,
     previous_position: Vec2,
-    previous_force: Option<f64>,
+    previous_force: Option<PyForceTouch>,
     position: Vec2,
-    force: Option<f64>,
+    force: Option<PyForceTouch>,
 }
 
 impl PyTouch {
@@ -144,23 +146,12 @@ impl PyTouch {
         PyTouch {
             id: touch.id(),
             start_position: touch.start_position(),
-            start_force: touch.start_force().and_then(extract_force_value),
+            start_force: touch.start_force().map(Into::into),
             previous_position: touch.previous_position(),
-            previous_force: touch.previous_force().and_then(extract_force_value),
+            previous_force: touch.previous_force().map(Into::into),
             position: touch.position(),
-            force: touch.force().and_then(extract_force_value),
+            force: touch.force().map(Into::into),
         }
-    }
-}
-
-fn extract_force_value(force: ForceTouch) -> Option<f64> {
-    match force {
-        ForceTouch::Calibrated {
-            force,
-            max_possible_force,
-            altitude_angle: _,
-        } => Some(force / max_possible_force),
-        ForceTouch::Normalized(value) => Some(value),
     }
 }
 
@@ -187,17 +178,17 @@ impl PyTouch {
     }
 
     #[getter]
-    fn force(&self) -> Option<f64> {
+    fn force(&self) -> Option<PyForceTouch> {
         self.force
     }
 
     #[getter]
-    fn start_force(&self) -> Option<f64> {
+    fn start_force(&self) -> Option<PyForceTouch> {
         self.start_force
     }
 
     #[getter]
-    fn previous_force(&self) -> Option<f64> {
+    fn previous_force(&self) -> Option<PyForceTouch> {
         self.previous_force
     }
 
@@ -211,8 +202,12 @@ impl PyTouch {
 
     fn __repr__(&self) -> String {
         format!(
-            "Touch(id={}, position=({}, {}), force={:?})",
-            self.id, self.position.x, self.position.y, self.force
+            "Touch(id={}, position=({}, {}), force={})",
+            self.id,
+            self.position.x,
+            self.position.y,
+            self.force
+                .map_or_else(|| "None".to_string(), |force| force.__repr__())
         )
     }
 }

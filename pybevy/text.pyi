@@ -106,7 +106,7 @@ class FontAtlas:
 
     @property
     def texture_atlas(self) -> TextureAtlasLayout:
-        """The layout for the font atlas (a snapshot copy)."""
+        """A read-only snapshot of the atlas layout; writes raise RuntimeError."""
 
     @property
     def texture(self) -> Handle:

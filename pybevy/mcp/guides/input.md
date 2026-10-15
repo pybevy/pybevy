@@ -213,4 +213,6 @@ does not insert the `Gamepad` component. `GamepadRumbleRequest` requests haptic
 output.
 
 `InputPlugin` processes `TouchInput` in `PreUpdate`; write in `First` for same-frame
-`Touches` updates. A supplied `force` uses Bevy's normalized pressure variant.
+`Touches` updates. `force` is a
+`ForceTouch.Calibrated(force=1.0, max_possible_force=6.0, altitude_angle=None)` or
+`ForceTouch.Normalized(value)`, or `None` without pressure data.

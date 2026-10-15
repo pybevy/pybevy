@@ -135,6 +135,10 @@ reset. A file-watcher request may already have run by then; an explicit Partial
 reload cannot restore state that an earlier Full reload cleared. The CLI's F6
 shortcut changes the mode used by later file saves.
 
+The watcher skips a save whose file contents a reload has already executed, so
+saving and then calling `reload` loads the edit once, and re-saving unchanged
+contents does nothing. To retry the same contents, call `reload`.
+
 For CLI sessions, `pybevy dev scene.py --full` and `pybevy watch scene.py --full`
 start the watcher in Full mode; without `--full`, both start in Partial mode.
 This selects the initial mode only, so F6 still applies to later saves.

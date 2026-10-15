@@ -245,6 +245,34 @@ pub struct DebugCameraCleanup {
     pub original_cameras: Vec<(Entity, bool)>,
 }
 
+/// The pose a capture holds on its camera until the capture releases it.
+///
+/// Camera controllers in `Update` rewrite the camera's `Transform` every frame,
+/// so the pose is reapplied in `Last`, after them and before render extraction.
+#[derive(Resource)]
+pub(crate) struct CapturePoseHold {
+    entity: Entity,
+    transform: Transform,
+}
+
+pub fn hold_capture_pose(world: &mut World) {
+    let Some(&CapturePoseHold { entity, transform }) = world.get_resource::<CapturePoseHold>()
+    else {
+        return;
+    };
+    if let Some(mut current) = world.get_mut::<Transform>(entity)
+        && *current != transform
+    {
+        *current = transform;
+    }
+    let global = GlobalTransform::from(transform);
+    if let Some(mut current) = world.get_mut::<GlobalTransform>(entity)
+        && *current != global
+    {
+        *current = global;
+    }
+}
+
 /// Frames a queued capture may wait for its readback before it is failed and
 /// its visibility/camera state restored, so a capture that never completes
 /// cannot wedge `capture_in_progress` or hang its request forever.
@@ -1425,6 +1453,11 @@ fn setup_debug_camera_with_up_for_entity(
             }
         }
 
+        world.insert_resource(CapturePoseHold {
+            entity: reuse,
+            transform: target_transform,
+        });
+
         Ok(DebugCameraCleanup {
             debug_entity: reuse,
             reused_state: Some((
@@ -1460,6 +1493,10 @@ fn setup_debug_camera_with_up_for_entity(
                 GlobalTransform::from(target_transform),
             ))
             .id();
+        world.insert_resource(CapturePoseHold {
+            entity: debug_entity,
+            transform: target_transform,
+        });
 
         Ok(DebugCameraCleanup {
             debug_entity,
@@ -1496,6 +1533,12 @@ fn select_any_camera_3d(world: &mut World) -> Option<Entity> {
 }
 
 pub(crate) fn cleanup_debug_camera_world(cleanup: DebugCameraCleanup, world: &mut World) {
+    if world
+        .get_resource::<CapturePoseHold>()
+        .is_some_and(|hold| hold.entity == cleanup.debug_entity)
+    {
+        world.remove_resource::<CapturePoseHold>();
+    }
     if let Some((original_transform, original_global_transform, was_active)) = cleanup.reused_state
     {
         if let Some(mut transform) = world.get_mut::<Transform>(cleanup.debug_entity) {
@@ -1518,35 +1561,6 @@ pub(crate) fn cleanup_debug_camera_world(cleanup: DebugCameraCleanup, world: &mu
     }
 }
 
-/// Clean up a debug camera: restore or despawn it, then restore original cameras.
-fn cleanup_debug_camera(
-    cleanup: DebugCameraCleanup,
-    commands: &mut Commands,
-    cameras: &mut Query<&mut Camera>,
-    transforms: &mut Query<&mut Transform>,
-    global_transforms: &mut Query<&mut GlobalTransform>,
-) {
-    if let Some((orig_transform, orig_global_transform, was_active)) = cleanup.reused_state {
-        if let Ok(mut t) = transforms.get_mut(cleanup.debug_entity) {
-            *t = orig_transform;
-        }
-        // Restore GlobalTransform so propagate_transforms doesn't need an extra frame
-        if let Ok(mut gt) = global_transforms.get_mut(cleanup.debug_entity) {
-            *gt = orig_global_transform;
-        }
-        if let Ok(mut cam) = cameras.get_mut(cleanup.debug_entity) {
-            cam.is_active = was_active;
-        }
-    } else {
-        commands.entity(cleanup.debug_entity).despawn();
-    }
-    for (cam_entity, was_active) in cleanup.original_cameras {
-        if let Ok(mut cam) = cameras.get_mut(cam_entity) {
-            cam.is_active = was_active;
-        }
-    }
-}
-
 /// Global observer triggered by Bevy when a screenshot is captured.
 /// Handles normal screenshots, timeline captures, and turnaround captures.
 #[allow(clippy::too_many_arguments)]
@@ -1562,9 +1576,6 @@ pub fn screenshot_captured_observer(
     mut gizmo_store: Option<ResMut<GizmoConfigStore>>,
     mut overlay_suppression: Option<ResMut<OverlaySuppression>>,
     mut commands: Commands,
-    mut cameras: Query<&mut Camera>,
-    mut transforms: Query<&mut Transform>,
-    mut global_transforms: Query<&mut GlobalTransform>,
     mut visibility_query: Query<&mut Visibility>,
 ) {
     let entity = trigger.entity;
@@ -1625,15 +1636,10 @@ pub fn screenshot_captured_observer(
                     restore_gizmo_configs(store, gizmo_restore);
                 }
 
-                // Clean up debug camera if present
                 if let Some(cleanup) = timeline.debug_cleanup.take() {
-                    cleanup_debug_camera(
-                        cleanup,
-                        &mut commands,
-                        &mut cameras,
-                        &mut transforms,
-                        &mut global_transforms,
-                    );
+                    commands.queue(move |world: &mut World| {
+                        cleanup_debug_camera_world(cleanup, world);
+                    });
                 }
             }
         }
@@ -1683,15 +1689,8 @@ pub fn screenshot_captured_observer(
         commands.queue(move |world: &mut World| isolation.restore_world(world));
     }
 
-    // Clean up debug camera if present
     if let Some(cleanup) = responder.debug_cleanup {
-        cleanup_debug_camera(
-            cleanup,
-            &mut commands,
-            &mut cameras,
-            &mut transforms,
-            &mut global_transforms,
-        );
+        commands.queue(move |world: &mut World| cleanup_debug_camera_world(cleanup, world));
     }
 }
 
