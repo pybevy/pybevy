@@ -12,6 +12,14 @@ pub struct PyPolygon {
 
 #[pymethods]
 impl PyPolygon {
+    pub fn __copy__(&self) -> PyResult<Self> {
+        Ok(self.clone())
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
+
     #[new]
     pub fn new(vertices: Vec<PyVec2>) -> PyResult<Self> {
         let bevy_vertices: Vec<Vec2> = vertices

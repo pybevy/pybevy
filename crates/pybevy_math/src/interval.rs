@@ -1,5 +1,7 @@
 use bevy::math::curve::{Interval, interval};
-use pybevy_core::{FromBorrowedStorage, ValueStorage, repr::float_repr};
+use pybevy_core::{
+    FromBorrowedStorage, ValueStorage, public_error::INVALID_INTERVAL, repr::float_repr,
+};
 use pybevy_macros::pyvalue;
 use pyo3::{basic::CompareOp, exceptions::PyValueError, prelude::*};
 
@@ -35,11 +37,19 @@ impl From<Interval> for PyInterval {
 }
 
 fn invalid_interval_error() -> PyErr {
-    PyValueError::new_err("The resulting interval would be invalid (empty or with a NaN endpoint)")
+    PyValueError::new_err(INVALID_INTERVAL)
 }
 
 #[pymethods]
 impl PyInterval {
+    pub fn __copy__(&self) -> PyResult<Self> {
+        Ok(Self::from(Interval::try_from(self)?))
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
+
     #[new]
     pub fn new(start: f32, end: f32) -> PyResult<PyInterval> {
         interval(start, end)

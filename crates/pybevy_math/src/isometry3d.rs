@@ -50,6 +50,14 @@ impl From<Isometry3d> for PyIsometry3d {
 
 #[pymethods]
 impl PyIsometry3d {
+    pub fn __copy__(&self) -> PyResult<Self> {
+        Ok(Self::from(Isometry3d::try_from(self)?))
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
+
     #[new]
     #[pyo3(signature = (translation = Omittable::default(), rotation = PyQuat::IDENTITY))]
     pub fn new(translation: Omittable<Bound<'_, PyAny>>, rotation: PyQuat) -> PyResult<Self> {

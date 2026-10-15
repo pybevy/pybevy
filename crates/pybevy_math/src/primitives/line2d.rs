@@ -12,6 +12,14 @@ pub struct PyLine2d {
 
 #[pymethods]
 impl PyLine2d {
+    pub fn __copy__(&self) -> PyResult<Self> {
+        Ok(self.clone())
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
+
     #[new]
     #[pyo3(signature = (*, direction))]
     pub fn new(direction: PyDir2) -> PyResult<Self> {

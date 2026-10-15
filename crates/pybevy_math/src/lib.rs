@@ -138,9 +138,11 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<bounding::PyAabb2d>()?;
     m.add_class::<bounding::PyAabb3d>()?;
     m.add_class::<bounding::PyAabbCast2d>()?;
+    m.add_class::<bounding::PyAabbCast3d>()?;
     m.add_class::<bounding::PyBoundingCircle>()?;
     m.add_class::<bounding::PyBoundingCircleCast>()?;
     m.add_class::<bounding::PyBoundingSphere>()?;
+    m.add_class::<bounding::PyBoundingSphereCast>()?;
     m.add_class::<isometry2d::PyIsometry2d>()?;
     m.add_class::<isometry3d::PyIsometry3d>()?;
     m.add_class::<ray::PyRay2d>()?;

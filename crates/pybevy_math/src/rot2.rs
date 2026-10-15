@@ -1,5 +1,3 @@
-use std::f32::consts::PI;
-
 use bevy::math::{Rot2, StableInterpolate, Vec2};
 use pybevy_core::{
     FromBorrowedStorage, StorageMut, StorageRef, ValueStorage, public_error, repr::float_repr,
@@ -75,6 +73,14 @@ impl PyRot2 {
 #[pyconstructor("Rot2", keyword_only(cos, sin), complete(cos, sin))]
 #[pymethods]
 impl PyRot2 {
+    pub fn __copy__(&self) -> PyResult<Self> {
+        Ok(Self::from(Rot2::try_from(self)?))
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
+
     #[new]
     pub fn new(cos: Option<f32>, sin: Option<f32>) -> PyResult<Self> {
         if let (Some(c), Some(s)) = (cos, sin) {
@@ -96,37 +102,37 @@ impl PyRot2 {
     #[staticmethod]
     #[pyo3(name = "PI")]
     pub fn pi() -> Self {
-        Self::rot2(Rot2::from_sin_cos(0.0, -1.0))
+        Self::rot2(Rot2::PI)
     }
 
     #[staticmethod]
     #[pyo3(name = "FRAC_PI_2")]
     pub fn frac_pi_2() -> Self {
-        Self::rot2(Rot2::radians(PI / 2.0))
+        Self::rot2(Rot2::FRAC_PI_2)
     }
 
     #[staticmethod]
     #[pyo3(name = "FRAC_PI_3")]
     pub fn frac_pi_3() -> Self {
-        Self::rot2(Rot2::radians(PI / 3.0))
+        Self::rot2(Rot2::FRAC_PI_3)
     }
 
     #[staticmethod]
     #[pyo3(name = "FRAC_PI_4")]
     pub fn frac_pi_4() -> Self {
-        Self::rot2(Rot2::radians(PI / 4.0))
+        Self::rot2(Rot2::FRAC_PI_4)
     }
 
     #[staticmethod]
     #[pyo3(name = "FRAC_PI_6")]
     pub fn frac_pi_6() -> Self {
-        Self::rot2(Rot2::radians(PI / 6.0))
+        Self::rot2(Rot2::FRAC_PI_6)
     }
 
     #[staticmethod]
     #[pyo3(name = "FRAC_PI_8")]
     pub fn frac_pi_8() -> Self {
-        Self::rot2(Rot2::radians(PI / 8.0))
+        Self::rot2(Rot2::FRAC_PI_8)
     }
 
     #[staticmethod]
@@ -221,10 +227,6 @@ impl PyRot2 {
 
     pub fn angle_to(&self, other: &PyRot2) -> PyResult<f32> {
         Ok(self.as_ref()?.angle_to(*other.as_ref()?))
-    }
-
-    pub fn rotate(&self, vec: PyVec2) -> PyResult<PyVec2> {
-        Ok((*self.as_ref()? * Vec2::try_from(vec)?).into())
     }
 
     pub fn slerp(&self, rhs: &PyRot2, s: f32) -> PyResult<Self> {

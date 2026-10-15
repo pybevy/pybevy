@@ -384,10 +384,6 @@ impl PyVec3A {
         let v = self.as_ref()?;
         Ok(v.repr_literal())
     }
-
-    pub fn __str__(&self) -> PyResult<String> {
-        self.__repr__()
-    }
 }
 
 /// Extract a `Vec3A` from the union Bevy accepts as `impl Into<Vec3A>`.

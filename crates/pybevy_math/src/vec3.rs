@@ -1,7 +1,10 @@
 use bevy::math::{BVec3, Dir3, Vec3, Vec3Swizzles};
 use pybevy_core::{
     FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
-    public_error::UNSUPPORTED_COMPARISON, repr::ReprLiteral,
+    public_error::{
+        RHS_NOT_NORMALIZED, UNSUPPORTED_COMPARISON, VECTOR_NOT_NORMALIZED, from_slice_too_short,
+    },
+    repr::ReprLiteral,
 };
 use pyo3::{
     basic::CompareOp,
@@ -481,7 +484,7 @@ impl PyVec3 {
         }
     }
 
-    fn __div__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+    fn __truediv__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let self_vec = *self.as_ref()?;
         if let Ok(other_vec) = other.cast::<PyVec3>() {
             let other_vec = Vec3::try_from(&*other_vec.try_borrow()?)?;
@@ -491,10 +494,6 @@ impl PyVec3 {
         } else {
             Ok(py.NotImplemented().into_any())
         }
-    }
-
-    fn __truediv__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        self.__div__(other, py)
     }
 
     fn __neg__(&self) -> PyResult<PyVec3> {
@@ -720,7 +719,7 @@ impl PyVec3 {
     pub fn any_orthonormal_vector(&self) -> PyResult<PyVec3> {
         let vector = self.as_ref()?;
         if !vector.is_normalized() {
-            return Err(PyValueError::new_err("vector must be normalized"));
+            return Err(PyValueError::new_err(VECTOR_NOT_NORMALIZED));
         }
         Ok(vector.any_orthonormal_vector().into())
     }
@@ -728,7 +727,7 @@ impl PyVec3 {
     pub fn any_orthonormal_pair(&self) -> PyResult<(PyVec3, PyVec3)> {
         let vector = self.as_ref()?;
         if !vector.is_normalized() {
-            return Err(PyValueError::new_err("vector must be normalized"));
+            return Err(PyValueError::new_err(VECTOR_NOT_NORMALIZED));
         }
         let (v1, v2) = vector.any_orthonormal_pair();
         Ok((PyVec3::from_vec3(v1), PyVec3::from_vec3(v2)))
@@ -758,7 +757,7 @@ impl PyVec3 {
         let value = self.as_ref()?;
         let rhs = rhs.as_ref()?;
         if !rhs.is_normalized() {
-            return Err(PyValueError::new_err("rhs must be normalized"));
+            return Err(PyValueError::new_err(RHS_NOT_NORMALIZED));
         }
         Ok(PyVec3::from_vec3(value.project_onto_normalized(*rhs)))
     }
@@ -767,7 +766,7 @@ impl PyVec3 {
         let value = self.as_ref()?;
         let rhs = rhs.as_ref()?;
         if !rhs.is_normalized() {
-            return Err(PyValueError::new_err("rhs must be normalized"));
+            return Err(PyValueError::new_err(RHS_NOT_NORMALIZED));
         }
         Ok(PyVec3::from_vec3(value.reject_from_normalized(*rhs)))
     }
@@ -819,7 +818,7 @@ impl PyVec3 {
     #[staticmethod]
     pub fn from_slice(slice: Vec<f32>) -> PyResult<PyVec3> {
         if slice.len() < 3 {
-            return Err(PyValueError::new_err("Slice must have at least 3 elements"));
+            return Err(PyValueError::new_err(from_slice_too_short(3)));
         }
         Ok(PyVec3::from_vec3(Vec3::from_slice(&slice)))
     }

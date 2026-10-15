@@ -56,6 +56,14 @@ impl FromBorrowedStorage<ValueStorage<Arc2d>> for PyArc2d {
 
 #[pymethods]
 impl PyArc2d {
+    pub fn __copy__(&self) -> PyResult<Self> {
+        Ok(Self::from(Arc2d::try_from(self)?))
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
+
     #[new]
     #[pyo3(signature = (radius = 0.5, half_angle = 2.0 * FRAC_PI_3))]
     pub fn new(radius: f32, half_angle: f32) -> PyResult<Self> {

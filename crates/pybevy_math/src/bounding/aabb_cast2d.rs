@@ -1,4 +1,4 @@
-use bevy::math::bounding::AabbCast2d;
+use bevy::math::bounding::{AabbCast2d, IntersectsVolume};
 use pybevy_core::{FieldStorage, FromBorrowedStorage, repr::object_repr};
 use pybevy_macros::pyfield;
 use pyo3::prelude::*;
@@ -15,6 +15,14 @@ pub struct PyAabbCast2d {
 
 #[pymethods]
 impl PyAabbCast2d {
+    pub fn __copy__(&self) -> PyResult<Self> {
+        Ok(Self::from(AabbCast2d::try_from(self)?))
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
+
     #[new]
     pub fn new(aabb: &PyAabb2d, origin: PyVec2, direction: PyDir2, max: f32) -> PyResult<Self> {
         Ok(Self::from_owned(AabbCast2d::new(
@@ -36,6 +44,10 @@ impl PyAabbCast2d {
 
     pub fn aabb_collision_at(&self, aabb: &PyAabb2d) -> PyResult<Option<f32>> {
         Ok(self.as_ref()?.aabb_collision_at(aabb.try_into()?))
+    }
+
+    pub fn intersects(&self, volume: &PyAabb2d) -> PyResult<bool> {
+        Ok(self.as_ref()?.intersects(&volume.try_into()?))
     }
 
     #[getter]

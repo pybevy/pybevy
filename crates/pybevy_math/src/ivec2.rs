@@ -1,6 +1,7 @@
 use bevy::math::IVec2;
 use pybevy_core::{
-    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage, public_error::UNSUPPORTED_COMPARISON,
+    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
+    public_error::{UNSUPPORTED_COMPARISON, integer_vector_division_by_zero},
 };
 use pyo3::{
     basic::CompareOp,
@@ -94,6 +95,14 @@ impl PyIVec2 {
 
 #[pymethods]
 impl PyIVec2 {
+    pub fn __copy__(&self) -> PyResult<Self> {
+        Ok(Self::from(IVec2::try_from(self)?))
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
+
     #[new]
     #[pyo3(signature = (x=0, y=0))]
     pub fn new(x: i32, y: i32) -> Self {
@@ -223,7 +232,9 @@ impl PyIVec2 {
 
     pub fn __truediv__(&self, scalar: i32) -> PyResult<PyIVec2> {
         if scalar == 0 {
-            return Err(PyZeroDivisionError::new_err("IVec2 division by zero"));
+            return Err(PyZeroDivisionError::new_err(
+                integer_vector_division_by_zero("IVec2"),
+            ));
         }
         let value = self.as_ref()?;
         Ok(IVec2::new(

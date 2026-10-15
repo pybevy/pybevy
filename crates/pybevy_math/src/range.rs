@@ -44,6 +44,14 @@ impl PyRange {
 
 #[pymethods]
 impl PyRange {
+    pub fn __copy__(&self) -> PyResult<Self> {
+        Ok(Self::from(Range::<f32>::try_from(self)?))
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
+
     #[new]
     #[pyo3(signature = (start, end))]
     pub fn new(start: f32, end: f32) -> Self {

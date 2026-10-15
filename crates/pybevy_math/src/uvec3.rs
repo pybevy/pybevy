@@ -1,6 +1,7 @@
 use bevy::math::UVec3;
 use pybevy_core::{
-    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage, public_error::UNSUPPORTED_COMPARISON,
+    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
+    public_error::{UNSUPPORTED_COMPARISON, integer_vector_division_by_zero},
 };
 use pyo3::{
     basic::CompareOp,
@@ -83,6 +84,14 @@ impl PyUVec3 {
 
 #[pymethods]
 impl PyUVec3 {
+    pub fn __copy__(&self) -> PyResult<Self> {
+        Ok(Self::from(UVec3::try_from(self)?))
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
+
     #[new]
     #[pyo3(signature = (x=0, y=0, z=0))]
     pub fn new(x: u32, y: u32, z: u32) -> Self {
@@ -216,7 +225,9 @@ impl PyUVec3 {
 
     pub fn __truediv__(&self, scalar: u32) -> PyResult<PyUVec3> {
         if scalar == 0 {
-            return Err(PyZeroDivisionError::new_err("UVec3 division by zero"));
+            return Err(PyZeroDivisionError::new_err(
+                integer_vector_division_by_zero("UVec3"),
+            ));
         }
         let value = self.as_ref()?;
         Ok(UVec3::new(

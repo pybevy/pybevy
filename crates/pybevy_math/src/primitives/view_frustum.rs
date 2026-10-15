@@ -46,6 +46,14 @@ impl TryFrom<&PyViewFrustum> for ViewFrustum {
 
 #[pymethods]
 impl PyViewFrustum {
+    pub fn __copy__(&self) -> PyResult<Self> {
+        Ok(Self::from(ViewFrustum::try_from(self)?))
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
+
     #[classattr]
     pub const NEAR_PLANE_IDX: usize = ViewFrustum::NEAR_PLANE_IDX;
     #[classattr]

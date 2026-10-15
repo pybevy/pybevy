@@ -6,6 +6,7 @@ use pybevy_core::{
     FromBorrowedStorage, ValueStorage,
     public_error::{
         AABB3D_MIN_MAX, EMPTY_POINT_CLOUD, bounding_half_size, bounding_operation, bounding_shrink,
+        intersects_volume_type,
     },
     repr::ReprLiteral,
 };
@@ -57,6 +58,14 @@ impl From<Aabb3d> for PyAabb3d {
 
 #[pymethods]
 impl PyAabb3d {
+    pub fn __copy__(&self) -> PyResult<Self> {
+        Ok(Self::from(Aabb3d::try_from(self)?))
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
+
     #[new]
     #[pyo3(signature = (center, half_size))]
     pub fn new(center: &Bound<'_, PyAny>, half_size: &Bound<'_, PyAny>) -> PyResult<Self> {
@@ -125,18 +134,9 @@ impl PyAabb3d {
         Ok(self.as_ref()?.contains(&other_aabb))
     }
 
-    /// True if this Aabb3d intersects another Aabb3d or a BoundingSphere.
-    pub fn intersects(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
-        if other.is_instance_of::<PyAabb3d>() {
-            let other_aabb: Aabb3d = Aabb3d::try_from(&*other.cast::<PyAabb3d>()?.borrow())?;
-            return Ok(self.as_ref()?.intersects(&other_aabb));
-        }
-        if other.is_instance_of::<PyBoundingSphere>() {
-            let sphere: BoundingSphere =
-                BoundingSphere::try_from(&*other.cast::<PyBoundingSphere>()?.borrow())?;
-            return Ok(self.as_ref()?.intersects(&sphere));
-        }
-        Err(PyTypeError::new_err("expected Aabb3d or BoundingSphere"))
+    /// True if this Aabb3d intersects an Aabb3d or a BoundingSphere.
+    pub fn intersects(&self, volume: &Bound<'_, PyAny>) -> PyResult<bool> {
+        intersects_3d(&*self.as_ref()?, volume)
     }
 
     pub fn merge(&self, other: &PyAabb3d) -> PyResult<PyAabb3d> {
@@ -225,16 +225,6 @@ impl PyAabb3d {
         Ok(PyBoundingSphere::from_owned(bounds.bounding_sphere()))
     }
 
-    pub fn intersects_aabb(&self, other: &PyAabb3d) -> PyResult<bool> {
-        let other_aabb: Aabb3d = other.try_into()?;
-        Ok(self.as_ref()?.intersects(&other_aabb))
-    }
-
-    pub fn intersects_sphere(&self, sphere: &PyBoundingSphere) -> PyResult<bool> {
-        let bounding_sphere: BoundingSphere = sphere.try_into()?;
-        Ok(self.as_ref()?.intersects(&bounding_sphere))
-    }
-
     #[staticmethod]
     pub fn from_point_cloud(isometry: PyIsometry3d, points: Vec<PyVec3>) -> PyResult<PyAabb3d> {
         if points.is_empty() {
@@ -267,4 +257,21 @@ impl PyAabb3d {
             aabb.max.repr_literal()
         ))
     }
+}
+
+pub(crate) fn intersects_3d<V>(value: &V, volume: &Bound<'_, PyAny>) -> PyResult<bool>
+where
+    V: IntersectsVolume<Aabb3d> + IntersectsVolume<BoundingSphere>,
+{
+    if let Ok(aabb) = volume.cast::<PyAabb3d>() {
+        let aabb = Aabb3d::try_from(&*aabb.try_borrow()?)?;
+        return Ok(value.intersects(&aabb));
+    }
+    if let Ok(sphere) = volume.cast::<PyBoundingSphere>() {
+        let sphere = BoundingSphere::try_from(&*sphere.try_borrow()?)?;
+        return Ok(value.intersects(&sphere));
+    }
+    Err(PyTypeError::new_err(intersects_volume_type(
+        "Aabb3d or BoundingSphere",
+    )))
 }

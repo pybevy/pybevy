@@ -1396,6 +1396,14 @@ reason = "Bevy 0.19.1 bevy_math::bounding::RayCast3d::new defines the establishe
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::bounding::BoundingCircleCast::new defines the established Python constructor inputs"
 
+[bevy.constructor_functions."pybevy.math.PyAabbCast3d"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::bounding::AabbCast3d::new defines the Python constructor inputs"
+
+[bevy.constructor_functions."pybevy.math.PyBoundingSphereCast"]
+function = "new"
+reason = "Bevy 0.19.1 bevy_math::bounding::BoundingSphereCast::new defines the Python constructor inputs"
+
 [bevy.constructor_functions."pybevy.math.PyAabb2d"]
 function = "new"
 reason = "Bevy 0.19.1 bevy_math::bounding::Aabb2d::new defines the established Python constructor inputs"

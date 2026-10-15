@@ -73,6 +73,14 @@ impl PyMat3 {
 
 #[pymethods]
 impl PyMat3 {
+    pub fn __copy__(&self) -> PyResult<Self> {
+        Ok(Self::from(Mat3::try_from(self)?))
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
+
     #[staticmethod]
     #[pyo3(name = "IDENTITY")]
     fn const_identity() -> Self {

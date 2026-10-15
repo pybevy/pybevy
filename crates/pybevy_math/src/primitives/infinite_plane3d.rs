@@ -58,6 +58,14 @@ pub struct PyInfinitePlane3d {
 
 #[pymethods]
 impl PyInfinitePlane3d {
+    pub fn __copy__(&self) -> PyResult<Self> {
+        Ok(Self::from(InfinitePlane3d::try_from(self)?))
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
+
     #[new]
     #[pyo3(signature = (*, normal = PyVec3::Y))]
     pub fn new(normal: PyVec3) -> PyResult<Self> {

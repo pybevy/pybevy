@@ -27,6 +27,14 @@ impl From<Isometry2d> for PyIsometry2d {
 
 #[pymethods]
 impl PyIsometry2d {
+    pub fn __copy__(&self) -> PyResult<Self> {
+        Ok(self.clone())
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
+
     #[staticmethod]
     #[pyo3(name = "IDENTITY")]
     fn identity() -> Self {
