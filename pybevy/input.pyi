@@ -3154,12 +3154,12 @@ class GamepadSettings(Component):
     def __init__(
         self,
         *,
-        default_button_settings: ButtonSettings | None = None,
-        default_axis_settings: AxisSettings | None = None,
-        default_button_axis_settings: ButtonAxisSettings | None = None,
-        button_settings: dict[GamepadButton, ButtonSettings] | None = None,
-        axis_settings: dict[GamepadAxis, AxisSettings] | None = None,
-        button_axis_settings: dict[GamepadButton, ButtonAxisSettings] | None = None
+        default_button_settings: ButtonSettings = ...,
+        default_axis_settings: AxisSettings = ...,
+        default_button_axis_settings: ButtonAxisSettings = ...,
+        button_settings: dict[GamepadButton, ButtonSettings] = ...,
+        axis_settings: dict[GamepadAxis, AxisSettings] = ...,
+        button_axis_settings: dict[GamepadButton, ButtonAxisSettings] = ...
     ) -> None: ...
     @property
     def default_button_settings(self) -> ButtonSettings:

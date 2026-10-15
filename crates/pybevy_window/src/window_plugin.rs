@@ -9,16 +9,16 @@ use crate::{exit_condition::PyExitCondition, window::PyWindow};
 #[pyclass(name = "WindowPlugin", module = "pybevy.window", extends = PyPlugin)]
 pub struct PyWindowPlugin {
     primary_window: Option<PyWindow>,
-    exit_condition: Option<PyExitCondition>,
+    exit_condition: PyExitCondition,
 }
 
 #[pymethods]
 impl PyWindowPlugin {
     #[new]
-    #[pyo3(signature = (*, primary_window = None, exit_condition = None))]
+    #[pyo3(signature = (*, primary_window = None, exit_condition = PyExitCondition::OnAllClosed))]
     pub fn new(
         primary_window: Option<PyRef<'_, PyWindow>>,
-        exit_condition: Option<PyExitCondition>,
+        exit_condition: PyExitCondition,
     ) -> PyResult<PyClassInitializer<Self>> {
         let window = match primary_window {
             Some(w) => Some(w.storage.as_ref()?.clone().into()),
@@ -53,15 +53,10 @@ impl TryFrom<&PyWindowPlugin> for WindowPlugin {
             None
         };
 
-        let mut plugin = WindowPlugin {
+        Ok(WindowPlugin {
             primary_window,
+            exit_condition: py_plugin.exit_condition.into(),
             ..Default::default()
-        };
-
-        if let Some(exit_condition) = py_plugin.exit_condition {
-            plugin.exit_condition = exit_condition.into();
-        }
-
-        Ok(plugin)
+        })
     }
 }

@@ -279,37 +279,31 @@ impl PyImageLoaderSettings {
     #[pyo3(signature = (
         *,
         is_srgb = true,
-        sampler = None
+        sampler = PyImageSampler::from(ImageSampler::Default)
     ))]
-    pub fn new(is_srgb: bool, sampler: Option<PyImageSampler>) -> PyResult<Self> {
+    pub fn new(is_srgb: bool, sampler: PyImageSampler) -> PyResult<Self> {
         Ok(Self::from_owned(ImageLoaderSettings {
             format: ImageFormatSetting::FromExtension,
             texture_format: None,
             is_srgb,
-            sampler: sampler
-                .map(ImageSampler::try_from)
-                .transpose()?
-                .unwrap_or(ImageSampler::Default),
+            sampler: ImageSampler::try_from(sampler)?,
             asset_usage: RenderAssetUsages::default(),
             array_layout: None,
         }))
     }
 
     #[staticmethod]
-    #[pyo3(signature = (format, is_srgb = true, sampler = None))]
+    #[pyo3(signature = (format, is_srgb = true, sampler = PyImageSampler::from(ImageSampler::Default)))]
     pub fn with_format(
         format: PyImageFormat,
         is_srgb: bool,
-        sampler: Option<PyImageSampler>,
+        sampler: PyImageSampler,
     ) -> PyResult<Self> {
         Ok(Self::from_owned(ImageLoaderSettings {
             format: ImageFormatSetting::Format(format.into()),
             texture_format: None,
             is_srgb,
-            sampler: sampler
-                .map(ImageSampler::try_from)
-                .transpose()?
-                .unwrap_or(ImageSampler::Default),
+            sampler: ImageSampler::try_from(sampler)?,
             asset_usage: RenderAssetUsages::default(),
             array_layout: None,
         }))

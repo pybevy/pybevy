@@ -13,7 +13,8 @@ use bevy::ecs::{
 };
 
 use crate::{
-    ReadField, ReadVariant, RevalidatingSource, StorageMut, StorageRef, WriteField, WriteVariant,
+    ReadField, ReadVariant, RevalidatingSource, StorageMut, StorageRef, ValidateField, WriteField,
+    WriteVariant,
     borrowed::{BorrowedMut, BorrowedRef, RevalidatingField},
     component_change::ComponentWriteContext,
     storage_error::StorageError,
@@ -277,6 +278,53 @@ impl<T: Copy> ValueStorage<T> {
             ValueStorageInner::Revalidating(f) => f.get_mut::<T>().map(StorageMut::Direct),
             ValueStorageInner::Source(source) => source.resolve_mut().map(StorageMut::Source),
         }
+    }
+
+    /// Mutate the value, staging the write through any field validator first.
+    ///
+    /// Wrappers that can sit under a validated field write through this
+    /// instead of `as_mut`, which rejects validated paths. `mutate` must depend
+    /// only on the value it receives.
+    pub fn update<R>(&mut self, mut mutate: impl FnMut(&mut T) -> R) -> Result<R, StorageError> {
+        match &self.inner {
+            ValueStorageInner::Source(source) => source.update(mutate),
+            _ => Ok(mutate(self.as_mut()?.reborrow_mut())),
+        }
+    }
+
+    /// Borrow a field whose every nested write must pass `validate`.
+    ///
+    /// Borrowed storage yields a checked path that stages each child write on a
+    /// copy of the field and commits it only when `validate` accepts the
+    /// result, so a rejected write neither changes the value nor marks the
+    /// owner changed. Owned storage yields a read-only snapshot.
+    pub fn borrow_validated_field_as<F: Clone + 'static, S, W>(
+        &self,
+        read: ReadField<T, F>,
+        write: WriteField<T, F>,
+        validate: ValidateField<F>,
+    ) -> Result<W, StorageError>
+    where
+        T: Send + Sync + 'static,
+        S: BorrowableStorage<F>,
+        W: FromBorrowedStorage<S>,
+    {
+        let source = match &self.inner {
+            ValueStorageInner::Source(source) => {
+                read(&*source.resolve_ref()?);
+                source.field(read, write)
+            }
+            _ => {
+                read(&*self.as_ref()?);
+                match RevalidatingSource::from_borrowed_value(self) {
+                    Some(source) => source.field(read, write),
+                    None => return self.snapshot_field_as(read),
+                }
+            }
+        };
+        Ok(W::from_borrowed(S::revalidating_source(
+            source.validated(validate),
+        )))
     }
 
     /// Check if this storage contains an owned value (including read-only snapshots)

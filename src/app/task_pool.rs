@@ -1,5 +1,5 @@
 use bevy::app::{App, TaskPoolOptions, TaskPoolPlugin, TaskPoolThreadAssignmentPolicy};
-use pybevy_core::{PluginBuild, PyPlugin, public_error};
+use pybevy_core::{Omittable, PluginBuild, PyPlugin, public_error};
 use pybevy_macros::pyplugin;
 use pyo3::{PyTraverseError, PyVisit, exceptions::PyValueError, prelude::*};
 
@@ -158,35 +158,35 @@ impl PyTaskPoolOptions {
         *,
         min_total_threads = 1,
         max_total_threads = usize::MAX,
-        io = None,
-        async_compute = None,
-        compute = None,
+        io = Omittable::default(),
+        async_compute = Omittable::default(),
+        compute = Omittable::default(),
     ))]
     pub fn new(
         py: Python<'_>,
         min_total_threads: usize,
         max_total_threads: usize,
-        io: Option<Py<PyTaskPoolThreadAssignmentPolicy>>,
-        async_compute: Option<Py<PyTaskPoolThreadAssignmentPolicy>>,
-        compute: Option<Py<PyTaskPoolThreadAssignmentPolicy>>,
+        io: Omittable<Py<PyTaskPoolThreadAssignmentPolicy>>,
+        async_compute: Omittable<Py<PyTaskPoolThreadAssignmentPolicy>>,
+        compute: Omittable<Py<PyTaskPoolThreadAssignmentPolicy>>,
     ) -> PyResult<Self> {
         validate_total_threads(min_total_threads, max_total_threads)?;
         let defaults = TaskPoolOptions::default();
         Ok(Self {
             min_total_threads,
             max_total_threads,
-            io: match io {
+            io: match io.into_option() {
                 Some(io) => io,
                 None => Py::new(py, PyTaskPoolThreadAssignmentPolicy::from_bevy(defaults.io))?,
             },
-            async_compute: match async_compute {
+            async_compute: match async_compute.into_option() {
                 Some(async_compute) => async_compute,
                 None => Py::new(
                     py,
                     PyTaskPoolThreadAssignmentPolicy::from_bevy(defaults.async_compute),
                 )?,
             },
-            compute: match compute {
+            compute: match compute.into_option() {
                 Some(compute) => compute,
                 None => Py::new(
                     py,
@@ -292,14 +292,14 @@ impl PyTaskPoolPlugin {
 #[pymethods]
 impl PyTaskPoolPlugin {
     #[new]
-    #[pyo3(signature = (*, task_pool_options = None))]
+    #[pyo3(signature = (*, task_pool_options = Omittable::default()))]
     pub fn new(
         py: Python<'_>,
-        task_pool_options: Option<Py<PyTaskPoolOptions>>,
+        task_pool_options: Omittable<Py<PyTaskPoolOptions>>,
     ) -> PyResult<PyClassInitializer<Self>> {
         Ok((
             Self {
-                task_pool_options: match task_pool_options {
+                task_pool_options: match task_pool_options.into_option() {
                     Some(options) => options,
                     None => Py::new(
                         py,

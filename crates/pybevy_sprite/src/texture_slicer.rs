@@ -1,4 +1,4 @@
-use bevy::sprite::{BorderRect, SliceScaleMode, TextureSlicer};
+use bevy::sprite::{BorderRect, TextureSlicer};
 use pybevy_core::{BorrowableStorage, FieldStorage, FieldStorageInner};
 use pyo3::prelude::*;
 
@@ -38,20 +38,20 @@ impl PyTextureSlicer {
     #[pyo3(signature = (
         *,
         border = PyBorderRect::from_owned(BorderRect::ZERO),
-        center_scale_mode = None,
-        sides_scale_mode = None,
+        center_scale_mode = PySliceScaleMode::Stretch(),
+        sides_scale_mode = PySliceScaleMode::Stretch(),
         max_corner_scale = 1.0,
     ))]
     pub fn new(
         border: PyBorderRect,
-        center_scale_mode: Option<PySliceScaleMode>,
-        sides_scale_mode: Option<PySliceScaleMode>,
+        center_scale_mode: PySliceScaleMode,
+        sides_scale_mode: PySliceScaleMode,
         max_corner_scale: f32,
     ) -> PyResult<Self> {
         Ok(Self::from(TextureSlicer {
             border: border.try_into()?,
-            center_scale_mode: center_scale_mode.map_or(SliceScaleMode::Stretch, Into::into),
-            sides_scale_mode: sides_scale_mode.map_or(SliceScaleMode::Stretch, Into::into),
+            center_scale_mode: center_scale_mode.into(),
+            sides_scale_mode: sides_scale_mode.into(),
             max_corner_scale,
         }))
     }

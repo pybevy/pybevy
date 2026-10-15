@@ -329,12 +329,11 @@ pub fn reflect_to_json(value: &dyn PartialReflect) -> Value {
     if let Some(v) = value.try_downcast_ref::<String>() {
         return Value::String(v.clone());
     }
-    // Serialize opaque f32 ranges as [start, end].
     if let Some(range) = value.try_downcast_ref::<Range<f32>>() {
-        return Value::Array(vec![
-            float_to_json(f64::from(range.start)),
-            float_to_json(f64::from(range.end)),
-        ]);
+        let mut fields = Map::new();
+        fields.insert("start".to_string(), float_to_json(f64::from(range.start)));
+        fields.insert("end".to_string(), float_to_json(f64::from(range.end)));
+        return Value::Object(fields);
     }
 
     match value.reflect_ref() {
@@ -1249,9 +1248,12 @@ mod tests {
     }
 
     #[test]
-    fn reflect_to_json_renders_a_range_as_a_start_end_pair() {
+    fn reflect_to_json_renders_a_range_with_start_and_end_fields() {
         let range: Range<f32> = 0.25..0.75;
-        assert_eq!(reflect_to_json(&range), serde_json::json!([0.25, 0.75]));
+        assert_eq!(
+            reflect_to_json(&range),
+            serde_json::json!({"start": 0.25, "end": 0.75})
+        );
     }
 
     #[test]

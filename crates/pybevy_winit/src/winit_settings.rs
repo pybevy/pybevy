@@ -14,21 +14,15 @@ pub struct PyWinitSettings(pub(crate) WinitSettings);
 #[pymethods]
 impl PyWinitSettings {
     #[new]
-    #[pyo3(signature = (*, focused_mode = None, unfocused_mode = None))]
-    pub fn new(
-        focused_mode: Option<PyUpdateMode>,
-        unfocused_mode: Option<PyUpdateMode>,
-    ) -> PyResult<Self> {
-        let defaults = WinitSettings::default();
+    #[pyo3(signature = (
+        *,
+        focused_mode = PyUpdateMode::from(WinitSettings::default().focused_mode),
+        unfocused_mode = PyUpdateMode::from(WinitSettings::default().unfocused_mode)
+    ))]
+    pub fn new(focused_mode: PyUpdateMode, unfocused_mode: PyUpdateMode) -> PyResult<Self> {
         Ok(PyWinitSettings(WinitSettings {
-            focused_mode: focused_mode
-                .map(TryInto::try_into)
-                .transpose()?
-                .unwrap_or(defaults.focused_mode),
-            unfocused_mode: unfocused_mode
-                .map(TryInto::try_into)
-                .transpose()?
-                .unwrap_or(defaults.unfocused_mode),
+            focused_mode: focused_mode.into(),
+            unfocused_mode: unfocused_mode.into(),
         }))
     }
 

@@ -31,7 +31,7 @@ impl PyCamera {
         order = 0,
         is_active = true,
         msaa_writeback = PyMsaaWriteback::Auto,
-        clear_color = None,
+        clear_color = PyClearColorConfig::Default(),
         sub_camera_view = None
     ))]
     pub fn new(
@@ -39,18 +39,16 @@ impl PyCamera {
         order: isize,
         is_active: bool,
         msaa_writeback: PyMsaaWriteback,
-        clear_color: Option<PyClearColorConfig>,
+        clear_color: PyClearColorConfig,
         sub_camera_view: Option<PySubCameraView>,
     ) -> PyResult<PyClassInitializer<Self>> {
         let mut camera = Camera {
             is_active,
             order,
             msaa_writeback: msaa_writeback.into(),
+            clear_color: clear_color.into(),
             ..Default::default()
         };
-        if let Some(cc) = clear_color {
-            camera.clear_color = cc.into();
-        }
         if let Some(v) = viewport {
             camera.viewport = Some(v.try_into()?);
         }

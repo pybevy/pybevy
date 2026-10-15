@@ -103,8 +103,8 @@ class PlaybackSettings(Component):
     def __init__(
         self,
         *,
-        mode: PlaybackMode | None = None,
-        volume: Volume | None = None,
+        mode: PlaybackMode = PlaybackMode.Once,
+        volume: Volume = Volume.Linear(1.0),
         speed: float = 1.0,
         paused: bool = False,
         muted: bool = False,
@@ -261,8 +261,8 @@ class SpatialListener(Component):
         self,
         gap: float = 4.0,
         *,
-        left_ear_offset: Vec3 | None = None,
-        right_ear_offset: Vec3 | None = None
+        left_ear_offset: Vec3 = ...,
+        right_ear_offset: Vec3 = ...
     ) -> None:
         """Create a new SpatialListener.
 

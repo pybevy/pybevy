@@ -6,8 +6,8 @@ use bevy::{
     },
 };
 use pybevy_core::{
-    AssetStorage, ComponentStorage, FieldStorage, FromBorrowedStorage, PyComponent, PyHandle,
-    PyMaterial, ensure_asset_type, extract_handle_from_any,
+    AssetStorage, ComponentStorage, FieldStorage, FromBorrowedStorage, Omittable, PyComponent,
+    PyHandle, PyMaterial, ensure_asset_type, extract_handle_from_any,
 };
 use pybevy_macros::{pyasset, pycomponent, pyfield};
 use pyo3::{PyTypeInfo, prelude::*, types::PyType};
@@ -100,16 +100,16 @@ pub struct PyForwardDecalMaterial {
 #[pymethods]
 impl PyForwardDecalMaterial {
     #[new]
-    #[pyo3(signature = (*, base = None, extension = None))]
+    #[pyo3(signature = (*, base = Omittable::default(), extension = Omittable::default()))]
     pub fn new(
-        base: Option<PyRef<'_, PyStandardMaterial>>,
-        extension: Option<PyRef<'_, PyForwardDecalMaterialExt>>,
+        base: Omittable<PyRef<'_, PyStandardMaterial>>,
+        extension: Omittable<PyRef<'_, PyForwardDecalMaterialExt>>,
     ) -> PyResult<PyClassInitializer<Self>> {
-        let base = match base {
+        let base = match base.into_option() {
             Some(base) => base.storage.as_ref()?.clone(),
             None => StandardMaterial::default(),
         };
-        let extension = match extension {
+        let extension = match extension.into_option() {
             Some(extension) => (&*extension).try_into()?,
             None => ForwardDecalMaterialExt::default(),
         };

@@ -804,8 +804,8 @@ class TextFont(Component):
     def __init__(
         self,
         *,
-        font: FontSource | Handle | str | None = None,
-        font_size: FontSize | float | None = None,
+        font: FontSource | Handle | str = ...,
+        font_size: FontSize | float = FontSize.Px(20.0),
         weight: FontWeight = FontWeight.NORMAL,
         width: FontWidth = FontWidth.NORMAL,
         style: FontStyle = FontStyle.Normal(),
@@ -948,8 +948,8 @@ class Text2dShadow(Component):
     def __init__(
         self,
         *,
-        offset: Vec2 | None = None,
-        color: Color | None = None
+        offset: Vec2 = Vec2(4.0, -4.0),
+        color: Color = Color.BLACK
     ) -> None:
         """Create a text shadow component.
 
@@ -1211,34 +1211,40 @@ class TextEdit:
         def __init__(self) -> None: ...
 
     class MoveToPoint(TextEdit):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: tuple[float, float]
-        def __init__(self, value: tuple[float, float]) -> None: ...
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> Vec2: ...
+        def __init__(self, value: Vec2) -> None: ...
 
     class SelectWordAtPoint(TextEdit):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: tuple[float, float]
-        def __init__(self, value: tuple[float, float]) -> None: ...
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> Vec2: ...
+        def __init__(self, value: Vec2) -> None: ...
 
     class SelectLineAtPoint(TextEdit):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: tuple[float, float]
-        def __init__(self, value: tuple[float, float]) -> None: ...
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> Vec2: ...
+        def __init__(self, value: Vec2) -> None: ...
 
     class SelectedHardLineAtPoint(TextEdit):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: tuple[float, float]
-        def __init__(self, value: tuple[float, float]) -> None: ...
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> Vec2: ...
+        def __init__(self, value: Vec2) -> None: ...
 
     class ExtendSelectionToPoint(TextEdit):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: tuple[float, float]
-        def __init__(self, value: tuple[float, float]) -> None: ...
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> Vec2: ...
+        def __init__(self, value: Vec2) -> None: ...
 
     class ShiftClickExtension(TextEdit):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: tuple[float, float]
-        def __init__(self, value: tuple[float, float]) -> None: ...
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> Vec2: ...
+        def __init__(self, value: Vec2) -> None: ...
 
     class ImeSetCompose(TextEdit):
         __match_args__: ClassVar[tuple[Literal["value"], Literal["cursor"]]]
@@ -1267,7 +1273,7 @@ class EditableText(Component):
         text: str = "",
         *,
         cursor_width: float = 0.2,
-        cursor_blink_period: timedelta | float | int | None = None,
+        cursor_blink_period: timedelta | float | int = timedelta(seconds=1),
         max_characters: int | None = None,
         visible_lines: float | None = 1.0,
         visible_width: float | None = None,

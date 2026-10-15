@@ -11,7 +11,7 @@ use std::fmt;
 #[cfg(feature = "pyo3")]
 use pyo3::{
     PyErr,
-    exceptions::{PyIndexError, PyKeyError, PyRuntimeError},
+    exceptions::{PyIndexError, PyKeyError, PyRuntimeError, PyValueError},
 };
 
 /// Error message for accessing components outside system execution
@@ -96,6 +96,12 @@ pub enum StorageError {
     /// A resolver-backed enum wrapper no longer matches the current variant
     /// (`RuntimeError`).
     VariantChanged(&'static str),
+
+    /// A value failed its field validator (`ValueError`).
+    InvalidValue(String),
+
+    /// A validated field was resolved for an unchecked write (`RuntimeError`).
+    ValidatedFieldWrite,
 }
 
 /// Deepest expression tree the Python-to-Rust conversion accepts.
@@ -178,6 +184,10 @@ impl fmt::Display for StorageError {
             StorageError::VariantChanged(variant) => {
                 f.write_str(&enum_variant_changed(variant))
             }
+            StorageError::InvalidValue(message) => f.write_str(message),
+            StorageError::ValidatedFieldWrite => f.write_str(
+                "This field is validated; its wrapper must write through a checked update.",
+            ),
         }
     }
 }
@@ -202,7 +212,9 @@ impl From<StorageError> for PyErr {
             | StorageError::AssetViewsLive
             | StorageError::AssetAccessConflict
             | StorageError::BorrowedAccessConflict
-            | StorageError::VariantChanged(_) => PyRuntimeError::new_err(err.to_string()),
+            | StorageError::VariantChanged(_)
+            | StorageError::ValidatedFieldWrite => PyRuntimeError::new_err(err.to_string()),
+            StorageError::InvalidValue(message) => PyValueError::new_err(message),
             StorageError::IndexOutOfRange | StorageError::EmptyList => {
                 PyIndexError::new_err(err.to_string())
             }

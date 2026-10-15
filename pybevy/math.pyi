@@ -495,7 +495,7 @@ class Range:
     start: float
     end: float
 
-    def __init__(self, *, start: float, end: float) -> None:
+    def __init__(self, start: float, end: float) -> None:
         """Create a Range from start (inclusive) to end (exclusive).
 
         Args:

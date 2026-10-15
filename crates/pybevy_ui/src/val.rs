@@ -1,4 +1,5 @@
 use bevy::ui::{Val, percent, px, vh, vmax, vmin, vw};
+use pybevy_core::StorageError;
 use pybevy_macros::pyenum;
 use pyo3::{
     exceptions::{PyTypeError, PyValueError},
@@ -62,29 +63,36 @@ impl PyVal {
     }
 }
 
-pub(crate) fn validate_finite_val(value: Val, parameter: &str) -> PyResult<Val> {
+pub(crate) fn validate_finite_val(value: Val, parameter: &str) -> Result<Val, StorageError> {
     let magnitude = match value {
         Val::Auto => return Ok(value),
         Val::Px(v) | Val::Percent(v) | Val::Vw(v) | Val::Vh(v) | Val::VMin(v) | Val::VMax(v) => v,
     };
     if !magnitude.is_finite() {
-        return Err(PyValueError::new_err(format!(
+        return Err(StorageError::InvalidValue(format!(
             "{parameter} must be finite (got {magnitude})"
         )));
     }
     Ok(value)
 }
 
-/// Bare numbers are PyBevy's documented pixel-value convenience.
-pub fn extract_val_from_any(value: &Bound<'_, PyAny>, parameter: &str) -> PyResult<Val> {
-    let val = if let Ok(value) = value.extract::<PyVal>() {
-        value.into()
-    } else if let Ok(value) = value.extract::<f32>() {
-        Val::Px(value)
-    } else {
-        return Err(PyTypeError::new_err("expected Val or float"));
-    };
-    validate_finite_val(val, parameter)
+/// Accepted `Val` inputs; bare numbers are PyBevy's documented pixel-value convenience.
+/// Callers apply `validate_finite_val` with their parameter name.
+#[derive(Debug, Clone, Copy)]
+pub struct IntoVal(pub Val);
+
+impl FromPyObject<'_, '_> for IntoVal {
+    type Error = PyErr;
+
+    fn extract(value: Borrowed<'_, '_, PyAny>) -> PyResult<Self> {
+        if let Ok(value) = value.extract::<PyVal>() {
+            Ok(Self(value.into()))
+        } else if let Ok(value) = value.extract::<f32>() {
+            Ok(Self(Val::Px(value)))
+        } else {
+            Err(PyTypeError::new_err("expected Val or float"))
+        }
+    }
 }
 
 #[pymethods]

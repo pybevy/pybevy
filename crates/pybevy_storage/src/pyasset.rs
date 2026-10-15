@@ -324,7 +324,10 @@ impl<A: Asset> ErasedRevalidatingSource for AssetResolverSource<A> {
         })
     }
 
-    fn resolve_mut(&self) -> Result<ErasedResolvedMut, StorageError> {
+    fn resolve_mut(
+        &self,
+        stage: Option<&mut dyn FnMut(*mut u8)>,
+    ) -> Result<ErasedResolvedMut, StorageError> {
         self.resolver.root.validity.check_write()?;
         if !self.resolver.writable {
             return Err(StorageError::AssetReadOnly);
@@ -343,6 +346,8 @@ impl<A: Asset> ErasedRevalidatingSource for AssetResolverSource<A> {
         // SAFETY: the root is live under this write guard. Reapplying the full
         // read path validates every fallible segment before marking.
         unsafe { self.path.project_ref(root.cast::<u8>())? };
+        // SAFETY: as above; staging touches only a copy of the live value.
+        unsafe { self.path.stage_write(root.cast::<u8>(), stage)? };
 
         let root = self.resolver.commit_mut_prevalidated(&guard);
         // SAFETY: no code can change the asset while the resource writer is

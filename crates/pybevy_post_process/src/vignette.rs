@@ -26,33 +26,27 @@ impl PyVignette {
         radius = 0.75,
         smoothness = 5.0,
         roundness = 1.0,
-        center = None,
+        center = PyVec2::from(Vec2::new(0.5, 0.5)),
         edge_compensation = 1.0,
-        color = None
+        color = PyColor::from(Color::BLACK)
     ))]
     pub fn new(
         intensity: f32,
         radius: f32,
         smoothness: f32,
         roundness: f32,
-        center: Option<PyVec2>,
+        center: PyVec2,
         edge_compensation: f32,
-        color: Option<PyColor>,
+        color: PyColor,
     ) -> PyResult<PyClassInitializer<Self>> {
         let vignette = Vignette {
             intensity,
             radius,
             smoothness,
             roundness,
-            center: center
-                .map(TryInto::try_into)
-                .transpose()?
-                .unwrap_or(Vec2::new(0.5, 0.5)),
+            center: center.try_into()?,
             edge_compensation,
-            color: color
-                .map(TryInto::try_into)
-                .transpose()?
-                .unwrap_or(Color::BLACK),
+            color: color.try_into()?,
         };
 
         Ok(Self::from_owned(vignette).into())

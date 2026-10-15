@@ -70,26 +70,12 @@ impl PySubCameraView {
 #[pymethods]
 impl PySubCameraView {
     #[new]
-    #[pyo3(signature = (*, full_size=None, offset=None, size=None))]
-    pub fn new(
-        full_size: Option<PyUVec2>,
-        offset: Option<PyVec2>,
-        size: Option<PyUVec2>,
-    ) -> PyResult<Self> {
-        let default = SubCameraView::default();
+    #[pyo3(signature = (*, full_size = PyUVec2::ONE, offset = PyVec2::ZERO, size = PyUVec2::ONE))]
+    pub fn new(full_size: PyUVec2, offset: PyVec2, size: PyUVec2) -> PyResult<Self> {
         Ok(SubCameraView {
-            full_size: full_size
-                .map(TryInto::try_into)
-                .transpose()?
-                .unwrap_or(default.full_size),
-            offset: offset
-                .map(TryInto::try_into)
-                .transpose()?
-                .unwrap_or(default.offset),
-            size: size
-                .map(TryInto::try_into)
-                .transpose()?
-                .unwrap_or(default.size),
+            full_size: full_size.try_into()?,
+            offset: offset.try_into()?,
+            size: size.try_into()?,
         }
         .into())
     }

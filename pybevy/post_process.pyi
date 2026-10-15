@@ -44,10 +44,10 @@ class Bloom(Component):
         low_frequency_boost: float = 0.7,
         low_frequency_boost_curvature: float = 0.95,
         high_pass_frequency: float = 1.0,
-        prefilter: BloomPrefilter | None = None,
+        prefilter: BloomPrefilter = BloomPrefilter(),
         composite_mode: BloomCompositeMode = ...,
         max_mip_dimension: int = 512,
-        scale: Vec2 | None = None
+        scale: Vec2 = Vec2.ONE
     ) -> None: ...
 
     @property
@@ -113,9 +113,9 @@ class Vignette(Component):
         radius: float = 0.75,
         smoothness: float = 5.0,
         roundness: float = 1.0,
-        center: Vec2 | None = None,
+        center: Vec2 = Vec2(0.5, 0.5),
         edge_compensation: float = 1.0,
-        color: Color | None = None
+        color: Color = Color.BLACK
     ) -> None: ...
 
     @property
@@ -171,8 +171,8 @@ class LensDistortion(Component):
         *,
         intensity: float = 0.5,
         scale: float = 1.0,
-        multiplier: Vec2 | None = None,
-        center: Vec2 | None = None,
+        multiplier: Vec2 = Vec2.ONE,
+        center: Vec2 = Vec2(0.5, 0.5),
         edge_curvature: float = 0.0
     ) -> None: ...
 

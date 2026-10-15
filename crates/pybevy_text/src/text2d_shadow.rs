@@ -15,21 +15,15 @@ pub struct PyText2dShadow {
 #[pymethods]
 impl PyText2dShadow {
     #[new]
-    #[pyo3(signature = (*, offset = None, color = None))]
-    pub fn new(
-        offset: Option<PyVec2>,
-        color: Option<PyColor>,
-    ) -> PyResult<PyClassInitializer<Self>> {
-        let default = Text2dShadow::default();
+    #[pyo3(signature = (
+        *,
+        offset = PyVec2::from(Text2dShadow::default().offset),
+        color = PyColor::from(Text2dShadow::default().color)
+    ))]
+    pub fn new(offset: PyVec2, color: PyColor) -> PyResult<PyClassInitializer<Self>> {
         let shadow = Text2dShadow {
-            offset: offset
-                .map(TryInto::try_into)
-                .transpose()?
-                .unwrap_or(default.offset),
-            color: color
-                .map(TryInto::try_into)
-                .transpose()?
-                .unwrap_or(default.color),
+            offset: offset.try_into()?,
+            color: color.try_into()?,
         };
 
         Ok(Self::from_owned(shadow).into())

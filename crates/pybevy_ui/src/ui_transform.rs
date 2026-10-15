@@ -16,23 +16,23 @@ pub struct PyUiTransform {
 #[pymethods]
 impl PyUiTransform {
     #[new]
-    #[pyo3(signature = (*, translation = None, scale = None, rotation = None))]
+    #[pyo3(signature = (
+        *,
+        translation = PyVal2::from(UiTransform::IDENTITY.translation),
+        scale = PyVec2::from(UiTransform::IDENTITY.scale),
+        rotation = PyRot2::from(UiTransform::IDENTITY.rotation)
+    ))]
     pub fn new(
-        translation: Option<PyVal2>,
-        scale: Option<PyVec2>,
-        rotation: Option<PyRot2>,
+        translation: PyVal2,
+        scale: PyVec2,
+        rotation: PyRot2,
     ) -> PyResult<PyClassInitializer<Self>> {
-        let mut transform = UiTransform::IDENTITY;
-        if let Some(t) = translation {
-            transform.translation = t.into();
-        }
-        if let Some(s) = scale {
-            transform.scale = s.try_into()?;
-        }
-        if let Some(r) = rotation {
-            transform.rotation = r.try_into()?;
-        }
-        Ok(Self::from_owned(transform).into())
+        Ok(Self::from_owned(UiTransform {
+            translation: translation.into(),
+            scale: scale.try_into()?,
+            rotation: rotation.try_into()?,
+        })
+        .into())
     }
 
     #[staticmethod]

@@ -1,5 +1,3 @@
-use std::ops::Range;
-
 use bevy::camera::visibility::VisibilityRange;
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
@@ -15,23 +13,20 @@ pub struct PyVisibilityRange {
 #[pymethods]
 impl PyVisibilityRange {
     #[new]
-    #[pyo3(signature = (*, start_margin=None, end_margin=None, use_aabb=false))]
+    #[pyo3(signature = (
+        *,
+        start_margin = PyRange::from_range(0.0, 0.0),
+        end_margin = PyRange::from_range(0.0, 0.0),
+        use_aabb = false
+    ))]
     pub fn new(
-        start_margin: Option<&PyRange>,
-        end_margin: Option<&PyRange>,
+        start_margin: PyRange,
+        end_margin: PyRange,
         use_aabb: bool,
     ) -> PyResult<PyClassInitializer<Self>> {
-        let start: Range<f32> = match start_margin {
-            Some(r) => r.try_into()?,
-            None => 0.0..0.0,
-        };
-        let end: Range<f32> = match end_margin {
-            Some(r) => r.try_into()?,
-            None => f32::INFINITY..f32::INFINITY,
-        };
         Ok(Self::from_owned(VisibilityRange {
-            start_margin: start,
-            end_margin: end,
+            start_margin: start_margin.try_into()?,
+            end_margin: end_margin.try_into()?,
             use_aabb,
         })
         .into())

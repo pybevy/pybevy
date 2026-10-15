@@ -111,8 +111,8 @@ class WinitSettings:
     def __init__(
         self,
         *,
-        focused_mode: UpdateMode | None = None,
-        unfocused_mode: UpdateMode | None = None
+        focused_mode: UpdateMode = ...,
+        unfocused_mode: UpdateMode = ...
     ) -> None:
         """Create WinitSettings with custom update modes.
 

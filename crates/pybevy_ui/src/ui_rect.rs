@@ -154,7 +154,7 @@ impl PyUiRect {
 
     pub fn set_left(&mut self, value: PyVal) -> PyResult<()> {
         let value = validate_finite_val(value.into(), "UiRect.left")?;
-        self.as_mut()?.left = value;
+        self.storage.update(|rect| rect.left = value)?;
         Ok(())
     }
 
@@ -164,7 +164,7 @@ impl PyUiRect {
 
     pub fn set_right(&mut self, value: PyVal) -> PyResult<()> {
         let value = validate_finite_val(value.into(), "UiRect.right")?;
-        self.as_mut()?.right = value;
+        self.storage.update(|rect| rect.right = value)?;
         Ok(())
     }
 
@@ -174,7 +174,7 @@ impl PyUiRect {
 
     pub fn set_top(&mut self, value: PyVal) -> PyResult<()> {
         let value = validate_finite_val(value.into(), "UiRect.top")?;
-        self.as_mut()?.top = value;
+        self.storage.update(|rect| rect.top = value)?;
         Ok(())
     }
 
@@ -184,7 +184,7 @@ impl PyUiRect {
 
     pub fn set_bottom(&mut self, value: PyVal) -> PyResult<()> {
         let value = validate_finite_val(value.into(), "UiRect.bottom")?;
-        self.as_mut()?.bottom = value;
+        self.storage.update(|rect| rect.bottom = value)?;
         Ok(())
     }
 

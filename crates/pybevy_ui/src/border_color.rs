@@ -1,6 +1,6 @@
 use bevy::{color::Color, ui::BorderColor};
 use pybevy_color::color::{IntoColorValue, PyColor};
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, Omittable, PyComponent};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
@@ -14,20 +14,31 @@ pub struct PyBorderColor {
 #[pymethods]
 impl PyBorderColor {
     #[new]
-    #[pyo3(signature = (color=None, *, top=None, right=None, bottom=None, left=None))]
+    #[pyo3(signature = (
+        color=None,
+        *,
+        top=Omittable::default(),
+        right=Omittable::default(),
+        bottom=Omittable::default(),
+        left=Omittable::default(),
+    ))]
     pub fn new(
         color: Option<IntoColorValue>,
-        top: Option<PyColor>,
-        right: Option<PyColor>,
-        bottom: Option<PyColor>,
-        left: Option<PyColor>,
+        top: Omittable<PyRef<'_, PyColor>>,
+        right: Omittable<PyRef<'_, PyColor>>,
+        bottom: Omittable<PyRef<'_, PyColor>>,
+        left: Omittable<PyRef<'_, PyColor>>,
     ) -> PyResult<PyClassInitializer<Self>> {
         let base = color.map(|color| color.0).unwrap_or(Color::NONE);
+        let side = |side: Omittable<PyRef<'_, PyColor>>| -> PyResult<Color> {
+            side.into_option()
+                .map_or(Ok(base), |color| Color::try_from(&*color))
+        };
         let bc = BorderColor {
-            top: top.map(Color::try_from).transpose()?.unwrap_or(base),
-            right: right.map(Color::try_from).transpose()?.unwrap_or(base),
-            bottom: bottom.map(Color::try_from).transpose()?.unwrap_or(base),
-            left: left.map(Color::try_from).transpose()?.unwrap_or(base),
+            top: side(top)?,
+            right: side(right)?,
+            bottom: side(bottom)?,
+            left: side(left)?,
         };
         Ok(Self::from_owned(bc).into())
     }

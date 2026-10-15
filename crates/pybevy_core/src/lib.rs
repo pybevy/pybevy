@@ -464,11 +464,13 @@ pub use bridge_inventory::{
     MessageBridgeRegistration, PluginBridgeRegistration, ResourceBridgeRegistration,
 };
 pub use component::PyComponent;
+pub use constructor::Omittable;
 pub use debug_snapshot::{DebugSnapshot, ReloadMemorySnapshotInfo, SystemProfile};
 pub use duration::{
-    duration_from_hz, duration_from_py, duration_from_secs_f64, positive_duration_from_secs_f64,
-    relative_speed, try_duration_from_hz, try_duration_from_secs_f64,
-    try_finite_positive_frequency, try_positive_duration_from_secs_f64, try_relative_speed,
+    IntoDuration, duration_from_hz, duration_from_py, duration_from_secs_f64,
+    positive_duration_from_secs_f64, relative_speed, try_duration_from_hz,
+    try_duration_from_secs_f64, try_finite_positive_frequency, try_positive_duration_from_secs_f64,
+    try_relative_speed,
 };
 pub use entity::{PyEntity, extract_entity_from_any};
 pub use entity_index::PyEntityIndex;

@@ -43,6 +43,18 @@ impl From<PyFontSize> for FontSize {
     }
 }
 
+/// Accepted inputs at Bevy's `Into<FontSize>` boundaries.
+#[derive(Debug, Clone, Copy)]
+pub struct IntoFontSize(pub FontSize);
+
+impl FromPyObject<'_, '_> for IntoFontSize {
+    type Error = PyErr;
+
+    fn extract(obj: Borrowed<'_, '_, PyAny>) -> PyResult<Self> {
+        Ok(Self(extract_font_size_from_any(&obj)?))
+    }
+}
+
 /// Extract a [`FontSize`], mirroring bevy's `impl Into<FontSize>` parameters:
 /// a plain float is `FontSize::Px` (bevy's `From<f32>`), otherwise a `FontSize`.
 pub fn extract_font_size_from_any(obj: &Bound<'_, PyAny>) -> PyResult<FontSize> {

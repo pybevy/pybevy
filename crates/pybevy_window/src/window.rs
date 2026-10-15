@@ -1,6 +1,9 @@
 use std::num::NonZero;
 
-use bevy::{math::DVec2, window::Window};
+use bevy::{
+    math::DVec2,
+    window::{Window, WindowPosition},
+};
 use pybevy_core::{ComponentStorage, PyComponent, computed_owned, public_error};
 use pybevy_macros::pycomponent;
 use pybevy_math::{compass::PyCompassOctant, uvec2::PyUVec2, vec2::PyVec2};
@@ -41,7 +44,7 @@ impl PyWindow {
         *,
         present_mode = PyPresentMode::Fifo,
         mode = PyWindowMode::default(),
-        position = None,
+        position = PyWindowPosition::from(WindowPosition::Automatic),
         resolution = PyWindowResolution::default(),
         title = DEFAULT_APP_TITLE.to_string(),
         name = None,
@@ -86,7 +89,7 @@ impl PyWindow {
     pub fn new(
         present_mode: PyPresentMode,
         mode: PyWindowMode,
-        position: Option<PyRef<'_, PyWindowPosition>>,
+        position: PyWindowPosition,
         resolution: PyWindowResolution,
         title: String,
         name: Option<String>,
@@ -123,11 +126,10 @@ impl PyWindow {
         prefers_status_bar_hidden: bool,
         preferred_screen_edges_deferring_system_gestures: PyScreenEdge,
     ) -> PyResult<PyClassInitializer<Self>> {
-        let defaults = Window::default();
         let window = Window {
             present_mode: present_mode.into(),
             mode: mode.into(),
-            position: position.map_or(defaults.position, |value| value.0),
+            position: position.into(),
             resolution: resolution.try_into()?,
             title,
             name,

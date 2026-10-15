@@ -481,8 +481,8 @@ class TextureSlicer:
         self,
         *,
         border: BorderRect = ...,
-        center_scale_mode: SliceScaleMode | None = None,
-        sides_scale_mode: SliceScaleMode | None = None,
+        center_scale_mode: SliceScaleMode = SliceScaleMode.Stretch(),
+        sides_scale_mode: SliceScaleMode = SliceScaleMode.Stretch(),
         max_corner_scale: float = 1.0,
     ) -> None:
         """Create a TextureSlicer for nine-patch rendering.

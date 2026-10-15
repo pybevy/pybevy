@@ -1,12 +1,12 @@
 use bevy::ui::{Node, UiRect, Val};
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, PyComponent, StorageError};
 use pybevy_macros::pycomponent;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 use crate::{
     PyAlignContent, PyAlignItems, PyAlignSelf, PyBoxSizing, PyDisplay, PyFlexDirection, PyFlexWrap,
     PyGridAutoFlow, PyInlineDirection, PyJustifyContent, PyJustifyItems, PyJustifySelf,
-    PyOverflowAxis, PyPositionType,
+    PyOverflowAxis, PyPositionType, PyVisualBox,
     border_radius::PyBorderRadius,
     grid_placement::PyGridPlacement,
     grid_track::PyGridTrack,
@@ -14,10 +14,14 @@ use crate::{
     overflow_clip_margin::PyOverflowClipMargin,
     repeated_grid_track::PyRepeatedGridTrack,
     ui_rect::PyUiRect,
-    val::{PyVal, extract_val_from_any, validate_finite_val},
+    val::{IntoVal, PyVal, validate_finite_val},
 };
 
-fn validate_rect(rect: UiRect, parameter: &str, non_negative: bool) -> PyResult<UiRect> {
+fn validate_rect(
+    rect: UiRect,
+    parameter: &str,
+    non_negative: bool,
+) -> Result<UiRect, StorageError> {
     for (side, value) in [
         ("left", rect.left),
         ("right", rect.right),
@@ -34,12 +38,20 @@ fn validate_rect(rect: UiRect, parameter: &str, non_negative: bool) -> PyResult<
             | Val::VMax(v) => v,
         };
         if non_negative && magnitude < 0.0 {
-            return Err(PyValueError::new_err(format!(
+            return Err(StorageError::InvalidValue(format!(
                 "{parameter}.{side} must be non-negative (got {magnitude})"
             )));
         }
     }
     Ok(rect)
+}
+
+fn check_padding(rect: &UiRect) -> Result<(), StorageError> {
+    validate_rect(*rect, "padding", true).map(drop)
+}
+
+fn check_border(rect: &UiRect) -> Result<(), StorageError> {
+    validate_rect(*rect, "border", true).map(drop)
 }
 
 fn validate_aspect_ratio(value: Option<f32>) -> PyResult<Option<f32>> {
@@ -71,17 +83,17 @@ impl PyNode {
         position_type = PyPositionType::Relative,
         overflow = PyOverflow::py_new(PyOverflowAxis::Visible, PyOverflowAxis::Visible),
         scrollbar_width = 0.0,
-        overflow_clip_margin = PyOverflowClipMargin::new(None, 0.0),
-        left = None,
-        right = None,
-        top = None,
-        bottom = None,
-        width = None,
-        height = None,
-        min_width = None,
-        min_height = None,
-        max_width = None,
-        max_height = None,
+        overflow_clip_margin = PyOverflowClipMargin::new(PyVisualBox::PaddingBox, 0.0),
+        left = IntoVal(Val::Auto),
+        right = IntoVal(Val::Auto),
+        top = IntoVal(Val::Auto),
+        bottom = IntoVal(Val::Auto),
+        width = IntoVal(Val::Auto),
+        height = IntoVal(Val::Auto),
+        min_width = IntoVal(Val::Auto),
+        min_height = IntoVal(Val::Auto),
+        max_width = IntoVal(Val::Auto),
+        max_height = IntoVal(Val::Auto),
         aspect_ratio = None,
         align_items = PyAlignItems::Default,
         justify_items = PyJustifyItems::Default,
@@ -98,9 +110,9 @@ impl PyNode {
         flex_wrap = PyFlexWrap::NoWrap,
         flex_grow = 0.0,
         flex_shrink = 1.0,
-        flex_basis = None,
-        row_gap = None,
-        column_gap = None,
+        flex_basis = IntoVal(Val::Auto),
+        row_gap = IntoVal(Val::ZERO),
+        column_gap = IntoVal(Val::ZERO),
         grid_auto_flow = PyGridAutoFlow::Row,
         grid_template_rows = Vec::new(),
         grid_template_columns = Vec::new(),
@@ -116,16 +128,16 @@ impl PyNode {
         overflow: PyOverflow,
         scrollbar_width: f32,
         overflow_clip_margin: PyOverflowClipMargin,
-        left: Option<&Bound<'_, PyAny>>,
-        right: Option<&Bound<'_, PyAny>>,
-        top: Option<&Bound<'_, PyAny>>,
-        bottom: Option<&Bound<'_, PyAny>>,
-        width: Option<&Bound<'_, PyAny>>,
-        height: Option<&Bound<'_, PyAny>>,
-        min_width: Option<&Bound<'_, PyAny>>,
-        min_height: Option<&Bound<'_, PyAny>>,
-        max_width: Option<&Bound<'_, PyAny>>,
-        max_height: Option<&Bound<'_, PyAny>>,
+        left: IntoVal,
+        right: IntoVal,
+        top: IntoVal,
+        bottom: IntoVal,
+        width: IntoVal,
+        height: IntoVal,
+        min_width: IntoVal,
+        min_height: IntoVal,
+        max_width: IntoVal,
+        max_height: IntoVal,
         aspect_ratio: Option<f32>,
         align_items: PyAlignItems,
         justify_items: PyJustifyItems,
@@ -142,9 +154,9 @@ impl PyNode {
         flex_wrap: PyFlexWrap,
         flex_grow: f32,
         flex_shrink: f32,
-        flex_basis: Option<&Bound<'_, PyAny>>,
-        row_gap: Option<&Bound<'_, PyAny>>,
-        column_gap: Option<&Bound<'_, PyAny>>,
+        flex_basis: IntoVal,
+        row_gap: IntoVal,
+        column_gap: IntoVal,
         grid_auto_flow: PyGridAutoFlow,
         grid_template_rows: Vec<PyRepeatedGridTrack>,
         grid_template_columns: Vec<PyRepeatedGridTrack>,
@@ -153,9 +165,6 @@ impl PyNode {
         grid_row: PyGridPlacement,
         grid_column: PyGridPlacement,
     ) -> PyResult<PyClassInitializer<Self>> {
-        let val = |value: Option<&Bound<'_, PyAny>>, default: Val, name: &str| {
-            value.map_or(Ok(default), |value| extract_val_from_any(value, name))
-        };
         Ok(Self::from_owned(Node {
             display: display.into(),
             box_sizing: box_sizing.into(),
@@ -163,16 +172,16 @@ impl PyNode {
             overflow: overflow.try_into()?,
             scrollbar_width,
             overflow_clip_margin: overflow_clip_margin.into(),
-            left: val(left, Val::Auto, "left")?,
-            right: val(right, Val::Auto, "right")?,
-            top: val(top, Val::Auto, "top")?,
-            bottom: val(bottom, Val::Auto, "bottom")?,
-            width: val(width, Val::Auto, "width")?,
-            height: val(height, Val::Auto, "height")?,
-            min_width: val(min_width, Val::Auto, "min_width")?,
-            min_height: val(min_height, Val::Auto, "min_height")?,
-            max_width: val(max_width, Val::Auto, "max_width")?,
-            max_height: val(max_height, Val::Auto, "max_height")?,
+            left: validate_finite_val(left.0, "left")?,
+            right: validate_finite_val(right.0, "right")?,
+            top: validate_finite_val(top.0, "top")?,
+            bottom: validate_finite_val(bottom.0, "bottom")?,
+            width: validate_finite_val(width.0, "width")?,
+            height: validate_finite_val(height.0, "height")?,
+            min_width: validate_finite_val(min_width.0, "min_width")?,
+            min_height: validate_finite_val(min_height.0, "min_height")?,
+            max_width: validate_finite_val(max_width.0, "max_width")?,
+            max_height: validate_finite_val(max_height.0, "max_height")?,
             aspect_ratio: validate_aspect_ratio(aspect_ratio)?,
             align_items: align_items.into(),
             justify_items: justify_items.into(),
@@ -189,9 +198,9 @@ impl PyNode {
             flex_wrap: flex_wrap.into(),
             flex_grow,
             flex_shrink,
-            flex_basis: val(flex_basis, Val::Auto, "flex_basis")?,
-            row_gap: val(row_gap, Val::ZERO, "row_gap")?,
-            column_gap: val(column_gap, Val::ZERO, "column_gap")?,
+            flex_basis: validate_finite_val(flex_basis.0, "flex_basis")?,
+            row_gap: validate_finite_val(row_gap.0, "row_gap")?,
+            column_gap: validate_finite_val(column_gap.0, "column_gap")?,
             grid_auto_flow: grid_auto_flow.into(),
             grid_template_rows: grid_template_rows.into_iter().map(Into::into).collect(),
             grid_template_columns: grid_template_columns.into_iter().map(Into::into).collect(),
@@ -220,8 +229,8 @@ impl PyNode {
     }
 
     #[setter]
-    pub fn set_top(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        let value = extract_val_from_any(value, "top")?;
+    pub fn set_top(&mut self, value: IntoVal) -> PyResult<()> {
+        let value = validate_finite_val(value.0, "top")?;
         self.as_mut()?.top = value;
         Ok(())
     }
@@ -232,8 +241,8 @@ impl PyNode {
     }
 
     #[setter]
-    pub fn set_left(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        let value = extract_val_from_any(value, "left")?;
+    pub fn set_left(&mut self, value: IntoVal) -> PyResult<()> {
+        let value = validate_finite_val(value.0, "left")?;
         self.as_mut()?.left = value;
         Ok(())
     }
@@ -244,8 +253,8 @@ impl PyNode {
     }
 
     #[setter]
-    pub fn set_width(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        let value = extract_val_from_any(value, "width")?;
+    pub fn set_width(&mut self, value: IntoVal) -> PyResult<()> {
+        let value = validate_finite_val(value.0, "width")?;
         self.as_mut()?.width = value;
         Ok(())
     }
@@ -256,8 +265,8 @@ impl PyNode {
     }
 
     #[setter]
-    pub fn set_height(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        let value = extract_val_from_any(value, "height")?;
+    pub fn set_height(&mut self, value: IntoVal) -> PyResult<()> {
+        let value = validate_finite_val(value.0, "height")?;
         self.as_mut()?.height = value;
         Ok(())
     }
@@ -268,8 +277,8 @@ impl PyNode {
     }
 
     #[setter]
-    pub fn set_right(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        let value = extract_val_from_any(value, "right")?;
+    pub fn set_right(&mut self, value: IntoVal) -> PyResult<()> {
+        let value = validate_finite_val(value.0, "right")?;
         self.as_mut()?.right = value;
         Ok(())
     }
@@ -280,8 +289,8 @@ impl PyNode {
     }
 
     #[setter]
-    pub fn set_bottom(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        let value = extract_val_from_any(value, "bottom")?;
+    pub fn set_bottom(&mut self, value: IntoVal) -> PyResult<()> {
+        let value = validate_finite_val(value.0, "bottom")?;
         self.as_mut()?.bottom = value;
         Ok(())
     }
@@ -292,8 +301,8 @@ impl PyNode {
     }
 
     #[setter]
-    pub fn set_min_width(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        let value = extract_val_from_any(value, "min_width")?;
+    pub fn set_min_width(&mut self, value: IntoVal) -> PyResult<()> {
+        let value = validate_finite_val(value.0, "min_width")?;
         self.as_mut()?.min_width = value;
         Ok(())
     }
@@ -304,8 +313,8 @@ impl PyNode {
     }
 
     #[setter]
-    pub fn set_max_width(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        let value = extract_val_from_any(value, "max_width")?;
+    pub fn set_max_width(&mut self, value: IntoVal) -> PyResult<()> {
+        let value = validate_finite_val(value.0, "max_width")?;
         self.as_mut()?.max_width = value;
         Ok(())
     }
@@ -316,8 +325,8 @@ impl PyNode {
     }
 
     #[setter]
-    pub fn set_min_height(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        let value = extract_val_from_any(value, "min_height")?;
+    pub fn set_min_height(&mut self, value: IntoVal) -> PyResult<()> {
+        let value = validate_finite_val(value.0, "min_height")?;
         self.as_mut()?.min_height = value;
         Ok(())
     }
@@ -328,8 +337,8 @@ impl PyNode {
     }
 
     #[setter]
-    pub fn set_max_height(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        let value = extract_val_from_any(value, "max_height")?;
+    pub fn set_max_height(&mut self, value: IntoVal) -> PyResult<()> {
+        let value = validate_finite_val(value.0, "max_height")?;
         self.as_mut()?.max_height = value;
         Ok(())
     }
@@ -480,7 +489,11 @@ impl PyNode {
 
     #[getter]
     pub fn padding(&self) -> PyResult<PyUiRect> {
-        Ok(self.storage.borrow_field_as(|node| &node.padding)?)
+        Ok(self.storage.borrow_validated_field_as(
+            |node| &node.padding,
+            |node| &mut node.padding,
+            check_padding,
+        )?)
     }
 
     #[setter]
@@ -492,7 +505,11 @@ impl PyNode {
 
     #[getter]
     pub fn border(&self) -> PyResult<PyUiRect> {
-        Ok(self.storage.borrow_field_as(|node| &node.border)?)
+        Ok(self.storage.borrow_validated_field_as(
+            |node| &node.border,
+            |node| &mut node.border,
+            check_border,
+        )?)
     }
 
     #[setter]
@@ -530,8 +547,8 @@ impl PyNode {
     }
 
     #[setter]
-    pub fn set_flex_basis(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        let value = extract_val_from_any(value, "flex_basis")?;
+    pub fn set_flex_basis(&mut self, value: IntoVal) -> PyResult<()> {
+        let value = validate_finite_val(value.0, "flex_basis")?;
         self.as_mut()?.flex_basis = value;
         Ok(())
     }
@@ -542,8 +559,8 @@ impl PyNode {
     }
 
     #[setter]
-    pub fn set_row_gap(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        let value = extract_val_from_any(value, "row_gap")?;
+    pub fn set_row_gap(&mut self, value: IntoVal) -> PyResult<()> {
+        let value = validate_finite_val(value.0, "row_gap")?;
         self.as_mut()?.row_gap = value;
         Ok(())
     }
@@ -554,8 +571,8 @@ impl PyNode {
     }
 
     #[setter]
-    pub fn set_column_gap(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        let value = extract_val_from_any(value, "column_gap")?;
+    pub fn set_column_gap(&mut self, value: IntoVal) -> PyResult<()> {
+        let value = validate_finite_val(value.0, "column_gap")?;
         self.as_mut()?.column_gap = value;
         Ok(())
     }

@@ -1,10 +1,7 @@
-use bevy::{
-    math::Vec2,
-    post_process::bloom::{Bloom, BloomPrefilter},
-};
+use bevy::post_process::bloom::{Bloom, BloomPrefilter};
 use pybevy_core::{ComponentStorage, PyComponent, public_error};
 use pybevy_macros::pycomponent;
-use pybevy_math::vec2::{PyVec2, extract_vec2_from_any};
+use pybevy_math::vec2::{IntoVec2, PyVec2};
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 use crate::{bloom_composite_mode::PyBloomCompositeMode, bloom_prefilter::PyBloomPrefilter};
@@ -40,26 +37,21 @@ impl PyBloom {
         low_frequency_boost = 0.7,
         low_frequency_boost_curvature = 0.95,
         high_pass_frequency = 1.0,
-        prefilter = None,
+        prefilter = PyBloomPrefilter::from(BloomPrefilter::default()),
         composite_mode = PyBloomCompositeMode::EnergyConserving,
         max_mip_dimension = 512,
-        scale = None
+        scale = IntoVec2(Bloom::default().scale)
     ))]
     pub fn new(
         intensity: f32,
         low_frequency_boost: f32,
         low_frequency_boost_curvature: f32,
         high_pass_frequency: f32,
-        prefilter: Option<PyBloomPrefilter>,
+        prefilter: PyBloomPrefilter,
         composite_mode: PyBloomCompositeMode,
         max_mip_dimension: u32,
-        scale: Option<Bound<'_, PyAny>>,
+        scale: IntoVec2,
     ) -> PyResult<PyClassInitializer<Self>> {
-        let scale_vec = match scale {
-            Some(s) => extract_vec2_from_any(&s)?,
-            None => Vec2::ONE,
-        };
-
         validate_max_mip_dimension(max_mip_dimension)?;
 
         let bloom = Bloom {
@@ -67,13 +59,10 @@ impl PyBloom {
             low_frequency_boost,
             low_frequency_boost_curvature,
             high_pass_frequency,
-            prefilter: match prefilter {
-                Some(p) => p.try_into()?,
-                None => BloomPrefilter::default(),
-            },
+            prefilter: prefilter.try_into()?,
             composite_mode: composite_mode.into(),
             max_mip_dimension,
-            scale: scale_vec,
+            scale: scale.0,
         };
 
         Ok(Self::from_owned(bloom).into())

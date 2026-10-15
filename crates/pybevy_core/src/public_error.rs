@@ -285,6 +285,10 @@ pub fn constructor_argument_type(ty: &str, param: &str, expected: &str, got: &st
     format!("{ty}() argument '{param}' must be {expected}, not {got}")
 }
 
+pub fn omitted_argument_none(expected: &str) -> String {
+    format!("expected {expected}, not None; omit the argument to use its default")
+}
+
 pub fn constructor_form_conflict(ty: &str, given: &[&str], alternate: &[&str]) -> String {
     format!(
         "{ty}() cannot combine ({}) with ({})",
