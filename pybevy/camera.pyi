@@ -1489,8 +1489,9 @@ class ClearColorConfig:
 
     class Custom(ClearColorConfig):
         """Use a custom clear color."""
-        __match_args__: ClassVar[tuple[Literal["color"]]]
-        color: Color
+        __match_args__: ClassVar[tuple[Literal["color"]]] = ("color",)
+        @property
+        def color(self) -> Color: ...
         def __init__(self, color: Color) -> None: ...
 
     class None_(ClearColorConfig):

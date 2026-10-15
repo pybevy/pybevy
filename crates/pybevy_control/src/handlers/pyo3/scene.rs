@@ -408,8 +408,17 @@ fn extract_bridge_fields_with_context(
     bound: &Bound<'_, PyAny>,
     context: &mut SerializationContext,
 ) -> serde_json::Map<String, serde_json::Value> {
-    let mut map = serde_json::Map::new();
     let py_type = bound.get_type();
+    let complex_variant = pyo3_complex_enum_variant_name(&py_type);
+    if complex_variant.is_none()
+        && let Some(variant) = unit_enum_variant_name(bound, &py_type)
+    {
+        return enum_to_json(variant, EnumPayload::Unit)
+            .as_object()
+            .unwrap()
+            .clone();
+    }
+    let mut map = serde_json::Map::new();
 
     if let Ok(dir_list) = py_type.dir() {
         for attr_obj in dir_list.iter() {
@@ -440,7 +449,7 @@ fn extract_bridge_fields_with_context(
 
     // Preserve exact variant identity and use the same canonical enum shape as
     // reflected values and mutation responses.
-    if let Some(variant) = pyo3_complex_enum_variant_name(&py_type) {
+    if let Some(variant) = complex_variant {
         let payload = if map.is_empty() {
             EnumPayload::Unit
         } else if map.len() == 1 && map.contains_key("value") {
@@ -484,6 +493,21 @@ fn extract_bridge_fields_with_context(
     }
 
     map
+}
+
+fn unit_enum_variant_name(bound: &Bound<'_, PyAny>, owner: &Bound<'_, PyType>) -> Option<String> {
+    if !super::enum_names::is_enum_type(owner) {
+        return None;
+    }
+    let name = super::mutate::enum_variant_names(owner)
+        .into_iter()
+        .find(|name| {
+            owner.getattr(name.as_str()).is_ok_and(|candidate| {
+                candidate.is_instance(owner).unwrap_or(false)
+                    && candidate.eq(bound).unwrap_or(false)
+            })
+        })?;
+    Some(super::enum_names::canonical_variant_name(owner, &name))
 }
 
 fn pyo3_complex_enum_variant_name(py_type: &Bound<'_, PyType>) -> Option<String> {

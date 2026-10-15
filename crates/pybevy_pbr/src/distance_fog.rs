@@ -33,7 +33,7 @@ impl PyDistanceFog {
         let directional_light_color = directional_light_color.try_into()?;
         Ok(Self::from_owned(DistanceFog {
             color,
-            falloff: falloff.try_into()?,
+            falloff: falloff.into(),
             directional_light_color,
             directional_light_exponent: validate_directional_light_exponent(
                 directional_light_exponent,
@@ -61,7 +61,7 @@ impl PyDistanceFog {
 
     #[setter]
     pub fn set_falloff(&mut self, falloff: PyFogFalloff) -> PyResult<()> {
-        self.as_mut()?.falloff = falloff.try_into()?;
+        self.as_mut()?.falloff = falloff.into();
         Ok(())
     }
 

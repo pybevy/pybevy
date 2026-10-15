@@ -14,6 +14,8 @@ pub enum PyParallaxCorrection {
     Custom {
         #[py_type(PyVec3)]
         #[py_try_into]
+        #[py_borrow]
+        #[py_set]
         value: Vec3,
     },
 }

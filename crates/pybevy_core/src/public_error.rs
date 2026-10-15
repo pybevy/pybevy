@@ -79,7 +79,8 @@ pub use pybevy_storage::{
         CONFLICT_WORLD, SystemAccessConflictMessage,
     },
     storage_error::{
-        EXPRESSION_MAX_DEPTH, NESTED_EXECUTION, enum_variant_changed, expression_too_deep,
+        EXPRESSION_MAX_DEPTH, EXPRESSION_MAX_POOL_ENTRIES, NESTED_EXECUTION, enum_variant_changed,
+        expression_too_deep, expression_too_large,
     },
 };
 
@@ -237,6 +238,23 @@ pub fn mcp_native_resource_control_name(requested: &str, registered: &str) -> St
 
 pub fn mcp_schedule_non_public_tool(index: usize, tool: &str) -> String {
     format!("action[{index}]: tool '{tool}' is not a public schedulable tool")
+}
+
+pub fn mcp_enum_constant_not_variant(
+    constant: &str,
+    owner: &str,
+    value: Option<&str>,
+    variants: &[String],
+) -> String {
+    match value {
+        Some(value) => {
+            format!("'{constant}' is a constant of {owner}, not a variant; write its value {value}")
+        }
+        None => format!(
+            "'{constant}' is a constant of {owner}, not a variant; write its value as a variant. Valid variants: {}",
+            variants.join(", ")
+        ),
+    }
 }
 
 pub fn mcp_enum_component_unknown_fields(

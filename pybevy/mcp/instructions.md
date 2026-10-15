@@ -140,7 +140,7 @@ Owned nested UI gradient values and `Isometry2d` vector fields are read-only sna
 - **Always use chained return style** - use `return (app.add_plugins(...).add_systems(...))`. Do NOT use separate `app.method(...)` calls followed by `return app`.
 - Always use `from pybevy.prelude import *` (NOT `from pybevy import *`)
 - Pass shapes directly to meshes.add(): `meshes.add(Cuboid(1,1,1))`
-- Compare enum values with constructed variants, such as `MouseButton.Left()`. Comparisons with uncalled variant classes from the same family raise `TypeError`; compact constants such as `KeyCode.KeyA` keep their existing spelling.
+- Compare enum values with constructed variants, such as `MouseButton.Left()`. Comparisons with uncalled variant classes from the same family raise `TypeError`; compact unit variants such as `KeyCode.KeyA` keep their existing spelling.
 - `AudioPlayer` accepts `AudioSource` and `Pitch` handles. Query procedural players with `AudioPlayer[Pitch]`; bare `AudioPlayer` queries select `AudioSource` players.
 - Use `GlobalAmbientLight` (Resource) not `AmbientLight` (Component) for global light
 - Changing `@component` or `@resource` field structure (add/remove fields, change storage mode) works with `reload` Full mode, but use `run_scene` if behavior is unexpected
@@ -189,7 +189,7 @@ does not eagerly check existence, and `get_entity(id)` accepts reserved IDs.
 
 When using `set_component`, `spawn_entity`, `set_resource`, or `set_asset`, field values are automatically converted:
 
-- **Enum fields** (Color, PlaybackMode, etc.): `{"Srgba": {"red": 1.0, "green": 0.5, "blue": 0.0, "alpha": 1.0}}` or unit variant as string: `"Manual"`
+- **Enum fields** (Color, PlaybackMode, etc.): `{"Srgba": {"red": 1.0, "green": 0.5, "blue": 0.0, "alpha": 1.0}}` or unit variant as string: `"Manual"`. Class constants such as `Val.ZERO` or `Color.WHITE` are values, not variants: write their variant form, such as `{"variant": "Px", "value": 0.0}`
 - **Color shorthand**: `[1.0, 0.5, 0.0, 1.0]` means sRGBA for `Color`
 - **LinearRgba**: `[r, g, b, a]` is linear and accepts HDR channels above 1; the canonical object form is `{"red": r, "green": g, "blue": b, "alpha": a}`
 - **Vec2/Vec3/Vec4**: `[x, y]`, `[x, y, z]`, `[x, y, z, w]`; Vec3 also accepts the complete coordinate object `{"x": x, "y": y, "z": z}`

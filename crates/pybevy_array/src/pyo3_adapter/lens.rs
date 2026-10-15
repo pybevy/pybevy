@@ -132,7 +132,8 @@ impl ArrayLens {
         let index = self.normalize_lane(lane)?;
         let destination = index * self.itemsize;
         let expression = RustExpr::from_py_object(py, value)?;
-        let bytecode = compile_assignment(self.key, destination, self.field_type, &expression);
+        let bytecode = compile_assignment(self.key, destination, self.field_type, &expression)
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
         let validated =
             validate_buffer_program(&bytecode, self.key, self.stride, &[self.field_type]).map_err(
                 |error| match error {

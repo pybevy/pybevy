@@ -29,7 +29,8 @@ use pybevy_storage::{StorageError, ValidityFlag};
 
 use crate::{
     bytecode::{
-        CompiledBytecode, Compiler, FieldId, FieldType, NegativeIntegerPower, Op, exact_i128,
+        CompiledBytecode, Compiler, FieldId, FieldType, NegativeIntegerPower, Op, ProgramTooLarge,
+        exact_i128,
     },
     expr::RustExpr,
     tiled::{ReduceOp, lane_reduce_slice},
@@ -170,30 +171,40 @@ enum CachedProgramKey {
     },
 }
 
-impl CachedProgramKey {
-    fn canonical_eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::ReadOnly(a), Self::ReadOnly(b)) => a.canonical_eq(b),
+/// A borrowed cache lookup key; the expression is cloned only on a miss.
+#[derive(Clone, Copy)]
+enum ProgramKey<'a> {
+    ReadOnly(&'a RustExpr),
+    Assignment {
+        destination: FieldId,
+        expression: &'a RustExpr,
+    },
+}
+
+impl ProgramKey<'_> {
+    fn matches(self, cached: &CachedProgramKey) -> bool {
+        match (self, cached) {
+            (Self::ReadOnly(a), CachedProgramKey::ReadOnly(b)) => a.canonical_eq(b),
             (
                 Self::Assignment {
                     destination: ad,
                     expression: ae,
                 },
-                Self::Assignment {
+                CachedProgramKey::Assignment {
                     destination: bd,
                     expression: be,
                 },
-            ) => ad == bd && ae.canonical_eq(be),
+            ) => ad == *bd && ae.canonical_eq(be),
             _ => false,
         }
     }
 
-    fn hash(&self) -> u64 {
+    fn hash(self) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         match self {
             Self::ReadOnly(expression) => {
                 0_u8.hash(&mut hasher);
-                format!("{expression:?}").hash(&mut hasher);
+                expression.canonical_hash(&mut hasher);
             }
             Self::Assignment {
                 destination,
@@ -201,29 +212,44 @@ impl CachedProgramKey {
             } => {
                 1_u8.hash(&mut hasher);
                 destination.hash(&mut hasher);
-                format!("{expression:?}").hash(&mut hasher);
+                expression.canonical_hash(&mut hasher);
             }
         }
         hasher.finish()
     }
 
-    fn compile(&self) -> Arc<CompiledBytecode> {
+    fn into_owned(self) -> CachedProgramKey {
         match self {
+            Self::ReadOnly(expression) => CachedProgramKey::ReadOnly(expression.clone()),
+            Self::Assignment {
+                destination,
+                expression,
+            } => CachedProgramKey::Assignment {
+                destination,
+                expression: expression.clone(),
+            },
+        }
+    }
+
+    fn compile(self) -> Result<Arc<CompiledBytecode>, ProgramTooLarge> {
+        let bytecode = match self {
             Self::ReadOnly(expression) => {
                 let mut compiler = Compiler::new();
                 expression.compile(&mut compiler);
-                Arc::new(compiler.finalize())
+                compiler.optimize();
+                compiler.try_finalize()?
             }
             Self::Assignment {
                 destination,
                 expression,
-            } => Arc::new(view_engine::compile_assignment(
+            } => view_engine::compile_assignment(
                 destination.component_id,
                 destination.offset,
                 destination.field_type,
                 expression,
-            )),
-        }
+            )?,
+        };
+        Ok(Arc::new(bytecode))
     }
 }
 
@@ -312,7 +338,7 @@ impl CachedViewCore {
 
     fn get_or_compile(
         &self,
-        key: CachedProgramKey,
+        key: ProgramKey<'_>,
     ) -> Result<Arc<CompiledBytecode>, ViewRuntimeError> {
         let hash = key.hash();
         self.get_or_compile_with_hash(key, hash)
@@ -320,7 +346,7 @@ impl CachedViewCore {
 
     fn get_or_compile_with_hash(
         &self,
-        key: CachedProgramKey,
+        key: ProgramKey<'_>,
         hash: u64,
     ) -> Result<Arc<CompiledBytecode>, ViewRuntimeError> {
         let mut cache = self
@@ -329,20 +355,20 @@ impl CachedViewCore {
             .map_err(|_| ViewRuntimeError::ProgramCachePoisoned)?;
         cache.clock += 1;
         let clock = cache.clock;
-        if let Some(cached) = cache.buckets.get_mut(&hash).and_then(|bucket| {
-            bucket
-                .iter_mut()
-                .find(|cached| cached.key.canonical_eq(&key))
-        }) {
+        if let Some(cached) = cache
+            .buckets
+            .get_mut(&hash)
+            .and_then(|bucket| bucket.iter_mut().find(|cached| key.matches(&cached.key)))
+        {
             cached.last_used = clock;
             return Ok(Arc::clone(&cached.bytecode));
         }
+        let bytecode = key.compile()?;
         if cache.len >= PROGRAM_CACHE_CAPACITY {
             cache.evict_least_recently_used();
         }
-        let bytecode = key.compile();
         cache.buckets.entry(hash).or_default().push(CachedProgram {
-            key,
+            key: key.into_owned(),
             bytecode: Arc::clone(&bytecode),
             last_used: clock,
         });
@@ -528,7 +554,7 @@ impl ViewRuntimeCore {
         self.check_valid()?;
         let bytecode = self
             .cached
-            .get_or_compile(CachedProgramKey::ReadOnly(expression.clone()))?;
+            .get_or_compile(ProgramKey::ReadOnly(expression))?;
         self.validate_program(bytecode, ProgramIntent::ReadOnly)
     }
 
@@ -539,9 +565,9 @@ impl ViewRuntimeCore {
         expression: &RustExpr,
     ) -> Result<ValidatedViewProgram, ViewRuntimeError> {
         self.check_valid()?;
-        let bytecode = self.cached.get_or_compile(CachedProgramKey::Assignment {
+        let bytecode = self.cached.get_or_compile(ProgramKey::Assignment {
             destination,
-            expression: expression.clone(),
+            expression,
         })?;
         self.validate_program(bytecode, ProgramIntent::Assignment { destination })
     }
@@ -1402,6 +1428,9 @@ pub enum ViewRuntimeError {
     ReentrantOperation,
     /// A panic occurred while the stable compiled-program cache was locked.
     ProgramCachePoisoned,
+    /// The expression references more distinct literals or fields than one
+    /// compiled program can hold.
+    ProgramTooLarge,
     /// Cached component ids were resolved against a different World.
     WorldMismatch {
         /// World used to build the cached specification.
@@ -1618,6 +1647,7 @@ impl fmt::Display for ViewRuntimeError {
             Self::ReentrantOperation => {
                 write!(f, "Cannot re-enter a View operation while access is active")
             }
+            Self::ProgramTooLarge => fmt::Display::fmt(&ProgramTooLarge, f),
             Self::ProgramCachePoisoned => {
                 write!(
                     f,
@@ -1845,6 +1875,12 @@ impl std::error::Error for ViewRuntimeError {
 impl From<StorageError> for ViewRuntimeError {
     fn from(value: StorageError) -> Self {
         Self::Storage(value)
+    }
+}
+
+impl From<ProgramTooLarge> for ViewRuntimeError {
+    fn from(_: ProgramTooLarge) -> Self {
+        Self::ProgramTooLarge
     }
 }
 
@@ -3570,22 +3606,13 @@ mod tests {
         let forced_hash = 17;
 
         let first = cache
-            .get_or_compile_with_hash(
-                CachedProgramKey::ReadOnly(RustExpr::Const(1.0)),
-                forced_hash,
-            )
+            .get_or_compile_with_hash(ProgramKey::ReadOnly(&RustExpr::Const(1.0)), forced_hash)
             .unwrap();
         let second = cache
-            .get_or_compile_with_hash(
-                CachedProgramKey::ReadOnly(RustExpr::Const(2.0)),
-                forced_hash,
-            )
+            .get_or_compile_with_hash(ProgramKey::ReadOnly(&RustExpr::Const(2.0)), forced_hash)
             .unwrap();
         let first_again = cache
-            .get_or_compile_with_hash(
-                CachedProgramKey::ReadOnly(RustExpr::Const(1.0)),
-                forced_hash,
-            )
+            .get_or_compile_with_hash(ProgramKey::ReadOnly(&RustExpr::Const(1.0)), forced_hash)
             .unwrap();
 
         assert_eq!(first.constants, vec![1.0]);
@@ -3602,7 +3629,7 @@ mod tests {
         // A per-frame varying constant produces a distinct program each call.
         for frame in 0..(PROGRAM_CACHE_CAPACITY * 2) {
             cache
-                .get_or_compile(CachedProgramKey::ReadOnly(RustExpr::Const(frame as f64)))
+                .get_or_compile(ProgramKey::ReadOnly(&RustExpr::Const(frame as f64)))
                 .unwrap();
         }
 
@@ -3624,17 +3651,13 @@ mod tests {
         let cache = runtime.cached();
         let stable = RustExpr::Const(-1.0);
 
-        let first = cache
-            .get_or_compile(CachedProgramKey::ReadOnly(stable.clone()))
-            .unwrap();
+        let first = cache.get_or_compile(ProgramKey::ReadOnly(&stable)).unwrap();
         for frame in 0..(PROGRAM_CACHE_CAPACITY * 2) {
             cache
-                .get_or_compile(CachedProgramKey::ReadOnly(RustExpr::Const(frame as f64)))
+                .get_or_compile(ProgramKey::ReadOnly(&RustExpr::Const(frame as f64)))
                 .unwrap();
             // Touch the stable program so churn evicts one-shot entries instead.
-            let again = cache
-                .get_or_compile(CachedProgramKey::ReadOnly(stable.clone()))
-                .unwrap();
+            let again = cache.get_or_compile(ProgramKey::ReadOnly(&stable)).unwrap();
             assert!(Arc::ptr_eq(&first, &again));
         }
     }

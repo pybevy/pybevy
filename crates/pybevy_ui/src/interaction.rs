@@ -10,6 +10,11 @@ pub struct PyInteraction(pub(crate) Interaction);
 
 #[pymethods]
 impl PyInteraction {
+    #[classattr]
+    fn __pybevy_variant_aliases__() -> Vec<(&'static str, &'static str)> {
+        vec![("None", "None_")]
+    }
+
     #[new]
     pub fn new() -> PyClassInitializer<Self> {
         Self::from_owned(Interaction::None).into()

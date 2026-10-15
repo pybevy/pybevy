@@ -1,4 +1,5 @@
 use bevy::window::WindowPosition;
+use pybevy_core::{FromBorrowedStorage, ValueStorage};
 use pybevy_macros::pyenum;
 use pybevy_math::ivec2::PyIVec2;
 use pyo3::prelude::*;
@@ -142,7 +143,9 @@ impl PyWindowPositionAt {
     pub fn value(slf: PyRef<'_, Self>) -> PyResult<PyIVec2> {
         let base = slf.into_super();
         match &base.0 {
-            WindowPosition::At(value) => Ok((*value).into()),
+            WindowPosition::At(value) => Ok(PyIVec2::from_borrowed(
+                ValueStorage::read_only_snapshot(*value),
+            )),
             _ => unreachable!("WindowPosition.At changed discriminant"),
         }
     }

@@ -17,15 +17,15 @@ use bevy::{
             Buffer, BufferDescriptor, BufferUsages, CommandEncoderDescriptor, Extent3d, MapMode,
             PollType, TexelCopyBufferInfo, TexelCopyBufferLayout, TextureUsages,
         },
-        renderer::{RenderContext, RenderDevice, RenderGraph, RenderQueue},
+        renderer::{RenderContext, RenderDevice, RenderGraph, RenderGraphSystems, RenderQueue},
         texture::GpuImage,
     },
 };
 use crossbeam_channel::{Receiver, Sender};
 use tracing::{debug, error, warn};
 
-/// (frame bytes, width, height, arrival sequence) of the latest readback frame.
-type LatestFrame = (Arc<Vec<u8>>, u32, u32, u64);
+/// (frame bytes, width, height, arrival sequence, source entity bits) of the latest readback frame.
+type LatestFrame = (Arc<Vec<u8>>, u32, u32, u64, u64);
 
 /// Global frame buffer: entity bits → latest frame bytes.
 /// Written by Rust `collect_readback_frames` system, read by Python `poll_readback_frame`.
@@ -47,13 +47,13 @@ fn latest_frame_slot() -> &'static Mutex<Option<LatestFrame>> {
 /// Poll the latest readback frame with dimensions. Used by the control server
 /// for headless screenshots.
 pub fn poll_latest_frame() -> Option<(Vec<u8>, u32, u32)> {
-    let (frame, width, height, _) = latest_frame_slot().lock().ok()?.clone()?;
+    let (frame, width, height, ..) = latest_frame_slot().lock().ok()?.clone()?;
     Some((unwrap_frame(frame), width, height))
 }
 
 /// Poll the latest readback frame and the sequence assigned when it arrived.
 pub fn poll_latest_frame_with_sequence() -> Option<(Vec<u8>, u32, u32, u64)> {
-    let (frame, width, height, sequence) = latest_frame_slot().lock().ok()?.clone()?;
+    let (frame, width, height, sequence, _) = latest_frame_slot().lock().ok()?.clone()?;
     Some((unwrap_frame(frame), width, height, sequence))
 }
 
@@ -136,6 +136,7 @@ impl FrameReceiver {
 pub struct ImageCopier {
     buffer: Buffer,
     enabled: Arc<AtomicBool>,
+    copy_pending: Arc<AtomicBool>,
     pub src_image: Handle<Image>,
     source_entity: Option<Entity>,
     /// Extent the destination buffer was sized for; the copy is bounded by it.
@@ -185,6 +186,7 @@ impl ImageCopier {
             bytes_per_pixel,
             layer_warning_sent: Arc::new(AtomicBool::new(false)),
             enabled: Arc::new(AtomicBool::new(true)),
+            copy_pending: Arc::new(AtomicBool::new(false)),
             sender,
         }
     }
@@ -282,9 +284,11 @@ impl Plugin for ImageCopyPlugin {
 
         let render_app = app.sub_app_mut(RenderApp);
 
-        // Render passes are systems; the image-copy pass runs in the top-level
-        // `RenderGraph` schedule.
-        render_app.add_systems(RenderGraph, image_copy_driver);
+        // Copy after the camera passes are submitted so the readback sees this frame.
+        render_app.add_systems(
+            RenderGraph,
+            image_copy_driver.in_set(RenderGraphSystems::Finish),
+        );
         debug!("[ImageCopyPlugin] Added image copy driver system");
 
         render_app
@@ -400,11 +404,18 @@ pub fn collect_readback_frames(receivers: Query<(Entity, &FrameReceiver)>) {
         }
     }
 
-    if let Some((_, frame, width, height)) = headline
-        && let Ok(mut latest) = latest_frame_slot().lock()
-    {
+    let Ok(mut latest) = latest_frame_slot().lock() else {
+        return;
+    };
+    if let Some((bits, frame, width, height)) = headline {
         let sequence = LATEST_FRAME_SEQUENCE.fetch_add(1, Ordering::AcqRel) + 1;
-        *latest = Some((frame, width, height, sequence));
+        *latest = Some((frame, width, height, sequence, bits));
+    } else if let Some((.., source_bits)) = *latest
+        && !receivers
+            .iter()
+            .any(|(entity, _)| entity.to_bits() == source_bits)
+    {
+        *latest = None;
     }
 }
 
@@ -521,7 +532,13 @@ fn image_copy_driver(
         );
 
         render_queue.submit(std::iter::once(encoder.finish()));
+        image_copier.copy_pending.store(true, Ordering::Release);
     }
+}
+
+/// Claim this frame's readback only when the driver submitted a copy for it.
+fn claim_submitted_copy(enabled: &AtomicBool, copy_pending: &AtomicBool) -> bool {
+    enabled.load(Ordering::Relaxed) && copy_pending.swap(false, Ordering::AcqRel)
 }
 
 fn readback_map_ready(
@@ -551,8 +568,8 @@ fn receive_image_from_buffer(image_copiers: Res<ImageCopiers>, render_device: Re
     );
 
     for image_copier in image_copiers.0.iter() {
-        if !image_copier.enabled() {
-            debug!("[receive_image_from_buffer] Skipping disabled copier");
+        if !claim_submitted_copy(&image_copier.enabled, &image_copier.copy_pending) {
+            debug!("[receive_image_from_buffer] No copy submitted this frame, skipping");
             continue;
         }
 

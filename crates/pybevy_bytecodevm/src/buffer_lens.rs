@@ -261,7 +261,7 @@ mod tests {
             )),
             Box::new(field(key, 8)),
         );
-        let bytecode = compile_assignment(key, 4, FieldType::F32, &expression);
+        let bytecode = compile_assignment(key, 4, FieldType::F32, &expression).unwrap();
         assert!(validate_buffer_program(&bytecode, key, 12, &[FieldType::F32]).is_ok());
     }
 
@@ -269,7 +269,7 @@ mod tests {
     fn rejects_foreign_field() {
         let key = alloc_buffer_key();
         let other = alloc_buffer_key();
-        let bytecode = compile_assignment(key, 0, FieldType::F32, &field(other, 0));
+        let bytecode = compile_assignment(key, 0, FieldType::F32, &field(other, 0)).unwrap();
         assert!(matches!(
             validate_buffer_program(&bytecode, key, 12, &[FieldType::F32]),
             Err(BufferLensError::ForeignField { .. })
@@ -279,14 +279,14 @@ mod tests {
     #[test]
     fn rejects_out_of_bounds_and_overflowing_offsets() {
         let key = alloc_buffer_key();
-        let out_of_bounds = compile_assignment(key, 12, FieldType::F32, &field(key, 0));
+        let out_of_bounds = compile_assignment(key, 12, FieldType::F32, &field(key, 0)).unwrap();
         assert!(matches!(
             validate_buffer_program(&out_of_bounds, key, 12, &[FieldType::F32]),
             Err(BufferLensError::OffsetOutOfBounds { .. })
         ));
 
         let overflow =
-            compile_assignment(key, usize::MAX, FieldType::U8, &field_u8(key, usize::MAX));
+            compile_assignment(key, usize::MAX, FieldType::U8, &field_u8(key, usize::MAX)).unwrap();
         assert!(matches!(
             validate_buffer_program(&overflow, key, 4, &[FieldType::U8]),
             Err(BufferLensError::OffsetOutOfBounds {
@@ -300,7 +300,7 @@ mod tests {
     #[test]
     fn rejects_misaligned_or_disallowed_fields() {
         let key = alloc_buffer_key();
-        let misaligned = compile_assignment(key, 0, FieldType::F32, &field(key, 2));
+        let misaligned = compile_assignment(key, 0, FieldType::F32, &field(key, 2)).unwrap();
         assert!(matches!(
             validate_buffer_program(&misaligned, key, 12, &[FieldType::F32]),
             Err(BufferLensError::MisalignedOffset { .. })
@@ -311,7 +311,7 @@ mod tests {
             offset: 0,
             field_type: FieldType::F64,
         };
-        let disallowed = compile_assignment(key, 0, FieldType::F64, &f64_field);
+        let disallowed = compile_assignment(key, 0, FieldType::F64, &f64_field).unwrap();
         assert!(matches!(
             validate_buffer_program(&disallowed, key, 12, &[FieldType::F32]),
             Err(BufferLensError::UnsupportedFieldType { .. })
@@ -362,7 +362,7 @@ mod tests {
             )),
             Box::new(field(key, 8)),
         );
-        let bytecode = compile_assignment(key, 4, FieldType::F32, &expression);
+        let bytecode = compile_assignment(key, 4, FieldType::F32, &expression).unwrap();
         let validated = validate_buffer_program(&bytecode, key, 12, &[FieldType::F32]).unwrap();
 
         let mut values = [[1.0f32, 0.0, 3.0], [5.0, 0.0, 7.0], [2.0, 9.0, 1.0]];
@@ -383,7 +383,7 @@ mod tests {
             )),
             Box::new(RustExpr::Const(10.0)),
         );
-        let bytecode = compile_assignment(key, 0, FieldType::U8, &expression);
+        let bytecode = compile_assignment(key, 0, FieldType::U8, &expression).unwrap();
         let validated = validate_buffer_program(&bytecode, key, 4, &[FieldType::U8]).unwrap();
 
         let mut values = [[10u8, 1, 2, 255], [100, 0, 0, 255], [2, 0, 0, 255]];
@@ -407,7 +407,7 @@ mod tests {
             )),
             Box::new(field(key, 4)),
         );
-        let bytecode = compile_assignment(key, 0, FieldType::F32, &expression);
+        let bytecode = compile_assignment(key, 0, FieldType::F32, &expression).unwrap();
         let validated = validate_buffer_program(&bytecode, key, 12, &[FieldType::F32]).unwrap();
 
         let mut values = [[1.0f32, 10.0, 0.0], [2.0, 20.0, 0.0]];

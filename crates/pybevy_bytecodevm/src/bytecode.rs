@@ -28,6 +28,7 @@
 use std::{cmp::Ordering, collections::HashMap};
 
 use bevy_ecs::component::ComponentId;
+use pybevy_storage::storage_error::expression_too_large;
 
 /// Value types that can be stored on the VM stack
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -735,7 +736,21 @@ pub struct Compiler {
     integers: Vec<i128>,
     field_map: Vec<FieldId>,
     field_index_map: HashMap<FieldId, u16>, // FieldId -> field map index
+    overflowed: bool,
 }
+
+/// A program referenced more distinct literals or fields than its `u16`
+/// instruction indices can address.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProgramTooLarge;
+
+impl std::fmt::Display for ProgramTooLarge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&expression_too_large())
+    }
+}
+
+impl std::error::Error for ProgramTooLarge {}
 
 impl Default for Compiler {
     fn default() -> Self {
@@ -753,7 +768,16 @@ impl Compiler {
             integers: Vec::new(),
             field_map: Vec::new(),
             field_index_map: HashMap::new(),
+            overflowed: false,
         }
+    }
+
+    /// Index for the next entry of a pool holding `len` entries. On overflow
+    /// the program is marked too large and a placeholder index is returned.
+    fn next_index(&mut self, len: usize) -> Option<u16> {
+        let index = u16::try_from(len).ok();
+        self.overflowed |= index.is_none();
+        index
     }
 
     /// Emit a bytecode instruction
@@ -770,7 +794,9 @@ impl Compiler {
             return index;
         }
 
-        let index = self.constants.len() as u16;
+        let Some(index) = self.next_index(self.constants.len()) else {
+            return 0;
+        };
         self.constants.push(value);
         self.constant_map.insert(bits, index);
         index
@@ -782,14 +808,14 @@ impl Compiler {
         if (value as f64) as i128 == value {
             return Op::PushConst(self.add_constant(value as f64));
         }
-        let index = match self.integers.iter().position(|existing| *existing == value) {
-            Some(index) => index,
-            None => {
-                self.integers.push(value);
-                self.integers.len() - 1
-            }
+        if let Some(index) = self.integers.iter().position(|existing| *existing == value) {
+            return Op::PushInt(index as u16);
+        }
+        let Some(index) = self.next_index(self.integers.len()) else {
+            return Op::PushInt(0);
         };
-        Op::PushInt(index as u16)
+        self.integers.push(value);
+        Op::PushInt(index)
     }
 
     /// Replace `PushInt` with the nearest f64 `PushConst`, for executors
@@ -809,35 +835,54 @@ impl Compiler {
             return index;
         }
 
-        let index = self.field_map.len() as u16;
+        let Some(index) = self.next_index(self.field_map.len()) else {
+            return 0;
+        };
         self.field_map.push(field_id);
         self.field_index_map.insert(field_id, index);
         index
     }
 
-    /// Finalize compilation and return the bytecode
-    pub fn finalize(self) -> CompiledBytecode {
-        CompiledBytecode {
+    /// Finalize compilation, rejecting a program whose pools overflowed.
+    pub fn try_finalize(self) -> Result<CompiledBytecode, ProgramTooLarge> {
+        if self.overflowed {
+            return Err(ProgramTooLarge);
+        }
+        Ok(CompiledBytecode {
             bytecode: self.bytecode,
             constants: self.constants,
             integers: self.integers,
             field_map: self.field_map,
-        }
+        })
+    }
+
+    /// Finalize a program known to fit its pools.
+    ///
+    /// # Panics
+    /// If more than 65,536 distinct literals or fields were added. Use
+    /// [`Compiler::try_finalize`] for user expressions.
+    pub fn finalize(self) -> CompiledBytecode {
+        self.try_finalize().expect("program fits its u16 pools")
     }
 
     /// Simple peephole optimization pass: fold an arithmetic op whose two
     /// operands are literals into one literal of the resulting kind.
     pub fn optimize(&mut self) {
         let mut i = 0;
-        while i + 2 < self.bytecode.len() {
-            let folded = match (
-                self.literal_operand(self.bytecode[i]),
-                self.literal_operand(self.bytecode[i + 1]),
-            ) {
-                (Some(a), Some(b)) => fold_literals(self.bytecode[i + 2], a, b),
-                _ => None,
+        while i + 1 < self.bytecode.len() {
+            let Some(a) = self.literal_operand(self.bytecode[i]) else {
+                i += 1;
+                continue;
             };
-            let Some(folded) = folded else {
+            let folded = match fold_unary(self.bytecode[i + 1], a) {
+                Some(value) => Some((value, 2)),
+                None => self
+                    .literal_operand(self.bytecode[i + 1])
+                    .zip(self.bytecode.get(i + 2).copied())
+                    .and_then(|(b, op)| fold_literals(op, a, b))
+                    .map(|value| (value, 3)),
+            };
+            let Some((folded, width)) = folded else {
                 i += 1;
                 continue;
             };
@@ -845,7 +890,8 @@ impl Compiler {
                 Literal::Int(value) => self.int_literal(value),
                 Literal::Float(value) => Op::PushFloatConst(self.add_constant(value)),
             };
-            self.bytecode.drain(i + 1..i + 3);
+            self.bytecode.drain(i + 1..i + width);
+            i = i.saturating_sub(1);
         }
     }
 }
@@ -886,28 +932,66 @@ pub fn exact_i128(value: f64) -> Option<i128> {
         .then_some(value as i128)
 }
 
-/// Fold `a op b` for two literals into a literal of the resulting kind.
-/// Integer arithmetic folds exactly; integer powers only while non-negative.
+/// Fold a unary `op` applied to a literal, as the VM evaluates it.
+fn fold_unary(op: Op, a: Literal) -> Option<Literal> {
+    Some(match (op, a) {
+        (Op::Neg, Literal::Int(value)) => Literal::Int(value.checked_neg()?),
+        (Op::Abs, Literal::Int(value)) => Literal::Int(value.checked_abs()?),
+        (Op::Sign, Literal::Int(value)) => Literal::Int(value.signum()),
+        (Op::Floor | Op::Ceil | Op::Round, Literal::Int(value)) => Literal::Int(value),
+        (Op::Neg, Literal::Float(value)) => Literal::Float(-value),
+        (Op::Abs, Literal::Float(value)) => Literal::Float(value.abs()),
+        (Op::Sign, Literal::Float(value)) => Literal::Float(python_sign(value)),
+        (Op::Floor, Literal::Float(value)) => Literal::Float(value.floor()),
+        (Op::Ceil, Literal::Float(value)) => Literal::Float(value.ceil()),
+        (Op::Round, Literal::Float(value)) => Literal::Float(python_round(value)),
+        _ => return None,
+    })
+}
+
+/// Python's floor quotient and remainder, or `None` for a zero divisor or
+/// an overflowing quotient.
+fn floor_divmod_i128(a: i128, b: i128) -> Option<(i128, i128)> {
+    let quotient = a.checked_div(b)?;
+    let remainder = a.checked_rem(b)?;
+    Some(if remainder != 0 && (remainder < 0) != (b < 0) {
+        (quotient - 1, remainder + b)
+    } else {
+        (quotient, remainder)
+    })
+}
+
+/// Fold `a op b` for two literals into a literal of the resulting kind, as the
+/// VM evaluates it. Integer arithmetic folds exactly; integer powers only while
+/// non-negative; division by a zero literal is left to the VM.
 fn fold_literals(op: Op, a: Literal, b: Literal) -> Option<Literal> {
     if let (Literal::Int(a), Literal::Int(b)) = (a, b) {
         return match op {
             Op::Add => a.checked_add(b).map(Literal::Int),
             Op::Sub => a.checked_sub(b).map(Literal::Int),
             Op::Mul => a.checked_mul(b).map(Literal::Int),
+            Op::Min => Some(Literal::Int(a.min(b))),
+            Op::Max => Some(Literal::Int(a.max(b))),
+            Op::FloorDiv => floor_divmod_i128(a, b).map(|(quotient, _)| Literal::Int(quotient)),
+            Op::Mod => floor_divmod_i128(a, b).map(|(_, remainder)| Literal::Int(remainder)),
             Op::Div if b != 0 => Some(Literal::Float(a as f64 / b as f64)),
             Op::Pow => a.checked_pow(u32::try_from(b).ok()?).map(Literal::Int),
             _ => None,
         };
     }
     let (a, b) = (a.as_f64(), b.as_f64());
-    match op {
-        Op::Add => Some(Literal::Float(a + b)),
-        Op::Sub => Some(Literal::Float(a - b)),
-        Op::Mul => Some(Literal::Float(a * b)),
-        Op::Div if b != 0.0 => Some(Literal::Float(a / b)),
-        Op::Pow => Some(Literal::Float(a.powf(b))),
-        _ => None,
-    }
+    Some(Literal::Float(match op {
+        Op::Add => a + b,
+        Op::Sub => a - b,
+        Op::Mul => a * b,
+        Op::Min => python_minimum(a, b),
+        Op::Max => python_maximum(a, b),
+        Op::Div if b != 0.0 => a / b,
+        Op::FloorDiv if b != 0.0 => numpy_floor_divide(a, b),
+        Op::Mod if b != 0.0 => python_remainder(a, b),
+        Op::Pow => a.powf(b),
+        _ => return None,
+    }))
 }
 
 /// Return the sign convention exposed by PyBevy's Python expression APIs.
@@ -1742,10 +1826,11 @@ impl VM {
     /// # Safety
     ///
     /// The caller must ensure that:
-    /// - All field pointers in `field_ptrs` are valid and aligned for their respective types
+    /// - `field_ptrs` holds one pointer per `bytecode.field_map` entry, valid for
+    ///   reads of its `FieldType` and for writes where the program stores to it;
+    ///   no alignment is required
     /// - Field pointers remain valid for the duration of this call
     /// - No other code mutates the same memory during execution
-    /// - Each pointer's alignment matches the requirements of its FieldType (8 bytes for f64/i64/u64)
     pub unsafe fn execute(
         &mut self,
         bytecode: &CompiledBytecode,
@@ -1787,9 +1872,9 @@ impl VM {
     /// # Safety
     ///
     /// Same safety requirements as `execute()`:
-    /// - All field pointers in `field_ptrs` must be valid and aligned for their respective types
+    /// - `field_ptrs` holds one pointer per `bytecode.field_map` entry, valid for
+    ///   reads of its `FieldType`; no alignment is required
     /// - Field pointers must remain valid for the duration of this call
-    /// - Each pointer's alignment matches the requirements of its FieldType (8 bytes for f64/i64/u64)
     pub unsafe fn execute_and_reduce(
         &mut self,
         bytecode: &CompiledBytecode,
@@ -1907,6 +1992,8 @@ impl VM {
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
+    use pybevy_storage::storage_error::EXPRESSION_MAX_POOL_ENTRIES;
+
     use super::*;
 
     #[test]
@@ -3662,6 +3749,127 @@ mod tests {
         assert_eq!(fold(int_2, int_3, Op::Pow, &constants), Some((8.0, false)));
         assert_eq!(fold(int_2, float_3, Op::Pow, &constants), Some((8.0, true)));
         assert_eq!(fold(int_2, int_negative, Op::Pow, &constants), None);
+    }
+
+    fn folded(ops: &[Op], constants: &[f64], integers: &[i128]) -> CompiledBytecode {
+        let mut compiler = Compiler::new();
+        for value in constants {
+            compiler.add_constant(*value);
+        }
+        for value in integers {
+            compiler.integers.push(*value);
+        }
+        for op in ops {
+            compiler.emit(*op);
+        }
+        compiler.optimize();
+        compiler.finalize()
+    }
+
+    fn single_literal(bytecode: &CompiledBytecode) -> Option<(f64, bool)> {
+        match bytecode.bytecode[..] {
+            [Op::PushConst(index)] => Some((bytecode.constants[usize::from(index)], false)),
+            [Op::PushFloatConst(index)] => Some((bytecode.constants[usize::from(index)], true)),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn optimizer_folds_nested_and_unary_literal_operations() {
+        let (one, two, three) = (Op::PushConst(0), Op::PushConst(1), Op::PushConst(2));
+        let constants = [1.0, 2.0, 3.0, -7.0, 0.5];
+        let cases: [(&[Op], (f64, bool)); 8] = [
+            (&[one, two, three, Op::Add, Op::Add], (6.0, false)),
+            (&[one, two, Op::Add, three, Op::Mul], (9.0, false)),
+            (&[three, Op::Neg, Op::Abs], (3.0, false)),
+            (&[three, two, Op::Min, one, Op::Max], (2.0, false)),
+            (&[Op::PushConst(3), two, Op::FloorDiv], (-4.0, false)),
+            (&[Op::PushConst(3), two, Op::Mod], (1.0, false)),
+            (&[Op::PushConst(3), Op::Sign], (-1.0, false)),
+            (
+                &[Op::PushFloatConst(4), Op::Neg, three, Op::Max],
+                (3.0, true),
+            ),
+        ];
+        for (ops, expected) in cases {
+            assert_eq!(
+                single_literal(&folded(ops, &constants, &[])),
+                Some(expected),
+                "{ops:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn optimizer_folds_exact_integer_literals_beyond_f64() {
+        let bytecode = folded(
+            &[
+                Op::PushConst(0),
+                Op::PushInt(0),
+                Op::PushConst(0),
+                Op::Add,
+                Op::Add,
+            ],
+            &[1.0],
+            &[(1 << 62) + 1],
+        );
+        assert!(matches!(bytecode.bytecode[..], [Op::PushInt(_)]));
+        assert!(bytecode.integers.contains(&((1 << 62) + 3)));
+        let min = folded(
+            &[Op::PushInt(0), Op::PushInt(1), Op::Min],
+            &[],
+            &[(1 << 64) + 1, (1 << 65) + 1],
+        );
+        assert!(
+            matches!(min.bytecode[..], [Op::PushInt(index)] if min.integers[usize::from(index)] == (1 << 64) + 1)
+        );
+    }
+
+    #[test]
+    fn optimizer_leaves_zero_divisors_and_overflow_to_the_vm() {
+        for op in [Op::Div, Op::FloorDiv, Op::Mod] {
+            let bytecode = folded(&[Op::PushConst(0), Op::PushConst(1), op], &[7.0, 0.0], &[]);
+            assert_eq!(bytecode.bytecode.len(), 3, "{op:?}");
+        }
+        let bytecode = folded(
+            &[Op::PushInt(0), Op::PushInt(1), Op::FloorDiv],
+            &[],
+            &[i128::MIN, -1],
+        );
+        assert_eq!(bytecode.bytecode.len(), 3);
+    }
+
+    #[test]
+    fn pools_past_u16_indices_are_rejected_instead_of_aliasing() {
+        let full = |count: usize| {
+            let mut compiler = Compiler::new();
+            for value in 0..count {
+                let index = compiler.add_constant(value as f64);
+                compiler.emit(Op::PushConst(index));
+            }
+            compiler
+        };
+        assert!(full(EXPRESSION_MAX_POOL_ENTRIES).try_finalize().is_ok());
+        assert_eq!(
+            full(EXPRESSION_MAX_POOL_ENTRIES + 1).try_finalize().err(),
+            Some(ProgramTooLarge)
+        );
+
+        let mut fields = Compiler::new();
+        for offset in 0..=EXPRESSION_MAX_POOL_ENTRIES {
+            fields.add_field(FieldId {
+                component_id: ComponentId::new(0),
+                offset,
+                field_type: FieldType::U8,
+            });
+        }
+        assert_eq!(fields.try_finalize().err(), Some(ProgramTooLarge));
+
+        let mut integers = Compiler::new();
+        for value in 0..=EXPRESSION_MAX_POOL_ENTRIES as i128 {
+            integers.int_literal((1 << 60) + 2 * value + 1);
+        }
+        assert_eq!(integers.try_finalize().err(), Some(ProgramTooLarge));
     }
 
     #[test]

@@ -177,6 +177,20 @@ pub struct HeadlessFrameBuffer {
     pub sequence: u64,
 }
 
+impl HeadlessFrameBuffer {
+    /// Mirror the renderer's latest readback frame, dropping it once no camera produces one.
+    pub fn sync(&mut self, latest: Option<(Vec<u8>, u32, u32, u64)>) {
+        match latest {
+            Some((bytes, width, height, sequence)) if sequence > self.sequence => {
+                self.latest = Some((bytes, width, height));
+                self.sequence = sequence;
+            }
+            Some(_) => {}
+            None => self.latest = None,
+        }
+    }
+}
+
 /// Cross-world render completion state for captures queued after live edits.
 #[derive(Resource, Clone, Default)]
 pub struct RenderFrameReadiness {
@@ -3989,6 +4003,70 @@ mod tests {
         assert_eq!(capture["width"], 1);
         assert!(world.resource::<StagedScreenshots>().pending.is_empty());
         assert_eq!(world.resource::<OverlaySuppression>().0, 0);
+    }
+
+    #[test]
+    fn headless_frame_buffer_sync_drops_the_frame_but_keeps_the_sequence() {
+        let mut buffer = HeadlessFrameBuffer {
+            latest: Some((vec![255, 0, 0, 255], 1, 1)),
+            sequence: 5,
+        };
+
+        buffer.sync(Some((vec![0, 0, 255, 255], 1, 1, 5)));
+        assert_eq!(buffer.latest, Some((vec![255, 0, 0, 255], 1, 1)));
+
+        buffer.sync(None);
+        assert_eq!(buffer.latest, None);
+        assert_eq!(buffer.sequence, 5);
+
+        buffer.sync(Some((vec![0, 255, 0, 255], 1, 1, 6)));
+        assert_eq!(buffer.latest, Some((vec![0, 255, 0, 255], 1, 1)));
+        assert_eq!(buffer.sequence, 6);
+    }
+
+    #[test]
+    fn staged_capture_waits_instead_of_using_a_despawned_cameras_frame() {
+        let mut world = world_with_gizmos();
+        spawn_structurally_valid_headless_camera(&mut world);
+        world.insert_resource(HeadlessFrameBuffer {
+            latest: Some((vec![255, 0, 0, 255], 1, 1)),
+            sequence: 5,
+        });
+        world.insert_resource(OverlaySuppression(1));
+        world.insert_resource(PendingScreenshots::default());
+        let (tx, mut rx) = oneshot::channel();
+        world.insert_resource(StagedScreenshots {
+            pending: vec![StagedScreenshot {
+                response_tx: tx,
+                frames_remaining: 0,
+                with_gizmos: false,
+                gizmo_restore: GizmoEnabledRestore::new(),
+                max_width: None,
+                debug_cleanup: None,
+                ui_restore: None,
+                entity_isolation: None,
+                depth_analysis: None,
+                extra_response: None,
+                response_kind: CaptureResponseKind::Screenshot,
+                baseline_headless_sequence: Some(5),
+                frames_waited: 0,
+            }],
+        });
+
+        world.resource_mut::<HeadlessFrameBuffer>().sync(None);
+        process_pending_screenshots(&mut world);
+
+        assert!(rx.try_recv().is_err(), "capture must wait for a new frame");
+        assert_eq!(world.resource::<StagedScreenshots>().pending.len(), 1);
+
+        world
+            .resource_mut::<HeadlessFrameBuffer>()
+            .sync(Some((vec![0, 255, 0, 255], 1, 1, 6)));
+        process_pending_screenshots(&mut world);
+
+        let capture = rx.try_recv().unwrap().unwrap();
+        assert_eq!(capture["width"], 1);
+        assert!(world.resource::<StagedScreenshots>().pending.is_empty());
     }
 
     #[test]

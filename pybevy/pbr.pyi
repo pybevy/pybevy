@@ -212,25 +212,31 @@ class FogFalloff:
     REVISED_KOSCHMIEDER_CONTRAST_THRESHOLD: float
 
     class Linear(FogFalloff):
-        __match_args__: ClassVar[tuple[Literal["start"], Literal["end"]]]
-        start: float
-        end: float
+        __match_args__: ClassVar[tuple[Literal["start"], Literal["end"]]] = ("start", "end")
+        @property
+        def start(self) -> float: ...
+        @property
+        def end(self) -> float: ...
         def __init__(self, *, start: float, end: float) -> None: ...
 
     class Exponential(FogFalloff):
-        __match_args__: ClassVar[tuple[Literal["density"]]]
-        density: float
+        __match_args__: ClassVar[tuple[Literal["density"]]] = ("density",)
+        @property
+        def density(self) -> float: ...
         def __init__(self, *, density: float) -> None: ...
 
     class ExponentialSquared(FogFalloff):
-        __match_args__: ClassVar[tuple[Literal["density"]]]
-        density: float
+        __match_args__: ClassVar[tuple[Literal["density"]]] = ("density",)
+        @property
+        def density(self) -> float: ...
         def __init__(self, *, density: float) -> None: ...
 
     class Atmospheric(FogFalloff):
-        __match_args__: ClassVar[tuple[Literal["extinction"], Literal["inscattering"]]]
-        extinction: Vec3
-        inscattering: Vec3
+        __match_args__: ClassVar[tuple[Literal["extinction"], Literal["inscattering"]]] = ("extinction", "inscattering")
+        @property
+        def extinction(self) -> Vec3: ...
+        @property
+        def inscattering(self) -> Vec3: ...
         def __init__(self, *, extinction: Vec3, inscattering: Vec3) -> None: ...
 
     @staticmethod

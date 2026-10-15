@@ -19,7 +19,10 @@ use bevy_tasks::ComputeTaskPool;
 use nonmax::NonMaxU32;
 
 use crate::{
-    bytecode::{CompiledBytecode, Compiler, FieldId, FieldType, NegativeIntegerPower, Op, VM},
+    bytecode::{
+        CompiledBytecode, Compiler, FieldId, FieldType, NegativeIntegerPower, Op, ProgramTooLarge,
+        VM,
+    },
     expr::RustExpr,
     tiled::{TiledScratch, execute_assignment_tiled, supported_program},
 };
@@ -1002,9 +1005,9 @@ pub fn compile_assignment(
     dest_offset: usize,
     dest_field_type: FieldType,
     expr: &RustExpr,
-) -> CompiledBytecode {
+) -> Result<CompiledBytecode, ProgramTooLarge> {
     let mut compiler = Compiler::new();
-    compile_expr(expr, &mut compiler);
+    expr.compile(&mut compiler);
     let dest = FieldId {
         component_id: dest_component_id,
         offset: dest_offset,
@@ -1012,232 +1015,10 @@ pub fn compile_assignment(
     };
     let dest_idx = compiler.add_field(dest);
     compiler.emit(Op::StoreField(dest_idx));
-    // Fold constant arithmetic, as `RustExpr::compile_assignment` does, so
-    // the folded value is range-checked and the program stays tiled-eligible.
+    // Fold constant arithmetic so the folded value is range-checked and the
+    // program stays tiled-eligible.
     compiler.optimize();
-    compiler.finalize()
-}
-
-/// Compile a RustExpr to bytecode operations.
-fn compile_expr(expr: &RustExpr, c: &mut Compiler) {
-    match expr {
-        RustExpr::Field {
-            component_id,
-            offset,
-            field_type,
-        } => {
-            let fid = FieldId {
-                component_id: *component_id,
-                offset: *offset,
-                field_type: *field_type,
-            };
-            let idx = c.add_field(fid);
-            c.emit(Op::PushField(idx));
-        }
-        RustExpr::Input { index, .. } => {
-            c.emit(Op::PushInput(*index));
-        }
-        RustExpr::Const(v) => {
-            let idx = c.add_constant(*v);
-            c.emit(Op::PushConst(idx));
-        }
-        RustExpr::FloatConst(v) => {
-            let idx = c.add_constant(*v);
-            c.emit(Op::PushFloatConst(idx));
-        }
-        RustExpr::Int(v) => {
-            let push = c.int_literal(*v);
-            c.emit(push);
-        }
-        RustExpr::Add(a, b) => {
-            compile_expr(a, c);
-            compile_expr(b, c);
-            c.emit(Op::Add);
-        }
-        RustExpr::Sub(a, b) => {
-            compile_expr(a, c);
-            compile_expr(b, c);
-            c.emit(Op::Sub);
-        }
-        RustExpr::Mul(a, b) => {
-            compile_expr(a, c);
-            compile_expr(b, c);
-            c.emit(Op::Mul);
-        }
-        RustExpr::Div(a, b) => {
-            compile_expr(a, c);
-            compile_expr(b, c);
-            c.emit(Op::Div);
-        }
-        RustExpr::FloorDiv(a, b) => {
-            compile_expr(a, c);
-            compile_expr(b, c);
-            c.emit(Op::FloorDiv);
-        }
-        RustExpr::Neg(a) => {
-            compile_expr(a, c);
-            c.emit(Op::Neg);
-        }
-        RustExpr::Sin(a) => {
-            compile_expr(a, c);
-            c.emit(Op::Sin);
-        }
-        RustExpr::Cos(a) => {
-            compile_expr(a, c);
-            c.emit(Op::Cos);
-        }
-        RustExpr::Tan(a) => {
-            compile_expr(a, c);
-            c.emit(Op::Tan);
-        }
-        RustExpr::Asin(a) => {
-            compile_expr(a, c);
-            c.emit(Op::Asin);
-        }
-        RustExpr::Acos(a) => {
-            compile_expr(a, c);
-            c.emit(Op::Acos);
-        }
-        RustExpr::Atan(a) => {
-            compile_expr(a, c);
-            c.emit(Op::Atan);
-        }
-        RustExpr::Sqrt(a) => {
-            compile_expr(a, c);
-            c.emit(Op::Sqrt);
-        }
-        RustExpr::Abs(a) => {
-            compile_expr(a, c);
-            c.emit(Op::Abs);
-        }
-        RustExpr::Floor(a) => {
-            compile_expr(a, c);
-            c.emit(Op::Floor);
-        }
-        RustExpr::Ceil(a) => {
-            compile_expr(a, c);
-            c.emit(Op::Ceil);
-        }
-        RustExpr::Round(a) => {
-            compile_expr(a, c);
-            c.emit(Op::Round);
-        }
-        RustExpr::Exp(a) => {
-            compile_expr(a, c);
-            c.emit(Op::Exp);
-        }
-        RustExpr::Ln(a) => {
-            compile_expr(a, c);
-            c.emit(Op::Ln);
-        }
-        RustExpr::Log10(a) => {
-            compile_expr(a, c);
-            c.emit(Op::Log10);
-        }
-        RustExpr::Log2(a) => {
-            compile_expr(a, c);
-            c.emit(Op::Log2);
-        }
-        RustExpr::Sign(a) => {
-            compile_expr(a, c);
-            c.emit(Op::Sign);
-        }
-        RustExpr::Fract(a) => {
-            compile_expr(a, c);
-            c.emit(Op::Fract);
-        }
-        RustExpr::Mod(a, b) => {
-            compile_expr(a, c);
-            compile_expr(b, c);
-            c.emit(Op::Mod);
-        }
-        RustExpr::Pow(a, b) => {
-            compile_expr(a, c);
-            compile_expr(b, c);
-            c.emit(Op::Pow);
-        }
-        RustExpr::Min(a, b) => {
-            compile_expr(a, c);
-            compile_expr(b, c);
-            c.emit(Op::Min);
-        }
-        RustExpr::Max(a, b) => {
-            compile_expr(a, c);
-            compile_expr(b, c);
-            c.emit(Op::Max);
-        }
-        RustExpr::Clamp(val, min, max) => {
-            compile_expr(val, c);
-            compile_expr(min, c);
-            compile_expr(max, c);
-            c.emit(Op::Clamp);
-        }
-        RustExpr::Lerp(a, b, t) => {
-            compile_expr(a, c);
-            compile_expr(b, c);
-            compile_expr(t, c);
-            c.emit(Op::Lerp);
-        }
-        // Comparison/logical ops - compile to 1.0/0.0 result
-        RustExpr::Eq(a, b) => {
-            compile_expr(a, c);
-            compile_expr(b, c);
-            c.emit(Op::Eq);
-        }
-        RustExpr::Ne(a, b) => {
-            compile_expr(a, c);
-            compile_expr(b, c);
-            c.emit(Op::Ne);
-        }
-        RustExpr::Lt(a, b) => {
-            compile_expr(a, c);
-            compile_expr(b, c);
-            c.emit(Op::Lt);
-        }
-        RustExpr::Le(a, b) => {
-            compile_expr(a, c);
-            compile_expr(b, c);
-            c.emit(Op::Le);
-        }
-        RustExpr::Gt(a, b) => {
-            compile_expr(a, c);
-            compile_expr(b, c);
-            c.emit(Op::Gt);
-        }
-        RustExpr::Ge(a, b) => {
-            compile_expr(a, c);
-            compile_expr(b, c);
-            c.emit(Op::Ge);
-        }
-        RustExpr::And(a, b) => {
-            compile_expr(a, c);
-            compile_expr(b, c);
-            c.emit(Op::And);
-        }
-        RustExpr::Or(a, b) => {
-            compile_expr(a, c);
-            compile_expr(b, c);
-            c.emit(Op::Or);
-        }
-        RustExpr::Not(a) => {
-            compile_expr(a, c);
-            c.emit(Op::Not);
-        }
-        RustExpr::Where(cond, true_expr, false_expr) => {
-            compile_expr(cond, c);
-            compile_expr(true_expr, c);
-            compile_expr(false_expr, c);
-            c.emit(Op::Where);
-        }
-        RustExpr::Random(stream) => {
-            c.emit(Op::Random(*stream));
-        }
-        RustExpr::RandomRange(min, max, stream) => {
-            compile_expr(min, c);
-            compile_expr(max, c);
-            c.emit(Op::RandomRange(*stream));
-        }
-    }
+    compiler.try_finalize()
 }
 
 #[cfg(test)]
@@ -1957,7 +1738,7 @@ mod tests {
                 )),
             )),
         );
-        let bytecode = compile_assignment(cid, 0, FieldType::I64, &expression);
+        let bytecode = compile_assignment(cid, 0, FieldType::I64, &expression).unwrap();
         let (batched, filtered) = both_paths_i64(&bytecode, cid, 1);
         assert_eq!(batched, filtered);
     }
@@ -2065,7 +1846,7 @@ mod tests {
             Box::new(RustExpr::Const(3.0)),
         );
 
-        let bytecode = compile_assignment(cid, 0, FieldType::F32, &expr);
+        let bytecode = compile_assignment(cid, 0, FieldType::F32, &expr).unwrap();
         // PushField(0), PushConst(3.0), Add, StoreField(0)
         assert_eq!(bytecode.bytecode.len(), 4);
 
@@ -2075,6 +1856,17 @@ mod tests {
         // SAFETY: the program's only field is this live, exclusively held f32.
         unsafe { vm.execute(&bytecode, &[ptr], 0) };
         assert_eq!(value, 10.0);
+    }
+
+    #[test]
+    fn compile_assignment_folds_literal_arithmetic() {
+        let cid = ComponentId::new(0);
+        let expr = RustExpr::Add(
+            Box::new(RustExpr::Const(5.0)),
+            Box::new(RustExpr::Const(3.0)),
+        );
+        let bytecode = compile_assignment(cid, 0, FieldType::F32, &expr).unwrap();
+        assert_eq!(bytecode.bytecode.len(), 2);
     }
 
     #[test]

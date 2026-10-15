@@ -3,7 +3,11 @@
 //! This module provides an Abstract Syntax Tree (AST) for mathematical expressions
 //! that can be compiled to bytecode for efficient execution.
 
-use std::fmt;
+use std::{
+    fmt,
+    hash::{Hash, Hasher},
+    mem::discriminant,
+};
 
 use bevy_ecs::component::ComponentId;
 use pybevy_storage::storage_error::{EXPRESSION_MAX_DEPTH, expression_too_deep};
@@ -13,7 +17,7 @@ use pyo3::{
     types::{PyBool, PyFloat, PyInt},
 };
 
-use super::bytecode::{CompiledBytecode, Compiler, FieldId, FieldType, Op};
+use super::bytecode::{Compiler, FieldId, FieldType, Op, ProgramTooLarge};
 
 /// Extract exactly `N` expression arguments, rejecting malformed `args` lists
 /// with a `TypeError`.
@@ -265,6 +269,64 @@ impl RustExpr {
             (Const(a), Const(b)) | (FloatConst(a), FloatConst(b)) => a.to_bits() == b.to_bits(),
             (Int(a), Int(b)) => a == b,
             _ => false,
+        }
+    }
+
+    /// Structural hash consistent with [`RustExpr::canonical_eq`].
+    pub(crate) fn canonical_hash<H: Hasher>(&self, state: &mut H) {
+        use RustExpr::*;
+
+        discriminant(self).hash(state);
+        match self {
+            Add(a, b)
+            | Sub(a, b)
+            | Mul(a, b)
+            | Div(a, b)
+            | FloorDiv(a, b)
+            | Pow(a, b)
+            | Min(a, b)
+            | Max(a, b)
+            | Eq(a, b)
+            | Ne(a, b)
+            | Lt(a, b)
+            | Le(a, b)
+            | Gt(a, b)
+            | Ge(a, b)
+            | And(a, b)
+            | Or(a, b)
+            | Mod(a, b) => {
+                a.canonical_hash(state);
+                b.canonical_hash(state);
+            }
+            RandomRange(a, b, stream) => {
+                stream.hash(state);
+                a.canonical_hash(state);
+                b.canonical_hash(state);
+            }
+            Neg(a) | Sin(a) | Cos(a) | Tan(a) | Asin(a) | Acos(a) | Atan(a) | Sqrt(a) | Abs(a)
+            | Floor(a) | Ceil(a) | Round(a) | Not(a) | Exp(a) | Ln(a) | Log10(a) | Log2(a)
+            | Sign(a) | Fract(a) => a.canonical_hash(state),
+            Clamp(a, b, c) | Where(a, b, c) | Lerp(a, b, c) => {
+                a.canonical_hash(state);
+                b.canonical_hash(state);
+                c.canonical_hash(state);
+            }
+            Random(stream) => stream.hash(state),
+            Field {
+                component_id,
+                offset,
+                field_type,
+            } => {
+                component_id.hash(state);
+                offset.hash(state);
+                field_type.hash(state);
+            }
+            Input { index, field_type } => {
+                index.hash(state);
+                field_type.hash(state);
+            }
+            Const(value) | FloatConst(value) => value.to_bits().hash(state),
+            Int(value) => value.hash(state),
         }
     }
 
@@ -1112,7 +1174,9 @@ impl RustExpr {
         let mut compiler = Compiler::new();
         expr.compile(&mut compiler);
         compiler.lower_integers_to_f64();
-        let compiled = compiler.finalize();
+        let compiled = compiler
+            .try_finalize()
+            .map_err(|_| MapCompileError::ProgramTooLarge)?;
         if !compiled.field_map.is_empty() {
             return Err(MapCompileError::ComponentField);
         }
@@ -1131,36 +1195,6 @@ impl RustExpr {
             input_count,
         })
     }
-
-    /// Compile an assignment expression: dest = expr
-    ///
-    /// Returns compiled bytecode that evaluates `expr` and stores to `dest_field`
-    pub fn compile_assignment(dest_field: FieldId, expr: &RustExpr) -> PyResult<CompiledBytecode> {
-        let mut compiler = Compiler::new();
-
-        // Compile the right-hand side expression
-        expr.compile(&mut compiler);
-
-        // Add the store operation
-        let field_idx = compiler.add_field(dest_field);
-        compiler.emit(Op::StoreField(field_idx));
-
-        // Optimize before finalizing
-        compiler.optimize();
-
-        let compiled = compiler.finalize();
-        if compiled
-            .bytecode
-            .iter()
-            .any(|operation| matches!(operation, Op::PushInput(_)))
-        {
-            return Err(PyTypeError::new_err(
-                "dense input cannot be used in an ECS assignment",
-            ));
-        }
-
-        Ok(compiled)
-    }
 }
 
 /// Store-free bytecode over numbered dense input columns.
@@ -1174,6 +1208,7 @@ pub struct CompiledMap {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MapCompileError {
     ComponentField,
+    ProgramTooLarge,
 }
 
 impl fmt::Display for MapCompileError {
@@ -1182,6 +1217,7 @@ impl fmt::Display for MapCompileError {
             MapCompileError::ComponentField => {
                 write!(f, "dense expressions cannot reference ECS component fields")
             }
+            MapCompileError::ProgramTooLarge => fmt::Display::fmt(&ProgramTooLarge, f),
         }
     }
 }
@@ -1199,7 +1235,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::bytecode::VM;
+    use crate::bytecode::{CompiledBytecode, VM};
 
     /// Build a Python expression object (`types.SimpleNamespace`) with `op`/`args`.
     fn named_expr<'py>(py: Python<'py>, op: &str, args: &Bound<'py, PyList>) -> Bound<'py, PyAny> {
@@ -1294,6 +1330,31 @@ mod tests {
     }
 
     #[test]
+    fn canonical_hash_agrees_with_canonical_equality() {
+        let hash = |expression: &RustExpr| {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            expression.canonical_hash(&mut hasher);
+            hasher.finish()
+        };
+        let field = || RustExpr::Field {
+            component_id: ComponentId::new(3),
+            offset: 4,
+            field_type: FieldType::F32,
+        };
+        let build = |constant: f64| {
+            RustExpr::Clamp(
+                Box::new(RustExpr::Add(Box::new(field()), c(constant))),
+                Box::new(RustExpr::Int(1 << 70)),
+                Box::new(RustExpr::RandomRange(c(0.0), c(1.0), 3)),
+            )
+        };
+        assert!(build(2.0).canonical_eq(&build(2.0)));
+        assert_eq!(hash(&build(2.0)), hash(&build(2.0)));
+        assert_ne!(hash(&build(0.0)), hash(&build(-0.0)));
+        assert_ne!(hash(&RustExpr::Int(2)), hash(&RustExpr::FloatConst(2.0)));
+    }
+
+    #[test]
     fn python_literals_keep_their_numpy_scalar_kind_and_exact_value() {
         Python::initialize();
         Python::attach(|py| {
@@ -1371,29 +1432,6 @@ mod tests {
     }
 
     #[test]
-    fn test_compile_assignment() {
-        let component_id = ComponentId::new(0);
-        let field_id = FieldId {
-            component_id,
-            offset: 0,
-            field_type: FieldType::F32,
-        };
-
-        let expr = RustExpr::Add(
-            Box::new(RustExpr::Field {
-                component_id,
-                offset: 0,
-                field_type: FieldType::F32,
-            }),
-            c(10.0),
-        );
-
-        let bytecode = RustExpr::compile_assignment(field_id, &expr).unwrap();
-        // PushField(0), PushConst(10.0), Add, StoreField(0)
-        assert_eq!(bytecode.bytecode.len(), 4);
-    }
-
-    #[test]
     fn compile_map_preserves_expression_order_without_a_store() {
         let left = RustExpr::Input {
             index: 0,
@@ -1438,23 +1476,6 @@ mod tests {
             RustExpr::compile_map(&expression).unwrap_err(),
             MapCompileError::ComponentField
         );
-    }
-
-    #[test]
-    fn compile_assignment_rejects_dense_inputs() {
-        Python::initialize();
-        let destination = FieldId {
-            component_id: ComponentId::new(3),
-            offset: 0,
-            field_type: FieldType::F32,
-        };
-        let expression = RustExpr::Input {
-            index: 0,
-            field_type: FieldType::F32,
-        };
-
-        let error = RustExpr::compile_assignment(destination, &expression).unwrap_err();
-        assert!(error.to_string().contains("dense input"));
     }
 
     fn nested_adds<'py>(py: Python<'py>, additions: usize) -> Bound<'py, PyAny> {
@@ -1829,42 +1850,6 @@ mod tests {
             Box::new(RustExpr::Sqrt(c(16.0))),
         );
         assert_eq!(eval_const_expr(&expr), 9.0);
-    }
-
-    #[test]
-    fn test_assignment_constant_folding() {
-        // field = 5.0 + 3.0 → should optimize to field = 8.0
-        let field_id = FieldId {
-            component_id: ComponentId::new(0),
-            offset: 0,
-            field_type: FieldType::F32,
-        };
-        let expr = RustExpr::Add(c(5.0), c(3.0));
-        let bytecode = RustExpr::compile_assignment(field_id, &expr).unwrap();
-        // After folding: PushConst(8.0), StoreField(0)
-        assert_eq!(bytecode.bytecode.len(), 2);
-    }
-
-    #[test]
-    fn test_assignment_no_folding_with_field() {
-        // field = field + 10.0 → can't fold (PushField breaks pattern)
-        let component_id = ComponentId::new(0);
-        let field_id = FieldId {
-            component_id,
-            offset: 0,
-            field_type: FieldType::F32,
-        };
-        let expr = RustExpr::Add(
-            Box::new(RustExpr::Field {
-                component_id,
-                offset: 0,
-                field_type: FieldType::F32,
-            }),
-            c(10.0),
-        );
-        let bytecode = RustExpr::compile_assignment(field_id, &expr).unwrap();
-        // No folding possible: PushField(0), PushConst(10), Add, StoreField(0)
-        assert_eq!(bytecode.bytecode.len(), 4);
     }
 
     #[test]

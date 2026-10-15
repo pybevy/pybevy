@@ -1,5 +1,7 @@
 use bevy::camera::visibility::CubemapVisibleEntities;
-use pybevy_core::{ComponentStorage, PyComponent, public_error::CUBEMAP_FACE_INDEX};
+use pybevy_core::{
+    ComponentStorage, ComponentStorageInner, PyComponent, public_error::CUBEMAP_FACE_INDEX,
+};
 use pybevy_macros::pycomponent;
 use pyo3::{exceptions::PyIndexError, prelude::*};
 
@@ -30,9 +32,14 @@ impl PyCubemapVisibleEntities {
         if i >= CUBEMAP_FACE_COUNT {
             return Err(PyIndexError::new_err(CUBEMAP_FACE_INDEX));
         }
-        let cve = self.as_ref()?;
-        let vme = cve.get(i).clone();
-        Py::new(py, PyVisibleMeshEntities::from_owned(vme))
+        let storage = match &self.storage.inner {
+            // A re-resolving component handle can only represent whole components.
+            ComponentStorageInner::Revalidating(_) => {
+                ComponentStorage::read_only_snapshot(self.as_ref()?.get(i))
+            }
+            _ => self.storage.borrow_field(|cve| cve.get(i))?,
+        };
+        Py::new(py, PyVisibleMeshEntities::from_borrowed(storage))
     }
 
     pub fn __len__(&self) -> usize {

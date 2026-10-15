@@ -1,15 +1,35 @@
 use bevy::sprite::{BorderRect, SliceScaleMode, TextureSlicer};
+use pybevy_core::{BorrowableStorage, FieldStorage, FieldStorageInner};
 use pyo3::prelude::*;
 
 use crate::{border_rect::PyBorderRect, slice_scale_mode::PySliceScaleMode};
 
 #[pyclass(name = "TextureSlicer", module = "pybevy.sprite", eq, from_py_object)]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 pub struct PyTextureSlicer {
-    border: BorderRect,
-    center_scale_mode: SliceScaleMode,
-    sides_scale_mode: SliceScaleMode,
-    max_corner_scale: f32,
+    storage: FieldStorage<TextureSlicer>,
+}
+
+impl Clone for PyTextureSlicer {
+    // By-value copies, such as enum payloads, are frozen snapshots.
+    fn clone(&self) -> Self {
+        let storage = match &self.storage.inner {
+            FieldStorageInner::Owned { data, .. } | FieldStorageInner::OwnedReadOnly { data } => {
+                FieldStorage::snapshot(&**data)
+            }
+            _ => self.storage.clone(),
+        };
+        Self { storage }
+    }
+}
+
+impl PartialEq for PyTextureSlicer {
+    fn eq(&self, other: &Self) -> bool {
+        match (self.storage.as_ref(), other.storage.as_ref()) {
+            (Ok(left), Ok(right)) => *left == *right,
+            _ => false,
+        }
+    }
 }
 
 #[pymethods]
@@ -28,85 +48,83 @@ impl PyTextureSlicer {
         sides_scale_mode: Option<PySliceScaleMode>,
         max_corner_scale: f32,
     ) -> PyResult<Self> {
-        Ok(Self {
+        Ok(Self::from(TextureSlicer {
             border: border.try_into()?,
             center_scale_mode: center_scale_mode.map_or(SliceScaleMode::Stretch, Into::into),
             sides_scale_mode: sides_scale_mode.map_or(SliceScaleMode::Stretch, Into::into),
             max_corner_scale,
-        })
+        }))
     }
 
     #[getter]
-    pub fn border(&self) -> PyBorderRect {
-        PyBorderRect::from(self.border)
+    pub fn border(&self) -> PyResult<PyBorderRect> {
+        Ok(self.storage.borrow_field_as(|slicer| &slicer.border)?)
     }
 
     #[setter]
     pub fn set_border(&mut self, border: PyBorderRect) -> PyResult<()> {
-        self.border = border.try_into()?;
+        self.storage.as_mut()?.border = border.try_into()?;
         Ok(())
     }
 
     #[getter]
-    pub fn max_corner_scale(&self) -> f32 {
-        self.max_corner_scale
+    pub fn max_corner_scale(&self) -> PyResult<f32> {
+        Ok(self.storage.as_ref()?.max_corner_scale)
     }
 
     #[setter]
-    pub fn set_max_corner_scale(&mut self, max_corner_scale: f32) {
-        self.max_corner_scale = max_corner_scale;
+    pub fn set_max_corner_scale(&mut self, max_corner_scale: f32) -> PyResult<()> {
+        self.storage.as_mut()?.max_corner_scale = max_corner_scale;
+        Ok(())
     }
 
     #[getter]
-    pub fn center_scale_mode(&self) -> PySliceScaleMode {
-        self.center_scale_mode.into()
+    pub fn center_scale_mode(&self) -> PyResult<PySliceScaleMode> {
+        Ok(self.storage.as_ref()?.center_scale_mode.into())
     }
 
     #[setter]
-    pub fn set_center_scale_mode(&mut self, mode: PySliceScaleMode) {
-        self.center_scale_mode = mode.into();
+    pub fn set_center_scale_mode(&mut self, mode: PySliceScaleMode) -> PyResult<()> {
+        self.storage.as_mut()?.center_scale_mode = mode.into();
+        Ok(())
     }
 
     #[getter]
-    pub fn sides_scale_mode(&self) -> PySliceScaleMode {
-        self.sides_scale_mode.into()
+    pub fn sides_scale_mode(&self) -> PyResult<PySliceScaleMode> {
+        Ok(self.storage.as_ref()?.sides_scale_mode.into())
     }
 
     #[setter]
-    pub fn set_sides_scale_mode(&mut self, mode: PySliceScaleMode) {
-        self.sides_scale_mode = mode.into();
+    pub fn set_sides_scale_mode(&mut self, mode: PySliceScaleMode) -> PyResult<()> {
+        self.storage.as_mut()?.sides_scale_mode = mode.into();
+        Ok(())
     }
 
     pub fn __repr__(&self) -> PyResult<String> {
+        let slicer = self.storage.as_ref()?;
         Ok(format!(
             "TextureSlicer(border={}, center_scale_mode={}, sides_scale_mode={}, \
              max_corner_scale={})",
-            PyBorderRect::from(self.border).__repr__()?,
-            PySliceScaleMode::from(self.center_scale_mode).__repr__(),
-            PySliceScaleMode::from(self.sides_scale_mode).__repr__(),
-            self.max_corner_scale,
+            PyBorderRect::from(slicer.border).__repr__()?,
+            PySliceScaleMode::from(slicer.center_scale_mode).__repr__(),
+            PySliceScaleMode::from(slicer.sides_scale_mode).__repr__(),
+            slicer.max_corner_scale,
         ))
     }
 }
 
-impl From<PyTextureSlicer> for TextureSlicer {
-    fn from(slicer: PyTextureSlicer) -> Self {
-        TextureSlicer {
-            border: slicer.border,
-            center_scale_mode: slicer.center_scale_mode,
-            sides_scale_mode: slicer.sides_scale_mode,
-            max_corner_scale: slicer.max_corner_scale,
-        }
+impl TryFrom<PyTextureSlicer> for TextureSlicer {
+    type Error = PyErr;
+
+    fn try_from(slicer: PyTextureSlicer) -> PyResult<Self> {
+        Ok(slicer.storage.get()?)
     }
 }
 
 impl From<TextureSlicer> for PyTextureSlicer {
     fn from(slicer: TextureSlicer) -> Self {
-        PyTextureSlicer {
-            border: slicer.border,
-            center_scale_mode: slicer.center_scale_mode,
-            sides_scale_mode: slicer.sides_scale_mode,
-            max_corner_scale: slicer.max_corner_scale,
+        Self {
+            storage: FieldStorage::owned(slicer),
         }
     }
 }

@@ -2006,7 +2006,7 @@ pub fn insert_resource(
 
                     let unknown = unknown_set_fields(instance, obj.keys());
                     if !unknown.is_empty() {
-                        return Err(ControlError::internal(unknown_field_error(
+                        return Err(ControlError::invalid_params(unknown_field_error(
                             &resource_type,
                             &unknown,
                             &writable_field_names(instance),
@@ -2018,16 +2018,16 @@ pub fn insert_resource(
                         match convert_field_value(py, instance, field_name, field_value) {
                             Ok(py_value) => converted.push((field_name, py_value)),
                             Err(e) => {
-                                return Err(ControlError::internal(format!(
-                                    "Failed to convert {field_name}: {e}"
+                                return Err(ControlError::invalid_params(format!(
+                                    "Failed to convert {resource_type}.{field_name}: {e}"
                                 )));
                             }
                         }
                     }
                     for (field_name, py_value) in converted {
                         if let Err(e) = instance.setattr(field_name.as_str(), py_value) {
-                            return Err(ControlError::internal(format!(
-                                "Failed to set {field_name}: {e}"
+                            return Err(ControlError::invalid_params(format!(
+                                "Failed to set {resource_type}.{field_name}: {e}"
                             )));
                         }
                     }
@@ -2060,14 +2060,14 @@ pub fn insert_resource(
                                 Ok(py_value) => {
                                     if let Err(e) = instance.setattr(field_name.as_str(), py_value)
                                     {
-                                        return Err(ControlError::internal(format!(
-                                            "Failed to set {field_name}: {e}"
+                                        return Err(ControlError::invalid_params(format!(
+                                            "Failed to set {resource_type}.{field_name}: {e}"
                                         )));
                                     }
                                 }
                                 Err(e) => {
-                                    return Err(ControlError::internal(format!(
-                                        "Failed to convert {field_name}: {e}"
+                                    return Err(ControlError::invalid_params(format!(
+                                        "Failed to convert {resource_type}.{field_name}: {e}"
                                     )));
                                 }
                             }
@@ -2483,9 +2483,15 @@ fn enum_owner_type<'py>(current: &Bound<'py, PyAny>) -> Bound<'py, PyType> {
     if nested_variant { base } else { current_type }
 }
 
-fn own_type_class_attributes(owner: &Bound<'_, PyType>) -> (Vec<String>, bool) {
-    let mut names = Vec::new();
-    let mut has_variant_classes = false;
+#[derive(Default)]
+struct EnumMembers {
+    variants: Vec<String>,
+    constants: Vec<String>,
+}
+
+fn same_type_class_attributes(owner: &Bound<'_, PyType>) -> (Vec<String>, Vec<String>) {
+    let mut instances = Vec::new();
+    let mut classes = Vec::new();
     for name in owner
         .dir()
         .ok()
@@ -2498,25 +2504,83 @@ fn own_type_class_attributes(owner: &Bound<'_, PyType>) -> (Vec<String>, bool) {
             continue;
         };
         if value.is_instance(owner).unwrap_or(false) {
-            names.push(name);
+            instances.push(name);
         } else if value
             .cast::<PyType>()
             .is_ok_and(|variant| variant.is_subclass(owner).unwrap_or(false) && !variant.is(owner))
         {
-            has_variant_classes = true;
-            names.push(name);
+            classes.push(name);
         }
     }
-    names.sort();
-    (names, has_variant_classes)
+    (instances, classes)
 }
 
-fn enum_variant_names(owner: &Bound<'_, PyType>) -> Vec<String> {
-    let (names, has_variant_classes) = own_type_class_attributes(owner);
-    if has_variant_classes || super::enum_names::is_enum_type(owner) {
-        names
-    } else {
-        Vec::new()
+fn enum_members(owner: &Bound<'_, PyType>) -> EnumMembers {
+    let (instances, mut variants) = same_type_class_attributes(owner);
+    let has_variant_classes = !variants.is_empty();
+    if !has_variant_classes && !super::enum_names::is_enum_type(owner) {
+        return EnumMembers::default();
+    }
+    let (unit_variants, mut constants) =
+        super::enum_names::partition_unit_variants(owner, instances, has_variant_classes);
+    variants.extend(unit_variants);
+    variants.sort();
+    constants.sort();
+    EnumMembers {
+        variants,
+        constants,
+    }
+}
+
+pub(super) fn enum_variant_names(owner: &Bound<'_, PyType>) -> Vec<String> {
+    enum_members(owner).variants
+}
+
+fn reject_enum_constant(owner: &Bound<'_, PyType>, name: &str) -> Result<(), String> {
+    let EnumMembers {
+        variants,
+        constants,
+    } = enum_members(owner);
+    if !constants.iter().any(|constant| constant == name) {
+        return Ok(());
+    }
+    let owner_name = owner.name().map_err(|error| error.to_string())?;
+    let written = owner
+        .getattr(name)
+        .ok()
+        .map(|value| super::scene::py_value_to_json(&value))
+        .filter(|value| value.get("variant").is_some())
+        .map(|value| inline_json(&value));
+    Err(public_error::mcp_enum_constant_not_variant(
+        name,
+        &owner_name.to_string_lossy(),
+        written.as_deref(),
+        &super::enum_names::accepted_variant_names(owner, variants),
+    ))
+}
+
+fn inline_json(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Object(fields) => {
+            let entries = fields
+                .get_key_value("variant")
+                .into_iter()
+                .chain(fields.iter().filter(|(name, _)| *name != "variant"))
+                .map(|(name, value)| {
+                    format!(
+                        "{}: {}",
+                        serde_json::Value::from(name.as_str()),
+                        inline_json(value)
+                    )
+                })
+                .collect::<Vec<_>>();
+            format!("{{{}}}", entries.join(", "))
+        }
+        serde_json::Value::Array(items) => format!(
+            "[{}]",
+            items.iter().map(inline_json).collect::<Vec<_>>().join(", ")
+        ),
+        other => other.to_string(),
     }
 }
 
@@ -2617,19 +2681,35 @@ fn tagged_enum_variant_request(
     None
 }
 
+fn variant_payload_type<'py>(
+    py: Python<'py>,
+    owner: &Bound<'py, PyType>,
+    variant: &Bound<'py, PyAny>,
+    native_name: &str,
+) -> Option<Bound<'py, PyType>> {
+    if let Ok(prototype) = variant.getattr("__pybevy_control_payload_prototype__") {
+        return prototype.cast_into::<PyType>().ok();
+    }
+    let owner_name = owner.name().ok()?;
+    let Some(VariantInfo::Tuple(payload)) =
+        reflect_mutate::compiled_enum_variant_info(&owner_name.to_string_lossy(), native_name)
+    else {
+        return None;
+    };
+    if payload.field_len() != 1 {
+        return None;
+    }
+    find_pybevy_class(py, payload.field_at(0)?.type_path_table().ident()?)
+}
+
 fn construct_wrapped_variant_payload<'py>(
     py: Python<'py>,
     variant: &Bound<'py, PyAny>,
+    payload_type: &Bound<'py, PyType>,
     variant_name: &str,
     fields: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<Option<Py<PyAny>>, String> {
-    let Ok(prototype) = variant.getattr("__pybevy_control_payload_prototype__") else {
-        return Ok(None);
-    };
-    let Ok(payload_type) = prototype.cast::<PyType>() else {
-        return Ok(None);
-    };
-    let Ok(prototype) = payload_type.call0() else {
+    let Some(prototype) = constructible_representative(payload_type) else {
         return Ok(None);
     };
     let holder = PyModule::import(py, "types")
@@ -2688,6 +2768,7 @@ fn construct_enum_variant_for_owner(
             .map_err(|error| error.to_string())?
             .to_string_lossy()
             .into_owned();
+        reject_enum_constant(owner, variant_name)?;
         let valid_variants = super::enum_names::accepted_variant_names(owner, variants);
         if variant_name == "value" && source == VariantSource::ObjectKey {
             return Err(format!(
@@ -2783,9 +2864,15 @@ fn construct_enum_variant_for_owner(
                 ));
             }
             Err(_) => {
-                // A failed kwargs call may mean the variant wraps one payload struct.
-                if let Some(result) =
-                    construct_wrapped_variant_payload(py, &variant, variant_name, fields)?
+                // A failed kwargs call may mean the variant wraps one payload value.
+                if let Some(payload_type) = variant_payload_type(py, owner, &variant, &native_name)
+                    && let Some(result) = construct_wrapped_variant_payload(
+                        py,
+                        &variant,
+                        &payload_type,
+                        variant_name,
+                        fields,
+                    )?
                 {
                     return Ok(Some(result));
                 }
@@ -2838,6 +2925,9 @@ fn construct_color_variant(
     let color = color_module
         .getattr("Color")
         .map_err(|error| error.to_string())?;
+    if let Ok(color_type) = color.cast::<PyType>() {
+        reject_enum_constant(color_type, variant_name)?;
+    }
     let variant = color
         .getattr(variant_name)
         .map_err(|_| format!("unknown Color variant '{variant_name}'"))?;
@@ -3410,7 +3500,10 @@ fn constructible_representative<'py>(class: &Bound<'py, PyType>) -> Option<Bound
     if let Ok(instance) = class.call0() {
         return Some(instance);
     }
-    for name in own_type_class_attributes(class).0 {
+    let (mut names, classes) = same_type_class_attributes(class);
+    names.extend(classes);
+    names.sort();
+    for name in names {
         let Ok(candidate) = class.getattr(name.as_str()) else {
             continue;
         };
@@ -3823,7 +3916,10 @@ fn convert_field_value_typed(
                 "Vh" => "vh",
                 "VMin" => "vmin",
                 "VMax" => "vmax",
-                _ => return Err(format!("unknown Val variant '{variant}'")),
+                _ => {
+                    reject_enum_constant(&owner, variant)?;
+                    return Err(format!("unknown Val variant '{variant}'"));
+                }
             };
             let val_type = current.get_type();
             return if variant == "Auto" {
@@ -4661,11 +4757,13 @@ variant = Variant
                 .unwrap();
             py.run(&code, Some(&globals), None).unwrap();
             let variant = globals.get_item("variant").unwrap().unwrap();
+            let payload_type = py.get_type::<ControlPayloadFixture>();
             let fields = serde_json::json!({"required": 4});
 
             let result = construct_wrapped_variant_payload(
                 py,
                 &variant,
+                &payload_type,
                 "Wrapped",
                 fields.as_object().unwrap(),
             )

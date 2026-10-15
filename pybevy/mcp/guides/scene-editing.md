@@ -181,7 +181,10 @@ enum field whose current value is `null`. A one-key object may switch an enum
 component's active variant, for example `{"Orthographic": {"scale": 0.03}}`; omitted
 fields use the target payload's defaults, while a partial write to the current
 variant preserves its omitted fields. Enum constants are ordinary values, not
-variants.
+variants: `Val.ZERO`, `Color.WHITE`, and `Volume.SILENT` are not listed as
+variants, and writing their names is rejected. Write the constant's variant
+form instead, such as `{"variant": "Px", "value": 0.0}` for `Val.ZERO`; the
+error names that form, and readback reports a stored constant the same way.
 
 Schema and readback variant names use Bevy's canonical spelling. When a Python
 wrapper spells a variant differently, either spelling is accepted on write;
@@ -267,8 +270,10 @@ a different control name.
 omitted fields keep their current values. Native-resource patches validate
 field names, conversions, and setters on a detached value before committing.
 If any field fails, no fields are changed and the resource is not marked
-changed. Successful patches retain the resource entity and mark the resource
-changed without replacement hooks.
+changed. A rejected field is an invalid-parameters error (HTTP 400) naming
+`Resource.field`, for example `Failed to convert ClearColor.color: unknown
+variant 'nope' for Color. Valid variants: ...`. Successful patches retain the
+resource entity and mark the resource changed without replacement hooks.
 
 Resources that cannot safely provide a detached copy reject patches without
 mutation. An absent resource still requires support for construction and
