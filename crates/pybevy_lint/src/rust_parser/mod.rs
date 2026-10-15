@@ -15,12 +15,48 @@ mod constructor;
 #[path = "../../../pybevy_macros/src/constructor_spec.rs"]
 mod constructor_spec;
 
-use std::path::Path;
+use std::{collections::HashSet, fs, path::Path, sync::LazyLock};
 
 use anyhow::{Context, Result};
+use regex::Regex;
 use walkdir::WalkDir;
 
 use crate::model::PyClassDef;
+
+/// Top-level type declarations, e.g. `pub struct TensorPort` or
+/// `pub(crate) enum TensorLayout`. Used to tell PyBevy-internal types from
+/// claimed upstream Bevy types.
+static DECLARED_TYPE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\s*pub(?:\s*\([^)]*\))?\s+(?:struct|enum|type|union)\s+([A-Za-z_]\w*)")
+        .expect("static regex is valid")
+});
+
+/// Collect the names of every type declared in the project's Rust sources.
+/// A claimed Bevy type whose name appears here is defined by PyBevy itself
+/// (GPU/tensor plumbing, test doubles) and is not an upstream claim.
+pub fn collect_declared_type_names(path: &Path) -> Vec<String> {
+    let mut names: HashSet<String> = HashSet::new();
+
+    for entry in WalkDir::new(path)
+        .into_iter()
+        .filter_entry(|entry| !is_project_artifact_directory(entry))
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
+    {
+        let Ok(source) = fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        for line in source.lines() {
+            if let Some(captures) = DECLARED_TYPE_RE.captures(line) {
+                names.insert(captures[1].to_string());
+            }
+        }
+    }
+
+    let mut names: Vec<String> = names.into_iter().collect();
+    names.sort();
+    names
+}
 
 fn is_project_artifact_directory(entry: &walkdir::DirEntry) -> bool {
     if !entry.file_type().is_dir() {

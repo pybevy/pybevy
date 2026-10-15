@@ -327,6 +327,8 @@ pub struct EnumVariantDef {
     pub writable_fields: Vec<String>,
     /// Payload fields as the generated or adapter getters expose them.
     pub payload_fields: Vec<PayloadFieldDef>,
+    /// `__match_args__` declared by the nested Python variant class, in order.
+    pub match_args: Option<Vec<String>>,
 }
 
 /// A variant payload field with the type its Python getter returns.

@@ -92,6 +92,49 @@ pub enum DiagnosticCode {
     /// W020: public value class copies a Bevy struct's fields instead of
     /// holding storage or using a generated wrapper
     W020,
+    /// W021: wrapper declares Python hashing but the resolved upstream type
+    /// does not implement Hash
+    W021,
+    /// W022: stub declares a writable attribute where the Rust runtime is
+    /// read-only (frozen class or no corresponding setter)
+    W022,
+    /// W023: nested PyBevy wrapper field exposed through a plain struct-field
+    /// getter, which detaches a clone in borrowed (component) mode
+    W023,
+    /// W024: non-Copy upstream associated constant exposed as a ClassVar /
+    /// class attribute instead of a factory staticmethod
+    W024,
+    /// W025: wrapper explicitly claims a Bevy type that cannot be resolved in
+    /// the pinned Bevy (missing, or ambiguous without a deciding module or
+    /// explicit mapping)
+    W025,
+    /// W026: upstream tuple-payload enum variant exposed with named fields;
+    /// tuple payloads must stay positional
+    W026,
+    /// W029: wrapper's Python registration module (`module = "pybevy.X"`)
+    /// differs from the canonical Bevy placement derived from
+    /// `[bevy.crate_mappings]`
+    W029,
+    /// W030: pybevy.prelude diverges from the pinned Bevy prelude (missing
+    /// implemented names, or unreviewed PyBevy-specific additions)
+    W030,
+    /// W031: enum exposes a PyBevy variant name absent from the resolved
+    /// upstream Bevy enum and not explained by a configured rename
+    W031,
+    /// W032: GC-visible pyclass holds Python references in struct fields
+    /// but declares no `__traverse__`
+    W032,
+    /// W033: stub `__match_args__` does not match the variant's payload fields
+    W033,
+    /// W034: stub constructor default disagrees with the Rust `#[new]` default
+    W034,
+    /// W035: stub `Handle[T]` argument names a different asset type than the
+    /// upstream field/parameter
+    W035,
+    /// W036: optionality drift: a stub advertises/omits `None` acceptance
+    /// (constructor parameter or property) that the Rust signature or the
+    /// upstream field does not support
+    W036,
 
     // Test coverage info (T-codes)
     /// T001: Class has no test coverage
@@ -141,6 +184,20 @@ impl DiagnosticCode {
             DiagnosticCode::W018 => "W018",
             DiagnosticCode::W019 => "W019",
             DiagnosticCode::W020 => "W020",
+            DiagnosticCode::W021 => "W021",
+            DiagnosticCode::W022 => "W022",
+            DiagnosticCode::W023 => "W023",
+            DiagnosticCode::W024 => "W024",
+            DiagnosticCode::W025 => "W025",
+            DiagnosticCode::W026 => "W026",
+            DiagnosticCode::W029 => "W029",
+            DiagnosticCode::W030 => "W030",
+            DiagnosticCode::W031 => "W031",
+            DiagnosticCode::W032 => "W032",
+            DiagnosticCode::W033 => "W033",
+            DiagnosticCode::W034 => "W034",
+            DiagnosticCode::W035 => "W035",
+            DiagnosticCode::W036 => "W036",
             DiagnosticCode::T001 => "T001",
             DiagnosticCode::T002 => "T002",
             DiagnosticCode::T003 => "T003",
@@ -185,7 +242,21 @@ impl DiagnosticCode {
             | DiagnosticCode::W017
             | DiagnosticCode::W018
             | DiagnosticCode::W019
-            | DiagnosticCode::W020 => DiagnosticSeverity::Warning,
+            | DiagnosticCode::W020
+            | DiagnosticCode::W021
+            | DiagnosticCode::W022
+            | DiagnosticCode::W023
+            | DiagnosticCode::W024
+            | DiagnosticCode::W025
+            | DiagnosticCode::W026
+            | DiagnosticCode::W029
+            | DiagnosticCode::W030
+            | DiagnosticCode::W031
+            | DiagnosticCode::W032
+            | DiagnosticCode::W033
+            | DiagnosticCode::W034
+            | DiagnosticCode::W035
+            | DiagnosticCode::W036 => DiagnosticSeverity::Warning,
 
             DiagnosticCode::T001 | DiagnosticCode::T002 | DiagnosticCode::T003 => {
                 DiagnosticSeverity::Info
@@ -254,6 +325,38 @@ impl DiagnosticCode {
             }
             DiagnosticCode::W020 => {
                 "value class hand-mirrors Bevy struct fields instead of using storage or a generated wrapper"
+            }
+            DiagnosticCode::W021 => {
+                "wrapper declares Python hashing but the upstream type does not implement Hash"
+            }
+            DiagnosticCode::W022 => {
+                "stub declares a writable attribute where the Rust runtime is read-only"
+            }
+            DiagnosticCode::W023 => {
+                "nested PyBevy wrapper field uses a plain field getter, detaching a clone in borrowed mode"
+            }
+            DiagnosticCode::W024 => {
+                "non-Copy upstream constant exposed as a class attribute instead of a factory"
+            }
+            DiagnosticCode::W025 => {
+                "wrapper claims a Bevy type that cannot be resolved in the pinned Bevy"
+            }
+            DiagnosticCode::W026 => {
+                "upstream tuple-payload enum variant exposed with named fields instead of positionally"
+            }
+            DiagnosticCode::W029 => {
+                "Python registration module differs from the canonical Bevy placement"
+            }
+            DiagnosticCode::W030 => "pybevy.prelude diverges from the pinned Bevy prelude",
+            DiagnosticCode::W031 => {
+                "enum exposes a variant name absent from the upstream Bevy enum"
+            }
+            DiagnosticCode::W032 => "pyclass holds Python references without __traverse__",
+            DiagnosticCode::W033 => "__match_args__ does not match the variant payload fields",
+            DiagnosticCode::W034 => "stub constructor default disagrees with the Rust default",
+            DiagnosticCode::W035 => "stub Handle argument does not match the upstream field type",
+            DiagnosticCode::W036 => {
+                "stub None acceptance does not match the Rust signature or upstream field"
             }
             DiagnosticCode::T001 => "class has no test coverage",
             DiagnosticCode::T002 => "constructor not tested",

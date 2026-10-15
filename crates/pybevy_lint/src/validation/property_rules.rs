@@ -198,3 +198,125 @@ fn generate_property_stub(prop: &crate::model::PropertyDef) -> String {
 
     format!("{}: {}", prop.name, ty)
 }
+
+/// Flags stub attributes that promise Python writability where the Rust
+/// runtime is read-only: a frozen class rejects attribute assignment, and a
+/// non-frozen class without a matching setter raises AttributeError.
+/// Writable annotations in .pyi files parse as getter+setter properties, so
+/// this is the stub side of the writability contract.
+pub fn validate_stub_writability(rust: &PyClassDef, python: &PyClassDef) -> Vec<Diagnostic> {
+    if rust.extends.is_some() {
+        // Inherited setters from the base class are not visible to this check.
+        return Vec::new();
+    }
+
+    let mut diagnostics = Vec::new();
+    for stub_prop in python
+        .properties
+        .iter()
+        .filter(|p| p.has_setter && p.has_getter)
+    {
+        if stub_prop.name.starts_with('_') {
+            continue;
+        }
+        let rust_settable = rust
+            .properties
+            .iter()
+            .any(|p| p.name == stub_prop.name && p.has_setter);
+        if rust_settable {
+            continue;
+        }
+
+        let mut diagnostic = if rust.frozen {
+            Diagnostic::warning(
+                DiagnosticCode::W022,
+                format!(
+                    "stub declares '{}' writable but the frozen class '{}' rejects attribute assignment",
+                    stub_prop.name, rust.python_name
+                ),
+            )
+            .with_note("frozen pyclass attributes are read-only at runtime; the stub must use @property")
+        } else {
+            Diagnostic::warning(
+                DiagnosticCode::W022,
+                format!(
+                    "stub declares '{}' writable but class '{}' has no matching Rust setter",
+                    stub_prop.name, rust.python_name
+                ),
+            )
+            .with_note("attribute assignment raises AttributeError at runtime; declare a read-only @property or add the setter")
+        };
+        diagnostic = diagnostic
+            .with_suggestion(Suggestion::new(
+                "declare the attribute as a read-only @property in the stub, or generate the Rust setter",
+            ));
+        if let Some(location) = &rust.location {
+            diagnostic = diagnostic.with_location(location.clone());
+        }
+        diagnostics.push(diagnostic);
+    }
+
+    diagnostics
+}
+
+/// Flags writable payload attributes on generated nested variant classes where
+/// the storage-backed enum field is not `#[py_borrow]`. Such child writes are
+/// detached snapshots; only borrowed live fields may be writable.
+pub fn validate_nested_variant_payload_writability(
+    rust: &PyClassDef,
+    python_classes: &[PyClassDef],
+) -> Vec<Diagnostic> {
+    if !rust.is_enum || rust.storage_macro.is_none() {
+        return Vec::new();
+    }
+
+    let mut diagnostics = Vec::new();
+    for variant in &rust.enum_variants {
+        let stub_variants: Vec<&PyClassDef> = python_classes
+            .iter()
+            .filter(|class| {
+                class
+                    .extends
+                    .as_deref()
+                    .is_some_and(|base| base.eq_ignore_ascii_case(&rust.python_name))
+                    && class.python_name.eq_ignore_ascii_case(&variant.name)
+            })
+            .collect();
+        for stub_class in stub_variants {
+            for stub_prop in stub_class
+                .properties
+                .iter()
+                .filter(|p| p.has_setter && p.has_getter && !p.name.starts_with('_'))
+            {
+                let Some(payload) = variant
+                    .payload_fields
+                    .iter()
+                    .find(|f| f.name == stub_prop.name)
+                else {
+                    continue;
+                };
+                if payload.borrowed {
+                    continue;
+                }
+
+                let mut diagnostic = Diagnostic::warning(
+                    DiagnosticCode::W022,
+                    format!(
+                        "stub variant '{}' declares '{}' writable but the '{}' field is a non-borrowed storage snapshot",
+                        stub_class.python_name, stub_prop.name, rust.python_name
+                    ),
+                )
+                .with_note("child writes to a non-borrowed storage field are detached; declare the stub attribute read-only or borrow the live field")
+                .with_suggestion(Suggestion::new(
+                    "declare the payload attribute as a read-only @property, or mark the field #[py_borrow] for live writes",
+                ));
+                if let Some(location) = &rust.location {
+                    diagnostic = diagnostic.with_location(location.clone());
+                }
+                diagnostics.push(diagnostic);
+            }
+        }
+    }
+
+    diagnostics
+}

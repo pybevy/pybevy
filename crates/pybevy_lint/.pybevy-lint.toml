@@ -63,6 +63,32 @@ exclude_reason = "Bevy marks the field #[reflect(ignore)], so reflection cannot 
 "ecs::MessageId" = "core"
 # Handle/AssetPath in pybevy_core, exported from pybevy.assets at Python level
 "asset::AssetPath" = "core"
+# Prepass marker components: Bevy keeps them in bevy_core_pipeline, but the
+# user-facing toggle API is camera-side (Camera prepass configuration)
+"core_pipeline::DepthPrepass" = "camera"
+"core_pipeline::NormalPrepass" = "camera"
+"core_pipeline::MotionVectorPrepass" = "camera"
+"core_pipeline::DeferredPrepass" = "camera"
+# MeshMaterial3d: established mesh-facing wrapper; Bevy moved the type into
+# bevy_pbr. Moving the established wrapper to pybevy.pbr is a separate
+# compatibility decision
+"pbr::MeshMaterial3d" = "mesh"
+# PrimitiveTopology: wgpu type used while constructing meshes; placed next to
+# the mesh API rather than in the wgpu/render module
+"render::PrimitiveTopology" = "mesh"
+# Hdr: genuine W029 finding - bevy_camera::Hdr marker registered in
+# pybevy.render. Canonical move to pybevy.camera is a separate compatibility
+# decision (~12 import call sites plus extension rebuild)
+"camera::Hdr" = "render"
+# Text2d/Text2dShadow: the 2D text API is the user-facing text domain; pinned
+# Bevy moved the components into bevy_sprite, but moving the established
+# pybevy.text wrappers to pybevy.sprite is a separate compatibility decision
+"sprite::Text2d" = "text"
+"sprite::Text2dShadow" = "text"
+# ShaderStage: upstream is naga::ShaderStage (merged through bevy_render's
+# enum sources); the shader module is PyBevy's reviewed placement for naga
+# shader types
+"render::ShaderStage" = "shader"
 
 # Crate mappings: pybevy_module -> bevy_crate
 # Maps PyBevy source directories to corresponding Bevy crates
@@ -75,7 +101,13 @@ bevy_animation = ["petgraph"]
 # External sources used only for enum topology and trait contracts. Keeping
 # structs out avoids treating cargo-public-api's sorted fields as source order.
 [bevy.crate_enum_sources]
-bevy_render = ["wgpu-types"]
+bevy_render = ["wgpu-types", "naga"]
+bevy_a11y = ["accesskit"]
+
+# Crate-qualified rewrites for upstream claims that are ambiguous by short
+# name alone (AssetId is re-exported by several Bevy crates).
+[bevy.claim_overrides]
+"AssetId<LoadedFolder>" = "bevy::asset::AssetId<LoadedFolder>"
 
 [bevy.crate_mappings]
 transform = "bevy_transform"
@@ -1042,8 +1074,9 @@ PyForwardDecalMaterial = "ExtendedMaterial"
 PyMouseInput = "ButtonInput"
 PyMeshMaterial3dForwardDecal = "MeshMaterial3d"
 PyMeshMaterial3dShader = "MeshMaterial3d"
-# bevy_animation::graph::AnimationNodeIndex aliases petgraph::graph::NodeIndex<u32>.
-PyAnimationNodeIndex = "NodeIndex<Ix>"
+# bevy_animation::graph::AnimationNodeIndex aliases petgraph::graph::NodeIndex<u32>;
+# claim the Bevy alias name so the inventory lookup resolves it.
+PyAnimationNodeIndex = "AnimationNodeIndex"
 
 # Generic type specializations in Bevy -> PyBevy separate types
 # These specialized types have their own impl blocks in Bevy
@@ -2281,6 +2314,12 @@ intentional_missing_methods = ["to_dynamic"]
 intentional_signature_diffs = ["from_physical_camera"]
 notes = "to_dynamic needs PartialReflect, param renamed 'params' for Python clarity"
 
+
+# FontSmoothing: None_ because None is a Python keyword
+[bevy.type_ignores.FontSmoothing]
+renames = { "None" = "None_" }
+notes = "None renamed to None_ because None is a Python keyword"
+
 # Frustum: CullingSphere is PyBevy's Sphere wrapper
 [bevy.type_ignores.Frustum]
 intentional_signature_diffs = ["intersects_sphere"]
@@ -2312,6 +2351,12 @@ notes = "bitand/bitor/bitxor implemented as __and__/__or__/__xor__, 'with' renam
 
 # RenderTarget: None_ because 'None' is Python keyword
 [bevy.type_ignores.RenderTarget]
+renames = { "None" = "None_" }
+notes = "None renamed to None_ because None is a Python keyword"
+
+
+# ScreenEdge: None_ because None is a Python keyword
+[bevy.type_ignores.ScreenEdge]
 renames = { "None" = "None_" }
 notes = "None renamed to None_ because None is a Python keyword"
 
@@ -2536,6 +2581,11 @@ intentional_missing_methods = [
 ]
 
 
+# JumpAt: None_ because None is a Python keyword
+[bevy.type_ignores.JumpAt]
+renames = { "None" = "None_" }
+notes = "None renamed to None_ because None is a Python keyword"
+
 # LinearGradient: Vec<ColorStop> → Vec<PyColorStop> wrapper naming
 [bevy.type_ignores.LinearGradient]
 intentional_signature_diffs = [
@@ -2699,6 +2749,10 @@ notes = "Sync methods need &mut World which isn't available via Res/ResMut. Use 
 # owned by GPU schedules. Component configuration fields are private and their
 # constructors validate cross-field invariants, so replacement requires a new component.
 
+[bevy.type_ignores.PowerPreference]
+renames = { "None" = "None_" }
+notes = "None renamed to None_ because None is a Python keyword"
+
 [bevy.type_ignores.Array]
 intentional_readonly_properties = ["dtype", "itemsize", "ndim", "shape", "size", "strides"]
 notes = "Derived array layout and dtype metadata; resizing/retyping is not an in-place operation."
@@ -2713,6 +2767,12 @@ notes = "The Local type is fixed at registration; current is the explicit mutabl
 [bevy.type_ignores.ViewColumn]
 intentional_readonly_properties = ["dtype", "is_valid", "len", "ptr", "stride", "writable"]
 notes = "Validity-fenced opaque Numba view metadata; ptr and layout must never be assignable."
+
+
+# GizmoLineJoint: None_ because None is a Python keyword
+[bevy.type_ignores.GizmoLineJoint]
+renames = { "None" = "None_" }
+notes = "None renamed to None_ because None is a Python keyword"
 
 # GlobalTransform is derived by Bevy transform propagation, not user-authored state.
 [bevy.type_ignores.GlobalTransform]
@@ -2752,6 +2812,11 @@ notes = "The wrapper does not opt into pymessage writable; MessageBridge exposes
 intentional_readonly_properties = ["window"]
 notes = "The wrapper does not opt into pymessage writable; MessageBridge exposes this engine-reported channel as read-only."
 
+
+# ParallaxCorrection: None_ because None is a Python keyword
+[bevy.type_ignores.ParallaxCorrection]
+renames = { "None" = "None_" }
+notes = "None renamed to None_ because None is a Python keyword"
 
 [bevy.type_ignores.PinchGesture]
 intentional_extra_methods = ["value"]
@@ -3143,6 +3208,11 @@ reason = "pybevy-animation Python-defined type; no upstream Bevy constructor"
 
 [[validation.exceptions]]
 code = "E013"
+path = "animation.AnimationNodeIndex"
+reason = "constructor delegates to petgraph::NodeIndex::new through the bevy_animation::graph::AnimationNodeIndex alias; the alias itself declares no upstream constructor"
+
+[[validation.exceptions]]
+code = "E013"
 path = "animation.AnimationEventData"
 reason = "pybevy-animation Python-defined type; no upstream Bevy constructor"
 
@@ -3176,9 +3246,6 @@ reason = "computed batch wrapper over visibility bits; pybevy-defined"
 code = "E013"
 path = "control.ApiIndex"
 reason = "MCP control-plane index built from the repo tree; no native constructor"
-
-
-
 
 
 [[validation.exceptions]]
@@ -3460,3 +3527,27 @@ code = "W006"
 path = "text.TextEdit"
 message = "enum payload 'TextEdit.ImeSetCompose.cursor' returns unclassified mutable result 'Option < PyPreeditCursor >'"
 reason = "PyPreeditCursor's by-value extraction stores a read-only ValueStorage snapshot, so the payload rejects writes; Snapshot<T> cannot wrap the foreign PreeditCursor type from pybevy_text (orphan rule)"
+
+[[validation.exceptions]]
+code = "W030"
+path = "pybevy.prelude"
+message = "pybevy.prelude exports 9 implemented name(s) absent from the Bevy prelude: Bloom, BloomCompositeMode, BloomPrefilter, PrimitiveTopology, ScalingMode, Stage, Tonemapping, View, Volume"
+reason = "Reviewed additions: Bevy types absent from every Bevy prelude (Bloom, BloomCompositeMode, BloomPrefilter from bevy_post_process and Tonemapping from bevy_core_pipeline, neither of which defines a prelude; PrimitiveTopology from bevy_mesh, Volume from bevy_audio, and ScalingMode from bevy_camera, each a constructor parameter of a preluded type) plus PyBevy-specific APIs (Stage in pybevy.app, View in pybevy.ecs)"
+
+[[validation.exceptions]]
+code = "W032"
+path = "ecs.State"
+message = "pyclass 'State' holds Python references (current: Arc<Mutex<Py<PyAny>>>) but declares no __traverse__"
+reason = "Reviewed PyState exception (Safety: Retained Python References, never lock in __traverse__): src/ecs/state.rs takes the current-value mutex from py.detach() contexts, so a traverse would need a blocking lock that can deadlock the collector (permanently under free-threading); try_lock-and-skip is unsound while detached lockers exist. The retained enum member can still reach back through its class and module, so this leak is accepted, not impossible"
+
+[[validation.exceptions]]
+code = "W032"
+path = "ecs.NextState"
+message = "pyclass 'NextState' holds Python references (state_type: Mutex<Py<PyType>>) but declares no __traverse__"
+reason = "Reviewed PyNextState exception (Safety: Retained Python References, never lock in __traverse__): src/ecs/state.rs takes the state_type and queued-slot mutexes from py.detach() contexts, so a traverse would need a blocking lock that can deadlock the collector (permanently under free-threading); try_lock-and-skip is unsound while detached lockers exist. The retained state type can still reach back through its module, so this leak is accepted, not impossible"
+
+[[validation.exceptions]]
+code = "W032"
+path = "animation.AnimationEventData"
+message = "pyclass 'AnimationEventData' holds Python references (event: Py<PyAnimationEvent>) but declares no __traverse__"
+reason = "PyAnimationEvent holds only String fields (name, data); no reference path can reach back to the holder, so no GC cycle can form through this edge"

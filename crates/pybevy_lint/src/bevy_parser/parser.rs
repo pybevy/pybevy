@@ -270,7 +270,9 @@ const CRATE_FEATURES: &[(&str, &[&str])] = &[
         "bevy_input",
         &["gamepad", "gestures", "keyboard", "mouse", "touch"],
     ),
+    ("bevy_light", &["bevy_gizmos"]),
     ("bevy_mesh", &["morph"]),
+    ("bevy_sprite", &["bevy_text"]),
 ];
 
 /// Build the `cargo public-api` invocation for one crate.
