@@ -1,7 +1,11 @@
 use bevy::math::{EulerRot, Quat, Vec3, Vec3A};
 use pybevy_core::{
     FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
-    public_error::UNSUPPORTED_COMPARISON, repr::ReprLiteral,
+    public_error::{
+        QUAT_AXIS_NOT_FINITE, ROTATION_ARC_NOT_NORMALIZED, UNSUPPORTED_COMPARISON,
+        quat_angle_not_finite, quat_axis_not_normalized,
+    },
+    repr::ReprLiteral,
 };
 use pybevy_macros::pyenum;
 use pyo3::{
@@ -163,20 +167,14 @@ impl PyQuat {
         // glam does not enforce its normalized-axis precondition in release builds.
         let axis: Vec3 = axis.try_into()?;
         if !angle.is_finite() {
-            return Err(PyValueError::new_err(format!(
-                "angle must be finite (got {angle})"
-            )));
+            return Err(PyValueError::new_err(quat_angle_not_finite(angle)));
         }
         if !axis.is_finite() {
-            return Err(PyValueError::new_err(
-                "axis must be finite; from_axis_angle requires a normalized axis",
-            ));
+            return Err(PyValueError::new_err(QUAT_AXIS_NOT_FINITE));
         }
         if !axis.is_normalized() {
-            return Err(PyValueError::new_err(format!(
-                "from_axis_angle requires a normalized axis (got length {}); \
-                 call axis.normalize() first",
-                axis.length()
+            return Err(PyValueError::new_err(quat_axis_not_normalized(
+                axis.length(),
             )));
         }
         Ok(PyQuat {
@@ -215,9 +213,7 @@ impl PyQuat {
     #[staticmethod]
     pub fn from_rotation_arc(start: PyVec3, end: PyVec3) -> PyResult<Self> {
         if !start.is_normalized()? || !end.is_normalized()? {
-            return Err(PyTypeError::new_err(
-                "start and end vectors must be normalized",
-            ));
+            return Err(PyValueError::new_err(ROTATION_ARC_NOT_NORMALIZED));
         }
         Ok(PyQuat {
             storage: ValueStorage::owned(Quat::from_rotation_arc(

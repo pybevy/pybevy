@@ -1,6 +1,6 @@
 use bevy::math::{
     Isometry3d, Vec3, Vec3A,
-    bounding::{Aabb3d, BoundingSphere, BoundingVolume, IntersectsVolume},
+    bounding::{BoundingSphere, BoundingVolume},
 };
 use pybevy_core::{
     FromBorrowedStorage, ValueStorage,
@@ -8,12 +8,9 @@ use pybevy_core::{
     repr::{ReprLiteral, float_repr},
 };
 use pybevy_macros::pyvalue;
-use pyo3::{
-    exceptions::{PyTypeError, PyValueError},
-    prelude::*,
-};
+use pyo3::{exceptions::PyValueError, prelude::*};
 
-use super::aabb3d::PyAabb3d;
+use super::aabb3d::{PyAabb3d, intersects_3d};
 use crate::{
     isometry3d::PyIsometry3d,
     quat::extract_quat_from_any,
@@ -69,6 +66,14 @@ impl From<BoundingSphere> for PyBoundingSphere {
 
 #[pymethods]
 impl PyBoundingSphere {
+    pub fn __copy__(&self) -> PyResult<Self> {
+        Ok(Self::from(BoundingSphere::try_from(self)?))
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
+
     #[new]
     pub fn new(center: &Bound<'_, PyAny>, radius: f32) -> PyResult<Self> {
         if radius.is_nan() || radius < 0.0 {
@@ -111,18 +116,9 @@ impl PyBoundingSphere {
         Ok(self.as_ref()?.contains(&other_sphere))
     }
 
-    /// True if this BoundingSphere intersects another BoundingSphere or an Aabb3d.
-    pub fn intersects(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
-        if other.is_instance_of::<PyBoundingSphere>() {
-            let other_sphere: BoundingSphere =
-                BoundingSphere::try_from(&*other.cast::<PyBoundingSphere>()?.borrow())?;
-            return Ok(self.as_ref()?.intersects(&other_sphere));
-        }
-        if other.is_instance_of::<PyAabb3d>() {
-            let aabb: Aabb3d = Aabb3d::try_from(&*other.cast::<PyAabb3d>()?.borrow())?;
-            return Ok(self.as_ref()?.intersects(&aabb));
-        }
-        Err(PyTypeError::new_err("expected BoundingSphere or Aabb3d"))
+    /// True if this BoundingSphere intersects an Aabb3d or a BoundingSphere.
+    pub fn intersects(&self, volume: &Bound<'_, PyAny>) -> PyResult<bool> {
+        intersects_3d(&*self.as_ref()?, volume)
     }
 
     pub fn merge(&self, other: &PyBoundingSphere) -> PyResult<PyBoundingSphere> {
@@ -206,16 +202,6 @@ impl PyBoundingSphere {
 
     pub fn aabb_3d(&self) -> PyResult<PyAabb3d> {
         Ok(PyAabb3d::from_owned(self.as_ref()?.aabb_3d()))
-    }
-
-    pub fn intersects_sphere(&self, other: &PyBoundingSphere) -> PyResult<bool> {
-        let other_sphere: BoundingSphere = other.try_into()?;
-        Ok(self.as_ref()?.intersects(&other_sphere))
-    }
-
-    pub fn intersects_aabb(&self, aabb: &PyAabb3d) -> PyResult<bool> {
-        let aabb_3d: Aabb3d = aabb.try_into()?;
-        Ok(self.as_ref()?.intersects(&aabb_3d))
     }
 
     #[staticmethod]

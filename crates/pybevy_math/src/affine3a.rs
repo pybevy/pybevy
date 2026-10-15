@@ -1,6 +1,7 @@
 use bevy::math::{Affine3A, Mat3A, Mat4, Quat, Vec3, Vec3A};
 use pybevy_core::{
     FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
+    public_error::UNSUPPORTED_COMPARISON,
     repr::{ReprLiteral, object_repr},
 };
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
@@ -78,6 +79,14 @@ impl PyAffine3A {
 
 #[pymethods]
 impl PyAffine3A {
+    pub fn __copy__(&self) -> PyResult<Self> {
+        Ok(Self::from(Affine3A::try_from(self)?))
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
+
     #[staticmethod]
     #[pyo3(name = "IDENTITY")]
     fn const_identity() -> Self {
@@ -281,7 +290,7 @@ impl PyAffine3A {
         let result = match op {
             CompareOp::Eq => self_aff == other_aff,
             CompareOp::Ne => self_aff != other_aff,
-            _ => return Err(PyTypeError::new_err("Affine3A only supports == and !=")),
+            _ => return Err(PyTypeError::new_err(UNSUPPORTED_COMPARISON)),
         };
         Ok(comparison_result(py, result))
     }

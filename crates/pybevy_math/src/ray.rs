@@ -64,6 +64,14 @@ impl PyRay2d {
 
 #[pymethods]
 impl PyRay2d {
+    pub fn __copy__(&self) -> PyResult<Self> {
+        Ok(Self::from(Ray2d::try_from(self)?))
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
+
     #[new]
     pub fn new(origin: PyVec2, direction: PyDir2) -> PyResult<Self> {
         let origin_vec: Vec2 = origin.try_into()?;
@@ -177,6 +185,14 @@ impl PyRay3d {
 
 #[pymethods]
 impl PyRay3d {
+    pub fn __copy__(&self) -> PyResult<Self> {
+        Ok(Self::from(Ray3d::try_from(self)?))
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
+
     #[new]
     pub fn new(origin: PyVec3, direction: PyDir3) -> PyResult<Self> {
         let origin_vec: Vec3 = origin.try_into()?;

@@ -33,7 +33,7 @@ use pybevy_transform::global_transform::PyGlobalTransform;
 use pyo3::ffi;
 use pyo3::{
     prelude::*,
-    types::{PyDict, PyFloat, PyInt, PyModule, PyType},
+    types::{PyCFunction, PyDict, PyFloat, PyInt, PyModule, PyType},
 };
 
 use crate::{
@@ -476,6 +476,12 @@ fn extract_bridge_fields_with_context(
         return map;
     }
 
+    if map.is_empty()
+        && let Some(fields) = constructor_accessor_fields(bound, &py_type, context)
+    {
+        return fields;
+    }
+
     // Fallback for tuple-struct enum wrappers with no exposed properties.
     if map.is_empty()
         && let Ok(repr) = bound.call_method0("__repr__")
@@ -493,6 +499,35 @@ fn extract_bridge_fields_with_context(
     }
 
     map
+}
+
+fn constructor_accessor_fields(
+    bound: &Bound<'_, PyAny>,
+    py_type: &Bound<'_, PyType>,
+    context: &mut SerializationContext,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let signature = PyModule::import(bound.py(), "inspect")
+        .ok()?
+        .call_method1("signature", (py_type,))
+        .ok()?;
+    let names = signature
+        .getattr("parameters")
+        .ok()?
+        .try_iter()
+        .ok()?
+        .map(|name| name.ok()?.extract::<String>().ok())
+        .collect::<Option<Vec<_>>>()?;
+    if names.is_empty() {
+        return None;
+    }
+    let mut map = serde_json::Map::new();
+    for name in names {
+        let accessor = bound.getattr(name.as_str()).ok()?;
+        accessor.cast::<PyCFunction>().ok()?;
+        let value = accessor.call0().ok()?;
+        map.insert(name, py_value_to_json_inner(&value, context));
+    }
+    Some(map)
 }
 
 fn unit_enum_variant_name(bound: &Bound<'_, PyAny>, owner: &Bound<'_, PyType>) -> Option<String> {

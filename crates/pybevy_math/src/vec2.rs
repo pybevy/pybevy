@@ -1,6 +1,7 @@
 use bevy::math::{BVec2, Vec2, Vec2Swizzles};
 use pybevy_core::{
-    FromBorrowedStorage, StorageRef, ValueStorage, public_error::UNSUPPORTED_COMPARISON,
+    FromBorrowedStorage, StorageRef, ValueStorage,
+    public_error::{RHS_NOT_NORMALIZED, UNSUPPORTED_COMPARISON, from_slice_too_short},
     repr::ReprLiteral,
 };
 use pyo3::{
@@ -249,7 +250,7 @@ impl PyVec2 {
         }
     }
 
-    fn __div__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+    fn __truediv__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let self_v = self.as_ref()?;
         if let Ok(other_vec) = other.cast::<PyVec2>() {
             let other_vec = Vec2::try_from(&*other_vec.try_borrow()?)?;
@@ -259,10 +260,6 @@ impl PyVec2 {
         } else {
             Ok(py.NotImplemented().into_any())
         }
-    }
-
-    fn __truediv__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        self.__div__(other, py)
     }
 
     fn __neg__(&self) -> PyResult<PyVec2> {
@@ -523,7 +520,7 @@ impl PyVec2 {
         let value = self.as_ref()?;
         let rhs = rhs.as_ref()?;
         if !rhs.is_normalized() {
-            return Err(PyValueError::new_err("rhs must be normalized"));
+            return Err(PyValueError::new_err(RHS_NOT_NORMALIZED));
         }
         Ok(PyVec2::from_vec2(value.project_onto_normalized(*rhs)))
     }
@@ -532,7 +529,7 @@ impl PyVec2 {
         let value = self.as_ref()?;
         let rhs = rhs.as_ref()?;
         if !rhs.is_normalized() {
-            return Err(PyValueError::new_err("rhs must be normalized"));
+            return Err(PyValueError::new_err(RHS_NOT_NORMALIZED));
         }
         Ok(PyVec2::from_vec2(value.reject_from_normalized(*rhs)))
     }
@@ -580,7 +577,7 @@ impl PyVec2 {
     #[staticmethod]
     pub fn from_slice(slice: Vec<f32>) -> PyResult<PyVec2> {
         if slice.len() < 2 {
-            return Err(PyValueError::new_err("Slice must have at least 2 elements"));
+            return Err(PyValueError::new_err(from_slice_too_short(2)));
         }
         Ok(PyVec2::from_vec2(Vec2::from_slice(&slice)))
     }

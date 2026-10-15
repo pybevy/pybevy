@@ -1,5 +1,8 @@
 use bevy::math::{Mat3A, Vec3, Vec3A};
-use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage, repr::ReprLiteral};
+use pybevy_core::{
+    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
+    public_error::UNSUPPORTED_COMPARISON, repr::ReprLiteral,
+};
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 use super::{vec3::PyVec3, vec3a::PyVec3A};
@@ -75,6 +78,14 @@ impl PyMat3A {
 
 #[pymethods]
 impl PyMat3A {
+    pub fn __copy__(&self) -> PyResult<Self> {
+        Ok(Self::from(Mat3A::try_from(self)?))
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
+
     #[staticmethod]
     #[pyo3(name = "IDENTITY")]
     fn const_identity() -> Self {
@@ -213,7 +224,7 @@ impl PyMat3A {
         Ok(self.as_ref()?.mul_vec3a(rhs.try_into()?).into())
     }
 
-    pub fn mul_mat3a(&self, rhs: &PyMat3A) -> PyResult<Self> {
+    pub fn mul_mat3(&self, rhs: &PyMat3A) -> PyResult<Self> {
         Ok(PyMat3A::mat3a(
             self.as_ref()?.mul_mat3(rhs.as_ref()?.reborrow()),
         ))
@@ -332,7 +343,7 @@ impl PyMat3A {
         let result = match op {
             CompareOp::Eq => self_mat == other_mat,
             CompareOp::Ne => self_mat != other_mat,
-            _ => return Err(PyTypeError::new_err("Mat3A only supports == and !=")),
+            _ => return Err(PyTypeError::new_err(UNSUPPORTED_COMPARISON)),
         };
         Ok(comparison_result(py, result))
     }

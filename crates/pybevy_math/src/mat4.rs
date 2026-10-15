@@ -2,9 +2,10 @@ use bevy::math::{Mat4, Vec3, Vec4};
 use pybevy_core::{
     FromBorrowedStorage, StorageRef, ValueStorage,
     public_error::{
-        MAT4_LOOK_AT_EYE_EQUALS_CENTER, MAT4_LOOK_DIRECTION_PARALLEL_TO_UP,
-        MAT4_PERSPECTIVE_INFINITE_REVERSE_RH_NEAR, UNSUPPORTED_COMPARISON,
-        mat4_perspective_depth_planes, mat4_projection_not_finite,
+        DIRECTION_NOT_NORMALIZED, MAT4_LOOK_AT_EYE_EQUALS_CENTER,
+        MAT4_LOOK_DIRECTION_PARALLEL_TO_UP, MAT4_PERSPECTIVE_INFINITE_REVERSE_RH_NEAR,
+        UNSUPPORTED_COMPARISON, UP_NOT_NORMALIZED, mat4_perspective_depth_planes,
+        mat4_projection_not_finite,
     },
     repr::float_repr,
 };
@@ -114,10 +115,10 @@ fn look_to_inputs(eye: &PyVec3, dir: &PyVec3, up: &PyVec3) -> PyResult<(Vec3, Ve
     let dir: Vec3 = dir.try_into()?;
     let up: Vec3 = up.try_into()?;
     if !dir.is_normalized() {
-        return Err(PyValueError::new_err("direction must be normalized"));
+        return Err(PyValueError::new_err(DIRECTION_NOT_NORMALIZED));
     }
     if !up.is_normalized() {
-        return Err(PyValueError::new_err("up must be normalized"));
+        return Err(PyValueError::new_err(UP_NOT_NORMALIZED));
     }
     require_not_parallel(dir, up)?;
     Ok((eye, dir, up))
@@ -133,6 +134,14 @@ fn look_at_inputs(eye: &PyVec3, center: &PyVec3, up: &PyVec3) -> PyResult<(Vec3,
 
 #[pymethods]
 impl PyMat4 {
+    pub fn __copy__(&self) -> PyResult<Self> {
+        Ok(Self::from(Mat4::try_from(self)?))
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
+
     #[staticmethod]
     #[pyo3(name = "IDENTITY")]
     fn const_identity() -> Self {

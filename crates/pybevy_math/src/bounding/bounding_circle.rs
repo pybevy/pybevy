@@ -1,18 +1,15 @@
 use bevy::math::{
     Isometry2d, Vec2,
-    bounding::{Aabb2d, BoundingCircle, BoundingVolume, IntersectsVolume},
+    bounding::{BoundingCircle, BoundingVolume},
 };
 use pybevy_core::{
     FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
     public_error::{EMPTY_POINT_CLOUD, bounding_operation, bounding_radius, bounding_shrink},
     repr::{ReprLiteral, float_repr},
 };
-use pyo3::{
-    exceptions::{PyTypeError, PyValueError},
-    prelude::*,
-};
+use pyo3::{exceptions::PyValueError, prelude::*};
 
-use super::aabb2d::PyAabb2d;
+use super::aabb2d::{PyAabb2d, intersects_2d};
 use crate::{
     isometry2d::PyIsometry2d,
     rot2::extract_rot2_from_any,
@@ -73,14 +70,18 @@ impl PyBoundingCircle {
     fn as_mut(&mut self) -> PyResult<StorageMut<'_, BoundingCircle>> {
         Ok(self.storage.as_mut()?)
     }
-
-    pub(crate) fn to_bounding_circle(&self) -> PyResult<BoundingCircle> {
-        Ok(self.storage.get()?)
-    }
 }
 
 #[pymethods]
 impl PyBoundingCircle {
+    pub fn __copy__(&self) -> PyResult<Self> {
+        Ok(Self::from(BoundingCircle::try_from(self)?))
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
+
     #[new]
     pub fn new(center: PyVec2, radius: f32) -> PyResult<Self> {
         let center_vec: Vec2 = center.try_into()?;
@@ -120,18 +121,9 @@ impl PyBoundingCircle {
         Ok(self.as_ref()?.contains(&other_circle))
     }
 
-    /// True if this BoundingCircle intersects another BoundingCircle or an Aabb2d.
-    pub fn intersects(&self, other: &Bound<'_, PyAny>) -> PyResult<bool> {
-        if other.is_instance_of::<PyBoundingCircle>() {
-            let other_circle: BoundingCircle =
-                BoundingCircle::try_from(&*other.cast::<PyBoundingCircle>()?.borrow())?;
-            return Ok(self.as_ref()?.intersects(&other_circle));
-        }
-        if other.is_instance_of::<PyAabb2d>() {
-            let aabb: Aabb2d = Aabb2d::try_from(&*other.cast::<PyAabb2d>()?.borrow())?;
-            return Ok(self.as_ref()?.intersects(&aabb));
-        }
-        Err(PyTypeError::new_err("expected BoundingCircle or Aabb2d"))
+    /// True if this BoundingCircle intersects an Aabb2d or a BoundingCircle.
+    pub fn intersects(&self, volume: &Bound<'_, PyAny>) -> PyResult<bool> {
+        intersects_2d(&*self.as_ref()?, volume)
     }
 
     pub fn merge(&self, other: &PyBoundingCircle) -> PyResult<PyBoundingCircle> {
@@ -219,16 +211,6 @@ impl PyBoundingCircle {
 
     pub fn aabb_2d(&self) -> PyResult<PyAabb2d> {
         Ok(PyAabb2d::from_aabb2d(self.as_ref()?.aabb_2d()))
-    }
-
-    pub fn intersects_circle(&self, other: &PyBoundingCircle) -> PyResult<bool> {
-        let other_circle: BoundingCircle = other.try_into()?;
-        Ok(self.as_ref()?.intersects(&other_circle))
-    }
-
-    pub fn intersects_aabb(&self, aabb: &PyAabb2d) -> PyResult<bool> {
-        let aabb_2d: Aabb2d = aabb.try_into()?;
-        Ok(self.as_ref()?.intersects(&aabb_2d))
     }
 
     #[staticmethod]

@@ -1268,6 +1268,33 @@ pub const EMPTY_POINT_CLOUD: &str = "point cloud must contain at least one point
 pub const INFINITE_PLANE_POINTS: &str =
     "infinite plane must be defined by three finite, non-collinear points";
 pub const INTEGER_VECTOR_OVERFLOW: &str = "integer vector arithmetic overflow";
+pub const RHS_NOT_NORMALIZED: &str = "rhs must be normalized";
+pub const VECTOR_NOT_NORMALIZED: &str = "vector must be normalized";
+pub const DIRECTION_NOT_NORMALIZED: &str = "direction must be normalized";
+pub const UP_NOT_NORMALIZED: &str = "up must be normalized";
+pub const ROTATION_ARC_NOT_NORMALIZED: &str = "start and end vectors must be normalized";
+pub const QUAT_AXIS_NOT_FINITE: &str =
+    "axis must be finite; from_axis_angle requires a normalized axis";
+pub const INVALID_INTERVAL: &str =
+    "The resulting interval would be invalid (empty or with a NaN endpoint)";
+
+pub fn from_slice_too_short(minimum: usize) -> String {
+    format!("from_slice requires at least {minimum} elements")
+}
+
+pub fn integer_vector_division_by_zero(type_name: &str) -> String {
+    format!("{type_name} division by zero")
+}
+
+pub fn quat_angle_not_finite(angle: f32) -> String {
+    format!("angle must be finite (got {angle})")
+}
+
+pub fn quat_axis_not_normalized(length: f32) -> String {
+    format!(
+        "from_axis_angle requires a normalized axis (got length {length}); call axis.normalize() first"
+    )
+}
 
 /// Ordering comparison between two values of a type that defines only equality.
 pub const UNSUPPORTED_COMPARISON: &str = "Unsupported comparison operation";
@@ -1363,6 +1390,10 @@ pub fn primitive_dimension(name: &str, value: impl Display) -> String {
 
 pub fn primitive_angle(name: &str, value: f32) -> String {
     format!("{name} must be finite (got {value})")
+}
+
+pub fn intersects_volume_type(accepted: &str) -> String {
+    format!("expected {accepted}")
 }
 
 pub fn bounding_operation(kind: &str, operation: &str) -> String {

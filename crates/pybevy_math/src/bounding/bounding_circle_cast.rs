@@ -1,4 +1,4 @@
-use bevy::math::bounding::BoundingCircleCast;
+use bevy::math::bounding::{BoundingCircleCast, IntersectsVolume};
 use pybevy_core::{FieldStorage, FromBorrowedStorage, repr::object_repr};
 use pybevy_macros::pyfield;
 use pyo3::prelude::*;
@@ -15,6 +15,14 @@ pub struct PyBoundingCircleCast {
 
 #[pymethods]
 impl PyBoundingCircleCast {
+    pub fn __copy__(&self) -> PyResult<Self> {
+        Ok(Self::from(BoundingCircleCast::try_from(self)?))
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
+
     #[new]
     pub fn new(
         circle: &PyBoundingCircle,
@@ -41,6 +49,10 @@ impl PyBoundingCircleCast {
 
     pub fn circle_collision_at(&self, circle: &PyBoundingCircle) -> PyResult<Option<f32>> {
         Ok(self.as_ref()?.circle_collision_at(circle.try_into()?))
+    }
+
+    pub fn intersects(&self, volume: &PyBoundingCircle) -> PyResult<bool> {
+        Ok(self.as_ref()?.intersects(&volume.try_into()?))
     }
 
     #[getter]

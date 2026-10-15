@@ -1,8 +1,6 @@
 use bevy::math::{
-    Dir3, Ray3d, Vec2, Vec3,
-    bounding::{
-        Aabb2d, Aabb3d, BoundingCircle, BoundingSphere, IntersectsVolume, RayCast2d, RayCast3d,
-    },
+    Dir3, Vec2, Vec3,
+    bounding::{Aabb2d, Aabb3d, BoundingCircle, BoundingSphere, RayCast2d, RayCast3d},
 };
 use pybevy_core::{
     FieldStorage, FromBorrowedStorage, ValueStorage,
@@ -12,7 +10,9 @@ use pybevy_macros::pyfield;
 use pyo3::prelude::*;
 
 use super::{
-    aabb2d::PyAabb2d, aabb3d::PyAabb3d, bounding_circle::PyBoundingCircle,
+    aabb2d::{PyAabb2d, intersects_2d},
+    aabb3d::{PyAabb3d, intersects_3d},
+    bounding_circle::PyBoundingCircle,
     bounding_sphere::PyBoundingSphere,
 };
 use crate::{
@@ -21,6 +21,7 @@ use crate::{
     ray::{PyRay2d, PyRay3d},
     vec2::PyVec2,
     vec3::PyVec3,
+    vec3a::{PyVec3A, extract_vec3a_from_any},
 };
 
 #[pyfield]
@@ -32,6 +33,14 @@ pub struct PyRayCast2d {
 
 #[pymethods]
 impl PyRayCast2d {
+    pub fn __copy__(&self) -> PyResult<Self> {
+        Ok(Self::from(RayCast2d::try_from(self)?))
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
+
     #[new]
     pub fn new(origin: PyVec2, direction: PyDir2, max: f32) -> PyResult<Self> {
         let origin_vec: Vec2 = origin.try_into()?;
@@ -69,14 +78,9 @@ impl PyRayCast2d {
         Ok(())
     }
 
-    pub fn intersects_aabb(&self, aabb: &PyAabb2d) -> PyResult<bool> {
-        let aabb_2d: Aabb2d = aabb.try_into()?;
-        Ok(self.as_ref()?.intersects(&aabb_2d))
-    }
-
-    pub fn intersects_circle(&self, circle: &PyBoundingCircle) -> PyResult<bool> {
-        let bounding_circle: BoundingCircle = circle.try_into()?;
-        Ok(self.as_ref()?.intersects(&bounding_circle))
+    /// True if the ray hits an Aabb2d or a BoundingCircle within `max`.
+    pub fn intersects(&self, volume: &Bound<'_, PyAny>) -> PyResult<bool> {
+        intersects_2d(&*self.as_ref()?, volume)
     }
 
     pub fn aabb_intersection_at(&self, aabb: &PyAabb2d) -> PyResult<Option<f32>> {
@@ -112,6 +116,14 @@ pub struct PyRayCast3d {
 
 #[pymethods]
 impl PyRayCast3d {
+    pub fn __copy__(&self) -> PyResult<Self> {
+        Ok(Self::from(RayCast3d::try_from(self)?))
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
+
     #[new]
     pub fn new(origin: PyVec3, direction: PyDir3, max: f32) -> PyResult<Self> {
         let origin_vec: Vec3 = origin.try_into()?;
@@ -125,25 +137,33 @@ impl PyRayCast3d {
     }
 
     #[getter]
-    pub fn ray(&self) -> PyResult<PyRay3d> {
-        let cast = self.as_ref()?;
-        let dir3: Dir3 = cast.direction.into();
-        let ray = Ray3d::new(cast.origin.into(), dir3);
-        // bevy's RayCast3d stores origin/direction primitives, not a ray, so
-        // this getter synthesizes a fresh owned Ray3d. Return an enforced
-        // read-only snapshot so writes fail loudly instead of silently
-        // mutating a throwaway (W006).
-        Ok(PyRay3d::from_borrowed(ValueStorage::read_only_snapshot(
-            ray,
+    pub fn origin(&self) -> PyResult<PyVec3A> {
+        Ok(self.storage.borrow_field_as(|cast| &cast.origin)?)
+    }
+
+    #[setter]
+    pub fn set_origin(&mut self, origin: &Bound<'_, PyAny>) -> PyResult<()> {
+        let origin = extract_vec3a_from_any(origin)?;
+        let cast = self.as_ref()?.clone();
+        self.as_mut()?
+            .clone_from(&RayCast3d::new(origin, cast.direction, cast.max));
+        Ok(())
+    }
+
+    #[getter]
+    pub fn direction(&self) -> PyResult<PyDir3> {
+        let direction: Dir3 = self.as_ref()?.direction.into();
+        Ok(PyDir3::from_borrowed(ValueStorage::read_only_snapshot(
+            direction,
         )))
     }
 
     #[setter]
-    pub fn set_ray(&mut self, ray: &PyRay3d) -> PyResult<()> {
-        // Rebuild via from_ray so the cached direction reciprocal stays valid.
-        let max = self.as_ref()?.max;
+    pub fn set_direction(&mut self, direction: &PyDir3) -> PyResult<()> {
+        let direction = direction.get()?;
+        let cast = self.as_ref()?.clone();
         self.as_mut()?
-            .clone_from(&RayCast3d::from_ray(ray.to_ray3d()?, max));
+            .clone_from(&RayCast3d::new(cast.origin, direction, cast.max));
         Ok(())
     }
 
@@ -158,14 +178,9 @@ impl PyRayCast3d {
         Ok(())
     }
 
-    pub fn intersects_aabb(&self, aabb: &PyAabb3d) -> PyResult<bool> {
-        let aabb_3d: Aabb3d = aabb.try_into()?;
-        Ok(self.as_ref()?.intersects(&aabb_3d))
-    }
-
-    pub fn intersects_sphere(&self, sphere: &PyBoundingSphere) -> PyResult<bool> {
-        let bounding_sphere: BoundingSphere = sphere.try_into()?;
-        Ok(self.as_ref()?.intersects(&bounding_sphere))
+    /// True if the ray hits an Aabb3d or a BoundingSphere within `max`.
+    pub fn intersects(&self, volume: &Bound<'_, PyAny>) -> PyResult<bool> {
+        intersects_3d(&*self.as_ref()?, volume)
     }
 
     pub fn aabb_intersection_at(&self, aabb: &PyAabb3d) -> PyResult<Option<f32>> {

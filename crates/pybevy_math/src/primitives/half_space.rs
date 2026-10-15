@@ -2,7 +2,7 @@ use bevy::math::{Vec4, primitives::HalfSpace};
 use pybevy_core::{Omittable, repr::ReprLiteral};
 use pyo3::prelude::*;
 
-use crate::{vec3a::PyVec3A, vec4::PyVec4};
+use crate::{vec3::PyVec3, vec3a::PyVec3A, vec4::PyVec4};
 
 #[pyclass(name = "HalfSpace", module = "pybevy.math", frozen, from_py_object)]
 #[derive(Debug, Clone, Copy)]
@@ -30,6 +30,14 @@ impl From<&PyHalfSpace> for HalfSpace {
 
 #[pymethods]
 impl PyHalfSpace {
+    pub fn __copy__(&self) -> PyResult<Self> {
+        Ok(*self)
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
+
     #[new]
     #[pyo3(signature = (normal_d = Omittable::default()))]
     pub fn new(normal_d: Omittable<PyRef<'_, PyVec4>>) -> PyResult<Self> {
@@ -43,19 +51,21 @@ impl PyHalfSpace {
         Ok(PyHalfSpace { inner })
     }
 
-    #[getter]
     pub fn normal(&self) -> PyVec3A {
         PyVec3A::from_vec3a(self.inner.normal())
     }
 
-    #[getter]
     pub fn d(&self) -> f32 {
         self.inner.d()
     }
 
-    #[getter]
     pub fn normal_d(&self) -> PyVec4 {
         PyVec4::from_vec4(self.inner.normal_d())
+    }
+
+    #[staticmethod]
+    pub fn intersection_point(a: &PyHalfSpace, b: &PyHalfSpace, c: &PyHalfSpace) -> Option<PyVec3> {
+        HalfSpace::intersection_point(a.inner, b.inner, c.inner).map(PyVec3::from_vec3)
     }
 
     pub fn __repr__(&self) -> String {

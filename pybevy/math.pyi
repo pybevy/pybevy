@@ -47,6 +47,11 @@ class FloatOrd:
     def __ge__(self, other: FloatOrd) -> bool: ...
     def __hash__(self) -> int: ...
 
+    def __copy__(self) -> FloatOrd:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> FloatOrd:
+        """Return an independent copy; the value holds no Python objects."""
 
 class Vec3:
     """A 3-dimensional vector class providing common vector operations.
@@ -133,7 +138,6 @@ class Vec3:
     def __add__(self, other: float | Vec3) -> Vec3: ...
     def __sub__(self, other: float | Vec3) -> Vec3: ...
     def __mul__(self, other: float | Vec3) -> Vec3: ...
-    def __div__(self, other: float | Vec3) -> Vec3: ...
     def __truediv__(self, other: float | Vec3) -> Vec3:
         """Divide using IEEE floating-point semantics; zero produces infinities or NaN."""
     def __neg__(self) -> Vec3: ...
@@ -468,7 +472,6 @@ class Vec2:
     def __add__(self, other: float | Vec2) -> Vec2: ...
     def __sub__(self, other: float | Vec2) -> Vec2: ...
     def __mul__(self, other: float | Vec2) -> Vec2: ...
-    def __div__(self, other: float | Vec2) -> Vec2: ...
     def __truediv__(self, other: float | Vec2) -> Vec2:
         """Divide using IEEE floating-point semantics; zero produces infinities or NaN."""
     def __neg__(self) -> Vec2: ...
@@ -511,6 +514,12 @@ class Range:
 
     def __eq__(self, other: object) -> bool: ...
     def __ne__(self, other: object) -> bool: ...
+
+    def __copy__(self) -> Range:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Range:
+        """Return an independent copy; the value holds no Python objects."""
 
 class Rect:
     """A rectangle defined by minimum and maximum corner points."""
@@ -662,6 +671,12 @@ class UVec2:
     def __eq__(self, other: object) -> bool: ...
     def __ne__(self, other: object) -> bool: ...
 
+    def __copy__(self) -> UVec2:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> UVec2:
+        """Return an independent copy; the value holds no Python objects."""
+
 class IVec2:
     """A 2-dimensional signed integer vector."""
 
@@ -736,6 +751,12 @@ class IVec2:
     def __neg__(self) -> IVec2: ...
     def __eq__(self, other: object) -> bool: ...
     def __ne__(self, other: object) -> bool: ...
+
+    def __copy__(self) -> IVec2:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> IVec2:
+        """Return an independent copy; the value holds no Python objects."""
 
 class UVec3:
     """A 3-dimensional unsigned integer vector."""
@@ -814,6 +835,12 @@ class UVec3:
         """
     def __eq__(self, other: object) -> bool: ...
     def __ne__(self, other: object) -> bool: ...
+
+    def __copy__(self) -> UVec3:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> UVec3:
+        """Return an independent copy; the value holds no Python objects."""
 
 class URect:
     """A rectangle defined by minimum and maximum corner points (unsigned integers).
@@ -985,6 +1012,12 @@ class IRect:
     def __eq__(self, other: object) -> bool: ...
     def __ne__(self, other: object) -> bool: ...
 
+    def __copy__(self) -> IRect:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> IRect:
+        """Return an independent copy; the value holds no Python objects."""
+
 class Interval:
     """A nonempty closed interval, possibly unbounded in either direction."""
 
@@ -1049,6 +1082,12 @@ class Interval:
     def __le__(self, other: object) -> bool: ...
     def __gt__(self, other: object) -> bool: ...
     def __ge__(self, other: object) -> bool: ...
+
+    def __copy__(self) -> Interval:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Interval:
+        """Return an independent copy; the value holds no Python objects."""
 
 class Circle(Meshable):
     """A 2D circle primitive.
@@ -1241,6 +1280,12 @@ class Dir3:
     def __mul__(self, other: float) -> Vec3: ...
     def __rmul__(self, other: float) -> Vec3: ...
 
+    def __copy__(self) -> Dir3:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Dir3:
+        """Return an independent copy; the value holds no Python objects."""
+
 class Mat2:
     """2x2 column-major matrix for rotation/scale/shear."""
 
@@ -1306,6 +1351,12 @@ class Mat2:
     def __ne__(self, other: object) -> bool: ...
     def __rmul__(self, other: float) -> Mat2: ...
 
+    def __copy__(self) -> Mat2:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Mat2:
+        """Return an independent copy; the value holds no Python objects."""
+
 class Affine2:
     """2D affine transformation (scale, shear, rotation, translation)."""
 
@@ -1355,6 +1406,12 @@ class Affine2:
     def __repr__(self) -> str: ...
     def __eq__(self, other: object) -> bool: ...
     def __ne__(self, other: object) -> bool: ...
+
+    def __copy__(self) -> Affine2:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Affine2:
+        """Return an independent copy; the value holds no Python objects."""
 
 class Mat3A:
     """A 3x3 column-major matrix using SIMD-aligned Vec3A columns.
@@ -1421,7 +1478,7 @@ class Mat3A:
             ValueError: If the matrix is singular or its inverse is not finite
         """
     def mul_vec3a(self, rhs: Vec3A) -> Vec3A: ...
-    def mul_mat3a(self, rhs: Mat3A) -> Mat3A: ...
+    def mul_mat3(self, rhs: Mat3A) -> Mat3A: ...
     def mul_scalar(self, rhs: float) -> Mat3A: ...
     def to_cols_array(self) -> list[float]: ...
     def abs(self) -> Mat3A: ...
@@ -1446,6 +1503,12 @@ class Mat3A:
     def __truediv__(self, other: float) -> Mat3A:
         """Divide using IEEE floating-point semantics; zero produces infinities or NaN."""
     def __rtruediv__(self, other: float) -> Mat3A: ...
+
+    def __copy__(self) -> Mat3A:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Mat3A:
+        """Return an independent copy; the value holds no Python objects."""
 
 class Affine3A:
     """A 3D affine transform using SIMD-aligned types.
@@ -1512,6 +1575,12 @@ class Affine3A:
     def __repr__(self) -> str: ...
     def __eq__(self, other: object) -> bool: ...
     def __ne__(self, other: object) -> bool: ...
+
+    def __copy__(self) -> Affine3A:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Affine3A:
+        """Return an independent copy; the value holds no Python objects."""
 
 class Cone(Meshable):
     """A 3D cone primitive with its tip on +Y.
@@ -1686,6 +1755,12 @@ class InfinitePlane3d:
     @normal.setter
     def normal(self, value: Dir3) -> None: ...
 
+    def __copy__(self) -> InfinitePlane3d:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> InfinitePlane3d:
+        """Return an independent copy; the value holds no Python objects."""
+
 class HalfSpace:
     """A region of 3D space defined by a bisecting 2D plane.
 
@@ -1693,16 +1768,25 @@ class HalfSpace:
     and the 4th component is the signed distance from the plane to the origin.
     """
 
-    @property
-    def normal(self) -> Vec3A: ...
-    @property
-    def d(self) -> float: ...
-    @property
-    def normal_d(self) -> Vec4: ...
+    def normal(self) -> Vec3A:
+        """The unit normal of the bisecting plane."""
+    def d(self) -> float:
+        """The signed distance from the plane to the origin."""
+    def normal_d(self) -> Vec4:
+        """The normal in xyz and the signed distance in w."""
+    @staticmethod
+    def intersection_point(a: HalfSpace, b: HalfSpace, c: HalfSpace) -> Vec3 | None:
+        """The point where three planes meet, or None when no single point exists."""
 
     def __init__(self, normal_d: Vec4 = ...) -> None: ...
 
     def __eq__(self, other: object) -> bool: ...
+
+    def __copy__(self) -> HalfSpace:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> HalfSpace:
+        """Return an independent copy; the value holds no Python objects."""
 
 class ViewFrustum:
     """A region of 3D space defined by the intersection of 6 half-spaces.
@@ -1739,6 +1823,12 @@ class ViewFrustum:
         """The 8 corner points of the frustum, or None if it is unbounded."""
 
     def __eq__(self, other: object) -> bool: ...
+
+    def __copy__(self) -> ViewFrustum:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> ViewFrustum:
+        """Return an independent copy; the value holds no Python objects."""
 
 class Cylinder(Meshable):
     """A 3D cylinder primitive aligned with the Y axis.
@@ -1916,7 +2006,6 @@ class Vec4:
     def __add__(self, other: float | Vec4) -> Vec4: ...
     def __sub__(self, other: float | Vec4) -> Vec4: ...
     def __mul__(self, other: float | Vec4) -> Vec4: ...
-    def __div__(self, other: float | Vec4) -> Vec4: ...
     def __truediv__(self, other: float | Vec4) -> Vec4:
         """Divide using IEEE floating-point semantics; zero produces infinities or NaN."""
     def __neg__(self) -> Vec4: ...
@@ -2021,6 +2110,12 @@ class Mat3:
     def __neg__(self) -> Mat3: ...
     def __eq__(self, other: object) -> bool: ...
     def __ne__(self, other: object) -> bool: ...
+
+    def __copy__(self) -> Mat3:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Mat3:
+        """Return an independent copy; the value holds no Python objects."""
 
 class Mat4:
     """A 4x4 matrix class for 3D transformations."""
@@ -2181,6 +2276,12 @@ class Mat4:
     def __eq__(self, other: object) -> bool: ...
     def __ne__(self, other: object) -> bool: ...
 
+    def __copy__(self) -> Mat4:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Mat4:
+        """Return an independent copy; the value holds no Python objects."""
+
 class Isometry2d:
     """2D isometry representing translation and rotation (rigid transform)."""
 
@@ -2238,6 +2339,12 @@ class Isometry2d:
 
     def __eq__(self, other: object) -> bool: ...
 
+    def __copy__(self) -> Isometry2d:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Isometry2d:
+        """Return an independent copy; the value holds no Python objects."""
+
 class Aabb2d:
     """Axis-aligned bounding box in 2D space.
 
@@ -2288,8 +2395,8 @@ class Aabb2d:
 
     def contains(self, other: Aabb2d) -> bool:
         """Check if this bounding box completely contains another."""
-    def intersects(self, other: Aabb2d | BoundingCircle) -> bool:
-        """True if this box intersects another Aabb2d or a BoundingCircle."""
+    def intersects(self, volume: Aabb2d | BoundingCircle) -> bool:
+        """True if this box intersects an Aabb2d or a BoundingCircle."""
 
     def merge(self, other: Aabb2d) -> Aabb2d:
         """Merge with another bounding box, returning the smallest box containing both."""
@@ -2339,13 +2446,13 @@ class Aabb2d:
             ValueError: If the computed extents violate Bevy nonnegative preconditions.
         """
 
-    def intersects_aabb(self, other: Aabb2d) -> bool:
-        """Check if this bounding box intersects with another Aabb2d."""
-
-    def intersects_circle(self, circle: BoundingCircle) -> bool:
-        """Check if this bounding box intersects with a BoundingCircle."""
-
     def __eq__(self, other: object) -> bool: ...
+
+    def __copy__(self) -> Aabb2d:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Aabb2d:
+        """Return an independent copy; the value holds no Python objects."""
 
 class BoundingCircle:
     """Bounding circle in 2D space.
@@ -2437,15 +2544,16 @@ class BoundingCircle:
     def transformed_by(self, translation: Vec2, rotation: Rot2 | float) -> BoundingCircle:
         """New circle rotated then translated."""
 
-    def intersects_circle(self, other: BoundingCircle) -> bool:
-        """Check if this circle intersects with another BoundingCircle."""
-    def intersects(self, other: BoundingCircle | Aabb2d) -> bool:
-        """True if this circle intersects another BoundingCircle or an Aabb2d."""
-
-    def intersects_aabb(self, aabb: Aabb2d) -> bool:
-        """Check if this circle intersects with an Aabb2d."""
+    def intersects(self, volume: Aabb2d | BoundingCircle) -> bool:
+        """True if this circle intersects an Aabb2d or a BoundingCircle."""
 
     def __eq__(self, other: object) -> bool: ...
+
+    def __copy__(self) -> BoundingCircle:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> BoundingCircle:
+        """Return an independent copy; the value holds no Python objects."""
 
 class Isometry3d:
     """3D isometry (rotation + translation) for bounding volume transformations.
@@ -2499,6 +2607,12 @@ class Isometry3d:
     def __mul__(self, other: Vec3) -> Vec3: ...
     @overload
     def __mul__(self, other: Dir3) -> Dir3: ...
+
+    def __copy__(self) -> Isometry3d:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Isometry3d:
+        """Return an independent copy; the value holds no Python objects."""
 
 class Aabb3d:
     """Axis-aligned bounding box in 3D space."""
@@ -2596,13 +2710,8 @@ class Aabb3d:
             ValueError: If the computed extents violate Bevy nonnegative preconditions.
         """
 
-    def intersects_aabb(self, other: Aabb3d) -> bool:
-        """Check if this AABB intersects with another Aabb3d."""
-    def intersects(self, other: Aabb3d | BoundingSphere) -> bool:
-        """True if this box intersects another Aabb3d or a BoundingSphere."""
-
-    def intersects_sphere(self, sphere: BoundingSphere) -> bool:
-        """Check if this AABB intersects with a BoundingSphere."""
+    def intersects(self, volume: Aabb3d | BoundingSphere) -> bool:
+        """True if this box intersects an Aabb3d or a BoundingSphere."""
 
     @staticmethod
     def from_point_cloud(isometry: Isometry3d, points: list[Vec3]) -> Aabb3d:
@@ -2619,6 +2728,12 @@ class Aabb3d:
         """
 
     def __eq__(self, other: object) -> bool: ...
+
+    def __copy__(self) -> Aabb3d:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Aabb3d:
+        """Return an independent copy; the value holds no Python objects."""
 
 class BoundingSphere:
     """Bounding sphere in 3D space."""
@@ -2692,13 +2807,8 @@ class BoundingSphere:
     def transformed_by(self, translation: Vec3A | Vec3, rotation: Quat) -> BoundingSphere:
         """New sphere rotated then translated."""
 
-    def intersects_sphere(self, other: BoundingSphere) -> bool:
-        """Check if this sphere intersects with another BoundingSphere."""
-    def intersects(self, other: BoundingSphere | Aabb3d) -> bool:
-        """True if this sphere intersects another BoundingSphere or an Aabb3d."""
-
-    def intersects_aabb(self, aabb: Aabb3d) -> bool:
-        """Check if this sphere intersects with an Aabb3d."""
+    def intersects(self, volume: Aabb3d | BoundingSphere) -> bool:
+        """True if this sphere intersects an Aabb3d or a BoundingSphere."""
 
     @staticmethod
     def from_point_cloud(isometry: Isometry3d, points: list[Vec3]) -> BoundingSphere:
@@ -2715,6 +2825,12 @@ class BoundingSphere:
         """
 
     def __eq__(self, other: object) -> bool: ...
+
+    def __copy__(self) -> BoundingSphere:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> BoundingSphere:
+        """Return an independent copy; the value holds no Python objects."""
 
 class Dir2:
     """A normalized 2D direction vector."""
@@ -2817,6 +2933,12 @@ class Dir2:
     def __eq__(self, other: object) -> bool: ...
     def __ne__(self, other: object) -> bool: ...
 
+    def __copy__(self) -> Dir2:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Dir2:
+        """Return an independent copy; the value holds no Python objects."""
+
 class Ray2d:
     """A 2D ray defined by an origin point and direction."""
 
@@ -2869,6 +2991,12 @@ class Ray2d:
         """
 
     def __eq__(self, other: object) -> bool: ...
+
+    def __copy__(self) -> Ray2d:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Ray2d:
+        """Return an independent copy; the value holds no Python objects."""
 
 class Ray3d:
     """A 3D ray defined by an origin point and direction."""
@@ -2927,6 +3055,12 @@ class Ray3d:
 
     def __eq__(self, other: object) -> bool: ...
 
+    def __copy__(self) -> Ray3d:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Ray3d:
+        """Return an independent copy; the value holds no Python objects."""
+
 class RayCast2d:
     """A 2D raycast with a maximum distance for intersection testing."""
 
@@ -2950,11 +3084,8 @@ class RayCast2d:
     def from_ray(ray: Ray2d, max: float) -> RayCast2d:
         """Create a RayCast2d from a Ray2d and maximum distance."""
 
-    def intersects_aabb(self, aabb: Aabb2d) -> bool:
-        """Check if the ray intersects with an Aabb2d within max distance."""
-
-    def intersects_circle(self, circle: BoundingCircle) -> bool:
-        """Check if the ray intersects with a BoundingCircle within max distance."""
+    def intersects(self, volume: Aabb2d | BoundingCircle) -> bool:
+        """True if the ray hits an Aabb2d or a BoundingCircle within `max`."""
 
     def aabb_intersection_at(self, aabb: Aabb2d) -> float | None:
         """Get the distance to intersection with Aabb2d, or None."""
@@ -2965,11 +3096,30 @@ class RayCast2d:
     def direction_recip(self) -> Vec2:
         """Get the reciprocal of the ray direction (1.0 / direction for each component)."""
 
+    def __copy__(self) -> RayCast2d:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> RayCast2d:
+        """Return an independent copy; the value holds no Python objects."""
+
 class RayCast3d:
     """A 3D raycast with a maximum distance for intersection testing."""
 
-    ray: Ray3d
     max: float
+
+    @property
+    def origin(self) -> Vec3A:
+        """The ray origin; assign a new value to move the ray."""
+
+    @origin.setter
+    def origin(self, value: Vec3A | Vec3) -> None: ...
+
+    @property
+    def direction(self) -> Dir3:
+        """A read-only snapshot of the ray direction; assign a new Dir3 to turn the ray."""
+
+    @direction.setter
+    def direction(self, value: Dir3) -> None: ...
 
     def __init__(self, origin: Vec3, direction: Dir3, max: float) -> None:
         """Create a new RayCast3d.
@@ -2988,11 +3138,8 @@ class RayCast3d:
     def from_ray(ray: Ray3d, max: float) -> RayCast3d:
         """Create a RayCast3d from a Ray3d and maximum distance."""
 
-    def intersects_aabb(self, aabb: Aabb3d) -> bool:
-        """Check if the ray intersects with an Aabb3d within max distance."""
-
-    def intersects_sphere(self, sphere: BoundingSphere) -> bool:
-        """Check if the ray intersects with a BoundingSphere within max distance."""
+    def intersects(self, volume: Aabb3d | BoundingSphere) -> bool:
+        """True if the ray hits an Aabb3d or a BoundingSphere within `max`."""
 
     def aabb_intersection_at(self, aabb: Aabb3d) -> float | None:
         """Get the distance to intersection with Aabb3d, or None."""
@@ -3002,6 +3149,12 @@ class RayCast3d:
 
     def direction_recip(self) -> Vec3:
         """Get the reciprocal of the ray direction (1.0 / direction for each component)."""
+
+    def __copy__(self) -> RayCast3d:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> RayCast3d:
+        """Return an independent copy; the value holds no Python objects."""
 
 class JumpAt:
     """Specifies where a jump should occur in a stepped easing function."""
@@ -3895,6 +4048,12 @@ class Plane2d:
 
     def __eq__(self, other: object) -> bool: ...
 
+    def __copy__(self) -> Plane2d:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Plane2d:
+        """Return an independent copy; the value holds no Python objects."""
+
 class Line2d:
     """An infinite line going through the origin along a direction in 2D space.
 
@@ -3918,6 +4077,12 @@ class Line2d:
 
     def __eq__(self, other: object) -> bool: ...
 
+    def __copy__(self) -> Line2d:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Line2d:
+        """Return an independent copy; the value holds no Python objects."""
+
 class Line3d:
     """An infinite line going through the origin along a direction in 3D space.
 
@@ -3940,6 +4105,12 @@ class Line3d:
         """
 
     def __eq__(self, other: object) -> bool: ...
+
+    def __copy__(self) -> Line3d:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Line3d:
+        """Return an independent copy; the value holds no Python objects."""
 
 class Segment2d(Meshable):
     """A line segment defined by two endpoints in 2D space.
@@ -4274,6 +4445,12 @@ class Arc2d:
 
     def __eq__(self, other: object) -> bool: ...
     def __ne__(self, other: object) -> bool: ...
+
+    def __copy__(self) -> Arc2d:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Arc2d:
+        """Return an independent copy; the value holds no Python objects."""
 
 class CircularSector:
     """A circular sector in 2D space (pie slice).
@@ -4652,6 +4829,12 @@ class Polygon:
         """
 
     def __eq__(self, other: object) -> bool: ...
+
+    def __copy__(self) -> Polygon:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Polygon:
+        """Return an independent copy; the value holds no Python objects."""
 
 class TorusKind:
     """Indicates the kind of torus based on the relationship between minor and major radii."""
@@ -5216,9 +5399,6 @@ class Rot2:
     def angle_to(self, other: Rot2) -> float:
         """Get the angle between this rotation and another in radians."""
 
-    def rotate(self, vec: Vec2) -> Vec2:
-        """Rotate a 2D vector by this rotation."""
-
     def slerp(self, rhs: Rot2, s: float) -> Rot2:
         """Spherical linear interpolation between rotations.
 
@@ -5261,6 +5441,12 @@ class Rot2:
         """Rotate a 2D vector."""
     def __eq__(self, other: object) -> bool: ...
     def __ne__(self, other: object) -> bool: ...
+
+    def __copy__(self) -> Rot2:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Rot2:
+        """Return an independent copy; the value holds no Python objects."""
 
 class CubicCurve3d:
     """A 3D cubic curve composed of cubic segments."""
@@ -5507,6 +5693,9 @@ class AabbCast2d:
     def aabb_collision_at(self, aabb: Aabb2d) -> float | None:
         """Distance at which the swept AABB first hits `aabb`, or None."""
 
+    def intersects(self, volume: Aabb2d) -> bool:
+        """True if the swept AABB hits `volume`."""
+
     @property
     def aabb(self) -> Aabb2d:
         """The AABB being cast."""
@@ -5521,6 +5710,12 @@ class AabbCast2d:
     @ray.setter
     def ray(self, value: RayCast2d) -> None: ...
 
+    def __copy__(self) -> AabbCast2d:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> AabbCast2d:
+        """Return an independent copy; the value holds no Python objects."""
+
 class BoundingCircleCast:
     """A 2D circle swept along a ray for collision testing."""
 
@@ -5533,6 +5728,9 @@ class BoundingCircleCast:
 
     def circle_collision_at(self, circle: BoundingCircle) -> float | None:
         """Distance at which the swept circle first hits `circle`, or None."""
+
+    def intersects(self, volume: BoundingCircle) -> bool:
+        """True if the swept circle hits `volume`."""
 
     @property
     def circle(self) -> BoundingCircle:
@@ -5547,3 +5745,81 @@ class BoundingCircleCast:
 
     @ray.setter
     def ray(self, value: RayCast2d) -> None: ...
+
+    def __copy__(self) -> BoundingCircleCast:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> BoundingCircleCast:
+        """Return an independent copy; the value holds no Python objects."""
+
+class AabbCast3d:
+    """A 3D AABB swept along a ray for collision testing."""
+
+    def __init__(self, aabb: Aabb3d, origin: Vec3, direction: Dir3, max: float) -> None:
+        """Cast an `Aabb3d` from an origin along a direction for at most `max` distance."""
+
+    @staticmethod
+    def from_ray(aabb: Aabb3d, ray: Ray3d, max: float) -> AabbCast3d:
+        """Cast an `Aabb3d` along a `Ray3d` for at most `max` distance."""
+
+    def aabb_collision_at(self, aabb: Aabb3d) -> float | None:
+        """Distance at which the swept AABB first hits `aabb`, or None."""
+
+    def intersects(self, volume: Aabb3d) -> bool:
+        """True if the swept AABB hits `volume`."""
+
+    @property
+    def aabb(self) -> Aabb3d:
+        """The AABB being cast."""
+
+    @aabb.setter
+    def aabb(self, value: Aabb3d) -> None: ...
+
+    @property
+    def ray(self) -> RayCast3d:
+        """The ray along which the AABB is cast."""
+
+    @ray.setter
+    def ray(self, value: RayCast3d) -> None: ...
+
+    def __copy__(self) -> AabbCast3d:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> AabbCast3d:
+        """Return an independent copy; the value holds no Python objects."""
+
+class BoundingSphereCast:
+    """A 3D sphere swept along a ray for collision testing."""
+
+    def __init__(self, sphere: BoundingSphere, origin: Vec3, direction: Dir3, max: float) -> None:
+        """Cast a `BoundingSphere` from an origin along a direction for at most `max` distance."""
+
+    @staticmethod
+    def from_ray(sphere: BoundingSphere, ray: Ray3d, max: float) -> BoundingSphereCast:
+        """Cast a `BoundingSphere` along a `Ray3d` for at most `max` distance."""
+
+    def sphere_collision_at(self, sphere: BoundingSphere) -> float | None:
+        """Distance at which the swept sphere first hits `sphere`, or None."""
+
+    def intersects(self, volume: BoundingSphere) -> bool:
+        """True if the swept sphere hits `volume`."""
+
+    @property
+    def sphere(self) -> BoundingSphere:
+        """The sphere being cast."""
+
+    @sphere.setter
+    def sphere(self, value: BoundingSphere) -> None: ...
+
+    @property
+    def ray(self) -> RayCast3d:
+        """The ray along which the sphere is cast."""
+
+    @ray.setter
+    def ray(self, value: RayCast3d) -> None: ...
+
+    def __copy__(self) -> BoundingSphereCast:
+        """Return an independent copy of this value."""
+
+    def __deepcopy__(self, memo: dict[int, object]) -> BoundingSphereCast:
+        """Return an independent copy; the value holds no Python objects."""

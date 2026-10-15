@@ -87,6 +87,14 @@ impl PyDir2 {
 
 #[pymethods]
 impl PyDir2 {
+    pub fn __copy__(&self) -> PyResult<Self> {
+        Ok(Self::from(Dir2::try_from(self)?))
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
+
     #[staticmethod]
     #[pyo3(name = "X")]
     fn const_x() -> Self {

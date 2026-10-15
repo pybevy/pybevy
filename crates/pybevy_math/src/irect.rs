@@ -46,6 +46,14 @@ impl From<IRect> for PyIRect {
 
 #[pymethods]
 impl PyIRect {
+    pub fn __copy__(&self) -> PyResult<Self> {
+        Ok(Self::from(IRect::try_from(self)?))
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
+
     #[new]
     #[pyo3(signature = (x0=0, y0=0, x1=0, y1=0))]
     pub fn new(x0: i32, y0: i32, x1: i32, y1: i32) -> Self {

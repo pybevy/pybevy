@@ -25,7 +25,10 @@ use pybevy_math::{quat::PyQuat, range::PyRange, vec3::PyVec3};
 use pyo3::{
     ffi::{PyObject, PyTypeObject},
     prelude::*,
-    types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyModule, PySet, PyString, PyTuple, PyType},
+    types::{
+        PyBool, PyCFunction, PyDict, PyFloat, PyInt, PyList, PyModule, PySet, PyString, PyTuple,
+        PyType,
+    },
 };
 
 type RemoveComponentLifecycleHook = fn(&mut World, Entity, *const PyTypeObject);
@@ -3532,8 +3535,11 @@ fn convert_struct_element(
             ));
         }
         let converted = match instance {
-            Some(instance) => convert_field_value(py, instance, name, value)
-                .map_err(|error| format!("{name}: {error}"))?,
+            Some(instance) => {
+                let owner = method_field_owner(py, instance, name);
+                convert_field_value(py, owner.as_ref().unwrap_or(instance), name, value)
+                    .map_err(|error| format!("{name}: {error}"))?
+            }
             None => json_to_py(py, value)?,
         };
         kwargs
@@ -3549,6 +3555,24 @@ fn convert_struct_element(
         .call((), Some(&kwargs))
         .map(Bound::unbind)
         .map_err(|error| format!("element {index}: invalid {class_name} element: {error}"))
+}
+
+fn method_field_owner<'py>(
+    py: Python<'py>,
+    instance: &Bound<'py, PyAny>,
+    name: &str,
+) -> Option<Bound<'py, PyAny>> {
+    let accessor = instance.getattr(name).ok()?;
+    accessor.cast::<PyCFunction>().ok()?;
+    let value = accessor.call0().ok()?;
+    let fields = PyDict::new(py);
+    fields.set_item(name, value).ok()?;
+    PyModule::import(py, "types")
+        .ok()?
+        .getattr("SimpleNamespace")
+        .ok()?
+        .call((), Some(&fields))
+        .ok()
 }
 
 fn enum_element_missing_field(

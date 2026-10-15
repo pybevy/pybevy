@@ -1,7 +1,8 @@
 use bevy::math::{BVec4A, Vec4, Vec4Swizzles};
 use pybevy_core::{
     FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
-    public_error::UNSUPPORTED_COMPARISON, repr::ReprLiteral,
+    public_error::{RHS_NOT_NORMALIZED, UNSUPPORTED_COMPARISON, from_slice_too_short},
+    repr::ReprLiteral,
 };
 use pyo3::{
     basic::CompareOp,
@@ -282,9 +283,7 @@ impl PyVec4 {
     #[staticmethod]
     pub fn from_slice(a: Vec<f32>) -> PyResult<PyVec4> {
         if a.len() < 4 {
-            return Err(PyValueError::new_err(
-                "from_slice requires at least 4 elements",
-            ));
+            return Err(PyValueError::new_err(from_slice_too_short(4)));
         }
         Ok(PyVec4::from_vec4(Vec4::from_slice(&a)))
     }
@@ -386,7 +385,7 @@ impl PyVec4 {
         let value = self.as_ref()?;
         let rhs = rhs.as_ref()?;
         if !rhs.is_normalized() {
-            return Err(PyValueError::new_err("rhs must be normalized"));
+            return Err(PyValueError::new_err(RHS_NOT_NORMALIZED));
         }
         Ok(PyVec4::from_vec4(value.project_onto_normalized(*rhs)))
     }
@@ -395,7 +394,7 @@ impl PyVec4 {
         let value = self.as_ref()?;
         let rhs = rhs.as_ref()?;
         if !rhs.is_normalized() {
-            return Err(PyValueError::new_err("rhs must be normalized"));
+            return Err(PyValueError::new_err(RHS_NOT_NORMALIZED));
         }
         Ok(PyVec4::from_vec4(value.reject_from_normalized(*rhs)))
     }
@@ -595,7 +594,7 @@ impl PyVec4 {
         }
     }
 
-    fn __div__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+    fn __truediv__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let self_vec = *self.as_ref()?;
         if let Ok(other_vec) = other.cast::<PyVec4>() {
             let other_vec = Vec4::try_from(&*other_vec.try_borrow()?)?;
@@ -605,10 +604,6 @@ impl PyVec4 {
         } else {
             Ok(py.NotImplemented().into_any())
         }
-    }
-
-    fn __truediv__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        self.__div__(other, py)
     }
 
     fn __neg__(&self) -> PyResult<PyVec4> {

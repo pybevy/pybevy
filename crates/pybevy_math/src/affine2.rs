@@ -83,6 +83,14 @@ impl PyAffine2 {
 
 #[pymethods]
 impl PyAffine2 {
+    pub fn __copy__(&self) -> PyResult<Self> {
+        Ok(Self::from(Affine2::try_from(self)?))
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
+
     #[staticmethod]
     #[pyo3(name = "IDENTITY")]
     pub fn identity() -> Self {
