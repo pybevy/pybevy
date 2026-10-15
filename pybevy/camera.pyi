@@ -1097,10 +1097,6 @@ class RenderLayers(Component):
     """
 
     @staticmethod
-    def all() -> RenderLayers:
-        """Create RenderLayers with all layers enabled (0-31)."""
-
-    @staticmethod
     def none() -> RenderLayers:
         """Create RenderLayers with no layers enabled."""
 

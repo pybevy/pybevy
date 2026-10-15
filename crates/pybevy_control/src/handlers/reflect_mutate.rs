@@ -40,6 +40,8 @@ pub enum ReflectError {
     ComponentNotOnEntity,
     /// Field-level mutation error
     FieldError(String),
+    /// A value no write path can store, reported without a Python fallback
+    InvalidValue(String),
 }
 
 /// Try reflection-based field mutation on a component.
@@ -129,8 +131,8 @@ pub fn reflect_set_component(
         // Resolve the actual Bevy field name (handles Python reserved word aliasing)
         let actual_name = resolve_field_name(field_name, struct_info)
             .ok_or_else(|| ReflectError::FieldError(format!("{field_name}: field not found")))?;
-        let reflected = json_field_to_reflect(field_name, field_value, struct_info, &type_registry)
-            .map_err(|e| ReflectError::FieldError(format!("{field_name}: {e}")))?;
+        let reflected =
+            json_field_to_reflect(field_name, field_value, struct_info, &type_registry)?;
         converted.push((actual_name, reflected));
     }
 
@@ -479,8 +481,7 @@ pub fn reflect_spawn_component(
                             field_value,
                             struct_info,
                             &type_registry,
-                        )
-                        .map_err(|e| ReflectError::FieldError(format!("{field_name}: {e}")))?;
+                        )?;
 
                         if let Some(field) = s.field_mut(&actual_name) {
                             field.try_apply(reflected.as_ref()).map_err(|e| {
@@ -618,15 +619,23 @@ fn json_field_to_reflect(
     value: &Value,
     parent_info: &StructInfo,
     registry: &TypeRegistry,
-) -> Result<Box<dyn PartialReflect>, String> {
-    let actual_name = resolve_field_name(field_name, parent_info)
-        .ok_or_else(|| format!("field '{field_name}' not found"))?;
+) -> Result<Box<dyn PartialReflect>, ReflectError> {
+    let actual_name = resolve_field_name(field_name, parent_info).ok_or_else(|| {
+        ReflectError::FieldError(format!("{field_name}: field '{field_name}' not found"))
+    })?;
 
     let field_info = parent_info.field(&actual_name).unwrap();
     let target_type_id = field_info.type_id();
+    if let Value::Number(number) = value
+        && number.as_i128().is_some()
+        && let Some(Err(error)) = convert_integer(number, target_type_id)
+    {
+        return Err(ReflectError::InvalidValue(format!("{field_name}: {error}")));
+    }
     let target_type_info = registry.get(target_type_id).map(|r| r.type_info());
 
     json_to_reflect(value, target_type_id, target_type_info, registry)
+        .map_err(|error| ReflectError::FieldError(format!("{field_name}: {error}")))
 }
 
 /// Recursively convert a JSON value to a Box<dyn PartialReflect>.
@@ -1130,41 +1139,49 @@ fn convert_number(
             .as_f64()
             .ok_or_else(|| format!("expected number for f64, got {n}"))?;
         Ok(Box::new(require_finite_float(value)?))
-    } else if target_type_id == TypeId::of::<i8>() {
-        Ok(Box::new(integer_in_range(n, "i8", i8::MIN, i8::MAX)?))
-    } else if target_type_id == TypeId::of::<i16>() {
-        Ok(Box::new(integer_in_range(n, "i16", i16::MIN, i16::MAX)?))
-    } else if target_type_id == TypeId::of::<i32>() {
-        Ok(Box::new(integer_in_range(n, "i32", i32::MIN, i32::MAX)?))
-    } else if target_type_id == TypeId::of::<i64>() {
-        Ok(Box::new(integer_in_range(n, "i64", i64::MIN, i64::MAX)?))
-    } else if target_type_id == TypeId::of::<isize>() {
-        Ok(Box::new(integer_in_range(
-            n,
-            "isize",
-            isize::MIN,
-            isize::MAX,
-        )?))
-    } else if target_type_id == TypeId::of::<u8>() {
-        Ok(Box::new(integer_in_range(n, "u8", u8::MIN, u8::MAX)?))
-    } else if target_type_id == TypeId::of::<u16>() {
-        Ok(Box::new(integer_in_range(n, "u16", u16::MIN, u16::MAX)?))
-    } else if target_type_id == TypeId::of::<u32>() {
-        Ok(Box::new(integer_in_range(n, "u32", u32::MIN, u32::MAX)?))
-    } else if target_type_id == TypeId::of::<u64>() {
-        Ok(Box::new(integer_in_range(n, "u64", u64::MIN, u64::MAX)?))
-    } else if target_type_id == TypeId::of::<usize>() {
-        Ok(Box::new(integer_in_range(
-            n,
-            "usize",
-            usize::MIN,
-            usize::MAX,
-        )?))
+    } else if let Some(integer) = convert_integer(n, target_type_id) {
+        integer
     } else {
         let target = target_type_info
             .map(|info| info.type_path_table().short_path())
             .unwrap_or("the requested field type");
         Err(format!("cannot convert number {n} to {target}"))
+    }
+}
+
+/// Convert a JSON number to a reflected integer, or `None` for a non-integer target.
+fn convert_integer(
+    n: &serde_json::Number,
+    target_type_id: TypeId,
+) -> Option<Result<Box<dyn PartialReflect>, String>> {
+    fn boxed<T: PartialReflect>(
+        value: Result<T, String>,
+    ) -> Option<Result<Box<dyn PartialReflect>, String>> {
+        Some(value.map(|value| Box::new(value) as Box<dyn PartialReflect>))
+    }
+
+    if target_type_id == TypeId::of::<i8>() {
+        boxed(integer_in_range(n, "i8", i8::MIN, i8::MAX))
+    } else if target_type_id == TypeId::of::<i16>() {
+        boxed(integer_in_range(n, "i16", i16::MIN, i16::MAX))
+    } else if target_type_id == TypeId::of::<i32>() {
+        boxed(integer_in_range(n, "i32", i32::MIN, i32::MAX))
+    } else if target_type_id == TypeId::of::<i64>() {
+        boxed(integer_in_range(n, "i64", i64::MIN, i64::MAX))
+    } else if target_type_id == TypeId::of::<isize>() {
+        boxed(integer_in_range(n, "isize", isize::MIN, isize::MAX))
+    } else if target_type_id == TypeId::of::<u8>() {
+        boxed(integer_in_range(n, "u8", u8::MIN, u8::MAX))
+    } else if target_type_id == TypeId::of::<u16>() {
+        boxed(integer_in_range(n, "u16", u16::MIN, u16::MAX))
+    } else if target_type_id == TypeId::of::<u32>() {
+        boxed(integer_in_range(n, "u32", u32::MIN, u32::MAX))
+    } else if target_type_id == TypeId::of::<u64>() {
+        boxed(integer_in_range(n, "u64", u64::MIN, u64::MAX))
+    } else if target_type_id == TypeId::of::<usize>() {
+        boxed(integer_in_range(n, "usize", usize::MIN, usize::MAX))
+    } else {
+        None
     }
 }
 

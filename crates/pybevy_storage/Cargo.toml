@@ -9,6 +9,7 @@ homepage = "https://pybevy.com"
 
 [dependencies]
 bevy = { workspace = true, features = ["bevy_asset"] }
+smallvec = { workspace = true }
 
 [dependencies.pyo3]
 workspace = true

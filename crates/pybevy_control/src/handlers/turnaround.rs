@@ -9,9 +9,10 @@ use tokio::sync::oneshot;
 
 use super::{
     screenshot::{
-        CAPTURE_DEADLINE_ERROR, DebugCameraCleanup, EntityCaptureIsolationActive,
-        MAX_CAPTURE_WAIT_FRAMES, STALE_HEADLESS_FRAME_ERROR, cleanup_debug_camera_world,
-        headless_frame_sequence, restore_ui_nodes, setup_debug_camera_with_up,
+        CAPTURE_CANCELLED_ERROR, CAPTURE_DEADLINE_ERROR, DebugCameraCleanup,
+        EntityCaptureIsolationActive, MAX_CAPTURE_WAIT_FRAMES, STALE_HEADLESS_FRAME_ERROR,
+        capture_in_progress, cleanup_debug_camera_world, headless_frame_sequence, restore_ui_nodes,
+        setup_debug_camera_with_up,
     },
     spatial::compute_world_aabb,
 };
@@ -57,6 +58,12 @@ pub struct ActiveTurnaround {
     pub headless_sequence: Option<u64>,
     /// Frames spent waiting on a capture (or headless frame) without progress.
     pub stall_frames: u32,
+}
+
+impl ActiveTurnaround {
+    pub(crate) fn is_started(&self) -> bool {
+        self.overlay_suppressed && self.response_tx.is_some()
+    }
 }
 
 fn headless_view_is_ready(baseline: Option<u64>, current: Option<u64>) -> bool {
@@ -195,8 +202,24 @@ pub fn process_pending_turnarounds(world: &mut World) {
     }
 
     let mut still_active = Vec::new();
+    let mut lease_held = pending.active.iter().any(ActiveTurnaround::is_started);
 
     for mut turnaround in pending.active.drain(..) {
+        if turnaround
+            .response_tx
+            .as_ref()
+            .is_some_and(oneshot::Sender::is_closed)
+        {
+            fail_turnaround(world, turnaround, CAPTURE_CANCELLED_ERROR.to_string());
+            continue;
+        }
+        if !turnaround.is_started() {
+            if lease_held || capture_in_progress(world) {
+                still_active.push(turnaround);
+                continue;
+            }
+            lease_held = true;
+        }
         if turnaround.frames_remaining > 0 {
             turnaround.frames_remaining -= 1;
             still_active.push(turnaround);

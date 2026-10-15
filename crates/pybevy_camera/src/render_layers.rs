@@ -22,15 +22,6 @@ impl PartialEq for PyRenderLayers {
 #[pymethods]
 impl PyRenderLayers {
     #[staticmethod]
-    pub fn all(py: Python<'_>) -> PyResult<Py<Self>> {
-        let mut layers = RenderLayers::none();
-        for i in 0..32 {
-            layers = layers.with(i);
-        }
-        Py::new(py, (PyRenderLayers::from(layers), PyComponent))
-    }
-
-    #[staticmethod]
     pub fn none(py: Python<'_>) -> PyResult<Py<Self>> {
         Py::new(
             py,

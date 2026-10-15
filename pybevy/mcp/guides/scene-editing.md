@@ -128,7 +128,8 @@ be finite; a rejected value names its field and leaves the component unchanged.
 Finite JSON numbers that overflow a native `f32` field are also rejected before
 the component or resource is committed. Native `f64` fields keep their wider range.
 Integer fields likewise reject a value outside their type's range, such as
-`300` for a `u8`, instead of storing a wrapped value.
+`300` for a `u8`, instead of storing a wrapped value; the error names the
+field and range, as in `u8 value must be between 0 and 255, got 300`.
 The exception is a `Range` endpoint: `"Infinity"` and `"-Infinity"` replay
 there, but `"NaN"` remains invalid. JSON `null` is valid
 only for an `Option<T>` field; a required float field needs a JSON number.
@@ -427,6 +428,13 @@ component access can still address a disabled entity to remove `Disabled`.
 Capture tools hide authored UI by default. Pass `hide_ui=false` when the UI is
 part of the result; internal PyBevy overlays remain hidden.
 
+Captures run one at a time. A capture that arrives while another one holds the
+camera pose, camera activity, or UI visibility waits until that capture has
+restored them, so overlapping calls each see the authored scene and return
+their own view. `delay_frames` is at most 600 and `capture_timeline`'s
+`total_frames` at most 1200. A capture whose caller disconnects, for example
+after a client timeout, is cancelled and restores the state it held.
+
 Headless `capture_timeline` captures the active camera's image target after
 applying capture visibility, including for the first tile. Visibility stays
 suppressed until all scheduled screenshots complete, then is restored; a
@@ -582,6 +590,10 @@ them with `capture_depth`.
 ## Batched Schedules
 
 Use `schedule_actions` to execute multiple tool calls inside the engine frame loop with precise timing. Same-`at` actions fire in the same frame (atomic), eliminating drift between sequential tool calls.
+
+Each action accepts only `tool`, `args`, `at`, `at_frame`, `label`, and
+`skip_if_error`; any other key rejects the whole schedule. An unknown key inside
+`args` fails that action, as it would fail the direct tool call.
 
 ### Time-Lapse Capture
 

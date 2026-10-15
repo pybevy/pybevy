@@ -5240,6 +5240,7 @@ version = "0.3.0-rc.1"
 dependencies = [
  "bevy",
  "pyo3",
+ "smallvec",
 ]
 
 [[package]]

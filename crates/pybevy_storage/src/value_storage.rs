@@ -66,7 +66,7 @@ pub enum ValueStorageInner<T: Copy> {
     Revalidating(Box<RevalidatingField>),
 
     /// A typed path into a live Bevy asset, re-resolved on every access.
-    Source(Box<RevalidatingSource<T>>),
+    Source(RevalidatingSource<T>),
 }
 
 impl<T: Copy> Clone for ValueStorage<T> {
@@ -161,7 +161,7 @@ impl<T: Copy> BorrowableStorage<T> for ValueStorage<T> {
         T: 'static,
     {
         Self {
-            inner: ValueStorageInner::Source(Box::new(source)),
+            inner: ValueStorageInner::Source(source),
         }
     }
 }
@@ -312,19 +312,17 @@ impl<T: Copy> ValueStorage<T> {
         let source = match &self.inner {
             ValueStorageInner::Source(source) => {
                 read(&*source.resolve_ref()?);
-                source.field(read, write)
+                source.validated_field(read, write, validate)
             }
             _ => {
                 read(&*self.as_ref()?);
                 match RevalidatingSource::from_borrowed_value(self) {
-                    Some(source) => source.field(read, write),
+                    Some(source) => source.validated_field(read, write, validate),
                     None => return self.snapshot_field_as(read),
                 }
             }
         };
-        Ok(W::from_borrowed(S::revalidating_source(
-            source.validated(validate),
-        )))
+        Ok(W::from_borrowed(S::revalidating_source(source)))
     }
 
     /// Check if this storage contains an owned value (including read-only snapshots)

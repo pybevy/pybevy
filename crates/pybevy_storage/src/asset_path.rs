@@ -12,6 +12,7 @@ use std::{
 };
 
 use bevy::{asset::UntypedAssetId, ecs::component::Component};
+use smallvec::SmallVec;
 
 use crate::{
     AssetResourceReadGuard, AssetResourceWriteGuard, ComponentStorage, ComponentStorageInner,
@@ -195,6 +196,62 @@ impl<Parent: 'static, Field: 'static> ErasedPathStep for InlineFieldStep<Parent,
     }
 }
 
+struct OptionalFieldStep<Parent: 'static, Field: 'static> {
+    name: &'static str,
+    read: ReadField<Parent, Option<Field>>,
+    write: WriteField<Parent, Option<Field>>,
+}
+
+impl<Parent: 'static, Field: 'static> fmt::Debug for OptionalFieldStep<Parent, Field> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OptionalFieldStep")
+            .field("parent", &type_name::<Parent>())
+            .field("field", &type_name::<Field>())
+            .field("name", &self.name)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<Parent: 'static, Field: 'static> ErasedPathStep for OptionalFieldStep<Parent, Field> {
+    fn input_type(&self) -> TypeId {
+        TypeId::of::<Parent>()
+    }
+
+    fn output_type(&self) -> TypeId {
+        TypeId::of::<Field>()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn same_identity(&self, other: &dyn ErasedPathStep) -> bool {
+        other.as_any().downcast_ref::<Self>().is_some_and(|other| {
+            self.name == other.name
+                && self.read as usize == other.read as usize
+                && self.write as usize == other.write as usize
+        })
+    }
+
+    unsafe fn project_ref(&self, parent: *const u8) -> Result<*const u8, StorageError> {
+        // SAFETY: forwarded from the erased step contract.
+        let parent = unsafe { &*parent.cast::<Parent>() };
+        (self.read)(parent)
+            .as_ref()
+            .map(|value| value as *const Field as *const u8)
+            .ok_or(StorageError::VariantChanged(self.name))
+    }
+
+    unsafe fn project_mut(&self, parent: *mut u8) -> Result<*mut u8, StorageError> {
+        // SAFETY: forwarded from the erased step contract.
+        let parent = unsafe { &mut *parent.cast::<Parent>() };
+        (self.write)(parent)
+            .as_mut()
+            .map(|value| value as *mut Field as *mut u8)
+            .ok_or(StorageError::VariantChanged(self.name))
+    }
+}
+
 struct EnumVariantStep<Parent: 'static, Field: 'static> {
     name: &'static str,
     read: ReadVariant<Parent, Field>,
@@ -367,11 +424,13 @@ where
     }
 }
 
+type PathSteps = SmallVec<[Arc<dyn ErasedPathStep>; 4]>;
+
 #[derive(Debug, Clone)]
 pub(crate) struct AssetPath {
     root_type: TypeId,
     output_type: TypeId,
-    steps: Arc<[Arc<dyn ErasedPathStep>]>,
+    steps: PathSteps,
 }
 
 impl AssetPath {
@@ -379,23 +438,26 @@ impl AssetPath {
         Self {
             root_type: TypeId::of::<Asset>(),
             output_type: TypeId::of::<Asset>(),
-            steps: Arc::new([]),
+            steps: SmallVec::new(),
         }
     }
 
-    fn append(&self, step: Arc<dyn ErasedPathStep>) -> Self {
-        assert_eq!(
-            self.output_type,
-            step.input_type(),
-            "asset path step input must match its parent output"
-        );
-        let mut steps = self.steps.to_vec();
-        let output_type = step.output_type();
-        steps.push(step);
+    fn extend(&self, steps: &[Arc<dyn ErasedPathStep>]) -> Self {
+        let mut output_type = self.output_type;
+        for step in steps {
+            assert_eq!(
+                output_type,
+                step.input_type(),
+                "asset path step input must match its parent output"
+            );
+            output_type = step.output_type();
+        }
+        let mut combined = self.steps.clone();
+        combined.extend(steps.iter().cloned());
         Self {
             root_type: self.root_type,
             output_type,
-            steps: steps.into(),
+            steps: combined,
         }
     }
 
@@ -467,35 +529,45 @@ pub(crate) struct ErasedResolvedMut {
     pub(crate) guard: SourceWriteGuard,
 }
 
-#[derive(Debug)]
+trait AccessGate: Send + Sync {
+    fn gate(&self) -> &AtomicIsize;
+}
+
 pub(crate) struct BorrowedPathGuard {
-    gate: Arc<AtomicIsize>,
+    owner: Arc<dyn AccessGate>,
     write: bool,
 }
 
+impl fmt::Debug for BorrowedPathGuard {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BorrowedPathGuard")
+            .field("write", &self.write)
+            .finish_non_exhaustive()
+    }
+}
+
 impl BorrowedPathGuard {
-    fn acquire(gate: &Arc<AtomicIsize>, write: bool) -> Result<Self, StorageError> {
-        gate.fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
-            if write {
-                (count == 0).then_some(-1)
-            } else {
-                (count >= 0).then(|| count.checked_add(1)).flatten()
-            }
-        })
-        .map_err(|_| StorageError::BorrowedAccessConflict)?;
-        Ok(Self {
-            gate: gate.clone(),
-            write,
-        })
+    fn acquire(owner: Arc<dyn AccessGate>, write: bool) -> Result<Self, StorageError> {
+        owner
+            .gate()
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                if write {
+                    (count == 0).then_some(-1)
+                } else {
+                    (count >= 0).then(|| count.checked_add(1)).flatten()
+                }
+            })
+            .map_err(|_| StorageError::BorrowedAccessConflict)?;
+        Ok(Self { owner, write })
     }
 }
 
 impl Drop for BorrowedPathGuard {
     fn drop(&mut self) {
         if self.write {
-            self.gate.store(0, Ordering::Release);
+            self.owner.gate().store(0, Ordering::Release);
         } else {
-            self.gate.fetch_sub(1, Ordering::Release);
+            self.owner.gate().fetch_sub(1, Ordering::Release);
         }
     }
 }
@@ -609,9 +681,22 @@ impl<T> BorrowedRoot<T> {
     }
 }
 
+struct BorrowedShared<T> {
+    root: BorrowedRoot<T>,
+    gate: AtomicIsize,
+}
+
+impl<T> AccessGate for BorrowedShared<T>
+where
+    Self: Send + Sync,
+{
+    fn gate(&self) -> &AtomicIsize {
+        &self.gate
+    }
+}
+
 struct BorrowedSource<T> {
-    root: Arc<BorrowedRoot<T>>,
-    gate: Arc<AtomicIsize>,
+    shared: Arc<BorrowedShared<T>>,
     path: AssetPath,
     readonly: bool,
 }
@@ -626,8 +711,8 @@ impl<T> fmt::Debug for BorrowedSource<T> {
 
 impl<T: Send + Sync + 'static> ErasedRevalidatingSource for BorrowedSource<T> {
     fn resolve_ref(&self) -> Result<ErasedResolvedRef, StorageError> {
-        let guard = BorrowedPathGuard::acquire(&self.gate, false)?;
-        let root = self.root.read()? as *const T as *const u8;
+        let guard = BorrowedPathGuard::acquire(self.shared.clone(), false)?;
+        let root = self.shared.root.read()? as *const T as *const u8;
         // SAFETY: the typed root checked validity and the path checks every variant.
         let ptr = unsafe { self.path.project_ref(root)? };
         Ok(ErasedResolvedRef {
@@ -640,8 +725,8 @@ impl<T: Send + Sync + 'static> ErasedRevalidatingSource for BorrowedSource<T> {
         &self,
         stage: Option<&mut dyn FnMut(*mut u8)>,
     ) -> Result<ErasedResolvedMut, StorageError> {
-        let guard = BorrowedPathGuard::acquire(&self.gate, true)?;
-        let root = self.root.read()? as *const T as *const u8;
+        let guard = BorrowedPathGuard::acquire(self.shared.clone(), true)?;
+        let root = self.shared.root.read()? as *const T as *const u8;
         // SAFETY: validate the full path under the writer before marking any change.
         unsafe {
             self.path.project_ref(root)?;
@@ -649,10 +734,10 @@ impl<T: Send + Sync + 'static> ErasedRevalidatingSource for BorrowedSource<T> {
         if self.readonly {
             return Err(StorageError::ReadOnly);
         }
-        self.root.check_write()?;
+        self.shared.root.check_write()?;
         // SAFETY: the root was read under this writer; staging touches only a copy.
         unsafe { self.path.stage_write(root, stage)? };
-        let root = self.root.write_ptr()?;
+        let root = self.shared.root.write_ptr()?;
         // SAFETY: write authority is checked; no callback intervenes after preflight.
         let ptr = unsafe { self.path.project_mut(root)? };
         Ok(ErasedResolvedMut {
@@ -663,8 +748,7 @@ impl<T: Send + Sync + 'static> ErasedRevalidatingSource for BorrowedSource<T> {
 
     fn append_step(&self, path: AssetPath) -> Arc<dyn ErasedRevalidatingSource> {
         Arc::new(Self {
-            root: self.root.clone(),
-            gate: self.gate.clone(),
+            shared: self.shared.clone(),
             path,
             readonly: self.readonly,
         })
@@ -672,15 +756,14 @@ impl<T: Send + Sync + 'static> ErasedRevalidatingSource for BorrowedSource<T> {
 
     fn clone_readonly(&self) -> Arc<dyn ErasedRevalidatingSource> {
         Arc::new(Self {
-            root: self.root.clone(),
-            gate: self.gate.clone(),
+            shared: self.shared.clone(),
             path: self.path.clone(),
             readonly: true,
         })
     }
 
     fn root_identity(&self) -> SourceIdentity {
-        SourceIdentity::Borrowed(Arc::as_ptr(&self.root) as usize)
+        SourceIdentity::Borrowed(Arc::as_ptr(&self.shared) as usize)
     }
 
     fn path(&self) -> &AssetPath {
@@ -688,50 +771,141 @@ impl<T: Send + Sync + 'static> ErasedRevalidatingSource for BorrowedSource<T> {
     }
 }
 
-impl<T: Send + Sync + 'static> RevalidatingSource<T> {
-    fn from_borrowed_root(root: BorrowedRoot<T>) -> Self {
-        Self::new(Arc::new(BorrowedSource {
-            root: Arc::new(root),
-            gate: Arc::new(AtomicIsize::new(0)),
-            path: AssetPath::root::<T>(),
+/// A borrowed root whose first projection builds the source in one step.
+pub(crate) struct BorrowedRootSource<T> {
+    shared: Arc<BorrowedShared<T>>,
+}
+
+impl<T: Send + Sync + 'static> BorrowedRootSource<T> {
+    fn new(root: BorrowedRoot<T>) -> Self {
+        Self {
+            shared: Arc::new(BorrowedShared {
+                root,
+                gate: AtomicIsize::new(0),
+            }),
+        }
+    }
+
+    fn extend<Field: 'static>(
+        &self,
+        steps: &[Arc<dyn ErasedPathStep>],
+    ) -> RevalidatingSource<Field> {
+        RevalidatingSource::new(Arc::new(BorrowedSource {
+            shared: self.shared.clone(),
+            path: AssetPath::root::<T>().extend(steps),
             readonly: false,
         }))
     }
+
+    #[cfg(test)]
+    pub(crate) fn field<Field: 'static>(
+        &self,
+        read: ReadField<T, Field>,
+        write: WriteField<T, Field>,
+    ) -> RevalidatingSource<Field> {
+        self.extend(&[field_step(read, write)])
+    }
+
+    pub(crate) fn validated_field<Field: Clone + 'static>(
+        &self,
+        read: ReadField<T, Field>,
+        write: WriteField<T, Field>,
+        validate: ValidateField<Field>,
+    ) -> RevalidatingSource<Field> {
+        self.extend(&[field_step(read, write), validated_step(validate)])
+    }
+
+    pub(crate) fn variant<Field: 'static>(
+        &self,
+        name: &'static str,
+        read: ReadVariant<T, Field>,
+        write: WriteVariant<T, Field>,
+    ) -> RevalidatingSource<Field> {
+        self.extend(&[variant_step(name, read, write)])
+    }
+
+    pub(crate) fn optional<Field: 'static>(
+        &self,
+        name: &'static str,
+        read: ReadField<T, Option<Field>>,
+        write: WriteField<T, Option<Field>>,
+    ) -> RevalidatingSource<Field> {
+        self.extend(&[optional_step(name, read, write)])
+    }
+}
+
+fn field_step<Parent: 'static, Field: 'static>(
+    read: ReadField<Parent, Field>,
+    write: WriteField<Parent, Field>,
+) -> Arc<dyn ErasedPathStep> {
+    Arc::new(InlineFieldStep { read, write })
+}
+
+fn validated_step<Field: Clone + 'static>(
+    validate: ValidateField<Field>,
+) -> Arc<dyn ErasedPathStep> {
+    Arc::new(ValidatedStep { validate })
+}
+
+fn variant_step<Parent: 'static, Field: 'static>(
+    name: &'static str,
+    read: ReadVariant<Parent, Field>,
+    write: WriteVariant<Parent, Field>,
+) -> Arc<dyn ErasedPathStep> {
+    Arc::new(EnumVariantStep { name, read, write })
+}
+
+fn optional_step<Parent: 'static, Field: 'static>(
+    name: &'static str,
+    read: ReadField<Parent, Option<Field>>,
+    write: WriteField<Parent, Option<Field>>,
+) -> Arc<dyn ErasedPathStep> {
+    Arc::new(OptionalFieldStep { name, read, write })
+}
+
+fn index_step<Parent: 'static, Field: 'static>(
+    index: usize,
+    read: ReadIndex<Parent, Field>,
+    write: WriteIndex<Parent, Field>,
+) -> Arc<dyn ErasedPathStep> {
+    Arc::new(IndexedStep { index, read, write })
 }
 
 impl<T: Copy + Send + Sync + 'static> RevalidatingSource<T> {
-    pub(crate) fn from_borrowed_value(storage: &ValueStorage<T>) -> Option<Self> {
+    pub(crate) fn from_borrowed_value(storage: &ValueStorage<T>) -> Option<BorrowedRootSource<T>> {
         let root = match &storage.inner {
             ValueStorageInner::BorrowedRef(root) => BorrowedRoot::Read(root.clone()),
             ValueStorageInner::BorrowedMut(root) => BorrowedRoot::Write(root.share()),
             ValueStorageInner::Revalidating(root) => BorrowedRoot::Component((**root).clone()),
             _ => return None,
         };
-        Some(Self::from_borrowed_root(root))
+        Some(BorrowedRootSource::new(root))
     }
 }
 
 impl<T: Clone + Send + Sync + 'static> RevalidatingSource<T> {
-    pub(crate) fn from_borrowed_field(storage: &FieldStorage<T>) -> Option<Self> {
+    pub(crate) fn from_borrowed_field(storage: &FieldStorage<T>) -> Option<BorrowedRootSource<T>> {
         let root = match &storage.inner {
             FieldStorageInner::BorrowedRef(root) => BorrowedRoot::Read(root.clone()),
             FieldStorageInner::BorrowedMut(root) => BorrowedRoot::Write(root.share()),
             FieldStorageInner::Revalidating(root) => BorrowedRoot::Component((**root).clone()),
             _ => return None,
         };
-        Some(Self::from_borrowed_root(root))
+        Some(BorrowedRootSource::new(root))
     }
 }
 
 impl<T: Component> RevalidatingSource<T> {
-    pub(crate) fn from_borrowed_component(storage: &ComponentStorage<T>) -> Option<Self> {
+    pub(crate) fn from_borrowed_component(
+        storage: &ComponentStorage<T>,
+    ) -> Option<BorrowedRootSource<T>> {
         let root = match &storage.inner {
             ComponentStorageInner::BorrowedRef(root) => BorrowedRoot::Read(root.clone()),
             ComponentStorageInner::BorrowedMut(root) => BorrowedRoot::Write(root.share()),
             ComponentStorageInner::Revalidating(root) => BorrowedRoot::Component((**root).clone()),
             _ => return None,
         };
-        Some(Self::from_borrowed_root(root))
+        Some(BorrowedRootSource::new(root))
     }
 }
 
@@ -762,14 +936,20 @@ impl<T: 'static> RevalidatingSource<T> {
         }
     }
 
+    fn extend<Field: 'static>(
+        &self,
+        steps: &[Arc<dyn ErasedPathStep>],
+    ) -> RevalidatingSource<Field> {
+        let path = self.inner.path().extend(steps);
+        RevalidatingSource::new(self.inner.append_step(path))
+    }
+
     pub fn field<Field: 'static>(
         &self,
         read: ReadField<T, Field>,
         write: WriteField<T, Field>,
     ) -> RevalidatingSource<Field> {
-        let step: Arc<dyn ErasedPathStep> = Arc::new(InlineFieldStep { read, write });
-        let path = self.inner.path().append(step);
-        RevalidatingSource::new(self.inner.append_step(path))
+        self.extend(&[field_step(read, write)])
     }
 
     pub fn variant<Field: 'static>(
@@ -778,9 +958,7 @@ impl<T: 'static> RevalidatingSource<T> {
         read: ReadVariant<T, Field>,
         write: WriteVariant<T, Field>,
     ) -> RevalidatingSource<Field> {
-        let step: Arc<dyn ErasedPathStep> = Arc::new(EnumVariantStep { name, read, write });
-        let path = self.inner.path().append(step);
-        RevalidatingSource::new(self.inner.append_step(path))
+        self.extend(&[variant_step(name, read, write)])
     }
 
     /// Project the `Some` payload of an `Option` field, rechecked on every access.
@@ -790,8 +968,7 @@ impl<T: 'static> RevalidatingSource<T> {
         read: ReadField<T, Option<Field>>,
         write: WriteField<T, Option<Field>>,
     ) -> RevalidatingSource<Field> {
-        self.field(read, write)
-            .variant(name, Option::as_ref, Option::as_mut)
+        self.extend(&[optional_step(name, read, write)])
     }
 
     pub fn index<Field: 'static>(
@@ -800,9 +977,7 @@ impl<T: 'static> RevalidatingSource<T> {
         read: ReadIndex<T, Field>,
         write: WriteIndex<T, Field>,
     ) -> RevalidatingSource<Field> {
-        let step: Arc<dyn ErasedPathStep> = Arc::new(IndexedStep { index, read, write });
-        let path = self.inner.path().append(step);
-        RevalidatingSource::new(self.inner.append_step(path))
+        self.extend(&[index_step(index, read, write)])
     }
 
     /// Check every staged write through this path with `validate`.
@@ -810,9 +985,17 @@ impl<T: 'static> RevalidatingSource<T> {
     where
         T: Clone,
     {
-        let step: Arc<dyn ErasedPathStep> = Arc::new(ValidatedStep { validate });
-        let path = self.inner.path().append(step);
-        RevalidatingSource::new(self.inner.append_step(path))
+        self.extend(&[validated_step(validate)])
+    }
+
+    /// Project a field whose every staged write must pass `validate`.
+    pub fn validated_field<Field: Clone + 'static>(
+        &self,
+        read: ReadField<T, Field>,
+        write: WriteField<T, Field>,
+        validate: ValidateField<Field>,
+    ) -> RevalidatingSource<Field> {
+        self.extend(&[field_step(read, write), validated_step(validate)])
     }
 
     pub fn key<Key, Field>(
@@ -825,9 +1008,7 @@ impl<T: 'static> RevalidatingSource<T> {
         Key: Clone + fmt::Debug + Eq + Send + Sync + 'static,
         Field: 'static,
     {
-        let step: Arc<dyn ErasedPathStep> = Arc::new(KeyedStep { key, read, write });
-        let path = self.inner.path().append(step);
-        RevalidatingSource::new(self.inner.append_step(path))
+        self.extend(&[Arc::new(KeyedStep { key, read, write })])
     }
 }
 
@@ -1113,5 +1294,122 @@ mod tests {
             Err(StorageError::InvalidAccess)
         ));
         assert!(RevalidatingSource::from_borrowed_value(&ValueStorage::owned(value)).is_none());
+    }
+
+    mod allocations {
+        use std::{
+            alloc::{GlobalAlloc, Layout, System},
+            cell::Cell,
+        };
+
+        use super::*;
+        use crate::{ComponentStorage, FromBorrowedStorage};
+
+        struct CountingAllocator;
+
+        thread_local! {
+            static ALLOCATIONS: Cell<usize> = const { Cell::new(0) };
+        }
+
+        // SAFETY: forwards every call to the system allocator unchanged.
+        unsafe impl GlobalAlloc for CountingAllocator {
+            unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+                let _ = ALLOCATIONS.try_with(|count| count.set(count.get() + 1));
+                // SAFETY: forwarded from the caller.
+                unsafe { System.alloc(layout) }
+            }
+
+            unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+                // SAFETY: forwarded from the caller.
+                unsafe { System.dealloc(ptr, layout) }
+            }
+        }
+
+        #[global_allocator]
+        static GLOBAL: CountingAllocator = CountingAllocator;
+
+        fn allocations_of<R>(f: impl FnOnce() -> R) -> usize {
+            let before = ALLOCATIONS.with(Cell::get);
+            let result = f();
+            let after = ALLOCATIONS.with(Cell::get);
+            drop(result);
+            after - before
+        }
+
+        struct Payload(ValueStorage<f32>);
+
+        impl FromBorrowedStorage<ValueStorage<f32>> for Payload {
+            fn from_borrowed(storage: ValueStorage<f32>) -> Self {
+                Self(storage)
+            }
+        }
+
+        struct Bounds(ValueStorage<(f32, f32)>);
+
+        impl FromBorrowedStorage<ValueStorage<(f32, f32)>> for Bounds {
+            fn from_borrowed(storage: ValueStorage<(f32, f32)>) -> Self {
+                Self(storage)
+            }
+        }
+
+        fn optional(storage: &ComponentStorage<Holder>) -> ValueStorage<f32> {
+            storage
+                .borrow_optional_field::<f32, ValueStorage<f32>>(
+                    "Holder.0",
+                    |holder| &holder.0,
+                    |holder| &mut holder.0,
+                )
+                .unwrap()
+                .unwrap()
+        }
+
+        fn variant(storage: &ComponentStorage<Holder>) -> Payload {
+            storage
+                .borrow_resolved_variant_as::<f32, ValueStorage<f32>, Payload>(
+                    "Some",
+                    |holder| holder.0.as_ref(),
+                    |holder| holder.0.as_mut(),
+                )
+                .unwrap()
+        }
+
+        fn validated(storage: &ComponentStorage<Span>) -> Bounds {
+            storage
+                .borrow_validated_field_as::<(f32, f32), ValueStorage<(f32, f32)>, Bounds>(
+                    |span| &span.bounds,
+                    |span| &mut span.bounds,
+                    ordered,
+                )
+                .unwrap()
+        }
+
+        #[test]
+        fn checked_path_getters_allocate_within_budget() {
+            let mut holder = Holder(Some(1.0));
+            let mut span = Span {
+                bounds: (0.25, 0.5),
+                label: 1,
+            };
+            let flag = ValidityFlag::new_write();
+            // SAFETY: both values outlive every access on this thread under flag.
+            let holder_storage =
+                unsafe { ComponentStorage::borrowed_mut(&mut holder, flag.clone()) };
+            // SAFETY: as above.
+            let span_storage = unsafe { ComponentStorage::borrowed_mut(&mut span, flag.clone()) };
+
+            drop((
+                optional(&holder_storage),
+                variant(&holder_storage),
+                validated(&span_storage),
+            ));
+            assert_eq!(allocations_of(|| optional(&holder_storage)), 3);
+            assert_eq!(allocations_of(|| variant(&holder_storage)), 3);
+            assert_eq!(allocations_of(|| validated(&span_storage)), 4);
+            let child = optional(&holder_storage);
+            assert_eq!(allocations_of(|| child.get().unwrap()), 0);
+            assert_eq!(variant(&holder_storage).0.get().unwrap(), 1.0);
+            assert_eq!(validated(&span_storage).0.get().unwrap(), (0.25, 0.5));
+            flag.set_invalid();
+        }
     }
 }

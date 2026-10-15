@@ -8,23 +8,29 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 
-use crate::handlers::{
-    self,
-    depth::{PendingDepthAnalysis, validate_depth_sampling},
-    frame_analysis::{DEFAULT_COMPARE_EPSILON, FrameStatsOptions, validate_frame_stats_options},
-    reload::{PendingReloadAndCapture, PendingReloadAndCaptures},
-    schedule::{
-        ActiveSchedule, ActiveSchedules, ScheduleMode, ScheduleRequest,
-        SharedScheduleRegistryResource, SharedScheduleState,
+use crate::{
+    feature_gate::authorize,
+    handlers::{
+        self,
+        depth::{PendingDepthAnalysis, validate_depth_sampling},
+        frame_analysis::{
+            DEFAULT_COMPARE_EPSILON, FrameStatsOptions, validate_frame_stats_options,
+        },
+        reload::{PendingReloadAndCapture, PendingReloadAndCaptures},
+        schedule::{
+            ActiveSchedule, ActiveSchedules, ScheduleMode, ScheduleRequest,
+            SharedScheduleRegistryResource, SharedScheduleState,
+        },
+        screenshot::{
+            ActiveTimeline, GizmoEnabledRestore, MAX_CAPTURE_DELAY_FRAMES, MAX_TIMELINE_CAPTURES,
+            MAX_TIMELINE_FRAMES, PendingTimelines, compute_schedule, validate_capture_delay,
+        },
+        turnaround::{
+            ActiveTurnaround, MAX_TURNAROUND_VIEWS, PendingTurnarounds, compute_scene_bounds,
+            compute_viewpoints,
+        },
     },
-    screenshot::{
-        ActiveTimeline, GizmoEnabledRestore, MAX_TIMELINE_CAPTURES, PendingTimelines,
-        compute_schedule, headless_frame_sequence, prepare_capture_visibility, setup_debug_camera,
-    },
-    turnaround::{
-        ActiveTurnaround, MAX_TURNAROUND_VIEWS, PendingTurnarounds, compute_scene_bounds,
-        compute_viewpoints,
-    },
+    plugin::ControlConfig,
 };
 
 /// Maximum requests processed per frame to prevent frame spikes
@@ -168,6 +174,7 @@ pub struct CaptureScreenshotParams {
     pub entity: Option<EntityRef>,
     /// Frames to wait before capture (default 2)
     #[serde(default = "default_2")]
+    #[schemars(range(max = MAX_CAPTURE_DELAY_FRAMES))]
     pub delay_frames: u32,
     /// Max image width in pixels (default 768). Use 1280 for detail.
     pub max_width: Option<u32>,
@@ -200,6 +207,7 @@ pub struct CaptureStatsParams {
     pub sample_points: Option<Vec<[i64; 2]>>,
     /// Frames to wait before capture (default 2).
     #[serde(default = "default_2")]
+    #[schemars(range(max = MAX_CAPTURE_DELAY_FRAMES))]
     pub delay_frames: u32,
     /// Maximum analyzed width in pixels (default 768).
     #[schemars(range(min = 1))]
@@ -234,6 +242,7 @@ pub struct CompareFramesParams {
 pub struct CaptureTimelineParams {
     /// Frame span to capture over (~1s at 60fps)
     #[serde(default = "default_60")]
+    #[schemars(range(max = MAX_TIMELINE_FRAMES))]
     pub total_frames: u32,
     /// Number of captures (max 20)
     #[serde(default = "default_6")]
@@ -303,6 +312,7 @@ pub struct CaptureDepthParams {
     pub include_rgb: Option<bool>,
     /// Frames to wait before capture (default 2)
     #[schemars(extend("default" = 2))]
+    #[schemars(range(max = MAX_CAPTURE_DELAY_FRAMES))]
     pub delay_frames: Option<u32>,
     /// Hide UI during capture (default true)
     #[schemars(extend("default" = true))]
@@ -338,6 +348,7 @@ pub struct ReloadAndCaptureParams {
     pub time_scale: Option<f32>,
     /// Frames to wait after reload before capture (default 30)
     #[schemars(extend("default" = 30))]
+    #[schemars(range(max = MAX_CAPTURE_DELAY_FRAMES))]
     pub delay_frames: Option<u32>,
     /// Max screenshot width (default 768)
     pub max_width: Option<u32>,
@@ -618,6 +629,7 @@ fn default_compare_epsilon() -> f64 {
 #[repr(i32)]
 pub enum ErrorCode {
     NotFound = -32001,
+    Forbidden = -32003,
     NotSupported = -32601,
     InvalidParams = -32602,
     Internal = -32603,
@@ -639,6 +651,13 @@ impl ControlError {
     pub fn not_found(msg: impl Into<String>) -> Self {
         Self {
             code: ErrorCode::NotFound,
+            message: msg.into(),
+        }
+    }
+
+    pub fn forbidden(msg: impl Into<String>) -> Self {
+        Self {
+            code: ErrorCode::Forbidden,
             message: msg.into(),
         }
     }
@@ -859,6 +878,10 @@ pub fn push_pending_screenshot(
     response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
     deferred: &mut Vec<PendingScreenshot>,
 ) {
+    if let Err(error) = validate_capture_delay(params.delay_frames) {
+        let _ = response_tx.send(Err(error));
+        return;
+    }
     let debug_camera = params.position.map(|pos| DebugCameraRequest {
         position: pos,
         look_at: params.look_at.unwrap_or([0.0, 0.0, 0.0]),
@@ -895,7 +918,9 @@ pub fn push_pending_stats(
         region: params.region,
         sample_points: params.sample_points,
     };
-    if let Err(error) = validate_frame_stats_options(&options) {
+    if let Err(error) = validate_frame_stats_options(&options)
+        .and_then(|()| validate_capture_delay(params.delay_frames))
+    {
         let _ = response_tx.send(Err(error));
         return;
     }
@@ -933,6 +958,12 @@ pub fn push_pending_timeline(
         ))));
         return;
     }
+    if params.total_frames > MAX_TIMELINE_FRAMES {
+        let _ = response_tx.send(Err(ControlError::invalid_params(format!(
+            "total_frames must be at most {MAX_TIMELINE_FRAMES}"
+        ))));
+        return;
+    }
 
     let mut schedule = compute_schedule(params.total_frames, params.capture_count);
     // Let one post-suppression frame reach both window and headless targets.
@@ -940,29 +971,15 @@ pub fn push_pending_timeline(
         *first += 1;
     }
 
-    let debug_cleanup = if let Some(pos) = params.position {
-        let debug_req = DebugCameraRequest {
-            position: pos,
-            look_at: params.look_at.unwrap_or([0.0, 0.0, 0.0]),
-        };
-        if let Some(first) = schedule.front_mut() {
-            *first += 2;
-        }
-        match setup_debug_camera(world, &debug_req) {
-            Ok(cleanup) => Some(cleanup),
-            Err(error) => {
-                let _ = response_tx.send(Err(error));
-                return;
-            }
-        }
-    } else {
-        None
-    };
-
-    // Prepare visibility before any zero-delay capture can be scheduled.
-    let (ui_restore, gizmo_restore) =
-        prepare_capture_visibility(world, params.hide_ui, params.gizmos);
-    let headless_sequence = headless_frame_sequence(world);
+    let debug_camera = params.position.map(|position| DebugCameraRequest {
+        position,
+        look_at: params.look_at.unwrap_or([0.0, 0.0, 0.0]),
+    });
+    if debug_camera.is_some()
+        && let Some(first) = schedule.front_mut()
+    {
+        *first += 2;
+    }
 
     let mut pending = world.get_resource_or_insert_with(PendingTimelines::default);
     let id = pending.next_id;
@@ -977,17 +994,18 @@ pub fn push_pending_timeline(
             // way; capture_screenshot clamps to DEFAULT_SCREENSHOT_MAX_WIDTH.
             max_width: Some(params.max_width.unwrap_or(DEFAULT_TIMELINE_MAX_WIDTH)),
             columns: params.columns,
-            debug_cleanup,
+            debug_camera,
+            debug_cleanup: None,
             schedule,
             total_captures: params.capture_count,
             next_capture_index: 0,
             collected: Vec::new(),
-            overlay_suppressed: true,
+            overlay_suppressed: false,
             hide_ui: params.hide_ui,
             with_gizmos: params.gizmos,
-            ui_restore,
-            gizmo_restore,
-            headless_sequence,
+            ui_restore: None,
+            gizmo_restore: GizmoEnabledRestore::new(),
+            headless_sequence: None,
             stall_frames: 0,
         },
     );
@@ -1025,9 +1043,9 @@ pub fn push_pending_reload_and_capture(
 ) {
     // Surface validation errors (e.g. an out-of-range time_scale) directly
     // instead of dropping the bad param and reporting a false success later.
-    if let Err(e) =
+    if let Err(e) = validate_capture_delay(params.delay_frames.unwrap_or(30)).and_then(|()| {
         handlers::reload::trigger_reload(world, params.mode, params.pause, params.time_scale)
-    {
+    }) {
         let _ = response_tx.send(Err(e));
         return;
     }
@@ -1117,7 +1135,9 @@ pub fn push_pending_depth(
     deferred: &mut Vec<PendingScreenshot>,
     world: &mut World,
 ) {
-    if let Err(error) = validate_depth_sampling(&params.sample_points, &params.grid_density) {
+    if let Err(error) = validate_depth_sampling(&params.sample_points, &params.grid_density)
+        .and_then(|()| validate_capture_delay(params.delay_frames.unwrap_or(2)))
+    {
         let _ = response_tx.send(Err(error));
         return;
     }
@@ -1245,6 +1265,7 @@ pub fn control_poll_system(world: &mut World) {
 
     let mut processed = 0;
     let mut deferred_screenshots: Vec<PendingScreenshot> = Vec::new();
+    let config = world.get_resource::<ControlConfig>().cloned();
 
     // Two-phase processing: drain all requests first (no GIL needed), then
     // execute sync handlers in one batched Python::attach. This prevents both
@@ -1260,6 +1281,11 @@ pub fn control_poll_system(world: &mut World) {
         match receiver.rx.try_recv() {
             Ok(request) => {
                 processed += 1;
+
+                if let Err(error) = authorize(&request.operation, config.as_ref()) {
+                    let _ = request.response_tx.send(Err(error));
+                    continue;
+                }
 
                 // Handle ScheduleActions (no GIL needed - just stores in World resource)
                 if let ControlOperation::ScheduleActions(sched) = request.operation {
@@ -1387,6 +1413,17 @@ mod tests {
     use super::*;
     use crate::{protocol::SseEvent, runtime::ControlRuntime, runtime_pyo3::Pyo3ControlRuntime};
 
+    fn all_features_enabled() -> ControlConfig {
+        ControlConfig {
+            port: 0,
+            host: "127.0.0.1".into(),
+            screenshot: true,
+            manipulation: true,
+            execute_python: true,
+            api_discovery: true,
+        }
+    }
+
     #[test]
     fn entity_ref_deserialize_id() {
         let json = "42";
@@ -1423,6 +1460,7 @@ mod tests {
     #[test]
     fn control_poll_suppresses_gizmos_before_queuing_capture() {
         let mut world = World::new();
+        world.insert_resource(all_features_enabled());
         let mut store = GizmoConfigStore::default();
         store.insert(GizmoConfig::default(), DefaultGizmoConfigGroup);
         world.insert_resource(store);
@@ -1453,6 +1491,7 @@ mod tests {
     #[test]
     fn capture_screenshot_gizmos_flag_survives_direct_dispatch() {
         let mut world = World::new();
+        world.insert_resource(all_features_enabled());
         let mut store = GizmoConfigStore::default();
         store.insert(GizmoConfig::default(), DefaultGizmoConfigGroup);
         world.insert_resource(store);
@@ -1742,8 +1781,22 @@ mod tests {
         let timeline = pending.active.values().next().unwrap();
         assert!(!timeline.hide_ui);
         assert!(timeline.with_gizmos);
-        assert!(timeline.overlay_suppressed);
+        assert!(
+            !timeline.overlay_suppressed,
+            "a queued timeline holds no state"
+        );
         assert_eq!(timeline.schedule.front(), Some(&1));
+        assert!(!world.contains_resource::<OverlaySuppression>());
+
+        crate::handlers::screenshot::process_pending_timelines(&mut world);
+        let timeline = world
+            .resource::<PendingTimelines>()
+            .active
+            .values()
+            .next()
+            .unwrap();
+        assert!(timeline.overlay_suppressed);
+        assert_eq!(timeline.schedule.front(), Some(&0));
         assert_eq!(world.resource::<OverlaySuppression>().0, 1);
     }
 
@@ -1756,10 +1809,16 @@ mod tests {
         params.position = Some([0.0, 0.0, 500.0]);
 
         push_pending_timeline(params, tx, &mut world);
+        assert!(
+            rx.try_recv().is_err(),
+            "the pose is applied when the timeline starts"
+        );
+        crate::handlers::screenshot::process_pending_timelines(&mut world);
 
         let error = rx.try_recv().unwrap().unwrap_err();
         assert!(error.message.contains("require a Camera3d"));
-        assert!(!world.contains_resource::<PendingTimelines>());
+        assert!(world.resource::<PendingTimelines>().active.is_empty());
+        assert!(!world.contains_resource::<OverlaySuppression>());
     }
 
     #[test]

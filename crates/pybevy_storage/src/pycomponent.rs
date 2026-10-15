@@ -59,7 +59,7 @@ pub enum ComponentStorageInner<T: Component> {
     Revalidating(Box<RevalidatingField>),
 
     /// A native component value nested inside a live Bevy asset.
-    Source(Box<RevalidatingSource<T>>),
+    Source(RevalidatingSource<T>),
 }
 
 impl<T: Component> Drop for ComponentStorage<T> {
@@ -202,7 +202,7 @@ impl<T: Component> ComponentStorage<T> {
 
     pub fn revalidating_source(source: RevalidatingSource<T>) -> Self {
         Self {
-            inner: ComponentStorageInner::Source(Box::new(source)),
+            inner: ComponentStorageInner::Source(source),
         }
     }
 
@@ -268,19 +268,17 @@ impl<T: Component> ComponentStorage<T> {
         let source = match &self.inner {
             ComponentStorageInner::Source(source) => {
                 read(&*source.resolve_ref()?);
-                source.field(read, write)
+                source.validated_field(read, write, validate)
             }
             _ => {
                 read(&*self.as_ref()?);
                 match RevalidatingSource::from_borrowed_component(self) {
-                    Some(source) => source.field(read, write),
+                    Some(source) => source.validated_field(read, write, validate),
                     None => return self.snapshot_field_as(read),
                 }
             }
         };
-        Ok(W::from_borrowed(S::revalidating_source(
-            source.validated(validate),
-        )))
+        Ok(W::from_borrowed(S::revalidating_source(source)))
     }
 
     /// Create a second handle to the same component data.
