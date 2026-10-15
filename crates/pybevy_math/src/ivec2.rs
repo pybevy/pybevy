@@ -1,15 +1,18 @@
 use bevy::math::IVec2;
 use pybevy_core::{
     FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
-    public_error::{UNSUPPORTED_COMPARISON, integer_vector_division_by_zero},
+    public_error::{
+        CLAMP_MIN_EXCEEDS_MAX, UNSUPPORTED_COMPARISON, integer_vector_division_by_zero,
+    },
 };
 use pyo3::{
     basic::CompareOp,
-    exceptions::{PyTypeError, PyZeroDivisionError},
+    exceptions::{PyTypeError, PyValueError, PyZeroDivisionError},
     prelude::*,
+    types::PyInt,
 };
 
-use crate::{integer::checked, richcmp::comparison_result};
+use crate::{integer::checked, richcmp::comparison_result, uvec2::PyUVec2, vec2::PyVec2};
 
 #[pyclass(name = "IVec2", module = "pybevy.math", from_py_object)]
 #[derive(Debug, Clone)]
@@ -221,29 +224,6 @@ impl PyIVec2 {
         .into())
     }
 
-    pub fn __mul__(&self, scalar: i32) -> PyResult<PyIVec2> {
-        let value = self.as_ref()?;
-        Ok(IVec2::new(
-            checked(value.x.checked_mul(scalar))?,
-            checked(value.y.checked_mul(scalar))?,
-        )
-        .into())
-    }
-
-    pub fn __truediv__(&self, scalar: i32) -> PyResult<PyIVec2> {
-        if scalar == 0 {
-            return Err(PyZeroDivisionError::new_err(
-                integer_vector_division_by_zero("IVec2"),
-            ));
-        }
-        let value = self.as_ref()?;
-        Ok(IVec2::new(
-            checked(value.x.checked_div(scalar))?,
-            checked(value.y.checked_div(scalar))?,
-        )
-        .into())
-    }
-
     pub fn __neg__(&self) -> PyResult<PyIVec2> {
         let value = self.as_ref()?;
         Ok(IVec2::new(
@@ -293,4 +273,138 @@ impl PyIVec2 {
         let y = checked(value.y.checked_mul(value.y))?;
         checked(x.checked_add(y))
     }
+
+    pub fn as_vec2(&self) -> PyResult<PyVec2> {
+        Ok(self.as_ref()?.as_vec2().into())
+    }
+
+    pub fn as_uvec2(&self) -> PyResult<PyUVec2> {
+        Ok(self.as_ref()?.as_uvec2().into())
+    }
+
+    pub fn __mul__(&self, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let py = other.py();
+        let Some(rhs) = integer_operand(other)? else {
+            return Ok(py.NotImplemented());
+        };
+        let value = *self.as_ref()?;
+        let product = IVec2::new(
+            checked(value.x.checked_mul(rhs.x))?,
+            checked(value.y.checked_mul(rhs.y))?,
+        );
+        Ok(Py::new(py, PyIVec2::from(product))?.into_any())
+    }
+
+    pub fn __rmul__(&self, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        self.__mul__(other)
+    }
+
+    pub fn __truediv__(&self, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let py = other.py();
+        let Some(rhs) = integer_operand(other)? else {
+            return Ok(py.NotImplemented());
+        };
+        if rhs.cmpeq(IVec2::ZERO).any() {
+            return Err(PyZeroDivisionError::new_err(
+                integer_vector_division_by_zero("IVec2"),
+            ));
+        }
+        let value = *self.as_ref()?;
+        let quotient = IVec2::new(
+            checked(value.x.checked_div(rhs.x))?,
+            checked(value.y.checked_div(rhs.y))?,
+        );
+        Ok(Py::new(py, PyIVec2::from(quotient))?.into_any())
+    }
+
+    #[staticmethod]
+    #[pyo3(name = "AXES")]
+    pub fn axes() -> (PyIVec2, PyIVec2) {
+        (Self::from(IVec2::X), Self::from(IVec2::Y))
+    }
+
+    pub fn clamp(&self, min: &PyIVec2, max: &PyIVec2) -> PyResult<PyIVec2> {
+        let (min, max) = (*min.as_ref()?, *max.as_ref()?);
+        if !min.cmple(max).all() {
+            return Err(PyValueError::new_err(CLAMP_MIN_EXCEEDS_MAX));
+        }
+        Ok(self.as_ref()?.clamp(min, max).into())
+    }
+
+    pub fn cmpeq(&self, rhs: &PyIVec2) -> PyResult<(bool, bool)> {
+        let mask = self.as_ref()?.cmpeq(*rhs.as_ref()?);
+        Ok((mask.x, mask.y))
+    }
+
+    pub fn cmpne(&self, rhs: &PyIVec2) -> PyResult<(bool, bool)> {
+        let mask = self.as_ref()?.cmpne(*rhs.as_ref()?);
+        Ok((mask.x, mask.y))
+    }
+
+    pub fn cmpge(&self, rhs: &PyIVec2) -> PyResult<(bool, bool)> {
+        let mask = self.as_ref()?.cmpge(*rhs.as_ref()?);
+        Ok((mask.x, mask.y))
+    }
+
+    pub fn cmpgt(&self, rhs: &PyIVec2) -> PyResult<(bool, bool)> {
+        let mask = self.as_ref()?.cmpgt(*rhs.as_ref()?);
+        Ok((mask.x, mask.y))
+    }
+
+    pub fn cmple(&self, rhs: &PyIVec2) -> PyResult<(bool, bool)> {
+        let mask = self.as_ref()?.cmple(*rhs.as_ref()?);
+        Ok((mask.x, mask.y))
+    }
+
+    pub fn cmplt(&self, rhs: &PyIVec2) -> PyResult<(bool, bool)> {
+        let mask = self.as_ref()?.cmplt(*rhs.as_ref()?);
+        Ok((mask.x, mask.y))
+    }
+
+    #[staticmethod]
+    pub fn from_array(a: (i32, i32)) -> PyIVec2 {
+        IVec2::new(a.0, a.1).into()
+    }
+
+    pub fn manhattan_distance(&self, rhs: &PyIVec2) -> PyResult<u32> {
+        checked(self.as_ref()?.checked_manhattan_distance(*rhs.as_ref()?))
+    }
+
+    pub fn element_sum(&self) -> PyResult<i32> {
+        let value = self.as_ref()?;
+        checked(value.x.checked_add(value.y))
+    }
+
+    pub fn element_product(&self) -> PyResult<i32> {
+        let value = self.as_ref()?;
+        checked(value.x.checked_mul(value.y))
+    }
+
+    pub fn to_array(&self) -> PyResult<(i32, i32)> {
+        let value = self.as_ref()?;
+        Ok((value.x, value.y))
+    }
+
+    pub fn perp(&self) -> PyResult<PyIVec2> {
+        let value = self.as_ref()?;
+        Ok(IVec2::new(checked(value.y.checked_neg())?, value.x).into())
+    }
+
+    pub fn perp_dot(&self, rhs: &PyIVec2) -> PyResult<i32> {
+        let value = self.as_ref()?;
+        let rhs = rhs.as_ref()?;
+        let left = checked(value.x.checked_mul(rhs.y))?;
+        let right = checked(value.y.checked_mul(rhs.x))?;
+        checked(left.checked_sub(right))
+    }
+}
+
+fn integer_operand(other: &Bound<'_, PyAny>) -> PyResult<Option<IVec2>> {
+    if let Ok(vector) = other.cast::<PyIVec2>() {
+        return Ok(Some(IVec2::try_from(&*vector.try_borrow()?)?));
+    }
+    if other.is_instance_of::<PyInt>() {
+        return Ok(Some(IVec2::splat(other.extract::<i32>()?)));
+    }
+    Ok(None)
 }

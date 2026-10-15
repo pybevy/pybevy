@@ -313,6 +313,37 @@ class Vec3:
     def __deepcopy__(self, memo: dict[int, object]) -> Vec3:
         """Return an independent copy; the value holds no Python objects."""
 
+    def as_uvec3(self) -> UVec3:
+        """Cast each component to u32, as glam's `as_uvec3`."""
+    def to_vec3a(self) -> Vec3A:
+        """Convert to the SIMD-aligned `Vec3A`."""
+
+    def reflect(self, normal: Vec3) -> Vec3:
+        """Reflect this vector about `normal`.
+
+        Raises:
+            ValueError: If `normal` is not normalized.
+        """
+    def refract(self, normal: Vec3, eta: float) -> Vec3:
+        """Refract this incident direction through a surface with ratio `eta`.
+
+        Raises:
+            ValueError: If this vector or `normal` is not normalized.
+        """
+    def normalize_and_length(self) -> tuple[Vec3, float]:
+        """The normalized vector and the original length; `(X, 0.0)` when not normalizable."""
+    def rotate_towards(self, rhs: Vec3, max_angle: float) -> Vec3:
+        """Rotate towards `rhs` by at most `max_angle` radians."""
+    def rotate_x(self, angle: float) -> Vec3: ...
+    def rotate_y(self, angle: float) -> Vec3: ...
+    def rotate_z(self, angle: float) -> Vec3: ...
+    def rotate_axis(self, axis: Vec3, angle: float) -> Vec3:
+        """Rotate about `axis` by `angle` radians.
+
+        Raises:
+            ValueError: If `axis` is not normalized.
+        """
+
 class Vec3A:
     """A 3-dimensional SIMD-aligned vector class.
 
@@ -489,6 +520,29 @@ class Vec2:
     def __deepcopy__(self, memo: dict[int, object]) -> Vec2:
         """Return an independent copy; the value holds no Python objects."""
 
+    def as_ivec2(self) -> IVec2:
+        """Cast each component to i32, as glam's `as_ivec2`."""
+    def as_uvec2(self) -> UVec2:
+        """Cast each component to u32, as glam's `as_uvec2`."""
+
+    def reflect(self, normal: Vec2) -> Vec2:
+        """Reflect this vector about `normal`.
+
+        Raises:
+            ValueError: If `normal` is not normalized.
+        """
+    def refract(self, normal: Vec2, eta: float) -> Vec2:
+        """Refract this incident direction through a surface with ratio `eta`.
+
+        Raises:
+            ValueError: If this vector or `normal` is not normalized.
+        """
+    def normalize_and_length(self) -> tuple[Vec2, float]:
+        """The normalized vector and the original length; `(X, 0.0)` when not normalizable."""
+    def rotate_towards(self, rhs: Vec2, max_angle: float) -> Vec2:
+        """Rotate towards `rhs` by at most `max_angle` radians."""
+    def abs_diff_eq(self, rhs: Vec2, max_abs_diff: float) -> bool: ...
+
 class Range:
     """A range of float values with start (inclusive) and end (exclusive).
 
@@ -597,6 +651,17 @@ class Rect:
     def __deepcopy__(self, memo: dict[int, object]) -> Rect:
         """Return an independent copy; the value holds no Python objects."""
 
+    def as_irect(self) -> IRect:
+        """Cast the corners to i32 coordinates."""
+    def as_urect(self) -> URect:
+        """Cast the corners to u32 coordinates."""
+
+    EMPTY: ClassVar[Rect]
+    def translate(self, offset: Vec2) -> Rect:
+        """This rectangle moved by `offset`."""
+    def normalize(self, other: Rect) -> Rect:
+        """This rectangle in the normalized [0, 1] coordinates of `other`."""
+
 class UVec2:
     """A 2-dimensional unsigned integer vector."""
 
@@ -609,6 +674,7 @@ class UVec2:
     Y: ClassVar[UVec2]
     MIN: ClassVar[UVec2]
     MAX: ClassVar[UVec2]
+    AXES: ClassVar[tuple[UVec2, UVec2]]
 
     def __init__(self, x: int = 0, y: int = 0) -> None:
         """Create a UVec2 from x and y coordinates.
@@ -655,13 +721,13 @@ class UVec2:
         Raises:
             OverflowError: If any component result is outside its integer range.
         """
-    def __mul__(self, scalar: int) -> UVec2:
+    def __mul__(self, other: int | UVec2) -> UVec2:
         """Componentwise integer arithmetic.
 
         Raises:
             OverflowError: If any component result is outside its integer range.
         """
-    def __truediv__(self, scalar: int) -> UVec2:
+    def __truediv__(self, other: int | UVec2) -> UVec2:
         """Componentwise integer division.
 
         Raises:
@@ -676,6 +742,39 @@ class UVec2:
 
     def __deepcopy__(self, memo: dict[int, object]) -> UVec2:
         """Return an independent copy; the value holds no Python objects."""
+
+    def as_vec2(self) -> Vec2:
+        """Cast each component to f32."""
+    def as_ivec2(self) -> IVec2:
+        """Cast each component to i32, as glam's `as_ivec2`."""
+
+    def __rmul__(self, other: int | UVec2) -> UVec2:
+        """Componentwise integer multiplication.
+
+        Raises:
+            OverflowError: If any component result is outside its integer range.
+        """
+    def clamp(self, min: UVec2, max: UVec2) -> UVec2:
+        """Clamp each component between `min` and `max`.
+
+        Raises:
+            ValueError: If any `min` component exceeds the `max` component.
+        """
+    def cmpeq(self, rhs: UVec2) -> tuple[bool, bool]: ...
+    def cmpne(self, rhs: UVec2) -> tuple[bool, bool]: ...
+    def cmpge(self, rhs: UVec2) -> tuple[bool, bool]: ...
+    def cmpgt(self, rhs: UVec2) -> tuple[bool, bool]: ...
+    def cmple(self, rhs: UVec2) -> tuple[bool, bool]: ...
+    def cmplt(self, rhs: UVec2) -> tuple[bool, bool]: ...
+    @staticmethod
+    def from_array(a: tuple[int, int]) -> UVec2: ...
+    def manhattan_distance(self, rhs: UVec2) -> int:
+        """Sum of the absolute componentwise differences.
+
+        Raises:
+            OverflowError: If the distance does not fit in a u32.
+        """
+    def extend(self, z: int) -> UVec3: ...
 
 class IVec2:
     """A 2-dimensional signed integer vector."""
@@ -692,6 +791,7 @@ class IVec2:
     NEG_Y: ClassVar[IVec2]
     MIN: ClassVar[IVec2]
     MAX: ClassVar[IVec2]
+    AXES: ClassVar[tuple[IVec2, IVec2]]
 
     def __init__(self, x: int = 0, y: int = 0) -> None:
         """Create an IVec2 from x and y coordinates.
@@ -735,13 +835,13 @@ class IVec2:
         Raises:
             OverflowError: If any component result is outside its integer range.
         """
-    def __mul__(self, scalar: int) -> IVec2:
+    def __mul__(self, other: int | IVec2) -> IVec2:
         """Componentwise integer arithmetic.
 
         Raises:
             OverflowError: If any component result is outside its integer range.
         """
-    def __truediv__(self, scalar: int) -> IVec2:
+    def __truediv__(self, other: int | IVec2) -> IVec2:
         """Componentwise integer division.
 
         Raises:
@@ -758,6 +858,63 @@ class IVec2:
     def __deepcopy__(self, memo: dict[int, object]) -> IVec2:
         """Return an independent copy; the value holds no Python objects."""
 
+    def as_vec2(self) -> Vec2:
+        """Cast each component to f32."""
+    def as_uvec2(self) -> UVec2:
+        """Cast each component to u32, as glam's `as_uvec2`."""
+
+    def __rmul__(self, other: int | IVec2) -> IVec2:
+        """Componentwise integer multiplication.
+
+        Raises:
+            OverflowError: If any component result is outside its integer range.
+        """
+    def clamp(self, min: IVec2, max: IVec2) -> IVec2:
+        """Clamp each component between `min` and `max`.
+
+        Raises:
+            ValueError: If any `min` component exceeds the `max` component.
+        """
+    def cmpeq(self, rhs: IVec2) -> tuple[bool, bool]: ...
+    def cmpne(self, rhs: IVec2) -> tuple[bool, bool]: ...
+    def cmpge(self, rhs: IVec2) -> tuple[bool, bool]: ...
+    def cmpgt(self, rhs: IVec2) -> tuple[bool, bool]: ...
+    def cmple(self, rhs: IVec2) -> tuple[bool, bool]: ...
+    def cmplt(self, rhs: IVec2) -> tuple[bool, bool]: ...
+    @staticmethod
+    def from_array(a: tuple[int, int]) -> IVec2: ...
+    def manhattan_distance(self, rhs: IVec2) -> int:
+        """Sum of the absolute componentwise differences.
+
+        Raises:
+            OverflowError: If the distance does not fit in a u32.
+        """
+    def element_sum(self) -> int:
+        """Sum of the components.
+
+        Raises:
+            OverflowError: If the sum is outside the i32 range.
+        """
+    def element_product(self) -> int:
+        """Product of the components.
+
+        Raises:
+            OverflowError: If the product is outside the i32 range.
+        """
+    def to_array(self) -> tuple[int, int]: ...
+    def perp(self) -> IVec2:
+        """The vector rotated by 90 degrees, `(-y, x)`.
+
+        Raises:
+            OverflowError: If `-y` is outside the i32 range.
+        """
+    def perp_dot(self, rhs: IVec2) -> int:
+        """The perpendicular dot product, `x * rhs.y - y * rhs.x`.
+
+        Raises:
+            OverflowError: If the result is outside the i32 range.
+        """
+
 class UVec3:
     """A 3-dimensional unsigned integer vector."""
 
@@ -772,6 +929,7 @@ class UVec3:
     Z: ClassVar[UVec3]
     MIN: ClassVar[UVec3]
     MAX: ClassVar[UVec3]
+    AXES: ClassVar[tuple[UVec3, UVec3, UVec3]]
 
     def __init__(self, x: int = 0, y: int = 0, z: int = 0) -> None:
         """Create a UVec3 from x, y, and z coordinates.
@@ -820,13 +978,13 @@ class UVec3:
         Raises:
             OverflowError: If any component result is outside its integer range.
         """
-    def __mul__(self, scalar: int) -> UVec3:
+    def __mul__(self, other: int | UVec3) -> UVec3:
         """Componentwise integer arithmetic.
 
         Raises:
             OverflowError: If any component result is outside its integer range.
         """
-    def __truediv__(self, scalar: int) -> UVec3:
+    def __truediv__(self, other: int | UVec3) -> UVec3:
         """Componentwise integer division.
 
         Raises:
@@ -841,6 +999,36 @@ class UVec3:
 
     def __deepcopy__(self, memo: dict[int, object]) -> UVec3:
         """Return an independent copy; the value holds no Python objects."""
+
+    def as_vec3(self) -> Vec3:
+        """Cast each component to f32."""
+
+    def __rmul__(self, other: int | UVec3) -> UVec3:
+        """Componentwise integer multiplication.
+
+        Raises:
+            OverflowError: If any component result is outside its integer range.
+        """
+    def clamp(self, min: UVec3, max: UVec3) -> UVec3:
+        """Clamp each component between `min` and `max`.
+
+        Raises:
+            ValueError: If any `min` component exceeds the `max` component.
+        """
+    def cmpeq(self, rhs: UVec3) -> tuple[bool, bool, bool]: ...
+    def cmpne(self, rhs: UVec3) -> tuple[bool, bool, bool]: ...
+    def cmpge(self, rhs: UVec3) -> tuple[bool, bool, bool]: ...
+    def cmpgt(self, rhs: UVec3) -> tuple[bool, bool, bool]: ...
+    def cmple(self, rhs: UVec3) -> tuple[bool, bool, bool]: ...
+    def cmplt(self, rhs: UVec3) -> tuple[bool, bool, bool]: ...
+    @staticmethod
+    def from_array(a: tuple[int, int, int]) -> UVec3: ...
+    def manhattan_distance(self, rhs: UVec3) -> int:
+        """Sum of the absolute componentwise differences.
+
+        Raises:
+            OverflowError: If the distance does not fit in a u32.
+        """
 
 class URect:
     """A rectangle defined by minimum and maximum corner points (unsigned integers).
@@ -936,6 +1124,11 @@ class URect:
 
     def __deepcopy__(self, memo: dict[int, object]) -> URect:
         """Return an independent copy; the value holds no Python objects."""
+
+    def as_rect(self) -> Rect:
+        """Convert the corners to f32 coordinates."""
+    def as_irect(self) -> IRect:
+        """Cast the corners to i32 coordinates."""
 
 class IRect:
     """A rectangle defined by minimum and maximum corner points (signed integers)."""
@@ -1236,6 +1429,97 @@ class Quat:
     def __deepcopy__(self, memo: dict[int, object]) -> Quat:
         """Return an independent copy; the value holds no Python objects."""
 
+    def mul_vec3(self, rhs: Vec3) -> Vec3:
+        """Rotate `rhs` by this quaternion.
+
+        Raises:
+            ValueError: If a quaternion is not normalized.
+        """
+    def mul_quat(self, rhs: Quat) -> Quat: ...
+    def is_normalized(self) -> bool: ...
+    def is_finite(self) -> bool: ...
+    def is_nan(self) -> bool: ...
+    def is_near_identity(self) -> bool: ...
+    def angle_between(self, rhs: Quat) -> float:
+        """The angle in radians between two rotations.
+
+        Raises:
+            ValueError: If a quaternion is not normalized.
+        """
+    def rotate_towards(self, rhs: Quat, max_angle: float) -> Quat:
+        """Rotate towards `rhs` by at most `max_angle` radians.
+
+        Raises:
+            ValueError: If a quaternion is not normalized.
+        """
+    @staticmethod
+    def from_mat3(mat: Mat3) -> Quat:
+        """The rotation of a pure-rotation matrix.
+
+        Raises:
+            ValueError: If the rotation axes are not normalized.
+        """
+    @staticmethod
+    def from_mat4(mat: Mat4) -> Quat:
+        """The rotation of a matrix's upper 3x3 block.
+
+        Raises:
+            ValueError: If the rotation axes are not normalized.
+        """
+    @staticmethod
+    def from_affine3a(a: Affine3A) -> Quat:
+        """The rotation of an affine transform's matrix.
+
+        Raises:
+            ValueError: If the rotation axes are not normalized.
+        """
+    @staticmethod
+    def look_to_lh(dir: Vec3, up: Vec3) -> Quat:
+        """Left-handed view rotation facing `dir`.
+
+        Raises:
+            ValueError: If `dir` or `up` is not normalized or they are parallel.
+        """
+    @staticmethod
+    def look_to_rh(dir: Vec3, up: Vec3) -> Quat:
+        """Right-handed view rotation facing `dir`.
+
+        Raises:
+            ValueError: If `dir` or `up` is not normalized or they are parallel.
+        """
+    @staticmethod
+    def look_at_lh(eye: Vec3, center: Vec3, up: Vec3) -> Quat:
+        """Left-handed view rotation from `eye` toward `center`.
+
+        Raises:
+            ValueError: If `eye` equals `center` or the view direction is parallel to `up`.
+        """
+    @staticmethod
+    def look_at_rh(eye: Vec3, center: Vec3, up: Vec3) -> Quat:
+        """Right-handed view rotation from `eye` toward `center`.
+
+        Raises:
+            ValueError: If `eye` equals `center` or the view direction is parallel to `up`.
+        """
+    @staticmethod
+    def from_rotation_arc_2d(from_: Vec2, to: Vec2) -> Quat:
+        """The rotation about Z from `from_` to `to`.
+
+        Raises:
+            ValueError: If `from_` or `to` is not normalized.
+        """
+    @staticmethod
+    def from_rotation_arc_colinear(from_: Vec3, to: Vec3) -> Quat:
+        """The smallest rotation aligning `from_` with `to` or `-to`.
+
+        Raises:
+            ValueError: If `from_` or `to` is not normalized.
+        """
+    @staticmethod
+    def from_array(a: tuple[float, float, float, float]) -> Quat: ...
+    def to_array(self) -> tuple[float, float, float, float]: ...
+    def abs_diff_eq(self, rhs: Quat, max_abs_diff: float) -> bool: ...
+
 class Dir3:
     X: Dir3
     Y: Dir3
@@ -1285,6 +1569,21 @@ class Dir3:
 
     def __deepcopy__(self, memo: dict[int, object]) -> Dir3:
         """Return an independent copy; the value holds no Python objects."""
+
+    @staticmethod
+    def from_xyz(x: float, y: float, z: float) -> Dir3:
+        """Create a direction from x, y, and z components.
+
+        Raises:
+            ValueError: If the vector length is zero, very close to zero, or non-finite
+        """
+    @staticmethod
+    def new_and_length(value: Vec3) -> tuple[Dir3, float]:
+        """Normalize `value`, returning the direction and the original length.
+
+        Raises:
+            ValueError: If the vector length is zero, very close to zero, or non-finite
+        """
 
 class Mat2:
     """2x2 column-major matrix for rotation/scale/shear."""
@@ -1356,6 +1655,14 @@ class Mat2:
 
     def __deepcopy__(self, memo: dict[int, object]) -> Mat2:
         """Return an independent copy; the value holds no Python objects."""
+
+    def to_cols_array(self) -> list[float]: ...
+    @staticmethod
+    def from_cols_array_2d(m: list[list[float]]) -> Mat2: ...
+    def to_cols_array_2d(self) -> list[list[float]]: ...
+    def add_mat2(self, rhs: Mat2) -> Mat2: ...
+    def sub_mat2(self, rhs: Mat2) -> Mat2: ...
+    def div_scalar(self, rhs: float) -> Mat2: ...
 
 class Affine2:
     """2D affine transformation (scale, shear, rotation, translation)."""
@@ -1510,6 +1817,14 @@ class Mat3A:
     def __deepcopy__(self, memo: dict[int, object]) -> Mat3A:
         """Return an independent copy; the value holds no Python objects."""
 
+    @staticmethod
+    def from_cols_array_2d(m: list[list[float]]) -> Mat3A: ...
+    def to_cols_array_2d(self) -> list[list[float]]: ...
+    def add_mat3(self, rhs: Mat3A) -> Mat3A: ...
+    def sub_mat3(self, rhs: Mat3A) -> Mat3A: ...
+    def div_scalar(self, rhs: float) -> Mat3A: ...
+    def mul_vec3(self, rhs: Vec3) -> Vec3: ...
+
 class Affine3A:
     """A 3D affine transform using SIMD-aligned types.
 
@@ -1581,6 +1896,41 @@ class Affine3A:
 
     def __deepcopy__(self, memo: dict[int, object]) -> Affine3A:
         """Return an independent copy; the value holds no Python objects."""
+
+    def to_scale_rotation_translation(self) -> tuple[Vec3, Quat, Vec3]:
+        """Decompose into scale, rotation, and translation.
+
+        Raises:
+            ValueError: If the determinant is zero or not finite.
+        """
+    @staticmethod
+    def look_to_lh(eye: Vec3, dir: Vec3, up: Vec3) -> Affine3A:
+        """Left-handed view transform at `eye` facing `dir`.
+
+        Raises:
+            ValueError: If `dir` or `up` is not normalized or they are parallel.
+        """
+    @staticmethod
+    def look_to_rh(eye: Vec3, dir: Vec3, up: Vec3) -> Affine3A:
+        """Right-handed view transform at `eye` facing `dir`.
+
+        Raises:
+            ValueError: If `dir` or `up` is not normalized or they are parallel.
+        """
+    @staticmethod
+    def look_at_lh(eye: Vec3, center: Vec3, up: Vec3) -> Affine3A:
+        """Left-handed view transform from `eye` toward `center`.
+
+        Raises:
+            ValueError: If `eye` equals `center` or the view direction is parallel to `up`.
+        """
+    @staticmethod
+    def look_at_rh(eye: Vec3, center: Vec3, up: Vec3) -> Affine3A:
+        """Right-handed view transform from `eye` toward `center`.
+
+        Raises:
+            ValueError: If `eye` equals `center` or the view direction is parallel to `up`.
+        """
 
 class Cone(Meshable):
     """A 3D cone primitive with its tip on +Y.
@@ -2022,6 +2372,22 @@ class Vec4:
     def __deepcopy__(self, memo: dict[int, object]) -> Vec4:
         """Return an independent copy; the value holds no Python objects."""
 
+    def reflect(self, normal: Vec4) -> Vec4:
+        """Reflect this vector about `normal`.
+
+        Raises:
+            ValueError: If `normal` is not normalized.
+        """
+    def refract(self, normal: Vec4, eta: float) -> Vec4:
+        """Refract this incident direction through a surface with ratio `eta`.
+
+        Raises:
+            ValueError: If this vector or `normal` is not normalized.
+        """
+    def normalize_and_length(self) -> tuple[Vec4, float]:
+        """The normalized vector and the original length; `(X, 0.0)` when not normalizable."""
+    def abs_diff_eq(self, rhs: Vec4, max_abs_diff: float) -> bool: ...
+
 class Mat3:
     """A 3x3 matrix class."""
     IDENTITY: ClassVar[Mat3]
@@ -2116,6 +2482,61 @@ class Mat3:
 
     def __deepcopy__(self, memo: dict[int, object]) -> Mat3:
         """Return an independent copy; the value holds no Python objects."""
+
+    @property
+    def x_axis(self) -> Vec3:
+        """The first column; nested writes reach this matrix."""
+    @x_axis.setter
+    def x_axis(self, value: Vec3) -> None: ...
+    @property
+    def y_axis(self) -> Vec3:
+        """The second column; nested writes reach this matrix."""
+    @y_axis.setter
+    def y_axis(self, value: Vec3) -> None: ...
+    @property
+    def z_axis(self) -> Vec3:
+        """The third column; nested writes reach this matrix."""
+    @z_axis.setter
+    def z_axis(self, value: Vec3) -> None: ...
+    @staticmethod
+    def from_euler(order: EulerRot, a: float, b: float, c: float) -> Mat3: ...
+    def to_euler(self, order: EulerRot) -> tuple[float, float, float]:
+        """Extract Euler angles in the given order.
+
+        Raises:
+            ValueError: If a column is not normalized.
+        """
+    @staticmethod
+    def from_mat4(m: Mat4) -> Mat3:
+        """The upper-left 3x3 block of a Mat4."""
+    @staticmethod
+    def look_to_lh(dir: Vec3, up: Vec3) -> Mat3:
+        """Left-handed view rotation facing `dir`.
+
+        Raises:
+            ValueError: If `dir` or `up` is not normalized or they are parallel.
+        """
+    @staticmethod
+    def look_to_rh(dir: Vec3, up: Vec3) -> Mat3:
+        """Right-handed view rotation facing `dir`.
+
+        Raises:
+            ValueError: If `dir` or `up` is not normalized or they are parallel.
+        """
+    @staticmethod
+    def look_at_lh(eye: Vec3, center: Vec3, up: Vec3) -> Mat3:
+        """Left-handed view rotation from `eye` toward `center`.
+
+        Raises:
+            ValueError: If `eye` equals `center` or the view direction is parallel to `up`.
+        """
+    @staticmethod
+    def look_at_rh(eye: Vec3, center: Vec3, up: Vec3) -> Mat3:
+        """Right-handed view rotation from `eye` toward `center`.
+
+        Raises:
+            ValueError: If `eye` equals `center` or the view direction is parallel to `up`.
+        """
 
 class Mat4:
     """A 4x4 matrix class for 3D transformations."""
@@ -2281,6 +2702,79 @@ class Mat4:
 
     def __deepcopy__(self, memo: dict[int, object]) -> Mat4:
         """Return an independent copy; the value holds no Python objects."""
+
+    @property
+    def x_axis(self) -> Vec4:
+        """The first column; nested writes reach this matrix."""
+    @x_axis.setter
+    def x_axis(self, value: Vec4) -> None: ...
+    @property
+    def y_axis(self) -> Vec4:
+        """The second column; nested writes reach this matrix."""
+    @y_axis.setter
+    def y_axis(self, value: Vec4) -> None: ...
+    @property
+    def z_axis(self) -> Vec4:
+        """The third column; nested writes reach this matrix."""
+    @z_axis.setter
+    def z_axis(self, value: Vec4) -> None: ...
+    @property
+    def w_axis(self) -> Vec4:
+        """The fourth column; nested writes reach this matrix."""
+    @w_axis.setter
+    def w_axis(self, value: Vec4) -> None: ...
+    def to_scale_rotation_translation(self) -> tuple[Vec3, Quat, Vec3]:
+        """Decompose into scale, rotation, and translation.
+
+        Raises:
+            ValueError: If the determinant is zero or not finite.
+        """
+    @staticmethod
+    def from_euler(order: EulerRot, a: float, b: float, c: float) -> Mat4: ...
+    def to_euler(self, order: EulerRot) -> tuple[float, float, float]:
+        """Extract Euler angles in the given order.
+
+        Raises:
+            ValueError: If the x, y, or z column is not normalized.
+        """
+    def abs(self) -> Mat4: ...
+    @staticmethod
+    def from_rotation_translation(rotation: Quat, translation: Vec3) -> Mat4: ...
+    def transform_point3a(self, rhs: Vec3A) -> Vec3A:
+        """Transform a point, applying translation.
+
+        Raises:
+            ValueError: If the last row is not (0, 0, 0, 1).
+        """
+    def transform_vector3a(self, rhs: Vec3A) -> Vec3A:
+        """Transform a vector, ignoring translation.
+
+        Raises:
+            ValueError: If the last row is not (0, 0, 0, 1).
+        """
+    @staticmethod
+    def perspective_infinite_lh(fov_y_radians: float, aspect_ratio: float, z_near: float) -> Mat4:
+        """Left-handed infinite perspective projection.
+
+        Raises:
+            ValueError: If `z_near` is not positive or the matrix is not finite.
+        """
+    @staticmethod
+    def perspective_infinite_rh(fov_y_radians: float, aspect_ratio: float, z_near: float) -> Mat4:
+        """Right-handed infinite perspective projection.
+
+        Raises:
+            ValueError: If `z_near` is not positive or the matrix is not finite.
+        """
+    @staticmethod
+    def perspective_infinite_reverse_lh(
+        fov_y_radians: float, aspect_ratio: float, z_near: float
+    ) -> Mat4:
+        """Left-handed infinite reverse-Z perspective projection.
+
+        Raises:
+            ValueError: If `z_near` is not positive or the matrix is not finite.
+        """
 
 class Isometry2d:
     """2D isometry representing translation and rotation (rigid transform)."""
@@ -2938,6 +3432,21 @@ class Dir2:
 
     def __deepcopy__(self, memo: dict[int, object]) -> Dir2:
         """Return an independent copy; the value holds no Python objects."""
+
+    @staticmethod
+    def from_xy(x: float, y: float) -> Dir2:
+        """Create a direction from x and y components.
+
+        Raises:
+            ValueError: If the vector length is zero, very close to zero, or non-finite
+        """
+    @staticmethod
+    def new_and_length(value: Vec2) -> tuple[Dir2, float]:
+        """Normalize `value`, returning the direction and the original length.
+
+        Raises:
+            ValueError: If the vector length is zero, very close to zero, or non-finite
+        """
 
 class Ray2d:
     """A 2D ray defined by an origin point and direction."""
@@ -5135,6 +5644,13 @@ class CubicCardinalSpline2d:
             ValueError: If insufficient control points were provided
         """
 
+    def to_curve_cyclic(self) -> CubicCurve2d:
+        """Build a closed curve that loops back to the first point.
+
+        Raises:
+            ValueError: If there are too few control points.
+        """
+
 class CubicHermite2d:
     """A 2D cubic Hermite curve.
 
@@ -5172,6 +5688,12 @@ class CubicHermite2d:
             ValueError: If insufficient control points were provided
         """
 
+    def to_curve_cyclic(self) -> CubicCurve2d:
+        """Build a closed curve that loops back to the first point.
+
+        Raises:
+            ValueError: If there are too few control points.
+        """
 
 class CompassOctant:
     """Eight compass directions.
@@ -5508,6 +6030,13 @@ class CubicCardinalSpline3d:
     @tension.setter
     def tension(self, value: float) -> None: ...
 
+    def to_curve_cyclic(self) -> CubicCurve3d:
+        """Build a closed curve that loops back to the first point.
+
+        Raises:
+            ValueError: If there are too few control points.
+        """
+
 class CubicHermite3d:
     """A 3D cubic Hermite spline.
 
@@ -5530,6 +6059,13 @@ class CubicHermite3d:
     def to_curve(self) -> CubicCurve3d:
         """Convert to a `CubicCurve3d` for evaluation."""
 
+    def to_curve_cyclic(self) -> CubicCurve3d:
+        """Build a closed curve that loops back to the first point.
+
+        Raises:
+            ValueError: If there are too few control points.
+        """
+
 class CubicBSpline2d:
     """A 2D cubic B-spline.
 
@@ -5541,6 +6077,13 @@ class CubicBSpline2d:
 
     def to_curve(self) -> CubicCurve2d:
         """Convert to a `CubicCurve2d` for evaluation."""
+
+    def to_curve_cyclic(self) -> CubicCurve2d:
+        """Build a closed curve that loops back to the first point.
+
+        Raises:
+            ValueError: If there are too few control points.
+        """
 
 class CubicBSpline3d:
     """A 3D cubic B-spline.
@@ -5554,6 +6097,13 @@ class CubicBSpline3d:
     def to_curve(self) -> CubicCurve3d:
         """Convert to a `CubicCurve3d` for evaluation."""
 
+    def to_curve_cyclic(self) -> CubicCurve3d:
+        """Build a closed curve that loops back to the first point.
+
+        Raises:
+            ValueError: If there are too few control points.
+        """
+
 class LinearSpline2d:
     """A 2D linear spline.
 
@@ -5566,6 +6116,13 @@ class LinearSpline2d:
     def to_curve(self) -> CubicCurve2d:
         """Convert to a `CubicCurve2d` for evaluation."""
 
+    def to_curve_cyclic(self) -> CubicCurve2d:
+        """Build a closed curve that loops back to the first point.
+
+        Raises:
+            ValueError: If there are too few control points.
+        """
+
 class LinearSpline3d:
     """A 3D linear spline.
 
@@ -5577,6 +6134,13 @@ class LinearSpline3d:
 
     def to_curve(self) -> CubicCurve3d:
         """Convert to a `CubicCurve3d` for evaluation."""
+
+    def to_curve_cyclic(self) -> CubicCurve3d:
+        """Build a closed curve that loops back to the first point.
+
+        Raises:
+            ValueError: If there are too few control points.
+        """
 
 class CubicNurbs2d:
     """A 2D non-uniform rational B-spline (NURBS) curve.

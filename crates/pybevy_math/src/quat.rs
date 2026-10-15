@@ -1,9 +1,10 @@
-use bevy::math::{EulerRot, Quat, Vec3, Vec3A};
+use bevy::math::{Affine3A, EulerRot, Mat3, Mat4, Quat, Vec2, Vec3, Vec3A};
 use pybevy_core::{
     FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
     public_error::{
-        QUAT_AXIS_NOT_FINITE, ROTATION_ARC_NOT_NORMALIZED, UNSUPPORTED_COMPARISON,
-        quat_angle_not_finite, quat_axis_not_normalized,
+        QUAT_AXIS_NOT_FINITE, QUAT_NOT_NORMALIZED, ROTATION_ARC_NOT_NORMALIZED,
+        ROTATION_AXES_NOT_NORMALIZED, UNSUPPORTED_COMPARISON, quat_angle_not_finite,
+        quat_axis_not_normalized,
     },
     repr::ReprLiteral,
 };
@@ -16,7 +17,15 @@ use pyo3::{
     types::{PyAny, PyDict, PyTuple},
 };
 
-use crate::{richcmp::comparison_result, vec3::PyVec3, vec3a::PyVec3A};
+use crate::{
+    affine3a::PyAffine3A,
+    mat3::PyMat3,
+    mat4::{PyMat4, look_at_inputs, look_to_axes},
+    richcmp::comparison_result,
+    vec2::PyVec2,
+    vec3::PyVec3,
+    vec3a::PyVec3A,
+};
 
 #[pyenum(EulerRot)]
 #[pyclass(
@@ -423,6 +432,142 @@ impl PyQuat {
         };
         Ok(comparison_result(py, result))
     }
+
+    pub fn mul_vec3(&self, rhs: &PyVec3) -> PyResult<PyVec3> {
+        let rotation = normalized_quat(*self.as_ref()?)?;
+        Ok(rotation.mul_vec3(rhs.try_into()?).into())
+    }
+
+    pub fn mul_quat(&self, rhs: &PyQuat) -> PyResult<PyQuat> {
+        Ok(self.as_ref()?.mul_quat(*rhs.as_ref()?).into())
+    }
+
+    pub fn is_normalized(&self) -> PyResult<bool> {
+        Ok(self.as_ref()?.is_normalized())
+    }
+
+    pub fn is_finite(&self) -> PyResult<bool> {
+        Ok(self.as_ref()?.is_finite())
+    }
+
+    pub fn is_nan(&self) -> PyResult<bool> {
+        Ok(self.as_ref()?.is_nan())
+    }
+
+    pub fn is_near_identity(&self) -> PyResult<bool> {
+        Ok(self.as_ref()?.is_near_identity())
+    }
+
+    pub fn angle_between(&self, rhs: &PyQuat) -> PyResult<f32> {
+        let rotation = normalized_quat(*self.as_ref()?)?;
+        Ok(rotation.angle_between(normalized_quat(*rhs.as_ref()?)?))
+    }
+
+    pub fn rotate_towards(&self, rhs: &PyQuat, max_angle: f32) -> PyResult<PyQuat> {
+        let rotation = normalized_quat(*self.as_ref()?)?;
+        Ok(rotation
+            .rotate_towards(normalized_quat(*rhs.as_ref()?)?, max_angle)
+            .into())
+    }
+
+    #[staticmethod]
+    pub fn from_mat3(mat: &PyMat3) -> PyResult<PyQuat> {
+        let mat: Mat3 = mat.try_into()?;
+        rotation_axes(mat.x_axis, mat.y_axis, mat.z_axis)?;
+        Ok(Quat::from_mat3(&mat).into())
+    }
+
+    #[staticmethod]
+    pub fn from_mat4(mat: &PyMat4) -> PyResult<PyQuat> {
+        let mat: Mat4 = mat.try_into()?;
+        rotation_axes(
+            mat.x_axis.truncate(),
+            mat.y_axis.truncate(),
+            mat.z_axis.truncate(),
+        )?;
+        Ok(Quat::from_mat4(&mat).into())
+    }
+
+    #[staticmethod]
+    pub fn from_affine3a(a: &PyAffine3A) -> PyResult<PyQuat> {
+        let a: Affine3A = a.try_into()?;
+        rotation_axes(
+            a.matrix3.x_axis.into(),
+            a.matrix3.y_axis.into(),
+            a.matrix3.z_axis.into(),
+        )?;
+        Ok(Quat::from_affine3a(&a).into())
+    }
+
+    #[staticmethod]
+    pub fn look_to_lh(dir: &PyVec3, up: &PyVec3) -> PyResult<PyQuat> {
+        let (dir, up) = look_to_axes(dir, up)?;
+        Ok(Quat::look_to_lh(dir, up).into())
+    }
+
+    #[staticmethod]
+    pub fn look_to_rh(dir: &PyVec3, up: &PyVec3) -> PyResult<PyQuat> {
+        let (dir, up) = look_to_axes(dir, up)?;
+        Ok(Quat::look_to_rh(dir, up).into())
+    }
+
+    #[staticmethod]
+    pub fn look_at_lh(eye: &PyVec3, center: &PyVec3, up: &PyVec3) -> PyResult<PyQuat> {
+        let (_, dir, up) = look_at_inputs(eye, center, up)?;
+        Ok(Quat::look_to_lh(dir, up).into())
+    }
+
+    #[staticmethod]
+    pub fn look_at_rh(eye: &PyVec3, center: &PyVec3, up: &PyVec3) -> PyResult<PyQuat> {
+        let (_, dir, up) = look_at_inputs(eye, center, up)?;
+        Ok(Quat::look_to_rh(dir, up).into())
+    }
+
+    #[staticmethod]
+    pub fn from_rotation_arc_2d(from_: &PyVec2, to: &PyVec2) -> PyResult<PyQuat> {
+        let (from, to): (Vec2, Vec2) = (from_.try_into()?, to.try_into()?);
+        if !from.is_normalized() || !to.is_normalized() {
+            return Err(PyValueError::new_err(ROTATION_ARC_NOT_NORMALIZED));
+        }
+        Ok(Quat::from_rotation_arc_2d(from, to).into())
+    }
+
+    #[staticmethod]
+    pub fn from_rotation_arc_colinear(from_: &PyVec3, to: &PyVec3) -> PyResult<PyQuat> {
+        let (from, to): (Vec3, Vec3) = (from_.try_into()?, to.try_into()?);
+        if !from.is_normalized() || !to.is_normalized() {
+            return Err(PyValueError::new_err(ROTATION_ARC_NOT_NORMALIZED));
+        }
+        Ok(Quat::from_rotation_arc_colinear(from, to).into())
+    }
+
+    #[staticmethod]
+    pub fn from_array(a: (f32, f32, f32, f32)) -> PyQuat {
+        Quat::from_array([a.0, a.1, a.2, a.3]).into()
+    }
+
+    pub fn to_array(&self) -> PyResult<(f32, f32, f32, f32)> {
+        let [x, y, z, w] = self.as_ref()?.to_array();
+        Ok((x, y, z, w))
+    }
+
+    pub fn abs_diff_eq(&self, rhs: &PyQuat, max_abs_diff: f32) -> PyResult<bool> {
+        Ok(self.as_ref()?.abs_diff_eq(*rhs.as_ref()?, max_abs_diff))
+    }
+}
+
+fn normalized_quat(rotation: Quat) -> PyResult<Quat> {
+    if !rotation.is_normalized() {
+        return Err(PyValueError::new_err(QUAT_NOT_NORMALIZED));
+    }
+    Ok(rotation)
+}
+
+fn rotation_axes(x_axis: Vec3, y_axis: Vec3, z_axis: Vec3) -> PyResult<()> {
+    if !(x_axis.is_normalized() && y_axis.is_normalized() && z_axis.is_normalized()) {
+        return Err(PyValueError::new_err(ROTATION_AXES_NOT_NORMALIZED));
+    }
+    Ok(())
 }
 
 /// Accept a PyQuat, matching bevy's `impl Into<Quat>` parameters.

@@ -11,7 +11,7 @@ use pyo3::{
 };
 
 use super::{integer::checked, uvec2::PyUVec2};
-use crate::richcmp::comparison_result;
+use crate::{irect::PyIRect, rect::PyRect, richcmp::comparison_result};
 
 #[pyvalue]
 #[pyclass(name = "URect", module = "pybevy.math", from_py_object)]
@@ -226,5 +226,13 @@ impl PyURect {
             _ => return Err(PyTypeError::new_err(UNSUPPORTED_COMPARISON)),
         };
         Ok(comparison_result(py, result))
+    }
+
+    pub fn as_rect(&self) -> PyResult<PyRect> {
+        Ok(self.to_bevy()?.as_rect().into())
+    }
+
+    pub fn as_irect(&self) -> PyResult<PyIRect> {
+        Ok(self.to_bevy()?.as_irect().into())
     }
 }

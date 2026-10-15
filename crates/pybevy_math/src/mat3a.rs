@@ -347,4 +347,33 @@ impl PyMat3A {
         };
         Ok(comparison_result(py, result))
     }
+
+    #[staticmethod]
+    pub fn from_cols_array_2d(m: [[f32; 3]; 3]) -> Self {
+        PyMat3A::mat3a(Mat3A::from_cols_array_2d(&m))
+    }
+
+    pub fn to_cols_array_2d(&self) -> PyResult<[[f32; 3]; 3]> {
+        Ok(self.as_ref()?.to_cols_array_2d())
+    }
+
+    pub fn add_mat3(&self, rhs: &PyMat3A) -> PyResult<Self> {
+        Ok(PyMat3A::mat3a(
+            self.as_ref()?.add_mat3(rhs.as_ref()?.reborrow()),
+        ))
+    }
+
+    pub fn sub_mat3(&self, rhs: &PyMat3A) -> PyResult<Self> {
+        Ok(PyMat3A::mat3a(
+            self.as_ref()?.sub_mat3(rhs.as_ref()?.reborrow()),
+        ))
+    }
+
+    pub fn div_scalar(&self, rhs: f32) -> PyResult<Self> {
+        Ok(PyMat3A::mat3a(self.as_ref()?.div_scalar(rhs)))
+    }
+
+    pub fn mul_vec3(&self, rhs: &PyVec3) -> PyResult<PyVec3> {
+        Ok(PyVec3::from_vec3(self.as_ref()?.mul_vec3(rhs.try_get()?)))
+    }
 }

@@ -625,8 +625,21 @@ pub const SHADER_BUFFER_DATA_CHANGED: &str =
 
 pub const TIME_CONTEXT_TYPE_REQUIRED: &str =
     "Time[...] expects one of the Fixed, Real, or Virtual marker types";
-pub const MAT4_PERSPECTIVE_INFINITE_REVERSE_RH_NEAR: &str =
-    "perspective_infinite_reverse_rh requires z_near > 0";
+pub fn mat4_perspective_near(function: &str) -> String {
+    format!("{function} requires z_near > 0")
+}
+
+pub fn matrix_decomposition_singular(type_name: &str) -> String {
+    format!("{type_name}.to_scale_rotation_translation requires a finite, non-zero determinant")
+}
+
+pub fn euler_axes_not_normalized(type_name: &str) -> String {
+    format!("{type_name}.to_euler requires normalized x, y, and z axes")
+}
+
+pub fn affine_transform_last_row(type_name: &str, function: &str) -> String {
+    format!("{type_name}.{function} requires the last row to be (0, 0, 0, 1)")
+}
 pub const MAT4_LOOK_DIRECTION_PARALLEL_TO_UP: &str = "look direction must not be parallel to up";
 pub const MAT4_LOOK_AT_EYE_EQUALS_CENTER: &str = "eye and center must be distinct finite points";
 
@@ -1269,10 +1282,15 @@ pub const INFINITE_PLANE_POINTS: &str =
     "infinite plane must be defined by three finite, non-collinear points";
 pub const INTEGER_VECTOR_OVERFLOW: &str = "integer vector arithmetic overflow";
 pub const RHS_NOT_NORMALIZED: &str = "rhs must be normalized";
+pub const CLAMP_MIN_EXCEEDS_MAX: &str = "clamp: expected min <= max";
 pub const VECTOR_NOT_NORMALIZED: &str = "vector must be normalized";
+pub const NORMAL_NOT_NORMALIZED: &str = "normal must be normalized";
+pub const AXIS_NOT_NORMALIZED: &str = "axis must be normalized";
 pub const DIRECTION_NOT_NORMALIZED: &str = "direction must be normalized";
 pub const UP_NOT_NORMALIZED: &str = "up must be normalized";
 pub const ROTATION_ARC_NOT_NORMALIZED: &str = "start and end vectors must be normalized";
+pub const QUAT_NOT_NORMALIZED: &str = "quaternion must be normalized";
+pub const ROTATION_AXES_NOT_NORMALIZED: &str = "rotation axes must be normalized";
 pub const QUAT_AXIS_NOT_FINITE: &str =
     "axis must be finite; from_axis_angle requires a normalized axis";
 pub const INVALID_INTERVAL: &str =

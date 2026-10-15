@@ -1,12 +1,23 @@
 use bevy::math::{Mat3, Vec3};
 use pybevy_core::{
-    FromBorrowedStorage, StorageRef, ValueStorage, public_error::UNSUPPORTED_COMPARISON,
+    FromBorrowedStorage, StorageRef, ValueStorage,
+    public_error::{UNSUPPORTED_COMPARISON, euler_axes_not_normalized},
     repr::float_repr,
 };
-use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
+use pyo3::{
+    basic::CompareOp,
+    exceptions::{PyTypeError, PyValueError},
+    prelude::*,
+};
 
 use super::{quat::PyQuat, vec2::PyVec2, vec3::PyVec3};
-use crate::{matrix_index, require_invertible, richcmp::comparison_result};
+use crate::{
+    mat4::{PyMat4, look_at_inputs, look_to_axes},
+    matrix_index,
+    quat::PyEulerRot,
+    require_invertible,
+    richcmp::comparison_result,
+};
 
 #[pyclass(name = "Mat3", module = "pybevy.math", from_py_object)]
 #[derive(Debug, Clone)]
@@ -354,5 +365,89 @@ impl PyMat3 {
             _ => return Err(PyTypeError::new_err(UNSUPPORTED_COMPARISON)),
         };
         Ok(comparison_result(py, result))
+    }
+
+    #[getter]
+    pub fn x_axis(&self) -> PyResult<PyVec3> {
+        Ok(self
+            .storage
+            .borrow_resolved_field_as(|m| &m.x_axis, |m| &mut m.x_axis)?)
+    }
+
+    #[setter]
+    pub fn set_x_axis(&mut self, value: &PyVec3) -> PyResult<()> {
+        self.storage.as_mut()?.x_axis = value.try_into()?;
+        Ok(())
+    }
+
+    #[getter]
+    pub fn y_axis(&self) -> PyResult<PyVec3> {
+        Ok(self
+            .storage
+            .borrow_resolved_field_as(|m| &m.y_axis, |m| &mut m.y_axis)?)
+    }
+
+    #[setter]
+    pub fn set_y_axis(&mut self, value: &PyVec3) -> PyResult<()> {
+        self.storage.as_mut()?.y_axis = value.try_into()?;
+        Ok(())
+    }
+
+    #[getter]
+    pub fn z_axis(&self) -> PyResult<PyVec3> {
+        Ok(self
+            .storage
+            .borrow_resolved_field_as(|m| &m.z_axis, |m| &mut m.z_axis)?)
+    }
+
+    #[setter]
+    pub fn set_z_axis(&mut self, value: &PyVec3) -> PyResult<()> {
+        self.storage.as_mut()?.z_axis = value.try_into()?;
+        Ok(())
+    }
+
+    #[staticmethod]
+    pub fn from_euler(order: PyEulerRot, a: f32, b: f32, c: f32) -> Self {
+        PyMat3::mat3(Mat3::from_euler(order.into(), a, b, c))
+    }
+
+    pub fn to_euler(&self, order: PyEulerRot) -> PyResult<(f32, f32, f32)> {
+        let matrix = *self.as_ref()?;
+        if !(matrix.x_axis.is_normalized()
+            && matrix.y_axis.is_normalized()
+            && matrix.z_axis.is_normalized())
+        {
+            return Err(PyValueError::new_err(euler_axes_not_normalized("Mat3")));
+        }
+        Ok(matrix.to_euler(order.into()))
+    }
+
+    #[staticmethod]
+    pub fn from_mat4(m: &PyMat4) -> PyResult<Self> {
+        Ok(PyMat3::mat3(Mat3::from_mat4(m.try_into()?)))
+    }
+
+    #[staticmethod]
+    pub fn look_to_lh(dir: &PyVec3, up: &PyVec3) -> PyResult<Self> {
+        let (dir, up) = look_to_axes(dir, up)?;
+        Ok(PyMat3::mat3(Mat3::look_to_lh(dir, up)))
+    }
+
+    #[staticmethod]
+    pub fn look_to_rh(dir: &PyVec3, up: &PyVec3) -> PyResult<Self> {
+        let (dir, up) = look_to_axes(dir, up)?;
+        Ok(PyMat3::mat3(Mat3::look_to_rh(dir, up)))
+    }
+
+    #[staticmethod]
+    pub fn look_at_lh(eye: &PyVec3, center: &PyVec3, up: &PyVec3) -> PyResult<Self> {
+        let (_, dir, up) = look_at_inputs(eye, center, up)?;
+        Ok(PyMat3::mat3(Mat3::look_to_lh(dir, up)))
+    }
+
+    #[staticmethod]
+    pub fn look_at_rh(eye: &PyVec3, center: &PyVec3, up: &PyVec3) -> PyResult<Self> {
+        let (_, dir, up) = look_at_inputs(eye, center, up)?;
+        Ok(PyMat3::mat3(Mat3::look_to_rh(dir, up)))
     }
 }

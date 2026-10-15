@@ -1,7 +1,10 @@
 use bevy::math::{BVec2, Vec2, Vec2Swizzles};
 use pybevy_core::{
     FromBorrowedStorage, StorageRef, ValueStorage,
-    public_error::{RHS_NOT_NORMALIZED, UNSUPPORTED_COMPARISON, from_slice_too_short},
+    public_error::{
+        NORMAL_NOT_NORMALIZED, RHS_NOT_NORMALIZED, UNSUPPORTED_COMPARISON, VECTOR_NOT_NORMALIZED,
+        from_slice_too_short,
+    },
     repr::ReprLiteral,
 };
 use pyo3::{
@@ -10,7 +13,7 @@ use pyo3::{
     prelude::*,
 };
 
-use crate::{richcmp::comparison_result, vec3::PyVec3};
+use crate::{ivec2::PyIVec2, richcmp::comparison_result, uvec2::PyUVec2, vec3::PyVec3};
 
 #[pyclass(name = "Vec2", module = "pybevy.math", from_py_object)]
 #[derive(Debug, Clone)]
@@ -621,6 +624,49 @@ impl PyVec2 {
 
     pub fn yy(&self) -> PyResult<PyVec2> {
         Ok(self.as_ref()?.yy().into())
+    }
+
+    pub fn as_ivec2(&self) -> PyResult<PyIVec2> {
+        Ok(self.as_ref()?.as_ivec2().into())
+    }
+
+    pub fn as_uvec2(&self) -> PyResult<PyUVec2> {
+        Ok(self.as_ref()?.as_uvec2().into())
+    }
+
+    pub fn reflect(&self, normal: &PyVec2) -> PyResult<PyVec2> {
+        let normal = *normal.as_ref()?;
+        if !normal.is_normalized() {
+            return Err(PyValueError::new_err(NORMAL_NOT_NORMALIZED));
+        }
+        Ok(PyVec2::from_vec2(self.as_ref()?.reflect(normal)))
+    }
+
+    pub fn refract(&self, normal: &PyVec2, eta: f32) -> PyResult<PyVec2> {
+        let incident = *self.as_ref()?;
+        let normal = *normal.as_ref()?;
+        if !incident.is_normalized() {
+            return Err(PyValueError::new_err(VECTOR_NOT_NORMALIZED));
+        }
+        if !normal.is_normalized() {
+            return Err(PyValueError::new_err(NORMAL_NOT_NORMALIZED));
+        }
+        Ok(PyVec2::from_vec2(incident.refract(normal, eta)))
+    }
+
+    pub fn normalize_and_length(&self) -> PyResult<(PyVec2, f32)> {
+        let (normalized, length) = self.as_ref()?.normalize_and_length();
+        Ok((PyVec2::from_vec2(normalized), length))
+    }
+
+    pub fn rotate_towards(&self, rhs: &PyVec2, max_angle: f32) -> PyResult<PyVec2> {
+        Ok(PyVec2::from_vec2(
+            self.as_ref()?.rotate_towards(*rhs.as_ref()?, max_angle),
+        ))
+    }
+
+    pub fn abs_diff_eq(&self, rhs: &PyVec2, max_abs_diff: f32) -> PyResult<bool> {
+        Ok(self.as_ref()?.abs_diff_eq(*rhs.as_ref()?, max_abs_diff))
     }
 }
 

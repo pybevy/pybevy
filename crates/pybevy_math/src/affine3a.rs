@@ -1,13 +1,21 @@
 use bevy::math::{Affine3A, Mat3A, Mat4, Quat, Vec3, Vec3A};
 use pybevy_core::{
     FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
-    public_error::UNSUPPORTED_COMPARISON,
+    public_error::{UNSUPPORTED_COMPARISON, matrix_decomposition_singular},
     repr::{ReprLiteral, object_repr},
 };
-use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
+use pyo3::{
+    basic::CompareOp,
+    exceptions::{PyTypeError, PyValueError},
+    prelude::*,
+};
 
 use super::{mat3a::PyMat3A, mat4::PyMat4, quat::PyQuat, vec3::PyVec3, vec3a::PyVec3A};
-use crate::{require_invertible, richcmp::comparison_result};
+use crate::{
+    mat4::{look_at_inputs, look_to_inputs},
+    require_invertible,
+    richcmp::comparison_result,
+};
 
 #[pyclass(name = "Affine3A", module = "pybevy.math", skip_from_py_object)]
 #[derive(Debug, Clone)]
@@ -293,5 +301,49 @@ impl PyAffine3A {
             _ => return Err(PyTypeError::new_err(UNSUPPORTED_COMPARISON)),
         };
         Ok(comparison_result(py, result))
+    }
+
+    pub fn to_scale_rotation_translation(&self) -> PyResult<(PyVec3, PyQuat, PyVec3)> {
+        let affine = *self.as_ref()?;
+        let determinant = affine.matrix3.determinant();
+        if !determinant.is_finite() || determinant == 0.0 {
+            return Err(PyValueError::new_err(matrix_decomposition_singular(
+                "Affine3A",
+            )));
+        }
+        let (scale, rotation, translation) = affine.to_scale_rotation_translation();
+        Ok((scale.into(), rotation.into(), translation.into()))
+    }
+
+    #[staticmethod]
+    pub fn look_to_lh(eye: &PyVec3, dir: &PyVec3, up: &PyVec3) -> PyResult<Self> {
+        let (eye, dir, up) = look_to_inputs(eye, dir, up)?;
+        Ok(PyAffine3A::from_affine3a(Affine3A::look_to_lh(
+            eye, dir, up,
+        )))
+    }
+
+    #[staticmethod]
+    pub fn look_to_rh(eye: &PyVec3, dir: &PyVec3, up: &PyVec3) -> PyResult<Self> {
+        let (eye, dir, up) = look_to_inputs(eye, dir, up)?;
+        Ok(PyAffine3A::from_affine3a(Affine3A::look_to_rh(
+            eye, dir, up,
+        )))
+    }
+
+    #[staticmethod]
+    pub fn look_at_lh(eye: &PyVec3, center: &PyVec3, up: &PyVec3) -> PyResult<Self> {
+        let (eye, dir, up) = look_at_inputs(eye, center, up)?;
+        Ok(PyAffine3A::from_affine3a(Affine3A::look_to_lh(
+            eye, dir, up,
+        )))
+    }
+
+    #[staticmethod]
+    pub fn look_at_rh(eye: &PyVec3, center: &PyVec3, up: &PyVec3) -> PyResult<Self> {
+        let (eye, dir, up) = look_at_inputs(eye, center, up)?;
+        Ok(PyAffine3A::from_affine3a(Affine3A::look_to_rh(
+            eye, dir, up,
+        )))
     }
 }

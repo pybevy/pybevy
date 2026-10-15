@@ -11,7 +11,7 @@ use pyo3::{
     prelude::*,
 };
 
-use crate::{richcmp::comparison_result, vec2::PyVec2};
+use crate::{irect::PyIRect, richcmp::comparison_result, urect::PyURect, vec2::PyVec2};
 
 fn check_center_extent(extent: Vec2, error: &'static str) -> PyResult<()> {
     if extent.x < 0.0 || extent.y < 0.0 || extent.x.is_nan() || extent.y.is_nan() {
@@ -171,6 +171,28 @@ impl PyRect {
             _ => return Err(PyTypeError::new_err(UNSUPPORTED_COMPARISON)),
         };
         Ok(comparison_result(py, result))
+    }
+
+    pub fn as_irect(&self) -> PyResult<PyIRect> {
+        Ok(self.to_bevy()?.as_irect().into())
+    }
+
+    pub fn as_urect(&self) -> PyResult<PyURect> {
+        Ok(self.to_bevy()?.as_urect().into())
+    }
+
+    #[staticmethod]
+    #[pyo3(name = "EMPTY")]
+    pub fn empty() -> Self {
+        Self::from_owned(Rect::EMPTY)
+    }
+
+    pub fn translate(&self, offset: &PyVec2) -> PyResult<PyRect> {
+        Ok(self.to_bevy()?.translate(offset.try_get()?).into())
+    }
+
+    pub fn normalize(&self, other: &PyRect) -> PyResult<PyRect> {
+        Ok(self.to_bevy()?.normalize(other.to_bevy()?).into())
     }
 }
 

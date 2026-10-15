@@ -1,7 +1,10 @@
 use bevy::math::{BVec4A, Vec4, Vec4Swizzles};
 use pybevy_core::{
     FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
-    public_error::{RHS_NOT_NORMALIZED, UNSUPPORTED_COMPARISON, from_slice_too_short},
+    public_error::{
+        NORMAL_NOT_NORMALIZED, RHS_NOT_NORMALIZED, UNSUPPORTED_COMPARISON, VECTOR_NOT_NORMALIZED,
+        from_slice_too_short,
+    },
     repr::ReprLiteral,
 };
 use pyo3::{
@@ -688,5 +691,34 @@ impl PyVec4 {
     fn as_tuple(&self) -> PyResult<(f32, f32, f32, f32)> {
         let v = *self.as_ref()?;
         Ok((v.x, v.y, v.z, v.w))
+    }
+
+    pub fn reflect(&self, normal: &PyVec4) -> PyResult<PyVec4> {
+        let normal = *normal.as_ref()?;
+        if !normal.is_normalized() {
+            return Err(PyValueError::new_err(NORMAL_NOT_NORMALIZED));
+        }
+        Ok(PyVec4::from_vec4(self.as_ref()?.reflect(normal)))
+    }
+
+    pub fn refract(&self, normal: &PyVec4, eta: f32) -> PyResult<PyVec4> {
+        let incident = *self.as_ref()?;
+        let normal = *normal.as_ref()?;
+        if !incident.is_normalized() {
+            return Err(PyValueError::new_err(VECTOR_NOT_NORMALIZED));
+        }
+        if !normal.is_normalized() {
+            return Err(PyValueError::new_err(NORMAL_NOT_NORMALIZED));
+        }
+        Ok(PyVec4::from_vec4(incident.refract(normal, eta)))
+    }
+
+    pub fn normalize_and_length(&self) -> PyResult<(PyVec4, f32)> {
+        let (normalized, length) = self.as_ref()?.normalize_and_length();
+        Ok((PyVec4::from_vec4(normalized), length))
+    }
+
+    pub fn abs_diff_eq(&self, rhs: &PyVec4, max_abs_diff: f32) -> PyResult<bool> {
+        Ok(self.as_ref()?.abs_diff_eq(*rhs.as_ref()?, max_abs_diff))
     }
 }
