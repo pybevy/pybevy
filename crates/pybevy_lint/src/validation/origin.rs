@@ -1166,6 +1166,52 @@ pub fn source_variant_field_order(
     variant_fields_in_items(&file.items, type_name, variant_name)
 }
 
+/// Named struct field types by field name from the pinned source declaration.
+pub fn source_field_types(
+    full_path: &str,
+    bevy_path: Option<&Path>,
+) -> Option<HashMap<String, String>> {
+    let bevy_path = bevy_path?;
+    let crate_name = full_path.split("::").next()?;
+    let source = find_type_source_file(full_path, crate_name, bevy_path)?;
+    let text = std::fs::read_to_string(&source).ok()?;
+    let type_name = full_path.rsplit("::").next()?.split('<').next()?;
+    let file = syn::parse_file(&text).ok()?;
+    struct_field_types_in_items(&file.items, type_name)
+}
+
+fn struct_field_types_in_items(
+    items: &[syn::Item],
+    type_name: &str,
+) -> Option<HashMap<String, String>> {
+    items.iter().find_map(|item| match item {
+        syn::Item::Struct(item) if item.ident == type_name => {
+            let syn::Fields::Named(fields) = &item.fields else {
+                return None;
+            };
+            Some(
+                fields
+                    .named
+                    .iter()
+                    .filter_map(|field| {
+                        let name = field.ident.as_ref()?.to_string();
+                        let ty = &field.ty;
+                        Some((
+                            name.trim_start_matches("r#").to_string(),
+                            quote::quote!(#ty).to_string(),
+                        ))
+                    })
+                    .collect(),
+            )
+        }
+        syn::Item::Mod(module) => module
+            .content
+            .as_ref()
+            .and_then(|(_, items)| struct_field_types_in_items(items, type_name)),
+        _ => None,
+    })
+}
+
 fn variant_fields_in_items(
     items: &[syn::Item],
     type_name: &str,

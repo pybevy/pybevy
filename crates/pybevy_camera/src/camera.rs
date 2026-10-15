@@ -64,17 +64,17 @@ impl PyCamera {
     pub fn viewport(&self) -> PyResult<Option<PyViewport>> {
         Ok(self
             .storage
-            .borrow_optional_field(|c| &c.viewport)?
+            .borrow_optional_field("Camera.viewport", |c| &c.viewport, |c| &mut c.viewport)?
             .map(PyViewport::from_borrowed))
     }
 
     #[setter]
     pub fn set_viewport(&mut self, value: Option<&PyViewport>) -> PyResult<()> {
-        let mut camera = self.as_mut()?;
-        camera.viewport = match value {
+        let viewport = match value {
             Some(py_viewport) => Some(py_viewport.try_into()?),
             None => None,
         };
+        self.as_mut()?.viewport = viewport;
         Ok(())
     }
 
@@ -137,7 +137,11 @@ impl PyCamera {
     pub fn sub_camera_view(&self) -> PyResult<Option<PySubCameraView>> {
         Ok(self
             .storage
-            .borrow_optional_field(|c| &c.sub_camera_view)?
+            .borrow_optional_field(
+                "Camera.sub_camera_view",
+                |c| &c.sub_camera_view,
+                |c| &mut c.sub_camera_view,
+            )?
             .map(PySubCameraView::from_borrowed))
     }
 

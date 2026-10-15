@@ -59,7 +59,8 @@ pub struct ScheduleAction {
     /// Time offset in **virtual** seconds from schedule start (default 0). Must be monotonically
     /// non-decreasing. Note: virtual seconds do not advance while time is paused, so a schedule
     /// that calls `pause_time` cannot use `at` for any later action - use `at_frame` instead, or
-    /// call `resume_time` from outside the schedule.
+    /// call `resume_time` from outside the schedule. A `seek_time` action moves the schedule clock
+    /// with virtual time, so later actions keep their `at` spacing from the seek.
     pub at: Option<f64>,
     /// Frame offset from schedule start (alternative to 'at'). Cannot mix with 'at'.
     pub at_frame: Option<i64>,
@@ -279,13 +280,6 @@ fn is_deferred_tool(name: &str) -> bool {
             | "capture_timeline"
             | "capture_turnaround"
             | "capture_depth"
-    )
-}
-
-fn is_time_control_tool(name: &str) -> bool {
-    matches!(
-        name,
-        "seek_time" | "pause_time" | "resume_time" | "set_time_scale"
     )
 }
 
@@ -815,7 +809,8 @@ fn process_single_schedule(
                 // Execute the action
                 let tool_name = action.tool.clone();
                 let tool_args = action.args.clone();
-                let is_time_tool = is_time_control_tool(&tool_name);
+                let action_at = resolve_at(action);
+                let mut seeked_clock = false;
                 let is_transform_mutation = is_transform_mutation_tool(&tool_name);
                 let is_render_mutation = is_render_mutation_tool(&tool_name);
 
@@ -856,6 +851,7 @@ fn process_single_schedule(
                             let result = handlers::dispatch(world, op, runtime);
                             match result {
                                 Ok(value) => {
+                                    seeked_clock = tool_name == "seek_time";
                                     let has_errors =
                                         crate::handlers::pyo3::mutate::has_embedded_errors(&value);
                                     let has_run_code_failure = value
@@ -977,14 +973,12 @@ fn process_single_schedule(
                         }
                     }
                     schedule.current_index += 1;
-                    // Re-base action timing after time-manipulation tools (seek_time can
-                    // move game_time backward below the previous timing origin, which would
-                    // stall all subsequent at:0 actions).
-                    if is_time_tool {
-                        schedule.timing_origin_game_time = world
+                    if seeked_clock {
+                        let now = world
                             .get_resource::<Time<Virtual>>()
                             .map(|t| t.elapsed_secs_f64())
                             .unwrap_or(0.0);
+                        schedule.timing_origin_game_time = now - action_at;
                     }
                     update_async_progress(schedule);
                     continue; // Same-at actions fire in the same frame
@@ -1871,18 +1865,6 @@ mod tests {
                 ..Default::default()
             }
         );
-    }
-
-    #[test]
-    fn test_is_time_control_tool() {
-        assert!(is_time_control_tool("seek_time"));
-        assert!(is_time_control_tool("pause_time"));
-        assert!(is_time_control_tool("resume_time"));
-        assert!(is_time_control_tool("set_time_scale"));
-        assert!(!is_time_control_tool("capture_screenshot"));
-        assert!(!is_time_control_tool("set_component"));
-        assert!(!is_time_control_tool("query_entities"));
-        assert!(!is_time_control_tool("get_scene_summary"));
     }
 
     /// Verifies that the registry and ActiveSchedule share the same Arc,

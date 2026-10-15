@@ -2452,10 +2452,10 @@ notes = "Python static constructors for enum variants (Rust uses variant syntax)
 intentional_extra_methods = ["tile"]
 notes = "Python static constructor for Tile variant (Rust uses variant syntax)"
 
-# Anchor: Python-specific accessors
+# Anchor: tuple payload accessor
 [bevy.type_ignores.Anchor]
-intentional_extra_methods = ["custom", "value"]
-notes = "custom() is Python constructor for Custom variant, value property is accessor for inner Vec2"
+intentional_extra_methods = ["value"]
+notes = "value property is the named accessor for the tuple payload Anchor.0"
 
 
 # ShaderImport: Cow<String> -> String

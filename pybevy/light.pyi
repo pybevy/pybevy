@@ -406,8 +406,8 @@ class EnvironmentMapLight(Component):
     def __init__(
         self,
         *,
-        diffuse_map: Handle[Image] | None = None,
-        specular_map: Handle[Image] | None = None,
+        diffuse_map: Handle[Image] = ...,
+        specular_map: Handle[Image] = ...,
         intensity: float = 0.0,
         rotation: Quat = ...,
         affects_lightmapped_mesh_diffuse: bool = True
@@ -528,14 +528,14 @@ class IrradianceVolume(Component):
     diffuse global illumination. Requires LightProbe component.
 
     Args:
-        voxels: The 3D texture representing ambient cubes (optional, defaults to invalid handle).
+        voxels: The 3D texture representing ambient cubes (defaults to the default handle).
         intensity: Light intensity multiplier.
         affects_lightmapped_meshes: Whether to affect lightmapped meshes.
     """
     def __init__(
         self,
         *,
-        voxels: Handle[Image] | None = None,
+        voxels: Handle[Image] = ...,
         intensity: float = 0.0,
         affects_lightmapped_meshes: bool = True
     ) -> None: ...
@@ -660,7 +660,7 @@ class GeneratedEnvironmentMapLight(Component):
     def __init__(
         self,
         *,
-        environment_map: Handle[Image] | None = None,
+        environment_map: Handle[Image] = ...,
         intensity: float = 0.0,
         rotation: Quat = ...,
         affects_lightmapped_mesh_diffuse: bool = True

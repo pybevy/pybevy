@@ -91,7 +91,11 @@ impl PyTextCursorStyle {
     #[getter]
     pub fn selected_text_color(&self, py: Python<'_>) -> PyResult<Option<Py<PyColor>>> {
         self.storage
-            .borrow_optional_field(|style| &style.selected_text_color)?
+            .borrow_optional_field(
+                "TextCursorStyle.selected_text_color",
+                |style| &style.selected_text_color,
+                |style| &mut style.selected_text_color,
+            )?
             .map(|storage| PyColor::from_storage(storage, py))
             .transpose()
     }

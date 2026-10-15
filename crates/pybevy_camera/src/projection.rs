@@ -105,7 +105,7 @@ impl PyPerspectiveProjection {
     pub fn near_clip_plane(&self) -> PyResult<PyVec4> {
         Ok(self
             .storage
-            .borrow_field_as(|projection| &projection.near_clip_plane)?)
+            .borrow_resolved_field_as(|p| &p.near_clip_plane, |p| &mut p.near_clip_plane)?)
     }
 
     #[setter]
@@ -234,7 +234,9 @@ impl PyOrthographicProjection {
 
     #[getter]
     pub fn viewport_origin(&self) -> PyResult<PyVec2> {
-        Ok(self.storage.borrow_field_as(|p| &p.viewport_origin)?)
+        Ok(self
+            .storage
+            .borrow_resolved_field_as(|p| &p.viewport_origin, |p| &mut p.viewport_origin)?)
     }
 
     #[setter]
@@ -267,7 +269,9 @@ impl PyOrthographicProjection {
 
     #[getter]
     pub fn area(&self) -> PyResult<PyRect> {
-        Ok(self.storage.borrow_field_as(|p| &p.area)?)
+        Ok(self
+            .storage
+            .borrow_resolved_field_as(|p| &p.area, |p| &mut p.area)?)
     }
 
     #[setter]

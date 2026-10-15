@@ -1,6 +1,7 @@
 use bevy::image::TextureAtlas;
 use pybevy_core::{
-    FromBorrowedStorage, extract_handle_from_any, field_storage::FieldStorage, handle::PyHandle,
+    FromBorrowedStorage, HandleArg, extract_handle_from_any, field_storage::FieldStorage,
+    handle::PyHandle,
 };
 use pybevy_macros::pyfield;
 use pyo3::prelude::*;
@@ -15,14 +16,13 @@ pub struct PyTextureAtlas {
 #[pymethods]
 impl PyTextureAtlas {
     #[new]
-    #[pyo3(signature = (*, layout = None, index = 0))]
-    pub fn new(layout: Option<&Bound<'_, PyAny>>, index: usize) -> PyResult<Self> {
-        let layout = match layout {
-            Some(layout) => extract_handle_from_any(layout)?.try_into()?,
-            None => Default::default(),
-        };
+    #[pyo3(signature = (*, layout = HandleArg::default(), index = 0))]
+    pub fn new(layout: HandleArg, index: usize) -> PyResult<Self> {
         Ok(Self {
-            storage: FieldStorage::owned(TextureAtlas { layout, index }),
+            storage: FieldStorage::owned(TextureAtlas {
+                layout: layout.into_handle()?,
+                index,
+            }),
         })
     }
 

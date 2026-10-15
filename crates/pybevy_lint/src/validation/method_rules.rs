@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::{
     config::BevyConfig,
     model::{
@@ -453,6 +455,79 @@ fn check_field_order(
         }
         last_seen = Some(*pos);
     }
+}
+
+/// W017: a field-derived constructor input is published as `T | None = None`
+/// while the upstream field it initializes is not an `Option`. A Rust-only
+/// `Option<T>` omission sentinel behind a `T = ...` stub is not reported.
+pub fn check_optional_field_parameters(
+    origin: &ConstructorOrigin,
+    rust_class: &PyClassDef,
+    python_class: Option<&PyClassDef>,
+    field_types: &HashMap<String, String>,
+) -> Vec<Diagnostic> {
+    let (upstream_type, fields) = match origin {
+        ConstructorOrigin::FieldDerived {
+            upstream_type,
+            field_order,
+        } => (upstream_type, field_order),
+        ConstructorOrigin::Mixed {
+            upstream_type,
+            tail_fields,
+            ..
+        } => (upstream_type, tail_fields),
+        _ => return Vec::new(),
+    };
+    let Some(constructor) = rust_class.constructor.as_ref() else {
+        return Vec::new();
+    };
+    let stub_params = python_class
+        .and_then(|class| class.constructor.as_ref())
+        .map(|ctor| ctor.parameters.as_slice())
+        .unwrap_or_default();
+
+    let mut diagnostics = Vec::new();
+    for param in &constructor.parameters {
+        if !fields.contains(&param.name) {
+            continue;
+        }
+        let Some(field_type) = field_types.get(&param.name) else {
+            continue;
+        };
+        if is_option_type(field_type) {
+            continue;
+        }
+        let stub_accepts_none = stub_params
+            .iter()
+            .find(|stub| stub.name == param.name)
+            .is_some_and(|stub| defaults_to_none(stub) && stub.is_optional);
+        if !stub_accepts_none {
+            continue;
+        }
+        let mut diag = Diagnostic::warning(
+            DiagnosticCode::W017,
+            format!(
+                "constructor '{}' parameter '{}' accepts None but the upstream field {}::{} is `{}`; default to Bevy's value and reject None",
+                rust_class.python_name, param.name, upstream_type, param.name, field_type
+            ),
+        );
+        if let Some(loc) = &constructor.location {
+            diag = diag.with_location(loc.clone());
+        }
+        diagnostics.push(diag);
+    }
+    diagnostics
+}
+
+fn defaults_to_none(param: &crate::model::ParameterDef) -> bool {
+    param.default_value.as_deref() == Some("None")
+}
+
+fn is_option_type(ty: &str) -> bool {
+    let compact: String = ty.chars().filter(|c| !c.is_whitespace()).collect();
+    ["Option<", "core::option::Option<", "std::option::Option<"]
+        .iter()
+        .any(|prefix| compact.starts_with(prefix))
 }
 
 /// Validate constructor matches between Rust and Python

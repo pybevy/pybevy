@@ -1,5 +1,5 @@
 use bevy::{math::Rect, pbr::Lightmap};
-use pybevy_core::{ComponentStorage, PyComponent, PyHandle, extract_handle_from_any};
+use pybevy_core::{ComponentStorage, HandleArg, PyComponent, PyHandle, extract_handle_from_any};
 use pybevy_macros::pycomponent;
 use pybevy_math::rect::PyRect;
 use pyo3::prelude::*;
@@ -13,18 +13,14 @@ pub struct PyLightmap {
 #[pymethods]
 impl PyLightmap {
     #[new]
-    #[pyo3(signature = (*, image = None, uv_rect = None, bicubic_sampling = false))]
+    #[pyo3(signature = (*, image = HandleArg::default(), uv_rect = None, bicubic_sampling = false))]
     pub fn new(
-        image: Option<&Bound<'_, PyAny>>,
+        image: HandleArg,
         uv_rect: Option<PyRect>,
         bicubic_sampling: bool,
     ) -> PyResult<PyClassInitializer<Self>> {
-        let image = match image {
-            Some(image) => extract_handle_from_any(image)?.try_into()?,
-            None => Default::default(),
-        };
         Ok(Self::from_owned(Lightmap {
-            image,
+            image: image.into_handle()?,
             uv_rect: uv_rect
                 .map(TryInto::try_into)
                 .transpose()?

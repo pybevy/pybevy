@@ -1107,7 +1107,7 @@ class RenderLayers(Component):
         """Create RenderLayers with only the specified layer enabled.
 
         Args:
-            layer: Layer number below the platform's integer bit width
+            layer: Layer number below 64
 
         Returns:
             RenderLayers with only the specified layer enabled

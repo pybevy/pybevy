@@ -1,5 +1,5 @@
-use bevy::{asset::Handle, light::GeneratedEnvironmentMapLight};
-use pybevy_core::{ComponentStorage, PyComponent, PyHandle, extract_handle_from_any};
+use bevy::light::GeneratedEnvironmentMapLight;
+use pybevy_core::{ComponentStorage, HandleArg, PyComponent, PyHandle, extract_handle_from_any};
 use pybevy_macros::pycomponent;
 use pybevy_math::quat::PyQuat;
 use pyo3::prelude::*;
@@ -29,23 +29,19 @@ impl PyGeneratedEnvironmentMapLight {
     #[new]
     #[pyo3(signature = (
         *,
-        environment_map = None,
+        environment_map = HandleArg::default(),
         intensity = Self::default_intensity(),
         rotation = Self::default_rotation(),
         affects_lightmapped_mesh_diffuse = Self::default_affects_lightmapped_mesh_diffuse()
     ))]
     pub fn new(
-        environment_map: Option<&Bound<'_, PyAny>>,
+        environment_map: HandleArg,
         intensity: f32,
         rotation: PyQuat,
         affects_lightmapped_mesh_diffuse: bool,
     ) -> PyResult<PyClassInitializer<Self>> {
-        let handle = match environment_map {
-            Some(h) => extract_handle_from_any(h)?.try_into()?,
-            None => Handle::default(),
-        };
         Ok(Self::from_owned(GeneratedEnvironmentMapLight {
-            environment_map: handle,
+            environment_map: environment_map.into_handle()?,
             intensity,
             rotation: rotation.try_into()?,
             affects_lightmapped_mesh_diffuse,

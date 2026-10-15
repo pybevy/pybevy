@@ -61,7 +61,9 @@ impl PyRect {
 
     #[getter]
     pub fn min(&self) -> PyResult<PyVec2> {
-        Ok(self.storage.borrow_field_as(|r| &r.min)?)
+        Ok(self
+            .storage
+            .borrow_resolved_field_as(|r| &r.min, |r| &mut r.min)?)
     }
 
     #[setter]
@@ -72,7 +74,9 @@ impl PyRect {
 
     #[getter]
     pub fn max(&self) -> PyResult<PyVec2> {
-        Ok(self.storage.borrow_field_as(|r| &r.max)?)
+        Ok(self
+            .storage
+            .borrow_resolved_field_as(|r| &r.max, |r| &mut r.max)?)
     }
 
     #[setter]

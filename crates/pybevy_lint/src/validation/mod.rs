@@ -6,6 +6,7 @@ pub mod property_rules;
 mod protocol_rules;
 mod specialized_receivers;
 pub mod style_rules;
+pub mod wrapper_types;
 
 use std::collections::{HashMap, HashSet};
 
@@ -72,11 +73,13 @@ pub fn validate_with_bevy(
         ));
     }
 
+    let wrapper_index = wrapper_types::wrapper_index(rust_classes, &config.bevy);
     for rust_class in rust_classes {
         if rust_class.python_name.starts_with('_') {
             continue;
         }
         let in_scope = rust_class.constructor.is_some()
+            || !rust_class.properties.is_empty()
             || rust_class.is_enum
             || rust_class
                 .enum_variants
@@ -96,6 +99,35 @@ pub fn validate_with_bevy(
             .as_ref()
             .map(|origin| origin::check_constructor_policy(origin, rust_class))
             .unwrap_or_default();
+
+        if let Some(origin) = &origin
+            && let Some(upstream_type) = origin.upstream_type()
+            && let Some(field_types) = origin::source_field_types(upstream_type, bevy_path)
+        {
+            policy_diagnostics.extend(method_rules::check_optional_field_parameters(
+                origin,
+                rust_class,
+                find_matching_python_class(rust_class, python_classes),
+                &field_types,
+            ));
+        }
+
+        if let Some(python_class) = find_matching_python_class(rust_class, python_classes) {
+            let upstream = upstream_slots(
+                rust_class,
+                origin.as_ref(),
+                bevy_crates,
+                &config.bevy,
+                bevy_path,
+            );
+            policy_diagnostics.extend(wrapper_types::check_wrapper_types(
+                rust_class,
+                python_class,
+                origin.as_ref(),
+                &upstream,
+                &wrapper_index,
+            ));
+        }
 
         if let Some(MacroInfo::BevyEnum { bevy_type, .. }) = &rust_class.macro_info
             && let Some((_, bevy_item)) = find_bevy_item(bevy_crates, bevy_type)
@@ -281,6 +313,36 @@ fn variant_policy(
         ..Default::default()
     };
     origin::check_constructor_policy(&origin, &variant_class)
+}
+
+/// Upstream field and variant payload types behind one wrapper's stub slots.
+fn upstream_slots(
+    class: &PyClassDef,
+    origin: Option<&ConstructorOrigin>,
+    bevy_crates: &HashMap<String, BevyCrate>,
+    bevy_config: &crate::config::BevyConfig,
+    bevy_path: Option<&std::path::Path>,
+) -> wrapper_types::UpstreamSlots {
+    let item = find_bevy_item(
+        bevy_crates,
+        &crate::comparison::pybevy_bevy_name(class, bevy_config),
+    )
+    .map(|(_, item)| item);
+    let upstream_type = origin
+        .and_then(ConstructorOrigin::upstream_type)
+        .or(item.map(|item| item.full_path.as_str()));
+    let fields = upstream_type
+        .and_then(|upstream_type| origin::source_field_types(upstream_type, bevy_path))
+        .unwrap_or_default();
+    let variants = item
+        .map(|item| {
+            item.variants
+                .iter()
+                .map(|variant| (variant.name.clone(), variant.kind.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    wrapper_types::UpstreamSlots { fields, variants }
 }
 
 /// Find one item by short name across the parsed crates.

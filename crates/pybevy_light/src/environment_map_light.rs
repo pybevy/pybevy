@@ -1,5 +1,5 @@
-use bevy::{asset::Handle, light::EnvironmentMapLight};
-use pybevy_core::{ComponentStorage, PyComponent, PyHandle, extract_handle_from_any};
+use bevy::light::EnvironmentMapLight;
+use pybevy_core::{ComponentStorage, HandleArg, PyComponent, PyHandle, extract_handle_from_any};
 use pybevy_macros::pycomponent;
 use pybevy_math::quat::PyQuat;
 use pyo3::prelude::*;
@@ -29,30 +29,22 @@ impl PyEnvironmentMapLight {
     #[new]
     #[pyo3(signature = (
         *,
-        diffuse_map = None,
-        specular_map = None,
+        diffuse_map = HandleArg::default(),
+        specular_map = HandleArg::default(),
         intensity = Self::default_intensity(),
         rotation = Self::default_rotation(),
         affects_lightmapped_mesh_diffuse = Self::default_affects_lightmapped_mesh_diffuse()
     ))]
     pub fn new(
-        diffuse_map: Option<&Bound<'_, PyAny>>,
-        specular_map: Option<&Bound<'_, PyAny>>,
+        diffuse_map: HandleArg,
+        specular_map: HandleArg,
         intensity: f32,
         rotation: PyQuat,
         affects_lightmapped_mesh_diffuse: bool,
     ) -> PyResult<PyClassInitializer<Self>> {
-        let diffuse = match diffuse_map {
-            Some(h) => extract_handle_from_any(h)?.try_into()?,
-            None => Handle::default(),
-        };
-        let specular = match specular_map {
-            Some(h) => extract_handle_from_any(h)?.try_into()?,
-            None => Handle::default(),
-        };
         Ok(Self::from_owned(EnvironmentMapLight {
-            diffuse_map: diffuse,
-            specular_map: specular,
+            diffuse_map: diffuse_map.into_handle()?,
+            specular_map: specular_map.into_handle()?,
             intensity,
             rotation: rotation.try_into()?,
             affects_lightmapped_mesh_diffuse,

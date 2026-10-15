@@ -80,6 +80,12 @@ pub enum DiagnosticCode {
     /// W016: pyclass declares no `module = "pybevy...."`, so `__module__` is
     /// `builtins`
     W016,
+    /// W017: field-derived constructor parameter accepts `None` but the Bevy
+    /// field is not an `Option`
+    W017,
+    /// W018: stub spells a builtin tuple/list/number where the Bevy field or
+    /// payload type has a PyBevy wrapper
+    W018,
 
     // Test coverage info (T-codes)
     /// T001: Class has no test coverage
@@ -125,6 +131,8 @@ impl DiagnosticCode {
             DiagnosticCode::W014 => "W014",
             DiagnosticCode::W015 => "W015",
             DiagnosticCode::W016 => "W016",
+            DiagnosticCode::W017 => "W017",
+            DiagnosticCode::W018 => "W018",
             DiagnosticCode::T001 => "T001",
             DiagnosticCode::T002 => "T002",
             DiagnosticCode::T003 => "T003",
@@ -165,7 +173,9 @@ impl DiagnosticCode {
             | DiagnosticCode::W013
             | DiagnosticCode::W014
             | DiagnosticCode::W015
-            | DiagnosticCode::W016 => DiagnosticSeverity::Warning,
+            | DiagnosticCode::W016
+            | DiagnosticCode::W017
+            | DiagnosticCode::W018 => DiagnosticSeverity::Warning,
 
             DiagnosticCode::T001 | DiagnosticCode::T002 | DiagnosticCode::T003 => {
                 DiagnosticSeverity::Info
@@ -221,6 +231,12 @@ impl DiagnosticCode {
                 "payload-free immutable value enum omits upstream-supported hashing"
             }
             DiagnosticCode::W016 => "pyclass declares no module, so __module__ is builtins",
+            DiagnosticCode::W017 => {
+                "field-derived constructor parameter accepts None but the Bevy field is not optional"
+            }
+            DiagnosticCode::W018 => {
+                "stub uses a tuple/builtin where the Bevy field or payload type has a PyBevy wrapper"
+            }
             DiagnosticCode::T001 => "class has no test coverage",
             DiagnosticCode::T002 => "constructor not tested",
             DiagnosticCode::T003 => "member not tested",

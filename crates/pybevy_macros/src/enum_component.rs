@@ -283,22 +283,21 @@ fn try_expand(
                 field_index,
             );
             if field.borrowed {
-                // A revalidating wrapper tracks the live component, which may hold a
-                // different variant by now; nothing can change it between these two
-                // same-call accesses.
                 quote! {
                     #[getter]
                     pub fn #getter(slf: pyo3::PyRef<'_, Self>) -> pyo3::PyResult<#return_type> {
                         let base = slf.into_super();
-                        if !matches!(&*base.storage.as_ref()?, #materialize_pattern) {
-                            return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                                pybevy_core::public_error::enum_variant_changed(#qualname),
-                            ));
-                        }
-                        Ok(base.storage.borrow_field_as(|value| match value {
-                            #pattern => #stored_name,
-                            _ => unreachable!(concat!(#qualname, " changed variant within one call")),
-                        })?)
+                        Ok(base.storage.borrow_resolved_variant_as(
+                            #qualname,
+                            |value| match value {
+                                #pattern => Some(#stored_name),
+                                _ => None,
+                            },
+                            |value| match value {
+                                #pattern => Some(#stored_name),
+                                _ => None,
+                            },
+                        )?)
                     }
                 }
             } else {

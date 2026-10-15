@@ -10,7 +10,7 @@ use bevy::ecs::{
 };
 
 use crate::{
-    ReadField, RevalidatingSource, StorageMut, StorageRef, WriteField,
+    ReadField, ReadVariant, RevalidatingSource, StorageMut, StorageRef, WriteField, WriteVariant,
     borrowed::{BorrowedMut, BorrowedRef, RevalidatingField},
     component_change::ComponentWriteContext,
     owned_cell::OwnedCell,
@@ -395,37 +395,74 @@ impl<T: Component> ComponentStorage<T> {
         Ok(W::from_borrowed(storage))
     }
 
-    /// Borrow an optional field from the component storage
+    /// Borrow an enum payload that rechecks the expected variant on every access.
     ///
-    /// Owned storage returns a read-only snapshot. Borrowed storage returns a
-    /// validity-bound field inheriting the parent's read/write access.
-    pub fn borrow_optional_field<F: Clone, S>(
+    /// Borrowed storage yields a checked path rooted at the live component, so a
+    /// payload escaped before the variant is replaced errors instead of reading or
+    /// writing through a stale offset. Owned storage yields a read-only snapshot.
+    pub fn borrow_resolved_variant_as<F: Clone + 'static, S, W>(
         &self,
-        field_accessor: impl Fn(&T) -> &Option<F>,
+        name: &'static str,
+        read: ReadVariant<T, F>,
+        write: WriteVariant<T, F>,
+    ) -> Result<W, StorageError>
+    where
+        S: BorrowableStorage<F>,
+        W: crate::storage_traits::FromBorrowedStorage<S>,
+    {
+        let storage = match &self.inner {
+            ComponentStorageInner::Source(source) => {
+                let current = source.resolve_ref()?;
+                read(&current).ok_or(StorageError::VariantChanged(name))?;
+                drop(current);
+                S::revalidating_source(source.variant(name, read, write))
+            }
+            _ => {
+                let current = self.as_ref()?;
+                let value = read(&current).ok_or(StorageError::VariantChanged(name))?;
+                match RevalidatingSource::from_borrowed_component(self) {
+                    Some(source) => S::revalidating_source(source.variant(name, read, write)),
+                    None => S::snapshot(value),
+                }
+            }
+        };
+        Ok(W::from_borrowed(storage))
+    }
+
+    /// Borrow an `Option` field whose child rechecks `Some` on every access.
+    ///
+    /// Borrowed storage yields a checked path rooted at the live component, so a
+    /// child escaped before the field is set to `None` errors instead of reading or
+    /// writing through a stale offset, and follows a later `Some` value. Owned
+    /// storage yields a read-only snapshot.
+    pub fn borrow_optional_field<F: Clone + 'static, S>(
+        &self,
+        name: &'static str,
+        read: ReadField<T, Option<F>>,
+        write: WriteField<T, Option<F>>,
     ) -> Result<Option<S>, StorageError>
     where
         S: BorrowableStorage<F>,
     {
-        match &self.inner {
-            ComponentStorageInner::Owned { data, .. }
-            | ComponentStorageInner::OwnedReadOnly { data, .. } => match field_accessor(data.get())
-            {
-                Some(field_ref) => Ok(Some(S::snapshot(field_ref))),
-                None => Ok(None),
-            },
-            ComponentStorageInner::BorrowedRef(b) => b.borrow_optional_field(field_accessor),
-            ComponentStorageInner::BorrowedMut(b) => b.borrow_optional_field(field_accessor),
-            ComponentStorageInner::Revalidating(r) => {
-                r.child_of_optional::<T, F, S>(field_accessor)
-            }
+        let child = match &self.inner {
             ComponentStorageInner::Source(source) => {
-                let resolved = source.resolve_ref()?;
-                match field_accessor(&resolved) {
-                    Some(field) => Ok(Some(S::snapshot(field))),
-                    None => Ok(None),
+                if read(&*source.resolve_ref()?).is_none() {
+                    return Ok(None);
+                }
+                source.optional(name, read, write)
+            }
+            _ => {
+                let current = self.as_ref()?;
+                let Some(value) = read(&current) else {
+                    return Ok(None);
+                };
+                match RevalidatingSource::from_borrowed_component(self) {
+                    Some(source) => source.optional(name, read, write),
+                    None => return Ok(Some(S::snapshot(value))),
                 }
             }
-        }
+        };
+        Ok(Some(S::revalidating_source(child)))
     }
 }
 
@@ -487,12 +524,17 @@ impl<T: Component + Clone> ComponentStorage<T> {
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
-    use bevy::ecs::{change_detection::DetectChangesMut, component::Component, world::World};
+    use bevy::ecs::{
+        change_detection::{DetectChangesMut, Tick},
+        component::Component,
+        entity::Entity,
+        world::World,
+    };
 
     use super::*;
     use crate::{
         AccessMode, BorrowableStorage, ComponentWriteContext, ValidityFlag, ValidityGuard,
-        value_storage::ValueStorage,
+        storage_traits::FromBorrowedStorage, value_storage::ValueStorage,
     };
 
     #[derive(Clone, Debug, PartialEq, Component)]
@@ -1045,5 +1087,247 @@ mod tests {
         shared.as_mut().unwrap().value = 55;
         assert_eq!(storage.as_ref().unwrap().value, 55);
         assert_eq!(world.entity(e).get::<TestComponent>().unwrap().value, 55);
+    }
+    #[derive(Clone, Debug, PartialEq, Component)]
+    enum Shape {
+        Size([u32; 2]),
+        Handle(u64),
+    }
+
+    struct Payload(ValueStorage<[u32; 2]>);
+
+    impl FromBorrowedStorage<ValueStorage<[u32; 2]>> for Payload {
+        fn from_borrowed(storage: ValueStorage<[u32; 2]>) -> Self {
+            Self(storage)
+        }
+    }
+
+    fn size_of(shape: &Shape) -> Option<&[u32; 2]> {
+        match shape {
+            Shape::Size(size) => Some(size),
+            _ => None,
+        }
+    }
+
+    fn size_of_mut(shape: &mut Shape) -> Option<&mut [u32; 2]> {
+        match shape {
+            Shape::Size(size) => Some(size),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn test_revalidating_variant_payload_rejects_stale_variant() {
+        let mut world = World::new();
+        let cid = world.register_component::<Shape>();
+        let e = world.spawn(Shape::Size([1, 2])).id();
+        let cell = world.as_unsafe_world_cell();
+        let validity = ValidityFlag::new_write();
+        // SAFETY: the test owns World and accesses only this Shape through the handle.
+        let storage = unsafe {
+            ComponentStorage::<Shape>::revalidating(
+                cell,
+                e,
+                cid,
+                validity.with_access_mode(AccessMode::Write),
+            )
+        };
+        let Payload(mut payload) = storage
+            .borrow_resolved_variant_as("Shape.Size", size_of, size_of_mut)
+            .unwrap();
+
+        world.entity_mut(e).insert(TestComponent { value: 0 });
+        payload.as_mut().unwrap()[0] = 7;
+        assert_eq!(world.get::<Shape>(e), Some(&Shape::Size([7, 2])));
+
+        world.entity_mut(e).insert(Shape::Handle(99));
+        let before = world.entity(e).get_change_ticks::<Shape>().unwrap().changed;
+        world.increment_change_tick();
+        assert!(matches!(
+            payload.as_ref(),
+            Err(StorageError::VariantChanged("Shape.Size"))
+        ));
+        assert!(matches!(
+            payload.as_mut(),
+            Err(StorageError::VariantChanged("Shape.Size"))
+        ));
+        let after = world.entity(e).get_change_ticks::<Shape>().unwrap().changed;
+        assert_eq!(before, after);
+        assert_eq!(world.get::<Shape>(e), Some(&Shape::Handle(99)));
+        assert!(matches!(
+            storage.borrow_resolved_variant_as::<_, _, Payload>("Shape.Size", size_of, size_of_mut),
+            Err(StorageError::VariantChanged("Shape.Size"))
+        ));
+        validity.set_invalid();
+    }
+
+    #[test]
+    fn test_owned_variant_payload_is_read_only_snapshot() {
+        let storage = ComponentStorage::owned(Shape::Size([3, 4]));
+        let Payload(mut payload) = storage
+            .borrow_resolved_variant_as("Shape.Size", size_of, size_of_mut)
+            .unwrap();
+        assert_eq!(payload.get().unwrap(), [3, 4]);
+        assert!(matches!(
+            payload.as_mut(),
+            Err(StorageError::OwnedFieldReadOnly)
+        ));
+    }
+
+    #[derive(Clone, Debug, PartialEq, Component)]
+    struct Sized2 {
+        size: Option<[f32; 2]>,
+    }
+
+    fn size_field(value: &Sized2) -> &Option<[f32; 2]> {
+        &value.size
+    }
+
+    fn size_field_mut(value: &mut Sized2) -> &mut Option<[f32; 2]> {
+        &mut value.size
+    }
+
+    fn size_changed(world: &World, entity: Entity, last_run: Tick, this_run: Tick) -> bool {
+        world
+            .entity(entity)
+            .get_change_ticks::<Sized2>()
+            .unwrap()
+            .is_changed(last_run, this_run)
+    }
+
+    #[test]
+    fn test_tracked_optional_child_rejects_none_and_follows_new_some() {
+        let mut world = World::new();
+        let entity = world
+            .spawn(Sized2 {
+                size: Some([1.0, 2.0]),
+            })
+            .id();
+        let component_id = world.component_id::<Sized2>().unwrap();
+        let last_run = world.read_change_tick();
+        world.increment_change_tick();
+        world.increment_change_tick();
+        let this_run = world.read_change_tick();
+        let ptr = {
+            let mut component = world.get_mut::<Sized2>(entity).unwrap();
+            component.bypass_change_detection() as *mut Sized2
+        };
+        let validity = ValidityFlag::new_write();
+        // SAFETY: `world` outlives the context and no competing access occurs.
+        let context = unsafe {
+            ComponentWriteContext::new(
+                world.as_unsafe_world_cell(),
+                entity,
+                component_id,
+                last_run,
+                this_run,
+            )
+        };
+        // SAFETY: `ptr` and `context` identify the same live World component.
+        let mut parent = unsafe {
+            <ComponentStorage<Sized2> as BorrowableStorage<Sized2>>::borrowed_mut_tracked(
+                ptr,
+                validity.clone(),
+                context,
+            )
+        };
+        let mut child: ValueStorage<[f32; 2]> = parent
+            .borrow_optional_field("Sized2.size", size_field, size_field_mut)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(child.get().unwrap(), [1.0, 2.0]);
+        assert!(!size_changed(&world, entity, last_run, this_run));
+
+        world
+            .get_mut::<Sized2>(entity)
+            .unwrap()
+            .bypass_change_detection()
+            .size = None;
+        assert!(matches!(
+            child.get(),
+            Err(StorageError::VariantChanged("Sized2.size"))
+        ));
+        assert!(matches!(
+            child.as_mut(),
+            Err(StorageError::VariantChanged("Sized2.size"))
+        ));
+        assert!(!size_changed(&world, entity, last_run, this_run));
+        assert_eq!(world.get::<Sized2>(entity).unwrap().size, None);
+        assert!(
+            parent
+                .borrow_optional_field::<_, ValueStorage<[f32; 2]>>(
+                    "Sized2.size",
+                    size_field,
+                    size_field_mut
+                )
+                .unwrap()
+                .is_none()
+        );
+
+        parent.as_mut().unwrap().size = Some([5.0, 6.0]);
+        child.as_mut().unwrap()[0] = 7.0;
+        assert_eq!(world.get::<Sized2>(entity).unwrap().size, Some([7.0, 6.0]));
+        assert!(size_changed(&world, entity, last_run, this_run));
+        validity.set_invalid();
+    }
+
+    #[test]
+    fn test_revalidating_optional_child_rejects_none_after_move() {
+        let mut world = World::new();
+        let component_id = world.register_component::<Sized2>();
+        let entity = world
+            .spawn(Sized2 {
+                size: Some([1.0, 2.0]),
+            })
+            .id();
+        let validity = ValidityFlag::new_write();
+        // SAFETY: the test owns World and accesses only this Sized2 through the handle.
+        let parent = unsafe {
+            ComponentStorage::<Sized2>::revalidating(
+                world.as_unsafe_world_cell(),
+                entity,
+                component_id,
+                validity.with_access_mode(AccessMode::Write),
+            )
+        };
+        let mut child: ValueStorage<[f32; 2]> = parent
+            .borrow_optional_field("Sized2.size", size_field, size_field_mut)
+            .unwrap()
+            .unwrap();
+
+        world.entity_mut(entity).insert(TestComponent { value: 0 });
+        child.as_mut().unwrap()[1] = 9.0;
+        assert_eq!(world.get::<Sized2>(entity).unwrap().size, Some([1.0, 9.0]));
+
+        world.entity_mut(entity).insert(Sized2 { size: None });
+        assert!(matches!(
+            child.get(),
+            Err(StorageError::VariantChanged("Sized2.size"))
+        ));
+        assert!(matches!(
+            child.as_mut(),
+            Err(StorageError::VariantChanged("Sized2.size"))
+        ));
+        assert_eq!(world.get::<Sized2>(entity).unwrap().size, None);
+        validity.set_invalid();
+    }
+
+    #[test]
+    fn test_read_only_optional_child_rejects_writes() {
+        let component = Sized2 {
+            size: Some([3.0, 4.0]),
+        };
+        let validity = ValidityFlag::new_read();
+        // SAFETY: component outlives every access below and is never mutated.
+        let parent = unsafe { ComponentStorage::borrowed_ref(&component, validity.clone()) };
+        let mut child: ValueStorage<[f32; 2]> = parent
+            .borrow_optional_field("Sized2.size", size_field, size_field_mut)
+            .unwrap()
+            .unwrap();
+        assert_eq!(child.get().unwrap(), [3.0, 4.0]);
+        assert!(matches!(child.as_mut(), Err(StorageError::ReadOnly)));
+        validity.set_invalid();
+        assert!(matches!(child.get(), Err(StorageError::InvalidAccess)));
     }
 }
