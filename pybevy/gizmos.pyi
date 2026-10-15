@@ -24,7 +24,8 @@ class GizmoLineJoint:
 
     class Round(GizmoLineJoint):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: int
+        @property
+        def value(self) -> int: ...
         def __init__(self, value: int) -> None: ...
 
     class Bevel(GizmoLineJoint):
@@ -48,8 +49,10 @@ class GizmoLineStyle:
 
     class Dashed(GizmoLineStyle):
         __match_args__: ClassVar[tuple[Literal["gap_scale"], Literal["line_scale"]]]
-        gap_scale: float
-        line_scale: float
+        @property
+        def gap_scale(self) -> float: ...
+        @property
+        def line_scale(self) -> float: ...
         def __init__(self, *, gap_scale: float, line_scale: float) -> None: ...
 
 class GizmoLineConfig:

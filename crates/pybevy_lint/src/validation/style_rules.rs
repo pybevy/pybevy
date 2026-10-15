@@ -1,5 +1,5 @@
 use crate::{
-    model::{GetterResultClassification, PyClassDef, SelfMutability},
+    model::{GetterResultClassification, MacroInfo, PyClassDef, SelfMutability},
     output::{Diagnostic, DiagnosticCode, Suggestion},
 };
 
@@ -103,7 +103,154 @@ pub fn check_class_style(rust: &PyClassDef, all_classes: &[PyClassDef]) -> Vec<D
         }
     }
 
+    if is_message_or_enum_adapter(rust, all_classes) {
+        for prop in &rust.properties {
+            let Some(return_type) = prop.property_type.as_deref() else {
+                continue;
+            };
+            if !prop.has_getter
+                || prop.getter_uses_borrow
+                || prop.getter_result_classification != GetterResultClassification::Unclassified
+                || !exposes_mutable_wrapper(return_type, all_classes)
+            {
+                continue;
+            }
+            let mut diag = Diagnostic::warning(
+                DiagnosticCode::W006,
+                format!(
+                    "getter '{}::{}' returns unclassified mutable result '{}'",
+                    rust.python_name, prop.name, return_type
+                ),
+            );
+            if let Some(ref loc) = prop.getter_location {
+                diag = diag.with_location(loc.clone());
+            }
+            diag = diag.with_note(
+                "A message or enum value copies its fields, so `value.field.x = ...` changes a \
+                 detached wrapper. Return a read-only snapshot such as `Snapshot<T>`.",
+            );
+            diagnostics.push(diag);
+        }
+    }
+
+    if rust.is_enum {
+        diagnostics.extend(check_enum_payloads(rust, all_classes));
+    }
+
     diagnostics
+}
+
+fn check_enum_payloads(rust: &PyClassDef, all_classes: &[PyClassDef]) -> Vec<Diagnostic> {
+    let component = matches!(
+        rust.macro_info,
+        Some(MacroInfo::BevyEnum {
+            component: true,
+            ..
+        })
+    );
+    let mut diagnostics = Vec::new();
+    for variant in &rust.enum_variants {
+        for field in &variant.payload_fields {
+            if field.borrowed || !exposes_mutable_wrapper(&field.python_type, all_classes) {
+                continue;
+            }
+            let mut diag = Diagnostic::warning(
+                DiagnosticCode::W006,
+                format!(
+                    "enum payload '{}.{}.{}' returns unclassified mutable result '{}'",
+                    rust.python_name, variant.name, field.name, field.python_type
+                ),
+            );
+            if let Some(ref loc) = field.location {
+                diag = diag.with_location(loc.clone());
+            }
+            diag = diag.with_note(
+                "The payload getter returns a detached copy, so `value.field.x = ...` \
+                 changes nothing.",
+            );
+            diag = diag.with_suggestion(Suggestion::new(if component {
+                "Add #[py_borrow] so the payload borrows the live component field"
+            } else {
+                "Expose the payload as a read-only snapshot such as `Snapshot<T>`"
+            }));
+            diagnostics.push(diag);
+        }
+    }
+    diagnostics
+}
+
+/// Hand-written message wrappers and enum adapter hierarchies hold plain values.
+fn is_message_or_enum_adapter(class: &PyClassDef, all_classes: &[PyClassDef]) -> bool {
+    if class.is_enum || uses_storage_wrapper(class) {
+        return false;
+    }
+    let enum_adapter = |candidate: &PyClassDef| {
+        matches!(candidate.macro_info, Some(MacroInfo::BevyEnum { .. })) && !candidate.is_enum
+    };
+    class.extends.as_deref() == Some("PyMessage")
+        || enum_adapter(class)
+        || class.extends.as_deref().is_some_and(|base| {
+            all_classes
+                .iter()
+                .any(|candidate| candidate.rust_name == base && enum_adapter(candidate))
+        })
+}
+
+/// True when the type resolves to a known wrapper class with setters or `&mut self` methods.
+fn exposes_mutable_wrapper(ty: &str, all_classes: &[PyClassDef]) -> bool {
+    let compact: String = ty
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    exposes_mutable_compact(&compact, all_classes)
+}
+
+fn exposes_mutable_compact(ty: &str, all_classes: &[PyClassDef]) -> bool {
+    for wrapper in ["PyResult", "Option", "Py", "Vec"] {
+        if let Some(inner) = strip_outer(ty, wrapper) {
+            return exposes_mutable_compact(inner, all_classes);
+        }
+    }
+    if let Some(inner) = strip_outer(ty, "Bound") {
+        return split_top_level(inner)
+            .last()
+            .is_some_and(|part| exposes_mutable_compact(part, all_classes));
+    }
+    if let Some(inner) = strip_outer(ty, "HashMap").or_else(|| strip_outer(ty, "BTreeMap")) {
+        return split_top_level(inner)
+            .iter()
+            .any(|part| exposes_mutable_compact(part, all_classes));
+    }
+    if ty.starts_with('(') && ty.ends_with(')') {
+        return split_top_level(&ty[1..ty.len() - 1])
+            .iter()
+            .any(|part| exposes_mutable_compact(part, all_classes));
+    }
+    if ty.starts_with('[') && ty.ends_with(']') {
+        let element = ty[1..ty.len() - 1].split(';').next().unwrap_or_default();
+        return exposes_mutable_compact(element, all_classes);
+    }
+    if is_snapshot_adapter(ty) {
+        return false;
+    }
+    let lookup = ty.rsplit("::").next().unwrap_or(ty);
+    all_classes.iter().any(|class| {
+        class.rust_name == lookup
+            && !class.clone_snapshots
+            && (has_mutators(class)
+                || all_classes.iter().any(|variant| {
+                    variant.extends.as_deref() == Some(lookup) && has_mutators(variant)
+                }))
+    })
+}
+
+fn has_mutators(class: &PyClassDef) -> bool {
+    !class.frozen
+        && (class.properties.iter().any(|property| property.has_setter)
+            || class
+                .methods
+                .iter()
+                .any(|method| method.self_mutability == SelfMutability::RefMut))
 }
 
 /// Check if a class uses a storage macro wrapper (Component/Resource/Field/Value/Asset storage)
@@ -182,7 +329,7 @@ fn is_immutable_compact(ty: &str, all_classes: &[PyClassDef]) -> bool {
         let element = ty[1..ty.len() - 1].split(';').next().unwrap_or_default();
         return is_immutable_compact(element, all_classes);
     }
-    if ty == "Self" {
+    if ty == "Self" || is_snapshot_adapter(ty) {
         return true;
     }
     if matches!(ty, "PyBytes" | "PyString" | "PyFrozenSet" | "PyNone") {
@@ -201,6 +348,11 @@ fn is_immutable_compact(ty: &str, all_classes: &[PyClassDef]) -> bool {
             );
     }
     false
+}
+
+/// Adapters whose `IntoPyObject` produces an enforced read-only snapshot.
+fn is_snapshot_adapter(ty: &str) -> bool {
+    strip_outer(ty, "Snapshot").is_some() || ty == "OwnedColorValue"
 }
 
 fn strip_outer<'a>(ty: &'a str, wrapper: &str) -> Option<&'a str> {

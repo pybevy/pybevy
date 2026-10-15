@@ -1273,7 +1273,12 @@ class Mat2:
     def y_axis(self, value: Vec2) -> None: ...
     def transpose(self) -> Mat2: ...
     def determinant(self) -> float: ...
-    def inverse(self) -> Mat2: ...
+    def inverse(self) -> Mat2:
+        """Return the inverse matrix.
+
+        Raises:
+            ValueError: If the matrix is singular or its inverse is not finite
+        """
     def mul_vec2(self, rhs: Vec2) -> Vec2: ...
     def mul_mat2(self, rhs: Mat2) -> Mat2: ...
     def mul_scalar(self, rhs: float) -> Mat2: ...
@@ -1328,7 +1333,12 @@ class Affine2:
     def translation(self) -> Vec2: ...
     @translation.setter
     def translation(self, value: Vec2) -> None: ...
-    def inverse(self) -> Affine2: ...
+    def inverse(self) -> Affine2:
+        """Return the inverse matrix.
+
+        Raises:
+            ValueError: If the matrix is singular or its inverse is not finite
+        """
     def transform_point2(self, point: Vec2) -> Vec2: ...
     def transform_vector2(self, vector: Vec2) -> Vec2: ...
     def is_finite(self) -> bool: ...
@@ -1397,7 +1407,12 @@ class Mat3A:
         """
     def transpose(self) -> Mat3A: ...
     def determinant(self) -> float: ...
-    def inverse(self) -> Mat3A: ...
+    def inverse(self) -> Mat3A:
+        """Return the inverse matrix.
+
+        Raises:
+            ValueError: If the matrix is singular or its inverse is not finite
+        """
     def mul_vec3a(self, rhs: Vec3A) -> Vec3A: ...
     def mul_mat3a(self, rhs: Mat3A) -> Mat3A: ...
     def mul_scalar(self, rhs: float) -> Mat3A: ...
@@ -1477,7 +1492,12 @@ class Affine3A:
     def transform_point3a(self, rhs: Vec3A) -> Vec3A: ...
     def transform_vector3(self, rhs: Vec3) -> Vec3: ...
     def transform_vector3a(self, rhs: Vec3A) -> Vec3A: ...
-    def inverse(self) -> Affine3A: ...
+    def inverse(self) -> Affine3A:
+        """Return the inverse matrix.
+
+        Raises:
+            ValueError: If the matrix is singular or its inverse is not finite
+        """
     def is_finite(self) -> bool: ...
     def is_nan(self) -> bool: ...
 
@@ -1925,7 +1945,12 @@ class Mat3:
     def to_cols_array_2d(self) -> list[list[float]]: ...
     def transpose(self) -> Mat3: ...
     def determinant(self) -> float: ...
-    def inverse(self) -> Mat3: ...
+    def inverse(self) -> Mat3:
+        """Return the inverse matrix.
+
+        Raises:
+            ValueError: If the matrix is singular or its inverse is not finite
+        """
     def mul_vec3(self, rhs: Vec3) -> Vec3: ...
     def mul_mat3(self, rhs: Mat3) -> Mat3: ...
     def add_mat3(self, rhs: Mat3) -> Mat3: ...
@@ -1995,9 +2020,23 @@ class Mat4:
     @staticmethod
     def from_mat3(mat3: Mat3) -> Mat4: ...
     @staticmethod
-    def perspective_lh(fov_y_radians: float, aspect_ratio: float, z_near: float, z_far: float) -> Mat4: ...
+    def perspective_lh(fov_y_radians: float, aspect_ratio: float, z_near: float, z_far: float) -> Mat4:
+        """Create a perspective projection.
+
+        Raises:
+            ValueError: Unless z_near > 0 and z_far > 0, or if the parameters
+                produce a non-finite matrix (zero field of view or aspect ratio,
+                equal depth planes, or NaN input)
+        """
     @staticmethod
-    def perspective_rh(fov_y_radians: float, aspect_ratio: float, z_near: float, z_far: float) -> Mat4: ...
+    def perspective_rh(fov_y_radians: float, aspect_ratio: float, z_near: float, z_far: float) -> Mat4:
+        """Create a perspective projection.
+
+        Raises:
+            ValueError: Unless z_near > 0 and z_far > 0, or if the parameters
+                produce a non-finite matrix (zero field of view or aspect ratio,
+                equal depth planes, or NaN input)
+        """
 
     @staticmethod
     def perspective_infinite_reverse_rh(
@@ -2008,23 +2047,46 @@ class Mat4:
         This matches Bevy's rendering convention: the near plane maps to NDC 1
         and infinity approaches 0.
 
-        Raises `ValueError` unless `z_near > 0`.
+        Raises `ValueError` unless `z_near > 0`, or if the parameters produce a
+        non-finite matrix.
         """
 
     @staticmethod
-    def orthographic_lh(left: float, right: float, bottom: float, top: float, near: float, far: float) -> Mat4: ...
+    def orthographic_lh(left: float, right: float, bottom: float, top: float, near: float, far: float) -> Mat4:
+        """Create an orthographic projection.
+
+        Raises:
+            ValueError: If the parameters produce a non-finite matrix, such as
+                equal opposite bounds or non-finite input
+        """
     @staticmethod
-    def orthographic_rh(left: float, right: float, bottom: float, top: float, near: float, far: float) -> Mat4: ...
+    def orthographic_rh(left: float, right: float, bottom: float, top: float, near: float, far: float) -> Mat4:
+        """Create an orthographic projection.
+
+        Raises:
+            ValueError: If the parameters produce a non-finite matrix, such as
+                equal opposite bounds or non-finite input
+        """
     @staticmethod
-    def look_at_lh(eye: Vec3, center: Vec3, up: Vec3) -> Mat4: ...
+    def look_at_lh(eye: Vec3, center: Vec3, up: Vec3) -> Mat4:
+        """Build a view matrix looking from eye toward center.
+
+        Raises:
+            ValueError: If eye and center coincide or the view direction is parallel to up
+        """
     @staticmethod
-    def look_at_rh(eye: Vec3, center: Vec3, up: Vec3) -> Mat4: ...
+    def look_at_rh(eye: Vec3, center: Vec3, up: Vec3) -> Mat4:
+        """Build a view matrix looking from eye toward center.
+
+        Raises:
+            ValueError: If eye and center coincide or the view direction is parallel to up
+        """
     @staticmethod
     def look_to_lh(eye: Vec3, dir: Vec3, up: Vec3) -> Mat4:
-        """Build a left-handed view; dir and up must be unit vectors or ValueError is raised."""
+        """Build a left-handed view; dir and up must be non-parallel unit vectors or ValueError is raised."""
     @staticmethod
     def look_to_rh(eye: Vec3, dir: Vec3, up: Vec3) -> Mat4:
-        """Build a right-handed view; dir and up must be unit vectors or ValueError is raised."""
+        """Build a right-handed view; dir and up must be non-parallel unit vectors or ValueError is raised."""
 
     def col(self, index: int) -> Vec4:
         """The matrix's column at `index`, counting from the end if negative.
@@ -2042,7 +2104,12 @@ class Mat4:
     def to_cols_array_2d(self) -> list[list[float]]: ...
     def transpose(self) -> Mat4: ...
     def determinant(self) -> float: ...
-    def inverse(self) -> Mat4: ...
+    def inverse(self) -> Mat4:
+        """Return the inverse matrix.
+
+        Raises:
+            ValueError: If the matrix is singular or its inverse is not finite
+        """
     def mul_vec4(self, rhs: Vec4) -> Vec4: ...
     def mul_mat4(self, rhs: Mat4) -> Mat4: ...
     def add_mat4(self, rhs: Mat4) -> Mat4: ...
@@ -3787,7 +3854,7 @@ class Segment2d:
         """Get the normalized counterclockwise normal on the left side.
 
         Raises:
-            RuntimeError: If a valid normal could not be computed
+            RuntimeError: If endpoints are coincident, NaN, or infinite
         """
 
     def try_left_normal(self) -> Dir2:
@@ -3801,7 +3868,7 @@ class Segment2d:
         """Get the normalized clockwise normal on the right side.
 
         Raises:
-            RuntimeError: If a valid normal could not be computed
+            RuntimeError: If endpoints are coincident, NaN, or infinite
         """
 
     def try_right_normal(self) -> Dir2:

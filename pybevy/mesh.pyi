@@ -415,15 +415,18 @@ class SphereKind:
 
     class Ico(SphereKind):
         __match_args__: ClassVar[tuple[Literal["subdivisions"]]]
-        subdivisions: int
+        @property
+        def subdivisions(self) -> int: ...
 
         def __init__(self, *, subdivisions: int) -> None: ...
         """Icosphere mesh kind with the given number of subdivisions."""
 
     class Uv(SphereKind):
         __match_args__: ClassVar[tuple[Literal["sectors"], Literal["stacks"]]]
-        sectors: int
-        stacks: int
+        @property
+        def sectors(self) -> int: ...
+        @property
+        def stacks(self) -> int: ...
 
         def __init__(self, *, sectors: int, stacks: int) -> None: ...
         """UV sphere mesh kind with the given number of sectors and stacks."""

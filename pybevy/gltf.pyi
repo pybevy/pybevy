@@ -439,34 +439,42 @@ class GltfLoaderSettings:
 class GltfAssetLabel:
     class Scene(GltfAssetLabel):
         __match_args__: ClassVar[tuple[Literal["index"]]]
-        index: int
+        @property
+        def index(self) -> int: ...
         def __init__(self, index: int) -> None: ...
 
     class Node(GltfAssetLabel):
         __match_args__: ClassVar[tuple[Literal["index"]]]
-        index: int
+        @property
+        def index(self) -> int: ...
         def __init__(self, index: int) -> None: ...
 
     class Mesh(GltfAssetLabel):
         __match_args__: ClassVar[tuple[Literal["index"]]]
-        index: int
+        @property
+        def index(self) -> int: ...
         def __init__(self, index: int) -> None: ...
 
     class Primitive(GltfAssetLabel):
         __match_args__: ClassVar[tuple[Literal["mesh"], Literal["primitive"]]]
-        mesh: int
-        primitive: int
+        @property
+        def mesh(self) -> int: ...
+        @property
+        def primitive(self) -> int: ...
         def __init__(self, *, mesh: int, primitive: int) -> None: ...
 
     class Texture(GltfAssetLabel):
         __match_args__: ClassVar[tuple[Literal["index"]]]
-        index: int
+        @property
+        def index(self) -> int: ...
         def __init__(self, index: int) -> None: ...
 
     class Material(GltfAssetLabel):
         __match_args__: ClassVar[tuple[Literal["index"], Literal["is_scale_inverted"]]]
-        index: int
-        is_scale_inverted: bool
+        @property
+        def index(self) -> int: ...
+        @property
+        def is_scale_inverted(self) -> bool: ...
         def __init__(self, *, index: int, is_scale_inverted: bool) -> None:
             """Label for the GltfMaterial sub-asset of a glTF file.
 
@@ -481,17 +489,20 @@ class GltfAssetLabel:
 
     class Animation(GltfAssetLabel):
         __match_args__: ClassVar[tuple[Literal["index"]]]
-        index: int
+        @property
+        def index(self) -> int: ...
         def __init__(self, index: int) -> None: ...
 
     class Skin(GltfAssetLabel):
         __match_args__: ClassVar[tuple[Literal["index"]]]
-        index: int
+        @property
+        def index(self) -> int: ...
         def __init__(self, index: int) -> None: ...
 
     class InverseBindMatrices(GltfAssetLabel):
         __match_args__: ClassVar[tuple[Literal["index"]]]
-        index: int
+        @property
+        def index(self) -> int: ...
         def __init__(self, index: int) -> None: ...
 
     def from_asset(self, path: str) -> AssetPath: ...

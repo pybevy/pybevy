@@ -1,12 +1,12 @@
 use std::path::Path;
 
 use proc_macro2::TokenStream;
-use syn::{Attribute, Expr, Fields, ItemEnum, ItemStruct, Lit, Meta};
+use syn::{Attribute, Expr, Fields, ItemEnum, ItemStruct, Lit, Meta, spanned::Spanned};
 
 use super::{macros, signature, types::type_to_string};
 use crate::model::{
     EnumVariantDef, EnumVariantKind, MacroInfo, MethodDef, ParameterDef, ParameterKind,
-    PropertyDef, PyClassDef, SelfMutability, SourceLocation,
+    PayloadFieldDef, PropertyDef, PyClassDef, SelfMutability, SourceLocation,
 };
 
 /// Parse a struct item for pyclass attributes
@@ -135,6 +135,7 @@ pub fn parse_enum(item: &ItemEnum, file_path: &Path) -> Option<PyClassDef> {
                 kind,
                 constructor,
                 writable_fields: Vec::new(),
+                payload_fields: parse_payload_fields(&v.fields, file_path),
             }
         })
         .collect();
@@ -183,6 +184,41 @@ pub fn parse_enum(item: &ItemEnum, file_path: &Path) -> Option<PyClassDef> {
         bevy_tuple_variants,
         ..Default::default()
     })
+}
+
+fn parse_payload_fields(fields: &Fields, file_path: &Path) -> Vec<PayloadFieldDef> {
+    fields
+        .iter()
+        .enumerate()
+        .map(|(index, field)| {
+            let python_type = field
+                .attrs
+                .iter()
+                .find(|attr| attr.path().is_ident("py_type"))
+                .and_then(|attr| attr.parse_args::<syn::Type>().ok())
+                .map_or_else(|| type_to_string(&field.ty), |ty| type_to_string(&ty));
+            let span = field
+                .ident
+                .as_ref()
+                .map_or_else(|| field.ty.span(), |ident| ident.span());
+            PayloadFieldDef {
+                name: field
+                    .ident
+                    .as_ref()
+                    .map_or_else(|| format!("_{index}"), ToString::to_string),
+                python_type,
+                borrowed: field
+                    .attrs
+                    .iter()
+                    .any(|attr| attr.path().is_ident("py_borrow")),
+                location: Some(SourceLocation {
+                    file: file_path.to_path_buf(),
+                    line: span.start().line,
+                    column: span.start().column,
+                }),
+            }
+        })
+        .collect()
 }
 
 /// Find the #[pyclass] attribute in a list of attributes

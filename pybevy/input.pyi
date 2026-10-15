@@ -32,22 +32,26 @@ class NativeKeyCode:
 
     class Android(NativeKeyCode):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: int
+        @property
+        def value(self) -> int: ...
         def __init__(self, value: int) -> None: ...
 
     class MacOS(NativeKeyCode):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: int
+        @property
+        def value(self) -> int: ...
         def __init__(self, value: int) -> None: ...
 
     class Windows(NativeKeyCode):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: int
+        @property
+        def value(self) -> int: ...
         def __init__(self, value: int) -> None: ...
 
     class Xkb(NativeKeyCode):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: int
+        @property
+        def value(self) -> int: ...
         def __init__(self, value: int) -> None: ...
 
     def __hash__(self) -> int: ...
@@ -61,27 +65,32 @@ class NativeKey:
 
     class Android(NativeKey):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: int
+        @property
+        def value(self) -> int: ...
         def __init__(self, value: int) -> None: ...
 
     class MacOS(NativeKey):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: int
+        @property
+        def value(self) -> int: ...
         def __init__(self, value: int) -> None: ...
 
     class Windows(NativeKey):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: int
+        @property
+        def value(self) -> int: ...
         def __init__(self, value: int) -> None: ...
 
     class Xkb(NativeKey):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: int
+        @property
+        def value(self) -> int: ...
         def __init__(self, value: int) -> None: ...
 
     class Web(NativeKey):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: str
+        @property
+        def value(self) -> str: ...
         def __init__(self, value: str) -> None: ...
 
     def __hash__(self) -> int: ...
@@ -91,17 +100,20 @@ class Key:
 
     class Character(Key):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: str
+        @property
+        def value(self) -> str: ...
         def __init__(self, value: str) -> None: ...
 
     class Unidentified(Key):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: NativeKey
+        @property
+        def value(self) -> NativeKey: ...
         def __init__(self, value: NativeKey) -> None: ...
 
     class Dead(Key):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: str | None
+        @property
+        def value(self) -> str | None: ...
         def __init__(self, value: str | None) -> None: ...
 
     class Alt(Key):
@@ -1335,7 +1347,8 @@ class KeyCode:
 
     class Unidentified(KeyCode):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: NativeKeyCode
+        @property
+        def value(self) -> NativeKeyCode: ...
         def __init__(self, value: NativeKeyCode) -> None: ...
 
     # Function keys
@@ -1739,7 +1752,8 @@ class MouseButton:
 
     class Other(MouseButton):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: int
+        @property
+        def value(self) -> int: ...
         def __init__(self, value: int) -> None: ...
 
     def __hash__(self) -> int: ...
@@ -2225,7 +2239,8 @@ class GamepadButton:
 
     class Other(GamepadButton):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: int
+        @property
+        def value(self) -> int: ...
         def __init__(self, value: int) -> None: ...
 
     @staticmethod
@@ -2267,7 +2282,8 @@ class GamepadAxis:
 
     class Other(GamepadAxis):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: int
+        @property
+        def value(self) -> int: ...
         def __init__(self, value: int) -> None: ...
 
     @staticmethod
@@ -2501,9 +2517,12 @@ class GamepadConnection:
         __match_args__: ClassVar[
             tuple[Literal["name"], Literal["vendor_id"], Literal["product_id"]]
         ]
-        name: str
-        vendor_id: int | None
-        product_id: int | None
+        @property
+        def name(self) -> str: ...
+        @property
+        def vendor_id(self) -> int | None: ...
+        @property
+        def product_id(self) -> int | None: ...
 
         def __init__(
             self, *, name: str, vendor_id: int | None, product_id: int | None
@@ -2881,15 +2900,19 @@ class GamepadRumbleRequest(Message):
             intensity: GamepadRumbleIntensity,
             gamepad: Entity,
         ) -> None: ...
-        duration: timedelta
-        intensity: GamepadRumbleIntensity
-        gamepad: Entity
+        @property
+        def duration(self) -> timedelta: ...
+        @property
+        def intensity(self) -> GamepadRumbleIntensity: ...
+        @property
+        def gamepad(self) -> Entity: ...
 
     class Stop(GamepadRumbleRequest):
         __match_args__: ClassVar[tuple[Literal["gamepad"]]]
 
         def __init__(self, *, gamepad: Entity) -> None: ...
-        gamepad: Entity
+        @property
+        def gamepad(self) -> Entity: ...
 
 class Touch:
     """

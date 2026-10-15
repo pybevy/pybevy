@@ -2,9 +2,99 @@ use bevy::{
     math::Vec2,
     text::{PreeditCursor, TextEdit},
 };
-use pybevy_macros::pyenum;
-use pybevy_math::vec2::PyVec2;
-use pyo3::prelude::*;
+use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_macros::{pyenum, pyvalue};
+use pybevy_math::snapshot::Snapshot;
+use pyo3::{prelude::*, types::PyString};
+
+#[pyvalue]
+#[pyclass(
+    name = "PreeditCursor",
+    module = "pybevy.text",
+    eq,
+    skip_from_py_object
+)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct PyPreeditCursor {
+    pub(crate) storage: ValueStorage<PreeditCursor>,
+}
+
+impl From<PreeditCursor> for PyPreeditCursor {
+    fn from(value: PreeditCursor) -> Self {
+        Self::from_owned(value)
+    }
+}
+
+impl TryFrom<PyPreeditCursor> for PreeditCursor {
+    type Error = PyErr;
+
+    fn try_from(value: PyPreeditCursor) -> PyResult<Self> {
+        value.to_bevy()
+    }
+}
+
+impl TryFrom<&PyPreeditCursor> for PreeditCursor {
+    type Error = PyErr;
+
+    fn try_from(value: &PyPreeditCursor) -> PyResult<Self> {
+        value.to_bevy()
+    }
+}
+
+impl PyPreeditCursor {
+    fn snapshot(value: PreeditCursor) -> Self {
+        Self::from_borrowed(ValueStorage::read_only_snapshot(value))
+    }
+}
+
+// By-value extraction only feeds the frozen TextEdit payload, so it stores a read-only copy.
+impl<'a, 'py> FromPyObject<'a, 'py> for PyPreeditCursor {
+    type Error = PyErr;
+
+    fn extract(obj: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        let cursor = obj.cast::<Self>()?.borrow().to_bevy()?;
+        Ok(Self::snapshot(cursor))
+    }
+}
+
+#[pymethods]
+impl PyPreeditCursor {
+    #[new]
+    #[pyo3(signature = (*, anchor, focus))]
+    pub fn new(anchor: usize, focus: usize) -> Self {
+        Self::from_owned(PreeditCursor { anchor, focus })
+    }
+
+    #[getter]
+    pub fn anchor(&self) -> PyResult<usize> {
+        Ok(self.storage.as_ref()?.anchor)
+    }
+
+    #[setter]
+    pub fn set_anchor(&mut self, value: usize) -> PyResult<()> {
+        self.storage.as_mut()?.anchor = value;
+        Ok(())
+    }
+
+    #[getter]
+    pub fn focus(&self) -> PyResult<usize> {
+        Ok(self.storage.as_ref()?.focus)
+    }
+
+    #[setter]
+    pub fn set_focus(&mut self, value: usize) -> PyResult<()> {
+        self.storage.as_mut()?.focus = value;
+        Ok(())
+    }
+
+    pub fn __repr__(&self) -> PyResult<String> {
+        let cursor = self.to_bevy()?;
+        Ok(format!(
+            "PreeditCursor(anchor={}, focus={})",
+            cursor.anchor, cursor.focus
+        ))
+    }
+}
 
 #[pyenum(TextEdit, manual)]
 #[pyclass(name = "TextEdit", module = "pybevy.text", eq, frozen, from_py_object)]
@@ -60,27 +150,27 @@ pub enum PyTextEdit {
     SelectAll(),
     SelectAllIfCollapsed(),
     MoveToPoint {
-        value: PyVec2,
+        value: Snapshot<Vec2>,
     },
     SelectWordAtPoint {
-        value: PyVec2,
+        value: Snapshot<Vec2>,
     },
     SelectLineAtPoint {
-        value: PyVec2,
+        value: Snapshot<Vec2>,
     },
     SelectedHardLineAtPoint {
-        value: PyVec2,
+        value: Snapshot<Vec2>,
     },
     ExtendSelectionToPoint {
-        value: PyVec2,
+        value: Snapshot<Vec2>,
     },
     ShiftClickExtension {
-        value: PyVec2,
+        value: Snapshot<Vec2>,
     },
     #[pyo3(constructor = (*, value, cursor))]
     ImeSetCompose {
         value: String,
-        cursor: Option<(usize, usize)>,
+        cursor: Option<PyPreeditCursor>,
     },
     #[pyo3(constructor = (*, value))]
     ImeCommit {
@@ -96,9 +186,20 @@ fn to_smol(value: String) -> smol_str::SmolStr {
     smol_str::SmolStr::from(value)
 }
 
-fn point_repr(value: &PyVec2) -> PyResult<String> {
-    let value: Vec2 = value.try_into()?;
-    Ok(format!("Vec2({}, {})", value.x, value.y))
+fn point_repr(py: Python<'_>, value: &Snapshot<Vec2>) -> PyResult<String> {
+    Ok(Bound::new(py, value.into_wrapper())?
+        .repr()?
+        .to_str()?
+        .to_owned())
+}
+
+fn str_repr(py: Python<'_>, value: &str) -> PyResult<String> {
+    Ok(PyString::new(py, value).repr()?.to_str()?.to_owned())
+}
+
+fn bool_variant_repr(name: &str, value: bool) -> String {
+    let value = if value { "True" } else { "False" };
+    format!("TextEdit.{name}({value})")
 }
 
 impl From<&TextEdit> for PyTextEdit {
@@ -130,26 +231,26 @@ impl From<&TextEdit> for PyTextEdit {
             TextEdit::SelectAll => Self::SelectAll(),
             TextEdit::SelectAllIfCollapsed => Self::SelectAllIfCollapsed(),
             TextEdit::MoveToPoint(value) => Self::MoveToPoint {
-                value: PyVec2::from_vec2(*value),
+                value: Snapshot(*value),
             },
             TextEdit::SelectWordAtPoint(value) => Self::SelectWordAtPoint {
-                value: PyVec2::from_vec2(*value),
+                value: Snapshot(*value),
             },
             TextEdit::SelectLineAtPoint(value) => Self::SelectLineAtPoint {
-                value: PyVec2::from_vec2(*value),
+                value: Snapshot(*value),
             },
             TextEdit::SelectedHardLineAtPoint(value) => Self::SelectedHardLineAtPoint {
-                value: PyVec2::from_vec2(*value),
+                value: Snapshot(*value),
             },
             TextEdit::ExtendSelectionToPoint(value) => Self::ExtendSelectionToPoint {
-                value: PyVec2::from_vec2(*value),
+                value: Snapshot(*value),
             },
             TextEdit::ShiftClickExtension(value) => Self::ShiftClickExtension {
-                value: PyVec2::from_vec2(*value),
+                value: Snapshot(*value),
             },
             TextEdit::ImeSetCompose { value, cursor } => Self::ImeSetCompose {
                 value: from_smol(value.clone()),
-                cursor: cursor.map(|c| (c.anchor, c.focus)),
+                cursor: cursor.map(PyPreeditCursor::snapshot),
             },
             TextEdit::ImeCommit { value } => Self::ImeCommit {
                 value: from_smol(value.clone()),
@@ -186,25 +287,19 @@ impl TryFrom<PyTextEdit> for TextEdit {
             PyTextEdit::CollapseSelection() => TextEdit::CollapseSelection,
             PyTextEdit::SelectAll() => TextEdit::SelectAll,
             PyTextEdit::SelectAllIfCollapsed() => TextEdit::SelectAllIfCollapsed,
-            PyTextEdit::MoveToPoint { value } => TextEdit::MoveToPoint(value.try_into()?),
-            PyTextEdit::SelectWordAtPoint { value } => {
-                TextEdit::SelectWordAtPoint(value.try_into()?)
-            }
-            PyTextEdit::SelectLineAtPoint { value } => {
-                TextEdit::SelectLineAtPoint(value.try_into()?)
-            }
+            PyTextEdit::MoveToPoint { value } => TextEdit::MoveToPoint(value.0),
+            PyTextEdit::SelectWordAtPoint { value } => TextEdit::SelectWordAtPoint(value.0),
+            PyTextEdit::SelectLineAtPoint { value } => TextEdit::SelectLineAtPoint(value.0),
             PyTextEdit::SelectedHardLineAtPoint { value } => {
-                TextEdit::SelectedHardLineAtPoint(value.try_into()?)
+                TextEdit::SelectedHardLineAtPoint(value.0)
             }
             PyTextEdit::ExtendSelectionToPoint { value } => {
-                TextEdit::ExtendSelectionToPoint(value.try_into()?)
+                TextEdit::ExtendSelectionToPoint(value.0)
             }
-            PyTextEdit::ShiftClickExtension { value } => {
-                TextEdit::ShiftClickExtension(value.try_into()?)
-            }
+            PyTextEdit::ShiftClickExtension { value } => TextEdit::ShiftClickExtension(value.0),
             PyTextEdit::ImeSetCompose { value, cursor } => TextEdit::ImeSetCompose {
                 value: to_smol(value),
-                cursor: cursor.map(|(anchor, focus)| PreeditCursor { anchor, focus }),
+                cursor: cursor.map(PreeditCursor::try_from).transpose()?,
             },
             PyTextEdit::ImeCommit { value } => TextEdit::ImeCommit {
                 value: to_smol(value),
@@ -215,53 +310,68 @@ impl TryFrom<PyTextEdit> for TextEdit {
 
 #[pymethods]
 impl PyTextEdit {
-    pub fn __repr__(&self) -> PyResult<String> {
+    pub fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
         Ok(match self {
             PyTextEdit::Copy() => "TextEdit.Copy".into(),
             PyTextEdit::Cut() => "TextEdit.Cut".into(),
             PyTextEdit::Paste() => "TextEdit.Paste".into(),
-            PyTextEdit::Insert { value } => format!("TextEdit.Insert({value:?})"),
+            PyTextEdit::Insert { value } => format!("TextEdit.Insert({})", str_repr(py, value)?),
             PyTextEdit::Backspace() => "TextEdit.Backspace".into(),
             PyTextEdit::BackspaceWord() => "TextEdit.BackspaceWord".into(),
             PyTextEdit::Delete() => "TextEdit.Delete".into(),
             PyTextEdit::DeleteWord() => "TextEdit.DeleteWord".into(),
-            PyTextEdit::Left { value } => format!("TextEdit.Left({value})"),
-            PyTextEdit::Right { value } => format!("TextEdit.Right({value})"),
-            PyTextEdit::WordLeft { value } => format!("TextEdit.WordLeft({value})"),
-            PyTextEdit::WordRight { value } => format!("TextEdit.WordRight({value})"),
-            PyTextEdit::Up { value } => format!("TextEdit.Up({value})"),
-            PyTextEdit::Down { value } => format!("TextEdit.Down({value})"),
-            PyTextEdit::TextStart { value } => format!("TextEdit.TextStart({value})"),
-            PyTextEdit::TextEnd { value } => format!("TextEdit.TextEnd({value})"),
-            PyTextEdit::HardLineStart { value } => format!("TextEdit.HardLineStart({value})"),
-            PyTextEdit::HardLineEnd { value } => format!("TextEdit.HardLineEnd({value})"),
-            PyTextEdit::LineStart { value } => format!("TextEdit.LineStart({value})"),
-            PyTextEdit::LineEnd { value } => format!("TextEdit.LineEnd({value})"),
+            PyTextEdit::Left { value } => bool_variant_repr("Left", *value),
+            PyTextEdit::Right { value } => bool_variant_repr("Right", *value),
+            PyTextEdit::WordLeft { value } => bool_variant_repr("WordLeft", *value),
+            PyTextEdit::WordRight { value } => bool_variant_repr("WordRight", *value),
+            PyTextEdit::Up { value } => bool_variant_repr("Up", *value),
+            PyTextEdit::Down { value } => bool_variant_repr("Down", *value),
+            PyTextEdit::TextStart { value } => bool_variant_repr("TextStart", *value),
+            PyTextEdit::TextEnd { value } => bool_variant_repr("TextEnd", *value),
+            PyTextEdit::HardLineStart { value } => bool_variant_repr("HardLineStart", *value),
+            PyTextEdit::HardLineEnd { value } => bool_variant_repr("HardLineEnd", *value),
+            PyTextEdit::LineStart { value } => bool_variant_repr("LineStart", *value),
+            PyTextEdit::LineEnd { value } => bool_variant_repr("LineEnd", *value),
             PyTextEdit::CollapseSelection() => "TextEdit.CollapseSelection".into(),
             PyTextEdit::SelectAll() => "TextEdit.SelectAll".into(),
             PyTextEdit::SelectAllIfCollapsed() => "TextEdit.SelectAllIfCollapsed".into(),
             PyTextEdit::MoveToPoint { value } => {
-                format!("TextEdit.MoveToPoint({})", point_repr(value)?)
+                format!("TextEdit.MoveToPoint({})", point_repr(py, value)?)
             }
             PyTextEdit::SelectWordAtPoint { value } => {
-                format!("TextEdit.SelectWordAtPoint({})", point_repr(value)?)
+                format!("TextEdit.SelectWordAtPoint({})", point_repr(py, value)?)
             }
             PyTextEdit::SelectLineAtPoint { value } => {
-                format!("TextEdit.SelectLineAtPoint({})", point_repr(value)?)
+                format!("TextEdit.SelectLineAtPoint({})", point_repr(py, value)?)
             }
             PyTextEdit::SelectedHardLineAtPoint { value } => {
-                format!("TextEdit.SelectedHardLineAtPoint({})", point_repr(value)?)
+                format!(
+                    "TextEdit.SelectedHardLineAtPoint({})",
+                    point_repr(py, value)?
+                )
             }
             PyTextEdit::ExtendSelectionToPoint { value } => {
-                format!("TextEdit.ExtendSelectionToPoint({})", point_repr(value)?)
+                format!(
+                    "TextEdit.ExtendSelectionToPoint({})",
+                    point_repr(py, value)?
+                )
             }
             PyTextEdit::ShiftClickExtension { value } => {
-                format!("TextEdit.ShiftClickExtension({})", point_repr(value)?)
+                format!("TextEdit.ShiftClickExtension({})", point_repr(py, value)?)
             }
             PyTextEdit::ImeSetCompose { value, cursor } => {
-                format!("TextEdit.ImeSetCompose(value={value:?}, cursor={cursor:?})")
+                let cursor = match cursor {
+                    Some(cursor) => cursor.__repr__()?,
+                    None => "None".into(),
+                };
+                format!(
+                    "TextEdit.ImeSetCompose(value={}, cursor={cursor})",
+                    str_repr(py, value)?
+                )
             }
-            PyTextEdit::ImeCommit { value } => format!("TextEdit.ImeCommit(value={value:?})"),
+            PyTextEdit::ImeCommit { value } => {
+                format!("TextEdit.ImeCommit(value={})", str_repr(py, value)?)
+            }
         })
     }
 }

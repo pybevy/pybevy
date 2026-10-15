@@ -155,12 +155,14 @@ class ShaderRef:
 
     class Handle(ShaderRef):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: AssetHandle
+        @property
+        def value(self) -> AssetHandle: ...
         def __init__(self, value: AssetHandle) -> None: ...
 
     class Path(ShaderRef):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: str
+        @property
+        def value(self) -> str: ...
         def __init__(self, value: str) -> None: ...
 
 
@@ -222,62 +224,74 @@ class Source:
 
     class Wgsl(Source):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: str
+        @property
+        def value(self) -> str: ...
         def __init__(self, value: str) -> None: ...
 
     class Wesl(Source):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: str
+        @property
+        def value(self) -> str: ...
         def __init__(self, value: str) -> None: ...
 
     class GlslVertex(Source):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: str
+        @property
+        def value(self) -> str: ...
         def __init__(self, value: str) -> None: ...
 
     class GlslTask(Source):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: str
+        @property
+        def value(self) -> str: ...
         def __init__(self, value: str) -> None: ...
 
     class GlslMesh(Source):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: str
+        @property
+        def value(self) -> str: ...
         def __init__(self, value: str) -> None: ...
 
     class GlslRayGeneration(Source):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: str
+        @property
+        def value(self) -> str: ...
         def __init__(self, value: str) -> None: ...
 
     class GlslMiss(Source):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: str
+        @property
+        def value(self) -> str: ...
         def __init__(self, value: str) -> None: ...
 
     class GlslAnyHit(Source):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: str
+        @property
+        def value(self) -> str: ...
         def __init__(self, value: str) -> None: ...
 
     class GlslClosestHit(Source):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: str
+        @property
+        def value(self) -> str: ...
         def __init__(self, value: str) -> None: ...
 
     class GlslFragment(Source):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: str
+        @property
+        def value(self) -> str: ...
         def __init__(self, value: str) -> None: ...
 
     class GlslCompute(Source):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: str
+        @property
+        def value(self) -> str: ...
         def __init__(self, value: str) -> None: ...
 
     class SpirV(Source):
         __match_args__: ClassVar[tuple[Literal["value"]]]
-        value: bytes
+        @property
+        def value(self) -> bytes: ...
         def __init__(self, value: bytes) -> None: ...
 
     def as_str(self) -> str:

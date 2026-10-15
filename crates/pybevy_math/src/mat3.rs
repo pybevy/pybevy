@@ -5,7 +5,7 @@ use pybevy_core::{
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 use super::{quat::PyQuat, vec2::PyVec2, vec3::PyVec3};
-use crate::richcmp::comparison_result;
+use crate::{require_invertible, richcmp::comparison_result};
 
 #[pyclass(name = "Mat3", module = "pybevy.math", from_py_object)]
 #[derive(Debug, Clone)]
@@ -205,7 +205,9 @@ impl PyMat3 {
     }
 
     pub fn inverse(&self) -> PyResult<Self> {
-        Ok(PyMat3::mat3(self.as_ref()?.inverse()))
+        let inverse = self.as_ref()?.inverse();
+        require_invertible("Mat3", inverse.is_finite())?;
+        Ok(PyMat3::mat3(inverse))
     }
 
     pub fn mul_vec3(&self, rhs: &PyVec3) -> PyResult<PyVec3> {

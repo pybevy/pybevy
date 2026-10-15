@@ -665,7 +665,8 @@ class RunMode:
     class Loop(RunMode):
         """Run the schedule repeatedly, optionally waiting between frames."""
         __match_args__: ClassVar[tuple[Literal["wait"]]]
-        wait: int | None
+        @property
+        def wait(self) -> int | None: ...
         def __init__(self, *, wait: int | None = None) -> None: ...
 
     class Once(RunMode):
@@ -779,7 +780,8 @@ class AppExit(Message):
 
     class Error(AppExit):
         __match_args__: ClassVar[tuple[Literal["code"]]]
-        code: int
+        @property
+        def code(self) -> int: ...
         def __init__(self, code: int) -> None: ...
 
     @staticmethod

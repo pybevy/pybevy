@@ -63,6 +63,8 @@ pub struct PyClassDef {
     pub bevy_tuple_variants: HashSet<String>,
     /// Public classes nested directly inside this class.
     pub nested_types: Vec<String>,
+    /// A handwritten `Clone` turns owned storage into a read-only snapshot.
+    pub clone_snapshots: bool,
 }
 
 /// Method definition
@@ -313,6 +315,21 @@ pub struct EnumVariantDef {
     pub constructor: Option<MethodDef>,
     /// Payload fields declared writable by the nested Python variant class.
     pub writable_fields: Vec<String>,
+    /// Payload fields as the generated or adapter getters expose them.
+    pub payload_fields: Vec<PayloadFieldDef>,
+}
+
+/// A variant payload field with the type its Python getter returns.
+#[derive(Debug, Clone, Default)]
+pub struct PayloadFieldDef {
+    /// Python field name
+    pub name: String,
+    /// `#[py_type(...)]` when present, otherwise the declared field type
+    pub python_type: String,
+    /// `#[py_borrow]` makes the getter borrow the live field
+    pub borrowed: bool,
+    /// Source location
+    pub location: Option<SourceLocation>,
 }
 
 /// Enum variant kind

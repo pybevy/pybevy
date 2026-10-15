@@ -78,13 +78,15 @@ class TimeUpdateStrategy(Resource):
     class ManualDuration(TimeUpdateStrategy):
         """Advance by ``duration`` after Bevy's zero-delta first update."""
         __match_args__: ClassVar[tuple[Literal["duration"]]]
-        duration: timedelta
+        @property
+        def duration(self) -> timedelta: ...
         def __init__(self, duration: timedelta) -> None: ...
 
     class FixedTimesteps(TimeUpdateStrategy):
         """Advance by ``steps`` fixed timesteps on every app update."""
         __match_args__: ClassVar[tuple[Literal["steps"]]]
-        steps: int
+        @property
+        def steps(self) -> int: ...
         def __init__(self, steps: int) -> None: ...
 
 class Time(Resource, Generic[_TimeContext]):

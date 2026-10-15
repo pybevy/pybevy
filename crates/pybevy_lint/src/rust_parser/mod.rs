@@ -176,6 +176,7 @@ pub fn parse_file(path: &Path) -> Result<Vec<PyClassDef>> {
                 let class = std::slice::from_mut(&mut classes[index]);
                 pymethods::process_impl_block(methods, class, path);
                 conversions::process_conversion_impl(item_impl, class, path);
+                conversions::process_clone_impl(item_impl, class);
             }
         }
     }

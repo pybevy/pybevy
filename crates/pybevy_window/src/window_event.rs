@@ -1,11 +1,14 @@
-use bevy::window::{FileDragAndDrop, Ime, WindowEvent};
+use bevy::{
+    math::{IVec2, Vec2},
+    window::{FileDragAndDrop, Ime, WindowEvent},
+};
 use pybevy_core::{PyEntity, PyMessage};
 use pybevy_input::{
     button_state::PyButtonState, keyboard_input::PyKeyboardInput, mouse_button::PyMouseButton,
     mouse_scroll_unit::PyMouseScrollUnit, touch_phase::PyTouchPhase,
 };
 use pybevy_macros::pyenum;
-use pybevy_math::{ivec2::PyIVec2, vec2::PyVec2};
+use pybevy_math::snapshot::Snapshot;
 use pyo3::{Borrowed, IntoPyObjectExt, prelude::*};
 
 use crate::{
@@ -108,9 +111,9 @@ pub enum PyWindowEvent {
     },
     #[pyo3(constructor = (position, window, delta = None))]
     CursorMoved {
-        position: PyVec2,
+        position: Snapshot<Vec2>,
         window: PyEntity,
-        delta: Option<PyVec2>,
+        delta: Option<Snapshot<Vec2>>,
     },
     #[pyo3(constructor = (value,))]
     FileDragAndDrop {
@@ -144,7 +147,7 @@ pub enum PyWindowEvent {
     },
     #[pyo3(constructor = (delta,))]
     MouseMotion {
-        delta: PyVec2,
+        delta: Snapshot<Vec2>,
     },
     #[pyo3(constructor = (unit, x, y, window))]
     MouseWheel {
@@ -170,7 +173,7 @@ pub enum PyWindowEvent {
     #[pyo3(constructor = (phase, position, id, window, force = None))]
     TouchInput {
         phase: PyTouchPhase,
-        position: PyVec2,
+        position: Snapshot<Vec2>,
         id: u64,
         window: PyEntity,
         force: Option<f64>,
@@ -186,7 +189,7 @@ pub enum PyWindowEvent {
     },
     #[pyo3(constructor = (position, window))]
     WindowMoved {
-        position: PyIVec2,
+        position: Snapshot<IVec2>,
         window: PyEntity,
     },
     #[pyo3(constructor = (occluded, window))]
@@ -351,9 +354,9 @@ impl PyWindowEvent {
                 delta,
             } => format!(
                 "WindowEvent.CursorMoved(position={}, window={}, delta={})",
-                field_repr(py, position.clone())?,
+                field_repr(py, *position)?,
                 field_repr(py, *window)?,
-                field_repr(py, delta.clone())?
+                field_repr(py, *delta)?
             ),
             PyWindowEvent::FileDragAndDrop { value } => format!(
                 "WindowEvent.FileDragAndDrop(value={})",
@@ -392,10 +395,9 @@ impl PyWindowEvent {
                 field_repr(py, *state)?,
                 field_repr(py, *window)?
             ),
-            PyWindowEvent::MouseMotion { delta } => format!(
-                "WindowEvent.MouseMotion(delta={})",
-                field_repr(py, delta.clone())?
-            ),
+            PyWindowEvent::MouseMotion { delta } => {
+                format!("WindowEvent.MouseMotion(delta={})", field_repr(py, *delta)?)
+            }
             PyWindowEvent::MouseWheel { unit, x, y, window } => format!(
                 "WindowEvent.MouseWheel(unit={}, x={}, y={}, window={})",
                 field_repr(py, *unit)?,
@@ -426,7 +428,7 @@ impl PyWindowEvent {
             } => format!(
                 "WindowEvent.TouchInput(phase={}, position={}, id={}, window={}, force={})",
                 field_repr(py, *phase)?,
-                field_repr(py, position.clone())?,
+                field_repr(py, *position)?,
                 field_repr(py, *id)?,
                 field_repr(py, *window)?,
                 field_repr(py, *force)?
@@ -442,7 +444,7 @@ impl PyWindowEvent {
             ),
             PyWindowEvent::WindowMoved { position, window } => format!(
                 "WindowEvent.WindowMoved(position={}, window={})",
-                field_repr(py, position.clone())?,
+                field_repr(py, *position)?,
                 field_repr(py, *window)?
             ),
             PyWindowEvent::WindowOccluded { occluded, window } => format!(

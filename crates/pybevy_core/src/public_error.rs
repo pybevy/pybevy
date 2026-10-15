@@ -429,6 +429,14 @@ pub fn segment_direction_failed(error: impl Display) -> String {
     format!("Failed to compute the direction of a line segment: {error}")
 }
 
+pub fn segment_left_normal_failed(error: impl Display) -> String {
+    format!("Failed to compute the left-hand side normal of a line segment: {error}")
+}
+
+pub fn segment_right_normal_failed(error: impl Display) -> String {
+    format!("Failed to compute the right-hand side normal of a line segment: {error}")
+}
+
 pub fn mesh_attribute_missing(name: &str) -> String {
     // `{:?}` quotes and escapes the user-controlled name so the message stays one line.
     format!(
@@ -577,6 +585,20 @@ pub const TIME_CONTEXT_TYPE_REQUIRED: &str =
     "Time[...] expects one of the Fixed, Real, or Virtual marker types";
 pub const MAT4_PERSPECTIVE_INFINITE_REVERSE_RH_NEAR: &str =
     "perspective_infinite_reverse_rh requires z_near > 0";
+pub const MAT4_LOOK_DIRECTION_PARALLEL_TO_UP: &str = "look direction must not be parallel to up";
+pub const MAT4_LOOK_AT_EYE_EQUALS_CENTER: &str = "eye and center must be distinct finite points";
+
+pub fn matrix_not_invertible(type_name: &str) -> String {
+    format!("{type_name} is not invertible: its determinant is zero or its inverse is not finite")
+}
+
+pub fn mat4_perspective_depth_planes(function: &str) -> String {
+    format!("{function} requires z_near > 0 and z_far > 0")
+}
+
+pub fn mat4_projection_not_finite(function: &str) -> String {
+    format!("{function} parameters produce a non-finite matrix")
+}
 
 pub const TIMER_ELAPSED_PAST_DURATION: &str = "the remaining time is undefined while Timer elapsed is past the duration; \
      call set_elapsed() with a value within the duration";

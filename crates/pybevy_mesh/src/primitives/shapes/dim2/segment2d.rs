@@ -155,7 +155,12 @@ impl PySegment2d {
     }
 
     pub fn left_normal(&self) -> PyResult<PyDir2> {
-        Ok(PyDir2::from_dir2(self.0.left_normal()))
+        self.0
+            .try_left_normal()
+            .map(PyDir2::from_dir2)
+            .map_err(|error| {
+                PyRuntimeError::new_err(public_error::segment_left_normal_failed(error))
+            })
     }
 
     pub fn try_left_normal(&self) -> PyResult<PyDir2> {
@@ -166,7 +171,12 @@ impl PySegment2d {
     }
 
     pub fn right_normal(&self) -> PyResult<PyDir2> {
-        Ok(PyDir2::from_dir2(self.0.right_normal()))
+        self.0
+            .try_right_normal()
+            .map(PyDir2::from_dir2)
+            .map_err(|error| {
+                PyRuntimeError::new_err(public_error::segment_right_normal_failed(error))
+            })
     }
 
     pub fn try_right_normal(&self) -> PyResult<PyDir2> {

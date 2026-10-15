@@ -3,7 +3,7 @@ use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 use super::{vec3::PyVec3, vec3a::PyVec3A};
-use crate::richcmp::comparison_result;
+use crate::{require_invertible, richcmp::comparison_result};
 
 #[pyclass(name = "Mat3A", module = "pybevy.math", from_py_object)]
 #[derive(Debug, Clone)]
@@ -200,7 +200,9 @@ impl PyMat3A {
     }
 
     pub fn inverse(&self) -> PyResult<Self> {
-        Ok(PyMat3A::mat3a(self.as_ref()?.inverse()))
+        let inverse = self.as_ref()?.inverse();
+        require_invertible("Mat3A", inverse.is_finite())?;
+        Ok(PyMat3A::mat3a(inverse))
     }
 
     pub fn mul_vec3a(&self, rhs: &PyVec3A) -> PyResult<PyVec3A> {

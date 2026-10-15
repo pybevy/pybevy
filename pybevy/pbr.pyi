@@ -27,7 +27,8 @@ class ParallaxMappingMethod:
 
     class Relief(ParallaxMappingMethod):
         __match_args__: ClassVar[tuple[Literal["max_steps"]]]
-        max_steps: int
+        @property
+        def max_steps(self) -> int: ...
         def __init__(self, *, max_steps: int) -> None: ...
 
 class Material(Asset):
@@ -362,8 +363,10 @@ class ScreenSpaceAmbientOcclusionQualityLevel:
 
     class Custom(ScreenSpaceAmbientOcclusionQualityLevel):
         __match_args__: ClassVar[tuple[Literal["slice_count"], Literal["samples_per_slice_side"]]]
-        slice_count: int
-        samples_per_slice_side: int
+        @property
+        def slice_count(self) -> int: ...
+        @property
+        def samples_per_slice_side(self) -> int: ...
         def __init__(self, *, slice_count: int, samples_per_slice_side: int) -> None: ...
 
 class ScreenSpaceAmbientOcclusion(Component):
