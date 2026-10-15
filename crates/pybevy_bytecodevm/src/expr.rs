@@ -10,7 +10,7 @@ use pybevy_storage::storage_error::{EXPRESSION_MAX_DEPTH, expression_too_deep};
 use pyo3::{
     exceptions::{PyTypeError, PyValueError},
     prelude::*,
-    types::{PyBool, PyInt},
+    types::{PyBool, PyFloat, PyInt},
 };
 
 use super::bytecode::{CompiledBytecode, Compiler, FieldId, FieldType, Op};
@@ -176,8 +176,14 @@ pub enum RustExpr {
     /// Interpreter-neutral dense input column.
     Input { index: u16, field_type: FieldType },
 
-    /// Constant value
+    /// Python `int` (or `bool`) literal; it adopts the other operand's lane.
     Const(f64),
+
+    /// Python `float` literal; it promotes an integer operand to f64.
+    FloatConst(f64),
+
+    /// Python `int` literal held exactly; it adopts the other operand's lane.
+    Int(i128),
 }
 
 impl RustExpr {
@@ -256,7 +262,8 @@ impl RustExpr {
                     field_type: bt,
                 },
             ) => ai == bi && at == bt,
-            (Const(a), Const(b)) => a.to_bits() == b.to_bits(),
+            (Const(a), Const(b)) | (FloatConst(a), FloatConst(b)) => a.to_bits() == b.to_bits(),
+            (Int(a), Int(b)) => a == b,
             _ => false,
         }
     }
@@ -305,13 +312,8 @@ impl RustExpr {
             return Ok(resolved);
         }
 
-        // Check if it's a simple numeric type (int or float)
-        if let Ok(val) = obj.extract::<f64>() {
-            return Ok(RustExpr::Const(val));
-        }
-
-        if let Ok(val) = obj.extract::<i64>() {
-            return Ok(RustExpr::Const(val as f64));
+        if let Some(literal) = Self::literal(obj)? {
+            return Ok(literal);
         }
 
         // Otherwise, expect an Expr object with 'op' and 'args'
@@ -812,12 +814,30 @@ impl RustExpr {
                     )));
                 }
 
-                let value: f64 = args_list[0].extract()?;
-                Ok(RustExpr::Const(value))
+                match Self::literal(&args_list[0])? {
+                    Some(literal) => Ok(literal),
+                    None => Ok(RustExpr::FloatConst(args_list[0].extract()?)),
+                }
             }
 
             _ => Err(PyTypeError::new_err(format!("Unknown operation: {}", op))),
         }
+    }
+
+    /// Convert a numeric Python scalar, keeping its NumPy scalar kind: an
+    /// integer (anything with `__index__`), held exactly, or a float.
+    fn literal(obj: &Bound<'_, PyAny>) -> PyResult<Option<Self>> {
+        if !obj.is_instance_of::<PyFloat>() {
+            if let Ok(value) = obj.extract::<i128>() {
+                return Ok(Some(RustExpr::Int(value)));
+            }
+            if obj.is_instance_of::<PyInt>() {
+                return obj
+                    .extract::<f64>()
+                    .map(|value| Some(RustExpr::Const(value)));
+            }
+        }
+        Ok(obj.extract::<f64>().ok().map(RustExpr::FloatConst))
     }
 
     /// Compile this expression AST to bytecode
@@ -1074,6 +1094,16 @@ impl RustExpr {
                 let const_idx = compiler.add_constant(*value);
                 compiler.emit(Op::PushConst(const_idx));
             }
+
+            RustExpr::FloatConst(value) => {
+                let const_idx = compiler.add_constant(*value);
+                compiler.emit(Op::PushFloatConst(const_idx));
+            }
+
+            RustExpr::Int(value) => {
+                let push = compiler.int_literal(*value);
+                compiler.emit(push);
+            }
         }
     }
 
@@ -1081,6 +1111,7 @@ impl RustExpr {
     pub fn compile_map(expr: &RustExpr) -> Result<CompiledMap, MapCompileError> {
         let mut compiler = Compiler::new();
         expr.compile(&mut compiler);
+        compiler.lower_integers_to_f64();
         let compiled = compiler.finalize();
         if !compiled.field_map.is_empty() {
             return Err(MapCompileError::ComponentField);
@@ -1160,7 +1191,12 @@ impl std::error::Error for MapCompileError {}
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
-    use pyo3::types::{PyDict, PyFloat, PyInt, PyList, PyString};
+    use std::ffi::CStr;
+
+    use pyo3::{
+        exceptions::PyOverflowError,
+        types::{PyDict, PyFloat, PyInt, PyList, PyString},
+    };
 
     use super::*;
     use crate::bytecode::VM;
@@ -1255,6 +1291,75 @@ mod tests {
         let second_nan = f64::from_bits(0x7ff8_0000_0000_0002);
         assert!(RustExpr::Const(first_nan).canonical_eq(&RustExpr::Const(first_nan)));
         assert!(!RustExpr::Const(first_nan).canonical_eq(&RustExpr::Const(second_nan)));
+    }
+
+    #[test]
+    fn python_literals_keep_their_numpy_scalar_kind_and_exact_value() {
+        Python::initialize();
+        Python::attach(|py| {
+            let convert =
+                |source: &CStr| RustExpr::from_py_object(py, &py.eval(source, None, None).unwrap());
+            let exact = [
+                (c"2", 2),
+                (c"True", 1),
+                (c"2 ** 63 - 1", i128::from(i64::MAX)),
+                (c"2 ** 64 - 1", i128::from(u64::MAX)),
+                (c"-(2 ** 63) - 1", -(1_i128 << 63) - 1),
+                (c"2 ** 100 + 1", (1_i128 << 100) + 1),
+            ];
+            for (source, expected) in exact {
+                assert!(
+                    matches!(convert(source), Ok(RustExpr::Int(value)) if value == expected),
+                    "{source:?}"
+                );
+            }
+            assert!(matches!(convert(c"2.0"), Ok(RustExpr::FloatConst(2.0))));
+            assert!(matches!(convert(c"2 ** 200"), Ok(RustExpr::Const(v)) if v == 2_f64.powi(200)));
+            let error = convert(c"2 ** 1100").unwrap_err();
+            assert!(error.is_instance_of::<PyOverflowError>(py));
+
+            let integer_const = named_expr(py, "const", &PyList::new(py, [3i64]).unwrap());
+            assert!(matches!(
+                RustExpr::from_py_object(py, &integer_const),
+                Ok(RustExpr::Int(3))
+            ));
+            let float_const = named_expr(py, "const", &PyList::new(py, [3.0f64]).unwrap());
+            assert!(matches!(
+                RustExpr::from_py_object(py, &float_const),
+                Ok(RustExpr::FloatConst(3.0))
+            ));
+        });
+        assert!(!RustExpr::Int(2).canonical_eq(&RustExpr::FloatConst(2.0)));
+        assert!(!RustExpr::Int(1 << 60).canonical_eq(&RustExpr::Int((1 << 60) + 1)));
+        assert!(RustExpr::FloatConst(2.0).canonical_eq(&RustExpr::FloatConst(2.0)));
+    }
+
+    #[test]
+    fn int_literals_beyond_f64_compile_to_exact_integer_pushes() {
+        let bytecode = compile_expr(&RustExpr::Add(
+            Box::new(RustExpr::Int((1 << 60) + 1)),
+            Box::new(RustExpr::Int(1 << 60)),
+        ));
+        assert!(matches!(
+            bytecode.bytecode[..],
+            [Op::PushInt(0), Op::PushConst(0), Op::Add]
+        ));
+        assert_eq!(bytecode.integers, vec![(1 << 60) + 1]);
+        assert_eq!(bytecode.constants, vec![2_f64.powi(60)]);
+
+        let map = RustExpr::compile_map(&RustExpr::Int((1 << 60) + 1)).unwrap();
+        assert!(matches!(map.bytecode[..], [Op::PushConst(0)]));
+        assert_eq!(map.constants, vec![2_f64.powi(60)]);
+    }
+
+    #[test]
+    fn float_literal_compiles_to_float_constant_push() {
+        let bytecode = compile_expr(&RustExpr::Add(c(2.0), Box::new(RustExpr::FloatConst(2.0))));
+        assert!(matches!(
+            bytecode.bytecode[..],
+            [Op::PushConst(0), Op::PushFloatConst(0), Op::Add]
+        ));
+        assert_eq!(bytecode.constants, vec![2.0]);
     }
 
     #[test]

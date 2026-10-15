@@ -27,7 +27,9 @@ use bevy_ecs::{
 use pybevy_storage::{StorageError, ValidityFlag};
 
 use crate::{
-    bytecode::{CompiledBytecode, Compiler, FieldId, FieldType, Op},
+    bytecode::{
+        CompiledBytecode, Compiler, FieldId, FieldType, NegativeIntegerPower, Op, exact_i128,
+    },
     expr::RustExpr,
     tiled::{ReduceOp, lane_reduce_slice},
     view_engine::{self, ViewEngineError, ViewFilter},
@@ -758,7 +760,7 @@ impl BatchLease {
                 self.runtime.spec().component_strides(),
                 parallel,
             )
-        })
+        }?)
     }
 
     /// Evaluate and reduce one validated read-only program over exact rows.
@@ -801,9 +803,9 @@ impl BatchLease {
             // rows; the operation fence and scheduler access exclude aliases.
             unsafe {
                 if has_tick_masks {
-                    view_engine::execute_filtered_assignment(batches, bytecode, strides, parallel);
+                    view_engine::execute_filtered_assignment(batches, bytecode, strides, parallel)
                 } else {
-                    view_engine::execute_batch_assignment(batches, bytecode, strides, parallel);
+                    view_engine::execute_batch_assignment(batches, bytecode, strides, parallel)
                 }
             }
         })
@@ -816,7 +818,7 @@ impl BatchLease {
             &[view_engine::TableBatch],
             &CompiledBytecode,
             &HashMap<ComponentId, usize>,
-        ),
+        ) -> Result<(), NegativeIntegerPower>,
     ) -> Result<(), ViewRuntimeError> {
         self.runtime.check_program(program)?;
         let ProgramIntent::Assignment { destination } = program.intent() else {
@@ -838,7 +840,7 @@ impl BatchLease {
             &self.batches,
             program.bytecode(),
             self.runtime.spec().component_strides(),
-        );
+        )?;
         Ok(())
     }
 
@@ -1035,7 +1037,7 @@ impl BatchSlice {
                 self.lease.runtime.spec().component_strides(),
                 parallel,
             )
-        })
+        }?)
     }
 
     /// Execute one validated assignment over only this slice.
@@ -1067,8 +1069,8 @@ impl BatchSlice {
                 program.bytecode(),
                 self.lease.runtime.spec().component_strides(),
                 parallel,
-            );
-        }
+            )
+        }?;
         Ok(())
     }
 
@@ -1349,6 +1351,27 @@ impl ValidatedViewProgram {
     }
 }
 
+/// A Python `int` literal outside the integer lane it meets; NumPy 2 raises
+/// `OverflowError` for it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IntegerLiteralOutOfBounds {
+    /// The literal's decimal value.
+    pub literal: String,
+    /// The integer lane it met.
+    pub field_type: FieldType,
+}
+
+impl fmt::Display for IntegerLiteralOutOfBounds {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Python integer {} out of bounds for {}",
+            self.literal,
+            numpy_dtype_name(self.field_type)
+        )
+    }
+}
+
 /// Failure while resolving a View or validating a program capability.
 #[derive(Debug)]
 pub enum ViewRuntimeError {
@@ -1464,6 +1487,13 @@ pub enum ViewRuntimeError {
     },
     /// A floating result would be silently narrowed into an integer field.
     ImplicitFloatToInteger { destination: FieldType },
+    /// An int literal does not fit the integer lane it is combined with or
+    /// stored into; NumPy 2 raises `OverflowError` for such Python integers.
+    IntegerLiteralOutOfBounds(IntegerLiteralOutOfBounds),
+    /// An integer power had a negative exponent, which NumPy rejects. A literal
+    /// exponent is rejected before execution; one read from a field is reported
+    /// after the single pass, which may already have written rows.
+    NegativeIntegerPower,
     /// A program leaves the wrong number of values after execution.
     InvalidFinalStackDepth {
         /// Program intent whose result shape was checked.
@@ -1675,6 +1705,10 @@ impl fmt::Display for ViewRuntimeError {
                 f,
                 "Cannot assign a float expression to integer View field {destination:?}"
             ),
+            Self::IntegerLiteralOutOfBounds(error) => write!(f, "{error}"),
+            Self::NegativeIntegerPower => {
+                write!(f, "Integers to negative integer powers are not allowed.")
+            }
             Self::InvalidFinalStackDepth {
                 intent,
                 expected,
@@ -1779,9 +1813,29 @@ impl From<StorageError> for ViewRuntimeError {
     }
 }
 
+impl From<NegativeIntegerPower> for ViewRuntimeError {
+    fn from(_: NegativeIntegerPower) -> Self {
+        Self::NegativeIntegerPower
+    }
+}
+
 impl From<ViewEngineError> for ViewRuntimeError {
     fn from(value: ViewEngineError) -> Self {
         Self::Engine(value)
+    }
+}
+
+fn numpy_dtype_name(field_type: FieldType) -> &'static str {
+    match field_type {
+        FieldType::I32 => "int32",
+        FieldType::I64 => "int64",
+        FieldType::U8 => "uint8",
+        FieldType::U32 => "uint32",
+        FieldType::U64 => "uint64",
+        FieldType::F32 => "float32",
+        FieldType::F64 => "float64",
+        FieldType::Bool => "bool",
+        FieldType::Vec2 | FieldType::Vec3 | FieldType::Vec4 => "vector",
     }
 }
 
@@ -1855,10 +1909,18 @@ pub(crate) fn validate_instruction_indices(
                     field_count: bytecode.field_map.len(),
                 });
             }
-            Op::PushConst(index) if usize::from(index) >= bytecode.constants.len() => {
+            Op::PushConst(index) | Op::PushFloatConst(index)
+                if usize::from(index) >= bytecode.constants.len() =>
+            {
                 return Err(ViewRuntimeError::InvalidConstantIndex {
                     index,
                     constant_count: bytecode.constants.len(),
+                });
+            }
+            Op::PushInt(index) if usize::from(index) >= bytecode.integers.len() => {
+                return Err(ViewRuntimeError::InvalidConstantIndex {
+                    index,
+                    constant_count: bytecode.integers.len(),
                 });
             }
             _ => {}
@@ -1994,7 +2056,7 @@ pub(crate) fn validate_stack_effects(
                         field_count: 0,
                     });
                 }
-                Op::PushConst(_) => {
+                Op::PushConst(_) | Op::PushFloatConst(_) | Op::PushInt(_) => {
                     stack.push(StackKind::Float);
                     continue;
                 }
@@ -2199,8 +2261,60 @@ const INTEGER_TYPES: u16 = TYPE_I32 | TYPE_I64 | TYPE_U8 | TYPE_U32 | TYPE_U64;
 
 #[derive(Clone, Copy)]
 enum TrackedValue {
-    Numeric(u16),
+    /// Field-type mask (0 for an int literal) and the value of an int literal.
+    Numeric(u16, Option<IntLiteral>),
     Bool,
+}
+
+/// The value of a Python `int` literal: exact, or beyond `i128` and held
+/// only as its f64 approximation.
+#[derive(Clone, Copy)]
+enum IntLiteral {
+    Exact(i128),
+    Huge(f64),
+}
+
+impl IntLiteral {
+    fn saturated(self) -> i128 {
+        match self {
+            Self::Exact(value) => value,
+            Self::Huge(value) if value > 0.0 => i128::MAX,
+            Self::Huge(_) => i128::MIN,
+        }
+    }
+
+    fn negated(self) -> Self {
+        match self {
+            Self::Exact(value) => value
+                .checked_neg()
+                .map_or(Self::Huge(-(value as f64)), Self::Exact),
+            Self::Huge(value) => Self::Huge(-value),
+        }
+    }
+
+    fn out_of_bounds(self, field_type: FieldType) -> ViewRuntimeError {
+        let literal = match self {
+            Self::Exact(value) => value.to_string(),
+            Self::Huge(value) => format!("{value:.0}"),
+        };
+        ViewRuntimeError::IntegerLiteralOutOfBounds(IntegerLiteralOutOfBounds {
+            literal,
+            field_type,
+        })
+    }
+}
+
+impl TrackedValue {
+    fn numeric(mask: u16) -> Self {
+        Self::Numeric(mask, None)
+    }
+}
+
+fn pop_numeric(stack: &mut Vec<TrackedValue>) -> (u16, Option<IntLiteral>) {
+    match stack.pop().expect("stack already validated") {
+        TrackedValue::Numeric(mask, literal) => (mask, literal),
+        TrackedValue::Bool => unreachable!("numeric operand stack type already validated"),
+    }
 }
 
 fn field_type_mask(field_type: FieldType) -> u16 {
@@ -2250,10 +2364,72 @@ fn preserving_numeric_result(
     })
 }
 
+/// The field type and the smallest and largest representable values of an
+/// integer lane, or `None` for float lanes.
+fn integer_lane_range(lane: u16) -> Option<(FieldType, i128, i128)> {
+    Some(match lane {
+        TYPE_I32 => (FieldType::I32, i32::MIN.into(), i32::MAX.into()),
+        TYPE_I64 => (FieldType::I64, i64::MIN.into(), i64::MAX.into()),
+        TYPE_U8 => (FieldType::U8, 0, u8::MAX.into()),
+        TYPE_U32 => (FieldType::U32, 0, u32::MAX.into()),
+        TYPE_U64 => (FieldType::U64, 0, u64::MAX.into()),
+        _ => return None,
+    })
+}
+
+/// Reject an int literal outside the integer lane it meets, as NumPy 2 does
+/// for Python integers (NEP 50). Float lanes accept any literal.
+fn check_literal_bounds(literal: Option<IntLiteral>, lane: u16) -> Result<(), ViewRuntimeError> {
+    match (literal, integer_lane_range(lane)) {
+        (Some(literal), Some((field_type, min, max)))
+            if !(min..=max).contains(&literal.saturated()) =>
+        {
+            Err(literal.out_of_bounds(field_type))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// NumPy's `clip` accepts an out-of-range bound that cannot bind, and rejects
+/// a lower bound above the lane's maximum or an upper bound below its minimum.
+fn check_clip_bounds(
+    min_literal: Option<IntLiteral>,
+    max_literal: Option<IntLiteral>,
+    lane: u16,
+) -> Result<(), ViewRuntimeError> {
+    let Some((field_type, lane_min, lane_max)) = integer_lane_range(lane) else {
+        return Ok(());
+    };
+    match min_literal
+        .filter(|literal| literal.saturated() > lane_max)
+        .or(max_literal.filter(|literal| literal.saturated() < lane_min))
+    {
+        Some(literal) => Err(literal.out_of_bounds(field_type)),
+        None => Ok(()),
+    }
+}
+
+/// Whether a float result may be stored into an integer destination.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FloatStores {
+    /// Raise, as NumPy's `same_kind` rule does for View assignments.
+    Reject,
+    /// Cast at the store, as a buffer lens assignment does.
+    Cast,
+}
+
+fn validate_integer_arithmetic_types(bytecode: &CompiledBytecode) -> Result<(), ViewRuntimeError> {
+    check_integer_types(bytecode, FloatStores::Reject)
+}
+
 /// Track primitive field origins through the already stack-valid program and
 /// reject only operations whose VM fallback would silently route differing
-/// integer widths through f64. Constants remain polymorphic (`mask == 0`).
-fn validate_integer_arithmetic_types(bytecode: &CompiledBytecode) -> Result<(), ViewRuntimeError> {
+/// integer widths through f64. Int literals remain polymorphic (`mask == 0`);
+/// float literals are f64, so they promote integer operands as in NumPy.
+pub(crate) fn check_integer_types(
+    bytecode: &CompiledBytecode,
+    float_stores: FloatStores,
+) -> Result<(), ViewRuntimeError> {
     let mut stack: Vec<TrackedValue> = Vec::new();
     for (instruction_index, op) in bytecode.bytecode.iter().enumerate() {
         match *op {
@@ -2262,38 +2438,39 @@ fn validate_integer_arithmetic_types(bytecode: &CompiledBytecode) -> Result<(), 
                 stack.push(if field_type == FieldType::Bool {
                     TrackedValue::Bool
                 } else {
-                    TrackedValue::Numeric(field_type_mask(field_type))
+                    TrackedValue::numeric(field_type_mask(field_type))
                 });
             }
             Op::PushConst(index) => {
                 let value = bytecode.constants[usize::from(index)];
-                let integer_like = value.is_finite() && value.fract() == 0.0;
-                stack.push(TrackedValue::Numeric(if integer_like {
-                    0
-                } else {
-                    TYPE_F64
-                }));
+                stack.push(match exact_i128(value) {
+                    Some(value) => TrackedValue::Numeric(0, Some(IntLiteral::Exact(value))),
+                    None if value.is_finite() && value.fract() == 0.0 => {
+                        TrackedValue::Numeric(0, Some(IntLiteral::Huge(value)))
+                    }
+                    None => TrackedValue::numeric(TYPE_F64),
+                });
             }
-            Op::Random(_) => stack.push(TrackedValue::Numeric(TYPE_F64)),
+            Op::PushInt(index) => {
+                let value = bytecode.integers[usize::from(index)];
+                stack.push(TrackedValue::Numeric(0, Some(IntLiteral::Exact(value))));
+            }
+            Op::PushFloatConst(_) | Op::Random(_) => stack.push(TrackedValue::numeric(TYPE_F64)),
             Op::StoreField(index) => {
                 let value = stack.pop().expect("stack already validated");
                 let destination = bytecode.field_map[usize::from(index)].field_type;
-                if let TrackedValue::Numeric(mask) = value
+                if let TrackedValue::Numeric(mask, literal) = value
                     && field_type_mask(destination) & INTEGER_TYPES != 0
-                    && mask & (TYPE_F32 | TYPE_F64) != 0
                 {
-                    return Err(ViewRuntimeError::ImplicitFloatToInteger { destination });
+                    if mask & (TYPE_F32 | TYPE_F64) != 0 && float_stores == FloatStores::Reject {
+                        return Err(ViewRuntimeError::ImplicitFloatToInteger { destination });
+                    }
+                    check_literal_bounds(literal, field_type_mask(destination))?;
                 }
             }
-            Op::Add | Op::Sub | Op::Mul | Op::Min | Op::Max | Op::FloorDiv | Op::Mod => {
-                let TrackedValue::Numeric(right) = stack.pop().expect("stack already validated")
-                else {
-                    unreachable!("numeric operation stack type already validated")
-                };
-                let TrackedValue::Numeric(left) = stack.pop().expect("stack already validated")
-                else {
-                    unreachable!("numeric operation stack type already validated")
-                };
+            Op::Add | Op::Sub | Op::Mul | Op::Min | Op::Max | Op::FloorDiv | Op::Mod | Op::Pow => {
+                let (right, exponent) = pop_numeric(&mut stack);
+                let (left, base) = pop_numeric(&mut stack);
                 let instruction = match op {
                     Op::Add => "Add",
                     Op::Sub => "Sub",
@@ -2302,39 +2479,42 @@ fn validate_integer_arithmetic_types(bytecode: &CompiledBytecode) -> Result<(), 
                     Op::Max => "Max",
                     Op::FloorDiv => "FloorDiv",
                     Op::Mod => "Mod",
+                    Op::Pow => "Pow",
                     _ => unreachable!(),
                 };
-                stack.push(TrackedValue::Numeric(preserving_numeric_result(
-                    left,
-                    right,
-                    instruction_index,
-                    instruction,
-                )?));
+                let result =
+                    preserving_numeric_result(left, right, instruction_index, instruction)?;
+                check_literal_bounds(base, result)?;
+                check_literal_bounds(exponent, result)?;
+                if matches!(op, Op::Pow)
+                    && result & (TYPE_F32 | TYPE_F64) == 0
+                    && exponent.is_some_and(|literal| literal.saturated() < 0)
+                {
+                    return Err(ViewRuntimeError::NegativeIntegerPower);
+                }
+                stack.push(TrackedValue::numeric(result));
             }
             Op::Clamp => {
-                let TrackedValue::Numeric(max) = stack.pop().expect("stack already validated")
-                else {
-                    unreachable!("clamp stack type already validated")
-                };
-                let TrackedValue::Numeric(min) = stack.pop().expect("stack already validated")
-                else {
-                    unreachable!("clamp stack type already validated")
-                };
-                let TrackedValue::Numeric(value) = stack.pop().expect("stack already validated")
-                else {
-                    unreachable!("clamp stack type already validated")
-                };
+                let (max, max_literal) = pop_numeric(&mut stack);
+                let (min, min_literal) = pop_numeric(&mut stack);
+                let (value, _) = pop_numeric(&mut stack);
                 let bounds = preserving_numeric_result(min, max, instruction_index, "Clamp")?;
-                stack.push(TrackedValue::Numeric(preserving_numeric_result(
-                    value,
-                    bounds,
-                    instruction_index,
-                    "Clamp",
-                )?));
+                let result = preserving_numeric_result(value, bounds, instruction_index, "Clamp")?;
+                check_clip_bounds(min_literal, max_literal, result)?;
+                stack.push(TrackedValue::numeric(result));
             }
-            Op::Neg | Op::Abs | Op::Floor | Op::Ceil | Op::Round | Op::Sign => {}
+            Op::Neg => {
+                let (mask, literal) = pop_numeric(&mut stack);
+                stack.push(TrackedValue::Numeric(
+                    mask,
+                    literal.map(IntLiteral::negated),
+                ));
+            }
+            Op::Abs | Op::Floor | Op::Ceil | Op::Round | Op::Sign => {
+                let (mask, _) = pop_numeric(&mut stack);
+                stack.push(TrackedValue::numeric(mask));
+            }
             Op::Div
-            | Op::Pow
             | Op::Sin
             | Op::Cos
             | Op::Tan
@@ -2351,7 +2531,7 @@ fn validate_integer_arithmetic_types(bytecode: &CompiledBytecode) -> Result<(), 
             | Op::RandomRange(_) => {
                 let arity = if matches!(op, Op::Lerp) {
                     3
-                } else if matches!(op, Op::Div | Op::Pow | Op::RandomRange(_)) {
+                } else if matches!(op, Op::Div | Op::RandomRange(_)) {
                     2
                 } else {
                     1
@@ -2359,7 +2539,7 @@ fn validate_integer_arithmetic_types(bytecode: &CompiledBytecode) -> Result<(), 
                 for _ in 0..arity {
                     stack.pop();
                 }
-                stack.push(TrackedValue::Numeric(TYPE_F64));
+                stack.push(TrackedValue::numeric(TYPE_F64));
             }
             Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge => {
                 stack.pop();
@@ -2373,18 +2553,10 @@ fn validate_integer_arithmetic_types(bytecode: &CompiledBytecode) -> Result<(), 
             }
             Op::Not => {}
             Op::Where => {
-                let TrackedValue::Numeric(false_value) =
-                    stack.pop().expect("stack already validated")
-                else {
-                    unreachable!("where branch stack type already validated")
-                };
-                let TrackedValue::Numeric(true_value) =
-                    stack.pop().expect("stack already validated")
-                else {
-                    unreachable!("where branch stack type already validated")
-                };
+                let (false_value, _) = pop_numeric(&mut stack);
+                let (true_value, _) = pop_numeric(&mut stack);
                 stack.pop();
-                stack.push(TrackedValue::Numeric(true_value | false_value));
+                stack.push(TrackedValue::numeric(true_value | false_value));
             }
             Op::PushInput(_) => unreachable!("instruction indices already validated"),
         }
@@ -2672,6 +2844,7 @@ mod tests {
         Arc::new(CompiledBytecode {
             bytecode: vec![Op::PushField(0)],
             constants: Vec::new(),
+            integers: Vec::new(),
             field_map: vec![field],
         })
     }
@@ -2680,6 +2853,7 @@ mod tests {
         Arc::new(CompiledBytecode {
             bytecode: vec![Op::PushConst(0), Op::StoreField(0)],
             constants: vec![42.0],
+            integers: Vec::new(),
             field_map: vec![destination],
         })
     }
@@ -2957,6 +3131,7 @@ mod tests {
                 Op::StoreField(0),
             ],
             constants: vec![1.0],
+            integers: Vec::new(),
             field_map: vec![destination],
         });
         let result =
@@ -3058,6 +3233,7 @@ mod tests {
                 Arc::new(CompiledBytecode {
                     bytecode: vec![op],
                     constants: Vec::new(),
+                    integers: Vec::new(),
                     field_map: vec![field(component_id, 0, FieldType::F32)],
                 }),
                 ProgramIntent::ReadOnly,
@@ -3076,6 +3252,7 @@ mod tests {
             Arc::new(CompiledBytecode {
                 bytecode: vec![Op::PushConst(0)],
                 constants: Vec::new(),
+                integers: Vec::new(),
                 field_map: Vec::new(),
             }),
             ProgramIntent::ReadOnly,
@@ -3092,6 +3269,7 @@ mod tests {
             Arc::new(CompiledBytecode {
                 bytecode: vec![Op::PushInput(0)],
                 constants: Vec::new(),
+                integers: Vec::new(),
                 field_map: Vec::new(),
             }),
             ProgramIntent::ReadOnly,
@@ -3116,6 +3294,7 @@ mod tests {
             Arc::new(CompiledBytecode {
                 bytecode: vec![Op::StoreField(0)],
                 constants: Vec::new(),
+                integers: Vec::new(),
                 field_map: vec![destination],
             }),
             ProgramIntent::Assignment { destination },
@@ -3134,6 +3313,7 @@ mod tests {
             Arc::new(CompiledBytecode {
                 bytecode: vec![Op::PushConst(0), Op::Not],
                 constants: vec![1.0],
+                integers: Vec::new(),
                 field_map: Vec::new(),
             }),
             ProgramIntent::ReadOnly,
@@ -3152,6 +3332,7 @@ mod tests {
             Arc::new(CompiledBytecode {
                 bytecode: vec![Op::PushConst(0), Op::StoreField(0), Op::PushConst(0)],
                 constants: vec![1.0],
+                integers: Vec::new(),
                 field_map: vec![destination],
             }),
             ProgramIntent::Assignment { destination },
@@ -3174,6 +3355,7 @@ mod tests {
             Arc::new(CompiledBytecode {
                 bytecode: vec![Op::PushConst(0), Op::PushConst(1), Op::Lt, Op::Not],
                 constants: vec![1.0, 2.0],
+                integers: Vec::new(),
                 field_map: Vec::new(),
             }),
             ProgramIntent::ReadOnly,
@@ -4234,6 +4416,7 @@ mod tests {
             Arc::new(CompiledBytecode {
                 bytecode: vec![Op::PushField(0), Op::PushConst(0), Op::Add],
                 constants: vec![1.0],
+                integers: Vec::new(),
                 field_map: vec![field(component_id, 4, FieldType::Bool)],
             }),
             ProgramIntent::ReadOnly,
@@ -4259,6 +4442,7 @@ mod tests {
             Arc::new(CompiledBytecode {
                 bytecode: vec![Op::PushField(1), Op::StoreField(0)],
                 constants: Vec::new(),
+                integers: Vec::new(),
                 field_map: vec![destination, field(component_id, 4, FieldType::Bool)],
             }),
             ProgramIntent::Assignment { destination },
@@ -4296,6 +4480,7 @@ mod tests {
                     Op::StoreField(0),
                 ],
                 constants: vec![1.0],
+                integers: Vec::new(),
                 field_map: vec![destination],
             }),
             ProgramIntent::Assignment { destination },
@@ -4372,6 +4557,7 @@ mod tests {
         let bytecode = CompiledBytecode {
             bytecode: vec![Op::PushField(0), Op::PushField(1), Op::Add],
             constants: vec![],
+            integers: Vec::new(),
             field_map: vec![
                 field(component_id, 0, FieldType::I64),
                 field(component_id, 8, FieldType::U32),
@@ -4389,8 +4575,220 @@ mod tests {
         let bytecode = CompiledBytecode {
             bytecode: vec![Op::PushField(0), Op::PushConst(0), Op::Add],
             constants: vec![1.0],
+            integers: Vec::new(),
             field_map: vec![field(component_id, 0, FieldType::I64)],
         };
         assert!(validate_integer_arithmetic_types(&bytecode).is_ok());
+    }
+
+    fn integer_assignment(operations: &[Op], constants: Vec<f64>) -> CompiledBytecode {
+        let destination = field(ComponentId::new(1), 0, FieldType::I64);
+        let mut bytecode = operations.to_vec();
+        bytecode.push(Op::StoreField(0));
+        CompiledBytecode {
+            bytecode,
+            constants,
+            integers: Vec::new(),
+            field_map: vec![destination],
+        }
+    }
+
+    #[test]
+    fn integral_float_literal_promotes_integer_field_to_float() {
+        let float_literal = integer_assignment(
+            &[Op::PushField(0), Op::PushFloatConst(0), Op::FloorDiv],
+            vec![2.0],
+        );
+        assert!(matches!(
+            validate_integer_arithmetic_types(&float_literal),
+            Err(ViewRuntimeError::ImplicitFloatToInteger {
+                destination: FieldType::I64
+            })
+        ));
+        let int_literal = integer_assignment(
+            &[Op::PushField(0), Op::PushConst(0), Op::FloorDiv],
+            vec![2.0],
+        );
+        assert!(validate_integer_arithmetic_types(&int_literal).is_ok());
+        let float_store = integer_assignment(&[Op::PushFloatConst(0)], vec![2.0]);
+        assert!(validate_integer_arithmetic_types(&float_store).is_err());
+    }
+
+    #[test]
+    fn integer_power_keeps_integer_type_and_rejects_negative_literal_exponent() {
+        let square = integer_assignment(&[Op::PushField(0), Op::PushConst(0), Op::Pow], vec![2.0]);
+        assert!(validate_integer_arithmetic_types(&square).is_ok());
+        let field_exponent =
+            integer_assignment(&[Op::PushConst(0), Op::PushField(0), Op::Pow], vec![2.0]);
+        assert!(validate_integer_arithmetic_types(&field_exponent).is_ok());
+
+        for operations in [
+            &[Op::PushField(0), Op::PushConst(0), Op::Pow][..],
+            &[Op::PushField(0), Op::PushConst(1), Op::Neg, Op::Pow][..],
+            &[Op::PushConst(1), Op::PushConst(0), Op::Pow][..],
+        ] {
+            let program = integer_assignment(operations, vec![-1.0, 1.0]);
+            assert!(matches!(
+                validate_integer_arithmetic_types(&program),
+                Err(ViewRuntimeError::NegativeIntegerPower)
+            ));
+        }
+    }
+
+    #[test]
+    fn float_power_is_float_and_accepts_negative_exponents() {
+        let float_exponent = integer_assignment(
+            &[Op::PushField(0), Op::PushFloatConst(0), Op::Pow],
+            vec![-1.0],
+        );
+        assert!(matches!(
+            validate_integer_arithmetic_types(&float_exponent),
+            Err(ViewRuntimeError::ImplicitFloatToInteger { .. })
+        ));
+        let component_id = ComponentId::new(1);
+        let float_base = CompiledBytecode {
+            bytecode: vec![
+                Op::PushField(0),
+                Op::PushConst(0),
+                Op::Pow,
+                Op::StoreField(0),
+            ],
+            constants: vec![-1.0],
+            integers: Vec::new(),
+            field_map: vec![field(component_id, 0, FieldType::F64)],
+        };
+        assert!(validate_integer_arithmetic_types(&float_base).is_ok());
+    }
+
+    type LiteralShape<'a> = (FieldType, &'a [Option<Op>], &'a [i128]);
+    type RejectedLiteral<'a> = (FieldType, &'a [Option<Op>], &'a [i128], &'a str);
+
+    fn literal_program(
+        field_type: FieldType,
+        shape: &[Option<Op>],
+        literals: &[i128],
+    ) -> CompiledBytecode {
+        let mut compiler = Compiler::new();
+        let field_index = compiler.add_field(field(ComponentId::new(1), 0, field_type));
+        let mut literals = literals.iter();
+        for op in shape {
+            let op = match op {
+                Some(op) => *op,
+                None => compiler.int_literal(*literals.next().expect("one literal per slot")),
+            };
+            compiler.emit(op);
+        }
+        compiler.emit(Op::StoreField(field_index));
+        compiler.finalize()
+    }
+
+    fn out_of_bounds(literal: &str, field_type: FieldType) -> ViewRuntimeError {
+        ViewRuntimeError::IntegerLiteralOutOfBounds(IntegerLiteralOutOfBounds {
+            literal: literal.to_owned(),
+            field_type,
+        })
+    }
+
+    #[test]
+    fn int_literal_outside_its_integer_lane_is_rejected() {
+        let add = [Some(Op::PushField(0)), None, Some(Op::Add)];
+        let reversed = [None, Some(Op::PushField(0)), Some(Op::Sub)];
+        let power = [Some(Op::PushField(0)), None, Some(Op::Pow)];
+        let store = [None];
+        let clip = [Some(Op::PushField(0)), None, None, Some(Op::Clamp)];
+        let rejected: [RejectedLiteral; 11] = [
+            (FieldType::U8, &add, &[300], "300"),
+            (FieldType::U8, &reversed, &[-1], "-1"),
+            (FieldType::U8, &store, &[256], "256"),
+            (FieldType::U32, &power, &[-1], "-1"),
+            (FieldType::I32, &add, &[1 << 31], "2147483648"),
+            (FieldType::I32, &store, &[-(1 << 31) - 1], "-2147483649"),
+            (FieldType::I64, &add, &[1 << 63], "9223372036854775808"),
+            (
+                FieldType::I64,
+                &reversed,
+                &[-(1 << 63) - 1],
+                "-9223372036854775809",
+            ),
+            (FieldType::U64, &add, &[1 << 64], "18446744073709551616"),
+            (FieldType::U32, &clip, &[1 << 40, 1 << 41], "1099511627776"),
+            (FieldType::U32, &clip, &[-5, -1], "-1"),
+        ];
+        for (field_type, shape, literals, message) in rejected {
+            let program = literal_program(field_type, shape, literals);
+            let expected = out_of_bounds(message, field_type).to_string();
+            assert_eq!(
+                validate_integer_arithmetic_types(&program).map_err(|error| error.to_string()),
+                Err(expected),
+                "{field_type:?} {literals:?}"
+            );
+        }
+        let accepted: [LiteralShape; 7] = [
+            (FieldType::U8, &add, &[255]),
+            (FieldType::I32, &add, &[-(1 << 31)]),
+            (FieldType::I64, &add, &[i64::MAX.into()]),
+            (FieldType::I64, &reversed, &[i64::MIN.into()]),
+            (FieldType::U64, &store, &[u64::MAX.into()]),
+            (FieldType::U32, &clip, &[-1, 1 << 40]),
+            (FieldType::F32, &add, &[1 << 100]),
+        ];
+        for (field_type, shape, literals) in accepted {
+            let program = literal_program(field_type, shape, literals);
+            assert!(
+                validate_integer_arithmetic_types(&program).is_ok(),
+                "{field_type:?} {literals:?}"
+            );
+        }
+        assert_eq!(
+            out_of_bounds("18446744073709551616", FieldType::U64).to_string(),
+            "Python integer 18446744073709551616 out of bounds for uint64"
+        );
+    }
+
+    #[test]
+    fn buffer_stores_cast_floats_but_check_literal_bounds() {
+        let float_store = literal_program(
+            FieldType::U8,
+            &[
+                Some(Op::PushField(0)),
+                Some(Op::PushFloatConst(0)),
+                Some(Op::Mul),
+            ],
+            &[],
+        );
+        let mut float_store = float_store;
+        float_store.constants.push(2.0);
+        assert!(check_integer_types(&float_store, FloatStores::Cast).is_ok());
+        assert!(check_integer_types(&float_store, FloatStores::Reject).is_err());
+        let literal = literal_program(
+            FieldType::U8,
+            &[Some(Op::PushField(0)), None, Some(Op::Add)],
+            &[300],
+        );
+        assert!(matches!(
+            check_integer_types(&literal, FloatStores::Cast),
+            Err(ViewRuntimeError::IntegerLiteralOutOfBounds(_))
+        ));
+    }
+
+    #[test]
+    fn integer_power_rejects_mixed_integer_widths() {
+        let component_id = ComponentId::new(1);
+        let bytecode = CompiledBytecode {
+            bytecode: vec![Op::PushField(0), Op::PushField(1), Op::Pow],
+            constants: vec![],
+            integers: Vec::new(),
+            field_map: vec![
+                field(component_id, 0, FieldType::I64),
+                field(component_id, 8, FieldType::I32),
+            ],
+        };
+        assert!(matches!(
+            validate_integer_arithmetic_types(&bytecode),
+            Err(ViewRuntimeError::MixedIntegerArithmetic {
+                instruction: "Pow",
+                ..
+            })
+        ));
     }
 }

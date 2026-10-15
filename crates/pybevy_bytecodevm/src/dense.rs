@@ -266,7 +266,10 @@ fn stack_effect(op: &Op) -> Result<(&'static [StackKind], StackKind), &'static s
         Op::StoreField(_) => return Err("StoreField"),
         Op::Random(_) => return Err("Random"),
         Op::RandomRange(_) => return Err("RandomRange"),
-        Op::PushInput(_) | Op::PushConst(_) => unreachable!("handled before stack_effect"),
+        Op::PushInput(_) | Op::PushConst(_) | Op::PushFloatConst(_) => {
+            unreachable!("handled before stack_effect")
+        }
+        Op::PushInt(_) => return Err("PushInt"),
         Op::PushField(_) => return Err("PushField"),
     })
 }
@@ -285,7 +288,7 @@ fn validate(ops: &[Op], num_constants: usize, num_inputs: usize) -> Result<Stack
                 }
                 kinds.push(StackKind::Float);
             }
-            Op::PushConst(i) => {
+            Op::PushConst(i) | Op::PushFloatConst(i) => {
                 let idx = *i as usize;
                 if idx >= num_constants {
                     return Err(DenseError::ConstIndexOutOfRange {
@@ -360,6 +363,7 @@ pub fn execute_dense(
     let compiled = CompiledBytecode {
         bytecode: Vec::new(),
         constants: program.constants.clone(),
+        integers: Vec::new(),
         field_map: Vec::new(),
     };
     let has_f32_input = program_inputs

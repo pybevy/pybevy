@@ -6,13 +6,17 @@ Internal machinery for pybevy.material; not part of the public API.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from types import NoneType, UnionType
+from typing import Any, Union, get_args, get_origin
 
+from ..assets import Handle
 from ..color import LinearRgba
 from ..image import Image
 from ..math import Vec2, Vec3, Vec4
 
 _MAX_TEXTURE_SLOTS = 4
+_UNION_ORIGINS = (Union, UnionType)
+_TEXTURE_ANNOTATION = "Handle[Image] | None"
 
 # Keep aligned with Naga's WGSL reserved tokens for the pinned renderer.
 _WGSL_RESERVED_NAMES = frozenset(
@@ -81,6 +85,35 @@ class _FieldLayout:
         self.default = default
 
 
+def _annotation_name(typ: object) -> str:
+    if get_origin(typ) in _UNION_ORIGINS:
+        return " | ".join(_annotation_name(arg) for arg in get_args(typ))
+    if typ is NoneType:
+        return "None"
+    return str(getattr(typ, "__name__", repr(typ)))
+
+
+def _is_texture_annotation(typ: object) -> bool:
+    if typ is Handle:
+        return True
+    return get_origin(typ) in _UNION_ORIGINS and set(get_args(typ)) == {Handle, NoneType}
+
+
+def _check_texture_annotation(name: str, typ: object) -> None:
+    members = get_args(typ) if get_origin(typ) in _UNION_ORIGINS else (typ,)
+    if Image in members:
+        raise TypeError(
+            f"Material field '{name}' is annotated '{_annotation_name(typ)}', but a texture "
+            f"field holds a Handle[Image]; annotate it as "
+            f"'{name}: {_TEXTURE_ANNOTATION} = None'"
+        )
+    if Handle in members:
+        raise TypeError(
+            f"Unsupported texture field annotation '{_annotation_name(typ)}' for '{name}'; "
+            f"annotate it as 'Handle[Image]' or '{_TEXTURE_ANNOTATION}'"
+        )
+
+
 class _BoolFieldInfo:
     """Tracks a bool field that maps to a shader def bit."""
     __slots__ = ("bit_index", "def_name", "default", "name")
@@ -93,7 +126,7 @@ class _BoolFieldInfo:
 
 
 class _TextureFieldInfo:
-    """Tracks an Image field that maps to a texture slot."""
+    """Tracks a Handle[Image] field that maps to a texture slot."""
     __slots__ = ("binding_sampler", "binding_texture", "name", "slot_index")
 
     def __init__(self, name: str, slot_index: int) -> None:
@@ -105,12 +138,12 @@ class _TextureFieldInfo:
 
 
 def _compute_layout(
-    hints: Mapping[str, type], defaults: Mapping[str, Any],
+    hints: Mapping[str, object], defaults: Mapping[str, Any],
 ) -> tuple[list[_FieldLayout], list[_BoolFieldInfo], list[_TextureFieldInfo]]:
     """Compute std140-compatible layout for material fields.
 
     Returns (uniform_fields, bool_fields, texture_fields).
-    Bool fields become shader defs, Image fields become texture slots.
+    Bool fields become shader defs, Handle[Image] fields become texture slots.
     """
     fields: list[_FieldLayout] = []
     bool_fields: list[_BoolFieldInfo] = []
@@ -137,12 +170,11 @@ def _compute_layout(
             ))
             continue
 
-        # Image fields → texture slots
-        if typ is Image:
+        if _is_texture_annotation(typ):
             _validate_wgsl_identifier(name, "field")
             if len(texture_fields) >= _MAX_TEXTURE_SLOTS:
                 raise TypeError(
-                    f"Too many Image fields (max {_MAX_TEXTURE_SLOTS}): '{name}'"
+                    f"Too many texture fields (max {_MAX_TEXTURE_SLOTS}): '{name}'"
                 )
             texture_fields.append(_TextureFieldInfo(
                 name=name,
@@ -150,10 +182,12 @@ def _compute_layout(
             ))
             continue
 
-        if typ not in _TYPE_MAP:
+        _check_texture_annotation(name, typ)
+        if not isinstance(typ, type) or typ not in _TYPE_MAP:
             raise TypeError(
-                f"Unsupported material field type '{typ.__name__}' for '{name}'. "
-                f"Supported: float, int, bool, Image, Vec2, Vec3, Vec4, LinearRgba"
+                f"Unsupported material field type '{_annotation_name(typ)}' for '{name}'. "
+                f"Supported: float, int, bool, Vec2, Vec3, Vec4, LinearRgba, "
+                f"{_TEXTURE_ANNOTATION}"
             )
 
         _validate_wgsl_identifier(name, "field")

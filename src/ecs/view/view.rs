@@ -46,7 +46,7 @@ use pybevy_core::{
     registry::global_registry,
 };
 use pyo3::{
-    exceptions::{PyAttributeError, PyRuntimeError, PyTypeError, PyValueError},
+    exceptions::{PyAttributeError, PyOverflowError, PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
     types::{PyAny, PyType},
 };
@@ -64,7 +64,17 @@ use crate::ecs::{
 fn view_program_error(error: ViewRuntimeError) -> PyErr {
     match error {
         ViewRuntimeError::ImplicitFloatToInteger { .. } => PyTypeError::new_err(error.to_string()),
+        ViewRuntimeError::IntegerLiteralOutOfBounds(_) => {
+            PyOverflowError::new_err(error.to_string())
+        }
         _ => PyValueError::new_err(error.to_string()),
+    }
+}
+
+fn view_execution_error(error: ViewRuntimeError) -> PyErr {
+    match error {
+        ViewRuntimeError::NegativeIntegerPower => PyValueError::new_err(error.to_string()),
+        _ => PyRuntimeError::new_err(error.to_string()),
     }
 }
 
@@ -151,14 +161,14 @@ impl PyView {
         let program = self
             .runtime
             .prepare_read_program(&expression)
-            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+            .map_err(view_program_error)?;
         let lease = self
             .runtime
             .gather_batches()
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         lease
             .reduce(&program, reduction, true)
-            .map_err(|error| PyRuntimeError::new_err(error.to_string()))
+            .map_err(view_execution_error)
     }
 }
 
@@ -801,16 +811,16 @@ impl PyViewColMut {
             let read_program = view
                 .runtime
                 .prepare_read_program(&expr)
-                .map_err(|error| PyValueError::new_err(error.to_string()))?;
+                .map_err(view_program_error)?;
             let values = lease
                 .evaluate(&read_program, true)
-                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+                .map_err(view_execution_error)?;
             validate_view_assignment_values(&values, dest_field_type, constraints)
                 .map_err(|error| PyValueError::new_err(error.to_string()))?;
         }
         lease
             .execute_assignment(&program, true)
-            .map_err(|error| PyRuntimeError::new_err(error.to_string()))
+            .map_err(view_execution_error)
     }
 }
 

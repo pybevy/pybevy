@@ -19,7 +19,7 @@ use bevy_tasks::ComputeTaskPool;
 use nonmax::NonMaxU32;
 
 use crate::{
-    bytecode::{CompiledBytecode, Compiler, FieldId, FieldType, Op, VM},
+    bytecode::{CompiledBytecode, Compiler, FieldId, FieldType, NegativeIntegerPower, Op, VM},
     expr::RustExpr,
     tiled::{TiledScratch, execute_assignment_tiled, supported_program},
 };
@@ -669,12 +669,15 @@ fn program_uses_random(bytecode: &CompiledBytecode) -> bool {
 ///
 /// All pointers in `batches` must be valid for the duration of this call.
 /// No other code may mutate the same memory concurrently.
+///
+/// An integer raised to a negative power is reported after the single pass,
+/// so every chunk, including rows after the failing one, may have been written.
 pub unsafe fn execute_batch_assignment(
     batches: &[TableBatch],
     bytecode: &CompiledBytecode,
     component_strides: &HashMap<ComponentId, usize>,
     parallel: bool,
-) {
+) -> Result<(), NegativeIntegerPower> {
     const CHUNK_SIZE: usize = 32768;
 
     // Fail-safe: skip rather than panic if a field references a component that
@@ -686,7 +689,7 @@ pub unsafe fn execute_batch_assignment(
         .iter()
         .any(|f| !component_strides.contains_key(&f.component_id))
     {
-        return;
+        return Ok(());
     }
 
     struct ChunkInfo {
@@ -786,7 +789,7 @@ pub unsafe fn execute_batch_assignment(
         && pool.thread_num() > 1
     {
         let task_size = chunks.len().div_ceil(pool.thread_num());
-        pool.scope(|scope| {
+        let outcomes = pool.scope(|scope| {
             for group in chunks.chunks(task_size) {
                 scope.spawn(async move {
                     let mut scratch = TiledScratch::new();
@@ -794,10 +797,11 @@ pub unsafe fn execute_batch_assignment(
                     for chunk in group {
                         process_chunk(chunk, &mut scratch, &mut vm);
                     }
+                    vm.take_negative_power()
                 });
             }
         });
-        return;
+        return outcomes.into_iter().collect();
     }
 
     let _ = parallel;
@@ -806,6 +810,7 @@ pub unsafe fn execute_batch_assignment(
     for chunk in &chunks {
         process_chunk(chunk, &mut scratch, &mut vm);
     }
+    vm.take_negative_power()
 }
 
 #[inline]
@@ -822,12 +827,14 @@ fn tiled_assignment_supported(bytecode: &CompiledBytecode) -> bool {
 ///
 /// All pointers in `batches` must be valid. Tick masks must accurately
 /// reflect which entities should be processed.
+///
+/// A negative integer power is reported after every selected row is processed.
 pub unsafe fn execute_filtered_assignment(
     batches: &[TableBatch],
     bytecode: &CompiledBytecode,
     component_strides: &HashMap<ComponentId, usize>,
     parallel: bool,
-) {
+) -> Result<(), NegativeIntegerPower> {
     // Fail-safe: skip rather than panic if a field references a component that
     // was not gathered (see `execute_batch_assignment`).
     if bytecode
@@ -835,7 +842,7 @@ pub unsafe fn execute_filtered_assignment(
         .iter()
         .any(|f| !component_strides.contains_key(&f.component_id))
     {
-        return;
+        return Ok(());
     }
 
     let field_strides: Vec<usize> = bytecode
@@ -903,6 +910,7 @@ pub unsafe fn execute_filtered_assignment(
         unsafe {
             vm.execute(bytecode, &ptrs, work.entity_seed);
         }
+        vm.take_negative_power()
     };
 
     #[cfg(feature = "parallel")]
@@ -912,22 +920,21 @@ pub unsafe fn execute_filtered_assignment(
         && pool.thread_num() > 1
     {
         let task_size = work_items.len().div_ceil(pool.thread_num());
-        pool.scope(|scope| {
+        let outcomes = pool.scope(|scope| {
             for group in work_items.chunks(task_size) {
-                scope.spawn(async move {
-                    for work in group {
-                        process_entity(work);
-                    }
-                });
+                scope.spawn(
+                    async move { group.iter().map(process_entity).fold(Ok(()), Result::and) },
+                );
             }
         });
-        return;
+        return outcomes.into_iter().collect();
     }
 
     let _ = parallel;
-    for work in &work_items {
-        process_entity(work);
-    }
+    work_items
+        .iter()
+        .map(process_entity)
+        .fold(Ok(()), Result::and)
 }
 
 /// Evaluate one validated read-only program over exact gathered batches.
@@ -948,13 +955,13 @@ pub(crate) unsafe fn evaluate_batch_program(
     bytecode: &CompiledBytecode,
     component_strides: &HashMap<ComponentId, usize>,
     parallel: bool,
-) -> Vec<f64> {
+) -> Result<Vec<f64>, NegativeIntegerPower> {
     if bytecode
         .field_map
         .iter()
         .any(|field| !component_strides.contains_key(&field.component_id))
     {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     let needs_seeds = program_uses_random(bytecode);
@@ -1009,7 +1016,8 @@ pub(crate) unsafe fn evaluate_batch_program(
         let field_ptrs: Vec<*mut u8> = work.field_ptrs.iter().map(|pointer| pointer.0).collect();
         // SAFETY: upheld by this function's caller and the bounds-checked work
         // construction above; the bytecode is read-only and fully validated.
-        unsafe { vm.execute_and_reduce(bytecode, &field_ptrs, work.entity_seed) }
+        let value = unsafe { vm.execute_and_reduce(bytecode, &field_ptrs, work.entity_seed) };
+        vm.take_negative_power().map(|()| value)
     };
 
     #[cfg(feature = "parallel")]
@@ -1021,15 +1029,19 @@ pub(crate) unsafe fn evaluate_batch_program(
         let task_size = work_items.len().div_ceil(pool.thread_num());
         let groups = pool.scope(|scope| {
             for (index, group) in work_items.chunks(task_size).enumerate() {
-                scope
-                    .spawn(async move { (index, group.iter().map(&evaluate).collect::<Vec<_>>()) });
+                scope.spawn(async move {
+                    (
+                        index,
+                        group.iter().map(&evaluate).collect::<Result<Vec<_>, _>>(),
+                    )
+                });
             }
         });
         let mut values = vec![Vec::new(); groups.len()];
         for (index, group) in groups {
-            values[index] = group;
+            values[index] = group?;
         }
-        return values.into_iter().flatten().collect();
+        return Ok(values.into_iter().flatten().collect());
     }
 
     let _ = parallel;
@@ -1080,6 +1092,14 @@ fn compile_expr(expr: &RustExpr, c: &mut Compiler) {
         RustExpr::Const(v) => {
             let idx = c.add_constant(*v);
             c.emit(Op::PushConst(idx));
+        }
+        RustExpr::FloatConst(v) => {
+            let idx = c.add_constant(*v);
+            c.emit(Op::PushFloatConst(idx));
+        }
+        RustExpr::Int(v) => {
+            let push = c.int_literal(*v);
+            c.emit(push);
         }
         RustExpr::Add(a, b) => {
             compile_expr(a, c);
@@ -1398,7 +1418,7 @@ mod tests {
         let mut strides = HashMap::new();
         strides.insert(cid, 4usize); // f32 stride
 
-        unsafe { execute_batch_assignment(&batches, &bytecode, &strides, false) };
+        unsafe { execute_batch_assignment(&batches, &bytecode, &strides, false) }.unwrap();
 
         assert_eq!(data[0], 11.0);
         assert_eq!(data[1], 21.0);
@@ -1436,7 +1456,7 @@ mod tests {
         .unwrap();
         let strides = resolve_component_strides(&world, &filter.component_ids).unwrap();
         // SAFETY: batches point into live, exclusively-held table columns.
-        unsafe { execute_batch_assignment(&batches, &bytecode, &strides, false) };
+        unsafe { execute_batch_assignment(&batches, &bytecode, &strides, false) }.unwrap();
 
         // Read through Bevy's dense contiguous query API.
         let mut state = world.query::<&DenseValue>();
@@ -1455,6 +1475,65 @@ mod tests {
             got, want,
             "tiled View results must match via contiguous_iter"
         );
+    }
+
+    #[test]
+    fn negative_field_exponent_is_reported_after_the_single_pass() {
+        let mut compiler = Compiler::new();
+        let component_id = ComponentId::new(0);
+        let base = compiler.add_field(FieldId {
+            component_id,
+            offset: 0,
+            field_type: FieldType::I64,
+        });
+        let exponent = compiler.add_field(FieldId {
+            component_id,
+            offset: 8,
+            field_type: FieldType::I64,
+        });
+        compiler.emit(Op::PushField(base));
+        compiler.emit(Op::PushField(exponent));
+        compiler.emit(Op::Pow);
+        compiler.emit(Op::StoreField(base));
+        let bytecode = compiler.finalize();
+        assert!(!tiled_assignment_supported(&bytecode));
+
+        let strides = HashMap::from([(component_id, 2 * size_of::<i64>())]);
+        for mask in [None, Some(vec![true; 3])] {
+            let mut rows = [[2_i64, 2], [3, -1], [4, 2]];
+            let batches = [TableBatch {
+                table_id: TableId::from_u32(0),
+                component_bases: HashMap::from([(component_id, rows.as_mut_ptr().cast::<u8>())]),
+                entities: test_entities(0, rows.len()),
+                start_row: 0,
+                entity_count: rows.len(),
+                tick_mask: mask.clone(),
+            }];
+            // SAFETY: the batch points to three live, exclusively held rows.
+            let result = unsafe {
+                if mask.is_some() {
+                    execute_filtered_assignment(&batches, &bytecode, &strides, false)
+                } else {
+                    execute_batch_assignment(&batches, &bytecode, &strides, false)
+                }
+            };
+            assert_eq!(result, Err(NegativeIntegerPower));
+            assert_eq!(rows.map(|row| row[0]), [4, 0, 16]);
+        }
+
+        let mut rows = [[2_i64, 3], [3, 2]];
+        let batches = [TableBatch {
+            table_id: TableId::from_u32(0),
+            component_bases: HashMap::from([(component_id, rows.as_mut_ptr().cast::<u8>())]),
+            entities: test_entities(0, rows.len()),
+            start_row: 0,
+            entity_count: rows.len(),
+            tick_mask: None,
+        }];
+        // SAFETY: the batch points to two live, exclusively held rows.
+        let result = unsafe { execute_batch_assignment(&batches, &bytecode, &strides, false) };
+        assert_eq!(result, Ok(()));
+        assert_eq!(rows.map(|row| row[0]), [8, 9]);
     }
 
     #[test]
@@ -1485,7 +1564,7 @@ mod tests {
         }];
         let strides = HashMap::from([(component_id, size_of::<u64>())]);
         // SAFETY: the batch points to one live, exclusively held u64 run.
-        unsafe { execute_batch_assignment(&batches, &bytecode, &strides, false) };
+        unsafe { execute_batch_assignment(&batches, &bytecode, &strides, false) }.unwrap();
 
         assert_eq!(values, [(1_u64 << 53) + 2, 0]);
     }
@@ -1518,7 +1597,7 @@ mod tests {
         let mut strides = HashMap::new();
         strides.insert(cid, 4usize);
 
-        unsafe { execute_filtered_assignment(&batches, &bytecode, &strides, false) };
+        unsafe { execute_filtered_assignment(&batches, &bytecode, &strides, false) }.unwrap();
 
         assert_eq!(data[0], 1.0); // unchanged
         assert_eq!(data[1], 102.0); // +100
@@ -1626,7 +1705,7 @@ mod tests {
         );
         // SAFETY: the batches were gathered from this unchanged World and the
         // bytecode only accesses the declared `DenseValue` component field.
-        unsafe { execute_batch_assignment(&batches, &bytecode, &strides, false) };
+        unsafe { execute_batch_assignment(&batches, &bytecode, &strides, false) }.unwrap();
 
         assert_eq!(
             world.entity(plain_first).get::<DenseValue>().unwrap().0,
@@ -1655,7 +1734,7 @@ mod tests {
         let strides = HashMap::new();
 
         // Should not panic on empty batches
-        unsafe { execute_batch_assignment(&batches, &bytecode, &strides, false) };
+        unsafe { execute_batch_assignment(&batches, &bytecode, &strides, false) }.unwrap();
     }
 
     #[test]
@@ -1698,13 +1777,13 @@ mod tests {
             tick_mask: None,
         }];
         // SAFETY: the batch describes one live, exclusively held f64 run.
-        unsafe { execute_batch_assignment(&batches, &assignment, &strides, false) };
+        unsafe { execute_batch_assignment(&batches, &assignment, &strides, false) }.unwrap();
         #[cfg(feature = "parallel")]
         {
             let serial = batched.clone();
             batched.fill(0.0);
             // SAFETY: the same live, exclusive batch is reused after serial execution.
-            unsafe { execute_batch_assignment(&batches, &assignment, &strides, true) };
+            unsafe { execute_batch_assignment(&batches, &assignment, &strides, true) }.unwrap();
             assert_eq!(batched, serial);
         }
 
@@ -1718,13 +1797,13 @@ mod tests {
             tick_mask: Some(vec![true; count]),
         }];
         // SAFETY: as above; the mask selects every row of the same run.
-        unsafe { execute_filtered_assignment(&batches, &assignment, &strides, false) };
+        unsafe { execute_filtered_assignment(&batches, &assignment, &strides, false) }.unwrap();
         #[cfg(feature = "parallel")]
         {
             let serial = filtered.clone();
             filtered.fill(0.0);
             // SAFETY: the same live, exclusive rows are reused after serial execution.
-            unsafe { execute_filtered_assignment(&batches, &assignment, &strides, true) };
+            unsafe { execute_filtered_assignment(&batches, &assignment, &strides, true) }.unwrap();
             assert_eq!(filtered, serial);
         }
 
@@ -1738,11 +1817,13 @@ mod tests {
         }];
         // SAFETY: the read-only program declares no fields, so no pointer is
         // dereferenced for these rows.
-        let evaluated = unsafe { evaluate_batch_program(&batches, &read_only, &strides, false) };
+        let evaluated =
+            unsafe { evaluate_batch_program(&batches, &read_only, &strides, false) }.unwrap();
         #[cfg(feature = "parallel")]
         {
             // SAFETY: the read-only program still declares no fields.
-            let parallel = unsafe { evaluate_batch_program(&batches, &read_only, &strides, true) };
+            let parallel =
+                unsafe { evaluate_batch_program(&batches, &read_only, &strides, true) }.unwrap();
             assert_eq!(parallel, evaluated);
         }
 
@@ -1780,7 +1861,7 @@ mod tests {
                 tick_mask: None,
             }];
             // SAFETY: the batch describes one live, exclusively held f64 run.
-            unsafe { execute_batch_assignment(&batches, &assignment, &strides, false) };
+            unsafe { execute_batch_assignment(&batches, &assignment, &strides, false) }.unwrap();
             values
         };
 
@@ -1811,9 +1892,9 @@ mod tests {
             // SAFETY: the batch describes one live, exclusively held i64.
             unsafe {
                 if batches[0].tick_mask.is_some() {
-                    execute_filtered_assignment(&batches, bytecode, &strides, false);
+                    execute_filtered_assignment(&batches, bytecode, &strides, false).unwrap();
                 } else {
-                    execute_batch_assignment(&batches, bytecode, &strides, false);
+                    execute_batch_assignment(&batches, bytecode, &strides, false).unwrap();
                 }
             }
             value[0]
@@ -1926,9 +2007,9 @@ mod tests {
             // SAFETY: the batch describes one live, exclusively held u8.
             unsafe {
                 if batches[0].tick_mask.is_some() {
-                    execute_filtered_assignment(&batches, bytecode, &strides, false);
+                    execute_filtered_assignment(&batches, bytecode, &strides, false).unwrap();
                 } else {
-                    execute_batch_assignment(&batches, bytecode, &strides, false);
+                    execute_batch_assignment(&batches, bytecode, &strides, false).unwrap();
                 }
             }
             value[0]
@@ -2103,6 +2184,7 @@ mod tests {
         let bytecode = CompiledBytecode {
             bytecode: vec![],
             constants: vec![],
+            integers: Vec::new(),
             field_map: vec![],
         };
         assert!(validate_bytecode_components(&bytecode, &allowed).is_ok());
@@ -2236,6 +2318,7 @@ mod tests {
         let bytecode = CompiledBytecode {
             bytecode: vec![],
             constants: vec![],
+            integers: Vec::new(),
             field_map: vec![],
         };
         assert!(validate_bytecode_field_types(&bytecode, &allowed).is_ok());

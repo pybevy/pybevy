@@ -13,9 +13,12 @@ use std::{
 use bevy_ecs::component::ComponentId;
 
 use crate::{
-    bytecode::{CompiledBytecode, FieldType, Op, VM},
+    bytecode::{CompiledBytecode, FieldType, NegativeIntegerPower, Op, VM},
     tiled::{TiledScratch, execute_assignment_tiled, supported_program},
-    view_runtime::{ProgramIntent, validate_instruction_indices, validate_stack_effects},
+    view_runtime::{
+        FloatStores, IntegerLiteralOutOfBounds, ProgramIntent, ViewRuntimeError,
+        check_integer_types, validate_instruction_indices, validate_stack_effects,
+    },
 };
 
 /// Opaque grouping key for one buffer lens. It is never resolved against a World.
@@ -49,6 +52,10 @@ pub enum BufferLensError {
     },
     MalformedProgram(String),
     NotAnAssignment,
+    /// An int literal does not fit the lane's integer type.
+    IntegerLiteralOutOfBounds(IntegerLiteralOutOfBounds),
+    /// An integer is raised to a negative literal power.
+    NegativeIntegerPower,
 }
 
 impl fmt::Display for BufferLensError {
@@ -82,6 +89,8 @@ impl fmt::Display for BufferLensError {
                     "program is not a single in-place field assignment"
                 )
             }
+            BufferLensError::IntegerLiteralOutOfBounds(error) => write!(formatter, "{error}"),
+            BufferLensError::NegativeIntegerPower => write!(formatter, "{NegativeIntegerPower}"),
         }
     }
 }
@@ -122,6 +131,13 @@ pub fn validate_buffer_program<'a>(
         .expect("exactly one validated store exists");
     validate_stack_effects(bytecode, ProgramIntent::Assignment { destination })
         .map_err(|error| BufferLensError::MalformedProgram(error.to_string()))?;
+    check_integer_types(bytecode, FloatStores::Cast).map_err(|error| match error {
+        ViewRuntimeError::IntegerLiteralOutOfBounds(error) => {
+            BufferLensError::IntegerLiteralOutOfBounds(error)
+        }
+        ViewRuntimeError::NegativeIntegerPower => BufferLensError::NegativeIntegerPower,
+        error => BufferLensError::MalformedProgram(error.to_string()),
+    })?;
 
     for field in &bytecode.field_map {
         if field.component_id != key {
@@ -165,16 +181,17 @@ pub fn validate_buffer_program<'a>(
 /// `base.add(element * validated.stride + field.offset)` must identify a valid,
 /// exclusively writable value of the declared field type for the duration of
 /// this call. `validated` binds bytecode and stride to one successful
-/// [`validate_buffer_program`] call.
+/// [`validate_buffer_program`] call. A negative integer power is reported
+/// after the pass, which may already have written every element.
 pub unsafe fn execute_buffer_assignment(
     validated: &ValidatedBufferProgram<'_>,
     base: *mut u8,
     count: usize,
-) {
+) -> Result<(), NegativeIntegerPower> {
     let bytecode = validated.bytecode;
     let stride = validated.stride;
     if count == 0 || bytecode.field_map.is_empty() {
-        return;
+        return Ok(());
     }
 
     let field_bases: Vec<*mut u8> = bytecode
@@ -193,11 +210,13 @@ pub unsafe fn execute_buffer_assignment(
         // SAFETY: forwards the function's pointer and exclusivity contract.
         unsafe { execute_assignment_tiled(bytecode, &field_bases, &strides, count, &mut scratch) }
             .expect("supported_program checked");
+        Ok(())
     } else {
         let mut vm = VM::new();
         // SAFETY: forwards the function's pointer and exclusivity contract.
         // One unchunked pass, so the element index is already a stable seed.
         unsafe { vm.execute_batch_multi(bytecode, &field_bases, &strides, count, None) };
+        vm.take_negative_power()
     }
 }
 
@@ -305,6 +324,7 @@ mod tests {
         let invalid_index = CompiledBytecode {
             bytecode: vec![Op::PushField(9), Op::StoreField(0)],
             constants: vec![],
+            integers: Vec::new(),
             field_map: vec![FieldId {
                 component_id: key,
                 offset: 0,
@@ -319,6 +339,7 @@ mod tests {
         let stack_underflow = CompiledBytecode {
             bytecode: vec![Op::Add, Op::StoreField(0)],
             constants: vec![],
+            integers: Vec::new(),
             field_map: vec![FieldId {
                 component_id: key,
                 offset: 0,
@@ -346,7 +367,8 @@ mod tests {
 
         let mut values = [[1.0f32, 0.0, 3.0], [5.0, 0.0, 7.0], [2.0, 9.0, 1.0]];
         // SAFETY: `values` is exclusively borrowed and has a 12-byte row stride.
-        unsafe { execute_buffer_assignment(&validated, values.as_mut_ptr().cast(), values.len()) };
+        unsafe { execute_buffer_assignment(&validated, values.as_mut_ptr().cast(), values.len()) }
+            .unwrap();
 
         assert_eq!(values, [[1.0, 5.0, 3.0], [5.0, 17.0, 7.0], [2.0, 5.0, 1.0]]);
     }
@@ -366,7 +388,8 @@ mod tests {
 
         let mut values = [[10u8, 1, 2, 255], [100, 0, 0, 255], [2, 0, 0, 255]];
         // SAFETY: `values` is exclusively borrowed and has a four-byte row stride.
-        unsafe { execute_buffer_assignment(&validated, values.as_mut_ptr().cast(), values.len()) };
+        unsafe { execute_buffer_assignment(&validated, values.as_mut_ptr().cast(), values.len()) }
+            .unwrap();
 
         assert_eq!(
             values,
@@ -389,7 +412,8 @@ mod tests {
 
         let mut values = [[1.0f32, 10.0, 0.0], [2.0, 20.0, 0.0]];
         // SAFETY: `values` is exclusively borrowed and has a 12-byte row stride.
-        unsafe { execute_buffer_assignment(&validated, values.as_mut_ptr().cast(), values.len()) };
+        unsafe { execute_buffer_assignment(&validated, values.as_mut_ptr().cast(), values.len()) }
+            .unwrap();
 
         assert_eq!(values, [[13.0, 10.0, 0.0], [26.0, 20.0, 0.0]]);
     }

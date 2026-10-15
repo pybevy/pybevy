@@ -36,10 +36,16 @@ pub enum StackValue {
     F32(f32),
     /// 64-bit floating-point number.
     Float(f64),
-    /// Constant-pool number. Kept distinct so exact integer constants can be
-    /// specialized to the other operand's lane type without treating a runtime
-    /// floating-point field the same way.
+    /// Python `int` literal. Like NumPy's weak Python scalars it adopts the
+    /// other operand's lane type, including exact integer lanes.
     Constant(f64),
+    /// Python `float` literal. It adopts an `f32` lane but promotes an
+    /// integer operand to f64, as NumPy's weak float scalars do.
+    FloatConstant(f64),
+    /// Python `int` literal in the `i64` range that f64 cannot hold exactly.
+    ExactInt(i64),
+    /// Python `int` literal above `i64::MAX` that f64 cannot hold exactly.
+    ExactUInt(u64),
     /// Signed 32-bit integer.
     I32(i32),
     /// Signed 64-bit integer.
@@ -60,8 +66,10 @@ impl StackValue {
     pub fn as_float(&self) -> f64 {
         match self {
             StackValue::F32(f) => f64::from(*f),
-            StackValue::Float(f) | StackValue::Constant(f) => *f,
+            StackValue::Float(f) | StackValue::Constant(f) | StackValue::FloatConstant(f) => *f,
             StackValue::I32(v) => f64::from(*v),
+            StackValue::ExactInt(v) => *v as f64,
+            StackValue::ExactUInt(v) => *v as f64,
             StackValue::I64(v) => *v as f64,
             StackValue::U8(v) => f64::from(*v),
             StackValue::U32(v) => f64::from(*v),
@@ -78,6 +86,9 @@ impl StackValue {
             StackValue::F32(_)
             | StackValue::Float(_)
             | StackValue::Constant(_)
+            | StackValue::FloatConstant(_)
+            | StackValue::ExactInt(_)
+            | StackValue::ExactUInt(_)
             | StackValue::I32(_)
             | StackValue::I64(_)
             | StackValue::U8(_)
@@ -86,10 +97,46 @@ impl StackValue {
         }
     }
 
+    /// An exact int literal as the stack value that holds it: an f64
+    /// `Constant` when exact, otherwise the `i64`/`u64` exact variants.
+    pub fn int_literal(value: i128) -> Self {
+        if let Ok(value) = i64::try_from(value)
+            && (value as f64) as i128 != i128::from(value)
+        {
+            return StackValue::ExactInt(value);
+        }
+        if let Ok(value) = u64::try_from(value)
+            && (value as f64) as i128 != i128::from(value)
+        {
+            return StackValue::ExactUInt(value);
+        }
+        StackValue::Constant(value as f64)
+    }
+
+    #[inline]
+    fn coerce_exact(value: i128, template: Self) -> Option<Self> {
+        Some(match template {
+            StackValue::F32(_) => StackValue::F32(value as f32),
+            StackValue::Float(_) | StackValue::FloatConstant(_) => {
+                StackValue::FloatConstant(value as f64)
+            }
+            StackValue::I32(_) => StackValue::I32(i32::try_from(value).ok()?),
+            StackValue::I64(_) => StackValue::I64(i64::try_from(value).ok()?),
+            StackValue::U8(_) => StackValue::U8(u8::try_from(value).ok()?),
+            StackValue::U32(_) => StackValue::U32(u32::try_from(value).ok()?),
+            StackValue::U64(_) => StackValue::U64(u64::try_from(value).ok()?),
+            _ => return None,
+        })
+    }
+
     #[inline]
     fn coerce_constant(self, template: Self) -> Option<Self> {
-        let StackValue::Constant(value) = self else {
-            return None;
+        let value = match self {
+            StackValue::ExactInt(value) => return Self::coerce_exact(value.into(), template),
+            StackValue::ExactUInt(value) => return Self::coerce_exact(value.into(), template),
+            StackValue::Constant(value) => value,
+            StackValue::FloatConstant(value) if matches!(template, StackValue::F32(_)) => value,
+            _ => return None,
         };
         if matches!(template, StackValue::F32(_)) {
             return Some(StackValue::F32(value as f32));
@@ -172,20 +219,51 @@ fn cmp_u64_f64(integer: u64, float: f64) -> Option<Ordering> {
     }
 }
 
-/// Result of an op whose operands did not share a native lane. Constant-only
-/// inputs stay `Constant`, so a later operand can still specialize them.
-#[inline]
-fn numeric_result(constant: bool, value: f64) -> StackValue {
-    if constant {
-        StackValue::Constant(value)
-    } else {
-        StackValue::Float(value)
+/// Where a value came from, ordered so that combining two origins keeps the
+/// greater one: literal-only inputs stay literals a later operand can specialize.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Origin {
+    IntLiteral,
+    FloatLiteral,
+    Runtime,
+}
+
+impl Origin {
+    #[inline]
+    fn of(value: StackValue) -> Self {
+        match value {
+            StackValue::Constant(_) | StackValue::ExactInt(_) | StackValue::ExactUInt(_) => {
+                Self::IntLiteral
+            }
+            StackValue::FloatConstant(_) => Self::FloatLiteral,
+            _ => Self::Runtime,
+        }
+    }
+
+    #[inline]
+    fn of_all(values: &[StackValue]) -> Self {
+        values
+            .iter()
+            .map(|value| Self::of(*value))
+            .max()
+            .unwrap_or(Self::IntLiteral)
+    }
+
+    /// The origin of a float-valued result computed from these inputs.
+    #[inline]
+    fn floating(self) -> Self {
+        self.max(Self::FloatLiteral)
     }
 }
 
+/// Result of an op whose operands did not share a native lane.
 #[inline]
-fn is_constant(value: StackValue) -> bool {
-    matches!(value, StackValue::Constant(_))
+fn numeric_result(origin: Origin, value: f64) -> StackValue {
+    match origin {
+        Origin::IntLiteral => StackValue::Constant(value),
+        Origin::FloatLiteral => StackValue::FloatConstant(value),
+        Origin::Runtime => StackValue::Float(value),
+    }
 }
 
 macro_rules! signed_floor_divmod {
@@ -220,7 +298,7 @@ fn floor_divide(a: StackValue, b: StackValue) -> StackValue {
         (StackValue::U64(a), StackValue::U64(b)) => StackValue::U64(a.checked_div(b).unwrap_or(0)),
         (StackValue::F32(a), StackValue::F32(b)) => StackValue::F32(numpy_floor_divide_f32(a, b)),
         (a, b) => numeric_result(
-            is_constant(a) && is_constant(b),
+            Origin::of_all(&[a, b]),
             numpy_floor_divide(a.as_float(), b.as_float()),
         ),
     }
@@ -237,11 +315,95 @@ fn remainder(a: StackValue, b: StackValue) -> StackValue {
         (StackValue::U64(a), StackValue::U64(b)) => StackValue::U64(a.checked_rem(b).unwrap_or(0)),
         (StackValue::F32(a), StackValue::F32(b)) => StackValue::F32(python_remainder_f32(a, b)),
         (a, b) => numeric_result(
-            is_constant(a) && is_constant(b),
+            Origin::of_all(&[a, b]),
             python_remainder(a.as_float(), b.as_float()),
         ),
     }
 }
+
+macro_rules! signed_power {
+    ($name:ident, $ty:ty) => {
+        #[inline]
+        fn $name(base: $ty, exponent: $ty) -> $ty {
+            if exponent < 0 {
+                return match base {
+                    1 => 1,
+                    -1 if exponent & 1 == 0 => 1,
+                    -1 => -1,
+                    _ => 0,
+                };
+            }
+            unsigned_power_body!(base, exponent, $ty)
+        }
+    };
+}
+
+macro_rules! unsigned_power {
+    ($name:ident, $ty:ty) => {
+        #[inline]
+        fn $name(base: $ty, exponent: $ty) -> $ty {
+            unsigned_power_body!(base, exponent, $ty)
+        }
+    };
+}
+
+macro_rules! unsigned_power_body {
+    ($base:expr, $exponent:expr, $ty:ty) => {{
+        let (mut base, mut exponent, mut result): ($ty, $ty, $ty) = ($base, $exponent, 1);
+        while exponent > 0 {
+            if exponent & 1 == 1 {
+                result = result.wrapping_mul(base);
+            }
+            base = base.wrapping_mul(base);
+            exponent >>= 1;
+        }
+        result
+    }};
+}
+
+signed_power!(power_i32, i32);
+signed_power!(power_i64, i64);
+unsigned_power!(power_u8, u8);
+unsigned_power!(power_u32, u32);
+unsigned_power!(power_u64, u64);
+
+/// NumPy `power`: integer lanes wrap on overflow. The flag reports a signed
+/// integer lane raised to a negative power, which NumPy rejects; the value
+/// returned for it is truncated toward zero (0 unless the base is 1 or -1).
+#[inline]
+fn power(a: StackValue, b: StackValue) -> (StackValue, bool) {
+    let (a, b) = specialize_constants(a, b);
+    match (a, b) {
+        (StackValue::I32(a), StackValue::I32(b)) => (StackValue::I32(power_i32(a, b)), b < 0),
+        (StackValue::I64(a), StackValue::I64(b)) => (StackValue::I64(power_i64(a, b)), b < 0),
+        (StackValue::U8(a), StackValue::U8(b)) => (StackValue::U8(power_u8(a, b)), false),
+        (StackValue::U32(a), StackValue::U32(b)) => (StackValue::U32(power_u32(a, b)), false),
+        (StackValue::U64(a), StackValue::U64(b)) => (StackValue::U64(power_u64(a, b)), false),
+        (StackValue::F32(a), StackValue::F32(b)) => (StackValue::F32(a.powf(b)), false),
+        (a, b) => {
+            let origin = match Origin::of_all(&[a, b]) {
+                Origin::IntLiteral if b.as_float() >= 0.0 => Origin::IntLiteral,
+                origin => origin.floating(),
+            };
+            (
+                numeric_result(origin, a.as_float().powf(b.as_float())),
+                false,
+            )
+        }
+    }
+}
+
+/// A row raised an integer to a negative integer power, which NumPy rejects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NegativeIntegerPower;
+
+impl std::fmt::Display for NegativeIntegerPower {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Integers to negative integer powers are not allowed.")
+    }
+}
+
+impl std::error::Error for NegativeIntegerPower {}
 
 macro_rules! integer_binary {
     ($a:expr, $b:expr, $method:ident, $float:expr) => {{
@@ -253,10 +415,7 @@ macro_rules! integer_binary {
             (StackValue::U8(a), StackValue::U8(b)) => StackValue::U8(a.$method(b)),
             (StackValue::U32(a), StackValue::U32(b)) => StackValue::U32(a.$method(b)),
             (StackValue::U64(a), StackValue::U64(b)) => StackValue::U64(a.$method(b)),
-            (a, b) => numeric_result(
-                is_constant(a) && is_constant(b),
-                $float(a.as_float(), b.as_float()),
-            ),
+            (a, b) => numeric_result(Origin::of_all(&[a, b]), $float(a.as_float(), b.as_float())),
         }
     }};
 }
@@ -267,7 +426,7 @@ macro_rules! float_binary {
         match (a, b) {
             (StackValue::F32(a), StackValue::F32(b)) => StackValue::F32($f32(a, b)),
             (a, b) => numeric_result(
-                is_constant(a) && is_constant(b),
+                Origin::of_all(&[a, b]).floating(),
                 $f64(a.as_float(), b.as_float()),
             ),
         }
@@ -278,7 +437,7 @@ macro_rules! float_unary {
     ($value:expr, $f32:expr, $f64:expr) => {{
         match $value {
             StackValue::F32(value) => StackValue::F32($f32(value)),
-            value => numeric_result(is_constant(value), $f64(value.as_float())),
+            value => numeric_result(Origin::of(value).floating(), $f64(value.as_float())),
         }
     }};
 }
@@ -298,9 +457,12 @@ impl ExactInteger {
             StackValue::U8(value) => Some(Self::Unsigned(u64::from(value))),
             StackValue::U32(value) => Some(Self::Unsigned(u64::from(value))),
             StackValue::U64(value) => Some(Self::Unsigned(value)),
+            StackValue::ExactInt(value) => Some(Self::Signed(value)),
+            StackValue::ExactUInt(value) => Some(Self::Unsigned(value)),
             StackValue::F32(_)
             | StackValue::Float(_)
             | StackValue::Constant(_)
+            | StackValue::FloatConstant(_)
             | StackValue::Bool(_) => None,
         }
     }
@@ -338,19 +500,23 @@ fn numeric_cmp(a: StackValue, b: StackValue) -> Option<Ordering> {
     match (a, b) {
         (StackValue::Bool(a), StackValue::Bool(b)) => a.partial_cmp(&b),
         (StackValue::F32(a), StackValue::F32(b)) => a.partial_cmp(&b),
-        (StackValue::F32(a), StackValue::Float(b) | StackValue::Constant(b)) => {
-            f64::from(a).partial_cmp(&b)
-        }
-        (StackValue::Float(a) | StackValue::Constant(a), StackValue::F32(b)) => {
-            a.partial_cmp(&f64::from(b))
-        }
         (
-            StackValue::Float(a) | StackValue::Constant(a),
-            StackValue::Float(b) | StackValue::Constant(b),
+            StackValue::F32(a),
+            StackValue::Float(b) | StackValue::Constant(b) | StackValue::FloatConstant(b),
+        ) => f64::from(a).partial_cmp(&b),
+        (
+            StackValue::Float(a) | StackValue::Constant(a) | StackValue::FloatConstant(a),
+            StackValue::F32(b),
+        ) => a.partial_cmp(&f64::from(b)),
+        (
+            StackValue::Float(a) | StackValue::Constant(a) | StackValue::FloatConstant(a),
+            StackValue::Float(b) | StackValue::Constant(b) | StackValue::FloatConstant(b),
         ) => a.partial_cmp(&b),
-        (_, StackValue::Float(b) | StackValue::Constant(b)) => a_integer?.cmp_float(b),
+        (_, StackValue::Float(b) | StackValue::Constant(b) | StackValue::FloatConstant(b)) => {
+            a_integer?.cmp_float(b)
+        }
         (_, StackValue::F32(b)) => a_integer?.cmp_float(f64::from(b)),
-        (StackValue::Float(a) | StackValue::Constant(a), _) => {
+        (StackValue::Float(a) | StackValue::Constant(a) | StackValue::FloatConstant(a), _) => {
             b_integer?.cmp_float(a).map(Ordering::reverse)
         }
         (StackValue::F32(a), _) => b_integer?.cmp_float(f64::from(a)).map(Ordering::reverse),
@@ -369,9 +535,17 @@ pub enum Op {
     /// u16 is an index into the caller-provided input columns.
     PushInput(u16),
 
-    /// Push a constant from the constant pool onto the stack
+    /// Push a Python `int` literal from the constant pool onto the stack
     /// u16 is an index into the constants array
     PushConst(u16),
+
+    /// Push a Python `float` literal from the constant pool onto the stack
+    /// u16 is an index into the constants array
+    PushFloatConst(u16),
+
+    /// Push a Python `int` literal that f64 cannot hold exactly
+    /// u16 is an index into the integers array
+    PushInt(u16),
 
     /// Pop two values, add them, push result
     Add,
@@ -530,6 +704,8 @@ pub struct CompiledBytecode {
     pub bytecode: Vec<Op>,
     /// Constant pool (f64 values referenced by PushConst)
     pub constants: Vec<f64>,
+    /// Exact integer pool referenced by PushInt
+    pub integers: Vec<i128>,
     /// Maps field indices (used in bytecode) to actual component field locations
     pub field_map: Vec<FieldId>,
 }
@@ -539,6 +715,7 @@ pub struct Compiler {
     bytecode: Vec<Op>,
     constants: Vec<f64>,
     constant_map: HashMap<u64, u16>, // f64 bits -> constant pool index
+    integers: Vec<i128>,
     field_map: Vec<FieldId>,
     field_index_map: HashMap<FieldId, u16>, // FieldId -> field map index
 }
@@ -556,6 +733,7 @@ impl Compiler {
             bytecode: Vec::new(),
             constants: Vec::new(),
             constant_map: HashMap::new(),
+            integers: Vec::new(),
             field_map: Vec::new(),
             field_index_map: HashMap::new(),
         }
@@ -581,6 +759,33 @@ impl Compiler {
         index
     }
 
+    /// Add an exact Python `int` literal and return the instruction pushing it:
+    /// `PushConst` when f64 holds it exactly, otherwise `PushInt`.
+    pub fn int_literal(&mut self, value: i128) -> Op {
+        if (value as f64) as i128 == value {
+            return Op::PushConst(self.add_constant(value as f64));
+        }
+        let index = match self.integers.iter().position(|existing| *existing == value) {
+            Some(index) => index,
+            None => {
+                self.integers.push(value);
+                self.integers.len() - 1
+            }
+        };
+        Op::PushInt(index as u16)
+    }
+
+    /// Replace `PushInt` with the nearest f64 `PushConst`, for executors
+    /// whose numeric domain is floating point.
+    pub fn lower_integers_to_f64(&mut self) {
+        for index in 0..self.bytecode.len() {
+            if let Op::PushInt(integer) = self.bytecode[index] {
+                let value = self.integers[usize::from(integer)] as f64;
+                self.bytecode[index] = Op::PushConst(self.add_constant(value));
+            }
+        }
+    }
+
     /// Add a field to the field map and return its index
     pub fn add_field(&mut self, field_id: FieldId) -> u16 {
         if let Some(&index) = self.field_index_map.get(&field_id) {
@@ -598,82 +803,93 @@ impl Compiler {
         CompiledBytecode {
             bytecode: self.bytecode,
             constants: self.constants,
+            integers: self.integers,
             field_map: self.field_map,
         }
     }
 
-    /// Simple peephole optimization pass
+    /// Simple peephole optimization pass: fold an arithmetic op whose two
+    /// operands are literals into one literal of the resulting kind.
     pub fn optimize(&mut self) {
-        // Constant folding example:
-        // PushConst(a), PushConst(b), Add -> PushConst(a+b)
-
         let mut i = 0;
         while i + 2 < self.bytecode.len() {
-            match (
-                &self.bytecode[i],
-                &self.bytecode[i + 1],
-                &self.bytecode[i + 2],
+            let folded = match (
+                self.literal_operand(self.bytecode[i]),
+                self.literal_operand(self.bytecode[i + 1]),
             ) {
-                (Op::PushConst(a), Op::PushConst(b), Op::Add) => {
-                    let val_a = self.constants[*a as usize];
-                    let val_b = self.constants[*b as usize];
-                    let result = val_a + val_b;
-                    let result_idx = self.add_constant(result);
-
-                    self.bytecode[i] = Op::PushConst(result_idx);
-                    self.bytecode.remove(i + 1);
-                    self.bytecode.remove(i + 1);
-                    // Don't increment i - check this position again
-                }
-                (Op::PushConst(a), Op::PushConst(b), Op::Mul) => {
-                    let val_a = self.constants[*a as usize];
-                    let val_b = self.constants[*b as usize];
-                    let result = val_a * val_b;
-                    let result_idx = self.add_constant(result);
-
-                    self.bytecode[i] = Op::PushConst(result_idx);
-                    self.bytecode.remove(i + 1);
-                    self.bytecode.remove(i + 1);
-                }
-                (Op::PushConst(a), Op::PushConst(b), Op::Sub) => {
-                    let val_a = self.constants[*a as usize];
-                    let val_b = self.constants[*b as usize];
-                    let result = val_a - val_b;
-                    let result_idx = self.add_constant(result);
-
-                    self.bytecode[i] = Op::PushConst(result_idx);
-                    self.bytecode.remove(i + 1);
-                    self.bytecode.remove(i + 1);
-                }
-                (Op::PushConst(a), Op::PushConst(b), Op::Div) => {
-                    let val_a = self.constants[*a as usize];
-                    let val_b = self.constants[*b as usize];
-                    if val_b != 0.0 {
-                        let result = val_a / val_b;
-                        let result_idx = self.add_constant(result);
-
-                        self.bytecode[i] = Op::PushConst(result_idx);
-                        self.bytecode.remove(i + 1);
-                        self.bytecode.remove(i + 1);
-                    } else {
-                        i += 1;
-                    }
-                }
-                (Op::PushConst(a), Op::PushConst(b), Op::Pow) => {
-                    let val_a = self.constants[*a as usize];
-                    let val_b = self.constants[*b as usize];
-                    let result = val_a.powf(val_b);
-                    let result_idx = self.add_constant(result);
-
-                    self.bytecode[i] = Op::PushConst(result_idx);
-                    self.bytecode.remove(i + 1);
-                    self.bytecode.remove(i + 1);
-                }
-                _ => {
-                    i += 1;
-                }
-            }
+                (Some(a), Some(b)) => fold_literals(self.bytecode[i + 2], a, b),
+                _ => None,
+            };
+            let Some(folded) = folded else {
+                i += 1;
+                continue;
+            };
+            self.bytecode[i] = match folded {
+                Literal::Int(value) => self.int_literal(value),
+                Literal::Float(value) => Op::PushFloatConst(self.add_constant(value)),
+            };
+            self.bytecode.drain(i + 1..i + 3);
         }
+    }
+}
+
+/// A literal operand seen by the constant folder.
+#[derive(Clone, Copy)]
+enum Literal {
+    Int(i128),
+    Float(f64),
+}
+
+impl Literal {
+    fn as_f64(self) -> f64 {
+        match self {
+            Literal::Int(value) => value as f64,
+            Literal::Float(value) => value,
+        }
+    }
+}
+
+impl Compiler {
+    fn literal_operand(&self, op: Op) -> Option<Literal> {
+        match op {
+            Op::PushConst(index) => {
+                let value = self.constants[usize::from(index)];
+                exact_i128(value).map(Literal::Int)
+            }
+            Op::PushInt(index) => Some(Literal::Int(self.integers[usize::from(index)])),
+            Op::PushFloatConst(index) => Some(Literal::Float(self.constants[usize::from(index)])),
+            _ => None,
+        }
+    }
+}
+
+/// The exact integer an integral f64 holds, if it fits `i128`.
+pub fn exact_i128(value: f64) -> Option<i128> {
+    (value.is_finite() && value.fract() == 0.0 && value.abs() < 2_f64.powi(127))
+        .then_some(value as i128)
+}
+
+/// Fold `a op b` for two literals into a literal of the resulting kind.
+/// Integer arithmetic folds exactly; integer powers only while non-negative.
+fn fold_literals(op: Op, a: Literal, b: Literal) -> Option<Literal> {
+    if let (Literal::Int(a), Literal::Int(b)) = (a, b) {
+        return match op {
+            Op::Add => a.checked_add(b).map(Literal::Int),
+            Op::Sub => a.checked_sub(b).map(Literal::Int),
+            Op::Mul => a.checked_mul(b).map(Literal::Int),
+            Op::Div if b != 0 => Some(Literal::Float(a as f64 / b as f64)),
+            Op::Pow => a.checked_pow(u32::try_from(b).ok()?).map(Literal::Int),
+            _ => None,
+        };
+    }
+    let (a, b) = (a.as_f64(), b.as_f64());
+    match op {
+        Op::Add => Some(Literal::Float(a + b)),
+        Op::Sub => Some(Literal::Float(a - b)),
+        Op::Mul => Some(Literal::Float(a * b)),
+        Op::Div if b != 0.0 => Some(Literal::Float(a / b)),
+        Op::Pow => Some(Literal::Float(a.powf(b))),
+        _ => None,
     }
 }
 
@@ -950,7 +1166,8 @@ pub unsafe fn read_field_stack_value(ptr: *const u8, field_type: FieldType) -> S
 /// Write a VM value without losing exact same-domain integer values.
 ///
 /// Cross-domain stores are explicit conversions at the destination boundary;
-/// integer operations themselves remain typed.
+/// integer operations themselves remain typed. An int literal reaching an
+/// integer field unconverted (a `where` branch) wraps, as NumPy casts it.
 ///
 /// # Safety
 /// The pointer must be valid for a value of `field_type` and not concurrently read.
@@ -976,6 +1193,23 @@ pub unsafe fn write_field_stack_value(ptr: *mut u8, value: StackValue, field_typ
             (FieldType::Bool, StackValue::Bool(value)) => {
                 ptr.write_unaligned(u8::from(value));
             }
+            (
+                FieldType::I32 | FieldType::I64 | FieldType::U8 | FieldType::U32 | FieldType::U64,
+                StackValue::Constant(_) | StackValue::ExactInt(_) | StackValue::ExactUInt(_),
+            ) => {
+                let value = match value {
+                    StackValue::ExactInt(value) => i128::from(value),
+                    StackValue::ExactUInt(value) => i128::from(value),
+                    value => value.as_float() as i128,
+                };
+                match field_type {
+                    FieldType::I32 => (ptr as *mut i32).write_unaligned(value as i32),
+                    FieldType::I64 => (ptr as *mut i64).write_unaligned(value as i64),
+                    FieldType::U8 => ptr.write_unaligned(value as u8),
+                    FieldType::U32 => (ptr as *mut u32).write_unaligned(value as u32),
+                    _ => (ptr as *mut u64).write_unaligned(value as u64),
+                }
+            }
             (FieldType::Bool, value) => {
                 ptr.write_unaligned(u8::from(value.as_float() >= 0.5));
             }
@@ -995,6 +1229,8 @@ pub struct VM {
     entity_index: usize,
     /// Execution domain for dense programs whose numeric inputs are all f32.
     native_f32: bool,
+    /// Set by an integer power with a negative exponent; read after a pass.
+    negative_power: bool,
 }
 
 impl Default for VM {
@@ -1058,6 +1294,7 @@ impl VM {
             stack: Vec::with_capacity(32), // Most expressions need < 32 stack slots
             entity_index: 0,
             native_f32: false,
+            negative_power: false,
         }
     }
 
@@ -1067,6 +1304,18 @@ impl VM {
         self.stack.clear();
         self.entity_index = 0;
         self.native_f32 = false;
+        self.negative_power = false;
+    }
+
+    /// Report and clear whether any row since the last call raised an
+    /// integer to a negative power.
+    #[inline]
+    pub fn take_negative_power(&mut self) -> Result<(), NegativeIntegerPower> {
+        if std::mem::take(&mut self.negative_power) {
+            Err(NegativeIntegerPower)
+        } else {
+            Ok(())
+        }
     }
 
     #[inline]
@@ -1106,6 +1355,22 @@ impl VM {
                     StackValue::Constant(value)
                 });
             }
+            Op::PushFloatConst(const_idx) => {
+                let value = bytecode.constants[*const_idx as usize];
+                self.stack.push(if self.native_f32 {
+                    StackValue::F32(value as f32)
+                } else {
+                    StackValue::FloatConstant(value)
+                });
+            }
+            Op::PushInt(index) => {
+                let value = bytecode.integers[usize::from(*index)];
+                self.stack.push(if self.native_f32 {
+                    StackValue::F32(value as f32)
+                } else {
+                    StackValue::int_literal(value)
+                });
+            }
 
             Op::Add => {
                 let b = self.stack.pop().expect("Stack underflow on Add");
@@ -1139,8 +1404,9 @@ impl VM {
             Op::Pow => {
                 let b = self.stack.pop().expect("Stack underflow on Pow");
                 let a = self.stack.pop().expect("Stack underflow on Pow");
-                self.stack
-                    .push(float_binary!(a, b, |a: f32, b| a.powf(b), |a: f64, b| a.powf(b)));
+                let (value, negative) = power(a, b);
+                self.negative_power |= negative;
+                self.stack.push(value);
             }
             Op::Mod => {
                 let b = self.stack.pop().expect("Stack underflow on Mod");
@@ -1156,7 +1422,9 @@ impl VM {
                     StackValue::U8(v) => StackValue::U8(v.wrapping_neg()),
                     StackValue::U32(v) => StackValue::U32(v.wrapping_neg()),
                     StackValue::U64(v) => StackValue::U64(v.wrapping_neg()),
-                    value => numeric_result(is_constant(value), -value.as_float()),
+                    StackValue::ExactInt(v) => StackValue::int_literal(-i128::from(v)),
+                    StackValue::ExactUInt(v) => StackValue::int_literal(-i128::from(v)),
+                    value => numeric_result(Origin::of(value), -value.as_float()),
                 });
             }
 
@@ -1207,7 +1475,7 @@ impl VM {
                     StackValue::U8(v) => StackValue::U8(v),
                     StackValue::U32(v) => StackValue::U32(v),
                     StackValue::U64(v) => StackValue::U64(v),
-                    value => numeric_result(is_constant(value), value.as_float().abs()),
+                    value => numeric_result(Origin::of(value), value.as_float().abs()),
                 });
             }
             Op::Floor => {
@@ -1219,7 +1487,7 @@ impl VM {
                     | StackValue::U32(_)
                     | StackValue::U64(_) => x,
                     StackValue::F32(value) => StackValue::F32(value.floor()),
-                    value => numeric_result(is_constant(value), value.as_float().floor()),
+                    value => numeric_result(Origin::of(value), value.as_float().floor()),
                 });
             }
             Op::Ceil => {
@@ -1231,7 +1499,7 @@ impl VM {
                     | StackValue::U32(_)
                     | StackValue::U64(_) => x,
                     StackValue::F32(value) => StackValue::F32(value.ceil()),
-                    value => numeric_result(is_constant(value), value.as_float().ceil()),
+                    value => numeric_result(Origin::of(value), value.as_float().ceil()),
                 });
             }
             Op::Round => {
@@ -1243,7 +1511,7 @@ impl VM {
                     | StackValue::U32(_)
                     | StackValue::U64(_) => x,
                     StackValue::F32(value) => StackValue::F32(value.round_ties_even()),
-                    value => numeric_result(is_constant(value), python_round(value.as_float())),
+                    value => numeric_result(Origin::of(value), python_round(value.as_float())),
                 });
             }
             Op::Exp => {
@@ -1275,7 +1543,7 @@ impl VM {
                     StackValue::U32(v) => StackValue::U32(u32::from(v != 0)),
                     StackValue::U64(v) => StackValue::U64(u64::from(v != 0)),
                     StackValue::F32(value) => StackValue::F32(python_sign_f32(value)),
-                    value => numeric_result(is_constant(value), python_sign(value.as_float())),
+                    value => numeric_result(Origin::of(value), python_sign(value.as_float())),
                 });
             }
             Op::Fract => {
@@ -1295,9 +1563,9 @@ impl VM {
                         StackValue::F32(a + t * (b - a))
                     }
                     (a, b, t) => {
-                        let constant = is_constant(a) && is_constant(b) && is_constant(t);
+                        let origin = Origin::of_all(&[a, b, t]).floating();
                         let (a, b, t) = (a.as_float(), b.as_float(), t.as_float());
-                        numeric_result(constant, a + t * (b - a))
+                        numeric_result(origin, a + t * (b - a))
                     }
                 });
             }
@@ -1317,7 +1585,7 @@ impl VM {
                         StackValue::F32(python_minimum_f32(a, b))
                     }
                     (a, b) => numeric_result(
-                        is_constant(a) && is_constant(b),
+                        Origin::of_all(&[a, b]),
                         python_minimum(a.as_float(), b.as_float()),
                     ),
                 });
@@ -1336,7 +1604,7 @@ impl VM {
                         StackValue::F32(python_maximum_f32(a, b))
                     }
                     (a, b) => numeric_result(
-                        is_constant(a) && is_constant(b),
+                        Origin::of_all(&[a, b]),
                         python_maximum(a.as_float(), b.as_float()),
                     ),
                 });
@@ -1368,7 +1636,7 @@ impl VM {
                         StackValue::F32(python_clip_f32(value, min, max))
                     }
                     (value, min, max) => numeric_result(
-                        is_constant(value) && is_constant(min) && is_constant(max),
+                        Origin::of_all(&[value, min, max]),
                         python_clip(value.as_float(), min.as_float(), max.as_float()),
                     ),
                 });
@@ -1561,7 +1829,9 @@ impl VM {
         let result = self.stack.pop().expect("Stack empty after reduction");
         match result {
             StackValue::F32(f) => f64::from(f),
-            StackValue::Float(f) | StackValue::Constant(f) => f,
+            StackValue::Float(f) | StackValue::Constant(f) | StackValue::FloatConstant(f) => f,
+            StackValue::ExactInt(v) => v as f64,
+            StackValue::ExactUInt(v) => v as f64,
             StackValue::I32(v) => f64::from(v),
             StackValue::I64(v) => v as f64,
             StackValue::U8(v) => f64::from(v),
@@ -3104,6 +3374,274 @@ mod tests {
         unsafe { vm.execute(&bytecode, &pointers, 0) };
 
         assert_eq!(value, 4);
+    }
+
+    #[test]
+    fn integer_power_wraps_like_numpy() {
+        let cases = [
+            (
+                StackValue::I64(3),
+                StackValue::Constant(41.0),
+                -420_491_770_248_316_829,
+            ),
+            (StackValue::Constant(2.0), StackValue::I64(63), i64::MIN),
+            (StackValue::Constant(2.0), StackValue::I64(64), 0),
+            (StackValue::I64(-3), StackValue::Constant(3.0), -27),
+            (StackValue::I64(0), StackValue::Constant(0.0), 1),
+        ];
+        for (base, exponent, expected) in cases {
+            assert_eq!(power(base, exponent), (StackValue::I64(expected), false));
+        }
+        assert_eq!(
+            power(StackValue::I32(70_000), StackValue::Constant(2.0)).0,
+            StackValue::I32(605_032_704)
+        );
+        assert_eq!(
+            power(StackValue::U8(3), StackValue::U8(7)).0,
+            StackValue::U8(139)
+        );
+        assert_eq!(
+            power(StackValue::U32(70_000), StackValue::Constant(2.0)).0,
+            StackValue::U32(605_032_704)
+        );
+        assert_eq!(
+            power(StackValue::U64(u64::MAX), StackValue::Constant(3.0)).0,
+            StackValue::U64(u64::MAX)
+        );
+    }
+
+    #[test]
+    fn int_literals_beyond_f64_stay_exact_in_integer_lanes() {
+        let i64_max = StackValue::int_literal(i64::MAX.into());
+        let u64_max = StackValue::int_literal(u64::MAX.into());
+        let below_i64 = StackValue::int_literal(-(1_i128 << 63) - 1);
+        assert_eq!(i64_max, StackValue::ExactInt(i64::MAX));
+        assert_eq!(u64_max, StackValue::ExactUInt(u64::MAX));
+        assert_eq!(below_i64, StackValue::Constant(-(2_f64.powi(63))));
+        assert_eq!(
+            StackValue::int_literal(1 << 60),
+            StackValue::Constant(2_f64.powi(60))
+        );
+
+        let mut vm = VM::new();
+        let bytecode = CompiledBytecode {
+            bytecode: Vec::new(),
+            constants: Vec::new(),
+            integers: vec![i64::MAX.into(), u64::MAX.into(), (1 << 53) + 1],
+            field_map: Vec::new(),
+        };
+        let run = |vm: &mut VM, field: StackValue, integer: u16, op: Op| {
+            vm.stack.clear();
+            vm.stack.push(field);
+            vm.dispatch_stack_op(&Op::PushInt(integer), &bytecode);
+            vm.dispatch_stack_op(&op, &bytecode);
+            vm.stack.pop().unwrap()
+        };
+        assert_eq!(
+            run(&mut vm, StackValue::I64(-5), 0, Op::Add),
+            StackValue::I64(i64::MAX - 5)
+        );
+        assert_eq!(
+            run(&mut vm, StackValue::I64(2), 0, Op::Add),
+            StackValue::I64(i64::MIN + 1)
+        );
+        assert_eq!(
+            run(&mut vm, StackValue::U64(1), 1, Op::Sub),
+            StackValue::U64(2)
+        );
+        assert_eq!(
+            run(&mut vm, StackValue::U64(3), 1, Op::Mul),
+            StackValue::U64(u64::MAX - 2)
+        );
+        assert_eq!(
+            run(&mut vm, StackValue::I64((1 << 53) + 1), 2, Op::Eq),
+            StackValue::Bool(true)
+        );
+        assert_eq!(
+            run(&mut vm, StackValue::I64(1 << 53), 2, Op::Lt),
+            StackValue::Bool(true)
+        );
+        assert_eq!(
+            run(&mut vm, StackValue::Float(1.0), 2, Op::Add),
+            StackValue::Float(((1_i64 << 53) + 1) as f64 + 1.0)
+        );
+        vm.stack.clear();
+        vm.dispatch_stack_op(&Op::PushInt(0), &bytecode);
+        vm.dispatch_stack_op(&Op::Neg, &bytecode);
+        assert_eq!(vm.stack, [StackValue::ExactInt(-i64::MAX)]);
+    }
+
+    #[test]
+    fn int_literal_stored_into_an_integer_field_wraps_like_numpy() {
+        let mut value = 7_u32;
+        let mut signed = 7_i32;
+        // SAFETY: both pointers address live, exclusively borrowed locals of
+        // the written field types.
+        unsafe {
+            write_field_stack_value(
+                (&mut value as *mut u32).cast(),
+                StackValue::Constant(2_f64.powi(32) + 3.0),
+                FieldType::U32,
+            );
+            write_field_stack_value(
+                (&mut signed as *mut i32).cast(),
+                StackValue::Constant(-5.0),
+                FieldType::I32,
+            );
+        }
+        assert_eq!((value, signed), (3, -5));
+        let mut wide = 0_u64;
+        let mut narrow = 0_u32;
+        // SAFETY: both pointers address live, exclusively borrowed locals of
+        // the written field types.
+        unsafe {
+            write_field_stack_value(
+                (&mut wide as *mut u64).cast(),
+                StackValue::ExactUInt(u64::MAX),
+                FieldType::U64,
+            );
+            write_field_stack_value(
+                (&mut narrow as *mut u32).cast(),
+                StackValue::ExactInt(i64::MAX),
+                FieldType::U32,
+            );
+        }
+        assert_eq!((wide, narrow), (u64::MAX, u32::MAX));
+    }
+
+    #[test]
+    fn negative_runtime_integer_exponent_is_flagged_and_truncated() {
+        for (base, exponent, expected) in [
+            (2, -1, 0),
+            (1, -5, 1),
+            (-1, -3, -1),
+            (-1, -2, 1),
+            (0, -1, 0),
+        ] {
+            assert_eq!(
+                power(StackValue::I64(base), StackValue::I64(exponent)),
+                (StackValue::I64(expected), true)
+            );
+        }
+        assert!(!power(StackValue::I64(2), StackValue::I64(0)).1);
+        assert!(!power(StackValue::U8(2), StackValue::U8(200)).1);
+
+        let bytecode = CompiledBytecode {
+            bytecode: Vec::new(),
+            constants: Vec::new(),
+            integers: Vec::new(),
+            field_map: Vec::new(),
+        };
+        let mut vm = VM::new();
+        vm.stack.extend([StackValue::I32(2), StackValue::I32(-1)]);
+        vm.dispatch_stack_op(&Op::Pow, &bytecode);
+        vm.stack.extend([StackValue::I32(2), StackValue::I32(3)]);
+        vm.dispatch_stack_op(&Op::Pow, &bytecode);
+        assert_eq!(vm.stack, [StackValue::I32(0), StackValue::I32(8)]);
+        assert_eq!(vm.take_negative_power(), Err(NegativeIntegerPower));
+        assert_eq!(vm.take_negative_power(), Ok(()));
+    }
+
+    #[test]
+    fn float_literal_promotes_integer_lane_and_int_literal_adopts_it() {
+        let seven = StackValue::I64(7);
+        assert_eq!(
+            floor_divide(seven, StackValue::Constant(2.0)),
+            StackValue::I64(3)
+        );
+        assert_eq!(
+            floor_divide(seven, StackValue::FloatConstant(2.0)),
+            StackValue::Float(3.0)
+        );
+        assert_eq!(
+            power(seven, StackValue::FloatConstant(2.0)).0,
+            StackValue::Float(49.0)
+        );
+        assert_eq!(
+            power(StackValue::F32(1.5), StackValue::FloatConstant(2.0)).0,
+            StackValue::F32(2.25)
+        );
+
+        let mut vm = VM::new();
+        let bytecode = CompiledBytecode {
+            bytecode: Vec::new(),
+            constants: vec![2.0],
+            integers: Vec::new(),
+            field_map: Vec::new(),
+        };
+        for (op, expected) in [
+            (Op::Add, StackValue::Float(9.0)),
+            (Op::Mul, StackValue::Float(14.0)),
+            (Op::Min, StackValue::Float(2.0)),
+            (Op::Mod, StackValue::Float(1.0)),
+        ] {
+            vm.stack.clear();
+            vm.stack.push(seven);
+            vm.dispatch_stack_op(&Op::PushFloatConst(0), &bytecode);
+            vm.dispatch_stack_op(&op, &bytecode);
+            assert_eq!(vm.stack, [expected], "{op:?}");
+        }
+    }
+
+    #[test]
+    fn literal_only_results_keep_their_kind() {
+        assert_eq!(
+            power(StackValue::Constant(2.0), StackValue::Constant(3.0)).0,
+            StackValue::Constant(8.0)
+        );
+        assert_eq!(
+            power(StackValue::Constant(2.0), StackValue::FloatConstant(3.0)).0,
+            StackValue::FloatConstant(8.0)
+        );
+        assert_eq!(
+            floor_divide(StackValue::Constant(7.0), StackValue::FloatConstant(2.0)),
+            StackValue::FloatConstant(3.0)
+        );
+
+        let mut vm = VM::new();
+        let bytecode = CompiledBytecode {
+            bytecode: Vec::new(),
+            constants: vec![4.0],
+            integers: Vec::new(),
+            field_map: Vec::new(),
+        };
+        vm.dispatch_stack_op(&Op::PushConst(0), &bytecode);
+        vm.dispatch_stack_op(&Op::Sqrt, &bytecode);
+        assert_eq!(vm.stack, [StackValue::FloatConstant(2.0)]);
+    }
+
+    #[test]
+    fn optimizer_folds_literals_into_the_resulting_kind() {
+        let fold = |a: Op, b: Op, op: Op, constants: &[f64]| {
+            let mut compiler = Compiler::new();
+            for value in constants {
+                compiler.add_constant(*value);
+            }
+            compiler.emit(a);
+            compiler.emit(b);
+            compiler.emit(op);
+            compiler.optimize();
+            let bytecode = compiler.finalize();
+            match bytecode.bytecode[..] {
+                [Op::PushConst(index)] => Some((bytecode.constants[usize::from(index)], false)),
+                [Op::PushFloatConst(index)] => Some((bytecode.constants[usize::from(index)], true)),
+                _ => None,
+            }
+        };
+        let int_2 = Op::PushConst(0);
+        let int_3 = Op::PushConst(1);
+        let float_3 = Op::PushFloatConst(1);
+        let int_negative = Op::PushConst(2);
+        let constants = [2.0, 3.0, -1.0];
+        assert_eq!(fold(int_2, int_3, Op::Add, &constants), Some((5.0, false)));
+        assert_eq!(fold(int_2, float_3, Op::Mul, &constants), Some((6.0, true)));
+        assert_eq!(
+            fold(int_2, int_3, Op::Div, &constants),
+            Some((2.0 / 3.0, true))
+        );
+        assert_eq!(fold(int_2, int_3, Op::Pow, &constants), Some((8.0, false)));
+        assert_eq!(fold(int_2, float_3, Op::Pow, &constants), Some((8.0, true)));
+        assert_eq!(fold(int_2, int_negative, Op::Pow, &constants), None);
     }
 
     #[test]

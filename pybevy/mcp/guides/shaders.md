@@ -92,7 +92,7 @@ mat = GlowMaterial(
 | `Vec4`         | `vec4<f32>`    | 16 bytes, 16-byte aligned      |
 | `LinearRgba`   | `vec4<f32>`    | 16 bytes, 16-byte aligned      |
 | `bool`         | shader def     | `#ifdef FIELD_NAME` in WGSL    |
-| `Image`        | texture slot   | `texture_2d<f32>` + `sampler`  |
+| `Handle[Image] \| None` | texture slot | `texture_2d<f32>` + `sampler` |
 
 ## How It Works
 
@@ -286,7 +286,8 @@ such as `wave_amplitude`, `wave_frequency`, and `surface_color`. The generated
 WGSL module preserves the Python declaration order and corresponding WGSL types.
 
 Uniform fields occupy binding 100. A `bool` is a shader definition rather than
-uniform data, and each `Image` field uses a separate texture and sampler binding.
+uniform data, and each `Handle[Image] | None` field uses a separate texture and
+sampler binding.
 The decorator does not expose additional custom bind groups.
 
 ### Non-PBR (simple) fragment shader
@@ -373,15 +374,22 @@ Different bool combinations produce different compiled shader pipelines (cached 
 
 ## Texture Slots
 
-Up to 4 `Image` fields map to texture/sampler bindings:
+Up to 4 `Handle[Image] | None` fields map to texture/sampler bindings:
 
 ```python
+from pybevy.assets import Handle
+from pybevy.image import Image
+
 @material(fragment_shader="shaders/terrain.wgsl")
 class TerrainMaterial(Material):
     blend_sharpness: float = 2.0
-    grass: Image = None   # slot 0: bindings 101/102
-    rock: Image = None    # slot 1: bindings 103/104
+    grass: Handle[Image] | None = None  # slot 0: bindings 101/102
+    rock: Handle[Image] | None = None   # slot 1: bindings 103/104
 ```
+
+`Handle[Image]` and `Optional[Handle[Image]]` also declare a texture slot. An
+`Image` annotation, or a union with any other type, raises `TypeError` when the
+class is decorated.
 
 In the setup system, pass loaded image handles:
 
@@ -396,13 +404,12 @@ def setup(commands, meshes, materials, asset_server: Res[AssetServer]):
     handle = materials.add(mat)
 ```
 
-The `Image` annotation only marks the texture slot; the attribute holds a
-`Handle[Image]`, or `None` for an empty slot. Reading it returns that handle
-from a new material, from `get()`, `get_mut()`, iteration, and `remove()`, so
-`mat.grass = mat.grass` keeps the texture. Assign a handle or `None` through
-`get_mut()` to change the slot; `get()` and iterated materials reject writes.
-A returned handle is an ordinary strong handle that stays valid after the system
-and keeps its image alive.
+The attribute holds a `Handle[Image]`, or `None` for an empty slot. Reading it
+returns that handle from a new material, from `get()`, `get_mut()`, iteration,
+and `remove()`, so `mat.grass = mat.grass` keeps the texture. Assign a handle
+or `None` through `get_mut()` to change the slot; `get()` and iterated
+materials reject writes. A returned handle is an ordinary strong handle that
+stays valid after the system and keeps its image alive.
 
 In WGSL:
 ```wgsl
