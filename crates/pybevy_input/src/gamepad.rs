@@ -1,11 +1,12 @@
-use bevy::input::gamepad::{Gamepad, GamepadAxis, GamepadButton, GamepadInput};
+use bevy::input::gamepad::{Gamepad, GamepadButton};
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
 use crate::{
-    gamepad_axis::PyGamepadAxis, gamepad_button::PyGamepadButton, gamepad_input::PyGamepadInput,
+    gamepad_button::PyGamepadButton,
+    gamepad_input::{PyGamepadInput, extract_gamepad_input_from_any},
 };
 
 #[pycomponent(Gamepad, no_clone, bridge)]
@@ -31,40 +32,14 @@ impl PyGamepad {
         Ok(gamepad.pressed(button_type.into()))
     }
 
-    pub fn get_button(&self, button: PyGamepadButton) -> PyResult<Option<f32>> {
-        let gamepad = self.as_ref()?;
-        let bevy_button: GamepadButton = button.into();
-        Ok(gamepad.get(bevy_button))
+    pub fn get(&self, input: &Bound<'_, PyAny>) -> PyResult<Option<f32>> {
+        let input = extract_gamepad_input_from_any(input)?;
+        Ok(self.as_ref()?.get(input))
     }
 
-    pub fn get_axis(&self, axis: PyGamepadAxis) -> PyResult<Option<f32>> {
-        let gamepad = self.as_ref()?;
-        let bevy_axis: GamepadAxis = axis.into();
-        Ok(gamepad.get(bevy_axis))
-    }
-
-    pub fn get_button_unclamped(&self, button: PyGamepadButton) -> PyResult<Option<f32>> {
-        let gamepad = self.as_ref()?;
-        let bevy_button: GamepadButton = button.into();
-        Ok(gamepad.get_unclamped(bevy_button))
-    }
-
-    pub fn get_axis_unclamped(&self, axis: PyGamepadAxis) -> PyResult<Option<f32>> {
-        let gamepad = self.as_ref()?;
-        let bevy_axis: GamepadAxis = axis.into();
-        Ok(gamepad.get_unclamped(bevy_axis))
-    }
-
-    pub fn get(&self, input: PyGamepadInput) -> PyResult<Option<f32>> {
-        let gamepad = self.as_ref()?;
-        let bevy_input: GamepadInput = input.into();
-        Ok(gamepad.get(bevy_input))
-    }
-
-    pub fn get_unclamped(&self, input: PyGamepadInput) -> PyResult<Option<f32>> {
-        let gamepad = self.as_ref()?;
-        let bevy_input: GamepadInput = input.into();
-        Ok(gamepad.get_unclamped(bevy_input))
+    pub fn get_unclamped(&self, input: &Bound<'_, PyAny>) -> PyResult<Option<f32>> {
+        let input = extract_gamepad_input_from_any(input)?;
+        Ok(self.as_ref()?.get_unclamped(input))
     }
 
     pub fn get_analog_axes(&self) -> PyResult<Vec<PyGamepadInput>> {

@@ -168,7 +168,7 @@ def gamepad_system(query: Query[Gamepad]) -> None:
             print(f"stick: {stick.x}, {stick.y}")
 
         # Triggers (analog 0.0–1.0)
-        trigger = gamepad.get_button(GamepadButton.RightTrigger2())
+        trigger = gamepad.get(GamepadButton.RightTrigger2())
         if trigger and trigger > 0.5:
             print("right trigger pulled")
 ```

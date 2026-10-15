@@ -117,7 +117,8 @@ def spawn(commands: Commands) -> None:
 
 app = App()
 app.add_systems(Startup, spawn)
-app.initialize()
+app.finish()
+app.cleanup()
 
 gc.collect()
 gc.collect()

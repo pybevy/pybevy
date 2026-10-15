@@ -6,59 +6,6 @@ from pybevy.app import App, Plugin
 from pybevy.assets import Asset, Handle
 from pybevy.ecs import Component, Entity
 
-class AnimationEvent:
-    """A simple animation event that can be triggered at specific timestamps.
-
-    **LIMITATION**: Due to Python/Rust trait constraints, this is a simplified version
-    of Bevy's AnimationEvent system. These events are for metadata/tracking purposes.
-    They do NOT automatically trigger through Bevy's observer system.
-
-    For event handling, users should:
-    1. Store AnimationEvent metadata alongside animations
-    2. Poll ActiveAnimation.seek_time() in systems
-    3. Manually trigger logic when seek_time crosses event timestamps
-
-    Example:
-        >>> event = AnimationEvent("footstep", data='{"volume": 0.8}')
-        >>> # Store this with your animation metadata
-        >>> # In a system, check: if prev_time < event_time <= curr_time: handle_event()
-    """
-
-    name: str
-    data: str | None
-
-    def __init__(self, name: str, data: str | None = None) -> None:
-        """Create an animation event.
-
-        Args:
-            name: Event identifier (e.g., "footstep", "weapon_swing")
-            data: Optional JSON string for event data
-        """
-
-    def __repr__(self) -> str: ...
-    def __eq__(self, other: object) -> bool: ...
-
-
-class AnimationEventData:
-    """Pairs an AnimationEvent with a timestamp for timeline placement.
-
-    **LIMITATION**: This is metadata only - not integrated with Bevy's event system.
-    Users must manually poll and trigger these events based on seek_time().
-    """
-
-    time: float
-    event: AnimationEvent
-
-    def __init__(self, time: float, event: AnimationEvent) -> None:
-        """Create event data with timestamp.
-
-        Args:
-            time: Time in seconds when event should occur
-            event: The event to trigger
-        """
-
-    def __repr__(self) -> str: ...
-
 class AnimationPlugin(Plugin):
     def __init__(self) -> None: ...
     def build(self, app: App) -> None: ...

@@ -53,10 +53,6 @@ impl PyLoadState {
         self.__copy__(py)
     }
 
-    pub fn is_not_loaded(&self) -> bool {
-        matches!(self.value, LoadStateValue::NotLoaded)
-    }
-
     pub fn is_loading(&self) -> bool {
         matches!(self.value, LoadStateValue::Loading)
     }

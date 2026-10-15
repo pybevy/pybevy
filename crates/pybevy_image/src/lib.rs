@@ -8,6 +8,7 @@ pub mod image_filter_mode;
 pub mod image_format;
 pub mod image_format_setting;
 pub mod image_sampler_border_color;
+pub mod image_saver;
 pub mod image_saver_settings;
 pub mod loader_settings;
 pub mod plugin;
@@ -43,6 +44,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<image_compare_function::PyImageCompareFunction>()?;
     m.add_class::<image_format::PyImageFormat>()?;
     m.add_class::<image_format_setting::PyImageFormatSetting>()?;
+    m.add_class::<image_saver::PyImageSaver>()?;
     m.add_class::<image_saver_settings::PyImageSaverSettings>()?;
     m.add_class::<save_image_format_setting::PySaveImageFormatSetting>()?;
     m.add_class::<image_sampler_border_color::PyImageSamplerBorderColor>()?;

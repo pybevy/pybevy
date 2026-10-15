@@ -3,6 +3,7 @@ import pytest
 from pytest_benchmark.fixture import BenchmarkFixture
 
 import pybevy.array as xp
+from benches._helpers import initialize
 from pybevy.app import App, MinimalPlugins, Startup, Update
 from pybevy.assets import AssetPlugin, Assets
 from pybevy.ecs import Commands, Query, ResMut
@@ -44,7 +45,7 @@ def test_image_data_copy(benchmark: BenchmarkFixture) -> None:
 
     app = create_app().add_systems(Update, update_system)
 
-    app.initialize()
+    initialize(app)
     benchmark(app.update)
 
 
@@ -63,7 +64,7 @@ def test_image_set_data(benchmark: BenchmarkFixture) -> None:
 
     app = create_app().add_systems(Update, update_system)
 
-    app.initialize()
+    initialize(app)
     benchmark(app.update)
 
 
@@ -81,7 +82,7 @@ def test_image_data_readonly_context(benchmark: BenchmarkFixture) -> None:
 
     app = create_app().add_systems(Update, update_system)
 
-    app.initialize()
+    initialize(app)
     benchmark(app.update)
 
 
@@ -99,7 +100,7 @@ def test_image_data_mutable_context(benchmark: BenchmarkFixture) -> None:
 
     app = create_app().add_systems(Update, update_system)
 
-    app.initialize()
+    initialize(app)
     benchmark(app.update)
 
 
@@ -120,7 +121,7 @@ def test_image_data_readonly_with_computation(benchmark: BenchmarkFixture) -> No
 
     app = create_app().add_systems(Update, update_system)
 
-    app.initialize()
+    initialize(app)
     benchmark(app.update)
 
 
@@ -140,5 +141,5 @@ def test_image_data_mutable_with_modification(benchmark: BenchmarkFixture) -> No
 
     app = create_app().add_systems(Update, update_system)
 
-    app.initialize()
+    initialize(app)
     benchmark(app.update)

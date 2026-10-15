@@ -32,7 +32,7 @@ use pyo3::{
 };
 
 use crate::{
-    indices::{PyIndices, extract_indices},
+    indices::{PyIndices, extract_indices, materialize_indices},
     mesh_builder::PyMeshBuilder,
     meshable::{PyMeshable, meshable_to_mesh},
     primitive_topology::PyPrimitiveTopology,
@@ -578,14 +578,15 @@ impl PyMesh {
         self.cloned_with(py, |mesh| mesh.insert_indices(indices))
     }
 
-    pub fn remove_indices(&mut self) -> PyResult<Option<PyIndices>> {
+    pub fn remove_indices(&mut self, py: Python<'_>) -> PyResult<Option<Py<PyIndices>>> {
         mesh_with_mut!(self, |mesh: &mut Mesh| mesh.try_remove_indices())
-            .map(|indices| indices.map(|inner| PyIndices { inner }))
-            .map_err(|error| mesh_operation_error("remove_indices", error))
+            .map_err(|error| mesh_operation_error("remove_indices", error))?
+            .map(|inner| materialize_indices(py, inner))
+            .transpose()
     }
 
     pub fn with_removed_indices(&self, py: Python<'_>) -> PyResult<Py<Self>> {
-        self.cloned_with(py, |mesh| mesh.remove_indices().map(|_| ()))
+        self.cloned_with(py, |mesh| mesh.remove_indices(py).map(|_| ()))
     }
 
     pub fn insert_attribute<'py>(

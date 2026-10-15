@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import pytest
 from pytest_benchmark.fixture import BenchmarkFixture
 
+from benches._helpers import initialize
 from pybevy.app import App, ScheduleRunnerPlugin, Startup, Update
 from pybevy.decorators import component
 from pybevy.ecs import Commands, Component, Mut, Query, View
@@ -66,7 +67,7 @@ def _setup_query_wrapper_read(entity_count: int) -> App:
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, spawn)
     app.add_systems(Update, query_read)
-    app.initialize()
+    initialize(app)
     app.update()
     return app
 
@@ -94,7 +95,7 @@ def _setup_query_pyobject_read(entity_count: int, *, nested_size: int = 1) -> Ap
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, spawn)
     app.add_systems(Update, query_read)
-    app.initialize()
+    initialize(app)
     app.update()
     return app
 
@@ -118,7 +119,7 @@ def _setup_query_wrapper_write(entity_count: int) -> App:
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, spawn)
     app.add_systems(Update, query_write)
-    app.initialize()
+    initialize(app)
     app.update()
     return app
 
@@ -145,7 +146,7 @@ def _setup_query_pyobject_write(entity_count: int) -> App:
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, spawn)
     app.add_systems(Update, query_write)
-    app.initialize()
+    initialize(app)
     app.update()
     return app
 
@@ -169,7 +170,7 @@ def _setup_view_wrapper_write(entity_count: int) -> App:
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, spawn)
     app.add_systems(Update, view_write)
-    app.initialize()
+    initialize(app)
     app.update()
     return app
 
@@ -243,6 +244,6 @@ def test_multi_component_wrapper_10000(benchmark: BenchmarkFixture) -> None:
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, spawn)
     app.add_systems(Update, query_multi)
-    app.initialize()
+    initialize(app)
 
     benchmark(app.update)

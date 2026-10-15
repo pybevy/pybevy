@@ -2327,7 +2327,7 @@ class Gamepad(Component):
                 if gamepad.just_pressed(GamepadButton.South()):
                     print("A/Cross button pressed!")
 
-                left_x = gamepad.get_axis(GamepadAxis.LeftStickX())
+                left_x = gamepad.get(GamepadAxis.LeftStickX())
                 if left_x is not None:
                     print(f"Left stick X: {left_x}")
         ```
@@ -2343,23 +2343,11 @@ class Gamepad(Component):
     def pressed(self, button_type: GamepadButton) -> bool:
         """Returns true if the button is currently held down."""
 
-    def get_button(self, button: GamepadButton) -> float | None:
-        """Get the analog value of a button (0.0 to 1.0), or None if not available."""
+    def get(self, input: GamepadInput | GamepadAxis | GamepadButton) -> float | None:
+        """Get the analog value of an axis or button, clamped to [-1.0, 1.0]."""
 
-    def get_axis(self, axis: GamepadAxis) -> float | None:
-        """Get the value of an axis (-1.0 to 1.0), or None if not available."""
-
-    def get_button_unclamped(self, button: GamepadButton) -> float | None:
-        """Get the unclamped analog value of a button (may be outside -1.0 to 1.0)."""
-
-    def get_axis_unclamped(self, axis: GamepadAxis) -> float | None:
-        """Get the unclamped value of an axis (may be outside -1.0 to 1.0)."""
-
-    def get(self, input: GamepadInput) -> float | None:
-        """Get the analog value of a GamepadInput (axis or button), clamped to [-1.0, 1.0]."""
-
-    def get_unclamped(self, input: GamepadInput) -> float | None:
-        """Get the unclamped analog value of a GamepadInput (axis or button)."""
+    def get_unclamped(self, input: GamepadInput | GamepadAxis | GamepadButton) -> float | None:
+        """Get the unclamped analog value of an axis or button."""
 
     def get_analog_axes(self) -> list[GamepadInput]:
         """Get all analog inputs (axes and buttons) that have values."""

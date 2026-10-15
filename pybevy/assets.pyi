@@ -8,7 +8,7 @@ from pybevy.audio import AudioSource
 from pybevy.color import Color
 from pybevy.ecs import Message, Resource, SystemSet
 from pybevy.gltf import Gltf, GltfLoaderSettings
-from pybevy.image import Image, ImageLoaderSettings, ImageSaverSettings
+from pybevy.image import Image, ImageLoaderSettings, ImageSaver, ImageSaverSettings
 from pybevy.mesh import Mesh, Meshable, MeshBuilder
 from pybevy.pbr import StandardMaterial
 from pybevy.sprite import ColorMaterial
@@ -97,8 +97,6 @@ class AssetId(Generic[A_co]):
         def uuid(self) -> int: ...
         def __init__(self, *, uuid: int, asset_type: type[_VariantA_co]) -> None: ...
 
-    @staticmethod
-    def uuid_from_u128(value: int, asset_type: type[A_co]) -> AssetId.Uuid[A_co]: ...
     def asset_type_class(self) -> type[A_co]: ...
     def __eq__(self, other: object) -> bool: ...
     def __hash__(self) -> int: ...
@@ -155,9 +153,6 @@ class LoadState:
         @property
         def value(self) -> str:
             """Bevy's rendered asset-load error."""
-
-    def is_not_loaded(self) -> bool:
-        """Returns `True` if this instance is `LoadState.NotLoaded`"""
 
     def is_loading(self) -> bool:
         """Returns `True` if this instance is `LoadState.Loading`"""
@@ -289,22 +284,6 @@ class AssetServer(Resource):
     @overload
     @deprecated("Use load_builder().with_settings(settings).load(path) instead")
     def load_with_settings(self, path: str | AssetPath, settings: ImageLoaderSettings | GltfLoaderSettings, *, asset_type: type[_LoadA]) -> Handle[_LoadA]: ...
-    def save_image(
-        self,
-        image: Image,
-        path: str | AssetPath,
-        settings: ImageSaverSettings | None = None,
-    ) -> None:
-        """Save an image to a file, blocking until the write completes.
-
-        Absolute paths are written as-is; relative paths resolve against the
-        default asset source root. PNG is the supported format.
-
-        Raises:
-            ValueError: Unsupported format/extension or the image has no pixel data.
-            OSError: File write failure.
-            RuntimeError: No asset source or writer is registered.
-        """
     def load_folder(self, path: str | AssetPath) -> Handle[LoadedFolder]:
         """Load all assets from a folder.
 
@@ -431,7 +410,7 @@ class AssetPath:
         self,
         *,
         source: str | None = None,
-        path: str,
+        path: str = "",
         label: str | None = None
     ) -> None: ...
     @staticmethod
@@ -470,9 +449,6 @@ class DependencyLoadState:
         def value(self) -> str:
             """Bevy's rendered asset-load error."""
 
-    def is_not_loaded(self) -> bool:
-        """Returns True if dependencies have not started loading."""
-
     def is_loading(self) -> bool:
         """Returns True if dependencies are loading."""
 
@@ -507,9 +483,6 @@ class RecursiveDependencyLoadState:
         @property
         def value(self) -> str:
             """Bevy's rendered asset-load error."""
-
-    def is_not_loaded(self) -> bool:
-        """Returns True if recursive dependencies have not started loading."""
 
     def is_loading(self) -> bool:
         """Returns True if recursive dependencies are loading."""
@@ -629,3 +602,22 @@ class UnapprovedPathMode:
     """Forbid unapproved paths (strictest mode)."""
 
     def __eq__(self, other: object) -> bool: ...
+
+def save_using_saver(
+    asset_server: AssetServer,
+    saver: ImageSaver,
+    path: str | AssetPath,
+    asset: Image,
+    settings: ImageSaverSettings,
+) -> None:
+    """Save an asset with a saver, blocking until the write completes.
+
+    Bevy's ``save_using_saver`` is async; PyBevy blocks the calling thread.
+    Absolute paths are written as-is; relative paths resolve against the
+    default asset source root. PNG is the supported image format.
+
+    Raises:
+        ValueError: Unsupported format/extension or the image has no pixel data.
+        OSError: File write failure.
+        RuntimeError: No asset source or writer is registered.
+    """

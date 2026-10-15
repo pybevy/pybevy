@@ -240,7 +240,6 @@ class Messages(Resource, Generic[M]):
     Users typically don't need to reference this type directly - use
     MessageWriter and MessageReader for the public API.
     """
-    def send(self, message: Any) -> MessageId: ...
     def clear(self) -> None: ...
     def is_empty(self) -> bool: ...
     def len(self) -> int: ...
@@ -505,7 +504,11 @@ class Commands:
         """Spawn entities from an iterable of component tuples."""
     def spawn_empty(self) -> EntityCommands: ...
     def entity(self, entity: Entity) -> EntityCommands: ...
-    def get_entity(self, entity: Entity) -> EntityCommands | None: ...
+    def get_entity(self, entity: Entity) -> EntityCommands:
+        """Return commands for a valid entity ID, including reserved IDs.
+
+        Raises ValueError when the ID's generation is no longer current.
+        """
     def insert_resource(self, resource: Resource) -> None: ...
     def remove_resource(self, resource_type: type[ResourceType]) -> None:
         """Remove a resource from the world.
@@ -516,7 +519,6 @@ class Commands:
         Example:
             commands.remove_resource(Time)
         """
-    def despawn(self, entity: Entity) -> None: ...
     def trigger(self, event: Event) -> None:
         """Trigger an event (deferred until command flush).
 
@@ -1191,7 +1193,7 @@ class EntityIndex:
     def __deepcopy__(self, memo: dict[int, object]) -> EntityIndex: ...
 
     @staticmethod
-    def from_raw(raw: int) -> EntityIndex | None:
+    def from_raw_u32(raw: int) -> EntityIndex | None:
         """Construct an index, or return ``None`` for ``2**32 - 1``."""
     def index(self) -> int:
         """Return the raw integer index used in entity diagnostics."""
@@ -1206,7 +1208,7 @@ class Entity:
     Use the packed ``to_bits()`` value at wire boundaries.
     """
     @staticmethod
-    def from_raw(raw: int) -> Entity | None:
+    def from_raw_u32(raw: int) -> Entity | None:
         """Construct a generation-zero identity from an index.
 
         This does not recover an arbitrary live entity that currently uses the
@@ -1224,31 +1226,6 @@ class Entity:
 
 class EntityCommands:
     def add_child(self, child: Entity) -> EntityCommands: ...
-    def set_parent(self, parent: Entity) -> EntityCommands:
-        """Set the parent of this entity.
-
-        Creates a parent-child relationship by adding a ChildOf component to this entity.
-
-        Args:
-            parent: The entity to set as parent
-
-        Returns:
-            EntityCommands for method chaining
-
-        Example:
-            child = commands.spawn(Transform()).set_parent(parent_entity)
-        """
-    def remove_parent(self) -> EntityCommands:
-        """Remove the parent relationship from this entity.
-
-        Removes the ChildOf component, making this entity parentless.
-
-        Returns:
-            EntityCommands for method chaining
-
-        Example:
-            entity_commands.remove_parent()
-        """
     def remove_children(self, *children: Entity) -> EntityCommands: ...
     def clear_children(self) -> EntityCommands: ...
     def id(self) -> Entity: ...
@@ -1446,36 +1423,21 @@ class World:
         """
     def write_message(self, message: MessageTypeVar) -> MessageId | None:
         """Write a message, returning None if its channel is not registered."""
-    def add_observer(self, observer: SystemFn) -> Entity:
-        """Register an observer and return its entity ID for lifecycle management.
+    def add_observer(self, observer: SystemFn) -> EntityCommands:
+        """Register an observer and return commands for its entity.
 
-        Use this method when you need to manage the observer's lifecycle
-        (e.g., despawn it later). For simple observer registration during
-        app setup, use app.add_observer() instead.
+        Call ``.id()`` to keep the observer entity; despawning that entity with
+        ``world.despawn()`` or ``commands.entity(id).despawn()`` removes the
+        observer. For simple observer registration during app setup, use
+        app.add_observer() instead.
 
         Example:
             def on_player_died(trigger: On[PlayerDied]) -> None:
                 print(f"Player died")
 
             def setup(world: World) -> None:
-                observer_id = world.add_observer(on_player_died)
-                # Later can despawn with: world.despawn_observer(observer_id)
-        """
-    def despawn_observer(self, observer_entity: Entity) -> None:
-        """Despawn an observer entity.
-
-        Removes the observer from the registry and despawns its entity.
-        The observer will no longer trigger for events.
-
-        The argument must be the Entity returned by add_observer(). A live
-        entity that is not a registered observer raises ValueError, and an
-        already despawned observer is a no-op.
-        Protected resource entities raise TypeError and remain unchanged.
-
-        Example:
-            observer_id = world.add_observer(on_event)
-            # Later...
-            world.despawn_observer(observer_id)
+                observer_id = world.add_observer(on_player_died).id()
+                # Later: world.despawn(observer_id)
         """
     def iter_entities(self) -> list[Entity]:
         """Return a snapshot of every currently allocated entity."""
@@ -1539,6 +1501,11 @@ class World:
         Captured outer World/Commands handles and borrowed children raise
         RuntimeError while the nested schedule runs. Use its systems' injected
         parameters. Outer access resumes when the call returns, including errors.
+
+        System errors raised while the schedule runs are raised from this
+        call: one as itself, several as an ExceptionGroup. Under hot reload
+        they are reported instead. From outside a system, run a schedule with
+        ``app.world(lambda world: world.run_schedule(SimTick))``.
 
         Note: any references obtained from this World before calling
         run_schedule() may be stale afterward. Re-query after the call.
@@ -1653,13 +1620,9 @@ class Mut(Generic[T]):
         Query[tuple[Mut[Transform], PointLight]] - mutable Transform, read-only PointLight
     """
 
-    @property
-    def inner_type(self) -> type[T]: ...
-    @property
-    def value(self) -> T: ...
     def __len__(self) -> int: ...
     def __iter__(self) -> Iterator[object]: ...
-    def unwrap(self) -> T: ...
+    def into_inner(self) -> T: ...
 
 # Type variables for tuple unwrapping
 T1 = TypeVar("T1", bound="Component | Entity")
@@ -2352,17 +2315,11 @@ class Local(Generic[V]):
 
     def __init__(self, value: V) -> None: ...
     @property
-    def value_type(self) -> type[V]: ...
-    @property
     def current(self) -> V:
         """The current per-system value."""
     @current.setter
     def current(self, value: V) -> None:
         """Replace the current value with one of the same concrete type."""
-    def get(self) -> V:
-        """Explicit alias for reading :attr:`current`."""
-    def set(self, value: V) -> None:
-        """Explicit alias for replacing :attr:`current`."""
     def __getattr__(self, name: str) -> Any:
         """Forward unknown attribute reads to the current value."""
     def __setattr__(self, name: str, value: Any) -> None:
@@ -2439,8 +2396,6 @@ class Children(Component):
     Cannot be created from Python: it is automatically managed by Bevy
     when ChildOf components are added. Query it to iterate over children.
     """
-    def entities(self) -> list[Entity]:
-        """Get all child entities as a list."""
     def len(self) -> int: ...
     def __len__(self) -> int: ...
     def is_empty(self) -> bool: ...

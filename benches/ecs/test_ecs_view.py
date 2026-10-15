@@ -7,6 +7,7 @@ numba = pytest.importorskip("numba", reason="Numba not installed")
 
 from dataclasses import dataclass
 
+from benches._helpers import initialize
 from pybevy.app import App, ScheduleRunnerPlugin, Startup, Update
 from pybevy.decorators import component
 from pybevy.ecs import Commands, Component, Mut, Query, View
@@ -76,7 +77,7 @@ def _warmup_numba() -> None:
 
     app.add_systems(Startup, setup)
     app.add_systems(Update, warmup)
-    app.initialize()
+    initialize(app)
     app.update()
     _numba_warmed_up = True
 
@@ -99,7 +100,7 @@ def _setup_view_numba_sum(entity_count: int) -> App:
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, measure_view)
-    app.initialize()
+    initialize(app)
     app.update()
     return app
 
@@ -120,7 +121,7 @@ def _setup_query_sum(entity_count: int) -> App:
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, measure_query)
-    app.initialize()
+    initialize(app)
     app.update()
     return app
 
@@ -145,7 +146,7 @@ def _setup_view_batch_ops(entity_count: int) -> App:
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, batch_ops)
-    app.initialize()
+    initialize(app)
     app.update()
     return app
 
@@ -170,7 +171,7 @@ def _setup_query_batch_ops(entity_count: int) -> App:
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, iter_ops)
-    app.initialize()
+    initialize(app)
     app.update()
     return app
 
@@ -193,7 +194,7 @@ def _setup_view_complex_ops(entity_count: int) -> App:
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, complex_ops)
-    app.initialize()
+    initialize(app)
     app.update()
     return app
 
@@ -219,7 +220,7 @@ def _setup_query_complex_ops(entity_count: int) -> App:
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, complex_ops)
-    app.initialize()
+    initialize(app)
     app.update()
     return app
 
@@ -289,7 +290,7 @@ def test_physics_query_10000(benchmark: BenchmarkFixture) -> None:
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, physics_query)
-    app.initialize()
+    initialize(app)
 
     benchmark(app.update)
 
@@ -314,6 +315,6 @@ def test_physics_view_numba_10000(benchmark: BenchmarkFixture) -> None:
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, physics_view)
-    app.initialize()
+    initialize(app)
 
     benchmark(app.update)

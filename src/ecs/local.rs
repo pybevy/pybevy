@@ -12,7 +12,6 @@ use pyo3::{
 /// local again. Use a `@resource` for state that must survive one.
 #[pyclass(name = "Local", module = "pybevy.ecs")]
 pub struct PyLocal {
-    #[pyo3(get, name = "value_type")]
     pub(crate) ty: Py<PyType>,
 
     pub(crate) value: Py<PyAny>,
@@ -96,16 +95,6 @@ impl PyLocal {
     /// Replace the current per-system value with another value of the same type.
     #[setter]
     pub fn set_current(&mut self, py: Python, value: Bound<'_, PyAny>) -> PyResult<()> {
-        self.set(py, value)
-    }
-
-    /// Explicit alias for reading `current`.
-    pub fn get(&self, py: Python) -> Py<PyAny> {
-        self.current(py)
-    }
-
-    /// Explicit alias for replacing `current`.
-    pub fn set(&mut self, py: Python, value: Bound<'_, PyAny>) -> PyResult<()> {
         if !value.get_type().is(self.ty.bind(py)) {
             return Err(PyTypeError::new_err(format!(
                 "Expected type {}, but got {}",
@@ -127,7 +116,7 @@ impl PyLocal {
     /// Proxy attribute setting to the wrapped value
     pub fn __setattr__(&mut self, py: Python, name: &str, value: Bound<'_, PyAny>) -> PyResult<()> {
         if name == "current" {
-            return self.set(py, value);
+            return self.set_current(py, value);
         }
         self.value.bind(py).setattr(name, value)
     }

@@ -58,7 +58,8 @@ def _make_increment_app(entity_count: int) -> App:
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, workload)
-    app.initialize()
+    app.finish()
+    app.cleanup()
     return app
 
 
@@ -77,7 +78,8 @@ def _make_complex_math_app(entity_count: int) -> App:
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, workload)
-    app.initialize()
+    app.finish()
+    app.cleanup()
     return app
 
 
@@ -98,7 +100,8 @@ def _make_multi_field_app(entity_count: int) -> App:
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, workload)
-    app.initialize()
+    app.finish()
+    app.cleanup()
     return app
 
 

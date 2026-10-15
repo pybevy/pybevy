@@ -1,8 +1,9 @@
 use bevy::light::ShadowFilteringMethod;
 use pybevy_core::PyComponent;
-use pybevy_macros::pywrap;
+use pybevy_macros::{pyenum, pywrap};
 use pyo3::prelude::*;
 
+#[pyenum(ShadowFilteringMethod, manual)]
 #[pywrap(ShadowFilteringMethod, bridge)]
 #[pyclass(name = "ShadowFilteringMethod", module = "pybevy.light", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Clone, Debug, PartialEq)]

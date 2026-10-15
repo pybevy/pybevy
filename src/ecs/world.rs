@@ -50,7 +50,10 @@ use pyo3::{
 };
 
 use crate::{
-    app::PyStage,
+    app::{
+        PyStage,
+        app::{catch_schedule_build_failure, raise_collected_errors_since},
+    },
     assets::{asset_type::PyAssetTypeParam, assets::PyAssets},
     ecs::{
         PyEntity,
@@ -83,7 +86,7 @@ use crate::{
             PyOnEnterSchedule, PyOnExitSchedule, PyOnTransitionSchedule,
             canonicalize_state_schedule_label, canonicalize_transition_schedule_label,
         },
-        system_interpreter::new_main_one_shot_system,
+        system_interpreter::{ObserverRuntimeSinks, new_main_one_shot_system},
         world_commands::{self, WorldCommandState},
         world_gc::WorldGcState,
     },
@@ -1237,26 +1240,20 @@ impl PyWorld {
         })
     }
 
-    pub fn add_observer(&self, py: Python, observer: Bound<'_, PyAny>) -> PyResult<Py<PyEntity>> {
-        world_commands::ErrorBoundary::new(self.world_ref()?).run(|| {
-            self.check_valid()?;
-            self.check_native_asset_access("world.add_observer()")?;
-            let mut world = self.world_mut()?;
-            let observer_entity = ObserverRegistry::register_observer(py, &observer, &mut world)?;
+    pub fn add_observer(
+        pyself: PyRef<'_, Self>,
+        py: Python,
+        observer: Bound<'_, PyAny>,
+    ) -> PyResult<PyEntityCommands> {
+        world_commands::ErrorBoundary::new(pyself.world_ref()?).run(|| {
+            pyself.check_valid()?;
+            pyself.check_native_asset_access("world.add_observer()")?;
+            let observer_entity = {
+                let mut world = pyself.world_mut()?;
+                ObserverRegistry::register_observer(py, &observer, &mut world)?
+            };
 
-            Py::new(py, PyEntity(observer_entity))
-        })
-    }
-
-    pub fn despawn_observer(&self, observer_entity: &Bound<'_, PyAny>) -> PyResult<()> {
-        world_commands::ErrorBoundary::new(self.world_ref()?).run(|| {
-            let observer_entity = &extract_entity_from_any(observer_entity)?;
-            self.check_valid()?;
-            self.check_native_asset_access("world.despawn_observer()")?;
-            let mut world = self.world_mut()?;
-            ObserverRegistry::despawn_observer(observer_entity.0, &mut world)?;
-
-            Ok(())
+            Ok(PyEntityCommands::with_world(observer_entity, pyself))
         })
     }
 
@@ -1289,6 +1286,12 @@ impl PyWorld {
                 // SAFETY: we have exclusive World access (SystemStateFlags::EXCLUSIVE)
                 // and the pointer is valid for the system's lifetime (ValidityFlag).
                 let mut world = self.world_mut()?;
+                let error_state = world
+                    .get_resource::<ObserverRuntimeSinks>()
+                    .map(|sinks| sinks.error_state.clone());
+                let error_start = error_state
+                    .as_ref()
+                    .map_or(0, |state| lock_or_recover(state).len());
                 let world_addr = &mut *world as *mut World as usize;
                 let _suspension = self
                     .validity
@@ -1302,10 +1305,12 @@ impl PyWorld {
                 py.detach(move || {
                     // SAFETY: the retained mutation guard excludes traversal until execution ends.
                     let world = unsafe { &mut *(world_addr as *mut World) };
-                    stage.run_on_world(world);
-                    Ok::<(), PyErr>(())
+                    catch_schedule_build_failure(|| stage.run_on_world(world))
                 })?;
 
+                if let Some(error_state) = &error_state {
+                    raise_collected_errors_since(py, error_state, error_start)?;
+                }
                 return Ok(());
             }
 
@@ -1341,18 +1346,27 @@ impl PyWorld {
 
             ensure_no_live_asset_access(&world, "world.run_schedule()")
                 .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+            let error_state = world
+                .get_resource::<ObserverRuntimeSinks>()
+                .map(|sinks| sinks.error_state.clone());
+            let error_start = error_state
+                .as_ref()
+                .map_or(0, |state| lock_or_recover(state).len());
             let world_addr = &mut *world as *mut World as usize;
             py.detach(move || {
                 let world = unsafe { &mut *(world_addr as *mut World) };
-                let result = match schedule {
+                let result = catch_schedule_build_failure(|| match schedule {
                     EitherStateSchedule::State(label) => world.try_run_schedule(label),
                     EitherStateSchedule::Transition(label) => world.try_run_schedule(label),
-                };
+                })?;
                 result.map_err(|error| {
                     PyRuntimeError::new_err(format!("Failed to run state schedule: {error}"))
                 })
             })?;
 
+            if let Some(error_state) = &error_state {
+                raise_collected_errors_since(py, error_state, error_start)?;
+            }
             Ok(())
         })
     }

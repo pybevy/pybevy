@@ -2,12 +2,14 @@ use bevy::{
     asset::Handle,
     mesh::{Mesh, morph::MorphWeights},
 };
-use pybevy_core::{ComponentStorage, PyComponent, PyHandle, public_error, repr::float_list_repr};
-use pybevy_macros::pycomponent;
-use pyo3::{
-    exceptions::{PyIndexError, PyValueError},
-    prelude::*,
+use pybevy_core::{
+    ComponentStorage, PyComponent, PyHandle,
+    live_sequence::{compare_live_sequence, normalize_index},
+    public_error,
+    repr::float_list_repr,
 };
+use pybevy_macros::pycomponent;
+use pyo3::{exceptions::PyValueError, prelude::*, pyclass::CompareOp, types::PyList};
 
 #[pycomponent(MorphWeights, bridge)]
 #[pyclass(name = "MorphWeights", module = "pybevy.mesh", extends = PyComponent)]
@@ -41,8 +43,13 @@ impl PyMorphWeights {
     }
 
     #[getter]
-    pub fn weights(&self) -> PyResult<Vec<f32>> {
-        Ok(self.as_ref()?.weights().to_vec())
+    pub fn weights(&self) -> PyResult<PyMorphWeightsView> {
+        let storage = if self.storage.is_owned() {
+            ComponentStorage::read_only_snapshot(&*self.as_ref()?)
+        } else {
+            self.storage.share_borrow()
+        };
+        Ok(PyMorphWeightsView { storage })
     }
 
     #[setter]
@@ -60,32 +67,6 @@ impl PyMorphWeights {
         Ok(())
     }
 
-    pub fn get_weight(&self, index: usize) -> PyResult<f32> {
-        let morph = self.as_ref()?;
-        let weights = morph.weights();
-        weights.get(index).copied().ok_or_else(|| {
-            PyIndexError::new_err(format!(
-                "Index {} out of bounds for {} weights",
-                index,
-                weights.len()
-            ))
-        })
-    }
-
-    pub fn set_weight(&mut self, index: usize, value: f32) -> PyResult<()> {
-        let mut morph = self.as_mut()?;
-        let weights = morph.weights_mut();
-        if index >= weights.len() {
-            return Err(PyIndexError::new_err(format!(
-                "Index {} out of bounds for {} weights",
-                index,
-                weights.len()
-            )));
-        }
-        weights[index] = value;
-        Ok(())
-    }
-
     pub fn __repr__(&self) -> PyResult<String> {
         let morph = self.as_ref()?;
         let weights = morph.weights();
@@ -100,5 +81,60 @@ impl PyMorphWeights {
                 weights.len()
             ))
         }
+    }
+}
+
+#[pyclass(
+    name = "_MorphWeightsView",
+    module = "pybevy.mesh",
+    skip_from_py_object
+)]
+pub struct PyMorphWeightsView {
+    storage: ComponentStorage<MorphWeights>,
+}
+
+impl PyMorphWeightsView {
+    fn values(&self) -> PyResult<Vec<f32>> {
+        Ok(self.storage.as_ref()?.weights().to_vec())
+    }
+}
+
+#[pymethods]
+impl PyMorphWeightsView {
+    fn __len__(&self) -> PyResult<usize> {
+        Ok(self.storage.as_ref()?.weights().len())
+    }
+
+    fn __getitem__(&self, index: isize) -> PyResult<f32> {
+        let morph = self.storage.as_ref()?;
+        let weights = morph.weights();
+        Ok(weights[normalize_index(index, weights.len())?])
+    }
+
+    fn __setitem__(&mut self, index: isize, value: f32) -> PyResult<()> {
+        let length = self.storage.as_ref()?.weights().len();
+        let index = normalize_index(index, length)?;
+        self.storage.as_mut()?.weights_mut()[index] = value;
+        Ok(())
+    }
+
+    fn __iter__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        Ok(PyList::new(py, self.values()?)?
+            .call_method0("__iter__")?
+            .unbind())
+    }
+
+    fn to_list(&self) -> PyResult<Vec<f32>> {
+        self.values()
+    }
+
+    fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<Py<PyAny>> {
+        let py = other.py();
+        let items = PyList::new(py, self.values()?)?;
+        compare_live_sequence(py, &items, other, op, other.is_instance_of::<Self>())
+    }
+
+    fn __repr__(&self) -> PyResult<String> {
+        Ok(float_list_repr(&self.values()?))
     }
 }

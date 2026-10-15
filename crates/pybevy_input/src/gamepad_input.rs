@@ -1,6 +1,6 @@
 use bevy::input::gamepad::{GamepadAxis, GamepadButton, GamepadInput};
 use pybevy_macros::pyenum;
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyTypeError, prelude::*};
 
 use crate::{gamepad_axis::PyGamepadAxis, gamepad_button::PyGamepadButton};
 
@@ -37,4 +37,20 @@ impl PyGamepadInput {
             }
         }
     }
+}
+
+pub fn extract_gamepad_input_from_any(obj: &Bound<'_, PyAny>) -> PyResult<GamepadInput> {
+    if let Ok(input) = obj.extract::<PyGamepadInput>() {
+        return Ok(input.into());
+    }
+    if let Ok(axis) = obj.extract::<PyGamepadAxis>() {
+        return Ok(GamepadInput::from(GamepadAxis::from(axis)));
+    }
+    if let Ok(button) = obj.extract::<PyGamepadButton>() {
+        return Ok(GamepadInput::from(GamepadButton::from(button)));
+    }
+    Err(PyTypeError::new_err(format!(
+        "expected GamepadInput, GamepadAxis, or GamepadButton, not {}",
+        obj.get_type().name()?
+    )))
 }

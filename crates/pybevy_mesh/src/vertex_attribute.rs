@@ -133,17 +133,18 @@ fn intern_attribute_name(name: &str) -> &'static str {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct PyMeshVertexAttributeId(pub(crate) MeshVertexAttributeId);
 
-#[pymethods]
 impl PyMeshVertexAttributeId {
-    #[getter]
-    pub fn value(&self) -> u64 {
+    fn raw(&self) -> u64 {
         let mut hasher = AttributeIdHasher::default();
         self.0.hash(&mut hasher);
         hasher.finish()
     }
+}
 
+#[pymethods]
+impl PyMeshVertexAttributeId {
     fn __repr__(&self) -> String {
-        format!("MeshVertexAttributeId({})", self.value())
+        format!("MeshVertexAttributeId({})", self.raw())
     }
 }
 

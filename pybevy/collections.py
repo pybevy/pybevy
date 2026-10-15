@@ -17,6 +17,13 @@ class LiveSequence(Protocol[_T_co]):
 
 
 @runtime_checkable
+class LiveArray(LiveSequence[_T], Protocol[_T]):
+    """Fixed-length mutable indexed access into live engine-owned storage."""
+
+    def __setitem__(self, index: int, value: _T) -> None: ...
+
+
+@runtime_checkable
 class LiveList(LiveSequence[_T], Protocol[_T]):
     """Mutable indexed access into live engine-owned storage."""
 

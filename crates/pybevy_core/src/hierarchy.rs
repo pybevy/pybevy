@@ -128,10 +128,6 @@ impl TryFrom<PyChildren> for Children {
 
 #[pymethods]
 impl PyChildren {
-    pub fn entities(&self) -> Vec<PyEntity> {
-        self.entities.clone()
-    }
-
     pub fn len(&self) -> usize {
         self.entities.len()
     }
@@ -253,7 +249,7 @@ mod tests {
         assert_eq!(py_children.len(), 3);
         assert!(!py_children.is_empty());
         assert_eq!(
-            py_children.entities(),
+            py_children.entities,
             vec![PyEntity(e1), PyEntity(e2), PyEntity(e3)]
         );
         // Positive, last, and negative indexes map onto the stored order.

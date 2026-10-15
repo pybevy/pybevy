@@ -3,10 +3,11 @@ use std::collections::{HashMap, HashSet};
 use proc_macro2::{Group, TokenStream, TokenTree};
 use syn::{Expr, ImplItem, Item, Type, parse::Parser, visit::Visit};
 
-use super::types::type_to_string;
+use super::{pyclass::parse_variant_pyo3_name, types::type_to_string};
 use crate::model::{EnumVariantDef, EnumVariantKind, MacroInfo, PyClassDef};
 
-/// Recover only topology witnessed in Python class attributes or registrations.
+/// Recover only topology witnessed in Python class attributes, unit-variant
+/// factories that `pybevy/_constants.py` publishes as attributes, or registrations.
 pub(super) fn extract(file: &syn::File, classes: &mut [PyClassDef]) {
     if !classes.iter().any(|class| {
         !class.is_enum
@@ -45,6 +46,22 @@ pub(super) fn extract(file: &syn::File, classes: &mut [PyClassDef]) {
                         || matches!(member, ImplItem::Const(value) if has_attr(&value.attrs, "classattr") && !value.ident.to_string().starts_with("__"))
                     {
                         supported = false;
+                    }
+                    if let ImplItem::Fn(method) = member
+                        && has_attr(&method.attrs, "staticmethod")
+                        && let Some(name) = parse_variant_pyo3_name(&method.attrs)
+                        && let Some(EnumVariantKind::Unit) =
+                            construction(method, native, name.trim_end_matches('_'))
+                    {
+                        witnessed = true;
+                        variants.push(EnumVariantDef {
+                            name,
+                            kind: EnumVariantKind::Unit,
+                            constructor: None,
+                            writable_fields: Vec::new(),
+                            payload_fields: Vec::new(),
+                            match_args: None,
+                        });
                     }
                     if let ImplItem::Fn(method) = member
                         && has_attr(&method.attrs, "classattr")

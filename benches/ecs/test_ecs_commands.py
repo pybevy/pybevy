@@ -3,6 +3,7 @@
 import numpy as np
 from pytest_benchmark.fixture import BenchmarkFixture
 
+from benches._helpers import initialize
 from pybevy.app import App, ScheduleRunnerPlugin, Startup
 from pybevy.decorators import component
 from pybevy.ecs import Commands, Component, World
@@ -25,7 +26,7 @@ def _bench_batch_spawn(entity_count: int) -> None:
     app = App()
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup_batch)
-    app.initialize()
+    initialize(app)
     app.update()
 
 
@@ -41,7 +42,7 @@ def _bench_normal_spawn(entity_count: int) -> None:
     app = App()
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup_normal)
-    app.initialize()
+    initialize(app)
     app.update()
 
 
@@ -58,7 +59,7 @@ def _bench_batch_scaling(entity_count: int) -> None:
     app = App()
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
-    app.initialize()
+    initialize(app)
     app.update()
 
 
@@ -138,7 +139,7 @@ def test_batch_spawn_with_full_transform_data(benchmark: BenchmarkFixture) -> No
         app = App()
         app.add_plugins(ScheduleRunnerPlugin.run_once())
         app.add_systems(Startup, setup)
-        app.initialize()
+        initialize(app)
         app.update()
 
     benchmark(bench)
@@ -157,7 +158,7 @@ def test_batch_spawn_positions_only(benchmark: BenchmarkFixture) -> None:
         app = App()
         app.add_plugins(ScheduleRunnerPlugin.run_once())
         app.add_systems(Startup, setup)
-        app.initialize()
+        initialize(app)
         app.update()
 
     benchmark(bench)

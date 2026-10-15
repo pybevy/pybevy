@@ -39,7 +39,7 @@ impl From<PyEntity> for Entity {
 #[pymethods]
 impl PyEntity {
     #[staticmethod]
-    fn from_raw(raw: u32) -> Option<Self> {
+    fn from_raw_u32(raw: u32) -> Option<Self> {
         Entity::from_raw_u32(raw).map(PyEntity)
     }
 
@@ -113,10 +113,10 @@ mod tests {
 
     #[test]
     fn from_raw_valid() {
-        let py_entity = PyEntity::from_raw(7);
+        let py_entity = PyEntity::from_raw_u32(7);
         assert!(py_entity.is_some());
         let bits = py_entity.unwrap().to_bits();
-        let restored = PyEntity::from_raw(7).unwrap().to_bits();
+        let restored = PyEntity::from_raw_u32(7).unwrap().to_bits();
         assert_eq!(bits, restored);
     }
 
@@ -167,24 +167,24 @@ mod tests {
 
     #[test]
     fn from_raw_constructs_generation_zero_identity_entities() {
-        // from_raw is deterministic and distinct per index, and is not the
+        // from_raw_u32 is deterministic and distinct per index, and is not the
         // inverse of from_bits: from_bits(5) is a different entity.
-        assert_eq!(PyEntity::from_raw(5), PyEntity::from_raw(5));
-        assert_ne!(PyEntity::from_raw(5), PyEntity::from_raw(6));
+        assert_eq!(PyEntity::from_raw_u32(5), PyEntity::from_raw_u32(5));
+        assert_ne!(PyEntity::from_raw_u32(5), PyEntity::from_raw_u32(6));
         assert_ne!(
-            PyEntity::from_raw(5).unwrap(),
+            PyEntity::from_raw_u32(5).unwrap(),
             PyEntity::from_bits(5).unwrap()
         );
-        // Every from_raw entity round-trips through its own bits, including
+        // Every from_raw_u32 entity round-trips through its own bits, including
         // index 0 (which from_bits itself rejects) and the pen-max index.
         for raw in [0u32, 1, 5, u32::MAX - 1] {
-            let entity = PyEntity::from_raw(raw).unwrap();
+            let entity = PyEntity::from_raw_u32(raw).unwrap();
             assert_eq!(
                 PyEntity::from_bits(entity.to_bits()).unwrap(),
                 entity,
                 "{raw}"
             );
         }
-        assert!(PyEntity::from_raw(u32::MAX).is_none());
+        assert!(PyEntity::from_raw_u32(u32::MAX).is_none());
     }
 }

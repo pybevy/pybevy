@@ -37,8 +37,6 @@ pub(crate) enum WorldMutation {
     AddChild(Entity, Entity),
     RemoveChildren(Entity, Vec<Entity>),
     ClearChildren(Entity),
-    SetParent(Entity, Entity),
-    RemoveParent(Entity),
 }
 
 impl WorldCommand {
@@ -77,12 +75,6 @@ impl WorldCommand {
                     }
                     WorldMutation::ClearChildren(parent) => {
                         commands::clear_children_helper(&adapter, parent)
-                    }
-                    WorldMutation::SetParent(child, parent) => {
-                        commands::set_parent_helper(&adapter, child, parent)
-                    }
-                    WorldMutation::RemoveParent(child) => {
-                        commands::remove_parent_helper(&adapter, child)
                     }
                 }
             }

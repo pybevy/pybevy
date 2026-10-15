@@ -79,10 +79,10 @@ def display_gamepad_state(query: Query[tuple[Gamepad, Entity]]) -> None:
             print(f"[Gamepad {entity}] Right stick button pressed!")
 
         # Read analog sticks
-        left_x = gamepad.get_axis(GamepadAxis.LeftStickX())
-        left_y = gamepad.get_axis(GamepadAxis.LeftStickY())
-        right_x = gamepad.get_axis(GamepadAxis.RightStickX())
-        right_y = gamepad.get_axis(GamepadAxis.RightStickY())
+        left_x = gamepad.get(GamepadAxis.LeftStickX())
+        left_y = gamepad.get(GamepadAxis.LeftStickY())
+        right_x = gamepad.get(GamepadAxis.RightStickX())
+        right_y = gamepad.get(GamepadAxis.RightStickY())
 
         # Apply deadzone and display stick values
         deadzone = 0.15
@@ -97,8 +97,8 @@ def display_gamepad_state(query: Query[tuple[Gamepad, Entity]]) -> None:
             )
 
         # Read triggers (analog buttons)
-        left_trigger = gamepad.get_button(GamepadButton.LeftTrigger2())
-        right_trigger = gamepad.get_button(GamepadButton.RightTrigger2())
+        left_trigger = gamepad.get(GamepadButton.LeftTrigger2())
+        right_trigger = gamepad.get(GamepadButton.RightTrigger2())
 
         if left_trigger is not None and left_trigger > 0.1:
             print(f"[Gamepad {entity}] Left Trigger: {left_trigger:.2f}")

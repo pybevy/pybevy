@@ -70,11 +70,6 @@ impl PyRenderLayers {
         Ok(self.as_ref()?.iter().collect())
     }
 
-    #[getter]
-    pub fn active_layers(&self) -> PyResult<Vec<usize>> {
-        self.iter()
-    }
-
     pub fn intersection(&self, py: Python<'_>, other: &PyRenderLayers) -> PyResult<Py<Self>> {
         let result = self.as_ref()?.intersection(other.as_ref()?.reborrow());
         Py::new(py, (PyRenderLayers::from(result), PyComponent))

@@ -842,34 +842,38 @@ class CursorIcon(Component):
     Insert into a window entity to set the cursor icon. Supports system
     cursors and (with custom_cursor feature) custom cursor images.
 
+    PyBevy builds without Bevy's `custom_cursor` feature, so `System` is the
+    only variant.
+
     Example:
         ```python
         from pybevy.window import CursorIcon, SystemCursorIcon, PrimaryWindow
-        from pybevy.ecs import Single, Mut, With
+        from pybevy.ecs import Commands, Entity, Mut, Single, With
 
         def set_pointer_cursor(
+            commands: Commands, window: Single[Entity, With[PrimaryWindow]]
+        ) -> None:
+            commands.entity(window.into_inner()).insert(
+                CursorIcon.System(SystemCursorIcon.Pointer)
+            )
+
+        def set_wait_cursor(
             cursor: Single[Mut[CursorIcon], With[PrimaryWindow]],
         ) -> None:
-            cursor.set_system(SystemCursorIcon.Pointer)
+            match cursor.into_inner():
+                case CursorIcon.System() as icon:
+                    icon.value = SystemCursorIcon.Wait
         ```
     """
 
-    def __init__(self, system_icon: SystemCursorIcon = ...) -> None:
-        """Create a CursorIcon with a system cursor (default: Default)."""
-
-    @staticmethod
-    def system(icon: SystemCursorIcon) -> CursorIcon:
-        """Create a CursorIcon from a system cursor icon."""
+    class System(CursorIcon):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        value: SystemCursorIcon
+        def __init__(self, value: SystemCursorIcon) -> None: ...
 
     @property
     def as_system(self) -> SystemCursorIcon | None:
         """Get the system cursor icon if this is a system cursor."""
-
-    def set_system(self, icon: SystemCursorIcon) -> None:
-        """Set this cursor to a system cursor icon."""
-
-    def is_system(self) -> bool:
-        """Check if this is a system cursor."""
 
     def __eq__(self, other: object) -> bool: ...
 

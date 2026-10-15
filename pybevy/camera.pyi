@@ -1174,14 +1174,6 @@ class RenderLayers(Component):
             List of layer indices that are enabled
         """
 
-    @property
-    def active_layers(self) -> list[int]:
-        """Read the enabled layer indices as a property; PyBevy has no Bevy counterpart.
-
-        Returns:
-            List of layer indices that are enabled, the same list `iter()` returns
-        """
-
     def intersection(self, other: RenderLayers) -> RenderLayers:
         """Get layers common to both RenderLayers (bitwise AND).
 

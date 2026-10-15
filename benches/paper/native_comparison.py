@@ -79,7 +79,8 @@ def _make_query_app(entity_count: int) -> App:
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, increment)
-    app.initialize()
+    app.finish()
+    app.cleanup()
     return app
 
 
@@ -98,7 +99,8 @@ def _make_view_app(entity_count: int) -> App:
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, increment)
-    app.initialize()
+    app.finish()
+    app.cleanup()
     return app
 
 
@@ -119,7 +121,8 @@ def _make_numba_app(entity_count: int) -> App:
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, increment)
-    app.initialize()
+    app.finish()
+    app.cleanup()
     return app
 
 
@@ -165,7 +168,8 @@ def _make_query_physics_app(entity_count: int) -> App:
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, physics)
-    app.initialize()
+    app.finish()
+    app.cleanup()
     return app
 
 
@@ -190,7 +194,8 @@ def _make_view_physics_app(entity_count: int) -> App:
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, physics)
-    app.initialize()
+    app.finish()
+    app.cleanup()
     return app
 
 
@@ -211,7 +216,8 @@ def _make_numba_physics_app(entity_count: int) -> App:
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
     app.add_systems(Update, physics)
-    app.initialize()
+    app.finish()
+    app.cleanup()
     return app
 
 

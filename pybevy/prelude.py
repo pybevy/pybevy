@@ -174,6 +174,7 @@ from .material import AlphaMode
 from .math import (
     Annulus,
     Arc2d,
+    BVec2,
     Capsule2d,
     Capsule3d,
     Circle,
@@ -591,6 +592,7 @@ __all__ = [
     # Math
     "Annulus",
     "Arc2d",
+    "BVec2",
     "Capsule2d",
     "Capsule3d",
     "Circle",

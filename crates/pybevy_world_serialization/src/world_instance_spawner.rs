@@ -77,19 +77,11 @@ impl PyWorldInstanceSpawner {
         Ok(self.as_ref()?.instance_is_ready(instance_id.0))
     }
 
-    pub fn iter_instance_entities(
-        &self,
-        instance_id: &PyInstanceId,
-    ) -> PyResult<Option<Vec<PyEntity>>> {
-        let spawner = self.as_ref()?;
-        if !spawner.instance_is_ready(instance_id.0) {
-            return Ok(None);
-        }
-        Ok(Some(
-            spawner
-                .iter_instance_entities(instance_id.0)
-                .map(PyEntity)
-                .collect(),
-        ))
+    pub fn iter_instance_entities(&self, instance_id: &PyInstanceId) -> PyResult<Vec<PyEntity>> {
+        Ok(self
+            .as_ref()?
+            .iter_instance_entities(instance_id.0)
+            .map(PyEntity)
+            .collect())
     }
 }

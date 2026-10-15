@@ -15,6 +15,7 @@ try:
 except ImportError:
     NUMBA_AVAILABLE = False
 
+from benches._helpers import initialize
 from pybevy.app import App, Last, ScheduleRunnerPlugin, Startup, Update
 from pybevy.decorators import component
 from pybevy.ecs import Commands, Component, Mut, Query, View, With
@@ -64,7 +65,7 @@ def test_simple_query(benchmark: BenchmarkFixture, entity_count: int) -> None:
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, spawn)
     app.add_systems(Update, bench_query)
-    app.initialize()
+    initialize(app)
     app.update()
 
     benchmark(app.update)
@@ -85,7 +86,7 @@ def test_simple_view(benchmark: BenchmarkFixture, entity_count: int) -> None:
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, spawn)
     app.add_systems(Update, bench_view)
-    app.initialize()
+    initialize(app)
     app.update()
 
     benchmark(app.update)
@@ -110,7 +111,7 @@ def test_multi_field_query(benchmark: BenchmarkFixture, entity_count: int) -> No
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, spawn)
     app.add_systems(Update, bench_query)
-    app.initialize()
+    initialize(app)
     app.update()
 
     benchmark(app.update)
@@ -135,7 +136,7 @@ def test_multi_field_view(benchmark: BenchmarkFixture, entity_count: int) -> Non
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, spawn)
     app.add_systems(Update, bench_view)
-    app.initialize()
+    initialize(app)
     app.update()
 
     benchmark(app.update)
@@ -182,7 +183,7 @@ def test_jit_api_available() -> None:
     app.add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, spawn)
     app.add_systems(Update, try_jit)
-    app.initialize()
+    initialize(app)
     app.update()
 
     # Either it worked or we got the expected error
@@ -214,7 +215,7 @@ def test_view_correctness() -> None:
     app.add_systems(Startup, spawn)
     app.add_systems(Update, calc_view)
     app.add_systems(Last, verify)
-    app.initialize()
+    initialize(app)
     app.update()
 
     assert len(results) == entity_count

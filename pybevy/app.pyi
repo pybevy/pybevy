@@ -466,7 +466,6 @@ class App:
 
     def __init__(self) -> None: ...
     def add_systems(self, schedule: Stage | OnEnterSchedule | OnExitSchedule | OnTransitionSchedule, *systems: SystemFns) -> App: ...
-    def initialize(self) -> None: ...
     def finish(self) -> None: ...
     def update(self) -> None: ...
     def run(self) -> AppExit:
@@ -475,12 +474,6 @@ class App:
         """
     def _mark_entrypoint(self) -> None: ...
     def world(self, callback: Callable[..., None]) -> None: ...
-    def run_system_once(self, func: SystemFn) -> None:
-        """Run a system function once immediately on this app's world.
-
-        A required Single parameter with zero or multiple matches raises
-        RuntimeError; scheduled systems preserve Bevy's silent skip instead.
-        """
     def _run_systems_once(self, *funcs: SystemFn) -> None:
         """Run multiple system functions once immediately (PyBevy-specific)."""
     def init_resource(self, resource: type[ResourceType]) -> App: ...
@@ -533,7 +526,7 @@ class App:
         World.trigger() or Commands.trigger().
 
         Returns self for method chaining. For lifecycle management, use
-        World.add_observer() instead to get the observer entity ID.
+        World.add_observer() instead to get the observer entity.
 
         Example:
             def on_player_died(trigger: On[PlayerDied]) -> None:
@@ -567,25 +560,6 @@ class App:
             ```
         """
 
-    def run_schedule(self, stage: Stage) -> None:
-        """Run a specific schedule once on the app's world.
-
-        This executes only the systems registered in the given schedule,
-        without running the full frame update. Useful for RL simulation
-        workloads where SimTick needs to run independently of rendering.
-
-        Args:
-            stage: The schedule to run (e.g., SimTick, Update)
-
-        Example:
-            ```python
-            # Run SimTick independently (without other frame schedules)
-            app.run_schedule(SimTick)
-
-            # Run Update schedule independently
-            app.run_schedule(Update)
-            ```
-        """
     def init_schedule(self, label: Stage) -> App:
         """Initialize a schedule and add it to the app.
 

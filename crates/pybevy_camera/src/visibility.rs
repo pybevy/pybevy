@@ -1,10 +1,11 @@
 use bevy::camera::visibility::Visibility;
 use pybevy_core::{ComponentStorage, PyComponent};
-use pybevy_macros::pycomponent;
+use pybevy_macros::{pycomponent, pyenum};
 use pyo3::prelude::*;
 
 use crate::visibility_batch::PyVisibilityBatch;
 
+#[pyenum(Visibility, manual)]
 #[pycomponent(Visibility, bridge)]
 #[pyclass(name = "Visibility", module = "pybevy.camera", extends = PyComponent, eq)]
 #[derive(Debug)]

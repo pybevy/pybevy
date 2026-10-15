@@ -1,5 +1,6 @@
 from pytest_benchmark.fixture import BenchmarkFixture
 
+from benches._helpers import initialize
 from pybevy.app import App, Update
 
 
@@ -11,7 +12,7 @@ def test_local_system(benchmark: BenchmarkFixture) -> None:
 
     app = App().add_systems(Update, update_system)
 
-    app.initialize()
+    initialize(app)
     benchmark(app.update)
 
 
@@ -23,5 +24,5 @@ def test_local_update(benchmark: BenchmarkFixture) -> None:
 
     app = App().add_systems(Update, update_system)
 
-    app.initialize()
+    initialize(app)
     benchmark(app.update)

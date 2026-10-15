@@ -47,10 +47,6 @@ impl PyRelativeCursorPosition {
         Ok(())
     }
 
-    pub fn is_cursor_over(&self) -> PyResult<bool> {
-        Ok(self.as_ref()?.cursor_over())
-    }
-
     pub fn __repr__(&self) -> PyResult<String> {
         let inner = self.as_ref()?;
         let normalized = match inner.normalized {

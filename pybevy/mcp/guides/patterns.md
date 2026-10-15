@@ -168,7 +168,7 @@ operation that implicitly flushes also raises any command errors it applies;
 successful mutations are not rolled back. Callback and command failures are
 grouped with the callback failure first.
 `world.commands().entity(id)` does not check existence eagerly;
-`get_entity(id)` accepts reserved IDs and returns `None` for invalid IDs.
+`get_entity(id)` accepts reserved IDs and raises `ValueError` for invalid IDs.
 Use `world.spawn(...)`, `world.entity(...)`, and direct
 World resource methods when immediate mutation is required.
 
@@ -210,10 +210,10 @@ def setup(commands: Commands) -> None:
     commands.entity(e).insert(Transform(), Name("Deferred"))
 
     # Despawn an entity
-    commands.despawn(entity)
+    commands.entity(entity).despawn()
 ```
 
-`commands.get_entity(entity)` returns `None` for an expired entity generation.
+`commands.get_entity(entity)` raises `ValueError` for an expired entity generation.
 Following Bevy, valid unspawned IDs are accepted, including fresh IDs and IDs
 reserved by `commands.spawn()` before deferred commands apply.
 A returned handle remains subject to the system's validity window.
@@ -384,12 +384,12 @@ Capture **every** variable from the loop scope that the lambda references - incl
 def reparent(commands: Commands, query: Query[Entity, With[Enemy]]) -> None:
     new_parent = commands.spawn(Transform()).id()
     for entity in query:
-        commands.entity(entity).set_parent(new_parent)
+        commands.entity(entity).insert(ChildOf(new_parent))
 
 def orphan(commands: Commands, parent_query: Query[tuple[Entity, Children]]) -> None:
     for entity, children in parent_query:
         for child in children:
-            commands.entity(child).remove_parent()
+            commands.entity(child).remove(ChildOf)
 ```
 
 #### Querying Children
@@ -506,7 +506,7 @@ def pause(flags: Query[Mut[GameFlags]]) -> None:
 app = App().add_systems(Update, run_if(game_logic, is_game_active))
 app.world(setup)
 app.update()
-app.run_system_once(pause)
+app.world(lambda world: world.run_system_once(pause))
 app.update()
 assert ticks == ["tick"]
 ```
@@ -961,9 +961,9 @@ use separate systems. Unrelated message channels remain compatible.
 
 Observers react to events or lifecycle hooks without polling. Register with `app.add_observer()`.
 
-For removable observers, retain the entity returned by `world.add_observer()`
-and pass it to `world.despawn_observer()`. Live non-observers raise `ValueError`;
-protected resource entities raise `TypeError`. Already-despawned entities are a no-op.
+For removable observers, keep `world.add_observer(fn).id()` and despawn that
+entity as Bevy does, with `world.despawn(id)` or `commands.entity(id).despawn()`;
+the observer stops firing and its callable is released.
 
 ```python
 from dataclasses import dataclass

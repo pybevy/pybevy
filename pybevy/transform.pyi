@@ -105,23 +105,23 @@ class GlobalTransform(Component):
         or the output will be invalid.
         """
 
-    def right(self) -> Vec3:
+    def right(self) -> Dir3:
         """Return the local right vector (X axis)."""
 
-    def left(self) -> Vec3:
+    def left(self) -> Dir3:
         """Return the local left vector (-X axis)."""
 
-    def up(self) -> Vec3:
+    def up(self) -> Dir3:
         """Return the local up vector (Y axis)."""
 
-    def down(self) -> Vec3:
+    def down(self) -> Dir3:
         """Return the local down vector (-Y axis)."""
 
-    def forward(self) -> Vec3:
-        """Return the local forward vector (Z axis)."""
+    def forward(self) -> Dir3:
+        """Return the local forward vector (-Z axis)."""
 
-    def back(self) -> Vec3:
-        """Return the local back vector (-Z axis)."""
+    def back(self) -> Dir3:
+        """Return the local back vector (Z axis)."""
 
     def mul_transform(self, transform: Transform) -> GlobalTransform:
         """Multiply this GlobalTransform by a Transform.

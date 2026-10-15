@@ -36,6 +36,7 @@ def _apply() -> None:
     from .math import (
         Affine2,
         Affine3A,
+        BVec2,
         Dir2,
         Dir3,
         Interval,
@@ -70,6 +71,7 @@ def _apply() -> None:
         Overflow,
         UiPosition,
         UiRect,
+        UiTransform,
         Val2,
     )
 
@@ -230,6 +232,7 @@ def _apply() -> None:
                 "AXES",
             ],
         ),
+        (BVec2, ["FALSE", "TRUE"]),
         (UVec2, ["ZERO", "ONE", "X", "Y", "MIN", "MAX", "AXES"]),
         (UVec3, ["ZERO", "ONE", "X", "Y", "Z", "MIN", "MAX", "AXES"]),
         (Quat, ["IDENTITY", "NAN"]),
@@ -300,6 +303,7 @@ def _apply() -> None:
         (Interaction, ["None_", "Hovered", "Pressed"]),
         (Overflow, ["DEFAULT"]),
         (BorderRadius, ["ZERO", "MAX"]),
+        (UiTransform, ["IDENTITY"]),
         (UiPosition, ["CENTER", "TOP", "BOTTOM", "LEFT", "RIGHT", "TOP_LEFT", "TOP_RIGHT", "BOTTOM_LEFT", "BOTTOM_RIGHT"]),
         (UiRect, ["ZERO", "AUTO", "DEFAULT"]),
         (Val2, ["ZERO"]),
