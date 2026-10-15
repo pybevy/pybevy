@@ -3,7 +3,7 @@ use bevy::{
     pbr::{MeshMaterial3d, StandardMaterial},
 };
 use pybevy_core::{
-    ComponentStorage, PyComponent, PyHandle, PyLogicalComponentParam, ensure_asset_type,
+    ComponentStorage, HandleArg, PyComponent, PyHandle, PyLogicalComponentParam, ensure_asset_type,
     extract_handle_from_any,
 };
 use pybevy_macros::pycomponent;
@@ -27,8 +27,9 @@ fn extract_material_handle(material: &Bound<'_, PyAny>) -> PyResult<Handle<Stand
 #[pymethods]
 impl PyMeshMaterial3d {
     #[new]
-    pub fn new(material: &Bound<'_, PyAny>) -> PyResult<PyClassInitializer<Self>> {
-        Ok(Self::from_owned(MeshMaterial3d(extract_material_handle(material)?)).into())
+    #[pyo3(signature = (material = HandleArg::default()))]
+    pub fn new(material: HandleArg) -> PyResult<PyClassInitializer<Self>> {
+        Ok(Self::from_owned(MeshMaterial3d(material.into_handle()?)).into())
     }
 
     /// Support `MeshMaterial3d[HologramMaterial]` subscript notation.

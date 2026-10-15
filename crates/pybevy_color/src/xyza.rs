@@ -170,7 +170,7 @@ impl PyXyza {
         Ok(())
     }
 
-    pub fn to_linear(&self) -> PyResult<PyLinearRgba> {
+    pub fn to_linear_rgba(&self) -> PyResult<PyLinearRgba> {
         let linear: LinearRgba = (*self.as_ref()?).into();
         Ok(PyLinearRgba::from_owned(linear))
     }
@@ -229,6 +229,18 @@ impl PyXyza {
             self.as_ref()?
                 .interpolate_stable(other.as_ref()?.reborrow(), t),
         ))
+    }
+
+    pub fn interpolate_stable_assign(&mut self, other: &PyXyza, t: f32) -> PyResult<()> {
+        let other = *other.as_ref()?;
+        self.as_mut()?.interpolate_stable_assign(&other, t);
+        Ok(())
+    }
+
+    pub fn smooth_nudge(&mut self, target: &PyXyza, decay_rate: f32, delta: f32) -> PyResult<()> {
+        let target = *target.as_ref()?;
+        self.as_mut()?.smooth_nudge(&target, decay_rate, delta);
+        Ok(())
     }
 
     pub fn __repr__(&self) -> PyResult<String> {

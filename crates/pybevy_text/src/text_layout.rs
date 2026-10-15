@@ -1,4 +1,4 @@
-use bevy::text::{Justify, LineBreak, TextLayout};
+use bevy::text::{LineBreak, TextLayout};
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
@@ -38,36 +38,8 @@ impl PyTextLayout {
     }
 
     #[staticmethod]
-    pub fn new_with_justify(py: Python<'_>, justify: PyJustify) -> PyResult<Py<Self>> {
-        Py::new(
-            py,
-            Self::from_owned(TextLayout {
-                justify: justify.into(),
-                linebreak: LineBreak::WordBoundary,
-            }),
-        )
-    }
-
-    #[staticmethod]
-    pub fn new_with_linebreak(py: Python<'_>, linebreak: PyLineBreak) -> PyResult<Py<Self>> {
-        Py::new(
-            py,
-            Self::from_owned(TextLayout {
-                justify: Justify::Left,
-                linebreak: linebreak.into(),
-            }),
-        )
-    }
-
-    #[staticmethod]
-    pub fn new_with_no_wrap(py: Python<'_>) -> PyResult<Py<Self>> {
-        Py::new(
-            py,
-            Self::from_owned(TextLayout {
-                justify: Justify::Left,
-                linebreak: LineBreak::NoWrap,
-            }),
-        )
+    pub fn no_wrap(py: Python<'_>) -> PyResult<Py<Self>> {
+        Py::new(py, Self::from_owned(TextLayout::no_wrap()))
     }
 
     #[getter]

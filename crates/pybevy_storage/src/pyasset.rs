@@ -890,6 +890,55 @@ impl<T: Asset> AssetStorage<T> {
         }
     }
 
+    /// Borrow an `Option` field of this asset whose child rechecks `Some` on
+    /// every access.
+    ///
+    /// Tracked and pointer-backed assets yield a checked path rooted at the
+    /// asset, so a child escaped before the field becomes `None` errors instead
+    /// of reading or writing a stale payload, and follows a later `Some` value.
+    /// Owned assets yield a read-only snapshot.
+    pub fn borrow_optional_field<F: Clone + 'static, S>(
+        &self,
+        name: &'static str,
+        read: ReadField<T, Option<F>>,
+        write: WriteField<T, Option<F>>,
+    ) -> Result<Option<S>, StorageError>
+    where
+        S: BorrowableStorage<F>,
+    {
+        if self.resolver.is_some() {
+            if read(&*self.as_ref()?).is_none() {
+                return Ok(None);
+            }
+            let source = self.root_source()?.optional(name, read, write);
+            return Ok(Some(S::revalidating_source(source)));
+        }
+        let child = match &self.inner {
+            AssetStorageInner::Owned(Some(asset)) => {
+                return Ok(read(asset).as_ref().map(S::snapshot));
+            }
+            AssetStorageInner::Owned(None) => return Err(StorageError::AssetConsumed),
+            AssetStorageInner::OwnedReadOnly(asset) => {
+                return Ok(read(asset).as_ref().map(S::snapshot));
+            }
+            AssetStorageInner::Source(source) => {
+                if read(&*source.resolve_ref()?).is_none() {
+                    return Ok(None);
+                }
+                source.optional(name, read, write)
+            }
+            AssetStorageInner::BorrowedRef { .. } | AssetStorageInner::BorrowedMut { .. } => {
+                if read(&*self.as_ref()?).is_none() {
+                    return Ok(None);
+                }
+                RevalidatingSource::from_borrowed_asset(self)
+                    .ok_or(StorageError::InvalidAccess)?
+                    .optional(name, read, write)
+            }
+        };
+        Ok(Some(S::revalidating_source(child)))
+    }
+
     /// Borrow an asset-shaped inline field from this asset.
     pub fn borrow_asset_field<F: Asset + Clone + 'static>(
         &self,

@@ -794,6 +794,19 @@ fn synthetic_upstream(preferred: &str, short_name: &str) -> Option<BevyItem> {
             "depth_or_array_layers".to_string(),
         ],
         ("render", "TextureUsages") => Vec::new(),
+        ("render", "TextureViewDescriptor") => [
+            "label",
+            "format",
+            "dimension",
+            "usage",
+            "aspect",
+            "base_mip_level",
+            "mip_level_count",
+            "base_array_layer",
+            "array_layer_count",
+        ]
+        .map(str::to_string)
+        .to_vec(),
         _ => return None,
     };
     Some(bevy_item_with_fields(

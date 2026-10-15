@@ -207,8 +207,7 @@ error names that form, and readback reports a stored constant the same way.
 
 Schema and readback variant names use Bevy's canonical spelling. When a Python
 wrapper spells a variant differently, either spelling is accepted on write;
-`Tonemapping.None_` and `Tonemapping.PbrNeutral`, for example, correspond to
-`"None"` and `"KhronosPbrNeutral"` in JSON. Echoes use the canonical spelling.
+`Tonemapping.None_`, for example, corresponds to `"None"` in JSON. Echoes use the canonical spelling.
 
 An unknown field on an enum component reports this synthetic input and the
 accepted variant names. `set_resource` reports the resource type under

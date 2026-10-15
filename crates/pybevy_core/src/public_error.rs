@@ -1437,6 +1437,7 @@ pub fn unsigned_rect_origin(origin: [u32; 2], extent: [u32; 2], half_size: bool)
 
 pub const IMAGE_NO_DATA: &str = "Image has no data";
 
+pub const RENDER_CREATION_MANUAL_UNSUPPORTED: &str = "RenderCreation.Manual carries live GPU device handles and cannot be represented in Python; use RenderCreation.Automatic(WgpuSettings(...))";
 pub const IMAGE_INVALID_PIXEL_COORDINATES: &str = "Invalid pixel coordinates or no image data";
 
 pub const IMAGE_PIXEL_COUNT_EXCEEDS_U32: &str =

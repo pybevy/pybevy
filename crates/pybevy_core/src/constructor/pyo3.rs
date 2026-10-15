@@ -36,6 +36,21 @@ impl<'a, 'py, T: PyClass> FromPyObject<'a, 'py> for Omittable<PyRef<'py, T>> {
     }
 }
 
+impl<'a, 'py, T> FromPyObject<'a, 'py> for Omittable<Option<T>>
+where
+    T: FromPyObject<'a, 'py>,
+    T::Error: Into<PyErr>,
+{
+    type Error = PyErr;
+
+    fn extract(obj: Borrowed<'a, 'py, PyAny>) -> Result<Self, Self::Error> {
+        if obj.is_none() {
+            return Ok(Self::Supplied(None));
+        }
+        Ok(Self::Supplied(Some(T::extract(obj).map_err(Into::into)?)))
+    }
+}
+
 impl<'a, 'py> FromPyObject<'a, 'py> for Omittable<Bound<'py, PyAny>> {
     type Error = PyErr;
 

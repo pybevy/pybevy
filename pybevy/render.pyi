@@ -1,6 +1,6 @@
 import builtins
 from contextlib import AbstractContextManager
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 from pybevy.app import App, Plugin
 from pybevy.array import Array
@@ -43,11 +43,23 @@ class ShaderBuffer(Asset):
     def resize_in_place(self, size: int) -> None: ...
 
 class TextureDescriptor:
-    """Image texture descriptor. Currently exposes usage flags only.
+    """Image texture descriptor.
 
     Obtain from Image.texture_descriptor; copy.copy() creates a mutable copy.
     """
 
+    @property
+    def mip_level_count(self) -> int: ...
+    @mip_level_count.setter
+    def mip_level_count(self, value: int) -> None: ...
+    @property
+    def dimension(self) -> TextureDimension: ...
+    @dimension.setter
+    def dimension(self, value: TextureDimension) -> None: ...
+    @property
+    def format(self) -> TextureFormat: ...
+    @format.setter
+    def format(self, value: TextureFormat) -> None: ...
     @property
     def usage(self) -> TextureUsages: ...
     @usage.setter
@@ -283,6 +295,79 @@ class Face:
 
 PyFace = Face
 
+class TextureAspect:
+    """Which aspect of a texture a view covers."""
+
+    All: ClassVar[TextureAspect]
+    StencilOnly: ClassVar[TextureAspect]
+    DepthOnly: ClassVar[TextureAspect]
+    Plane0: ClassVar[TextureAspect]
+    Plane1: ClassVar[TextureAspect]
+    Plane2: ClassVar[TextureAspect]
+
+    def __copy__(self) -> TextureAspect: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> TextureAspect: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
+
+class TextureViewDescriptor:
+    """Describes how an image's texture view is created.
+
+    Obtain from Image.texture_view_descriptor; copy.copy() creates a mutable copy.
+    """
+
+    def __init__(
+        self,
+        *,
+        label: str | None = None,
+        format: TextureFormat | None = None,
+        dimension: TextureViewDimension | None = None,
+        usage: TextureUsages | None = None,
+        aspect: TextureAspect = TextureAspect.All,
+        base_mip_level: int = 0,
+        mip_level_count: int | None = None,
+        base_array_layer: int = 0,
+        array_layer_count: int | None = None,
+    ) -> None: ...
+    @property
+    def label(self) -> str | None:
+        """Debug label; each distinct label is interned for the process lifetime."""
+    @label.setter
+    def label(self, value: str | None) -> None: ...
+    @property
+    def format(self) -> TextureFormat | None: ...
+    @format.setter
+    def format(self, value: TextureFormat | None) -> None: ...
+    @property
+    def dimension(self) -> TextureViewDimension | None: ...
+    @dimension.setter
+    def dimension(self, value: TextureViewDimension | None) -> None: ...
+    @property
+    def usage(self) -> TextureUsages | None: ...
+    @usage.setter
+    def usage(self, value: TextureUsages | None) -> None: ...
+    @property
+    def aspect(self) -> TextureAspect: ...
+    @aspect.setter
+    def aspect(self, value: TextureAspect) -> None: ...
+    @property
+    def base_mip_level(self) -> int: ...
+    @base_mip_level.setter
+    def base_mip_level(self, value: int) -> None: ...
+    @property
+    def mip_level_count(self) -> int | None: ...
+    @mip_level_count.setter
+    def mip_level_count(self, value: int | None) -> None: ...
+    @property
+    def base_array_layer(self) -> int: ...
+    @base_array_layer.setter
+    def base_array_layer(self, value: int) -> None: ...
+    @property
+    def array_layer_count(self) -> int | None: ...
+    @array_layer_count.setter
+    def array_layer_count(self, value: int | None) -> None: ...
+    def __copy__(self) -> TextureViewDescriptor: ...
+
 class TextureViewDimension:
     """Dimension used when interpreting a texture through a view."""
 
@@ -308,18 +393,134 @@ class TexturePlugin(Plugin):
     """
     def __init__(self) -> None: ...
 
+class Backends:
+    """Mutable set of wgpu backends. Combine flags with `|`."""
+
+    NOOP: ClassVar[Backends]
+    VULKAN: ClassVar[Backends]
+    GL: ClassVar[Backends]
+    METAL: ClassVar[Backends]
+    DX12: ClassVar[Backends]
+    BROWSER_WEBGPU: ClassVar[Backends]
+    PRIMARY: ClassVar[Backends]
+    SECONDARY: ClassVar[Backends]
+
+    def __init__(self) -> None:
+        """Create Bevy's default set: every backend."""
+
+    def __or__(self, other: Backends) -> Backends: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __copy__(self) -> Backends: ...
+    def insert(self, other: Backends) -> None: ...
+    def remove(self, other: Backends) -> None: ...
+    def toggle(self, other: Backends) -> None: ...
+    def set(self, other: Backends, value: bool) -> None: ...
+    def contains(self, other: Backends) -> bool:
+        """Whether all backends in other are present."""
+
+class WgpuSettingsPriority:
+    """Which features and limits wgpu requests from the adapter."""
+
+    WebGPU: ClassVar[WgpuSettingsPriority]
+    Functionality: ClassVar[WgpuSettingsPriority]
+    WebGL2: ClassVar[WgpuSettingsPriority]
+
+    def __copy__(self) -> WgpuSettingsPriority: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> WgpuSettingsPriority: ...
+    def __eq__(self, other: object) -> bool: ...
+
+class Gles3MinorVersion:
+    """GLES 3 minor version requested by the GL backend."""
+
+    Automatic: ClassVar[Gles3MinorVersion]
+    Version0: ClassVar[Gles3MinorVersion]
+    Version1: ClassVar[Gles3MinorVersion]
+    Version2: ClassVar[Gles3MinorVersion]
+
+    def __copy__(self) -> Gles3MinorVersion: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> Gles3MinorVersion: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
+
+class WgpuSettings:
+    """Settings for the automatic wgpu renderer setup.
+
+    Omitted arguments keep Bevy's defaults, which honor the WGPU_BACKEND,
+    WGPU_POWER_PREF, WGPU_SETTINGS_PRIO and WGPU_GLES_MINOR_VERSION
+    environment variables. `backends=None` disables renderer creation.
+    Features, limits, DX12 compiler, instance flags, memory hints and memory
+    budget thresholds keep Bevy's defaults and are not exposed.
+    """
+
+    def __init__(
+        self,
+        *,
+        device_label: str | None = ...,
+        backends: Backends | None = ...,
+        power_preference: PowerPreference = ...,
+        priority: WgpuSettingsPriority = ...,
+        gles3_minor_version: Gles3MinorVersion = ...,
+        force_fallback_adapter: bool = False,
+        adapter_name: str | None = None,
+    ) -> None: ...
+    @property
+    def device_label(self) -> str | None: ...
+    @device_label.setter
+    def device_label(self, value: str | None) -> None: ...
+    @property
+    def backends(self) -> Backends | None: ...
+    @backends.setter
+    def backends(self, value: Backends | None) -> None: ...
+    @property
+    def power_preference(self) -> PowerPreference: ...
+    @power_preference.setter
+    def power_preference(self, value: PowerPreference) -> None: ...
+    @property
+    def priority(self) -> WgpuSettingsPriority: ...
+    @priority.setter
+    def priority(self, value: WgpuSettingsPriority) -> None: ...
+    @property
+    def gles3_minor_version(self) -> Gles3MinorVersion: ...
+    @gles3_minor_version.setter
+    def gles3_minor_version(self, value: Gles3MinorVersion) -> None: ...
+    @property
+    def force_fallback_adapter(self) -> bool: ...
+    @force_fallback_adapter.setter
+    def force_fallback_adapter(self, value: bool) -> None: ...
+    @property
+    def adapter_name(self) -> str | None: ...
+    @adapter_name.setter
+    def adapter_name(self, value: str | None) -> None: ...
+    def __copy__(self) -> WgpuSettings: ...
+
+class RenderCreation:
+    """How the renderer's GPU resources are created.
+
+    Only `RenderCreation.Automatic(settings)` is available from Python; Bevy's
+    `Manual` variant carries live GPU device handles.
+    """
+
+    class Automatic(RenderCreation):
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        def __init__(self, value: WgpuSettings) -> None: ...
+        @property
+        def value(self) -> WgpuSettings:
+            """A read-only snapshot of the settings; construct a new value to change them."""
+
 class RenderPlugin(Plugin):
     """Configures the rendering pipeline.
 
     Examples:
         ```python
         from pybevy.app import DefaultPlugins
-        from pybevy.render import RenderPlugin, PowerPreference
+        from pybevy.render import PowerPreference, RenderCreation, RenderPlugin, WgpuSettings
 
         # Low power GPU
         app.add_plugins(
             DefaultPlugins().set(RenderPlugin(
-                power_preference=PowerPreference.LowPower
+                render_creation=RenderCreation.Automatic(
+                    WgpuSettings(power_preference=PowerPreference.LowPower)
+                )
             ))
         )
 
@@ -335,14 +536,14 @@ class RenderPlugin(Plugin):
     def __init__(
         self,
         *,
-        power_preference: PowerPreference | None = None,
+        render_creation: RenderCreation = ...,
         synchronous_pipeline_compilation: bool = False
     ) -> None:
         """Create a RenderPlugin with optional configuration.
 
         Args:
-            power_preference: GPU adapter selection preference (None, LowPower, HighPerformance).
-                If None, uses environment variable or defaults to HighPerformance.
+            render_creation: Renderer setup; defaults to
+                RenderCreation.Automatic(WgpuSettings()).
             synchronous_pipeline_compilation: If True, disables async pipeline compilation.
                 No effect on macOS, Wasm, or iOS.
         """
@@ -350,7 +551,7 @@ class RenderPlugin(Plugin):
     def build(self, app: App) -> None: ...
 
     @property
-    def power_preference(self) -> PowerPreference | None: ...
+    def render_creation(self) -> RenderCreation: ...
 
     @property
     def synchronous_pipeline_compilation(self) -> bool: ...

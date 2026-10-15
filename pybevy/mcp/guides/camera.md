@@ -297,10 +297,10 @@ For a procedural image containing six vertically stacked square faces, mark the
 array texture's view as a cubemap before adding it to `Assets[Image]`:
 
 ```python
-from pybevy.render import TextureViewDimension
+from pybevy.render import TextureViewDescriptor, TextureViewDimension
 
 cubemap.reinterpret_stacked_2d_as_array(6)
-cubemap.texture_view_dimension = TextureViewDimension.Cube
+cubemap.texture_view_descriptor = TextureViewDescriptor(dimension=TextureViewDimension.Cube)
 cubemap_handle = images.add(cubemap)
 commands.spawn(Camera3d(), Skybox(image=cubemap_handle, brightness=1000.0))
 ```

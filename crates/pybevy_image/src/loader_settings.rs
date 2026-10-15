@@ -3,15 +3,15 @@ use bevy::{
     image::{ImageFormatSetting, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor},
 };
 use pybevy_core::{
-    FieldStorage, FromBorrowedStorage, StorageRef, computed_owned, enum_comparison::compare_values,
-    public_error::enum_variant_changed,
+    FieldStorage, FromBorrowedStorage, Omittable, StorageRef, computed_owned,
+    enum_comparison::compare_values, public_error::enum_variant_changed,
 };
 use pybevy_macros::{pyenum, pyfield};
 use pyo3::{exceptions::PyRuntimeError, prelude::*, pyclass::CompareOp, types::PyTuple};
 
 use crate::{
-    image::PyRenderAssetUsages, image_format::PyImageFormat,
-    image_format_setting::PyImageFormatSetting, sampler_descriptor::PyImageSamplerDescriptor,
+    image::PyRenderAssetUsages, image_format_setting::PyImageFormatSetting,
+    sampler_descriptor::PyImageSamplerDescriptor,
 };
 
 #[pyenum(ImageSampler, manual)]
@@ -278,29 +278,21 @@ impl PyImageLoaderSettings {
     #[new]
     #[pyo3(signature = (
         *,
+        format = Omittable::default(),
         is_srgb = true,
         sampler = PyImageSampler::from(ImageSampler::Default)
     ))]
-    pub fn new(is_srgb: bool, sampler: PyImageSampler) -> PyResult<Self> {
-        Ok(Self::from_owned(ImageLoaderSettings {
-            format: ImageFormatSetting::FromExtension,
-            texture_format: None,
-            is_srgb,
-            sampler: ImageSampler::try_from(sampler)?,
-            asset_usage: RenderAssetUsages::default(),
-            array_layout: None,
-        }))
-    }
-
-    #[staticmethod]
-    #[pyo3(signature = (format, is_srgb = true, sampler = PyImageSampler::from(ImageSampler::Default)))]
-    pub fn with_format(
-        format: PyImageFormat,
+    pub fn new(
+        format: Omittable<PyRef<'_, PyImageFormatSetting>>,
         is_srgb: bool,
         sampler: PyImageSampler,
     ) -> PyResult<Self> {
         Ok(Self::from_owned(ImageLoaderSettings {
-            format: ImageFormatSetting::Format(format.into()),
+            format: format
+                .into_option()
+                .map_or(ImageFormatSetting::FromExtension, |format| {
+                    (*format).clone().into()
+                }),
             texture_format: None,
             is_srgb,
             sampler: ImageSampler::try_from(sampler)?,
@@ -338,6 +330,12 @@ impl PyImageLoaderSettings {
     #[getter]
     pub fn format(&self) -> PyResult<PyImageFormatSetting> {
         Ok(computed_owned(self.as_ref()?.format.clone().into()))
+    }
+
+    #[setter]
+    pub fn set_format(&mut self, value: PyRef<'_, PyImageFormatSetting>) -> PyResult<()> {
+        self.as_mut()?.format = (*value).clone().into();
+        Ok(())
     }
 
     #[getter]

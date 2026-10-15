@@ -155,7 +155,7 @@ impl PyHwba {
         Ok(())
     }
 
-    pub fn to_linear(&self) -> PyResult<PyLinearRgba> {
+    pub fn to_linear_rgba(&self) -> PyResult<PyLinearRgba> {
         let linear: LinearRgba = (*self.as_ref()?).into();
         Ok(linear.into())
     }

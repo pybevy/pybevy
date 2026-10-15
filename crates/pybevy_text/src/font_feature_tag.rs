@@ -119,11 +119,6 @@ impl PyFontFeatureTag {
         format!("FontFeatureTag({})", str_repr(&tag_characters(&self.0)))
     }
 
-    #[getter]
-    pub fn value(&self) -> String {
-        tag_characters(&self.0)
-    }
-
     pub fn __str__(&self) -> String {
         tag_characters(&self.0)
     }

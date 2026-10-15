@@ -214,7 +214,7 @@ impl PySrgba {
         Ok(self.as_ref()?.distance_squared(other.as_ref()?.reborrow()))
     }
 
-    pub fn to_linear(&self) -> PyResult<PyLinearRgba> {
+    pub fn to_linear_rgba(&self) -> PyResult<PyLinearRgba> {
         Ok(LinearRgba::from(*self.as_ref()?).into())
     }
 
@@ -294,6 +294,18 @@ impl PySrgba {
             self.as_ref()?
                 .interpolate_stable(other.as_ref()?.reborrow(), t),
         ))
+    }
+
+    pub fn interpolate_stable_assign(&mut self, other: &PySrgba, t: f32) -> PyResult<()> {
+        let other = *other.as_ref()?;
+        self.as_mut()?.interpolate_stable_assign(&other, t);
+        Ok(())
+    }
+
+    pub fn smooth_nudge(&mut self, target: &PySrgba, decay_rate: f32, delta: f32) -> PyResult<()> {
+        let target = *target.as_ref()?;
+        self.as_mut()?.smooth_nudge(&target, decay_rate, delta);
+        Ok(())
     }
 
     #[pyo3(name = "set_alpha")]

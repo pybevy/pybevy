@@ -1,5 +1,5 @@
 use bevy::sprite_render::{ColorMaterial, MeshMaterial2d};
-use pybevy_core::{PyComponent, PyHandle, ensure_asset_type, extract_handle_from_any};
+use pybevy_core::{HandleArg, PyComponent, PyHandle};
 use pybevy_macros::pyhandle;
 use pyo3::prelude::*;
 
@@ -25,12 +25,13 @@ impl From<&MeshMaterial2d<ColorMaterial>> for PyMeshMaterial2d {
 #[pymethods]
 impl PyMeshMaterial2d {
     #[new]
-    pub fn new(material: &Bound<'_, PyAny>) -> PyResult<PyClassInitializer<Self>> {
-        let handle = extract_handle_from_any(material)?;
-
-        ensure_asset_type::<ColorMaterial>(&handle)?;
-
-        Ok((Self(handle), PyComponent).into())
+    #[pyo3(signature = (material = HandleArg::default()))]
+    pub fn new(material: HandleArg) -> PyResult<PyClassInitializer<Self>> {
+        Ok((
+            Self(material.into_py_handle::<ColorMaterial>()?),
+            PyComponent,
+        )
+            .into())
     }
     #[getter]
     pub fn handle(&self) -> PyResult<PyHandle> {

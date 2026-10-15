@@ -48,14 +48,14 @@ class Font(Asset):
         >>>
         >>> # Create font from bytes
         >>> font_data = open("fonts/custom.ttf", "rb").read()
-        >>> font = Font.try_from_bytes(font_data)
+        >>> font = Font.from_bytes(font_data)
     """
 
     def __copy__(self) -> Font: ...
     def __deepcopy__(self, memo: dict[int, object]) -> Font: ...
 
     @staticmethod
-    def try_from_bytes(font_data: bytes) -> Font:
+    def from_bytes(font_data: bytes) -> Font:
         """Create a Font from bytes.
 
         Args:
@@ -63,9 +63,6 @@ class Font(Asset):
 
         Returns:
             Font asset
-
-        Raises:
-            ValueError: If font data is invalid or cannot be parsed
         """
 
     def data(self) -> bytes:
@@ -461,10 +458,7 @@ class FontFeatureTag:
 
     def __eq__(self, other: object) -> bool: ...
     def __repr__(self) -> str: ...
-    def __str__(self) -> str: ...
-
-    @property
-    def value(self) -> str:
+    def __str__(self) -> str:
         """The four-character OpenType tag."""
 
 class FontFeatures:
@@ -616,10 +610,6 @@ class FontSize:
     treated as `FontSize.Px` (mirrors bevy's `From<f32> for FontSize`).
     TextFont requires the value to be finite and non-negative.
     """
-
-    @property
-    def value(self) -> float:
-        """The numeric payload of the variant."""
 
     class Px(FontSize):
         __match_args__: ClassVar[tuple[Literal["value"]]]
@@ -865,15 +855,7 @@ class TextLayout(Component):
         """Create text layout configuration."""
 
     @staticmethod
-    def new_with_justify(justify: Justify) -> TextLayout:
-        """Create a new TextLayout with specific justification."""
-
-    @staticmethod
-    def new_with_linebreak(linebreak: LineBreak) -> TextLayout:
-        """Create a new TextLayout with specific line break behavior."""
-
-    @staticmethod
-    def new_with_no_wrap() -> TextLayout:
+    def no_wrap() -> TextLayout:
         """Create a new TextLayout with wrapping disabled."""
 
     def with_justify(self, justify: Justify) -> TextLayout:

@@ -602,6 +602,7 @@ pub fn check_optional_field_parameters(
 
 fn is_option_type(ty: &str) -> bool {
     let compact: String = ty.chars().filter(|c| !c.is_whitespace()).collect();
+    let compact = compact.strip_prefix("Omittable<").unwrap_or(&compact);
     ["Option<", "core::option::Option<", "std::option::Option<"]
         .iter()
         .any(|prefix| compact.starts_with(prefix))
@@ -1565,7 +1566,7 @@ pub fn validate_constructor_none_parity(rust: &PyClassDef, python: &PyClassDef) 
         let (Some(rust_type), Some(stub_type)) = (&rparam.param_type, &pparam.param_type) else {
             continue;
         };
-        let rust_optional = rust_type.replace(' ', "").starts_with("Option<");
+        let rust_optional = is_option_type(rust_type);
         // A dynamic extraction (`&Bound<PyAny>`) may accept None by inspection.
         if !rust_optional && is_dynamic_python_type(rust_type) {
             continue;
