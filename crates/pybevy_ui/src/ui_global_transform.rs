@@ -4,11 +4,7 @@ use pybevy_core::{
     repr::{ReprLiteral, object_repr},
 };
 use pybevy_macros::pycomponent;
-use pybevy_math::{
-    affine2::{PyAffine2, PyMat2},
-    rot2::PyRot2,
-    vec2::PyVec2,
-};
+use pybevy_math::{affine2::PyAffine2, mat2::PyMat2, rot2::PyRot2, vec2::PyVec2};
 use pyo3::prelude::*;
 
 #[pycomponent(UiGlobalTransform, bridge, no_insert)]

@@ -90,23 +90,41 @@ impl PyDir3 {
 
 #[pymethods]
 impl PyDir3 {
-    #[classattr]
-    pub const X: PyDir3 = PyDir3::dir3(Dir3::X);
+    #[staticmethod]
+    #[pyo3(name = "X")]
+    fn const_x() -> Self {
+        PyDir3::dir3(Dir3::X)
+    }
 
-    #[classattr]
-    pub const Y: PyDir3 = PyDir3::dir3(Dir3::Y);
+    #[staticmethod]
+    #[pyo3(name = "Y")]
+    fn const_y() -> Self {
+        PyDir3::dir3(Dir3::Y)
+    }
 
-    #[classattr]
-    pub const Z: PyDir3 = PyDir3::dir3(Dir3::Z);
+    #[staticmethod]
+    #[pyo3(name = "Z")]
+    fn const_z() -> Self {
+        PyDir3::dir3(Dir3::Z)
+    }
 
-    #[classattr]
-    pub const NEG_X: PyDir3 = PyDir3::dir3(Dir3::NEG_X);
+    #[staticmethod]
+    #[pyo3(name = "NEG_X")]
+    fn const_neg_x() -> Self {
+        PyDir3::dir3(Dir3::NEG_X)
+    }
 
-    #[classattr]
-    pub const NEG_Y: PyDir3 = PyDir3::dir3(Dir3::NEG_Y);
+    #[staticmethod]
+    #[pyo3(name = "NEG_Y")]
+    fn const_neg_y() -> Self {
+        PyDir3::dir3(Dir3::NEG_Y)
+    }
 
-    #[classattr]
-    pub const NEG_Z: PyDir3 = PyDir3::dir3(Dir3::NEG_Z);
+    #[staticmethod]
+    #[pyo3(name = "NEG_Z")]
+    fn const_neg_z() -> Self {
+        PyDir3::dir3(Dir3::NEG_Z)
+    }
 
     #[new]
     pub fn new(x: f32, y: f32, z: f32) -> PyResult<Self> {
@@ -205,7 +223,6 @@ impl PyDir3 {
 
     pub fn __mul__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         if other.cast::<PyQuat>().is_ok() {
-            // Dir3 * Quat is not standard, suggest Quat * Dir3 instead
             Err(PyTypeError::new_err(
                 "Dir3 * Quat is not supported. Use Quat * Dir3 to rotate a direction.",
             ))
@@ -218,7 +235,6 @@ impl PyDir3 {
 
     pub fn __rmul__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         if let Ok(quat) = other.cast::<PyQuat>() {
-            // Quat * Dir3 -> Dir3 (rotation)
             let quat = quat.try_borrow()?.try_get()?;
             Ok(Py::new(py, PyDir3::dir3(quat * self.get()?))?.into_any())
         } else if let Ok(scalar) = other.extract::<f32>() {

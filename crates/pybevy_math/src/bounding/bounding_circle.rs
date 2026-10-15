@@ -14,6 +14,7 @@ use pyo3::{
 
 use super::aabb2d::PyAabb2d;
 use crate::{
+    isometry2d::PyIsometry2d,
     rot2::extract_rot2_from_any,
     vec2::{PyVec2, extract_vec2_from_any},
 };
@@ -83,7 +84,6 @@ impl PyBoundingCircle {
     #[new]
     pub fn new(center: PyVec2, radius: f32) -> PyResult<Self> {
         let center_vec: Vec2 = center.try_into()?;
-        // Reject inputs that fail Bevy nonnegative radius precondition.
         if radius.is_nan() || radius < 0.0 {
             return Err(PyValueError::new_err(bounding_radius(
                 "BoundingCircle",
@@ -233,7 +233,7 @@ impl PyBoundingCircle {
 
     #[staticmethod]
     pub fn from_point_cloud(
-        isometry: super::aabb2d::PyIsometry2d,
+        isometry: PyIsometry2d,
         points: Vec<PyVec2>,
     ) -> PyResult<PyBoundingCircle> {
         if points.is_empty() {

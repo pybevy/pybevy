@@ -3,7 +3,7 @@ use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage, rep
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 use super::{vec3::PyVec3, vec3a::PyVec3A};
-use crate::{require_invertible, richcmp::comparison_result};
+use crate::{matrix_index, require_invertible, richcmp::comparison_result};
 
 #[pyclass(name = "Mat3A", module = "pybevy.math", from_py_object)]
 #[derive(Debug, Clone)]
@@ -75,20 +75,23 @@ impl PyMat3A {
 
 #[pymethods]
 impl PyMat3A {
-    #[classattr]
-    pub const IDENTITY: PyMat3A = PyMat3A {
-        storage: ValueStorage::read_only_snapshot(Mat3A::IDENTITY),
-    };
+    #[staticmethod]
+    #[pyo3(name = "IDENTITY")]
+    fn const_identity() -> Self {
+        PyMat3A::mat3a(Mat3A::IDENTITY)
+    }
 
-    #[classattr]
-    pub const ZERO: PyMat3A = PyMat3A {
-        storage: ValueStorage::read_only_snapshot(Mat3A::ZERO),
-    };
+    #[staticmethod]
+    #[pyo3(name = "ZERO")]
+    fn const_zero() -> Self {
+        PyMat3A::mat3a(Mat3A::ZERO)
+    }
 
-    #[classattr]
-    pub const NAN: PyMat3A = PyMat3A {
-        storage: ValueStorage::read_only_snapshot(Mat3A::NAN),
-    };
+    #[staticmethod]
+    #[pyo3(name = "NAN")]
+    fn const_nan() -> Self {
+        PyMat3A::mat3a(Mat3A::NAN)
+    }
 
     #[new]
     #[allow(clippy::too_many_arguments)]
@@ -183,12 +186,12 @@ impl PyMat3A {
     }
 
     pub fn col(&self, index: isize) -> PyResult<PyVec3A> {
-        let index = crate::matrix_index("Column", index, "Mat3A", 3)?;
+        let index = matrix_index("Column", index, "Mat3A", 3)?;
         Ok(self.as_ref()?.col(index).into())
     }
 
     pub fn row(&self, index: isize) -> PyResult<PyVec3A> {
-        let index = crate::matrix_index("Row", index, "Mat3A", 3)?;
+        let index = matrix_index("Row", index, "Mat3A", 3)?;
         Ok(self.as_ref()?.row(index).into())
     }
 

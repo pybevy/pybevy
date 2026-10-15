@@ -87,41 +87,77 @@ impl PyDir2 {
 
 #[pymethods]
 impl PyDir2 {
-    #[classattr]
-    pub const X: PyDir2 = PyDir2::dir2(Dir2::X);
+    #[staticmethod]
+    #[pyo3(name = "X")]
+    fn const_x() -> Self {
+        PyDir2::dir2(Dir2::X)
+    }
 
-    #[classattr]
-    pub const Y: PyDir2 = PyDir2::dir2(Dir2::Y);
+    #[staticmethod]
+    #[pyo3(name = "Y")]
+    fn const_y() -> Self {
+        PyDir2::dir2(Dir2::Y)
+    }
 
-    #[classattr]
-    pub const NEG_X: PyDir2 = PyDir2::dir2(Dir2::NEG_X);
+    #[staticmethod]
+    #[pyo3(name = "NEG_X")]
+    fn const_neg_x() -> Self {
+        PyDir2::dir2(Dir2::NEG_X)
+    }
 
-    #[classattr]
-    pub const NEG_Y: PyDir2 = PyDir2::dir2(Dir2::NEG_Y);
+    #[staticmethod]
+    #[pyo3(name = "NEG_Y")]
+    fn const_neg_y() -> Self {
+        PyDir2::dir2(Dir2::NEG_Y)
+    }
 
-    #[classattr]
-    pub const NORTH: PyDir2 = PyDir2::dir2(Dir2::NORTH);
+    #[staticmethod]
+    #[pyo3(name = "NORTH")]
+    fn const_north() -> Self {
+        PyDir2::dir2(Dir2::NORTH)
+    }
 
-    #[classattr]
-    pub const SOUTH: PyDir2 = PyDir2::dir2(Dir2::SOUTH);
+    #[staticmethod]
+    #[pyo3(name = "SOUTH")]
+    fn const_south() -> Self {
+        PyDir2::dir2(Dir2::SOUTH)
+    }
 
-    #[classattr]
-    pub const EAST: PyDir2 = PyDir2::dir2(Dir2::EAST);
+    #[staticmethod]
+    #[pyo3(name = "EAST")]
+    fn const_east() -> Self {
+        PyDir2::dir2(Dir2::EAST)
+    }
 
-    #[classattr]
-    pub const WEST: PyDir2 = PyDir2::dir2(Dir2::WEST);
+    #[staticmethod]
+    #[pyo3(name = "WEST")]
+    fn const_west() -> Self {
+        PyDir2::dir2(Dir2::WEST)
+    }
 
-    #[classattr]
-    pub const NORTH_EAST: PyDir2 = PyDir2::dir2(Dir2::NORTH_EAST);
+    #[staticmethod]
+    #[pyo3(name = "NORTH_EAST")]
+    fn const_north_east() -> Self {
+        PyDir2::dir2(Dir2::NORTH_EAST)
+    }
 
-    #[classattr]
-    pub const NORTH_WEST: PyDir2 = PyDir2::dir2(Dir2::NORTH_WEST);
+    #[staticmethod]
+    #[pyo3(name = "NORTH_WEST")]
+    fn const_north_west() -> Self {
+        PyDir2::dir2(Dir2::NORTH_WEST)
+    }
 
-    #[classattr]
-    pub const SOUTH_EAST: PyDir2 = PyDir2::dir2(Dir2::SOUTH_EAST);
+    #[staticmethod]
+    #[pyo3(name = "SOUTH_EAST")]
+    fn const_south_east() -> Self {
+        PyDir2::dir2(Dir2::SOUTH_EAST)
+    }
 
-    #[classattr]
-    pub const SOUTH_WEST: PyDir2 = PyDir2::dir2(Dir2::SOUTH_WEST);
+    #[staticmethod]
+    #[pyo3(name = "SOUTH_WEST")]
+    fn const_south_west() -> Self {
+        PyDir2::dir2(Dir2::SOUTH_WEST)
+    }
 
     #[new]
     pub fn new(x: f32, y: f32) -> PyResult<Self> {

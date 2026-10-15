@@ -1,4 +1,5 @@
 use bevy::math::{Vec2, primitives::Polygon};
+use pybevy_core::{FromBorrowedStorage, ValueStorage};
 use pyo3::{prelude::*, types::PyList};
 
 use crate::vec2::PyVec2;
@@ -26,7 +27,9 @@ impl PyPolygon {
     pub fn vertices(&self, py: Python<'_>) -> PyResult<Py<PyList>> {
         let list = PyList::empty(py);
         for vertex in &self.inner.vertices {
-            list.append(PyVec2::from(*vertex))?;
+            list.append(PyVec2::from_borrowed(ValueStorage::read_only_snapshot(
+                *vertex,
+            )))?;
         }
         Ok(list.into())
     }

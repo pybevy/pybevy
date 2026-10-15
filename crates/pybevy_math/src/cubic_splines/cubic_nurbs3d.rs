@@ -2,6 +2,7 @@ use bevy::math::{
     Vec3,
     cubic_splines::{CubicNurbs, RationalGenerator},
 };
+use pybevy_core::{FromBorrowedStorage, ValueStorage};
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 use super::rational_curve3d::PyRationalCurve3d;
@@ -50,7 +51,7 @@ impl PyCubicNurbs3d {
         self.nurbs
             .control_points
             .iter()
-            .map(|p| (*p).into())
+            .map(|p| FromBorrowedStorage::from_borrowed(ValueStorage::read_only_snapshot(*p)))
             .collect()
     }
 

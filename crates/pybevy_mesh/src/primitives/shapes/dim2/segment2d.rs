@@ -4,7 +4,9 @@ use bevy::{
 };
 use pybevy_core::{public_error, repr::float_list_repr};
 use pybevy_macros::pyconstructor;
-use pybevy_math::{bounding::PyIsometry2d, dir2::PyDir2, ray::PyRay2d, rot2::PyRot2, vec2::PyVec2};
+use pybevy_math::{
+    dir2::PyDir2, isometry2d::PyIsometry2d, ray::PyRay2d, rot2::PyRot2, vec2::PyVec2,
+};
 use pyo3::{
     exceptions::{PyRuntimeError, PyValueError},
     prelude::*,

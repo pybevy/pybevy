@@ -1091,19 +1091,11 @@ PyCubicCurve3d = "CubicCurve<Vec3>"
 PyRationalCurve2d = "RationalCurve<Vec2>"
 PyRationalCurve3d = "RationalCurve<Vec3>"
 
-[bevy.constructor_functions."pybevy.math.PyAffine2"]
-function = "from_mat2_translation"
-reason = "affine2.rs calls glam::Affine2::from_mat2_translation(matrix2: Mat2, translation: Vec2); the accepted inputs map this factory, not field assignment"
-
 [bevy.constructor_functions."pybevy.render.PyShaderBuffer"]
 function = "new"
 internal_parameters = ["asset_usage"]
 field_inputs = ["copy_on_resize"]
 reason = "ShaderBuffer maps Bevy 0.19.1 ShaderBuffer::new(data, asset_usage); Python exposes the native data prefix, supplies default asset usage, and keeps the independent copy_on_resize field keyword-only"
-
-[bevy.constructor_functions."pybevy.math.PyMat2"]
-function = "from_cols"
-reason = "glam 0.32.1 Mat2::from_cols defines the established x_axis and y_axis constructor inputs"
 
 [bevy.constructor_functions."pybevy.ui.PyImageNode"]
 function = "new"
@@ -1550,6 +1542,7 @@ reason = "Bevy 0.19.1 bevy_mesh::Mesh::new maps primitive_topology and asset_usa
 "pybevy.light.PySpotLightTexture" = "Bevy 0.19.1 bevy_light::SpotLightTexture fields define the established Python constructor"
 "pybevy.light.PySunDisk" = "Bevy 0.19.1 bevy_light::SunDisk fields define the established Python constructor"
 "pybevy.light.PyVolumetricFog" = "Bevy 0.19.1 bevy_light::VolumetricFog fields define the established Python constructor"
+"pybevy.math.PyAffine2" = "glam 0.32.1 Affine2 fields define the Python constructor; Default is IDENTITY"
 "pybevy.math.PyAffine3A" = "Bevy 0.19.1 glam::Affine3A fields define the established Python constructor"
 "pybevy.math.PyLine2d" = "Bevy 0.19.1 bevy_math::primitives::Line2d fields define the established Python constructor"
 "pybevy.math.PyLine3d" = "Bevy 0.19.1 bevy_math::primitives::Line3d fields define the established Python constructor"
@@ -1750,6 +1743,7 @@ reason = "Bevy 0.19.1 bevy_audio::SpatialListener::new defines the gap prefix fo
 [bevy.constructor_adapters]
 "pybevy.mesh.PyMeshable" = "Bevy Meshable is an open trait, not a constructible type; this Python base exists so user subclasses can supply mesh()"
 "pybevy.mesh.PyMeshBuilder" = "Bevy MeshBuilder is an open trait, not a constructible type; this Python base exists so user subclasses can supply build()"
+"pybevy.math.PyMat2" = "glam 0.32.1 Mat2 is a SIMD newtype whose x_axis and y_axis columns are reached through Deref, so its fields have no declaration to audit; the keyword-only constructor mirrors those columns with the IDENTITY defaults"
 "pybevy.math.PyRange" = "Maintainer decision 2026-09-27: Range(start, end) mirrors the positional start..end range syntax of std::ops::Range<f32>, not keyword field initialization"
 "pybevy.winit.PyWinitPlugin" = "The settings input inserts the separate WinitSettings resource before building Bevy's default WinitPlugin"
 "pybevy.render.PyRenderPlugin" = "The constructor maps power_preference into nested WgpuSettings and accepts an optional synchronous pipeline compilation override"

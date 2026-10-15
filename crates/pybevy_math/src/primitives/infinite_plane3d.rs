@@ -12,8 +12,8 @@ use pyo3::{
 };
 
 use crate::{
-    bounding::aabb3d::PyIsometry3d, dir3::PyDir3, quat::PyQuat, richcmp::comparison_result,
-    vec3::PyVec3, vec3a::PyVec3A,
+    dir3::PyDir3, isometry3d::PyIsometry3d, quat::PyQuat, richcmp::comparison_result, vec3::PyVec3,
+    vec3a::PyVec3A,
 };
 
 /// Correct Bevy's rotated-plane projection until it subtracts the world-space
