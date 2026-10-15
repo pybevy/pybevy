@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, fmt::Display, sync::Arc};
+use std::{array, collections::BTreeMap, fmt::Display, sync::Arc};
 
 use bevy::{
     asset::RenderAssetUsages,
@@ -11,10 +11,10 @@ use bevy::{
 use numpy::{PyReadonlyArray2, PyUntypedArrayMethods};
 use pybevy_array::{
     ArrayDType, BorrowProbe, PyArray, borrowed_read_only_f32, borrowed_read_only_u16,
-    borrowed_read_only_u32,
+    borrowed_read_only_u32, owned_contiguous_le_bytes,
 };
 use pybevy_core::{
-    AssetInputConverter, AssetStorage, PyAsset,
+    AssetInputConverter, AssetStorage, Omittable, PyAsset,
     borrowed_array_anchor::{AssetBorrowAnchor, AssetBorrowAnchorMut},
     content_hash::CanonicalContentHasher,
     numpy_view_guard::{PendingNumpyViewGuard, PyNumpyViewGuard},
@@ -26,13 +26,13 @@ use pybevy_math::{quat::PyQuat, vec3::PyVec3};
 use pybevy_transform::transform::PyTransform;
 use pyo3::{
     PyTraverseError, PyVisit,
-    exceptions::{PyRuntimeError, PyValueError},
+    exceptions::{PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
     types::{PyBytes, PyList, PyTuple},
 };
 
 use crate::{
-    indices::extract_indices,
+    indices::{PyIndices, extract_indices},
     mesh_builder::PyMeshBuilder,
     meshable::{PyMeshable, meshable_to_mesh},
     primitive_topology::PyPrimitiveTopology,
@@ -40,7 +40,10 @@ use crate::{
         check_index_range, check_index_range_over_all, check_indexed, check_scale,
         check_triangle_list,
     },
-    vertex_attribute::{PyMeshVertexAttribute, PyVertexAttributeValues, attribute_id},
+    vertex_attribute::{
+        PyMeshVertexAttribute, PyVertexAttributeValues, attribute_id,
+        materialize_vertex_attribute_values,
+    },
 };
 fn mesh_operation_error(operation: &str, error: impl Display) -> PyErr {
     PyRuntimeError::new_err(public_error::mesh_operation_failed(operation, error))
@@ -138,6 +141,8 @@ fn extract_attribute_values(
 ) -> PyResult<VertexAttributeValues> {
     let attr_values = if let Ok(vref) = values.extract::<PyRef<PyVertexAttributeValues>>() {
         vref.0.clone()
+    } else if attribute.0.format == VertexFormat::Uint16x4 {
+        extract_u16x4_attribute_values(values)?
     } else {
         PyVertexAttributeValues::new(values)?.0
     };
@@ -146,7 +151,7 @@ fn extract_attribute_values(
         && !matches!(attr_values, VertexAttributeValues::Float32x4(_))
     {
         return Err(PyValueError::new_err(
-            "Color attribute must have shape (N, 4)",
+            public_error::MESH_COLOR_ATTRIBUTE_SHAPE,
         ));
     }
 
@@ -160,6 +165,47 @@ fn extract_attribute_values(
     }
 
     Ok(attr_values)
+}
+
+fn extract_u16x4_attribute_values(values: &Bound<'_, PyAny>) -> PyResult<VertexAttributeValues> {
+    if values.is_instance_of::<PyList>() || values.is_instance_of::<PyTuple>() {
+        return values
+            .extract::<Vec<[u16; 4]>>()
+            .map(VertexAttributeValues::Uint16x4)
+            .map_err(|_| PyTypeError::new_err(public_error::MESH_UINT16X4_ATTRIBUTE_SHAPE));
+    }
+    if let Ok(array) = values.extract::<PyRef<PyArray>>() {
+        let (dtype, shape, bytes) = owned_contiguous_le_bytes(&array)?;
+        if dtype != ArrayDType::Uint16 || shape.len() != 2 || shape[1] != 4 {
+            return Err(PyTypeError::new_err(
+                public_error::MESH_UINT16X4_ATTRIBUTE_SHAPE,
+            ));
+        }
+        let rows = bytes
+            .chunks_exact(8)
+            .map(|row| {
+                array::from_fn(|index| u16::from_le_bytes([row[index * 2], row[index * 2 + 1]]))
+            })
+            .collect();
+        return Ok(VertexAttributeValues::Uint16x4(rows));
+    }
+    if let Ok(array) = values.extract::<PyReadonlyArray2<u16>>() {
+        if array.shape()[1] != 4 || !array.as_array().is_standard_layout() {
+            return Err(PyTypeError::new_err(
+                public_error::MESH_UINT16X4_ATTRIBUTE_SHAPE,
+            ));
+        }
+        let rows = array
+            .as_slice()
+            .map_err(|_| PyTypeError::new_err(public_error::MESH_UINT16X4_ATTRIBUTE_SHAPE))?
+            .chunks_exact(4)
+            .map(|row| [row[0], row[1], row[2], row[3]])
+            .collect();
+        return Ok(VertexAttributeValues::Uint16x4(rows));
+    }
+    Err(PyTypeError::new_err(
+        public_error::MESH_UINT16X4_ATTRIBUTE_SHAPE,
+    ))
 }
 
 fn check_flat_normal_preconditions(mesh: &Mesh) -> PyResult<()> {
@@ -244,8 +290,7 @@ fn asarray_2d_f32<'py>(
     obj: &Bound<'py, PyAny>,
 ) -> PyResult<PyReadonlyArray2<'py, f32>> {
     let np = py.import("numpy")?;
-    let arr = np.call_method1("asarray", (obj,))?;
-    let arr = arr.call_method1("astype", (np.getattr("float32")?,))?;
+    let arr = np.call_method1("ascontiguousarray", (obj, np.getattr("float32")?))?;
     Ok(arr.extract::<PyReadonlyArray2<f32>>()?)
 }
 
@@ -415,12 +460,16 @@ impl PyMesh {
     }
 
     #[new]
-    pub fn new(primitive_topology: PyPrimitiveTopology) -> PyClassInitializer<Self> {
-        Self::from_owned(Mesh::new(
-            primitive_topology.into(),
-            RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
-        ))
-        .into()
+    #[pyo3(signature = (primitive_topology, asset_usage = Omittable::default()))]
+    pub fn new(
+        primitive_topology: PyPrimitiveTopology,
+        asset_usage: Omittable<PyRef<'_, PyRenderAssetUsages>>,
+    ) -> PyResult<PyClassInitializer<Self>> {
+        let asset_usage = match asset_usage.into_option() {
+            Some(usage) => (&*usage).try_into()?,
+            None => RenderAssetUsages::default(),
+        };
+        Ok(Self::from_owned(Mesh::new(primitive_topology.into(), asset_usage)).into())
     }
 
     pub fn primitive_topology(&self) -> PyResult<PyPrimitiveTopology> {
@@ -450,6 +499,12 @@ impl PyMesh {
         Ok(mesh_with!(self, |mesh: &Mesh| mesh.enable_raytracing))
     }
 
+    #[setter]
+    pub fn set_enable_raytracing(&mut self, value: bool) -> PyResult<()> {
+        mesh_with_mut!(self, |mesh: &mut Mesh| mesh.enable_raytracing = value);
+        Ok(())
+    }
+
     pub fn get_vertex_buffer_size(&self) -> PyResult<usize> {
         Ok(mesh_with!(self, |mesh: &Mesh| mesh.get_vertex_buffer_size()))
     }
@@ -475,8 +530,9 @@ impl PyMesh {
 
     pub fn remove_attribute(
         &mut self,
+        py: Python<'_>,
         attribute: &PyMeshVertexAttribute,
-    ) -> PyResult<Option<PyVertexAttributeValues>> {
+    ) -> PyResult<Option<Py<PyVertexAttributeValues>>> {
         let present = mesh_with!(self, |mesh: &Mesh| mesh
             .try_contains_attribute(attribute.0.id))
         .map_err(|error| mesh_operation_error("remove_attribute", error))?;
@@ -486,7 +542,7 @@ impl PyMesh {
         let values = mesh_with_mut!(self, |mesh: &mut Mesh| mesh
             .try_remove_attribute(attribute.0.id)
             .expect("read preflight confirmed mutable attribute storage and presence"));
-        Ok(Some(values.into()))
+        materialize_vertex_attribute_values(py, values).map(Some)
     }
 
     pub fn with_removed_attribute(
@@ -494,7 +550,7 @@ impl PyMesh {
         py: Python<'_>,
         attribute: &PyMeshVertexAttribute,
     ) -> PyResult<Py<Self>> {
-        self.cloned_with(py, |mesh| mesh.remove_attribute(attribute).map(|_| ()))
+        self.cloned_with(py, |mesh| mesh.remove_attribute(py, attribute).map(|_| ()))
     }
 
     /// Return the versioned SHA-256 digest of vertex attributes, topology, and indices.
@@ -520,6 +576,16 @@ impl PyMesh {
         indices: &Bound<'py, PyAny>,
     ) -> PyResult<Py<Self>> {
         self.cloned_with(py, |mesh| mesh.insert_indices(indices))
+    }
+
+    pub fn remove_indices(&mut self) -> PyResult<Option<PyIndices>> {
+        mesh_with_mut!(self, |mesh: &mut Mesh| mesh.try_remove_indices())
+            .map(|indices| indices.map(|inner| PyIndices { inner }))
+            .map_err(|error| mesh_operation_error("remove_indices", error))
+    }
+
+    pub fn with_removed_indices(&self, py: Python<'_>) -> PyResult<Py<Self>> {
+        self.cloned_with(py, |mesh| mesh.remove_indices().map(|_| ()))
     }
 
     pub fn insert_attribute<'py>(
@@ -569,7 +635,7 @@ impl PyMesh {
         let mut candidate = mesh_with!(self, |mesh: &Mesh| mesh.clone());
         candidate
             .generate_tangents()
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to generate tangents: {e}")))?;
+            .map_err(|e| PyRuntimeError::new_err(public_error::mesh_tangents_failed(e)))?;
         mesh_with_mut!(self, |mesh: &mut Mesh| *mesh = candidate);
         Ok(())
     }
@@ -636,7 +702,6 @@ impl PyMesh {
     }
 
     /// Per-triangle Python callback mutating the accumulating normals list in place.
-    #[pyo3(signature = (per_triangle, *))]
     pub fn compute_custom_smooth_normals<'py>(
         &mut self,
         py: Python<'py>,
@@ -699,6 +764,32 @@ impl PyMesh {
 
     pub fn with_computed_smooth_normals(&self, py: Python<'_>) -> PyResult<Py<Self>> {
         self.cloned_with(py, |mesh| mesh.compute_smooth_normals())
+    }
+
+    pub fn with_computed_area_weighted_normals(&self, py: Python<'_>) -> PyResult<Py<Self>> {
+        self.cloned_with(py, |mesh| mesh.compute_area_weighted_normals())
+    }
+
+    pub fn merge_duplicate_vertices(&mut self) -> PyResult<()> {
+        let mut candidate = mesh_with!(self, |mesh: &Mesh| mesh.clone());
+        candidate
+            .merge_duplicate_vertices()
+            .map_err(|error| mesh_operation_error("merge_duplicate_vertices", error))?;
+        mesh_with_mut!(self, |mesh: &mut Mesh| *mesh = candidate);
+        Ok(())
+    }
+
+    pub fn with_merge_duplicate_vertices(&self, py: Python<'_>) -> PyResult<Py<Self>> {
+        self.cloned_with(py, |mesh| mesh.merge_duplicate_vertices())
+    }
+
+    pub fn normalize_joint_weights(&mut self) -> PyResult<()> {
+        let mut candidate = mesh_with!(self, |mesh: &Mesh| mesh.clone());
+        candidate
+            .try_normalize_joint_weights()
+            .map_err(|error| mesh_operation_error("normalize_joint_weights", error))?;
+        mesh_with_mut!(self, |mesh: &mut Mesh| *mesh = candidate);
+        Ok(())
     }
 
     pub fn duplicate_vertices(&mut self) -> PyResult<()> {
@@ -909,8 +1000,8 @@ impl PyMesh {
         slf: &Bound<'_, Self>,
         py: Python<'_>,
         id: &PyMeshVertexAttribute,
-    ) -> PyResult<Py<PyArray>> {
-        Self::attribute_borrowed(slf, py, id.0)
+    ) -> PyResult<Option<Py<PyArray>>> {
+        Self::attribute_borrowed_optional(slf, py, id.0)
     }
 
     /// In-place mutable bounded-array context over an arbitrary float32 attribute.
@@ -976,6 +1067,16 @@ impl PyMesh {
         py: Python<'_>,
         attribute: MeshVertexAttribute,
     ) -> PyResult<Py<PyArray>> {
+        Self::attribute_borrowed_optional(slf, py, attribute)?.ok_or_else(|| {
+            PyRuntimeError::new_err(public_error::mesh_attribute_missing(attribute.name))
+        })
+    }
+
+    fn attribute_borrowed_optional(
+        slf: &Bound<'_, Self>,
+        py: Python<'_>,
+        attribute: MeshVertexAttribute,
+    ) -> PyResult<Option<Py<PyArray>>> {
         let this = slf.borrow();
         // Atomically claim a read view (increment + verify no writer), closing
         // the check-then-acquire race under free-threading. On any later error
@@ -985,9 +1086,7 @@ impl PyMesh {
         let validity = this.storage.validity_flag();
         let mesh = this.storage.as_ref()?;
         let Some(values) = mesh.attribute(attribute.id) else {
-            return Err(PyRuntimeError::new_err(
-                public_error::mesh_attribute_missing(attribute.name),
-            ));
+            return Ok(None);
         };
         let (ptr, len, shape) = attribute_f32_view(values)?;
         let probe: Arc<dyn BorrowProbe> = Arc::new(AssetBorrowAnchor::new(validity, guard));
@@ -999,7 +1098,7 @@ impl PyMesh {
         // mesh cannot be reallocated through this wrapper or read after the
         // system ends while the array is alive.
         let nd = unsafe { borrowed_read_only_f32(ptr, len, &shape, probe)? };
-        Py::new(py, nd)
+        Ok(Some(Py::new(py, nd)?))
     }
 
     /// Build an in-place mutable bounded-array context over a float32 attribute.
@@ -1042,7 +1141,7 @@ impl PyMesh {
             })?;
         if attribute_f32_layout(current)? != layout {
             return Err(PyRuntimeError::new_err(
-                "Mesh attribute layout changed during view acquisition",
+                public_error::MESH_ATTRIBUTE_LAYOUT_CHANGED,
             ));
         }
 

@@ -39,6 +39,13 @@ pub fn read_only_f32(data: Vec<f32>, shape: &[usize]) -> PyResult<PyArray> {
     Ok(PyArray::wrap(core))
 }
 
+/// Wrap owned typed storage as an independent read-only bounded array.
+pub fn read_only_storage(storage: ArrayStorage, shape: &[usize]) -> PyResult<PyArray> {
+    let mut core = DenseArrayCore::from_storage(storage, shape).map_err(kernels::map_array_err)?;
+    core.set_read_only();
+    Ok(PyArray::wrap(core))
+}
+
 /// Decode shared little-endian tensor storage into a read-only Python array.
 pub fn read_only_from_le_bytes(
     dtype: ArrayDType,
@@ -85,6 +92,8 @@ fn buffer_dtype(buffer: &PyUntypedBuffer) -> Option<ArrayDType> {
         (b'd', 8) => ArrayDType::Float64,
         (b'q' | b'l', 8) => ArrayDType::Int64,
         (b'i' | b'l', 4) => ArrayDType::Int32,
+        (b'h', 2) => ArrayDType::Int16,
+        (b'b', 1) => ArrayDType::Int8,
         (b'I' | b'L', 4) => ArrayDType::Uint32,
         (b'H', 2) => ArrayDType::Uint16,
         (b'B', 1) => ArrayDType::Uint8,
@@ -313,6 +322,8 @@ pub fn build_module<'py>(py: Python<'py>, name: &str) -> PyResult<Bound<'py, PyM
         ArrayDType::Float64,
         ArrayDType::Int64,
         ArrayDType::Int32,
+        ArrayDType::Int16,
+        ArrayDType::Int8,
         ArrayDType::Uint32,
         ArrayDType::Uint16,
         ArrayDType::Uint8,

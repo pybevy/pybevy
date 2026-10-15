@@ -75,7 +75,7 @@ class Vec3:
     NEG_Z: ClassVar[Vec3]
     AXES: ClassVar[tuple[Vec3, Vec3, Vec3]]
 
-    def __init__(self, x: float, y: float, z: float) -> None:
+    def __init__(self, x: float = 0.0, y: float = 0.0, z: float = 0.0) -> None:
         """Initializes a new Vec3 instance.
 
         Args:
@@ -335,7 +335,7 @@ class Vec3A:
     NEG_Y: ClassVar[Vec3A]
     NEG_Z: ClassVar[Vec3A]
 
-    def __init__(self, x: float, y: float, z: float) -> None: ...
+    def __init__(self, x: float = 0.0, y: float = 0.0, z: float = 0.0) -> None: ...
     @staticmethod
     def splat(value: float) -> Vec3A: ...
     @staticmethod
@@ -389,7 +389,7 @@ class Vec2:
     NEG_Y: ClassVar[Vec2]
     AXES: ClassVar[tuple[Vec2, Vec2]]
 
-    def __init__(self, x: float, y: float) -> None: ...
+    def __init__(self, x: float = 0.0, y: float = 0.0) -> None: ...
     @staticmethod
     def splat(value: float) -> Vec2: ...
     @staticmethod
@@ -518,7 +518,7 @@ class Rect:
     min: Vec2
     max: Vec2
 
-    def __init__(self, x0: float, y0: float, x1: float, y1: float) -> None:
+    def __init__(self, x0: float = 0.0, y0: float = 0.0, x1: float = 0.0, y1: float = 0.0) -> None:
         """Create a Rect from corner coordinates.
 
         Args:
@@ -601,7 +601,7 @@ class UVec2:
     MIN: ClassVar[UVec2]
     MAX: ClassVar[UVec2]
 
-    def __init__(self, x: int, y: int) -> None:
+    def __init__(self, x: int = 0, y: int = 0) -> None:
         """Create a UVec2 from x and y coordinates.
 
         Args:
@@ -678,7 +678,7 @@ class IVec2:
     MIN: ClassVar[IVec2]
     MAX: ClassVar[IVec2]
 
-    def __init__(self, x: int, y: int) -> None:
+    def __init__(self, x: int = 0, y: int = 0) -> None:
         """Create an IVec2 from x and y coordinates.
 
         Args:
@@ -752,7 +752,7 @@ class UVec3:
     MIN: ClassVar[UVec3]
     MAX: ClassVar[UVec3]
 
-    def __init__(self, x: int, y: int, z: int) -> None:
+    def __init__(self, x: int = 0, y: int = 0, z: int = 0) -> None:
         """Create a UVec3 from x, y, and z coordinates.
 
         Args:
@@ -833,7 +833,7 @@ class URect:
 
     EMPTY: ClassVar[URect]
 
-    def __init__(self, x0: int, y0: int, x1: int, y1: int) -> None:
+    def __init__(self, x0: int = 0, y0: int = 0, x1: int = 0, y1: int = 0) -> None:
         """Create a URect from corner coordinates.
 
         Args:
@@ -918,7 +918,7 @@ class IRect:
 
     EMPTY: ClassVar[IRect]
 
-    def __init__(self, x0: int, y0: int, x1: int, y1: int) -> None:
+    def __init__(self, x0: int = 0, y0: int = 0, x1: int = 0, y1: int = 0) -> None:
         """Create an IRect from corner coordinates.
 
         Args:
@@ -1100,6 +1100,9 @@ class EulerRot:
 class Quat:
     IDENTITY: ClassVar[Quat]
     NAN: ClassVar[Quat]
+
+    def __init__(self) -> None:
+        """The identity rotation; raw components go through `from_xyzw`."""
 
     x: float
     y: float
@@ -1367,9 +1370,9 @@ class Mat3A:
 
     def __init__(
         self,
-        m00: float, m01: float, m02: float,
-        m10: float, m11: float, m12: float,
-        m20: float, m21: float, m22: float,
+        m00: float = 1.0, m01: float = 0.0, m02: float = 0.0,
+        m10: float = 0.0, m11: float = 1.0, m12: float = 0.0,
+        m20: float = 0.0, m21: float = 0.0, m22: float = 1.0,
     ) -> None: ...
 
     @staticmethod
@@ -1591,8 +1594,6 @@ class Rectangle(Meshable):
     @half_size.setter
     def half_size(self, value: Vec2) -> None: ...
     def size(self) -> Vec2: ...
-    def width(self) -> float: ...
-    def height(self) -> float: ...
     def closest_point(self, point: Vec2) -> Vec2: ...
     def area(self) -> float: ...
     def perimeter(self) -> float: ...
@@ -1701,7 +1702,7 @@ class HalfSpace:
     @property
     def normal_d(self) -> Vec4: ...
 
-    def __init__(self, normal_d: Vec4) -> None: ...
+    def __init__(self, normal_d: Vec4 = ...) -> None: ...
 
     def __eq__(self, other: object) -> bool: ...
 
@@ -1826,7 +1827,7 @@ class Vec4:
     NEG_W: ClassVar[Vec4]
     AXES: ClassVar[tuple[Vec4, Vec4, Vec4, Vec4]]
 
-    def __init__(self, x: float, y: float, z: float, w: float) -> None: ...
+    def __init__(self, x: float = 0.0, y: float = 0.0, z: float = 0.0, w: float = 0.0) -> None: ...
     @staticmethod
     def splat(value: float) -> Vec4: ...
     def dot(self, other: Vec4) -> float: ...
@@ -1942,9 +1943,9 @@ class Mat3:
 
     def __init__(
         self,
-        m00: float, m01: float, m02: float,
-        m10: float, m11: float, m12: float,
-        m20: float, m21: float, m22: float,
+        m00: float = 1.0, m01: float = 0.0, m02: float = 0.0,
+        m10: float = 0.0, m11: float = 1.0, m12: float = 0.0,
+        m20: float = 0.0, m21: float = 0.0, m22: float = 1.0,
     ) -> None: ...
 
     @staticmethod
@@ -2032,10 +2033,10 @@ class Mat4:
 
     def __init__(
         self,
-        m00: float, m01: float, m02: float, m03: float,
-        m10: float, m11: float, m12: float, m13: float,
-        m20: float, m21: float, m22: float, m23: float,
-        m30: float, m31: float, m32: float, m33: float,
+        m00: float = 1.0, m01: float = 0.0, m02: float = 0.0, m03: float = 0.0,
+        m10: float = 0.0, m11: float = 1.0, m12: float = 0.0, m13: float = 0.0,
+        m20: float = 0.0, m21: float = 0.0, m22: float = 1.0, m23: float = 0.0,
+        m30: float = 0.0, m31: float = 0.0, m32: float = 0.0, m33: float = 1.0,
     ) -> None: ...
 
     @staticmethod
@@ -3210,9 +3211,6 @@ class Capsule2d(Meshable):
             length: The distance between the centers of the semicircles
         """
 
-    def inner_rectangle(self) -> Rectangle:
-        """Get the inner rectangle of the capsule (excluding the semicircular ends)."""
-
     def to_inner_rectangle(self) -> Rectangle:
         """Get the inner rectangle of the capsule (excluding the semicircular ends)."""
 
@@ -3824,7 +3822,7 @@ class Line3d:
 
     def __eq__(self, other: object) -> bool: ...
 
-class Segment2d:
+class Segment2d(Meshable):
     """A line segment defined by two endpoints in 2D space.
 
     Example:

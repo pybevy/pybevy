@@ -87,14 +87,6 @@ impl PyRectangle {
         Ok(self.as_ref()?.size().into())
     }
 
-    pub fn width(&self) -> PyResult<f32> {
-        Ok(self.as_ref()?.half_size.x * 2.0)
-    }
-
-    pub fn height(&self) -> PyResult<f32> {
-        Ok(self.as_ref()?.half_size.y * 2.0)
-    }
-
     pub fn closest_point(&self, point: &PyVec2) -> PyResult<PyVec2> {
         let cp = self.as_ref()?.closest_point(point.try_into()?);
         Ok(cp.into())

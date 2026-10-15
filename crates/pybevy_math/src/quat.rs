@@ -123,11 +123,14 @@ impl PyQuat {
 #[pymethods]
 impl PyQuat {
     #[new]
-    #[pyo3(signature = (*_args, **_kwargs))]
+    #[pyo3(signature = (*_args, **_kwargs), text_signature = "()")]
     pub fn py_new(
         _args: &Bound<'_, PyTuple>,
         _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
+        if _args.is_empty() && _kwargs.is_none_or(|kwargs| kwargs.is_empty()) {
+            return Ok(Self::IDENTITY);
+        }
         Err(PyTypeError::new_err(
             "Quat cannot be constructed directly (raw xyzw components are error-prone); \
              use Quat.from_euler(EulerRot.XYZ, x, y, z), \

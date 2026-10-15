@@ -75,10 +75,6 @@ impl PyCapsule2d {
         Ok(())
     }
 
-    pub fn inner_rectangle(&self, py: Python<'_>) -> PyResult<Py<PyRectangle>> {
-        Py::new(py, (self.0.to_inner_rectangle().into(), PyMeshable))
-    }
-
     pub fn to_inner_rectangle(&self, py: Python<'_>) -> PyResult<Py<PyRectangle>> {
         Py::new(py, (self.0.to_inner_rectangle().into(), PyMeshable))
     }

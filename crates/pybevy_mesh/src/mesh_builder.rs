@@ -9,11 +9,16 @@ use crate::mesh::PyMesh;
     frozen,
     skip_from_py_object
 )]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PyMeshBuilder;
 
 #[pymethods]
 impl PyMeshBuilder {
+    #[new]
+    pub fn new() -> Self {
+        Self
+    }
+
     pub fn build(pyself: Bound<'_, Self>) -> PyResult<Py<PyMesh>> {
         Err(PyNotImplementedError::new_err(format!(
             "MeshBuilder.build() not implemented for {}",

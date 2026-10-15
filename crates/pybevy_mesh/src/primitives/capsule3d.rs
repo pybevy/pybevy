@@ -1,5 +1,6 @@
-use bevy::mesh::{Capsule3dMeshBuilder, MeshBuilder};
+use bevy::mesh::{Capsule3dMeshBuilder, CapsuleUvProfile, MeshBuilder};
 use pybevy_core::PyAsset;
+use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 use crate::{
@@ -7,6 +8,21 @@ use crate::{
     mesh_builder::PyMeshBuilder,
     primitives::validation::{minimum_count, vertex_budget},
 };
+
+#[pyenum(CapsuleUvProfile)]
+#[pyclass(
+    name = "CapsuleUvProfile",
+    module = "pybevy.mesh",
+    frozen,
+    eq,
+    from_py_object
+)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PyCapsuleUvProfile {
+    Aspect,
+    Uniform,
+    Fixed,
+}
 
 #[pyclass(name = "Capsule3dMeshBuilder", module = "pybevy.mesh", extends = PyMeshBuilder)]
 #[derive(Debug)]
@@ -38,6 +54,10 @@ impl PyCapsule3dMeshBuilder {
         let mut builder = self.0;
         builder.latitudes = latitudes;
         Py::new(py, (Self(builder), PyMeshBuilder))
+    }
+
+    pub fn uv_profile(&self, py: Python<'_>, profile: PyCapsuleUvProfile) -> PyResult<Py<Self>> {
+        Py::new(py, (Self(self.0.uv_profile(profile.into())), PyMeshBuilder))
     }
 
     pub fn build(&self, py: Python) -> PyResult<Py<PyMesh>> {

@@ -41,6 +41,15 @@ pub fn decode_read_only_le_bytes(
         ArrayDType::Int32 => {
             ArrayStorage::Int32(decode_numeric(bytes, dtype, elements, i32::from_le_bytes)?)
         }
+        ArrayDType::Int16 => {
+            ArrayStorage::Int16(decode_numeric(bytes, dtype, elements, i16::from_le_bytes)?)
+        }
+        ArrayDType::Int8 => ArrayStorage::Int8(
+            copy_bytes(bytes, dtype, elements)?
+                .into_iter()
+                .map(|value| value as i8)
+                .collect(),
+        ),
         ArrayDType::Uint32 => {
             ArrayStorage::Uint32(decode_numeric(bytes, dtype, elements, u32::from_le_bytes)?)
         }

@@ -1,4 +1,4 @@
-use bevy::ui::UiPosition;
+use bevy::{math::Vec2, ui::UiPosition};
 use pybevy_core::{
     FromBorrowedStorage, ValueStorage,
     repr::{ReprLiteral, object_repr},
@@ -95,7 +95,7 @@ impl PyUiPosition {
     }
 
     #[new]
-    #[pyo3(signature = (anchor, x, y))]
+    #[pyo3(signature = (anchor = PyVec2::from(Vec2::ZERO), x = PyVal::zero(), y = PyVal::zero()))]
     pub fn new(anchor: PyVec2, x: PyVal, y: PyVal) -> PyResult<Self> {
         Ok(Self::from_owned(UiPosition::new(
             anchor.try_into()?,

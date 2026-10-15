@@ -1946,7 +1946,7 @@ class ImageNode(Component):
     Args:
         handle: Handle to the Image asset
     """
-    def __init__(self, handle: Handle[Image]) -> None: ...
+    def __init__(self, handle: Handle[Image] = ...) -> None: ...
 
     @staticmethod
     def solid_color(color: Color) -> ImageNode:
@@ -3165,7 +3165,7 @@ class UiPosition:
     BOTTOM_LEFT: ClassVar[UiPosition]
     BOTTOM_RIGHT: ClassVar[UiPosition]
 
-    def __init__(self, anchor: Vec2, x: Val, y: Val) -> None:
+    def __init__(self, anchor: Vec2 = ..., x: Val = ..., y: Val = ...) -> None:
         """Create a position with explicit anchor and offsets."""
 
     @staticmethod
@@ -3317,7 +3317,7 @@ class LinearGradient:
         ```
     """
 
-    def __init__(self, angle: float, stops: list[ColorStop]) -> None:
+    def __init__(self, angle: float = 0.0, stops: list[ColorStop] = ...) -> None:
         """Create a gradient with angle in radians (0 = up, clockwise)."""
 
     @staticmethod

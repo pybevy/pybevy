@@ -69,6 +69,7 @@ def test_mesh_system_get_ref_vertices(benchmark: BenchmarkFixture) -> None:
             assert mesh is not None
 
             v = mesh.attribute(Mesh.ATTRIBUTE_POSITION)
+            assert v is not None
             assert v.shape == (vertex_count, 3)
 
     app = create_app().add_systems(Update, update_system)
@@ -98,6 +99,6 @@ def test_mesh_vertex_attribute_values_new(benchmark: BenchmarkFixture) -> None:
     vertices = np.random.rand(vertex_count, 3).astype(np.float32)
 
     def do_bench() -> None:
-        VertexAttributeValues(vertices)
+        VertexAttributeValues.Float32x3(vertices)
 
     benchmark(do_bench)

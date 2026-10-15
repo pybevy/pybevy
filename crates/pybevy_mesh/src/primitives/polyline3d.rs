@@ -8,7 +8,7 @@ use pyo3::prelude::*;
 
 use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder};
 
-// Bevy keeps its builder private, so reproduce the LineList conversion here.
+// Bevy's builder has private fields and underflows with fewer than two vertices.
 #[pyclass(name = "Polyline3dMeshBuilder", module = "pybevy.mesh", extends = PyMeshBuilder, frozen)]
 #[derive(Debug)]
 pub struct PyPolyline3dMeshBuilder {

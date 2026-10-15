@@ -108,7 +108,12 @@ fn infer_dtype(flat: &[Scalar]) -> ArrayDType {
 fn storage_from_scalars(flat: &[Scalar], dtype: ArrayDType) -> PyResult<ArrayStorage> {
     if matches!(
         dtype,
-        ArrayDType::Int32 | ArrayDType::Uint32 | ArrayDType::Uint16 | ArrayDType::Uint8
+        ArrayDType::Int32
+            | ArrayDType::Int16
+            | ArrayDType::Int8
+            | ArrayDType::Uint32
+            | ArrayDType::Uint16
+            | ArrayDType::Uint8
     ) {
         for s in flat {
             if let Scalar::I64(v) = s {
@@ -236,6 +241,8 @@ fn array_from_numpy(obj: &Bound<'_, PyAny>) -> PyResult<DenseArrayCore> {
     extract!(f32, Float32);
     extract!(i64, Int64);
     extract!(i32, Int32);
+    extract!(i16, Int16);
+    extract!(i8, Int8);
     extract!(u32, Uint32);
     extract!(u16, Uint16);
     extract!(u8, Uint8);
@@ -243,7 +250,7 @@ fn array_from_numpy(obj: &Bound<'_, PyAny>) -> PyResult<DenseArrayCore> {
 
     Err(PyTypeError::new_err(format!(
         "NumPy dtype '{dtype}' is not supported; expected float16, float32, float64, \
-         int32, int64, uint8, uint16, uint32, or bool"
+         int8, int16, int32, int64, uint8, uint16, uint32, or bool"
     )))
 }
 
@@ -287,6 +294,8 @@ fn array_from_numpy_scalar(obj: &Bound<'_, PyAny>) -> PyResult<Option<DenseArray
     extract!(dtype, "float32", f32, Float32);
     extract!(dtype, "int64", i64, Int64);
     extract!(dtype, "int32", i32, Int32);
+    extract!(dtype, "int16", i16, Int16);
+    extract!(dtype, "int8", i8, Int8);
     extract!(dtype, "uint32", u32, Uint32);
     extract!(dtype, "uint16", u16, Uint16);
     extract!(dtype, "uint8", u8, Uint8);
@@ -294,7 +303,7 @@ fn array_from_numpy_scalar(obj: &Bound<'_, PyAny>) -> PyResult<Option<DenseArray
 
     Err(PyTypeError::new_err(format!(
         "NumPy dtype '{dtype}' is not supported; expected float16, float32, float64, \
-         int32, int64, uint8, uint16, uint32, or bool"
+         int8, int16, int32, int64, uint8, uint16, uint32, or bool"
     )))
 }
 
@@ -466,6 +475,8 @@ pub fn to_numpy(py: Python<'_>, core: &DenseArrayCore) -> PyResult<Py<PyAny>> {
         ArrayStorage::Float64(values) => export!(values),
         ArrayStorage::Int64(values) => export!(values),
         ArrayStorage::Int32(values) => export!(values),
+        ArrayStorage::Int16(values) => export!(values),
+        ArrayStorage::Int8(values) => export!(values),
         ArrayStorage::Uint32(values) => export!(values),
         ArrayStorage::Uint16(values) => export!(values),
         ArrayStorage::Uint8(values) => export!(values),

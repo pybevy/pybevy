@@ -1,11 +1,18 @@
 use bevy::mesh::{Mesh, MeshBuilder, Meshable};
-use pyo3::{exceptions::PyTypeError, prelude::*};
+use pyo3::{
+    exceptions::{PyNotImplementedError, PyTypeError},
+    prelude::*,
+};
 
-use crate::primitives::{
-    PyAnnulus, PyCapsule2d, PyCapsule3d, PyCircle, PyCircularSector, PyCircularSegment, PyCone,
-    PyCuboid, PyCylinder, PyEllipse, PyPlane3d, PyRectangle, PyRegularPolygon, PyRhombus,
-    PySegment2d, PySphere, PyTetrahedron, PyTorus, PyTriangle2d, PyTriangle3d,
-    validation::vertex_budget,
+use crate::{
+    mesh::PyMesh,
+    mesh_builder::PyMeshBuilder,
+    primitives::{
+        PyAnnulus, PyCapsule2d, PyCapsule3d, PyCircle, PyCircularSector, PyCircularSegment, PyCone,
+        PyConicalFrustum, PyCuboid, PyCylinder, PyEllipse, PyPlane3d, PyPolyline2d, PyPolyline3d,
+        PyRectangle, PyRegularPolygon, PyRhombus, PySegment2d, PySphere, PyTetrahedron, PyTorus,
+        PyTriangle2d, PyTriangle3d, validation::vertex_budget,
+    },
 };
 
 #[pyclass(
@@ -15,11 +22,39 @@ use crate::primitives::{
     frozen,
     skip_from_py_object
 )]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PyMeshable;
 
-/// Convert a PyMeshable subclass instance directly to a Bevy Mesh in Rust,
-/// bypassing Python method resolution entirely.
+#[pymethods]
+impl PyMeshable {
+    #[new]
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn mesh(&self) -> PyResult<Py<PyMeshBuilder>> {
+        Err(PyNotImplementedError::new_err(
+            "Meshable.mesh() must be implemented by a subclass",
+        ))
+    }
+}
+
+fn build_python_meshable(asset: &Bound<'_, PyAny>) -> PyResult<Mesh> {
+    let builder = asset.call_method0("mesh")?;
+    if !builder.is_instance_of::<PyMeshBuilder>() {
+        return Err(PyTypeError::new_err(
+            "Meshable.mesh() must return a MeshBuilder",
+        ));
+    }
+    let built = builder.call_method0("build")?;
+    let mesh = built
+        .cast::<PyMesh>()
+        .map_err(|_| PyTypeError::new_err("MeshBuilder.build() must return a Mesh"))?;
+    let borrowed = mesh.borrow();
+    Ok(PyMesh::as_ref(&borrowed)?.clone())
+}
+
+/// Convert a PyMeshable subclass instance directly to a Bevy Mesh.
 pub fn meshable_to_mesh(asset: &Bound<'_, PyAny>) -> PyResult<Mesh> {
     // 3D primitives
     if let Ok(v) = asset.cast::<PySphere>() {
@@ -48,6 +83,18 @@ pub fn meshable_to_mesh(asset: &Bound<'_, PyAny>) -> PyResult<Mesh> {
     }
     if let Ok(v) = asset.cast::<PyPlane3d>() {
         return Ok(PyPlane3d::as_ref(&v.borrow())?.mesh().build());
+    }
+    if let Ok(v) = asset.cast::<PyConicalFrustum>() {
+        let py = asset.py();
+        let builder = v.borrow().mesh(py)?;
+        let mesh = builder.borrow(py).build(py)?;
+        return Ok(PyMesh::as_ref(&mesh.borrow(py))?.clone());
+    }
+    if let Ok(v) = asset.cast::<PyPolyline3d>() {
+        let py = asset.py();
+        let builder = v.borrow().mesh(py)?;
+        let mesh = builder.borrow(py).build(py)?;
+        return Ok(PyMesh::as_ref(&mesh.borrow(py))?.clone());
     }
     // 2D primitives
     if let Ok(v) = asset.cast::<PyCircle>() {
@@ -85,12 +132,11 @@ pub fn meshable_to_mesh(asset: &Bound<'_, PyAny>) -> PyResult<Mesh> {
     if let Ok(v) = asset.cast::<PySegment2d>() {
         return Ok(v.borrow().0.mesh().build());
     }
-    let type_name = asset
-        .get_type()
-        .name()
-        .map(|n| n.to_string())
-        .unwrap_or_else(|_| "Unknown".to_string());
-    Err(PyTypeError::new_err(format!(
-        "Unknown meshable type: {type_name}"
-    )))
+    if let Ok(v) = asset.cast::<PyPolyline2d>() {
+        let py = asset.py();
+        let builder = v.borrow().mesh(py)?;
+        let mesh = builder.borrow(py).build(py)?;
+        return Ok(PyMesh::as_ref(&mesh.borrow(py))?.clone());
+    }
+    build_python_meshable(asset)
 }

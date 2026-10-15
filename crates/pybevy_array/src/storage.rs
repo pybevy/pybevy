@@ -141,6 +141,8 @@ pub enum ArrayStorage {
     Float64(Vec<f64>),
     Int64(Vec<i64>),
     Int32(Vec<i32>),
+    Int16(Vec<i16>),
+    Int8(Vec<i8>),
     Uint32(Vec<u32>),
     Uint16(Vec<u16>),
     Uint8(Vec<u8>),
@@ -192,6 +194,8 @@ impl PartialEq for ArrayStorage {
             (Float64(a), Float64(b)) => a == b,
             (Int64(a), Int64(b)) => a == b,
             (Int32(a), Int32(b)) => a == b,
+            (Int16(a), Int16(b)) => a == b,
+            (Int8(a), Int8(b)) => a == b,
             (Uint32(a), Uint32(b)) => a == b,
             (Uint16(a), Uint16(b)) => a == b,
             (Uint8(a), Uint8(b)) => a == b,
@@ -269,6 +273,8 @@ impl ArrayStorage {
             ArrayStorage::Float64(_) => ArrayDType::Float64,
             ArrayStorage::Int64(_) => ArrayDType::Int64,
             ArrayStorage::Int32(_) => ArrayDType::Int32,
+            ArrayStorage::Int16(_) => ArrayDType::Int16,
+            ArrayStorage::Int8(_) => ArrayDType::Int8,
             ArrayStorage::Uint32(_) => ArrayDType::Uint32,
             ArrayStorage::Uint16(_) => ArrayDType::Uint16,
             ArrayStorage::Uint8(_) => ArrayDType::Uint8,
@@ -291,6 +297,8 @@ impl ArrayStorage {
             ArrayStorage::Float64(v) => v.len(),
             ArrayStorage::Int64(v) => v.len(),
             ArrayStorage::Int32(v) => v.len(),
+            ArrayStorage::Int16(v) => v.len(),
+            ArrayStorage::Int8(v) => v.len(),
             ArrayStorage::Uint32(v) => v.len(),
             ArrayStorage::Uint16(v) => v.len(),
             ArrayStorage::Uint8(v) => v.len(),
@@ -401,6 +409,8 @@ impl ArrayStorage {
             ArrayStorage::Float64(values) => Some(values.as_mut_ptr().cast()),
             ArrayStorage::Int64(values) => Some(values.as_mut_ptr().cast()),
             ArrayStorage::Int32(values) => Some(values.as_mut_ptr().cast()),
+            ArrayStorage::Int16(values) => Some(values.as_mut_ptr().cast()),
+            ArrayStorage::Int8(values) => Some(values.as_mut_ptr().cast()),
             ArrayStorage::Uint32(values) => Some(values.as_mut_ptr().cast()),
             ArrayStorage::Uint16(values) => Some(values.as_mut_ptr().cast()),
             ArrayStorage::Uint8(values) => Some(values.as_mut_ptr().cast()),
@@ -582,6 +592,12 @@ impl ArrayStorage {
             ArrayDType::Int32 => {
                 ArrayStorage::Int32(try_filled_vec(dtype, len, value.to_i64_trunc() as i32)?)
             }
+            ArrayDType::Int16 => {
+                ArrayStorage::Int16(try_filled_vec(dtype, len, value.to_i64_trunc() as i16)?)
+            }
+            ArrayDType::Int8 => {
+                ArrayStorage::Int8(try_filled_vec(dtype, len, value.to_i64_trunc() as i8)?)
+            }
             ArrayDType::Uint32 => {
                 ArrayStorage::Uint32(try_filled_vec(dtype, len, value.to_i64_trunc() as u32)?)
             }
@@ -611,6 +627,8 @@ impl ArrayStorage {
             ArrayStorage::Float64(v) => Scalar::F64(v[flat]),
             ArrayStorage::Int64(v) => Scalar::I64(v[flat]),
             ArrayStorage::Int32(v) => Scalar::I64(i64::from(v[flat])),
+            ArrayStorage::Int16(v) => Scalar::I64(i64::from(v[flat])),
+            ArrayStorage::Int8(v) => Scalar::I64(i64::from(v[flat])),
             ArrayStorage::Uint32(v) => Scalar::I64(i64::from(v[flat])),
             ArrayStorage::Uint16(v) => Scalar::I64(i64::from(v[flat])),
             ArrayStorage::Uint8(v) => Scalar::I64(i64::from(v[flat])),
@@ -678,6 +696,8 @@ impl ArrayStorage {
             ArrayStorage::Float64(values) => append_numeric!(values),
             ArrayStorage::Int64(values) => append_numeric!(values),
             ArrayStorage::Int32(values) => append_numeric!(values),
+            ArrayStorage::Int16(values) => append_numeric!(values),
+            ArrayStorage::Int8(values) => append_numeric!(values),
             ArrayStorage::Uint32(values) => append_numeric!(values),
             ArrayStorage::Uint16(values) => append_numeric!(values),
             ArrayStorage::Uint8(values) => {
@@ -766,6 +786,8 @@ impl ArrayStorage {
             ArrayStorage::Float64(v) => v[flat] = value.to_f64(),
             ArrayStorage::Int64(v) => v[flat] = value.to_i64_trunc(),
             ArrayStorage::Int32(v) => v[flat] = value.to_i64_trunc() as i32,
+            ArrayStorage::Int16(v) => v[flat] = value.to_i64_trunc() as i16,
+            ArrayStorage::Int8(v) => v[flat] = value.to_i64_trunc() as i8,
             ArrayStorage::Uint32(v) => v[flat] = value.to_i64_trunc() as u32,
             ArrayStorage::Uint16(v) => v[flat] = value.to_i64_trunc() as u16,
             ArrayStorage::Uint8(v) => v[flat] = value.to_i64_trunc() as u8,

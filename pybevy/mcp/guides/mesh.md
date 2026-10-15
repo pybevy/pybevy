@@ -5,7 +5,21 @@ Creating 3D and 2D meshes from primitives, custom vertices, and zero-copy bounde
 Examples using NumPy or `.to_numpy()` require `pybevy[numpy]` in the scene's
 Python environment. Bounded-array access itself does not require NumPy.
 
+`VertexAttributeValues` has exact Bevy variant classes. For example,
+`VertexAttributeValues.Float32x3([[0.0, 0.0, 0.0]])` and
+`VertexAttributeValues.Uint16x4([[0, 0, 0, 0]])` accept nested lists or bounded
+arrays. Their `.value` is an independent read-only `pybevy.array.Array` with
+the variant's dtype and shape; `Mesh.remove_attribute()` returns the exact
+variant. `Mesh.insert_attribute()` still accepts arrays and nested sequences
+directly. Column-major NumPy joint-index arrays must be converted with
+`numpy.ascontiguousarray()` before insertion. Exact vertex-value variants and
+`CircularMeshUvMode.Mask` support Python's shallow and deep copy protocols.
+`Indices` remains mutable and supports `push()`.
+
 ## Primitive Meshes
+
+Import primitives such as `Cuboid` and `Circle` from `pybevy.math`; import
+`Mesh`, `Meshable`, and mesh builders from `pybevy.mesh`.
 
 **Two patterns** for creating meshes:
 
@@ -28,6 +42,12 @@ meshes.add(Circle(0.5).mesh().resolution(64).build())
 ```
 
 **Use direct pass unless you need resolution control.**
+
+`ConicalFrustum`, `Polyline2d`, and `Polyline3d` also support direct pass.
+Omitting polyline vertices uses Bevy's default two endpoints; explicit `None`
+is not a vertex list.
+To define a custom meshable, subclass `Meshable` and return a `MeshBuilder`
+subclass from `mesh()`; its `build()` must return a `Mesh`.
 
 ### Available Primitives
 
@@ -59,18 +79,30 @@ Zero is allowed. Bevy accepts any value; PyBevy rejects these on purpose.
 Some builders have extra configuration:
 
 ```python
+from math import pi
+from pybevy.math import Capsule3d, Circle, CircularSector, Cone, Cylinder, Plane3d, Range, Sphere, Torus, Vec2, Vec3
+from pybevy.mesh import CapsuleUvProfile, CircularMeshUvMode
+
 # Sphere variants - .ico() and .uv() return Mesh directly (no .build())
 Sphere(0.5).mesh().ico(3)     # Icosphere with 3 subdivisions
 Sphere(0.5).mesh().uv(32, 18) # UV sphere with sectors/stacks
 
 # Plane with subdivisions
 Plane3d(Vec3.Y, Vec2(5.0, 5.0)).mesh().subdivisions(4).build()
+# Or select each plane axis independently
+Plane3d(Vec3.Y, Vec2(5.0, 5.0)).mesh().subdivisions_x(4).subdivisions_z(2).build()
 
 # Torus resolution
 Torus(0.3, 1.0).mesh().minor_resolution(24).major_resolution(48).build()
+# A partial torus arc, using pybevy.math.Range
+Torus(0.3, 1.0).mesh().angle_range(Range(0.0, pi)).build()
 
 # Capsule detail
 Capsule3d(0.5, 2.0).mesh().rings(4).longitudes(32).latitudes(16).build()
+Capsule3d(0.5, 2.0).mesh().uv_profile(CapsuleUvProfile.Fixed).build()
+
+# Circular shape UV rotation
+CircularSector(1.0, 0.5).mesh().uv_mode(CircularMeshUvMode.Mask(angle=0.5)).build()
 
 # Cylinder and cone detail, caps and anchor
 Cylinder(0.5, 2.0).mesh().resolution(64).segments(2).without_caps().build()
@@ -80,6 +112,19 @@ Cone(0.5, 2.0).mesh().resolution(64).build()
 `CylinderMeshBuilder.anchor(CylinderAnchor.Top)` and
 `ConeMeshBuilder.anchor(ConeAnchor.Tip)` select non-default origins. Builder
 methods return new values, leaving the original builder unchanged.
+`CapsuleUvProfile` has `Aspect`, `Uniform`, and `Fixed` modes. The circular
+UV mode is a named variant, `CircularMeshUvMode.Mask(angle=...)`.
+`TorusMeshBuilder.angle_range()` accepts `pybevy.math.Range`; its `start` and
+`end` are used as the inclusive Bevy angle endpoints.
+
+`SphereMeshBuilder.kind(kind)` requires a `SphereKind` and returns a new
+builder. `PlaneMeshBuilder(normal, size)` uses a normal positional constructor;
+`from_size()` and `from_length()` remain available. `UvChannel` is selected
+through `UvChannel.Uv0` or `.Uv1`, not a base constructor. Shape dimensions
+come from `Rectangle.size()` and capsule interiors from
+`Capsule2d.to_inner_rectangle()`. `SkinnedMesh.joints` and
+`MorphWeights.weights` provide the lists formerly exposed through extra length
+or indexing helpers; invalid `MorphWeights` indices raise `IndexError`.
 
 Mesh-builder counts must meet their minimum usable resolution. Capsule3d needs
 at least 4 latitudes and 1 longitude; Capsule2d needs resolution 2; Annulus
@@ -100,6 +145,27 @@ raises `ValueError` when built.
 ## Custom Meshes from Vertices
 
 Create meshes directly from vertex data using NumPy arrays or lists:
+
+`Mesh(primitive_topology, asset_usage=RenderAssetUsages.MAIN_WORLD)` selects
+non-default asset usage. `mesh.enable_raytracing` can be assigned; an arbitrary
+`mesh.attribute(id)` returns `None` when absent, while `positions()`,
+`normals()`, and `uvs()` require their attributes to be present.
+
+`remove_indices()` returns an independently owned `Indices` value or `None`;
+`with_removed_indices()` returns a new mesh and leaves the source unchanged.
+`merge_duplicate_vertices()` creates indices for identical vertex rows and
+requires an unindexed mesh; its `with_*` counterpart leaves the source unchanged.
+`with_computed_area_weighted_normals()` requires indexed triangle geometry.
+`normalize_joint_weights()` clamps negative weights and normalizes each row,
+using the first joint for an all-zero row. Mesh mutation is refused while a
+bounded array view is live.
+
+`Mesh.ATTRIBUTE_JOINT_INDEX` accepts a contiguous `uint16` array of shape
+`(N, 4)` or nested integer rows such as `[[0, 1, 2, 3]]`. Values outside the
+`uint16` range, wrong widths, and wrong array dtypes are rejected before the
+mesh changes. `Mesh.attribute()` currently exposes only float32 attributes as
+bounded arrays; joint-index bytes can be checked through the packed vertex
+buffer until typed attribute-value readback is available.
 
 ```python
 import numpy as np

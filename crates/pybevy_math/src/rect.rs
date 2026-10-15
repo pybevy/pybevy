@@ -30,6 +30,7 @@ pub struct PyRect {
 #[pymethods]
 impl PyRect {
     #[new]
+    #[pyo3(signature = (x0=0.0, y0=0.0, x1=0.0, y1=0.0))]
     pub fn new(x0: f32, y0: f32, x1: f32, y1: f32) -> Self {
         Self::from_owned(Rect::new(x0, y0, x1, y1))
     }

@@ -136,6 +136,9 @@ pub enum DiagnosticCode {
     /// (constructor parameter or property) that the Rust signature or the
     /// upstream field does not support
     W036,
+    /// W037: Bevy type implements `Default` but the Python constructor has
+    /// required inputs, so `Type()` cannot build the default value
+    W037,
 
     // Test coverage info (T-codes)
     /// T001: Class has no test coverage
@@ -199,6 +202,7 @@ impl DiagnosticCode {
             DiagnosticCode::W034 => "W034",
             DiagnosticCode::W035 => "W035",
             DiagnosticCode::W036 => "W036",
+            DiagnosticCode::W037 => "W037",
             DiagnosticCode::T001 => "T001",
             DiagnosticCode::T002 => "T002",
             DiagnosticCode::T003 => "T003",
@@ -257,7 +261,8 @@ impl DiagnosticCode {
             | DiagnosticCode::W033
             | DiagnosticCode::W034
             | DiagnosticCode::W035
-            | DiagnosticCode::W036 => DiagnosticSeverity::Warning,
+            | DiagnosticCode::W036
+            | DiagnosticCode::W037 => DiagnosticSeverity::Warning,
 
             DiagnosticCode::T001 | DiagnosticCode::T002 | DiagnosticCode::T003 => {
                 DiagnosticSeverity::Info
@@ -359,6 +364,7 @@ impl DiagnosticCode {
             DiagnosticCode::W036 => {
                 "stub None acceptance does not match the Rust signature or upstream field"
             }
+            DiagnosticCode::W037 => "Bevy Default type cannot be constructed without arguments",
             DiagnosticCode::T001 => "class has no test coverage",
             DiagnosticCode::T002 => "constructor not tested",
             DiagnosticCode::T003 => "member not tested",

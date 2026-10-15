@@ -81,6 +81,11 @@ bevy_animation = ["petgraph"]
 bevy_render = ["wgpu-types", "naga"]
 bevy_a11y = ["accesskit"]
 
+# External structs merged for their kind and trait contracts only (W037 reads
+# Default); their sorted cargo-public-api fields are dropped.
+[bevy.crate_trait_sources]
+bevy_render = ["wgpu-types"]
+
 # Crate-qualified rewrites for upstream claims that are ambiguous by short
 # name alone (AssetId is re-exported by several Bevy crates).
 [bevy.claim_overrides]
@@ -1450,8 +1455,7 @@ reason = "Bevy 0.19.1 bevy_image::Image::new defines the established Python cons
 
 [bevy.constructor_functions."pybevy.mesh.PyMesh"]
 function = "new"
-internal_parameters = ["asset_usage"]
-reason = "Bevy 0.19.1 bevy_mesh::Mesh::new maps primitive_topology; PyBevy supplies the trailing asset_usage internally"
+reason = "Bevy 0.19.1 bevy_mesh::Mesh::new maps primitive_topology and asset_usage"
 
 
 [bevy.constructor_fields]
@@ -1721,6 +1725,8 @@ reason = "Bevy 0.19.1 bevy_audio::SpatialListener::new defines the gap prefix fo
 "pybevy.world_serialization.PyWorldAssetRoot" = "Bevy 0.19.1 bevy_world_serialization::WorldAssetRoot is a tuple struct/newtype; Python construction preserves its positional payload contract"
 
 [bevy.constructor_adapters]
+"pybevy.mesh.PyMeshable" = "Bevy Meshable is an open trait, not a constructible type; this Python base exists so user subclasses can supply mesh()"
+"pybevy.mesh.PyMeshBuilder" = "Bevy MeshBuilder is an open trait, not a constructible type; this Python base exists so user subclasses can supply build()"
 "pybevy.math.PyRange" = "Maintainer decision 2026-09-27: Range(start, end) mirrors the positional start..end range syntax of std::ops::Range<f32>, not keyword field initialization"
 "pybevy.winit.PyWinitPlugin" = "The settings input inserts the separate WinitSettings resource before building Bevy's default WinitPlugin"
 "pybevy.render.PyRenderPlugin" = "The constructor maps power_preference into nested WgpuSettings and accepts an optional synchronous pipeline compilation override"
@@ -2148,16 +2154,15 @@ notes = "Python accessor for Deref<Target=String> - Bevy uses *self to access in
 # Mesh: context wrappers for safe attribute access
 [bevy.type_ignores.Mesh]
 intentional_extra_methods = ["_content_hash"]
-intentional_readonly_properties = ["enable_raytracing"]
 intentional_signature_diffs = [
-    { name = "attribute", expected_return = "PyResult<Py<PyArray>>" },
+    { name = "attribute", expected_return = "PyResult<Option<Py<PyArray>>>" },
     { name = "attribute_mut", expected_return = "PyResult<Py<MeshBoundedContextMut>>" },
 ]
 notes = """
 - _content_hash: Internal PyBevy snapshot/regression hook with a versioned canonical format
-- attribute: Returns a read-only bounded array
+- attribute: Returns an optional read-only bounded array
 - attribute_mut: Returns a mutable bounded-array context
-- enable_raytracing: Read-only property set at creation"""
+"""
 
 # Mesh2d/Mesh3d: handle wrappers (same pattern as WorldAssetRoot)
 [bevy.type_ignores.Mesh2d]
@@ -2968,11 +2973,6 @@ reason = "to_jax is installed at runtime by the optional pybevy.ecs.jax_ext exte
 code = "E003"
 path = "ecs.ViewColumn"
 reason = "from_jax is installed at runtime by the optional pybevy.ecs.jax_ext extension module, not by the Rust class"
-
-[[validation.exceptions]]
-code = "E003"
-path = "mesh.Meshable"
-reason = "mesh() is implemented per primitive subclass; the abstract base only documents the contract"
 
 [[validation.exceptions]]
 code = "E003"

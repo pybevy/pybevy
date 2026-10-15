@@ -1,7 +1,7 @@
 use bevy::{color::Color, image::Image, prelude::Handle, ui::widget::ImageNode};
 use pybevy_color::color::PyColor;
 use pybevy_core::{
-    ComponentStorage, FromBorrowedStorage, PyComponent, PyHandle, ensure_asset_type,
+    ComponentStorage, FromBorrowedStorage, HandleArg, PyComponent, PyHandle, ensure_asset_type,
     extract_handle_from_any, repr::object_repr,
 };
 use pybevy_macros::pycomponent;
@@ -20,13 +20,13 @@ pub struct PyImageNode {
 #[pymethods]
 impl PyImageNode {
     #[new]
-    pub fn new(handle: &Bound<'_, PyAny>) -> PyResult<PyClassInitializer<Self>> {
-        let py_handle = extract_handle_from_any(handle)?;
-
-        ensure_asset_type::<Image>(&py_handle)?;
-
-        let bevy_handle: Handle<Image> = py_handle.try_into()?;
-        Ok(Self::from_owned(ImageNode::new(bevy_handle)).into())
+    #[pyo3(signature = (handle = HandleArg::default()))]
+    pub fn new(handle: HandleArg) -> PyResult<PyClassInitializer<Self>> {
+        let image_node = match handle {
+            HandleArg::Omitted => ImageNode::default(),
+            HandleArg::Supplied(handle) => ImageNode::new(Handle::<Image>::try_from(&handle)?),
+        };
+        Ok(Self::from_owned(image_node).into())
     }
 
     #[staticmethod]

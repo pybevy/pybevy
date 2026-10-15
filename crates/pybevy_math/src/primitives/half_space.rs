@@ -1,5 +1,5 @@
 use bevy::math::{Vec4, primitives::HalfSpace};
-use pybevy_core::repr::ReprLiteral;
+use pybevy_core::{Omittable, repr::ReprLiteral};
 use pyo3::prelude::*;
 
 use crate::{vec3a::PyVec3A, vec4::PyVec4};
@@ -31,11 +31,16 @@ impl From<&PyHalfSpace> for HalfSpace {
 #[pymethods]
 impl PyHalfSpace {
     #[new]
-    pub fn new(normal_d: &PyVec4) -> PyResult<Self> {
-        let vec4: Vec4 = normal_d.try_into()?;
-        Ok(PyHalfSpace {
-            inner: HalfSpace::new(vec4),
-        })
+    #[pyo3(signature = (normal_d = Omittable::default()))]
+    pub fn new(normal_d: Omittable<PyRef<'_, PyVec4>>) -> PyResult<Self> {
+        let inner = match normal_d.into_option() {
+            Some(normal_d) => {
+                let vec4: Vec4 = (&*normal_d).try_into()?;
+                HalfSpace::new(vec4)
+            }
+            None => HalfSpace::default(),
+        };
+        Ok(PyHalfSpace { inner })
     }
 
     #[getter]

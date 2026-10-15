@@ -1,5 +1,8 @@
+use std::ops::Range;
+
 use bevy::mesh::{MeshBuilder, TorusMeshBuilder};
 use pybevy_core::PyAsset;
+use pybevy_math::range::PyRange;
 use pyo3::prelude::*;
 
 use crate::{
@@ -28,6 +31,17 @@ impl PyTorusMeshBuilder {
         let mut builder = self.0.clone();
         builder.major_resolution = resolution;
         Py::new(py, (Self(builder), PyMeshBuilder))
+    }
+
+    pub fn angle_range(&self, py: Python<'_>, range: &PyRange) -> PyResult<Py<Self>> {
+        let range: Range<f32> = range.try_into()?;
+        Py::new(
+            py,
+            (
+                Self(self.0.clone().angle_range(range.start..=range.end)),
+                PyMeshBuilder,
+            ),
+        )
     }
 
     pub fn build(&self, py: Python) -> PyResult<Py<PyMesh>> {

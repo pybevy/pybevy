@@ -3,6 +3,7 @@ use pybevy_core::PyAsset;
 use pyo3::prelude::*;
 
 use crate::{
+    circular_mesh_uv_mode::PyCircularMeshUvMode,
     mesh::PyMesh,
     mesh_builder::PyMeshBuilder,
     primitives::validation::{minimum_count, vertex_budget},
@@ -25,6 +26,13 @@ impl PyCircularSectorMeshBuilder {
         let mut builder = self.0.clone();
         builder.resolution = resolution;
         Py::new(py, (Self(builder), PyMeshBuilder))
+    }
+
+    pub fn uv_mode(&self, py: Python<'_>, mode: PyCircularMeshUvMode) -> PyResult<Py<Self>> {
+        Py::new(
+            py,
+            (Self(self.0.clone().uv_mode(mode.into())), PyMeshBuilder),
+        )
     }
 
     pub fn build(&self, py: Python) -> PyResult<Py<PyMesh>> {

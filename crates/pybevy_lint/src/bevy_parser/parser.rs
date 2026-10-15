@@ -56,6 +56,47 @@ pub fn merge_source_enums(
     merged
 }
 
+/// Merge re-exported structs' kind and trait contracts without their fields,
+/// whose cargo-public-api order is sorted rather than declared.
+pub fn merge_source_trait_contracts(
+    target: &mut BevyCrate,
+    source: &BevyCrate,
+    wanted_names: &HashSet<String>,
+) -> usize {
+    let mut merged = 0;
+    for (name, item) in &source.items {
+        if item.kind != BevyItemKind::Struct
+            || !wanted_names.contains(name)
+            || target.items.contains_key(name)
+        {
+            continue;
+        }
+        let mut item = item.clone();
+        item.fields.clear();
+        target.items.insert(name.clone(), item);
+        merged += 1;
+    }
+    merged
+}
+
+/// Parse re-export source crates and merge only their structs' trait contracts.
+pub fn merge_reexported_trait_contracts(
+    bevy_crates: &mut HashMap<String, BevyCrate>,
+    bevy_path: &Path,
+    trait_sources: &HashMap<String, Vec<String>>,
+    wanted_names: &HashSet<String>,
+    use_cache: bool,
+) {
+    merge_reexported_items(
+        bevy_crates,
+        bevy_path,
+        trait_sources,
+        wanted_names,
+        use_cache,
+        merge_source_trait_contracts,
+    );
+}
+
 /// Parse re-export source crates and merge their wrapped types into the parsed
 /// Bevy crates. See [`merge_source_types`] for the merge rules.
 pub fn merge_reexported_types(

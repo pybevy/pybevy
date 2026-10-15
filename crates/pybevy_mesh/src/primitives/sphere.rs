@@ -1,6 +1,6 @@
 use bevy::mesh::{MeshBuilder, SphereKind, SphereMeshBuilder};
-use pybevy_core::PyAsset;
-use pyo3::{IntoPyObjectExt, exceptions::PyValueError, prelude::*};
+use pybevy_core::{PyAsset, public_error};
+use pyo3::{exceptions::PyValueError, prelude::*};
 
 use crate::{
     mesh::PyMesh, mesh_builder::PyMeshBuilder, primitives::validation::vertex_budget,
@@ -16,9 +16,9 @@ fn validate_ico(subdivisions: u32) -> PyResult<()> {
     if subdivisions >= 80 {
         let side = u128::from(subdivisions) + 1;
         let vertices = 10 * side * side + 2;
-        return Err(PyValueError::new_err(format!(
-            "Cannot create an icosphere of {subdivisions} subdivisions due to there being too many vertices being generated: {vertices}. (Limited to 65535 vertices or 79 subdivisions)"
-        )));
+        return Err(PyValueError::new_err(
+            public_error::icosphere_subdivisions_too_many(subdivisions, vertices),
+        ));
     }
     Ok(())
 }
@@ -35,14 +35,8 @@ impl From<SphereMeshBuilder> for PySphereMeshBuilder {
 
 #[pymethods]
 impl PySphereMeshBuilder {
-    #[pyo3(signature = (kind=None))]
-    pub fn kind(&self, py: Python<'_>, kind: Option<PySphereKind>) -> PyResult<Py<PyAny>> {
-        match kind {
-            Some(kind) => {
-                Ok(Py::new(py, (Self(self.0.kind(kind.into())), PyMeshBuilder))?.into_any())
-            }
-            None => PySphereKind::from(self.0.kind).into_py_any(py),
-        }
+    pub fn kind(&self, py: Python<'_>, kind: PySphereKind) -> PyResult<Py<Self>> {
+        Py::new(py, (Self(self.0.kind(kind.into())), PyMeshBuilder))
     }
 
     pub fn ico(&self, py: Python, subdivisions: u32) -> PyResult<Py<PyMesh>> {

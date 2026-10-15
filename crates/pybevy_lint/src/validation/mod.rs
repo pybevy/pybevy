@@ -303,6 +303,13 @@ pub fn validate_with_bevy(
             ));
         }
 
+        // W037: a Bevy `Default` type must be constructible with no arguments.
+        if let Some((_, bevy_item)) = resolved_bevy {
+            policy_diagnostics.extend(class_rules::validate_default_constructor(
+                rust_class, bevy_item,
+            ));
+        }
+
         // W035: stub `Handle[T]` annotations must name the upstream asset
         // type of the field they document.
         if let Some((_, bevy_item)) = resolved_bevy

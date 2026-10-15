@@ -17,6 +17,7 @@ pybevy_render = { workspace = true }
 pybevy_array = { workspace = true, features = ["pyo3"] }
 pybevy_transform = { workspace = true }
 numpy = { workspace = true }
+half = { workspace = true }
 
 [dependencies.bevy]
 workspace = true

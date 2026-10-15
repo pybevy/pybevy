@@ -1,5 +1,5 @@
-use bevy::animation::graph::AnimationGraphHandle;
-use pybevy_core::{PyComponent, PyHandle};
+use bevy::animation::graph::{AnimationGraph, AnimationGraphHandle};
+use pybevy_core::{HandleArg, PyComponent, PyHandle};
 use pybevy_macros::pyhandle;
 use pyo3::prelude::*;
 
@@ -33,8 +33,13 @@ impl From<&AnimationGraphHandle> for PyAnimationGraphHandle {
 #[pymethods]
 impl PyAnimationGraphHandle {
     #[new]
-    pub fn new(handle: PyHandle) -> PyResult<PyClassInitializer<Self>> {
-        Ok((Self(handle), PyComponent).into())
+    #[pyo3(signature = (handle = HandleArg::default()))]
+    pub fn new(handle: HandleArg) -> PyResult<PyClassInitializer<Self>> {
+        Ok((
+            Self(handle.into_py_handle::<AnimationGraph>()?),
+            PyComponent,
+        )
+            .into())
     }
 
     #[getter]

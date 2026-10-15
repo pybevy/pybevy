@@ -1,5 +1,5 @@
 use bevy::{
-    math::Vec2,
+    math::{Dir3, Vec2},
     mesh::{MeshBuilder, PlaneMeshBuilder},
 };
 use pybevy_core::PyAsset;
@@ -8,7 +8,7 @@ use pyo3::prelude::*;
 
 use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder, primitives::validation::vertex_budget};
 
-#[pyclass(name = "PlaneMeshBuilder", module = "pybevy.mesh", extends = PyMeshBuilder)]
+#[pyclass(name = "PlaneMeshBuilder", module = "pybevy.mesh", extends = PyMeshBuilder, frozen)]
 #[derive(Debug)]
 pub struct PyPlaneMeshBuilder(PlaneMeshBuilder);
 
@@ -20,12 +20,12 @@ impl From<PlaneMeshBuilder> for PyPlaneMeshBuilder {
 
 #[pymethods]
 impl PyPlaneMeshBuilder {
-    #[staticmethod]
-    #[allow(clippy::new_ret_no_self)]
-    pub fn new(py: Python, normal: PyDir3, size: PyVec2) -> PyResult<Py<PyAny>> {
+    #[new]
+    #[pyo3(signature = (normal = PyDir3::from(Dir3::Y), size = PyVec2::from(Vec2::ONE)))]
+    pub fn new(normal: PyDir3, size: PyVec2) -> PyResult<PyClassInitializer<Self>> {
         let size: Vec2 = dimension("size", size.try_into()?)?;
         let builder = PlaneMeshBuilder::new(normal.try_into()?, size);
-        Ok(Py::new(py, (Self(builder), PyMeshBuilder))?.into_any())
+        Ok((Self(builder), PyMeshBuilder).into())
     }
 
     #[staticmethod]
@@ -53,6 +53,20 @@ impl PyPlaneMeshBuilder {
 
     pub fn subdivisions(&self, py: Python<'_>, subdivisions: u32) -> PyResult<Py<Self>> {
         Py::new(py, (Self(self.0.subdivisions(subdivisions)), PyMeshBuilder))
+    }
+
+    pub fn subdivisions_x(&self, py: Python<'_>, subdivisions: u32) -> PyResult<Py<Self>> {
+        Py::new(
+            py,
+            (Self(self.0.subdivisions_x(subdivisions)), PyMeshBuilder),
+        )
+    }
+
+    pub fn subdivisions_z(&self, py: Python<'_>, subdivisions: u32) -> PyResult<Py<Self>> {
+        Py::new(
+            py,
+            (Self(self.0.subdivisions_z(subdivisions)), PyMeshBuilder),
+        )
     }
 
     pub fn build(&self, py: Python) -> PyResult<Py<PyMesh>> {

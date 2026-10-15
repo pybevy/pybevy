@@ -5127,6 +5127,7 @@ name = "pybevy_mesh"
 version = "0.3.0-rc.1"
 dependencies = [
  "bevy",
+ "half",
  "numpy",
  "pybevy_array",
  "pybevy_core",

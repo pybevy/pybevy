@@ -1,5 +1,5 @@
 use bevy::mesh::{Mesh, Mesh3d};
-use pybevy_core::{PyComponent, PyHandle, ensure_asset_type, extract_handle_from_any};
+use pybevy_core::{HandleArg, PyComponent, PyHandle};
 use pybevy_macros::pyhandle;
 use pyo3::prelude::*;
 
@@ -25,12 +25,9 @@ impl From<&Mesh3d> for PyMesh3d {
 #[pymethods]
 impl PyMesh3d {
     #[new]
-    pub fn new(mesh: &Bound<'_, PyAny>) -> PyResult<PyClassInitializer<Self>> {
-        let handle = extract_handle_from_any(mesh)?;
-
-        ensure_asset_type::<Mesh>(&handle)?;
-
-        Ok((Self(handle), PyComponent).into())
+    #[pyo3(signature = (mesh = HandleArg::default()))]
+    pub fn new(mesh: HandleArg) -> PyResult<PyClassInitializer<Self>> {
+        Ok((Self(mesh.into_py_handle::<Mesh>()?), PyComponent).into())
     }
     #[getter]
     pub fn handle(&self) -> PyResult<PyHandle> {

@@ -54,7 +54,7 @@ impl From<PyLinearGradient> for LinearGradient {
 #[pymethods]
 impl PyLinearGradient {
     #[new]
-    #[pyo3(signature = (angle, stops))]
+    #[pyo3(signature = (angle = 0.0, stops = Vec::new()))]
     pub fn new(angle: f32, stops: Vec<PyColorStop>) -> PyResult<Self> {
         Ok(PyLinearGradient {
             read_only: false,

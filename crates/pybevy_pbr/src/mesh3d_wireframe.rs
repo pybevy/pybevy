@@ -1,5 +1,5 @@
 use bevy::pbr::wireframe::{Mesh3dWireframe, WireframeMaterial};
-use pybevy_core::{PyComponent, PyHandle, ensure_asset_type, extract_handle_from_any};
+use pybevy_core::{HandleArg, PyComponent, PyHandle};
 use pybevy_macros::pyhandle;
 use pyo3::prelude::*;
 
@@ -31,12 +31,13 @@ impl From<&Mesh3dWireframe> for PyMesh3dWireframe {
 #[pymethods]
 impl PyMesh3dWireframe {
     #[new]
-    pub fn new(material: &Bound<'_, PyAny>) -> PyResult<PyClassInitializer<Self>> {
-        let handle = extract_handle_from_any(material)?;
-
-        ensure_asset_type::<WireframeMaterial>(&handle)?;
-
-        Ok((Self(handle), PyComponent).into())
+    #[pyo3(signature = (material = HandleArg::default()))]
+    pub fn new(material: HandleArg) -> PyResult<PyClassInitializer<Self>> {
+        Ok((
+            Self(material.into_py_handle::<WireframeMaterial>()?),
+            PyComponent,
+        )
+            .into())
     }
 
     #[getter]

@@ -165,6 +165,7 @@ impl PyVec2 {
     }
 
     #[new]
+    #[pyo3(signature = (x=0.0, y=0.0))]
     pub fn new(x: f32, y: f32) -> Self {
         PyVec2::vec2(Vec2::new(x, y))
     }

@@ -1,4 +1,5 @@
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
+pub mod circular_mesh_uv_mode;
 pub mod indices;
 pub mod mesh;
 pub mod mesh2d;
@@ -83,14 +84,18 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<vertex_attribute::PyMeshVertexAttributeId>()?;
     m.add_class::<vertex_attribute::PyMeshVertexAttribute>()?;
     m.add_class::<primitive_topology::PyPrimitiveTopology>()?;
+    m.add_class::<circular_mesh_uv_mode::PyCircularMeshUvMode>()?;
+    circular_mesh_uv_mode::register_circular_mesh_uv_mode_variants(&m)?;
     m.add_class::<sphere_kind::PySphereKind>()?;
     m.add_class::<uv_channel::PyUvChannel>()?;
     m.add_class::<vertex_attribute::PyVertexAttributeValues>()?;
+    vertex_attribute::register_vertex_attribute_values_variants(&m)?;
     m.add_class::<mesh::MeshBoundedContextMut>()?;
     m.add_class::<meshable::PyMeshable>()?;
 
     m.add_class::<mesh_builder::PyMeshBuilder>()?;
     m.add_class::<primitives::PyConeAnchor>()?;
+    m.add_class::<primitives::PyCapsuleUvProfile>()?;
     m.add_class::<primitives::PyCylinderAnchor>()?;
     m.add_class::<primitives::PyAnnulusMeshBuilder>()?;
     m.add_class::<primitives::PyCapsule2dMeshBuilder>()?;
@@ -116,26 +121,5 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<primitives::PyCircularSegmentMeshBuilder>()?;
     m.add_class::<primitives::PySegment2dMeshBuilder>()?;
 
-    m.add_class::<primitives::PyAnnulus>()?;
-    m.add_class::<primitives::PyCapsule2d>()?;
-    m.add_class::<primitives::PyCircle>()?;
-    m.add_class::<primitives::PyEllipse>()?;
-    m.add_class::<primitives::PyRectangle>()?;
-    m.add_class::<primitives::PyRegularPolygon>()?;
-    m.add_class::<primitives::PyRhombus>()?;
-    m.add_class::<primitives::PyTriangle2d>()?;
-    m.add_class::<primitives::PyCircularSector>()?;
-    m.add_class::<primitives::PyCircularSegment>()?;
-    m.add_class::<primitives::PySegment2d>()?;
-
-    m.add_class::<primitives::PyCapsule3d>()?;
-    m.add_class::<primitives::PyCone>()?;
-    m.add_class::<primitives::PyCuboid>()?;
-    m.add_class::<primitives::PyCylinder>()?;
-    m.add_class::<primitives::PyPlane3d>()?;
-    m.add_class::<primitives::PySphere>()?;
-    m.add_class::<primitives::PyTetrahedron>()?;
-    m.add_class::<primitives::PyTorus>()?;
-    m.add_class::<primitives::PyTriangle3d>()?;
     parent.add_submodule(&m)
 }

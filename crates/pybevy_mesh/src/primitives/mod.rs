@@ -27,7 +27,7 @@ pub mod shapes;
 
 pub use annulus::PyAnnulusMeshBuilder;
 pub use capsule2d::PyCapsule2dMeshBuilder;
-pub use capsule3d::PyCapsule3dMeshBuilder;
+pub use capsule3d::{PyCapsule3dMeshBuilder, PyCapsuleUvProfile};
 pub use circle::PyCircleMeshBuilder;
 pub use circular_sector::PyCircularSectorMeshBuilder;
 pub use circular_segment::PyCircularSegmentMeshBuilder;

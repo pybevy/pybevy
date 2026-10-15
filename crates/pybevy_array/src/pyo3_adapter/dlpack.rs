@@ -430,6 +430,8 @@ fn dtype_from_dlpack(dtype: DlDataType) -> PyResult<ArrayDType> {
         (2, 64) => Ok(ArrayDType::Float64),
         (0, 64) => Ok(ArrayDType::Int64),
         (0, 32) => Ok(ArrayDType::Int32),
+        (0, 16) => Ok(ArrayDType::Int16),
+        (0, 8) => Ok(ArrayDType::Int8),
         (1, 32) => Ok(ArrayDType::Uint32),
         (1, 16) => Ok(ArrayDType::Uint16),
         (1, 8) => Ok(ArrayDType::Uint8),
@@ -448,6 +450,8 @@ fn dtype_alignment(dtype: ArrayDType) -> usize {
         ArrayDType::Float64 => align_of::<f64>(),
         ArrayDType::Int64 => align_of::<i64>(),
         ArrayDType::Int32 => align_of::<i32>(),
+        ArrayDType::Int16 => align_of::<i16>(),
+        ArrayDType::Int8 => align_of::<i8>(),
         ArrayDType::Uint32 => align_of::<u32>(),
         ArrayDType::Uint16 => align_of::<u16>(),
         ArrayDType::Uint8 | ArrayDType::Bool => align_of::<u8>(),
@@ -570,6 +574,12 @@ unsafe fn copy_tensor(tensor: &DlTensor) -> PyResult<DenseArrayCore> {
                     .try_into()
                     .expect("validated i32 item width"),
             ) as i64),
+            ArrayDType::Int16 => Scalar::I64(i16::from_ne_bytes(
+                bytes[start..start + 2]
+                    .try_into()
+                    .expect("validated i16 item width"),
+            ) as i64),
+            ArrayDType::Int8 => Scalar::I64(i64::from(bytes[start] as i8)),
             ArrayDType::Uint32 => Scalar::I64(u32::from_ne_bytes(
                 bytes[start..start + 4]
                     .try_into()

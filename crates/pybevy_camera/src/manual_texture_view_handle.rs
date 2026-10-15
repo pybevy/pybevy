@@ -27,6 +27,7 @@ impl From<PyManualTextureViewHandle> for ManualTextureViewHandle {
 #[pymethods]
 impl PyManualTextureViewHandle {
     #[new]
+    #[pyo3(signature = (value = 0))]
     pub fn new(value: u32) -> Self {
         Self(ManualTextureViewHandle(value))
     }
