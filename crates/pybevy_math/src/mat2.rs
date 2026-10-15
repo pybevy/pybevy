@@ -283,4 +283,33 @@ impl PyMat2 {
         };
         Ok(comparison_result(py, result))
     }
+
+    pub fn to_cols_array(&self) -> PyResult<[f32; 4]> {
+        Ok(self.as_ref()?.to_cols_array())
+    }
+
+    #[staticmethod]
+    pub fn from_cols_array_2d(m: [[f32; 2]; 2]) -> Self {
+        PyMat2::from_mat2(Mat2::from_cols_array_2d(&m))
+    }
+
+    pub fn to_cols_array_2d(&self) -> PyResult<[[f32; 2]; 2]> {
+        Ok(self.as_ref()?.to_cols_array_2d())
+    }
+
+    pub fn add_mat2(&self, rhs: &PyMat2) -> PyResult<PyMat2> {
+        Ok(PyMat2::from_mat2(
+            self.as_ref()?.add_mat2(rhs.as_ref()?.reborrow()),
+        ))
+    }
+
+    pub fn sub_mat2(&self, rhs: &PyMat2) -> PyResult<PyMat2> {
+        Ok(PyMat2::from_mat2(
+            self.as_ref()?.sub_mat2(rhs.as_ref()?.reborrow()),
+        ))
+    }
+
+    pub fn div_scalar(&self, rhs: f32) -> PyResult<PyMat2> {
+        Ok(PyMat2::from_mat2(self.as_ref()?.div_scalar(rhs)))
+    }
 }

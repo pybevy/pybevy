@@ -2,7 +2,8 @@ use bevy::math::{BVec3, Dir3, Vec3, Vec3Swizzles};
 use pybevy_core::{
     FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
     public_error::{
-        RHS_NOT_NORMALIZED, UNSUPPORTED_COMPARISON, VECTOR_NOT_NORMALIZED, from_slice_too_short,
+        AXIS_NOT_NORMALIZED, NORMAL_NOT_NORMALIZED, RHS_NOT_NORMALIZED, UNSUPPORTED_COMPARISON,
+        VECTOR_NOT_NORMALIZED, from_slice_too_short,
     },
     repr::ReprLiteral,
 };
@@ -13,7 +14,7 @@ use pyo3::{
 };
 
 use super::{vec2::PyVec2, vec4::PyVec4};
-use crate::richcmp::comparison_result;
+use crate::{richcmp::comparison_result, uvec3::PyUVec3, vec3a::PyVec3A};
 
 #[pyclass(name = "Vec3", module = "pybevy.math", from_py_object)]
 #[derive(Debug, Clone)]
@@ -821,5 +822,64 @@ impl PyVec3 {
             return Err(PyValueError::new_err(from_slice_too_short(3)));
         }
         Ok(PyVec3::from_vec3(Vec3::from_slice(&slice)))
+    }
+
+    pub fn as_uvec3(&self) -> PyResult<PyUVec3> {
+        Ok(self.as_ref()?.as_uvec3().into())
+    }
+
+    pub fn to_vec3a(&self) -> PyResult<PyVec3A> {
+        Ok(self.as_ref()?.to_vec3a().into())
+    }
+
+    pub fn reflect(&self, normal: &PyVec3) -> PyResult<PyVec3> {
+        let normal = *normal.as_ref()?;
+        if !normal.is_normalized() {
+            return Err(PyValueError::new_err(NORMAL_NOT_NORMALIZED));
+        }
+        Ok(PyVec3::from_vec3(self.as_ref()?.reflect(normal)))
+    }
+
+    pub fn refract(&self, normal: &PyVec3, eta: f32) -> PyResult<PyVec3> {
+        let incident = *self.as_ref()?;
+        let normal = *normal.as_ref()?;
+        if !incident.is_normalized() {
+            return Err(PyValueError::new_err(VECTOR_NOT_NORMALIZED));
+        }
+        if !normal.is_normalized() {
+            return Err(PyValueError::new_err(NORMAL_NOT_NORMALIZED));
+        }
+        Ok(PyVec3::from_vec3(incident.refract(normal, eta)))
+    }
+
+    pub fn normalize_and_length(&self) -> PyResult<(PyVec3, f32)> {
+        let (normalized, length) = self.as_ref()?.normalize_and_length();
+        Ok((PyVec3::from_vec3(normalized), length))
+    }
+
+    pub fn rotate_towards(&self, rhs: &PyVec3, max_angle: f32) -> PyResult<PyVec3> {
+        Ok(PyVec3::from_vec3(
+            self.as_ref()?.rotate_towards(*rhs.as_ref()?, max_angle),
+        ))
+    }
+
+    pub fn rotate_x(&self, angle: f32) -> PyResult<PyVec3> {
+        Ok(PyVec3::from_vec3(self.as_ref()?.rotate_x(angle)))
+    }
+
+    pub fn rotate_y(&self, angle: f32) -> PyResult<PyVec3> {
+        Ok(PyVec3::from_vec3(self.as_ref()?.rotate_y(angle)))
+    }
+
+    pub fn rotate_z(&self, angle: f32) -> PyResult<PyVec3> {
+        Ok(PyVec3::from_vec3(self.as_ref()?.rotate_z(angle)))
+    }
+
+    pub fn rotate_axis(&self, axis: &PyVec3, angle: f32) -> PyResult<PyVec3> {
+        let axis = *axis.as_ref()?;
+        if !axis.is_normalized() {
+            return Err(PyValueError::new_err(AXIS_NOT_NORMALIZED));
+        }
+        Ok(PyVec3::from_vec3(self.as_ref()?.rotate_axis(axis, angle)))
     }
 }

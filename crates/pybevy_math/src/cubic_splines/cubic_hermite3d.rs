@@ -1,6 +1,6 @@
 use bevy::math::{
     Vec3,
-    cubic_splines::{CubicGenerator, CubicHermite},
+    cubic_splines::{CubicGenerator, CubicHermite, CyclicCubicGenerator},
 };
 use pybevy_core::public_error;
 use pyo3::{exceptions::PyValueError, prelude::*};
@@ -48,6 +48,15 @@ impl PyCubicHermite3d {
         let curve = self
             .hermite
             .to_curve()
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        Py::new(py, PyCubicCurve3d::from_curve(curve))
+    }
+
+    pub fn to_curve_cyclic(&self, py: Python<'_>) -> PyResult<Py<PyCubicCurve3d>> {
+        let curve = self
+            .hermite
+            .to_curve_cyclic()
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
         Py::new(py, PyCubicCurve3d::from_curve(curve))

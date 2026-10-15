@@ -287,4 +287,18 @@ impl PyDir2 {
     pub fn __rmul__(&self, scalar: f32) -> PyResult<PyVec2> {
         Ok(PyVec2::from_vec2(scalar * self.get()?))
     }
+
+    #[staticmethod]
+    pub fn from_xy(x: f32, y: f32) -> PyResult<PyDir2> {
+        Dir2::from_xy(x, y)
+            .map(PyDir2::dir2)
+            .map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
+    #[staticmethod]
+    pub fn new_and_length(value: &PyVec2) -> PyResult<(PyDir2, f32)> {
+        Dir2::new_and_length(value.try_get()?)
+            .map(|(direction, length)| (PyDir2::dir2(direction), length))
+            .map_err(|e| PyValueError::new_err(e.to_string()))
+    }
 }

@@ -3,9 +3,9 @@ use pybevy_core::{
     FromBorrowedStorage, StorageRef, ValueStorage,
     public_error::{
         DIRECTION_NOT_NORMALIZED, MAT4_LOOK_AT_EYE_EQUALS_CENTER,
-        MAT4_LOOK_DIRECTION_PARALLEL_TO_UP, MAT4_PERSPECTIVE_INFINITE_REVERSE_RH_NEAR,
-        UNSUPPORTED_COMPARISON, UP_NOT_NORMALIZED, mat4_perspective_depth_planes,
-        mat4_projection_not_finite,
+        MAT4_LOOK_DIRECTION_PARALLEL_TO_UP, UNSUPPORTED_COMPARISON, UP_NOT_NORMALIZED,
+        affine_transform_last_row, euler_axes_not_normalized, mat4_perspective_depth_planes,
+        mat4_perspective_near, mat4_projection_not_finite, matrix_decomposition_singular,
     },
     repr::float_repr,
 };
@@ -16,7 +16,9 @@ use pyo3::{
 };
 
 use super::{mat3::PyMat3, quat::PyQuat, vec3::PyVec3, vec4::PyVec4};
-use crate::{matrix_index, require_invertible, richcmp::comparison_result};
+use crate::{
+    matrix_index, quat::PyEulerRot, require_invertible, richcmp::comparison_result, vec3a::PyVec3A,
+};
 
 #[pyclass(name = "Mat4", module = "pybevy.math", from_py_object)]
 #[derive(Debug, Clone)]
@@ -79,6 +81,16 @@ impl PyMat4 {
     fn as_ref(&self) -> PyResult<StorageRef<'_, Mat4>> {
         Ok(self.storage.as_ref()?)
     }
+
+    fn affine_rows(&self, function: &str) -> PyResult<Mat4> {
+        let matrix = *self.as_ref()?;
+        if !matrix.row(3).abs_diff_eq(Vec4::W, 1e-6) {
+            return Err(PyValueError::new_err(affine_transform_last_row(
+                "Mat4", function,
+            )));
+        }
+        Ok(matrix)
+    }
 }
 
 fn finite_projection(function: &str, matrix: Mat4) -> PyResult<PyMat4> {
@@ -86,6 +98,13 @@ fn finite_projection(function: &str, matrix: Mat4) -> PyResult<PyMat4> {
         return Err(PyValueError::new_err(mat4_projection_not_finite(function)));
     }
     Ok(PyMat4::mat4(matrix))
+}
+
+fn perspective_near(function: &str, z_near: f32) -> PyResult<()> {
+    if z_near.is_nan() || z_near <= 0.0 {
+        return Err(PyValueError::new_err(mat4_perspective_near(function)));
+    }
+    Ok(())
 }
 
 fn perspective_depth_planes(function: &str, z_near: f32, z_far: f32) -> PyResult<()> {
@@ -97,7 +116,7 @@ fn perspective_depth_planes(function: &str, z_near: f32, z_far: f32) -> PyResult
     Ok(())
 }
 
-fn look_direction(eye: Vec3, center: Vec3) -> PyResult<Vec3> {
+pub(crate) fn look_direction(eye: Vec3, center: Vec3) -> PyResult<Vec3> {
     (center - eye)
         .try_normalize()
         .ok_or_else(|| PyValueError::new_err(MAT4_LOOK_AT_EYE_EQUALS_CENTER))
@@ -110,8 +129,17 @@ fn require_not_parallel(dir: Vec3, up: Vec3) -> PyResult<()> {
     Ok(())
 }
 
-fn look_to_inputs(eye: &PyVec3, dir: &PyVec3, up: &PyVec3) -> PyResult<(Vec3, Vec3, Vec3)> {
+pub(crate) fn look_to_inputs(
+    eye: &PyVec3,
+    dir: &PyVec3,
+    up: &PyVec3,
+) -> PyResult<(Vec3, Vec3, Vec3)> {
     let eye: Vec3 = eye.try_into()?;
+    let (dir, up) = look_to_axes(dir, up)?;
+    Ok((eye, dir, up))
+}
+
+pub(crate) fn look_to_axes(dir: &PyVec3, up: &PyVec3) -> PyResult<(Vec3, Vec3)> {
     let dir: Vec3 = dir.try_into()?;
     let up: Vec3 = up.try_into()?;
     if !dir.is_normalized() {
@@ -121,10 +149,14 @@ fn look_to_inputs(eye: &PyVec3, dir: &PyVec3, up: &PyVec3) -> PyResult<(Vec3, Ve
         return Err(PyValueError::new_err(UP_NOT_NORMALIZED));
     }
     require_not_parallel(dir, up)?;
-    Ok((eye, dir, up))
+    Ok((dir, up))
 }
 
-fn look_at_inputs(eye: &PyVec3, center: &PyVec3, up: &PyVec3) -> PyResult<(Vec3, Vec3, Vec3)> {
+pub(crate) fn look_at_inputs(
+    eye: &PyVec3,
+    center: &PyVec3,
+    up: &PyVec3,
+) -> PyResult<(Vec3, Vec3, Vec3)> {
     let eye: Vec3 = eye.try_into()?;
     let up: Vec3 = up.try_into()?;
     let dir = look_direction(eye, center.try_into()?)?;
@@ -305,12 +337,7 @@ impl PyMat4 {
         aspect_ratio: f32,
         z_near: f32,
     ) -> PyResult<Self> {
-        // glam validates z_near only when its optional assertions are enabled.
-        if z_near.is_nan() || z_near <= 0.0 {
-            return Err(PyValueError::new_err(
-                MAT4_PERSPECTIVE_INFINITE_REVERSE_RH_NEAR,
-            ));
-        }
+        perspective_near("perspective_infinite_reverse_rh", z_near)?;
         finite_projection(
             "perspective_infinite_reverse_rh",
             Mat4::perspective_infinite_reverse_rh(fov_y_radians, aspect_ratio, z_near),
@@ -545,5 +572,144 @@ impl PyMat4 {
             _ => return Err(PyTypeError::new_err(UNSUPPORTED_COMPARISON)),
         };
         Ok(comparison_result(py, result))
+    }
+
+    #[getter]
+    pub fn x_axis(&self) -> PyResult<PyVec4> {
+        Ok(self
+            .storage
+            .borrow_resolved_field_as(|m| &m.x_axis, |m| &mut m.x_axis)?)
+    }
+
+    #[setter]
+    pub fn set_x_axis(&mut self, value: &PyVec4) -> PyResult<()> {
+        self.storage.as_mut()?.x_axis = value.try_into()?;
+        Ok(())
+    }
+
+    #[getter]
+    pub fn y_axis(&self) -> PyResult<PyVec4> {
+        Ok(self
+            .storage
+            .borrow_resolved_field_as(|m| &m.y_axis, |m| &mut m.y_axis)?)
+    }
+
+    #[setter]
+    pub fn set_y_axis(&mut self, value: &PyVec4) -> PyResult<()> {
+        self.storage.as_mut()?.y_axis = value.try_into()?;
+        Ok(())
+    }
+
+    #[getter]
+    pub fn z_axis(&self) -> PyResult<PyVec4> {
+        Ok(self
+            .storage
+            .borrow_resolved_field_as(|m| &m.z_axis, |m| &mut m.z_axis)?)
+    }
+
+    #[setter]
+    pub fn set_z_axis(&mut self, value: &PyVec4) -> PyResult<()> {
+        self.storage.as_mut()?.z_axis = value.try_into()?;
+        Ok(())
+    }
+
+    #[getter]
+    pub fn w_axis(&self) -> PyResult<PyVec4> {
+        Ok(self
+            .storage
+            .borrow_resolved_field_as(|m| &m.w_axis, |m| &mut m.w_axis)?)
+    }
+
+    #[setter]
+    pub fn set_w_axis(&mut self, value: &PyVec4) -> PyResult<()> {
+        self.storage.as_mut()?.w_axis = value.try_into()?;
+        Ok(())
+    }
+
+    pub fn to_scale_rotation_translation(&self) -> PyResult<(PyVec3, PyQuat, PyVec3)> {
+        let matrix = *self.as_ref()?;
+        let determinant = matrix.determinant();
+        if !determinant.is_finite() || determinant == 0.0 {
+            return Err(PyValueError::new_err(matrix_decomposition_singular("Mat4")));
+        }
+        let (scale, rotation, translation) = matrix.to_scale_rotation_translation();
+        Ok((scale.into(), rotation.into(), translation.into()))
+    }
+
+    #[staticmethod]
+    pub fn from_euler(order: PyEulerRot, a: f32, b: f32, c: f32) -> Self {
+        PyMat4::mat4(Mat4::from_euler(order.into(), a, b, c))
+    }
+
+    pub fn to_euler(&self, order: PyEulerRot) -> PyResult<(f32, f32, f32)> {
+        let matrix = *self.as_ref()?;
+        if !(matrix.x_axis.truncate().is_normalized()
+            && matrix.y_axis.truncate().is_normalized()
+            && matrix.z_axis.truncate().is_normalized())
+        {
+            return Err(PyValueError::new_err(euler_axes_not_normalized("Mat4")));
+        }
+        Ok(matrix.to_euler(order.into()))
+    }
+
+    pub fn abs(&self) -> PyResult<Self> {
+        Ok(PyMat4::mat4(self.as_ref()?.abs()))
+    }
+
+    #[staticmethod]
+    pub fn from_rotation_translation(rotation: &PyQuat, translation: &PyVec3) -> PyResult<Self> {
+        Ok(PyMat4::mat4(Mat4::from_rotation_translation(
+            rotation.try_into()?,
+            translation.try_into()?,
+        )))
+    }
+
+    pub fn transform_point3a(&self, rhs: &PyVec3A) -> PyResult<PyVec3A> {
+        let matrix = self.affine_rows("transform_point3a")?;
+        Ok(matrix.transform_point3a(rhs.try_into()?).into())
+    }
+
+    pub fn transform_vector3a(&self, rhs: &PyVec3A) -> PyResult<PyVec3A> {
+        let matrix = self.affine_rows("transform_vector3a")?;
+        Ok(matrix.transform_vector3a(rhs.try_into()?).into())
+    }
+
+    #[staticmethod]
+    pub fn perspective_infinite_lh(
+        fov_y_radians: f32,
+        aspect_ratio: f32,
+        z_near: f32,
+    ) -> PyResult<Self> {
+        perspective_near("perspective_infinite_lh", z_near)?;
+        finite_projection(
+            "perspective_infinite_lh",
+            Mat4::perspective_infinite_lh(fov_y_radians, aspect_ratio, z_near),
+        )
+    }
+
+    #[staticmethod]
+    pub fn perspective_infinite_rh(
+        fov_y_radians: f32,
+        aspect_ratio: f32,
+        z_near: f32,
+    ) -> PyResult<Self> {
+        perspective_near("perspective_infinite_rh", z_near)?;
+        finite_projection(
+            "perspective_infinite_rh",
+            Mat4::perspective_infinite_rh(fov_y_radians, aspect_ratio, z_near),
+        )
+    }
+
+    #[staticmethod]
+    pub fn perspective_infinite_reverse_lh(
+        fov_y_radians: f32,
+        aspect_ratio: f32,
+        z_near: f32,
+    ) -> PyResult<Self> {
+        perspective_near("perspective_infinite_reverse_lh", z_near)?;
+        finite_projection(
+            "perspective_infinite_reverse_lh",
+            Mat4::perspective_infinite_reverse_lh(fov_y_radians, aspect_ratio, z_near),
+        )
     }
 }

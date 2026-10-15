@@ -251,4 +251,18 @@ impl PyDir3 {
             Ok(py.NotImplemented().into_any())
         }
     }
+
+    #[staticmethod]
+    pub fn from_xyz(x: f32, y: f32, z: f32) -> PyResult<PyDir3> {
+        Dir3::from_xyz(x, y, z)
+            .map(PyDir3::dir3)
+            .map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
+    #[staticmethod]
+    pub fn new_and_length(value: &PyVec3) -> PyResult<(PyDir3, f32)> {
+        Dir3::new_and_length(value.try_get()?)
+            .map(|(direction, length)| (PyDir3::dir3(direction), length))
+            .map_err(|e| PyValueError::new_err(e.to_string()))
+    }
 }

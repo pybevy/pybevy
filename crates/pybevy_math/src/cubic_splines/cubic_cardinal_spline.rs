@@ -1,6 +1,6 @@
 use bevy::math::{
     Vec2,
-    cubic_splines::{CubicCardinalSpline, CubicGenerator},
+    cubic_splines::{CubicCardinalSpline, CubicGenerator, CyclicCubicGenerator},
 };
 use pybevy_core::repr::float_repr;
 use pyo3::{exceptions::PyValueError, prelude::*};
@@ -48,6 +48,15 @@ impl PyCubicCardinalSpline2d {
         let curve = self
             .spline
             .to_curve()
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        Py::new(py, PyCubicCurve2d::from_curve(curve))
+    }
+
+    pub fn to_curve_cyclic(&self, py: Python<'_>) -> PyResult<Py<PyCubicCurve2d>> {
+        let curve = self
+            .spline
+            .to_curve_cyclic()
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
         Py::new(py, PyCubicCurve2d::from_curve(curve))
