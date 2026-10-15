@@ -274,7 +274,7 @@ class McpBridge:
 
                 try:
                     request: object = json.loads(line)
-                except json.JSONDecodeError as e:
+                except (json.JSONDecodeError, RecursionError) as e:
                     self._write_response(
                         {
                             "jsonrpc": "2.0",
@@ -326,6 +326,13 @@ class McpBridge:
         return response
 
     def _dispatch_inner(self, request: JsonDict) -> JsonDict | None:
+        if "method" not in request:
+            if "result" in request or "error" in request:
+                return None
+            return self._error(request.get("id"), -32600, "Invalid Request")
+        if "id" not in request:
+            return None
+
         method = str(request.get("method", ""))
         req_id: JsonId = request.get("id")  # type: ignore[assignment]
         raw_params = request.get("params")

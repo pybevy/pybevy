@@ -363,8 +363,8 @@ class Image(Asset):
             New Image configured as a render target, filled with zeroes
 
         Raises:
-            ValueError: If width or height is zero, or the format cannot be
-                used for a render target.
+            ValueError: If width or height is zero, width * height exceeds
+                2**32 - 1, or the format cannot be used for a render target.
 
         Example:
             >>> # Create a render target for post-processing
@@ -395,7 +395,8 @@ class Image(Asset):
             New Image configured as a render target, filled with zeroes
 
         Raises:
-            ValueError: If width or height is zero.
+            ValueError: If width or height is zero, or width * height exceeds
+                2**32 - 1.
 
         Example:
             >>> # Create render target for headless rendering
@@ -861,7 +862,7 @@ class Image(Asset):
             size: New dimensions for the image
 
         Raises:
-            RuntimeError: If resize fails
+            ValueError: If the new pixel count exceeds 2**32 - 1.
         """
 
     def resize_in_place(self, size: Extent3d) -> None:
@@ -874,7 +875,7 @@ class Image(Asset):
             size: New dimensions for the image
 
         Raises:
-            RuntimeError: If resize fails
+            ValueError: If the new pixel count exceeds 2**32 - 1.
         """
 
     def reinterpret_size(self, size: Extent3d) -> None:
@@ -886,7 +887,8 @@ class Image(Asset):
             size: New dimensions (must have same pixel count)
 
         Raises:
-            ValueError: If new size has different pixel count
+            ValueError: If new size has a different pixel count, or its pixel
+                count exceeds 2**32 - 1.
         """
 
     def reinterpret_stacked_2d_as_array(self, layers: int) -> None:
@@ -1105,6 +1107,8 @@ class TextureAtlasLayout(Asset):
         Returns:
             Indexed rectangular regions, each representing one texture/sprite.
         """
+    @textures.setter
+    def textures(self, value: list[URect]) -> None: ...
 
     def add_texture(self, rect: URect) -> int:
         """Add a texture region to the layout.
@@ -1224,8 +1228,9 @@ class TextureAtlasBuilder:
     def build(self) -> tuple[TextureAtlasLayout, TextureAtlasSources, Image]:
         """Return the packed layout, source-handle map, and atlas image.
 
-        Raises ``ValueError`` when Bevy reports a packing, format, or texture
-        access error. The builder can be reused after a successful build.
+        Raises ``ValueError`` for packing, format, or texture access errors.
+        Unsupported automatic format conversion raises instead of leaving a
+        blank rectangle in the atlas. The builder can be reused after a build.
         """
 
 class TextureAtlasSources:

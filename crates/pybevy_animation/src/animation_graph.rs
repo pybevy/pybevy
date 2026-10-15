@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use bevy::animation::{
     graph::{AnimationGraph, AnimationGraphNode, AnimationNodeType},
@@ -21,6 +21,16 @@ use pyo3::{
 use crate::{animation_node_index::PyAnimationNodeIndex, validate::validate_finite};
 
 const CLIP_CANNOT_BE_NONE: &str = "clip cannot be None";
+const MAX_REACHABLE_DEPTH: usize = 512;
+
+fn validate_mask_group(group: u32) -> PyResult<()> {
+    if group >= u64::BITS {
+        return Err(PyValueError::new_err(format!(
+            "mask group must be less than 64 (got {group})"
+        )));
+    }
+    Ok(())
+}
 
 fn validate_node(graph: &AnimationGraph, index: AnimationNodeIndex) -> PyResult<()> {
     if graph.get(index).is_none() {
@@ -45,6 +55,39 @@ fn edge_would_cycle(
         }
     }
     false
+}
+
+fn validate_reachable_depth(
+    graph: &AnimationGraph,
+    root: AnimationNodeIndex,
+    added_edge: Option<(AnimationNodeIndex, AnimationNodeIndex)>,
+    appended_to: Option<AnimationNodeIndex>,
+) -> PyResult<()> {
+    let mut longest_seen = HashMap::new();
+    let mut pending = vec![(root, 1_usize)];
+    while let Some((node, depth)) = pending.pop() {
+        if depth > MAX_REACHABLE_DEPTH {
+            return Err(PyValueError::new_err(format!(
+                "AnimationGraph path exceeds {MAX_REACHABLE_DEPTH} nodes"
+            )));
+        }
+        if longest_seen.get(&node).is_some_and(|seen| *seen >= depth) {
+            continue;
+        }
+        longest_seen.insert(node, depth);
+        if appended_to == Some(node) && depth == MAX_REACHABLE_DEPTH {
+            return Err(PyValueError::new_err(format!(
+                "AnimationGraph path exceeds {MAX_REACHABLE_DEPTH} nodes"
+            )));
+        }
+        pending.extend(graph.graph.neighbors(node).map(|child| (child, depth + 1)));
+        if let Some((from, to)) = added_edge
+            && from == node
+        {
+            pending.push((to, depth + 1));
+        }
+    }
+    Ok(())
 }
 
 #[pyasset(AnimationGraph, bridge)]
@@ -115,8 +158,10 @@ impl PyAnimationGraph {
 
     #[setter]
     pub fn set_root(&mut self, value: &PyAnimationNodeIndex) -> PyResult<()> {
-        if self.as_ref()?.get(value.0).is_none() {
-            return Err(PyValueError::new_err(ANIMATION_GRAPH_NODE_MISSING));
+        {
+            let graph = self.as_ref()?;
+            validate_node(&graph, value.0)?;
+            validate_reachable_depth(&graph, value.0, None, None)?;
         }
         self.as_mut()?.root = value.0;
         Ok(())
@@ -131,6 +176,7 @@ impl PyAnimationGraph {
         {
             let graph = self.as_ref()?;
             validate_node(&graph, parent.0)?;
+            validate_reachable_depth(&graph, graph.root, None, Some(parent.0))?;
         }
         Ok(PyAnimationNodeIndex(
             self.as_mut()?.add_blend(weight, parent.0),
@@ -152,6 +198,7 @@ impl PyAnimationGraph {
         {
             let graph = self.as_ref()?;
             validate_node(&graph, parent.0)?;
+            validate_reachable_depth(&graph, graph.root, None, Some(parent.0))?;
         }
         Ok(PyAnimationNodeIndex(
             self.as_mut()?.add_clip(handle, weight, parent.0),
@@ -171,6 +218,7 @@ impl PyAnimationGraph {
             if edge_would_cycle(&graph, from_.0, to.0) {
                 return Err(PyValueError::new_err(ANIMATION_GRAPH_CYCLE));
             }
+            validate_reachable_depth(&graph, graph.root, Some((from_.0, to.0)), None)?;
         }
         self.as_mut()?.add_edge(from_.0, to.0);
         Ok(())
@@ -362,6 +410,7 @@ impl PyAnimationGraphNode {
     }
 
     pub fn add_mask_group<'py>(slf: PyRef<'py, Self>, group: u32) -> PyResult<PyRef<'py, Self>> {
+        validate_mask_group(group)?;
         slf.with_node_mut(slf.py(), |node| {
             node.add_mask_group(group);
         })?;
@@ -369,6 +418,7 @@ impl PyAnimationGraphNode {
     }
 
     pub fn remove_mask_group<'py>(slf: PyRef<'py, Self>, group: u32) -> PyResult<PyRef<'py, Self>> {
+        validate_mask_group(group)?;
         slf.with_node_mut(slf.py(), |node| {
             node.remove_mask_group(group);
         })?;

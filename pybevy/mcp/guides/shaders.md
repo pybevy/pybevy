@@ -109,6 +109,10 @@ custom material class, and `Query[MeshMaterial3d[GlowMaterial]]` only matches en
 using `GlowMaterial`. In optional query data, a different custom material class is
 treated as absent and yields `None`; it does not remove the entity from the query.
 
+A decorated material may inherit from another decorated material. Its fields
+keep the parent's defaults unless the child explicitly overrides them. Each
+decorated class still has its own shader paths and logical identity.
+
 Partial reload preserves a material's identity when its qualified name and field layout
 are unchanged. Changing field names, types, or ordering allocates a fresh identity, as
 does a full reload, so old handles cannot be interpreted through a different layout.
@@ -391,6 +395,14 @@ def setup(commands, meshes, materials, asset_server: Res[AssetServer]):
     )
     handle = materials.add(mat)
 ```
+
+The `Image` annotation only marks the texture slot; the attribute holds a
+`Handle[Image]`, or `None` for an empty slot. Reading it returns that handle
+from a new material, from `get()`, `get_mut()`, iteration, and `remove()`, so
+`mat.grass = mat.grass` keeps the texture. Assign a handle or `None` through
+`get_mut()` to change the slot; `get()` and iterated materials reject writes.
+A returned handle is an ordinary strong handle that stays valid after the system
+and keeps its image alive.
 
 In WGSL:
 ```wgsl

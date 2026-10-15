@@ -1380,6 +1380,9 @@ class Player(Component):       # No fields -> marker, no @dataclass needed
     pass
 ```
 
+Construct a marker with `Player()`; arguments require a dataclass-generated
+constructor or an explicit `__init__` and are rejected when no constructor exists.
+
 Resources can use `@dataclass` for simple primitive state, or a plain `__init__` for complex types:
 
 ```python

@@ -95,6 +95,8 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<meshable::PyMeshable>()?;
 
     m.add_class::<mesh_builder::PyMeshBuilder>()?;
+    m.add_class::<primitives::PyConeAnchor>()?;
+    m.add_class::<primitives::PyCylinderAnchor>()?;
     m.add_class::<primitives::PyAnnulusMeshBuilder>()?;
     m.add_class::<primitives::PyCapsule2dMeshBuilder>()?;
     m.add_class::<primitives::PyCapsule3dMeshBuilder>()?;

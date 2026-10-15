@@ -2,7 +2,9 @@ use bevy::mesh::{MeshBuilder, TorusMeshBuilder};
 use pybevy_core::PyAsset;
 use pyo3::prelude::*;
 
-use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder};
+use crate::{
+    mesh::PyMesh, mesh_builder::PyMeshBuilder, primitives::validation::vertex_budget_product,
+};
 
 #[pyclass(name = "TorusMeshBuilder", module = "pybevy.mesh", extends = PyMeshBuilder)]
 #[derive(Debug)]
@@ -29,6 +31,11 @@ impl PyTorusMeshBuilder {
     }
 
     pub fn build(&self, py: Python) -> PyResult<Py<PyMesh>> {
+        vertex_budget_product(
+            "TorusMeshBuilder",
+            self.0.major_resolution as u128 + 1,
+            self.0.minor_resolution as u128 + 1,
+        )?;
         Py::new(py, (self.0.build().into(), PyAsset))
     }
 }

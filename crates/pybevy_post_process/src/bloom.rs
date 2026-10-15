@@ -2,8 +2,7 @@ use bevy::{
     math::Vec2,
     post_process::bloom::{Bloom, BloomPrefilter},
 };
-use numpy::PyReadonlyArray2;
-use pybevy_core::{ComponentStorage, PyComponent, PyRustComponentBatch, public_error};
+use pybevy_core::{ComponentStorage, PyComponent, public_error};
 use pybevy_macros::pycomponent;
 use pybevy_math::vec2::{PyVec2, extract_vec2_from_any};
 use pyo3::{exceptions::PyValueError, prelude::*};
@@ -19,28 +18,12 @@ fn validate_max_mip_dimension(dimension: u32) -> PyResult<()> {
     Ok(())
 }
 
-fn validate_bloom_batch(py: Python<'_>, batch: &PyRustComponentBatch) -> PyResult<()> {
-    if let Some(values) = batch.get_field_values("max_mip_dimension") {
-        for &dimension in values {
-            validate_max_mip_dimension(dimension as u32)?;
-        }
-        return Ok(());
-    }
-    if let Some(array) = batch.get_field_array(py, "max_mip_dimension") {
-        let array: PyReadonlyArray2<f32> = array.extract()?;
-        for &dimension in array.as_slice()? {
-            validate_max_mip_dimension(dimension as u32)?;
-        }
-    }
-    Ok(())
-}
-
-#[pycomponent(Bloom, bridge, batch_validate = validate_bloom_batch, view_fields = [
+#[pycomponent(Bloom, bridge, view_fields = [
     intensity,
     low_frequency_boost,
     low_frequency_boost_curvature,
     high_pass_frequency,
-    max_mip_dimension
+    max_mip_dimension => [positive(public_error::BLOOM_MAX_MIP_DIMENSION_ZERO)]
 ])]
 #[pyclass(name = "Bloom", module = "pybevy.post_process", extends = PyComponent)]
 pub struct PyBloom {

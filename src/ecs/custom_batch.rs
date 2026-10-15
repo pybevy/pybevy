@@ -13,7 +13,7 @@ use pybevy_core::{
 };
 use pyo3::{
     PyTraverseError, PyVisit,
-    exceptions::{PyTypeError, PyValueError},
+    exceptions::{PyModuleNotFoundError, PyTypeError, PyValueError},
     prelude::*,
     types::{PyDict, PyList, PyTuple, PyType},
 };
@@ -21,7 +21,7 @@ use pyo3::{
 use super::{
     component_layout::{
         ComponentLayout, ComponentStorageType, ComponentStorageTypeExt, PrimitiveType,
-        PrimitiveTypeExt,
+        PrimitiveTypeExt, PrimitiveValue, extract_primitive_from_py,
     },
     component_type::{PreparedCustomComponentRegistration, register_prepared_custom_component},
     component_wrapper::*,
@@ -47,6 +47,90 @@ pub struct PyCustomComponentBatch {
     /// Qualified name for the component (retained for debugging)
     #[allow(dead_code)]
     qualified_name: String,
+}
+
+enum FieldDefault<'py> {
+    Value(Bound<'py, PyAny>),
+    Factory(Bound<'py, PyAny>),
+}
+
+impl<'py> FieldDefault<'py> {
+    fn next_value(&self) -> PyResult<Bound<'py, PyAny>> {
+        match self {
+            Self::Value(value) => Ok(value.clone()),
+            Self::Factory(factory) => factory.call0(),
+        }
+    }
+}
+
+fn field_default<'py>(
+    cls: &Bound<'py, PyType>,
+    dataclass_fields: Option<&Bound<'py, PyDict>>,
+    missing: &Bound<'py, PyAny>,
+    field_name: &str,
+) -> PyResult<FieldDefault<'py>> {
+    if let Some(fields) = dataclass_fields
+        && let Some(field) = fields.get_item(field_name)?
+    {
+        let default = field.getattr("default")?;
+        if !default.is(missing) {
+            return Ok(FieldDefault::Value(default));
+        }
+        let factory = field.getattr("default_factory")?;
+        if !factory.is(missing) {
+            return Ok(FieldDefault::Factory(factory));
+        }
+    } else if let Some(default) = cls.getattr_opt(field_name)? {
+        return Ok(FieldDefault::Value(default));
+    }
+
+    Err(PyTypeError::new_err(format!(
+        "{}.batch() omits required field '{field_name}'",
+        cls.name()?
+    )))
+}
+
+fn default_column(
+    field_type: PrimitiveType,
+    source: &FieldDefault<'_>,
+    count: usize,
+) -> PyResult<ColumnData> {
+    let mut column = match field_type {
+        PrimitiveType::F32 | PrimitiveType::Vec2 | PrimitiveType::Vec3 => {
+            ColumnData::F32(Vec::new())
+        }
+        PrimitiveType::F64 => ColumnData::F64(Vec::new()),
+        PrimitiveType::I32 => ColumnData::I32(Vec::new()),
+        PrimitiveType::I64 => ColumnData::I64(Vec::new()),
+        PrimitiveType::U32 => ColumnData::U32(Vec::new()),
+        PrimitiveType::U64 => ColumnData::U64(Vec::new()),
+        PrimitiveType::Bool => ColumnData::Bool(Vec::new()),
+    };
+
+    for _ in 0..count {
+        let value = source.next_value()?;
+        let value = extract_primitive_from_py(field_type, &value)?;
+        match (&mut column, value) {
+            (ColumnData::F32(values), PrimitiveValue::F32(value)) => values.push(value),
+            (ColumnData::F64(values), PrimitiveValue::F64(value)) => values.push(value),
+            (ColumnData::I32(values), PrimitiveValue::I32(value)) => values.push(value),
+            (ColumnData::I64(values), PrimitiveValue::I64(value)) => values.push(value),
+            (ColumnData::U32(values), PrimitiveValue::U32(value)) => values.push(value),
+            (ColumnData::U64(values), PrimitiveValue::U64(value)) => values.push(value),
+            (ColumnData::Bool(values), PrimitiveValue::Bool(value)) => {
+                values.push(u8::from(value));
+            }
+            (ColumnData::F32(values), PrimitiveValue::Vec2(value)) => {
+                values.extend([value.x, value.y]);
+            }
+            (ColumnData::F32(values), PrimitiveValue::Vec3(value)) => {
+                values.extend([value.x, value.y, value.z]);
+            }
+            _ => unreachable!("primitive extraction returned a different field type"),
+        }
+    }
+
+    Ok(column)
 }
 
 impl PyCustomComponentBatch {
@@ -172,7 +256,16 @@ impl PyCustomComponentBatch {
                 })?;
                 field_values.push((field_idx, column));
             } else {
-                let np = py.import("numpy")?;
+                if !value.hasattr("__array__")? {
+                    return Err(unsupported_column_error(&field_name));
+                }
+                let np = py.import("numpy").map_err(|error| {
+                    if error.is_instance_of::<PyModuleNotFoundError>(py) {
+                        unsupported_column_error(&field_name)
+                    } else {
+                        error
+                    }
+                })?;
                 let value = np.call_method1("asarray", (value,))?;
                 let ndim: usize = value.getattr("ndim")?.extract()?;
                 let shape: Vec<usize> = value.getattr("shape")?.extract()?;
@@ -193,6 +286,30 @@ impl PyCustomComponentBatch {
 
         // kwargs is non-empty, so at least one column was observed.
         let count = agree.count().unwrap_or(0);
+
+        let mut specified = vec![false; layout.fields.len()];
+        for (field_idx, _) in &field_arrays {
+            specified[*field_idx] = true;
+        }
+        for (field_idx, _) in &field_values {
+            specified[*field_idx] = true;
+        }
+        if specified.iter().any(|present| !present) {
+            let dataclass_fields = cls.getattr_opt("__dataclass_fields__")?;
+            let dataclass_fields = dataclass_fields
+                .as_ref()
+                .map(|fields| fields.cast::<PyDict>())
+                .transpose()?;
+            let missing = py.import("dataclasses")?.getattr("MISSING")?;
+            for (field_idx, field) in layout.fields.iter().enumerate() {
+                if specified[field_idx] {
+                    continue;
+                }
+                let source = field_default(cls, dataclass_fields, &missing, &field.name)?;
+                let column = default_column(field.field_type, &source, count)?;
+                field_values.push((field_idx, column));
+            }
+        }
 
         // Qualified name for registration
         let module = cls
@@ -216,6 +333,12 @@ impl PyCustomComponentBatch {
             qualified_name,
         })
     }
+}
+
+fn unsupported_column_error(field_name: &str) -> PyErr {
+    PyTypeError::new_err(format!(
+        "custom batch field '{field_name}' requires a list, tuple, pybevy.array.Array, or NumPy-compatible array"
+    ))
 }
 
 fn portable_dtype_for(dtype: ColumnDType) -> Option<ArrayDType> {

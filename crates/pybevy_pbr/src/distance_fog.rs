@@ -6,7 +6,7 @@ use pyo3::{exceptions::PyValueError, prelude::*};
 
 use crate::fog_falloff::PyFogFalloff;
 
-#[pycomponent(DistanceFog, bridge, view_fields = [directional_light_exponent], batch_only_fields = [color, directional_light_color])]
+#[pycomponent(DistanceFog, bridge, view_fields = [directional_light_exponent => [finite]], batch_only_fields = [color, directional_light_color])]
 #[pyclass(name = "DistanceFog", module = "pybevy.pbr", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyDistanceFog {

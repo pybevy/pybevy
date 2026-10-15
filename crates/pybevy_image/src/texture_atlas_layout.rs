@@ -86,6 +86,16 @@ impl PyTextureAtlasLayout {
             .borrow_field_as(|layout| &layout.textures, |layout| &mut layout.textures)?)
     }
 
+    #[setter]
+    pub fn set_textures(&mut self, textures: Vec<PyURect>) -> PyResult<()> {
+        let textures = textures
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect::<PyResult<Vec<_>>>()?;
+        self.as_mut()?.textures = textures;
+        Ok(())
+    }
+
     pub fn add_texture(&mut self, rect: PyURect) -> PyResult<usize> {
         let rect = rect.try_into()?;
         Ok(self.as_mut()?.add_texture(rect))

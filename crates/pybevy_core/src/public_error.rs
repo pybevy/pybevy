@@ -1276,6 +1276,9 @@ pub const IMAGE_NO_DATA: &str = "Image has no data";
 
 pub const IMAGE_INVALID_PIXEL_COORDINATES: &str = "Invalid pixel coordinates or no image data";
 
+pub const IMAGE_PIXEL_COUNT_EXCEEDS_U32: &str =
+    "image extent exceeds Bevy's u32 pixel count (width * height * depth)";
+
 pub fn image_encoding_unsupported(format: impl Display, supported: &[String]) -> String {
     if supported.is_empty() {
         format!("{format} encoding is not supported; no image encoders are enabled")

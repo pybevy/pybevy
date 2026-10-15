@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use bevy::text::EditableText;
+use bevy::text::{EditableText, TextEdit};
 use pybevy_core::{ComponentStorage, PyComponent, duration_from_py};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
@@ -54,9 +54,11 @@ impl PyEditableText {
         Ok(self.as_ref()?.value().to_string())
     }
 
-    /// Clear the text buffer and any pending edits.
+    /// Clear the text buffer and pending edits, and reset the cursor.
     pub fn clear(&mut self) -> PyResult<()> {
-        self.as_mut()?.clear();
+        let mut editable = self.as_mut()?;
+        editable.clear();
+        editable.queue_edit(TextEdit::TextStart(false));
         Ok(())
     }
 

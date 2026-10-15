@@ -10,7 +10,7 @@ use crate::{
     volume::PyVolume,
 };
 
-#[pycomponent(PlaybackSettings, bridge, view_fields = [speed, paused, muted, spatial])]
+#[pycomponent(PlaybackSettings, bridge, view_fields = [speed => [finite], paused, muted, spatial])]
 #[pyclass(name = "PlaybackSettings", module = "pybevy.audio", extends = PyComponent)]
 pub struct PyPlaybackSettings {
     pub(crate) storage: ComponentStorage<PlaybackSettings>,

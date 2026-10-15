@@ -2,7 +2,11 @@ use bevy::mesh::{Capsule2dMeshBuilder, MeshBuilder};
 use pybevy_core::PyAsset;
 use pyo3::prelude::*;
 
-use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder, primitives::validation::minimum_count};
+use crate::{
+    mesh::PyMesh,
+    mesh_builder::PyMeshBuilder,
+    primitives::validation::{minimum_count, vertex_budget},
+};
 
 #[pyclass(name = "Capsule2dMeshBuilder", module = "pybevy.mesh", extends = PyMeshBuilder)]
 #[derive(Debug)]
@@ -25,6 +29,7 @@ impl PyCapsule2dMeshBuilder {
 
     pub fn build(&self, py: Python) -> PyResult<Py<PyMesh>> {
         minimum_count("Capsule2dMeshBuilder.resolution", self.0.resolution, 2)?;
+        vertex_budget("Capsule2dMeshBuilder", 2 * u128::from(self.0.resolution))?;
         Py::new(py, (self.0.build().into(), PyAsset))
     }
 }

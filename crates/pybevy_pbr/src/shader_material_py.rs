@@ -69,6 +69,18 @@ fn checked_index(value: isize, name: &str) -> PyResult<usize> {
     usize::try_from(value).map_err(|_| PyIndexError::new_err(non_negative_argument(name, value)))
 }
 
+fn checked_texture_slot(slot: isize) -> PyResult<usize> {
+    let slot = checked_index(slot, "texture slot")?;
+    if slot >= MAX_TEXTURE_SLOTS {
+        return Err(PyIndexError::new_err(format!(
+            "texture slot {} out of range (max {})",
+            slot,
+            MAX_TEXTURE_SLOTS - 1
+        )));
+    }
+    Ok(slot)
+}
+
 fn check_packed_uniform<F: PackedUniform>(float_index: usize) -> PyResult<()> {
     check_uniform_index::<F>(float_index).map_err(|error| match error {
         UniformIndexError::Misaligned => PyValueError::new_err(packed_uniform_misaligned(
@@ -99,6 +111,14 @@ fn validate_shader_defs(shader_defs: u32, shader_def_names: &[String]) -> PyResu
 }
 
 impl PyShaderMaterial {
+    fn replace_texture(&mut self, slot: usize, handle: Option<Handle<Image>>) -> PyResult<()> {
+        let mut material = self.as_mut()?;
+        if let Some(texture) = material.extension.texture_slot_mut(slot) {
+            *texture = handle;
+        }
+        Ok(())
+    }
+
     fn uniform_field<F, W>(&self, float_index: usize) -> PyResult<W>
     where
         F: PackedUniform + 'static,
@@ -222,46 +242,26 @@ impl PyShaderMaterial {
         Ok(())
     }
 
+    fn get_texture(&self, slot: isize) -> PyResult<Option<PyHandle>> {
+        let slot = checked_texture_slot(slot)?;
+        let material = self.as_ref()?;
+        Ok(material
+            .extension
+            .texture_slot(slot)
+            .and_then(Option::as_ref)
+            .map(PyHandle::from))
+    }
+
     fn set_texture(&mut self, slot: isize, handle: &Bound<'_, PyAny>) -> PyResult<()> {
-        let slot = checked_index(slot, "texture slot")?;
-        if slot >= MAX_TEXTURE_SLOTS {
-            return Err(PyIndexError::new_err(format!(
-                "texture slot {} out of range (max {})",
-                slot,
-                MAX_TEXTURE_SLOTS - 1
-            )));
-        }
+        let slot = checked_texture_slot(slot)?;
         let py_handle = extract_handle_from_any(handle)?;
         let typed: Handle<Image> = (&py_handle).try_into()?;
-        let mut mat = self.as_mut()?;
-        match slot {
-            0 => mat.extension.texture_0 = Some(typed),
-            1 => mat.extension.texture_1 = Some(typed),
-            2 => mat.extension.texture_2 = Some(typed),
-            3 => mat.extension.texture_3 = Some(typed),
-            _ => unreachable!("slot was range-checked"),
-        }
-        Ok(())
+        self.replace_texture(slot, Some(typed))
     }
 
     fn clear_texture(&mut self, slot: isize) -> PyResult<()> {
-        let slot = checked_index(slot, "texture slot")?;
-        if slot >= MAX_TEXTURE_SLOTS {
-            return Err(PyIndexError::new_err(format!(
-                "texture slot {} out of range (max {})",
-                slot,
-                MAX_TEXTURE_SLOTS - 1
-            )));
-        }
-        let mut mat = self.as_mut()?;
-        match slot {
-            0 => mat.extension.texture_0 = None,
-            1 => mat.extension.texture_1 = None,
-            2 => mat.extension.texture_2 = None,
-            3 => mat.extension.texture_3 = None,
-            _ => unreachable!("slot was range-checked"),
-        }
-        Ok(())
+        let slot = checked_texture_slot(slot)?;
+        self.replace_texture(slot, None)
     }
 
     fn set_data_float(&mut self, index: isize, value: f32) -> PyResult<()> {

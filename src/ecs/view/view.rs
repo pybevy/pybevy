@@ -38,6 +38,9 @@ use pybevy_bytecodevm::{
 };
 use pybevy_core::{
     FieldType as StorageFieldType, PyEntity,
+    batch_columns::{
+        BatchValueConstraint, has_view_assignment_checks, validate_view_assignment_values,
+    },
     component_fields::declared_annotations,
     public_error::{RESOURCE_VIEW_DATA, VIEW_COLUMN_READ_ONLY_ASSIGNMENT},
     registry::global_registry,
@@ -564,6 +567,23 @@ pub(crate) fn get_component_field_info(
     }
 }
 
+pub(crate) fn native_view_field_constraints(
+    component_type: &PyComponentType,
+    field_name: &str,
+) -> Option<(&'static str, &'static [BatchValueConstraint])> {
+    let PyComponentType::Dynamic(type_ptr) = component_type else {
+        return None;
+    };
+    let base_field = field_name
+        .split_once('.')
+        .map_or(field_name, |(base, _)| base);
+    global_registry::get_component_batch_meta(*type_ptr as usize)?
+        .fields
+        .iter()
+        .find(|field| field.name == base_field)
+        .map(|field| (field.name, field.constraints))
+}
+
 /// Shared __getattr__ implementation for both read-only and mutable column proxies
 /// Returns the appropriate field proxy (FieldExpr, Vec3Expr, or QuatExpr)
 fn create_field_proxy<'py>(
@@ -775,6 +795,19 @@ impl PyViewColMut {
             .runtime
             .gather_batches()
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        let constraints = native_view_field_constraints(&self.component_type, field_name)
+            .map_or(&[][..], |(_, constraints)| constraints);
+        if has_view_assignment_checks(constraints) {
+            let read_program = view
+                .runtime
+                .prepare_read_program(&expr)
+                .map_err(|error| PyValueError::new_err(error.to_string()))?;
+            let values = lease
+                .evaluate(&read_program, true)
+                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+            validate_view_assignment_values(&values, dest_field_type, constraints)
+                .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        }
         lease
             .execute_assignment(&program, true)
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))

@@ -76,10 +76,10 @@ def flush_user_modules(
         List of module names that were flushed.
     """
     import importlib
-    import sysconfig
+
+    from .._internal.reload_modules import is_external_module_path
 
     project_prefix = os.path.realpath(project_dir) + os.sep
-    stdlib_prefix = os.path.realpath(sysconfig.get_paths()["stdlib"]) + os.sep
 
     # Selective flush: use import graph to compute affected files
     affected_files: set[str] | None = None
@@ -124,9 +124,7 @@ def flush_user_modules(
         fpath = os.path.realpath(fpath)
         if not fpath.startswith(project_prefix):
             continue
-        if "site-packages" in fpath or "dist-packages" in fpath:
-            continue
-        if fpath.startswith(stdlib_prefix):
+        if is_external_module_path(fpath):
             continue
 
         # If selective mode, only flush files in the affected set

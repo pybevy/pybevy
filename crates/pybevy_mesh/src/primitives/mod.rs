@@ -21,7 +21,7 @@ pub mod tetrahedron;
 pub mod torus;
 pub mod triangle2d;
 pub mod triangle3d;
-mod validation;
+pub(crate) mod validation;
 
 pub mod shapes;
 
@@ -31,10 +31,10 @@ pub use capsule3d::PyCapsule3dMeshBuilder;
 pub use circle::PyCircleMeshBuilder;
 pub use circular_sector::PyCircularSectorMeshBuilder;
 pub use circular_segment::PyCircularSegmentMeshBuilder;
-pub use cone::PyConeMeshBuilder;
+pub use cone::{PyConeAnchor, PyConeMeshBuilder};
 pub use conical_frustum::PyConicalFrustumMeshBuilder;
 pub use cuboid::PyCuboidMeshBuilder;
-pub use cylinder::PyCylinderMeshBuilder;
+pub use cylinder::{PyCylinderAnchor, PyCylinderMeshBuilder};
 pub use ellipse::PyEllipseMeshBuilder;
 pub use plane3d::PyPlaneMeshBuilder;
 pub use polyline2d::PyPolyline2dMeshBuilder;

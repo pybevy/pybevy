@@ -7,6 +7,7 @@ pub mod gamepad_button;
 pub mod gamepad_event;
 pub mod gamepad_events;
 pub mod gamepad_input;
+pub mod gamepad_raw_events;
 pub mod gamepad_rumble_intensity;
 pub mod gamepad_rumble_request;
 pub mod gamepad_settings;
@@ -80,6 +81,8 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<gamepad_events::PyGamepadConnection>()?;
     m.add_class::<gamepad_events::PyGamepadConnectionEvent>()?;
     m.add_class::<gamepad_events::PyGamepadButtonStateChangedEvent>()?;
+    m.add_class::<gamepad_raw_events::PyRawGamepadButtonChangedEvent>()?;
+    m.add_class::<gamepad_raw_events::PyRawGamepadAxisChangedEvent>()?;
     m.add_class::<gesture_events::PyPinchGesture>()?;
     m.add_class::<gesture_events::PyRotationGesture>()?;
     m.add_class::<gesture_events::PyDoubleTapGesture>()?;
@@ -89,6 +92,8 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<accumulated_mouse::PyAccumulatedMouseScroll>()?;
     m.add_class::<gamepad_event::PyGamepadEvent>()?;
     gamepad_event::register_gamepad_event_variants(&m)?;
+    m.add_class::<gamepad_event::PyRawGamepadEvent>()?;
+    gamepad_event::register_raw_gamepad_event_variants(&m)?;
     m.add_class::<keyboard_input::PyKeyboardInput>()?;
     m.add_class::<touches::PyTouch>()?;
     m.add_class::<touches::PyTouches>()?;

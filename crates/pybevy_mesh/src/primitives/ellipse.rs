@@ -2,7 +2,11 @@ use bevy::mesh::{EllipseMeshBuilder, MeshBuilder};
 use pybevy_core::PyAsset;
 use pyo3::prelude::*;
 
-use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder, primitives::validation::minimum_count};
+use crate::{
+    mesh::PyMesh,
+    mesh_builder::PyMeshBuilder,
+    primitives::validation::{minimum_count, vertex_budget},
+};
 
 #[pyclass(name = "EllipseMeshBuilder", module = "pybevy.mesh", extends = PyMeshBuilder)]
 #[derive(Debug)]
@@ -25,6 +29,7 @@ impl PyEllipseMeshBuilder {
 
     pub fn build(&self, py: Python) -> PyResult<Py<PyMesh>> {
         minimum_count("EllipseMeshBuilder.resolution", self.0.resolution, 3)?;
+        vertex_budget("EllipseMeshBuilder", u128::from(self.0.resolution))?;
         Py::new(py, (self.0.build().into(), PyAsset))
     }
 }

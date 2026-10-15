@@ -1279,7 +1279,10 @@ class EditableText(Component):
         """The current text content."""
 
     def clear(self) -> None:
-        """Clear the text buffer and any pending edits."""
+        """Clear the text and pending edits, then reset the cursor and selection.
+
+        Edits queued after ``clear()`` can apply in the same frame.
+        """
 
     def queue_edit(self, edit: TextEdit) -> None:
         """Queue an edit for `PostUpdate`.

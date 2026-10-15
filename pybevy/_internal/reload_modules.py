@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import os
+import site
 import sys
 import sysconfig
 import threading
 import weakref
 from collections.abc import Callable, Mapping
 from contextvars import ContextVar
+from functools import lru_cache
 from types import ModuleType
 from typing import TYPE_CHECKING, Protocol, cast
 
@@ -69,19 +71,35 @@ def _under_root(module: ModuleType, root: str) -> bool:
         return False
 
 
+@lru_cache(maxsize=1)
+def _external_module_roots() -> tuple[str, ...]:
+    paths = sysconfig.get_paths()
+    roots = {paths[key] for key in ("stdlib", "purelib", "platlib") if paths.get(key)}
+    get_site_packages = getattr(site, "getsitepackages", None)
+    if get_site_packages is not None:
+        roots.update(get_site_packages())
+    user_site = site.getusersitepackages()
+    if user_site:
+        roots.add(user_site)
+    return tuple(os.path.realpath(root) + os.sep for root in roots)
+
+
+def is_external_module_path(path: str | os.PathLike[str]) -> bool:
+    """Whether a module is under an actual stdlib or installed package root."""
+    resolved = os.path.realpath(path)
+    return any(resolved.startswith(root) for root in _external_module_roots())
+
+
 def _protected(name: str, module: ModuleType) -> bool:
     if name in ("pybevy", "_pybevy", "__main__") or name.startswith(
         ("pybevy.", "_pybevy.")
     ):
         return True
     path = getattr(module, "__file__", None)
-    return isinstance(path, str) and (
-        "site-packages" in path
-        or "dist-packages" in path
-        or os.path.realpath(path).startswith(
-            os.path.realpath(sysconfig.get_paths()["stdlib"]) + os.sep
-        )
-    )
+    try:
+        return isinstance(path, str | os.PathLike) and is_external_module_path(path)
+    except (TypeError, ValueError):
+        return False
 
 
 class ModuleReloadTransaction:

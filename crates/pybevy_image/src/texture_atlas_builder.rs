@@ -115,6 +115,26 @@ impl PyTextureAtlasBuilder {
         Py<PyTextureAtlasSources>,
         Py<PyImage>,
     )> {
+        let converted = self
+            .textures
+            .iter()
+            .enumerate()
+            .map(|(index, (_, image))| {
+                if !self.auto_format_conversion || image.texture_descriptor.format == self.format {
+                    return Ok(None);
+                }
+                image
+                    .convert(self.format)
+                    .filter(|converted| converted.texture_descriptor.format == self.format)
+                    .map(Some)
+                    .ok_or_else(|| {
+                        PyValueError::new_err(format!(
+                            "atlas source {index} cannot be converted from {:?} to {:?}",
+                            image.texture_descriptor.format, self.format
+                        ))
+                    })
+            })
+            .collect::<PyResult<Vec<_>>>()?;
         let mut builder = TextureAtlasBuilder::default();
         builder
             .initial_size(self.initial_size)
@@ -122,8 +142,8 @@ impl PyTextureAtlasBuilder {
             .format(self.format)
             .auto_format_conversion(self.auto_format_conversion)
             .padding(self.padding);
-        for (image_id, image) in &self.textures {
-            builder.add_texture(*image_id, image);
+        for ((image_id, image), converted_image) in self.textures.iter().zip(&converted) {
+            builder.add_texture(*image_id, converted_image.as_ref().unwrap_or(image));
         }
         let (layout, sources, image) = builder
             .build()

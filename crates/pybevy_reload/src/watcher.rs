@@ -16,8 +16,20 @@ use walkdir::WalkDir;
 
 const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
-pub const DEFAULT_IGNORE_PATTERNS: &[&str] =
-    &[".git", "__pycache__", ".pytest_cache", ".venv", "target"];
+pub const DEFAULT_IGNORE_PATTERNS: &[&str] = &[
+    ".git",
+    ".hg",
+    ".svn",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".hypothesis",
+    ".tox",
+    ".venv",
+    ".idea",
+    "node_modules",
+    "target",
+];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WatchBatch {
@@ -192,6 +204,7 @@ fn watch_worker(
             let outcome = watch_pruned_tree(
                 &mut watcher,
                 root,
+                &roots,
                 &ignore_patterns,
                 &mut watched_paths,
                 false,
@@ -242,13 +255,14 @@ fn watch_worker(
             handle_directory_event(
                 &mut watcher,
                 &first_event,
+                &roots,
                 &ignore_patterns,
                 &mut watched_paths,
                 &mut paths,
                 &batch_sender,
             );
         }
-        collect_event_paths(&first_event, &ignore_patterns, &mut paths);
+        collect_event_paths(&first_event, &roots, &ignore_patterns, &mut paths);
         let mut deadline = Instant::now() + debounce;
 
         while Instant::now() < deadline {
@@ -263,6 +277,7 @@ fn watch_worker(
                         handle_directory_event(
                             &mut watcher,
                             &event,
+                            &roots,
                             &ignore_patterns,
                             &mut watched_paths,
                             &mut paths,
@@ -270,7 +285,7 @@ fn watch_worker(
                         );
                     }
                     let relevant_python_event =
-                        collect_event_paths(&event, &ignore_patterns, &mut paths);
+                        collect_event_paths(&event, &roots, &ignore_patterns, &mut paths);
                     // Debounce from the most recent event, not the first one. Editors
                     // commonly save through several rename/write operations spread
                     // across more than one debounce interval. Unrelated filesystem
@@ -314,12 +329,13 @@ struct WatchTreeOutcome {
 fn watch_pruned_tree(
     watcher: &mut RecommendedWatcher,
     root: &Path,
+    roots: &[PathBuf],
     ignore_patterns: &[String],
     watched_paths: &mut BTreeSet<PathBuf>,
     discover_python_files: bool,
 ) -> WatchTreeOutcome {
     let (paths_to_watch, python_files) =
-        collect_pruned_tree(root, ignore_patterns, discover_python_files);
+        collect_pruned_tree(root, roots, ignore_patterns, discover_python_files);
 
     let errors = register_watch_paths(paths_to_watch, watched_paths, |path| {
         watcher
@@ -372,10 +388,11 @@ fn watch_errors_result(errors: Vec<WatchError>) -> Result<(), WatchError> {
 
 fn collect_pruned_tree(
     root: &Path,
+    roots: &[PathBuf],
     ignore_patterns: &[String],
     discover_python_files: bool,
 ) -> (Vec<PathBuf>, Vec<PathBuf>) {
-    if is_ignored_path(root, ignore_patterns) {
+    if is_ignored_path(root, roots, ignore_patterns) {
         return (Vec::new(), Vec::new());
     }
     if !root.is_dir() {
@@ -387,13 +404,18 @@ fn collect_pruned_tree(
     for entry in WalkDir::new(root)
         .follow_links(true)
         .into_iter()
-        .filter_entry(|entry| !is_ignored_path(entry.path(), ignore_patterns))
+        .filter_entry(|entry| {
+            !is_ignored_path(entry.path(), roots, ignore_patterns)
+                && !(entry.file_type().is_dir()
+                    && !is_watch_root(entry.path(), roots)
+                    && is_python_environment(entry.path()))
+        })
         .filter_map(Result::ok)
     {
         let path = entry.path();
         if entry.metadata().is_ok_and(|metadata| metadata.is_dir()) {
             paths_to_watch.push(path.to_path_buf());
-        } else if discover_python_files && is_python_path(path, ignore_patterns) {
+        } else if discover_python_files && is_python_path(path, roots, ignore_patterns) {
             python_files.push(absolute_path(path));
         }
     }
@@ -404,6 +426,7 @@ fn collect_pruned_tree(
 fn handle_directory_event(
     watcher: &mut RecommendedWatcher,
     event: &Event,
+    roots: &[PathBuf],
     ignore_patterns: &[String],
     watched_paths: &mut BTreeSet<PathBuf>,
     paths: &mut BTreeSet<PathBuf>,
@@ -415,8 +438,9 @@ fn handle_directory_event(
     }
 
     for path in &event.paths {
-        if path.is_dir() && !is_ignored_path(path, ignore_patterns) {
-            let outcome = watch_pruned_tree(watcher, path, ignore_patterns, watched_paths, true);
+        if path.is_dir() && !is_ignored_path(path, roots, ignore_patterns) {
+            let outcome =
+                watch_pruned_tree(watcher, path, roots, ignore_patterns, watched_paths, true);
             paths.extend(outcome.python_files);
             for error in outcome.errors {
                 let _ = batch_sender.send(Err(error));
@@ -449,6 +473,7 @@ fn forget_removed_watch_paths(event: &Event, watched_paths: &mut BTreeSet<PathBu
 
 fn collect_event_paths(
     event: &Event,
+    roots: &[PathBuf],
     ignore_patterns: &[String],
     paths: &mut BTreeSet<PathBuf>,
 ) -> bool {
@@ -461,7 +486,7 @@ fn collect_event_paths(
 
     let mut relevant = false;
     for path in &event.paths {
-        if is_python_path(path, ignore_patterns) {
+        if is_python_path(path, roots, ignore_patterns) && !is_in_python_environment(path, roots) {
             relevant = true;
             paths.insert(absolute_path(path));
         }
@@ -469,18 +494,57 @@ fn collect_event_paths(
     relevant
 }
 
-fn is_python_path(path: &Path, ignore_patterns: &[String]) -> bool {
+fn is_python_path(path: &Path, roots: &[PathBuf], ignore_patterns: &[String]) -> bool {
     if path.extension().is_none_or(|extension| extension != "py") {
         return false;
     }
-    !is_ignored_path(path, ignore_patterns)
+    !is_ignored_path(path, roots, ignore_patterns)
 }
 
-fn is_ignored_path(path: &Path, ignore_patterns: &[String]) -> bool {
-    let path_text = path.to_string_lossy();
-    ignore_patterns
+fn is_ignored_path(path: &Path, roots: &[PathBuf], ignore_patterns: &[String]) -> bool {
+    let is_ignored_name = |component: std::path::Component<'_>| {
+        ignore_patterns
+            .iter()
+            .any(|pattern| component.as_os_str() == std::ffi::OsStr::new(pattern))
+    };
+    let mut relative_paths = roots
         .iter()
-        .any(|pattern| path_text.contains(pattern))
+        .filter_map(|root| path.strip_prefix(root_directory(root)?).ok())
+        .peekable();
+    if relative_paths.peek().is_none() {
+        // Backends may spell event paths differently from the roots (macOS
+        // reports /private/var for /var), so match the whole path instead.
+        return path.components().any(is_ignored_name);
+    }
+    relative_paths.all(|relative| relative.components().any(is_ignored_name))
+}
+
+fn root_directory(root: &Path) -> Option<&Path> {
+    if root.is_file() {
+        root.parent()
+    } else {
+        Some(root)
+    }
+}
+
+fn is_watch_root(path: &Path, roots: &[PathBuf]) -> bool {
+    roots.iter().any(|root| root_directory(root) == Some(path))
+}
+
+fn is_python_environment(directory: &Path) -> bool {
+    directory.join("pyvenv.cfg").is_file() || directory.join("conda-meta").is_dir()
+}
+
+fn is_in_python_environment(path: &Path, roots: &[PathBuf]) -> bool {
+    roots
+        .iter()
+        .filter_map(|root| root_directory(root))
+        .any(|root| {
+            path.ancestors()
+                .skip(1)
+                .take_while(|ancestor| *ancestor != root && ancestor.starts_with(root))
+                .any(is_python_environment)
+        })
 }
 
 fn absolute_path(path: &Path) -> PathBuf {
@@ -532,13 +596,43 @@ mod tests {
             .iter()
             .map(|pattern| (*pattern).to_string())
             .collect::<Vec<_>>();
-        assert!(is_python_path(Path::new("src/scene.py"), &ignored));
-        assert!(!is_python_path(Path::new("src/scene.txt"), &ignored));
-        assert!(!is_python_path(
-            Path::new("src/__pycache__/scene.py"),
+        let roots = vec![PathBuf::from("project")];
+        assert!(is_python_path(
+            Path::new("project/src/scene.py"),
+            &roots,
             &ignored
         ));
-        assert!(!is_python_path(Path::new("target/scene.py"), &ignored));
+        assert!(!is_python_path(
+            Path::new("project/src/scene.txt"),
+            &roots,
+            &ignored
+        ));
+        assert!(!is_python_path(
+            Path::new("project/src/__pycache__/scene.py"),
+            &roots,
+            &ignored
+        ));
+        assert!(!is_python_path(
+            Path::new("project/target/scene.py"),
+            &roots,
+            &ignored
+        ));
+        assert!(is_python_path(
+            Path::new("project/src/targeting.py"),
+            &roots,
+            &ignored
+        ));
+        assert!(is_python_path(
+            Path::new("project/target_practice/scene.py"),
+            &roots,
+            &ignored
+        ));
+        let target_root = vec![PathBuf::from("target")];
+        assert!(is_python_path(
+            Path::new("target/scene.py"),
+            &target_root,
+            &ignored
+        ));
     }
 
     #[test]
@@ -559,7 +653,12 @@ mod tests {
             .iter()
             .map(|pattern| (*pattern).to_string())
             .collect::<Vec<_>>();
-        let (watched_paths, python_files) = collect_pruned_tree(&directory.0, &ignored, true);
+        let (watched_paths, python_files) = collect_pruned_tree(
+            &directory.0,
+            std::slice::from_ref(&directory.0),
+            &ignored,
+            true,
+        );
 
         assert!(watched_paths.contains(&directory.0));
         assert!(watched_paths.contains(&directory.0.join("src")));
@@ -575,6 +674,77 @@ mod tests {
                 .all(|path| !path.starts_with(directory.0.join(".git")))
         );
         assert_eq!(python_files, vec![absolute_path(&source_path)]);
+    }
+
+    #[test]
+    fn paths_outside_the_root_spelling_fall_back_to_their_own_components() {
+        let ignored = DEFAULT_IGNORE_PATTERNS
+            .iter()
+            .map(|pattern| (*pattern).to_string())
+            .collect::<Vec<_>>();
+        let roots = vec![PathBuf::from("/var/project")];
+        assert!(is_python_path(
+            Path::new("/private/var/project/scene.py"),
+            &roots,
+            &ignored
+        ));
+        assert!(!is_python_path(
+            Path::new("/private/var/project/node_modules/tool.py"),
+            &roots,
+            &ignored
+        ));
+    }
+
+    #[test]
+    fn python_environments_are_pruned_by_their_markers() {
+        let directory = TempDirectory::new();
+        let source_path = directory.0.join("scene.py");
+        fs::write(&source_path, "value = 1\n").unwrap();
+        for (environment, marker) in [("venv", "pyvenv.cfg"), ("env", "pyvenv.cfg")] {
+            let site_packages = directory.0.join(environment).join("lib/site-packages");
+            fs::create_dir_all(&site_packages).unwrap();
+            fs::write(directory.0.join(environment).join(marker), "home = /usr\n").unwrap();
+            fs::write(site_packages.join("library.py"), "value = 2\n").unwrap();
+        }
+        let conda = directory.0.join("conda_env");
+        fs::create_dir_all(conda.join("conda-meta")).unwrap();
+        fs::write(conda.join("library.py"), "value = 3\n").unwrap();
+
+        let roots = [directory.0.clone()];
+        let ignored = DEFAULT_IGNORE_PATTERNS
+            .iter()
+            .map(|pattern| (*pattern).to_string())
+            .collect::<Vec<_>>();
+        let (watched_paths, python_files) =
+            collect_pruned_tree(&directory.0, &roots, &ignored, true);
+
+        assert_eq!(python_files, vec![absolute_path(&source_path)]);
+        for environment in ["venv", "env", "conda_env"] {
+            assert!(
+                watched_paths
+                    .iter()
+                    .all(|path| !path.starts_with(directory.0.join(environment)))
+            );
+        }
+        assert!(is_in_python_environment(
+            &directory.0.join("venv/lib/site-packages/library.py"),
+            &roots
+        ));
+        assert!(!is_in_python_environment(&source_path, &roots));
+    }
+
+    #[test]
+    fn a_watch_root_that_is_itself_an_environment_is_still_watched() {
+        let directory = TempDirectory::new();
+        fs::write(directory.0.join("pyvenv.cfg"), "home = /usr\n").unwrap();
+        let source_path = directory.0.join("scene.py");
+        fs::write(&source_path, "value = 1\n").unwrap();
+
+        let roots = [directory.0.clone()];
+        let (_, python_files) = collect_pruned_tree(&directory.0, &roots, &[], true);
+
+        assert_eq!(python_files, vec![absolute_path(&source_path)]);
+        assert!(!is_in_python_environment(&source_path, &roots));
     }
 
     #[test]
@@ -619,11 +789,28 @@ mod tests {
         ];
 
         for kind in event_kinds {
-            let event = Event::new(kind).add_path(PathBuf::from("scene.py"));
+            let event = Event::new(kind).add_path(PathBuf::from("project/scene.py"));
             let mut paths = BTreeSet::new();
-            collect_event_paths(&event, &ignored, &mut paths);
+            collect_event_paths(&event, &[PathBuf::from("project")], &ignored, &mut paths);
             assert_eq!(paths.len(), 1);
         }
+    }
+
+    #[test]
+    fn watches_project_and_helper_names_containing_target() {
+        let directory = TempDirectory::new();
+        let project = directory.0.join("target_practice");
+        fs::create_dir_all(&project).unwrap();
+        let watcher = FileWatcher::with_defaults(vec![project.clone()]).unwrap();
+        let helper = project.join("targeting.py");
+        fs::write(&helper, "value = 1\n").unwrap();
+
+        let batch = watcher
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .expect("watcher did not report the target-named helper");
+        assert!(batch.paths().contains(&absolute_path(&helper)));
+        watcher.stop().unwrap();
     }
 
     #[test]

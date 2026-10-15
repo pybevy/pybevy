@@ -2798,6 +2798,49 @@ class GamepadEvent(Message):
         @property
         def value(self) -> GamepadAxisChangedEvent: ...
 
+class RawGamepadButtonChangedEvent(Message):
+    """Unfiltered button value. Wrap in `RawGamepadEvent.Button` to update `Gamepad` state."""
+
+    def __init__(self, gamepad: Entity, button: GamepadButton, value: float) -> None: ...
+    gamepad: Entity
+    button: GamepadButton
+    value: float
+
+class RawGamepadAxisChangedEvent(Message):
+    """Unfiltered axis value. Wrap in `RawGamepadEvent.Axis` to update `Gamepad` state."""
+
+    def __init__(self, gamepad: Entity, axis: GamepadAxis, value: float) -> None: ...
+    gamepad: Entity
+    axis: GamepadAxis
+    value: float
+
+class RawGamepadEvent(Message):
+    """Ordered raw gamepad input consumed by Bevy's gamepad processor."""
+
+    def __copy__(self) -> RawGamepadEvent: ...
+    def __deepcopy__(self, memo: object) -> RawGamepadEvent: ...
+    def __repr__(self) -> str: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __ne__(self, other: object) -> bool: ...
+
+    class Connection(RawGamepadEvent):
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: GamepadConnectionEvent) -> None: ...
+        @property
+        def value(self) -> GamepadConnectionEvent: ...
+
+    class Button(RawGamepadEvent):
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: RawGamepadButtonChangedEvent) -> None: ...
+        @property
+        def value(self) -> RawGamepadButtonChangedEvent: ...
+
+    class Axis(RawGamepadEvent):
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: RawGamepadAxisChangedEvent) -> None: ...
+        @property
+        def value(self) -> RawGamepadAxisChangedEvent: ...
+
 class KeyboardFocusLost(Message):
     """
     Keyboard focus lost event message.

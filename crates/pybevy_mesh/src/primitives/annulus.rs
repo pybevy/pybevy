@@ -2,7 +2,11 @@ use bevy::mesh::{AnnulusMeshBuilder, MeshBuilder};
 use pybevy_core::PyAsset;
 use pyo3::prelude::*;
 
-use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder, primitives::validation::minimum_count};
+use crate::{
+    mesh::PyMesh,
+    mesh_builder::PyMeshBuilder,
+    primitives::validation::{minimum_count, vertex_budget},
+};
 
 #[pyclass(name = "AnnulusMeshBuilder", module = "pybevy.mesh", extends = PyMeshBuilder)]
 #[derive(Debug)]
@@ -25,6 +29,10 @@ impl PyAnnulusMeshBuilder {
 
     pub fn build(&self, py: Python) -> PyResult<Py<PyMesh>> {
         minimum_count("AnnulusMeshBuilder.resolution", self.0.resolution, 1)?;
+        vertex_budget(
+            "AnnulusMeshBuilder",
+            2 * (u128::from(self.0.resolution) + 1),
+        )?;
         Py::new(py, (self.0.build().into(), PyAsset))
     }
 }

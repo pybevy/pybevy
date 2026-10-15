@@ -197,11 +197,20 @@ def simulate_jump(writer: MessageWriter[KeyboardInput]) -> None:
     )
 ```
 
-Writable: `KeyboardInput`, `MouseButtonInput`, `MouseMotion`, `MouseWheel`, `TouchInput`,
-`GamepadButtonChangedEvent`, `GamepadButtonStateChangedEvent`,
-`GamepadAxisChangedEvent`, `GamepadConnectionEvent`, `GamepadRumbleRequest`, and
+Writable inputs: `KeyboardInput`, `MouseButtonInput`, `MouseMotion`, `MouseWheel`,
+`TouchInput`, `GamepadConnectionEvent`, `RawGamepadEvent`, and
 `CursorMoved` / `RequestRedraw` from `pybevy.window`. Synthetic `MouseWheel`
-messages default to `TouchPhase.Moved` but may provide another phase.
+messages default to `TouchPhase.Moved` but may provide another phase. For gamepad
+button and axis state, write `RawGamepadEvent.Button(RawGamepadButtonChangedEvent(gamepad, button, value))`
+or `RawGamepadEvent.Axis(RawGamepadAxisChangedEvent(gamepad, axis, value))`. Bevy processes these
+in `PreUpdate`; write them in `First` for same-frame state updates. The separate
+`RawGamepadButtonChangedEvent` and `RawGamepadAxisChangedEvent` channels and the
+processed `GamepadButtonChangedEvent`, `GamepadButtonStateChangedEvent`,
+`GamepadAxisChangedEvent`, and `GamepadEvent` channels are writable but do not
+drive `Gamepad` state. Connect a spawned entity with `GamepadConnectionEvent`
+before sending button or axis input; a `RawGamepadEvent.Connection` by itself
+does not insert the `Gamepad` component. `GamepadRumbleRequest` requests haptic
+output.
 
 `InputPlugin` processes `TouchInput` in `PreUpdate`; write in `First` for same-frame
 `Touches` updates. A supplied `force` uses Bevy's normalized pressure variant.

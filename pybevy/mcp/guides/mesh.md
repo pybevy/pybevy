@@ -24,6 +24,7 @@ meshes.add(Sphere(0.5).mesh().uv(32, 18))             # .uv() returns Mesh direc
 meshes.add(Sphere(0.5).mesh().ico(3))                  # .ico() returns Mesh directly
 meshes.add(Torus(0.3, 1.0).mesh().minor_resolution(24).major_resolution(48).build())
 meshes.add(Plane3d(Vec3.Y, Vec2(5.0, 5.0)).mesh().subdivisions(4).build())
+meshes.add(Circle(0.5).mesh().resolution(64).build())
 ```
 
 **Use direct pass unless you need resolution control.**
@@ -65,17 +66,31 @@ Torus(0.3, 1.0).mesh().minor_resolution(24).major_resolution(48).build()
 
 # Capsule detail
 Capsule3d(0.5, 2.0).mesh().rings(4).longitudes(32).latitudes(16).build()
+
+# Cylinder and cone detail, caps and anchor
+Cylinder(0.5, 2.0).mesh().resolution(64).segments(2).without_caps().build()
+Cone(0.5, 2.0).mesh().resolution(64).build()
 ```
+
+`CylinderMeshBuilder.anchor(CylinderAnchor.Top)` and
+`ConeMeshBuilder.anchor(ConeAnchor.Tip)` select non-default origins. Builder
+methods return new values, leaving the original builder unchanged.
 
 Mesh-builder counts must meet their minimum usable resolution. Capsule3d needs
 at least 4 latitudes and 1 longitude; Capsule2d needs resolution 2; Annulus
 needs resolution 1; Ellipse needs resolution 3; CircularSector and
-CircularSegment need resolution 2. Smaller values raise `ValueError` before
+CircularSegment need resolution 2; Circle, Cylinder and Cone need resolution 3;
+Cylinder needs at least 1 height segment. Smaller values raise `ValueError` before
 Bevy builds the mesh.
 
 `ConicalFrustum.mesh()` requires `resolution(3)` or higher and `segments(1)`
-or higher. Its builder raises `ValueError` before building a mesh with more
-than one million vertices; lower the resolution or segment count for large meshes.
+or higher. Resolution-driven primitive builders raise `ValueError` before
+building a mesh with more than 16,777,216 (2**24) vertices, about a 4096 x 4096
+grid, including planes, spheres,
+tori, annuli, sectors, segments, capsules, ellipses, and regular polygons.
+The Circle, Cylinder and Cone builders use the same limit.
+Lower the relevant counts for large meshes. An invalid icosphere kind also
+raises `ValueError` when built.
 
 ## Custom Meshes from Vertices
 

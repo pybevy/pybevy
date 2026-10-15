@@ -2,9 +2,7 @@ use bevy::mesh::{ConicalFrustumMeshBuilder, MeshBuilder};
 use pybevy_core::PyAsset;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
-use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder};
-
-const MAX_VERTICES: u128 = 1_000_000;
+use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder, primitives::validation::vertex_budget};
 
 fn validate_counts(builder: &ConicalFrustumMeshBuilder) -> PyResult<()> {
     if builder.resolution < 3 {
@@ -26,12 +24,7 @@ fn validate_build(builder: &ConicalFrustumMeshBuilder) -> PyResult<()> {
     let resolution = u128::from(builder.resolution);
     let segments = u128::from(builder.segments);
     let vertices = 2 * resolution + (segments + 1) * (resolution + 1);
-    if vertices > MAX_VERTICES {
-        return Err(PyValueError::new_err(format!(
-            "ConicalFrustumMeshBuilder would create {vertices} vertices; maximum is {MAX_VERTICES}"
-        )));
-    }
-    Ok(())
+    vertex_budget("ConicalFrustumMeshBuilder", vertices)
 }
 
 #[pyclass(name = "ConicalFrustumMeshBuilder", module = "pybevy.mesh", extends = PyMeshBuilder, frozen)]
