@@ -114,19 +114,17 @@ impl PyAabb3d {
         Ok(())
     }
 
-    pub fn center(&self) -> PyResult<PyVec3> {
-        Ok(PyVec3::from_vec3(self.as_ref()?.center().into()))
+    pub fn center(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.center()))
     }
 
-    pub fn half_size(&self) -> PyResult<PyVec3> {
-        Ok(PyVec3::from_vec3(self.as_ref()?.half_size().into()))
+    pub fn half_size(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.half_size()))
     }
 
-    pub fn closest_point(&self, point: &Bound<'_, PyAny>) -> PyResult<PyVec3> {
+    pub fn closest_point(&self, point: &Bound<'_, PyAny>) -> PyResult<PyVec3A> {
         let point = extract_vec3a_from_any(point)?;
-        Ok(PyVec3::from_vec3(
-            self.as_ref()?.closest_point(point).into(),
-        ))
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.closest_point(point)))
     }
 
     pub fn contains(&self, other: &PyAabb3d) -> PyResult<bool> {
@@ -252,10 +250,37 @@ impl PyAabb3d {
     fn __repr__(&self) -> PyResult<String> {
         let aabb = self.as_ref()?;
         Ok(format!(
-            "Aabb3d(min={}, max={})",
+            "Aabb3d.from_min_max({}, {})",
             aabb.min.repr_literal(),
             aabb.max.repr_literal()
         ))
+    }
+
+    pub fn translated_by(&self, translation: &Bound<'_, PyAny>) -> PyResult<PyAabb3d> {
+        let translation = extract_vec3a_from_any(translation)?;
+        Ok(Aabb3d::try_from(self)?.translated_by(translation).into())
+    }
+
+    pub fn translate_by(&mut self, translation: &Bound<'_, PyAny>) -> PyResult<()> {
+        let translation = extract_vec3a_from_any(translation)?;
+        self.as_mut()?.translate_by(translation);
+        Ok(())
+    }
+
+    pub fn rotate_by(&mut self, rotation: &Bound<'_, PyAny>) -> PyResult<()> {
+        let rotated = Aabb3d::try_from(&self.rotated_by(rotation)?)?;
+        *self.as_mut()? = rotated;
+        Ok(())
+    }
+
+    pub fn transform_by(
+        &mut self,
+        translation: &Bound<'_, PyAny>,
+        rotation: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        let transformed = Aabb3d::try_from(&self.transformed_by(translation, rotation)?)?;
+        *self.as_mut()? = transformed;
+        Ok(())
     }
 }
 

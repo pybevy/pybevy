@@ -175,6 +175,7 @@ def _apply() -> None:
                 "NEG_X",
                 "NEG_Y",
                 "NEG_Z",
+                "AXES",
             ],
         ),
         (

@@ -1,8 +1,5 @@
 use bevy::math::{Dir2, Isometry2d, Rot2, Vec2};
-use pybevy_core::{
-    FromBorrowedStorage, ValueStorage,
-    repr::{ReprLiteral, float_repr},
-};
+use pybevy_core::{FromBorrowedStorage, ValueStorage, repr::ReprLiteral};
 use pyo3::prelude::*;
 
 use crate::{dir2::PyDir2, rot2::PyRot2, vec2::PyVec2};
@@ -139,11 +136,11 @@ impl PyIsometry2d {
         }
     }
 
-    fn __repr__(&self) -> String {
-        format!(
-            "Isometry2d(translation={}, rotation=Rot2({}))",
+    fn __repr__(&self) -> PyResult<String> {
+        Ok(format!(
+            "Isometry2d(translation={}, rotation={})",
             self.inner.translation.repr_literal(),
-            float_repr(self.inner.rotation.as_radians())
-        )
+            PyRot2::from(self.inner.rotation).__repr__()?
+        ))
     }
 }

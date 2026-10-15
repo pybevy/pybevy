@@ -1,8 +1,7 @@
 use bevy::math::{Dir3, Isometry3d, Quat, Vec3, Vec3A, primitives::InfinitePlane3d};
 use pybevy_core::{
-    FromBorrowedStorage, ValueStorage,
+    FromBorrowedStorage, Omittable, ValueStorage,
     public_error::{INFINITE_PLANE_POINTS, UNSUPPORTED_COMPARISON},
-    repr::float_list_repr,
 };
 use pybevy_macros::pyvalue;
 use pyo3::{
@@ -12,7 +11,11 @@ use pyo3::{
 };
 
 use crate::{
-    dir3::PyDir3, isometry3d::PyIsometry3d, quat::PyQuat, richcmp::comparison_result, vec3::PyVec3,
+    dir3::{PyDir3, extract_dir3_from_any},
+    isometry3d::PyIsometry3d,
+    quat::PyQuat,
+    richcmp::comparison_result,
+    vec3::PyVec3,
     vec3a::PyVec3A,
 };
 
@@ -67,18 +70,13 @@ impl PyInfinitePlane3d {
     }
 
     #[new]
-    #[pyo3(signature = (*, normal = PyVec3::Y))]
-    pub fn new(normal: PyVec3) -> PyResult<Self> {
-        let dir =
-            Dir3::new(normal.try_into()?).map_err(|e| PyValueError::new_err(format!("{}", e)))?;
-        Ok(Self::from_owned(InfinitePlane3d { normal: dir }))
-    }
-
-    #[staticmethod]
-    pub fn from_dir(normal: PyDir3) -> PyResult<Self> {
-        Ok(Self::from_owned(InfinitePlane3d {
-            normal: normal.into_dir3()?,
-        }))
+    #[pyo3(signature = (*, normal = Omittable::default()))]
+    pub fn new(normal: Omittable<Bound<'_, PyAny>>) -> PyResult<Self> {
+        let normal = match normal.into_option() {
+            Some(normal) => extract_dir3_from_any(&normal)?,
+            None => Dir3::Y,
+        };
+        Ok(Self::from_owned(InfinitePlane3d { normal }))
     }
 
     #[staticmethod]
@@ -128,10 +126,10 @@ impl PyInfinitePlane3d {
     }
 
     fn __repr__(&self) -> PyResult<String> {
-        let n = self.as_ref()?.normal;
+        let normal = self.as_ref()?.normal;
         Ok(format!(
             "InfinitePlane3d(normal={})",
-            float_list_repr(&n.to_array())
+            PyDir3::from(normal).__repr__()?
         ))
     }
 

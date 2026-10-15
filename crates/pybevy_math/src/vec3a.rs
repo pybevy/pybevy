@@ -1,11 +1,19 @@
-use bevy::math::{Vec3, Vec3A};
+use bevy::math::{BVec3A, Vec3, Vec3A, Vec3Swizzles};
 use pybevy_core::{
     FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
-    public_error::UNSUPPORTED_COMPARISON, repr::ReprLiteral,
+    public_error::{
+        AXIS_NOT_NORMALIZED, NORMAL_NOT_NORMALIZED, RHS_NOT_NORMALIZED, UNSUPPORTED_COMPARISON,
+        VECTOR_NOT_NORMALIZED, from_slice_too_short,
+    },
+    repr::ReprLiteral,
 };
-use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
+use pyo3::{
+    basic::CompareOp,
+    exceptions::{PyTypeError, PyValueError},
+    prelude::*,
+};
 
-use crate::{richcmp::comparison_result, vec3::PyVec3};
+use crate::{richcmp::comparison_result, uvec3::PyUVec3, vec2::PyVec2, vec3::PyVec3, vec4::PyVec4};
 
 #[pyclass(name = "Vec3A", module = "pybevy.math", from_py_object)]
 #[derive(Debug, Clone)]
@@ -355,8 +363,6 @@ impl PyVec3A {
     ) -> PyResult<Py<PyAny>> {
         let other = if let Ok(other_vec) = other.extract::<PyVec3A>() {
             *other_vec.as_ref()?
-        } else if let Ok((x, y, z)) = other.extract::<(f32, f32, f32)>() {
-            Vec3A::new(x, y, z)
         } else {
             return Ok(py.NotImplemented());
         };
@@ -383,6 +389,474 @@ impl PyVec3A {
     pub fn __repr__(&self) -> PyResult<String> {
         let v = self.as_ref()?;
         Ok(v.repr_literal())
+    }
+
+    pub fn xy(&self) -> PyResult<PyVec2> {
+        Ok(self.as_ref()?.xy().into())
+    }
+
+    pub fn xz(&self) -> PyResult<PyVec2> {
+        Ok(self.as_ref()?.xz().into())
+    }
+
+    pub fn yz(&self) -> PyResult<PyVec2> {
+        Ok(self.as_ref()?.yz().into())
+    }
+
+    pub fn yx(&self) -> PyResult<PyVec2> {
+        Ok(self.as_ref()?.yx().into())
+    }
+
+    pub fn zx(&self) -> PyResult<PyVec2> {
+        Ok(self.as_ref()?.zx().into())
+    }
+
+    pub fn zy(&self) -> PyResult<PyVec2> {
+        Ok(self.as_ref()?.zy().into())
+    }
+
+    pub fn xx(&self) -> PyResult<PyVec2> {
+        Ok(self.as_ref()?.xx().into())
+    }
+
+    pub fn yy(&self) -> PyResult<PyVec2> {
+        Ok(self.as_ref()?.yy().into())
+    }
+
+    pub fn zz(&self) -> PyResult<PyVec2> {
+        Ok(self.as_ref()?.zz().into())
+    }
+
+    pub fn with_x(&self, x: f32) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.with_x(x)))
+    }
+
+    pub fn with_y(&self, y: f32) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.with_y(y)))
+    }
+
+    pub fn with_z(&self, z: f32) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.with_z(z)))
+    }
+
+    pub fn truncate(&self) -> PyResult<PyVec2> {
+        Ok(self.as_ref()?.truncate().into())
+    }
+
+    pub fn extend(&self, w: f32) -> PyResult<PyVec4> {
+        Ok(self.as_ref()?.extend(w).into())
+    }
+
+    #[staticmethod]
+    pub fn from_array(a: (f32, f32, f32)) -> PyVec3A {
+        PyVec3A::from_vec3a(Vec3A::from_array([a.0, a.1, a.2]))
+    }
+
+    pub fn to_array(&self) -> PyResult<(f32, f32, f32)> {
+        let arr = self.as_ref()?.to_array();
+        Ok((arr[0], arr[1], arr[2]))
+    }
+
+    pub fn signum(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.signum()))
+    }
+
+    pub fn copysign(&self, rhs: &PyVec3A) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.copysign(*rhs.as_ref()?)))
+    }
+
+    pub fn is_finite(&self) -> PyResult<bool> {
+        Ok(self.as_ref()?.is_finite())
+    }
+
+    pub fn is_nan(&self) -> PyResult<bool> {
+        Ok(self.as_ref()?.is_nan())
+    }
+
+    pub fn abs_diff_eq(&self, rhs: &PyVec3A, max_abs_diff: f32) -> PyResult<bool> {
+        Ok(self.as_ref()?.abs_diff_eq(*rhs.as_ref()?, max_abs_diff))
+    }
+
+    pub fn round(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.round()))
+    }
+
+    pub fn trunc(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.trunc()))
+    }
+
+    pub fn fract(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.fract()))
+    }
+
+    pub fn fract_gl(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.fract_gl()))
+    }
+
+    pub fn exp(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.exp()))
+    }
+
+    pub fn powf(&self, n: f32) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.powf(n)))
+    }
+
+    pub fn recip(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.recip()))
+    }
+
+    pub fn move_towards(&self, rhs: &PyVec3A, d: f32) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(
+            self.as_ref()?.move_towards(*rhs.as_ref()?, d),
+        ))
+    }
+
+    pub fn midpoint(&self, rhs: &PyVec3A) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.midpoint(*rhs.as_ref()?)))
+    }
+
+    pub fn project_onto(&self, rhs: &PyVec3A) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(
+            self.as_ref()?.project_onto(*rhs.as_ref()?),
+        ))
+    }
+
+    pub fn reject_from(&self, rhs: &PyVec3A) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(
+            self.as_ref()?.reject_from(*rhs.as_ref()?),
+        ))
+    }
+
+    pub fn try_normalize(&self) -> PyResult<Option<PyVec3A>> {
+        Ok(self.as_ref()?.try_normalize().map(PyVec3A::from_vec3a))
+    }
+
+    pub fn clamp(&self, min: &PyVec3A, max: &PyVec3A) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(
+            self.as_ref()?.clamp(*min.as_ref()?, *max.as_ref()?),
+        ))
+    }
+
+    pub fn element_sum(&self) -> PyResult<f32> {
+        Ok(self.as_ref()?.element_sum())
+    }
+
+    pub fn element_product(&self) -> PyResult<f32> {
+        Ok(self.as_ref()?.element_product())
+    }
+
+    pub fn is_normalized(&self) -> PyResult<bool> {
+        Ok(self.as_ref()?.is_normalized())
+    }
+
+    pub fn floor(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.floor()))
+    }
+
+    pub fn ceil(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.ceil()))
+    }
+
+    pub fn zxy(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.zxy()))
+    }
+
+    pub fn xyz(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.xyz()))
+    }
+
+    pub fn xzy(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.xzy()))
+    }
+
+    pub fn yxz(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.yxz()))
+    }
+
+    pub fn yzx(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.yzx()))
+    }
+
+    pub fn zyx(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.zyx()))
+    }
+
+    pub fn xxx(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.xxx()))
+    }
+
+    pub fn xxy(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.xxy()))
+    }
+
+    pub fn xxz(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.xxz()))
+    }
+
+    pub fn xyx(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.xyx()))
+    }
+
+    pub fn xyy(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.xyy()))
+    }
+
+    pub fn xzx(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.xzx()))
+    }
+
+    pub fn xzz(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.xzz()))
+    }
+
+    pub fn yxx(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.yxx()))
+    }
+
+    pub fn yxy(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.yxy()))
+    }
+
+    pub fn yyx(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.yyx()))
+    }
+
+    pub fn yyy(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.yyy()))
+    }
+
+    pub fn yyz(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.yyz()))
+    }
+
+    pub fn yzy(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.yzy()))
+    }
+
+    pub fn yzz(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.yzz()))
+    }
+
+    pub fn zxx(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.zxx()))
+    }
+
+    pub fn zxz(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.zxz()))
+    }
+
+    pub fn zyy(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.zyy()))
+    }
+
+    pub fn zyz(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.zyz()))
+    }
+
+    pub fn zzx(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.zzx()))
+    }
+
+    pub fn zzy(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.zzy()))
+    }
+
+    pub fn zzz(&self) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.zzz()))
+    }
+
+    pub fn min_element(&self) -> PyResult<f32> {
+        Ok(self.as_ref()?.min_element())
+    }
+
+    pub fn max_element(&self) -> PyResult<f32> {
+        Ok(self.as_ref()?.max_element())
+    }
+
+    pub fn angle_between(&self, other: &PyVec3A) -> PyResult<f32> {
+        Ok(self.as_ref()?.angle_between(*other.as_ref()?))
+    }
+
+    pub fn any_orthogonal_vector(&self) -> PyResult<PyVec3A> {
+        Ok(self.as_ref()?.any_orthogonal_vector().into())
+    }
+
+    pub fn any_orthonormal_vector(&self) -> PyResult<PyVec3A> {
+        let vector = self.as_ref()?;
+        if !vector.is_normalized() {
+            return Err(PyValueError::new_err(VECTOR_NOT_NORMALIZED));
+        }
+        Ok(vector.any_orthonormal_vector().into())
+    }
+
+    pub fn any_orthonormal_pair(&self) -> PyResult<(PyVec3A, PyVec3A)> {
+        let vector = self.as_ref()?;
+        if !vector.is_normalized() {
+            return Err(PyValueError::new_err(VECTOR_NOT_NORMALIZED));
+        }
+        let (v1, v2) = vector.any_orthonormal_pair();
+        Ok((PyVec3A::from_vec3a(v1), PyVec3A::from_vec3a(v2)))
+    }
+
+    pub fn length_recip(&self) -> PyResult<f32> {
+        Ok(self.as_ref()?.length_recip())
+    }
+
+    pub fn slerp(&self, rhs: &PyVec3A, s: f32) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.slerp(*rhs.as_ref()?, s)))
+    }
+
+    pub fn clamp_length(&self, min: f32, max: f32) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.clamp_length(min, max)))
+    }
+
+    pub fn clamp_length_min(&self, min: f32) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.clamp_length_min(min)))
+    }
+
+    pub fn clamp_length_max(&self, max: f32) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.clamp_length_max(max)))
+    }
+
+    pub fn project_onto_normalized(&self, rhs: &PyVec3A) -> PyResult<PyVec3A> {
+        let value = self.as_ref()?;
+        let rhs = rhs.as_ref()?;
+        if !rhs.is_normalized() {
+            return Err(PyValueError::new_err(RHS_NOT_NORMALIZED));
+        }
+        Ok(PyVec3A::from_vec3a(value.project_onto_normalized(*rhs)))
+    }
+
+    pub fn reject_from_normalized(&self, rhs: &PyVec3A) -> PyResult<PyVec3A> {
+        let value = self.as_ref()?;
+        let rhs = rhs.as_ref()?;
+        if !rhs.is_normalized() {
+            return Err(PyValueError::new_err(RHS_NOT_NORMALIZED));
+        }
+        Ok(PyVec3A::from_vec3a(value.reject_from_normalized(*rhs)))
+    }
+
+    #[staticmethod]
+    pub fn select(
+        mask: (bool, bool, bool),
+        if_true: &PyVec3A,
+        if_false: &PyVec3A,
+    ) -> PyResult<PyVec3A> {
+        let bmask = BVec3A::new(mask.0, mask.1, mask.2);
+        Ok(PyVec3A::from_vec3a(Vec3A::select(
+            bmask,
+            *if_true.as_ref()?,
+            *if_false.as_ref()?,
+        )))
+    }
+
+    pub fn cmpeq(&self, rhs: &PyVec3A) -> PyResult<(bool, bool, bool)> {
+        let result = self.as_ref()?.cmpeq(*rhs.as_ref()?);
+        let [x, y, z]: [bool; 3] = result.into();
+        Ok((x, y, z))
+    }
+
+    pub fn cmpne(&self, rhs: &PyVec3A) -> PyResult<(bool, bool, bool)> {
+        let result = self.as_ref()?.cmpne(*rhs.as_ref()?);
+        let [x, y, z]: [bool; 3] = result.into();
+        Ok((x, y, z))
+    }
+
+    pub fn cmpge(&self, rhs: &PyVec3A) -> PyResult<(bool, bool, bool)> {
+        let result = self.as_ref()?.cmpge(*rhs.as_ref()?);
+        let [x, y, z]: [bool; 3] = result.into();
+        Ok((x, y, z))
+    }
+
+    pub fn cmpgt(&self, rhs: &PyVec3A) -> PyResult<(bool, bool, bool)> {
+        let result = self.as_ref()?.cmpgt(*rhs.as_ref()?);
+        let [x, y, z]: [bool; 3] = result.into();
+        Ok((x, y, z))
+    }
+
+    pub fn cmple(&self, rhs: &PyVec3A) -> PyResult<(bool, bool, bool)> {
+        let result = self.as_ref()?.cmple(*rhs.as_ref()?);
+        let [x, y, z]: [bool; 3] = result.into();
+        Ok((x, y, z))
+    }
+
+    pub fn cmplt(&self, rhs: &PyVec3A) -> PyResult<(bool, bool, bool)> {
+        let result = self.as_ref()?.cmplt(*rhs.as_ref()?);
+        let [x, y, z]: [bool; 3] = result.into();
+        Ok((x, y, z))
+    }
+
+    #[staticmethod]
+    pub fn from_slice(slice: Vec<f32>) -> PyResult<PyVec3A> {
+        if slice.len() < 3 {
+            return Err(PyValueError::new_err(from_slice_too_short(3)));
+        }
+        Ok(PyVec3A::from_vec3a(Vec3A::from_slice(&slice)))
+    }
+
+    pub fn as_uvec3(&self) -> PyResult<PyUVec3> {
+        Ok(self.as_ref()?.as_uvec3().into())
+    }
+
+    pub fn reflect(&self, normal: &PyVec3A) -> PyResult<PyVec3A> {
+        let normal = *normal.as_ref()?;
+        if !normal.is_normalized() {
+            return Err(PyValueError::new_err(NORMAL_NOT_NORMALIZED));
+        }
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.reflect(normal)))
+    }
+
+    pub fn refract(&self, normal: &PyVec3A, eta: f32) -> PyResult<PyVec3A> {
+        let incident = *self.as_ref()?;
+        let normal = *normal.as_ref()?;
+        if !incident.is_normalized() {
+            return Err(PyValueError::new_err(VECTOR_NOT_NORMALIZED));
+        }
+        if !normal.is_normalized() {
+            return Err(PyValueError::new_err(NORMAL_NOT_NORMALIZED));
+        }
+        Ok(PyVec3A::from_vec3a(incident.refract(normal, eta)))
+    }
+
+    pub fn normalize_and_length(&self) -> PyResult<(PyVec3A, f32)> {
+        let (normalized, length) = self.as_ref()?.normalize_and_length();
+        Ok((PyVec3A::from_vec3a(normalized), length))
+    }
+
+    pub fn rotate_towards(&self, rhs: &PyVec3A, max_angle: f32) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(
+            self.as_ref()?.rotate_towards(*rhs.as_ref()?, max_angle),
+        ))
+    }
+
+    pub fn rotate_x(&self, angle: f32) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.rotate_x(angle)))
+    }
+
+    pub fn rotate_y(&self, angle: f32) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.rotate_y(angle)))
+    }
+
+    pub fn rotate_z(&self, angle: f32) -> PyResult<PyVec3A> {
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.rotate_z(angle)))
+    }
+
+    pub fn rotate_axis(&self, axis: &PyVec3A, angle: f32) -> PyResult<PyVec3A> {
+        let axis = *axis.as_ref()?;
+        if !axis.is_normalized() {
+            return Err(PyValueError::new_err(AXIS_NOT_NORMALIZED));
+        }
+        Ok(PyVec3A::from_vec3a(self.as_ref()?.rotate_axis(axis, angle)))
+    }
+
+    #[staticmethod]
+    #[pyo3(name = "AXES")]
+    pub fn axes() -> (Self, Self, Self) {
+        (
+            Self::vec3a(Vec3A::X),
+            Self::vec3a(Vec3A::Y),
+            Self::vec3a(Vec3A::Z),
+        )
     }
 }
 

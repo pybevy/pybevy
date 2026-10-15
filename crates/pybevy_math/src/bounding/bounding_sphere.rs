@@ -103,12 +103,12 @@ impl PyBoundingSphere {
         Ok(self.as_ref()?.radius())
     }
 
-    pub fn closest_point(&self, point: &Bound<'_, PyAny>) -> PyResult<PyVec3> {
+    pub fn closest_point(&self, point: &Bound<'_, PyAny>) -> PyResult<PyVec3A> {
         let point = extract_vec3a_from_any(point)?;
         let sphere = self.as_ref()?;
-        Ok(PyVec3::from_vec3(
-            bounding_sphere_closest_point(&sphere, point).into(),
-        ))
+        Ok(PyVec3A::from_vec3a(bounding_sphere_closest_point(
+            &sphere, point,
+        )))
     }
 
     pub fn contains(&self, other: &PyBoundingSphere) -> PyResult<bool> {
@@ -237,5 +237,34 @@ impl PyBoundingSphere {
             sphere.center.repr_literal(),
             float_repr(sphere.radius())
         ))
+    }
+
+    pub fn translated_by(&self, translation: &Bound<'_, PyAny>) -> PyResult<PyBoundingSphere> {
+        let translation = extract_vec3a_from_any(translation)?;
+        Ok(BoundingSphere::try_from(self)?
+            .translated_by(translation)
+            .into())
+    }
+
+    pub fn translate_by(&mut self, translation: &Bound<'_, PyAny>) -> PyResult<()> {
+        let translation = extract_vec3a_from_any(translation)?;
+        self.as_mut()?.translate_by(translation);
+        Ok(())
+    }
+
+    pub fn rotate_by(&mut self, rotation: &Bound<'_, PyAny>) -> PyResult<()> {
+        let rotated = BoundingSphere::try_from(&self.rotated_by(rotation)?)?;
+        *self.as_mut()? = rotated;
+        Ok(())
+    }
+
+    pub fn transform_by(
+        &mut self,
+        translation: &Bound<'_, PyAny>,
+        rotation: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        let transformed = BoundingSphere::try_from(&self.transformed_by(translation, rotation)?)?;
+        *self.as_mut()? = transformed;
+        Ok(())
     }
 }

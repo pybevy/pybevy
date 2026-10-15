@@ -1,5 +1,8 @@
 use bevy::math::bounding::{BoundingCircleCast, IntersectsVolume};
-use pybevy_core::{FieldStorage, FromBorrowedStorage, repr::object_repr};
+use pybevy_core::{
+    FieldStorage, FromBorrowedStorage,
+    repr::{ReprLiteral, float_repr, object_repr},
+};
 use pybevy_macros::pyfield;
 use pyo3::prelude::*;
 
@@ -80,9 +83,11 @@ impl PyBoundingCircleCast {
     fn __repr__(&self) -> PyResult<String> {
         let cast = self.as_ref()?;
         Ok(format!(
-            "BoundingCircleCast(circle={}, ray={})",
+            "BoundingCircleCast(circle={}, origin={}, direction={}, max={})",
             object_repr(PyBoundingCircle::from(cast.circle)),
-            object_repr(PyRayCast2d::from_owned(cast.ray.clone()))
+            cast.ray.ray.origin.repr_literal(),
+            PyDir2::from(cast.ray.ray.direction).__repr__()?,
+            float_repr(cast.ray.max)
         ))
     }
 }

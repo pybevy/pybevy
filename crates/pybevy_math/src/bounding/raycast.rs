@@ -1,10 +1,10 @@
 use bevy::math::{
-    Dir3, Vec2, Vec3,
+    Dir3, Vec2,
     bounding::{Aabb2d, Aabb3d, BoundingCircle, BoundingSphere, RayCast2d, RayCast3d},
 };
 use pybevy_core::{
     FieldStorage, FromBorrowedStorage, ValueStorage,
-    repr::{ReprLiteral, float_repr, object_repr},
+    repr::{ReprLiteral, float_repr},
 };
 use pybevy_macros::pyfield;
 use pyo3::prelude::*;
@@ -100,8 +100,9 @@ impl PyRayCast2d {
     fn __repr__(&self) -> PyResult<String> {
         let cast = self.as_ref()?;
         Ok(format!(
-            "RayCast2d(ray={}, max={})",
-            object_repr(PyRay2d::from(cast.ray)),
+            "RayCast2d(origin={}, direction={}, max={})",
+            cast.ray.origin.repr_literal(),
+            PyDir2::from(cast.ray.direction).__repr__()?,
             float_repr(cast.max)
         ))
     }
@@ -125,10 +126,13 @@ impl PyRayCast3d {
     }
 
     #[new]
-    pub fn new(origin: PyVec3, direction: PyDir3, max: f32) -> PyResult<Self> {
-        let origin_vec: Vec3 = origin.try_into()?;
-        let dir = direction.get()?;
-        Ok(Self::from_owned(RayCast3d::new(origin_vec, dir, max)))
+    pub fn new(origin: &Bound<'_, PyAny>, direction: PyDir3, max: f32) -> PyResult<Self> {
+        let origin = extract_vec3a_from_any(origin)?;
+        Ok(Self::from_owned(RayCast3d::new(
+            origin,
+            direction.get()?,
+            max,
+        )))
     }
 
     #[staticmethod]
@@ -200,11 +204,9 @@ impl PyRayCast3d {
     fn __repr__(&self) -> PyResult<String> {
         let cast = self.as_ref()?;
         Ok(format!(
-            "RayCast3d(origin={}, direction=Dir3({}, {}, {}), max={})",
+            "RayCast3d(origin={}, direction={}, max={})",
             cast.origin.repr_literal(),
-            float_repr(cast.direction.x),
-            float_repr(cast.direction.y),
-            float_repr(cast.direction.z),
+            PyDir3::from(Dir3::from(cast.direction)).__repr__()?,
             float_repr(cast.max)
         ))
     }

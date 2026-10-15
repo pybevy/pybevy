@@ -163,6 +163,10 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<cubic_splines::linear_spline3d::PyLinearSpline3d>()?;
     m.add_class::<cubic_splines::rational_curve2d::PyRationalCurve2d>()?;
     m.add_class::<cubic_splines::rational_curve3d::PyRationalCurve3d>()?;
+    m.add_class::<cubic_splines::PyCubicSegment2d>()?;
+    m.add_class::<cubic_splines::PyCubicSegment3d>()?;
+    m.add_class::<cubic_splines::PyRationalSegment2d>()?;
+    m.add_class::<cubic_splines::PyRationalSegment3d>()?;
     m.add_class::<cubic_splines::cubic_cardinal_spline::PyCubicCardinalSpline2d>()?;
     m.add_class::<cubic_splines::cubic_hermite::PyCubicHermite2d>()?;
     m.add_class::<rot2::PyRot2>()?;

@@ -1,13 +1,16 @@
 use bevy::math::{
-    Dir3, Vec3,
+    Dir3,
     bounding::{BoundingSphereCast, IntersectsVolume},
 };
-use pybevy_core::{FieldStorage, FromBorrowedStorage, repr::object_repr};
+use pybevy_core::{
+    FieldStorage, FromBorrowedStorage,
+    repr::{ReprLiteral, float_repr, object_repr},
+};
 use pybevy_macros::pyfield;
 use pyo3::prelude::*;
 
 use super::{bounding_sphere::PyBoundingSphere, raycast::PyRayCast3d};
-use crate::{dir3::PyDir3, ray::PyRay3d, vec3::PyVec3};
+use crate::{dir3::PyDir3, ray::PyRay3d, vec3a::extract_vec3a_from_any};
 
 #[pyfield]
 #[pyclass(name = "BoundingSphereCast", module = "pybevy.math", from_py_object)]
@@ -29,13 +32,13 @@ impl PyBoundingSphereCast {
     #[new]
     pub fn new(
         sphere: &PyBoundingSphere,
-        origin: PyVec3,
+        origin: &Bound<'_, PyAny>,
         direction: PyDir3,
         max: f32,
     ) -> PyResult<Self> {
         Ok(Self::from_owned(BoundingSphereCast::new(
             sphere.try_into()?,
-            Vec3::try_from(origin)?,
+            extract_vec3a_from_any(origin)?,
             Dir3::try_from(direction)?,
             max,
         )))
@@ -83,9 +86,11 @@ impl PyBoundingSphereCast {
     fn __repr__(&self) -> PyResult<String> {
         let cast = self.as_ref()?;
         Ok(format!(
-            "BoundingSphereCast(sphere={}, ray={})",
+            "BoundingSphereCast(sphere={}, origin={}, direction={}, max={})",
             object_repr(PyBoundingSphere::from(cast.sphere)),
-            object_repr(PyRayCast3d::from_owned(cast.ray.clone()))
+            cast.ray.origin.repr_literal(),
+            PyDir3::from(Dir3::from(cast.ray.direction)).__repr__()?,
+            float_repr(cast.ray.max)
         ))
     }
 }

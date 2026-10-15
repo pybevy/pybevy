@@ -281,10 +281,6 @@ impl PyUVec3 {
         Ok((value.x, value.y, value.z))
     }
 
-    pub fn as_tuple(&self) -> PyResult<(u32, u32, u32)> {
-        self.to_array()
-    }
-
     pub fn as_vec3(&self) -> PyResult<PyVec3> {
         Ok(self.as_ref()?.as_vec3().into())
     }

@@ -201,7 +201,7 @@ impl PyIRect {
     pub fn __repr__(&self) -> PyResult<String> {
         let rect = self.to_bevy()?;
         Ok(format!(
-            "IRect(min=IVec2({}, {}), max=IVec2({}, {}))",
+            "IRect({}, {}, {}, {})",
             rect.min.x, rect.min.y, rect.max.x, rect.max.y
         ))
     }

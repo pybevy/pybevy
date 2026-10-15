@@ -166,7 +166,7 @@ impl PyUVec2 {
 
     pub fn __repr__(&self) -> PyResult<String> {
         let vec = self.as_ref()?;
-        Ok(format!("UVec2(x={}, y={})", vec.x, vec.y))
+        Ok(format!("UVec2({}, {})", vec.x, vec.y))
     }
 
     pub fn __richcmp__(
@@ -265,10 +265,6 @@ impl PyUVec2 {
     pub fn to_array(&self) -> PyResult<(u32, u32)> {
         let value = self.as_ref()?;
         Ok((value.x, value.y))
-    }
-
-    pub fn as_tuple(&self) -> PyResult<(u32, u32)> {
-        self.to_array()
     }
 
     pub fn as_vec2(&self) -> PyResult<PyVec2> {

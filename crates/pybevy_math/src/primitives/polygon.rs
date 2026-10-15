@@ -1,5 +1,5 @@
 use bevy::math::{Vec2, primitives::Polygon};
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, ValueStorage, repr::ReprLiteral};
 use pyo3::{prelude::*, types::PyList};
 
 use crate::vec2::PyVec2;
@@ -57,7 +57,14 @@ impl PyPolygon {
     }
 
     fn __repr__(&self) -> String {
-        format!("Polygon(vertices=[{}])", self.inner.vertices.len())
+        let vertices = self
+            .inner
+            .vertices
+            .iter()
+            .map(|vertex| vertex.repr_literal())
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("Polygon([{vertices}])")
     }
 }
 

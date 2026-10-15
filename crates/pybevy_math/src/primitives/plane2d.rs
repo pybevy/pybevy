@@ -1,15 +1,14 @@
 use bevy::math::{Dir2, primitives::Plane2d};
 use pybevy_core::{
-    FromBorrowedStorage, ValueStorage, public_error::UNSUPPORTED_COMPARISON, repr::float_list_repr,
+    FromBorrowedStorage, Omittable, ValueStorage, public_error::UNSUPPORTED_COMPARISON,
 };
 use pybevy_macros::pyvalue;
-use pyo3::{
-    basic::CompareOp,
-    exceptions::{PyTypeError, PyValueError},
-    prelude::*,
-};
+use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
-use crate::{dir2::PyDir2, richcmp::comparison_result, vec2::PyVec2};
+use crate::{
+    dir2::{PyDir2, extract_dir2_from_any},
+    richcmp::comparison_result,
+};
 
 #[pyvalue]
 #[pyclass(name = "Plane2d", module = "pybevy.math", skip_from_py_object)]
@@ -29,18 +28,13 @@ impl PyPlane2d {
     }
 
     #[new]
-    #[pyo3(signature = (normal = PyVec2::Y))]
-    pub fn new(normal: PyVec2) -> PyResult<Self> {
-        let dir =
-            Dir2::new(normal.try_get()?).map_err(|e| PyValueError::new_err(format!("{}", e)))?;
-        Ok(Self::from_owned(Plane2d { normal: dir }))
-    }
-
-    #[staticmethod]
-    pub fn from_dir(normal: PyDir2) -> PyResult<Self> {
-        Ok(Self::from_owned(Plane2d {
-            normal: normal.into_dir2()?,
-        }))
+    #[pyo3(signature = (normal = Omittable::default()))]
+    pub fn new(normal: Omittable<Bound<'_, PyAny>>) -> PyResult<Self> {
+        let normal = match normal.into_option() {
+            Some(normal) => extract_dir2_from_any(&normal)?,
+            None => Dir2::Y,
+        };
+        Ok(Self::from_owned(Plane2d { normal }))
     }
 
     #[getter]
@@ -55,11 +49,8 @@ impl PyPlane2d {
     }
 
     fn __repr__(&self) -> PyResult<String> {
-        let n = self.as_ref()?.normal;
-        Ok(format!(
-            "Plane2d(normal={})",
-            float_list_repr(&n.to_array())
-        ))
+        let normal = self.as_ref()?.normal;
+        Ok(format!("Plane2d({})", PyDir2::from(normal).__repr__()?))
     }
 
     fn __richcmp__(

@@ -2,7 +2,7 @@ use bevy::math::{Mat3, Vec3};
 use pybevy_core::{
     FromBorrowedStorage, StorageRef, ValueStorage,
     public_error::{UNSUPPORTED_COMPARISON, euler_axes_not_normalized},
-    repr::float_repr,
+    repr::ReprLiteral,
 };
 use pyo3::{
     basic::CompareOp,
@@ -111,22 +111,13 @@ impl PyMat3 {
     }
 
     #[new]
-    #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (m00=1.0, m01=0.0, m02=0.0, m10=0.0, m11=1.0, m12=0.0, m20=0.0, m21=0.0, m22=1.0))]
-    pub fn new(
-        m00: f32,
-        m01: f32,
-        m02: f32,
-        m10: f32,
-        m11: f32,
-        m12: f32,
-        m20: f32,
-        m21: f32,
-        m22: f32,
-    ) -> Self {
-        PyMat3::mat3(Mat3::from_cols_array(&[
-            m00, m01, m02, m10, m11, m12, m20, m21, m22,
-        ]))
+    #[pyo3(signature = (*, x_axis = PyVec3::X, y_axis = PyVec3::Y, z_axis = PyVec3::Z))]
+    pub fn new(x_axis: PyVec3, y_axis: PyVec3, z_axis: PyVec3) -> PyResult<Self> {
+        Ok(PyMat3::mat3(Mat3::from_cols(
+            x_axis.try_into()?,
+            y_axis.try_into()?,
+            z_axis.try_into()?,
+        )))
     }
 
     #[staticmethod]
@@ -341,10 +332,11 @@ impl PyMat3 {
 
     fn __repr__(&self) -> PyResult<String> {
         let mat = *self.as_ref()?;
-        let arr = mat.to_cols_array().map(float_repr);
         Ok(format!(
-            "Mat3([{}, {}, {}], [{}, {}, {}], [{}, {}, {}])",
-            arr[0], arr[1], arr[2], arr[3], arr[4], arr[5], arr[6], arr[7], arr[8]
+            "Mat3(x_axis={}, y_axis={}, z_axis={})",
+            mat.x_axis.repr_literal(),
+            mat.y_axis.repr_literal(),
+            mat.z_axis.repr_literal()
         ))
     }
 

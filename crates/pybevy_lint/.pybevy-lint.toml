@@ -867,7 +867,6 @@ types = [
     "math::CubicInOutCurve",
     "math::CubicNurbsError",
     "math::CubicOutCurve",
-    "math::CubicSegment",
     "math::CurveReparamCurve",
     "math::Dir3A",
     "math::Dir4",
@@ -902,7 +901,6 @@ types = [
     "math::QuinticInCurve",
     "math::QuinticInOutCurve",
     "math::QuinticOutCurve",
-    "math::RationalSegment",
     "math::ReparamCurve",
     "math::RepeatCurve",
     "math::RepeatError",
@@ -1090,6 +1088,10 @@ PyCubicCurve2d = "CubicCurve<Vec2>"
 PyCubicCurve3d = "CubicCurve<Vec3>"
 PyRationalCurve2d = "RationalCurve<Vec2>"
 PyRationalCurve3d = "RationalCurve<Vec3>"
+PyCubicSegment2d = "CubicSegment<Vec2>"
+PyCubicSegment3d = "CubicSegment<Vec3>"
+PyRationalSegment2d = "RationalSegment<Vec2>"
+PyRationalSegment3d = "RationalSegment<Vec3>"
 
 [bevy.constructor_functions."pybevy.render.PyShaderBuffer"]
 function = "new"
@@ -1552,6 +1554,13 @@ reason = "Bevy 0.19.1 bevy_mesh::Mesh::new maps primitive_topology and asset_usa
 "pybevy.light.PyVolumetricFog" = "Bevy 0.19.1 bevy_light::VolumetricFog fields define the established Python constructor"
 "pybevy.math.PyAffine2" = "glam 0.32.1 Affine2 fields define the Python constructor; Default is IDENTITY"
 "pybevy.math.PyAffine3A" = "Bevy 0.19.1 glam::Affine3A fields define the established Python constructor"
+"pybevy.math.PyCubicSegment2d" = "Bevy 0.19.1 bevy_math::cubic_splines::CubicSegment fields define the Python constructor"
+"pybevy.math.PyCubicSegment3d" = "Bevy 0.19.1 bevy_math::cubic_splines::CubicSegment fields define the Python constructor"
+"pybevy.math.PyMat3" = "glam 0.32.1 Mat3 fields define the Python constructor; Default is IDENTITY"
+"pybevy.math.PyMat3A" = "glam 0.32.1 Mat3A fields define the Python constructor; Default is IDENTITY"
+"pybevy.math.PyMat4" = "glam 0.32.1 Mat4 fields define the Python constructor; Default is IDENTITY"
+"pybevy.math.PyRationalSegment2d" = "Bevy 0.19.1 bevy_math::cubic_splines::RationalSegment fields define the Python constructor"
+"pybevy.math.PyRationalSegment3d" = "Bevy 0.19.1 bevy_math::cubic_splines::RationalSegment fields define the Python constructor"
 "pybevy.math.PyLine2d" = "Bevy 0.19.1 bevy_math::primitives::Line2d fields define the established Python constructor"
 "pybevy.math.PyLine3d" = "Bevy 0.19.1 bevy_math::primitives::Line3d fields define the established Python constructor"
 "pybevy.math.PyEllipse" = "Bevy 0.19.1 bevy_math::primitives::Ellipse fields define the established Python constructor"
@@ -1757,9 +1766,6 @@ reason = "Bevy 0.19.1 bevy_audio::SpatialListener::new defines the gap prefix fo
 "pybevy.render.PyRenderPlugin" = "The constructor maps power_preference into nested WgpuSettings and accepts an optional synchronous pipeline compilation override"
 "pybevy.math.PyDir2" = "PyBevy flattens the Vec2 accepted by Bevy Dir2::new into x and y inputs"
 "pybevy.math.PyDir3" = "PyBevy flattens the Vec3 accepted by Bevy Dir3::new into x, y, and z inputs"
-"pybevy.math.PyMat3" = "PyBevy flattens the array accepted by glam Mat3::from_cols_array into nine matrix entries"
-"pybevy.math.PyMat3A" = "PyBevy flattens the array accepted by glam Mat3A::from_cols_array into nine matrix entries"
-"pybevy.math.PyMat4" = "PyBevy flattens the array accepted by glam Mat4::from_cols_array into sixteen matrix entries"
 "pybevy.ui.PyBorderRadius" = "PyBevy combines a uniform radius convenience input with optional per-corner overrides"
 "pybevy.ui.PyBoxShadow" = "PyBevy constructs the BoxShadow collection from ShadowStyle values rather than mirroring the single-shadow native factory"
 
@@ -3142,6 +3148,11 @@ message = "method 'MessageMutator::__iter__' return type mismatch: Rust='PyResul
 reason = "the private iterator materializes the channel type retained by MessageMutator[M] and structurally implements Iterator[M]"
 
 [[validation.exceptions]]
+code = "E005"
+path = "math.Mat4"
+reason = "The external-crate field list for glam 0.32.1 Mat4 is read from cargo-public-api output, which sorts fields alphabetically (w_axis first); the declared order in glam/src/f32/sse2/mat4.rs is x_axis, y_axis, z_axis, w_axis, which the constructor follows"
+
+[[validation.exceptions]]
 code = "E013"
 path = "animation.AnimationEvent"
 reason = "pybevy-animation Python-defined type; no upstream Bevy constructor"
@@ -3429,41 +3440,6 @@ paths = [
 
 [[validation.exceptions]]
 code = "W038"
-reason = "Pending fix/math-review: existing math drift (Python-only member) found when W038 landed; that review fixes or justifies it"
-paths = [
-    "math.Aabb2d.intersects_aabb",
-    "math.Aabb2d.intersects_circle",
-    "math.Aabb3d.intersects_aabb",
-    "math.Aabb3d.intersects_sphere",
-    "math.BoundingCircle.intersects_aabb",
-    "math.BoundingCircle.intersects_circle",
-    "math.BoundingSphere.intersects_aabb",
-    "math.BoundingSphere.intersects_sphere",
-    "math.CubicCurve2d.segment_count",
-    "math.CubicCurve3d.segment_count",
-    "math.Dir2.as_tuple",
-    "math.Dir3.as_tuple",
-    "math.EaseFunction.ease",
-    "math.InfinitePlane3d.from_dir",
-    "math.Mat3A.mul_mat3a",
-    "math.Plane2d.from_dir",
-    "math.RationalCurve2d.segment_count",
-    "math.RationalCurve3d.segment_count",
-    "math.RayCast2d.intersects_aabb",
-    "math.RayCast2d.intersects_circle",
-    "math.RayCast3d.intersects_aabb",
-    "math.RayCast3d.intersects_sphere",
-    "math.RayCast3d.ray",
-    "math.Rot2.rotate",
-    "math.UVec2.as_tuple",
-    "math.UVec3.as_tuple",
-    "math.Vec2.as_tuple",
-    "math.Vec3.as_tuple",
-    "math.Vec4.as_tuple",
-]
-
-[[validation.exceptions]]
-code = "W038"
 reason = "Existing drift (Python-only member) found when W038 landed; triage pending"
 paths = [
     "animation.AnimationEvent.data",
@@ -3588,16 +3564,38 @@ paths = [
 
 [[validation.exceptions]]
 code = "W039"
-reason = "Pending fix/math-review: existing math drift (return type differs from Bevy) found when W039 landed; that review fixes or justifies it"
+reason = "Pending: Isometry3d point transforms and RayCast3d.direction_recip return Vec3 where Bevy returns Vec3A; outside the fix/math-review scope"
 paths = [
-    "math.Aabb3d.center",
-    "math.Aabb3d.closest_point",
-    "math.Aabb3d.half_size",
-    "math.BoundingSphere.closest_point",
     "math.Isometry3d.inverse_transform_point",
     "math.Isometry3d.transform_point",
     "math.RayCast3d.direction_recip",
+]
+
+[[validation.exceptions]]
+code = "W039"
+reason = "PyBevy has no BVec wrapper, so the cmp* comparison masks return a tuple of bools, and to_array returns a tuple rather than a fixed-size array"
+paths = [
+    "math.IVec2.cmpeq",
+    "math.IVec2.cmpge",
+    "math.IVec2.cmpgt",
+    "math.IVec2.cmple",
+    "math.IVec2.cmplt",
+    "math.IVec2.cmpne",
+    "math.IVec2.to_array",
+    "math.Quat.to_array",
+    "math.UVec2.cmpeq",
+    "math.UVec2.cmpge",
+    "math.UVec2.cmpgt",
+    "math.UVec2.cmple",
+    "math.UVec2.cmplt",
+    "math.UVec2.cmpne",
     "math.UVec2.to_array",
+    "math.UVec3.cmpeq",
+    "math.UVec3.cmpge",
+    "math.UVec3.cmpgt",
+    "math.UVec3.cmple",
+    "math.UVec3.cmplt",
+    "math.UVec3.cmpne",
     "math.UVec3.to_array",
     "math.Vec2.cmpeq",
     "math.Vec2.cmpge",
@@ -3613,6 +3611,13 @@ paths = [
     "math.Vec3.cmplt",
     "math.Vec3.cmpne",
     "math.Vec3.to_array",
+    "math.Vec3A.cmpeq",
+    "math.Vec3A.cmpge",
+    "math.Vec3A.cmpgt",
+    "math.Vec3A.cmple",
+    "math.Vec3A.cmplt",
+    "math.Vec3A.cmpne",
+    "math.Vec3A.to_array",
     "math.Vec4.cmpeq",
     "math.Vec4.cmpge",
     "math.Vec4.cmpgt",
@@ -3646,13 +3651,6 @@ paths = [
 
 [[validation.exceptions]]
 code = "W040"
-reason = "Pending fix/math-review: existing math drift (Bevy enum wrapped as an ordinary class) found when W040 landed; that review fixes or justifies it"
-paths = [
-    "math.EaseFunction",
-]
-
-[[validation.exceptions]]
-code = "W040"
 reason = "Existing drift (Bevy enum wrapped as an ordinary class) found when W040 landed; triage pending"
 paths = [
     "camera.Visibility",
@@ -3670,59 +3668,26 @@ paths = [
 
 [[validation.exceptions]]
 code = "W041"
-reason = "Pending fix/math-review: existing math drift (missing contract-trait method) found when W041 landed; that review fixes or justifies it"
+reason = "Pending: BoundingVolume::half_size on the bounding circle and sphere, and StableInterpolate::interpolate_stable on Quat, are outside the fix/math-review scope"
 paths = [
-    "math.Aabb2d.rotate_by",
-    "math.Aabb2d.transform_by",
-    "math.Aabb2d.translate_by",
-    "math.Aabb2d.translated_by",
-    "math.Aabb3d.rotate_by",
-    "math.Aabb3d.transform_by",
-    "math.Aabb3d.translate_by",
-    "math.Aabb3d.translated_by",
-    "math.AabbCast2d.intersects",
     "math.BoundingCircle.half_size",
-    "math.BoundingCircle.rotate_by",
-    "math.BoundingCircle.transform_by",
-    "math.BoundingCircle.translate_by",
-    "math.BoundingCircle.translated_by",
-    "math.BoundingCircleCast.intersects",
     "math.BoundingSphere.half_size",
-    "math.BoundingSphere.rotate_by",
-    "math.BoundingSphere.transform_by",
-    "math.BoundingSphere.translate_by",
-    "math.BoundingSphere.translated_by",
-    "math.CubicBSpline2d.to_curve_cyclic",
-    "math.CubicBSpline3d.to_curve_cyclic",
-    "math.CubicCardinalSpline2d.to_curve_cyclic",
-    "math.CubicCardinalSpline3d.to_curve_cyclic",
-    "math.CubicCurve2d.domain",
-    "math.CubicCurve2d.sample",
-    "math.CubicCurve2d.sample_clamped",
-    "math.CubicCurve2d.sample_unchecked",
-    "math.CubicCurve3d.domain",
-    "math.CubicCurve3d.sample",
-    "math.CubicCurve3d.sample_clamped",
-    "math.CubicCurve3d.sample_unchecked",
-    "math.CubicHermite2d.to_curve_cyclic",
-    "math.CubicHermite3d.to_curve_cyclic",
-    "math.EaseFunction.domain",
-    "math.EaseFunction.sample",
-    "math.EaseFunction.sample_clamped",
-    "math.EaseFunction.sample_unchecked",
-    "math.LinearSpline2d.to_curve_cyclic",
-    "math.LinearSpline3d.to_curve_cyclic",
     "math.Quat.interpolate_stable",
-    "math.RationalCurve2d.domain",
-    "math.RationalCurve2d.sample",
-    "math.RationalCurve2d.sample_clamped",
+]
+
+[[validation.exceptions]]
+code = "W041"
+reason = "Curve::sample_unchecked is not exposed; Python samples a curve through sample and sample_clamped, which check the domain instead of returning unspecified values outside it"
+paths = [
+    "math.CubicCurve2d.sample_unchecked",
+    "math.CubicCurve3d.sample_unchecked",
+    "math.CubicSegment2d.sample_unchecked",
+    "math.CubicSegment3d.sample_unchecked",
+    "math.EaseFunction.sample_unchecked",
     "math.RationalCurve2d.sample_unchecked",
-    "math.RationalCurve3d.domain",
-    "math.RationalCurve3d.sample",
-    "math.RationalCurve3d.sample_clamped",
     "math.RationalCurve3d.sample_unchecked",
-    "math.RayCast2d.intersects",
-    "math.RayCast3d.intersects",
+    "math.RationalSegment2d.sample_unchecked",
+    "math.RationalSegment3d.sample_unchecked",
 ]
 
 [[validation.exceptions]]
