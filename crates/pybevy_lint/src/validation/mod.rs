@@ -74,6 +74,12 @@ pub fn validate_with_bevy(
     }
 
     let wrapper_index = wrapper_types::wrapper_index(rust_classes, &config.bevy);
+    let unwrapped = wrapper_types::unwrapped_bevy_types(
+        rust_classes,
+        python_classes,
+        &config.bevy,
+        bevy_crates,
+    );
     for rust_class in rust_classes {
         if rust_class.python_name.starts_with('_') {
             continue;
@@ -126,6 +132,17 @@ pub fn validate_with_bevy(
                 origin.as_ref(),
                 &upstream,
                 &wrapper_index,
+                &unwrapped,
+            ));
+        }
+
+        if let Some((_, bevy_item)) = find_bevy_item(
+            bevy_crates,
+            &crate::comparison::pybevy_bevy_name(rust_class, &config.bevy),
+        ) && origin::source_struct_is_generic(&bevy_item.full_path, bevy_path) == Some(false)
+        {
+            policy_diagnostics.extend(wrapper_types::check_hand_mirrored_value(
+                rust_class, bevy_item,
             ));
         }
 

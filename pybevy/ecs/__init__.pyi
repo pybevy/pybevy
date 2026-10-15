@@ -570,6 +570,8 @@ class Component:
 
         Added by the @component decorator. Calling it on a storage="python"
         component raises TypeError because Python-object storage is not batchable.
+        A class with `__post_init__` or its own `__init__` builds each row through
+        that constructor, so its validation also applies to batched entities.
         """
 
 class IsResource(Component):

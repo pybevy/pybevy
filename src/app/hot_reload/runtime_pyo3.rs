@@ -11,9 +11,12 @@ use bevy::ecs::{
     },
     world::World,
 };
-use pybevy_core::{PluginIdentity, ReloadRequestMode, ReloadResult};
-use pybevy_ecs::shared::schedule::{
-    ScheduleDisplayNameRegistry, StateScheduleLabel, TransitionScheduleLabel,
+use pybevy_core::{
+    PluginIdentity, ReloadRequestMode, ReloadResult, public_error::reload_schedule_rejected,
+};
+use pybevy_ecs::shared::{
+    schedule::{ScheduleDisplayNameRegistry, StateScheduleLabel, TransitionScheduleLabel},
+    schedule_check::{PlannedNode, check_schedule_extension},
 };
 use pybevy_reload::{
     DefsFingerprint, KEEP_ALIVE_GENERATIONS, PendingSystemError, ReloadError, ReloadMode,
@@ -47,7 +50,8 @@ use crate::{
         },
         system_config::{
             InstalledSystemSetConfigs, PySystemConfig, SystemSetConfigIdentity,
-            build_scheduled_system, build_set_config, system_set_config_identity,
+            build_scheduled_system, build_set_config, planned_set_node, planned_system_node,
+            system_set_config_identity,
         },
         system_interpreter::retire_main_handle,
         world::PyWorld,
@@ -179,6 +183,105 @@ fn print_and_drop_loader_error(error: PyErr) {
 enum ReloadStateSchedule {
     State(StateScheduleLabel, String),
     Transition(TransitionScheduleLabel, String),
+}
+
+fn reload_state_schedule(
+    world: &World,
+    schedule: &Bound<'_, PyAny>,
+) -> PyResult<ReloadStateSchedule> {
+    let py = schedule.py();
+    if let Ok(on_enter) = schedule.cast::<PyOnEnterSchedule>() {
+        let on_enter = on_enter.borrow();
+        return Ok(ReloadStateSchedule::State(
+            canonicalize_state_schedule_label(world, on_enter.to_bevy_label(py)?),
+            on_enter.display_name(py)?,
+        ));
+    }
+    if let Ok(on_exit) = schedule.cast::<PyOnExitSchedule>() {
+        let on_exit = on_exit.borrow();
+        return Ok(ReloadStateSchedule::State(
+            canonicalize_state_schedule_label(world, on_exit.to_bevy_label(py)?),
+            on_exit.display_name(py)?,
+        ));
+    }
+    if let Ok(on_transition) = schedule.cast::<PyOnTransitionSchedule>() {
+        let on_transition = on_transition.borrow();
+        return Ok(ReloadStateSchedule::Transition(
+            canonicalize_transition_schedule_label(world, on_transition.to_bevy_label(py)?),
+            on_transition.display_name(py)?,
+        ));
+    }
+    Err(PyRuntimeError::new_err(
+        "invalid state schedule collected during reload",
+    ))
+}
+
+fn planned_chain(value: &Bound<'_, PyAny>, generation: u32) -> PyResult<Vec<PlannedNode>> {
+    match value.extract::<PyChainedSystems>() {
+        Ok(chained) => chained
+            .systems
+            .bind(value.py())
+            .iter()
+            .map(|system| planned_system_node(&system, generation))
+            .collect(),
+        Err(_) => Ok(vec![planned_system_node(value, generation)?]),
+    }
+}
+
+fn planned_set_chain(value: &Bound<'_, PyAny>) -> PyResult<Vec<PlannedNode>> {
+    match value.extract::<PyChainedSystemSets>() {
+        Ok(chained) => chained
+            .sets
+            .bind(value.py())
+            .iter()
+            .map(|member| Ok(planned_set_node(&system_set_config_identity(&member)?)))
+            .collect(),
+        Err(_) => Ok(vec![planned_set_node(&system_set_config_identity(value)?)]),
+    }
+}
+
+/// Group the candidate's systems and set configurations by target schedule.
+fn schedule_plans(
+    world: &World,
+    defs: &PendingDefinitions,
+    generation: u32,
+) -> PyResult<Vec<(InternedScheduleLabel, Vec<Vec<PlannedNode>>)>> {
+    Python::attach(|py| {
+        let mut plans: Vec<(InternedScheduleLabel, Vec<Vec<PlannedNode>>)> = Vec::new();
+        let mut push = |label: InternedScheduleLabel, chain: Vec<PlannedNode>| match plans
+            .iter_mut()
+            .find(|(existing, _)| *existing == label)
+        {
+            Some((_, chains)) => chains.push(chain),
+            None => plans.push((label, vec![chain])),
+        };
+        for (stage, systems) in &defs.systems {
+            for system in systems {
+                push(
+                    stage.intern_label(),
+                    planned_chain(system.bind(py), generation)?,
+                );
+            }
+        }
+        for (stage, values) in &defs.set_configs {
+            for value in values {
+                push(stage.intern_label(), planned_set_chain(value.bind(py))?);
+            }
+        }
+        for pending in &defs.state_systems {
+            let label = match reload_state_schedule(world, pending.schedule.bind(py))? {
+                ReloadStateSchedule::State(label, _) => label.intern(),
+                ReloadStateSchedule::Transition(label, _) => label.intern(),
+            };
+            for system in &pending.systems {
+                push(
+                    label,
+                    vec![planned_system_node(system.bind(py), generation)?],
+                );
+            }
+        }
+        Ok(plans)
+    })
 }
 
 /// Add a batch of Python system functions to a Bevy schedule.
@@ -491,6 +594,29 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
         result
     }
 
+    /// Registration reports malformed definitions with their source, so a
+    /// candidate that cannot be planned is left to it.
+    fn check_schedules(
+        &mut self,
+        world: &mut World,
+        defs: &PendingDefinitions,
+        generation: u32,
+    ) -> Result<(), ReloadError> {
+        let Ok(plans) = schedule_plans(world, defs, generation) else {
+            return Ok(());
+        };
+        for (label, chains) in plans {
+            if let Err(detail) = check_schedule_extension(world, label, &chains) {
+                return Err(ReloadError {
+                    message: reload_schedule_rejected(&format!("{label:?}"), &detail),
+                    traceback: None,
+                    is_load_failure: false,
+                });
+            }
+        }
+        Ok(())
+    }
+
     fn defs_fingerprint(&self, defs: &PendingDefinitions) -> DefsFingerprint {
         Python::attach(|py| {
             let mut builder = InitialDefsFingerprint::default();
@@ -655,37 +781,9 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
         }
 
         for pending in defs.state_systems {
-            let label = Python::attach(|py| -> PyResult<ReloadStateSchedule> {
-                let schedule = pending.schedule.bind(py);
-                if let Ok(on_enter) = schedule.cast::<PyOnEnterSchedule>() {
-                    let on_enter = on_enter.borrow();
-                    return Ok(ReloadStateSchedule::State(
-                        canonicalize_state_schedule_label(world, on_enter.to_bevy_label(py)?),
-                        on_enter.display_name(py)?,
-                    ));
-                }
-                if let Ok(on_exit) = schedule.cast::<PyOnExitSchedule>() {
-                    let on_exit = on_exit.borrow();
-                    return Ok(ReloadStateSchedule::State(
-                        canonicalize_state_schedule_label(world, on_exit.to_bevy_label(py)?),
-                        on_exit.display_name(py)?,
-                    ));
-                }
-                if let Ok(on_transition) = schedule.cast::<PyOnTransitionSchedule>() {
-                    let on_transition = on_transition.borrow();
-                    return Ok(ReloadStateSchedule::Transition(
-                        canonicalize_transition_schedule_label(
-                            world,
-                            on_transition.to_bevy_label(py)?,
-                        ),
-                        on_transition.display_name(py)?,
-                    ));
-                }
-                Err(PyRuntimeError::new_err(
-                    "invalid state schedule collected during reload",
-                ))
-            })
-            .map_err(|error| reload_error_from_py(&error, "", false))?;
+            let label =
+                Python::attach(|py| reload_state_schedule(world, pending.schedule.bind(py)))
+                    .map_err(|error| reload_error_from_py(&error, "", false))?;
 
             macro_rules! register_state_systems {
                 ($label:expr) => {{

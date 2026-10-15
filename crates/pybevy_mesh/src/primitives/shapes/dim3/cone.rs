@@ -2,6 +2,7 @@ use bevy::{
     math::primitives::{Cone, Measured3d},
     mesh::Meshable,
 };
+use pybevy_math::primitives::dimension::dimension;
 use pyo3::prelude::*;
 
 use crate::{
@@ -18,8 +19,9 @@ pub struct PyCone(pub(crate) Cone);
 impl PyCone {
     #[new]
     #[pyo3(signature = (radius=0.5, height=1.0))]
-    pub fn new(radius: f32, height: f32) -> PyClassInitializer<Self> {
-        (Self(Cone::new(radius, height)), PyMeshable).into()
+    pub fn new(radius: f32, height: f32) -> PyResult<PyClassInitializer<Self>> {
+        let cone = Cone::new(dimension("radius", radius)?, dimension("height", height)?);
+        Ok((Self(cone), PyMeshable).into())
     }
 
     #[getter]
@@ -28,8 +30,9 @@ impl PyCone {
     }
 
     #[setter]
-    pub fn set_radius(&mut self, value: f32) {
-        self.0.radius = value;
+    pub fn set_radius(&mut self, value: f32) -> PyResult<()> {
+        self.0.radius = dimension("radius", value)?;
+        Ok(())
     }
 
     #[getter]
@@ -38,8 +41,9 @@ impl PyCone {
     }
 
     #[setter]
-    pub fn set_height(&mut self, value: f32) {
-        self.0.height = value;
+    pub fn set_height(&mut self, value: f32) -> PyResult<()> {
+        self.0.height = dimension("height", value)?;
+        Ok(())
     }
 
     pub fn base(&self, py: Python) -> PyResult<Py<PyCircle>> {

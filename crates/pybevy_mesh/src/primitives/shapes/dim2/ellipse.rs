@@ -7,7 +7,10 @@ use bevy::{
 };
 use pybevy_core::{FromBorrowedStorage, ValueStorage};
 use pybevy_macros::pyvalue;
-use pybevy_math::vec2::PyVec2;
+use pybevy_math::{
+    primitives::dimension::{check_half_size2, dimension},
+    vec2::PyVec2,
+};
 use pyo3::prelude::*;
 
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyEllipseMeshBuilder};
@@ -55,7 +58,7 @@ impl PyEllipse {
     #[new]
     #[pyo3(signature = (*, half_size = PyVec2::vec2(Vec2::new(1.0, 0.5))))]
     pub fn new(half_size: PyVec2) -> PyResult<PyClassInitializer<Self>> {
-        let half_size: Vec2 = half_size.try_into()?;
+        let half_size: Vec2 = dimension("half_size", half_size.try_into()?)?;
         Ok((
             Self::from_owned(Ellipse::new(half_size.x, half_size.y)),
             PyMeshable,
@@ -65,12 +68,18 @@ impl PyEllipse {
 
     #[getter]
     pub fn half_size(&self) -> PyResult<PyVec2> {
-        Ok(self.storage.borrow_field_as(|s| &s.half_size)?)
+        Ok(self.storage.borrow_validated_field_as(
+            |s| &s.half_size,
+            |s| &mut s.half_size,
+            check_half_size2,
+        )?)
     }
 
     #[setter]
     pub fn set_half_size(&mut self, value: PyVec2) -> PyResult<()> {
-        self.as_mut()?.half_size = value.try_into()?;
+        let half_size = value.try_into()?;
+        let mut shape = self.as_mut()?;
+        shape.half_size = dimension("half_size", half_size)?;
         Ok(())
     }
 
@@ -92,7 +101,7 @@ impl PyEllipse {
 
     #[staticmethod]
     pub fn from_size(py: Python, size: PyVec2) -> PyResult<Py<Self>> {
-        let bevy_size: Vec2 = size.try_into()?;
+        let bevy_size: Vec2 = dimension("size", size.try_into()?)?;
         Py::new(
             py,
             (Self::from_owned(Ellipse::from_size(bevy_size)), PyMeshable),

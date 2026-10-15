@@ -2,7 +2,7 @@ use bevy::{
     math::primitives::{Measured3d, Sphere},
     mesh::Meshable,
 };
-use pybevy_math::vec3::PyVec3;
+use pybevy_math::{primitives::dimension::dimension, vec3::PyVec3};
 use pyo3::prelude::*;
 
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PySphereMeshBuilder};
@@ -15,8 +15,8 @@ pub struct PySphere(pub Sphere);
 impl PySphere {
     #[new]
     #[pyo3(signature = (radius=0.5))]
-    pub fn new(radius: f32) -> PyClassInitializer<Self> {
-        (Self(Sphere::new(radius)), PyMeshable).into()
+    pub fn new(radius: f32) -> PyResult<PyClassInitializer<Self>> {
+        Ok((Self(Sphere::new(dimension("radius", radius)?)), PyMeshable).into())
     }
 
     #[getter]
@@ -25,8 +25,9 @@ impl PySphere {
     }
 
     #[setter]
-    pub fn set_radius(&mut self, value: f32) {
-        self.0.radius = value;
+    pub fn set_radius(&mut self, value: f32) -> PyResult<()> {
+        self.0.radius = dimension("radius", value)?;
+        Ok(())
     }
 
     pub fn diameter(&self) -> f32 {

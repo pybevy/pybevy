@@ -2,6 +2,7 @@ use bevy::{
     math::primitives::{ConicalFrustum, Measured3d},
     mesh::Meshable,
 };
+use pybevy_math::primitives::dimension::dimension;
 use pyo3::prelude::*;
 
 use crate::{
@@ -30,16 +31,17 @@ impl From<PyConicalFrustum> for ConicalFrustum {
 impl PyConicalFrustum {
     #[new]
     #[pyo3(signature = (*, radius_top = 0.25, radius_bottom = 0.5, height = 0.5))]
-    pub fn new(radius_top: f32, radius_bottom: f32, height: f32) -> PyClassInitializer<Self> {
-        (
-            Self(ConicalFrustum {
-                radius_top,
-                radius_bottom,
-                height,
-            }),
-            PyMeshable,
-        )
-            .into()
+    pub fn new(
+        radius_top: f32,
+        radius_bottom: f32,
+        height: f32,
+    ) -> PyResult<PyClassInitializer<Self>> {
+        let frustum = ConicalFrustum {
+            radius_top: dimension("radius_top", radius_top)?,
+            radius_bottom: dimension("radius_bottom", radius_bottom)?,
+            height: dimension("height", height)?,
+        };
+        Ok((Self(frustum), PyMeshable).into())
     }
 
     #[getter]
@@ -48,8 +50,9 @@ impl PyConicalFrustum {
     }
 
     #[setter]
-    pub fn set_radius_top(&mut self, value: f32) {
-        self.0.radius_top = value;
+    pub fn set_radius_top(&mut self, value: f32) -> PyResult<()> {
+        self.0.radius_top = dimension("radius_top", value)?;
+        Ok(())
     }
 
     #[getter]
@@ -58,8 +61,9 @@ impl PyConicalFrustum {
     }
 
     #[setter]
-    pub fn set_radius_bottom(&mut self, value: f32) {
-        self.0.radius_bottom = value;
+    pub fn set_radius_bottom(&mut self, value: f32) -> PyResult<()> {
+        self.0.radius_bottom = dimension("radius_bottom", value)?;
+        Ok(())
     }
 
     #[getter]
@@ -68,8 +72,9 @@ impl PyConicalFrustum {
     }
 
     #[setter]
-    pub fn set_height(&mut self, value: f32) {
-        self.0.height = value;
+    pub fn set_height(&mut self, value: f32) -> PyResult<()> {
+        self.0.height = dimension("height", value)?;
+        Ok(())
     }
 
     pub fn bottom_base(&self, py: Python<'_>) -> PyResult<Py<PyCircle>> {

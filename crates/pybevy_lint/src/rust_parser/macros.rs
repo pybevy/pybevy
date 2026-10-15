@@ -27,6 +27,18 @@ pub fn parse_storage_macro(attrs: &[Attribute]) -> Option<String> {
     })
 }
 
+/// Name of any wrapper-generating macro on a struct, storage-backed or not.
+pub fn parse_wrapper_macro(attrs: &[Attribute]) -> Option<String> {
+    parse_storage_macro(attrs).or_else(|| {
+        attrs.iter().find_map(|attr| {
+            let name = attr.path().get_ident()?.to_string();
+            ["pyplugin", "pymessage", "pyenum"]
+                .contains(&name.as_str())
+                .then_some(name)
+        })
+    })
+}
+
 /// Parse bridge metadata from storage macro attributes like
 /// `#[pycomponent(..., bridge, view_fields = [...], no_insert)]`.
 pub fn parse_bridge_attrs(

@@ -101,6 +101,17 @@ pub trait ReloadRuntime {
         false
     }
 
+    /// Reject definitions whose schedules would fail to build once registered.
+    /// Called BEFORE generation increment, like `load_definitions`.
+    fn check_schedules(
+        &mut self,
+        _world: &mut World,
+        _defs: &Self::Defs,
+        _generation: u32,
+    ) -> Result<(), ReloadError> {
+        Ok(())
+    }
+
     /// Compute a [`DefsFingerprint`] of the pending definitions.
     /// The orchestrator compares it against the previous generation's to
     /// decide whether a Partial reload must escalate to Full.

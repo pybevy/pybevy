@@ -197,6 +197,29 @@ impl ScheduleOrdering {
     pub fn push_after(&mut self, set: SystemSetTarget) {
         push_unique(&mut self.after, set);
     }
+
+    /// Return the first `before`/`after` target that is one of `members`, the
+    /// callable sets the configured system itself joins.
+    #[must_use]
+    pub fn relation_to_member<'a>(
+        &'a self,
+        members: &[DynamicSetLabel],
+    ) -> Option<(&'static str, &'a DynamicSetLabel)> {
+        let member = |target: &'a SystemSetTarget| match target {
+            SystemSetTarget::Dynamic(label) if members.contains(label) => Some(label),
+            _ => None,
+        };
+        self.before
+            .iter()
+            .find_map(member)
+            .map(|label| ("before", label))
+            .or_else(|| {
+                self.after
+                    .iter()
+                    .find_map(member)
+                    .map(|label| ("after", label))
+            })
+    }
 }
 
 fn push_unique(labels: &mut Vec<SystemSetTarget>, label: SystemSetTarget) {

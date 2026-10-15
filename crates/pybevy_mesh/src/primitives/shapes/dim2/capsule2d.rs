@@ -3,6 +3,7 @@ use bevy::{
     mesh::Meshable,
 };
 use pybevy_macros::pyconstructor;
+use pybevy_math::primitives::dimension::dimension;
 use pyo3::prelude::*;
 
 use super::rectangle::PyRectangle;
@@ -35,7 +36,9 @@ impl PyCapsule2d {
         #[default(1.0)] length: f32,
         half_length: Option<f32>,
     ) -> PyResult<PyClassInitializer<Self>> {
+        let radius = dimension("radius", radius)?;
         if let Some(half_length) = half_length {
+            let half_length = dimension("half_length", half_length)?;
             return Ok((
                 Self(Capsule2d {
                     radius,
@@ -45,7 +48,8 @@ impl PyCapsule2d {
             )
                 .into());
         }
-        Ok((Self(Capsule2d::new(radius, length)), PyMeshable).into())
+        let capsule = Capsule2d::new(radius, dimension("length", length)?);
+        Ok((Self(capsule), PyMeshable).into())
     }
 
     #[getter]
@@ -54,8 +58,9 @@ impl PyCapsule2d {
     }
 
     #[setter]
-    pub fn set_radius(&mut self, value: f32) {
-        self.0.radius = value;
+    pub fn set_radius(&mut self, value: f32) -> PyResult<()> {
+        self.0.radius = dimension("radius", value)?;
+        Ok(())
     }
 
     #[getter]
@@ -64,8 +69,9 @@ impl PyCapsule2d {
     }
 
     #[setter]
-    pub fn set_half_length(&mut self, value: f32) {
-        self.0.half_length = value;
+    pub fn set_half_length(&mut self, value: f32) -> PyResult<()> {
+        self.0.half_length = dimension("half_length", value)?;
+        Ok(())
     }
 
     pub fn inner_rectangle(&self, py: Python<'_>) -> PyResult<Py<PyRectangle>> {

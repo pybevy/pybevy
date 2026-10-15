@@ -556,6 +556,11 @@ app.add_systems(
 Use `SystemSet("my_game.Standalone")` when a set does not belong to an enum
 family or its name is selected dynamically.
 
+A plain callable passed to `before()`/`after()` names the ordering set shared
+by every registered callable with the same `__module__` and `__qualname__`.
+Lambdas and closures from one factory share that name, so ordering one
+relative to another raises `ValueError`; use `chain()` or a `SystemSet`.
+
 Order Python systems around engine phases using native sets:
 
 ```python
@@ -871,6 +876,11 @@ custom resource retain the same shallow live-alias behavior as its other nested
 Python values. Merely choosing iteration does not change the existing custom
 resource tick policy: `Res[T]` does not mark, and `ResMut[T]` remains
 conservatively marked when the parameter is materialized.
+
+A native (engine) resource taken as `ResMut[T]` in a system is marked changed
+only when the system writes it, including nested writes such as
+`motion.delta.x += 1.0`. Reading through `ResMut[T]` leaves `Changed[T]` unset,
+as in Bevy.
 
 Both `Res[Assets[T]]` and `ResMut[Assets[T]]` also support `len()` and
 iteration. Iteration yields read-only asset wrappers in either mode; use

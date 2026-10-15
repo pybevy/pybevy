@@ -5,7 +5,15 @@ use bevy::{
     mesh::Meshable,
 };
 use pybevy_macros::pyconstructor;
-use pybevy_math::{primitives::PyArc2d, vec2::PyVec2};
+use pybevy_math::{
+    primitives::{
+        PyArc2d,
+        arc2d::{
+            checked_arc, checked_arc_from_degrees, checked_arc_from_radians, checked_arc_from_turns,
+        },
+    },
+    vec2::PyVec2,
+};
 use pyo3::prelude::*;
 
 use crate::{
@@ -40,7 +48,13 @@ impl PyCircularSector {
         if let Some(a) = arc {
             return Ok((Self(CircularSector { arc: a.try_into()? }), PyMeshable).into());
         }
-        Ok((Self(CircularSector::new(radius, half_angle)), PyMeshable).into())
+        Ok((
+            Self(CircularSector {
+                arc: checked_arc(radius, half_angle)?,
+            }),
+            PyMeshable,
+        )
+            .into())
     }
 
     #[staticmethod]
@@ -48,7 +62,9 @@ impl PyCircularSector {
         Py::new(
             py,
             (
-                Self(CircularSector::from_radians(radius, angle)),
+                Self(CircularSector {
+                    arc: checked_arc_from_radians(radius, angle)?,
+                }),
                 PyMeshable,
             ),
         )
@@ -59,7 +75,9 @@ impl PyCircularSector {
         Py::new(
             py,
             (
-                Self(CircularSector::from_degrees(radius, angle)),
+                Self(CircularSector {
+                    arc: checked_arc_from_degrees(radius, angle)?,
+                }),
                 PyMeshable,
             ),
         )
@@ -70,7 +88,9 @@ impl PyCircularSector {
         Py::new(
             py,
             (
-                Self(CircularSector::from_turns(radius, fraction)),
+                Self(CircularSector {
+                    arc: checked_arc_from_turns(radius, fraction)?,
+                }),
                 PyMeshable,
             ),
         )

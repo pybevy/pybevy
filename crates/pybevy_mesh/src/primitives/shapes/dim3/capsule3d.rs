@@ -3,6 +3,7 @@ use bevy::{
     mesh::Meshable,
 };
 use pybevy_macros::pyconstructor;
+use pybevy_math::primitives::dimension::dimension;
 use pyo3::prelude::*;
 
 use super::cylinder::PyCylinder;
@@ -35,12 +36,13 @@ impl PyCapsule3d {
         #[default(1.0)] length: f32,
         half_length: Option<f32>,
     ) -> PyResult<PyClassInitializer<Self>> {
+        let radius = dimension("radius", radius)?;
         let capsule = match half_length {
             Some(half_length) => Capsule3d {
                 radius,
-                half_length,
+                half_length: dimension("half_length", half_length)?,
             },
-            None => Capsule3d::new(radius, length),
+            None => Capsule3d::new(radius, dimension("length", length)?),
         };
         Ok((Self(capsule), PyMeshable).into())
     }
@@ -51,8 +53,9 @@ impl PyCapsule3d {
     }
 
     #[setter]
-    pub fn set_radius(&mut self, value: f32) {
-        self.0.radius = value;
+    pub fn set_radius(&mut self, value: f32) -> PyResult<()> {
+        self.0.radius = dimension("radius", value)?;
+        Ok(())
     }
 
     #[getter]
@@ -61,8 +64,9 @@ impl PyCapsule3d {
     }
 
     #[setter]
-    pub fn set_half_length(&mut self, value: f32) {
-        self.0.half_length = value;
+    pub fn set_half_length(&mut self, value: f32) -> PyResult<()> {
+        self.0.half_length = dimension("half_length", value)?;
+        Ok(())
     }
 
     pub fn to_cylinder(&self, py: Python<'_>) -> PyResult<Py<PyCylinder>> {

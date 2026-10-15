@@ -55,7 +55,7 @@ impl BatchableField for bool {
 
     #[inline(always)]
     fn from_numpy_f32_slice(data: &[f32], index: usize) -> Self {
-        data[index] > 0.0
+        data[index] != 0.0
     }
 }
 
@@ -210,15 +210,15 @@ mod tests {
 
     #[test]
     fn bool_from_numpy_true() {
-        let data = [1.0f32, 0.5, 0.01];
-        assert!(bool::from_numpy_f32_slice(&data, 0));
-        assert!(bool::from_numpy_f32_slice(&data, 1));
-        assert!(bool::from_numpy_f32_slice(&data, 2));
+        let data = [1.0f32, 0.5, 0.01, -1.0, f32::NAN];
+        for index in 0..data.len() {
+            assert!(bool::from_numpy_f32_slice(&data, index));
+        }
     }
 
     #[test]
     fn bool_from_numpy_false() {
-        let data = [0.0f32, -1.0];
+        let data = [0.0f32, -0.0];
         assert!(!bool::from_numpy_f32_slice(&data, 0));
         assert!(!bool::from_numpy_f32_slice(&data, 1));
     }

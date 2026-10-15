@@ -27,6 +27,12 @@ pub fn view_column_float_only(operation: &str, dtype: &str) -> String {
     )
 }
 
+pub fn callable_ordered_against_own_set(system: &str, relation: &str, target: &str) -> String {
+    format!(
+        "system `{system}` cannot be ordered {relation} `{target}`: callables share one ordering set per __module__ and __qualname__, so the target includes this system; use chain() or a SystemSet to order same-named lambdas or closures"
+    )
+}
+
 pub fn capture_no_camera(operation: &str) -> String {
     format!("{operation} requires an active Camera, but the scene has no Camera entities")
 }
@@ -146,6 +152,12 @@ pub fn mcp_entity_not_found(id: u64) -> String {
 
 pub fn mcp_optional_enum_error(error: &str) -> String {
     format!("{error}. This optional field also accepts null")
+}
+
+pub fn reload_schedule_rejected(schedule: &str, detail: &str) -> String {
+    format!(
+        "Hot reload rejected: schedule {schedule} would not build with the reloaded systems; the previous generation keeps running. {detail}"
+    )
 }
 
 pub const RELOAD_NAME_ERROR_HINT: &str = "NameError: A variable or import is missing. Check if you need to add an import (e.g., `from pybevy.prelude import *`) or if a variable name is misspelled.";
@@ -1297,6 +1309,14 @@ pub fn bounding_half_size(kind: &str, axes: &[f32]) -> String {
 
 pub fn bounding_radius(kind: &str, radius: f32) -> String {
     format!("{kind} radius must be nonnegative, got {radius}")
+}
+
+pub fn primitive_dimension(name: &str, value: impl Display) -> String {
+    format!("{name} must be finite and non-negative (got {value})")
+}
+
+pub fn primitive_angle(name: &str, value: f32) -> String {
+    format!("{name} must be finite (got {value})")
 }
 
 pub fn bounding_operation(kind: &str, operation: &str) -> String {

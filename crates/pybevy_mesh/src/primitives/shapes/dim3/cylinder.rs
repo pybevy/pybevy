@@ -3,6 +3,7 @@ use bevy::{
     mesh::Meshable,
 };
 use pybevy_macros::pyconstructor;
+use pybevy_math::primitives::dimension::dimension;
 use pyo3::prelude::*;
 
 use crate::{
@@ -24,7 +25,9 @@ impl PyCylinder {
         #[default(1.0)] height: f32,
         half_height: Option<f32>,
     ) -> PyResult<PyClassInitializer<Self>> {
+        let radius = dimension("radius", radius)?;
         if let Some(half_height) = half_height {
+            let half_height = dimension("half_height", half_height)?;
             return Ok((
                 Self(Cylinder {
                     radius,
@@ -34,7 +37,8 @@ impl PyCylinder {
             )
                 .into());
         }
-        Ok((Self(Cylinder::new(radius, height)), PyMeshable).into())
+        let cylinder = Cylinder::new(radius, dimension("height", height)?);
+        Ok((Self(cylinder), PyMeshable).into())
     }
 
     #[getter]
@@ -43,8 +47,9 @@ impl PyCylinder {
     }
 
     #[setter]
-    pub fn set_radius(&mut self, value: f32) {
-        self.0.radius = value;
+    pub fn set_radius(&mut self, value: f32) -> PyResult<()> {
+        self.0.radius = dimension("radius", value)?;
+        Ok(())
     }
 
     #[getter]
@@ -53,8 +58,9 @@ impl PyCylinder {
     }
 
     #[setter]
-    pub fn set_half_height(&mut self, value: f32) {
-        self.0.half_height = value;
+    pub fn set_half_height(&mut self, value: f32) -> PyResult<()> {
+        self.0.half_height = dimension("half_height", value)?;
+        Ok(())
     }
 
     pub fn base(&self, py: Python) -> PyResult<Py<PyCircle>> {

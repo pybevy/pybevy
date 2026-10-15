@@ -7,8 +7,11 @@ use bevy::{
 };
 use pybevy_core::{FromBorrowedStorage, ValueStorage};
 use pybevy_macros::{pyconstructor, pyvalue};
-use pybevy_math::vec3::PyVec3;
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pybevy_math::{
+    primitives::dimension::{check_half_size3, dimension},
+    vec3::PyVec3,
+};
+use pyo3::prelude::*;
 
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyCuboidMeshBuilder};
 
@@ -28,24 +31,6 @@ impl PartialEq for PyCuboid {
     }
 }
 
-fn validate_dimension(value: f32, parameter: &str) -> PyResult<()> {
-    if !value.is_finite() || value <= 0.0 {
-        return Err(PyValueError::new_err(format!(
-            "{parameter} must be finite and greater than zero"
-        )));
-    }
-    Ok(())
-}
-
-fn validate_dimensions(value: Vec3, parameter: &str) -> PyResult<Vec3> {
-    if !value.is_finite() || value.cmple(Vec3::ZERO).any() {
-        return Err(PyValueError::new_err(format!(
-            "{parameter} components must be finite and greater than zero"
-        )));
-    }
-    Ok(value)
-}
-
 #[pyconstructor(
     "Cuboid",
     keyword_only(half_size),
@@ -61,49 +46,50 @@ impl PyCuboid {
         #[expected("Vec3")] half_size: Option<PyVec3>,
     ) -> PyResult<PyClassInitializer<Self>> {
         if let Some(hs) = half_size {
-            let half_size = validate_dimensions(hs.try_into()?, "half_size")?;
+            let half_size: Vec3 = dimension("half_size", hs.try_into()?)?;
             return Ok((Self::from_owned(Cuboid { half_size }), PyMeshable).into());
         }
-        validate_dimension(x_length, "x_length")?;
-        validate_dimension(y_length, "y_length")?;
-        validate_dimension(z_length, "z_length")?;
-        Ok((
-            Self::from_owned(Cuboid::new(x_length, y_length, z_length)),
-            PyMeshable,
-        )
-            .into())
+        let cuboid = Cuboid::new(
+            dimension("x_length", x_length)?,
+            dimension("y_length", y_length)?,
+            dimension("z_length", z_length)?,
+        );
+        Ok((Self::from_owned(cuboid), PyMeshable).into())
     }
 
     #[staticmethod]
     pub fn from_size(py: Python, size: PyVec3) -> PyResult<Py<Self>> {
-        let size = validate_dimensions(size.try_into()?, "size")?;
+        let size: Vec3 = dimension("size", size.try_into()?)?;
         Py::new(py, (Self::from_owned(Cuboid::from_size(size)), PyMeshable))
     }
 
     #[staticmethod]
     pub fn from_corners(py: Python, point1: PyVec3, point2: PyVec3) -> PyResult<Py<Self>> {
         let cuboid = Cuboid::from_corners(point1.try_into()?, point2.try_into()?);
-        validate_dimensions(cuboid.half_size, "corner-derived half_size")?;
+        dimension("half_size", cuboid.half_size)?;
         Py::new(py, (Self::from_owned(cuboid), PyMeshable))
     }
 
     #[staticmethod]
     pub fn from_length(py: Python, length: f32) -> PyResult<Py<Self>> {
-        validate_dimension(length, "length")?;
-        Py::new(
-            py,
-            (Self::from_owned(Cuboid::from_length(length)), PyMeshable),
-        )
+        let cuboid = Cuboid::from_length(dimension("length", length)?);
+        Py::new(py, (Self::from_owned(cuboid), PyMeshable))
     }
 
     #[getter]
     pub fn half_size(&self) -> PyResult<PyVec3> {
-        Ok(self.storage.borrow_field_as(|s| &s.half_size)?)
+        Ok(self.storage.borrow_validated_field_as(
+            |s| &s.half_size,
+            |s| &mut s.half_size,
+            check_half_size3,
+        )?)
     }
 
     #[setter]
     pub fn set_half_size(&mut self, value: PyVec3) -> PyResult<()> {
-        self.as_mut()?.half_size = validate_dimensions(value.try_into()?, "half_size")?;
+        let half_size: Vec3 = value.try_into()?;
+        let mut cuboid = self.as_mut()?;
+        cuboid.half_size = dimension("half_size", half_size)?;
         Ok(())
     }
 

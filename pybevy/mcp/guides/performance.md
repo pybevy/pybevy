@@ -177,8 +177,14 @@ def setup(
   changes to the inputs do not alter a queued spawn. Omitted fields use their
   declared dataclass or class defaults; default factories run once per row,
   while omitted required fields raise `TypeError` at batch creation.
+  A class that defines `__post_init__` or its own `__init__` builds every row
+  through that constructor, as `T(**row)` would: its validation errors raise
+  from `batch()` and its normalized values are stored, at one Python call per
+  row. Plain dataclasses skip the per-row call.
   Scalars, generators, and ranges are not batch columns; materialize a list
   for those inputs.
+- A number in a `bool` batch column stores whether it is nonzero (NaN is
+  true), for custom and native components alike.
 - Use View API afterwards for bulk per-entity updates (see below)
 - To keep one shared material while varying a small shader-side integer, batch
   `MeshTag.batch(value=...)`; see `guide://shaders`.

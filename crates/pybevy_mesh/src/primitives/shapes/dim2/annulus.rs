@@ -6,7 +6,7 @@ use bevy::{
     mesh::Meshable,
 };
 use pybevy_macros::pyconstructor;
-use pybevy_math::vec2::PyVec2;
+use pybevy_math::{primitives::dimension::dimension, vec2::PyVec2};
 use pyo3::prelude::*;
 
 use super::circle::PyCircle;
@@ -53,16 +53,18 @@ impl PyAnnulus {
         #[expected("Circle")] inner_circle: Option<PyRef<'_, PyCircle>>,
         #[expected("Circle")] outer_circle: Option<PyRef<'_, PyCircle>>,
     ) -> PyResult<PyClassInitializer<Self>> {
+        let inner_circle = match inner_circle {
+            Some(circle) => circle.try_get()?,
+            None => Circle::new(dimension("inner_radius", inner_radius)?),
+        };
+        let outer_circle = match outer_circle {
+            Some(circle) => circle.try_get()?,
+            None => Circle::new(dimension("outer_radius", outer_radius)?),
+        };
         Ok((
             Self(Annulus {
-                inner_circle: inner_circle
-                    .map(|circle| circle.try_get())
-                    .transpose()?
-                    .unwrap_or_else(|| Circle::new(inner_radius)),
-                outer_circle: outer_circle
-                    .map(|circle| circle.try_get())
-                    .transpose()?
-                    .unwrap_or_else(|| Circle::new(outer_radius)),
+                inner_circle,
+                outer_circle,
             }),
             PyMeshable,
         )
