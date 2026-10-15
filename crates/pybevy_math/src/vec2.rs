@@ -1,6 +1,7 @@
 use bevy::math::{BVec2, Vec2, Vec2Swizzles};
 use pybevy_core::{
     FromBorrowedStorage, StorageRef, ValueStorage, public_error::UNSUPPORTED_COMPARISON,
+    repr::ReprLiteral,
 };
 use pyo3::{
     basic::CompareOp,
@@ -318,7 +319,7 @@ impl PyVec2 {
 
     fn __repr__(&self) -> PyResult<String> {
         let v = self.as_ref()?;
-        Ok(format!("Vec2({}, {})", v.x, v.y))
+        Ok(v.repr_literal())
     }
 
     fn __richcmp__(

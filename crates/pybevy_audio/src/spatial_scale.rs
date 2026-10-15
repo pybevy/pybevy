@@ -1,4 +1,5 @@
 use bevy::audio::SpatialScale;
+use pybevy_core::repr::ReprLiteral;
 use pybevy_math::vec3::PyVec3;
 use pyo3::prelude::*;
 
@@ -42,6 +43,6 @@ impl PySpatialScale {
     }
 
     fn __repr__(&self) -> String {
-        format!("SpatialScale({:?})", self.inner.0)
+        format!("SpatialScale({})", self.inner.0.repr_literal())
     }
 }

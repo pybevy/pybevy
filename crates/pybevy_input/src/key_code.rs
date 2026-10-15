@@ -29,7 +29,7 @@ impl PyKeyCode {
 
 #[pymethods]
 impl PyKeyCode {
-    fn __repr__(&self) -> String {
+    pub fn __repr__(&self) -> String {
         match self.0 {
             KeyCode::Unidentified(value) => {
                 format!(

@@ -1,5 +1,5 @@
 use bevy::math::FloatOrd;
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, ValueStorage, repr::float_repr};
 use pybevy_macros::pyvalue;
 use pyo3::{basic::CompareOp, prelude::*};
 
@@ -90,6 +90,6 @@ impl PyFloatOrd {
     }
 
     pub fn __repr__(&self) -> PyResult<String> {
-        Ok(format!("{:?}", *self.as_ref()?))
+        Ok(format!("FloatOrd({})", float_repr(self.as_ref()?.0)))
     }
 }

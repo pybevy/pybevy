@@ -1,5 +1,5 @@
 use bevy::text::RemSize;
-use pybevy_core::{PyResource, ResourceStorage, resource_initializer};
+use pybevy_core::{PyResource, ResourceStorage, repr::float_repr, resource_initializer};
 use pybevy_macros::pyresource;
 use pyo3::prelude::*;
 
@@ -33,7 +33,7 @@ impl PyRemSize {
 
     pub fn __repr__(&self) -> String {
         match self.as_ref() {
-            Ok(size) => format!("RemSize({})", size.0),
+            Ok(size) => format!("RemSize({})", float_repr(size.0)),
             Err(_) => "RemSize(<invalid>)".to_string(),
         }
     }

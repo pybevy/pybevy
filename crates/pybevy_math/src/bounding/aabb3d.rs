@@ -7,6 +7,7 @@ use pybevy_core::{
     public_error::{
         AABB3D_MIN_MAX, EMPTY_POINT_CLOUD, bounding_half_size, bounding_operation, bounding_shrink,
     },
+    repr::ReprLiteral,
 };
 use pybevy_macros::pyvalue;
 use pyo3::{
@@ -167,8 +168,9 @@ impl PyIsometry3d {
         let t = iso.translation;
         let r = iso.rotation;
         Ok(format!(
-            "Isometry3d(translation=Vec3A({}, {}, {}), rotation=Quat({}, {}, {}, {}))",
-            t.x, t.y, t.z, r.x, r.y, r.z, r.w
+            "Isometry3d(translation={}, rotation={})",
+            t.repr_literal(),
+            r.repr_literal()
         ))
     }
 }
@@ -412,6 +414,10 @@ impl PyAabb3d {
 
     fn __repr__(&self) -> PyResult<String> {
         let aabb = self.as_ref()?;
-        Ok(format!("Aabb3d(min={:?}, max={:?})", aabb.min, aabb.max))
+        Ok(format!(
+            "Aabb3d(min={}, max={})",
+            aabb.min.repr_literal(),
+            aabb.max.repr_literal()
+        ))
     }
 }

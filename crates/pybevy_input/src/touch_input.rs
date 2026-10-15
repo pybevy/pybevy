@@ -1,6 +1,6 @@
 use bevy::{ecs::entity::Entity, input::touch::TouchInput, math::Vec2};
-use pybevy_core::PyEntity;
 pub use pybevy_core::PyMessage;
+use pybevy_core::{PyEntity, repr::ReprLiteral};
 use pybevy_macros::pymessage;
 use pybevy_math::snapshot::Snapshot;
 use pyo3::prelude::*;
@@ -89,10 +89,9 @@ impl PyTouchInput {
 
     pub fn __repr__(&self) -> String {
         format!(
-            "TouchInput(phase={}, position=Vec2(x={:.2}, y={:.2}), id={}, force={})",
+            "TouchInput(phase={}, position={}, id={}, force={})",
             self.phase.__repr__(),
-            self.position.x,
-            self.position.y,
+            self.position.repr_literal(),
             self.id,
             self.force
                 .map_or_else(|| "None".to_string(), |force| force.__repr__())

@@ -1,5 +1,5 @@
 use bevy::math::{Dir3, StableInterpolate, Vec3};
-use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage, repr::float_repr};
 use pyo3::{
     exceptions::{PyTypeError, PyValueError},
     prelude::*,
@@ -186,7 +186,12 @@ impl PyDir3 {
 
     pub fn __repr__(&self) -> PyResult<String> {
         let value = self.as_ref()?;
-        Ok(format!("Dir3({}, {}, {})", value.x, value.y, value.z))
+        Ok(format!(
+            "Dir3({}, {}, {})",
+            float_repr(value.x),
+            float_repr(value.y),
+            float_repr(value.z)
+        ))
     }
 
     pub fn as_tuple(&self) -> PyResult<(f32, f32, f32)> {

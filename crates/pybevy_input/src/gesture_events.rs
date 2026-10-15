@@ -3,6 +3,7 @@ use bevy::{
     math::Vec2,
 };
 pub use pybevy_core::PyMessage;
+use pybevy_core::repr::{ReprLiteral, float_repr};
 use pybevy_macros::pymessage;
 use pybevy_math::{snapshot::Snapshot, vec2::PyVec2};
 use pyo3::{exceptions::PyValueError, prelude::*};
@@ -37,7 +38,7 @@ impl PyPinchGesture {
     }
 
     fn __repr__(&self) -> String {
-        format!("PinchGesture({})", self.0)
+        format!("PinchGesture({})", float_repr(self.0))
     }
 }
 
@@ -71,7 +72,7 @@ impl PyRotationGesture {
     }
 
     fn __repr__(&self) -> String {
-        format!("RotationGesture({})", self.0)
+        format!("RotationGesture({})", float_repr(self.0))
     }
 }
 
@@ -150,6 +151,6 @@ impl PyPanGesture {
     }
 
     fn __repr__(&self) -> String {
-        format!("PanGesture(value={:?})", self.0)
+        format!("PanGesture(value={})", self.0.repr_literal())
     }
 }

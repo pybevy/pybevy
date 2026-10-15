@@ -42,15 +42,15 @@ impl PyWindowMode {
         Ok(match self {
             PyWindowMode::Windowed() => "WindowMode.Windowed()".to_string(),
             PyWindowMode::BorderlessFullscreen { monitor } => {
-                format!("WindowMode.BorderlessFullscreen({:?})", monitor)
+                format!("WindowMode.BorderlessFullscreen({})", monitor.__repr__())
             }
             PyWindowMode::Fullscreen {
                 monitor,
                 video_mode,
             } => {
                 format!(
-                    "WindowMode.Fullscreen(monitor={:?}, video_mode={})",
-                    monitor,
+                    "WindowMode.Fullscreen(monitor={}, video_mode={})",
+                    monitor.__repr__(),
                     video_mode.__repr__()?
                 )
             }

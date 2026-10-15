@@ -2,7 +2,7 @@ use bevy::{
     asset::Handle,
     mesh::{Mesh, morph::MorphWeights},
 };
-use pybevy_core::{ComponentStorage, PyComponent, PyHandle};
+use pybevy_core::{ComponentStorage, PyComponent, PyHandle, repr::float_list_repr};
 use pybevy_macros::pycomponent;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
@@ -92,7 +92,7 @@ impl PyMorphWeights {
         let morph = self.as_ref()?;
         let weights = morph.weights();
         if weights.len() <= 5 {
-            Ok(format!("MorphWeights({:?})", weights))
+            Ok(format!("MorphWeights({})", float_list_repr(weights)))
         } else {
             Ok(format!(
                 "MorphWeights([{:.3}, {:.3}, {:.3}, ... ({} total)])",

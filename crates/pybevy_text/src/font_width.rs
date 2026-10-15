@@ -1,4 +1,5 @@
 use bevy::text::FontWidth;
+use pybevy_core::repr::float_repr;
 use pyo3::prelude::*;
 
 #[pyclass(name = "FontWidth", module = "pybevy.text", frozen, eq, from_py_object)]
@@ -78,7 +79,7 @@ impl PyFontWidth {
         } else if v == FontWidth::ULTRA_EXPANDED {
             "ULTRA_EXPANDED"
         } else {
-            return format!("FontWidth({})", v.0);
+            return format!("FontWidth({})", float_repr(v.0));
         };
         format!("FontWidth.{name}")
     }

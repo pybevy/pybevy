@@ -1,5 +1,8 @@
 use bevy::{camera::primitives::Sphere, math::Vec3A};
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{
+    FromBorrowedStorage, ValueStorage,
+    repr::{ReprLiteral, float_repr},
+};
 use pybevy_macros::pyvalue;
 use pybevy_math::vec3a::PyVec3A;
 use pyo3::prelude::*;
@@ -68,9 +71,9 @@ impl PySphere {
 
     pub fn __repr__(&self) -> PyResult<String> {
         Ok(format!(
-            "Sphere(center={:?}, radius={})",
-            self.as_ref()?.center,
-            self.as_ref()?.radius
+            "Sphere(center={}, radius={})",
+            self.as_ref()?.center.repr_literal(),
+            float_repr(self.as_ref()?.radius)
         ))
     }
 }

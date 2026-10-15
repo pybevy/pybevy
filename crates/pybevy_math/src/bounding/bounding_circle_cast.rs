@@ -1,5 +1,5 @@
 use bevy::math::bounding::BoundingCircleCast;
-use pybevy_core::{FieldStorage, FromBorrowedStorage};
+use pybevy_core::{FieldStorage, FromBorrowedStorage, repr::object_repr};
 use pybevy_macros::pyfield;
 use pyo3::prelude::*;
 
@@ -68,8 +68,9 @@ impl PyBoundingCircleCast {
     fn __repr__(&self) -> PyResult<String> {
         let cast = self.as_ref()?;
         Ok(format!(
-            "BoundingCircleCast(circle={:?}, ray=({:?}, max={}))",
-            cast.circle, cast.ray.ray, cast.ray.max
+            "BoundingCircleCast(circle={}, ray={})",
+            object_repr(PyBoundingCircle::from(cast.circle)),
+            object_repr(PyRayCast2d::from_owned(cast.ray.clone()))
         ))
     }
 }

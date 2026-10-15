@@ -5,6 +5,7 @@ use bevy::{
     },
     mesh::Meshable,
 };
+use pybevy_core::repr::float_repr;
 use pybevy_macros::pyconstructor;
 use pybevy_math::{primitives::dimension::dimension, vec2::PyVec2};
 use pyo3::prelude::*;
@@ -129,7 +130,8 @@ impl PyAnnulus {
     fn __repr__(&self) -> String {
         format!(
             "Annulus(inner_radius={}, outer_radius={})",
-            self.0.inner_circle.radius, self.0.outer_circle.radius
+            float_repr(self.0.inner_circle.radius),
+            float_repr(self.0.outer_circle.radius)
         )
     }
 }

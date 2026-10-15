@@ -9,6 +9,7 @@ use pybevy_core::{
     public_error::{
         ANIMATION_GRAPH_CYCLE, ANIMATION_GRAPH_NODE_MISSING, ANIMATION_GRAPH_NODE_READ_ONLY,
     },
+    repr::{float_repr, object_repr},
 };
 use pybevy_macros::{pyasset, pyenum};
 use pyo3::{
@@ -289,7 +290,7 @@ impl PyAnimationNodeType {
     pub fn __repr__(&self) -> String {
         match self {
             PyAnimationNodeType::Clip { handle } => {
-                format!("AnimationNodeType.Clip({:?})", handle)
+                format!("AnimationNodeType.Clip({})", object_repr(handle.clone()))
             }
             PyAnimationNodeType::Blend() => "AnimationNodeType.Blend".to_string(),
             PyAnimationNodeType::Add() => "AnimationNodeType.Add".to_string(),
@@ -428,8 +429,10 @@ impl PyAnimationGraphNode {
     fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
         self.with_node(py, |node| {
             format!(
-                "AnimationGraphNode(node_type={:?}, mask={}, weight={})",
-                node.node_type, node.mask, node.weight
+                "AnimationGraphNode(node_type={}, mask={}, weight={})",
+                PyAnimationNodeType::from(&node.node_type).__repr__(),
+                node.mask,
+                float_repr(node.weight)
             )
         })
     }

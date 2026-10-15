@@ -1,5 +1,5 @@
 use bevy::light::SunDisk;
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, PyComponent, repr::float_repr};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
@@ -59,7 +59,8 @@ impl PySunDisk {
         let sd = self.as_ref()?;
         Ok(format!(
             "SunDisk(angular_size={}, intensity={})",
-            sd.angular_size, sd.intensity
+            float_repr(sd.angular_size),
+            float_repr(sd.intensity)
         ))
     }
 }

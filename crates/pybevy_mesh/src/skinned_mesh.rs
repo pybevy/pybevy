@@ -1,5 +1,5 @@
 use bevy::mesh::skinning::SkinnedMesh;
-use pybevy_core::{ComponentStorage, PyComponent, PyEntity, PyHandle};
+use pybevy_core::{ComponentStorage, PyComponent, PyEntity, PyHandle, repr::object_repr};
 use pybevy_macros::pycomponent;
 use pyo3::{
     exceptions::{PyTypeError, PyValueError},
@@ -108,9 +108,9 @@ impl PySkinnedMesh {
     fn __repr__(&self) -> String {
         match self.as_ref() {
             Ok(mesh) => format!(
-                "SkinnedMesh(joints={}, inverse_bindposes=Handle({:?}))",
+                "SkinnedMesh(joints={}, inverse_bindposes={})",
                 mesh.joints.len(),
-                PyHandle::from(&mesh.inverse_bindposes)
+                object_repr(PyHandle::from(&mesh.inverse_bindposes))
             ),
             Err(_) => "SkinnedMesh(<invalid>)".to_string(),
         }

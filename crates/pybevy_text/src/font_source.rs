@@ -2,7 +2,7 @@ use bevy::{
     asset::Handle,
     text::{Font, FontSource},
 };
-use pybevy_core::{PyHandle, extract_handle_from_any};
+use pybevy_core::{PyHandle, extract_handle_from_any, repr::str_repr};
 use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
@@ -117,7 +117,7 @@ impl PyFontSource {
     fn __repr__(&self) -> String {
         match self {
             PyFontSource::Handle { .. } => "FontSource.Handle(...)".to_string(),
-            PyFontSource::Family { value } => format!("FontSource.Family({value:?})"),
+            PyFontSource::Family { value } => format!("FontSource.Family({})", str_repr(value)),
             PyFontSource::Serif() => "FontSource.Serif()".to_string(),
             PyFontSource::SansSerif() => "FontSource.SansSerif()".to_string(),
             PyFontSource::Cursive() => "FontSource.Cursive()".to_string(),

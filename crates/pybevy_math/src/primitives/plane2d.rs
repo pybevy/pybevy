@@ -1,5 +1,7 @@
 use bevy::math::{Dir2, primitives::Plane2d};
-use pybevy_core::{FromBorrowedStorage, ValueStorage, public_error::UNSUPPORTED_COMPARISON};
+use pybevy_core::{
+    FromBorrowedStorage, ValueStorage, public_error::UNSUPPORTED_COMPARISON, repr::float_list_repr,
+};
 use pybevy_macros::pyvalue;
 use pyo3::{
     basic::CompareOp,
@@ -45,7 +47,11 @@ impl PyPlane2d {
     }
 
     fn __repr__(&self) -> PyResult<String> {
-        Ok(format!("Plane2d(normal={})", self.as_ref()?.normal))
+        let n = self.as_ref()?.normal;
+        Ok(format!(
+            "Plane2d(normal={})",
+            float_list_repr(&n.to_array())
+        ))
     }
 
     fn __richcmp__(

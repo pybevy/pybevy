@@ -7,7 +7,10 @@ use bevy::{
     },
     math::{AspectRatio, Rect, Vec2},
 };
-use pybevy_core::{ComponentStorage, FieldStorage, FromBorrowedStorage};
+use pybevy_core::{
+    ComponentStorage, FieldStorage, FromBorrowedStorage,
+    repr::{ReprLiteral, float_repr, object_repr},
+};
 use pybevy_macros::{pyenum, pyfield};
 use pybevy_math::{mat4::PyMat4, rect::PyRect, vec2::PyVec2, vec3a::PyVec3A, vec4::PyVec4};
 use pybevy_transform::global_transform::PyGlobalTransform;
@@ -55,6 +58,17 @@ impl PyPerspectiveProjection {
             far,
             ..Default::default()
         })
+    }
+
+    pub fn __repr__(&self) -> PyResult<String> {
+        let projection = self.as_ref()?;
+        Ok(format!(
+            "PerspectiveProjection(fov={}, aspect_ratio={}, near={}, far={})",
+            float_repr(projection.fov),
+            float_repr(projection.aspect_ratio),
+            float_repr(projection.near),
+            float_repr(projection.far)
+        ))
     }
 
     #[getter]
@@ -198,6 +212,19 @@ impl PyOrthographicProjection {
             scale,
             area: area.try_into()?,
         }))
+    }
+
+    pub fn __repr__(&self) -> PyResult<String> {
+        let projection = self.as_ref()?;
+        Ok(format!(
+            "OrthographicProjection(near={}, far={}, viewport_origin={}, scaling_mode={}, scale={}, area={})",
+            float_repr(projection.near),
+            float_repr(projection.far),
+            projection.viewport_origin.repr_literal(),
+            object_repr(PyScalingMode::from(projection.scaling_mode)),
+            float_repr(projection.scale),
+            object_repr(PyRect::from(projection.area))
+        ))
     }
 
     #[staticmethod]
@@ -357,9 +384,15 @@ impl PyProjection {
 
     pub fn __repr__(&self) -> PyResult<String> {
         match self.as_ref()?.reborrow() {
-            Projection::Perspective(value) => Ok(format!("Projection.Perspective({value:?})")),
-            Projection::Orthographic(value) => Ok(format!("Projection.Orthographic({value:?})")),
-            Projection::Custom(value) => Ok(format!("Projection.Custom({value:?})")),
+            Projection::Perspective(value) => Ok(format!(
+                "Projection.Perspective({})",
+                PyPerspectiveProjection::from_owned(value.clone()).__repr__()?
+            )),
+            Projection::Orthographic(value) => Ok(format!(
+                "Projection.Orthographic({})",
+                PyOrthographicProjection::from_owned(value.clone()).__repr__()?
+            )),
+            Projection::Custom(_) => Ok("Projection.Custom(...)".to_string()),
         }
     }
 }

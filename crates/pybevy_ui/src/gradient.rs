@@ -1,5 +1,6 @@
 use bevy::ui::Gradient;
 use pybevy_color::color::PyColor;
+use pybevy_core::repr::object_repr;
 use pyo3::prelude::*;
 
 use crate::{
@@ -61,9 +62,18 @@ impl PyGradient {
 
     pub fn __repr__(&self) -> String {
         match &self.inner {
-            Gradient::Linear(g) => format!("Gradient.linear({:?})", g),
-            Gradient::Radial(g) => format!("Gradient.radial({:?})", g),
-            Gradient::Conic(g) => format!("Gradient.conic({:?})", g),
+            Gradient::Linear(g) => format!(
+                "Gradient.linear({})",
+                object_repr(PyLinearGradient::from(g.clone()))
+            ),
+            Gradient::Radial(g) => format!(
+                "Gradient.radial({})",
+                object_repr(PyRadialGradient::from(g.clone()))
+            ),
+            Gradient::Conic(g) => format!(
+                "Gradient.conic({})",
+                object_repr(PyConicGradient::from(g.clone()))
+            ),
         }
     }
 }

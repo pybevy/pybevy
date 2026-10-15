@@ -1,5 +1,5 @@
 use bevy::audio::SpatialListener;
-use pybevy_core::{ComponentStorage, Omittable, PyComponent};
+use pybevy_core::{ComponentStorage, Omittable, PyComponent, repr::ReprLiteral};
 use pybevy_macros::pycomponent;
 use pybevy_math::vec3::PyVec3;
 use pyo3::prelude::*;
@@ -59,8 +59,9 @@ impl PySpatialListener {
     fn __repr__(&self) -> String {
         match self.as_ref() {
             Ok(listener) => format!(
-                "SpatialListener(left_ear={:?}, right_ear={:?})",
-                listener.left_ear_offset, listener.right_ear_offset
+                "SpatialListener(left_ear={}, right_ear={})",
+                listener.left_ear_offset.repr_literal(),
+                listener.right_ear_offset.repr_literal()
             ),
             Err(_) => "SpatialListener(<invalid>)".to_string(),
         }

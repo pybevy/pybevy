@@ -11,6 +11,7 @@ use pybevy_core::{
     ValueStorage,
     enum_comparison::compare_values,
     public_error::{COLOR_INPUT_TYPES, COLOR_INTERPOLATION_MISMATCH, enum_variant_changed},
+    repr::float_repr,
 };
 use pybevy_macros::pyenum;
 use pyo3::{
@@ -21,7 +22,7 @@ use pyo3::{
 };
 
 use super::{
-    common::fmt_f32, hsla::PyHsla, hsva::PyHsva, hwba::PyHwba, laba::PyLaba, lcha::PyLcha,
+    hsla::PyHsla, hsva::PyHsva, hwba::PyHwba, laba::PyLaba, lcha::PyLcha,
     linear_rgba::PyLinearRgba, oklaba::PyOklaba, oklcha::PyOklcha, srgba::PySrgba, xyza::PyXyza,
 };
 
@@ -310,10 +311,10 @@ impl PyColor {
             ($name:literal, $value:expr, $first:ident, $second:ident, $third:ident) => {{
                 format!(
                     concat!("Color.", $name, "(", $name, "({}, {}, {}, {}))"),
-                    fmt_f32($value.$first),
-                    fmt_f32($value.$second),
-                    fmt_f32($value.$third),
-                    fmt_f32($value.alpha),
+                    float_repr($value.$first),
+                    float_repr($value.$second),
+                    float_repr($value.$third),
+                    float_repr($value.alpha),
                 )
             }};
         }

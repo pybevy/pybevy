@@ -6,7 +6,10 @@ use syn::{
     parse_macro_input,
 };
 
-use crate::enum_spec::{BevyVariantShape, EnumSpec, FieldSpec, VariantShape};
+use crate::{
+    enum_spec::{BevyVariantShape, EnumSpec, FieldSpec, VariantShape},
+    util::{extract_option_inner, value_repr},
+};
 
 /// Arguments for pyenum attribute macro
 pub(crate) struct BevyEnumArgs {
@@ -475,15 +478,17 @@ pub fn pyenum(attr: TokenStream, item: TokenStream) -> TokenStream {
                 let repr_str = format!("{}.{}{}", type_repr_name, v.repr_name, suffix);
                 quote! { #py_type::#ident() => #repr_str.to_string() }
             }
-            VariantKind::DataTuple { is_option, .. } => {
+            VariantKind::DataTuple { field, is_option } => {
                 let repr_prefix = format!("{}.{}(", type_repr_name, v.repr_name);
+                let inner = extract_option_inner(field.rust_type).unwrap_or(field.rust_type);
+                let value = value_repr(inner, quote!(v), None);
                 if *is_option {
                     quote! {
-                        #py_type::#ident(Some(v)) => format!("{}{})", #repr_prefix, v),
+                        #py_type::#ident(Some(v)) => format!("{}{})", #repr_prefix, #value),
                         #py_type::#ident(None) => format!("{}None)", #repr_prefix)
                     }
                 } else {
-                    quote! { #py_type::#ident(v) => format!("{}{})", #repr_prefix, v) }
+                    quote! { #py_type::#ident(v) => format!("{}{})", #repr_prefix, #value) }
                 }
             }
             VariantKind::DataStruct { fields, bevy_shape } => {
@@ -491,14 +496,16 @@ pub fn pyenum(attr: TokenStream, item: TokenStream) -> TokenStream {
                 let names = struct_field_names(fields);
                 if fields.len() == 1 && *bevy_shape == BevyVariantShape::Tuple {
                     let field = names[0];
+                    let inner = extract_option_inner(fields[0].rust_type).unwrap_or(fields[0].rust_type);
+                    let value = value_repr(inner, quote!(v), None);
                     if is_option(fields[0].rust_type) {
                         quote! {
-                            #py_type::#ident { #field: Some(v) } => format!("{}{})", #repr_prefix, v),
+                            #py_type::#ident { #field: Some(v) } => format!("{}{})", #repr_prefix, #value),
                             #py_type::#ident { #field: None } => format!("{}None)", #repr_prefix)
                         }
                     } else {
                         quote! {
-                            #py_type::#ident { #field: v } => format!("{}{})", #repr_prefix, v)
+                            #py_type::#ident { #field: v } => format!("{}{})", #repr_prefix, #value)
                         }
                     }
                 } else if fields.is_empty() {
@@ -506,10 +513,14 @@ pub fn pyenum(attr: TokenStream, item: TokenStream) -> TokenStream {
                         #py_type::#ident {} => format!("{})", #repr_prefix)
                     }
                 } else {
-                    let labels = fields.iter().map(|field| field.python_name.as_str());
+                    let rendered = fields.iter().zip(&names).map(|(field, name)| {
+                        let label = field.python_name.as_str();
+                        let value = value_repr(field.rust_type, quote!(#name), None);
+                        quote! { format!("{}={}", #label, #value) }
+                    });
                     quote! {
                         #py_type::#ident { #(#names),* } => {
-                            let fields = [#(format!("{}={:?}", #labels, #names)),*];
+                            let fields = [#(#rendered),*];
                             format!("{}{})", #repr_prefix, fields.join(", "))
                         }
                     }

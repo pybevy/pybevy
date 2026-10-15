@@ -1,4 +1,5 @@
 use bevy::ui::GridPlacement;
+use pybevy_core::repr::ReprLiteral;
 use pyo3::prelude::*;
 
 #[pyclass(
@@ -115,10 +116,10 @@ impl PyGridPlacement {
 
     pub fn __repr__(&self) -> String {
         format!(
-            "GridPlacement(start={:?}, span={:?}, end={:?})",
-            self.inner.get_start(),
-            self.inner.get_span(),
-            self.inner.get_end()
+            "GridPlacement(start={}, span={}, end={})",
+            self.inner.get_start().repr_literal(),
+            self.inner.get_span().repr_literal(),
+            self.inner.get_end().repr_literal()
         )
     }
 }

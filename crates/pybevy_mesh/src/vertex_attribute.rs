@@ -6,7 +6,10 @@ use std::{
 use bevy::mesh::{MeshVertexAttribute, MeshVertexAttributeId, VertexAttributeValues};
 use numpy::{PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods};
 use pybevy_array::{ArrayDType, ArrayError, DenseArrayCore, PyArray, Scalar};
-use pybevy_core::{PyComponent, public_error};
+use pybevy_core::{
+    PyComponent, public_error,
+    repr::{object_repr, str_repr},
+};
 use pybevy_macros::pywrap;
 use pybevy_render::vertex_format::PyVertexFormat;
 use pyo3::{
@@ -171,8 +174,10 @@ impl PyMeshVertexAttribute {
 
     fn __repr__(&self) -> String {
         format!(
-            "MeshVertexAttribute(name=\"{}\", id={:?}, format={:?})",
-            self.0.name, self.0.id, self.0.format
+            "MeshVertexAttribute(name={}, id={:?}, format={})",
+            str_repr(self.0.name),
+            self.0.id,
+            object_repr(PyVertexFormat::from(self.0.format))
         )
     }
 }

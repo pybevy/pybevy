@@ -4,12 +4,10 @@ use bevy::{
     },
     math::{StableInterpolate, Vec3, Vec4},
 };
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, ValueStorage, repr::float_repr};
 use pybevy_macros::pyvalue;
 use pybevy_math::{vec3::PyVec3, vec4::PyVec4};
 use pyo3::prelude::*;
-
-use super::common::fmt_f32;
 
 #[pyvalue]
 #[pyclass(name = "LinearRgba", module = "pybevy.color", eq, from_py_object)]
@@ -55,10 +53,10 @@ impl PyLinearRgba {
         let c = self.as_ref()?;
         Ok(format!(
             "LinearRgba({}, {}, {}, {})",
-            fmt_f32(c.red),
-            fmt_f32(c.green),
-            fmt_f32(c.blue),
-            fmt_f32(c.alpha),
+            float_repr(c.red),
+            float_repr(c.green),
+            float_repr(c.blue),
+            float_repr(c.alpha),
         ))
     }
 

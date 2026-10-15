@@ -1,7 +1,7 @@
 use std::f32::consts::FRAC_PI_3;
 
 use bevy::math::primitives::Arc2d;
-use pybevy_core::{FromBorrowedStorage, StorageError, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, StorageError, ValueStorage, repr::float_repr};
 use pyo3::prelude::*;
 
 use super::dimension::{angle, dimension};
@@ -166,7 +166,8 @@ impl PyArc2d {
         let arc = self.storage.as_ref()?;
         Ok(format!(
             "Arc2d(radius={}, half_angle={})",
-            arc.radius, arc.half_angle
+            float_repr(arc.radius),
+            float_repr(arc.half_angle)
         ))
     }
 }

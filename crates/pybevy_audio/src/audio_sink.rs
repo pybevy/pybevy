@@ -4,6 +4,7 @@ use bevy::audio::{AudioSink, AudioSinkPlayback};
 use pybevy_core::{
     ComponentStorage, PyComponent,
     public_error::{SPEED_NON_FINITE, audio_seek_failed},
+    repr::float_repr,
 };
 use pybevy_macros::pycomponent;
 use pyo3::{
@@ -111,8 +112,8 @@ impl PyAudioSink {
         match self.as_ref() {
             Ok(sink) => format!(
                 "AudioSink(volume={}, speed={}, paused={}, muted={})",
-                sink.volume().to_linear(),
-                sink.speed(),
+                float_repr(sink.volume().to_linear()),
+                float_repr(sink.speed()),
                 if sink.is_paused() { "True" } else { "False" },
                 if sink.is_muted() { "True" } else { "False" },
             ),

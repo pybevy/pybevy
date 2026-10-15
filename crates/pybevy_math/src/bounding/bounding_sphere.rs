@@ -5,6 +5,7 @@ use bevy::math::{
 use pybevy_core::{
     FromBorrowedStorage, ValueStorage,
     public_error::{EMPTY_POINT_CLOUD, bounding_operation, bounding_radius, bounding_shrink},
+    repr::{ReprLiteral, float_repr},
 };
 use pybevy_macros::pyvalue;
 use pyo3::{
@@ -246,9 +247,9 @@ impl PyBoundingSphere {
     fn __repr__(&self) -> PyResult<String> {
         let sphere = self.as_ref()?;
         Ok(format!(
-            "BoundingSphere(center={:?}, radius={})",
-            sphere.center,
-            sphere.radius()
+            "BoundingSphere(center={}, radius={})",
+            sphere.center.repr_literal(),
+            float_repr(sphere.radius())
         ))
     }
 }

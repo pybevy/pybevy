@@ -2,12 +2,12 @@ use bevy::{
     color::{Alpha, Gray, Hue, Hwba, LinearRgba, Mix, Srgba},
     math::{Vec3, Vec4},
 };
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, ValueStorage, repr::float_repr};
 use pybevy_macros::pyvalue;
 use pybevy_math::{vec3::PyVec3, vec4::PyVec4};
 use pyo3::prelude::*;
 
-use super::{common::fmt_f32, linear_rgba::PyLinearRgba, srgba::PySrgba};
+use super::{linear_rgba::PyLinearRgba, srgba::PySrgba};
 
 #[pyvalue]
 #[pyclass(name = "Hwba", module = "pybevy.color", eq, skip_from_py_object)]
@@ -225,10 +225,10 @@ impl PyHwba {
         let color = self.as_ref()?;
         Ok(format!(
             "Hwba({}, {}, {}, {})",
-            fmt_f32(color.hue),
-            fmt_f32(color.whiteness),
-            fmt_f32(color.blackness),
-            fmt_f32(color.alpha),
+            float_repr(color.hue),
+            float_repr(color.whiteness),
+            float_repr(color.blackness),
+            float_repr(color.alpha),
         ))
     }
 }

@@ -1,5 +1,5 @@
 use bevy::text::TextSpan;
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, PyComponent, repr::str_repr};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
@@ -31,7 +31,7 @@ impl PyTextSpan {
 
     fn __repr__(&self) -> PyResult<String> {
         let text = self.as_ref()?.0.clone();
-        Ok(format!("TextSpan(\"{}\")", text))
+        Ok(format!("TextSpan({})", str_repr(&text)))
     }
 
     fn __str__(&self) -> PyResult<String> {

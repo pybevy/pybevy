@@ -1,5 +1,8 @@
 use bevy::ui::UiPosition;
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{
+    FromBorrowedStorage, ValueStorage,
+    repr::{ReprLiteral, object_repr},
+};
 use pybevy_macros::pyvalue;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
@@ -164,8 +167,10 @@ impl PyUiPosition {
     pub fn __repr__(&self) -> PyResult<String> {
         let position = self.to_bevy()?;
         Ok(format!(
-            "UiPosition(anchor={:?}, x={:?}, y={:?})",
-            position.anchor, position.x, position.y
+            "UiPosition(anchor={}, x={}, y={})",
+            position.anchor.repr_literal(),
+            object_repr(PyVal::from(position.x)),
+            object_repr(PyVal::from(position.y))
         ))
     }
 }

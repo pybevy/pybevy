@@ -1,5 +1,8 @@
 use bevy::ui::UiTransform;
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{
+    ComponentStorage, PyComponent,
+    repr::{ReprLiteral, object_repr},
+};
 use pybevy_macros::pycomponent;
 use pybevy_math::{rot2::PyRot2, vec2::PyVec2};
 use pyo3::prelude::*;
@@ -102,8 +105,10 @@ impl PyUiTransform {
     fn __repr__(&self) -> PyResult<String> {
         let t = self.as_ref()?;
         Ok(format!(
-            "UiTransform(translation={:?}, scale={:?}, rotation={:?})",
-            t.translation, t.scale, t.rotation
+            "UiTransform(translation={}, scale={}, rotation={})",
+            object_repr(PyVal2::from(t.translation)),
+            t.scale.repr_literal(),
+            object_repr(PyRot2::from(t.rotation))
         ))
     }
 }

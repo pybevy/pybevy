@@ -108,7 +108,12 @@ impl PyRenderLayers {
     }
 
     pub fn __repr__(&self) -> PyResult<String> {
-        Ok(format!("RenderLayers({:?})", self.as_ref()?))
+        let layers: Vec<String> = self
+            .as_ref()?
+            .iter()
+            .map(|layer| layer.to_string())
+            .collect();
+        Ok(format!("RenderLayers.from_layers([{}])", layers.join(", ")))
     }
 
     pub fn __and__(&self, py: Python<'_>, other: &PyRenderLayers) -> PyResult<Py<Self>> {

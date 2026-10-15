@@ -208,7 +208,7 @@ impl PyButtonInput {
             Ok(input) => {
                 let pressed: Vec<String> = input
                     .get_pressed()
-                    .map(|key| format!("{:?}", key))
+                    .map(|key| PyKeyCode::from_bevy(*key).__repr__())
                     .collect();
                 format!("ButtonInput(pressed=[{}])", pressed.join(", "))
             }

@@ -1,5 +1,5 @@
 use bevy::ui::Overflow;
-use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage, repr::object_repr};
 use pyo3::prelude::*;
 
 use crate::PyOverflowAxis;
@@ -141,6 +141,10 @@ impl PyOverflow {
 
     pub fn __repr__(&self) -> PyResult<String> {
         let o = self.as_ref()?;
-        Ok(format!("Overflow(x={:?}, y={:?})", o.x, o.y))
+        Ok(format!(
+            "Overflow(x={}, y={})",
+            object_repr(PyOverflowAxis::from(o.x)),
+            object_repr(PyOverflowAxis::from(o.y))
+        ))
     }
 }

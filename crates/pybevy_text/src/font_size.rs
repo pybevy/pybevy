@@ -1,4 +1,5 @@
 use bevy::text::FontSize;
+use pybevy_core::repr::float_repr;
 use pybevy_macros::pyenum;
 use pyo3::{
     exceptions::{PyTypeError, PyValueError},
@@ -102,12 +103,12 @@ impl PyFontSize {
 
     fn __repr__(&self) -> String {
         match self {
-            PyFontSize::Px { value } => format!("FontSize.Px({value})"),
-            PyFontSize::Vw { value } => format!("FontSize.Vw({value})"),
-            PyFontSize::Vh { value } => format!("FontSize.Vh({value})"),
-            PyFontSize::VMin { value } => format!("FontSize.VMin({value})"),
-            PyFontSize::VMax { value } => format!("FontSize.VMax({value})"),
-            PyFontSize::Rem { value } => format!("FontSize.Rem({value})"),
+            PyFontSize::Px { value } => format!("FontSize.Px({})", float_repr(*value)),
+            PyFontSize::Vw { value } => format!("FontSize.Vw({})", float_repr(*value)),
+            PyFontSize::Vh { value } => format!("FontSize.Vh({})", float_repr(*value)),
+            PyFontSize::VMin { value } => format!("FontSize.VMin({})", float_repr(*value)),
+            PyFontSize::VMax { value } => format!("FontSize.VMax({})", float_repr(*value)),
+            PyFontSize::Rem { value } => format!("FontSize.Rem({})", float_repr(*value)),
         }
     }
 }

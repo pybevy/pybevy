@@ -4,7 +4,9 @@ use bevy::time::{Fixed, Real, Time, Virtual};
 use pybevy_core::{
     PyResource, ResourceStorage, duration_from_hz, positive_duration_from_secs_f64,
     public_error::{DURATION_ZERO, TIME_CONTEXT_TYPE_REQUIRED},
-    relative_speed, resource_initializer,
+    relative_speed,
+    repr::float_repr,
+    resource_initializer,
 };
 use pybevy_macros::pyresource;
 use pyo3::{PyTypeInfo, exceptions::PyTypeError, prelude::*, types::PyType};
@@ -402,7 +404,7 @@ impl PyTimeVirtual {
             Ok(t) => format!(
                 "Time[Virtual](elapsed={:.3}s, relative_speed={}, paused={})",
                 t.elapsed_secs_f64(),
-                t.relative_speed(),
+                float_repr(t.relative_speed_f64()),
                 if t.is_paused() { "True" } else { "False" }
             ),
             Err(_) => "Time[Virtual](<invalid>)".to_string(),

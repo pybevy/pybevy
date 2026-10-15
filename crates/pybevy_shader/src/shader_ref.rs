@@ -1,5 +1,9 @@
 use bevy::{asset::AssetPath, shader::ShaderRef};
-use pybevy_core::{PyHandle, enum_comparison::reject_variant_type};
+use pybevy_core::{
+    PyHandle,
+    enum_comparison::reject_variant_type,
+    repr::{object_repr, str_repr},
+};
 use pyo3::{prelude::*, pyclass::CompareOp};
 
 #[pyclass(
@@ -34,8 +38,10 @@ impl PyShaderRef {
     fn __repr__(&self) -> String {
         match self {
             PyShaderRef::Default() => "ShaderRef.Default".to_string(),
-            PyShaderRef::Handle { value } => format!("ShaderRef.Handle({:?})", value),
-            PyShaderRef::Path { value } => format!("ShaderRef.Path(\"{}\")", value),
+            PyShaderRef::Handle { value } => {
+                format!("ShaderRef.Handle({})", object_repr(value.clone()))
+            }
+            PyShaderRef::Path { value } => format!("ShaderRef.Path({})", str_repr(value)),
         }
     }
 

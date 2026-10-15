@@ -1,5 +1,7 @@
 use bevy::input::gamepad::GamepadRumbleIntensity;
-use pybevy_core::{FromBorrowedStorage, ValueStorage, public_error::value_out_of_range};
+use pybevy_core::{
+    FromBorrowedStorage, ValueStorage, public_error::value_out_of_range, repr::float_repr,
+};
 use pybevy_macros::pyvalue;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
@@ -95,7 +97,8 @@ impl PyGamepadRumbleIntensity {
         let intensity = self.to_bevy()?;
         Ok(format!(
             "GamepadRumbleIntensity(strong_motor={}, weak_motor={})",
-            intensity.strong_motor, intensity.weak_motor
+            float_repr(intensity.strong_motor),
+            float_repr(intensity.weak_motor)
         ))
     }
 }

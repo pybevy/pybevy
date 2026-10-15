@@ -1,5 +1,5 @@
 use bevy::window::WindowResizeConstraints;
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, ValueStorage, repr::float_repr};
 use pybevy_macros::pyvalue;
 use pyo3::prelude::*;
 
@@ -113,7 +113,10 @@ impl PyWindowResizeConstraints {
         let c = self.to_bevy()?;
         Ok(format!(
             "WindowResizeConstraints(min_width={}, min_height={}, max_width={}, max_height={})",
-            c.min_width, c.min_height, c.max_width, c.max_height
+            float_repr(c.min_width),
+            float_repr(c.min_height),
+            float_repr(c.max_width),
+            float_repr(c.max_height)
         ))
     }
 }

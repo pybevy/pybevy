@@ -2,7 +2,7 @@ use bevy::{
     camera::primitives::Aabb,
     math::{Vec3, Vec3A},
 };
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, PyComponent, repr::ReprLiteral};
 use pybevy_macros::pycomponent;
 use pybevy_math::{
     affine3a::PyAffine3A, mat3a::PyMat3A, primitives::half_space::PyHalfSpace, vec3::PyVec3,
@@ -83,8 +83,9 @@ impl PyAabb {
     pub fn __repr__(&self) -> PyResult<String> {
         let aabb = self.as_ref()?;
         Ok(format!(
-            "Aabb(center={:?}, half_extents={:?})",
-            aabb.center, aabb.half_extents
+            "Aabb(center={}, half_extents={})",
+            aabb.center.repr_literal(),
+            aabb.half_extents.repr_literal()
         ))
     }
 

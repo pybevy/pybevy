@@ -1,3 +1,4 @@
+use pybevy_core::repr::{float_repr, str_repr};
 use pyo3::prelude::*;
 
 #[pyclass(
@@ -25,8 +26,12 @@ impl PyAnimationEvent {
 
     pub fn __repr__(&self) -> String {
         match &self.data {
-            Some(data) => format!("AnimationEvent(name='{}', data='{}')", self.name, data),
-            None => format!("AnimationEvent(name='{}')", self.name),
+            Some(data) => format!(
+                "AnimationEvent(name={}, data={})",
+                str_repr(&self.name),
+                str_repr(data)
+            ),
+            None => format!("AnimationEvent(name={})", str_repr(&self.name)),
         }
     }
 }
@@ -65,8 +70,9 @@ impl PyAnimationEventData {
         Python::attach(|py| {
             let event_repr = self.event.borrow(py).__repr__();
             format!(
-                "AnimationEventData(time={:?}, event={})",
-                self.time, event_repr
+                "AnimationEventData(time={}, event={})",
+                float_repr(self.time),
+                event_repr
             )
         })
     }

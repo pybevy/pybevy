@@ -1,5 +1,4 @@
 pub mod color;
-mod common;
 pub mod hsla;
 pub mod hsva;
 pub mod hwba;

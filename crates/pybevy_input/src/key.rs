@@ -1,4 +1,5 @@
 use bevy::input::keyboard::Key;
+use pybevy_core::repr::str_repr;
 use pybevy_macros::pyenum;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
@@ -971,11 +972,13 @@ impl From<PyKey> for Key {
 impl PyKey {
     fn __repr__(&self) -> String {
         match self {
-            Self::Character { value } => format!("Key.Character({value:?})"),
+            Self::Character { value } => format!("Key.Character({})", str_repr(value)),
             Self::Unidentified { value } => {
                 format!("Key.Unidentified({})", value.__repr__())
             }
-            Self::Dead { value: Some(value) } => format!("Key.Dead({value:?})"),
+            Self::Dead { value: Some(value) } => {
+                format!("Key.Dead({})", str_repr(&value.to_string()))
+            }
             Self::Dead { value: None } => "Key.Dead(None)".to_string(),
             value => format!("Key.{value:?}").replace("()", ""),
         }

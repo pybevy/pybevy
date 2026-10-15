@@ -1,5 +1,5 @@
 use bevy::shader::{Shader, ShaderDefVal};
-use pybevy_core::AssetStorage;
+use pybevy_core::{AssetStorage, repr::str_repr};
 use pybevy_macros::pyasset;
 use pyo3::prelude::*;
 
@@ -131,6 +131,6 @@ impl PyShader {
 
     fn __repr__(&self) -> PyResult<String> {
         let shader = self.as_ref()?;
-        Ok(format!("Shader(path=\"{}\")", shader.path))
+        Ok(format!("Shader(path={})", str_repr(&shader.path)))
     }
 }

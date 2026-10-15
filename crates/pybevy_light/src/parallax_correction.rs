@@ -1,5 +1,5 @@
 use bevy::{light::ParallaxCorrection, math::Vec3};
-use pybevy_core::ComponentStorage;
+use pybevy_core::{ComponentStorage, repr::ReprLiteral};
 use pybevy_macros::pyenum;
 use pybevy_math::vec3::PyVec3;
 use pyo3::prelude::*;
@@ -27,8 +27,8 @@ impl PyParallaxCorrection {
             ParallaxCorrection::None => Ok("ParallaxCorrection.None_()".to_string()),
             ParallaxCorrection::Auto => Ok("ParallaxCorrection.Auto()".to_string()),
             ParallaxCorrection::Custom(value) => Ok(format!(
-                "ParallaxCorrection.Custom(value=Vec3({}, {}, {}))",
-                value.x, value.y, value.z
+                "ParallaxCorrection.Custom(value={})",
+                value.repr_literal()
             )),
         }
     }

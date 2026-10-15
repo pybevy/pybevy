@@ -7,7 +7,7 @@ use bevy::{
     prelude::{IntoScheduleConfigs, Resource},
     render::{Render, RenderApp, RenderSystems},
 };
-use pybevy_core::{PluginBuild, PyPlugin, ensure_asset_access_registry};
+use pybevy_core::{PluginBuild, PyPlugin, ensure_asset_access_registry, repr::str_repr};
 use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
@@ -66,9 +66,9 @@ impl PyControlPlugin {
     pub fn __repr__(&self) -> String {
         let flag = |value: bool| if value { "True" } else { "False" };
         format!(
-            "McpPlugin(port={}, host='{}', screenshot={}, manipulation={}, execute_python={}, api_discovery={})",
+            "McpPlugin(port={}, host={}, screenshot={}, manipulation={}, execute_python={}, api_discovery={})",
             self.port,
-            self.host,
+            str_repr(&self.host),
             flag(self.screenshot),
             flag(self.manipulation),
             flag(self.execute_python),

@@ -2,7 +2,7 @@ use bevy::{
     input::touch::{Touch, Touches},
     math::Vec2,
 };
-use pybevy_core::{PyResource, ResourceStorage, resource_initializer};
+use pybevy_core::{PyResource, ResourceStorage, repr::ReprLiteral, resource_initializer};
 use pybevy_macros::pyresource;
 use pybevy_math::{snapshot::Snapshot, vec2::PyVec2};
 use pyo3::prelude::*;
@@ -202,10 +202,9 @@ impl PyTouch {
 
     fn __repr__(&self) -> String {
         format!(
-            "Touch(id={}, position=({}, {}), force={})",
+            "Touch(id={}, position={}, force={})",
             self.id,
-            self.position.x,
-            self.position.y,
+            self.position.repr_literal(),
             self.force
                 .map_or_else(|| "None".to_string(), |force| force.__repr__())
         )

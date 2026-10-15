@@ -1,5 +1,5 @@
 use bevy::text::LineHeight;
-use pybevy_core::{ComponentStorage, enum_comparison::compare_values};
+use pybevy_core::{ComponentStorage, enum_comparison::compare_values, repr::float_repr};
 use pybevy_macros::pyenum;
 use pyo3::{prelude::*, pyclass::CompareOp};
 
@@ -28,8 +28,10 @@ impl PyLineHeight {
 
     pub fn __repr__(&self) -> PyResult<String> {
         match self.as_ref()?.reborrow() {
-            LineHeight::Px(value) => Ok(format!("LineHeight.Px({value})")),
-            LineHeight::RelativeToFont(value) => Ok(format!("LineHeight.RelativeToFont({value})")),
+            LineHeight::Px(value) => Ok(format!("LineHeight.Px({})", float_repr(*value))),
+            LineHeight::RelativeToFont(value) => {
+                Ok(format!("LineHeight.RelativeToFont({})", float_repr(*value)))
+            }
         }
     }
 }

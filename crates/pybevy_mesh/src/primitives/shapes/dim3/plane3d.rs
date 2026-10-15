@@ -2,7 +2,10 @@ use bevy::{
     math::{Dir3, Vec3, primitives::Plane3d},
     mesh::Meshable,
 };
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{
+    FromBorrowedStorage, ValueStorage,
+    repr::{ReprLiteral, object_repr},
+};
 use pybevy_macros::pyvalue;
 use pybevy_math::{
     dir3::PyDir3,
@@ -103,9 +106,9 @@ impl PyPlane3d {
 
     pub fn __repr__(&self) -> PyResult<String> {
         Ok(format!(
-            "Plane3d(normal={:?}, half_size={:?})",
-            self.as_ref()?.normal,
-            self.as_ref()?.half_size
+            "Plane3d(normal={}, half_size={})",
+            object_repr(PyDir3::from(self.as_ref()?.normal)),
+            self.as_ref()?.half_size.repr_literal()
         ))
     }
 

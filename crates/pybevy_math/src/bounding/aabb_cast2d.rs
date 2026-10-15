@@ -1,5 +1,5 @@
 use bevy::math::bounding::AabbCast2d;
-use pybevy_core::{FieldStorage, FromBorrowedStorage};
+use pybevy_core::{FieldStorage, FromBorrowedStorage, repr::object_repr};
 use pybevy_macros::pyfield;
 use pyo3::prelude::*;
 
@@ -63,8 +63,9 @@ impl PyAabbCast2d {
     fn __repr__(&self) -> PyResult<String> {
         let cast = self.as_ref()?;
         Ok(format!(
-            "AabbCast2d(aabb={:?}, ray=({:?}, max={}))",
-            cast.aabb, cast.ray.ray, cast.ray.max
+            "AabbCast2d(aabb={}, ray={})",
+            object_repr(PyAabb2d::from(cast.aabb)),
+            object_repr(PyRayCast2d::from_owned(cast.ray.clone()))
         ))
     }
 }

@@ -2,6 +2,7 @@ use std::ops::Range;
 
 use pybevy_core::{
     FieldStorage, FromBorrowedStorage, StorageRef, public_error::UNSUPPORTED_COMPARISON,
+    repr::float_repr,
 };
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
@@ -83,7 +84,11 @@ impl PyRange {
 
     pub fn __repr__(&self) -> PyResult<String> {
         let r = self.as_ref()?;
-        Ok(format!("Range({}, {})", r.start, r.end))
+        Ok(format!(
+            "Range({}, {})",
+            float_repr(r.start),
+            float_repr(r.end)
+        ))
     }
 
     pub fn __str__(&self) -> PyResult<String> {

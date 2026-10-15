@@ -1,5 +1,5 @@
 use bevy::audio::GlobalVolume;
-use pybevy_core::{PyResource, ResourceStorage};
+use pybevy_core::{PyResource, ResourceStorage, repr::object_repr};
 use pybevy_macros::pyresource;
 use pyo3::prelude::*;
 
@@ -37,7 +37,10 @@ impl PyGlobalVolume {
 
     fn __repr__(&self) -> String {
         match self.as_ref() {
-            Ok(gv) => format!("GlobalVolume(volume={:?})", gv.volume),
+            Ok(gv) => format!(
+                "GlobalVolume(volume={})",
+                object_repr(PyVolume::from(gv.volume))
+            ),
             Err(_) => "GlobalVolume(<invalid>)".to_string(),
         }
     }

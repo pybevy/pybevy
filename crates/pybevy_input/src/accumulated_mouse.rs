@@ -2,7 +2,7 @@ use bevy::{
     input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll},
     math::Vec2,
 };
-use pybevy_core::{PyResource, ResourceStorage, resource_initializer};
+use pybevy_core::{PyResource, ResourceStorage, repr::ReprLiteral, resource_initializer};
 use pybevy_macros::pyresource;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
@@ -37,10 +37,7 @@ impl PyAccumulatedMouseMotion {
 
     fn __repr__(&self) -> String {
         match self.as_ref() {
-            Ok(m) => format!(
-                "AccumulatedMouseMotion(delta=Vec2({}, {}))",
-                m.delta.x, m.delta.y
-            ),
+            Ok(m) => format!("AccumulatedMouseMotion(delta={})", m.delta.repr_literal()),
             Err(_) => "AccumulatedMouseMotion(<invalid>)".to_string(),
         }
     }
@@ -104,8 +101,9 @@ impl PyAccumulatedMouseScroll {
     fn __repr__(&self) -> String {
         match self.as_ref() {
             Ok(scroll) => format!(
-                "AccumulatedMouseScroll(delta=Vec2({}, {}), unit={:?})",
-                scroll.delta.x, scroll.delta.y, scroll.unit
+                "AccumulatedMouseScroll(delta={}, unit={})",
+                scroll.delta.repr_literal(),
+                PyMouseScrollUnit::from(scroll.unit).__repr__()
             ),
             Err(_) => "AccumulatedMouseScroll(<invalid>)".to_string(),
         }

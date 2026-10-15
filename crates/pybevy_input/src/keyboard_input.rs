@@ -145,8 +145,9 @@ impl PyKeyboardInput {
 
     fn __repr__(&self) -> String {
         format!(
-            "KeyboardInput(key_code={:?}, state={:?})",
-            self.key_code, self.state
+            "KeyboardInput(key_code={}, state={})",
+            PyKeyCode::from_bevy(self.key_code).__repr__(),
+            self.state.__repr__()
         )
     }
 }

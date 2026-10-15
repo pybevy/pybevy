@@ -2,10 +2,13 @@ use bevy::{
     math::Vec2,
     text::{PreeditCursor, TextEdit},
 };
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{
+    FromBorrowedStorage, ValueStorage,
+    repr::{ReprLiteral, str_repr},
+};
 use pybevy_macros::{pyenum, pyvalue};
 use pybevy_math::snapshot::Snapshot;
-use pyo3::{prelude::*, types::PyString};
+use pyo3::prelude::*;
 
 #[pyvalue]
 #[pyclass(
@@ -186,17 +189,6 @@ fn to_smol(value: String) -> smol_str::SmolStr {
     smol_str::SmolStr::from(value)
 }
 
-fn point_repr(py: Python<'_>, value: &Snapshot<Vec2>) -> PyResult<String> {
-    Ok(Bound::new(py, value.into_wrapper())?
-        .repr()?
-        .to_str()?
-        .to_owned())
-}
-
-fn str_repr(py: Python<'_>, value: &str) -> PyResult<String> {
-    Ok(PyString::new(py, value).repr()?.to_str()?.to_owned())
-}
-
 fn bool_variant_repr(name: &str, value: bool) -> String {
     let value = if value { "True" } else { "False" };
     format!("TextEdit.{name}({value})")
@@ -310,12 +302,12 @@ impl TryFrom<PyTextEdit> for TextEdit {
 
 #[pymethods]
 impl PyTextEdit {
-    pub fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+    pub fn __repr__(&self) -> PyResult<String> {
         Ok(match self {
             PyTextEdit::Copy() => "TextEdit.Copy".into(),
             PyTextEdit::Cut() => "TextEdit.Cut".into(),
             PyTextEdit::Paste() => "TextEdit.Paste".into(),
-            PyTextEdit::Insert { value } => format!("TextEdit.Insert({})", str_repr(py, value)?),
+            PyTextEdit::Insert { value } => format!("TextEdit.Insert({})", str_repr(value)),
             PyTextEdit::Backspace() => "TextEdit.Backspace".into(),
             PyTextEdit::BackspaceWord() => "TextEdit.BackspaceWord".into(),
             PyTextEdit::Delete() => "TextEdit.Delete".into(),
@@ -336,28 +328,28 @@ impl PyTextEdit {
             PyTextEdit::SelectAll() => "TextEdit.SelectAll".into(),
             PyTextEdit::SelectAllIfCollapsed() => "TextEdit.SelectAllIfCollapsed".into(),
             PyTextEdit::MoveToPoint { value } => {
-                format!("TextEdit.MoveToPoint({})", point_repr(py, value)?)
+                format!("TextEdit.MoveToPoint({})", value.0.repr_literal())
             }
             PyTextEdit::SelectWordAtPoint { value } => {
-                format!("TextEdit.SelectWordAtPoint({})", point_repr(py, value)?)
+                format!("TextEdit.SelectWordAtPoint({})", value.0.repr_literal())
             }
             PyTextEdit::SelectLineAtPoint { value } => {
-                format!("TextEdit.SelectLineAtPoint({})", point_repr(py, value)?)
+                format!("TextEdit.SelectLineAtPoint({})", value.0.repr_literal())
             }
             PyTextEdit::SelectedHardLineAtPoint { value } => {
                 format!(
                     "TextEdit.SelectedHardLineAtPoint({})",
-                    point_repr(py, value)?
+                    value.0.repr_literal()
                 )
             }
             PyTextEdit::ExtendSelectionToPoint { value } => {
                 format!(
                     "TextEdit.ExtendSelectionToPoint({})",
-                    point_repr(py, value)?
+                    value.0.repr_literal()
                 )
             }
             PyTextEdit::ShiftClickExtension { value } => {
-                format!("TextEdit.ShiftClickExtension({})", point_repr(py, value)?)
+                format!("TextEdit.ShiftClickExtension({})", value.0.repr_literal())
             }
             PyTextEdit::ImeSetCompose { value, cursor } => {
                 let cursor = match cursor {
@@ -366,11 +358,11 @@ impl PyTextEdit {
                 };
                 format!(
                     "TextEdit.ImeSetCompose(value={}, cursor={cursor})",
-                    str_repr(py, value)?
+                    str_repr(value)
                 )
             }
             PyTextEdit::ImeCommit { value } => {
-                format!("TextEdit.ImeCommit(value={})", str_repr(py, value)?)
+                format!("TextEdit.ImeCommit(value={})", str_repr(value))
             }
         })
     }

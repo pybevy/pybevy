@@ -1,7 +1,9 @@
 use std::f32::consts::PI;
 
 use bevy::math::{Rot2, StableInterpolate, Vec2};
-use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage, public_error};
+use pybevy_core::{
+    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage, public_error, repr::float_repr,
+};
 use pybevy_macros::pyconstructor;
 use pyo3::{
     exceptions::{PyTypeError, PyValueError},
@@ -266,7 +268,10 @@ impl PyRot2 {
     }
 
     pub fn __repr__(&self) -> PyResult<String> {
-        Ok(format!("Rot2(radians={})", self.as_ref()?.as_radians()))
+        Ok(format!(
+            "Rot2(radians={})",
+            float_repr(self.as_ref()?.as_radians())
+        ))
     }
 }
 

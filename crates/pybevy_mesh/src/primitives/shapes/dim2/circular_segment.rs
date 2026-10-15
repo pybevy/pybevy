@@ -4,6 +4,7 @@ use bevy::{
     math::primitives::{CircularSegment, Measured2d},
     mesh::Meshable,
 };
+use pybevy_core::repr::float_repr;
 use pybevy_macros::pyconstructor;
 use pybevy_math::{
     primitives::{
@@ -158,8 +159,8 @@ impl PyCircularSegment {
     fn __repr__(&self) -> String {
         format!(
             "CircularSegment(radius={}, angle={})",
-            self.0.radius(),
-            self.0.angle()
+            float_repr(self.0.radius()),
+            float_repr(self.0.angle())
         )
     }
 }

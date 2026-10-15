@@ -4,7 +4,10 @@ use bevy::math::{
         Aabb2d, Aabb3d, BoundingCircle, BoundingSphere, IntersectsVolume, RayCast2d, RayCast3d,
     },
 };
-use pybevy_core::{FieldStorage, FromBorrowedStorage, ValueStorage};
+use pybevy_core::{
+    FieldStorage, FromBorrowedStorage, ValueStorage,
+    repr::{ReprLiteral, float_repr, object_repr},
+};
 use pybevy_macros::pyfield;
 use pyo3::prelude::*;
 
@@ -92,7 +95,11 @@ impl PyRayCast2d {
 
     fn __repr__(&self) -> PyResult<String> {
         let cast = self.as_ref()?;
-        Ok(format!("RayCast2d(ray={:?}, max={})", cast.ray, cast.max))
+        Ok(format!(
+            "RayCast2d(ray={}, max={})",
+            object_repr(PyRay2d::from(cast.ray)),
+            float_repr(cast.max)
+        ))
     }
 }
 
@@ -178,8 +185,12 @@ impl PyRayCast3d {
     fn __repr__(&self) -> PyResult<String> {
         let cast = self.as_ref()?;
         Ok(format!(
-            "RayCast3d(origin={:?}, direction={:?}, max={})",
-            cast.origin, cast.direction, cast.max
+            "RayCast3d(origin={}, direction=Dir3({}, {}, {}), max={})",
+            cast.origin.repr_literal(),
+            float_repr(cast.direction.x),
+            float_repr(cast.direction.y),
+            float_repr(cast.direction.z),
+            float_repr(cast.max)
         ))
     }
 }

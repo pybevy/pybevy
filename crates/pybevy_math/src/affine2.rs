@@ -1,6 +1,8 @@
 use bevy::math::{Affine2, Mat2, Mat3, Vec2};
 use pybevy_core::{
-    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage, public_error::UNSUPPORTED_COMPARISON,
+    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
+    public_error::UNSUPPORTED_COMPARISON,
+    repr::{ReprLiteral, object_repr},
 };
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
@@ -237,8 +239,9 @@ impl PyAffine2 {
     pub fn __repr__(&self) -> PyResult<String> {
         let a = self.as_ref()?;
         Ok(format!(
-            "Affine2(matrix2={:?}, translation={:?})",
-            a.matrix2, a.translation
+            "Affine2(matrix2={}, translation={})",
+            object_repr(PyMat2::from(a.matrix2)),
+            a.translation.repr_literal()
         ))
     }
 
@@ -507,8 +510,9 @@ impl PyMat2 {
     pub fn __repr__(&self) -> PyResult<String> {
         let m = self.as_ref()?;
         Ok(format!(
-            "Mat2(x_axis={:?}, y_axis={:?})",
-            m.x_axis, m.y_axis
+            "Mat2(x_axis={}, y_axis={})",
+            m.x_axis.repr_literal(),
+            m.y_axis.repr_literal()
         ))
     }
 

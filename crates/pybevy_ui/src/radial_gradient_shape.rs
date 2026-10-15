@@ -1,4 +1,5 @@
 use bevy::ui::RadialGradientShape;
+use pybevy_core::repr::object_repr;
 use pyo3::prelude::*;
 
 use crate::val::PyVal;
@@ -88,10 +89,17 @@ impl PyRadialGradientShape {
             RadialGradientShape::FarthestCorner => {
                 "RadialGradientShape.farthest_corner()".to_string()
             }
-            RadialGradientShape::Circle(r) => format!("RadialGradientShape.circle({:?})", r),
-            RadialGradientShape::Ellipse(w, h) => {
-                format!("RadialGradientShape.ellipse({:?}, {:?})", w, h)
+            RadialGradientShape::Circle(r) => {
+                format!(
+                    "RadialGradientShape.circle({})",
+                    object_repr(PyVal::from(*r))
+                )
             }
+            RadialGradientShape::Ellipse(w, h) => format!(
+                "RadialGradientShape.ellipse({}, {})",
+                object_repr(PyVal::from(*w)),
+                object_repr(PyVal::from(*h))
+            ),
         }
     }
 }

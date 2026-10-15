@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use bevy::{platform::time::Instant, time::TimeUpdateStrategy};
+use pybevy_core::repr::float_repr;
 use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
@@ -30,7 +31,7 @@ impl PyTimeUpdateStrategy {
             TimeUpdateStrategy::Automatic => Ok("TimeUpdateStrategy.Automatic()".to_string()),
             TimeUpdateStrategy::ManualDuration(duration) => Ok(format!(
                 "TimeUpdateStrategy.ManualDuration(timedelta(seconds={}))",
-                duration.as_secs_f64()
+                float_repr(duration.as_secs_f64())
             )),
             TimeUpdateStrategy::FixedTimesteps(steps) => {
                 Ok(format!("TimeUpdateStrategy.FixedTimesteps({steps})"))

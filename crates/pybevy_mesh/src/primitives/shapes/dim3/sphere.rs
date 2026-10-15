@@ -2,6 +2,7 @@ use bevy::{
     math::primitives::{Measured3d, Sphere},
     mesh::Meshable,
 };
+use pybevy_core::repr::float_repr;
 use pybevy_math::{primitives::dimension::dimension, vec3::PyVec3};
 use pyo3::prelude::*;
 
@@ -47,7 +48,7 @@ impl PySphere {
     }
 
     pub fn __repr__(&self) -> String {
-        format!("Sphere(radius={})", self.0.radius)
+        format!("Sphere(radius={})", float_repr(self.0.radius))
     }
 
     pub fn mesh(&self, py: Python) -> PyResult<Py<PySphereMeshBuilder>> {

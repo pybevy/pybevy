@@ -1,5 +1,5 @@
 use bevy::asset::LoadState;
-use pybevy_core::public_error::enum_base_construction;
+use pybevy_core::{public_error::enum_base_construction, repr::str_repr};
 use pybevy_macros::pyenum;
 use pyo3::{exceptions::PyTypeError, prelude::*, types::PyDict};
 
@@ -75,7 +75,7 @@ impl PyLoadState {
             LoadStateValue::Loading => "LoadState.Loading()".to_string(),
             LoadStateValue::Loaded => "LoadState.Loaded()".to_string(),
             LoadStateValue::Failed(value) => {
-                format!("LoadState.Failed(value={value:?})")
+                format!("LoadState.Failed(value={})", str_repr(value))
             }
         }
     }

@@ -1,5 +1,7 @@
 use bevy::audio::Pitch;
-use pybevy_core::{AssetStorage, duration_from_secs_f64, try_finite_positive_frequency};
+use pybevy_core::{
+    AssetStorage, duration_from_secs_f64, repr::float_repr, try_finite_positive_frequency,
+};
 use pybevy_macros::pyasset;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
@@ -53,7 +55,7 @@ impl PyPitch {
         let pitch = self.as_ref()?;
         Ok(format!(
             "Pitch(frequency={} Hz, duration={:.3} s)",
-            pitch.frequency,
+            float_repr(pitch.frequency),
             pitch.duration.as_secs_f64()
         ))
     }

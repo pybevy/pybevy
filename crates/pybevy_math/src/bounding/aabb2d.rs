@@ -5,6 +5,7 @@ use bevy::math::{
 use pybevy_core::{
     FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
     public_error::{EMPTY_POINT_CLOUD, bounding_half_size, bounding_operation, bounding_shrink},
+    repr::{ReprLiteral, float_repr},
 };
 use pyo3::{
     exceptions::{PyTypeError, PyValueError},
@@ -267,7 +268,11 @@ impl PyAabb2d {
 
     fn __repr__(&self) -> PyResult<String> {
         let aabb = self.as_ref()?;
-        Ok(format!("Aabb2d(min={:?}, max={:?})", aabb.min, aabb.max))
+        Ok(format!(
+            "Aabb2d(min={}, max={})",
+            aabb.min.repr_literal(),
+            aabb.max.repr_literal()
+        ))
     }
 }
 
@@ -401,10 +406,9 @@ impl PyIsometry2d {
 
     fn __repr__(&self) -> String {
         format!(
-            "Isometry2d(translation=Vec2({}, {}), rotation=Rot2({}))",
-            self.inner.translation.x,
-            self.inner.translation.y,
-            self.inner.rotation.as_radians()
+            "Isometry2d(translation={}, rotation=Rot2({}))",
+            self.inner.translation.repr_literal(),
+            float_repr(self.inner.rotation.as_radians())
         )
     }
 }

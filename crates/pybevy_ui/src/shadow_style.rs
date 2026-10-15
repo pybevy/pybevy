@@ -1,6 +1,6 @@
 use bevy::{color::Color, ui::ShadowStyle};
 use pybevy_color::color::PyColor;
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, ValueStorage, repr::object_repr};
 use pybevy_macros::pyvalue;
 use pyo3::prelude::*;
 
@@ -133,8 +133,12 @@ impl PyShadowStyle {
     pub fn __repr__(&self) -> PyResult<String> {
         let style = self.as_ref()?;
         Ok(format!(
-            "ShadowStyle(color={:?}, x_offset={:?}, y_offset={:?}, spread_radius={:?}, blur_radius={:?})",
-            style.color, style.x_offset, style.y_offset, style.spread_radius, style.blur_radius
+            "ShadowStyle(color={}, x_offset={}, y_offset={}, spread_radius={}, blur_radius={})",
+            object_repr(PyColor::from(style.color)),
+            object_repr(PyVal::from(style.x_offset)),
+            object_repr(PyVal::from(style.y_offset)),
+            object_repr(PyVal::from(style.spread_radius)),
+            object_repr(PyVal::from(style.blur_radius))
         ))
     }
 }

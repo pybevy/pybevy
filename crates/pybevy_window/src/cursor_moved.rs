@@ -1,5 +1,5 @@
 use bevy::{math::Vec2, window::CursorMoved};
-use pybevy_core::{PyEntity, PyMessage};
+use pybevy_core::{PyEntity, PyMessage, repr::ReprLiteral};
 use pybevy_macros::pymessage;
 use pybevy_math::snapshot::Snapshot;
 use pyo3::prelude::*;
@@ -86,12 +86,10 @@ impl PyCursorMoved {
     }
 
     fn __repr__(&self) -> String {
-        let delta = self
-            .delta
-            .map(|delta| format!("Vec2({}, {})", delta.x, delta.y));
         format!(
-            "CursorMoved(position=Vec2({}, {}), delta={:?})",
-            self.position.x, self.position.y, delta
+            "CursorMoved(position={}, delta={})",
+            self.position.repr_literal(),
+            self.delta.repr_literal()
         )
     }
 }

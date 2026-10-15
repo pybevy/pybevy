@@ -1,4 +1,5 @@
 use bevy_math::curve::{Curve, EaseFunction, easing::JumpAt};
+use pybevy_core::repr::float_repr;
 use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
@@ -247,6 +248,13 @@ impl PyEaseFunction {
     }
 
     fn __repr__(&self) -> String {
-        format!("{:?}", self.ease_fn)
+        match self.ease_fn {
+            EaseFunction::Elastic(omega) => format!("EaseFunction.Elastic({})", float_repr(omega)),
+            EaseFunction::Steps(steps, jump) => format!(
+                "EaseFunction.Steps({steps}, {})",
+                PyJumpAt::from(jump).__repr__()
+            ),
+            unit => format!("EaseFunction.{unit:?}"),
+        }
     }
 }

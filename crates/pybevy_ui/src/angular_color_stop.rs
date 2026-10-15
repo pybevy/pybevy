@@ -1,6 +1,10 @@
 use bevy::{color::Color, ui::AngularColorStop};
 use pybevy_color::color::PyColor;
-use pybevy_core::{FromBorrowedStorage, ValueStorage, public_error::value_out_of_range};
+use pybevy_core::{
+    FromBorrowedStorage, ValueStorage,
+    public_error::value_out_of_range,
+    repr::{ReprLiteral, float_repr, object_repr},
+};
 use pybevy_macros::pyvalue;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
@@ -116,8 +120,10 @@ impl PyAngularColorStop {
     pub fn __repr__(&self) -> PyResult<String> {
         let stop = self.as_ref()?;
         Ok(format!(
-            "AngularColorStop(color={:?}, angle={:?}, hint={})",
-            stop.color, stop.angle, stop.hint
+            "AngularColorStop(color={}, angle={}, hint={})",
+            object_repr(PyColor::from(stop.color)),
+            stop.angle.repr_literal(),
+            float_repr(stop.hint)
         ))
     }
 }

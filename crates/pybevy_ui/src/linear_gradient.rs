@@ -1,5 +1,5 @@
 use bevy::{prelude::InColorSpace, ui::LinearGradient};
-use pybevy_core::ValueStorage;
+use pybevy_core::{ValueStorage, repr::float_repr};
 use pyo3::prelude::*;
 
 use crate::{PyInterpolationColorSpace, color_stop::PyColorStop};
@@ -211,8 +211,8 @@ impl PyLinearGradient {
 
     pub fn __repr__(&self) -> String {
         format!(
-            "LinearGradient(angle={}, stops={:?})",
-            self.inner.angle,
+            "LinearGradient(angle={}, stops={})",
+            float_repr(self.inner.angle),
             self.inner.stops.len()
         )
     }

@@ -1,5 +1,6 @@
 use pybevy_core::{
     AssetLoadFailedRecord, MaterializedPyAssetId, PyAssetId, PyAssetPath, PyMessage,
+    repr::{object_repr, str_repr},
 };
 use pyo3::{prelude::*, types::PyType};
 
@@ -47,8 +48,10 @@ impl PyAssetLoadFailedEvent {
 
     pub fn __repr__(&self) -> String {
         format!(
-            "AssetLoadFailedEvent(id={:?}, path={:?}, error={:?})",
-            self.id, self.path, self.error
+            "AssetLoadFailedEvent(id={}, path={}, error={})",
+            object_repr(MaterializedPyAssetId::from(self.id)),
+            object_repr(self.path.clone()),
+            str_repr(&self.error)
         )
     }
 }

@@ -1,5 +1,5 @@
 use bevy::light::atmosphere::ScatteringTerm;
-use pybevy_core::{FieldStorage, FromBorrowedStorage};
+use pybevy_core::{FieldStorage, FromBorrowedStorage, repr::ReprLiteral};
 use pybevy_macros::pyfield;
 use pybevy_math::vec3::PyVec3;
 use pyo3::prelude::*;
@@ -87,9 +87,9 @@ impl PyScatteringTerm {
     pub fn __repr__(&self) -> PyResult<String> {
         let term = self.as_ref()?;
         Ok(format!(
-            "ScatteringTerm(absorption={:?}, scattering={:?}, falloff={}, phase={})",
-            term.absorption,
-            term.scattering,
+            "ScatteringTerm(absorption={}, scattering={}, falloff={}, phase={})",
+            term.absorption.repr_literal(),
+            term.scattering.repr_literal(),
             PyFalloff(term.falloff.clone()).__repr__(),
             PyPhaseFunction(term.phase.clone()).__repr__()
         ))

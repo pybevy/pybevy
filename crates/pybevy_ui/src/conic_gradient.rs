@@ -1,5 +1,8 @@
 use bevy::{prelude::InColorSpace, ui::ConicGradient};
-use pybevy_core::ValueStorage;
+use pybevy_core::{
+    ValueStorage,
+    repr::{float_repr, object_repr},
+};
 use pyo3::prelude::*;
 
 use crate::{
@@ -128,9 +131,9 @@ impl PyConicGradient {
 
     pub fn __repr__(&self) -> String {
         format!(
-            "ConicGradient(position={:?}, start={}, stops={})",
-            self.inner.position,
-            self.inner.start,
+            "ConicGradient(position={}, start={}, stops={})",
+            object_repr(PyUiPosition::from(self.inner.position)),
+            float_repr(self.inner.start),
             self.inner.stops.len()
         )
     }

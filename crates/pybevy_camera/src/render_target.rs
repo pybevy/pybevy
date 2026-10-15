@@ -3,7 +3,7 @@ use bevy::{
     math::UVec2,
     window::WindowRef,
 };
-use pybevy_core::{ComponentStorage, PyEntity, PyHandle};
+use pybevy_core::{ComponentStorage, PyEntity, PyHandle, repr::object_repr};
 use pybevy_macros::pyenum;
 use pybevy_math::uvec2::PyUVec2;
 use pybevy_window::window_ref::PyWindowRef;
@@ -62,9 +62,18 @@ impl PyRenderTarget {
 
     pub fn __repr__(&self) -> PyResult<String> {
         match self.as_ref()?.reborrow() {
-            RenderTarget::Window(value) => Ok(format!("RenderTarget.Window({value:?})")),
-            RenderTarget::Image(value) => Ok(format!("RenderTarget.Image({value:?})")),
-            RenderTarget::TextureView(value) => Ok(format!("RenderTarget.TextureView({value:?})")),
+            RenderTarget::Window(value) => Ok(format!(
+                "RenderTarget.Window({})",
+                object_repr(PyWindowRef::from(*value))
+            )),
+            RenderTarget::Image(value) => Ok(format!(
+                "RenderTarget.Image({})",
+                object_repr(PyImageRenderTarget::from(value.clone()))
+            )),
+            RenderTarget::TextureView(value) => Ok(format!(
+                "RenderTarget.TextureView({})",
+                object_repr(PyManualTextureViewHandle::from(*value))
+            )),
             RenderTarget::None { size } => Ok(format!(
                 "RenderTarget.None_(size=UVec2({}, {}))",
                 size.x, size.y

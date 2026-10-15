@@ -1,5 +1,8 @@
 use bevy::{app::App, render::texture::TexturePlugin};
-use pybevy_core::{PluginBuild, PyPlugin};
+use pybevy_core::{
+    PluginBuild, PyPlugin,
+    repr::{ReprLiteral, object_repr},
+};
 use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
@@ -64,10 +67,13 @@ impl PyRenderPlugin {
     pub fn __repr__(&self) -> String {
         let mut parts = Vec::new();
         if let Some(ref pp) = self.power_preference {
-            parts.push(format!("power_preference={pp:?}"));
+            parts.push(format!("power_preference={}", object_repr(*pp)));
         }
         if let Some(sync) = self.synchronous_pipeline_compilation {
-            parts.push(format!("synchronous_pipeline_compilation={sync}"));
+            parts.push(format!(
+                "synchronous_pipeline_compilation={}",
+                sync.repr_literal()
+            ));
         }
         if parts.is_empty() {
             "RenderPlugin()".to_string()

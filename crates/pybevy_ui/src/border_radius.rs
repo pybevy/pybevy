@@ -1,4 +1,5 @@
 use bevy::ui::{BorderRadius, Val};
+use pybevy_core::repr::object_repr;
 use pyo3::prelude::*;
 
 use crate::val::PyVal;
@@ -159,11 +160,11 @@ impl PyBorderRadius {
 
     pub fn __repr__(&self) -> String {
         format!(
-            "BorderRadius(top_left={:?}, top_right={:?}, bottom_left={:?}, bottom_right={:?})",
-            self.inner.top_left,
-            self.inner.top_right,
-            self.inner.bottom_left,
-            self.inner.bottom_right
+            "BorderRadius(top_left={}, top_right={}, bottom_left={}, bottom_right={})",
+            object_repr(PyVal::from(self.inner.top_left)),
+            object_repr(PyVal::from(self.inner.top_right)),
+            object_repr(PyVal::from(self.inner.bottom_left)),
+            object_repr(PyVal::from(self.inner.bottom_right))
         )
     }
 }

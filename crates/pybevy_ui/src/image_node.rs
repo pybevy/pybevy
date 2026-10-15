@@ -2,7 +2,7 @@ use bevy::{color::Color, image::Image, prelude::Handle, ui::widget::ImageNode};
 use pybevy_color::color::PyColor;
 use pybevy_core::{
     ComponentStorage, FromBorrowedStorage, PyComponent, PyHandle, ensure_asset_type,
-    extract_handle_from_any,
+    extract_handle_from_any, repr::object_repr,
 };
 use pybevy_macros::pycomponent;
 use pybevy_math::rect::PyRect;
@@ -125,6 +125,9 @@ impl PyImageNode {
     }
 
     pub fn __repr__(&self) -> PyResult<String> {
-        Ok(format!("ImageNode(image={:?})", self.as_ref()?.image))
+        Ok(format!(
+            "ImageNode(image={})",
+            object_repr(PyHandle::from(&self.as_ref()?.image))
+        ))
     }
 }

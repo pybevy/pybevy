@@ -2,6 +2,7 @@ use bevy::{
     math::primitives::{Cylinder, Measured3d},
     mesh::Meshable,
 };
+use pybevy_core::repr::float_repr;
 use pybevy_macros::pyconstructor;
 use pybevy_math::primitives::dimension::dimension;
 use pyo3::prelude::*;
@@ -90,7 +91,8 @@ impl PyCylinder {
     pub fn __repr__(&self) -> String {
         format!(
             "Cylinder(radius={}, half_height={})",
-            self.0.radius, self.0.half_height
+            float_repr(self.0.radius),
+            float_repr(self.0.half_height)
         )
     }
 }

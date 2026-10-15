@@ -2,6 +2,7 @@ use bevy::{
     math::primitives::{ConicalFrustum, Measured3d},
     mesh::Meshable,
 };
+use pybevy_core::repr::float_repr;
 use pybevy_math::primitives::dimension::dimension;
 use pyo3::prelude::*;
 
@@ -116,7 +117,9 @@ impl PyConicalFrustum {
     fn __repr__(&self) -> String {
         format!(
             "ConicalFrustum(radius_top={}, radius_bottom={}, height={})",
-            self.0.radius_top, self.0.radius_bottom, self.0.height
+            float_repr(self.0.radius_top),
+            float_repr(self.0.radius_bottom),
+            float_repr(self.0.height)
         )
     }
 }

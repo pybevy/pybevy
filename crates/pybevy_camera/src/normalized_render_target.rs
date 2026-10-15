@@ -2,6 +2,7 @@ use bevy::{
     camera::{ImageRenderTarget, ManualTextureViewHandle, NormalizedRenderTarget},
     window::NormalizedWindowRef,
 };
+use pybevy_core::repr::object_repr;
 use pybevy_macros::pyenum;
 use pybevy_window::window_ref::PyNormalizedWindowRef;
 use pyo3::prelude::*;
@@ -45,15 +46,15 @@ impl PyNormalizedRenderTarget {
         match self {
             Self::Window { value } => {
                 let value: PyNormalizedWindowRef = *value;
-                format!("NormalizedRenderTarget.Window({value:?})")
+                format!("NormalizedRenderTarget.Window({})", object_repr(value))
             }
             Self::Image { value } => {
                 let value: PyImageRenderTarget = value.clone();
-                format!("NormalizedRenderTarget.Image({value:?})")
+                format!("NormalizedRenderTarget.Image({})", object_repr(value))
             }
             Self::TextureView { value } => {
                 let value: PyManualTextureViewHandle = *value;
-                format!("NormalizedRenderTarget.TextureView({value:?})")
+                format!("NormalizedRenderTarget.TextureView({})", object_repr(value))
             }
             Self::None { width, height } => {
                 format!("NormalizedRenderTarget.None_(width={width}, height={height})")

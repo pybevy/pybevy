@@ -1,5 +1,5 @@
 use bevy::ui::UiScale;
-use pybevy_core::{PyResource, ResourceStorage, resource_initializer};
+use pybevy_core::{PyResource, ResourceStorage, repr::float_repr, resource_initializer};
 use pybevy_macros::pyresource;
 use pyo3::prelude::*;
 
@@ -37,7 +37,7 @@ impl PyUiScale {
 
     pub fn __repr__(&self) -> String {
         match self.as_ref() {
-            Ok(s) => format!("UiScale({})", s.0),
+            Ok(s) => format!("UiScale({})", float_repr(s.0)),
             Err(_) => "UiScale(<invalid>)".to_string(),
         }
     }

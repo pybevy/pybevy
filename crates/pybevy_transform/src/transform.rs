@@ -2,7 +2,9 @@ use bevy::{
     math::{Dir3, Mat4, Quat, Vec3},
     transform::components::Transform,
 };
-use pybevy_core::{ComponentStorage, PyComponent, public_error::direction_argument_type};
+use pybevy_core::{
+    ComponentStorage, PyComponent, public_error::direction_argument_type, repr::ReprLiteral,
+};
 use pybevy_macros::pycomponent;
 use pybevy_math::{
     affine3a::PyAffine3A, bounding::PyIsometry3d, dir3::PyDir3, mat4::PyMat4, quat::PyQuat,
@@ -52,17 +54,10 @@ pub(crate) fn format_transform_repr(
     scale: Vec3,
 ) -> String {
     format!(
-        "{name}(translation=Vec3({}, {}, {}), rotation=Quat({}, {}, {}, {}), scale=Vec3({}, {}, {}))",
-        translation.x,
-        translation.y,
-        translation.z,
-        rotation.x,
-        rotation.y,
-        rotation.z,
-        rotation.w,
-        scale.x,
-        scale.y,
-        scale.z,
+        "{name}(translation={}, rotation={}, scale={})",
+        translation.repr_literal(),
+        rotation.repr_literal(),
+        scale.repr_literal(),
     )
 }
 

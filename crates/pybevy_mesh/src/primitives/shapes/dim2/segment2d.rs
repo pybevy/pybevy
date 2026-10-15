@@ -2,7 +2,7 @@ use bevy::{
     math::{InvalidDirectionError, Isometry2d, Ray2d, Rot2, primitives::Segment2d},
     mesh::Meshable,
 };
-use pybevy_core::public_error;
+use pybevy_core::{public_error, repr::float_list_repr};
 use pybevy_macros::pyconstructor;
 use pybevy_math::{bounding::PyIsometry2d, dir2::PyDir2, ray::PyRay2d, rot2::PyRot2, vec2::PyVec2};
 use pyo3::{
@@ -259,8 +259,8 @@ impl PySegment2d {
     fn __repr__(&self) -> String {
         format!(
             "Segment2d(point1={}, point2={})",
-            self.0.point1(),
-            self.0.point2()
+            float_list_repr(&self.0.point1().to_array()),
+            float_list_repr(&self.0.point2().to_array())
         )
     }
 }

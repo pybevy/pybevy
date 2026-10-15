@@ -1,6 +1,9 @@
 use bevy::{color::Color, prelude::TextShadow};
 use pybevy_color::color::PyColor;
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{
+    ComponentStorage, PyComponent,
+    repr::{ReprLiteral, object_repr},
+};
 use pybevy_macros::pycomponent;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
@@ -54,8 +57,9 @@ impl PyTextShadow {
     pub fn __repr__(&self) -> PyResult<String> {
         let shadow = self.as_ref()?;
         Ok(format!(
-            "TextShadow(offset={:?}, color={:?})",
-            shadow.offset, shadow.color
+            "TextShadow(offset={}, color={})",
+            shadow.offset.repr_literal(),
+            object_repr(PyColor::from(shadow.color))
         ))
     }
 }

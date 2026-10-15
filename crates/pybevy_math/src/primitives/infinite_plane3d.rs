@@ -2,6 +2,7 @@ use bevy::math::{Dir3, Isometry3d, Quat, Vec3, Vec3A, primitives::InfinitePlane3
 use pybevy_core::{
     FromBorrowedStorage, ValueStorage,
     public_error::{INFINITE_PLANE_POINTS, UNSUPPORTED_COMPARISON},
+    repr::float_list_repr,
 };
 use pybevy_macros::pyvalue;
 use pyo3::{
@@ -119,7 +120,11 @@ impl PyInfinitePlane3d {
     }
 
     fn __repr__(&self) -> PyResult<String> {
-        Ok(format!("InfinitePlane3d(normal={})", self.as_ref()?.normal))
+        let n = self.as_ref()?.normal;
+        Ok(format!(
+            "InfinitePlane3d(normal={})",
+            float_list_repr(&n.to_array())
+        ))
     }
 
     fn __richcmp__(

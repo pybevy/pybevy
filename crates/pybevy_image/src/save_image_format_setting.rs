@@ -24,13 +24,13 @@ pub enum PySaveImageFormatSetting {
 
 #[pymethods]
 impl PySaveImageFormatSetting {
-    fn __repr__(&self) -> String {
+    pub fn __repr__(&self) -> String {
         match self {
             PySaveImageFormatSetting::FromExtension() => {
                 "SaveImageFormatSetting.FromExtension".to_string()
             }
             PySaveImageFormatSetting::Format { value } => {
-                format!("SaveImageFormatSetting.Format({value:?})")
+                format!("SaveImageFormatSetting.Format({})", value.__repr__())
             }
         }
     }

@@ -1,4 +1,8 @@
-use bevy::ui::GridTrack;
+use bevy::{
+    reflect::{PartialReflect, ReflectRef},
+    ui::{GridTrack, MaxTrackSizingFunction, MinTrackSizingFunction},
+};
+use pybevy_core::repr::float_repr;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 pub(crate) fn finite_grid_value(value: f32, parameter: &str) -> PyResult<f32> {
@@ -8,6 +12,58 @@ pub(crate) fn finite_grid_value(value: f32, parameter: &str) -> PyResult<f32> {
         )));
     }
     Ok(value)
+}
+
+/// The factory name and arguments that rebuild `track`, when one exists.
+pub(crate) fn grid_track_factory(track: &GridTrack) -> Option<(&'static str, Option<String>)> {
+    let ReflectRef::Struct(fields) = track.reflect_ref() else {
+        return None;
+    };
+    let min = fields
+        .field("min_sizing_function")?
+        .try_downcast_ref::<MinTrackSizingFunction>()?;
+    let max = fields
+        .field("max_sizing_function")?
+        .try_downcast_ref::<MaxTrackSizingFunction>()?;
+    let value = |value: &f32| Some(float_repr(*value));
+    Some(match (min, max) {
+        (MinTrackSizingFunction::Px(a), MaxTrackSizingFunction::Px(b)) if a == b => {
+            ("px", value(a))
+        }
+        (MinTrackSizingFunction::Percent(a), MaxTrackSizingFunction::Percent(b)) if a == b => {
+            ("percent", value(a))
+        }
+        (MinTrackSizingFunction::Auto, MaxTrackSizingFunction::Fraction(v)) => ("fr", value(v)),
+        (MinTrackSizingFunction::Px(zero), MaxTrackSizingFunction::Fraction(v)) if *zero == 0.0 => {
+            ("flex", value(v))
+        }
+        (MinTrackSizingFunction::Auto, MaxTrackSizingFunction::Auto) => ("auto", None),
+        (MinTrackSizingFunction::MinContent, MaxTrackSizingFunction::MinContent) => {
+            ("min_content", None)
+        }
+        (MinTrackSizingFunction::MaxContent, MaxTrackSizingFunction::MaxContent) => {
+            ("max_content", None)
+        }
+        (MinTrackSizingFunction::Auto, MaxTrackSizingFunction::FitContentPx(v)) => {
+            ("fit_content_px", value(v))
+        }
+        (MinTrackSizingFunction::Auto, MaxTrackSizingFunction::FitContentPercent(v)) => {
+            ("fit_content_percent", value(v))
+        }
+        (MinTrackSizingFunction::VMin(a), MaxTrackSizingFunction::VMin(b)) if a == b => {
+            ("vmin", value(a))
+        }
+        (MinTrackSizingFunction::VMax(a), MaxTrackSizingFunction::VMax(b)) if a == b => {
+            ("vmax", value(a))
+        }
+        (MinTrackSizingFunction::Vh(a), MaxTrackSizingFunction::Vh(b)) if a == b => {
+            ("vh", value(a))
+        }
+        (MinTrackSizingFunction::Vw(a), MaxTrackSizingFunction::Vw(b)) if a == b => {
+            ("vw", value(a))
+        }
+        _ => return None,
+    })
 }
 
 #[pyclass(name = "GridTrack", module = "pybevy.ui", eq, frozen, from_py_object)]
@@ -135,6 +191,11 @@ impl PyGridTrack {
     }
 
     pub fn __repr__(&self) -> String {
-        format!("GridTrack({:?})", self.inner)
+        match grid_track_factory(&self.inner) {
+            Some((name, argument)) => {
+                format!("GridTrack.{name}({})", argument.unwrap_or_default())
+            }
+            None => "GridTrack(...)".to_string(),
+        }
     }
 }

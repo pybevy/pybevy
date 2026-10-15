@@ -1,4 +1,5 @@
 use bevy::sprite::{SpriteImageMode, SpriteScalingMode, TextureSlicer};
+use pybevy_core::repr::{ReprLiteral, float_repr};
 use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
@@ -52,7 +53,7 @@ impl PySpriteImageMode {
             Self::Auto() => "SpriteImageMode.Auto()".to_string(),
             Self::Scale { mode } => {
                 let mode: PySpriteScalingMode = *mode;
-                format!("SpriteImageMode.Scale(mode={mode:?})")
+                format!("SpriteImageMode.Scale(mode={})", mode.__repr__())
             }
             Self::Sliced { slicer } => {
                 format!("SpriteImageMode.Sliced(slicer={})", slicer.__repr__()?)
@@ -62,7 +63,10 @@ impl PySpriteImageMode {
                 tile_y,
                 stretch_value,
             } => format!(
-                "SpriteImageMode.Tiled(tile_x={tile_x}, tile_y={tile_y}, stretch_value={stretch_value})"
+                "SpriteImageMode.Tiled(tile_x={}, tile_y={}, stretch_value={})",
+                tile_x.repr_literal(),
+                tile_y.repr_literal(),
+                float_repr(*stretch_value)
             ),
         })
     }

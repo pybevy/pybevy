@@ -1,5 +1,5 @@
 use bevy::text::LetterSpacing;
-use pybevy_core::{ComponentStorage, enum_comparison::compare_values};
+use pybevy_core::{ComponentStorage, enum_comparison::compare_values, repr::float_repr};
 use pybevy_macros::pyenum;
 use pyo3::{prelude::*, pyclass::CompareOp};
 
@@ -28,8 +28,8 @@ impl PyLetterSpacing {
 
     pub fn __repr__(&self) -> PyResult<String> {
         match self.as_ref()?.reborrow() {
-            LetterSpacing::Px(value) => Ok(format!("LetterSpacing.Px({value})")),
-            LetterSpacing::Rem(value) => Ok(format!("LetterSpacing.Rem({value})")),
+            LetterSpacing::Px(value) => Ok(format!("LetterSpacing.Px({})", float_repr(*value))),
+            LetterSpacing::Rem(value) => Ok(format!("LetterSpacing.Rem({})", float_repr(*value))),
         }
     }
 }

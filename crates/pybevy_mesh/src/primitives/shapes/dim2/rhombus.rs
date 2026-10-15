@@ -2,7 +2,7 @@ use bevy::{
     math::{Vec2, prelude::Measured2d, primitives::Rhombus},
     mesh::Meshable,
 };
-use pybevy_core::{FromBorrowedStorage, StorageError, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, StorageError, ValueStorage, repr::ReprLiteral};
 use pybevy_macros::{pyconstructor, pyvalue};
 use pybevy_math::{primitives::dimension::dimension, vec2::PyVec2};
 use pyo3::prelude::*;
@@ -137,9 +137,8 @@ impl PyRhombus {
 
     fn __repr__(&self) -> PyResult<String> {
         Ok(format!(
-            "Rhombus(half_diagonals=Vec2({}, {}))",
-            self.as_ref()?.half_diagonals.x,
-            self.as_ref()?.half_diagonals.y
+            "Rhombus(half_diagonals={})",
+            self.as_ref()?.half_diagonals.repr_literal()
         ))
     }
 }

@@ -4,12 +4,12 @@ use bevy::{
     },
     math::{StableInterpolate, Vec3, Vec4},
 };
-use pybevy_core::{FromBorrowedStorage, ValueStorage};
+use pybevy_core::{FromBorrowedStorage, ValueStorage, repr::float_repr};
 use pybevy_macros::pyvalue;
 use pybevy_math::{vec3::PyVec3, vec4::PyVec4};
 use pyo3::prelude::*;
 
-use super::{common::fmt_f32, linear_rgba::PyLinearRgba, srgba::PySrgba};
+use super::{linear_rgba::PyLinearRgba, srgba::PySrgba};
 
 #[pyvalue]
 #[pyclass(name = "Oklaba", module = "pybevy.color", eq, skip_from_py_object)]
@@ -247,10 +247,10 @@ impl PyOklaba {
         let c = self.as_ref()?;
         Ok(format!(
             "Oklaba({}, {}, {}, {})",
-            fmt_f32(c.lightness),
-            fmt_f32(c.a),
-            fmt_f32(c.b),
-            fmt_f32(c.alpha),
+            float_repr(c.lightness),
+            float_repr(c.a),
+            float_repr(c.b),
+            float_repr(c.alpha),
         ))
     }
 }

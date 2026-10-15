@@ -1,7 +1,10 @@
 use bevy::image::{ImageSampler, ImageSamplerDescriptor};
-use pybevy_core::{FieldStorage, FromBorrowedStorage};
+use pybevy_core::{
+    FieldStorage, FromBorrowedStorage,
+    repr::{float_repr, str_repr},
+};
 use pybevy_macros::pyfield;
-use pyo3::{prelude::*, types::PyString};
+use pyo3::prelude::*;
 
 use crate::{
     image_address_mode::PyImageAddressMode, image_compare_function::PyImageCompareFunction,
@@ -212,7 +215,7 @@ impl PyImageSamplerDescriptor {
         Ok(())
     }
 
-    pub fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+    pub fn __repr__(&self) -> PyResult<String> {
         let descriptor = self.as_ref()?;
         let compare = match descriptor.compare {
             Some(value) => PyImageCompareFunction::from(value).__repr__(),
@@ -223,7 +226,7 @@ impl PyImageSamplerDescriptor {
             None => "None".to_owned(),
         };
         let label = match &descriptor.label {
-            Some(value) => PyString::new(py, value).repr()?.extract()?,
+            Some(value) => str_repr(value),
             None => "None".to_owned(),
         };
         Ok(format!(
@@ -237,8 +240,8 @@ impl PyImageSamplerDescriptor {
             PyImageFilterMode::from(descriptor.mag_filter).__repr__(),
             PyImageFilterMode::from(descriptor.min_filter).__repr__(),
             PyImageFilterMode::from(descriptor.mipmap_filter).__repr__(),
-            descriptor.lod_min_clamp,
-            descriptor.lod_max_clamp,
+            float_repr(descriptor.lod_min_clamp),
+            float_repr(descriptor.lod_max_clamp),
             descriptor.anisotropy_clamp,
         ))
     }
