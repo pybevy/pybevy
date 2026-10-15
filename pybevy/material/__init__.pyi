@@ -57,6 +57,10 @@ def material(
     fragment_shader: str | None = None,
     vertex_shader: str | None = None,
     *,
+    prepass_vertex_shader: str | None = None,
+    prepass_fragment_shader: str | None = None,
+    deferred_vertex_shader: str | None = None,
+    deferred_fragment_shader: str | None = None,
     alpha_mode: AlphaMode | None = None,
     double_sided: bool | None = None,
     cull_mode: object = ...,
@@ -64,6 +68,10 @@ def material(
     depth_bias: float | None = None,
 ) -> Callable[[type[MaterialT]], type[MaterialT]]:
     """Decorator to define a custom shader material.
+
+    Shader paths must name WGSL assets. Prepass hooks cover depth, normals,
+    motion vectors and shadows; deferred hooks write the G-buffer. Omitted
+    paths keep native defaults. Forward stages are not reused automatically.
 
     A uniform field name must not end in a digit: upstream WGSL composition
     escapes such a struct member (``tint2`` becomes ``tint2_``) without

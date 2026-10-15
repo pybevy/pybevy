@@ -1,4 +1,4 @@
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from types import TracebackType
 from typing import ClassVar, Literal
 
@@ -7,7 +7,7 @@ import numpy as np
 from pybevy import array as xp
 from pybevy.app import App, Plugin
 from pybevy.assets import Asset, Handle, RenderAssetUsages
-from pybevy.collections import LiveArray
+from pybevy.collections import LiveArray, LiveList
 from pybevy.ecs import Batchable, Component, Entity
 from pybevy.math import Dir3, Mat4, Quat, Range, Vec2, Vec3
 from pybevy.render import VertexFormat
@@ -761,8 +761,20 @@ class MeshMorphWeights(Component):
 
     class Value(MeshMorphWeights):
         __match_args__: ClassVar[tuple[Literal["weights"]]]
-        weights: list[float]
-        def __init__(self, *, weights: list[float]) -> None: ...
+        def __init__(self, *, weights: Iterable[float]) -> None: ...
+        @property
+        def weights(self) -> LiveList[float]:
+            """Live list of the weights.
+
+            Through `Query[Mut[MeshMorphWeights]]`, `w.weights[i] = x` and list
+            edits such as `append` write the component and mark it changed;
+            through `Query[MeshMorphWeights]` the list is read-only; on an owned
+            value it is a read-only snapshot, so assign the whole list instead.
+            The list expires with its system and raises once the component
+            changes variant.
+            """
+        @weights.setter
+        def weights(self, weights: Iterable[float]) -> None: ...
 
     class Reference(MeshMorphWeights):
         __match_args__: ClassVar[tuple[Literal["value"]]]

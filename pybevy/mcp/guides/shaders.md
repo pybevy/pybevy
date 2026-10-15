@@ -49,7 +49,10 @@ if __name__ == "__main__":
 **Shader paths** are relative to the `assets/` directory (Bevy's default asset root).
 For a file at `assets/shaders/glow.wgsl`, use `fragment_shader="shaders/glow.wgsl"`.
 Malformed paths, such as a trailing `#` with no label, raise `ValueError` when
-the material is converted to `ShaderMaterial`.
+the material is converted to `ShaderMaterial`, before consuming its base.
+All custom material shader paths must name `.wgsl` assets. The separate
+`Shader`/`Source` GLSL and WESL constructors do not establish support for those
+languages in this material API.
 
 ## Base Material Properties
 
@@ -149,6 +152,11 @@ Both vertex and fragment shaders can read the material uniforms at
 `@group(3) @binding(100)`. The decorator generates a WGSL module containing
 the matching uniform, texture, and sampler declarations. Import that module by
 the material class name:
+
+Independent classes with the same short name can keep this import spelling.
+PyBevy selects their matching generated layouts through pipeline specialization,
+including when old material assets survive a class reload. Import the bindings
+for the material drawing the mesh; importing another material's module is an error.
 
 ```wgsl
 #import pybevy::gen::GlowMaterial as params
@@ -274,13 +282,79 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 For skinned or morph-target meshes, start from Bevy's full mesh vertex shader
 flow and apply the displacement after skinning or morphing as appropriate.
 Large vertex displacement can also move geometry outside its CPU-side culling
-bounds. Custom vertex displacement does not affect PyBevy's default shadow or
-prepass pipelines.
+bounds. Supply matching prepass/deferred vertex shaders for the passes that
+must see that displacement; the forward vertex hook alone leaves them on
+Bevy's defaults. See the pass contracts below.
+
+## Depth, Shadows, Motion Vectors and Deferred Rendering
+
+Choose each shader stage explicitly. Omitted paths use Bevy's default stage;
+a forward shader is never copied automatically into a different pass.
+
+| Decorator / `ShaderMaterial` keyword | Runs in | Shader interface |
+|---|---|---|
+| `vertex_shader`, `fragment_shader` | Forward rendering | `bevy_pbr::forward_io` |
+| `prepass_vertex_shader`, `prepass_fragment_shader` | Depth, normal, motion-vector prepasses and shadow maps | `bevy_pbr::prepass_io` |
+| `deferred_vertex_shader`, `deferred_fragment_shader` | Deferred G-buffer pass | `bevy_pbr::prepass_io`, `pbr_deferred_functions::deferred_output` |
+
+These optional keywords need no additional Bevy feature flags in the standard
+native build. Shader loading errors identify the stage, and file edits reload
+its shader. Generated uniforms, textures and bool definitions are available to
+each explicitly customized pass.
+
+The PBR fragment example above handles both forward and deferred output. Opt
+into its deferred entry point using the same asset path:
+
+<!-- pybevy-snippet: typecheck -->
+```python
+from pybevy.color import LinearRgba
+from pybevy.material import material
+from pybevy.pbr import Material
+
+@material(
+    fragment_shader="shaders/glow.wgsl",
+    deferred_fragment_shader="shaders/glow.wgsl",
+)
+class GlowMaterial(Material):
+    color: LinearRgba = LinearRgba(0.0, 1.0, 0.5, 1.0)
+    intensity: float = 1.5
+```
+
+Configure the scene's deferred camera with `DepthPrepass()`, `DeferredPrepass()`
+and `Msaa.Off`, and select deferred rendering on the base material or through
+`DefaultOpaqueRendererMethod.deferred()`. A material whose base explicitly uses
+`OpaqueRendererMethod.Forward` still uses its forward hooks in that scene.
+Deferred shaders write PBR/G-buffer data; an effect applied after forward
+lighting may need a separate later effect instead of a deferred equivalent.
+Do not use this G-buffer fragment as an ordinary prepass/shadow fragment.
+
+For a custom prepass, use `PREPASS_PIPELINE` to select the prepass vertex
+interface and `DEFERRED_PREPASS` to distinguish the G-buffer pass. A forward
+shader can also see `DEFERRED_PREPASS` when the camera has a deferred prepass;
+check `PREPASS_PIPELINE` first when sharing a file across stages.
+
+In prepass fragments, `NORMAL_PREPASS`, `MOTION_VECTOR_PREPASS` and
+`UNCLIPPED_DEPTH_ORTHO_EMULATION` determine the outputs. `PREPASS_FRAGMENT`
+enables `prepass_io::FragmentOutput`; a depth-only or shadow fragment can have
+no color output and return nothing. Providing `prepass_fragment_shader` runs
+that fragment even for an opaque depth-only pass, allowing custom `discard`.
+Match the forward cutout in every relevant pass. Ordinary blend transparency
+does not acquire opaque prepass participation just by providing a hook.
+
+Animated vertex deformation must provide **current and previous** positions.
+Use the current object transform for the current deformation and
+`mesh_functions::get_previous_world_from_local` for the previous deformation;
+the prepass fragment can use `pbr_prepass_functions::calculate_motion_vector`.
+Keep the previous animation parameters yourself. Camera/object transform
+history alone cannot recover an arbitrary shader's previous shape.
+Matching depth and motion are prerequisites for correct depth effects and
+motion blur. Shader displacement still does not update CPU culling bounds;
+use conservative mesh bounds or `NoFrustumCulling()` where appropriate.
 
 ### Grouping Parameters
 
-One `@material` class defines one flat material bind group shared by both
-stages. Nested classes and dataclasses are not supported as material fields.
+One `@material` class defines one flat material bind group shared by its
+shader stages. Nested classes and dataclasses are not supported as material fields.
 Keep related values together by declaration order and use descriptive prefixes
 such as `wave_amplitude`, `wave_frequency`, and `surface_color`. The generated
 WGSL module preserves the Python declaration order and corresponding WGSL types.
@@ -503,16 +577,10 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 ```
 
-> **Custom shaders never run in prepass or shadow pipelines.** Those pipelines keep
-> bevy's default shaders, so top-level imports of `globals` and `view` are safe in any
-> custom shader, and a custom **vertex** shader's displacement does not move prepass
-> depth or normals.
->
-> **WARNING: `@material` shaders do not run under deferred rendering.** The mesh remains
-> visible using its base `StandardMaterial`, but the custom vertex and fragment shaders
-> are not applied. Do not combine `@material` custom shaders with
-> `DefaultOpaqueRendererMethod.deferred()` (which the SSR recipe requires): keep custom
-> shader scenes on forward rendering.
+Use imports that match the pass's native bindings. Forward view resources are
+not universally available in a shadow/prepass layout. The optional pass hooks
+above determine which custom stages run; providing only forward paths keeps
+the base material's default prepass, shadow and deferred behavior.
 
 All `@material` classes use the shared `ShaderMaterialPlugin`. You may add a new
 decorated class during hot reload as long as that plugin was installed when the

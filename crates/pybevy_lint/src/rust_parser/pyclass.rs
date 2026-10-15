@@ -282,7 +282,10 @@ fn parse_pyclass_args(attr: &Attribute) -> PyClassArgs {
                         args.module = Some(lit_str.value());
                     }
                 } else if nv.path.is_ident("extends") {
-                    args.extends = Some(path_to_string(&nv.value));
+                    let base = path_to_string(&nv.value);
+                    if !matches!(base.replace(' ', "").as_str(), "PyAny" | "pyo3::PyAny") {
+                        args.extends = Some(base);
+                    }
                 }
             }
             Meta::Path(path) => {

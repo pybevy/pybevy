@@ -18,7 +18,7 @@ use bevy::{
 };
 use pybevy_color::{color::PyColor, linear_rgba::PyLinearRgba};
 use pybevy_core::{
-    ResourceBridge,
+    PyHandle, ResourceBridge,
     component_fields::declared_annotations,
     public_error,
     registry::global_registry::{all_component_bridges, all_resource_bridges},
@@ -257,6 +257,9 @@ fn serialize_python_value(
     if let Some(entity) = entity_to_json(value) {
         return entity;
     }
+    if let Some(handle) = handle_to_json(value) {
+        return handle;
+    }
     if let Some(member) = python_enum_to_json(value) {
         return member;
     }
@@ -362,6 +365,13 @@ fn entity_to_json(value: &Bound<'_, PyAny>) -> Option<serde_json::Value> {
     }
     let bits = value.call_method0("to_bits").ok()?.extract::<u64>().ok()?;
     Some(serde_json::json!(bits))
+}
+
+/// Handles stay opaque: their variant payload cannot name the asset type a write would need.
+fn handle_to_json(value: &Bound<'_, PyAny>) -> Option<serde_json::Value> {
+    value.cast::<PyHandle>().ok()?;
+    let repr = value.repr().ok()?.extract::<String>().ok()?;
+    Some(serde_json::json!({ "repr": repr }))
 }
 
 fn python_enum_to_json(value: &Bound<'_, PyAny>) -> Option<serde_json::Value> {

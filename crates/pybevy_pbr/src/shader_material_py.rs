@@ -38,6 +38,7 @@ use crate::{
             PackedUniform, UniformData, UniformIndexError, check_uniform_index, uniform_mut,
             uniform_ref,
         },
+        validate_material_shader_path,
     },
     standard_material::PyStandardMaterial,
 };
@@ -146,7 +147,7 @@ impl PyShaderMaterial {
 impl PyShaderMaterial {
     #[new]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (base, fragment_shader=None, vertex_shader=None, data=None, shader_defs=0, shader_def_names=None, textures=None, bindings_wgsl=None))]
+    #[pyo3(signature = (base, fragment_shader=None, vertex_shader=None, data=None, shader_defs=0, shader_def_names=None, textures=None, bindings_wgsl=None, *, prepass_vertex_shader=None, prepass_fragment_shader=None, deferred_vertex_shader=None, deferred_fragment_shader=None))]
     pub fn new(
         py: Python<'_>,
         base: &Bound<'_, PyAny>,
@@ -157,14 +158,26 @@ impl PyShaderMaterial {
         shader_def_names: Option<Vec<String>>,
         textures: Option<Py<PyList>>,
         bindings_wgsl: Option<String>,
+        prepass_vertex_shader: Option<String>,
+        prepass_fragment_shader: Option<String>,
+        deferred_vertex_shader: Option<String>,
+        deferred_fragment_shader: Option<String>,
     ) -> PyResult<PyClassInitializer<Self>> {
         let shader_def_names = shader_def_names.unwrap_or_default();
         validate_shader_defs(shader_defs, &shader_def_names)?;
-        if let Some(path) = &fragment_shader {
+        for path in [
+            &fragment_shader,
+            &vertex_shader,
+            &prepass_vertex_shader,
+            &prepass_fragment_shader,
+            &deferred_vertex_shader,
+            &deferred_fragment_shader,
+        ]
+        .into_iter()
+        .flatten()
+        {
             parse_asset_path(path)?;
-        }
-        if let Some(path) = &vertex_shader {
-            parse_asset_path(path)?;
+            validate_material_shader_path(path).map_err(PyValueError::new_err)?;
         }
         let mut params = ShaderParams::default();
 
@@ -215,6 +228,10 @@ impl PyShaderMaterial {
                 texture_3: tex_handles[3].take(),
                 fragment_shader_path: fragment_shader,
                 vertex_shader_path: vertex_shader,
+                prepass_vertex_shader_path: prepass_vertex_shader,
+                prepass_fragment_shader_path: prepass_fragment_shader,
+                deferred_vertex_shader_path: deferred_vertex_shader,
+                deferred_fragment_shader_path: deferred_fragment_shader,
                 shader_defs,
                 shader_def_names,
                 logical_type_id: None,

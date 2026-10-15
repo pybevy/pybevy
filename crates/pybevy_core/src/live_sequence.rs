@@ -83,7 +83,7 @@ macro_rules! impl_live_scalar_list {
             fn __delitem__(&mut self, index: isize) -> PyResult<()> {
                 let len = self.storage.as_ref()?.len();
                 let index = $crate::live_sequence::normalize_index(index, len)?;
-                self.validate_length_after_removal(len - 1)?;
+                self.validate_resize(len - 1)?;
                 self.storage.as_mut()?.remove(index);
                 Ok(())
             }
@@ -94,6 +94,7 @@ macro_rules! impl_live_scalar_list {
             }
 
             fn append(&mut self, value: $elem) -> PyResult<()> {
+                self.validate_resize(self.storage.as_ref()?.len() + 1)?;
                 self.storage.as_mut()?.push(value);
                 Ok(())
             }
@@ -103,7 +104,9 @@ macro_rules! impl_live_scalar_list {
                     .try_iter()?
                     .map(|item| item?.extract::<$elem>())
                     .collect::<PyResult<Vec<_>>>()?;
-                slf.borrow_mut().storage.as_mut()?.extend(values);
+                let mut list = slf.borrow_mut();
+                list.validate_resize(list.storage.as_ref()?.len() + values.len())?;
+                list.storage.as_mut()?.extend(values);
                 Ok(())
             }
 
@@ -124,10 +127,9 @@ macro_rules! impl_live_scalar_list {
             }
 
             fn insert(&mut self, index: isize, value: $elem) -> PyResult<()> {
-                let index = $crate::live_sequence::normalize_insert_index(
-                    index,
-                    self.storage.as_ref()?.len(),
-                );
+                let len = self.storage.as_ref()?.len();
+                self.validate_resize(len + 1)?;
+                let index = $crate::live_sequence::normalize_insert_index(index, len);
                 self.storage.as_mut()?.insert(index, value);
                 Ok(())
             }
@@ -139,13 +141,13 @@ macro_rules! impl_live_scalar_list {
                     return Err($crate::StorageError::EmptyList.into());
                 }
                 let index = $crate::live_sequence::normalize_index(index, len)?;
-                self.validate_length_after_removal(len - 1)?;
+                self.validate_resize(len - 1)?;
                 Ok(self.storage.as_mut()?.remove(index))
             }
 
             fn clear(&mut self) -> PyResult<()> {
                 self.storage.as_ref()?;
-                self.validate_length_after_removal(0)?;
+                self.validate_resize(0)?;
                 self.storage.as_mut()?.clear();
                 Ok(())
             }

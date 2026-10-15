@@ -1254,7 +1254,9 @@ class ThreadBridge(Resource):
 This is the idiomatic way to bridge background threads with ECS - store the shared `Queue`/`Lock` in a resource so systems access them via `Res[T]`/`ResMut[T]` instead of module globals. Custom `Res[T]` access is scheduled exclusively because nested objects and methods remain live; native resources keep ordinary shared-read scheduling.
 
 **Asset handles are typed objects:** `meshes.add()` returns `Handle[Mesh]` and
-`materials.add()` returns `Handle[StandardMaterial]`. Store those handles
+`materials.add()` returns `Handle[StandardMaterial]`, each a strong
+`Handle.Strong` variant; `Handle.Uuid(value, asset_type=Mesh)` builds a
+non-owning UUID handle. Store those handles
 directly in `@resource` fields when the asset must stay alive. `handle.id()`
 returns a copyable, non-owning `AssetId[T]` suitable for lookup, comparison, and
 dictionary keys; an `AssetId` does not keep its asset alive. See

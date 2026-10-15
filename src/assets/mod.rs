@@ -129,6 +129,7 @@ pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     assets.add_class::<assets::PyAssets>()?;
     assets.add_class::<assets::PyAssetIter>()?;
     assets.add_class::<pybevy_core::handle::PyHandle>()?;
+    pybevy_core::handle::register_handle_variants(&assets)?;
     assets.add_class::<load_state::PyLoadState>()?;
     load_state::register_load_state_variants(&assets)?;
     assets.add_class::<dependency_load_state::PyDependencyLoadState>()?;

@@ -1182,7 +1182,7 @@ class TextureAtlas:
             from pybevy.assets import Handle
             from pybevy.image import TextureAtlas, TextureAtlasLayout
 
-            layout = Handle[TextureAtlasLayout].uuid_from_u128(1, TextureAtlasLayout)
+            layout = Handle.Uuid(1, asset_type=TextureAtlasLayout)
             atlas = TextureAtlas(layout=layout, index=0).with_index(5)
             ```
         """
@@ -1201,8 +1201,8 @@ class TextureAtlas:
             from pybevy.assets import Handle
             from pybevy.image import TextureAtlas, TextureAtlasLayout
 
-            layout1 = Handle[TextureAtlasLayout].uuid_from_u128(1, TextureAtlasLayout)
-            layout2 = Handle[TextureAtlasLayout].uuid_from_u128(2, TextureAtlasLayout)
+            layout1 = Handle.Uuid(1, asset_type=TextureAtlasLayout)
+            layout2 = Handle.Uuid(2, asset_type=TextureAtlasLayout)
             atlas = TextureAtlas(layout=layout1, index=0).with_layout(layout2)
             ```
         """
