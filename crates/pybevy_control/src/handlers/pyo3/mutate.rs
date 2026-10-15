@@ -439,6 +439,15 @@ fn class_declares_component_field(class: &Bound<'_, PyType>, field_name: &str) -
     found_metadata.then_some(false)
 }
 
+fn has_public_instance_field(instance: &Bound<'_, PyAny>, field_name: &str) -> bool {
+    !field_name.starts_with('_')
+        && instance
+            .getattr("__dict__")
+            .ok()
+            .and_then(|fields| fields.cast_into::<PyDict>().ok())
+            .is_some_and(|fields| fields.contains(field_name).unwrap_or(false))
+}
+
 fn resolved_field_annotation<'py>(
     py: Python<'py>,
     class: &Bound<'py, PyType>,
@@ -1599,7 +1608,8 @@ fn set_custom_component(
         let unknown = field_obj
             .keys()
             .filter(|name| match class_declares_component_field(&class, name) {
-                Some(declared) => !declared,
+                Some(true) => false,
+                Some(false) => !has_public_instance_field(bound, name),
                 None => bound.getattr(name.as_str()).is_err(),
             })
             .cloned()
@@ -2473,26 +2483,41 @@ fn enum_owner_type<'py>(current: &Bound<'py, PyAny>) -> Bound<'py, PyType> {
     if nested_variant { base } else { current_type }
 }
 
-fn enum_variant_names(owner: &Bound<'_, PyType>) -> Vec<String> {
-    let mut names = owner
+fn own_type_class_attributes(owner: &Bound<'_, PyType>) -> (Vec<String>, bool) {
+    let mut names = Vec::new();
+    let mut has_variant_classes = false;
+    for name in owner
         .dir()
         .ok()
         .into_iter()
         .flatten()
         .filter_map(|name| name.extract::<String>().ok())
         .filter(|name| !name.starts_with('_'))
-        .filter(|name| {
-            let Ok(value) = owner.getattr(name.as_str()) else {
-                return false;
-            };
-            value.is_instance(owner).unwrap_or(false)
-                || value.cast::<PyType>().is_ok_and(|variant| {
-                    variant.is_subclass(owner).unwrap_or(false) && !variant.is(owner)
-                })
-        })
-        .collect::<Vec<_>>();
+    {
+        let Ok(value) = owner.getattr(name.as_str()) else {
+            continue;
+        };
+        if value.is_instance(owner).unwrap_or(false) {
+            names.push(name);
+        } else if value
+            .cast::<PyType>()
+            .is_ok_and(|variant| variant.is_subclass(owner).unwrap_or(false) && !variant.is(owner))
+        {
+            has_variant_classes = true;
+            names.push(name);
+        }
+    }
     names.sort();
-    names
+    (names, has_variant_classes)
+}
+
+fn enum_variant_names(owner: &Bound<'_, PyType>) -> Vec<String> {
+    let (names, has_variant_classes) = own_type_class_attributes(owner);
+    if has_variant_classes || super::enum_names::is_enum_type(owner) {
+        names
+    } else {
+        Vec::new()
+    }
 }
 
 fn enum_field_prototype<'py>(
@@ -3385,7 +3410,7 @@ fn constructible_representative<'py>(class: &Bound<'py, PyType>) -> Option<Bound
     if let Ok(instance) = class.call0() {
         return Some(instance);
     }
-    for name in enum_variant_names(class) {
+    for name in own_type_class_attributes(class).0 {
         let Ok(candidate) = class.getattr(name.as_str()) else {
             continue;
         };

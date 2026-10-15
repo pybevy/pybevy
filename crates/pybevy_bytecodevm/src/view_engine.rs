@@ -24,20 +24,6 @@ use crate::{
     tiled::{TiledScratch, execute_assignment_tiled, supported_program},
 };
 
-/// Send+Sync wrapper for raw pointers in parallel execution.
-///
-/// # Safety
-/// Pointers are valid for the duration of batch execution and accessed
-/// using disjoint row ranges in scoped compute-pool tasks (no aliasing writes).
-#[derive(Clone, Copy)]
-struct SendPtr(*mut u8);
-// SAFETY: scheduling guarantees that a pointer is sent only with the live batch
-// it belongs to and that parallel tasks never alias mutable row ranges.
-unsafe impl Send for SendPtr {}
-// SAFETY: shared access to the address value is harmless; dereferencing remains
-// restricted to the scheduler-disjoint batch operations described above.
-unsafe impl Sync for SendPtr {}
-
 /// A contiguous range of rows in one ECS table.
 ///
 /// Sparse-set components can split one table across multiple archetypes. View
@@ -67,6 +53,8 @@ pub struct TableBatch {
     pub start_row: usize,
     /// Number of entities in this contiguous selected range.
     pub entity_count: usize,
+    /// Row count of the table when the batch was gathered.
+    pub table_entity_count: usize,
     /// Per-entity tick mask. `None` means all entities pass.
     /// `Some(vec)` where `vec[i]` is true if local row i passes all tick filters.
     pub tick_mask: Option<Vec<bool>>,
@@ -183,6 +171,37 @@ impl std::fmt::Display for ViewEngineError {
 }
 
 impl std::error::Error for ViewEngineError {}
+
+/// Why batch execution stopped or reported failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BatchExecutionError {
+    /// An integer was raised to a negative integer power; see the executing
+    /// function for which rows may already have been written.
+    NegativeIntegerPower,
+    /// A bytecode field names a component with no gathered stride or base.
+    /// Nothing was executed.
+    FieldComponentNotGathered(ComponentId),
+}
+
+impl std::fmt::Display for BatchExecutionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NegativeIntegerPower => NegativeIntegerPower.fmt(f),
+            Self::FieldComponentNotGathered(id) => write!(
+                f,
+                "Field expression references component {id:?}, which was not gathered for this batch"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for BatchExecutionError {}
+
+impl From<NegativeIntegerPower> for BatchExecutionError {
+    fn from(_: NegativeIntegerPower) -> Self {
+        Self::NegativeIntegerPower
+    }
+}
 
 /// Validate that every field referenced by `bytecode` (including the
 /// destination field of an assignment) lies entirely within its
@@ -622,6 +641,7 @@ pub unsafe fn gather_table_batches_from_cell(
             entities: table.entities().as_ptr(),
             start_row: row_range.start_row,
             entity_count: row_range.entity_count,
+            table_entity_count,
             tick_mask,
         });
     }
@@ -631,13 +651,11 @@ pub unsafe fn gather_table_batches_from_cell(
 /// Seed `Op::Random` from entity identity, so the value survives the entity
 /// moving table or row and is the same on every execution path.
 #[inline]
-pub fn entity_random_seed(entity: Entity) -> usize {
-    // VM::random hashes only the low 32 bits, and a plain xor-fold would let
-    // (index 3, gen 2) collide with (index 1, gen 0).
+pub fn entity_random_seed(entity: Entity) -> u64 {
     let mut bits = entity.to_bits();
     bits = (bits ^ (bits >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     bits = (bits ^ (bits >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    ((bits ^ (bits >> 31)) as u32) as usize
+    bits ^ (bits >> 31)
 }
 
 /// Seed for one selected row of `batch`.
@@ -646,7 +664,7 @@ pub fn entity_random_seed(entity: Entity) -> usize {
 /// `table_row` must be one of this batch's selected rows, and the batch's
 /// `entities` pointer must still satisfy its liveness contract.
 #[inline]
-unsafe fn batch_row_seed(batch: &TableBatch, table_row: usize) -> usize {
+unsafe fn batch_row_seed(batch: &TableBatch, table_row: usize) -> u64 {
     // SAFETY: the caller guarantees `table_row` is inside the live entity slice.
     entity_random_seed(unsafe { *batch.entities.add(table_row) })
 }
@@ -660,10 +678,133 @@ fn program_uses_random(bytecode: &CompiledBytecode) -> bool {
         .any(|op| matches!(op, Op::Random(_) | Op::RandomRange(_)))
 }
 
+/// Maximum rows handed to one executor call and the unit of parallel work.
+const RUN_ROWS: usize = 32768;
+
+/// One contiguous run of selected rows inside `batches[batch]`.
+#[derive(Clone, Copy)]
+struct RowRun {
+    batch: usize,
+    table_row: usize,
+    count: usize,
+}
+
+/// Selected rows as ordered contiguous runs of at most [`RUN_ROWS`] rows.
+/// Tick masks select rows only when `honor_masks` is set.
+fn row_runs(batches: &[TableBatch], honor_masks: bool) -> Vec<RowRun> {
+    let mut runs = Vec::new();
+    for (index, batch) in batches.iter().enumerate() {
+        let mut push = |local_start: usize, local_end: usize| {
+            let mut start = local_start;
+            while start < local_end {
+                let count = (local_end - start).min(RUN_ROWS);
+                runs.push(RowRun {
+                    batch: index,
+                    table_row: batch.start_row + start,
+                    count,
+                });
+                start += count;
+            }
+        };
+        match batch.tick_mask.as_ref().filter(|_| honor_masks) {
+            None => push(0, batch.entity_count),
+            Some(mask) => {
+                let mut row = 0;
+                while row < batch.entity_count {
+                    if !mask[row] {
+                        row += 1;
+                        continue;
+                    }
+                    let start = row;
+                    while row < batch.entity_count && mask[row] {
+                        row += 1;
+                    }
+                    push(start, row);
+                }
+            }
+        }
+    }
+    runs
+}
+
+/// Batches shared with compute-pool tasks, which address disjoint row runs.
+#[derive(Clone, Copy)]
+struct SharedBatches<'a>(&'a [TableBatch]);
+// SAFETY: tasks read only batch metadata and dereference pointers for the
+// disjoint row runs they were handed, under the caller's execution contract.
+unsafe impl Send for SharedBatches<'_> {}
+// SAFETY: see the `Send` impl; no task mutates the batch metadata.
+unsafe impl Sync for SharedBatches<'_> {}
+
+impl SharedBatches<'_> {
+    fn get(&self) -> &[TableBatch] {
+        self.0
+    }
+}
+
+/// Field base pointers for the first row of `run`, in field-map order.
+///
+/// # Safety
+/// `run` must lie inside its batch's gathered range and every field's
+/// component must have a base in that batch.
+unsafe fn run_bases(
+    batch: &TableBatch,
+    bytecode: &CompiledBytecode,
+    field_strides: &[usize],
+    run: RowRun,
+    bases: &mut Vec<*mut u8>,
+) {
+    bases.clear();
+    bases.extend(
+        bytecode
+            .field_map
+            .iter()
+            .zip(field_strides)
+            .map(|(field, stride)| {
+                // SAFETY: the run is inside the gathered column range and the
+                // validated field offset fits the component layout.
+                unsafe {
+                    batch.component_bases[&field.component_id]
+                        .add(field.offset)
+                        .add(run.table_row * stride)
+                }
+            }),
+    );
+}
+
+/// Seeds for every row of `run`, from each row's entity.
+///
+/// # Safety
+/// `run` must lie inside its batch's gathered range.
+unsafe fn run_seeds(batch: &TableBatch, run: RowRun, seeds: &mut Vec<u64>) {
+    seeds.clear();
+    seeds.extend((0..run.count).map(|row| {
+        // SAFETY: every row of the run is inside the gathered entity slice.
+        unsafe { batch_row_seed(batch, run.table_row + row) }
+    }));
+}
+
+/// Per-field strides, rejecting a field whose component was not gathered.
+fn field_strides(
+    bytecode: &CompiledBytecode,
+    component_strides: &HashMap<ComponentId, usize>,
+) -> Result<Vec<usize>, BatchExecutionError> {
+    bytecode
+        .field_map
+        .iter()
+        .map(|field| {
+            component_strides.get(&field.component_id).copied().ok_or(
+                BatchExecutionError::FieldComponentNotGathered(field.component_id),
+            )
+        })
+        .collect()
+}
+
 /// Execute bytecode assignment across all entities in all batches (fast path).
 ///
-/// When `parallel` is true (and the `parallel` feature is enabled), uses
-/// Bevy's compute pool for chunked execution if that pool is initialized.
+/// Tick masks are ignored; use [`execute_filtered_assignment`] for masked
+/// batches. When `parallel` is true (and the `parallel` feature is enabled),
+/// uses Bevy's compute pool for chunked execution if that pool is initialized.
 ///
 /// # Safety
 ///
@@ -677,151 +818,15 @@ pub unsafe fn execute_batch_assignment(
     bytecode: &CompiledBytecode,
     component_strides: &HashMap<ComponentId, usize>,
     parallel: bool,
-) -> Result<(), NegativeIntegerPower> {
-    const CHUNK_SIZE: usize = 32768;
-
-    // Fail-safe: skip rather than panic if a field references a component that
-    // was not gathered (its id is absent from the stride/base maps). Callers
-    // should reject such bytecode up front via `validate_bytecode_components`;
-    // this guards the raw-pointer sink even if they do not.
-    if bytecode
-        .field_map
-        .iter()
-        .any(|f| !component_strides.contains_key(&f.component_id))
-    {
-        return Ok(());
-    }
-
-    struct ChunkInfo {
-        field_bases: Vec<SendPtr>,
-        field_strides: Vec<usize>,
-        count: usize,
-        row_seeds: Option<Vec<usize>>,
-    }
-
-    // Only a random-bearing program pays for the per-row entity lookup.
-    let needs_seeds = program_uses_random(bytecode);
-
-    let chunks: Vec<ChunkInfo> = batches
-        .iter()
-        .flat_map(|batch| {
-            let field_strides: Vec<usize> = bytecode
-                .field_map
-                .iter()
-                .map(|field_id| component_strides[&field_id.component_id])
-                .collect();
-
-            (0..batch.entity_count)
-                .step_by(CHUNK_SIZE)
-                .map(move |start| {
-                    let chunk_count = (batch.entity_count - start).min(CHUNK_SIZE);
-                    let field_bases: Vec<SendPtr> = bytecode
-                        .field_map
-                        .iter()
-                        .enumerate()
-                        .map(|(i, field_id)| {
-                            let component_base = batch.component_bases[&field_id.component_id];
-                            let stride = field_strides[i];
-                            // SAFETY: the batch range and chunk are within the
-                            // gathered table column, and validated field offsets
-                            // fit their registered component layouts.
-                            SendPtr(unsafe {
-                                component_base
-                                    .add(field_id.offset)
-                                    .add((batch.start_row + start) * stride)
-                            })
-                        })
-                        .collect();
-                    let row_seeds = needs_seeds.then(|| {
-                        (0..chunk_count)
-                            .map(|row| {
-                                // SAFETY: the row lies in this batch's selected
-                                // range, which the gather bounds-checked.
-                                unsafe { batch_row_seed(batch, batch.start_row + start + row) }
-                            })
-                            .collect()
-                    });
-                    ChunkInfo {
-                        field_bases,
-                        field_strides: field_strides.clone(),
-                        count: chunk_count,
-                        row_seeds,
-                    }
-                })
-        })
-        .collect();
-
-    let tiled_ok = tiled_assignment_supported(bytecode);
-    let process_chunk = |chunk: &ChunkInfo, scratch: &mut TiledScratch, vm: &mut VM| {
-        let bases: Vec<*mut u8> = chunk.field_bases.iter().map(|p| p.0).collect();
-        if tiled_ok {
-            // SAFETY: same pointer-validity contract as execute_batch_multi below; the
-            // field bases/strides span the chunk's rows.
-            unsafe {
-                execute_assignment_tiled(
-                    bytecode,
-                    &bases,
-                    &chunk.field_strides,
-                    chunk.count,
-                    scratch,
-                )
-            }
-            .expect("tiled_assignment_supported checked above");
-        } else {
-            // SAFETY: chunk bases and strides were derived from live table
-            // columns and span exactly `chunk.count` scheduler-disjoint rows.
-            unsafe {
-                vm.execute_batch_multi(
-                    bytecode,
-                    &bases,
-                    &chunk.field_strides,
-                    chunk.count,
-                    chunk.row_seeds.as_deref(),
-                );
-            }
-        }
-    };
-
-    #[cfg(feature = "parallel")]
-    if parallel
-        && chunks.len() > 1
-        && let Some(pool) = ComputeTaskPool::try_get()
-        && pool.thread_num() > 1
-    {
-        let task_size = chunks.len().div_ceil(pool.thread_num());
-        let outcomes = pool.scope(|scope| {
-            for group in chunks.chunks(task_size) {
-                scope.spawn(async move {
-                    let mut scratch = TiledScratch::new();
-                    let mut vm = VM::new();
-                    for chunk in group {
-                        process_chunk(chunk, &mut scratch, &mut vm);
-                    }
-                    vm.take_negative_power()
-                });
-            }
-        });
-        return outcomes.into_iter().collect();
-    }
-
-    let _ = parallel;
-    let mut scratch = TiledScratch::new();
-    let mut vm = VM::new();
-    for chunk in &chunks {
-        process_chunk(chunk, &mut scratch, &mut vm);
-    }
-    vm.take_negative_power()
-}
-
-#[inline]
-fn tiled_assignment_supported(bytecode: &CompiledBytecode) -> bool {
-    supported_program(bytecode)
+) -> Result<(), BatchExecutionError> {
+    // SAFETY: forwarded from this function's contract.
+    unsafe { execute_runs(batches, bytecode, component_strides, parallel, false) }
 }
 
 /// Execute bytecode assignment on tick-filtered entities only.
 ///
-/// Processes each passing entity individually (cannot use batch VM because
-/// entities may be non-contiguous after tick filtering).
+/// Each maximal run of rows passing the tick mask executes like an unfiltered
+/// batch, so filtered and unfiltered assignments share one executor.
 ///
 /// # Safety
 ///
@@ -834,107 +839,81 @@ pub unsafe fn execute_filtered_assignment(
     bytecode: &CompiledBytecode,
     component_strides: &HashMap<ComponentId, usize>,
     parallel: bool,
-) -> Result<(), NegativeIntegerPower> {
-    // Fail-safe: skip rather than panic if a field references a component that
-    // was not gathered (see `execute_batch_assignment`).
-    if bytecode
-        .field_map
-        .iter()
-        .any(|f| !component_strides.contains_key(&f.component_id))
-    {
-        return Ok(());
-    }
+) -> Result<(), BatchExecutionError> {
+    // SAFETY: forwarded from this function's contract.
+    unsafe { execute_runs(batches, bytecode, component_strides, parallel, true) }
+}
 
-    let field_strides: Vec<usize> = bytecode
-        .field_map
-        .iter()
-        .map(|field_id| component_strides[&field_id.component_id])
-        .collect();
-
+/// # Safety
+/// As [`execute_batch_assignment`].
+unsafe fn execute_runs(
+    batches: &[TableBatch],
+    bytecode: &CompiledBytecode,
+    component_strides: &HashMap<ComponentId, usize>,
+    parallel: bool,
+    honor_masks: bool,
+) -> Result<(), BatchExecutionError> {
+    let field_strides = field_strides(bytecode, component_strides)?;
+    let runs = row_runs(batches, honor_masks);
+    let tiled = supported_program(bytecode);
     let needs_seeds = program_uses_random(bytecode);
+    let shared = SharedBatches(batches);
+    let field_strides = field_strides.as_slice();
 
-    struct EntityWork {
-        field_ptrs: Vec<SendPtr>,
-        entity_seed: usize,
-    }
-
-    let work_items: Vec<EntityWork> = batches
-        .iter()
-        .flat_map(|batch| {
-            let mask = batch.tick_mask.as_ref();
-            let strides = &field_strides;
-            (0..batch.entity_count).filter_map(move |entity_idx| {
-                if let Some(mask) = mask
-                    && !mask[entity_idx]
-                {
-                    return None;
-                }
-
-                let field_ptrs: Vec<SendPtr> = bytecode
-                    .field_map
-                    .iter()
-                    .enumerate()
-                    .map(|(i, field_id)| {
-                        let base = batch.component_bases[&field_id.component_id];
-                        let stride = strides[i];
-                        // SAFETY: the local entity index is inside this gathered
-                        // range and validated field offsets fit the component.
-                        SendPtr(unsafe {
-                            base.add(field_id.offset)
-                                .add((batch.start_row + entity_idx) * stride)
-                        })
-                    })
-                    .collect();
-
-                let entity_seed = if needs_seeds {
-                    // SAFETY: this local row is inside the gathered range.
-                    unsafe { batch_row_seed(batch, batch.start_row + entity_idx) }
-                } else {
-                    0
-                };
-
-                Some(EntityWork {
-                    field_ptrs,
-                    entity_seed,
-                })
-            })
-        })
-        .collect();
-
-    let process_entity = |work: &EntityWork| {
-        // PERF: consider PooledVM::acquire() to reuse stack allocation
+    let process = move |group: &[RowRun]| {
+        let batches = shared.get();
+        let mut scratch = tiled.then(TiledScratch::new);
         let mut vm = VM::new();
-        let ptrs: Vec<*mut u8> = work.field_ptrs.iter().map(|p| p.0).collect();
-        // SAFETY: each work item owns pointers for one selected live entity;
-        // parallel construction keeps mutable entity rows disjoint.
-        unsafe {
-            vm.execute(bytecode, &ptrs, work.entity_seed);
+        let mut bases = Vec::with_capacity(field_strides.len());
+        let mut seeds = Vec::new();
+        for &run in group {
+            let batch = &batches[run.batch];
+            // SAFETY: runs come from the gathered ranges of `batches`.
+            unsafe { run_bases(batch, bytecode, field_strides, run, &mut bases) };
+            if let Some(scratch) = scratch.as_mut() {
+                // SAFETY: the bases and strides span exactly this run's rows.
+                unsafe {
+                    execute_assignment_tiled(bytecode, &bases, field_strides, run.count, scratch)
+                }
+                .expect("supported_program checked above");
+                continue;
+            }
+            if needs_seeds {
+                // SAFETY: as above.
+                unsafe { run_seeds(batch, run, &mut seeds) };
+            }
+            // SAFETY: the bases and strides span exactly this run's rows,
+            // which no other task addresses.
+            unsafe {
+                vm.execute_batch_multi(
+                    bytecode,
+                    &bases,
+                    field_strides,
+                    run.count,
+                    needs_seeds.then_some(seeds.as_slice()),
+                );
+            }
         }
-        vm.take_negative_power()
+        vm.take_negative_power().map_err(BatchExecutionError::from)
     };
 
     #[cfg(feature = "parallel")]
     if parallel
-        && work_items.len() > 1
+        && runs.len() > 1
         && let Some(pool) = ComputeTaskPool::try_get()
         && pool.thread_num() > 1
     {
-        let task_size = work_items.len().div_ceil(pool.thread_num());
+        let task_size = runs.len().div_ceil(pool.thread_num());
         let outcomes = pool.scope(|scope| {
-            for group in work_items.chunks(task_size) {
-                scope.spawn(
-                    async move { group.iter().map(process_entity).fold(Ok(()), Result::and) },
-                );
+            for group in runs.chunks(task_size) {
+                scope.spawn(async move { process(group) });
             }
         });
         return outcomes.into_iter().collect();
     }
 
     let _ = parallel;
-    work_items
-        .iter()
-        .map(process_entity)
-        .fold(Ok(()), Result::and)
+    process(&runs)
 }
 
 /// Evaluate one validated read-only program over exact gathered batches.
@@ -955,86 +934,55 @@ pub(crate) unsafe fn evaluate_batch_program(
     bytecode: &CompiledBytecode,
     component_strides: &HashMap<ComponentId, usize>,
     parallel: bool,
-) -> Result<Vec<f64>, NegativeIntegerPower> {
-    if bytecode
-        .field_map
-        .iter()
-        .any(|field| !component_strides.contains_key(&field.component_id))
-    {
-        return Ok(Vec::new());
-    }
-
+) -> Result<Vec<f64>, BatchExecutionError> {
+    let field_strides = field_strides(bytecode, component_strides)?;
+    let runs = row_runs(batches, true);
     let needs_seeds = program_uses_random(bytecode);
+    let shared = SharedBatches(batches);
+    let field_strides = field_strides.as_slice();
 
-    struct EntityWork {
-        field_ptrs: Vec<SendPtr>,
-        entity_seed: usize,
-    }
-
-    let work_items: Vec<EntityWork> = batches
-        .iter()
-        .flat_map(|batch| {
-            (0..batch.entity_count).filter_map(move |local_row| {
-                if batch
-                    .tick_mask
-                    .as_ref()
-                    .is_some_and(|mask| !mask[local_row])
-                {
-                    return None;
-                }
-
-                let table_row = batch.start_row + local_row;
-                let field_ptrs: Vec<SendPtr> = bytecode
-                    .field_map
-                    .iter()
-                    .map(|field| {
-                        let base = batch.component_bases[&field.component_id];
-                        let stride = component_strides[&field.component_id];
-                        // SAFETY: the caller validated the field span and this
-                        // row lies inside the gathered contiguous range.
-                        SendPtr(unsafe { base.add(field.offset).add(table_row * stride) })
-                    })
-                    .collect();
-
-                let entity_seed = if needs_seeds {
-                    // SAFETY: this row is inside the gathered range.
-                    unsafe { batch_row_seed(batch, table_row) }
+    let evaluate = move |group: &[RowRun]| {
+        let batches = shared.get();
+        let mut vm = VM::new();
+        let mut bases = Vec::with_capacity(field_strides.len());
+        let mut row_pointers = Vec::with_capacity(field_strides.len());
+        let mut values = Vec::with_capacity(group.iter().map(|run| run.count).sum());
+        for &run in group {
+            let batch = &batches[run.batch];
+            // SAFETY: runs come from the gathered ranges of `batches`.
+            unsafe { run_bases(batch, bytecode, field_strides, run, &mut bases) };
+            for row in 0..run.count {
+                row_pointers.clear();
+                row_pointers.extend(bases.iter().zip(field_strides).map(|(base, stride)| {
+                    // SAFETY: `row` is inside this run's gathered rows.
+                    unsafe { base.add(row * stride) }
+                }));
+                let seed = if needs_seeds {
+                    // SAFETY: `row` is inside this run's gathered rows.
+                    unsafe { batch_row_seed(batch, run.table_row + row) }
                 } else {
                     0
                 };
-
-                Some(EntityWork {
-                    field_ptrs,
-                    entity_seed,
-                })
-            })
-        })
-        .collect();
-
-    let evaluate = |work: &EntityWork| {
-        let mut vm = VM::new();
-        let field_ptrs: Vec<*mut u8> = work.field_ptrs.iter().map(|pointer| pointer.0).collect();
-        // SAFETY: upheld by this function's caller and the bounds-checked work
-        // construction above; the bytecode is read-only and fully validated.
-        let value = unsafe { vm.execute_and_reduce(bytecode, &field_ptrs, work.entity_seed) };
-        vm.take_negative_power().map(|()| value)
+                // SAFETY: upheld by this function's caller; the bytecode is
+                // read-only and fully validated.
+                values.push(unsafe { vm.execute_and_reduce(bytecode, &row_pointers, seed) });
+            }
+        }
+        vm.take_negative_power()
+            .map(|()| values)
+            .map_err(BatchExecutionError::from)
     };
 
     #[cfg(feature = "parallel")]
     if parallel
-        && work_items.len() > 1
+        && runs.len() > 1
         && let Some(pool) = ComputeTaskPool::try_get()
         && pool.thread_num() > 1
     {
-        let task_size = work_items.len().div_ceil(pool.thread_num());
+        let task_size = runs.len().div_ceil(pool.thread_num());
         let groups = pool.scope(|scope| {
-            for (index, group) in work_items.chunks(task_size).enumerate() {
-                scope.spawn(async move {
-                    (
-                        index,
-                        group.iter().map(&evaluate).collect::<Result<Vec<_>, _>>(),
-                    )
-                });
+            for (index, group) in runs.chunks(task_size).enumerate() {
+                scope.spawn(async move { (index, evaluate(group)) });
             }
         });
         let mut values = vec![Vec::new(); groups.len()];
@@ -1045,7 +993,7 @@ pub(crate) unsafe fn evaluate_batch_program(
     }
 
     let _ = parallel;
-    work_items.iter().map(evaluate).collect()
+    evaluate(&runs)
 }
 
 /// Compile a field assignment expression to bytecode.
@@ -1412,6 +1360,7 @@ mod tests {
             entities: test_entities(0, 3),
             start_row: 0,
             entity_count: 3,
+            table_entity_count: 3,
             tick_mask: None,
         }];
 
@@ -1442,7 +1391,7 @@ mod tests {
             added_ids: Vec::new(),
         };
         let bytecode = make_add_bytecode(cid, 0, 2.5);
-        assert!(tiled_assignment_supported(&bytecode));
+        assert!(supported_program(&bytecode));
         // SAFETY: the test owns `world` exclusively for the gather and the
         // execution below, and no structural change happens in between.
         let batches = unsafe {
@@ -1496,7 +1445,7 @@ mod tests {
         compiler.emit(Op::Pow);
         compiler.emit(Op::StoreField(base));
         let bytecode = compiler.finalize();
-        assert!(!tiled_assignment_supported(&bytecode));
+        assert!(!supported_program(&bytecode));
 
         let strides = HashMap::from([(component_id, 2 * size_of::<i64>())]);
         for mask in [None, Some(vec![true; 3])] {
@@ -1507,6 +1456,7 @@ mod tests {
                 entities: test_entities(0, rows.len()),
                 start_row: 0,
                 entity_count: rows.len(),
+                table_entity_count: rows.len(),
                 tick_mask: mask.clone(),
             }];
             // SAFETY: the batch points to three live, exclusively held rows.
@@ -1517,7 +1467,7 @@ mod tests {
                     execute_batch_assignment(&batches, &bytecode, &strides, false)
                 }
             };
-            assert_eq!(result, Err(NegativeIntegerPower));
+            assert_eq!(result, Err(BatchExecutionError::NegativeIntegerPower));
             assert_eq!(rows.map(|row| row[0]), [4, 0, 16]);
         }
 
@@ -1528,6 +1478,7 @@ mod tests {
             entities: test_entities(0, rows.len()),
             start_row: 0,
             entity_count: rows.len(),
+            table_entity_count: rows.len(),
             tick_mask: None,
         }];
         // SAFETY: the batch points to two live, exclusively held rows.
@@ -1551,7 +1502,7 @@ mod tests {
         compiler.emit(Op::Add);
         compiler.emit(Op::StoreField(field));
         let bytecode = compiler.finalize();
-        assert!(tiled_assignment_supported(&bytecode));
+        assert!(supported_program(&bytecode));
 
         let mut values = [(1_u64 << 53) + 1, u64::MAX];
         let batches = [TableBatch {
@@ -1560,6 +1511,7 @@ mod tests {
             entities: test_entities(0, values.len()),
             start_row: 0,
             entity_count: values.len(),
+            table_entity_count: values.len(),
             tick_mask: None,
         }];
         let strides = HashMap::from([(component_id, size_of::<u64>())]);
@@ -1591,6 +1543,7 @@ mod tests {
             entities: test_entities(0, 4),
             start_row: 0,
             entity_count: 4,
+            table_entity_count: 4,
             tick_mask: Some(vec![false, true, false, true]),
         }];
 
@@ -1726,12 +1679,39 @@ mod tests {
     }
 
     #[test]
+    fn execution_rejects_a_field_whose_component_was_not_gathered() {
+        let cid = ComponentId::new(0);
+        let missing = ComponentId::new(9);
+        let bytecode = make_add_bytecode(missing, 0, 1.0);
+        let batches: [TableBatch; 0] = [];
+        let strides = HashMap::from([(cid, size_of::<f32>())]);
+        let expected = Err(BatchExecutionError::FieldComponentNotGathered(missing));
+
+        // SAFETY: no batch is supplied, and the missing component is rejected
+        // before any pointer could be formed.
+        unsafe {
+            assert_eq!(
+                execute_batch_assignment(&batches, &bytecode, &strides, false),
+                expected
+            );
+            assert_eq!(
+                execute_filtered_assignment(&batches, &bytecode, &strides, false),
+                expected
+            );
+            assert_eq!(
+                evaluate_batch_program(&batches, &bytecode, &strides, false).map(|_| ()),
+                expected
+            );
+        }
+    }
+
+    #[test]
     fn test_execute_batch_assignment_empty() {
         let cid = ComponentId::new(0);
         let bytecode = make_add_bytecode(cid, 0, 1.0);
 
         let batches: Vec<TableBatch> = vec![];
-        let strides = HashMap::new();
+        let strides = HashMap::from([(cid, size_of::<f32>())]);
 
         // Should not panic on empty batches
         unsafe { execute_batch_assignment(&batches, &bytecode, &strides, false) }.unwrap();
@@ -1774,6 +1754,7 @@ mod tests {
             entities: test_entities(0, count),
             start_row: 0,
             entity_count: count,
+            table_entity_count: count,
             tick_mask: None,
         }];
         // SAFETY: the batch describes one live, exclusively held f64 run.
@@ -1794,6 +1775,7 @@ mod tests {
             entities: test_entities(0, count),
             start_row: 0,
             entity_count: count,
+            table_entity_count: count,
             tick_mask: Some(vec![true; count]),
         }];
         // SAFETY: as above; the mask selects every row of the same run.
@@ -1813,6 +1795,7 @@ mod tests {
             entities: test_entities(0, count),
             start_row: 0,
             entity_count: count,
+            table_entity_count: count,
             tick_mask: None,
         }];
         // SAFETY: the read-only program declares no fields, so no pointer is
@@ -1833,6 +1816,29 @@ mod tests {
             batched[0], batched[32_768],
             "the seed must not restart at the chunk boundary"
         );
+    }
+
+    #[test]
+    fn random_uses_the_full_entity_seed() {
+        let mut seen = HashMap::new();
+        let (first, second) = (1..)
+            .map(Entity::from_bits)
+            .find_map(|entity| {
+                let low = entity_random_seed(entity) as u32;
+                seen.insert(low, entity)
+                    .filter(|&earlier| earlier != entity)
+                    .map(|earlier| (earlier, entity))
+            })
+            .expect("32-bit seed prefixes collide well before 2**32 entities");
+        let mut compiler = Compiler::new();
+        compiler.emit(Op::Random(0));
+        let bytecode = compiler.finalize();
+        let draw = |entity: Entity| {
+            let mut vm = VM::new();
+            // SAFETY: the stack-only program reads no fields.
+            unsafe { vm.execute_and_reduce(&bytecode, &[], entity_random_seed(entity)) }
+        };
+        assert_ne!(draw(first), draw(second));
     }
 
     #[test]
@@ -1858,6 +1864,7 @@ mod tests {
                 entities: test_entities(first_entity, values.len()),
                 start_row: 0,
                 entity_count: values.len(),
+                table_entity_count: values.len(),
                 tick_mask: None,
             }];
             // SAFETY: the batch describes one live, exclusively held f64 run.
@@ -1887,6 +1894,7 @@ mod tests {
                 entities: test_entities(0, 1),
                 start_row: 0,
                 entity_count: 1,
+                table_entity_count: 1,
                 tick_mask: mask,
             }];
             // SAFETY: the batch describes one live, exclusively held i64.
@@ -2002,6 +2010,7 @@ mod tests {
                 entities: test_entities(0, 1),
                 start_row: 0,
                 entity_count: 1,
+                table_entity_count: 1,
                 tick_mask: mask,
             }];
             // SAFETY: the batch describes one live, exclusively held u8.
@@ -2017,7 +2026,7 @@ mod tests {
 
         // Unfolded, the constant-only Add is declined.
         assert!(
-            !tiled_assignment_supported(&bytecode),
+            !supported_program(&bytecode),
             "a constant-only operation must not reach the integer lanes"
         );
         assert_eq!(run(&bytecode, None), run(&bytecode, Some(vec![true])));
@@ -2040,7 +2049,7 @@ mod tests {
         folded.optimize();
         bytecode = folded.finalize();
         assert_eq!(bytecode.bytecode.len(), 4, "the constant pair folded");
-        assert!(!tiled_assignment_supported(&bytecode));
+        assert!(!supported_program(&bytecode));
         assert_eq!(run(&bytecode, None), run(&bytecode, Some(vec![true])));
     }
 

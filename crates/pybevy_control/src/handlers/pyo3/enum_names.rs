@@ -1,4 +1,33 @@
-use pyo3::{prelude::*, types::PyType};
+use pyo3::{
+    prelude::*,
+    types::{PyModule, PyType},
+};
+
+use crate::handlers::reflect_mutate::compiled_type_is_enum;
+
+pub(super) fn is_enum_type(owner: &Bound<'_, PyType>) -> bool {
+    owner.hasattr("__pybevy_variant_aliases__").unwrap_or(false)
+        || is_python_enum(owner)
+        || is_reflected_bevy_enum(owner)
+}
+
+fn is_python_enum(owner: &Bound<'_, PyType>) -> bool {
+    PyModule::import(owner.py(), "enum")
+        .and_then(|module| module.getattr("Enum"))
+        .and_then(|base| owner.is_subclass(&base))
+        .unwrap_or(false)
+}
+
+fn is_reflected_bevy_enum(owner: &Bound<'_, PyType>) -> bool {
+    let pybevy_wrapper = owner.module().is_ok_and(|module| {
+        let module = module.to_string_lossy();
+        module == "pybevy" || module.starts_with("pybevy.")
+    });
+    pybevy_wrapper
+        && owner
+            .name()
+            .is_ok_and(|name| compiled_type_is_enum(&name.to_string_lossy()))
+}
 
 fn variant_aliases(owner: &Bound<'_, PyType>) -> Vec<(String, String)> {
     owner

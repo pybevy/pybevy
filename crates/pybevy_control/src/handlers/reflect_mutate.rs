@@ -585,10 +585,7 @@ const PYTHON_KEYWORDS: &[&str] = &[
     "nonlocal", "not", "or", "pass", "raise", "return", "try", "while", "with", "yield",
 ];
 
-pub(crate) fn compiled_enum_variant_info(
-    owner: &str,
-    variant: &str,
-) -> Option<&'static VariantInfo> {
+fn compiled_enum_info(owner: &str) -> Option<&'static EnumInfo> {
     static REGISTRY: OnceLock<TypeRegistry> = OnceLock::new();
     let registry = REGISTRY.get_or_init(|| {
         let mut registry = TypeRegistry::default();
@@ -597,10 +594,21 @@ pub(crate) fn compiled_enum_variant_info(
         }
         registry
     });
-    let TypeInfo::Enum(info) = registry.get_with_short_type_path(owner)?.type_info() else {
-        return None;
-    };
-    info.variant(variant)
+    match registry.get_with_short_type_path(owner)?.type_info() {
+        TypeInfo::Enum(info) => Some(info),
+        _ => None,
+    }
+}
+
+pub(crate) fn compiled_type_is_enum(owner: &str) -> bool {
+    compiled_enum_info(owner).is_some()
+}
+
+pub(crate) fn compiled_enum_variant_info(
+    owner: &str,
+    variant: &str,
+) -> Option<&'static VariantInfo> {
+    compiled_enum_info(owner)?.variant(variant)
 }
 
 /// Convert a named field's JSON value to a reflected value using the parent struct's type info.

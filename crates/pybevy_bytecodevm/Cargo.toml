@@ -35,5 +35,9 @@ harness = false
 name = "view_assignment"
 harness = false
 
+[[bench]]
+name = "view_scalar_paths"
+harness = false
+
 [lints]
 workspace = true

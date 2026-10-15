@@ -60,6 +60,10 @@ global, resource, or component; an instance becomes invalid when its system call
 returns. It is also rejected in run conditions because drawing mutates the gizmo
 buffer.
 
+`circle`, `circle_2d`, `ellipse`, `ellipse_2d`, and `sphere` accept at most
+1,048,576 segments per curve. Larger resolutions raise `ValueError` before
+Bevy allocates a vertex buffer.
+
 Read `gizmos.config` to inspect the default group's configuration for the current
 system call. It is a read-only borrowed reference and expires when the system
 returns:

@@ -113,6 +113,23 @@ impl StackValue {
         StackValue::Constant(value as f64)
     }
 
+    /// The exact integer an integer lane or int literal holds.
+    #[inline]
+    fn integer_value(self) -> Option<i128> {
+        match self {
+            StackValue::I32(value) => Some(value.into()),
+            StackValue::I64(value) | StackValue::ExactInt(value) => Some(value.into()),
+            StackValue::U8(value) => Some(value.into()),
+            StackValue::U32(value) => Some(value.into()),
+            StackValue::U64(value) | StackValue::ExactUInt(value) => Some(value.into()),
+            StackValue::Constant(value) => Some(value as i128),
+            StackValue::F32(_)
+            | StackValue::Float(_)
+            | StackValue::FloatConstant(_)
+            | StackValue::Bool(_) => None,
+        }
+    }
+
     #[inline]
     fn coerce_exact(value: i128, template: Self) -> Option<Self> {
         Some(match template {
@@ -1125,7 +1142,7 @@ pub unsafe fn write_field_value(ptr: *mut u8, value: f64, field_type: FieldType)
             FieldType::Bool => {
                 // Write through `u8` (mirrors the `u8` read) so the store never depends
                 // on `*mut bool` provenance; a bool is stored as 1/0.
-                ptr.write_unaligned(u8::from(value >= 0.5));
+                ptr.write_unaligned(u8::from(value != 0.0));
             }
             FieldType::Vec2 | FieldType::Vec3 | FieldType::Vec4 => {
                 unreachable!("VM should decompose Vec2/Vec3/Vec4 to F32 sub-fields")
@@ -1163,11 +1180,11 @@ pub unsafe fn read_field_stack_value(ptr: *const u8, field_type: FieldType) -> S
     }
 }
 
-/// Write a VM value without losing exact same-domain integer values.
+/// Write a VM value without losing exact integer values.
 ///
-/// Cross-domain stores are explicit conversions at the destination boundary;
-/// integer operations themselves remain typed. An int literal reaching an
-/// integer field unconverted (a `where` branch) wraps, as NumPy casts it.
+/// Every integer value, including an int literal reaching the field
+/// unconverted (a `where` branch), is cast exactly and wraps into an integer
+/// field as NumPy casts it. Other cross-domain stores convert through f64.
 ///
 /// # Safety
 /// The pointer must be valid for a value of `field_type` and not concurrently read.
@@ -1176,42 +1193,26 @@ pub unsafe fn write_field_stack_value(ptr: *mut u8, value: StackValue, field_typ
     // SAFETY: the caller guarantees exclusive writable access to a live value whose
     // layout matches `field_type`; conversion stores preserve that same contract.
     unsafe {
+        if matches!(
+            field_type,
+            FieldType::I32 | FieldType::I64 | FieldType::U8 | FieldType::U32 | FieldType::U64
+        ) && let Some(value) = value.integer_value()
+        {
+            match field_type {
+                FieldType::I32 => (ptr as *mut i32).write_unaligned(value as i32),
+                FieldType::I64 => (ptr as *mut i64).write_unaligned(value as i64),
+                FieldType::U8 => ptr.write_unaligned(value as u8),
+                FieldType::U32 => (ptr as *mut u32).write_unaligned(value as u32),
+                _ => (ptr as *mut u64).write_unaligned(value as u64),
+            }
+            return;
+        }
         match (field_type, value) {
-            (FieldType::I32, StackValue::I32(value)) => {
-                (ptr as *mut i32).write_unaligned(value);
-            }
-            (FieldType::I64, StackValue::I64(value)) => {
-                (ptr as *mut i64).write_unaligned(value);
-            }
-            (FieldType::U8, StackValue::U8(value)) => ptr.write_unaligned(value),
-            (FieldType::U32, StackValue::U32(value)) => {
-                (ptr as *mut u32).write_unaligned(value);
-            }
-            (FieldType::U64, StackValue::U64(value)) => {
-                (ptr as *mut u64).write_unaligned(value);
-            }
             (FieldType::Bool, StackValue::Bool(value)) => {
                 ptr.write_unaligned(u8::from(value));
             }
-            (
-                FieldType::I32 | FieldType::I64 | FieldType::U8 | FieldType::U32 | FieldType::U64,
-                StackValue::Constant(_) | StackValue::ExactInt(_) | StackValue::ExactUInt(_),
-            ) => {
-                let value = match value {
-                    StackValue::ExactInt(value) => i128::from(value),
-                    StackValue::ExactUInt(value) => i128::from(value),
-                    value => value.as_float() as i128,
-                };
-                match field_type {
-                    FieldType::I32 => (ptr as *mut i32).write_unaligned(value as i32),
-                    FieldType::I64 => (ptr as *mut i64).write_unaligned(value as i64),
-                    FieldType::U8 => ptr.write_unaligned(value as u8),
-                    FieldType::U32 => (ptr as *mut u32).write_unaligned(value as u32),
-                    _ => (ptr as *mut u64).write_unaligned(value as u64),
-                }
-            }
             (FieldType::Bool, value) => {
-                ptr.write_unaligned(u8::from(value.as_float() >= 0.5));
+                ptr.write_unaligned(u8::from(value.as_float() != 0.0));
             }
             (field_type, StackValue::Bool(_)) => {
                 panic!("cannot store bool in numeric field {field_type:?}")
@@ -1225,8 +1226,8 @@ pub unsafe fn write_field_stack_value(ptr: *mut u8, value: StackValue, field_typ
 pub struct VM {
     /// Evaluation stack for typed numeric and boolean values.
     pub(crate) stack: Vec<StackValue>,
-    /// Current entity index for deterministic random number generation
-    entity_index: usize,
+    /// Current row's random seed, derived from its entity identity.
+    seed: u64,
     /// Execution domain for dense programs whose numeric inputs are all f32.
     native_f32: bool,
     /// Set by an integer power with a negative exponent; read after a pass.
@@ -1292,7 +1293,7 @@ impl VM {
     pub fn new() -> Self {
         Self {
             stack: Vec::with_capacity(32), // Most expressions need < 32 stack slots
-            entity_index: 0,
+            seed: 0,
             native_f32: false,
             negative_power: false,
         }
@@ -1302,7 +1303,7 @@ impl VM {
     #[inline]
     pub fn reset(&mut self) {
         self.stack.clear();
-        self.entity_index = 0;
+        self.seed = 0;
         self.native_f32 = false;
         self.negative_power = false;
     }
@@ -1323,19 +1324,15 @@ impl VM {
         self.native_f32 = native_f32;
     }
 
-    /// Simple hash-based random number generator for deterministic per-entity randomness
-    /// Uses the entity index as seed to ensure reproducibility
+    /// Deterministic draw in `[0.0, 1.0)` for the row's seed and `stream`.
     #[inline]
     fn random(&self, stream: u32) -> f64 {
-        // Counter-based draw: the (entity seed, stream) pair is one injective
-        // 64-bit input to the SplitMix64 finalizer.
-        let mut x = (u64::from(self.entity_index as u32) << 32) | u64::from(stream);
+        let mut x = self.seed ^ u64::from(stream).wrapping_mul(0x9E37_79B9_7F4A_7C15);
         x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
         x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
         x ^= x >> 31;
-
-        // Convert to [0.0, 1.0); dividing by 2^32 keeps u32::MAX below 1.
-        f64::from((x >> 32) as u32) / 4_294_967_296.0
+        // The top 53 bits fill an f64 mantissa exactly, so the draw stays below 1.
+        (x >> 11) as f64 / 9_007_199_254_740_992.0
     }
 
     /// Dispatch a single stack-only operation (everything except external loads/stores).
@@ -1753,10 +1750,10 @@ impl VM {
         &mut self,
         bytecode: &CompiledBytecode,
         field_ptrs: &[*mut u8],
-        entity_index: usize,
+        seed: u64,
     ) {
         self.stack.clear();
-        self.entity_index = entity_index;
+        self.seed = seed;
 
         for op in &bytecode.bytecode {
             if self.dispatch_stack_op(op, bytecode) {
@@ -1797,10 +1794,10 @@ impl VM {
         &mut self,
         bytecode: &CompiledBytecode,
         field_ptrs: &[*mut u8],
-        entity_index: usize,
+        seed: u64,
     ) -> f64 {
         self.stack.clear();
-        self.entity_index = entity_index;
+        self.seed = seed;
 
         for op in &bytecode.bytecode {
             if self.dispatch_stack_op(op, bytecode) {
@@ -1865,7 +1862,7 @@ impl VM {
         field_bases: &[*mut u8],
         field_strides: &[usize],
         count: usize,
-        row_seeds: Option<&[usize]>,
+        row_seeds: Option<&[u64]>,
     ) {
         // SAFETY: the caller provides one correctly typed base and stride for
         // every bytecode field, each spanning all `count` entities.
@@ -1875,9 +1872,9 @@ impl VM {
 
             for entity_idx in 0..count {
                 self.stack.clear();
-                self.entity_index = match row_seeds {
+                self.seed = match row_seeds {
                     Some(seeds) => seeds[entity_idx],
-                    None => entity_idx,
+                    None => entity_idx as u64,
                 };
 
                 for op in &bytecode.bytecode {
@@ -2348,45 +2345,37 @@ mod tests {
     }
 
     #[test]
-    fn random_stays_below_one_for_every_entity_index() {
-        fn modular_inverse(a: u32) -> u32 {
-            let mut inv = a;
-            for _ in 0..5 {
-                inv = inv.wrapping_mul(2u32.wrapping_sub(a.wrapping_mul(inv)));
+    fn random_stays_below_one_at_the_largest_draw() {
+        fn unshift(value: u64, shift: u32) -> u64 {
+            let mut result = value;
+            for _ in 0..64 / shift {
+                result = value ^ (result >> shift);
             }
-            inv
+            result
         }
-        fn hash(mut x: u32) -> u32 {
-            x = x.wrapping_mul(747796405).wrapping_add(2891336453);
-            x = (x ^ (x >> 13)).wrapping_mul(1597334677);
-            x ^ (x >> 16)
+        fn inverse(odd: u64) -> u64 {
+            let mut inverse = odd;
+            for _ in 0..6 {
+                inverse = inverse.wrapping_mul(2_u64.wrapping_sub(odd.wrapping_mul(inverse)));
+            }
+            inverse
         }
-        // The hash is a bijection on u32; invert it to find the one entity
-        // index whose hash is u32::MAX (the worst case for the upper bound).
-        let x = u32::MAX;
-        let x = x ^ (x >> 16);
-        let w = x.wrapping_mul(modular_inverse(1597334677));
-        let w = w ^ (w >> 13) ^ (w >> 26);
-        let worst = w
-            .wrapping_sub(2891336453)
-            .wrapping_mul(modular_inverse(747796405));
-        assert_eq!(hash(worst), u32::MAX);
+        let mut seed = unshift(u64::MAX, 31);
+        seed = unshift(seed.wrapping_mul(inverse(0x94D0_49BB_1331_11EB)), 27);
+        seed = unshift(seed.wrapping_mul(inverse(0xBF58_476D_1CE4_E5B9)), 30);
 
         let mut compiler = Compiler::new();
         compiler.emit(Op::Random(0));
         let bytecode = compiler.finalize();
         let mut vm = VM::new();
-        unsafe { vm.execute(&bytecode, &[], worst as usize) };
-        let value = vm.stack[0].as_float();
-        assert!(
-            (0.0..1.0).contains(&value),
-            "random() must stay in [0.0, 1.0), got {value}"
-        );
+        // SAFETY: this stack-only program reads no component fields.
+        unsafe { vm.execute(&bytecode, &[], seed) };
+        assert_eq!(vm.stack[0].as_float(), 1.0 - f64::EPSILON / 2.0);
     }
 
     #[test]
     fn random_streams_select_distinct_deterministic_draws() {
-        for entity_index in [0, 1, 37, u32::MAX as usize] {
+        for seed in [0, 1, 37, u64::MAX] {
             let mut values = Vec::new();
             for stream in [0, 1, 2] {
                 let mut compiler = Compiler::new();
@@ -2394,7 +2383,7 @@ mod tests {
                 let bytecode = compiler.finalize();
                 let mut vm = VM::new();
                 // SAFETY: this stack-only program reads no component fields.
-                unsafe { vm.execute(&bytecode, &[], entity_index) };
+                unsafe { vm.execute(&bytecode, &[], seed) };
                 values.push(vm.stack[0].as_float());
             }
             assert_eq!(values.len(), 3);
@@ -2427,7 +2416,7 @@ mod tests {
             let mut pooled = PooledVM::acquire();
             let vm = pooled.get_mut();
             vm.stack.push(StackValue::Float(42.0));
-            vm.entity_index = 7;
+            vm.seed = 7;
             vm.set_native_f32(true);
         }
 
@@ -2436,7 +2425,7 @@ mod tests {
         let mut pooled = PooledVM::acquire();
         let vm = pooled.get_mut();
         assert!(vm.stack.is_empty());
-        assert_eq!(vm.entity_index, 0);
+        assert_eq!(vm.seed, 0);
         assert!(
             !vm.native_f32,
             "stale native-f32 mode would change rounding"
@@ -2450,13 +2439,13 @@ mod tests {
 
         // Add some state
         vm.stack.push(StackValue::Float(42.0));
-        vm.entity_index = 999;
+        vm.seed = 999;
 
         // Reset should clear state
         vm.reset();
 
         assert!(vm.stack.is_empty());
-        assert_eq!(vm.entity_index, 0);
+        assert_eq!(vm.seed, 0);
 
         // But stack capacity should be preserved
         assert_eq!(vm.stack.capacity(), 32);
@@ -2537,7 +2526,7 @@ mod tests {
             vm.reset();
             let ptr = value as *mut f32 as *mut u8;
             unsafe {
-                vm.execute(&bytecode, &[ptr], i);
+                vm.execute(&bytecode, &[ptr], i as u64);
             }
         }
 
@@ -2738,30 +2727,29 @@ mod tests {
 
         assert!(vm.stack[0].as_bool());
 
-        // Now test store: value >= 0.5 → true, < 0.5 → false
-        let mut compiler = Compiler::new();
-        let field_id = FieldId {
-            component_id: ComponentId::new(0),
-            offset: 0,
-            field_type: FieldType::Bool,
-        };
-        let field_idx = compiler.add_field(field_id);
-        let const_val = compiler.add_constant(0.3); // < 0.5, should store false
+        for (value, expected) in [(0.0, false), (0.3, true), (-1.0, true), (f64::NAN, true)] {
+            let mut compiler = Compiler::new();
+            let field_idx = compiler.add_field(FieldId {
+                component_id: ComponentId::new(0),
+                offset: 0,
+                field_type: FieldType::Bool,
+            });
+            let const_val = compiler.add_constant(value);
+            compiler.emit(Op::PushFloatConst(const_val));
+            compiler.emit(Op::StoreField(field_idx));
+            let bytecode = compiler.finalize();
 
-        compiler.emit(Op::PushConst(const_val));
-        compiler.emit(Op::StoreField(field_idx));
+            let mut field_value = !expected;
+            let field_ptr = &mut field_value as *mut bool as *mut u8;
+            unsafe {
+                VM::new().execute(&bytecode, &[field_ptr], 0);
+            }
+            assert_eq!(field_value, expected, "{value}");
 
-        let bytecode = compiler.finalize();
-        let mut vm = VM::new();
-
-        let mut field_value = true;
-        let field_ptr = &mut field_value as *mut bool as *mut u8;
-
-        unsafe {
-            vm.execute(&bytecode, &[field_ptr], 0);
+            let mut eager = !expected;
+            unsafe { write_field_value((&mut eager as *mut bool).cast(), value, FieldType::Bool) };
+            assert_eq!(eager, expected, "{value}");
         }
-
-        assert!(!field_value);
     }
 
     #[test]
@@ -3507,6 +3495,38 @@ mod tests {
             );
         }
         assert_eq!((wide, narrow), (u64::MAX, u32::MAX));
+    }
+
+    #[test]
+    fn integer_stores_between_widths_wrap_exactly_like_numpy() {
+        let mut narrow = [0_i32; 2];
+        let mut signed = [0_i64; 2];
+        let mut byte = 0_u8;
+        // SAFETY: every pointer addresses a live, exclusively borrowed local of
+        // the written field type.
+        unsafe {
+            for (slot, value) in narrow
+                .iter_mut()
+                .zip([(1_i64 << 31) + 5, -(1_i64 << 40) - 3])
+            {
+                write_field_stack_value(
+                    (slot as *mut i32).cast(),
+                    StackValue::I64(value),
+                    FieldType::I32,
+                );
+            }
+            for (slot, value) in signed.iter_mut().zip([u64::MAX, (1_u64 << 53) + 1]) {
+                write_field_stack_value(
+                    (slot as *mut i64).cast(),
+                    StackValue::U64(value),
+                    FieldType::I64,
+                );
+            }
+            write_field_stack_value(&mut byte, StackValue::U32(300), FieldType::U8);
+        }
+        assert_eq!(narrow, [-2_147_483_643, -3]);
+        assert_eq!(signed, [-1, (1_i64 << 53) + 1]);
+        assert_eq!(byte, 44);
     }
 
     #[test]

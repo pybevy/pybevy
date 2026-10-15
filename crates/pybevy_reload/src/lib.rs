@@ -69,4 +69,7 @@ pub use util::{
     count_generation_schedule_systems, count_schedule_systems, get_current_rss_mb, is_verbose,
     lock_or_recover, parse_resolution,
 };
-pub use watcher::{DEFAULT_IGNORE_PATTERNS, FileWatcher, WatchBatch, WatchError};
+pub use watcher::{
+    DEFAULT_IGNORE_PATTERNS, FileWatcher, WatchBatch, WatchError, is_in_hidden_directory,
+    is_in_python_environment, is_python_environment,
+};

@@ -2,7 +2,7 @@ use std::{
     collections::BTreeSet,
     error::Error,
     fmt,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     sync::{
         Mutex,
         mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError},
@@ -502,21 +502,70 @@ fn is_python_path(path: &Path, roots: &[PathBuf], ignore_patterns: &[String]) ->
 }
 
 fn is_ignored_path(path: &Path, roots: &[PathBuf], ignore_patterns: &[String]) -> bool {
-    let is_ignored_name = |component: std::path::Component<'_>| {
+    let is_ignored_name = |component: Component<'_>| {
         ignore_patterns
             .iter()
             .any(|pattern| component.as_os_str() == std::ffi::OsStr::new(pattern))
     };
-    let mut relative_paths = roots
-        .iter()
-        .filter_map(|root| path.strip_prefix(root_directory(root)?).ok())
-        .peekable();
-    if relative_paths.peek().is_none() {
-        // Backends may spell event paths differently from the roots (macOS
-        // reports /private/var for /var), so match the whole path instead.
+    let is_directory = path.is_dir();
+    let relative_paths = relative_to_roots(path, roots);
+    if relative_paths.is_empty() {
+        // Without a root to anchor it, a hidden ancestor may be the user's own
+        // (~/.local/project), so only exact names are matched here.
         return path.components().any(is_ignored_name);
     }
-    relative_paths.all(|relative| relative.components().any(is_ignored_name))
+    relative_paths.iter().all(|relative| {
+        relative.components().any(is_ignored_name) || has_hidden_directory(relative, is_directory)
+    })
+}
+
+/// `path` relative to each root containing it, retrying with resolved
+/// spellings because backends may report another one (macOS /private/var).
+fn relative_to_roots(path: &Path, roots: &[PathBuf]) -> Vec<PathBuf> {
+    let direct = roots
+        .iter()
+        .filter_map(|root| path.strip_prefix(root_directory(root)?).ok())
+        .map(Path::to_path_buf)
+        .collect::<Vec<_>>();
+    if !direct.is_empty() {
+        return direct;
+    }
+    let Some(resolved) = resolved_path(path) else {
+        return Vec::new();
+    };
+    roots
+        .iter()
+        .filter_map(|root| resolved_path(root_directory(root)?))
+        .filter_map(|root| resolved.strip_prefix(root).ok().map(Path::to_path_buf))
+        .collect()
+}
+
+fn resolved_path(path: &Path) -> Option<PathBuf> {
+    std::fs::canonicalize(path).ok().or_else(|| {
+        let parent = std::fs::canonicalize(path.parent()?).ok()?;
+        Some(parent.join(path.file_name()?))
+    })
+}
+
+fn is_hidden_name(component: Component<'_>) -> bool {
+    matches!(component, Component::Normal(name) if name.as_encoded_bytes().starts_with(b"."))
+}
+
+/// Whether a relative path passes through a directory named `.*`. A final
+/// component counts only when it is itself a directory.
+fn has_hidden_directory(relative: &Path, is_directory: bool) -> bool {
+    let mut components = relative.components().collect::<Vec<_>>();
+    if !is_directory {
+        components.pop();
+    }
+    components.into_iter().any(is_hidden_name)
+}
+
+/// Whether `path` is, or lies inside, a directory named `.*` strictly below `root`.
+pub fn is_in_hidden_directory(path: &Path, root: &Path) -> bool {
+    relative_to_roots(path, &[root.to_path_buf()])
+        .iter()
+        .any(|relative| has_hidden_directory(relative, path.is_dir()))
 }
 
 fn root_directory(root: &Path) -> Option<&Path> {
@@ -531,11 +580,13 @@ fn is_watch_root(path: &Path, roots: &[PathBuf]) -> bool {
     roots.iter().any(|root| root_directory(root) == Some(path))
 }
 
-fn is_python_environment(directory: &Path) -> bool {
+/// A directory holding a virtualenv or conda environment.
+pub fn is_python_environment(directory: &Path) -> bool {
     directory.join("pyvenv.cfg").is_file() || directory.join("conda-meta").is_dir()
 }
 
-fn is_in_python_environment(path: &Path, roots: &[PathBuf]) -> bool {
+/// Whether `path` lies inside a Python environment strictly below one of `roots`.
+pub fn is_in_python_environment(path: &Path, roots: &[PathBuf]) -> bool {
     roots
         .iter()
         .filter_map(|root| root_directory(root))
@@ -731,6 +782,109 @@ mod tests {
             &roots
         ));
         assert!(!is_in_python_environment(&source_path, &roots));
+    }
+
+    #[test]
+    fn dot_directories_below_the_root_are_pruned() {
+        let directory = TempDirectory::new();
+        let source_path = directory.0.join("pkg/scene.py");
+        let hidden_path = directory.0.join(".cache/pkg/module.py");
+        let nested_hidden_path = directory.0.join("pkg/.tool/state.py");
+        let dotted_file = directory.0.join("pkg/.scratch.py");
+        for path in [
+            &source_path,
+            &hidden_path,
+            &nested_hidden_path,
+            &dotted_file,
+        ] {
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "value = 1\n").unwrap();
+        }
+
+        let roots = [directory.0.clone()];
+        let (watched_paths, mut python_files) =
+            collect_pruned_tree(&directory.0, &roots, &[], true);
+        python_files.sort();
+
+        assert_eq!(
+            python_files,
+            vec![absolute_path(&dotted_file), absolute_path(&source_path)]
+        );
+        for hidden in [".cache", "pkg/.tool"] {
+            assert!(
+                watched_paths
+                    .iter()
+                    .all(|path| !path.starts_with(directory.0.join(hidden)))
+            );
+        }
+        assert!(!is_python_path(&hidden_path, &roots, &[]));
+        assert!(!is_python_path(&nested_hidden_path, &roots, &[]));
+        assert!(is_python_path(&source_path, &roots, &[]));
+        assert!(is_in_hidden_directory(&hidden_path, &directory.0));
+        assert!(is_in_hidden_directory(
+            &directory.0.join(".cache"),
+            &directory.0
+        ));
+        assert!(!is_in_hidden_directory(&dotted_file, &directory.0));
+    }
+
+    #[test]
+    fn dot_directory_events_are_ignored_after_the_directory_is_removed() {
+        let directory = TempDirectory::new();
+        let roots = [directory.0.clone()];
+        assert!(!is_python_path(
+            &directory.0.join(".worktrees/other/scene.py"),
+            &roots,
+            &[]
+        ));
+        assert!(is_python_path(
+            &directory.0.join("gone/scene.py"),
+            &roots,
+            &[]
+        ));
+    }
+
+    #[test]
+    fn a_dot_named_watch_root_is_still_watched() {
+        let directory = TempDirectory::new();
+        let root = directory.0.join(".proj");
+        let source_path = root.join("pkg/scene.py");
+        fs::create_dir_all(source_path.parent().unwrap()).unwrap();
+        fs::write(&source_path, "value = 1\n").unwrap();
+
+        let roots = [root.clone()];
+        let (watched_paths, python_files) = collect_pruned_tree(&root, &roots, &[], true);
+
+        assert_eq!(python_files, vec![absolute_path(&source_path)]);
+        assert!(watched_paths.contains(&root.join("pkg")));
+        assert!(is_python_path(&source_path, &roots, &[]));
+        assert!(!is_in_hidden_directory(&source_path, &root));
+    }
+
+    #[test]
+    fn a_hidden_ancestor_outside_the_root_spelling_is_not_ignored() {
+        let roots = vec![PathBuf::from("/var/.home/project")];
+        assert!(is_python_path(
+            Path::new("/private/var/.home/project/scene.py"),
+            &roots,
+            &[]
+        ));
+    }
+
+    #[test]
+    fn resolved_spellings_apply_dot_directory_rules() {
+        let directory = TempDirectory::new();
+        let root = directory.0.join("project");
+        fs::create_dir_all(root.join(".cache")).unwrap();
+        let alias = directory.0.join("alias");
+        std::os::unix::fs::symlink(&root, &alias).unwrap();
+        let roots = [root.clone()];
+        assert!(!is_python_path(
+            &alias.join(".cache/module.py"),
+            &roots,
+            &[]
+        ));
+        assert!(is_python_path(&alias.join("scene.py"), &roots, &[]));
     }
 
     #[test]

@@ -86,6 +86,9 @@ def setup(
 )
 ```
 
+`from_grid` raises `ValueError` for more than 1,048,576 cells or coordinates
+that would overflow Bevy's `u32` atlas geometry.
+
 To pack separate images instead of slicing an existing sheet, use
 `TextureAtlasBuilder`. Pass each source handle to `add_texture` so the returned
 `TextureAtlasSources` can resolve its index. The builder snapshots source
@@ -93,6 +96,8 @@ pixels; later edits to a source image do not change an already built atlas.
 If a source format cannot be converted to the atlas format, `build()` raises
 `ValueError` instead of leaving a blank rectangle. Set a compatible atlas
 format or supply a compatible source image.
+The builder raises `ValueError` when a requested size exceeds 67,108,864
+pixels or the output format would require more than 268,435,456 atlas bytes.
 The `Assets[TextureAtlasLayout]` collection needs `SpritePlugin` (included in
 `DefaultPlugins`).
 

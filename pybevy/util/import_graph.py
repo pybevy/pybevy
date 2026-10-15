@@ -15,6 +15,9 @@ import sys
 import threading
 from collections import defaultdict
 
+from .._internal.reload_modules import is_external_module_path
+from ..app import _FileWatcher  # type: ignore[attr-defined]
+
 _DYNAMIC_IMPORT_CALLS = frozenset(
     {
         "__import__",
@@ -27,19 +30,13 @@ _DYNAMIC_IMPORT_CALLS = frozenset(
     }
 )
 
-_IGNORED_DIRS = frozenset(
-    {
-        ".git",
-        "__pycache__",
-        ".pytest_cache",
-        ".venv",
-        "venv",
-        "node_modules",
-        "target",
-        ".mypy_cache",
-        ".ruff_cache",
-    }
-)
+_IGNORED_DIRS: frozenset[str] = frozenset(_FileWatcher.default_ignore_patterns())
+
+
+def _prunes_directory(directory: str) -> bool:
+    return bool(_FileWatcher.is_python_environment(directory)) or is_external_module_path(
+        os.path.join(directory, "__init__.py")
+    )
 
 
 class ImportGraph:
@@ -60,6 +57,23 @@ class ImportGraph:
         self._dynamic_importers: set[str] = set()
         # all known .py files under watch_root
         self._all_files: set[str] = set()
+        self._excluded_directories: dict[str, bool] = {}
+
+    def _is_excluded_directory(self, directory: str) -> bool:
+        """Whether modules in a directory are installed code or hidden state."""
+        excluded = self._excluded_directories.get(directory)
+        if excluded is None:
+            member = os.path.join(directory, "__init__.py")
+            excluded = (
+                bool(_FileWatcher.in_hidden_directory(member, self._watch_root))
+                or bool(_FileWatcher.in_python_environment(member, self._watch_root))
+                or is_external_module_path(member)
+            )
+            self._excluded_directories[directory] = excluded
+        return excluded
+
+    def _is_excluded_path(self, path: str) -> bool:
+        return self._is_excluded_directory(os.path.dirname(path))
 
     def build(self) -> None:
         """Scan all .py files under watch_root and build the dependency graph."""
@@ -72,13 +86,14 @@ class ImportGraph:
         self._dynamic_importers.clear()
         self._all_files.clear()
 
-        for dirpath, _dirnames, filenames in os.walk(self._watch_root):
-            # Skip common non-project directories
-            basename = os.path.basename(dirpath)
-            if basename in _IGNORED_DIRS:
-                _dirnames.clear()  # Don't descend
-                continue
-
+        for dirpath, dirnames, filenames in os.walk(self._watch_root):
+            dirnames[:] = [
+                name
+                for name in dirnames
+                if name not in _IGNORED_DIRS
+                and not name.startswith(".")
+                and not _prunes_directory(os.path.join(dirpath, name))
+            ]
             for filename in filenames:
                 if filename.endswith(".py"):
                     filepath = os.path.realpath(os.path.join(dirpath, filename))
@@ -106,7 +121,11 @@ class ImportGraph:
 
     def _update_files_locked(self, filepaths: set[str]) -> None:
         known_before = set(self._all_files)
-        normalized = {os.path.realpath(filepath) for filepath in filepaths}
+        normalized = {
+            path
+            for filepath in filepaths
+            if not self._is_excluded_path(path := os.path.realpath(filepath))
+        }
         self._all_files.update(
             filepath for filepath in normalized if os.path.exists(filepath)
         )
@@ -169,7 +188,11 @@ class ImportGraph:
             return self._relevant_changed_files_locked(changed_files)
 
     def _relevant_changed_files_locked(self, changed_files: set[str]) -> set[str]:
-        normalized = {os.path.realpath(filepath) for filepath in changed_files}
+        normalized = {
+            path
+            for filepath in changed_files
+            if not self._is_excluded_path(path := os.path.realpath(filepath))
+        }
         if self._entry_file is None:
             return normalized
 
@@ -306,7 +329,11 @@ class ImportGraph:
         root_prefix = self._watch_root + os.sep
         seen: set[str] = set()
         for root in search_roots:
-            if root in seen or (root != self._watch_root and not root.startswith(root_prefix)):
+            if (
+                root in seen
+                or (root != self._watch_root and not root.startswith(root_prefix))
+                or self._is_excluded_directory(root)
+            ):
                 continue
             seen.add(root)
             for candidate in (
@@ -320,6 +347,8 @@ class ImportGraph:
 
     def _resolve_candidate(self, candidate: str) -> str | None:
         path = os.path.realpath(candidate)
+        if self._is_excluded_path(path):
+            return None
         if path in self._all_files:
             return path
         if not os.path.isfile(path):

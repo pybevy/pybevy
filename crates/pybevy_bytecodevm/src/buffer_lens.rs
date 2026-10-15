@@ -16,7 +16,7 @@ use crate::{
     bytecode::{CompiledBytecode, FieldType, NegativeIntegerPower, Op, VM},
     tiled::{TiledScratch, execute_assignment_tiled, supported_program},
     view_runtime::{
-        FloatStores, IntegerLiteralOutOfBounds, ProgramIntent, ViewRuntimeError,
+        IntegerLiteralOutOfBounds, ProgramIntent, StoreCasting, ViewRuntimeError,
         check_integer_types, validate_instruction_indices, validate_stack_effects,
     },
 };
@@ -131,7 +131,7 @@ pub fn validate_buffer_program<'a>(
         .expect("exactly one validated store exists");
     validate_stack_effects(bytecode, ProgramIntent::Assignment { destination })
         .map_err(|error| BufferLensError::MalformedProgram(error.to_string()))?;
-    check_integer_types(bytecode, FloatStores::Cast).map_err(|error| match error {
+    check_integer_types(bytecode, StoreCasting::Unsafe).map_err(|error| match error {
         ViewRuntimeError::IntegerLiteralOutOfBounds(error) => {
             BufferLensError::IntegerLiteralOutOfBounds(error)
         }

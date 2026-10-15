@@ -120,6 +120,8 @@ class OrthographicProjection:
         """Update projection for a new render area size.
 
         Updates the projection area based on the scaling mode and dimensions.
+        Zero, non-finite, or ratio-overflowing dimensions raise ValueError
+        without changing the area.
 
         Args:
             width: New width of the render area
@@ -1382,6 +1384,8 @@ class PerspectiveProjection:
         """Update projection for a new render area size.
 
         Updates the aspect ratio based on the new dimensions.
+        Zero, non-finite, or ratio-overflowing dimensions raise ValueError
+        instead of a native panic.
 
         Args:
             width: New width of the render area

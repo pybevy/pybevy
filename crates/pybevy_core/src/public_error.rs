@@ -1263,6 +1263,10 @@ pub const INTEGER_RECT_SIZE_NEGATIVE: &str = "IRect size must be non-negative";
 
 pub const INTEGER_RECT_HALF_SIZE_NEGATIVE: &str = "IRect half_size must be non-negative";
 
+pub const RECT_SIZE_INVALID: &str = "Rect size must be non-negative and not NaN";
+
+pub const RECT_HALF_SIZE_INVALID: &str = "Rect half_size must be non-negative and not NaN";
+
 pub fn unsigned_rect_origin(origin: [u32; 2], extent: [u32; 2], half_size: bool) -> String {
     let requirement = if half_size { "half_size" } else { "(size / 2)" };
     let operand = if half_size { "half_size" } else { "size" };

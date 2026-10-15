@@ -1,10 +1,31 @@
-use bevy::image::TextureAtlasLayout;
+use bevy::{image::TextureAtlasLayout, math::UVec2};
 use pybevy_core::{AssetStorage, PyAsset};
 use pybevy_macros::pyasset;
 use pybevy_math::{urect::PyURect, uvec2::PyUVec2};
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyValueError, prelude::*};
 
 use crate::texture_atlas_rects::PyTextureAtlasRects;
+
+const MAX_GRID_RECTS: u64 = 1 << 20;
+
+fn check_grid_axis(tile: u32, count: u32, padding: u32, offset: u32) -> PyResult<()> {
+    let step = u64::from(tile) + u64::from(padding);
+    let total = step
+        .checked_mul(u64::from(count))
+        .and_then(|value| value.checked_sub(u64::from(padding)));
+    let last_end = step
+        .checked_mul(u64::from(count.saturating_sub(1)))
+        .and_then(|value| value.checked_add(u64::from(offset)))
+        .and_then(|value| value.checked_add(u64::from(tile)));
+    if total.is_none_or(|value| value > u64::from(u32::MAX))
+        || (count > 0 && last_end.is_none_or(|value| value > u64::from(u32::MAX)))
+    {
+        return Err(PyValueError::new_err(
+            "texture atlas grid coordinates overflow u32",
+        ));
+    }
+    Ok(())
+}
 
 #[pyasset(TextureAtlasLayout, bridge, not_loadable)]
 #[pyclass(name = "TextureAtlasLayout", module = "pybevy.image", extends = PyAsset, eq, skip_from_py_object)]
@@ -53,14 +74,27 @@ impl PyTextureAtlasLayout {
         padding: Option<PyUVec2>,
         offset: Option<PyUVec2>,
     ) -> PyResult<Py<PyTextureAtlasLayout>> {
+        let count = u64::from(columns) * u64::from(rows);
+        if count > MAX_GRID_RECTS {
+            return Err(PyValueError::new_err(format!(
+                "texture atlas grid would create {count} rectangles; maximum is {MAX_GRID_RECTS}"
+            )));
+        }
+        let tile_size: UVec2 = tile_size.try_into()?;
+        let padding: Option<UVec2> = padding.map(TryInto::try_into).transpose()?;
+        let offset: Option<UVec2> = offset.map(TryInto::try_into).transpose()?;
+        let gap = padding.unwrap_or_default();
+        let origin = if count == 0 {
+            UVec2::ZERO
+        } else {
+            offset.unwrap_or_default()
+        };
+        let x_padding = if rows > 0 && columns > 1 { gap.x } else { 0 };
+        let y_padding = if rows > 1 { gap.y } else { 0 };
+        check_grid_axis(tile_size.x, columns, x_padding, origin.x)?;
+        check_grid_axis(tile_size.y, rows, y_padding, origin.y)?;
         Python::attach(|py| {
-            let layout = TextureAtlasLayout::from_grid(
-                tile_size.try_into()?,
-                columns,
-                rows,
-                padding.map(TryInto::try_into).transpose()?,
-                offset.map(TryInto::try_into).transpose()?,
-            );
+            let layout = TextureAtlasLayout::from_grid(tile_size, columns, rows, padding, offset);
             Py::new(py, Self::from_owned(layout))
         })
     }

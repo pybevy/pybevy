@@ -40,6 +40,11 @@ impl PyEaseFunction {
 #[pymethods]
 impl PyEaseFunction {
     #[classattr]
+    fn __pybevy_variant_aliases__() -> Vec<(&'static str, &'static str)> {
+        Vec::new()
+    }
+
+    #[classattr]
     #[pyo3(name = "Linear")]
     fn linear() -> Self {
         Self::new(EaseFunction::Linear)

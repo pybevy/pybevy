@@ -1,6 +1,9 @@
 use std::{path::PathBuf, time::Duration};
 
-use pybevy_reload::{DEFAULT_IGNORE_PATTERNS, FileWatcher};
+use pybevy_reload::{
+    DEFAULT_IGNORE_PATTERNS, FileWatcher, is_in_hidden_directory, is_in_python_environment,
+    is_python_environment,
+};
 use pyo3::{
     exceptions::{PyRuntimeError, PyValueError},
     prelude::*,
@@ -55,6 +58,26 @@ impl PyFileWatcher {
                 .map(|path| path.to_string_lossy().into_owned())
                 .collect()
         }))
+    }
+
+    #[staticmethod]
+    fn default_ignore_patterns() -> Vec<&'static str> {
+        DEFAULT_IGNORE_PATTERNS.to_vec()
+    }
+
+    #[staticmethod]
+    fn is_python_environment(directory: PathBuf) -> bool {
+        is_python_environment(&directory)
+    }
+
+    #[staticmethod]
+    fn in_python_environment(path: PathBuf, root: PathBuf) -> bool {
+        is_in_python_environment(&path, &[root])
+    }
+
+    #[staticmethod]
+    fn in_hidden_directory(path: PathBuf, root: PathBuf) -> bool {
+        is_in_hidden_directory(&path, &root)
     }
 
     fn close(&self, py: Python<'_>) -> PyResult<()> {

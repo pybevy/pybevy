@@ -13,9 +13,14 @@ use pybevy_math::{
     vec3::PyVec3,
 };
 use pybevy_transform::{global_transform::PyGlobalTransform, transform::PyTransform};
-use pyo3::{exceptions::PyTypeError, prelude::*};
+use pyo3::{
+    exceptions::{PyTypeError, PyValueError},
+    prelude::*,
+};
 
 use crate::config::PyGizmoConfig;
+
+const MAX_CURVE_RESOLUTION: u32 = 1 << 20;
 
 #[pyclass(name = "Gizmos", module = "pybevy.gizmos", frozen, skip_from_py_object)]
 #[derive(Debug, Clone)]
@@ -44,6 +49,15 @@ fn vec3(value: &PyVec3) -> PyResult<Vec3> {
 
 fn native_color(value: PyColor) -> PyResult<Color> {
     value.try_into()
+}
+
+fn check_curve_resolution(resolution: u32) -> PyResult<()> {
+    if resolution > MAX_CURVE_RESOLUTION {
+        return Err(PyValueError::new_err(format!(
+            "gizmo resolution {resolution} exceeds maximum {MAX_CURVE_RESOLUTION}"
+        )));
+    }
+    Ok(())
 }
 
 fn isometry2(value: PyIsometry2d) -> Isometry2d {
@@ -345,6 +359,7 @@ impl PyGizmos {
         resolution: u32,
     ) -> PyResult<()> {
         self.check_valid()?;
+        check_curve_resolution(resolution)?;
         if !self.config.as_ref()?.enabled {
             return Ok(());
         }
@@ -363,6 +378,7 @@ impl PyGizmos {
         resolution: u32,
     ) -> PyResult<()> {
         self.check_valid()?;
+        check_curve_resolution(resolution)?;
         if !self.config.as_ref()?.enabled {
             return Ok(());
         }
@@ -381,6 +397,7 @@ impl PyGizmos {
         resolution: u32,
     ) -> PyResult<()> {
         self.check_valid()?;
+        check_curve_resolution(resolution)?;
         if !self.config.as_ref()?.enabled {
             return Ok(());
         }
@@ -399,6 +416,7 @@ impl PyGizmos {
         resolution: u32,
     ) -> PyResult<()> {
         self.check_valid()?;
+        check_curve_resolution(resolution)?;
         if !self.config.as_ref()?.enabled {
             return Ok(());
         }
@@ -417,6 +435,7 @@ impl PyGizmos {
         resolution: u32,
     ) -> PyResult<()> {
         self.check_valid()?;
+        check_curve_resolution(resolution)?;
         if !self.config.as_ref()?.enabled {
             return Ok(());
         }

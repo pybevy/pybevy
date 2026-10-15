@@ -132,7 +132,10 @@ class GizmoConfigStore(Resource):
 TransformPoint = Transform | GlobalTransform | Isometry3d | Mat4 | Affine3A
 
 class Gizmos:
-    """Immediate-mode debug drawing system parameter."""
+    """Immediate-mode debug drawing system parameter.
+
+    Curve methods reject resolutions above 1,048,576 with ValueError.
+    """
 
     @property
     def config(self) -> GizmoConfig:

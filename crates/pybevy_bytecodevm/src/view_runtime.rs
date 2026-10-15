@@ -21,9 +21,10 @@ use bevy_ecs::{
     change_detection::Tick,
     component::{ComponentId, Components, StorageType},
     entity::Entity,
-    storage::TableId,
+    storage::{TableId, TableRow},
     world::{World, WorldId, unsafe_world_cell::UnsafeWorldCell},
 };
+use nonmax::NonMaxU32;
 use pybevy_storage::{StorageError, ValidityFlag};
 
 use crate::{
@@ -32,7 +33,7 @@ use crate::{
     },
     expr::RustExpr,
     tiled::{ReduceOp, lane_reduce_slice},
-    view_engine::{self, ViewEngineError, ViewFilter},
+    view_engine::{self, BatchExecutionError, ViewEngineError, ViewFilter},
 };
 
 /// The operation for which a bytecode program is being validated.
@@ -379,7 +380,9 @@ impl ViewRuntimeCore {
     /// - The scheduler access declared for this system parameter must cover all
     ///   data/filter/tick components in `cached.spec()` with the declared
     ///   read/write modes.
-    /// - Structural World mutation must not overlap any runtime operation.
+    /// - Structural World mutation must not occur while this runtime or any
+    ///   lease, slice, or column derived from it can still be used. Leases
+    ///   reject a resized or reallocated table, but not rows reordered in place.
     pub unsafe fn new(
         cached: Arc<CachedViewCore>,
         world_cell: UnsafeWorldCell<'_>,
@@ -620,6 +623,7 @@ pub struct BatchSlice {
 /// backend unsafe boundary.
 pub struct BatchColumn {
     lease: Arc<BatchLease>,
+    batch_index: usize,
     ptr: *mut u8,
     len: usize,
     stride: usize,
@@ -664,6 +668,7 @@ impl BatchLease {
     ) -> Result<Output, ViewRuntimeError> {
         let _operation = self.runtime.enter_operation()?;
         self.runtime.validate_live_world_metadata()?;
+        self.validate_batches()?;
         Ok(operation(&self.batches))
     }
 
@@ -751,6 +756,7 @@ impl BatchLease {
 
         let _operation = self.runtime.enter_operation()?;
         self.runtime.validate_live_world_metadata()?;
+        self.validate_batches()?;
         // SAFETY: validation bound every field to this exact spec and the
         // lease owns live selected rows under the operation/validity fences.
         Ok(unsafe {
@@ -778,7 +784,7 @@ impl BatchLease {
             ViewReduction::Min => lane_reduce_slice(ReduceOp::Min, &values),
             ViewReduction::Max => lane_reduce_slice(ReduceOp::Max, &values),
             ViewReduction::CountTruthy => {
-                values.iter().filter(|value| **value >= 0.5).count() as f64
+                values.iter().filter(|value| **value != 0.0).count() as f64
             }
         };
         Ok(ViewReductionOutput { value, count })
@@ -818,7 +824,7 @@ impl BatchLease {
             &[view_engine::TableBatch],
             &CompiledBytecode,
             &HashMap<ComponentId, usize>,
-        ) -> Result<(), NegativeIntegerPower>,
+        ) -> Result<(), BatchExecutionError>,
     ) -> Result<(), ViewRuntimeError> {
         self.runtime.check_program(program)?;
         let ProgramIntent::Assignment { destination } = program.intent() else {
@@ -856,27 +862,12 @@ impl BatchLease {
             Vec::with_capacity(self.batches.iter().map(|batch| batch.entity_count).sum());
 
         for batch in &self.batches {
+            let table_entity_count = self.validate_batch_range(batch)?;
+            let range_end = batch.start_row + batch.entity_count;
             let table = storages
                 .tables
                 .get(batch.table_id)
                 .ok_or(ViewRuntimeError::BatchTableMissing(batch.table_id))?;
-            let table_entity_count = table.entity_count() as usize;
-            let range_end = batch.start_row.checked_add(batch.entity_count).ok_or(
-                ViewRuntimeError::BatchRangeOutOfBounds {
-                    table_id: batch.table_id,
-                    start_row: batch.start_row,
-                    entity_count: batch.entity_count,
-                    table_entity_count,
-                },
-            )?;
-            if range_end > table_entity_count {
-                return Err(ViewRuntimeError::BatchRangeOutOfBounds {
-                    table_id: batch.table_id,
-                    start_row: batch.start_row,
-                    entity_count: batch.entity_count,
-                    table_entity_count,
-                });
-            }
             let column = table.get_column(destination).ok_or(
                 ViewRuntimeError::BatchDestinationColumnMissing {
                     table_id: batch.table_id,
@@ -916,6 +907,14 @@ impl BatchLease {
         Ok(changed_ticks)
     }
 
+    fn validate_batches(&self) -> Result<(), ViewRuntimeError> {
+        for batch in &self.batches {
+            self.validate_batch_range(batch)?;
+        }
+        Ok(())
+    }
+
+    /// Reject a batch whose table changed structurally since it was gathered.
     fn validate_batch_range(
         &self,
         batch: &view_engine::TableBatch,
@@ -928,6 +927,20 @@ impl BatchLease {
             .get(batch.table_id)
             .ok_or(ViewRuntimeError::BatchTableMissing(batch.table_id))?;
         let table_entity_count = table.entity_count() as usize;
+        let stale = ViewRuntimeError::StaleBatch(batch.table_id);
+        if table_entity_count != batch.table_entity_count
+            || table_entity_count == 0
+            || !std::ptr::eq(table.entities().as_ptr(), batch.entities)
+        {
+            return Err(stale);
+        }
+        for (&component_id, &base) in &batch.component_bases {
+            // SAFETY: the table is non-empty, so row 0 is in bounds.
+            let live = unsafe { table.get_component(component_id, TableRow::new(NonMaxU32::ZERO)) };
+            if live.map(|pointer| pointer.as_ptr()) != Some(base) {
+                return Err(stale);
+            }
+        }
         let range_end = batch.start_row.checked_add(batch.entity_count).ok_or(
             ViewRuntimeError::BatchRangeOutOfBounds {
                 table_id: batch.table_id,
@@ -1099,6 +1112,7 @@ impl BatchSlice {
             entities: source.entities,
             start_row: self.start_row,
             entity_count: self.entity_count,
+            table_entity_count: source.table_entity_count,
             tick_mask: None,
         })
     }
@@ -1179,6 +1193,7 @@ impl BatchSlice {
         let ptr = unsafe { base.add(self.start_row * stride) };
         Ok(BatchColumn {
             lease: Arc::clone(&self.lease),
+            batch_index: self.batch_index,
             ptr,
             len: self.entity_count,
             stride,
@@ -1219,9 +1234,14 @@ impl BatchColumn {
         self.lease.runtime()
     }
 
-    /// Enter the shared View pointer-access fence.
+    /// Enter the shared View pointer-access fence after checking that the
+    /// column's gathered table has not changed structurally.
     pub fn enter_operation(&self) -> Result<ViewOperationGuard, ViewRuntimeError> {
-        self.lease.runtime.enter_operation()
+        let operation = self.lease.runtime.enter_operation()?;
+        self.lease.runtime.validate_live_world_metadata()?;
+        self.lease
+            .validate_batch_range(&self.lease.batches[self.batch_index])?;
+        Ok(operation)
     }
 
     /// Check run lifetime and thread affinity without touching storage.
@@ -1258,6 +1278,7 @@ impl BatchColumn {
         let ptr = unsafe { self.ptr.add(offset) };
         Ok(Self {
             lease: Arc::clone(&self.lease),
+            batch_index: self.batch_index,
             ptr,
             len: self.len,
             stride: self.stride,
@@ -1487,6 +1508,9 @@ pub enum ViewRuntimeError {
     },
     /// A floating result would be silently narrowed into an integer field.
     ImplicitFloatToInteger { destination: FieldType },
+    /// A signed integer result would be stored into an unsigned field, which
+    /// NumPy's `same_kind` rule rejects.
+    ImplicitSignedToUnsigned { destination: FieldType },
     /// An int literal does not fit the integer lane it is combined with or
     /// stored into; NumPy 2 raises `OverflowError` for such Python integers.
     IntegerLiteralOutOfBounds(IntegerLiteralOutOfBounds),
@@ -1505,6 +1529,9 @@ pub enum ViewRuntimeError {
     },
     /// A gathered lease references a table that no longer exists.
     BatchTableMissing(TableId),
+    /// A gathered table was resized, reallocated, or reordered by a structural
+    /// World change after the lease was gathered.
+    StaleBatch(TableId),
     /// A gathered range no longer fits its table.
     BatchRangeOutOfBounds {
         /// Table containing the gathered range.
@@ -1705,6 +1732,10 @@ impl fmt::Display for ViewRuntimeError {
                 f,
                 "Cannot assign a float expression to integer View field {destination:?}"
             ),
+            Self::ImplicitSignedToUnsigned { destination } => write!(
+                f,
+                "Cannot assign a signed integer expression to unsigned View field {destination:?}"
+            ),
             Self::IntegerLiteralOutOfBounds(error) => write!(f, "{error}"),
             Self::NegativeIntegerPower => {
                 write!(f, "Integers to negative integer powers are not allowed.")
@@ -1720,6 +1751,10 @@ impl fmt::Display for ViewRuntimeError {
             Self::BatchTableMissing(table_id) => {
                 write!(f, "Gathered View table {table_id:?} is no longer present")
             }
+            Self::StaleBatch(table_id) => write!(
+                f,
+                "Gathered View table {table_id:?} changed structurally; gather the View again"
+            ),
             Self::BatchRangeOutOfBounds {
                 table_id,
                 start_row,
@@ -1816,6 +1851,17 @@ impl From<StorageError> for ViewRuntimeError {
 impl From<NegativeIntegerPower> for ViewRuntimeError {
     fn from(_: NegativeIntegerPower) -> Self {
         Self::NegativeIntegerPower
+    }
+}
+
+impl From<BatchExecutionError> for ViewRuntimeError {
+    fn from(error: BatchExecutionError) -> Self {
+        match error {
+            BatchExecutionError::NegativeIntegerPower => Self::NegativeIntegerPower,
+            BatchExecutionError::FieldComponentNotGathered(component_id) => {
+                ViewEngineError::FieldComponentNotDeclared(component_id).into()
+            }
+        }
     }
 }
 
@@ -2061,8 +2107,8 @@ pub(crate) fn validate_stack_effects(
                     continue;
                 }
                 Op::StoreField(index) => {
-                    // A Bool destination accepts either kind (the VM converts
-                    // numeric >= 0.5); numeric destinations require a float.
+                    // A Bool destination accepts either kind (the VM stores
+                    // whether a number is nonzero); numeric ones require a float.
                     let field_type = bytecode.field_map[usize::from(*index)].field_type;
                     let Some(actual) = stack.pop() else {
                         return Err(ViewRuntimeError::StackUnderflow {
@@ -2258,6 +2304,8 @@ const TYPE_U8: u16 = 1 << 4;
 const TYPE_U32: u16 = 1 << 5;
 const TYPE_U64: u16 = 1 << 6;
 const INTEGER_TYPES: u16 = TYPE_I32 | TYPE_I64 | TYPE_U8 | TYPE_U32 | TYPE_U64;
+const SIGNED_TYPES: u16 = TYPE_I32 | TYPE_I64;
+const UNSIGNED_TYPES: u16 = TYPE_U8 | TYPE_U32 | TYPE_U64;
 
 #[derive(Clone, Copy)]
 enum TrackedValue {
@@ -2409,17 +2457,18 @@ fn check_clip_bounds(
     }
 }
 
-/// Whether a float result may be stored into an integer destination.
+/// The casting rule applied when a result is stored into an integer field.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum FloatStores {
-    /// Raise, as NumPy's `same_kind` rule does for View assignments.
-    Reject,
+pub(crate) enum StoreCasting {
+    /// NumPy's `same_kind`, as View assignments apply it: a float or signed
+    /// integer result cannot be stored into an unsigned or integer field.
+    SameKind,
     /// Cast at the store, as a buffer lens assignment does.
-    Cast,
+    Unsafe,
 }
 
 fn validate_integer_arithmetic_types(bytecode: &CompiledBytecode) -> Result<(), ViewRuntimeError> {
-    check_integer_types(bytecode, FloatStores::Reject)
+    check_integer_types(bytecode, StoreCasting::SameKind)
 }
 
 /// Track primitive field origins through the already stack-valid program and
@@ -2428,7 +2477,7 @@ fn validate_integer_arithmetic_types(bytecode: &CompiledBytecode) -> Result<(), 
 /// float literals are f64, so they promote integer operands as in NumPy.
 pub(crate) fn check_integer_types(
     bytecode: &CompiledBytecode,
-    float_stores: FloatStores,
+    casting: StoreCasting,
 ) -> Result<(), ViewRuntimeError> {
     let mut stack: Vec<TrackedValue> = Vec::new();
     for (instruction_index, op) in bytecode.bytecode.iter().enumerate() {
@@ -2462,8 +2511,15 @@ pub(crate) fn check_integer_types(
                 if let TrackedValue::Numeric(mask, literal) = value
                     && field_type_mask(destination) & INTEGER_TYPES != 0
                 {
-                    if mask & (TYPE_F32 | TYPE_F64) != 0 && float_stores == FloatStores::Reject {
-                        return Err(ViewRuntimeError::ImplicitFloatToInteger { destination });
+                    if casting == StoreCasting::SameKind {
+                        if mask & (TYPE_F32 | TYPE_F64) != 0 {
+                            return Err(ViewRuntimeError::ImplicitFloatToInteger { destination });
+                        }
+                        if mask & SIGNED_TYPES != 0
+                            && field_type_mask(destination) & UNSIGNED_TYPES != 0
+                        {
+                            return Err(ViewRuntimeError::ImplicitSignedToUnsigned { destination });
+                        }
                     }
                     check_literal_bounds(literal, field_type_mask(destination))?;
                 }
@@ -2827,6 +2883,93 @@ mod tests {
                 element_extent: 4,
             })
         ));
+    }
+
+    fn stale_batch_world(mutable: bool) -> (Box<World>, Arc<BatchLease>, ComponentId) {
+        let mut world = Box::new(World::new());
+        world.spawn(RuntimeDense(1));
+        world.spawn(RuntimeDense(2));
+        let component_id = world.components().component_id::<RuntimeDense>().unwrap();
+        let mutable_components = if mutable {
+            HashSet::from([component_id])
+        } else {
+            HashSet::new()
+        };
+        let cache = cache_for(
+            &world,
+            filter(component_id),
+            mutable_components,
+            HashMap::from([(component_id, HashSet::from([(0, FieldType::U32)]))]),
+        );
+        // SAFETY: the World stays boxed and live; these tests mutate it
+        // structurally on purpose and assert that no stale pointer is used.
+        let runtime = unsafe { runtime_for_world(&mut world, cache, Tick::new(0), Tick::new(1)) };
+        let lease = Arc::new(runtime.gather_batches().unwrap());
+        (world, lease, component_id)
+    }
+
+    fn is_stale<T>(result: Result<T, ViewRuntimeError>) -> bool {
+        matches!(result, Err(ViewRuntimeError::StaleBatch(_)))
+    }
+
+    #[test]
+    fn lease_rejects_table_reallocated_after_gather() {
+        let (mut world, lease, component_id) = stale_batch_world(true);
+        let slices = lease.contiguous_slices().unwrap();
+        let column = slices[0].column(component_id, true).unwrap();
+        let program = lease
+            .runtime()
+            .prepare_read_program(&RustExpr::Field {
+                component_id,
+                offset: 0,
+                field_type: FieldType::U32,
+            })
+            .unwrap();
+
+        for value in 0..10_000 {
+            world.spawn(RuntimeDense(value));
+        }
+
+        assert!(is_stale(column.enter_operation()));
+        assert!(is_stale(slices[0].column(component_id, false)));
+        assert!(is_stale(slices[0].entities()));
+        assert!(is_stale(slices[0].evaluate(&program, false)));
+        assert!(is_stale(lease.entity_count()));
+        assert!(is_stale(lease.evaluate(&program, false)));
+        assert!(is_stale(lease.contiguous_slices()));
+        lease.runtime().validity().set_invalid();
+    }
+
+    #[test]
+    fn lease_rejects_table_shrunk_after_gather() {
+        let (mut world, lease, component_id) = stale_batch_world(true);
+        let slices = lease.contiguous_slices().unwrap();
+        let first = slices[0].entities().unwrap()[0];
+        let destination = field(component_id, 0, FieldType::U32);
+        let program = lease
+            .runtime()
+            .validate_program(
+                assignment_program(destination),
+                ProgramIntent::Assignment { destination },
+            )
+            .unwrap();
+
+        world.despawn(first);
+
+        assert!(is_stale(lease.execute_assignment(&program, false)));
+        assert!(is_stale(slices[0].execute_assignment(&program, false)));
+        lease.runtime().validity().set_invalid();
+        drop(slices);
+        drop(lease);
+        let values: Vec<u32> = world
+            .query::<&RuntimeDense>()
+            .iter(&world)
+            .map(|dense| dense.0)
+            .collect();
+        assert!(
+            !values.contains(&42),
+            "no stale assignment may land: {values:?}"
+        );
     }
 
     #[test]
@@ -3992,6 +4135,45 @@ mod tests {
     }
 
     #[test]
+    fn count_truthy_counts_nonzero_values_like_numpy() {
+        let mut world = World::new();
+        for value in [10, 20, 30] {
+            world.spawn(RuntimeDense(value));
+        }
+        let dense_id = world.components().component_id::<RuntimeDense>().unwrap();
+        let cache = cache_for(
+            &world,
+            filter(dense_id),
+            HashSet::new(),
+            HashMap::from([(dense_id, HashSet::from([(0, FieldType::U32)]))]),
+        );
+        // SAFETY: the World remains live and structurally unchanged through
+        // the reduction below.
+        let runtime = unsafe { runtime_for_world(&mut world, cache, Tick::new(0), Tick::new(1)) };
+        let expression = RustExpr::Sub(
+            Box::new(RustExpr::Field {
+                component_id: dense_id,
+                offset: 0,
+                field_type: FieldType::U32,
+            }),
+            Box::new(RustExpr::FloatConst(20.5)),
+        );
+        let program = runtime.prepare_read_program(&expression).unwrap();
+        let lease = runtime.gather_batches().unwrap();
+
+        let output = lease
+            .reduce(&program, ViewReduction::CountTruthy, false)
+            .unwrap();
+        assert_eq!(
+            output,
+            ViewReductionOutput {
+                value: 3.0,
+                count: 3
+            }
+        );
+    }
+
+    #[test]
     fn leased_min_and_max_propagate_nan() {
         let mut world = World::new();
         world.spawn(RuntimeDense(20));
@@ -4758,17 +4940,53 @@ mod tests {
         );
         let mut float_store = float_store;
         float_store.constants.push(2.0);
-        assert!(check_integer_types(&float_store, FloatStores::Cast).is_ok());
-        assert!(check_integer_types(&float_store, FloatStores::Reject).is_err());
+        assert!(check_integer_types(&float_store, StoreCasting::Unsafe).is_ok());
+        assert!(check_integer_types(&float_store, StoreCasting::SameKind).is_err());
         let literal = literal_program(
             FieldType::U8,
             &[Some(Op::PushField(0)), None, Some(Op::Add)],
             &[300],
         );
         assert!(matches!(
-            check_integer_types(&literal, FloatStores::Cast),
+            check_integer_types(&literal, StoreCasting::Unsafe),
             Err(ViewRuntimeError::IntegerLiteralOutOfBounds(_))
         ));
+    }
+
+    #[test]
+    fn signed_integer_store_into_unsigned_field_follows_same_kind() {
+        let store = |source: FieldType, destination: FieldType| {
+            let component_id = ComponentId::new(1);
+            CompiledBytecode {
+                bytecode: vec![Op::PushField(0), Op::StoreField(1)],
+                constants: Vec::new(),
+                integers: Vec::new(),
+                field_map: vec![
+                    field(component_id, 0, source),
+                    field(component_id, 8, destination),
+                ],
+            }
+        };
+        for (source, destination) in [
+            (FieldType::I64, FieldType::U64),
+            (FieldType::I32, FieldType::U8),
+            (FieldType::I64, FieldType::U32),
+        ] {
+            let program = store(source, destination);
+            assert!(matches!(
+                validate_integer_arithmetic_types(&program),
+                Err(ViewRuntimeError::ImplicitSignedToUnsigned { destination: d }) if d == destination
+            ));
+            assert!(check_integer_types(&program, StoreCasting::Unsafe).is_ok());
+        }
+        for (source, destination) in [
+            (FieldType::I64, FieldType::I32),
+            (FieldType::U64, FieldType::I64),
+            (FieldType::U32, FieldType::U8),
+            (FieldType::U8, FieldType::I32),
+        ] {
+            assert!(validate_integer_arithmetic_types(&store(source, destination)).is_ok());
+        }
     }
 
     #[test]

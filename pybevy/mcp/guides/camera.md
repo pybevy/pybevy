@@ -51,6 +51,11 @@ commands.spawn(
 )
 ```
 
+Manual `PerspectiveProjection.update(width, height)` and
+`OrthographicProjection.update(width, height)` calls require nonzero, finite
+render-area dimensions with a finite width-to-height ratio. Invalid values
+raise `ValueError` without changing the projection.
+
 ## Post-Processing Effects
 
 Post-processing components are added directly to the camera entity.
