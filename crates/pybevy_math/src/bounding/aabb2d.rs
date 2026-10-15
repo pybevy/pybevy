@@ -3,7 +3,7 @@ use bevy::math::{
     bounding::{Aabb2d, BoundingCircle, BoundingVolume, IntersectsVolume},
 };
 use pybevy_core::{
-    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
+    FromBorrowedStorage, Omittable, StorageMut, StorageRef, ValueStorage,
     public_error::{EMPTY_POINT_CLOUD, bounding_half_size, bounding_operation, bounding_shrink},
     repr::{ReprLiteral, float_repr},
 };
@@ -305,9 +305,10 @@ impl PyIsometry2d {
     }
 
     #[new]
-    #[pyo3(signature = (translation = PyVec2::ZERO, rotation = None))]
-    pub fn new(translation: PyVec2, rotation: Option<&PyRot2>) -> PyResult<Self> {
+    #[pyo3(signature = (translation = PyVec2::ZERO, rotation = Omittable::default()))]
+    pub fn new(translation: PyVec2, rotation: Omittable<PyRef<'_, PyRot2>>) -> PyResult<Self> {
         let rot = rotation
+            .into_option()
             .map(|rotation| rotation.inner())
             .transpose()?
             .unwrap_or(Rot2::IDENTITY);

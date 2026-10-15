@@ -14,7 +14,7 @@ use std::sync::{
 };
 
 use pybevy_storage::{PendingViewClaim, ReadViewClaim};
-use pyo3::prelude::*;
+use pyo3::{PyTraverseError, PyVisit, prelude::*};
 
 /// Base object for NumPy views over asset data. Holds the view counter it
 /// incremented at creation and a strong reference to the owning Python object
@@ -27,6 +27,13 @@ use pyo3::prelude::*;
 pub struct PyNumpyViewGuard {
     claim: PyViewClaim,
     _owner: Py<PyAny>,
+}
+
+#[pymethods]
+impl PyNumpyViewGuard {
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self._owner)
+    }
 }
 
 enum PyViewClaim {

@@ -7,7 +7,7 @@ use super::report::{
 };
 use crate::{
     bevy_parser::{BevyCrate, BevyItem, BevyItemKind, BevyMethod, SelfKind},
-    config::{BevyConfig, SignatureDiffSpec},
+    config::{BevyConfig, SignatureDiffSpec, is_keyword_escape_of},
     model::{MacroInfo, MethodDef, PropertyDef, PyClassDef, SelfMutability},
     python_parser::types::{resolve_self, types_compatible as stub_types_compatible},
     rust_parser::types::{normalize_rust_type, split_by_comma},
@@ -450,10 +450,14 @@ fn compare_type(
         let renamed_name = config.get_rename(&bevy_item.name, &bevy_method.name);
         let pybevy_method = pybevy_methods
             .get(bevy_method.name.as_str())
-            .or_else(|| renamed_name.and_then(|n| pybevy_methods.get(n)));
+            .or_else(|| renamed_name.as_deref().and_then(|n| pybevy_methods.get(n)));
         let pybevy_property = pybevy_properties
             .get(bevy_method.name.as_str())
-            .or_else(|| renamed_name.and_then(|n| pybevy_properties.get(n)));
+            .or_else(|| {
+                renamed_name
+                    .as_deref()
+                    .and_then(|n| pybevy_properties.get(n))
+            });
 
         let is_runtime_injected =
             config.is_runtime_injected_method(&bevy_item.name, &bevy_method.name);
@@ -746,7 +750,11 @@ fn find_extra_methods(
             continue;
         }
 
-        if config.is_rename_target(&bevy_item.name, name) {
+        if config.is_rename_target(&bevy_item.name, name)
+            || is_keyword_escape_of(name, |base| {
+                bevy_method_names.contains(base) || bevy_field_names.contains(base)
+            })
+        {
             continue;
         }
 
@@ -1113,9 +1121,8 @@ fn compare_variants(
         };
 
         // Check for rename: look up the Bevy name in renames config
-        let lookup_name = config
-            .get_rename(&bevy_item.name, &bevy_variant.name)
-            .unwrap_or(&bevy_variant.name);
+        let rename = config.get_rename(&bevy_item.name, &bevy_variant.name);
+        let lookup_name = rename.as_deref().unwrap_or(&bevy_variant.name);
 
         if let Some(py_variant) = pybevy_variants.get(lookup_name) {
             let pybevy_kind_str = match &py_variant.kind {
@@ -1161,6 +1168,7 @@ fn compare_variants(
 
     for py_variant in &pyclass.enum_variants {
         if config.is_rename_target(&bevy_item.name, &py_variant.name)
+            || is_keyword_escape_of(&py_variant.name, |base| bevy_variant_names.contains(base))
             || config.is_variant_intentionally_extra(&bevy_item.name, &py_variant.name)
         {
             continue;

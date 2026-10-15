@@ -54,6 +54,28 @@ use crate::ecs::{
 
 pub(crate) const STATE_RESOURCE_TYPE_CACHE_ATTR: &str = "__pybevy_state_resource_cache__";
 
+pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    let state = PyModule::new(m.py(), "state")?;
+    state.add_class::<PyState>()?;
+    state.add_class::<PyNextState>()?;
+    for wrapper_name in ["State", "NextState"] {
+        state
+            .getattr(wrapper_name)?
+            .setattr(STATE_RESOURCE_TYPE_CACHE_ATTR, PyDict::new(m.py()))?;
+    }
+    state.add_class::<PyOnEnterSchedule>()?;
+    state.add_class::<PyOnExitSchedule>()?;
+    state.add_class::<PyOnTransitionSchedule>()?;
+    state.add_class::<PyDespawnOnExit>()?;
+    state.add_class::<PyDespawnOnEnter>()?;
+    state.add_function(wrap_pyfunction!(self::state, &state)?)?;
+    state.add_function(wrap_pyfunction!(in_state, &state)?)?;
+    state.add_function(wrap_pyfunction!(on_enter, &state)?)?;
+    state.add_function(wrap_pyfunction!(on_exit, &state)?)?;
+    state.add_function(wrap_pyfunction!(on_transition, &state)?)?;
+    m.add_submodule(&state)
+}
+
 #[derive(Resource)]
 struct StateTransitionSystemInstalled;
 
@@ -84,7 +106,7 @@ pub(crate) fn ensure_state_transition_system_registered(world: &mut World) {
 /// # Example
 /// ```python
 /// from enum import Enum, auto
-/// from pybevy import state
+/// from pybevy.state import state
 ///
 /// @state
 /// class GameState(Enum):
@@ -122,7 +144,7 @@ pub fn state(py: Python, cls: Bound<PyType>) -> PyResult<Py<PyType>> {
 /// State<S> resource - holds the current state value
 ///
 /// Access via Res[State[GameState]] in systems
-#[pyclass(name = "State", module = "pybevy.ecs", frozen, extends = PyResource)]
+#[pyclass(name = "State", module = "pybevy.state", frozen, extends = PyResource)]
 pub struct PyState {
     /// Current state value (Python enum member) - uses internal mutability for transitions
     current: Arc<Mutex<Py<PyAny>>>,
@@ -229,7 +251,7 @@ impl PyState {
 /// NextState<S> resource - queue for pending state transitions
 ///
 /// Use ResMut[NextState[GameState]] to queue transitions
-#[pyclass(name = "NextState", module = "pybevy.ecs", frozen, extends = PyResource)]
+#[pyclass(name = "NextState", module = "pybevy.state", frozen, extends = PyResource)]
 pub struct PyNextState {
     /// Internal state and revision for atomic conditional replacement.
     inner: Arc<Mutex<NextStateSlot>>,
@@ -539,7 +561,7 @@ fn typed_state_resource_type(
     let state_name = state_type_qualified_name(state_type)?;
     let descriptor_name = format!("{}[{state_name}]", kind.name());
     let namespace = PyDict::new(py);
-    namespace.set_item("__module__", "pybevy.ecs")?;
+    namespace.set_item("__module__", "pybevy.state")?;
     namespace.set_item("__qualname__", &descriptor_name)?;
     namespace.set_item("__pybevy_resource_decorated__", true)?;
     namespace.set_item("__pybevy_state_type__", state_type)?;
@@ -869,7 +891,7 @@ pub(crate) fn register_reloaded_state_machine(
 }
 
 /// Schedule label for systems that run when entering a state
-#[pyclass(name = "OnEnterSchedule", module = "pybevy.ecs", frozen)]
+#[pyclass(name = "OnEnterSchedule", module = "pybevy.state", frozen)]
 pub struct PyOnEnterSchedule {
     state_value: Py<PyAny>,
 }
@@ -900,7 +922,7 @@ impl PyOnEnterSchedule {
 }
 
 /// Schedule label for systems that run when exiting a state
-#[pyclass(name = "OnExitSchedule", module = "pybevy.ecs", frozen)]
+#[pyclass(name = "OnExitSchedule", module = "pybevy.state", frozen)]
 pub struct PyOnExitSchedule {
     state_value: Py<PyAny>,
 }
@@ -931,7 +953,7 @@ impl PyOnExitSchedule {
 }
 
 /// Schedule label for systems that run during state transitions
-#[pyclass(name = "OnTransitionSchedule", module = "pybevy.ecs", frozen)]
+#[pyclass(name = "OnTransitionSchedule", module = "pybevy.state", frozen)]
 pub struct PyOnTransitionSchedule {
     exited: Py<PyAny>,
     entered: Py<PyAny>,
@@ -1126,7 +1148,7 @@ fn state_scoped_component_alias(
 ///     DespawnOnExit(GameState.IN_GAME)
 /// ))
 /// ```
-#[pyclass(name = "DespawnOnExit", module = "pybevy.ecs", frozen, extends = PyComponent)]
+#[pyclass(name = "DespawnOnExit", module = "pybevy.state", frozen, extends = PyComponent)]
 pub struct PyDespawnOnExit {
     state_value: Py<PyAny>,
 }
@@ -1172,7 +1194,7 @@ impl PyDespawnOnExit {
 ///     DespawnOnEnter(GameState.IN_GAME)
 /// ))
 /// ```
-#[pyclass(name = "DespawnOnEnter", module = "pybevy.ecs", frozen, extends = PyComponent)]
+#[pyclass(name = "DespawnOnEnter", module = "pybevy.state", frozen, extends = PyComponent)]
 pub struct PyDespawnOnEnter {
     state_value: Py<PyAny>,
 }
@@ -1228,9 +1250,8 @@ pub fn in_state(py: Python, state: Py<PyAny>) -> PyResult<Py<PyAny>> {
 
     // Create globals dict with required imports
     let globals = PyDict::new(py);
-    let ecs_module = py.import("pybevy.ecs")?;
-    globals.set_item("Res", ecs_module.getattr("Res")?)?;
-    globals.set_item("State", ecs_module.getattr("State")?)?;
+    globals.set_item("Res", py.import("pybevy.ecs")?.getattr("Res")?)?;
+    globals.set_item("State", py.import("pybevy.state")?.getattr("State")?)?;
     globals.set_item("StateType", state_type)?;
 
     let locals = PyDict::new(py);

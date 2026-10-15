@@ -7,11 +7,10 @@ use pyo3::prelude::*;
     name = "ImageFormat",
     module = "pybevy.image",
     eq,
-    hash,
     frozen,
     from_py_object
 )]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyImageFormat {
     Bmp,
     Dds,

@@ -15,7 +15,8 @@ from copy import copy
 
 from pybevy.camera import Camera, Camera2d, ClearColorConfig
 from pybevy.core_pipeline import Tonemapping
-from pybevy.render import Hdr, Msaa
+from pybevy.render import Msaa
+from pybevy.camera import Hdr
 
 commands.spawn(
     Camera2d(),
@@ -49,7 +50,7 @@ PyBevy has two text systems:
 
 | | UI Text | World Text |
 |---|---------|------------|
-| Component | `Text` (from `pybevy.ui`) | `Text2d` (from `pybevy.text`) |
+| Component | `Text` (from `pybevy.ui`) | `Text2d` (from `pybevy.sprite`) |
 | Positioning | Screen-space via `Node` | World-space via `Transform` |
 | Use case | HUDs, subtitles, menus | 2D game labels |
 | Layout | `Node` | `Transform` |
@@ -251,7 +252,8 @@ def fade_text(
 ## World-Space Text (Text2d)
 
 ```python
-from pybevy.text import Text2d, TextBounds, TextFont, TextColor
+from pybevy.text import TextBounds, TextFont, TextColor
+from pybevy.sprite import Text2d
 
 commands.spawn(
     Text2d("Player Name"),

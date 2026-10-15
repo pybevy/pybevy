@@ -1,4 +1,4 @@
-use bevy::camera::primitives::Frustum;
+use bevy::{camera::primitives::Frustum, math::primitives::ViewFrustum};
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
 use pybevy_math::{
@@ -18,12 +18,9 @@ pub struct PyFrustum {
 #[pymethods]
 impl PyFrustum {
     #[new]
-    #[pyo3(signature = (view_frustum = None))]
-    pub fn new(view_frustum: Option<PyViewFrustum>) -> PyResult<PyClassInitializer<Self>> {
-        let frustum = match view_frustum {
-            Some(view_frustum) => Frustum(view_frustum.try_into()?),
-            None => Frustum::default(),
-        };
+    #[pyo3(signature = (view_frustum = PyViewFrustum::from(ViewFrustum::default())))]
+    pub fn new(view_frustum: PyViewFrustum) -> PyResult<PyClassInitializer<Self>> {
+        let frustum = Frustum(view_frustum.try_into()?);
         Ok((
             PyFrustum {
                 storage: ComponentStorage::owned(frustum),

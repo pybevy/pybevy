@@ -20,7 +20,7 @@ numpy = { workspace = true }
 
 [dependencies.bevy]
 workspace = true
-features = ["bevy_mesh", "bevy_asset", "bevy_pbr", "bevy_sprite", "bevy_sprite_render"]
+features = ["bevy_mesh", "bevy_asset"]
 
 [lints]
 workspace = true

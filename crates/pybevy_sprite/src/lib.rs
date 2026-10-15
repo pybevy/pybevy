@@ -2,11 +2,14 @@ pub mod alpha_mode_2d;
 pub mod anchor;
 pub mod border_rect;
 pub mod color_material;
+pub mod mesh_material_2d;
 pub mod plugin;
 pub mod scaling_mode;
 pub mod slice_scale_mode;
 pub mod sprite;
 pub mod sprite_image_mode;
+pub mod text2d;
+pub mod text2d_shadow;
 pub mod texture_slicer;
 
 use pyo3::prelude::*;
@@ -15,11 +18,13 @@ pub mod prelude {
     pub use crate::{
         border_rect::PyBorderRect,
         color_material::PyColorMaterial,
+        mesh_material_2d::PyMeshMaterial2d,
         plugin::{PyColorMaterialPlugin, PySpritePlugin},
         scaling_mode::PySpriteScalingMode,
         slice_scale_mode::PySliceScaleMode,
         sprite::PySprite,
         sprite_image_mode::PySpriteImageMode,
+        text2d::PyText2d,
         texture_slicer::PyTextureSlicer,
     };
 }
@@ -33,6 +38,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<sprite::PySprite>()?;
 
     m.add_class::<color_material::PyColorMaterial>()?;
+    m.add_class::<mesh_material_2d::PyMeshMaterial2d>()?;
 
     m.add_class::<alpha_mode_2d::PyAlphaMode2d>()?;
     m.add_class::<border_rect::PyBorderRect>()?;
@@ -40,5 +46,8 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<slice_scale_mode::PySliceScaleMode>()?;
     m.add_class::<sprite_image_mode::PySpriteImageMode>()?;
     m.add_class::<texture_slicer::PyTextureSlicer>()?;
+
+    m.add_class::<text2d::PyText2d>()?;
+    m.add_class::<text2d_shadow::PyText2dShadow>()?;
     parent.add_submodule(&m)
 }

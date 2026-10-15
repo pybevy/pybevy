@@ -8,6 +8,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use bevy::ecs::{entity::Entity, world::World};
 use pyo3::{
+    PyTraverseError, PyVisit,
     exceptions::PyValueError,
     prelude::*,
     types::{PyDict, PyList, PyTuple},
@@ -39,6 +40,13 @@ pub struct PyRustComponentBatch {
 
 #[pymethods]
 impl PyRustComponentBatch {
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        for array in self.field_arrays.values() {
+            visit.call(array)?;
+        }
+        Ok(())
+    }
+
     /// Get the number of entities in this batch
     fn __len__(&self) -> usize {
         self.count

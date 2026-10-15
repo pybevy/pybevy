@@ -17,11 +17,10 @@ pub struct PyPolyline2d(pub(crate) Polyline2d);
 #[pymethods]
 impl PyPolyline2d {
     #[new]
-    #[pyo3(signature = (vertices = None))]
-    pub fn new(vertices: Option<Vec<PyVec2>>) -> PyResult<PyClassInitializer<Self>> {
-        let Some(vertices) = vertices else {
-            return Ok((Self(Polyline2d::default()), PyMeshable).into());
-        };
+    #[pyo3(signature = (
+        vertices = Polyline2d::default().vertices.into_iter().map(PyVec2::from).collect()
+    ))]
+    pub fn new(vertices: Vec<PyVec2>) -> PyResult<PyClassInitializer<Self>> {
         let vertices: Vec<Vec2> = vertices
             .into_iter()
             .map(TryInto::try_into)

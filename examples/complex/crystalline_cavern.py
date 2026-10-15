@@ -34,10 +34,10 @@ except ImportError:
     print("ERROR: Numba is required for this example. Install with: pip install numba")
     exit(1)
 
-from pybevy.camera import Exposure
+from pybevy.camera import Exposure, Hdr
 from pybevy.light import VolumetricFog, VolumetricLight
 from pybevy.prelude import *
-from pybevy.render import ColorGrading, ColorGradingGlobal, ColorGradingSection, Hdr
+from pybevy.render import ColorGrading, ColorGradingGlobal, ColorGradingSection
 
 # Constants
 PARTICLE_COUNT = 20000

@@ -14,13 +14,9 @@ pub struct PyDefaultSpatialScale {
 #[pymethods]
 impl PyDefaultSpatialScale {
     #[new]
-    #[pyo3(signature = (scale=None))]
-    pub fn new(scale: Option<PySpatialScale>) -> PyClassInitializer<Self> {
-        let default_scale = match scale {
-            Some(s) => DefaultSpatialScale(s.inner),
-            None => DefaultSpatialScale::default(),
-        };
-        Self::from_owned(default_scale)
+    #[pyo3(signature = (scale = PySpatialScale::from(DefaultSpatialScale::default().0)))]
+    pub fn new(scale: PySpatialScale) -> PyClassInitializer<Self> {
+        Self::from_owned(DefaultSpatialScale(scale.inner))
     }
 
     #[getter]

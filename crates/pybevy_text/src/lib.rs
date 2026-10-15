@@ -17,8 +17,6 @@ pub mod line_break;
 pub mod line_height;
 pub mod plugin;
 pub mod rem_size;
-pub mod text2d;
-pub mod text2d_shadow;
 pub mod text_background_color;
 pub mod text_bounds;
 pub mod text_color;
@@ -52,7 +50,7 @@ pub mod prelude {
         letter_spacing::PyLetterSpacing, line_break::PyLineBreak, plugin::PyTextPlugin,
         text_background_color::PyTextBackgroundColor, text_color::PyTextColor,
         text_cursor_style::PyTextCursorStyle, text_font::PyTextFont, text_layout::PyTextLayout,
-        text_span::PyTextSpan, text2d::PyText2d, text2d_shadow::PyText2dShadow,
+        text_span::PyTextSpan,
     };
 }
 
@@ -61,8 +59,6 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<plugin::PyTextPlugin>()?;
     m.add_class::<rem_size::PyRemSize>()?;
 
-    m.add_class::<text2d::PyText2d>()?;
-    m.add_class::<text2d_shadow::PyText2dShadow>()?;
     m.add_class::<text_color::PyTextColor>()?;
     m.add_class::<text_cursor_style::PyTextCursorStyle>()?;
     m.add_class::<text_edit::PyTextEdit>()?;

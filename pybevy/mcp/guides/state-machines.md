@@ -7,7 +7,7 @@ Finite state machines using Python Enums for game flow (Menu, Playing, Paused, G
 State types are in the prelude (`from pybevy.prelude import *`). For explicit imports:
 
 ```python
-from pybevy.ecs import state, State, NextState, OnEnter, OnExit, OnTransition, in_state
+from pybevy.state import state, State, NextState, OnEnter, OnExit, OnTransition, in_state
 from enum import Enum, auto
 ```
 

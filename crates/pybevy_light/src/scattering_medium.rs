@@ -5,7 +5,7 @@ use bevy::{
     image::Image,
     light::atmosphere::{ScatteringMedium, ScatteringTerm},
 };
-use pybevy_core::{AssetStorage, PyAsset, extract_handle_from_any};
+use pybevy_core::{AssetStorage, Omittable, PyAsset, extract_handle_from_any};
 use pybevy_macros::pyasset;
 use pyo3::prelude::*;
 
@@ -20,14 +20,14 @@ pub struct PyScatteringMedium {
 #[pymethods]
 impl PyScatteringMedium {
     #[new]
-    #[pyo3(signature = (falloff_resolution = 256, phase_resolution = 256, terms = None))]
+    #[pyo3(signature = (falloff_resolution = 256, phase_resolution = 256, terms = Omittable::default()))]
     pub fn new(
         falloff_resolution: u32,
         phase_resolution: u32,
-        terms: Option<Vec<PyScatteringTerm>>,
+        terms: Omittable<Vec<PyScatteringTerm>>,
     ) -> PyResult<PyClassInitializer<Self>> {
         // Omitted terms fall back to the Earth scattering profile at the given resolutions.
-        let medium = match terms {
+        let medium = match terms.into_option() {
             Some(terms) => {
                 let terms = terms
                     .into_iter()

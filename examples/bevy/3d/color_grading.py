@@ -6,8 +6,9 @@ and demonstrates system chaining with .chain().
 
 import math
 
+from pybevy.camera import Hdr
 from pybevy.prelude import *
-from pybevy.render import ColorGrading, Hdr
+from pybevy.render import ColorGrading
 
 
 def setup(

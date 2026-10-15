@@ -387,8 +387,6 @@ class SpriteScalingMode:
     FitEnd: ClassVar[SpriteScalingMode]
     """Scale to fit within sprite area, aligned to bottom-right. May add letterboxing."""
 
-    def __hash__(self) -> int: ...
-
 class SliceScaleMode:
     """Scaling mode for nine-patch texture slices."""
 
@@ -769,3 +767,94 @@ class Sprite(Component):
             asset_id = sprite.as_asset_id()
             ```
         """
+
+class Text2d(Component):
+    """2D text component for rendering text in world space.
+
+    Automatically includes TextLayout, TextFont, TextColor, and TextBounds
+    components via Bevy's component requirements system.
+
+    Example:
+        >>> from pybevy.text import TextFont, TextColor
+        >>> from pybevy.sprite import Text2d
+        >>> from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
+        >>> from pybevy.transform import Transform
+        >>>
+        >>> # Basic text
+        >>> commands.spawn(Text2d("Hello World!"))
+        >>>
+        >>> # Styled text
+        >>> commands.spawn(
+        >>>     Text2d("Hello!"),
+        >>>     TextFont.from_font_size(48.0),
+        >>>     TextColor(Color.srgb(1.0, 0.5, 0.0)),
+        >>>     Transform.from_xyz(0.0, 0.0, 0.0),
+        >>> )
+    """
+
+    def __init__(self, text: str) -> None:
+        """Create a 2D text component.
+
+        Args:
+            text: The text string to display
+        """
+
+    @property
+    def text(self) -> str:
+        """The text string to display."""
+
+    @text.setter
+    def text(self, value: str) -> None: ...
+
+class Text2dShadow(Component):
+    """Adds a shadow behind Text2d text.
+
+    Creates a visual shadow effect by rendering the text twice -
+    once offset with the shadow color, then the main text on top.
+
+    Example:
+        >>> from pybevy.sprite import Text2d, Text2dShadow
+        >>> from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
+        >>> from pybevy.math import Vec2
+        >>>
+        >>> # Add shadow to text
+        >>> commands.spawn(
+        >>>     Text2d("Hello!"),
+        >>>     Text2dShadow(offset=Vec2(4.0, -4.0), color=Color.BLACK),
+        >>> )
+        >>>
+        >>> # Colored shadow with custom offset
+        >>> commands.spawn(
+        >>>     Text2d("Glowing!"),
+        >>>     Text2dShadow(offset=Vec2(2.0, -2.0), color=Color.srgb(1.0, 0.0, 0.0)),
+        >>> )
+    """
+
+    offset: Vec2
+    """Shadow displacement from text position.
+
+    With a value of (0, 0) the shadow will be hidden directly behind the text.
+    Positive x moves right, negative y moves down.
+    """
+
+    color: Color
+    """Color of the shadow (default: black)"""
+
+    def __init__(
+        self,
+        *,
+        offset: Vec2 = Vec2(4.0, -4.0),
+        color: Color = Color.BLACK
+    ) -> None:
+        """Create a text shadow component.
+
+        Args:
+            offset: Shadow displacement (default: Vec2(4.0, -4.0))
+            color: Shadow color (default: Color.BLACK)
+        """
+
+class MeshMaterial2d(Component):
+    """Material component for 2D meshes."""
+    def __init__(self, material: Handle[ColorMaterial]) -> None: ...
+    @property
+    def handle(self) -> Handle[ColorMaterial]: ...

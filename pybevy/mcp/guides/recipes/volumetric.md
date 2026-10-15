@@ -5,7 +5,7 @@ Complete scene with god rays, atmosphere, and a localized fog volume.
 ```python
 import math
 from pybevy.prelude import *
-from pybevy.render import Hdr
+from pybevy.camera import Hdr
 from pybevy.light import (
     ScatteringMedium, Atmosphere,
     VolumetricFog, VolumetricLight, FogVolume,

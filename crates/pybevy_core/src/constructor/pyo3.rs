@@ -45,6 +45,18 @@ impl<'a, 'py> FromPyObject<'a, 'py> for Omittable<Bound<'py, PyAny>> {
     }
 }
 
+impl<'a, 'py, T> FromPyObject<'a, 'py> for Omittable<Vec<T>>
+where
+    Vec<T>: FromPyObject<'a, 'py, Error = PyErr>,
+{
+    type Error = PyErr;
+
+    fn extract(obj: Borrowed<'a, 'py, PyAny>) -> Result<Self, Self::Error> {
+        reject_explicit_none(&obj, "list")?;
+        Ok(Self::Supplied(obj.extract()?))
+    }
+}
+
 pub enum RawArg<'py> {
     Missing,
     Supplied(Bound<'py, PyAny>),
@@ -123,6 +135,8 @@ pub fn require_complete_form(ty: &str, members: &[(&str, &RawArg<'_>)]) -> PyRes
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
+    use pyo3::types::PyList;
+
     use super::*;
 
     #[test]
@@ -133,6 +147,19 @@ mod tests {
                 FromPyObject::extract(none.as_borrowed());
             assert!(extracted.unwrap().is_supplied());
             assert!(!RawArg::Missing.is_supplied());
+        });
+    }
+
+    #[test]
+    fn omittable_vec_rejects_none_and_extracts_items() {
+        Python::attach(|py| {
+            let none = py.None().into_bound(py);
+            let error = Omittable::<Vec<u32>>::extract(none.as_borrowed()).unwrap_err();
+            assert!(error.is_instance_of::<PyTypeError>(py));
+
+            let list = PyList::new(py, [1u32, 2]).unwrap();
+            let extracted = Omittable::<Vec<u32>>::extract(list.as_any().as_borrowed()).unwrap();
+            assert_eq!(extracted.into_option(), Some(vec![1, 2]));
         });
     }
 }

@@ -1,6 +1,9 @@
 //! Fail-closed field mapping IR for the parity reflection oracle.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::{
+    borrow::Cow,
+    collections::{BTreeMap, BTreeSet, HashMap},
+};
 
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
@@ -442,7 +445,7 @@ fn mapped_python_name(
         field_override.and_then(|value| value.pybevy_name.clone()),
         config
             .get_rename(&class.python_name, &bevy_field.name)
-            .map(str::to_string),
+            .map(Cow::into_owned),
         Some(bevy_field.name.clone()),
         Some(format!("{}_", bevy_field.name)),
         (bevy_field_count == 1).then(|| "value".to_string()),

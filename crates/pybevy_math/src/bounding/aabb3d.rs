@@ -3,7 +3,7 @@ use bevy::math::{
     bounding::{Aabb3d, BoundingSphere, BoundingVolume, IntersectsVolume},
 };
 use pybevy_core::{
-    FromBorrowedStorage, ValueStorage,
+    FromBorrowedStorage, Omittable, ValueStorage,
     public_error::{
         AABB3D_MIN_MAX, EMPTY_POINT_CLOUD, bounding_half_size, bounding_operation, bounding_shrink,
     },
@@ -64,10 +64,10 @@ impl From<Isometry3d> for PyIsometry3d {
 #[pymethods]
 impl PyIsometry3d {
     #[new]
-    #[pyo3(signature = (translation = None, rotation = PyQuat::IDENTITY))]
-    pub fn new(translation: Option<&Bound<'_, PyAny>>, rotation: PyQuat) -> PyResult<Self> {
-        let t = match translation {
-            Some(obj) => extract_vec3a_from_any(obj)?,
+    #[pyo3(signature = (translation = Omittable::default(), rotation = PyQuat::IDENTITY))]
+    pub fn new(translation: Omittable<Bound<'_, PyAny>>, rotation: PyQuat) -> PyResult<Self> {
+        let t = match translation.into_option() {
+            Some(obj) => extract_vec3a_from_any(&obj)?,
             None => Vec3A::ZERO,
         };
         Ok(PyIsometry3d::from_owned(Isometry3d::new(

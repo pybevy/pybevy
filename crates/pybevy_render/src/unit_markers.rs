@@ -1,52 +1,9 @@
-use bevy::{
-    camera::Hdr,
-    render::{
-        batching::NoAutomaticBatching, occlusion_culling::OcclusionCulling, view::NoIndirectDrawing,
-    },
+use bevy::render::{
+    batching::NoAutomaticBatching, occlusion_culling::OcclusionCulling, view::NoIndirectDrawing,
 };
 use pybevy_core::PyComponent;
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
-
-/// Marker component that enables HDR rendering for a camera.
-///
-/// When added to a camera entity, enables high dynamic range rendering.
-#[pycomponent(Hdr, unit, bridge)]
-#[pyclass(name = "Hdr", module = "pybevy.render", extends = PyComponent, frozen, eq, skip_from_py_object)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PyHdr;
-
-impl From<Hdr> for PyHdr {
-    fn from(_: Hdr) -> Self {
-        PyHdr
-    }
-}
-
-impl From<PyHdr> for Hdr {
-    fn from(_: PyHdr) -> Self {
-        Hdr
-    }
-}
-
-impl TryFrom<&Hdr> for PyHdr {
-    type Error = PyErr;
-
-    fn try_from(_: &Hdr) -> PyResult<Self> {
-        Ok(PyHdr)
-    }
-}
-
-#[pymethods]
-impl PyHdr {
-    #[new]
-    pub fn new() -> PyClassInitializer<Self> {
-        (PyHdr, PyComponent).into()
-    }
-
-    pub fn __repr__(&self) -> &'static str {
-        "Hdr"
-    }
-}
 
 /// Marker component that disables automatic batching for an entity.
 ///

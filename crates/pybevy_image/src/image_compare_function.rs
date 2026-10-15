@@ -8,10 +8,9 @@ use pyo3::prelude::*;
     module = "pybevy.image",
     eq,
     frozen,
-    from_py_object,
-    hash
+    from_py_object
 )]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyImageCompareFunction {
     Never,
     Less,

@@ -507,7 +507,7 @@ class GlobalVolume(Resource):
     This resource affects all audio playback in the app.
     """
 
-    def __init__(self, volume: Volume | None = None) -> None: ...
+    def __init__(self, volume: Volume = ...) -> None: ...
 
     @property
     def volume(self) -> Volume:
@@ -523,7 +523,7 @@ class DefaultSpatialScale(Resource):
     This can be overridden per-source via PlaybackSettings.spatial_scale.
     """
 
-    def __init__(self, scale: SpatialScale | None = None) -> None: ...
+    def __init__(self, scale: SpatialScale = ...) -> None: ...
 
     @property
     def scale(self) -> SpatialScale:

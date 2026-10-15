@@ -8,7 +8,8 @@
 //! policy check fails closed with E013 rather than silently passing.
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
+    iter,
     path::{Path, PathBuf},
 };
 
@@ -838,7 +839,7 @@ fn find_or_scan<'a>(
         // reflected structs; the pinned source has the real declaration.
         if let Some(bevy_path) = bevy_path
             && is_empty_shell
-            && let Some(scanned) = source_scan_item(preferred, short_name, bevy_path)
+            && let Some(scanned) = source_scan_merged(preferred, short_name, bevy_path, config)
         {
             return Some(FoundItem::Scanned {
                 crate_name: preferred.clone(),
@@ -857,11 +858,7 @@ fn find_or_scan<'a>(
         }
         // Parsed crates lack the name: scan the owning crate's pinned source.
         if let Some(bevy_path) = bevy_path
-            && let Some(item) = source_scan_item(
-                preferred,
-                bevy_name.rsplit("::").next().unwrap_or(bevy_name),
-                bevy_path,
-            )
+            && let Some(item) = source_scan_merged(preferred, short_name, bevy_path, config)
         {
             return Some(FoundItem::Scanned {
                 crate_name: preferred.clone(),
@@ -874,7 +871,7 @@ fn find_or_scan<'a>(
         let needs_source_shape = item.fields.is_empty() && item.variants.is_empty();
         if needs_source_shape
             && let Some(bevy_path) = bevy_path
-            && let Some(scanned) = source_scan_item(crate_name2, short_name, bevy_path)
+            && let Some(scanned) = source_scan_merged(crate_name2, short_name, bevy_path, config)
         {
             return Some(FoundItem::Scanned {
                 crate_name: crate_name2.to_string(),
@@ -894,26 +891,26 @@ fn find_or_scan<'a>(
     }
     // Global miss: scan every parsed crate's pinned source (the wrapper's
     // module may live in a different crate than its upstream type, e.g.
-    // pybevy.text::Text2d comes from bevy_sprite).
+    // PyShaderStage lives in pybevy_shader but wraps a bevy_render re-export).
     if let Some(bevy_path) = bevy_path {
         // Scan the parsed crates plus their re-export source crates
         // (bevy_sprite_render, glam) where the upstream declaration lives.
-        let mut scan_crates: Vec<String> = bevy_crates.keys().cloned().collect::<Vec<String>>();
-        for sources in config.crate_type_sources.values() {
-            for source in sources {
-                if !scan_crates.contains(source) {
-                    scan_crates.push(source.clone());
-                }
-            }
-        }
+        let scan_crates: BTreeSet<&String> = bevy_crates
+            .keys()
+            .chain(config.crate_type_sources.values().flatten())
+            .collect();
         let short = bevy_name.rsplit("::").next().unwrap_or(bevy_name);
-        for crate_name2 in scan_crates {
-            if let Some(item) = source_scan_item(crate_name2.as_str(), short, bevy_path) {
-                return Some(FoundItem::Scanned {
-                    crate_name: crate_name2,
-                    item: Box::new(item),
-                });
-            }
+        let mut declared = scan_crates.into_iter().filter_map(|crate_name2| {
+            source_scan_item(crate_name2, short, bevy_path).map(|item| (crate_name2, item))
+        });
+        // A name declared by several crates is ambiguous, as in `find_item`.
+        if let Some((crate_name2, item)) = declared.next()
+            && declared.next().is_none()
+        {
+            return Some(FoundItem::Scanned {
+                crate_name: crate_name2.clone(),
+                item: Box::new(item),
+            });
         }
         // Audited non-registry upstream (std::ops::Range<f32>, wgpu)
         if let Some(crate_name) = preferred
@@ -1323,6 +1320,20 @@ fn bevy_item_with_fields(
 /// Fall back to the pinned source when cargo public-api misses a type
 /// (private modules, newtype tuple structs, generic templates). Synthesizes
 /// the item with declaration-order fields so classification can proceed.
+/// Scan a parsed crate's pinned source, then the re-export source crates its
+/// `[bevy.crate_type_sources]` entry merges into it.
+fn source_scan_merged(
+    crate_name: &str,
+    short_name: &str,
+    bevy_path: &Path,
+    config: &BevyConfig,
+) -> Option<BevyItem> {
+    let sources = config.crate_type_sources.get(crate_name);
+    iter::once(crate_name)
+        .chain(sources.into_iter().flatten().map(String::as_str))
+        .find_map(|source| source_scan_item(source, short_name, bevy_path))
+}
+
 fn source_scan_item(crate_name: &str, short_name: &str, bevy_path: &Path) -> Option<BevyItem> {
     let crate_src = bevy_path.join("crates").join(crate_name).join("src");
     let struct_marker = format!("pub struct {short_name}");

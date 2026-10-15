@@ -13,7 +13,8 @@ from enum import Enum
 from typing import TypeVar
 
 from ..input import ButtonInput, KeyCode
-from . import Res, State, in_state
+from ..state import State, in_state
+from . import Res
 
 __all__ = [
     "always",
@@ -223,7 +224,7 @@ def state_is_active(
         ```python
         from enum import Enum, auto
 
-        from pybevy.ecs import state
+        from pybevy.state import state
         from pybevy.ecs.conditions import state_is_active
 
         @state

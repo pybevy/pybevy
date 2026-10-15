@@ -9,7 +9,7 @@ use regex::Regex;
 
 use crate::{
     bevy_parser::types::{BevyItem, BevyItemKind},
-    config::BevyConfig,
+    config::{BevyConfig, is_keyword_escape_of},
     model::{EnumVariantKind, MacroInfo, MethodDef, PyClassDef, SelfMutability, SourceLocation},
     output::{Diagnostic, DiagnosticCode, Suggestion},
     validation::origin::{source_field_types, source_struct_is_generic},
@@ -901,6 +901,7 @@ pub fn validate_variant_name_parity(
     for variant in &rust.enum_variants {
         if upstream_names.contains(variant.name.as_str())
             || bevy_config.is_rename_target(&bevy.name, &variant.name)
+            || is_keyword_escape_of(&variant.name, |base| upstream_names.contains(base))
             || bevy_config.is_variant_intentionally_extra(&bevy.name, &variant.name)
         {
             continue;
@@ -1041,9 +1042,10 @@ pub fn validate_struct_variant_spelling(
         let rename_target = bevy_config.get_rename(&bevy.name, &upstream.name);
         let explained = matched.iter().any(|candidate| {
             candidate.as_str() == upstream.name
-                || (upstream.name == "None" && candidate.as_str() == "None_")
                 || aliases.contains(&(upstream.name.clone(), candidate.as_str().to_string()))
-                || rename_target.is_some_and(|target| candidate.as_str() == target)
+                || rename_target
+                    .as_deref()
+                    .is_some_and(|target| candidate.as_str() == target)
         });
         if !explained {
             mismatches.push((matched[0].clone(), upstream.name.clone()));
@@ -1068,7 +1070,7 @@ pub fn validate_struct_variant_spelling(
         ),
     )
     .with_note(
-        "classattr/builder names for upstream variants use the upstream spelling, the None -> None_ escape, a __pybevy_variant_aliases__ entry, or a configured rename",
+        "classattr/builder names for upstream variants use the upstream spelling, a Python keyword escape (None -> None_), a __pybevy_variant_aliases__ entry, or a configured rename",
     )
     .with_suggestion(Suggestion::new(
         "rename the classattrs/builders to the upstream variant spelling, or record the alias under __pybevy_variant_aliases__ or [bevy.type_ignores] with the reason",

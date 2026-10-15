@@ -14,11 +14,10 @@ pub struct PyPolyline3d(pub(crate) Polyline3d);
 #[pymethods]
 impl PyPolyline3d {
     #[new]
-    #[pyo3(signature = (vertices = None))]
-    pub fn new(vertices: Option<Vec<PyVec3>>) -> PyResult<PyClassInitializer<Self>> {
-        let Some(vertices) = vertices else {
-            return Ok((Self(Polyline3d::default()), PyMeshable).into());
-        };
+    #[pyo3(signature = (
+        vertices = Polyline3d::default().vertices.into_iter().map(PyVec3::from).collect()
+    ))]
+    pub fn new(vertices: Vec<PyVec3>) -> PyResult<PyClassInitializer<Self>> {
         let vertices: Vec<Vec3> = vertices
             .into_iter()
             .map(TryInto::try_into)

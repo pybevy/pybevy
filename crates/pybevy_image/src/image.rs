@@ -30,6 +30,7 @@ use pybevy_render::{
     texture_view_dimension::PyTextureViewDimension,
 };
 use pyo3::{
+    PyTraverseError, PyVisit,
     buffer::PyBuffer,
     exceptions::{PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
@@ -826,6 +827,10 @@ pub struct ImageDataContext {
 
 #[pymethods]
 impl ImageDataContext {
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.array)
+    }
+
     fn __enter__(&self, py: Python<'_>) -> PyResult<Py<PyArray>> {
         self.anchor.check_read().map_err(PyRuntimeError::new_err)?;
         Ok(self.array.clone_ref(py))
@@ -851,6 +856,10 @@ pub struct ImageDataContextMut {
 
 #[pymethods]
 impl ImageDataContextMut {
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.array)
+    }
+
     fn __enter__(&self, py: Python<'_>) -> PyResult<Py<PyArray>> {
         self.anchor.check_read().map_err(PyRuntimeError::new_err)?;
         Ok(self.array.clone_ref(py))
@@ -876,6 +885,10 @@ pub struct ImagePixelContextMut {
 
 #[pymethods]
 impl ImagePixelContextMut {
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.array)
+    }
+
     fn __enter__(&self, py: Python<'_>) -> PyResult<Py<PyArray>> {
         self.anchor.check_read().map_err(PyRuntimeError::new_err)?;
         Ok(self.array.clone_ref(py))
@@ -922,17 +935,18 @@ impl PyImage {
         width: 1,
         height: 1,
         depth_or_array_layers: 1
-    }, dimension=None, data=None, format=None, asset_usage=None))]
+    }, dimension=PyTextureDimension::D2, data=None, format=PyTextureFormat::Rgba8UnormSrgb,
+       asset_usage=PyRenderAssetUsages::from(RenderAssetUsages::default())))]
     pub fn new(
         size: PyExtent3d,
-        dimension: Option<PyTextureDimension>,
+        dimension: PyTextureDimension,
         data: Option<&Bound<'_, PyAny>>,
-        format: Option<PyTextureFormat>,
-        asset_usage: Option<PyRenderAssetUsages>,
+        format: PyTextureFormat,
+        asset_usage: PyRenderAssetUsages,
     ) -> PyResult<PyClassInitializer<Self>> {
         let extent: Extent3d = size.into();
-        let dimension: TextureDimension = dimension.unwrap_or(PyTextureDimension::D2).into();
-        let format: TextureFormat = format.unwrap_or(PyTextureFormat::Rgba8UnormSrgb).into();
+        let dimension: TextureDimension = dimension.into();
+        let format: TextureFormat = format.into();
         reject_aspect_dependent_format(format)?;
         let data = match data {
             Some(data) => {
@@ -968,10 +982,7 @@ impl PyImage {
             dimension,
             data,
             format,
-            asset_usage
-                .map(TryInto::try_into)
-                .transpose()?
-                .unwrap_or_default(),
+            asset_usage.try_into()?,
         ))
         .into())
     }

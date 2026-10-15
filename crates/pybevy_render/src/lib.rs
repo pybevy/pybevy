@@ -19,6 +19,7 @@ pub mod unit_markers;
 pub mod vertex_format;
 pub mod wgpu_error_handler;
 
+use pybevy_shader::shader_stage::PyShaderStage;
 use pyo3::prelude::*;
 
 pub mod prelude {
@@ -33,7 +34,6 @@ pub mod prelude {
         texture_dimension::PyTextureDimension,
         texture_format::PyTextureFormat,
         texture_usages::PyTextureUsages,
-        unit_markers::PyHdr,
         vertex_format::PyVertexFormat,
     };
 }
@@ -44,7 +44,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<plugin::PyTexturePlugin>()?;
     m.add_class::<power_preference::PyPowerPreference>()?;
     m.add_class::<face::PyFace>()?;
-    m.add_class::<unit_markers::PyHdr>()?;
+    m.add_class::<PyShaderStage>()?;
     m.add_class::<unit_markers::PyNoAutomaticBatching>()?;
     m.add_class::<unit_markers::PyNoIndirectDrawing>()?;
     m.add_class::<unit_markers::PyOcclusionCulling>()?;

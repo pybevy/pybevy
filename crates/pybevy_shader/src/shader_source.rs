@@ -11,10 +11,9 @@ use pyo3::{exceptions::PyRuntimeError, prelude::*};
     module = "pybevy.shader",
     frozen,
     skip_from_py_object,
-    eq,
-    hash
+    eq
 )]
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PySource {
     Wgsl { value: String },
     Wesl { value: String },

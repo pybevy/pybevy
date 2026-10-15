@@ -115,7 +115,7 @@ GPU occlusion culling can help scenes with substantial opaque depth complexity.
 Measure before enabling it because the culling pass has its own overhead.
 
 ```python
-from pybevy.camera import DepthPrepass
+from pybevy.core_pipeline import DepthPrepass
 from pybevy.render import OcclusionCulling
 
 commands.spawn(

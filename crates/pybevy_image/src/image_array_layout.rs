@@ -8,10 +8,9 @@ use pyo3::prelude::*;
     module = "pybevy.image",
     frozen,
     from_py_object,
-    eq,
-    hash
+    eq
 )]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyImageArrayLayout {
     #[pyo3(constructor = (*, rows))]
     RowCount { rows: u32 },

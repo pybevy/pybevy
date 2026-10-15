@@ -8,10 +8,9 @@ use pyo3::prelude::*;
     module = "pybevy.window",
     eq,
     from_py_object,
-    frozen,
-    hash
+    frozen
 )]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PyCursorGrabMode {
     #[pyo3(name = "None_")]
     None,

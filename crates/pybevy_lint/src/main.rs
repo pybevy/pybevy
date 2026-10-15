@@ -10,6 +10,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 use colored::Colorize;
 use pybevy_lint::{
     comparison::simplify_type_for_display,
+    native_system_set_lint::with_native_system_set_lint,
     output::{DiagnosticSeverity, format_diagnostic},
     python_parser::module_symbols::parse_source_only_symbols,
 };
@@ -792,6 +793,13 @@ fn run_validate(
     } else {
         pybevy_lint::validate_scoped_with_config(&rust_classes, &python_classes, config)
     };
+    let diagnostics = with_native_system_set_lint(
+        diagnostics,
+        &args.rust_path,
+        bevy_crates.as_ref(),
+        &config.bevy,
+        type_filter,
+    )?;
 
     let mut error_count = 0;
     let mut warning_count = 0;
