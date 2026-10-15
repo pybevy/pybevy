@@ -490,6 +490,10 @@ class CascadeShadowConfig(Component):
         """Raises ValueError for overlap outside [0, 1) or negative/NaN minimum_distance after float32 normalization; bounds use Bevy defaults."""
 
 class Cascade:
+    """A single shadow cascade; Bevy's shadow system computes these per view."""
+
+    def __init__(self) -> None:
+        """Bevy's default: identity matrices and a texel size of 0.0."""
     @property
     def world_from_cascade(self) -> Mat4: ...
     @property
@@ -500,8 +504,10 @@ class Cascade:
     def texel_size(self) -> float: ...
 
 class Cascades(Component):
-    """Engine-managed component containing shadow cascades (read-only, cannot be constructed)."""
+    """Per-view shadow cascades of a DirectionalLight, rebuilt by Bevy's shadow system (read-only)."""
 
+    def __init__(self) -> None:
+        """Bevy's default: no views."""
     @property
     def cascades(self) -> dict[int, list[Cascade]]: ...
 

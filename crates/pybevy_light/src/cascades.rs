@@ -8,7 +8,7 @@ use pyo3::{
 
 use crate::cascade::PyCascade;
 
-#[pycomponent(Cascades, no_clone, bridge)]
+#[pycomponent(Cascades, bridge)]
 #[pyclass(name = "Cascades", module = "pybevy.light", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyCascades {
@@ -17,6 +17,11 @@ pub struct PyCascades {
 
 #[pymethods]
 impl PyCascades {
+    #[new]
+    pub fn new() -> PyClassInitializer<Self> {
+        Self::from_owned(Cascades::default()).into()
+    }
+
     #[getter]
     pub fn cascades(&self, py: Python) -> PyResult<Py<PyDict>> {
         let cascades = self.as_ref()?;

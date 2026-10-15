@@ -3399,6 +3399,16 @@ path = "animation.AnimationEventData"
 message = "pyclass 'AnimationEventData' holds Python references (event: Py<PyAnimationEvent>) but declares no __traverse__"
 reason = "PyAnimationEvent holds only String fields (name, data); no reference path can reach back to the holder, so no GC cycle can form through this edge"
 
+[[validation.exceptions]]
+code = "W037"
+reason = "Live view into one animation of an AnimationPlayer (player storage + AnimationNodeIndex) with no standalone value; Bevy obtains it from AnimationPlayer::play/animation_mut, not Default"
+path = "animation.ActiveAnimation"
+
+[[validation.exceptions]]
+code = "W037"
+reason = "Live view into one node of an AnimationGraph (graph + AnimationNodeIndex) with no standalone value; Bevy creates nodes through AnimationGraph::add_clip/add_blend/add_additive_blend, not Default"
+path = "animation.AnimationGraphNode"
+
 # API drift (W037-W041) that existed when the checks landed. Delete entries
 # as the drift is fixed or moved to a durable reason.
 

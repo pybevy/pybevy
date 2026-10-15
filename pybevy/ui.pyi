@@ -2867,9 +2867,12 @@ class ComputedStackIndex(Component):
     """The draw order of a UI node, computed by the UI stacking system.
 
     Nodes with a higher stack index are drawn on top of and receive
-    interactions before nodes with lower stack indices. Automatically added
-    and updated by the UI system - you cannot create it manually.
+    interactions before nodes with lower stack indices. Required by
+    ComputedNode and updated by the UI stacking system.
     """
+
+    def __init__(self) -> None:
+        """Bevy's default: stack index 0."""
 
     @property
     def value(self) -> int:
@@ -2883,8 +2886,8 @@ class ComputedNode(Component):
     """Computed layout information for a UI node.
 
     Contains the final computed sizes and layout information after Bevy's
-    UI layout system has processed the node. This component is automatically
-    added and updated by the UI system - you cannot create it manually.
+    UI layout system has processed the node. Required by Node and updated by
+    the UI layout system, which overwrites manually set values.
 
     Useful for reading final pixel sizes after layout, debugging layout issues,
     or implementing custom rendering based on actual node dimensions.
@@ -2900,6 +2903,8 @@ class ComputedNode(Component):
         ```
     """
 
+    def __init__(self) -> None:
+        """Bevy's default: zero sizes, positions and outline, and an inverse scale factor of 1.0."""
     @property
     def size(self) -> Vec2:
         """The final computed size of the node in physical pixels."""
