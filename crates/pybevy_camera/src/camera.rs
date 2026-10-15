@@ -219,7 +219,7 @@ impl PyCamera {
         camera
             .viewport_to_world_2d(&transform, viewport_pos)
             .map(|v| v.into())
-            .map_err(|e| PyValueError::new_err(public_error::viewport_conversion_failed(&e)))
+            .map_err(|e| PyValueError::new_err(public_error::viewport_conversion_failed(e)))
     }
 
     pub fn world_to_viewport(
@@ -234,7 +234,7 @@ impl PyCamera {
         camera
             .world_to_viewport(&transform, world_pos)
             .map(|v| v.into())
-            .map_err(|e| PyValueError::new_err(public_error::viewport_conversion_failed(&e)))
+            .map_err(|e| PyValueError::new_err(public_error::viewport_conversion_failed(e)))
     }
 
     pub fn viewport_to_world(
@@ -249,7 +249,7 @@ impl PyCamera {
         camera
             .viewport_to_world(&transform, viewport_pos)
             .map(|ray| ray.into())
-            .map_err(|e| PyValueError::new_err(public_error::viewport_conversion_failed(&e)))
+            .map_err(|e| PyValueError::new_err(public_error::viewport_conversion_failed(e)))
     }
 
     pub fn world_to_viewport_with_depth(
@@ -264,7 +264,7 @@ impl PyCamera {
         camera
             .world_to_viewport_with_depth(&transform, world_pos)
             .map(|v| v.into())
-            .map_err(|e| PyValueError::new_err(public_error::viewport_conversion_failed(&e)))
+            .map_err(|e| PyValueError::new_err(public_error::viewport_conversion_failed(e)))
     }
 
     pub fn clip_from_view(&self) -> PyResult<PyMat4> {
@@ -304,7 +304,7 @@ impl PyCamera {
         camera
             .viewport_to_ndc(viewport_pos)
             .map(|v| v.into())
-            .map_err(|e| PyValueError::new_err(public_error::viewport_conversion_failed(&e)))
+            .map_err(|e| PyValueError::new_err(public_error::viewport_conversion_failed(e)))
     }
 
     pub fn depth_ndc_to_view_z(&self, ndc_depth: f32) -> PyResult<f32> {

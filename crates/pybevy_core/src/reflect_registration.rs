@@ -101,7 +101,7 @@ mod tests {
             register: |registry: &mut TypeRegistry| {
                 registry.register::<RoutingReflectProbe>();
             },
-            registers_only: Some(|| TypeId::of::<RoutingReflectProbe>()),
+            registers_only: Some(TypeId::of::<RoutingReflectProbe>),
         }
     }
 
@@ -114,7 +114,7 @@ mod tests {
             register: |registry: &mut TypeRegistry| {
                 registry.register::<ManualReflectProbe>();
             },
-            registers_only: Some(|| TypeId::of::<ManualReflectProbe>()),
+            registers_only: Some(TypeId::of::<ManualReflectProbe>),
         }
     }
 
@@ -142,11 +142,11 @@ mod tests {
     fn single_type_entries_are_skipped_only_once_their_type_is_present() {
         let routing = ReflectTypeRegistration {
             register: |registry| registry.register::<RoutingReflectProbe>(),
-            registers_only: Some(|| TypeId::of::<RoutingReflectProbe>()),
+            registers_only: Some(TypeId::of::<RoutingReflectProbe>),
         };
         let manual = ReflectTypeRegistration {
             register: |registry| registry.register::<ManualReflectProbe>(),
-            registers_only: Some(|| TypeId::of::<ManualReflectProbe>()),
+            registers_only: Some(TypeId::of::<ManualReflectProbe>),
         };
         let hand_written = ReflectTypeRegistration {
             register: install_probe_marker,

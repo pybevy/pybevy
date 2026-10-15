@@ -1099,10 +1099,10 @@ unsafe impl SystemInterpreter for MainInterpreter {
             drop(callable);
             drop(params);
             drop(message_cursors);
-            let result = result
-                .map(|()| CallOutcome::Unit)
-                .map_err(|error| Self::failure(py, error));
+
             result
+                .map(|()| CallOutcome::Unit)
+                .map_err(|error| Self::failure(py, error))
         })
     }
 

@@ -384,6 +384,7 @@ impl NativePluginSlot {
     pub fn is_added(self, app: &App) -> bool {
         (self.is_added)(app)
     }
+    #[allow(clippy::result_unit_err)]
     pub fn place(
         self,
         builder: PluginGroupBuilder,

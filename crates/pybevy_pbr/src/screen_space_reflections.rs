@@ -30,6 +30,7 @@ impl PyScreenSpaceReflections {
         bisection_steps = 5,
         use_secant = true
     ))]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         min_perceptual_roughness: PyRange,
         max_perceptual_roughness: PyRange,

@@ -429,7 +429,6 @@ mod tests {
         assert_eq!(diagnostics.gc_objects, 1_002);
         assert!(diagnostics.refresh_gc_objects_if_due(0.25, &mut measure));
         assert_eq!(diagnostics.gc_objects, 1_003);
-        drop(measure);
         assert_eq!(measurements, 3);
     }
 

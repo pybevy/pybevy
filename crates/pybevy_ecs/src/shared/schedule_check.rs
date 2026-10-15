@@ -273,7 +273,7 @@ mod tests {
     #[test]
     fn chain_contradicting_a_set_order_is_reported_without_a_live_schedule() {
         let mut world = World::new();
-        let chains = vec![vec![
+        let chains = [vec![
             system("first", &[], &[Stage::Late]),
             PlannedNode {
                 name: "second".to_owned(),

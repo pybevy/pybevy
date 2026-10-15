@@ -426,9 +426,8 @@ fn construct_component_from_fields<'py>(
 /// fields. `None` means the class exposes no supported declaration metadata,
 /// so callers may fall back to instance attribute lookup.
 fn class_declares_component_field(class: &Bound<'_, PyType>, field_name: &str) -> Option<bool> {
-    match dataclass_field_names(class) {
-        Ok(Some(names)) => return Some(names.contains(field_name)),
-        Ok(None) | Err(_) => {}
+    if let Ok(Some(names)) = dataclass_field_names(class) {
+        return Some(names.contains(field_name));
     }
     let mut found_metadata = false;
     for attribute in ["__dataclass_fields__", "__annotations__"] {
@@ -2330,10 +2329,10 @@ pub fn batch_mutate(
     Ok(super::super::batch_response(results))
 }
 
-fn validate_batch_operation<'a>(
+fn validate_batch_operation(
     index: usize,
-    operation: &'a serde_json::Value,
-) -> Result<&'a str, ControlError> {
+    operation: &serde_json::Value,
+) -> Result<&str, ControlError> {
     let operation = operation.as_object().ok_or_else(|| {
         ControlError::invalid_params(format!("op[{index}]: operation must be an object"))
     })?;
@@ -3031,24 +3030,24 @@ fn construct_declared_optional(
     let Some(class) = find_pybevy_class(py, type_name) else {
         return Ok(None);
     };
-    if type_name == "Color" {
-        if let serde_json::Value::Array(values) = field_value {
-            if values.len() != 4 {
-                return Err(format!(
-                    "Color expects [r, g, b, a], got {} elements",
-                    values.len()
-                ));
-            }
-            let red = json_number_to_f32(&values[0])?;
-            let green = json_number_to_f32(&values[1])?;
-            let blue = json_number_to_f32(&values[2])?;
-            let alpha = json_number_to_f32(&values[3])?;
-            return class
-                .call_method1("srgba", (red, green, blue, alpha))
-                .map(Bound::unbind)
-                .map(Some)
-                .map_err(|error| error.to_string());
+    if type_name == "Color"
+        && let serde_json::Value::Array(values) = field_value
+    {
+        if values.len() != 4 {
+            return Err(format!(
+                "Color expects [r, g, b, a], got {} elements",
+                values.len()
+            ));
         }
+        let red = json_number_to_f32(&values[0])?;
+        let green = json_number_to_f32(&values[1])?;
+        let blue = json_number_to_f32(&values[2])?;
+        let alpha = json_number_to_f32(&values[3])?;
+        return class
+            .call_method1("srgba", (red, green, blue, alpha))
+            .map(Bound::unbind)
+            .map(Some)
+            .map_err(|error| error.to_string());
     }
     let serde_json::Value::Object(fields) = field_value else {
         return Ok(None);

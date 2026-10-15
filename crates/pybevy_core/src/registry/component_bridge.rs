@@ -271,7 +271,7 @@ mod tests {
         ) -> PyResult<()> {
             BULK_INSERT_CALLS.fetch_add(1, Ordering::SeqCst);
             if FAIL_ON_THIRD_INSERT.load(Ordering::SeqCst) > 0
-                && BULK_INSERT_CALLS.load(Ordering::SeqCst) % 3 == 0
+                && BULK_INSERT_CALLS.load(Ordering::SeqCst).is_multiple_of(3)
             {
                 return Err(pyo3::exceptions::PyRuntimeError::new_err(
                     "faulted third insert",

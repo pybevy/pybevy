@@ -139,6 +139,13 @@ pub enum DiagnosticCode {
     /// W037: Bevy type implements `Default` but the Python constructor has
     /// required inputs, so `Type()` cannot build the default value
     W037,
+    /// W038: wrapper exposes a method or property that the resolved Bevy type
+    /// does not have
+    W038,
+    /// W039: method return type differs from the resolved Bevy method
+    W039,
+    /// W040: Bevy enum wrapped as an ordinary class instead of an enum adapter
+    W040,
 
     // Test coverage info (T-codes)
     /// T001: Class has no test coverage
@@ -203,6 +210,9 @@ impl DiagnosticCode {
             DiagnosticCode::W035 => "W035",
             DiagnosticCode::W036 => "W036",
             DiagnosticCode::W037 => "W037",
+            DiagnosticCode::W038 => "W038",
+            DiagnosticCode::W039 => "W039",
+            DiagnosticCode::W040 => "W040",
             DiagnosticCode::T001 => "T001",
             DiagnosticCode::T002 => "T002",
             DiagnosticCode::T003 => "T003",
@@ -262,7 +272,10 @@ impl DiagnosticCode {
             | DiagnosticCode::W034
             | DiagnosticCode::W035
             | DiagnosticCode::W036
-            | DiagnosticCode::W037 => DiagnosticSeverity::Warning,
+            | DiagnosticCode::W037
+            | DiagnosticCode::W038
+            | DiagnosticCode::W039
+            | DiagnosticCode::W040 => DiagnosticSeverity::Warning,
 
             DiagnosticCode::T001 | DiagnosticCode::T002 | DiagnosticCode::T003 => {
                 DiagnosticSeverity::Info
@@ -365,6 +378,9 @@ impl DiagnosticCode {
                 "stub None acceptance does not match the Rust signature or upstream field"
             }
             DiagnosticCode::W037 => "Bevy Default type cannot be constructed without arguments",
+            DiagnosticCode::W038 => "wrapper exposes a member the Bevy type does not have",
+            DiagnosticCode::W039 => "method return type differs from Bevy",
+            DiagnosticCode::W040 => "Bevy enum wrapped as an ordinary class",
             DiagnosticCode::T001 => "class has no test coverage",
             DiagnosticCode::T002 => "constructor not tested",
             DiagnosticCode::T003 => "member not tested",

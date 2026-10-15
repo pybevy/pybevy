@@ -921,10 +921,10 @@ impl PyQueryIter {
     #[inline(always)]
     pub(crate) fn get_extract_fn(&self, ty: &PyComponentType) -> Option<ExtractFn> {
         let key = Self::component_type_key(ty);
-        if let Some((cached_key, extract_fn)) = self.last_extract_fn.get() {
-            if cached_key == key {
-                return extract_fn;
-            }
+        if let Some((cached_key, extract_fn)) = self.last_extract_fn.get()
+            && cached_key == key
+        {
+            return extract_fn;
         }
         let extract_fn = self.cached().extract_fns.get(ty).copied();
         self.last_extract_fn.set(Some((key, extract_fn)));
@@ -968,10 +968,10 @@ impl PyQueryIter {
     #[inline(always)]
     fn component_id(&self, ty: &PyComponentType) -> ComponentId {
         let key = Self::component_type_key(ty);
-        if let Some((cached_key, id)) = self.last_component_id.get() {
-            if cached_key == key {
-                return id;
-            }
+        if let Some((cached_key, id)) = self.last_component_id.get()
+            && cached_key == key
+        {
+            return id;
         }
         let id = self.lookup_component_id(ty);
         self.last_component_id.set(Some((key, id)));
@@ -1036,10 +1036,10 @@ impl PyQueryIter {
         ComponentStorageType,
         Option<Arc<crate::ecs::component_layout::ComponentLayout>>,
     ) {
-        if let Some((last_ptr, st, layout)) = &*self.last_layout.borrow() {
-            if *last_ptr == type_ptr {
-                return (*st, layout.clone());
-            }
+        if let Some((last_ptr, st, layout)) = &*self.last_layout.borrow()
+            && *last_ptr == type_ptr
+        {
+            return (*st, layout.clone());
         }
         let resolved = {
             let cache = self.layout_cache.borrow();

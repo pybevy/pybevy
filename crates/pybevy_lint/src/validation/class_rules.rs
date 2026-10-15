@@ -888,12 +888,25 @@ pub fn validate_default_constructor(rust: &PyClassDef, bevy: &BevyItem) -> Vec<D
         .trait_impls
         .iter()
         .any(|name| name == "Default" || name.ends_with("::Default"));
-    let Some(constructor) = rust.constructor.as_ref() else {
-        return Vec::new();
-    };
     if !implements_default {
         return Vec::new();
     }
+    let Some(constructor) = rust.constructor.as_ref() else {
+        let mut diagnostic = Diagnostic::warning(
+            DiagnosticCode::W037,
+            format!(
+                "'{}' has no constructor but Bevy '{}' implements Default",
+                rust.python_name, bevy.full_path
+            ),
+        )
+        .with_suggestion(Suggestion::new(
+            "add a #[new] that builds Default::default(), or record a reasoned [[validation.exceptions]] entry",
+        ));
+        if let Some(location) = rust.location.as_ref() {
+            diagnostic = diagnostic.with_location(location.clone());
+        }
+        return vec![diagnostic];
+    };
     let variadic = variadic_parameter_names(constructor);
     let required: Vec<&str> = constructor
         .parameters
