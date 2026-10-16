@@ -8,7 +8,8 @@ use pyo3::{
 use crate::{
     codec::{
         json_float::nonfinite_float_from_json,
-        value::{self as value_conversion},
+        math_shape::{CONSTRUCTIBLE, READBACK_ARRAYS, math_shape},
+        value,
     },
     pyo3::from_json::field::json_number_to_f32,
 };
@@ -19,12 +20,7 @@ pub(crate) fn math_readback_array(
 ) -> Option<serde_json::Value> {
     let fields = value.as_object()?;
     let type_name = current.get_type().name().ok()?;
-    let coordinates: &[&str] = match type_name.to_string_lossy().as_ref() {
-        "Vec2" | "UVec2" | "IVec2" => &["x", "y"],
-        "UVec3" => &["x", "y", "z"],
-        "Vec4" | "Quat" => &["x", "y", "z", "w"],
-        _ => return None,
-    };
+    let coordinates = math_shape(READBACK_ARRAYS, &type_name.to_string_lossy())?.coordinates;
     if fields.len() != coordinates.len() {
         return None;
     }
@@ -40,26 +36,23 @@ pub(crate) fn math_value_from_json(
     type_name: &str,
     values: &[serde_json::Value],
 ) -> Option<Result<Py<PyAny>, String>> {
-    let count = match type_name {
-        "Vec2" | "UVec2" | "IVec2" => 2,
-        "Vec3" | "UVec3" => 3,
-        "Vec4" | "Quat" => 4,
-        _ => return None,
-    };
+    let shape = math_shape(CONSTRUCTIBLE, type_name)?;
+    let count = shape.coordinates.len();
     if values.len() != count {
         return None;
     }
     if type_name == "Quat" {
         return Some(
-            value_conversion::unit_quat_from_json(&serde_json::Value::Array(values.to_vec()))
-                .and_then(|quat| {
+            value::unit_quat_from_json(&serde_json::Value::Array(values.to_vec())).and_then(
+                |quat| {
                     Py::new(py, PyQuat::from_quat(quat))
                         .map(Py::into_any)
                         .map_err(|error| error.to_string())
-                }),
+                },
+            ),
         );
     }
-    let integral = matches!(type_name, "UVec2" | "IVec2" | "UVec3");
+    let integral = shape.integral;
     let mut coordinates = Vec::with_capacity(count);
     for value in values {
         let coordinate = if integral {

@@ -27,6 +27,7 @@ use serde_json::{Map, Value};
 
 use super::{
     json_float::{float_to_json, nonfinite_float_from_json, require_finite_float},
+    math_shape::{FLOAT_VECTORS, math_shape},
     value::{EnumPayload, enum_to_json, unit_quat_from_json},
 };
 
@@ -565,16 +566,10 @@ pub(crate) fn enum_example_value_is_representable(value: &Value) -> bool {
     }
 }
 
-/// Component-shaped math types that `scene::vector_to_json` renders as arrays.
-/// Keep this list in lockstep with that function so a field looks the same
-/// whether it came from get_component or from a set_component post-state.
+/// Component-shaped math types that `to_json::vector_to_json` also renders as
+/// arrays, so a field looks the same from get_component and a set_component post-state.
 fn vector_field_names(short_type_path: &str) -> Option<&'static [&'static str]> {
-    match short_type_path {
-        "Vec2" => Some(&["x", "y"]),
-        "Vec3" => Some(&["x", "y", "z"]),
-        "Vec4" | "Quat" => Some(&["x", "y", "z", "w"]),
-        _ => None,
-    }
+    math_shape(FLOAT_VECTORS, short_type_path).map(|shape| shape.coordinates)
 }
 
 /// Read named fields off a component via reflection, for reporting the state

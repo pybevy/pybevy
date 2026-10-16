@@ -19,7 +19,7 @@ use pyo3::{
 
 use crate::{
     codec::{
-        reflect as reflect_mutate,
+        reflect,
         value::{EnumPayload, enum_to_json},
     },
     protocol::ControlError,
@@ -175,7 +175,7 @@ pub fn get_component_schema(
                 if bridge.can_insert()
                     && bridge.can_offer_hook_free_default_spawn()
                     && let Some(registry) = world.get_resource::<AppTypeRegistry>()
-                    && let Some(spawn_fields) = reflect_mutate::replayable_enum_default_fields(
+                    && let Some(spawn_fields) = reflect::replayable_enum_default_fields(
                         &registry.read(),
                         bridge.bevy_type_id(),
                         python_default.as_ref(),
@@ -498,7 +498,7 @@ fn default_enum_component_fields(
             .get("variant")
             .is_some_and(serde_json::Value::is_string)
     {
-        return reflect_mutate::enum_example_value_is_representable(&serde_json::Value::Object(
+        return reflect::enum_example_value_is_representable(&serde_json::Value::Object(
             fields.clone(),
         ))
         .then_some(fields);
@@ -508,7 +508,7 @@ fn default_enum_component_fields(
     let variant = super::enum_names::canonical_variant_name(py_type, &variant);
     let owner = py_type.name().ok()?;
     if !matches!(
-        reflect_mutate::compiled_enum_variant_info(&owner.to_string_lossy(), &variant),
+        reflect::compiled_enum_variant_info(&owner.to_string_lossy(), &variant),
         Some(VariantInfo::Unit(_))
     ) {
         return None;

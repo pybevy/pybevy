@@ -7,7 +7,11 @@ use pyo3::{
 };
 
 use crate::{
-    codec::value::json_kind_name,
+    codec::{
+        enum_payload,
+        math_shape::{FLOAT_VECTORS, MathShape, math_shape},
+        value::json_kind_name,
+    },
     pyo3::{
         enum_names,
         from_json::{
@@ -46,12 +50,7 @@ pub(crate) fn convert_list_elements<'py>(
         .map_err(|error| error.to_string())?
         .to_string_lossy()
         .into_owned();
-    let math_shape = match class_name.as_str() {
-        "Vec2" => Some("[x, y]"),
-        "Vec3" => Some("[x, y, z]"),
-        "Vec4" | "Quat" => Some("[x, y, z, w]"),
-        _ => None,
-    };
+    let vector_shape = math_shape(FLOAT_VECTORS, &class_name).map(MathShape::label);
     let is_enum = instance
         .as_ref()
         .is_some_and(|instance| !enum_variant_names(&enum_owner_type(instance)).is_empty());
@@ -59,7 +58,7 @@ pub(crate) fn convert_list_elements<'py>(
         .iter()
         .enumerate()
         .map(|(index, value)| -> Result<Py<PyAny>, String> {
-            if let Some(shape) = math_shape {
+            if let Some(shape) = &vector_shape {
                 if let serde_json::Value::Array(values) = value {
                     if let Some(result) = math_value_from_json(py, &class_name, values) {
                         return result;
@@ -306,16 +305,7 @@ fn convert_enum_element(
         .map_err(|error| error.to_string())?
         .to_string_lossy()
         .into_owned();
-    if let Some(serde_json::Value::String(variant_name)) = fields.get("variant") {
-        let mut payload = fields.clone();
-        payload.remove("variant");
-        let payload = if payload.is_empty() {
-            serde_json::Value::Null
-        } else if payload.len() == 1 && payload.contains_key("value") {
-            payload.remove("value").unwrap()
-        } else {
-            serde_json::Value::Object(payload)
-        };
+    if let Some((variant_name, payload)) = enum_payload::normalize(fields) {
         if let Some(field) = enum_element_missing_field(&owner, variant_name, &payload) {
             return Err(format!(
                 "element {index}: variant '{variant_name}' requires field '{field}'"
