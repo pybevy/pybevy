@@ -6,7 +6,10 @@ use syn::{
     parse_macro_input,
 };
 
-use crate::util::reflect_registration_tokens;
+use crate::{
+    domain::{DomainEntry, domain_impl_tokens, owner_name, parse_domains},
+    util::reflect_registration_tokens,
+};
 
 /// Generates storage boilerplate for resource wrappers in feature crates.
 ///
@@ -52,6 +55,7 @@ pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
         no_reflect: bool,
         materialize: Option<Path>,
         clone_with: Option<Path>,
+        domains: Vec<DomainEntry>,
     }
 
     impl Parse for ResourceStorageArgs {
@@ -70,6 +74,7 @@ pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
             let mut no_reflect = false;
             let mut materialize = None;
             let mut clone_with = None;
+            let mut domains = Vec::new();
 
             while input.peek(Token![,]) {
                 input.parse::<Token![,]>()?;
@@ -80,6 +85,10 @@ pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
                     bridge_name = Some(input.parse::<syn::LitStr>()?.value());
                 } else {
                     let ident: Ident = input.parse()?;
+                    if ident == "domains" {
+                        parse_domains(input, &mut domains)?;
+                        continue;
+                    }
                     if matches!(ident.to_string().as_str(), "materialize" | "clone_with") {
                         input.parse::<Token![=]>()?;
                         let path: Path = input.parse()?;
@@ -105,7 +114,7 @@ pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
                             return Err(syn::Error::new_spanned(
                                 ident,
                                 format!(
-                                    "unknown option '{}', expected one of: no_clone, bridge, no_insert, no_mut, no_remove, no_user_remove, default_insert, no_default, preserve_on_reload, no_reflect, materialize, clone_with",
+                                    "unknown option '{}', expected one of: no_clone, bridge, no_insert, no_mut, no_remove, no_user_remove, default_insert, no_default, preserve_on_reload, no_reflect, materialize, clone_with, domains",
                                     other
                                 ),
                             ));
@@ -129,6 +138,7 @@ pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
                 no_reflect,
                 materialize,
                 clone_with,
+                domains,
             })
         }
     }
@@ -226,9 +236,17 @@ pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
 
+    let domain_tokens = domain_impl_tokens(
+        bevy_type,
+        py_type,
+        &owner_name(py_type, args.bridge_name.as_deref()),
+        &args.domains,
+    );
+
     let expanded = quote! {
         #input
         #storage_impls
+        #domain_tokens
         #bridge_tokens
     };
 

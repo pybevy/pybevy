@@ -12,10 +12,7 @@ use pybevy_core::public_error::{
 };
 
 use crate::{
-    capture::{
-        depth::CaptureViewport,
-        queue::{CaptureResponseKind, DebugCameraRequest},
-    },
+    capture::{depth::CaptureViewport, queue::DebugCameraRequest},
     protocol::ControlError,
 };
 
@@ -57,11 +54,18 @@ pub fn hold_capture_pose(world: &mut World) {
     }
 }
 
+pub(super) fn has_primary_window(world: &mut World) -> bool {
+    world
+        .query_filtered::<Entity, With<PrimaryWindow>>()
+        .iter(world)
+        .next()
+        .is_some()
+}
+
 pub(super) fn validate_capture_camera(
     world: &mut World,
-    response_kind: &CaptureResponseKind,
+    operation: &str,
 ) -> Result<(), ControlError> {
-    let operation = response_kind.operation_name();
     let primary_window = world
         .query_filtered::<Entity, (With<PrimaryWindow>, With<Window>)>()
         .iter(world)
@@ -355,7 +359,6 @@ mod tests {
 
     use super::*;
     use crate::capture::{
-        analysis::FrameStatsOptions,
         hold::CaptureHold,
         queue::{CaptureResponseKind, DebugCameraRequest, PendingScreenshots},
         screenshot::{StagedScreenshot, StagedScreenshots, process_pending_screenshots},
@@ -367,8 +370,7 @@ mod tests {
     #[test]
     fn capture_camera_validation_distinguishes_missing_inactive_and_target_errors() {
         let mut no_camera = World::new();
-        let error =
-            validate_capture_camera(&mut no_camera, &CaptureResponseKind::Screenshot).unwrap_err();
+        let error = validate_capture_camera(&mut no_camera, "capture_screenshot").unwrap_err();
         assert!(error.message.starts_with("capture_screenshot requires"));
         assert!(error.message.contains("no Camera entities"));
 
@@ -382,15 +384,13 @@ mod tests {
                 size: UVec2::new(1, 1),
             },
         ));
-        let error =
-            validate_capture_camera(&mut inactive, &CaptureResponseKind::Screenshot).unwrap_err();
+        let error = validate_capture_camera(&mut inactive, "capture_screenshot").unwrap_err();
         assert!(error.message.starts_with("capture_screenshot requires"));
         assert!(error.message.contains("all Camera entities are inactive"));
 
         let mut missing_target = World::new();
         missing_target.spawn(Camera::default());
-        let error = validate_capture_camera(&mut missing_target, &CaptureResponseKind::Screenshot)
-            .unwrap_err();
+        let error = validate_capture_camera(&mut missing_target, "capture_screenshot").unwrap_err();
         assert!(error.message.contains("capturable RenderTarget"));
         assert!(!error.message.contains("renderer"));
 
@@ -401,8 +401,7 @@ mod tests {
                 size: UVec2::new(1, 1),
             },
         ));
-        let error = validate_capture_camera(&mut none_target, &CaptureResponseKind::Screenshot)
-            .unwrap_err();
+        let error = validate_capture_camera(&mut none_target, "capture_screenshot").unwrap_err();
         assert!(error.message.contains("RenderTarget.None"));
     }
 
@@ -411,7 +410,7 @@ mod tests {
         let mut world = World::new();
         spawn_structurally_valid_headless_camera(&mut world);
 
-        validate_capture_camera(&mut world, &CaptureResponseKind::Screenshot).unwrap();
+        validate_capture_camera(&mut world, "capture_screenshot").unwrap();
         assert!(world.get_resource::<Assets<Image>>().is_none());
     }
 
@@ -420,15 +419,7 @@ mod tests {
         let mut world = World::new();
         world.spawn((Camera::default(), RenderTarget::Window(WindowRef::Primary)));
 
-        let error = validate_capture_camera(
-            &mut world,
-            &CaptureResponseKind::Stats(FrameStatsOptions {
-                grid: 1,
-                region: None,
-                sample_points: None,
-            }),
-        )
-        .unwrap_err();
+        let error = validate_capture_camera(&mut world, "capture_stats").unwrap_err();
         assert!(error.message.starts_with("capture_stats requires"));
         assert!(error.message.contains("unavailable window target"));
     }

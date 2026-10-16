@@ -2,25 +2,14 @@ use bevy::{color::Color, ui::ColorStop};
 use pybevy_color::color::PyColor;
 use pybevy_core::{
     FromBorrowedStorage, ValueStorage,
-    public_error::value_out_of_range,
     repr::{float_repr, object_repr},
 };
 use pybevy_macros::pyvalue;
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pyo3::prelude::*;
 
 use crate::val::PyVal;
 
-fn check_hint(hint: f32) -> PyResult<f32> {
-    if (0.0..=1.0).contains(&hint) {
-        Ok(hint)
-    } else {
-        Err(PyValueError::new_err(value_out_of_range(
-            "hint", 0.0, 1.0, hint,
-        )))
-    }
-}
-
-#[pyvalue]
+#[pyvalue(domains = [hint => [range_inclusive(0.0, 1.0)]])]
 #[pyclass(name = "ColorStop", module = "pybevy.ui", eq, from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyColorStop {
@@ -64,7 +53,7 @@ impl PyColorStop {
         Ok(Self::from_owned(ColorStop {
             color,
             point: point.into(),
-            hint: check_hint(hint)?,
+            hint: Self::check_hint(hint)?,
         }))
     }
 
@@ -88,7 +77,7 @@ impl PyColorStop {
 
     pub fn with_hint(&self, hint: f32) -> PyResult<Self> {
         Ok(Self::from_owned(
-            self.to_bevy()?.with_hint(check_hint(hint)?),
+            self.to_bevy()?.with_hint(Self::check_hint(hint)?),
         ))
     }
 
@@ -122,7 +111,7 @@ impl PyColorStop {
 
     #[setter]
     pub fn set_hint(&mut self, value: f32) -> PyResult<()> {
-        let value = check_hint(value)?;
+        let value = Self::check_hint(value)?;
         self.as_mut()?.hint = value;
         Ok(())
     }

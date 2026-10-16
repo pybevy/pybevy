@@ -1,9 +1,11 @@
 use std::sync::{Arc, Mutex};
 
 use bevy::{
+    camera::Camera,
     ecs::world::World,
     time::{Time, Virtual},
 };
+use pybevy_core::public_error::capture_no_camera;
 use tokio::sync::oneshot;
 
 use crate::{
@@ -18,7 +20,7 @@ use crate::{
             CaptureResponseKind, DEFAULT_SCREENSHOT_MAX_WIDTH, DEFAULT_TIMELINE_MAX_WIDTH,
             DebugCameraRequest, PendingScreenshot, PendingScreenshots,
         },
-        screenshot::validate_capture_delay,
+        screenshot::{validate_capture_delay, validate_capture_pose},
         timeline::{
             ActiveTimeline, MAX_TIMELINE_CAPTURES, MAX_TIMELINE_FRAMES, PendingTimelines,
             compute_schedule,
@@ -124,7 +126,9 @@ pub fn push_pending_screenshot(
     response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
     deferred: &mut Vec<PendingScreenshot>,
 ) {
-    if let Err(error) = validate_capture_delay(params.delay_frames) {
+    if let Err(error) = validate_capture_delay(params.delay_frames)
+        .and_then(|()| validate_capture_pose(params.position, params.look_at))
+    {
         let _ = response_tx.send(Err(error));
         return;
     }
@@ -158,6 +162,7 @@ pub fn push_pending_stats(
     };
     if let Err(error) = validate_frame_stats_options(&options)
         .and_then(|()| validate_capture_delay(params.delay_frames))
+        .and_then(|()| validate_capture_pose(params.position, params.look_at))
     {
         let _ = response_tx.send(Err(error));
         return;
@@ -192,6 +197,11 @@ pub fn push_pending_timeline(
         let _ = response_tx.send(Err(ControlError::invalid_params(format!(
             "total_frames must be at most {MAX_TIMELINE_FRAMES}"
         ))));
+        return;
+    }
+
+    if let Err(error) = validate_capture_pose(params.position, params.look_at) {
+        let _ = response_tx.send(Err(error));
         return;
     }
 
@@ -264,6 +274,7 @@ pub fn push_pending_reload_and_capture(
     // Surface validation errors (e.g. an out-of-range time_scale) directly
     // instead of dropping the bad param and reporting a false success later.
     if let Err(e) = validate_capture_delay(params.delay_frames.unwrap_or(30))
+        .and_then(|()| validate_capture_pose(params.position, params.look_at))
         .and_then(|()| reload::trigger_reload(world, params.mode, params.pause, params.time_scale))
     {
         let _ = response_tx.send(Err(e));
@@ -343,14 +354,18 @@ pub fn push_pending_depth(
 ) {
     if let Err(error) = validate_depth_sampling(&params.sample_points, &params.grid_density)
         .and_then(|()| validate_capture_delay(params.delay_frames.unwrap_or(2)))
+        .and_then(|()| validate_capture_pose(params.position, params.look_at))
     {
         let _ = response_tx.send(Err(error));
         return;
     }
     let Some(camera_entity) = select_capture_camera_3d(world) else {
-        let _ = response_tx.send(Err(ControlError::not_found(
-            "No active Camera3d found for capture_depth projection",
-        )));
+        let error = if world.query::<&Camera>().iter(world).next().is_none() {
+            ControlError::invalid_params(capture_no_camera("capture_depth"))
+        } else {
+            ControlError::not_found("No active Camera3d found for capture_depth projection")
+        };
+        let _ = response_tx.send(Err(error));
         return;
     };
     let CaptureDepthParams {
@@ -447,11 +462,15 @@ pub(crate) fn handle_submit_schedule(
 
 #[cfg(test)]
 mod tests {
-    use bevy::prelude::Camera2d;
+    use bevy::{asset::Assets, camera::RenderTarget, image::Image, prelude::Camera2d};
 
     use super::*;
     use crate::{
-        capture::{hold::OverlaySuppression, timeline::process_pending_timelines},
+        capture::{
+            hold::OverlaySuppression,
+            test_support::{make_test_image, spawn_structurally_valid_headless_camera},
+            timeline::process_pending_timelines,
+        },
         protocol::{ErrorCode, ReloadMode},
     };
 
@@ -659,6 +678,7 @@ mod tests {
     #[test]
     fn push_pending_timeline_accepts_valid_capture_count() {
         let mut world = World::new();
+        spawn_structurally_valid_headless_camera(&mut world);
         let (tx, mut rx) = oneshot::channel();
         let mut params = timeline_params(6);
         params.hide_ui = false;
@@ -692,7 +712,8 @@ mod tests {
     #[test]
     fn push_pending_timeline_rejects_camera2d_position_override() {
         let mut world = World::new();
-        world.spawn(Camera2d);
+        let target = Assets::<Image>::default().add(make_test_image(1, 1));
+        world.spawn((Camera2d, RenderTarget::Image(target.into())));
         let (tx, mut rx) = oneshot::channel();
         let mut params = timeline_params(6);
         params.position = Some([0.0, 0.0, 500.0]);

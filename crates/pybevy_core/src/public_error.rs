@@ -10,19 +10,12 @@ use std::{
 };
 
 /// Value-domain violations carry their canonical wording in `Display`.
-pub use pybevy_storage::domain::DomainViolation;
+pub use pybevy_storage::domain::{DURATION_INPUT_TYPES, DomainViolation};
 
 pub const LOAD_BUILDER_TYPE_REQUIRED: &str = "LoadBuilder.load() requires keyword-only asset_type when no settings establish the type; use load(path, asset_type=Image)";
 pub const LOAD_WITH_SETTINGS_DEPRECATED: &CStr = c"AssetServer.load_with_settings() is deprecated; use load_builder().with_settings(settings).load(path) instead";
 pub const LOADER_SETTINGS_BRIDGE_MISSING: &str = "Loader settings asset bridge is not registered";
 
-pub fn window_resize_min_domain(field: &str) -> String {
-    format!("resize_constraints.{field} must be finite")
-}
-
-pub fn window_resize_max_domain(field: &str) -> String {
-    format!("resize_constraints.{field} must be finite within f32 range or positive infinity")
-}
 pub const WORLD_COMMAND_ERRORS: &str = "World command errors";
 pub const WORLD_CALLBACK_COMMAND_ERRORS: &str = "World callback and command errors";
 pub const WORLD_OPERATION_COMMAND_ERRORS: &str = "World operation and command errors";
@@ -35,14 +28,6 @@ pub const BUTTON_INPUT_TYPE_REQUIRED: &str =
     "ButtonInput[...] requires a button type, for example ButtonInput[KeyCode]";
 pub const UNSUPPORTED_LOGICAL_KEY_VARIANT: &str = "unsupported logical key variant";
 pub const FLOAT_SEQUENCE_NOT_STR: &str = "expected an iterable of floats, not str";
-
-pub fn ui_scale_not_finite(scale: impl Display) -> String {
-    format!("UiScale.scale must be finite (got {scale})")
-}
-
-pub fn ui_scale_not_positive(scale: impl Display) -> String {
-    format!("UiScale.scale must be greater than zero (got {scale})")
-}
 
 pub fn button_input_unsupported_type(name: &str) -> String {
     format!(
@@ -795,17 +780,11 @@ pub fn unsupported_packed_uniform_type(actual: impl Display) -> String {
     format!("packed uniform type must be Vec2, Vec3, Vec4, or LinearRgba, got {actual}")
 }
 
-pub const DESIRED_MAXIMUM_FRAME_LATENCY_AT_LEAST_ONE: &str =
-    "desired_maximum_frame_latency must be at least 1";
-
 pub fn task_pool_thread_bounds(min_threads: usize, max_threads: usize) -> String {
     format!(
         "TaskPoolThreadAssignmentPolicy min_threads ({min_threads}) cannot exceed max_threads ({max_threads})"
     )
 }
-
-pub const TASK_POOL_PERCENT_NONNEGATIVE: &str =
-    "TaskPoolThreadAssignmentPolicy percent must be nonnegative";
 
 pub fn task_pool_total_thread_bounds(min_total_threads: usize, max_total_threads: usize) -> String {
     format!(
@@ -1492,6 +1471,8 @@ pub fn integer_vector_coordinate_out_of_range(
 ) -> String {
     format!("{type_name} coordinate must be between {minimum} and {maximum}, got {received}")
 }
+
+pub const MCP_ASSET_REFERENCE_UNKNOWN_SESSION: &str = "Asset reference was not issued in this app session: it comes from another session or a completed Full reload, or it is not a valid token";
 
 pub const COMPONENT_FLOAT_REQUIRED: &str =
     "expected a number; null is only valid for optional fields";

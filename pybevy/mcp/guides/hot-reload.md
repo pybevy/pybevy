@@ -103,8 +103,12 @@ reload {"mode": "full", "time_scale": 0.1}            - Reload at slow-motion
 reload {"mode": "full", "pause": true, "time_scale": 0.1} - Both: frozen at 0.1x, resume when ready
 
 get_reload_status                  - Check if reload is pending/complete
-get_last_error                     - Get Python error traceback if reload failed, plus wgpu_validation GPU errors
+get_last_error                     - Get Python error traceback if reload failed, plus wgpu_validation GPU errors and shader_errors
 ```
+
+`get_last_error.shader_errors` is `null` or lists the compile errors of shaders
+whose pipelines currently fail, such as a WGSL syntax error. It clears when the
+fixed shader recompiles; a `.wgsl` edit applies without a Python reload.
 
 `get_last_error.wgpu_validation` is `null` or reports GPU validation errors
 recorded since the last successful reload: `count`, `first` and `last`

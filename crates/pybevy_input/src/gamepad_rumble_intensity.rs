@@ -1,22 +1,13 @@
 use bevy::input::gamepad::GamepadRumbleIntensity;
-use pybevy_core::{
-    FromBorrowedStorage, ValueStorage, public_error::value_out_of_range, repr::float_repr,
-};
+use pybevy_core::{FromBorrowedStorage, ValueStorage, repr::float_repr};
 use pybevy_macros::pyvalue;
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pyo3::prelude::*;
 
-/// bevy documents these as 0.0 to 1.0 and stores them unchecked.
-pub(crate) fn check_motor(name: &str, value: f32) -> PyResult<f32> {
-    if (0.0..=1.0).contains(&value) {
-        Ok(value)
-    } else {
-        Err(PyValueError::new_err(value_out_of_range(
-            name, 0.0, 1.0, value,
-        )))
-    }
-}
-
-#[pyvalue]
+// bevy documents these as 0.0 to 1.0 and stores them unchecked.
+#[pyvalue(domains = [
+    strong_motor => [range_inclusive(0.0, 1.0)],
+    weak_motor => [range_inclusive(0.0, 1.0)],
+])]
 #[pyclass(
     name = "GamepadRumbleIntensity",
     module = "pybevy.input",
@@ -63,8 +54,8 @@ impl PyGamepadRumbleIntensity {
     #[pyo3(signature = (*, strong_motor = 1.0, weak_motor = 1.0))]
     fn new(strong_motor: f32, weak_motor: f32) -> PyResult<Self> {
         Ok(Self::from_owned(GamepadRumbleIntensity {
-            strong_motor: check_motor("strong_motor", strong_motor)?,
-            weak_motor: check_motor("weak_motor", weak_motor)?,
+            strong_motor: Self::check_strong_motor(strong_motor)?,
+            weak_motor: Self::check_weak_motor(weak_motor)?,
         }))
     }
 

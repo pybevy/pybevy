@@ -573,6 +573,8 @@ reload_and_capture {"mode": "full", "pause": true}
 This replaces the 3-step `reload` → `get_last_error` → `capture_screenshot` workflow.
 On failure, `reload` contains the paired `error` and `traceback` and may contain
 an advisory `hint` for a recognized message. Unknown errors omit `hint`.
+When the reload succeeds but the capture cannot run, the answer keeps the
+`reload` result with `screenshot: null` and the reason in `screenshot_error`.
 
 ### Multi-Angle Inspection
 

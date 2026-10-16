@@ -161,6 +161,9 @@ fn serialize_python_value(
     if let Ok(i) = value.extract::<i64>() {
         return serde_json::json!(i);
     }
+    if let Ok(u) = value.extract::<u64>() {
+        return serde_json::json!(u);
+    }
     // float
     if let Ok(f) = value.extract::<f64>() {
         return float_to_json(f);

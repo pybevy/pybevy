@@ -1,11 +1,16 @@
 use bevy::window::WindowResizeConstraints;
 use pybevy_core::{
-    FromBorrowedStorage, StorageError, ValueStorage, public_error, repr::float_repr,
+    FromBorrowedStorage, StorageError, ValueStorage, domain::F32Input, repr::float_repr,
 };
 use pybevy_macros::pyvalue;
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pyo3::prelude::*;
 
-#[pyvalue]
+#[pyvalue(domains = [
+    min_width => [finite],
+    min_height => [finite],
+    max_width => [finite_or_pos_inf],
+    max_height => [finite_or_pos_inf],
+])]
 #[pyclass(
     name = "WindowResizeConstraints",
     module = "pybevy.window",
@@ -72,10 +77,10 @@ impl PyWindowResizeConstraints {
         let constraints = WindowResizeConstraints {
             min_width,
             min_height,
-            max_width: parse_maximum(max_width, "max_width")?,
-            max_height: parse_maximum(max_height, "max_height")?,
+            max_width: Self::check_max_width(F32Input(max_width))?.narrowed(),
+            max_height: Self::check_max_height(F32Input(max_height))?.narrowed(),
         };
-        validate_constraints(&constraints)?;
+        Self::validate_domains(&constraints)?;
         Ok(Self::from_owned(constraints))
     }
 
@@ -86,10 +91,8 @@ impl PyWindowResizeConstraints {
 
     #[setter]
     pub fn set_min_width(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_min_width(value)?;
         self.storage.check_write_access()?;
-        let mut candidate = self.to_bevy()?;
-        candidate.min_width = value;
-        validate_constraints(&candidate)?;
         self.storage
             .update(|constraints| constraints.min_width = value)?;
         Ok(())
@@ -102,10 +105,8 @@ impl PyWindowResizeConstraints {
 
     #[setter]
     pub fn set_min_height(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_min_height(value)?;
         self.storage.check_write_access()?;
-        let mut candidate = self.to_bevy()?;
-        candidate.min_height = value;
-        validate_constraints(&candidate)?;
         self.storage
             .update(|constraints| constraints.min_height = value)?;
         Ok(())
@@ -118,11 +119,8 @@ impl PyWindowResizeConstraints {
 
     #[setter]
     pub fn set_max_width(&mut self, value: f64) -> PyResult<()> {
+        let value = Self::check_max_width(F32Input(value))?.narrowed();
         self.storage.check_write_access()?;
-        let value = parse_maximum(value, "max_width")?;
-        let mut candidate = self.to_bevy()?;
-        candidate.max_width = value;
-        validate_constraints(&candidate)?;
         self.storage
             .update(|constraints| constraints.max_width = value)?;
         Ok(())
@@ -135,11 +133,8 @@ impl PyWindowResizeConstraints {
 
     #[setter]
     pub fn set_max_height(&mut self, value: f64) -> PyResult<()> {
+        let value = Self::check_max_height(F32Input(value))?.narrowed();
         self.storage.check_write_access()?;
-        let value = parse_maximum(value, "max_height")?;
-        let mut candidate = self.to_bevy()?;
-        candidate.max_height = value;
-        validate_constraints(&candidate)?;
         self.storage
             .update(|constraints| constraints.max_height = value)?;
         Ok(())
@@ -157,40 +152,8 @@ impl PyWindowResizeConstraints {
     }
 }
 
-fn parse_maximum(value: f64, field: &str) -> PyResult<f32> {
-    if value == f64::INFINITY {
-        return Ok(f32::INFINITY);
-    }
-    if !value.is_finite() || !(f32::MIN as f64..=f32::MAX as f64).contains(&value) {
-        return Err(PyValueError::new_err(
-            public_error::window_resize_max_domain(field),
-        ));
-    }
-    Ok(value as f32)
-}
-
 pub(crate) fn validate_constraints(
     constraints: &WindowResizeConstraints,
 ) -> Result<(), StorageError> {
-    for (field, value) in [
-        ("min_width", constraints.min_width),
-        ("min_height", constraints.min_height),
-    ] {
-        if !value.is_finite() {
-            return Err(StorageError::InvalidValue(
-                public_error::window_resize_min_domain(field),
-            ));
-        }
-    }
-    for (field, value) in [
-        ("max_width", constraints.max_width),
-        ("max_height", constraints.max_height),
-    ] {
-        if !value.is_finite() && value != f32::INFINITY {
-            return Err(StorageError::InvalidValue(
-                public_error::window_resize_max_domain(field),
-            ));
-        }
-    }
-    Ok(())
+    Ok(PyWindowResizeConstraints::validate_domains(constraints)?)
 }

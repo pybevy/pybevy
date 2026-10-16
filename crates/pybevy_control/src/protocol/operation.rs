@@ -103,7 +103,7 @@ pub enum ControlOperation {
         /// Packed entity ID from an MCP response, or Name
         entity: EntityRef,
     },
-    /// Update specific fields on a World-registered component without replacing it.
+    /// Update specific fields on a World-registered component without replacing it. If the entity lacks the component, it is inserted from the given fields and the response reports `inserted: true`.
     #[schemars(extend("x-feature-gate" = "manipulation"))]
     SetComponent(SetComponentParams),
     /// Remove a component from an entity.

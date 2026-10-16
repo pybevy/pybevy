@@ -6,7 +6,10 @@ use syn::{
     parse_macro_input,
 };
 
-use crate::util::reflect_registration_tokens;
+use crate::{
+    domain::{DomainEntry, domain_impl_tokens, owner_name, parse_domains},
+    util::reflect_registration_tokens,
+};
 
 /// Generates storage boilerplate for asset wrappers in feature crates.
 ///
@@ -53,6 +56,7 @@ pub fn pyasset(attr: TokenStream, item: TokenStream) -> TokenStream {
         material: bool,
         input_converter: bool,
         missing_resource_hint: Option<String>,
+        domains: Vec<DomainEntry>,
     }
 
     impl Parse for AssetStorageArgs {
@@ -65,6 +69,7 @@ pub fn pyasset(attr: TokenStream, item: TokenStream) -> TokenStream {
             let mut input_converter = false;
             let mut material = false;
             let mut missing_resource_hint = None;
+            let mut domains = Vec::new();
 
             while input.peek(Token![,]) {
                 input.parse::<Token![,]>()?;
@@ -76,6 +81,10 @@ pub fn pyasset(attr: TokenStream, item: TokenStream) -> TokenStream {
                     continue;
                 }
                 let ident: Ident = input.parse()?;
+                if ident == "domains" {
+                    parse_domains(input, &mut domains)?;
+                    continue;
+                }
                 if input.peek(Token![=]) {
                     input.parse::<Token![=]>()?;
                     let value: syn::LitStr = input.parse()?;
@@ -107,7 +116,7 @@ pub fn pyasset(attr: TokenStream, item: TokenStream) -> TokenStream {
                         return Err(syn::Error::new_spanned(
                             ident,
                             format!(
-                                "unknown option '{}', expected one of: no_clone, bridge, not_loadable, input_converter, material, missing_resource_hint = \"...\"",
+                                "unknown option '{}', expected one of: no_clone, bridge, not_loadable, input_converter, material, missing_resource_hint = \"...\", domains",
                                 other
                             ),
                         ));
@@ -131,6 +140,7 @@ pub fn pyasset(attr: TokenStream, item: TokenStream) -> TokenStream {
                 input_converter,
                 material,
                 missing_resource_hint,
+                domains,
             })
         }
     }
@@ -139,6 +149,12 @@ pub fn pyasset(attr: TokenStream, item: TokenStream) -> TokenStream {
     let bevy_type = &args.bevy_type;
     let input = parse_macro_input!(item as ItemStruct);
     let py_type = &input.ident;
+    let domain_tokens = domain_impl_tokens(
+        bevy_type,
+        py_type,
+        &owner_name(py_type, args.bridge_name.as_deref()),
+        &args.domains,
+    );
 
     // `material` inserts PyMaterial between PyAsset and the wrapper, mirroring
     // `impl Material for T` in Bevy. The assertion makes a mislabelled wrapper a
@@ -274,6 +290,7 @@ pub fn pyasset(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
 
+        #domain_tokens
         #bridge_tokens
     };
 

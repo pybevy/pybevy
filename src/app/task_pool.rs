@@ -7,15 +7,10 @@ use pyo3::{PyTraverseError, PyVisit, exceptions::PyValueError, prelude::*};
 
 use crate::app::app::PyApp;
 
-fn validate_policy(min_threads: usize, max_threads: usize, percent: f32) -> PyResult<()> {
+fn validate_thread_bounds(min_threads: usize, max_threads: usize) -> PyResult<()> {
     if min_threads > max_threads {
         return Err(PyValueError::new_err(
             public_error::task_pool_thread_bounds(min_threads, max_threads),
-        ));
-    }
-    if percent.is_nan() || percent < 0.0 {
-        return Err(PyValueError::new_err(
-            public_error::TASK_POOL_PERCENT_NONNEGATIVE,
         ));
     }
     Ok(())
@@ -30,7 +25,7 @@ fn validate_total_threads(min_total_threads: usize, max_total_threads: usize) ->
     Ok(())
 }
 
-#[pyfield]
+#[pyfield(domains = [percent => [non_negative]])]
 #[pyclass(
     name = "TaskPoolThreadAssignmentPolicy",
     module = "pybevy.app",
@@ -52,7 +47,8 @@ impl PyTaskPoolThreadAssignmentPolicy {
     #[new]
     #[pyo3(signature = (*, min_threads, max_threads, percent))]
     pub fn new(min_threads: usize, max_threads: usize, percent: f32) -> PyResult<Self> {
-        validate_policy(min_threads, max_threads, percent)?;
+        validate_thread_bounds(min_threads, max_threads)?;
+        let percent = Self::check_percent(percent)?;
         Ok(Self::from_owned(TaskPoolThreadAssignmentPolicy {
             min_threads,
             max_threads,
@@ -70,7 +66,7 @@ impl PyTaskPoolThreadAssignmentPolicy {
     #[setter]
     pub fn set_min_threads(&mut self, min_threads: usize) -> PyResult<()> {
         let mut policy = self.as_mut()?;
-        validate_policy(min_threads, policy.max_threads, policy.percent)?;
+        validate_thread_bounds(min_threads, policy.max_threads)?;
         policy.min_threads = min_threads;
         Ok(())
     }
@@ -83,7 +79,7 @@ impl PyTaskPoolThreadAssignmentPolicy {
     #[setter]
     pub fn set_max_threads(&mut self, max_threads: usize) -> PyResult<()> {
         let mut policy = self.as_mut()?;
-        validate_policy(policy.min_threads, max_threads, policy.percent)?;
+        validate_thread_bounds(policy.min_threads, max_threads)?;
         policy.max_threads = max_threads;
         Ok(())
     }
@@ -95,9 +91,8 @@ impl PyTaskPoolThreadAssignmentPolicy {
 
     #[setter]
     pub fn set_percent(&mut self, percent: f32) -> PyResult<()> {
-        let mut policy = self.as_mut()?;
-        validate_policy(policy.min_threads, policy.max_threads, percent)?;
-        policy.percent = percent;
+        let percent = Self::check_percent(percent)?;
+        self.as_mut()?.percent = percent;
         Ok(())
     }
 }

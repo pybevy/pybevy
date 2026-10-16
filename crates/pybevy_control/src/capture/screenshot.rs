@@ -8,7 +8,6 @@ use bevy::{
     log::error,
     prelude::*,
     render::view::window::screenshot::{Screenshot, ScreenshotCaptured},
-    window::PrimaryWindow,
 };
 use image::{ImageFormat, RgbImage, imageops::crop_imm};
 use pybevy_ecs::shared::system_runtime::HotReloadGeneration;
@@ -16,7 +15,8 @@ use tokio::sync::oneshot;
 
 use super::{
     camera::{
-        selected_camera_screenshot_target, setup_debug_camera_for_entity, validate_capture_camera,
+        has_primary_window, selected_camera_screenshot_target, setup_debug_camera_for_entity,
+        validate_capture_camera,
     },
     compose::composite_contact_sheet,
     headless::{capture_headless_frame, headless_frame_sequence},
@@ -97,6 +97,24 @@ pub(crate) fn validate_capture_delay(delay_frames: u32) -> Result<(), ControlErr
     Ok(())
 }
 
+/// A capture pose needs a view direction: `look_at`, the origin by default,
+/// must differ from `position`.
+pub(crate) fn validate_capture_pose(
+    position: Option<[f32; 3]>,
+    look_at: Option<[f32; 3]>,
+) -> Result<(), ControlError> {
+    let Some(position) = position else {
+        return Ok(());
+    };
+    let target = look_at.unwrap_or([0.0, 0.0, 0.0]);
+    if Vec3::from_array(position).distance(Vec3::from_array(target)) < 1e-6 {
+        return Err(ControlError::invalid_params(
+            "look_at must differ from position; the camera needs a view direction",
+        ));
+    }
+    Ok(())
+}
+
 /// Process pending screenshot requests (called each frame in Last schedule).
 ///
 /// Flow:
@@ -166,15 +184,22 @@ pub fn process_pending_screenshots(world: &mut World) {
         if let Some(camera_entity) = selected_depth_camera
             && let Err(error) = validate_depth_capture_camera(world, camera_entity)
         {
-            let _ = screenshot.response_tx.send(Err(error));
+            let _ = screenshot.response_tx.send(merge_extra_response(
+                Err(error),
+                screenshot.extra_response.take(),
+            ));
             hold.release(world);
             continue;
         }
         if selected_depth_camera.is_none()
             && screenshot.debug_camera.is_none()
-            && let Err(error) = validate_capture_camera(world, &screenshot.response_kind)
+            && let Err(error) =
+                validate_capture_camera(world, screenshot.response_kind.operation_name())
         {
-            let _ = screenshot.response_tx.send(Err(error));
+            let _ = screenshot.response_tx.send(merge_extra_response(
+                Err(error),
+                screenshot.extra_response.take(),
+            ));
             hold.release(world);
             continue;
         }
@@ -183,7 +208,10 @@ pub fn process_pending_screenshots(world: &mut World) {
             match setup_debug_camera_for_entity(world, &debug_req, selected_depth_camera) {
                 Ok(cleanup) => hold.debug_cleanup = Some(cleanup),
                 Err(error) => {
-                    let _ = screenshot.response_tx.send(Err(error));
+                    let _ = screenshot.response_tx.send(merge_extra_response(
+                        Err(error),
+                        screenshot.extra_response.take(),
+                    ));
                     hold.release(world);
                     continue;
                 }
@@ -194,7 +222,10 @@ pub fn process_pending_screenshots(world: &mut World) {
             match begin_entity_capture_isolation(world, &entity_ref, screenshot.with_gizmos) {
                 Ok(isolation) => hold.entity_isolation = Some(isolation),
                 Err(error) => {
-                    let _ = screenshot.response_tx.send(Err(error));
+                    let _ = screenshot.response_tx.send(merge_extra_response(
+                        Err(error),
+                        screenshot.extra_response.take(),
+                    ));
                     hold.release(world);
                     continue;
                 }
@@ -216,11 +247,7 @@ pub fn process_pending_screenshots(world: &mut World) {
             2
         };
 
-        let has_window = world
-            .query_filtered::<Entity, With<PrimaryWindow>>()
-            .iter(world)
-            .next()
-            .is_some();
+        let has_window = has_primary_window(world);
         // An isolated capture always stages: capturing in this same run
         // would grab a frame laid out before the isolation.
         if hold.debug_cleanup.is_some() || !has_window || isolated {
@@ -253,7 +280,10 @@ pub fn process_pending_screenshots(world: &mut World) {
                     (Screenshot(target), viewport)
                 }
                 Err(error) => {
-                    let _ = screenshot.response_tx.send(Err(error));
+                    let _ = screenshot.response_tx.send(merge_extra_response(
+                        Err(error),
+                        screenshot.extra_response.take(),
+                    ));
                     hold.release(world);
                     continue;
                 }
@@ -294,16 +324,13 @@ pub fn process_pending_screenshots(world: &mut World) {
             } else {
                 // Debug camera has rendered - capture now
                 if s.depth_analysis.is_none()
-                    && let Err(error) = validate_capture_camera(world, &s.response_kind)
+                    && let Err(error) =
+                        validate_capture_camera(world, s.response_kind.operation_name())
                 {
                     fail_staged_screenshot_with_error(world, s, error);
                     continue;
                 }
-                let has_window = world
-                    .query_filtered::<Entity, With<PrimaryWindow>>()
-                    .iter(world)
-                    .next()
-                    .is_some();
+                let has_window = has_primary_window(world);
 
                 let (capture_target, capture_viewport) = if let Some(depth_analysis) =
                     s.depth_analysis.as_ref()
@@ -405,7 +432,9 @@ fn fail_staged_screenshot_with_error(
     staged: StagedScreenshot,
     error: ControlError,
 ) {
-    let _ = staged.response_tx.send(Err(error));
+    let _ = staged
+        .response_tx
+        .send(merge_extra_response(Err(error), staged.extra_response));
     staged.hold.release(world);
 }
 
@@ -441,9 +470,10 @@ fn expire_stuck_screenshot_responders(world: &mut World) {
         if let Ok(entity_mut) = world.get_entity_mut(entity) {
             entity_mut.despawn();
         }
-        let _ = responder
-            .response_tx
-            .send(Err(ControlError::internal(CAPTURE_DEADLINE_ERROR)));
+        let _ = responder.response_tx.send(merge_extra_response(
+            Err(ControlError::internal(CAPTURE_DEADLINE_ERROR)),
+            responder.extra_response,
+        ));
         responder.hold.release(world);
     }
 }

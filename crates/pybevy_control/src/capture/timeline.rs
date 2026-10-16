@@ -1,14 +1,14 @@
 use std::collections::{HashMap, VecDeque};
 
-use bevy::{
-    ecs::world::World, prelude::*, render::view::window::screenshot::Screenshot,
-    window::PrimaryWindow,
-};
+use bevy::{ecs::world::World, prelude::*, render::view::window::screenshot::Screenshot};
 use image::RgbImage;
 use tokio::sync::oneshot;
 
 use super::{
-    camera::{selected_camera_screenshot_target, setup_debug_camera},
+    camera::{
+        has_primary_window, selected_camera_screenshot_target, setup_debug_camera,
+        validate_capture_camera,
+    },
     compose::composite_contact_sheet,
     headless::{headless_frame_sequence, read_headless_frame},
     hold::CaptureHold,
@@ -119,6 +119,9 @@ fn fail_timeline(
 
 /// Take the capture state a timeline holds until it completes.
 fn start_timeline(world: &mut World, timeline: &mut ActiveTimeline) -> Result<(), ControlError> {
+    if !has_primary_window(world) {
+        validate_capture_camera(world, "capture_timeline")?;
+    }
     let debug_cleanup = timeline
         .debug_camera
         .take()
@@ -142,11 +145,7 @@ pub fn process_pending_timelines(world: &mut World) {
         return;
     }
 
-    let has_window = world
-        .query_filtered::<Entity, With<PrimaryWindow>>()
-        .iter(world)
-        .next()
-        .is_some();
+    let has_window = has_primary_window(world);
     let current_headless_sequence = (!has_window)
         .then(|| headless_frame_sequence(world))
         .flatten();
@@ -350,7 +349,10 @@ mod tests {
         screenshot::{
             PendingScreenshotResponders, ScreenshotResponder, screenshot_captured_observer,
         },
-        test_support::{default_group_restore, gizmos_enabled, make_test_image, world_with_gizmos},
+        test_support::{
+            default_group_restore, gizmos_enabled, make_test_image,
+            spawn_structurally_valid_headless_camera, world_with_gizmos,
+        },
         turnaround::{PendingTurnarounds, TurnaroundCaptures},
     };
 
@@ -431,6 +433,7 @@ mod tests {
     #[test]
     fn timeline_suppresses_the_overlay_before_the_first_capture() {
         let mut world = world_with_gizmos();
+        spawn_structurally_valid_headless_camera(&mut world);
         world.insert_resource(HeadlessFrameBuffer {
             latest: Some((vec![255, 255, 255, 255], 1, 1)),
             sequence: 1,
@@ -482,6 +485,7 @@ mod tests {
     #[test]
     fn timeline_capture_applies_capture_visibility() {
         let mut world = world_with_gizmos();
+        spawn_structurally_valid_headless_camera(&mut world);
         world.insert_resource(HeadlessFrameBuffer {
             latest: Some((vec![255, 255, 255, 255], 1, 1)),
             sequence: 1,
@@ -559,6 +563,7 @@ mod tests {
     #[test]
     fn queued_timeline_starts_after_the_active_capture_ends() {
         let mut world = world_with_gizmos();
+        spawn_structurally_valid_headless_camera(&mut world);
         let ui = world.spawn((Visibility::Visible, Node::default())).id();
         let screenshot_entity = world.spawn_empty().id();
         let (tx, _responder_rx) = oneshot::channel();
@@ -605,6 +610,7 @@ mod tests {
     #[test]
     fn abandoned_timeline_releases_capture_state() {
         let mut world = world_with_gizmos();
+        spawn_structurally_valid_headless_camera(&mut world);
         let ui = world.spawn((Visibility::Visible, Node::default())).id();
         let (timeline, rx) = queued_timeline(true);
         let mut pending = PendingTimelines::default();
@@ -625,6 +631,7 @@ mod tests {
     #[test]
     fn headless_timeline_without_frame_buffer_fails_instead_of_hanging() {
         let mut world = world_with_gizmos();
+        spawn_structurally_valid_headless_camera(&mut world);
         let (tx, mut rx) = oneshot::channel();
         let mut timelines = PendingTimelines::default();
         timelines.active.insert(
@@ -675,6 +682,7 @@ mod tests {
     #[test]
     fn process_pending_timelines_countdown() {
         let mut world = World::new();
+        spawn_structurally_valid_headless_camera(&mut world);
         let (tx, _rx) = oneshot::channel();
         let mut timelines = PendingTimelines::default();
         timelines.active.insert(
@@ -753,6 +761,7 @@ mod tests {
     #[test]
     fn process_pending_timelines_multiple_delays() {
         let mut world = World::new();
+        spawn_structurally_valid_headless_camera(&mut world);
         world.insert_resource(HeadlessFrameBuffer {
             latest: Some((vec![255, 255, 255, 255], 1, 1)),
             sequence: 1,
@@ -911,6 +920,7 @@ mod tests {
     #[test]
     fn headless_timeline_waits_for_a_new_readback() {
         let mut world = World::new();
+        spawn_structurally_valid_headless_camera(&mut world);
         world.insert_resource(HeadlessFrameBuffer {
             latest: Some((vec![255, 0, 0, 255], 1, 1)),
             sequence: 5,

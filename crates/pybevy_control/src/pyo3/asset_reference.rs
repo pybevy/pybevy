@@ -5,7 +5,7 @@ use bevy::{
     ecs::{entity::Entity, world::World},
 };
 use pybevy_core::{
-    ComponentBridge, PyHandle, ValidityGuard,
+    ComponentBridge, PyHandle, ValidityGuard, public_error,
     registry::global_registry::{all_component_bridges, get_asset_bridge_by_type_id},
 };
 use pyo3::{prelude::*, types::PyType};
@@ -124,7 +124,7 @@ fn resolve(world: &mut World, reference: &AssetReference) -> Result<PyHandle, Co
         .contains(reference);
     if !session_matches {
         return Err(ControlError::invalid_params(
-            "Asset reference belongs to another app session or a completed Full reload",
+            public_error::MCP_ASSET_REFERENCE_UNKNOWN_SESSION,
         ));
     }
 
@@ -169,7 +169,7 @@ fn resolve(world: &mut World, reference: &AssetReference) -> Result<PyHandle, Co
     }
     if validation == Err(AssetReferenceValidationError::WrongSession) {
         return Err(ControlError::invalid_params(
-            "Asset reference belongs to another app session or a completed Full reload",
+            public_error::MCP_ASSET_REFERENCE_UNKNOWN_SESSION,
         ));
     }
     validate_live_asset(world, &handle)?;

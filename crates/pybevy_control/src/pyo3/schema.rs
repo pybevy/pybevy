@@ -95,10 +95,7 @@ pub fn get_component_schema(
             let type_name = if name.contains('.') {
                 name.clone()
             } else {
-                py_type
-                    .name()
-                    .map(|n| n.to_string())
-                    .unwrap_or_else(|_| name.clone())
+                bridge.name().to_string()
             };
             let mut fields = get_class_fields(py, &py_type);
             let is_asset_handle = type_has_handle_property(&py_type);
@@ -143,6 +140,23 @@ pub fn get_component_schema(
                         serde_json::Value::Object(field_types.clone()),
                     );
                 }
+            }
+
+            if let Some(field) = bridge.relationship_field() {
+                let obj = result.as_object_mut().unwrap();
+                if let Some(fields) = obj
+                    .get_mut("fields")
+                    .and_then(serde_json::Value::as_object_mut)
+                {
+                    fields.insert(field.to_string(), serde_json::json!("Entity"));
+                }
+                obj.insert("field_types".into(), serde_json::json!({ field: "Entity" }));
+                obj.insert(
+                    "spawn_example".into(),
+                    serde_json::json!({
+                        "components": { &type_name: "<packed entity id>" }
+                    }),
+                );
             }
 
             if is_asset_handle {
