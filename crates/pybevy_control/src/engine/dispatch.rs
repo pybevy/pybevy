@@ -135,7 +135,7 @@ mod tests {
         camera::primitives::Aabb,
         ecs::{name::Name, world::World},
         math::Vec3,
-        prelude::GlobalTransform,
+        prelude::{GlobalTransform, Transform},
         reflect::TypePath,
     };
     use pybevy_core::{
@@ -538,7 +538,7 @@ mod tests {
     fn dispatch_get_component_schema_with_type_registry() {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
-        app.register_type::<bevy::prelude::Transform>();
+        app.register_type::<Transform>();
         app.update();
 
         // Use a component name that is definitely NOT in any bridge registry.

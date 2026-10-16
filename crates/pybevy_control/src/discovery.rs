@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
+    env, fs, iter,
     path::{Path, PathBuf},
 };
 
@@ -51,7 +52,7 @@ impl ApiIndex {
         let mut py_fallbacks: Vec<(String, PathBuf)> = Vec::new();
         let mut package_init_files: Vec<(String, PathBuf)> = Vec::new();
 
-        if let Ok(read_dir) = std::fs::read_dir(pybevy_dir) {
+        if let Ok(read_dir) = fs::read_dir(pybevy_dir) {
             let mut dir_entries: Vec<_> = read_dir.filter_map(|e| e.ok()).collect();
             dir_entries.sort_by_key(|e| e.file_name());
 
@@ -75,7 +76,7 @@ impl ApiIndex {
                     let Some(subdir_str) = subdir_name.to_str() else {
                         continue;
                     };
-                    if let Ok(sub_read) = std::fs::read_dir(&path) {
+                    if let Ok(sub_read) = fs::read_dir(&path) {
                         let mut sub_entries: Vec<_> = sub_read.filter_map(|e| e.ok()).collect();
                         sub_entries.sort_by_key(|e| e.file_name());
                         for sub_entry in sub_entries {
@@ -125,7 +126,7 @@ impl ApiIndex {
                     && path.extension().is_some_and(|extension| extension == "py")
             })
             .filter_map(|(package, path)| {
-                std::fs::read_to_string(path)
+                fs::read_to_string(path)
                     .ok()
                     .map(|content| parse_package_reexports(package, &content))
             })
@@ -140,8 +141,7 @@ impl ApiIndex {
 
         // A package stub is the declared public surface. Pure-Python fallbacks
         // are indexed only when a stub-less package explicitly re-exports them.
-        let pyi_modules: std::collections::HashSet<String> =
-            pyi_files.iter().map(|(n, _)| n.clone()).collect();
+        let pyi_modules: HashSet<String> = pyi_files.iter().map(|(n, _)| n.clone()).collect();
         for (name, path) in py_fallbacks {
             if !pyi_modules.contains(&name) && public_fallback_modules.contains(&name) {
                 pyi_files.push((name, path));
@@ -149,7 +149,7 @@ impl ApiIndex {
         }
 
         for (module_name, path) in pyi_files {
-            if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(content) = fs::read_to_string(&path) {
                 let (classes, functions) = parse_stub_definitions(&content);
                 entries.push(ApiIndexEntry {
                     module: module_name.clone(),
@@ -166,7 +166,7 @@ impl ApiIndex {
             if !is_stub && stubbed_packages.contains(&package) {
                 continue;
             }
-            if let Ok(content) = std::fs::read_to_string(path) {
+            if let Ok(content) = fs::read_to_string(path) {
                 type_aliases.extend(parse_package_reexports(&package, &content));
             }
         }
@@ -176,7 +176,7 @@ impl ApiIndex {
 
         // Load default instructions from pybevy/mcp/instructions.md
         let instructions_path = pybevy_dir.join("mcp/instructions.md");
-        let instructions = std::fs::read_to_string(&instructions_path)
+        let instructions = fs::read_to_string(&instructions_path)
             .ok()
             .map(|content| strip_html_comments(&content));
 
@@ -384,7 +384,7 @@ impl ApiIndex {
     /// Find the pybevy/ directory relative to the current working directory
     pub fn find_pybevy_dir() -> Option<PathBuf> {
         // Try current directory
-        let cwd = std::env::current_dir().ok()?;
+        let cwd = env::current_dir().ok()?;
         let candidate = cwd.join("pybevy");
         if candidate.is_dir() {
             return Some(candidate);
@@ -628,7 +628,7 @@ fn collect_class_definitions(module: &str, content: &str) -> Vec<DefinitionCandi
         let qualname = parents
             .iter()
             .map(|(_, parent)| parent.as_str())
-            .chain(std::iter::once(name))
+            .chain(iter::once(name))
             .collect::<Vec<_>>()
             .join(".");
         let end = lines
@@ -761,7 +761,7 @@ fn load_guides(guides_dir: &Path) -> (Vec<GuideEntry>, HashMap<String, String>) 
     let mut entries = Vec::new();
     let mut contents = HashMap::new();
 
-    let Ok(read_dir) = std::fs::read_dir(guides_dir) else {
+    let Ok(read_dir) = fs::read_dir(guides_dir) else {
         return (entries, contents);
     };
 
@@ -783,7 +783,7 @@ fn load_guides(guides_dir: &Path) -> (Vec<GuideEntry>, HashMap<String, String>) 
             let Some(subdir_str) = subdir_name.to_str() else {
                 continue;
             };
-            if let Ok(sub_read) = std::fs::read_dir(&path) {
+            if let Ok(sub_read) = fs::read_dir(&path) {
                 let mut sub_entries: Vec<_> = sub_read.filter_map(|e| e.ok()).collect();
                 sub_entries.sort_by_key(|e| e.file_name());
                 for sub_entry in sub_entries {
@@ -801,7 +801,7 @@ fn load_guides(guides_dir: &Path) -> (Vec<GuideEntry>, HashMap<String, String>) 
     }
 
     for (name, path) in md_files {
-        if let Ok(content) = std::fs::read_to_string(&path) {
+        if let Ok(content) = fs::read_to_string(&path) {
             let content = strip_html_comments(&content);
             let (title, description) = parse_guide_header(&content);
             entries.push(GuideEntry {
@@ -1192,7 +1192,7 @@ fn extract_return_type(sig: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{env, fs};
 
     use super::*;
 
@@ -1661,7 +1661,7 @@ class Bloom(Component):
 
     #[test]
     fn api_index_build_with_temp_dir() {
-        let dir = std::env::temp_dir().join("pybevy_test_api_index");
+        let dir = env::temp_dir().join("pybevy_test_api_index");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
 
@@ -1688,7 +1688,7 @@ class Bloom(Component):
 
     #[test]
     fn package_init_stub_uses_the_package_module_name() {
-        let dir = std::env::temp_dir().join("pybevy_test_api_package_index");
+        let dir = env::temp_dir().join("pybevy_test_api_package_index");
         let _ = fs::remove_dir_all(&dir);
         let ecs_dir = dir.join("ecs");
         fs::create_dir_all(&ecs_dir).unwrap();
@@ -1715,7 +1715,7 @@ class Bloom(Component):
 
     #[test]
     fn api_index_search_case_insensitive() {
-        let dir = std::env::temp_dir().join("pybevy_test_search");
+        let dir = env::temp_dir().join("pybevy_test_search");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
 
@@ -1736,7 +1736,7 @@ class Bloom(Component):
 
     #[test]
     fn api_index_search_truncation() {
-        let dir = std::env::temp_dir().join("pybevy_test_truncation");
+        let dir = env::temp_dir().join("pybevy_test_truncation");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
 
@@ -1764,7 +1764,7 @@ class Bloom(Component):
 
     #[test]
     fn api_index_get_type_definition() {
-        let dir = std::env::temp_dir().join("pybevy_test_typedef");
+        let dir = env::temp_dir().join("pybevy_test_typedef");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
 
@@ -1787,7 +1787,7 @@ class Bloom(Component):
 
     #[test]
     fn api_index_gets_structured_function_definitions() {
-        let dir = std::env::temp_dir().join("pybevy_test_function_definition");
+        let dir = env::temp_dir().join("pybevy_test_function_definition");
         let _ = fs::remove_dir_all(&dir);
         let material_dir = dir.join("material");
         fs::create_dir_all(&material_dir).unwrap();
@@ -1836,7 +1836,7 @@ def material(
 
     #[test]
     fn api_index_type_lookup_is_qualified_and_reports_ambiguity() {
-        let dir = std::env::temp_dir().join("pybevy_test_qualified_typedef");
+        let dir = env::temp_dir().join("pybevy_test_qualified_typedef");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         fs::write(
@@ -1917,7 +1917,7 @@ class Shared:
 
     #[test]
     fn api_index_guides() {
-        let dir = std::env::temp_dir().join("pybevy_test_guides");
+        let dir = env::temp_dir().join("pybevy_test_guides");
         let _ = fs::remove_dir_all(&dir);
         let guides_dir = dir.join("mcp/guides");
         fs::create_dir_all(&guides_dir).unwrap();
@@ -1953,7 +1953,7 @@ class Shared:
 
     #[test]
     fn api_index_keeps_only_public_python_fallbacks() {
-        let dir = std::env::temp_dir().join("pybevy_test_py_fallback");
+        let dir = env::temp_dir().join("pybevy_test_py_fallback");
         let _ = fs::remove_dir_all(&dir);
         let contrib_dir = dir.join("contrib");
         let mcp_dir = dir.join("mcp");
@@ -2084,7 +2084,7 @@ from .single import Simple
 
     #[test]
     fn api_index_instructions() {
-        let dir = std::env::temp_dir().join("pybevy_test_instructions");
+        let dir = env::temp_dir().join("pybevy_test_instructions");
         let _ = fs::remove_dir_all(&dir);
         let mcp_dir = dir.join("mcp");
         fs::create_dir_all(&mcp_dir).unwrap();
@@ -2105,7 +2105,7 @@ from .single import Simple
 
     #[test]
     fn api_index_instructions_missing() {
-        let dir = std::env::temp_dir().join("pybevy_test_instructions_missing");
+        let dir = env::temp_dir().join("pybevy_test_instructions_missing");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
 

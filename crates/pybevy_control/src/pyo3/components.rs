@@ -1,9 +1,14 @@
-use std::sync::{Arc, OnceLock};
+use std::{
+    collections::HashMap,
+    sync::{Arc, OnceLock},
+};
 
-use bevy::ecs::{change_detection::DetectChangesMut, entity::Entity, world::World};
+use bevy::ecs::{
+    change_detection::DetectChangesMut, component::ComponentId, entity::Entity, world::World,
+};
 use pybevy_core::{
     ComponentBridge, CustomComponentInfo, PyEntity, ValidityFlag, ValidityGuard,
-    custom_resource::validate_hierarchy_link, public_error,
+    component_layout::ComponentLayout, custom_resource::validate_hierarchy_link, public_error,
 };
 use pyo3::{
     ffi::PyTypeObject,
@@ -18,7 +23,9 @@ use crate::{
     },
     protocol::{ControlError, EntityRef},
     pyo3::{
+        asset_reference::{contains_reference_field, set_from_reference},
         custom,
+        enum_names::canonical_variant_name,
         errors::{component_unknown_field_error, unknown_set_fields},
         execute::create_world_wrapper,
         from_json::{
@@ -27,7 +34,7 @@ use crate::{
                 resolve_enum_instance,
             },
             field::{
-                class_declares_component_field, convert_annotated_field_value, convert_field_value,
+                class_declares_component_field, convert_annotated_field_value,
                 convert_field_value_typed, declared_optional_type, entity_from_json,
                 has_public_instance_field, json_to_py, json_to_py_for_field, optional_field_types,
                 validate_annotated_field_value,
@@ -180,14 +187,8 @@ pub fn spawn_entity(
         }
 
         let fields = comp_fields.as_object().cloned().unwrap_or_default();
-        if super::asset_reference::contains_reference_field(&fields) {
-            match super::asset_reference::set_from_reference(
-                world,
-                entity,
-                bridge.name(),
-                &fields,
-                &bridge,
-            ) {
+        if contains_reference_field(&fields) {
+            match set_from_reference(world, entity, bridge.name(), &fields, &bridge) {
                 Ok(value) => {
                     added_components.push(comp_name.clone());
                     component_values.insert(comp_name.clone(), value);
@@ -277,10 +278,10 @@ pub fn spawn_entity(
 /// ordering, and the unsafe `insert_by_id` boundary.
 fn spawn_custom_component(
     world: &mut World,
-    entity: bevy::ecs::entity::Entity,
+    entity: Entity,
     comp_name: &str,
     value: &serde_json::Value,
-    component_id: bevy::ecs::component::ComponentId,
+    component_id: ComponentId,
     added_components: &mut Vec<String>,
     errors: &mut Vec<String>,
 ) {
@@ -404,153 +405,178 @@ fn construct_component_from_fields<'py>(
     }
 }
 
-/// Python fallback for spawning a component: create via py_type and apply fields.
-/// Tries call0() first (default constructor), then kwargs constructor if that fails.
+/// Why a native component could not be built or inserted.
+enum ConstructError {
+    /// `field: message`, reported as `Component.field: message`.
+    Field(String),
+    /// Reported as `Component: message`.
+    Component(String),
+    /// A complete message.
+    Whole(String),
+}
+
+impl ConstructError {
+    fn describe(&self, component: &str) -> String {
+        match self {
+            Self::Field(message) => format!("{component}.{message}"),
+            Self::Component(message) => format!("{component}: {message}"),
+            Self::Whole(message) => message.clone(),
+        }
+    }
+
+    fn detail(&self) -> &str {
+        match self {
+            Self::Field(message) | Self::Component(message) | Self::Whole(message) => message,
+        }
+    }
+}
+
+/// One `set_component` insert error: a complete message stands alone, the
+/// rest share the component prefix.
+fn insert_error(component: &str, errors: &[ConstructError]) -> ControlError {
+    if let [ConstructError::Whole(message)] = errors {
+        return ControlError::invalid_params(message.clone());
+    }
+    let details: Vec<&str> = errors.iter().map(ConstructError::detail).collect();
+    ControlError::invalid_params(format!(
+        "Failed to set '{component}': {}",
+        details.join("; ")
+    ))
+}
+
+/// Build a native component from JSON fields: its default with the fields
+/// written, the enum variant the fields request, or, for a type without a
+/// default, its constructor called with the fields as keywords. Every field
+/// error is reported, not only the first.
+fn construct_native<'py>(
+    py: Python<'py>,
+    bridge: &Arc<dyn ComponentBridge>,
+    component: &str,
+    fields: &serde_json::Map<String, serde_json::Value>,
+    optional_types: &HashMap<String, String>,
+) -> Result<Bound<'py, PyAny>, Vec<ConstructError>> {
+    let py_type = bridge.py_type(py);
+    let mut errors = Vec::new();
+    match py_type.call0() {
+        Ok(instance) => match resolve_enum_instance(py, &instance, fields) {
+            Ok(Some(resolved)) => return Ok(resolved.into_bound(py)),
+            Ok(None) => {
+                let unknown = unknown_set_fields(&instance, fields.keys());
+                if !unknown.is_empty() {
+                    return Err(vec![ConstructError::Whole(component_unknown_field_error(
+                        component, &unknown, &instance,
+                    ))]);
+                }
+                for (field_name, field_value) in fields {
+                    let declared = declared_optional_type(optional_types, field_name);
+                    let written =
+                        convert_field_value_typed(py, &instance, field_name, field_value, declared)
+                            .and_then(|value| {
+                                instance
+                                    .setattr(field_name.as_str(), value)
+                                    .map_err(|error| error.to_string())
+                            });
+                    if let Err(error) = written {
+                        errors.push(ConstructError::Field(format!("{field_name}: {error}")));
+                    }
+                }
+                if errors.is_empty() {
+                    return Ok(instance);
+                }
+            }
+            Err(error) => errors.push(ConstructError::Component(error)),
+        },
+        Err(_) if !fields.is_empty() => {
+            let kwargs = PyDict::new(py);
+            for (field_name, field_value) in fields {
+                let argument =
+                    json_to_py_for_field(py, bridge, field_name, field_value).and_then(|value| {
+                        kwargs
+                            .set_item(field_name, value)
+                            .map_err(|error| error.to_string())
+                    });
+                if let Err(error) = argument {
+                    errors.push(ConstructError::Field(format!("{field_name}: {error}")));
+                }
+            }
+            if errors.is_empty() {
+                return py_type.call((), Some(&kwargs)).map_err(|error| {
+                    vec![ConstructError::Component(format!(
+                        "failed to construct: {error}"
+                    ))]
+                });
+            }
+        }
+        Err(error) => errors.push(ConstructError::Component(format!(
+            "failed to create default: {error}"
+        ))),
+    }
+    Err(errors)
+}
+
+/// Check the written fields and a relationship link, then insert.
+fn insert_checked(
+    world: &mut World,
+    entity: Entity,
+    instance: &Bound<'_, PyAny>,
+    bridge: &Arc<dyn ComponentBridge>,
+    fields: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), ConstructError> {
+    validate_written_fields(instance, fields).map_err(ConstructError::Field)?;
+    check_relationship_link(world, entity, instance, bridge).map_err(ConstructError::Whole)?;
+    bridge
+        .insert(world, entity, instance)
+        .map_err(|error| ConstructError::Component(error.to_string()))
+}
+
+/// Python fallback for spawning a native component from a JSON object.
 fn spawn_component_python(
     world: &mut World,
-    entity: bevy::ecs::entity::Entity,
+    entity: Entity,
     comp_name: &str,
     fields: &serde_json::Map<String, serde_json::Value>,
     bridge: &Arc<dyn ComponentBridge>,
     added_components: &mut Vec<String>,
     errors: &mut Vec<String>,
 ) {
-    Python::attach(|py| {
-        let py_type = bridge.py_type(py);
-
-        // Try default constructor first
-        let instance = match py_type.call0() {
-            Ok(inst) => match resolve_enum_instance(py, &inst, fields) {
-                Ok(Some(resolved)) => {
-                    let bound = resolved.bind(py);
-                    if let Err(error) = validate_written_fields(bound, fields) {
-                        errors.push(format!("{comp_name}.{error}"));
-                        return;
-                    }
-                    if let Err(e) = check_relationship_link(world, entity, bound, bridge) {
-                        errors.push(format!("{comp_name}: {e}"));
-                        return;
-                    }
-                    if let Err(e) = bridge.insert(world, entity, bound) {
-                        errors.push(format!("{comp_name}: {e}"));
-                    } else {
-                        added_components.push(comp_name.to_string());
-                    }
-                    return;
-                }
-                Ok(None) => {
-                    for (field_name, field_value) in fields {
-                        match convert_field_value(py, &inst, field_name, field_value) {
-                            Ok(py_value) => {
-                                if let Err(e) = inst.setattr(field_name.as_str(), py_value) {
-                                    errors.push(format!("{comp_name}.{field_name}: {e}"));
-                                }
-                            }
-                            Err(e) => {
-                                errors.push(format!("{comp_name}.{field_name}: {e}"));
-                            }
-                        }
-                    }
-                    inst
-                }
-                Err(e) => {
-                    errors.push(format!("{comp_name}: {e}"));
-                    return;
-                }
-            },
-            Err(_) if !fields.is_empty() => {
-                // Default constructor failed - try passing fields as kwargs
-                let kwargs = PyDict::new(py);
-                for (field_name, field_value) in fields {
-                    match json_to_py_for_field(py, bridge, field_name, field_value) {
-                        Ok(py_value) => {
-                            if let Err(e) = kwargs.set_item(field_name, py_value) {
-                                errors.push(format!("{comp_name}.{field_name}: {e}"));
-                            }
-                        }
-                        Err(e) => {
-                            errors.push(format!("{comp_name}.{field_name}: {e}"));
-                        }
-                    }
-                }
-                match py_type.call((), Some(&kwargs)) {
-                    Ok(inst) => inst,
-                    Err(e) => {
-                        errors.push(format!("{comp_name}: failed to construct: {e}"));
-                        return;
-                    }
-                }
-            }
-            Err(e) => {
-                errors.push(format!("{comp_name}: failed to create default: {e}"));
-                return;
-            }
-        };
-
-        if let Err(error) = validate_written_fields(&instance, fields) {
-            errors.push(format!("{comp_name}.{error}"));
-            return;
-        }
-
-        if let Err(e) = check_relationship_link(world, entity, &instance, bridge) {
-            errors.push(format!("{comp_name}: {e}"));
-            return;
-        }
-
-        if let Err(e) = bridge.insert(world, entity, &instance) {
-            errors.push(format!("{comp_name}: {e}"));
-        } else {
-            added_components.push(comp_name.to_string());
-        }
+    let optional_types = optional_field_types(world, bridge.bevy_type_id());
+    let inserted = Python::attach(|py| {
+        let instance = construct_native(py, bridge, comp_name, fields, &optional_types)?;
+        insert_checked(world, entity, &instance, bridge, fields).map_err(|error| vec![error])
     });
+    match inserted {
+        Ok(()) => added_components.push(comp_name.to_string()),
+        Err(failures) => errors.extend(failures.iter().map(|error| error.describe(comp_name))),
+    }
 }
 
-/// Python fallback for spawning a component from a non-object JSON value.
-/// Used for components that accept a single constructor argument (e.g., Name("string"), Text2d("text")).
-/// Passes the JSON value as the first positional argument to the Python constructor.
+/// Python fallback for spawning a component from a non-object JSON value, which
+/// becomes the constructor's sole argument (`Name("x")`, `Text2d("hello")`).
 fn spawn_component_python_direct(
     world: &mut World,
-    entity: bevy::ecs::entity::Entity,
+    entity: Entity,
     comp_name: &str,
     value: &serde_json::Value,
     bridge: &Arc<dyn ComponentBridge>,
     added_components: &mut Vec<String>,
     errors: &mut Vec<String>,
 ) {
-    Python::attach(|py| {
-        let py_type = bridge.py_type(py);
+    let inserted = Python::attach(|py| {
         // A relationship component's sole argument is the related entity.
-        let converted = match bridge.relationship_field() {
+        let argument = match bridge.relationship_field() {
             Some(_) => entity_from_json(py, value),
             None => json_to_py(py, value),
-        };
-        let py_value = match converted {
-            Ok(v) => v,
-            Err(e) => {
-                errors.push(format!("{comp_name}: failed to convert value: {e}"));
-                return;
-            }
-        };
-
-        let instance = match py_type.call1((py_value,)) {
-            Ok(inst) => inst,
-            Err(e) => {
-                errors.push(format!("{comp_name}: failed to construct with value: {e}"));
-                return;
-            }
-        };
-
-        if let Err(e) = check_relationship_link(world, entity, &instance, bridge) {
-            errors.push(format!("{comp_name}: {e}"));
-            return;
         }
-
-        if let Err(e) = bridge.insert(world, entity, &instance) {
-            errors.push(format!("{comp_name}: {e}"));
-        } else {
-            added_components.push(comp_name.to_string());
-        }
+        .map_err(|error| ConstructError::Component(format!("failed to convert value: {error}")))?;
+        let instance = bridge.py_type(py).call1((argument,)).map_err(|error| {
+            ConstructError::Component(format!("failed to construct with value: {error}"))
+        })?;
+        insert_checked(world, entity, &instance, bridge, &serde_json::Map::new())
     });
+    match inserted {
+        Ok(()) => added_components.push(comp_name.to_string()),
+        Err(error) => errors.push(error.describe(comp_name)),
+    }
 }
 
 /// Partial mutation: change individual component fields.
@@ -573,7 +599,7 @@ pub fn set_component(
     if let Some(ComponentTarget::Native(bridge)) = &target {
         let type_id = bridge.bevy_type_id();
 
-        if super::asset_reference::contains_reference_field(field_obj) {
+        if contains_reference_field(field_obj) {
             let inserted = world
                 .get_entity(entity)
                 .is_ok_and(|entity_ref| !bridge.entity_contains(&entity_ref));
@@ -582,13 +608,7 @@ pub fn set_component(
                     "Component '{component}' cannot be set from Python"
                 )));
             }
-            let new_values = super::asset_reference::set_from_reference(
-                world,
-                entity,
-                bridge.name(),
-                field_obj,
-                bridge,
-            )?;
+            let new_values = set_from_reference(world, entity, bridge.name(), field_obj, bridge)?;
             let mut result = serde_json::json!({
                 "entity_id": entity_id,
                 "component": component,
@@ -711,7 +731,7 @@ pub fn set_component(
 /// Python fallback for set_component: extract via bridge and use setattr.
 fn set_component_python(
     world: &mut World,
-    entity: bevy::ecs::entity::Entity,
+    entity: Entity,
     entity_id: u64,
     component: &str,
     field_obj: &serde_json::Map<String, serde_json::Value>,
@@ -835,7 +855,7 @@ fn set_component_python(
                 let mut post = canonical_enum_fields(instance)
                     .unwrap_or_else(|| read_back_fields(instance, field_obj.keys()));
                 post.entry("variant".to_string()).or_insert_with(|| {
-                    serde_json::Value::String(super::enum_names::canonical_variant_name(
+                    serde_json::Value::String(canonical_variant_name(
                         &enum_owner_type(instance),
                         &variant_name,
                     ))
@@ -885,7 +905,7 @@ fn set_component_python(
 
 fn insert_component_python(
     world: &mut World,
-    entity: bevy::ecs::entity::Entity,
+    entity: Entity,
     entity_id: u64,
     component: &str,
     field_obj: &serde_json::Map<String, serde_json::Value>,
@@ -900,116 +920,21 @@ fn insert_component_python(
     let optional_types = optional_field_types(world, bridge.bevy_type_id());
 
     let new_values = Python::attach(|py| {
-        let py_type = bridge.py_type(py);
-        let instance = match py_type.call0() {
-            Ok(instance) => match resolve_enum_instance(py, &instance, field_obj) {
-                Ok(Some(resolved)) => {
-                    let bound = resolved.bind(py);
-                    validate_written_fields(bound, field_obj).map_err(|error| {
-                        ControlError::invalid_params(format!(
-                            "Failed to set '{component}': {error}"
-                        ))
-                    })?;
-                    check_relationship_link(world, entity, bound, bridge)
-                        .map_err(ControlError::invalid_params)?;
-                    bridge.insert(world, entity, bound).map_err(|error| {
-                        ControlError::invalid_params(format!(
-                            "Failed to insert component '{component}': {error}"
-                        ))
-                    })?;
-                    let mut post = read_back_fields(bound, field_obj.keys());
-                    if let Some(serde_json::Value::String(variant_name)) = field_obj.get("variant")
-                    {
-                        post.insert(
-                            "variant".to_string(),
-                            serde_json::Value::String(super::enum_names::canonical_variant_name(
-                                &py_type,
-                                variant_name,
-                            )),
-                        );
-                    }
-                    return Ok(post);
-                }
-                Ok(None) => {
-                    // Same pre-write guard before the insert setattr path.
-                    let unknown = unknown_set_fields(&instance, field_obj.keys());
-                    if !unknown.is_empty() {
-                        return Err(ControlError::invalid_params(component_unknown_field_error(
-                            component, &unknown, &instance,
-                        )));
-                    }
-                    for (field_name, field_value) in field_obj {
-                        let declared = declared_optional_type(&optional_types, field_name);
-                        let py_value = convert_field_value_typed(
-                            py,
-                            &instance,
-                            field_name,
-                            field_value,
-                            declared,
-                        )
-                        .map_err(|error| {
-                            ControlError::invalid_params(format!(
-                                "Failed to convert '{component}.{field_name}': {error}"
-                            ))
-                        })?;
-                        instance
-                            .setattr(field_name.as_str(), py_value)
-                            .map_err(|error| {
-                                ControlError::invalid_params(format!(
-                                    "Failed to set '{component}.{field_name}': {error}"
-                                ))
-                            })?;
-                    }
-                    instance
-                }
-                Err(error) => {
-                    return Err(ControlError::invalid_params(format!(
-                        "Failed to set '{component}': {error}"
-                    )));
-                }
-            },
-            Err(_) if !field_obj.is_empty() => {
-                let kwargs = PyDict::new(py);
-                for (field_name, field_value) in field_obj {
-                    let py_value = json_to_py_for_field(py, bridge, field_name, field_value)
-                        .map_err(|error| {
-                            ControlError::invalid_params(format!(
-                                "Failed to convert '{component}.{field_name}': {error}"
-                            ))
-                        })?;
-                    kwargs.set_item(field_name, py_value).map_err(|error| {
-                        ControlError::invalid_params(format!(
-                            "Failed to set constructor argument '{component}.{field_name}': {error}"
-                        ))
-                    })?;
-                }
-                py_type.call((), Some(&kwargs)).map_err(|error| {
-                    ControlError::invalid_params(format!(
-                        "Failed to construct component '{component}': {error}"
-                    ))
-                })?
-            }
-            Err(error) => {
-                return Err(ControlError::invalid_params(format!(
-                    "Failed to construct component '{component}': {error}"
-                )));
-            }
-        };
-
-        validate_written_fields(&instance, field_obj).map_err(|error| {
-            ControlError::invalid_params(format!("Failed to set '{component}': {error}"))
-        })?;
-
-        check_relationship_link(world, entity, &instance, bridge)
-            .map_err(ControlError::invalid_params)?;
-
-        bridge.insert(world, entity, &instance).map_err(|error| {
-            ControlError::invalid_params(format!(
-                "Failed to insert component '{component}': {error}"
-            ))
-        })?;
-
-        Ok::<_, ControlError>(read_back_fields(&instance, field_obj.keys()))
+        let instance = construct_native(py, bridge, component, field_obj, &optional_types)
+            .map_err(|errors| insert_error(component, &errors))?;
+        insert_checked(world, entity, &instance, bridge, field_obj)
+            .map_err(|error| insert_error(component, &[error]))?;
+        let mut post = read_back_fields(&instance, field_obj.keys());
+        if let Some(serde_json::Value::String(variant_name)) = field_obj.get("variant") {
+            post.insert(
+                "variant".to_string(),
+                serde_json::Value::String(canonical_variant_name(
+                    &bridge.py_type(py),
+                    variant_name,
+                )),
+            );
+        }
+        Ok::<_, ControlError>(post)
     })?;
 
     Ok(serde_json::json!({
@@ -1024,10 +949,10 @@ fn insert_component_python(
 /// Looks up the component via CustomComponentInfo and mutates fields via Python setattr.
 fn set_custom_component(
     world: &mut World,
-    entity: bevy::ecs::entity::Entity,
+    entity: Entity,
     entity_id: u64,
     component: &str,
-    resolved_id: Option<bevy::ecs::component::ComponentId>,
+    resolved_id: Option<ComponentId>,
     field_obj: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<serde_json::Value, ControlError> {
     // Find the custom component's ComponentId: try exact name match first
@@ -1102,23 +1027,7 @@ fn set_custom_component(
     }
 
     if !is_pyobject_storage {
-        let layout = wrapper_layout.ok_or_else(|| {
-            ControlError::internal(format!(
-                "Component '{component}' has no registered wrapper layout"
-            ))
-        })?;
-        let descriptor_layout = world
-            .components()
-            .get_info(comp_id)
-            .map(|info| info.layout())
-            .ok_or_else(|| {
-                ControlError::internal(format!("Component '{component}' has no Bevy descriptor"))
-            })?;
-        if !custom::descriptor_matches(&layout, descriptor_layout) {
-            return Err(ControlError::internal(format!(
-                "Component '{component}' wrapper layout does not match its Bevy descriptor"
-            )));
-        }
+        let layout = checked_wrapper_layout(world, component, comp_id, wrapper_layout)?;
 
         // An unknown field name fails the whole update before anything is
         // written, matching set_resource's unknown-field contract.
@@ -1289,13 +1198,13 @@ fn set_custom_component(
 #[allow(clippy::too_many_arguments)]
 fn insert_custom_component(
     world: &mut World,
-    entity: bevy::ecs::entity::Entity,
+    entity: Entity,
     entity_id: u64,
     component: &str,
-    comp_id: bevy::ecs::component::ComponentId,
+    comp_id: ComponentId,
     field_obj: &serde_json::Map<String, serde_json::Value>,
     is_pyobject_storage: bool,
-    wrapper_layout: Option<Arc<pybevy_core::component_layout::ComponentLayout>>,
+    wrapper_layout: Option<Arc<ComponentLayout>>,
 ) -> Result<serde_json::Value, ControlError> {
     let retained_type = world
         .get_resource::<CustomComponentInfo>()
@@ -1321,23 +1230,7 @@ fn insert_custom_component(
     let new_values = if is_pyobject_storage {
         requested_values
     } else {
-        let layout = wrapper_layout.ok_or_else(|| {
-            ControlError::internal(format!(
-                "Component '{component}' has no registered wrapper layout"
-            ))
-        })?;
-        let descriptor_layout = world
-            .components()
-            .get_info(comp_id)
-            .map(|info| info.layout())
-            .ok_or_else(|| {
-                ControlError::internal(format!("Component '{component}' has no Bevy descriptor"))
-            })?;
-        if !custom::descriptor_matches(&layout, descriptor_layout) {
-            return Err(ControlError::internal(format!(
-                "Component '{component}' wrapper layout does not match its Bevy descriptor"
-            )));
-        }
+        let layout = checked_wrapper_layout(world, component, comp_id, wrapper_layout)?;
         let ptr = world
             .get_entity(entity)
             .map_err(|_| ControlError::not_found(public_error::mcp_entity_not_found(entity_id)))?
@@ -1384,6 +1277,33 @@ const STRUCTURAL_COMPONENTS: &[&str] = &[
     "Sprite",
     "Node",
 ];
+
+/// A custom component's wrapper layout, checked against its Bevy descriptor.
+fn checked_wrapper_layout(
+    world: &World,
+    component: &str,
+    comp_id: ComponentId,
+    wrapper_layout: Option<Arc<ComponentLayout>>,
+) -> Result<Arc<ComponentLayout>, ControlError> {
+    let layout = wrapper_layout.ok_or_else(|| {
+        ControlError::internal(format!(
+            "Component '{component}' has no registered wrapper layout"
+        ))
+    })?;
+    let descriptor_layout = world
+        .components()
+        .get_info(comp_id)
+        .map(|info| info.layout())
+        .ok_or_else(|| {
+            ControlError::internal(format!("Component '{component}' has no Bevy descriptor"))
+        })?;
+    if !custom::descriptor_matches(&layout, descriptor_layout) {
+        return Err(ControlError::internal(format!(
+            "Component '{component}' wrapper layout does not match its Bevy descriptor"
+        )));
+    }
+    Ok(layout)
+}
 
 fn structural_warning(component: &str) -> Option<String> {
     if STRUCTURAL_COMPONENTS.contains(&component) {
@@ -1486,8 +1406,6 @@ pub fn remove_component(
     )))
 }
 
-/// Convert a JSON field value to the appropriate Python type by inspecting the current field type.
-/// For Vec2/Vec3/Quat fields, JSON arrays are converted to the proper constructor calls.
 /// Reject a parent-child link with a resource entity at either end.
 ///
 /// Bevy despawns children along with their parent, so a resource entity in the
@@ -1495,7 +1413,7 @@ pub fn remove_component(
 /// component, so every construction path shares one rule.
 fn check_relationship_link(
     world: &World,
-    child: bevy::ecs::entity::Entity,
+    child: Entity,
     instance: &Bound<'_, PyAny>,
     bridge: &Arc<dyn ComponentBridge>,
 ) -> Result<(), String> {
@@ -1507,12 +1425,13 @@ fn check_relationship_link(
         .map_err(|error| error.to_string())?
         .extract::<PyEntity>()
         .map_err(|error| error.to_string())?;
-    let parent = bevy::ecs::entity::Entity::from(parent);
+    let parent = Entity::from(parent);
     validate_hierarchy_link(world, child, parent).map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
 mod tests {
+    use core::ptr::NonNull;
     use std::{alloc::Layout, ptr, sync::Once};
 
     use bevy::{
@@ -1524,6 +1443,7 @@ mod tests {
             resource::IsResource,
         },
         prelude::With,
+        ptr::OwningPtr,
     };
     use pybevy_core::{
         CustomComponentEntry,
@@ -1926,10 +1846,10 @@ mod tests {
         unsafe {
             PrimitiveValue::F64(1.25).write_to_ptr(wrapper.data.as_mut_ptr());
             PrimitiveValue::I64(2).write_to_ptr(wrapper.data.as_mut_ptr().add(8));
-            let data = core::ptr::NonNull::new_unchecked(ptr::addr_of_mut!(wrapper) as *mut u8);
+            let data = NonNull::new_unchecked(ptr::addr_of_mut!(wrapper) as *mut u8);
             world
                 .entity_mut(entity)
-                .insert_by_id(comp_id, bevy::ptr::OwningPtr::new(data));
+                .insert_by_id(comp_id, OwningPtr::new(data));
         }
 
         let mut info = CustomComponentInfo::default();
@@ -2071,8 +1991,8 @@ mod tests {
         let payload: u64 = 0x3FF0_0000_0000_0000;
         // SAFETY: the u64 payload matches the descriptor layout and has no drop hook.
         unsafe {
-            let data = core::ptr::NonNull::new_unchecked(ptr::addr_of!(payload) as *mut u8);
-            entity_mut.insert_by_id(comp_id, bevy::ptr::OwningPtr::new(data));
+            let data = NonNull::new_unchecked(ptr::addr_of!(payload) as *mut u8);
+            entity_mut.insert_by_id(comp_id, OwningPtr::new(data));
         }
 
         world.insert_resource(CustomComponentInfo::default());

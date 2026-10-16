@@ -1,7 +1,10 @@
 use std::{collections::VecDeque, sync::Arc};
 
 use bevy::prelude::Resource;
-use image::{Rgb, Rgb32FImage, RgbImage};
+use image::{
+    Rgb, Rgb32FImage, RgbImage,
+    imageops::{FilterType, resize},
+};
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
@@ -28,12 +31,7 @@ pub(crate) fn resize_rgb_image_linear(rgb: RgbImage, max_width: Option<u32>) -> 
         let channels = rgb.get_pixel(x, y).0;
         Rgb(channels.map(|channel| srgb_to_linear(f64::from(channel) / 255.0) as f32))
     });
-    let resized = image::imageops::resize(
-        &linear,
-        max_width,
-        new_height,
-        image::imageops::FilterType::Triangle,
-    );
+    let resized = resize(&linear, max_width, new_height, FilterType::Triangle);
     RgbImage::from_fn(max_width, new_height, |x, y| {
         Rgb(resized.get_pixel(x, y).0.map(linear_to_srgb_u8))
     })

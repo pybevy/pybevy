@@ -1,13 +1,14 @@
 use bevy::{ecs::world::World, time::Time};
 use pybevy_core::build_info::build_info;
 
+use super::entity_count::scene_entity_count;
 use crate::protocol::ControlError;
 
 /// Get performance metrics from the debug overlay snapshot.
 /// Falls back to basic Time-based metrics if DebugSnapshot is not populated.
 pub fn get_performance(world: &mut World) -> Result<serde_json::Value, ControlError> {
     // Live each call, not from the 1 Hz snapshot, so it never lags spawns.
-    let entity_count = super::entity_count::scene_entity_count(world);
+    let entity_count = scene_entity_count(world);
 
     // Try rich snapshot first (populated by hot reload overlay system)
     if let Some(snap) = world.get_resource::<pybevy_core::DebugSnapshot>()

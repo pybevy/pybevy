@@ -1,4 +1,4 @@
-use std::{error::Error, fmt, time::Duration};
+use std::{error::Error, fmt, io, time::Duration};
 
 use serde_json::Value;
 
@@ -373,15 +373,15 @@ fn map_ureq_error(error: ureq::Error) -> ClientError {
     }
 }
 
-fn map_ureq_io_error(error: std::io::Error) -> ClientError {
+fn map_ureq_io_error(error: io::Error) -> ClientError {
     match error.kind() {
-        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => {
+        io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock => {
             ClientError::new(ClientErrorKind::Timeout, "loopback HTTP request timed out")
         }
-        std::io::ErrorKind::ConnectionRefused
-        | std::io::ErrorKind::ConnectionAborted
-        | std::io::ErrorKind::NotConnected
-        | std::io::ErrorKind::AddrNotAvailable => ClientError::new(
+        io::ErrorKind::ConnectionRefused
+        | io::ErrorKind::ConnectionAborted
+        | io::ErrorKind::NotConnected
+        | io::ErrorKind::AddrNotAvailable => ClientError::new(
             ClientErrorKind::Connect,
             format!("failed to connect to loopback HTTP server: {error}"),
         ),
@@ -662,10 +662,7 @@ mod tests {
 
     #[test]
     fn classifies_connect_timeout_error_kind() {
-        let error = map_ureq_io_error(std::io::Error::new(
-            std::io::ErrorKind::TimedOut,
-            "connect deadline",
-        ));
+        let error = map_ureq_io_error(io::Error::new(io::ErrorKind::TimedOut, "connect deadline"));
         assert_eq!(error.kind(), ClientErrorKind::Timeout);
     }
 

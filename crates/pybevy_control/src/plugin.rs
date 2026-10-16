@@ -1,9 +1,18 @@
 #[cfg(feature = "pyo3-runtime")]
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-
 #[cfg(feature = "bevy_winit")]
-use bevy::winit::UpdateMode;
+use std::time::Duration;
+
+#[cfg(feature = "pyo3-runtime")]
+use bevy::log::warn;
+#[cfg(feature = "bevy_winit")]
+use bevy::{
+    app::Startup,
+    log::info,
+    prelude::ResMut,
+    winit::{UpdateMode, WinitSettings},
+};
 use bevy::{
     app::{App, First, Last, Plugin},
     prelude::{IntoScheduleConfigs, Resource},
@@ -166,7 +175,7 @@ pub fn install_control_runtime(
 
     // Ensure the app keeps ticking when unfocused so MCP requests are processed
     #[cfg(feature = "bevy_winit")]
-    app.add_systems(bevy::app::Startup, configure_mcp_update_mode);
+    app.add_systems(Startup, configure_mcp_update_mode);
 
     app.add_systems(First, control_poll_system);
     app.add_systems(First, process_active_schedules.after(control_poll_system));
@@ -267,9 +276,7 @@ impl Plugin for ControlBevyPlugin {
             match pybevy_dir {
                 Some(dir) => ApiIndex::build(&dir),
                 None => {
-                    bevy::log::warn!(
-                        "[Control] Could not find pybevy package directory for API stubs"
-                    );
+                    warn!("[Control] Could not find pybevy package directory for API stubs");
                     ApiIndex::build(Path::new(""))
                 }
             }
@@ -297,19 +304,19 @@ impl Plugin for ControlBevyPlugin {
 /// MCP/control requests (screenshots, turnarounds, timelines) still run when the
 /// window is not focused, without spinning at uncapped FPS.
 #[cfg(feature = "bevy_winit")]
-fn configure_mcp_update_mode(settings: Option<bevy::prelude::ResMut<bevy::winit::WinitSettings>>) {
+fn configure_mcp_update_mode(settings: Option<ResMut<WinitSettings>>) {
     let Some(mut settings) = settings else {
         return;
     };
     // Reactive wakes on input/window/device events AND after the wait duration,
     // so MCP requests that trigger redraws are handled promptly while idle
     // frames are capped to ~60fps instead of spinning continuously.
-    let target = UpdateMode::reactive(std::time::Duration::from_millis(16));
+    let target = UpdateMode::reactive(Duration::from_millis(16));
     if matches!(settings.unfocused_mode, UpdateMode::Reactive { .. }) {
         return;
     }
     settings.unfocused_mode = target;
-    bevy::log::info!("[Control] Set unfocused_mode to Reactive(16ms) for MCP responsiveness");
+    info!("[Control] Set unfocused_mode to Reactive(16ms) for MCP responsiveness");
 }
 
 #[cfg(test)]
@@ -390,7 +397,7 @@ mod tests {
     fn preserves_already_reactive() {
         let mut world = World::new();
         world.insert_resource(WinitSettings {
-            unfocused_mode: UpdateMode::reactive(std::time::Duration::from_secs(1)),
+            unfocused_mode: UpdateMode::reactive(Duration::from_secs(1)),
             ..Default::default()
         });
         world.run_system_once(configure_mcp_update_mode).unwrap();

@@ -1,13 +1,14 @@
 use std::sync::Arc;
 
 use bevy::prelude::Resource;
+use tokio::sync::{broadcast, broadcast::Sender};
 
 use crate::protocol::SseEvent;
 
 /// SSE event broadcaster resource
 #[derive(Resource, Clone)]
 pub struct SseEventBroadcaster {
-    pub tx: Arc<tokio::sync::broadcast::Sender<String>>,
+    pub tx: Arc<Sender<String>>,
 }
 
 impl Default for SseEventBroadcaster {
@@ -18,7 +19,7 @@ impl Default for SseEventBroadcaster {
 
 impl SseEventBroadcaster {
     pub fn new() -> Self {
-        let (tx, _) = tokio::sync::broadcast::channel(256);
+        let (tx, _) = broadcast::channel(256);
         Self { tx: Arc::new(tx) }
     }
 

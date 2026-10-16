@@ -1,5 +1,7 @@
+use std::time::{Duration, Instant};
+
 use bevy::{
-    ecs::world::World,
+    ecs::{schedule::Schedules, world::World},
     prelude::Resource,
     time::{Time, Virtual},
 };
@@ -18,7 +20,7 @@ use crate::{
         readiness::RenderFrameReadiness,
     },
     protocol::{ControlError, ReloadMode},
-    scene::entity_count::scene_entity_count,
+    scene::{entity_count::scene_entity_count, time::validate_time_scale},
 };
 
 /// Frames a requested reload runs before its response is built.
@@ -38,7 +40,7 @@ pub struct PendingReload {
     /// fresh grace countdown starts when the fetch finishes.
     pub awaiting_fetch: bool,
     /// Backstop for a fetch flag that never clears.
-    pub fetch_deadline: Option<std::time::Instant>,
+    pub fetch_deadline: Option<Instant>,
     pub on_complete: ReloadCompletion,
 }
 
@@ -91,7 +93,7 @@ pub fn trigger_reload(
     // Validate first: set_relative_speed panics on <= 0.0 / non-finite and
     // spirals the fixed-timestep loop on very large values.
     if let Some(scale) = time_scale {
-        crate::scene::time::validate_time_scale(scale)?;
+        validate_time_scale(scale)?;
         let mut time = world.resource_mut::<Time<Virtual>>();
         time.set_relative_speed(scale);
     }
@@ -145,10 +147,7 @@ pub fn get_reload_status(world: &mut World) -> Result<serde_json::Value, Control
         result.insert("generation".into(), serde_json::json!(generation.current));
     }
 
-    if world
-        .get_resource::<bevy::ecs::schedule::Schedules>()
-        .is_some()
-    {
+    if world.get_resource::<Schedules>().is_some() {
         result.insert("app_running".into(), serde_json::json!(true));
     }
 
@@ -267,7 +266,7 @@ const POST_FETCH_GRACE_FRAMES: u32 = 5;
 
 /// Backstop for a stuck `definition_fetch_in_progress` flag. The fetch session
 /// caps its own retries well below this; hitting it means the flag leaked.
-const FETCH_RESPONSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+const FETCH_RESPONSE_TIMEOUT: Duration = Duration::from_secs(60);
 
 fn definition_fetch_in_progress(world: &World) -> bool {
     world
@@ -356,8 +355,8 @@ pub fn process_pending_reloads(world: &mut World) {
         } else if fetching {
             let deadline = *reload
                 .fetch_deadline
-                .get_or_insert_with(|| std::time::Instant::now() + FETCH_RESPONSE_TIMEOUT);
-            if std::time::Instant::now() < deadline {
+                .get_or_insert_with(|| Instant::now() + FETCH_RESPONSE_TIMEOUT);
+            if Instant::now() < deadline {
                 reload.awaiting_fetch = true;
                 still_waiting.push(reload);
             } else {
@@ -466,7 +465,10 @@ fn complete_reload(world: &mut World, reload: PendingReload) {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, atomic::AtomicU32};
+    use std::{
+        sync::{Arc, atomic::AtomicU32},
+        time::Instant,
+    };
 
     use pybevy_core::{
         LastSystemError, PendingReloadRequest, ReloadRequestMode, ReloadResult,
@@ -474,6 +476,7 @@ mod tests {
             RELOAD_ATTRIBUTE_ERROR_HINT, RELOAD_CONSTRUCTOR_TYPE_ERROR_HINT, RELOAD_QUERY_ROW_HINT,
         },
     };
+    use tokio::sync::oneshot;
 
     use super::*;
     use crate::capture::screenshot::process_pending_screenshots;
@@ -814,7 +817,7 @@ mod tests {
     fn process_pending_reloads_countdown() {
         let mut world = World::new();
         world.init_resource::<Time<Virtual>>();
-        let (tx, _rx) = tokio::sync::oneshot::channel();
+        let (tx, _rx) = oneshot::channel();
         world.insert_resource(PendingReloads {
             pending: vec![PendingReload {
                 response_tx: tx,
@@ -835,7 +838,7 @@ mod tests {
     fn process_pending_reloads_sends_response_when_ready() {
         let mut world = World::new();
         world.init_resource::<Time<Virtual>>();
-        let (tx, mut rx) = tokio::sync::oneshot::channel();
+        let (tx, mut rx) = oneshot::channel();
         world.insert_resource(PendingReloads {
             pending: vec![PendingReload {
                 response_tx: tx,
@@ -864,7 +867,7 @@ mod tests {
             definition_fetch_in_progress: true,
             ..Default::default()
         });
-        let (tx, mut rx) = tokio::sync::oneshot::channel();
+        let (tx, mut rx) = oneshot::channel();
         world.insert_resource(PendingReloads {
             pending: vec![PendingReload {
                 response_tx: tx,
@@ -910,14 +913,14 @@ mod tests {
             definition_fetch_in_progress: true,
             ..Default::default()
         });
-        let (tx, mut rx) = tokio::sync::oneshot::channel();
+        let (tx, mut rx) = oneshot::channel();
         world.insert_resource(PendingReloads {
             pending: vec![PendingReload {
                 response_tx: tx,
                 frames_remaining: 0,
                 mode: ReloadMode::Full,
                 awaiting_fetch: true,
-                fetch_deadline: Some(std::time::Instant::now() - FETCH_RESPONSE_TIMEOUT),
+                fetch_deadline: Some(Instant::now() - FETCH_RESPONSE_TIMEOUT),
                 on_complete: ReloadCompletion::Respond,
             }],
         });
@@ -947,7 +950,7 @@ mod tests {
             timestamp_secs: 5.0,
             ..Default::default()
         });
-        let (tx, mut rx) = tokio::sync::oneshot::channel();
+        let (tx, mut rx) = oneshot::channel();
         world.insert_resource(PendingReloads {
             pending: vec![PendingReload {
                 response_tx: tx,
@@ -987,7 +990,7 @@ mod tests {
             running_previous_generation: true,
             ..ReloadResult::default()
         });
-        let (tx, mut rx) = tokio::sync::oneshot::channel();
+        let (tx, mut rx) = oneshot::channel();
         world.insert_resource(PendingReloads {
             pending: vec![PendingReload {
                 response_tx: tx,
@@ -1126,7 +1129,7 @@ mod tests {
             running_previous_generation: true,
             ..ReloadResult::default()
         });
-        let (tx, mut rx) = tokio::sync::oneshot::channel();
+        let (tx, mut rx) = oneshot::channel();
         world.insert_resource(PendingReloads {
             pending: vec![PendingReload {
                 response_tx: tx,
@@ -1183,7 +1186,7 @@ mod tests {
             "reload request must clear the error slot"
         );
 
-        let (tx, mut rx) = tokio::sync::oneshot::channel();
+        let (tx, mut rx) = oneshot::channel();
         world.insert_resource(PendingReloads {
             pending: vec![PendingReload {
                 response_tx: tx,
@@ -1217,7 +1220,7 @@ mod tests {
         last.error = Some("RuntimeError: boom".into());
         last.timestamp_secs = 0.1;
 
-        let (tx, mut rx) = tokio::sync::oneshot::channel();
+        let (tx, mut rx) = oneshot::channel();
         world.insert_resource(PendingReloads {
             pending: vec![PendingReload {
                 response_tx: tx,
@@ -1282,7 +1285,7 @@ mod tests {
         let (tx, mut rx) = oneshot::channel();
         let mut reload = capture_reload(tx);
         reload.awaiting_fetch = true;
-        reload.fetch_deadline = Some(std::time::Instant::now() - FETCH_RESPONSE_TIMEOUT);
+        reload.fetch_deadline = Some(Instant::now() - FETCH_RESPONSE_TIMEOUT);
         world.insert_resource(PendingReloads {
             pending: vec![reload],
         });

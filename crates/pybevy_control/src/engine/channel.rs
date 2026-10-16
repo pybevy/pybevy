@@ -83,12 +83,16 @@ pub fn create_channel() -> (ControlSender, ControlReceiver) {
 
 #[cfg(test)]
 mod tests {
+    use std::panic;
+
+    use tokio::sync::oneshot;
+
     use super::*;
 
     #[test]
     fn create_channel_works() {
         let (sender, mut receiver) = create_channel();
-        let (tx, _rx) = tokio::sync::oneshot::channel();
+        let (tx, _rx) = oneshot::channel();
 
         sender
             .tx
@@ -125,7 +129,7 @@ mod tests {
         let state = sender.exclusive_execution();
         let unwind_state = state.clone();
 
-        let result = std::panic::catch_unwind(move || {
+        let result = panic::catch_unwind(move || {
             let _guard = unwind_state.try_enter().expect("entry should succeed");
             panic!("test unwind");
         });

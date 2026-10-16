@@ -10,7 +10,7 @@ use std::{
 use bevy::ecs::world::World;
 use pybevy_core::{
     ActiveSceneModule, CustomComponentInfo, CustomResourceInfo, ValidityFlag, ValidityGuard,
-    public_error,
+    public_error, public_error::RUN_CODE_EXECUTION_DEADLINE,
 };
 use pyo3::{
     create_exception,
@@ -75,9 +75,7 @@ impl RunCodeDeadline {
     ) -> PyResult<Py<Self>> {
         if Instant::now() >= slf.borrow(py).deadline {
             slf.borrow(py).expired.store(true, Ordering::Relaxed);
-            return Err(RunCodeCancelled::new_err(
-                pybevy_core::public_error::RUN_CODE_EXECUTION_DEADLINE,
-            ));
+            return Err(RunCodeCancelled::new_err(RUN_CODE_EXECUTION_DEADLINE));
         }
         Ok(slf)
     }
@@ -342,8 +340,7 @@ fn execute_python_with_limit(
         drop(trace_restore);
         let execution =
             if tracer.borrow(py).expired.load(Ordering::Relaxed) || Instant::now() >= deadline {
-                let timeout =
-                    PyTimeoutError::new_err(pybevy_core::public_error::RUN_CODE_EXECUTION_DEADLINE);
+                let timeout = PyTimeoutError::new_err(RUN_CODE_EXECUTION_DEADLINE);
                 if let Err(error) = execution {
                     timeout.set_traceback(py, error.traceback(py));
                 }

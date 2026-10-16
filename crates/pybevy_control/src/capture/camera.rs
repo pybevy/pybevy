@@ -101,7 +101,7 @@ pub(super) fn validate_capture_camera(
 
 pub(super) fn selected_camera_screenshot_target(
     world: &mut World,
-    response_kind: &CaptureResponseKind,
+    operation: &str,
 ) -> Result<Option<(RenderTarget, Option<CaptureViewport>)>, ControlError> {
     let selected = select_capture_camera_3d(world)
         .map(|entity| (entity, "Camera3d"))
@@ -109,7 +109,6 @@ pub(super) fn selected_camera_screenshot_target(
     let Some((entity, camera_kind)) = selected else {
         return Ok(None);
     };
-    let operation = response_kind.operation_name();
     let camera = world
         .get::<Camera>(entity)
         .expect("selected capture camera has Camera");
@@ -533,20 +532,18 @@ mod tests {
             ))
             .id();
 
-        let (target, _) =
-            selected_camera_screenshot_target(&mut world, &CaptureResponseKind::Screenshot)
-                .unwrap()
-                .unwrap();
+        let (target, _) = selected_camera_screenshot_target(&mut world, "capture_screenshot")
+            .unwrap()
+            .unwrap();
         let RenderTarget::Image(image_target) = target else {
             panic!("selected Camera2d should use its image target");
         };
         assert_eq!(image_target.handle.id(), higher_target.id());
 
         world.get_mut::<Camera>(higher).unwrap().is_active = false;
-        let (target, _) =
-            selected_camera_screenshot_target(&mut world, &CaptureResponseKind::Screenshot)
-                .unwrap()
-                .unwrap();
+        let (target, _) = selected_camera_screenshot_target(&mut world, "capture_screenshot")
+            .unwrap()
+            .unwrap();
         let RenderTarget::Image(image_target) = target else {
             panic!("active Camera2d should use its image target");
         };
@@ -583,7 +580,7 @@ mod tests {
         ));
 
         let (target, viewport) =
-            selected_camera_screenshot_target(&mut world, &CaptureResponseKind::Screenshot)
+            selected_camera_screenshot_target(&mut world, "capture_screenshot")
                 .unwrap()
                 .unwrap();
         let RenderTarget::Image(image_target) = target else {
@@ -611,8 +608,8 @@ mod tests {
             },
         ));
 
-        let error = selected_camera_screenshot_target(&mut world, &CaptureResponseKind::Screenshot)
-            .unwrap_err();
+        let error =
+            selected_camera_screenshot_target(&mut world, "capture_screenshot").unwrap_err();
         assert_eq!(
             error.message,
             "capture_screenshot selected highest-order Camera3d has no capturable target"

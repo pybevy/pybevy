@@ -1,5 +1,5 @@
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
 use super::EntityRef;
 use crate::capture::{
@@ -122,10 +122,11 @@ pub struct CaptureScreenshotParams {
     /// Optional entity Name or packed ID from an MCP response to isolate, including its descendants.
     pub entity: Option<EntityRef>,
     /// Frames to wait before capture (default 2)
-    #[serde(default = "default_2")]
+    #[serde(default = "default_2", deserialize_with = "capture_delay")]
     #[schemars(range(max = MAX_CAPTURE_DELAY_FRAMES))]
     pub delay_frames: u32,
     /// Max image width in pixels (default 768). Use 1280 for detail.
+    #[serde(default, deserialize_with = "capture_width")]
     pub max_width: Option<u32>,
     /// Camera position [x, y, z]. If set, temporarily re-poses a Camera3d and restores it after capture; creates one only when the scene has no cameras.
     pub position: Option<[f32; 3]>,
@@ -155,11 +156,12 @@ pub struct CaptureStatsParams {
     #[schemars(extend("maxItems" = 256))]
     pub sample_points: Option<Vec<[i64; 2]>>,
     /// Frames to wait before capture (default 2).
-    #[serde(default = "default_2")]
+    #[serde(default = "default_2", deserialize_with = "capture_delay")]
     #[schemars(range(max = MAX_CAPTURE_DELAY_FRAMES))]
     pub delay_frames: u32,
     /// Maximum analyzed width in pixels (default 768).
     #[schemars(range(min = 1))]
+    #[serde(default, deserialize_with = "capture_width")]
     pub max_width: Option<u32>,
     /// Camera position [x, y, z]. If set, temporarily reuses a Camera3d.
     pub position: Option<[f32; 3]>,
@@ -411,11 +413,60 @@ fn default_compare_epsilon() -> f64 {
     DEFAULT_COMPARE_EPSILON
 }
 
+fn capture_delay<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error> {
+    let frames = i64::deserialize(deserializer)?;
+    if frames < 0 {
+        return Err(D::Error::custom(
+            "delay_frames must be a non-negative integer",
+        ));
+    }
+    u32::try_from(frames).map_err(|_| D::Error::custom("delay_frames must not exceed 4294967295"))
+}
+
+fn capture_width<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<u32>, D::Error> {
+    let Some(width) = Option::<i64>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    if width <= 0 {
+        return Err(D::Error::custom("max_width must be a positive integer"));
+    }
+    u32::try_from(width)
+        .map(Some)
+        .map_err(|_| D::Error::custom("max_width must not exceed 4294967295"))
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn capture_params_default_and_reject_out_of_range_integers() {
+        let params: CaptureScreenshotParams =
+            serde_json::from_value(serde_json::json!({"position": [1.0, 2.0, 3.0]})).unwrap();
+        assert_eq!((params.delay_frames, params.max_width), (2, None));
+        assert!(params.hide_ui);
+        for (body, message) in [
+            (
+                serde_json::json!({"delay_frames": -5}),
+                "delay_frames must be a non-negative integer",
+            ),
+            (
+                serde_json::json!({"delay_frames": 4_294_967_296_i64}),
+                "delay_frames must not exceed 4294967295",
+            ),
+            (
+                serde_json::json!({"max_width": 0}),
+                "max_width must be a positive integer",
+            ),
+        ] {
+            let screenshot = serde_json::from_value::<CaptureScreenshotParams>(body.clone());
+            let stats = serde_json::from_value::<CaptureStatsParams>(body);
+            assert_eq!(screenshot.unwrap_err().to_string(), message);
+            assert_eq!(stats.unwrap_err().to_string(), message);
+        }
+    }
 
     #[test]
     fn reload_mode_deserializes_snake_case_and_rejects_unknown() {

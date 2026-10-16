@@ -8,8 +8,7 @@ use serde_json::{Map, Value};
 
 use crate::{
     catalog::tools::is_engine_tool_name,
-    schedule::tool_to_operation,
-    transport::server::{AppState, error_response, respond, schedule_status},
+    transport::server::{AppState, error_response, respond_to_tool, schedule_status},
 };
 
 /// `POST /api/v1/tools/{name}`: one MCP tool call with its arguments object.
@@ -36,10 +35,7 @@ pub(super) async fn call_tool(
             .into_response(),
         };
     }
-    match tool_to_operation(&name, &Value::Object(arguments)) {
-        Ok(operation) => respond(&state, operation, &headers).await,
-        Err(message) => error_response(StatusCode::UNPROCESSABLE_ENTITY, &message).into_response(),
-    }
+    respond_to_tool(&state, &name, arguments, &headers).await
 }
 
 #[cfg(test)]
@@ -494,7 +490,7 @@ mod tests {
             assert_eq!(result.status, StatusCode::UNPROCESSABLE_ENTITY, "{tool}");
             assert_eq!(
                 serde_json::from_str::<Value>(&result.body).unwrap(),
-                json!({"error": format!("invalid tool call '{tool}': {message}")})
+                json!({"error": format!("invalid '{tool}' arguments: {message}")})
             );
             assert!(result.operations.is_empty(), "{tool}");
         }

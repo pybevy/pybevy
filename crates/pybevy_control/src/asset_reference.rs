@@ -1,4 +1,4 @@
-use bevy::prelude::Resource;
+use bevy::prelude::{Resource, World};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -124,7 +124,7 @@ pub enum AssetReferenceValidationError {
     StaleOrForged,
 }
 
-pub fn rotate_asset_reference_session(world: &mut bevy::prelude::World) {
+pub fn rotate_asset_reference_session(world: &mut World) {
     if world.contains_resource::<AssetReferenceSession>() {
         world.insert_resource(AssetReferenceSession::default());
     }
@@ -132,6 +132,8 @@ pub fn rotate_asset_reference_session(world: &mut bevy::prelude::World) {
 
 #[cfg(test)]
 mod tests {
+    use bevy::prelude::World;
+
     use super::*;
 
     #[test]
@@ -177,7 +179,7 @@ mod tests {
 
     #[test]
     fn rotation_invalidates_existing_references_without_creating_a_session() {
-        let mut world = bevy::prelude::World::new();
+        let mut world = World::new();
         rotate_asset_reference_session(&mut world);
         assert!(!world.contains_resource::<AssetReferenceSession>());
 

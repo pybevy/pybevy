@@ -4,7 +4,10 @@ use bevy::{
     asset::UntypedAssetId,
     ecs::{entity::Entity, world::World},
 };
-use pybevy_core::{ComponentBridge, PyHandle, ValidityGuard};
+use pybevy_core::{
+    ComponentBridge, PyHandle, ValidityGuard,
+    registry::global_registry::{all_component_bridges, get_asset_bridge_by_type_id},
+};
 use pyo3::{prelude::*, types::PyType};
 
 use crate::{
@@ -131,7 +134,7 @@ fn resolve(world: &mut World, reference: &AssetReference) -> Result<PyHandle, Co
             reference.entity
         ))
     })?;
-    let source_bridge = pybevy_core::registry::global_registry::all_component_bridges()
+    let source_bridge = all_component_bridges()
         .into_iter()
         .find(|bridge| bridge.name() == reference.component)
         .ok_or_else(|| {
@@ -220,10 +223,9 @@ fn validate_live_asset(world: &World, handle: &PyHandle) -> Result<(), ControlEr
     let type_id = handle.asset_type_id().ok_or_else(|| {
         ControlError::invalid_params("Asset reference source has an unregistered asset type")
     })?;
-    let bridge = pybevy_core::registry::global_registry::get_asset_bridge_by_type_id(type_id)
-        .ok_or_else(|| {
-            ControlError::invalid_params("Asset reference source has an unregistered asset type")
-        })?;
+    let bridge = get_asset_bridge_by_type_id(type_id).ok_or_else(|| {
+        ControlError::invalid_params("Asset reference source has an unregistered asset type")
+    })?;
     let exists = bridge
         .contains(world, handle.untyped_id())
         .map_err(|error| {

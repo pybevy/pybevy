@@ -24,7 +24,7 @@ use crate::{
         names::{ComponentTarget, custom_component_name, resolve_component},
         to_json::{extract_bridge_fields, extract_custom_component_fields},
     },
-    scene::{entity::resolve_entity, summary::entity_component_breakdown},
+    scene::{entity::resolve_entity, spatial::entity_label, summary::entity_component_breakdown},
 };
 
 /// Extract custom component names for an entity using the CustomComponentInfo registry.
@@ -189,7 +189,7 @@ pub fn get_entity(
         components.insert(k.clone(), v.clone());
     }
 
-    let label = crate::scene::spatial::entity_label(world, entity);
+    let label = entity_label(world, entity);
 
     let mut result = serde_json::json!({
         "id": entity_id,
@@ -254,7 +254,7 @@ pub fn get_component(
 ) -> Result<serde_json::Value, ControlError> {
     let entity = resolve_entity(world, &entity_ref)?;
     let entity_id = entity.to_bits();
-    let label = crate::scene::spatial::entity_label(world, entity);
+    let label = entity_label(world, entity);
     let target = resolve_component(world, &component)?;
 
     // Try bridge components first
@@ -419,6 +419,8 @@ mod tests {
     extern crate pybevy_camera;
     extern crate pybevy_transform;
 
+    use pybevy_core::bridge_inventory::collect_all;
+
     use super::*;
     use crate::protocol::ErrorCode;
 
@@ -427,7 +429,7 @@ mod tests {
     fn setup() {
         INIT.call_once(|| {
             Python::initialize();
-            pybevy_core::bridge_inventory::collect_all();
+            collect_all();
         });
     }
 

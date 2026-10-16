@@ -18,6 +18,8 @@ use ::pyo3::{exceptions::PyRuntimeError, prelude::*};
 #[cfg(feature = "pyo3-runtime")]
 pub use plugin::PyControlPlugin;
 #[cfg(feature = "pyo3-runtime")]
+use pyo3::api_index::PyApiIndex;
+#[cfg(feature = "pyo3-runtime")]
 pub use pyo3::{
     components::register_lifecycle_mutation_hooks, execute::register_world_wrapper_hook,
 };
@@ -51,7 +53,7 @@ fn rust_resource_definitions(py: Python<'_>) -> PyResult<Py<PyAny>> {
 pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "mcp")?;
     m.add_class::<PyControlPlugin>()?;
-    m.add_class::<pyo3::api_index::PyApiIndex>()?;
+    m.add_class::<PyApiIndex>()?;
     m.add_function(wrap_pyfunction!(rust_tool_definitions, &m)?)?;
     m.add_function(wrap_pyfunction!(rust_resource_definitions, &m)?)?;
     transport::client_pyo3::add_functions(&m)?;
