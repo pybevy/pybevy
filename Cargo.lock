@@ -5164,6 +5164,7 @@ version = "0.3.0-rc.1"
 dependencies = [
  "bevy",
  "numpy",
+ "pybevy_camera",
  "pybevy_color",
  "pybevy_core",
  "pybevy_macros",

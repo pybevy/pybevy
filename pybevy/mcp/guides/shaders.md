@@ -970,9 +970,10 @@ Keep the previous animation parameters yourself. Camera/object transform
 history alone cannot recover an arbitrary shader's previous shape.
 Matching depth and motion are prerequisites for correct depth effects and
 motion blur. `MotionBlur` (see the [camera guide](camera.md#motion-blur))
-consumes motion vectors; TAA and `DepthOfField` are not wrapped yet (see its
-[anti-aliasing notes](camera.md#anti-aliasing-msaa)). You can also read them
-yourself with `bevy_pbr::prepass_utils::prepass_motion_vector` in a forward
+consumes motion vectors and `DepthOfField` (see
+[depth of field](camera.md#depth-of-field)) reads depth; TAA is not wrapped yet
+(see the [anti-aliasing notes](camera.md#anti-aliasing-msaa)). You can also read
+motion vectors yourself with `bevy_pbr::prepass_utils::prepass_motion_vector` in a forward
 fragment on a camera with `MotionVectorPrepass()`, or through a
 [TensorPass](tensor-pass.md#g-buffer-and-motion-input-bundles) motion input.
 Shader displacement still does not update CPU culling bounds;
@@ -1526,15 +1527,3 @@ See `examples/bevy/shaders/` for complete working examples:
 - `shader_defs.py` - bool fields enable `#ifdef` conditional compilation
 - `extended_material.py` - PBR extension with posterize effect
 - `animate_shader.py` - time-based animation via `globals.time`
-
-## API migration
-
-Use `shader_type`, `shader_type_layout`, `ShaderTypeField`, `ShaderTypeLayout`
-and `pack_shader_data` instead of the shader_struct family. The decorator now
-supplies dataclass generation. Prefer `ShaderBuffer(rows)` and `set_data(rows)`
-for typed uploads. Replace material decorator base-property keywords with
-`base=standard_material`; instance base= needs no InitVar declaration.
-TextureBinding's sampler option is now sampler_type=; integer sample spellings
-are s_int/u_int. SamplerBinding also calls its kind sampler_type.
-Generated WGSL uses Bevy's MATERIAL_BIND_GROUP definition. Renaming a material
-class still requires updating its pybevy::gen::<ClassName> import in shaders.

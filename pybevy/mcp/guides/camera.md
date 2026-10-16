@@ -305,7 +305,49 @@ finite (`ValueError` otherwise); `samples` is an unsigned integer, so negative
 values raise `OverflowError`. Transparent meshes write no motion vectors and
 are not blurred.
 
-ChromaticAberration and DepthOfField are not yet available in PyBevy.
+### Depth of Field
+
+`DepthOfField` blurs whatever is away from `focal_distance` (meters) on a 3D
+camera. `DefaultPlugins` already includes the render plugin, and no prepass is
+needed: it reads the camera's main depth texture. It works with every MSAA
+setting, only with a perspective projection (orthographic cameras render
+unblurred), and is disabled on WebGL2 builds.
+
+<!-- pybevy-snippet: typecheck
+from pybevy.prelude import *
+-->
+```python
+from pybevy.post_process import DepthOfField, DepthOfFieldMode
+
+def setup(commands: Commands) -> None:
+    commands.spawn(
+        Camera3d(),
+        DepthOfField(
+            mode=DepthOfFieldMode.Bokeh,
+            focal_distance=7.0,
+            aperture_f_stops=1.0 / 8.0,
+            max_depth=14.0,
+        ),
+    )
+```
+
+`DepthOfFieldMode.Gaussian` (the default) is a cheaper plain blur;
+`DepthOfFieldMode.Bokeh` produces lens-like highlight spots. Lower
+`aperture_f_stops` blurs more; `sensor_height` and the FOV set the focal
+length. Set a finite `max_depth` when a skybox or clear color is visible,
+since the default infinite depth blurs the background up to
+`max_circle_of_confusion_diameter` pixels. `DepthOfField.from_physical_camera(params)`
+copies `sensor_height` and `aperture_f_stops` from `PhysicalCameraParameters`,
+so pairing it with `Exposure.from_physical_camera(params)` keeps blur and
+exposure consistent.
+
+Every float field must be finite (`ValueError` otherwise), except `max_depth`,
+which also accepts positive infinity. PyBevy does not add ranges Bevy does not
+enforce, so zero or negative values are accepted even when they disable or
+distort the effect. MCP writes reject every non-finite float, so a
+`max_depth` of infinity can be read but not written back through MCP.
+
+ChromaticAberration is not yet available in PyBevy.
 
 ### Skybox
 
@@ -363,7 +405,7 @@ commands.spawn(Camera3d(), Msaa.Sample4)  # Default - good balance
 | `Msaa.Sample8` | Maximum quality, higher GPU cost |
 
 **Compatibility note:** SSAO and screen-space reflections require `Msaa.Off`;
-`MotionBlur` supports every MSAA setting.
+`MotionBlur` and `DepthOfField` support every MSAA setting.
 PyBevy does not yet expose Bevy's TAA, FXAA, or SMAA components, so there is no
 supported edge-anti-aliasing replacement for these effects yet.
 

@@ -464,6 +464,14 @@ pub const VIGNETTE_ROUNDNESS_FINITE: &str = "Vignette.roundness must be finite";
 pub const VIGNETTE_EDGE_COMPENSATION_FINITE: &str = "Vignette.edge_compensation must be finite";
 pub const VIGNETTE_CENTER_FINITE: &str = "Vignette.center coordinates must be finite";
 pub const MOTION_BLUR_SHUTTER_ANGLE_FINITE: &str = "MotionBlur.shutter_angle must be finite";
+pub const DEPTH_OF_FIELD_FOCAL_DISTANCE_FINITE: &str = "DepthOfField.focal_distance must be finite";
+pub const DEPTH_OF_FIELD_SENSOR_HEIGHT_FINITE: &str = "DepthOfField.sensor_height must be finite";
+pub const DEPTH_OF_FIELD_APERTURE_F_STOPS_FINITE: &str =
+    "DepthOfField.aperture_f_stops must be finite";
+pub const DEPTH_OF_FIELD_MAX_COC_DIAMETER_FINITE: &str =
+    "DepthOfField.max_circle_of_confusion_diameter must be finite";
+pub const DEPTH_OF_FIELD_MAX_DEPTH_NOT_NAN_OR_NEG_INF: &str =
+    "DepthOfField.max_depth must be finite or positive infinity";
 
 pub fn viewport_conversion_failed(error: impl Display) -> String {
     format!("Viewport conversion failed: {error}")
