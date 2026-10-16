@@ -28,10 +28,11 @@ impl PyCubemapVisibleEntities {
             .into()
     }
 
-    pub fn get(&self, py: Python<'_>, i: usize) -> PyResult<Py<PyVisibleMeshEntities>> {
-        if i >= CUBEMAP_FACE_COUNT {
-            return Err(PyIndexError::new_err(CUBEMAP_FACE_INDEX));
-        }
+    pub fn get(&self, py: Python<'_>, i: isize) -> PyResult<Py<PyVisibleMeshEntities>> {
+        let i = usize::try_from(i)
+            .ok()
+            .filter(|&i| i < CUBEMAP_FACE_COUNT)
+            .ok_or_else(|| PyIndexError::new_err(CUBEMAP_FACE_INDEX))?;
         let storage = match &self.storage.inner {
             // A re-resolving component handle can only represent whole components.
             ComponentStorageInner::Revalidating(_) => {

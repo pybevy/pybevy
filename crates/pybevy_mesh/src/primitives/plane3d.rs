@@ -23,22 +23,21 @@ impl PyPlaneMeshBuilder {
     #[new]
     #[pyo3(signature = (normal = PyDir3::from(Dir3::Y), size = PyVec2::from(Vec2::ONE)))]
     pub fn new(normal: PyDir3, size: PyVec2) -> PyResult<PyClassInitializer<Self>> {
-        let size: Vec2 = dimension("PlaneMeshBuilder", "size", size.try_into()?)?;
+        let size: Vec2 = dimension::<Self, _>("size", size.try_into()?)?;
         let builder = PlaneMeshBuilder::new(normal.try_into()?, size);
         Ok((Self(builder), PyMeshBuilder).into())
     }
 
     #[staticmethod]
     pub fn from_size(py: Python, size: PyVec2) -> PyResult<Py<PyAny>> {
-        let size: Vec2 = dimension("PlaneMeshBuilder", "size", size.try_into()?)?;
+        let size: Vec2 = dimension::<Self, _>("size", size.try_into()?)?;
         let builder = PlaneMeshBuilder::from_size(size);
         Ok(Py::new(py, (Self(builder), PyMeshBuilder))?.into_any())
     }
 
     #[staticmethod]
     pub fn from_length(py: Python, length: f32) -> PyResult<Py<PyAny>> {
-        let builder =
-            PlaneMeshBuilder::from_length(dimension("PlaneMeshBuilder", "length", length)?);
+        let builder = PlaneMeshBuilder::from_length(dimension::<Self, _>("length", length)?);
         Ok(Py::new(py, (Self(builder), PyMeshBuilder))?.into_any())
     }
 
@@ -47,8 +46,8 @@ impl PyPlaneMeshBuilder {
     }
 
     pub fn size(&self, py: Python<'_>, width: f32, height: f32) -> PyResult<Py<Self>> {
-        let width = dimension("PlaneMeshBuilder", "width", width)?;
-        let height = dimension("PlaneMeshBuilder", "height", height)?;
+        let width = dimension::<Self, _>("width", width)?;
+        let height = dimension::<Self, _>("height", height)?;
         Py::new(py, (Self(self.0.size(width, height)), PyMeshBuilder))
     }
 

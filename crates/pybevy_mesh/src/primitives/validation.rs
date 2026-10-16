@@ -1,4 +1,4 @@
-use pybevy_core::domain::{FieldDomain, IntegerInput, check};
+use pybevy_core::domain::FieldDomain;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 pub(super) const MAX_MESH_VERTICES: u128 = 1 << 24;
@@ -21,28 +21,7 @@ pub(super) fn vertex_budget_product(builder: &str, left: u128, right: u128) -> P
     vertex_budget(builder, vertices)
 }
 
-pub(super) const AT_LEAST_ONE: &[FieldDomain] = &[FieldDomain::AtLeast(1)];
-pub(super) const AT_LEAST_TWO: &[FieldDomain] = &[FieldDomain::AtLeast(2)];
+pub(crate) const AT_LEAST_ONE: &[FieldDomain] = &[FieldDomain::AtLeast(1)];
+pub(crate) const AT_LEAST_TWO: &[FieldDomain] = &[FieldDomain::AtLeast(2)];
 pub(crate) const AT_LEAST_THREE: &[FieldDomain] = &[FieldDomain::AtLeast(3)];
-pub(super) const AT_LEAST_FOUR: &[FieldDomain] = &[FieldDomain::AtLeast(4)];
-
-/// Check a builder count, read wide so a negative count is a `ValueError`.
-pub(super) fn minimum_count(
-    owner: &'static str,
-    field: &'static str,
-    count: IntegerInput<u32>,
-    domains: &'static [FieldDomain],
-) -> PyResult<u32> {
-    Ok(check(owner, field, count, domains)?.stored())
-}
-
-/// Check a count already stored in a builder.
-pub(super) fn stored_count(
-    owner: &'static str,
-    field: &'static str,
-    count: u32,
-    domains: &'static [FieldDomain],
-) -> PyResult<()> {
-    check(owner, field, count, domains)?;
-    Ok(())
-}
+pub(crate) const AT_LEAST_FOUR: &[FieldDomain] = &[FieldDomain::AtLeast(4)];

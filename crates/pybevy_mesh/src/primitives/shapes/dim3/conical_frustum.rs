@@ -38,9 +38,9 @@ impl PyConicalFrustum {
         height: f32,
     ) -> PyResult<PyClassInitializer<Self>> {
         let frustum = ConicalFrustum {
-            radius_top: dimension("ConicalFrustum", "radius_top", radius_top)?,
-            radius_bottom: dimension("ConicalFrustum", "radius_bottom", radius_bottom)?,
-            height: dimension("ConicalFrustum", "height", height)?,
+            radius_top: dimension::<Self, _>("radius_top", radius_top)?,
+            radius_bottom: dimension::<Self, _>("radius_bottom", radius_bottom)?,
+            height: dimension::<Self, _>("height", height)?,
         };
         Ok((Self(frustum), PyMeshable).into())
     }
@@ -52,7 +52,7 @@ impl PyConicalFrustum {
 
     #[setter]
     pub fn set_radius_top(&mut self, value: f32) -> PyResult<()> {
-        self.0.radius_top = dimension("ConicalFrustum", "radius_top", value)?;
+        self.0.radius_top = dimension::<Self, _>("radius_top", value)?;
         Ok(())
     }
 
@@ -63,7 +63,7 @@ impl PyConicalFrustum {
 
     #[setter]
     pub fn set_radius_bottom(&mut self, value: f32) -> PyResult<()> {
-        self.0.radius_bottom = dimension("ConicalFrustum", "radius_bottom", value)?;
+        self.0.radius_bottom = dimension::<Self, _>("radius_bottom", value)?;
         Ok(())
     }
 
@@ -74,7 +74,7 @@ impl PyConicalFrustum {
 
     #[setter]
     pub fn set_height(&mut self, value: f32) -> PyResult<()> {
-        self.0.height = dimension("ConicalFrustum", "height", value)?;
+        self.0.height = dimension::<Self, _>("height", value)?;
         Ok(())
     }
 

@@ -3,7 +3,7 @@ use std::time::Duration;
 use bevy::audio::{AudioSink, AudioSinkPlayback};
 use pybevy_core::{
     ComponentStorage, PyComponent,
-    domain::{FieldDomain, check},
+    domain::{FieldDomain, check_for},
     public_error::audio_seek_failed,
     repr::float_repr,
 };
@@ -52,7 +52,7 @@ impl PyAudioSink {
     }
 
     pub fn set_speed(&self, speed: f32) -> PyResult<()> {
-        let speed = check("AudioSink", "speed", speed, SPEED_DOMAIN)?;
+        let speed = check_for::<Self, _>("speed", speed, SPEED_DOMAIN)?;
         self.as_ref()?.set_speed(speed);
         Ok(())
     }

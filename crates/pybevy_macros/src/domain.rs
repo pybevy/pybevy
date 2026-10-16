@@ -7,7 +7,7 @@ use syn::{
     parse::{Parse, ParseStream},
 };
 
-pub(crate) const DOMAIN_RULES: &str = "finite, not_nan, finite_or_pos_inf, non_negative, positive, range(lo, hi), range_inclusive(lo, hi), at_least(n)";
+pub(crate) const DOMAIN_RULES: &str = "finite, not_nan, finite_or_pos_inf, non_negative, positive, range(lo, hi), range_inclusive(lo, hi), at_least(n), ordered, ordered_strict";
 
 /// One rule of a `domains` entry, lowered to `pybevy_core::domain::FieldDomain`.
 #[derive(Clone)]
@@ -20,6 +20,10 @@ pub(crate) enum DomainRuleKind {
     Range(Box<Expr>, Box<Expr>),
     RangeInclusive(Box<Expr>, Box<Expr>),
     AtLeast(Box<Expr>),
+    /// `start <= end` (or `<` when strict) on a range-shaped field.
+    Ordered {
+        strict: bool,
+    },
 }
 
 #[derive(Clone)]
@@ -43,6 +47,8 @@ impl Parse for DomainRule {
                 | "range"
                 | "range_inclusive"
                 | "at_least"
+                | "ordered"
+                | "ordered_strict"
         ) {
             return Err(syn::Error::new_spanned(
                 &ident,
@@ -93,6 +99,8 @@ impl Parse for DomainRule {
             ("range", [lo, hi]) => DomainRuleKind::Range(bound(lo), bound(hi)),
             ("range_inclusive", [lo, hi]) => DomainRuleKind::RangeInclusive(bound(lo), bound(hi)),
             ("at_least", [n]) => DomainRuleKind::AtLeast(bound(n)),
+            ("ordered", []) => DomainRuleKind::Ordered { strict: false },
+            ("ordered_strict", []) => DomainRuleKind::Ordered { strict: true },
             _ => {
                 return Err(syn::Error::new_spanned(
                     &ident,
@@ -123,15 +131,26 @@ impl DomainRule {
             DomainRuleKind::AtLeast(n) => quote! {
                 pybevy_core::domain::FieldDomain::AtLeast((#n) as i64)
             },
+            DomainRuleKind::Ordered { strict } => quote! {
+                pybevy_core::domain::FieldDomain::Ordered { strict: #strict }
+            },
         }
     }
 
     /// Rules whose violations follow NumPy float semantics on View by default.
+    /// Orderings never apply to View, so they do not turn its checks on.
     fn is_float_only(&self) -> bool {
         matches!(
             self.kind,
-            DomainRuleKind::Finite | DomainRuleKind::NotNan | DomainRuleKind::FiniteOrPosInf
+            DomainRuleKind::Finite
+                | DomainRuleKind::NotNan
+                | DomainRuleKind::FiniteOrPosInf
+                | DomainRuleKind::Ordered { .. }
         )
+    }
+
+    pub(crate) fn is_ordering(&self) -> bool {
+        matches!(self.kind, DomainRuleKind::Ordered { .. })
     }
 }
 
@@ -194,6 +213,44 @@ impl DomainEntry {
     }
 }
 
+/// An owner-level `ordered(lower, upper)` or `ordered_strict(lower, upper)`.
+#[derive(Clone)]
+pub(crate) struct DomainOrder {
+    pub(crate) lower: Ident,
+    pub(crate) upper: Ident,
+    strict: bool,
+}
+
+impl DomainOrder {
+    fn check_ident(&self) -> Ident {
+        quote::format_ident!("check_{}_order", self.lower)
+    }
+}
+
+/// Everything a `domains = [...]` option declares: per-field rules and
+/// orderings between two fields.
+#[derive(Clone, Default)]
+pub(crate) struct Domains {
+    pub(crate) fields: Vec<DomainEntry>,
+    pub(crate) orders: Vec<DomainOrder>,
+}
+
+impl Domains {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.fields.is_empty() && self.orders.is_empty()
+    }
+
+    /// The first ordering declared anywhere, for wrappers that cannot enforce one.
+    pub(crate) fn first_ordering(&self) -> Option<&Ident> {
+        self.orders.first().map(|order| &order.lower).or_else(|| {
+            self.fields
+                .iter()
+                .find(|entry| entry.rules.iter().any(DomainRule::is_ordering))
+                .map(|entry| &entry.python_name)
+        })
+    }
+}
+
 /// Parse a field path: `intensity`, or a tuple index with an alias such as
 /// `0 as value` or `0.x as x`. Returns the accessor, the `offset_of!` path and
 /// the Python name.
@@ -230,12 +287,12 @@ pub(crate) fn domain_impl_tokens(
     bevy_type: &Type,
     py_type: &Ident,
     owner: &str,
-    domains: &[DomainEntry],
+    domains: &Domains,
 ) -> proc_macro2::TokenStream {
     if domains.is_empty() {
         return quote! {};
     }
-    let items = domains.iter().map(|entry| {
+    let items = domains.fields.iter().map(|entry| {
         let const_ident = entry.const_ident();
         let check_ident = entry.check_ident();
         let validate_ident = entry.validate_ident();
@@ -250,27 +307,52 @@ pub(crate) fn domain_impl_tokens(
                 pybevy_core::domain::check(#owner, #name, value, Self::#const_ident)
             }
 
-            pub fn #validate_ident<V: pybevy_core::domain::DomainValues>(
+            pub fn #validate_ident<V: pybevy_core::domain::DomainValues + ?Sized>(
                 value: &V,
             ) -> Result<(), pybevy_core::StorageError> {
-                Self::#check_ident(*value).map(drop).map_err(Into::into)
+                pybevy_core::domain::check_ref(#owner, #name, value, Self::#const_ident)
+                    .map_err(Into::into)
             }
         }
     });
-    let whole = domains.iter().map(|entry| {
-        let check_ident = entry.check_ident();
+    let order_items = domains.orders.iter().map(|order| {
+        let check_ident = order.check_ident();
+        let lower = order.lower.to_string();
+        let upper = order.upper.to_string();
+        let strict = order.strict;
+        quote! {
+            pub fn #check_ident<T: Copy + Into<pybevy_core::domain::DomainValue>>(
+                lower: T,
+                upper: T,
+            ) -> Result<(), pybevy_core::domain::DomainViolation> {
+                pybevy_core::domain::check_ordered(#owner, #lower, lower, #upper, upper, #strict)
+            }
+        }
+    });
+    let whole = domains.fields.iter().map(|entry| {
+        let const_ident = entry.const_ident();
+        let name = entry.python_name.to_string();
         let accessor = &entry.rust_accessor;
-        quote! { Self::#check_ident(value #accessor)?; }
+        quote! {
+            pybevy_core::domain::check_ref(#owner, #name, &value #accessor, Self::#const_ident)?;
+        }
+    });
+    let whole_orders = domains.orders.iter().map(|order| {
+        let check_ident = order.check_ident();
+        let (lower, upper) = (&order.lower, &order.upper);
+        quote! { Self::#check_ident(value.#lower, value.#upper)?; }
     });
     quote! {
         impl #py_type {
             #(#items)*
+            #(#order_items)*
 
-            /// Check every declared field domain of a whole native value.
+            /// Check every declared field domain and ordering of a whole native value.
             pub fn validate_domains(
                 value: &#bevy_type,
             ) -> Result<(), pybevy_core::domain::DomainViolation> {
                 #(#whole)*
+                #(#whole_orders)*
                 Ok(())
             }
         }
@@ -286,24 +368,63 @@ pub(crate) fn owner_name(py_type: &Ident, bridge_name_override: Option<&str>) ->
     })
 }
 
-/// Parse `= [field => [rules], ...]` after a `domains` key into `domains`,
-/// rejecting a field named twice.
-pub(crate) fn parse_domains(input: ParseStream, domains: &mut Vec<DomainEntry>) -> syn::Result<()> {
+/// Parse `= [field => [rules], ordered(a, b), ...]` after a `domains` key into
+/// `domains`, rejecting a field named twice and a repeated ordering lower bound.
+pub(crate) fn parse_domains(input: ParseStream, domains: &mut Domains) -> syn::Result<()> {
     input.parse::<Token![=]>()?;
     let content;
     syn::bracketed!(content in input);
-    let entries = content.parse_terminated(DomainEntry::parse, Token![,])?;
-    for entry in entries {
-        if domains
-            .iter()
-            .any(|existing| existing.python_name == entry.python_name)
-        {
-            return Err(syn::Error::new_spanned(
-                &entry.python_name,
-                "duplicate domains entry",
-            ));
+    while !content.is_empty() {
+        let fork = content.fork();
+        let ordering = fork
+            .parse::<Ident>()
+            .ok()
+            .filter(|ident| ident == "ordered" || ident == "ordered_strict")
+            .filter(|_| fork.peek(syn::token::Paren));
+        if let Some(kind) = ordering {
+            content.parse::<Ident>()?;
+            let args;
+            syn::parenthesized!(args in content);
+            let lower: Ident = args.parse()?;
+            args.parse::<Token![,]>()?;
+            let upper: Ident = args.parse()?;
+            if !args.is_empty() {
+                return Err(args.error("expected `ordered(lower, upper)`"));
+            }
+            if lower == upper {
+                return Err(syn::Error::new_spanned(
+                    &upper,
+                    "an ordering needs two different fields",
+                ));
+            }
+            if domains.orders.iter().any(|order| order.lower == lower) {
+                return Err(syn::Error::new_spanned(
+                    &lower,
+                    format!("duplicate ordering for `{lower}`"),
+                ));
+            }
+            domains.orders.push(DomainOrder {
+                lower,
+                upper,
+                strict: kind == "ordered_strict",
+            });
+        } else {
+            let entry: DomainEntry = content.parse()?;
+            if domains
+                .fields
+                .iter()
+                .any(|existing| existing.python_name == entry.python_name)
+            {
+                return Err(syn::Error::new_spanned(
+                    &entry.python_name,
+                    "duplicate domains entry",
+                ));
+            }
+            domains.fields.push(entry);
         }
-        domains.push(entry);
+        if !content.is_empty() {
+            content.parse::<Token![,]>()?;
+        }
     }
     Ok(())
 }
@@ -312,13 +433,13 @@ pub(crate) fn parse_domains(input: ParseStream, domains: &mut Vec<DomainEntry>) 
 /// Bevy type, then optional `domains = [...]`.
 pub(crate) struct StorageTypeArgs {
     pub(crate) bevy_type: Option<Type>,
-    pub(crate) domains: Vec<DomainEntry>,
+    pub(crate) domains: Domains,
 }
 
 impl Parse for StorageTypeArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let mut bevy_type = None;
-        let mut domains = Vec::new();
+        let mut domains = Domains::default();
         while !input.is_empty() {
             if input.peek(Ident) && input.peek2(Token![=]) {
                 let key: Ident = input.parse()?;

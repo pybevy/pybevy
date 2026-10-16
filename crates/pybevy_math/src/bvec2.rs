@@ -45,11 +45,11 @@ impl TryFrom<&PyBVec2> for BVec2 {
     }
 }
 
-fn check_index(index: usize) -> PyResult<()> {
-    if index > 1 {
-        return Err(PyIndexError::new_err(BVEC2_INDEX_OUT_OF_RANGE));
-    }
-    Ok(())
+fn check_index(index: isize) -> PyResult<usize> {
+    usize::try_from(index)
+        .ok()
+        .filter(|&index| index <= 1)
+        .ok_or_else(|| PyIndexError::new_err(BVEC2_INDEX_OUT_OF_RANGE))
 }
 
 #[pymethods]
@@ -116,13 +116,13 @@ impl PyBVec2 {
         Ok(self.to_bevy()?.all())
     }
 
-    pub fn test(&self, index: usize) -> PyResult<bool> {
-        check_index(index)?;
+    pub fn test(&self, index: isize) -> PyResult<bool> {
+        let index = check_index(index)?;
         Ok(self.to_bevy()?.test(index))
     }
 
-    pub fn set(&mut self, index: usize, value: bool) -> PyResult<()> {
-        check_index(index)?;
+    pub fn set(&mut self, index: isize, value: bool) -> PyResult<()> {
+        let index = check_index(index)?;
         self.storage.update(|mask| mask.set(index, value))?;
         Ok(())
     }

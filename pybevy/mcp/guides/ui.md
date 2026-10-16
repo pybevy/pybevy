@@ -11,10 +11,15 @@ Use `px(value)`, `percent(value)`, `vw(value)`, `vh(value)`, `vmin(value)` and
 field to change its value. Read numeric payloads with `.value` after matching
 the variant; use `isinstance(value, Val.Auto)` or `value == Val.Auto()` for Auto.
 Bare numeric Node fields mean pixels.
-Node layout assignments, including margin, padding, border and live rect-side
-writes, reject NaN and infinity before they reach Bevy's layout. Standalone
-`Val` values can still carry non-finite data; `UiRect` rejects it in its
-constructors, `with_*` builders and setters. Grid-track numeric factories require finite values at construction.
+Node construction and property assignments, including margin, padding,
+border, flex growth and shrink, scrollbar width and live rect-side writes,
+reject NaN and infinity before they reach Bevy's layout, naming the field:
+`Node.width must be finite (got inf)`. Padding and border sides must also be
+non-negative (`Node.padding.left must be finite and non-negative (got -1.0)`).
+Node batch columns and MCP writes check the same rules; View arithmetic follows
+NumPy float semantics. Standalone `Val` values can still carry non-finite data;
+`UiRect` rejects it in its constructors, `with_*` builders and setters.
+Grid-track numeric factories require finite values at construction.
 
 Scalar multiplication, division and negation preserve the unit. `try_add` and
 `try_sub` return a value for matching numeric units and raise `ValueError` for

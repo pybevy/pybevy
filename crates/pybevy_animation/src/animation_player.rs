@@ -3,7 +3,7 @@ use bevy::animation::{
 };
 use pybevy_core::{
     ComponentStorage, PyComponent,
-    domain::{FINITE, check},
+    domain::{FINITE, check_for},
     public_error::ANIMATION_PLAYER_ANIMATION_MISSING,
 };
 use pybevy_macros::pycomponent;
@@ -61,7 +61,7 @@ impl PyActiveAnimation {
     }
 
     pub fn set_weight(mut pyself: PyRefMut<'_, Self>, weight: f32) -> PyResult<PyRefMut<'_, Self>> {
-        let weight = check("ActiveAnimation", "weight", weight, FINITE)?;
+        let weight = check_for::<Self, _>("weight", weight, FINITE)?;
         pyself.with_animation_mut(|anim| {
             anim.set_weight(weight);
             Ok(())
@@ -129,7 +129,7 @@ impl PyActiveAnimation {
     }
 
     pub fn set_speed(mut pyself: PyRefMut<'_, Self>, speed: f32) -> PyResult<PyRefMut<'_, Self>> {
-        let speed = check("ActiveAnimation", "speed", speed, FINITE)?;
+        let speed = check_for::<Self, _>("speed", speed, FINITE)?;
         pyself.with_animation_mut(|anim| {
             anim.set_speed(speed);
             Ok(())
@@ -161,7 +161,7 @@ impl PyActiveAnimation {
         mut pyself: PyRefMut<'_, Self>,
         seek_time: f32,
     ) -> PyResult<PyRefMut<'_, Self>> {
-        let seek_time = check("ActiveAnimation", "seek_time", seek_time, FINITE)?;
+        let seek_time = check_for::<Self, _>("seek_time", seek_time, FINITE)?;
         pyself.with_animation_mut(|anim| {
             anim.set_seek_time(seek_time);
             Ok(())
@@ -170,7 +170,7 @@ impl PyActiveAnimation {
     }
 
     pub fn seek_to(mut pyself: PyRefMut<'_, Self>, seek_time: f32) -> PyResult<PyRefMut<'_, Self>> {
-        let seek_time = check("ActiveAnimation", "seek_time", seek_time, FINITE)?;
+        let seek_time = check_for::<Self, _>("seek_time", seek_time, FINITE)?;
         pyself.with_animation_mut(|anim| {
             anim.seek_to(seek_time);
             Ok(())
@@ -277,7 +277,7 @@ impl PyAnimationPlayer {
         mut pyself: PyRefMut<'_, Self>,
         amount: f32,
     ) -> PyResult<PyRefMut<'_, Self>> {
-        let amount = check("AnimationPlayer", "amount", amount, FINITE)?;
+        let amount = check_for::<Self, _>("amount", amount, FINITE)?;
         pyself.as_mut()?.seek_all_by(amount);
         Ok(pyself)
     }
@@ -321,7 +321,7 @@ impl PyAnimationPlayer {
         mut pyself: PyRefMut<'_, Self>,
         factor: f32,
     ) -> PyResult<PyRefMut<'_, Self>> {
-        let factor = check("AnimationPlayer", "factor", factor, FINITE)?;
+        let factor = check_for::<Self, _>("factor", factor, FINITE)?;
         pyself.as_mut()?.adjust_speeds(factor);
         Ok(pyself)
     }

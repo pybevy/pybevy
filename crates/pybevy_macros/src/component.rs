@@ -7,7 +7,9 @@ use syn::{
 };
 
 use crate::{
-    domain::{DomainEntry, domain_impl_tokens, owner_name, parse_domains, parse_field_path},
+    domain::{
+        DomainEntry, Domains, domain_impl_tokens, owner_name, parse_domains, parse_field_path,
+    },
     unit::generate_unit_bridge_tokens,
     util::{reflect_registration_tokens, to_snake_case},
 };
@@ -158,7 +160,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
         clone_with: Option<Path>,
         batch_validate: Option<Path>,
         reflect_validate: Option<Path>,
-        domains: Vec<DomainEntry>,
+        domains: Domains,
     }
 
     impl Parse for ComponentStorageArgs {
@@ -177,7 +179,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
             let mut clone_with = None;
             let mut batch_validate = None;
             let mut reflect_validate = None;
-            let mut domains: Vec<DomainEntry> = Vec::new();
+            let mut domains = Domains::default();
 
             while input.peek(Token![,]) {
                 input.parse::<Token![,]>()?;
@@ -277,9 +279,19 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
     // constructor so query-built instances do not inherit a stale value.
     let extra_field_inits = extra_field_defaults(&input);
 
+    // Batch and View check one column at a time, so a component cannot declare an ordering yet.
+    if let Some(field) = args.domains.first_ordering() {
+        return syn::Error::new_spanned(
+            field,
+            "`ordered` domains are not supported on pycomponent; batch and View writes cannot check them",
+        )
+        .to_compile_error()
+        .into();
+    }
+
     // Unit component: no storage field, just the struct + optional bridge
     if args.unit {
-        if let Some(entry) = args.domains.first() {
+        if let Some(entry) = args.domains.fields.first() {
             return syn::Error::new_spanned(
                 &entry.python_name,
                 "domains are not supported for unit components",
@@ -328,7 +340,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
             args.clone_with.as_ref(),
             args.batch_validate.as_ref(),
             args.reflect_validate.as_ref(),
-            &args.domains,
+            &args.domains.fields,
             true, // emit inventory registration
         )
     } else {

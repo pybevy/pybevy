@@ -11,7 +11,8 @@ use crate::{
     image_filter_mode::PyImageFilterMode, image_sampler_border_color::PyImageSamplerBorderColor,
 };
 
-#[pyfield]
+// wgpu requires 0 <= lod_min_clamp <= lod_max_clamp for every sampler.
+#[pyfield(domains = [lod_min_clamp => [non_negative], ordered(lod_min_clamp, lod_max_clamp)])]
 #[pyclass(
     name = "ImageSamplerDescriptor",
     module = "pybevy.image",
@@ -55,8 +56,8 @@ impl PyImageSamplerDescriptor {
         compare: Option<PyImageCompareFunction>,
         anisotropy_clamp: u16,
         border_color: Option<PyImageSamplerBorderColor>,
-    ) -> Self {
-        ImageSamplerDescriptor {
+    ) -> PyResult<Self> {
+        let descriptor = ImageSamplerDescriptor {
             address_mode_u: address_mode_u.into(),
             address_mode_v: address_mode_v.into(),
             address_mode_w: address_mode_w.into(),
@@ -69,8 +70,9 @@ impl PyImageSamplerDescriptor {
             anisotropy_clamp,
             border_color: border_color.map(Into::into),
             label,
-        }
-        .into()
+        };
+        Self::validate_domains(&descriptor)?;
+        Ok(descriptor.into())
     }
 
     #[staticmethod]
@@ -156,7 +158,10 @@ impl PyImageSamplerDescriptor {
 
     #[setter]
     pub fn set_lod_min_clamp(&mut self, value: f32) -> PyResult<()> {
-        self.as_mut()?.lod_min_clamp = value;
+        let value = Self::check_lod_min_clamp(value)?;
+        let mut descriptor = self.as_mut()?;
+        Self::check_lod_min_clamp_order(value, descriptor.lod_max_clamp)?;
+        descriptor.lod_min_clamp = value;
         Ok(())
     }
 
@@ -167,7 +172,9 @@ impl PyImageSamplerDescriptor {
 
     #[setter]
     pub fn set_lod_max_clamp(&mut self, value: f32) -> PyResult<()> {
-        self.as_mut()?.lod_max_clamp = value;
+        let mut descriptor = self.as_mut()?;
+        Self::check_lod_min_clamp_order(descriptor.lod_min_clamp, value)?;
+        descriptor.lod_max_clamp = value;
         Ok(())
     }
 

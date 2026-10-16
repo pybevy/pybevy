@@ -1,7 +1,7 @@
 use bevy::math::{IRect, IVec2};
 use pybevy_core::{
     FromBorrowedStorage, ValueStorage,
-    domain::{NON_NEGATIVE, check},
+    domain::{NON_NEGATIVE, check_for},
     public_error::UNSUPPORTED_COMPARISON,
 };
 use pybevy_macros::pyvalue;
@@ -69,7 +69,7 @@ impl PyIRect {
     #[staticmethod]
     pub fn from_center_size(origin: PyIVec2, size: PyIVec2) -> PyResult<PyIRect> {
         let size: IVec2 = size.try_into()?;
-        let size = check("IRect", "size", size, NON_NEGATIVE)?;
+        let size = check_for::<Self, _>("size", size, NON_NEGATIVE)?;
         Self::from_center_half_size(origin, (size / 2).into())
     }
 
@@ -77,7 +77,7 @@ impl PyIRect {
     pub fn from_center_half_size(origin: PyIVec2, half_size: PyIVec2) -> PyResult<PyIRect> {
         let origin: IVec2 = origin.try_into()?;
         let half_size: IVec2 = half_size.try_into()?;
-        let half_size = check("IRect", "half_size", half_size, NON_NEGATIVE)?;
+        let half_size = check_for::<Self, _>("half_size", half_size, NON_NEGATIVE)?;
         Ok(IRect {
             min: IVec2::new(
                 checked(origin.x.checked_sub(half_size.x))?,

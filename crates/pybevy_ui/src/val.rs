@@ -1,5 +1,5 @@
 use bevy::ui::{Val, percent, px, vh, vmax, vmin, vw};
-use pybevy_core::{StorageError, public_error};
+use pybevy_core::public_error;
 use pybevy_macros::pyenum;
 use pyo3::{
     exceptions::{PyTypeError, PyValueError},
@@ -63,21 +63,8 @@ impl PyVal {
     }
 }
 
-pub(crate) fn validate_finite_val(value: Val, parameter: &str) -> Result<Val, StorageError> {
-    let magnitude = match value {
-        Val::Auto => return Ok(value),
-        Val::Px(v) | Val::Percent(v) | Val::Vw(v) | Val::Vh(v) | Val::VMin(v) | Val::VMax(v) => v,
-    };
-    if !magnitude.is_finite() {
-        return Err(StorageError::InvalidValue(format!(
-            "{parameter} must be finite (got {magnitude})"
-        )));
-    }
-    Ok(value)
-}
-
 /// Accepted `Val` inputs; bare numbers are PyBevy's documented pixel-value convenience.
-/// Callers apply `validate_finite_val` with their parameter name.
+/// Node checks the result against its declared field domains.
 #[derive(Debug, Clone, Copy)]
 pub struct IntoVal(pub Val);
 

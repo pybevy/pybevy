@@ -4,6 +4,7 @@ pub mod comparison;
 pub mod config;
 pub mod config_audit;
 pub mod coverage_json;
+pub mod domain_lint;
 pub mod mappings;
 pub mod model;
 pub mod native_system_set_lint;

@@ -36,7 +36,7 @@ impl PyCircle {
     #[new]
     #[pyo3(signature = (radius=0.5))]
     pub fn new(radius: f32) -> PyResult<PyClassInitializer<Self>> {
-        let circle = Circle::new(dimension("Circle", "radius", radius)?);
+        let circle = Circle::new(dimension::<Self, _>("radius", radius)?);
         Ok((Self(ValueStorage::owned(circle)), PyMeshable).into())
     }
 
@@ -48,7 +48,7 @@ impl PyCircle {
     #[setter]
     pub fn set_radius(&mut self, value: f32) -> PyResult<()> {
         let mut circle = self.0.as_mut()?;
-        circle.radius = dimension("Circle", "radius", value)?;
+        circle.radius = dimension::<Self, _>("radius", value)?;
         Ok(())
     }
 

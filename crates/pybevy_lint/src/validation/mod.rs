@@ -18,7 +18,7 @@ use std::{
 use crate::{
     bevy_parser::types::{BevyCrate, BevyItem},
     comparison::{ConversionIndex, pybevy_bevy_name},
-    config::Config,
+    config::{Config, ValidationException},
     model::{
         ConstructorOrigin, EnumVariantDef, EnumVariantKind, MacroInfo, MethodDef, ParameterDef,
         PropertyDef, PyClassDef,
@@ -471,7 +471,7 @@ pub fn validate_with_bevy(
             .iter()
             .zip(consumed_exceptions.iter())
         {
-            if !*consumed {
+            if !*consumed && !is_domain_lint_exception(exception) {
                 diagnostics.push(
                     Diagnostic::error(
                         DiagnosticCode::E010,
@@ -487,6 +487,11 @@ pub fn validate_with_bevy(
     }
 
     diagnostics
+}
+
+/// E018 exceptions are consumed, and checked for staleness, by the domain lint.
+fn is_domain_lint_exception(exception: &ValidationException) -> bool {
+    exception.code == DiagnosticCode::E018.as_str()
 }
 
 /// The upstream item a wrapper resolves to: an explicit claim (macro, bridge
@@ -955,7 +960,7 @@ fn validate_all_impl_with_consumed(
             .iter()
             .zip(consumed_exceptions.iter())
         {
-            if !*consumed {
+            if !*consumed && !is_domain_lint_exception(exception) {
                 diagnostics.push(
                     Diagnostic::error(
                         DiagnosticCode::E010,

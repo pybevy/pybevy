@@ -5,7 +5,7 @@
 //! [`DomainViolation`] whose `Display` text is the canonical user-facing
 //! message, and adapters raise it as `ValueError`.
 
-use std::{fmt, marker::PhantomData, num::NonZero, time::Duration};
+use std::{fmt, marker::PhantomData, num::NonZero, ops::Range, time::Duration};
 
 use bevy::math::{IVec2, Quat, Vec2, Vec3, Vec3A, Vec4};
 #[cfg(feature = "text")]
@@ -14,7 +14,7 @@ use bevy::text::FontSize;
 use bevy::ui::{UiRect, Val};
 #[cfg(feature = "pyo3")]
 use pyo3::{
-    Borrowed, FromPyObject, PyAny, PyErr,
+    Borrowed, FromPyObject, PyAny, PyClass, PyErr,
     exceptions::{PyOverflowError, PyTypeError, PyValueError},
     types::{PyAnyMethods, PyDelta},
 };
@@ -40,6 +40,9 @@ pub enum FieldDomain {
     RangeInclusive { lo: f64, hi: f64 },
     /// `v >= n`.
     AtLeast(i64),
+    /// On a range-shaped value, `start <= end`, or `start < end` when
+    /// `strict`; NaN never orders. Single values ignore it.
+    Ordered { strict: bool },
 }
 
 /// Rejects NaN and both infinities.
@@ -52,6 +55,8 @@ pub const NON_NEGATIVE: &[FieldDomain] = &[FieldDomain::NonNegative];
 pub const FINITE_NON_NEGATIVE: &[FieldDomain] = &[FieldDomain::Finite, FieldDomain::NonNegative];
 /// Finite and `v > 0`.
 pub const POSITIVE: &[FieldDomain] = &[FieldDomain::Positive];
+/// A bit index of a `u64` mask.
+pub const MASK_BIT_DOMAIN: &[FieldDomain] = &[FieldDomain::Range { lo: 0.0, hi: 64.0 }];
 
 impl FieldDomain {
     fn accepts(self, value: DomainValue) -> bool {
@@ -72,6 +77,7 @@ impl FieldDomain {
             Self::Range { lo, hi } => lo <= v && v < hi,
             Self::RangeInclusive { lo, hi } => lo <= v && v <= hi,
             Self::AtLeast(n) => v >= n as f64,
+            Self::Ordered { .. } => true,
         }
     }
 
@@ -84,12 +90,21 @@ impl FieldDomain {
             Self::Range { lo, hi } => lo <= wide && wide < hi,
             Self::RangeInclusive { lo, hi } => lo <= wide && wide <= hi,
             Self::AtLeast(n) => v >= i128::from(n),
+            Self::Ordered { .. } => true,
         }
     }
 
     /// Whether an integer value can break this rule.
     fn applies_to_int(self) -> bool {
         !matches!(self, Self::Finite | Self::NotNan | Self::FiniteOrPosInf)
+    }
+
+    /// The ordering a list of rules requires, if any.
+    fn ordering(domains: &[Self]) -> Option<bool> {
+        domains.iter().find_map(|domain| match domain {
+            Self::Ordered { strict } => Some(*strict),
+            _ => None,
+        })
     }
 }
 
@@ -182,9 +197,9 @@ domain_value_from_nonzero!(u8, u16, u32, u64, usize);
 
 /// A value shape that can be checked against a domain: a scalar, a vector or
 /// quaternion checked per component, or an `Option` whose `None` passes.
-pub trait DomainValues: Copy {
+pub trait DomainValues {
     fn check_domains(
-        self,
+        &self,
         owner: &'static str,
         field: &'static str,
         domains: &'static [FieldDomain],
@@ -196,12 +211,12 @@ macro_rules! scalar_domain_values {
         $(
             impl DomainValues for $ty {
                 fn check_domains(
-                    self,
+                    &self,
                     owner: &'static str,
                     field: &'static str,
                     domains: &'static [FieldDomain],
                 ) -> Result<(), DomainViolation> {
-                    check_component(owner, field, None, self.into(), domains)
+                    check_component(owner, field, None, (*self).into(), domains)
                 }
             }
         )+
@@ -222,7 +237,7 @@ macro_rules! vector_domain_values {
         $(
             impl DomainValues for $ty {
                 fn check_domains(
-                    self,
+                    &self,
                     owner: &'static str,
                     field: &'static str,
                     domains: &'static [FieldDomain],
@@ -246,12 +261,12 @@ vector_domain_values! {
 
 impl DomainValues for DomainValue {
     fn check_domains(
-        self,
+        &self,
         owner: &'static str,
         field: &'static str,
         domains: &'static [FieldDomain],
     ) -> Result<(), DomainViolation> {
-        check_component(owner, field, None, self, domains)
+        check_component(owner, field, None, *self, domains)
     }
 }
 
@@ -269,12 +284,12 @@ fn val_magnitude(value: Val) -> Option<f32> {
 #[cfg(feature = "ui")]
 impl DomainValues for Val {
     fn check_domains(
-        self,
+        &self,
         owner: &'static str,
         field: &'static str,
         domains: &'static [FieldDomain],
     ) -> Result<(), DomainViolation> {
-        val_magnitude(self).map_or(Ok(()), |magnitude| {
+        val_magnitude(*self).map_or(Ok(()), |magnitude| {
             check_component(owner, field, None, magnitude.into(), domains)
         })
     }
@@ -284,7 +299,7 @@ impl DomainValues for Val {
 #[cfg(feature = "ui")]
 impl DomainValues for UiRect {
     fn check_domains(
-        self,
+        &self,
         owner: &'static str,
         field: &'static str,
         domains: &'static [FieldDomain],
@@ -307,7 +322,7 @@ impl DomainValues for UiRect {
 #[cfg(feature = "text")]
 impl DomainValues for FontSize {
     fn check_domains(
-        self,
+        &self,
         owner: &'static str,
         field: &'static str,
         domains: &'static [FieldDomain],
@@ -317,7 +332,7 @@ impl DomainValues for FontSize {
         | FontSize::Vh(magnitude)
         | FontSize::VMin(magnitude)
         | FontSize::VMax(magnitude)
-        | FontSize::Rem(magnitude)) = self;
+        | FontSize::Rem(magnitude)) = *self;
         check_component(owner, field, None, magnitude.into(), domains)
     }
 }
@@ -336,7 +351,7 @@ impl F32Input {
 
 impl DomainValues for F32Input {
     fn check_domains(
-        self,
+        &self,
         owner: &'static str,
         field: &'static str,
         domains: &'static [FieldDomain],
@@ -421,7 +436,7 @@ impl<T: StoredInteger> IntegerInput<T> {
 
 impl<T: StoredInteger> DomainValues for IntegerInput<T> {
     fn check_domains(
-        self,
+        &self,
         owner: &'static str,
         field: &'static str,
         domains: &'static [FieldDomain],
@@ -463,7 +478,7 @@ pub const DURATION_INPUT_TYPES: &str =
 
 impl DomainValues for Duration {
     fn check_domains(
-        self,
+        &self,
         owner: &'static str,
         field: &'static str,
         domains: &'static [FieldDomain],
@@ -480,44 +495,57 @@ impl DomainValues for Duration {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DurationInput {
     Exact(Duration),
+    /// Integer seconds, reported as an integer.
+    WholeSeconds(i128),
     Seconds(f64),
 }
 
 impl DurationInput {
     /// The value as the field stores it; call after a successful check.
     pub fn stored(self) -> Duration {
+        fn unchecked() -> ! {
+            panic!("DurationInput::stored before its range check")
+        }
         match self {
             Self::Exact(duration) => duration,
-            Self::Seconds(seconds) => Duration::try_from_secs_f64(seconds)
-                .unwrap_or_else(|_| panic!("DurationInput::stored before its range check")),
+            Self::WholeSeconds(seconds) => {
+                Duration::from_secs(u64::try_from(seconds).unwrap_or_else(|_| unchecked()))
+            }
+            Self::Seconds(seconds) => {
+                Duration::try_from_secs_f64(seconds).unwrap_or_else(|_| unchecked())
+            }
         }
     }
 }
 
 impl DomainValues for DurationInput {
     fn check_domains(
-        self,
+        &self,
         owner: &'static str,
         field: &'static str,
         domains: &'static [FieldDomain],
     ) -> Result<(), DomainViolation> {
-        match self {
-            Self::Exact(duration) => duration.check_domains(owner, field, domains),
-            Self::Seconds(seconds) => {
-                check_component(owner, field, None, seconds.into(), domains)?;
-                if let Ok(duration) = Duration::try_from_secs_f64(seconds)
-                    && duration.check_domains(owner, field, domains).is_ok()
-                {
-                    return Ok(());
-                }
-                Err(DomainViolation::new(
-                    owner,
-                    field,
-                    None,
-                    ViolationKind::DurationRange { seconds },
-                ))
-            }
+        let (value, duration) = match *self {
+            Self::Exact(duration) => return duration.check_domains(owner, field, domains),
+            Self::WholeSeconds(seconds) => (
+                DomainValue::Int(seconds),
+                u64::try_from(seconds).ok().map(Duration::from_secs),
+            ),
+            Self::Seconds(seconds) => (
+                DomainValue::F64(seconds),
+                Duration::try_from_secs_f64(seconds).ok(),
+            ),
+        };
+        check_component(owner, field, None, value, domains)?;
+        if duration.is_some_and(|duration| duration.check_domains(owner, field, domains).is_ok()) {
+            return Ok(());
         }
+        Err(DomainViolation::new(
+            owner,
+            field,
+            None,
+            ViolationKind::DurationRange { value },
+        ))
     }
 }
 
@@ -535,8 +563,8 @@ impl FromPyObject<'_, '_> for DurationInput {
                 delta.call_method0("total_seconds")?.extract()?,
             ));
         }
-        if let Ok(seconds) = value.extract::<u64>() {
-            return Ok(Self::Exact(Duration::from_secs(seconds)));
+        if let Ok(seconds) = value.extract::<i128>() {
+            return Ok(Self::WholeSeconds(seconds));
         }
         if let Ok(seconds) = value.extract::<f64>() {
             return Ok(Self::Seconds(seconds));
@@ -545,14 +573,71 @@ impl FromPyObject<'_, '_> for DurationInput {
     }
 }
 
-impl<T: DomainValues> DomainValues for Option<T> {
+/// A `timedelta` bound for a `Duration` parameter that takes no seconds. A
+/// negative `timedelta` reaches the domain check instead of failing conversion.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TimedeltaInput(pub DurationInput);
+
+impl TimedeltaInput {
+    /// The value as the field stores it; call after a successful check.
+    pub fn stored(self) -> Duration {
+        self.0.stored()
+    }
+}
+
+impl DomainValues for TimedeltaInput {
     fn check_domains(
-        self,
+        &self,
         owner: &'static str,
         field: &'static str,
         domains: &'static [FieldDomain],
     ) -> Result<(), DomainViolation> {
-        self.map_or(Ok(()), |value| value.check_domains(owner, field, domains))
+        self.0.check_domains(owner, field, domains)
+    }
+}
+
+#[cfg(feature = "pyo3")]
+impl FromPyObject<'_, '_> for TimedeltaInput {
+    type Error = PyErr;
+
+    fn extract(value: Borrowed<'_, '_, PyAny>) -> Result<Self, PyErr> {
+        let delta = value.cast::<PyDelta>()?;
+        if let Ok(duration) = delta.extract::<Duration>() {
+            return Ok(Self(DurationInput::Exact(duration)));
+        }
+        Ok(Self(DurationInput::Seconds(
+            delta.call_method0("total_seconds")?.extract()?,
+        )))
+    }
+}
+
+/// Both ends, named `start` and `end`, then the ordering the rules require.
+impl<T: Copy + Into<DomainValue>> DomainValues for Range<T> {
+    fn check_domains(
+        &self,
+        owner: &'static str,
+        field: &'static str,
+        domains: &'static [FieldDomain],
+    ) -> Result<(), DomainViolation> {
+        let (start, end) = (self.start.into(), self.end.into());
+        check_component(owner, field, Some("start"), start, domains)?;
+        check_component(owner, field, Some("end"), end, domains)?;
+        let Some(strict) = FieldDomain::ordering(domains) else {
+            return Ok(());
+        };
+        ordering_violation(owner, field, Some("start"), start, "end", end, strict)
+    }
+}
+
+impl<T: DomainValues> DomainValues for Option<T> {
+    fn check_domains(
+        &self,
+        owner: &'static str,
+        field: &'static str,
+        domains: &'static [FieldDomain],
+    ) -> Result<(), DomainViolation> {
+        self.as_ref()
+            .map_or(Ok(()), |value| value.check_domains(owner, field, domains))
     }
 }
 
@@ -581,7 +666,7 @@ pub enum ViolationKind {
         value: WideInteger,
     },
     /// Seconds that no `Duration` can represent.
-    DurationRange { seconds: f64 },
+    DurationRange { value: DomainValue },
     /// The field must not exceed `greater`, or must be less than it when
     /// `strict`.
     Ordering {
@@ -662,10 +747,9 @@ impl fmt::Display for DomainViolation {
                 " must be within the {} range (got {value}",
                 column.range_name()
             )?,
-            ViolationKind::DurationRange { seconds } => write!(
+            ViolationKind::DurationRange { value } => write!(
                 f,
-                " must be within the supported duration range (got {}",
-                float_repr(*seconds)
+                " must be within the supported duration range (got {value}"
             )?,
             ViolationKind::Ordering {
                 greater,
@@ -678,7 +762,16 @@ impl fmt::Display for DomainViolation {
                 } else {
                     ("not exceed", ">")
                 };
-                write!(f, " must {relation} {greater} (got {value}")?;
+                // A range's end is named with its field: `depth.start ... depth.end`.
+                if details.component.is_some() {
+                    write!(
+                        f,
+                        " must {relation} {}.{greater} (got {value}",
+                        details.field
+                    )?;
+                } else {
+                    write!(f, " must {relation} {greater} (got {value}")?;
+                }
                 if value.is_nan() || greater_value.is_nan() {
                     write!(f, " and {greater_value}")?;
                 } else {
@@ -702,7 +795,8 @@ fn write_requirements(
     let mut first = true;
     for &domain in domains {
         let implied = domain == FieldDomain::Finite && has_positive;
-        if (int && !domain.applies_to_int()) || implied {
+        let ordering = matches!(domain, FieldDomain::Ordered { .. });
+        if (int && !domain.applies_to_int()) || implied || ordering {
             continue;
         }
         if !first {
@@ -723,6 +817,7 @@ fn write_requirements(
                 write!(f, "in [{}, {}]", bound(lo, int), bound(hi, int))?;
             }
             FieldDomain::AtLeast(n) => write!(f, "at least {n}")?,
+            FieldDomain::Ordered { .. } => {}
         }
     }
     Ok(())
@@ -791,6 +886,26 @@ pub fn check<T: DomainValues>(
     Ok(value)
 }
 
+/// [`check`] with the owner named by `O`'s Python class name.
+#[cfg(feature = "pyo3")]
+pub fn check_for<O: PyClass, T: DomainValues>(
+    field: &'static str,
+    value: T,
+    domains: &'static [FieldDomain],
+) -> Result<T, DomainViolation> {
+    check(<O as PyClass>::NAME, field, value, domains)
+}
+
+/// Check a value of any supported shape in place.
+pub fn check_ref<T: DomainValues + ?Sized>(
+    owner: &'static str,
+    field: &'static str,
+    value: &T,
+    domains: &'static [FieldDomain],
+) -> Result<(), DomainViolation> {
+    value.check_domains(owner, field, domains)
+}
+
 /// Check a Python float bound for `f32` storage before it narrows, so a finite
 /// value too large for `f32` is rejected instead of becoming an infinity.
 pub fn check_f64_as_f32(
@@ -855,14 +970,52 @@ pub fn check_ordered<T: Copy + Into<DomainValue>>(
     greater_value: T,
     strict: bool,
 ) -> Result<(), DomainViolation> {
-    let (value, greater_value) = (value.into(), greater_value.into());
+    ordering_violation(
+        owner,
+        field,
+        None,
+        value.into(),
+        greater,
+        greater_value.into(),
+        strict,
+    )
+}
+
+/// [`check_ordered`] with the owner named by `O`'s Python class name.
+#[cfg(feature = "pyo3")]
+pub fn check_ordered_for<O: PyClass, T: Copy + Into<DomainValue>>(
+    field: &'static str,
+    value: T,
+    greater: &'static str,
+    greater_value: T,
+    strict: bool,
+) -> Result<(), DomainViolation> {
+    check_ordered(
+        <O as PyClass>::NAME,
+        field,
+        value,
+        greater,
+        greater_value,
+        strict,
+    )
+}
+
+fn ordering_violation(
+    owner: &'static str,
+    field: &'static str,
+    component: Option<&'static str>,
+    value: DomainValue,
+    greater: &'static str,
+    greater_value: DomainValue,
+    strict: bool,
+) -> Result<(), DomainViolation> {
     if value.orders_before(greater_value, strict) {
         return Ok(());
     }
     Err(DomainViolation::new(
         owner,
         field,
-        None,
+        component,
         ViolationKind::Ordering {
             greater,
             strict,
@@ -1066,8 +1219,6 @@ mod tests {
 
     #[test]
     fn integer_input_checks_rules_then_the_stored_range() {
-        const POSITIVE: &[FieldDomain] = &[FieldDomain::Positive];
-        const AT_LEAST_ONE: &[FieldDomain] = &[FieldDomain::AtLeast(1)];
         assert_eq!(
             check("B", "mips", IntegerInput::<u32>::new(512), POSITIVE).map(IntegerInput::stored),
             Ok(512)
@@ -1167,6 +1318,43 @@ mod tests {
                 POSITIVE
             )),
             "E.period must be within the supported duration range (got 1e-320)"
+        );
+        assert_eq!(
+            check(
+                "T",
+                "delay",
+                DurationInput::WholeSeconds(3),
+                FINITE_NON_NEGATIVE
+            )
+            .map(DurationInput::stored),
+            Ok(Duration::from_secs(3))
+        );
+        assert_eq!(
+            message(check(
+                "T",
+                "delay",
+                DurationInput::WholeSeconds(-1),
+                FINITE_NON_NEGATIVE
+            )),
+            "T.delay must be non-negative (got -1)"
+        );
+        assert_eq!(
+            message(check(
+                "T",
+                "delay",
+                DurationInput::WholeSeconds(1 << 70),
+                FINITE_NON_NEGATIVE
+            )),
+            "T.delay must be within the supported duration range (got 1180591620717411303424)"
+        );
+        assert_eq!(
+            message(check(
+                "E",
+                "period",
+                DurationInput::WholeSeconds(0),
+                POSITIVE
+            )),
+            "E.period must be greater than zero (got 0)"
         );
         assert_eq!(
             check(
@@ -1362,6 +1550,34 @@ mod tests {
             )),
             "Viewport.depth.start must not exceed depth.end (got nan and 1.0)"
         );
+    }
+
+    #[test]
+    fn ranges_check_both_ends_then_the_declared_ordering() {
+        const DEPTH: &[FieldDomain] = &[
+            FieldDomain::RangeInclusive { lo: 0.0, hi: 1.0 },
+            FieldDomain::Ordered { strict: false },
+        ];
+        assert!(check("Viewport", "depth", 0.25_f32..0.25, DEPTH).is_ok());
+        assert_eq!(
+            message(check("Viewport", "depth", 0.0_f32..2.0, DEPTH)),
+            "Viewport.depth.end must be in [0.0, 1.0] (got 2.0)"
+        );
+        assert_eq!(
+            message(check("Viewport", "depth", 0.8_f32..0.2, DEPTH)),
+            "Viewport.depth.start must not exceed depth.end (got 0.8 > 0.2)"
+        );
+        const STRICT: &[FieldDomain] = &[FieldDomain::Ordered { strict: true }];
+        assert_eq!(
+            message(check("S", "span", 1.0_f32..1.0, STRICT)),
+            "S.span.start must be less than span.end (got 1.0 >= 1.0)"
+        );
+        assert_eq!(
+            message(check("S", "span", f32::NAN..1.0, STRICT)),
+            "S.span.start must be less than span.end (got nan and 1.0)"
+        );
+        assert!(check("S", "span", 5.0_f32..1.0, FINITE).is_ok());
+        assert!(check("S", "value", 3.0_f32, STRICT).is_ok());
     }
 
     #[test]

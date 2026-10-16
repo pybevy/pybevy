@@ -1,7 +1,7 @@
 use bevy::mesh::{MeshBuilder, SphereKind, SphereMeshBuilder};
 use pybevy_core::{
     PyAsset,
-    domain::{DomainValues, FieldDomain, IntegerInput, check},
+    domain::{FieldDomain, IntegerInput, check_for},
 };
 use pyo3::{exceptions::PyValueError, prelude::*};
 
@@ -17,15 +17,6 @@ fn validate_uv(sectors: u32, stacks: u32) -> PyResult<()> {
 
 /// Bevy's icosphere indices are `u16`, which 79 subdivisions still fit.
 const SUBDIVISIONS_DOMAIN: &[FieldDomain] = &[FieldDomain::Range { lo: 0.0, hi: 80.0 }];
-
-fn validate_ico<T: DomainValues>(subdivisions: T) -> PyResult<T> {
-    Ok(check(
-        "SphereMeshBuilder",
-        "subdivisions",
-        subdivisions,
-        SUBDIVISIONS_DOMAIN,
-    )?)
-}
 
 #[pyclass(name = "SphereMeshBuilder", module = "pybevy.mesh", extends = PyMeshBuilder, frozen)]
 #[derive(Debug)]
@@ -44,7 +35,8 @@ impl PySphereMeshBuilder {
     }
 
     pub fn ico(&self, py: Python, subdivisions: IntegerInput<u32>) -> PyResult<Py<PyMesh>> {
-        let subdivisions = validate_ico(subdivisions)?.stored();
+        let subdivisions =
+            check_for::<Self, _>("subdivisions", subdivisions, SUBDIVISIONS_DOMAIN)?.stored();
         let builder = self
             .0
             .ico(subdivisions)
@@ -62,7 +54,7 @@ impl PySphereMeshBuilder {
     pub fn build(&self, py: Python) -> PyResult<Py<PyMesh>> {
         let mesh = match self.0.kind {
             SphereKind::Ico { subdivisions } => {
-                validate_ico(subdivisions)?;
+                check_for::<Self, _>("subdivisions", subdivisions, SUBDIVISIONS_DOMAIN)?;
                 self.0
                     .ico(subdivisions)
                     .map_err(|error| PyValueError::new_err(error.to_string()))?

@@ -1,7 +1,7 @@
 use bevy::animation::{AnimationClip, VariableCurve};
 use pybevy_core::{
     AssetStorage, PyAsset, computed_owned,
-    domain::{FINITE_NON_NEGATIVE, check},
+    domain::{FINITE_NON_NEGATIVE, check_for},
 };
 use pybevy_macros::pyasset;
 use pyo3::{exceptions::PyTypeError, prelude::*, types::PyDict};
@@ -36,12 +36,7 @@ impl PyAnimationClip {
     }
 
     pub fn set_duration(&mut self, duration_sec: f32) -> PyResult<()> {
-        let duration_sec = check(
-            "AnimationClip",
-            "duration",
-            duration_sec,
-            FINITE_NON_NEGATIVE,
-        )?;
+        let duration_sec = check_for::<Self, _>("duration", duration_sec, FINITE_NON_NEGATIVE)?;
         self.as_mut()?.set_duration(duration_sec);
         Ok(())
     }

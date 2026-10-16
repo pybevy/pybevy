@@ -1,11 +1,3 @@
-use crate::{
-    material_access,
-    shader_material::{
-        StorageShaderMaterial, StorageShaderMaterialExtension, StorageShaderMaterialPlugin,
-    },
-    shader_material_py::build_shader_material,
-    standard_material::PyStandardMaterial,
-};
 use bevy::{
     app::App,
     asset::Handle,
@@ -16,10 +8,12 @@ use bevy::{
 use pybevy_core::{
     AssetInputConverter, AssetStorage, ComponentStorage, FieldStorage, LogicalTypeId, PluginBuild,
     PyComponent, PyHandle, PyMaterial, PyPlugin, ensure_asset_type, extract_handle_from_any,
+    public_error::shader_texture_slot_out_of_range,
 };
 use pybevy_image::sampler_descriptor::PyImageSamplerDescriptor;
 use pybevy_macros::{pyasset, pycomponent, pyplugin};
 use pybevy_shader_types::{
+    MAX_TEXTURE_SLOTS,
     sampler_binding::{MaterialSamplerBinding, MaterialSamplerKind},
     storage_element::StorageElement,
     storage_material::StorageBinding,
@@ -30,6 +24,15 @@ use pyo3::{
     exceptions::{PyIndexError, PyTypeError, PyValueError},
     prelude::*,
     types::{PyList, PyType},
+};
+
+use crate::{
+    material_access,
+    shader_material::{
+        StorageShaderMaterial, StorageShaderMaterialExtension, StorageShaderMaterialPlugin,
+    },
+    shader_material_py::build_shader_material,
+    standard_material::PyStandardMaterial,
 };
 
 type TextureLayoutInput = (String, String, bool, Option<String>);
@@ -183,10 +186,11 @@ impl PyStorageShaderMaterial {
             ));
         }
         let texture_layouts = texture_layouts.unwrap_or_default();
-        if texture_layouts.len() > 4 {
-            return Err(PyValueError::new_err(
-                "At most four texture layouts are supported",
-            ));
+        if texture_layouts.len() > MAX_TEXTURE_SLOTS {
+            return Err(PyIndexError::new_err(shader_texture_slot_out_of_range(
+                MAX_TEXTURE_SLOTS,
+                MAX_TEXTURE_SLOTS - 1,
+            )));
         }
         let texture_layouts = texture_layouts
             .into_iter()
@@ -263,7 +267,9 @@ impl PyStorageShaderMaterial {
         }))
     }
 
-    fn get_sampler(&self, slot: usize) -> PyResult<PyImageSamplerDescriptor> {
+    fn get_sampler(&self, slot: isize) -> PyResult<PyImageSamplerDescriptor> {
+        // A negative slot is out of range, like any slot past the end.
+        let slot = usize::try_from(slot).unwrap_or(usize::MAX);
         let values: FieldStorage<Vec<MaterialSamplerBinding>> = self.storage.borrow_field(
             |material| &material.extension.samplers,
             |material| &mut material.extension.samplers,
@@ -273,7 +279,8 @@ impl PyStorageShaderMaterial {
             |values, index| values.get_mut(index).map(|s| &mut s.descriptor),
         )?)
     }
-    fn set_sampler(&mut self, slot: usize, descriptor: &PyImageSamplerDescriptor) -> PyResult<()> {
+    fn set_sampler(&mut self, slot: isize, descriptor: &PyImageSamplerDescriptor) -> PyResult<()> {
+        let slot = usize::try_from(slot).unwrap_or(usize::MAX);
         let descriptor = ImageSamplerDescriptor::try_from(descriptor)?;
         let mut material = self.as_mut()?;
         material
@@ -344,7 +351,8 @@ impl PyStorageShaderMaterial {
         self.set_buffer_at(0, value)
     }
     #[pyo3(name = "get_storage_buffer_at")]
-    fn buffer_at(&self, slot: usize) -> PyResult<Option<PyHandle>> {
+    fn buffer_at(&self, slot: isize) -> PyResult<Option<PyHandle>> {
+        let slot = usize::try_from(slot).unwrap_or(usize::MAX);
         let material = self.as_ref()?;
         let binding = material
             .extension
@@ -354,7 +362,8 @@ impl PyStorageShaderMaterial {
         Ok(binding.handle.as_ref().map(PyHandle::from))
     }
     # [pyo3(name = "set_storage_buffer_at", signature = (slot, value=None))]
-    fn set_buffer_at(&mut self, slot: usize, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+    fn set_buffer_at(&mut self, slot: isize, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        let slot = usize::try_from(slot).unwrap_or(usize::MAX);
         let handle = extract_storage_handle(value)?;
         let mut material = self.as_mut()?;
         let binding = material

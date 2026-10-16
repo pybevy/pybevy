@@ -2,8 +2,7 @@ use std::time::Duration;
 
 use bevy::time::Stopwatch;
 use pybevy_core::{
-    DURATION_DOMAIN, check_duration,
-    domain::DurationInput,
+    domain::{DurationInput, FINITE_NON_NEGATIVE, check_for},
     repr::{ReprLiteral, object_repr},
 };
 use pyo3::prelude::*;
@@ -27,7 +26,7 @@ impl PyStopwatch {
         mut slf: PyRefMut<'py, Self>,
         delta: DurationInput,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        let delta = check_duration("Stopwatch", "delta", delta, DURATION_DOMAIN)?;
+        let delta = check_for::<Self, _>("delta", delta, FINITE_NON_NEGATIVE)?.stored();
         slf.stopwatch.tick(delta);
         Ok(slf)
     }
@@ -45,7 +44,7 @@ impl PyStopwatch {
     }
 
     pub fn set_elapsed(&mut self, time: DurationInput) -> PyResult<()> {
-        let time = check_duration("Stopwatch", "elapsed", time, DURATION_DOMAIN)?;
+        let time = check_for::<Self, _>("elapsed", time, FINITE_NON_NEGATIVE)?.stored();
         self.stopwatch.set_elapsed(time);
         Ok(())
     }

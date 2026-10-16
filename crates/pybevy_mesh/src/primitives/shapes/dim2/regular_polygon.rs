@@ -3,7 +3,7 @@ use bevy::{
     mesh::Meshable,
 };
 use pybevy_core::{
-    domain::{IntegerInput, check},
+    domain::{IntegerInput, check_for},
     repr::float_repr,
 };
 use pybevy_math::primitives::dimension::dimension;
@@ -37,8 +37,8 @@ impl PyRegularPolygon {
     #[new]
     #[pyo3(signature = (circumradius = 0.5, sides = IntegerInput::new(6)))]
     pub fn new(circumradius: f32, sides: IntegerInput<u32>) -> PyResult<PyClassInitializer<Self>> {
-        let circumradius = dimension("RegularPolygon", "circumradius", circumradius)?;
-        let sides = validate_sides(sides)?;
+        let circumradius = dimension::<Self, _>("circumradius", circumradius)?;
+        let sides = check_for::<Self, _>("sides", sides, AT_LEAST_THREE)?.stored();
         Ok((Self(RegularPolygon::new(circumradius, sides)), PyMeshable).into())
     }
 
@@ -53,7 +53,7 @@ impl PyRegularPolygon {
     #[setter]
     pub fn set_circumcircle(&mut self, value: &PyCircle) -> PyResult<()> {
         let mut circle = value.try_get()?;
-        circle.radius = dimension("RegularPolygon", "circumradius", circle.radius)?;
+        circle.radius = dimension::<Self, _>("circumradius", circle.radius)?;
         self.0.circumcircle = circle;
         Ok(())
     }
@@ -65,7 +65,7 @@ impl PyRegularPolygon {
 
     #[setter]
     pub fn set_sides(&mut self, value: IntegerInput<u32>) -> PyResult<()> {
-        self.0.sides = validate_sides(value)?;
+        self.0.sides = check_for::<Self, _>("sides", value, AT_LEAST_THREE)?.stored();
         Ok(())
     }
 
@@ -122,8 +122,4 @@ impl PyRegularPolygon {
             self.0.sides
         )
     }
-}
-
-fn validate_sides(sides: IntegerInput<u32>) -> PyResult<u32> {
-    Ok(check("RegularPolygon", "sides", sides, AT_LEAST_THREE)?.stored())
 }

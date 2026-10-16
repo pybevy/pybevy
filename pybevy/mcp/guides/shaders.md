@@ -157,6 +157,9 @@ options to configure a texture declaration. Class annotations describe bindings;
 instance reads, assignments and constructor arguments use `Handle[ShaderBuffer]
 | None`, `Handle[Image] | None`, or `ImageSamplerDescriptor`. Both mypy and
 Pyright/Pylance understand these types, including inherited fields.
+`ImageSamplerDescriptor` raises `ValueError` for a negative or NaN
+`lod_min_clamp` or one above `lod_max_clamp`, which wgpu rejects; a material
+sampler also needs a finite `lod_max_clamp`, checked when it is prepared.
 
 These declarations reuse the explicit `Annotated` forms below. Keep those for
 advanced metadata such as custom WGSL storage structs. Binding numbers and

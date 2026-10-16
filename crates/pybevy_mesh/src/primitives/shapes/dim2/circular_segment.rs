@@ -51,7 +51,7 @@ impl PyCircularSegment {
         }
         Ok((
             Self(CircularSegment {
-                arc: checked_arc("CircularSegment", radius, half_angle)?,
+                arc: checked_arc::<Self>(radius, half_angle)?,
             }),
             PyMeshable,
         )
@@ -64,7 +64,7 @@ impl PyCircularSegment {
             py,
             (
                 Self(CircularSegment {
-                    arc: checked_arc_from_radians("CircularSegment", radius, angle)?,
+                    arc: checked_arc_from_radians::<Self>(radius, angle)?,
                 }),
                 PyMeshable,
             ),
@@ -77,7 +77,7 @@ impl PyCircularSegment {
             py,
             (
                 Self(CircularSegment {
-                    arc: checked_arc_from_degrees("CircularSegment", radius, angle)?,
+                    arc: checked_arc_from_degrees::<Self>(radius, angle)?,
                 }),
                 PyMeshable,
             ),
@@ -90,7 +90,7 @@ impl PyCircularSegment {
             py,
             (
                 Self(CircularSegment {
-                    arc: checked_arc_from_turns("CircularSegment", radius, fraction)?,
+                    arc: checked_arc_from_turns::<Self>(radius, fraction)?,
                 }),
                 PyMeshable,
             ),

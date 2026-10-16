@@ -1,14 +1,15 @@
 use bevy::mesh::{CylinderAnchor, CylinderMeshBuilder, MeshBuilder};
-use pybevy_core::{PyAsset, domain::IntegerInput};
+use pybevy_core::{
+    PyAsset,
+    domain::{IntegerInput, check_for},
+};
 use pybevy_macros::pyenum;
 use pyo3::prelude::*;
 
 use crate::{
     mesh::PyMesh,
     mesh_builder::PyMeshBuilder,
-    primitives::validation::{
-        AT_LEAST_ONE, AT_LEAST_THREE, minimum_count, stored_count, vertex_budget,
-    },
+    primitives::validation::{AT_LEAST_ONE, AT_LEAST_THREE, vertex_budget},
 };
 
 #[pyenum(CylinderAnchor)]
@@ -39,17 +40,12 @@ impl From<CylinderMeshBuilder> for PyCylinderMeshBuilder {
 #[pymethods]
 impl PyCylinderMeshBuilder {
     pub fn resolution(&self, py: Python<'_>, resolution: IntegerInput<u32>) -> PyResult<Py<Self>> {
-        let resolution = minimum_count(
-            "CylinderMeshBuilder",
-            "resolution",
-            resolution,
-            AT_LEAST_THREE,
-        )?;
+        let resolution = check_for::<Self, _>("resolution", resolution, AT_LEAST_THREE)?.stored();
         Py::new(py, (Self(self.0.resolution(resolution)), PyMeshBuilder))
     }
 
     pub fn segments(&self, py: Python<'_>, segments: IntegerInput<u32>) -> PyResult<Py<Self>> {
-        let segments = minimum_count("CylinderMeshBuilder", "segments", segments, AT_LEAST_ONE)?;
+        let segments = check_for::<Self, _>("segments", segments, AT_LEAST_ONE)?.stored();
         Py::new(py, (Self(self.0.segments(segments)), PyMeshBuilder))
     }
 
@@ -62,18 +58,8 @@ impl PyCylinderMeshBuilder {
     }
 
     pub fn build(&self, py: Python) -> PyResult<Py<PyMesh>> {
-        stored_count(
-            "CylinderMeshBuilder",
-            "resolution",
-            self.0.resolution,
-            AT_LEAST_THREE,
-        )?;
-        stored_count(
-            "CylinderMeshBuilder",
-            "segments",
-            self.0.segments,
-            AT_LEAST_ONE,
-        )?;
+        check_for::<Self, _>("resolution", self.0.resolution, AT_LEAST_THREE)?;
+        check_for::<Self, _>("segments", self.0.segments, AT_LEAST_ONE)?;
         let resolution = u128::from(self.0.resolution);
         let segments = u128::from(self.0.segments);
         let caps = if self.0.caps { 2 * resolution } else { 0 };

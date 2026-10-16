@@ -460,8 +460,6 @@ pub const NEXT_STATE_CONSTRUCTION: &str = "NextState cannot be constructed direc
 pub const DURATION_NEGATIVE: &str = "Duration cannot be negative";
 pub const DURATION_NON_FINITE: &str = "Duration must be finite";
 pub const DURATION_OVERFLOW: &str = "Duration is too large";
-pub const FREQUENCY_OUT_OF_RANGE: &str =
-    "Frequency produces a timestep outside the supported duration range";
 pub const RELATIVE_SPEED_OUT_OF_RANGE: &str =
     "Relative speed produces a frame delta outside the supported duration range";
 pub const COLOR_INTERPOLATION_MISMATCH: &str =
@@ -755,18 +753,6 @@ pub fn shader_float_range_out_of_range(start: usize, end: usize, maximum: usize)
 
 pub fn unsupported_packed_uniform_type(actual: impl Display) -> String {
     format!("packed uniform type must be Vec2, Vec3, Vec4, or LinearRgba, got {actual}")
-}
-
-pub fn task_pool_thread_bounds(min_threads: usize, max_threads: usize) -> String {
-    format!(
-        "TaskPoolThreadAssignmentPolicy min_threads ({min_threads}) cannot exceed max_threads ({max_threads})"
-    )
-}
-
-pub fn task_pool_total_thread_bounds(min_total_threads: usize, max_total_threads: usize) -> String {
-    format!(
-        "TaskPoolOptions min_total_threads ({min_total_threads}) cannot exceed max_total_threads ({max_total_threads})"
-    )
 }
 
 pub const UNSUPPORTED_GIZMO_LINE_STYLE: &str =
@@ -1374,10 +1360,6 @@ pub fn value_out_of_range(
     value: impl Debug,
 ) -> String {
     format!("{name} must be between {low:?} and {high:?}, got {value:?}")
-}
-
-pub fn inverted_range(name: impl Display, start: impl Debug, end: impl Debug) -> String {
-    format!("{name} must be a (start, end) range with start <= end, got ({start:?}, {end:?})")
 }
 
 pub fn cubic_hermite_tangent_count(expected: usize, provided: usize) -> String {

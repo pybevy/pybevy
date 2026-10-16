@@ -1,36 +1,14 @@
-use std::ops::Range;
-
 use bevy::camera::Viewport;
 use pybevy_core::{
-    FromBorrowedStorage, StorageError,
-    field_storage::FieldStorage,
-    public_error::{UNSUPPORTED_COMPARISON, inverted_range, value_out_of_range},
+    FromBorrowedStorage, field_storage::FieldStorage, public_error::UNSUPPORTED_COMPARISON,
     repr::float_repr,
 };
 use pybevy_macros::pyfield;
 use pybevy_math::{range::PyRange, uvec2::PyUVec2};
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
-/// wgpu rejects a depth range outside 0.0..=1.0, one validation error per frame.
-fn check_depth(depth: &Range<f32>) -> Result<(), StorageError> {
-    for (name, value) in [("depth near", depth.start), ("depth far", depth.end)] {
-        if !(0.0..=1.0).contains(&value) {
-            return Err(StorageError::InvalidValue(value_out_of_range(
-                name, 0.0, 1.0, value,
-            )));
-        }
-    }
-    if depth.start > depth.end {
-        return Err(StorageError::InvalidValue(inverted_range(
-            "depth",
-            depth.start,
-            depth.end,
-        )));
-    }
-    Ok(())
-}
-
-#[pyfield]
+// wgpu rejects a depth range outside 0.0..=1.0 or inverted, one error per frame.
+#[pyfield(domains = [depth => [range_inclusive(0.0, 1.0), ordered]])]
 #[pyclass(name = "Viewport", module = "pybevy.camera", skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyViewport {
@@ -46,8 +24,7 @@ impl PyViewport {
         physical_size: PyUVec2,
         depth: PyRange,
     ) -> PyResult<Self> {
-        let depth = depth.try_into()?;
-        check_depth(&depth)?;
+        let depth = Self::check_depth(depth.try_into()?)?;
         Ok(Self::from_owned(Viewport {
             physical_position: physical_position.try_into()?,
             physical_size: physical_size.try_into()?,
@@ -83,17 +60,18 @@ impl PyViewport {
 
     #[getter]
     pub fn depth(&self) -> PyResult<PyRange> {
-        Ok(self
-            .storage
-            .borrow_validated_field_as(|v| &v.depth, |v| &mut v.depth, check_depth)?)
+        Ok(self.storage.borrow_validated_field_as(
+            |v| &v.depth,
+            |v| &mut v.depth,
+            Self::validate_depth,
+        )?)
     }
 
     #[setter]
     pub fn set_depth(&mut self, value: &PyRange) -> PyResult<()> {
         let depth = value.try_into()?;
         let mut viewport = self.as_mut()?;
-        check_depth(&depth)?;
-        viewport.depth = depth;
+        viewport.depth = Self::check_depth(depth)?;
         Ok(())
     }
 

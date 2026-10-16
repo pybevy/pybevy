@@ -15,7 +15,7 @@ use crate::{
 };
 
 fn check_half_size(value: &Vec2) -> Result<(), StorageError> {
-    dimension("Rectangle", "half_size", *value).map(drop)
+    Ok(dimension::<PyRectangle, _>("half_size", *value).map(drop)?)
 }
 
 #[pyvalue]
@@ -44,32 +44,32 @@ impl PyRectangle {
         #[expected("Vec2")] half_size: Option<PyVec2>,
     ) -> PyResult<PyClassInitializer<Self>> {
         if let Some(hs) = half_size {
-            let half_size = dimension("Rectangle", "half_size", hs.try_into()?)?;
+            let half_size = dimension::<Self, _>("half_size", hs.try_into()?)?;
             return Ok((Self::from_owned(Rectangle { half_size }), PyMeshable).into());
         }
         let rect = Rectangle::new(
-            dimension("Rectangle", "width", width)?,
-            dimension("Rectangle", "height", height)?,
+            dimension::<Self, _>("width", width)?,
+            dimension::<Self, _>("height", height)?,
         );
         Ok((Self::from_owned(rect), PyMeshable).into())
     }
 
     #[staticmethod]
     pub fn from_size(py: Python, size: &PyVec2) -> PyResult<Py<Self>> {
-        let rect = Rectangle::from_size(dimension("Rectangle", "size", size.try_into()?)?);
+        let rect = Rectangle::from_size(dimension::<Self, _>("size", size.try_into()?)?);
         Py::new(py, (Self::from_owned(rect), PyMeshable))
     }
 
     #[staticmethod]
     pub fn from_corners(py: Python, point1: &PyVec2, point2: &PyVec2) -> PyResult<Py<Self>> {
         let rect = Rectangle::from_corners(point1.try_into()?, point2.try_into()?);
-        dimension("Rectangle", "half_size", rect.half_size)?;
+        dimension::<Self, _>("half_size", rect.half_size)?;
         Py::new(py, (Self::from_owned(rect), PyMeshable))
     }
 
     #[staticmethod]
     pub fn from_length(py: Python, length: f32) -> PyResult<Py<Self>> {
-        let rect = Rectangle::from_length(dimension("Rectangle", "length", length)?);
+        let rect = Rectangle::from_length(dimension::<Self, _>("length", length)?);
         Py::new(py, (Self::from_owned(rect), PyMeshable))
     }
 
@@ -86,7 +86,7 @@ impl PyRectangle {
     pub fn set_half_size(&mut self, value: PyVec2) -> PyResult<()> {
         let half_size = value.try_into()?;
         let mut shape = self.as_mut()?;
-        shape.half_size = dimension("Rectangle", "half_size", half_size)?;
+        shape.half_size = dimension::<Self, _>("half_size", half_size)?;
         Ok(())
     }
 

@@ -4,7 +4,7 @@ use bevy::math::{
 };
 use pybevy_core::{
     FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
-    domain::{NON_NEGATIVE, check},
+    domain::{NON_NEGATIVE, check_for},
     public_error::{EMPTY_POINT_CLOUD, bounding_operation, bounding_shrink},
     repr::{ReprLiteral, float_repr},
 };
@@ -86,7 +86,7 @@ impl PyBoundingCircle {
     #[new]
     pub fn new(center: PyVec2, radius: f32) -> PyResult<Self> {
         let center_vec: Vec2 = center.try_into()?;
-        let radius = check("BoundingCircle", "radius", radius, NON_NEGATIVE)?;
+        let radius = check_for::<Self, _>("radius", radius, NON_NEGATIVE)?;
         Ok(PyBoundingCircle::from_bounding_circle(BoundingCircle::new(
             center_vec, radius,
         )))
@@ -163,13 +163,13 @@ impl PyBoundingCircle {
 
     pub fn grow(&self, amount: f32) -> PyResult<PyBoundingCircle> {
         let bounds = self.as_ref()?;
-        let amount = check("BoundingCircle", "amount", amount, NON_NEGATIVE)?;
+        let amount = check_for::<Self, _>("amount", amount, NON_NEGATIVE)?;
         Ok(PyBoundingCircle::from_bounding_circle(bounds.grow(amount)))
     }
 
     pub fn shrink(&self, amount: f32) -> PyResult<PyBoundingCircle> {
         let bounds = self.as_ref()?;
-        let amount = check("BoundingCircle", "amount", amount, NON_NEGATIVE)?;
+        let amount = check_for::<Self, _>("amount", amount, NON_NEGATIVE)?;
         if bounds
             .radius()
             .partial_cmp(&amount)
@@ -184,7 +184,7 @@ impl PyBoundingCircle {
 
     pub fn scale_around_center(&self, scale: f32) -> PyResult<PyBoundingCircle> {
         let bounds = self.as_ref()?;
-        let scale = check("BoundingCircle", "scale", scale, NON_NEGATIVE)?;
+        let scale = check_for::<Self, _>("scale", scale, NON_NEGATIVE)?;
         Ok(PyBoundingCircle::from_bounding_circle(
             bounds.scale_around_center(scale),
         ))

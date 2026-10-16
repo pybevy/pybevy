@@ -1,7 +1,7 @@
-use bevy::ui::{Node, UiRect, Val};
-use pybevy_core::{ComponentStorage, PyComponent, StorageError};
+use bevy::ui::{Node, Val};
+use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pyo3::prelude::*;
 
 use crate::{
     PyAlignContent, PyAlignItems, PyAlignSelf, PyBoxSizing, PyDisplay, PyFlexDirection, PyFlexWrap,
@@ -14,58 +14,34 @@ use crate::{
     overflow_clip_margin::PyOverflowClipMargin,
     repeated_grid_track::PyRepeatedGridTrack,
     ui_rect::PyUiRect,
-    val::{IntoVal, PyVal, validate_finite_val},
+    val::{IntoVal, PyVal},
 };
 
-fn validate_rect(
-    rect: UiRect,
-    parameter: &str,
-    non_negative: bool,
-) -> Result<UiRect, StorageError> {
-    for (side, value) in [
-        ("left", rect.left),
-        ("right", rect.right),
-        ("top", rect.top),
-        ("bottom", rect.bottom),
-    ] {
-        let magnitude = match validate_finite_val(value, &format!("{parameter}.{side}"))? {
-            Val::Auto => continue,
-            Val::Px(v)
-            | Val::Percent(v)
-            | Val::Vw(v)
-            | Val::Vh(v)
-            | Val::VMin(v)
-            | Val::VMax(v) => v,
-        };
-        if non_negative && magnitude < 0.0 {
-            return Err(StorageError::InvalidValue(format!(
-                "{parameter}.{side} must be non-negative (got {magnitude})"
-            )));
-        }
-    }
-    Ok(rect)
-}
-
-fn check_padding(rect: &UiRect) -> Result<(), StorageError> {
-    validate_rect(*rect, "padding", true).map(drop)
-}
-
-fn check_border(rect: &UiRect) -> Result<(), StorageError> {
-    validate_rect(*rect, "border", true).map(drop)
-}
-
-fn validate_aspect_ratio(value: Option<f32>) -> PyResult<Option<f32>> {
-    if let Some(ratio) = value
-        && !ratio.is_finite()
-    {
-        return Err(PyValueError::new_err(format!(
-            "aspect_ratio must be finite (got {ratio})"
-        )));
-    }
-    Ok(value)
-}
-
-#[pycomponent(Node, bridge, view_fields = [scrollbar_width, flex_grow, flex_shrink])]
+#[pycomponent(Node, bridge,
+    domains = [
+        scrollbar_width => [finite],
+        left => [finite],
+        right => [finite],
+        top => [finite],
+        bottom => [finite],
+        width => [finite],
+        height => [finite],
+        min_width => [finite],
+        min_height => [finite],
+        max_width => [finite],
+        max_height => [finite],
+        aspect_ratio => [finite],
+        margin => [finite],
+        padding => [finite, non_negative],
+        border => [finite, non_negative],
+        flex_grow => [finite],
+        flex_shrink => [finite],
+        flex_basis => [finite],
+        row_gap => [finite],
+        column_gap => [finite],
+    ],
+    view_fields = [scrollbar_width, flex_grow, flex_shrink],
+)]
 #[pyclass(name = "Node", module = "pybevy.ui", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyNode {
@@ -170,19 +146,19 @@ impl PyNode {
             box_sizing: box_sizing.into(),
             position_type: position_type.into(),
             overflow: overflow.try_into()?,
-            scrollbar_width,
+            scrollbar_width: Self::check_scrollbar_width(scrollbar_width)?,
             overflow_clip_margin: overflow_clip_margin.try_into()?,
-            left: validate_finite_val(left.0, "left")?,
-            right: validate_finite_val(right.0, "right")?,
-            top: validate_finite_val(top.0, "top")?,
-            bottom: validate_finite_val(bottom.0, "bottom")?,
-            width: validate_finite_val(width.0, "width")?,
-            height: validate_finite_val(height.0, "height")?,
-            min_width: validate_finite_val(min_width.0, "min_width")?,
-            min_height: validate_finite_val(min_height.0, "min_height")?,
-            max_width: validate_finite_val(max_width.0, "max_width")?,
-            max_height: validate_finite_val(max_height.0, "max_height")?,
-            aspect_ratio: validate_aspect_ratio(aspect_ratio)?,
+            left: Self::check_left(left.0)?,
+            right: Self::check_right(right.0)?,
+            top: Self::check_top(top.0)?,
+            bottom: Self::check_bottom(bottom.0)?,
+            width: Self::check_width(width.0)?,
+            height: Self::check_height(height.0)?,
+            min_width: Self::check_min_width(min_width.0)?,
+            min_height: Self::check_min_height(min_height.0)?,
+            max_width: Self::check_max_width(max_width.0)?,
+            max_height: Self::check_max_height(max_height.0)?,
+            aspect_ratio: Self::check_aspect_ratio(aspect_ratio)?,
             align_items: align_items.into(),
             justify_items: justify_items.into(),
             align_self: align_self.into(),
@@ -190,17 +166,17 @@ impl PyNode {
             align_content: align_content.into(),
             justify_content: justify_content.into(),
             direction: direction.into(),
-            margin: validate_rect(margin.try_into()?, "margin", false)?,
-            padding: validate_rect(padding.try_into()?, "padding", true)?,
-            border: validate_rect(border.try_into()?, "border", true)?,
+            margin: Self::check_margin(margin.try_into()?)?,
+            padding: Self::check_padding(padding.try_into()?)?,
+            border: Self::check_border(border.try_into()?)?,
             border_radius: border_radius.try_into()?,
             flex_direction: flex_direction.into(),
             flex_wrap: flex_wrap.into(),
-            flex_grow,
-            flex_shrink,
-            flex_basis: validate_finite_val(flex_basis.0, "flex_basis")?,
-            row_gap: validate_finite_val(row_gap.0, "row_gap")?,
-            column_gap: validate_finite_val(column_gap.0, "column_gap")?,
+            flex_grow: Self::check_flex_grow(flex_grow)?,
+            flex_shrink: Self::check_flex_shrink(flex_shrink)?,
+            flex_basis: Self::check_flex_basis(flex_basis.0)?,
+            row_gap: Self::check_row_gap(row_gap.0)?,
+            column_gap: Self::check_column_gap(column_gap.0)?,
             grid_auto_flow: grid_auto_flow.into(),
             grid_template_rows: grid_template_rows.into_iter().map(Into::into).collect(),
             grid_template_columns: grid_template_columns.into_iter().map(Into::into).collect(),
@@ -230,7 +206,7 @@ impl PyNode {
 
     #[setter]
     pub fn set_top(&mut self, value: IntoVal) -> PyResult<()> {
-        let value = validate_finite_val(value.0, "top")?;
+        let value = Self::check_top(value.0)?;
         self.as_mut()?.top = value;
         Ok(())
     }
@@ -242,7 +218,7 @@ impl PyNode {
 
     #[setter]
     pub fn set_left(&mut self, value: IntoVal) -> PyResult<()> {
-        let value = validate_finite_val(value.0, "left")?;
+        let value = Self::check_left(value.0)?;
         self.as_mut()?.left = value;
         Ok(())
     }
@@ -254,7 +230,7 @@ impl PyNode {
 
     #[setter]
     pub fn set_width(&mut self, value: IntoVal) -> PyResult<()> {
-        let value = validate_finite_val(value.0, "width")?;
+        let value = Self::check_width(value.0)?;
         self.as_mut()?.width = value;
         Ok(())
     }
@@ -266,7 +242,7 @@ impl PyNode {
 
     #[setter]
     pub fn set_height(&mut self, value: IntoVal) -> PyResult<()> {
-        let value = validate_finite_val(value.0, "height")?;
+        let value = Self::check_height(value.0)?;
         self.as_mut()?.height = value;
         Ok(())
     }
@@ -278,7 +254,7 @@ impl PyNode {
 
     #[setter]
     pub fn set_right(&mut self, value: IntoVal) -> PyResult<()> {
-        let value = validate_finite_val(value.0, "right")?;
+        let value = Self::check_right(value.0)?;
         self.as_mut()?.right = value;
         Ok(())
     }
@@ -290,7 +266,7 @@ impl PyNode {
 
     #[setter]
     pub fn set_bottom(&mut self, value: IntoVal) -> PyResult<()> {
-        let value = validate_finite_val(value.0, "bottom")?;
+        let value = Self::check_bottom(value.0)?;
         self.as_mut()?.bottom = value;
         Ok(())
     }
@@ -302,7 +278,7 @@ impl PyNode {
 
     #[setter]
     pub fn set_min_width(&mut self, value: IntoVal) -> PyResult<()> {
-        let value = validate_finite_val(value.0, "min_width")?;
+        let value = Self::check_min_width(value.0)?;
         self.as_mut()?.min_width = value;
         Ok(())
     }
@@ -314,7 +290,7 @@ impl PyNode {
 
     #[setter]
     pub fn set_max_width(&mut self, value: IntoVal) -> PyResult<()> {
-        let value = validate_finite_val(value.0, "max_width")?;
+        let value = Self::check_max_width(value.0)?;
         self.as_mut()?.max_width = value;
         Ok(())
     }
@@ -326,7 +302,7 @@ impl PyNode {
 
     #[setter]
     pub fn set_min_height(&mut self, value: IntoVal) -> PyResult<()> {
-        let value = validate_finite_val(value.0, "min_height")?;
+        let value = Self::check_min_height(value.0)?;
         self.as_mut()?.min_height = value;
         Ok(())
     }
@@ -338,7 +314,7 @@ impl PyNode {
 
     #[setter]
     pub fn set_max_height(&mut self, value: IntoVal) -> PyResult<()> {
-        let value = validate_finite_val(value.0, "max_height")?;
+        let value = Self::check_max_height(value.0)?;
         self.as_mut()?.max_height = value;
         Ok(())
     }
@@ -477,12 +453,16 @@ impl PyNode {
 
     #[getter]
     pub fn margin(&self) -> PyResult<PyUiRect> {
-        Ok(self.storage.borrow_field_as(|node| &node.margin)?)
+        Ok(self.storage.borrow_validated_field_as(
+            |node| &node.margin,
+            |node| &mut node.margin,
+            Self::validate_margin,
+        )?)
     }
 
     #[setter]
     pub fn set_margin(&mut self, value: PyUiRect) -> PyResult<()> {
-        let value = validate_rect(value.try_into()?, "margin", false)?;
+        let value = Self::check_margin(value.try_into()?)?;
         self.as_mut()?.margin = value;
         Ok(())
     }
@@ -492,13 +472,13 @@ impl PyNode {
         Ok(self.storage.borrow_validated_field_as(
             |node| &node.padding,
             |node| &mut node.padding,
-            check_padding,
+            Self::validate_padding,
         )?)
     }
 
     #[setter]
     pub fn set_padding(&mut self, value: PyUiRect) -> PyResult<()> {
-        let value = validate_rect(value.try_into()?, "padding", true)?;
+        let value = Self::check_padding(value.try_into()?)?;
         self.as_mut()?.padding = value;
         Ok(())
     }
@@ -508,13 +488,13 @@ impl PyNode {
         Ok(self.storage.borrow_validated_field_as(
             |node| &node.border,
             |node| &mut node.border,
-            check_border,
+            Self::validate_border,
         )?)
     }
 
     #[setter]
     pub fn set_border(&mut self, value: PyUiRect) -> PyResult<()> {
-        let value = validate_rect(value.try_into()?, "border", true)?;
+        let value = Self::check_border(value.try_into()?)?;
         self.as_mut()?.border = value;
         Ok(())
     }
@@ -526,6 +506,7 @@ impl PyNode {
 
     #[setter]
     pub fn set_flex_grow(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_flex_grow(value)?;
         self.as_mut()?.flex_grow = value;
         Ok(())
     }
@@ -537,6 +518,7 @@ impl PyNode {
 
     #[setter]
     pub fn set_flex_shrink(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_flex_shrink(value)?;
         self.as_mut()?.flex_shrink = value;
         Ok(())
     }
@@ -548,7 +530,7 @@ impl PyNode {
 
     #[setter]
     pub fn set_flex_basis(&mut self, value: IntoVal) -> PyResult<()> {
-        let value = validate_finite_val(value.0, "flex_basis")?;
+        let value = Self::check_flex_basis(value.0)?;
         self.as_mut()?.flex_basis = value;
         Ok(())
     }
@@ -560,7 +542,7 @@ impl PyNode {
 
     #[setter]
     pub fn set_row_gap(&mut self, value: IntoVal) -> PyResult<()> {
-        let value = validate_finite_val(value.0, "row_gap")?;
+        let value = Self::check_row_gap(value.0)?;
         self.as_mut()?.row_gap = value;
         Ok(())
     }
@@ -572,7 +554,7 @@ impl PyNode {
 
     #[setter]
     pub fn set_column_gap(&mut self, value: IntoVal) -> PyResult<()> {
-        let value = validate_finite_val(value.0, "column_gap")?;
+        let value = Self::check_column_gap(value.0)?;
         self.as_mut()?.column_gap = value;
         Ok(())
     }
@@ -584,7 +566,7 @@ impl PyNode {
 
     #[setter]
     pub fn set_aspect_ratio(&mut self, value: Option<f32>) -> PyResult<()> {
-        self.as_mut()?.aspect_ratio = validate_aspect_ratio(value)?;
+        self.as_mut()?.aspect_ratio = Self::check_aspect_ratio(value)?;
         Ok(())
     }
 
@@ -595,6 +577,7 @@ impl PyNode {
 
     #[setter]
     pub fn set_scrollbar_width(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_scrollbar_width(value)?;
         self.as_mut()?.scrollbar_width = value;
         Ok(())
     }

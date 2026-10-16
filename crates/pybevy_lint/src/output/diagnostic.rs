@@ -45,6 +45,8 @@ pub enum DiagnosticCode {
     E016,
     /// E017: pyenum stub declares a Python enum-family base
     E017,
+    /// E018: a hand-written write path skips a declared value domain check
+    E018,
 
     // Warnings (W-codes)
     /// W001: Complex type should return Py<T>
@@ -178,6 +180,7 @@ impl DiagnosticCode {
             DiagnosticCode::E015 => "E015",
             DiagnosticCode::E016 => "E016",
             DiagnosticCode::E017 => "E017",
+            DiagnosticCode::E018 => "E018",
             DiagnosticCode::W001 => "W001",
             DiagnosticCode::W002 => "W002",
             DiagnosticCode::W003 => "W003",
@@ -240,7 +243,8 @@ impl DiagnosticCode {
             | DiagnosticCode::E014
             | DiagnosticCode::E015
             | DiagnosticCode::E016
-            | DiagnosticCode::E017 => DiagnosticSeverity::Error,
+            | DiagnosticCode::E017
+            | DiagnosticCode::E018 => DiagnosticSeverity::Error,
 
             DiagnosticCode::W001
             | DiagnosticCode::W002
@@ -310,6 +314,7 @@ impl DiagnosticCode {
             }
             DiagnosticCode::E016 => "non-constructible wrapper regained a public initializer",
             DiagnosticCode::E017 => "pyenum stub declares a Python enum-family base",
+            DiagnosticCode::E018 => "write path skips a declared value domain check",
             DiagnosticCode::W001 => "complex type should return Py<T>",
             DiagnosticCode::W002 => "getter using &mut self instead of &self",
             DiagnosticCode::W003 => "setter missing set_ prefix",
