@@ -3,18 +3,10 @@ use tokio::sync::mpsc;
 
 use super::{
     channel::{ControlReceiver, ControlRequest},
-    deferred::{
-        handle_submit_schedule, push_pending_depth, push_pending_reload,
-        push_pending_reload_and_capture, push_pending_screenshot, push_pending_stats,
-        push_pending_timeline, push_pending_turnaround,
-    },
+    deferred::{DeferredBatch, handle_submit_schedule},
     runtime::ControlRuntime,
 };
 use crate::{
-    capture::{
-        queue::{PendingScreenshot, PendingScreenshots},
-        screenshot::prepare_pending_screenshot_gizmos,
-    },
     catalog::feature_gate::authorize,
     plugin::ControlConfig,
     protocol::{ControlOperation, SseEvent},
@@ -42,7 +34,7 @@ pub fn control_poll_system(world: &mut World) {
     };
 
     let mut processed = 0;
-    let mut deferred_screenshots: Vec<PendingScreenshot> = Vec::new();
+    let mut deferred = DeferredBatch::new(None);
     let config = world.get_resource::<ControlConfig>().cloned();
 
     // Two-phase processing: drain all requests first (no GIL needed), then
@@ -65,60 +57,20 @@ pub fn control_poll_system(world: &mut World) {
                     continue;
                 }
 
-                // Handle ScheduleActions (no GIL needed - just stores in World resource)
-                if let ControlOperation::ScheduleActions(sched) = request.operation {
-                    handle_submit_schedule(sched, request.response_tx, world);
-                    continue;
-                }
-
-                // Classify: deferred ops go directly to their queues,
-                // sync ops are collected for batched GIL processing
+                // Schedules and deferred operations are stored without the GIL;
+                // the rest runs in the batched sync dispatch below.
                 match request.operation {
-                    ControlOperation::CaptureScreenshot(p) => {
-                        let with_gizmos = p.gizmos;
-                        push_pending_screenshot(
-                            p,
-                            with_gizmos,
-                            request.response_tx,
-                            &mut deferred_screenshots,
-                        );
+                    ControlOperation::ScheduleActions(schedule) => {
+                        handle_submit_schedule(schedule, request.response_tx, world);
                     }
-                    ControlOperation::CaptureStats(p) => {
-                        push_pending_stats(p, request.response_tx, &mut deferred_screenshots);
-                    }
-                    ControlOperation::CaptureWithGizmos(p) => {
-                        push_pending_screenshot(
-                            p,
-                            true,
-                            request.response_tx,
-                            &mut deferred_screenshots,
-                        );
-                    }
-                    ControlOperation::CaptureTimeline(p) => {
-                        push_pending_timeline(p, request.response_tx, world);
-                    }
-                    ControlOperation::Reload(p) => {
-                        push_pending_reload(p, request.response_tx, world);
-                    }
-                    ControlOperation::ReloadAndCapture(p) => {
-                        push_pending_reload_and_capture(p, request.response_tx, world);
-                    }
-                    ControlOperation::CaptureTurnaround(p) => {
-                        push_pending_turnaround(p, request.response_tx, world);
-                    }
-                    ControlOperation::CaptureDepth(p) => {
-                        push_pending_depth(
-                            p,
-                            request.response_tx,
-                            &mut deferred_screenshots,
-                            world,
-                        );
-                    }
-                    other => {
-                        sync_requests.push(ControlRequest {
-                            operation: other,
+                    operation => {
+                        let request = ControlRequest {
+                            operation,
                             response_tx: request.response_tx,
-                        });
+                        };
+                        if let Some(request) = deferred.enqueue(world, request) {
+                            sync_requests.push(request);
+                        }
                     }
                 }
             }
@@ -140,14 +92,7 @@ pub fn control_poll_system(world: &mut World) {
         world.insert_non_send(runtime);
     }
 
-    // Store deferred screenshots
-    if !deferred_screenshots.is_empty() {
-        for screenshot in &mut deferred_screenshots {
-            prepare_pending_screenshot_gizmos(world, screenshot);
-        }
-        let mut pending = world.get_resource_or_insert_with(PendingScreenshots::default);
-        pending.pending.extend(deferred_screenshots);
-    }
+    deferred.commit(world);
 
     // Put the receiver back
     world.insert_resource(receiver);
@@ -191,6 +136,7 @@ mod tests {
 
     use super::*;
     use crate::{
+        capture::queue::PendingScreenshots,
         engine::channel::create_channel,
         protocol::{EntityRef, GetComponentParams},
         pyo3::runtime::Pyo3ControlRuntime,

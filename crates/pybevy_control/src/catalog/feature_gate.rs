@@ -1,76 +1,9 @@
 use crate::{
-    catalog::tools::public_tool_feature_gate,
     plugin::ControlConfig,
-    protocol::{ControlError, ControlOperation},
+    protocol::{ControlError, ControlOperation, FeatureGate, OperationTag},
 };
 
-/// A `McpPlugin` switch that disables a group of control tools.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum FeatureGate {
-    Screenshot,
-    Manipulation,
-    ExecutePython,
-}
-
 impl FeatureGate {
-    pub(crate) fn of(operation: &ControlOperation) -> Option<Self> {
-        match operation {
-            ControlOperation::CaptureScreenshot(..)
-            | ControlOperation::CaptureStats(..)
-            | ControlOperation::CompareFrames(..)
-            | ControlOperation::CaptureWithGizmos(..)
-            | ControlOperation::CaptureTimeline(..)
-            | ControlOperation::CaptureTurnaround(..)
-            | ControlOperation::CaptureDepth(..)
-            | ControlOperation::ReloadAndCapture(..) => Some(Self::Screenshot),
-            ControlOperation::SpawnEntity { .. }
-            | ControlOperation::DespawnEntity { .. }
-            | ControlOperation::SetComponent(..)
-            | ControlOperation::RemoveComponent(..)
-            | ControlOperation::SetResource(..)
-            | ControlOperation::RemoveResource { .. }
-            | ControlOperation::Batch { .. }
-            | ControlOperation::SetAsset(..) => Some(Self::Manipulation),
-            ControlOperation::RunCode { .. } => Some(Self::ExecutePython),
-            ControlOperation::ListEntities
-            | ControlOperation::GetEntity { .. }
-            | ControlOperation::ListResources
-            | ControlOperation::ListSystems { .. }
-            | ControlOperation::GetComponentSchema { .. }
-            | ControlOperation::GetComponent(..)
-            | ControlOperation::GetResource(..)
-            | ControlOperation::QueryEntities(..)
-            | ControlOperation::GetSceneSummary
-            | ControlOperation::GetBoundingBox { .. }
-            | ControlOperation::GetRegistry
-            | ControlOperation::Reload(..)
-            | ControlOperation::GetReloadStatus
-            | ControlOperation::GetLastError
-            | ControlOperation::PauseTime
-            | ControlOperation::ResumeTime
-            | ControlOperation::SetTimeScale { .. }
-            | ControlOperation::GetTimeStatus
-            | ControlOperation::SeekTime(..)
-            | ControlOperation::QuerySpatial(..)
-            | ControlOperation::QuerySpatialNeighborhood(..)
-            | ControlOperation::CheckOverlaps(..)
-            | ControlOperation::CheckAllOverlaps(..)
-            | ControlOperation::GetPerformance
-            | ControlOperation::ScheduleActions(..)
-            | ControlOperation::GetConfig { .. }
-            | ControlOperation::ListConfigs => None,
-        }
-    }
-
-    fn for_tool(tool: &str) -> Option<Self> {
-        match public_tool_feature_gate(tool)? {
-            "screenshot" => Some(Self::Screenshot),
-            "manipulation" => Some(Self::Manipulation),
-            "execute_python" => Some(Self::ExecutePython),
-            _ => None,
-        }
-    }
-
     #[cfg(test)]
     fn schema_name(self) -> &'static str {
         match self {
@@ -112,7 +45,9 @@ pub(crate) fn authorize(
 ) -> Result<(), ControlError> {
     if let ControlOperation::ScheduleActions(request) = operation {
         for (index, action) in request.actions.iter().enumerate() {
-            if let Some(gate) = FeatureGate::for_tool(&action.tool) {
+            if let Some(gate) =
+                OperationTag::from_name(&action.tool).and_then(|tag| tag.spec().gate)
+            {
                 gate.check(config).map_err(|message| {
                     ControlError::forbidden(format!("action[{index}]: {message}"))
                 })?;
@@ -120,7 +55,7 @@ pub(crate) fn authorize(
         }
         return Ok(());
     }
-    match FeatureGate::of(operation) {
+    match operation.spec().gate {
         Some(gate) => gate.check(config).map_err(ControlError::forbidden),
         None => Ok(()),
     }
@@ -187,7 +122,7 @@ mod tests {
             let operation = tool_to_operation(name, &minimal_arguments(&tool))
                 .unwrap_or_else(|error| panic!("{name}: {error}"));
             assert_eq!(
-                FeatureGate::of(&operation).map(FeatureGate::schema_name),
+                operation.spec().gate.map(FeatureGate::schema_name),
                 tool["feature_gate"].as_str(),
                 "{name}"
             );

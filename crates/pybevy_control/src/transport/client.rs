@@ -2,6 +2,8 @@ use std::{error::Error, fmt, time::Duration};
 
 use serde_json::{Map, Value, json};
 
+use crate::protocol::OperationTag;
+
 const MAX_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_HEADER_BYTES: usize = 64 * 1024;
 const IMAGE_DELIVERY_HEADER: (&str, &str) = ("x-pybevy-image-delivery", "mcp");
@@ -241,16 +243,8 @@ fn build_tool_request(
     arguments: &Map<String, Value>,
 ) -> Result<RequestSpec, ClientError> {
     let arguments_value = Value::Object(arguments.clone());
-    let image_delivery = matches!(
-        tool_name,
-        "capture_screenshot"
-            | "capture_timeline"
-            | "capture_turnaround"
-            | "capture_depth"
-            | "reload_and_capture"
-            | "schedule_actions"
-            | "get_schedule_result"
-    );
+    let image_delivery = tool_name == "get_schedule_result"
+        || OperationTag::from_name(tool_name).is_some_and(|tag| tag.spec().image_delivery);
 
     let mut request = match tool_name {
         "get_component" => {

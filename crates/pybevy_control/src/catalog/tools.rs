@@ -2,34 +2,23 @@
 //!
 //! Transforms schemars output into the MCP tools/list response format.
 
-use std::{collections::HashMap, sync::OnceLock};
+use std::{collections::HashSet, sync::OnceLock};
 
 use serde_json::{Map, Value, json};
 
 use crate::protocol::ControlOperation;
 
-static PUBLIC_TOOL_GATES: OnceLock<HashMap<String, Option<String>>> = OnceLock::new();
-
-fn public_tool_gates() -> &'static HashMap<String, Option<String>> {
-    PUBLIC_TOOL_GATES.get_or_init(|| {
-        list_tools()
-            .into_iter()
-            .filter_map(|tool| {
-                let name = tool["name"].as_str()?.to_owned();
-                let gate = tool["feature_gate"].as_str().map(str::to_owned);
-                Some((name, gate))
-            })
-            .collect()
-    })
-}
+static PUBLIC_TOOL_NAMES: OnceLock<HashSet<String>> = OnceLock::new();
 
 pub(crate) fn is_public_tool_name(name: &str) -> bool {
-    public_tool_gates().contains_key(name)
-}
-
-/// The `feature_gate` a public tool's schema declares.
-pub(crate) fn public_tool_feature_gate(name: &str) -> Option<&'static str> {
-    public_tool_gates().get(name)?.as_deref()
+    PUBLIC_TOOL_NAMES
+        .get_or_init(|| {
+            list_tools()
+                .into_iter()
+                .filter_map(|tool| tool["name"].as_str().map(str::to_owned))
+                .collect()
+        })
+        .contains(name)
 }
 
 /// Generate the full list of MCP tool definitions from ControlOperation's JSON schema.

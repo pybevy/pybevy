@@ -12,20 +12,23 @@ use crate::{
         depth::{PendingDepthAnalysis, compute_depth_samples_for_camera, validate_depth_sampling},
         queue::{
             CaptureResponseKind, DEFAULT_SCREENSHOT_MAX_WIDTH, DEFAULT_TIMELINE_MAX_WIDTH,
-            DebugCameraRequest, PendingScreenshot,
+            DebugCameraRequest, PendingScreenshot, PendingScreenshots,
         },
         screenshot::{
             ActiveTimeline, GizmoEnabledRestore, MAX_TIMELINE_CAPTURES, MAX_TIMELINE_FRAMES,
-            PendingTimelines, compute_schedule, select_capture_camera_3d, validate_capture_delay,
+            PendingTimelines, compute_schedule, prepare_pending_screenshot_gizmos,
+            select_capture_camera_3d, validate_capture_delay,
         },
         turnaround::{
             ActiveTurnaround, MAX_TURNAROUND_VIEWS, PendingTurnarounds, compute_scene_bounds,
             compute_viewpoints,
         },
     },
+    engine::channel::ControlRequest,
     protocol::{
         CaptureDepthParams, CaptureScreenshotParams, CaptureStatsParams, CaptureTimelineParams,
-        CaptureTurnaroundParams, ControlError, ReloadAndCaptureParams, ReloadParams,
+        CaptureTurnaroundParams, ControlError, ControlOperation, ReloadAndCaptureParams,
+        ReloadParams,
     },
     reload::{
         self, PendingReloadAndCapture, PendingReloadAndCaptures, PendingReloadResponse,
@@ -36,6 +39,83 @@ use crate::{
         SharedScheduleRegistryResource, SharedScheduleState,
     },
 };
+
+/// Deferred requests collected in one frame, stored together by [`Self::commit`].
+pub(crate) struct DeferredBatch {
+    render_epoch: Option<u64>,
+    screenshots: Vec<PendingScreenshot>,
+}
+
+impl DeferredBatch {
+    /// `render_epoch` makes queued screenshots wait for that render epoch
+    /// before their capture delay starts.
+    pub(crate) fn new(render_epoch: Option<u64>) -> Self {
+        Self {
+            render_epoch,
+            screenshots: Vec::new(),
+        }
+    }
+
+    /// Queue a deferred operation. A request whose operation is not deferred
+    /// is handed back unchanged.
+    pub(crate) fn enqueue(
+        &mut self,
+        world: &mut World,
+        request: ControlRequest,
+    ) -> Option<ControlRequest> {
+        let ControlRequest {
+            operation,
+            response_tx,
+        } = request;
+        let screenshots = &mut self.screenshots;
+        match operation {
+            ControlOperation::CaptureScreenshot(p) => {
+                let with_gizmos = p.gizmos;
+                push_pending_screenshot(p, with_gizmos, response_tx, screenshots);
+            }
+            ControlOperation::CaptureWithGizmos(p) => {
+                push_pending_screenshot(p, true, response_tx, screenshots);
+            }
+            ControlOperation::CaptureStats(p) => push_pending_stats(p, response_tx, screenshots),
+            ControlOperation::CaptureTimeline(p) => push_pending_timeline(p, response_tx, world),
+            ControlOperation::CaptureTurnaround(p) => {
+                push_pending_turnaround(p, response_tx, world);
+            }
+            ControlOperation::CaptureDepth(p) => {
+                push_pending_depth(p, response_tx, screenshots, world);
+            }
+            ControlOperation::Reload(p) => push_pending_reload(p, response_tx, world),
+            ControlOperation::ReloadAndCapture(p) => {
+                push_pending_reload_and_capture(p, response_tx, world);
+            }
+            operation => {
+                return Some(ControlRequest {
+                    operation,
+                    response_tx,
+                });
+            }
+        }
+        None
+    }
+
+    /// Suppress gizmos for the queued screenshots and hand them to the
+    /// capture systems.
+    pub(crate) fn commit(mut self, world: &mut World) {
+        if self.screenshots.is_empty() {
+            return;
+        }
+        for screenshot in &mut self.screenshots {
+            if let Some(epoch) = self.render_epoch {
+                screenshot.required_render_epoch = Some(epoch);
+            }
+            prepare_pending_screenshot_gizmos(world, screenshot);
+        }
+        world
+            .get_resource_or_insert_with(PendingScreenshots::default)
+            .pending
+            .extend(self.screenshots);
+    }
+}
 
 pub fn push_pending_screenshot(
     params: CaptureScreenshotParams,
@@ -427,6 +507,43 @@ mod tests {
         capture::{hold::OverlaySuppression, screenshot::process_pending_timelines},
         protocol::{ErrorCode, ReloadMode},
     };
+
+    #[test]
+    fn enqueue_hands_back_requests_that_are_not_deferred() {
+        let mut world = World::new();
+        let (response_tx, _rx) = oneshot::channel();
+        let mut batch = DeferredBatch::new(Some(3));
+        let request = ControlRequest {
+            operation: ControlOperation::PauseTime,
+            response_tx,
+        };
+
+        let returned = batch
+            .enqueue(&mut world, request)
+            .expect("pause_time is not deferred");
+        assert!(matches!(returned.operation, ControlOperation::PauseTime));
+        batch.commit(&mut world);
+        assert!(!world.contains_resource::<PendingScreenshots>());
+    }
+
+    #[test]
+    fn commit_applies_the_batch_render_epoch() {
+        for epoch in [None, Some(7)] {
+            let mut world = World::new();
+            let (response_tx, _rx) = oneshot::channel();
+            let mut batch = DeferredBatch::new(epoch);
+            let request = ControlRequest {
+                operation: ControlOperation::CaptureScreenshot(serde_json::from_str("{}").unwrap()),
+                response_tx,
+            };
+
+            assert!(batch.enqueue(&mut world, request).is_none());
+            batch.commit(&mut world);
+            let pending = world.resource::<PendingScreenshots>();
+            assert_eq!(pending.pending.len(), 1);
+            assert_eq!(pending.pending[0].required_render_epoch, epoch);
+        }
+    }
 
     #[test]
     fn push_pending_screenshot_applies_default_max_width() {
