@@ -30,10 +30,7 @@ use crate::{
         CaptureTurnaroundParams, ControlError, ControlOperation, ReloadAndCaptureParams,
         ReloadParams,
     },
-    reload::{
-        self, PendingReloadAndCapture, PendingReloadAndCaptures, PendingReloadResponse,
-        PendingReloadResponses,
-    },
+    reload::{self, PendingReload, PendingReloads, ReloadCapture, ReloadCompletion},
     schedule::{
         ActiveSchedule, ActiveSchedules, ScheduleMode, ScheduleRequest,
         SharedScheduleRegistryResource, SharedScheduleState,
@@ -269,14 +266,12 @@ pub fn push_pending_reload(
         return;
     }
 
-    let mut pending = world.get_resource_or_insert_with(PendingReloadResponses::default);
-    pending.pending.push(PendingReloadResponse {
+    let mut pending = world.get_resource_or_insert_with(PendingReloads::default);
+    pending.pending.push(PendingReload::new(
         response_tx,
-        frames_remaining: 5,
-        mode: params.mode,
-        awaiting_fetch: false,
-        fetch_deadline: None,
-    });
+        params.mode,
+        ReloadCompletion::Respond,
+    ));
 }
 
 pub fn push_pending_reload_and_capture(
@@ -293,18 +288,19 @@ pub fn push_pending_reload_and_capture(
         return;
     }
 
-    let mut pending = world.get_resource_or_insert_with(PendingReloadAndCaptures::default);
-    pending.pending.push(PendingReloadAndCapture {
-        response_tx,
-        mode: params.mode,
-        reload_frames_remaining: 5,
-        awaiting_fetch: false,
-        screenshot_delay_frames: params.delay_frames.unwrap_or(30),
+    let capture = ReloadCapture {
+        delay_frames: params.delay_frames.unwrap_or(30),
         max_width: params.max_width,
         position: params.position,
         look_at: params.look_at,
         hide_ui: params.hide_ui.unwrap_or(true),
-    });
+    };
+    let mut pending = world.get_resource_or_insert_with(PendingReloads::default);
+    pending.pending.push(PendingReload::new(
+        response_tx,
+        params.mode,
+        ReloadCompletion::Capture(capture),
+    ));
 }
 
 pub fn push_pending_turnaround(
@@ -638,7 +634,7 @@ mod tests {
         assert!(err.message.contains("1000"));
         // No deferred waiter queued, and the bad scale was not applied.
         let queued = world
-            .get_resource::<PendingReloadResponses>()
+            .get_resource::<PendingReloads>()
             .map(|p| p.pending.len())
             .unwrap_or(0);
         assert_eq!(queued, 0);
@@ -667,7 +663,7 @@ mod tests {
             "response is deferred, not immediate"
         );
         let queued = world
-            .get_resource::<PendingReloadResponses>()
+            .get_resource::<PendingReloads>()
             .map(|p| p.pending.len())
             .unwrap_or(0);
         assert_eq!(queued, 1);

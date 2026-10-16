@@ -34,7 +34,7 @@ pub mod bridge {
         capture::{hold::*, queue::*},
         engine::{channel::*, deferred::*, poll::*},
         protocol::{entity_ref::*, error::*, operation::*, params::*},
-        reload::{PendingReloadResponse, PendingReloadResponses},
+        reload::{PendingReload, PendingReloads},
         transport::sse::SseEventBroadcaster,
     };
 }

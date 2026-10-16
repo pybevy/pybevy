@@ -13,48 +13,70 @@ use tokio::sync::oneshot;
 
 use crate::{
     capture::{
-        queue::{CaptureResponseKind, DebugCameraRequest, PendingScreenshots},
-        screenshot::{GizmoEnabledRestore, RenderFrameReadiness},
+        queue::{
+            CaptureResponseKind, DEFAULT_SCREENSHOT_MAX_WIDTH, DebugCameraRequest,
+            PendingScreenshot, PendingScreenshots,
+        },
+        screenshot::{
+            GizmoEnabledRestore, RenderFrameReadiness, prepare_pending_screenshot_gizmos,
+        },
     },
     protocol::{ControlError, ReloadMode},
+    scene::entity_count::scene_entity_count,
 };
 
-/// Bevy resource for pending reload responses (deferred until reload completes)
+/// Frames a requested reload runs before its response is built.
+const RELOAD_SETTLE_FRAMES: u32 = 5;
+
+/// Bevy resource for reloads whose response waits until the reload completes.
 #[derive(Resource, Default)]
-pub struct PendingReloadResponses {
-    pub pending: Vec<PendingReloadResponse>,
+pub struct PendingReloads {
+    pub pending: Vec<PendingReload>,
 }
 
-pub struct PendingReloadResponse {
+pub struct PendingReload {
     pub response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
-    pub frames_remaining: u32,
     pub mode: ReloadMode,
+    pub frames_remaining: u32,
     /// The countdown expired while a definition fetch was still running; a
     /// fresh grace countdown starts when the fetch finishes.
     pub awaiting_fetch: bool,
     /// Backstop for a fetch flag that never clears.
     pub fetch_deadline: Option<std::time::Instant>,
+    pub on_complete: ReloadCompletion,
 }
 
-/// A pending reload-and-capture request.
-pub struct PendingReloadAndCapture {
-    pub response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
-    pub mode: ReloadMode,
-    pub reload_frames_remaining: u32,
-    /// The countdown expired while a definition fetch was still running; a
-    /// fresh grace countdown starts when the fetch finishes.
-    pub awaiting_fetch: bool,
-    pub screenshot_delay_frames: u32,
+impl PendingReload {
+    pub fn new(
+        response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
+        mode: ReloadMode,
+        on_complete: ReloadCompletion,
+    ) -> Self {
+        Self {
+            response_tx,
+            mode,
+            frames_remaining: RELOAD_SETTLE_FRAMES,
+            awaiting_fetch: false,
+            fetch_deadline: None,
+            on_complete,
+        }
+    }
+}
+
+/// What a completed reload sends back.
+pub enum ReloadCompletion {
+    /// The reload report.
+    Respond,
+    /// A screenshot whose response carries the reload report.
+    Capture(ReloadCapture),
+}
+
+pub struct ReloadCapture {
+    pub delay_frames: u32,
     pub max_width: Option<u32>,
     pub position: Option<[f32; 3]>,
     pub look_at: Option<[f32; 3]>,
     pub hide_ui: bool,
-}
-
-/// Bevy resource for pending reload-and-capture responses.
-#[derive(Resource, Default)]
-pub struct PendingReloadAndCaptures {
-    pub pending: Vec<PendingReloadAndCapture>,
 }
 
 /// Trigger a hot reload (full or partial), optionally setting time control atomically
@@ -268,11 +290,55 @@ fn add_error_hint(response: &mut serde_json::Value) {
     response["hint"] = serde_json::json!(hint);
 }
 
-/// Process pending reload responses (called each frame in Last schedule).
+/// Adds the completed reload's system error, registration failure and
+/// escalation to `response`, and returns whether it reported an error.
+/// `system_error_status` replaces the status when a system error is present.
+fn add_reload_outcome(
+    world: &World,
+    response: &mut serde_json::Value,
+    system_error_status: Option<&str>,
+) -> bool {
+    let mut has_error = false;
+    if let Some(last_error) = world.get_resource::<pybevy_core::LastSystemError>()
+        && let Some(ref error_msg) = last_error.error
+    {
+        if let Some(status) = system_error_status {
+            response["status"] = serde_json::json!(status);
+        }
+        response["error"] = serde_json::json!(error_msg);
+        response["traceback"] = serde_json::json!(last_error.traceback);
+        has_error = true;
+    }
+
+    // Registration and Startup failures flagged on ReloadResult take precedence.
+    if let Some(reload_result) = world.get_resource::<ReloadResult>() {
+        if reload_result.failed {
+            response["status"] = serde_json::json!("reload_failed");
+            response["error"] = serde_json::json!(
+                reload_result
+                    .failure_reason
+                    .as_deref()
+                    .unwrap_or("unknown registration failure")
+            );
+            response["traceback"] = serde_json::json!(reload_result.failure_traceback);
+            if let Some(ref reason) = reload_result.failure_reason {
+                response["failure_reason"] = serde_json::json!(reason);
+            }
+            has_error = true;
+        }
+        response["escalated"] = serde_json::json!(reload_result.escalated);
+        if let Some(ref reason) = reload_result.escalation_reason {
+            response["escalation_reason"] = serde_json::json!(reason);
+        }
+    }
+    has_error
+}
+
+/// Process pending reloads (called each frame in the Last schedule).
 /// Counts down frames, holds while a definition fetch is still running, then
-/// checks for errors/escalation and sends the deferred response.
+/// responds with the reload report or queues the requested capture.
 pub fn process_pending_reloads(world: &mut World) {
-    let Some(mut pending) = world.remove_resource::<PendingReloadResponses>() else {
+    let Some(mut pending) = world.remove_resource::<PendingReloads>() else {
         return;
     };
 
@@ -285,6 +351,9 @@ pub fn process_pending_reloads(world: &mut World) {
     let mut still_waiting = Vec::new();
 
     for mut reload in pending.pending.drain(..) {
+        if reload.response_tx.is_closed() {
+            continue;
+        }
         if reload.frames_remaining > 0 {
             reload.frames_remaining -= 1;
             still_waiting.push(reload);
@@ -296,13 +365,7 @@ pub fn process_pending_reloads(world: &mut World) {
                 reload.awaiting_fetch = true;
                 still_waiting.push(reload);
             } else {
-                let reason = "definition-load fetch did not finish within the response window";
-                let _ = reload.response_tx.send(Ok(serde_json::json!({
-                    "status": "reload_failed",
-                    "mode": reload.mode,
-                    "error": reason,
-                    "failure_reason": reason,
-                })));
+                respond_fetch_timeout(world, reload);
             }
         } else if reload.awaiting_fetch {
             // The fetch just finished; let the resumed attempt's generation
@@ -311,51 +374,7 @@ pub fn process_pending_reloads(world: &mut World) {
             reload.frames_remaining = POST_FETCH_GRACE_FRAMES;
             still_waiting.push(reload);
         } else {
-            // Reload has had time to execute - build response with error/escalation info
-            let time = world.resource::<Time<Virtual>>();
-            let mut response = serde_json::json!({
-                "status": "reload_completed",
-                "mode": reload.mode,
-                "paused": time.is_paused(),
-                "relative_speed": time.relative_speed(),
-            });
-
-            // Check for new errors since reload
-            if let Some(last_error) = world.get_resource::<pybevy_core::LastSystemError>()
-                && let Some(ref error_msg) = last_error.error
-            {
-                response["error"] = serde_json::json!(error_msg);
-                response["traceback"] = serde_json::json!(last_error.traceback);
-            }
-
-            // Surface registration/Startup failures flagged on ReloadResult.
-            if let Some(reload_result) = world.get_resource::<ReloadResult>() {
-                if reload_result.failed {
-                    response["status"] = serde_json::json!("reload_failed");
-                    response["error"] = serde_json::json!(
-                        reload_result
-                            .failure_reason
-                            .as_deref()
-                            .unwrap_or("unknown registration failure")
-                    );
-                    response["traceback"] = serde_json::json!(reload_result.failure_traceback);
-                    if let Some(ref reason) = reload_result.failure_reason {
-                        response["failure_reason"] = serde_json::json!(reason);
-                    }
-                }
-                response["escalated"] = serde_json::json!(reload_result.escalated);
-                if let Some(ref reason) = reload_result.escalation_reason {
-                    response["escalation_reason"] = serde_json::json!(reason);
-                }
-            }
-
-            if response.get("error").is_none() {
-                response["error"] = serde_json::json!(null);
-            }
-
-            add_error_hint(&mut response);
-
-            let _ = reload.response_tx.send(Ok(response));
+            complete_reload(world, reload);
         }
     }
 
@@ -363,135 +382,97 @@ pub fn process_pending_reloads(world: &mut World) {
     world.insert_resource(pending);
 }
 
-/// Process pending reload-and-capture requests: wait out the reload,
-/// check errors, then queue the screenshot whose responder sends the
-/// combined response.
-pub fn process_pending_reload_and_capture(world: &mut World) {
-    let Some(mut pending) = world.remove_resource::<PendingReloadAndCaptures>() else {
-        return;
+fn respond_fetch_timeout(world: &mut World, reload: PendingReload) {
+    let reason = "definition-load fetch did not finish within the response window";
+    let report = serde_json::json!({
+        "status": "reload_failed",
+        "mode": reload.mode,
+        "error": reason,
+        "failure_reason": reason,
+    });
+    let response = match reload.on_complete {
+        ReloadCompletion::Respond => report,
+        ReloadCompletion::Capture(_) => serde_json::json!({
+            "reload": report,
+            "errors": reason,
+            "screenshot": null,
+            "entity_count": scene_entity_count(world) as usize,
+        }),
+    };
+    let _ = reload.response_tx.send(Ok(response));
+}
+
+fn complete_reload(world: &mut World, reload: PendingReload) {
+    let time = world.resource::<Time<Virtual>>();
+    let (paused, relative_speed) = (time.is_paused(), time.relative_speed());
+    let capture = match reload.on_complete {
+        ReloadCompletion::Respond => {
+            let mut response = serde_json::json!({
+                "status": "reload_completed",
+                "mode": reload.mode,
+                "paused": paused,
+                "relative_speed": relative_speed,
+            });
+            add_reload_outcome(world, &mut response, None);
+            if response.get("error").is_none() {
+                response["error"] = serde_json::json!(null);
+            }
+            add_error_hint(&mut response);
+            let _ = reload.response_tx.send(Ok(response));
+            return;
+        }
+        ReloadCompletion::Capture(capture) => capture,
     };
 
-    if pending.pending.is_empty() {
-        world.insert_resource(pending);
+    let mut reload_response = serde_json::json!({
+        "mode": reload.mode,
+        "status": "success",
+        "paused": paused,
+        "relative_speed": relative_speed,
+    });
+    let has_error = add_reload_outcome(world, &mut reload_response, Some("error"));
+    add_error_hint(&mut reload_response);
+    let entity_count = scene_entity_count(world) as usize;
+
+    if has_error {
+        // Error during reload - respond immediately without screenshot
+        let response = serde_json::json!({
+            "reload": reload_response,
+            "errors": reload_response.get("error"),
+            "screenshot": null,
+            "entity_count": entity_count,
+        });
+        let _ = reload.response_tx.send(Ok(response));
         return;
     }
 
-    let fetching = definition_fetch_in_progress(world);
-    let mut still_waiting = Vec::new();
-
-    for mut rac in pending.pending.drain(..) {
-        if rac.response_tx.is_closed() {
-            continue;
-        }
-        if rac.reload_frames_remaining > 0 {
-            rac.reload_frames_remaining -= 1;
-            still_waiting.push(rac);
-        } else if fetching {
-            rac.awaiting_fetch = true;
-            still_waiting.push(rac);
-        } else if rac.awaiting_fetch {
-            rac.awaiting_fetch = false;
-            rac.reload_frames_remaining = POST_FETCH_GRACE_FRAMES;
-            still_waiting.push(rac);
-        } else {
-            // Reload has completed - check for errors
-            let time = world.resource::<Time<Virtual>>();
-            let mut reload_response = serde_json::json!({
-                "mode": rac.mode,
-                "status": "success",
-                "paused": time.is_paused(),
-                "relative_speed": time.relative_speed(),
-            });
-
-            let mut has_error = false;
-            if let Some(last_error) = world.get_resource::<pybevy_core::LastSystemError>()
-                && let Some(ref error_msg) = last_error.error
-            {
-                reload_response["status"] = serde_json::json!("error");
-                reload_response["error"] = serde_json::json!(error_msg);
-                reload_response["traceback"] = serde_json::json!(last_error.traceback);
-                has_error = true;
-            }
-
-            if let Some(reload_result) = world.get_resource::<ReloadResult>() {
-                if reload_result.failed {
-                    reload_response["status"] = serde_json::json!("reload_failed");
-                    let reason_str = reload_result
-                        .failure_reason
-                        .as_deref()
-                        .unwrap_or("unknown registration failure");
-                    reload_response["error"] = serde_json::json!(reason_str);
-                    reload_response["traceback"] =
-                        serde_json::json!(reload_result.failure_traceback);
-                    if let Some(ref reason) = reload_result.failure_reason {
-                        reload_response["failure_reason"] = serde_json::json!(reason);
-                    }
-                    has_error = true;
-                }
-                reload_response["escalated"] = serde_json::json!(reload_result.escalated);
-                if let Some(ref reason) = reload_result.escalation_reason {
-                    reload_response["escalation_reason"] = serde_json::json!(reason);
-                }
-            }
-
-            add_error_hint(&mut reload_response);
-
-            if has_error {
-                // Error during reload - respond immediately without screenshot
-                let entity_count = crate::scene::entity_count::scene_entity_count(world) as usize;
-                let response = serde_json::json!({
-                    "reload": reload_response,
-                    "errors": reload_response.get("error"),
-                    "screenshot": null,
-                    "entity_count": entity_count,
-                });
-                let _ = rac.response_tx.send(Ok(response));
-            } else {
-                // Success - queue screenshot with extra reload data
-                let entity_count = crate::scene::entity_count::scene_entity_count(world) as usize;
-
-                let debug_camera = rac.position.map(|pos| DebugCameraRequest {
-                    position: pos,
-                    look_at: rac.look_at.unwrap_or([0.0, 0.0, 0.0]),
-                });
-
-                let screenshot = crate::capture::queue::PendingScreenshot {
-                    response_tx: rac.response_tx,
-                    frames_remaining: rac.screenshot_delay_frames,
-                    required_render_epoch: world
-                        .get_resource::<RenderFrameReadiness>()
-                        .map(RenderFrameReadiness::request_frame),
-                    with_gizmos: false,
-                    gizmo_restore: GizmoEnabledRestore::new(),
-                    max_width: rac
-                        .max_width
-                        .or(Some(crate::capture::queue::DEFAULT_SCREENSHOT_MAX_WIDTH)),
-                    debug_camera,
-                    hide_ui: rac.hide_ui,
-                    entity: None,
-                    depth_analysis: None,
-                    response_kind: CaptureResponseKind::ReloadAndCapture,
-                    extra_response: Some(serde_json::json!({
-                        "reload": reload_response,
-                        "errors": null,
-                        "entity_count": entity_count,
-                    })),
-                };
-
-                let mut screenshot = screenshot;
-                crate::capture::screenshot::prepare_pending_screenshot_gizmos(
-                    world,
-                    &mut screenshot,
-                );
-                let mut screenshots =
-                    world.get_resource_or_insert_with(PendingScreenshots::default);
-                screenshots.pending.push(screenshot);
-            }
-        }
-    }
-
-    pending.pending = still_waiting;
-    world.insert_resource(pending);
+    let debug_camera = capture.position.map(|pos| DebugCameraRequest {
+        position: pos,
+        look_at: capture.look_at.unwrap_or([0.0, 0.0, 0.0]),
+    });
+    let mut screenshot = PendingScreenshot {
+        response_tx: reload.response_tx,
+        frames_remaining: capture.delay_frames,
+        required_render_epoch: world
+            .get_resource::<RenderFrameReadiness>()
+            .map(RenderFrameReadiness::request_frame),
+        with_gizmos: false,
+        gizmo_restore: GizmoEnabledRestore::new(),
+        max_width: capture.max_width.or(Some(DEFAULT_SCREENSHOT_MAX_WIDTH)),
+        debug_camera,
+        hide_ui: capture.hide_ui,
+        entity: None,
+        depth_analysis: None,
+        response_kind: CaptureResponseKind::ReloadAndCapture,
+        extra_response: Some(serde_json::json!({
+            "reload": reload_response,
+            "errors": null,
+            "entity_count": entity_count,
+        })),
+    };
+    prepare_pending_screenshot_gizmos(world, &mut screenshot);
+    let mut screenshots = world.get_resource_or_insert_with(PendingScreenshots::default);
+    screenshots.pending.push(screenshot);
 }
 
 #[cfg(test)]
@@ -505,7 +486,7 @@ mod tests {
         },
     };
 
-    use super::{PendingReloadResponse, *};
+    use super::*;
     use crate::capture::screenshot::process_pending_screenshots;
 
     #[test]
@@ -841,10 +822,10 @@ mod tests {
     fn process_pending_reloads_empty() {
         let mut world = World::new();
         world.init_resource::<Time<Virtual>>();
-        world.insert_resource(PendingReloadResponses::default());
+        world.insert_resource(PendingReloads::default());
         process_pending_reloads(&mut world);
         // Should still have the resource
-        assert!(world.get_resource::<PendingReloadResponses>().is_some());
+        assert!(world.get_resource::<PendingReloads>().is_some());
     }
 
     #[test]
@@ -852,17 +833,18 @@ mod tests {
         let mut world = World::new();
         world.init_resource::<Time<Virtual>>();
         let (tx, _rx) = tokio::sync::oneshot::channel();
-        world.insert_resource(PendingReloadResponses {
-            pending: vec![PendingReloadResponse {
+        world.insert_resource(PendingReloads {
+            pending: vec![PendingReload {
                 response_tx: tx,
                 frames_remaining: 3,
                 mode: ReloadMode::Full,
                 awaiting_fetch: false,
                 fetch_deadline: None,
+                on_complete: ReloadCompletion::Respond,
             }],
         });
         process_pending_reloads(&mut world);
-        let pending = world.get_resource::<PendingReloadResponses>().unwrap();
+        let pending = world.get_resource::<PendingReloads>().unwrap();
         assert_eq!(pending.pending.len(), 1);
         assert_eq!(pending.pending[0].frames_remaining, 2);
     }
@@ -872,13 +854,14 @@ mod tests {
         let mut world = World::new();
         world.init_resource::<Time<Virtual>>();
         let (tx, mut rx) = tokio::sync::oneshot::channel();
-        world.insert_resource(PendingReloadResponses {
-            pending: vec![PendingReloadResponse {
+        world.insert_resource(PendingReloads {
+            pending: vec![PendingReload {
                 response_tx: tx,
                 frames_remaining: 0,
                 mode: ReloadMode::Full,
                 awaiting_fetch: false,
                 fetch_deadline: None,
+                on_complete: ReloadCompletion::Respond,
             }],
         });
         process_pending_reloads(&mut world);
@@ -887,7 +870,7 @@ mod tests {
         assert_eq!(result["status"], "reload_completed");
         assert_eq!(result["mode"], "full");
         // Pending should be empty now
-        let pending = world.get_resource::<PendingReloadResponses>().unwrap();
+        let pending = world.get_resource::<PendingReloads>().unwrap();
         assert!(pending.pending.is_empty());
     }
 
@@ -900,20 +883,21 @@ mod tests {
             ..Default::default()
         });
         let (tx, mut rx) = tokio::sync::oneshot::channel();
-        world.insert_resource(PendingReloadResponses {
-            pending: vec![PendingReloadResponse {
+        world.insert_resource(PendingReloads {
+            pending: vec![PendingReload {
                 response_tx: tx,
                 frames_remaining: 0,
                 mode: ReloadMode::Full,
                 awaiting_fetch: false,
                 fetch_deadline: None,
+                on_complete: ReloadCompletion::Respond,
             }],
         });
 
         process_pending_reloads(&mut world);
         assert!(rx.try_recv().is_err(), "response sent while fetch pending");
         {
-            let pending = world.get_resource::<PendingReloadResponses>().unwrap();
+            let pending = world.get_resource::<PendingReloads>().unwrap();
             assert_eq!(pending.pending.len(), 1);
             assert!(pending.pending[0].awaiting_fetch);
         }
@@ -925,7 +909,7 @@ mod tests {
         process_pending_reloads(&mut world);
         assert!(rx.try_recv().is_err(), "response sent without grace frames");
         {
-            let pending = world.get_resource::<PendingReloadResponses>().unwrap();
+            let pending = world.get_resource::<PendingReloads>().unwrap();
             assert_eq!(pending.pending[0].frames_remaining, POST_FETCH_GRACE_FRAMES);
         }
 
@@ -945,13 +929,14 @@ mod tests {
             ..Default::default()
         });
         let (tx, mut rx) = tokio::sync::oneshot::channel();
-        world.insert_resource(PendingReloadResponses {
-            pending: vec![PendingReloadResponse {
+        world.insert_resource(PendingReloads {
+            pending: vec![PendingReload {
                 response_tx: tx,
                 frames_remaining: 0,
                 mode: ReloadMode::Full,
                 awaiting_fetch: true,
                 fetch_deadline: Some(std::time::Instant::now() - FETCH_RESPONSE_TIMEOUT),
+                on_complete: ReloadCompletion::Respond,
             }],
         });
 
@@ -981,13 +966,14 @@ mod tests {
             ..Default::default()
         });
         let (tx, mut rx) = tokio::sync::oneshot::channel();
-        world.insert_resource(PendingReloadResponses {
-            pending: vec![PendingReloadResponse {
+        world.insert_resource(PendingReloads {
+            pending: vec![PendingReload {
                 response_tx: tx,
                 frames_remaining: 0,
                 mode: ReloadMode::Full,
                 awaiting_fetch: false,
                 fetch_deadline: None,
+                on_complete: ReloadCompletion::Respond,
             }],
         });
         process_pending_reloads(&mut world);
@@ -1020,13 +1006,14 @@ mod tests {
             ..ReloadResult::default()
         });
         let (tx, mut rx) = tokio::sync::oneshot::channel();
-        world.insert_resource(PendingReloadResponses {
-            pending: vec![PendingReloadResponse {
+        world.insert_resource(PendingReloads {
+            pending: vec![PendingReload {
                 response_tx: tx,
                 frames_remaining: 0,
                 mode: ReloadMode::Full,
                 awaiting_fetch: false,
                 fetch_deadline: None,
+                on_complete: ReloadCompletion::Respond,
             }],
         });
         process_pending_reloads(&mut world);
@@ -1053,32 +1040,30 @@ mod tests {
             let previous_epoch = readiness.request_frame();
             world.insert_resource(readiness.clone());
             let (tx, mut rx) = oneshot::channel();
-            world.insert_resource(PendingReloadAndCaptures {
-                pending: vec![PendingReloadAndCapture {
+            world.insert_resource(PendingReloads {
+                pending: vec![PendingReload {
                     response_tx: tx,
                     mode,
-                    reload_frames_remaining: 1,
+                    frames_remaining: 1,
                     awaiting_fetch: false,
-                    screenshot_delay_frames: 2,
-                    max_width: None,
-                    position: None,
-                    look_at: None,
-                    hide_ui: false,
+                    fetch_deadline: None,
+                    on_complete: ReloadCompletion::Capture(ReloadCapture {
+                        delay_frames: 2,
+                        max_width: None,
+                        position: None,
+                        look_at: None,
+                        hide_ui: false,
+                    }),
                 }],
             });
 
-            process_pending_reload_and_capture(&mut world);
+            process_pending_reloads(&mut world);
             assert_eq!(readiness.requested_epoch(), previous_epoch);
             assert!(!world.contains_resource::<PendingScreenshots>());
 
-            process_pending_reload_and_capture(&mut world);
+            process_pending_reloads(&mut world);
             assert_eq!(readiness.requested_epoch(), previous_epoch + 1);
-            assert!(
-                world
-                    .resource::<PendingReloadAndCaptures>()
-                    .pending
-                    .is_empty()
-            );
+            assert!(world.resource::<PendingReloads>().pending.is_empty());
             let pending = world.resource::<PendingScreenshots>();
             assert_eq!(pending.pending.len(), 1);
             assert_eq!(
@@ -1104,21 +1089,24 @@ mod tests {
         let mut world = World::new();
         world.init_resource::<Time<Virtual>>();
         let (tx, _rx) = oneshot::channel();
-        world.insert_resource(PendingReloadAndCaptures {
-            pending: vec![PendingReloadAndCapture {
+        world.insert_resource(PendingReloads {
+            pending: vec![PendingReload {
                 response_tx: tx,
                 mode: ReloadMode::Full,
-                reload_frames_remaining: 0,
+                frames_remaining: 0,
                 awaiting_fetch: false,
-                screenshot_delay_frames: 2,
-                max_width: None,
-                position: None,
-                look_at: None,
-                hide_ui: false,
+                fetch_deadline: None,
+                on_complete: ReloadCompletion::Capture(ReloadCapture {
+                    delay_frames: 2,
+                    max_width: None,
+                    position: None,
+                    look_at: None,
+                    hide_ui: false,
+                }),
             }],
         });
 
-        process_pending_reload_and_capture(&mut world);
+        process_pending_reloads(&mut world);
         assert!(!world.contains_resource::<RenderFrameReadiness>());
         let pending = world.resource::<PendingScreenshots>();
         assert_eq!(pending.pending.len(), 1);
@@ -1157,21 +1145,24 @@ mod tests {
             ..ReloadResult::default()
         });
         let (tx, mut rx) = tokio::sync::oneshot::channel();
-        world.insert_resource(PendingReloadAndCaptures {
-            pending: vec![PendingReloadAndCapture {
+        world.insert_resource(PendingReloads {
+            pending: vec![PendingReload {
                 response_tx: tx,
                 mode: ReloadMode::Full,
-                reload_frames_remaining: 0,
+                frames_remaining: 0,
                 awaiting_fetch: false,
-                screenshot_delay_frames: 0,
-                max_width: None,
-                position: None,
-                look_at: None,
-                hide_ui: true,
+                fetch_deadline: None,
+                on_complete: ReloadCompletion::Capture(ReloadCapture {
+                    delay_frames: 0,
+                    max_width: None,
+                    position: None,
+                    look_at: None,
+                    hide_ui: true,
+                }),
             }],
         });
 
-        process_pending_reload_and_capture(&mut world);
+        process_pending_reloads(&mut world);
         let result = rx.try_recv().unwrap().unwrap();
         assert_eq!(result["reload"]["status"], "reload_failed");
         assert_eq!(
@@ -1211,13 +1202,14 @@ mod tests {
         );
 
         let (tx, mut rx) = tokio::sync::oneshot::channel();
-        world.insert_resource(PendingReloadResponses {
-            pending: vec![PendingReloadResponse {
+        world.insert_resource(PendingReloads {
+            pending: vec![PendingReload {
                 response_tx: tx,
                 frames_remaining: 0,
                 mode: ReloadMode::Full,
                 awaiting_fetch: false,
                 fetch_deadline: None,
+                on_complete: ReloadCompletion::Respond,
             }],
         });
         process_pending_reloads(&mut world);
@@ -1244,17 +1236,103 @@ mod tests {
         last.timestamp_secs = 0.1;
 
         let (tx, mut rx) = tokio::sync::oneshot::channel();
-        world.insert_resource(PendingReloadResponses {
-            pending: vec![PendingReloadResponse {
+        world.insert_resource(PendingReloads {
+            pending: vec![PendingReload {
                 response_tx: tx,
                 frames_remaining: 0,
                 mode: ReloadMode::Full,
                 awaiting_fetch: false,
                 fetch_deadline: None,
+                on_complete: ReloadCompletion::Respond,
             }],
         });
         process_pending_reloads(&mut world);
         let result = rx.try_recv().unwrap().unwrap();
         assert_eq!(result["error"], "RuntimeError: boom");
+    }
+
+    fn capture_reload(
+        response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
+    ) -> PendingReload {
+        let mut reload = PendingReload::new(
+            response_tx,
+            ReloadMode::Full,
+            ReloadCompletion::Capture(ReloadCapture {
+                delay_frames: 0,
+                max_width: None,
+                position: None,
+                look_at: None,
+                hide_ui: true,
+            }),
+        );
+        reload.frames_remaining = 0;
+        reload
+    }
+
+    #[test]
+    fn reload_and_capture_holds_a_running_fetch_under_a_deadline() {
+        let mut world = World::new();
+        world.init_resource::<Time<Virtual>>();
+        world.insert_resource(ReloadResult {
+            definition_fetch_in_progress: true,
+            ..Default::default()
+        });
+        let (tx, mut rx) = oneshot::channel();
+        world.insert_resource(PendingReloads {
+            pending: vec![capture_reload(tx)],
+        });
+
+        process_pending_reloads(&mut world);
+        assert!(rx.try_recv().is_err(), "response sent while fetch pending");
+        let pending = world.resource::<PendingReloads>();
+        assert!(pending.pending[0].awaiting_fetch);
+        assert!(pending.pending[0].fetch_deadline.is_some());
+    }
+
+    #[test]
+    fn reload_and_capture_times_out_a_stuck_fetch() {
+        let mut world = World::new();
+        world.init_resource::<Time<Virtual>>();
+        world.insert_resource(ReloadResult {
+            definition_fetch_in_progress: true,
+            ..Default::default()
+        });
+        let (tx, mut rx) = oneshot::channel();
+        let mut reload = capture_reload(tx);
+        reload.awaiting_fetch = true;
+        reload.fetch_deadline = Some(std::time::Instant::now() - FETCH_RESPONSE_TIMEOUT);
+        world.insert_resource(PendingReloads {
+            pending: vec![reload],
+        });
+
+        process_pending_reloads(&mut world);
+        let result = rx.try_recv().unwrap().unwrap();
+        let reason = "definition-load fetch did not finish within the response window";
+        assert_eq!(result["reload"]["status"], "reload_failed");
+        assert_eq!(result["reload"]["failure_reason"], reason);
+        assert_eq!(result["errors"], reason);
+        assert!(result["screenshot"].is_null());
+        assert_eq!(result["entity_count"], 0);
+        assert!(!world.contains_resource::<PendingScreenshots>());
+        assert!(world.resource::<PendingReloads>().pending.is_empty());
+    }
+
+    #[test]
+    fn closed_reload_responders_are_dropped() {
+        let mut world = World::new();
+        world.init_resource::<Time<Virtual>>();
+        let (respond_tx, respond_rx) = oneshot::channel();
+        let (capture_tx, capture_rx) = oneshot::channel();
+        world.insert_resource(PendingReloads {
+            pending: vec![
+                PendingReload::new(respond_tx, ReloadMode::Full, ReloadCompletion::Respond),
+                capture_reload(capture_tx),
+            ],
+        });
+        drop((respond_rx, capture_rx));
+
+        process_pending_reloads(&mut world);
+        assert!(world.resource::<PendingReloads>().pending.is_empty());
+        assert!(!world.contains_resource::<PendingScreenshots>());
     }
 }
