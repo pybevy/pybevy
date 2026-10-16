@@ -2256,11 +2256,10 @@ notes = "Shader define name is fixed"
 
 # Texture/Image loader - configuration types
 [bevy.type_ignores.TextureAtlasLayout]
-intentional_readonly_properties = ["textures"]
 intentional_signature_diffs = [
     { name = "new_empty", expected_params = { "size" = "PyUVec2" } },
 ]
-notes = "textures is read-only; add_texture extends the atlas. new_empty param renamed dimensions to size"
+notes = "new_empty param renamed dimensions to size"
 
 # Render asset usages - bitflags
 [bevy.type_ignores.RenderAssetUsages]
