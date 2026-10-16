@@ -9,7 +9,10 @@ use bevy::{
     color::{Color, Srgba},
     math::{Quat, Vec2, Vec3, Vec4},
 };
-use pybevy_storage::{FieldType, batch_columns::BatchValueConstraint};
+use pybevy_storage::{
+    FieldType,
+    domain::{DomainValues, DomainViolation, FieldDomain},
+};
 
 /// A component field type that can be populated from numpy float32 data.
 ///
@@ -158,12 +161,23 @@ pub struct BatchFieldMeta {
     pub name: &'static str,
     pub numpy_columns: usize,
     pub numpy_dtype: &'static str,
-    pub constraints: &'static [BatchValueConstraint],
+    /// Python-facing owner type named in domain violations.
+    pub owner: &'static str,
+    pub domains: &'static [FieldDomain],
+    /// Whether View writes check `domains`.
+    pub view_checked: bool,
 }
 
 impl BatchFieldMeta {
-    pub const fn with_constraints(mut self, constraints: &'static [BatchValueConstraint]) -> Self {
-        self.constraints = constraints;
+    pub const fn with_domains(
+        mut self,
+        owner: &'static str,
+        domains: &'static [FieldDomain],
+        view_checked: bool,
+    ) -> Self {
+        self.owner = owner;
+        self.domains = domains;
+        self.view_checked = view_checked;
         self
     }
 }
@@ -174,8 +188,27 @@ pub fn batch_field_meta_for<T: BatchableField>(_field: &T, name: &'static str) -
         name,
         numpy_columns: T::NUMPY_COLUMNS,
         numpy_dtype: T::NUMPY_DTYPE,
-        constraints: &[],
+        owner: "",
+        domains: &[],
+        view_checked: false,
     }
+}
+
+/// Check a normalized batch column row by row, as the field stores each value,
+/// so an integer field sees the truncated value.
+pub fn check_batch_field<T: BatchableField + DomainValues>(
+    _field: &T,
+    owner: &'static str,
+    name: &'static str,
+    data: &[f32],
+    domains: &'static [FieldDomain],
+) -> Result<(), DomainViolation> {
+    for row in 0..data.len() / T::NUMPY_COLUMNS {
+        T::from_numpy_f32_slice(data, row)
+            .check_domains(owner, name, domains)
+            .map_err(|violation| violation.at_row(row))?;
+    }
+    Ok(())
 }
 
 /// View API metadata helper: returns the `FieldType` for a field type.
@@ -196,6 +229,9 @@ pub fn set_field_from_numpy<T: BatchableField>(field: &mut T, data: &[f32], inde
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+
+    const FINITE: &[FieldDomain] = &[FieldDomain::Finite];
+    const POSITIVE: &[FieldDomain] = &[FieldDomain::Finite, FieldDomain::Positive];
 
     #[test]
     fn view_field_types_for_declared_view_field_channels() {
@@ -398,7 +434,8 @@ mod tests {
         assert_eq!(meta.name, "speed");
         assert_eq!(meta.numpy_columns, 1);
         assert_eq!(meta.numpy_dtype, "float32");
-        assert!(meta.constraints.is_empty());
+        assert!(meta.domains.is_empty());
+        assert!(!meta.view_checked);
     }
 
     #[test]
@@ -410,10 +447,40 @@ mod tests {
     }
 
     #[test]
-    fn batch_field_meta_carries_declared_constraints() {
-        let val = Vec3::ZERO;
-        let meta = batch_field_meta_for(&val, "position")
-            .with_constraints(&[BatchValueConstraint::Finite]);
-        assert_eq!(meta.constraints, &[BatchValueConstraint::Finite]);
+    fn batch_field_meta_carries_declared_domains() {
+        let meta =
+            batch_field_meta_for(&Vec3::ZERO, "position").with_domains("Transform", FINITE, false);
+        assert_eq!(
+            (meta.owner, meta.domains, meta.view_checked),
+            ("Transform", FINITE, false)
+        );
+    }
+
+    #[test]
+    fn batch_columns_are_checked_per_row_and_component() {
+        let rows = [1.0f32, 2.0, 3.0, 4.0, f32::NAN, 6.0];
+        assert_eq!(
+            check_batch_field(&Vec3::ZERO, "Transform", "translation", &rows, FINITE)
+                .map_err(|violation| violation.to_string()),
+            Err("Transform.translation.y must be finite (got nan at row 1)".into())
+        );
+        assert!(
+            check_batch_field(&Vec3::ZERO, "Transform", "translation", &rows[..3], FINITE).is_ok()
+        );
+    }
+
+    #[test]
+    fn integer_batch_columns_check_the_truncated_value() {
+        assert_eq!(
+            check_batch_field(
+                &0_u32,
+                "Bloom",
+                "max_mip_dimension",
+                &[512.0, 0.5],
+                POSITIVE
+            )
+            .map_err(|violation| violation.to_string()),
+            Err("Bloom.max_mip_dimension must be greater than zero (got 0 at row 1)".into())
+        );
     }
 }

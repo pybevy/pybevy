@@ -5,14 +5,14 @@ use bevy::{
     transform::components::Transform,
 };
 use pybevy_core::{
-    ComponentStorage, PyComponent, public_error::audio_seek_failed, repr::float_repr,
+    ComponentStorage, PyComponent, domain::check, public_error::audio_seek_failed, repr::float_repr,
 };
 use pybevy_macros::pycomponent;
 use pybevy_math::vec3::PyVec3;
 use pybevy_transform::transform::PyTransform;
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
 
-use crate::{audio_sink::validate_speed, volume::PyVolume};
+use crate::{audio_sink::SPEED_DOMAIN, volume::PyVolume};
 
 #[pycomponent(SpatialAudioSink, no_clone, bridge, no_reflect)]
 #[pyclass(name = "SpatialAudioSink", module = "pybevy.audio", extends = PyComponent)]
@@ -51,7 +51,7 @@ impl PySpatialAudioSink {
     }
 
     pub fn set_speed(&self, speed: f32) -> PyResult<()> {
-        let speed = validate_speed(speed)?;
+        let speed = check("SpatialAudioSink", "speed", speed, SPEED_DOMAIN)?;
         self.as_ref()?.set_speed(speed);
         Ok(())
     }

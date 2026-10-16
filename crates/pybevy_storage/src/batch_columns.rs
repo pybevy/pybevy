@@ -3,9 +3,11 @@
 //! cannot drift (the "validation, IR, registries, and error definitions" the
 //! Backend Unification rules keep neutral). The data work (numpy
 //! `reshape`/`astype` on pyo3; `astype`/`to_scalars` on RP2) stays in the
-//! adapters; this module owns shape/count validation and declared value constraints.
+//! adapters; this module owns shape/count validation and View value-domain checks.
 
 use std::fmt;
+
+use crate::domain::{DomainValue, DomainViolation, FieldDomain, check};
 
 /// Target dtype of one `batch` column. Covers every
 /// `pybevy_core::component_layout::PrimitiveType` payload (Vec3/Vec2 lower to
@@ -146,9 +148,6 @@ impl BatchColumn {
 /// pyo3 macro's strings verbatim so no observable CPython message changes.
 #[derive(Debug, Clone, PartialEq)]
 pub enum BatchColumnError {
-    Constraint {
-        message: &'static str,
-    },
     UnknownField {
         field: String,
         valid: String,
@@ -171,9 +170,6 @@ pub enum BatchColumnError {
         field: String,
         ndim: usize,
     },
-    NonFinite {
-        field: String,
-    },
     LengthMismatch {
         first_field: String,
         first_rows: usize,
@@ -186,7 +182,6 @@ pub enum BatchColumnError {
 impl fmt::Display for BatchColumnError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Constraint { message } => f.write_str(message),
             BatchColumnError::UnknownField { field, valid } => {
                 write!(f, "Unknown field '{field}'. Valid fields: {valid}")
             }
@@ -202,9 +197,6 @@ impl fmt::Display for BatchColumnError {
             }
             BatchColumnError::Not1DOr2D { field, ndim } => {
                 write!(f, "Field '{field}' must be a 1D or 2D array, got {ndim}D")
-            }
-            BatchColumnError::NonFinite { field } => {
-                write!(f, "Field '{field}' must contain only finite values")
             }
             BatchColumnError::LengthMismatch {
                 first_field,
@@ -223,28 +215,6 @@ impl fmt::Display for BatchColumnError {
 }
 
 impl std::error::Error for BatchColumnError {}
-
-/// Value-domain constraints attached to a native component batch field.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum BatchValueConstraint {
-    Finite,
-    Positive {
-        message: &'static str,
-    },
-    Range {
-        start: f32,
-        end: f32,
-        message: &'static str,
-    },
-    RangeInclusive {
-        start: f32,
-        end: f32,
-        message: &'static str,
-    },
-    NonNegative {
-        message: &'static str,
-    },
-}
 
 /// Custom `@component` `batch` validation errors. `Display` reproduces the
 /// pyo3 `src/ecs/custom_batch.rs` strings verbatim. Kept SEPARATE from
@@ -371,114 +341,34 @@ pub fn check_known_field(field: &str, valid: &[&str]) -> Result<(), BatchColumnE
     }
 }
 
-/// Apply a native batch field's declared constraints to normalized float data.
-pub fn validate_f32_values(
-    field: &str,
-    values: &[f32],
-    constraints: &[BatchValueConstraint],
-) -> Result<(), BatchColumnError> {
-    for constraint in constraints {
-        match constraint {
-            BatchValueConstraint::Finite if values.iter().any(|value| !value.is_finite()) => {
-                return Err(BatchColumnError::NonFinite {
-                    field: field.to_string(),
-                });
-            }
-            BatchValueConstraint::Range {
-                start,
-                end,
-                message,
-            } => {
-                if values.iter().any(|value| !(*start..*end).contains(value)) {
-                    return Err(BatchColumnError::Constraint { message });
-                }
-            }
-            BatchValueConstraint::RangeInclusive {
-                start,
-                end,
-                message,
-            } => {
-                if values.iter().any(|value| !(*start..=*end).contains(value)) {
-                    return Err(BatchColumnError::Constraint { message });
-                }
-            }
-            BatchValueConstraint::NonNegative { message } => {
-                if values.iter().any(|value| value.is_nan() || *value < 0.0) {
-                    return Err(BatchColumnError::Constraint { message });
-                }
-            }
-            BatchValueConstraint::Positive { message } => {
-                if values
-                    .iter()
-                    .any(|value| !value.is_finite() || *value <= 0.0)
-                {
-                    return Err(BatchColumnError::Constraint { message });
-                }
-            }
-            BatchValueConstraint::Finite => {}
-        }
-    }
-    Ok(())
-}
-
-/// Whether View writes to a field with these constraints need a preflight.
+/// Check values bound for a View field before any selected row is written.
 ///
-/// View arithmetic follows NumPy semantics, so `Finite` is not enforced there;
-/// only the domain constraints of native settings fields are.
-pub fn has_view_assignment_checks(constraints: &[BatchValueConstraint]) -> bool {
-    constraints
-        .iter()
-        .any(|constraint| !matches!(constraint, BatchValueConstraint::Finite))
-}
-
-/// Validate values bound for a View field before any selected row is written.
-pub fn validate_view_assignment_values(
+/// Each value is checked as the field stores it after the write's cast, so an
+/// integer field sees the truncated value and an `f32` field the rounded one.
+pub fn check_view_assignment(
+    owner: &'static str,
+    field: &'static str,
     values: &[f64],
     field_type: crate::FieldType,
-    constraints: &[BatchValueConstraint],
-) -> Result<(), BatchColumnError> {
-    for constraint in constraints {
-        let violates = match constraint {
-            BatchValueConstraint::Finite => false,
-            BatchValueConstraint::Range { start, end, .. } => values.iter().any(|value| {
-                let value = stored_value(*value, field_type);
-                value < f64::from(*start) || value >= f64::from(*end) || value.is_nan()
-            }),
-            BatchValueConstraint::RangeInclusive { start, end, .. } => values.iter().any(|value| {
-                let value = stored_value(*value, field_type);
-                value < f64::from(*start) || value > f64::from(*end) || value.is_nan()
-            }),
-            BatchValueConstraint::NonNegative { .. } => values.iter().any(|value| {
-                let value = stored_value(*value, field_type);
-                value.is_nan() || value < 0.0
-            }),
-            BatchValueConstraint::Positive { .. } => values.iter().any(|value| {
-                let value = stored_value(*value, field_type);
-                !value.is_finite() || value <= 0.0
-            }),
-        };
-        if violates
-            && let BatchValueConstraint::Range { message, .. }
-            | BatchValueConstraint::RangeInclusive { message, .. }
-            | BatchValueConstraint::NonNegative { message }
-            | BatchValueConstraint::Positive { message } = constraint
-        {
-            return Err(BatchColumnError::Constraint { message });
-        }
+    domains: &'static [FieldDomain],
+) -> Result<(), DomainViolation> {
+    for (row, &value) in values.iter().enumerate() {
+        check(owner, field, stored_value(value, field_type), domains)
+            .map_err(|violation| violation.at_row(row))?;
     }
     Ok(())
 }
 
 /// The value a write of `value` leaves in a field of `field_type`.
-fn stored_value(value: f64, field_type: crate::FieldType) -> f64 {
+fn stored_value(value: f64, field_type: crate::FieldType) -> DomainValue {
     use crate::FieldType;
 
     match field_type {
-        FieldType::F32 => (value as f32).into(),
-        FieldType::I32 => (value as i32).into(),
-        FieldType::U8 => (value as u8).into(),
-        FieldType::U32 => (value as u32).into(),
-        _ => value,
+        FieldType::F32 => DomainValue::F32(value as f32),
+        FieldType::I32 => DomainValue::Int(i128::from(value as i32)),
+        FieldType::U8 => DomainValue::Int(i128::from(value as u8)),
+        FieldType::U32 => DomainValue::Int(i128::from(value as u32)),
+        _ => DomainValue::F64(value),
     }
 }
 
@@ -699,6 +589,7 @@ impl CustomCountAgreement {
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+    use crate::FieldType;
 
     #[test]
     fn owned_column_decodes_little_endian_values() {
@@ -763,127 +654,49 @@ mod tests {
         assert!(check_known_field("range", &["intensity", "range"]).is_ok());
     }
 
+    const UNIT_RANGE: &[FieldDomain] = &[FieldDomain::Range { lo: 0.0, hi: 1.0 }];
+    const POSITIVE: &[FieldDomain] = &[FieldDomain::Finite, FieldDomain::Positive];
+    const SYMMETRIC: &[FieldDomain] = &[FieldDomain::RangeInclusive { lo: -1.0, hi: 1.0 }];
+
     #[test]
-    fn range_and_nonnegative_columns_follow_scalar_domains() {
-        let range = [BatchValueConstraint::Range {
-            start: 0.0,
-            end: 1.0,
-            message: "overlap must be in [0, 1)",
-        }];
-        assert_eq!(validate_f32_values("overlap", &[0.0, 0.5], &range), Ok(()));
-        for value in [-1.0, 1.0, f32::NAN, f32::INFINITY] {
-            assert_eq!(
-                validate_f32_values("overlap", &[value], &range),
-                Err(BatchColumnError::Constraint {
-                    message: "overlap must be in [0, 1)"
-                }),
-            );
-        }
-        let nonnegative = [BatchValueConstraint::NonNegative {
-            message: "distance must be non-negative",
-        }];
+    fn view_assignments_check_the_value_the_field_stores() {
+        let f64_field =
+            check_view_assignment("T", "f", &[0.999_999_999_9], FieldType::F64, UNIT_RANGE);
+        assert!(f64_field.is_ok());
+        let f32_field =
+            check_view_assignment("T", "f", &[0.999_999_999_9], FieldType::F32, UNIT_RANGE);
         assert_eq!(
-            validate_f32_values("distance", &[0.0, f32::INFINITY], &nonnegative),
-            Ok(())
+            f32_field.map_err(|violation| violation.to_string()),
+            Err("T.f must be in [0.0, 1.0) (got 1.0 at row 0)".into())
         );
-        for value in [-1.0, f32::NAN] {
+    }
+
+    #[test]
+    fn integer_view_fields_check_the_truncated_value() {
+        assert!(check_view_assignment("Bloom", "n", &[1.0, 7.9], FieldType::U32, POSITIVE).is_ok());
+        for value in [0.5, -3.0, f64::NAN] {
             assert_eq!(
-                validate_f32_values("distance", &[value], &nonnegative),
-                Err(BatchColumnError::Constraint {
-                    message: "distance must be non-negative"
-                }),
+                check_view_assignment("Bloom", "n", &[value], FieldType::U32, POSITIVE)
+                    .map_err(|violation| violation.to_string()),
+                Err("Bloom.n must be greater than zero (got 0 at row 0)".into())
             );
         }
     }
 
     #[test]
-    fn inclusive_range_accepts_endpoints_and_rejects_nonfinite_values() {
-        let constraint = [BatchValueConstraint::RangeInclusive {
-            start: -1.0,
-            end: 1.0,
-            message: "asymmetry must be in [-1, 1]",
-        }];
+    fn view_assignment_reports_the_first_failing_row() {
         assert_eq!(
-            validate_f32_values("asymmetry", &[-1.0, 0.0, 1.0], &constraint),
-            Ok(())
+            check_view_assignment(
+                "FogVolume",
+                "a",
+                &[0.5, 2.0, 3.0],
+                FieldType::F32,
+                SYMMETRIC
+            )
+            .map_err(|violation| violation.to_string()),
+            Err("FogVolume.a must be in [-1.0, 1.0] (got 2.0 at row 1)".into())
         );
-        for value in [-1.01, 1.01, f32::NAN, f32::NEG_INFINITY, f32::INFINITY] {
-            assert_eq!(
-                validate_f32_values("asymmetry", &[value], &constraint),
-                Err(BatchColumnError::Constraint {
-                    message: "asymmetry must be in [-1, 1]"
-                })
-            );
-        }
-        assert!(has_view_assignment_checks(&constraint));
-        assert_eq!(
-            validate_view_assignment_values(&[-1.0, 1.0], crate::FieldType::F32, &constraint),
-            Ok(())
-        );
-        for value in [-1.01, 1.01, f64::NAN, f64::NEG_INFINITY, f64::INFINITY] {
-            assert!(
-                validate_view_assignment_values(&[value], crate::FieldType::F32, &constraint)
-                    .is_err()
-            );
-        }
-    }
-
-    #[test]
-    fn finite_column_validation() {
-        let constraints = [BatchValueConstraint::Finite];
-        assert!(validate_f32_values("translation", &[0.0, -1.0, 1.0e20], &constraints).is_ok());
-        for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
-            assert_eq!(
-                validate_f32_values("translation", &[0.0, value], &constraints)
-                    .unwrap_err()
-                    .to_string(),
-                "Field 'translation' must contain only finite values"
-            );
-        }
-        assert!(validate_f32_values("unconstrained", &[f32::NAN], &[]).is_ok());
-    }
-
-    #[test]
-    fn view_assignments_skip_finite_but_check_domain_constraints() {
-        let finite = [BatchValueConstraint::Finite];
-        assert!(!has_view_assignment_checks(&finite));
-        assert!(
-            validate_view_assignment_values(&[f64::NAN], crate::FieldType::F32, &finite).is_ok()
-        );
-
-        let positive = [
-            BatchValueConstraint::Finite,
-            BatchValueConstraint::Positive {
-                message: "positive",
-            },
-        ];
-        assert!(has_view_assignment_checks(&positive));
-        assert!(validate_view_assignment_values(&[1.0], crate::FieldType::U32, &positive).is_ok());
-        for value in [0.0, 0.5, -3.0, f64::NAN] {
-            assert_eq!(
-                validate_view_assignment_values(&[value], crate::FieldType::U32, &positive)
-                    .unwrap_err()
-                    .to_string(),
-                "positive"
-            );
-        }
-    }
-
-    #[test]
-    fn view_constraints_check_the_value_the_field_stores() {
-        let range = [BatchValueConstraint::Range {
-            start: 0.0,
-            end: 1.0,
-            message: "range",
-        }];
-        assert!(
-            validate_view_assignment_values(&[0.999_999_999_9], crate::FieldType::F64, &range)
-                .is_ok()
-        );
-        assert!(
-            validate_view_assignment_values(&[0.999_999_999_9], crate::FieldType::F32, &range)
-                .is_err()
-        );
+        assert!(check_view_assignment("T", "f", &[], FieldType::F32, SYMMETRIC).is_ok());
     }
 
     #[test]

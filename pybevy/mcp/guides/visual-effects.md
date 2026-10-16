@@ -52,7 +52,9 @@ accident: GPU tensor captures and deferred rendering both require it.
 **Combine with:** Bloom on camera amplifies the rim into a halo. DistanceFog fades distant rims for depth.
 
 `Bloom.max_mip_dimension` must be at least 1. The constructor, setter, and
-`Bloom.batch()` reject zero with `ValueError` before inserting components.
+`Bloom.batch()` reject zero with `ValueError` before inserting components;
+`batch()` checks each value after conversion to an integer, so `0.5` is
+rejected too.
 
 ## Emissive Path Markers
 

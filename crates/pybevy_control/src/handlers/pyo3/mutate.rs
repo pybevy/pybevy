@@ -13,13 +13,12 @@ use bevy::{
 };
 use pybevy_color::linear_rgba::PyLinearRgba;
 use pybevy_core::{
-    BatchFieldMeta, ComponentBridge, CustomComponentInfo, CustomResourceInfo, PyEntity,
-    ValidityFlag, ValidityGuard,
+    ComponentBridge, CustomComponentInfo, CustomResourceInfo, PyEntity, ValidityFlag,
+    ValidityGuard,
     custom_resource::{
         hierarchy_contains_resource_entity, insert_dynamic_resource_value, validate_hierarchy_link,
     },
     public_error,
-    registry::global_registry,
 };
 use pybevy_math::{quat::PyQuat, range::PyRange, vec3::PyVec3};
 use pyo3::{
@@ -227,7 +226,6 @@ pub fn spawn_entity(
             continue;
         }
         let type_id = bridge.bevy_type_id();
-        let declared = declared_fields(&bridge);
 
         // Try reflection first
         match reflect_mutate::reflect_spawn_component_with_bridge(
@@ -235,7 +233,6 @@ pub fn spawn_entity(
             entity,
             type_id,
             &fields,
-            declared,
             bridge.as_ref(),
         ) {
             Ok(()) => {
@@ -260,6 +257,10 @@ pub fn spawn_entity(
             }
             Err(ReflectError::InvalidValue(error)) => {
                 errors.push(format!("{comp_name}.{error}"));
+                continue;
+            }
+            Err(ReflectError::Domain(error)) => {
+                errors.push(error);
                 continue;
             }
         }
@@ -975,15 +976,12 @@ pub fn set_component(
             return Ok(result);
         }
 
-        let declared = declared_fields(bridge);
-
         // Try reflection first
         match reflect_mutate::reflect_set_component_with_bridge(
             world,
             entity,
             type_id,
             field_obj,
-            declared,
             bridge.as_ref(),
         ) {
             Ok(new_values) => {
@@ -1011,7 +1009,6 @@ pub fn set_component(
                     entity,
                     type_id,
                     field_obj,
-                    declared,
                     bridge.as_ref(),
                 ) {
                     Ok(()) => {
@@ -1048,7 +1045,7 @@ pub fn set_component(
                             entity_id,
                         )));
                     }
-                    Err(ReflectError::InvalidValue(error)) => {
+                    Err(ReflectError::InvalidValue(error) | ReflectError::Domain(error)) => {
                         return Err(ControlError::invalid_params(format!(
                             "Failed to set '{component}': {error}"
                         )));
@@ -1062,7 +1059,7 @@ pub fn set_component(
             Err(ReflectError::NoReflectDefault) => {
                 // Not applicable for set_component, fall back
             }
-            Err(ReflectError::InvalidValue(error)) => {
+            Err(ReflectError::InvalidValue(error) | ReflectError::Domain(error)) => {
                 return Err(ControlError::invalid_params(format!(
                     "Failed to set '{component}': {error}"
                 )));
@@ -1086,12 +1083,6 @@ pub fn set_component(
         component_id,
         field_obj,
     )
-}
-
-/// Field metadata carrying the value-domain constraints the wrapper's setters enforce.
-fn declared_fields(bridge: &Arc<dyn ComponentBridge>) -> &'static [BatchFieldMeta] {
-    global_registry::get_component_batch_meta(bridge.py_type_ptr() as usize)
-        .map_or(&[], |meta| meta.fields)
 }
 
 /// Python fallback for set_component: extract via bridge and use setattr.

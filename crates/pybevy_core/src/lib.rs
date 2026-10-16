@@ -91,7 +91,7 @@ pub use logical_type::PyLogicalComponentParam;
 pub use pybevy_storage::{
     DefaultPluginKind, LogicalTypeId, LogicalTypeMap, NativeGroupCallback, NativePluginSlot,
     PluginGroupAddition, PluginGroupCallback, PluginGroupMembers, PluginGroupPlacement,
-    batch_columns, default_plugin_slots, field_storage, pyasset, pycomponent, pyresource,
+    batch_columns, default_plugin_slots, domain, field_storage, pyasset, pycomponent, pyresource,
     storage_error, storage_traits, validity_guard, value_storage, view_bridge,
 };
 use pyo3::{PyTypeInfo, exceptions::PyRuntimeError, ffi::PyTypeObject, prelude::*, types::PyType};
@@ -505,7 +505,8 @@ pub use registry::{
     ComponentBatchPrepareFn, ComponentBridge, ExtractFn, MessageBridge, PluginConfigs,
     PreparedBatchComponent, PreparedNativeBatch, PreparedNativeUniform, PreparedNativeUniformWith,
     PreparedUniformComponent, PreparedUniformFn, PyRustComponentBatch, ResourceBridge,
-    batch_field_meta_for, field_type_of, portable_f32_batch_column, set_field_from_numpy,
+    batch_field_meta_for, check_batch_field, field_type_of, portable_f32_batch_column,
+    set_field_from_numpy,
 };
 pub use reload_request::{
     CustomComponentEntry, CustomComponentInfo, CustomResourceEntry, CustomResourceInfo,

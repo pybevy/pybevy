@@ -1,60 +1,32 @@
 use bevy::post_process::dof::DepthOfField;
 use pybevy_camera::physical_camera_parameters::PyPhysicalCameraParameters;
-use pybevy_core::{ComponentStorage, PyComponent, StorageError, public_error};
+use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 use crate::depth_of_field_mode::PyDepthOfFieldMode;
 
-#[pycomponent(DepthOfField, bridge, view_fields = [
-    focal_distance => [range(f32::MIN, f32::INFINITY, public_error::DEPTH_OF_FIELD_FOCAL_DISTANCE_FINITE)],
-    sensor_height => [range(f32::MIN, f32::INFINITY, public_error::DEPTH_OF_FIELD_SENSOR_HEIGHT_FINITE)],
-    aperture_f_stops => [range(f32::MIN, f32::INFINITY, public_error::DEPTH_OF_FIELD_APERTURE_F_STOPS_FINITE)],
-    max_circle_of_confusion_diameter => [range(f32::MIN, f32::INFINITY, public_error::DEPTH_OF_FIELD_MAX_COC_DIAMETER_FINITE)],
-    max_depth => [range_inclusive(f32::MIN, f32::INFINITY, public_error::DEPTH_OF_FIELD_MAX_DEPTH_NOT_NAN_OR_NEG_INF)]
-])]
+#[pycomponent(
+    DepthOfField,
+    bridge,
+    domains = [
+        focal_distance => [finite(view = checked)],
+        sensor_height => [finite(view = checked)],
+        aperture_f_stops => [finite(view = checked)],
+        max_circle_of_confusion_diameter => [finite(view = checked)],
+        max_depth => [finite_or_pos_inf(view = checked)],
+    ],
+    view_fields = [
+        focal_distance,
+        sensor_height,
+        aperture_f_stops,
+        max_circle_of_confusion_diameter,
+        max_depth
+    ]
+)]
 #[pyclass(name = "DepthOfField", module = "pybevy.post_process", extends = PyComponent)]
 pub struct PyDepthOfField {
     pub(crate) storage: ComponentStorage<DepthOfField>,
-}
-
-fn check_finite(value: f32, message: &'static str) -> Result<f32, StorageError> {
-    if value.is_finite() {
-        Ok(value)
-    } else {
-        Err(StorageError::InvalidValue(message.to_string()))
-    }
-}
-
-fn check_max_depth(value: f32) -> Result<f32, StorageError> {
-    if value.is_finite() || value == f32::INFINITY {
-        Ok(value)
-    } else {
-        Err(StorageError::InvalidValue(
-            public_error::DEPTH_OF_FIELD_MAX_DEPTH_NOT_NAN_OR_NEG_INF.to_string(),
-        ))
-    }
-}
-
-fn validate(depth_of_field: &DepthOfField) -> Result<(), StorageError> {
-    check_finite(
-        depth_of_field.focal_distance,
-        public_error::DEPTH_OF_FIELD_FOCAL_DISTANCE_FINITE,
-    )?;
-    check_finite(
-        depth_of_field.sensor_height,
-        public_error::DEPTH_OF_FIELD_SENSOR_HEIGHT_FINITE,
-    )?;
-    check_finite(
-        depth_of_field.aperture_f_stops,
-        public_error::DEPTH_OF_FIELD_APERTURE_F_STOPS_FINITE,
-    )?;
-    check_finite(
-        depth_of_field.max_circle_of_confusion_diameter,
-        public_error::DEPTH_OF_FIELD_MAX_COC_DIAMETER_FINITE,
-    )?;
-    check_max_depth(depth_of_field.max_depth)?;
-    Ok(())
 }
 
 #[pymethods]
@@ -85,7 +57,7 @@ impl PyDepthOfField {
             max_circle_of_confusion_diameter,
             max_depth,
         };
-        validate(&depth_of_field)?;
+        Self::validate_domains(&depth_of_field)?;
         Ok(Self::from_owned(depth_of_field).into())
     }
 
@@ -116,10 +88,7 @@ impl PyDepthOfField {
 
     #[setter]
     pub fn set_focal_distance(&mut self, focal_distance: f32) -> PyResult<()> {
-        let focal_distance = check_finite(
-            focal_distance,
-            public_error::DEPTH_OF_FIELD_FOCAL_DISTANCE_FINITE,
-        )?;
+        let focal_distance = Self::check_focal_distance(focal_distance)?;
         self.as_mut()?.focal_distance = focal_distance;
         Ok(())
     }
@@ -131,10 +100,7 @@ impl PyDepthOfField {
 
     #[setter]
     pub fn set_sensor_height(&mut self, sensor_height: f32) -> PyResult<()> {
-        let sensor_height = check_finite(
-            sensor_height,
-            public_error::DEPTH_OF_FIELD_SENSOR_HEIGHT_FINITE,
-        )?;
+        let sensor_height = Self::check_sensor_height(sensor_height)?;
         self.as_mut()?.sensor_height = sensor_height;
         Ok(())
     }
@@ -146,10 +112,7 @@ impl PyDepthOfField {
 
     #[setter]
     pub fn set_aperture_f_stops(&mut self, aperture_f_stops: f32) -> PyResult<()> {
-        let aperture_f_stops = check_finite(
-            aperture_f_stops,
-            public_error::DEPTH_OF_FIELD_APERTURE_F_STOPS_FINITE,
-        )?;
+        let aperture_f_stops = Self::check_aperture_f_stops(aperture_f_stops)?;
         self.as_mut()?.aperture_f_stops = aperture_f_stops;
         Ok(())
     }
@@ -161,10 +124,7 @@ impl PyDepthOfField {
 
     #[setter]
     pub fn set_max_circle_of_confusion_diameter(&mut self, diameter: f32) -> PyResult<()> {
-        let diameter = check_finite(
-            diameter,
-            public_error::DEPTH_OF_FIELD_MAX_COC_DIAMETER_FINITE,
-        )?;
+        let diameter = Self::check_max_circle_of_confusion_diameter(diameter)?;
         self.as_mut()?.max_circle_of_confusion_diameter = diameter;
         Ok(())
     }
@@ -176,7 +136,7 @@ impl PyDepthOfField {
 
     #[setter]
     pub fn set_max_depth(&mut self, max_depth: f32) -> PyResult<()> {
-        let max_depth = check_max_depth(max_depth)?;
+        let max_depth = Self::check_max_depth(max_depth)?;
         self.as_mut()?.max_depth = max_depth;
         Ok(())
     }

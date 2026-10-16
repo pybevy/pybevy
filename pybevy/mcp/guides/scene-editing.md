@@ -183,12 +183,12 @@ components, such as the `AccessibilityNode`
 with a field-named error when written. Derived enum predicates such as `is_*`
 are omitted.
 
-Numeric fields with a declared value range reject values outside it in
+Numeric fields with a declared value domain reject values outside it in
 `set_component`, `batch`, and `spawn_entity`, with the Python setter's message:
 `CascadeShadowConfig.overlap_proportion` must be in `[0.0, 1.0)`,
 `minimum_distance` must be non-negative, and `Bloom.max_mip_dimension` must be
-at least 1. A rejected write, for example
-`Failed to set 'CascadeShadowConfig': overlap_proportion: overlap_proportion must be in range [0.0, 1.0)`,
+greater than zero. A rejected write, for example
+`Failed to set 'CascadeShadowConfig': CascadeShadowConfig.overlap_proportion must be in [0.0, 1.0) (got 5.0)`,
 leaves the component unchanged. Other setter checks, such as a nonempty
 `CascadeShadowConfig.bounds`, are not yet applied to these writes.
 

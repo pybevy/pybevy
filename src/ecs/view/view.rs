@@ -38,10 +38,9 @@ use pybevy_bytecodevm::{
 };
 use pybevy_core::{
     FieldType as StorageFieldType, PyEntity,
-    batch_columns::{
-        BatchValueConstraint, has_view_assignment_checks, validate_view_assignment_values,
-    },
+    batch_columns::check_view_assignment,
     component_fields::declared_annotations,
+    domain::FieldDomain,
     public_error::{RESOURCE_VIEW_DATA, VIEW_COLUMN_READ_ONLY_ASSIGNMENT},
     registry::global_registry,
 };
@@ -580,10 +579,12 @@ pub(crate) fn get_component_field_info(
     }
 }
 
-pub(crate) fn native_view_field_constraints(
+/// The owner, field and domain that a checked View write to `field_name` must
+/// satisfy, or `None` when View writes to it are unchecked.
+pub(crate) fn native_view_field_domains(
     component_type: &PyComponentType,
     field_name: &str,
-) -> Option<(&'static str, &'static [BatchValueConstraint])> {
+) -> Option<(&'static str, &'static str, &'static [FieldDomain])> {
     let PyComponentType::Dynamic(type_ptr) = component_type else {
         return None;
     };
@@ -593,8 +594,8 @@ pub(crate) fn native_view_field_constraints(
     global_registry::get_component_batch_meta(*type_ptr as usize)?
         .fields
         .iter()
-        .find(|field| field.name == base_field)
-        .map(|field| (field.name, field.constraints))
+        .find(|field| field.name == base_field && field.view_checked && !field.domains.is_empty())
+        .map(|field| (field.owner, field.name, field.domains))
 }
 
 /// Shared __getattr__ implementation for both read-only and mutable column proxies
@@ -808,9 +809,9 @@ impl PyViewColMut {
             .runtime
             .gather_batches()
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-        let constraints = native_view_field_constraints(&self.component_type, field_name)
-            .map_or(&[][..], |(_, constraints)| constraints);
-        if has_view_assignment_checks(constraints) {
+        if let Some((owner, field, domains)) =
+            native_view_field_domains(&self.component_type, field_name)
+        {
             let read_program = view
                 .runtime
                 .prepare_read_program(&expr)
@@ -818,8 +819,8 @@ impl PyViewColMut {
             let values = lease
                 .evaluate(&read_program, true)
                 .map_err(view_execution_error)?;
-            validate_view_assignment_values(&values, dest_field_type, constraints)
-                .map_err(|error| PyValueError::new_err(error.to_string()))?;
+            check_view_assignment(owner, field, &values, dest_field_type, domains)
+                .map_err(PyErr::from)?;
         }
         lease
             .execute_assignment(&program, true)
