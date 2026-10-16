@@ -3,6 +3,9 @@ use pybevy_core::public_error;
 
 use crate::codec::json_float::{nonfinite_float_from_json, require_finite_float};
 
+/// Field names of a linear RGBA color, in array order.
+pub(crate) const LINEAR_RGBA_CHANNELS: [&str; 4] = ["red", "green", "blue", "alpha"];
+
 pub(crate) enum EnumPayload {
     Unit,
     Single(serde_json::Value),

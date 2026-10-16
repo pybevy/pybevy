@@ -804,13 +804,6 @@ mod tests {
     }
 
     #[test]
-    fn reload_mode_deserialize_rejects_unknown() {
-        let result: Result<ReloadMode, _> =
-            serde_json::from_value(serde_json::json!("unknown_mode"));
-        assert!(result.is_err());
-    }
-
-    #[test]
     fn process_pending_reloads_no_resource() {
         let mut world = World::new();
         // Should not panic

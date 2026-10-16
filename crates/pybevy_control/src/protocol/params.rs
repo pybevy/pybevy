@@ -410,3 +410,19 @@ fn default_true() -> bool {
 fn default_compare_epsilon() -> f64 {
     DEFAULT_COMPARE_EPSILON
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn reload_mode_deserializes_snake_case_and_rejects_unknown() {
+        assert_eq!(
+            serde_json::from_value::<ReloadMode>(json!("partial")).unwrap(),
+            ReloadMode::Partial
+        );
+        assert!(serde_json::from_value::<ReloadMode>(json!("unknown_mode")).is_err());
+    }
+}

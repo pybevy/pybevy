@@ -15,9 +15,8 @@ use crate::{
     codec::{
         json_float::float_to_json,
         math_shape::{FLOAT_VECTORS, math_shape},
-        value::{EnumPayload, enum_to_json},
+        value::{EnumPayload, LINEAR_RGBA_CHANNELS, enum_to_json},
     },
-    engine::dispatch::LINEAR_RGBA_CHANNELS,
     pyo3::{custom, from_json::enums::enum_variant_names},
 };
 

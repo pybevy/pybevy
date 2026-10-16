@@ -227,7 +227,6 @@ mod tests {
 
     use super::*;
     use crate::capture::{
-        hold::{InternalOverlayUi, OverlaySuppression},
         lease::capture_in_progress,
         queue::{CaptureResponseKind, PendingScreenshots},
         screenshot::{

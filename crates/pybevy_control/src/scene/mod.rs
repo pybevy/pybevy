@@ -1,6 +1,9 @@
+pub mod bounds;
 pub mod diagnostics;
 pub mod entity;
 pub mod entity_count;
 pub mod spatial;
+pub mod summary;
+pub mod systems;
 pub mod time;
 pub(crate) mod transform_sync;

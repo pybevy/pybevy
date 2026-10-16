@@ -1,3 +1,5 @@
+#[cfg(feature = "pyo3-runtime")]
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 #[cfg(feature = "bevy_winit")]
@@ -7,17 +9,46 @@ use bevy::{
     prelude::{IntoScheduleConfigs, Resource},
     render::{Render, RenderApp, RenderSystems},
 };
+#[cfg(feature = "pyo3-runtime")]
 use pybevy_core::{PluginBuild, PyPlugin, ensure_asset_access_registry, repr::str_repr};
+#[cfg(feature = "pyo3-runtime")]
 use pybevy_macros::pyplugin;
+#[cfg(feature = "pyo3-runtime")]
 use pyo3::prelude::*;
 
+#[cfg(feature = "pyo3-runtime")]
+use crate::pyo3::runtime::Pyo3ControlRuntime;
 use crate::{
-    capture::analysis::CapturedFrames,
+    asset_reference::AssetReferenceSession,
+    capture::{
+        analysis::CapturedFrames,
+        camera::hold_capture_pose,
+        depth::process_pending_depth_samples,
+        readiness::{RenderFrameReadiness, update_render_frame_readiness},
+        screenshot::{
+            PendingScreenshotResponders, process_pending_screenshots, screenshot_captured_observer,
+        },
+        timeline::{PendingTimelines, TimelineCaptures, process_pending_timelines},
+        turnaround::{PendingTurnarounds, TurnaroundCaptures, process_pending_turnarounds},
+    },
     discovery::ApiIndex,
-    engine::{channel::create_channel, poll::control_poll_system},
-    transport::{server::AppState, sse::SseEventBroadcaster},
+    engine::{
+        channel::{ControlSender, create_channel},
+        poll::control_poll_system,
+        runtime::ControlRuntime,
+    },
+    reload::process_pending_reloads,
+    schedule::{
+        ActiveSchedules, SharedScheduleRegistry, SharedScheduleRegistryResource,
+        process_active_schedules,
+    },
+    transport::{
+        server::{AppState, start_server},
+        sse::SseEventBroadcaster,
+    },
 };
 
+#[cfg(feature = "pyo3-runtime")]
 #[pyplugin(ControlBevyPlugin)]
 #[pyclass(name = "McpPlugin", module = "pybevy.mcp", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone)]
@@ -30,6 +61,7 @@ pub struct PyControlPlugin {
     pub api_discovery: bool,
 }
 
+#[cfg(feature = "pyo3-runtime")]
 #[pymethods]
 impl PyControlPlugin {
     #[new]
@@ -77,6 +109,7 @@ impl PyControlPlugin {
     }
 }
 
+#[cfg(feature = "pyo3-runtime")]
 impl Default for PyControlPlugin {
     fn default() -> Self {
         PyControlPlugin {
@@ -90,6 +123,7 @@ impl Default for PyControlPlugin {
     }
 }
 
+#[cfg(feature = "pyo3-runtime")]
 impl PluginBuild for PyControlPlugin {
     fn build(py_plugin: &Bound<'_, PyAny>, app: &mut App) -> PyResult<()> {
         let config: PyRef<'_, PyControlPlugin> = py_plugin.extract()?;
@@ -111,19 +145,114 @@ pub struct ControlConfig {
     pub api_discovery: bool,
 }
 
-/// The actual Bevy plugin that sets up the HTTP control server
+/// Installs the control channel, schedule state and per-frame systems that
+/// serve requests through `runtime`, and returns the request sender.
+pub fn install_control_runtime(
+    app: &mut App,
+    config: ControlConfig,
+    runtime: Box<dyn ControlRuntime>,
+) -> (ControlSender, SharedScheduleRegistry) {
+    let (sender, receiver) = create_channel();
+    let exclusive_execution = sender.exclusive_execution();
+    let schedule_registry = SharedScheduleRegistry::default();
+
+    app.insert_resource(receiver);
+    app.insert_resource(exclusive_execution);
+    app.init_resource::<ActiveSchedules>();
+    app.insert_resource(SharedScheduleRegistryResource(schedule_registry.clone()));
+    app.init_resource::<AssetReferenceSession>();
+    app.insert_resource(config);
+    app.insert_non_send(runtime);
+
+    // Ensure the app keeps ticking when unfocused so MCP requests are processed
+    #[cfg(feature = "bevy_winit")]
+    app.add_systems(bevy::app::Startup, configure_mcp_update_mode);
+
+    app.add_systems(First, control_poll_system);
+    app.add_systems(First, process_active_schedules.after(control_poll_system));
+    app.add_systems(
+        Last,
+        (
+            hold_capture_pose,
+            process_pending_screenshots,
+            process_pending_timelines,
+            process_pending_reloads,
+            process_pending_turnarounds,
+            process_pending_depth_samples,
+        ),
+    );
+    app.add_observer(screenshot_captured_observer);
+    app.init_resource::<CapturedFrames>();
+    app.init_resource::<PendingScreenshotResponders>();
+    app.init_resource::<PendingTimelines>();
+    app.init_resource::<TimelineCaptures>();
+    app.init_resource::<PendingTurnarounds>();
+    app.init_resource::<TurnaroundCaptures>();
+
+    (sender, schedule_registry)
+}
+
+/// Installs the control runtime and starts the HTTP server. A repeat call is
+/// a no-op, so the server never binds its port twice.
+pub fn build_control_plugin(
+    app: &mut App,
+    config: ControlConfig,
+    api_index: ApiIndex,
+    runtime: Box<dyn ControlRuntime>,
+) {
+    if app.world().contains_resource::<ControlConfig>() {
+        return;
+    }
+    let sse_broadcaster = SseEventBroadcaster::new();
+    app.insert_resource(sse_broadcaster.clone());
+    let (sender, schedule_registry) = install_control_runtime(app, config.clone(), runtime);
+    let server_state = AppState::new(
+        sender,
+        sse_broadcaster,
+        Arc::new(api_index),
+        config.clone(),
+        schedule_registry,
+    );
+    start_server(config.host, config.port, server_state);
+}
+
+/// Shares render-frame completion between the render world and the main world.
+pub fn install_render_frame_readiness(app: &mut App) {
+    let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
+        return;
+    };
+    let readiness = RenderFrameReadiness::default();
+    render_app.insert_resource(readiness.clone()).add_systems(
+        Render,
+        update_render_frame_readiness.after(RenderSystems::Render),
+    );
+    app.insert_resource(readiness);
+}
+
+/// Adds render-frame readiness once the render sub-app exists.
+pub struct RenderFrameReadinessPlugin;
+
+impl Plugin for RenderFrameReadinessPlugin {
+    fn build(&self, _app: &mut App) {}
+
+    fn finish(&self, app: &mut App) {
+        install_render_frame_readiness(app);
+    }
+}
+
+/// The PyO3 control plugin: the neutral control plugin served by `Pyo3ControlRuntime`.
+#[cfg(feature = "pyo3-runtime")]
 pub struct ControlBevyPlugin {
     pub config: PyControlPlugin,
 }
 
+#[cfg(feature = "pyo3-runtime")]
 impl Plugin for ControlBevyPlugin {
     fn build(&self, app: &mut App) {
         ensure_asset_access_registry(app.world_mut());
-        // Guard against double-registration
         if app.world().contains_resource::<ControlConfig>() {
             return;
         }
-
         let config = &self.config;
 
         // Build API index from .pyi stubs
@@ -132,7 +261,7 @@ impl Plugin for ControlBevyPlugin {
                 let pybevy = py.import("pybevy").ok()?;
                 let path_list = pybevy.getattr("__path__").ok()?;
                 let first: String = path_list.get_item(0).ok()?.extract().ok()?;
-                let path = std::path::PathBuf::from(first);
+                let path = PathBuf::from(first);
                 path.is_dir().then_some(path)
             });
             match pybevy_dir {
@@ -141,19 +270,12 @@ impl Plugin for ControlBevyPlugin {
                     bevy::log::warn!(
                         "[Control] Could not find pybevy package directory for API stubs"
                     );
-                    ApiIndex::build(std::path::Path::new(""))
+                    ApiIndex::build(Path::new(""))
                 }
             }
         } else {
-            ApiIndex::build(std::path::Path::new(""))
+            ApiIndex::build(Path::new(""))
         };
-
-        // Create the channel
-        let (sender, receiver) = create_channel();
-        let exclusive_execution = sender.exclusive_execution();
-
-        // Create SSE broadcaster
-        let sse_broadcaster = SseEventBroadcaster::new();
 
         let control_config = ControlConfig {
             port: config.port,
@@ -163,81 +285,11 @@ impl Plugin for ControlBevyPlugin {
             execute_python: config.execute_python,
             api_discovery: config.api_discovery,
         };
-
-        // Create shared schedule registry
-        let schedule_registry = crate::schedule::SharedScheduleRegistry::default();
-
-        // Build server state
-        let server_state = AppState::new(
-            sender,
-            sse_broadcaster.clone(),
-            Arc::new(api_index),
-            control_config.clone(),
-            schedule_registry.clone(),
-        );
-
-        // Insert Bevy resources
-        app.insert_resource(receiver);
-        app.insert_resource(exclusive_execution);
-        app.insert_resource(sse_broadcaster);
-        app.init_resource::<crate::schedule::ActiveSchedules>();
-        app.insert_resource(crate::schedule::SharedScheduleRegistryResource(
-            schedule_registry,
-        ));
-        app.init_resource::<crate::asset_reference::AssetReferenceSession>();
-        app.insert_resource(control_config);
-
-        app.insert_non_send(Box::new(crate::pyo3::runtime::Pyo3ControlRuntime)
-            as Box<dyn crate::engine::runtime::ControlRuntime>);
-
-        // Ensure the app keeps ticking when unfocused so MCP requests are processed
-        #[cfg(feature = "bevy_winit")]
-        app.add_systems(bevy::app::Startup, configure_mcp_update_mode);
-
-        // Register the exclusive poll system in First schedule
-        app.add_systems(First, control_poll_system);
-        // Schedule processor runs after control_poll_system (also in First)
-        app.add_systems(
-            First,
-            crate::schedule::process_active_schedules.after(control_poll_system),
-        );
-
-        // Register screenshot and reload processing systems (runs after render)
-        app.add_systems(
-            Last,
-            (
-                crate::capture::camera::hold_capture_pose,
-                crate::capture::screenshot::process_pending_screenshots,
-                crate::capture::timeline::process_pending_timelines,
-                crate::reload::process_pending_reloads,
-                crate::capture::turnaround::process_pending_turnarounds,
-                crate::capture::depth::process_pending_depth_samples,
-            ),
-        );
-
-        // Register global observer for screenshot capture completion
-        app.add_observer(crate::capture::screenshot::screenshot_captured_observer);
-        app.init_resource::<CapturedFrames>();
-        app.init_resource::<crate::capture::screenshot::PendingScreenshotResponders>();
-        app.init_resource::<crate::capture::timeline::PendingTimelines>();
-        app.init_resource::<crate::capture::timeline::TimelineCaptures>();
-        app.init_resource::<crate::capture::turnaround::PendingTurnarounds>();
-        app.init_resource::<crate::capture::turnaround::TurnaroundCaptures>();
-
-        // Start the HTTP server
-        crate::transport::server::start_server(config.host.clone(), config.port, server_state);
+        build_control_plugin(app, control_config, api_index, Box::new(Pyo3ControlRuntime));
     }
 
     fn finish(&self, app: &mut App) {
-        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
-            return;
-        };
-        let readiness = crate::capture::readiness::RenderFrameReadiness::default();
-        render_app.insert_resource(readiness.clone()).add_systems(
-            Render,
-            crate::capture::readiness::update_render_frame_readiness.after(RenderSystems::Render),
-        );
-        app.insert_resource(readiness);
+        install_render_frame_readiness(app);
     }
 }
 
@@ -260,15 +312,64 @@ fn configure_mcp_update_mode(settings: Option<bevy::prelude::ResMut<bevy::winit:
     bevy::log::info!("[Control] Set unfocused_mode to Reactive(16ms) for MCP responsiveness");
 }
 
-#[cfg(all(test, feature = "bevy_winit"))]
+#[cfg(test)]
 mod tests {
+    use bevy::ecs::name::Name;
+    #[cfg(feature = "bevy_winit")]
     use bevy::{
         ecs::{system::RunSystemOnce, world::World},
         winit::{UpdateMode, WinitSettings},
     };
+    use serde_json::json;
+    use tokio::sync::oneshot;
 
-    use super::configure_mcp_update_mode;
+    use super::*;
+    use crate::{
+        engine::{
+            channel::ControlRequest,
+            runtime::fake::{Crate, Enemy, FakeRuntime},
+        },
+        protocol::ControlOperation,
+    };
 
+    #[test]
+    fn installed_runtime_serves_requests_in_first() {
+        let mut app = App::new();
+        let config = ControlConfig {
+            port: 0,
+            host: "127.0.0.1".into(),
+            screenshot: true,
+            manipulation: true,
+            execute_python: true,
+            api_discovery: true,
+        };
+        let (sender, _) = install_control_runtime(&mut app, config, Box::new(FakeRuntime));
+        let goblin = app
+            .world_mut()
+            .spawn((Name::new("Goblin"), Crate, Enemy))
+            .id();
+
+        let (response_tx, mut response_rx) = oneshot::channel();
+        sender
+            .tx
+            .send(ControlRequest {
+                operation: ControlOperation::GetRegistry,
+                response_tx,
+            })
+            .unwrap();
+        app.world_mut().run_schedule(First);
+
+        let result = response_rx.try_recv().unwrap().unwrap();
+        assert_eq!(result["component_bridge_names"], json!(["Crate"]));
+        assert_eq!(result["resource_names"], json!(["Clock", "Score"]));
+        assert_eq!(result["entity_samples"][0]["id"], goblin.to_bits());
+        assert_eq!(
+            result["entity_samples"][0]["detected_custom_components"],
+            json!(["Enemy"])
+        );
+    }
+
+    #[cfg(feature = "bevy_winit")]
     #[test]
     fn upgrades_continuous_to_reactive() {
         let mut world = World::new();
@@ -284,6 +385,7 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "bevy_winit")]
     #[test]
     fn preserves_already_reactive() {
         let mut world = World::new();
@@ -300,6 +402,7 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "bevy_winit")]
     #[test]
     fn no_op_without_winit_settings() {
         let mut world = World::new();

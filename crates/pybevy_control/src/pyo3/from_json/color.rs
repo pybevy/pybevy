@@ -5,8 +5,7 @@ use pyo3::{
 };
 
 use crate::{
-    codec::value::json_kind_name,
-    engine::dispatch::LINEAR_RGBA_CHANNELS,
+    codec::value::{LINEAR_RGBA_CHANNELS, json_kind_name},
     pyo3::from_json::{
         enums::reject_enum_constant,
         field::{json_number_to_f32, json_to_py},

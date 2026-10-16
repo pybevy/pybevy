@@ -918,41 +918,6 @@ mod tests {
     }
 
     #[test]
-    fn resolve_entity_by_id_found() {
-        let mut world = World::new();
-        let entity = world.spawn_empty().id();
-        let entity_ref = EntityRef::Id(entity.to_bits());
-        let result = resolve_entity(&mut world, &entity_ref);
-        assert_eq!(result.unwrap(), entity);
-    }
-
-    #[test]
-    fn resolve_entity_by_id_not_found() {
-        let mut world = World::new();
-        let entity_ref = EntityRef::Id(999999);
-        let result = resolve_entity(&mut world, &entity_ref);
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, ErrorCode::NotFound);
-    }
-
-    #[test]
-    fn resolve_entity_by_name_found() {
-        let mut world = World::new();
-        let entity = world.spawn(Name::new("TestEntity")).id();
-        let entity_ref = EntityRef::Name("TestEntity".into());
-        let result = resolve_entity(&mut world, &entity_ref);
-        assert_eq!(result.unwrap(), entity);
-    }
-
-    #[test]
-    fn resolve_entity_by_name_not_found() {
-        let mut world = World::new();
-        let entity_ref = EntityRef::Name("NonExistent".into());
-        let result = resolve_entity(&mut world, &entity_ref);
-        assert!(result.is_err());
-    }
-
-    #[test]
     fn query_spatial_two_entities() {
         let mut world = World::new();
         let ea = world

@@ -1,5 +1,3 @@
-pub(crate) const LINEAR_RGBA_CHANNELS: [&str; 4] = ["red", "green", "blue", "alpha"];
-
 use bevy::ecs::world::World;
 use pybevy_core::ensure_no_live_asset_access;
 
@@ -7,63 +5,22 @@ use crate::{
     capture::analysis,
     engine::{channel::SharedExclusiveExecution, runtime::ControlRuntime},
     protocol::{ControlError, ControlOperation},
-    pyo3::components::despawn_entity,
     reload,
-    scene::{diagnostics, spatial, time, transform_sync::propagate_transforms},
+    scene::{
+        bounds::get_bounding_box,
+        diagnostics,
+        entity::despawn_entity,
+        spatial,
+        summary::{debug_registry, list_entities, query_entities, scene_summary},
+        systems::list_systems,
+        time,
+        transform_sync::propagate_transforms,
+    },
 };
 
 fn guard_structural_request(world: &World, operation: &str) -> Result<(), ControlError> {
     ensure_no_live_asset_access(world, operation)
         .map_err(|error| ControlError::invalid_params(error.to_string()))
-}
-
-pub(crate) fn batch_response(results: Vec<serde_json::Value>) -> serde_json::Value {
-    let count = |status| {
-        results
-            .iter()
-            .filter(|result| result.get("status").and_then(|value| value.as_str()) == Some(status))
-            .count()
-    };
-
-    serde_json::json!({
-        "succeeded": count("ok"),
-        "partial": count("partial"),
-        "failed": count("error"),
-        "total": results.len(),
-        "results": results,
-    })
-}
-
-fn registry_with_resource_names(
-    world: &mut World,
-    runtime: &mut dyn ControlRuntime,
-) -> Result<serde_json::Value, ControlError> {
-    let mut registry = runtime.debug_registry(world)?;
-    let resource_listing = runtime.list_resources(world)?;
-    let mut resource_names: Vec<String> = resource_listing
-        .get("resources")
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| ControlError::internal("Resource listing did not contain an array"))?
-        .iter()
-        .map(|resource| {
-            resource
-                .get("name")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_owned)
-                .ok_or_else(|| ControlError::internal("Resource listing entry had no name"))
-        })
-        .collect::<Result<_, _>>()?;
-    resource_names.sort_unstable();
-    resource_names.dedup();
-
-    registry
-        .as_object_mut()
-        .ok_or_else(|| ControlError::internal("Registry response was not an object"))?
-        .insert(
-            "resource_names".to_string(),
-            serde_json::json!(resource_names),
-        );
-    Ok(registry)
 }
 
 /// Dispatch an MCP operation to the appropriate handler.
@@ -81,19 +38,17 @@ pub fn dispatch(
         guard_structural_request(world, tag.name())?;
     }
     match operation {
-        ControlOperation::ListEntities => runtime.list_entities(world),
+        ControlOperation::ListEntities => list_entities(world, runtime),
         ControlOperation::GetEntity { entity } => runtime.get_entity(world, entity),
         ControlOperation::ListResources => runtime.list_resources(world),
-        ControlOperation::ListSystems { include_internal } => {
-            runtime.list_systems(world, include_internal)
-        }
-        ControlOperation::QueryEntities(p) => runtime.query_entities(world, p),
+        ControlOperation::ListSystems { include_internal } => list_systems(world, include_internal),
+        ControlOperation::QueryEntities(p) => query_entities(world, runtime, p),
         ControlOperation::GetComponentSchema { name } => runtime.get_component_schema(world, name),
         ControlOperation::GetComponent(p) => runtime.get_component(world, p),
         ControlOperation::GetResource(p) => runtime.get_resource(world, p),
-        ControlOperation::GetSceneSummary => runtime.scene_summary(world),
-        ControlOperation::GetBoundingBox { entity } => runtime.get_bounding_box(world, entity),
-        ControlOperation::GetRegistry => registry_with_resource_names(world, runtime),
+        ControlOperation::GetSceneSummary => scene_summary(world, runtime),
+        ControlOperation::GetBoundingBox { entity } => get_bounding_box(world, entity),
+        ControlOperation::GetRegistry => debug_registry(world, runtime),
         ControlOperation::SpawnEntity { components } => runtime.spawn_entity(world, components),
         ControlOperation::DespawnEntity { entity } => despawn_entity(world, entity),
         ControlOperation::SetComponent(p) => runtime.set_component(world, p),
@@ -178,7 +133,7 @@ pub fn dispatch(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "pyo3-runtime"))]
 mod tests {
     use std::any::TypeId;
 
@@ -204,7 +159,7 @@ mod tests {
             CheckAllOverlapsParams, EntityRef, ErrorCode, RemoveComponentParams,
             SetComponentParams, SetResourceParams,
         },
-        runtime_pyo3::Pyo3ControlRuntime,
+        pyo3::runtime::Pyo3ControlRuntime,
     };
 
     #[derive(Asset, TypePath)]
@@ -212,21 +167,6 @@ mod tests {
 
     fn runtime() -> Pyo3ControlRuntime {
         Pyo3ControlRuntime
-    }
-
-    #[test]
-    fn batch_response_counts_each_terminal_status() {
-        let response = batch_response(vec![
-            serde_json::json!({"status": "ok"}),
-            serde_json::json!({"status": "partial"}),
-            serde_json::json!({"status": "error"}),
-            serde_json::json!({"status": "error"}),
-        ]);
-
-        assert_eq!(response["total"], 4);
-        assert_eq!(response["succeeded"], 1);
-        assert_eq!(response["partial"], 1);
-        assert_eq!(response["failed"], 2);
     }
 
     #[test]

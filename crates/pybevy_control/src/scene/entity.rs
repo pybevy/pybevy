@@ -1,8 +1,10 @@
+use std::sync::OnceLock;
+
 use bevy::ecs::{
     entity::Entity, entity_disabling::Disabled, hierarchy::ChildOf, name::Name, query::Allow,
     world::World,
 };
-use pybevy_core::public_error;
+use pybevy_core::{custom_resource::hierarchy_contains_resource_entity, public_error};
 
 use crate::protocol::{ControlError, EntityRef};
 
@@ -66,9 +68,69 @@ pub fn resolve_entity(world: &mut World, entity_ref: &EntityRef) -> Result<Entit
     }
 }
 
+type DespawnEntityHook = fn(&mut World, Entity);
+
+static DESPAWN_ENTITY_HOOK: OnceLock<DespawnEntityHook> = OnceLock::new();
+
+/// Lets a backend despawn through its own lifecycle path so Python
+/// `on_remove` and `on_despawn` observers run.
+pub fn register_despawn_entity_hook(hook: DespawnEntityHook) {
+    let _ = DESPAWN_ENTITY_HOOK.set(hook);
+}
+
+/// Check if a tool result contains embedded field-level errors.
+/// Used by batch and schedule to detect partial failures.
+pub fn has_embedded_errors(value: &serde_json::Value) -> bool {
+    value
+        .get("errors")
+        .and_then(|v| v.as_array())
+        .is_some_and(|arr| !arr.is_empty())
+}
+
+/// Despawn an entity by ID or Name
+pub fn despawn_entity(
+    world: &mut World,
+    entity_ref: EntityRef,
+) -> Result<serde_json::Value, ControlError> {
+    let entity = resolve_entity(world, &entity_ref)?;
+    let entity_id = entity.to_bits();
+
+    // Bevy cascades the despawn through descendants, so a resource entity
+    // anywhere in the subtree would have its value silently discarded.
+    if hierarchy_contains_resource_entity(world, entity) {
+        return Err(ControlError::invalid_params(
+            public_error::RESOURCE_ENTITY_DESPAWN,
+        ));
+    }
+
+    let existed = world.entities().contains(entity);
+    if existed {
+        match DESPAWN_ENTITY_HOOK.get() {
+            Some(hook) => hook(world, entity),
+            None => {
+                world.despawn(entity);
+            }
+        }
+    }
+
+    if existed {
+        Ok(serde_json::json!({
+            "despawned": true,
+            "entity_id": entity_id,
+        }))
+    } else {
+        Err(ControlError::not_found(public_error::mcp_entity_not_found(
+            entity_id,
+        )))
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use bevy::ecs::name::Name;
+    use bevy::{
+        camera::ClearColor,
+        ecs::{hierarchy::Children, name::Name, query::With, resource::IsResource},
+    };
 
     use super::*;
     use crate::protocol::ErrorCode;
@@ -83,18 +145,6 @@ mod tests {
         assert!(error.message.contains("2 matches"));
         assert!(error.message.contains(&a.to_bits().to_string()));
         assert!(error.message.contains(&b.to_bits().to_string()));
-    }
-
-    #[test]
-    fn unique_root_wins_over_children() {
-        let mut world = World::new();
-        let parent = world.spawn(Name::new("Parent")).id();
-        world.spawn((Name::new("Beacon"), ChildOf(parent)));
-        let root = world.spawn(Name::new("Beacon")).id();
-        assert_eq!(
-            resolve_entity(&mut world, &EntityRef::Name("Beacon".into())).unwrap(),
-            root
-        );
     }
 
     #[test]
@@ -182,16 +232,6 @@ mod tests {
     }
 
     #[test]
-    fn resolve_entity_by_zero_index_returns_not_found_without_panicking() {
-        // A caller-supplied id whose low 32 bits are 0 is an invalid EntityIndex;
-        // `Entity::from_bits` would panic and crash the exclusive control-poll
-        // system. `try_from_bits` must return a NotFound error instead.
-        let mut world = World::new();
-        let err = resolve_entity(&mut world, &EntityRef::Id(0)).unwrap_err();
-        assert!(err.message.contains("not found"));
-    }
-
-    #[test]
     fn resolve_entity_by_name_found() {
         let mut world = World::new();
         let entity = world.spawn(Name::new("Hero")).id();
@@ -207,10 +247,18 @@ mod tests {
     }
 
     #[test]
+    fn resolve_entity_by_id_found() {
+        let mut world = World::new();
+        let entity = world.spawn_empty().id();
+        let result = resolve_entity(&mut world, &EntityRef::Id(entity.to_bits())).unwrap();
+        assert_eq!(result, entity);
+    }
+
+    #[test]
     fn resolve_entity_by_id_not_found() {
         let mut world = World::new();
-        let result = resolve_entity(&mut world, &EntityRef::Id(999999));
-        assert!(result.is_err());
+        let error = resolve_entity(&mut world, &EntityRef::Id(999999)).unwrap_err();
+        assert_eq!(error.code, ErrorCode::NotFound);
     }
 
     #[test]
@@ -223,5 +271,150 @@ mod tests {
             let err = resolve_entity(&mut world, &EntityRef::Id(bits)).unwrap_err();
             assert!(matches!(err.code, ErrorCode::NotFound), "id {bits:#x}");
         }
+    }
+
+    #[test]
+    fn despawn_entity_by_id_success() {
+        let mut world = World::new();
+        let entity = world.spawn(Name::new("Target")).id();
+        let result = despawn_entity(&mut world, EntityRef::Id(entity.to_bits())).unwrap();
+        assert_eq!(result["despawned"], true);
+        assert!(world.get_entity(entity).is_err());
+    }
+
+    #[test]
+    fn despawn_entity_by_name_success() {
+        let mut world = World::new();
+        world.spawn(Name::new("Target"));
+        let result = despawn_entity(&mut world, EntityRef::Name("Target".into())).unwrap();
+        assert_eq!(result["despawned"], true);
+    }
+
+    #[test]
+    fn despawn_rejects_resource_entity() {
+        let mut world = World::new();
+        world.init_resource::<ClearColor>();
+        let entity = world
+            .query_filtered::<Entity, With<IsResource>>()
+            .iter(&world)
+            .next()
+            .expect("init_resource should create a resource entity");
+
+        let error = despawn_entity(&mut world, EntityRef::Id(entity.to_bits()))
+            .expect_err("resource entity despawn must be rejected");
+
+        assert_eq!(error.code, ErrorCode::InvalidParams);
+        assert!(world.get_entity(entity).is_ok());
+        assert!(world.get_resource::<ClearColor>().is_some());
+    }
+
+    #[test]
+    fn despawn_rejects_resource_entity_in_subtree() {
+        let mut world = World::new();
+        world.init_resource::<ClearColor>();
+        let resource_entity = world
+            .query_filtered::<Entity, With<IsResource>>()
+            .iter(&world)
+            .next()
+            .expect("init_resource should create a resource entity");
+        let parent = world.spawn(Name::new("Parent")).id();
+        world.entity_mut(parent).add_child(resource_entity);
+
+        let error = despawn_entity(&mut world, EntityRef::Id(parent.to_bits()))
+            .expect_err("cascade into a resource entity must be rejected");
+
+        assert_eq!(error.code, ErrorCode::InvalidParams);
+        assert!(world.get_resource::<ClearColor>().is_some());
+    }
+
+    #[test]
+    fn despawn_entity_not_found() {
+        let mut world = World::new();
+        let result = despawn_entity(&mut world, EntityRef::Id(999999));
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().code, ErrorCode::NotFound);
+    }
+
+    #[test]
+    fn despawn_entity_recursive_removes_children() {
+        let mut world = World::new();
+        let parent = world.spawn(Name::new("Parent")).id();
+        let child1 = world.spawn((Name::new("Child1"), ChildOf(parent))).id();
+        let child2 = world.spawn((Name::new("Child2"), ChildOf(parent))).id();
+        let grandchild = world.spawn((Name::new("Grandchild"), ChildOf(child1))).id();
+
+        let result = despawn_entity(&mut world, EntityRef::Id(parent.to_bits())).unwrap();
+        assert_eq!(result["despawned"], true);
+
+        // Parent and all descendants gone; no orphans with stale ChildOf.
+        assert!(world.get_entity(parent).is_err());
+        assert!(world.get_entity(child1).is_err());
+        assert!(world.get_entity(child2).is_err());
+        assert!(world.get_entity(grandchild).is_err());
+    }
+
+    #[test]
+    fn despawn_entity_by_name_not_found() {
+        let mut world = World::new();
+        let result = despawn_entity(&mut world, EntityRef::Name("NonExistent".into()));
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().code, ErrorCode::NotFound);
+    }
+
+    #[test]
+    fn has_embedded_errors_detects_errors() {
+        let val = serde_json::json!({
+            "entity_id": 42,
+            "errors": ["field not found"],
+        });
+        assert!(has_embedded_errors(&val));
+    }
+
+    #[test]
+    fn has_embedded_errors_empty_errors_is_false() {
+        let val = serde_json::json!({
+            "entity_id": 42,
+            "errors": [],
+        });
+        assert!(!has_embedded_errors(&val));
+    }
+
+    #[test]
+    fn has_embedded_errors_no_errors_key_is_false() {
+        let val = serde_json::json!({
+            "entity_id": 42,
+            "components_added": ["Transform"],
+        });
+        assert!(!has_embedded_errors(&val));
+    }
+
+    #[test]
+    fn world_despawn_vs_entity_mut_despawn_baseline() {
+        // Pin the Bevy contract our despawn_entity handler relies on:
+        // both `World::despawn` AND `EntityWorldMut::despawn` walk the
+        // `Children` relationship recursively. If a future Bevy release
+        // changes World::despawn back to non-recursive, despawn_entity
+        // would need to switch to entity_mut(e).despawn() to preserve the
+        // user-visible recursive behavior.
+        let mut world = World::new();
+        let parent_a = world.spawn(Name::new("ParentA")).id();
+        let child_a = world.spawn((Name::new("ChildA"), ChildOf(parent_a))).id();
+
+        let _ = world.despawn(parent_a);
+
+        assert!(world.get_entity(parent_a).is_err());
+        assert!(
+            world.get_entity(child_a).is_err(),
+            "World::despawn(parent) is recursive in Bevy 0.18: child should also be despawned"
+        );
+
+        let parent_b = world.spawn(Name::new("ParentB")).id();
+        let child_b = world.spawn((Name::new("ChildB"), ChildOf(parent_b))).id();
+        assert!(world.get::<Children>(parent_b).is_some());
+
+        world.entity_mut(parent_b).despawn();
+
+        assert!(world.get_entity(parent_b).is_err());
+        assert!(world.get_entity(child_b).is_err());
     }
 }

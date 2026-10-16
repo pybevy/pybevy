@@ -453,13 +453,12 @@ fn get_class_fields(py: Python<'_>, py_type: &Bound<'_, PyType>) -> serde_json::
     serde_json::Value::Object(fields)
 }
 
+type FieldMap = serde_json::Map<String, serde_json::Value>;
+
 fn default_component_fields(
     py_type: &Bound<'_, PyType>,
     fields: &serde_json::Value,
-) -> Option<(
-    serde_json::Map<String, serde_json::Value>,
-    Option<serde_json::Map<String, serde_json::Value>>,
-)> {
+) -> Option<(FieldMap, Option<FieldMap>)> {
     let instance = py_type.call0().ok()?;
     let fields = fields.as_object()?;
     let mut defaults = serde_json::Map::new();

@@ -29,7 +29,7 @@ use crate::{
     },
     schedule::{ScheduleMode, ScheduleRequest, SharedScheduleRegistry, validate_schedule},
     transport::{
-        image_preview::{
+        image_delivery::{
             MCP_IMAGE_DELIVERY_HEADER, MCP_IMAGE_DELIVERY_VALUE, prepare_mcp_response_images,
         },
         sse::SseEventBroadcaster,
@@ -1057,7 +1057,6 @@ mod tests {
     use super::*;
     use crate::{
         engine::channel::{ControlReceiver, create_channel},
-        handlers::schedule::SharedScheduleRegistry,
         protocol::ControlError,
     };
 
