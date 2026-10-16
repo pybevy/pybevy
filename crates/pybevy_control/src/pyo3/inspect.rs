@@ -10,6 +10,7 @@ use bevy::{
     reflect::{ReflectRef, TypeInfo},
 };
 use pybevy_core::{
+    ValidityGuard,
     registry::global_registry::{all_component_bridges, all_resource_bridges},
     source_location::SourceLocation,
 };
@@ -19,6 +20,7 @@ use crate::{
     engine::runtime::{ComponentCatalog, ComponentFilter, EntityComponentNames},
     protocol::{ControlError, EntityRef},
     pyo3::{
+        asset_reference::reference_fields_for_value,
         names::{ComponentTarget, custom_component_name, resolve_component},
         to_json::{extract_bridge_fields, extract_custom_component_fields},
     },
@@ -91,8 +93,7 @@ pub fn get_entity(
 
     // Extract component values via Python
     Python::attach(|py| {
-        let validity_flag = pybevy_core::ValidityFlag::new_read();
-        let validity = validity_flag.with_access_mode(pybevy_core::AccessMode::Read);
+        let (_read_window, validity) = ValidityGuard::read();
 
         for bridge in all_component_bridges() {
             let contains = world
@@ -119,28 +120,21 @@ pub fn get_entity(
                 .ok()
                 .flatten()
                 .map(|py_obj| {
-                    let bound = py_obj.bind(py);
-                    if let Some(fields) = super::asset_reference::reference_fields_for_value(
-                        world, entity, &name, bound,
-                    ) {
-                        return fields;
-                    }
-                    let mut fields = extract_bridge_fields(py, bound, reflected_enum);
-                    if let Some(variant) = reflected_variant {
-                        if bound.call_method0("__copy__").is_err() {
-                            fields.clear();
-                        }
-                        fields.insert("variant".to_string(), serde_json::Value::String(variant));
-                    }
-                    serde_json::Value::Object(fields)
+                    serde_json::Value::Object(native_value_fields(
+                        py,
+                        world,
+                        entity,
+                        &name,
+                        py_obj.bind(py),
+                        reflected_enum,
+                        reflected_variant,
+                    ))
                 })
                 .unwrap_or_else(|| serde_json::Value::String("<opaque>".to_string()));
 
                 components.insert(name, value);
             }
         }
-
-        validity_flag.set_invalid();
     });
 
     // Extract custom Python component data
@@ -227,6 +221,32 @@ pub fn get_entity(
 }
 
 /// Get a single component's field values from an entity
+/// A native component value's fields: its asset reference when it has one,
+/// else its getter fields, plus `variant` for a reflected enum.
+fn native_value_fields(
+    py: Python<'_>,
+    world: &mut World,
+    entity: Entity,
+    component: &str,
+    value: &Bound<'_, PyAny>,
+    reflected_enum: bool,
+    reflected_variant: Option<String>,
+) -> serde_json::Map<String, serde_json::Value> {
+    if let Some(serde_json::Value::Object(fields)) =
+        reference_fields_for_value(world, entity, component, value)
+    {
+        return fields;
+    }
+    let mut fields = extract_bridge_fields(py, value, reflected_enum);
+    if let Some(variant) = reflected_variant {
+        if value.call_method0("__copy__").is_err() {
+            fields.clear();
+        }
+        fields.insert("variant".to_string(), serde_json::Value::String(variant));
+    }
+    fields
+}
+
 pub fn get_component(
     world: &mut World,
     entity_ref: EntityRef,
@@ -239,8 +259,7 @@ pub fn get_component(
 
     // Try bridge components first
     let bridge_result = Python::attach(|py| -> Option<serde_json::Value> {
-        let validity_flag = pybevy_core::ValidityFlag::new_read();
-        let validity = validity_flag.with_access_mode(pybevy_core::AccessMode::Read);
+        let (_read_window, validity) = ValidityGuard::read();
 
         if let Some(ComponentTarget::Native(bridge)) = &target {
             let contains = match world.get_entity(entity) {
@@ -248,7 +267,6 @@ pub fn get_component(
                 Err(_) => return None,
             };
             if !contains {
-                validity_flag.set_invalid();
                 return None;
             }
             let reflected_enum = reflected_type_is_enum(world, bridge.bevy_type_id());
@@ -264,26 +282,17 @@ pub fn get_component(
             .ok()
             .flatten()
             .map(|py_obj| {
-                let bound = py_obj.bind(py);
-                if let Some(fields) = super::asset_reference::reference_fields_for_value(
+                native_value_fields(
+                    py,
                     world,
                     entity,
                     bridge.name(),
-                    bound,
-                ) {
-                    return fields.as_object().cloned().unwrap_or_default();
-                }
-                let mut fields = extract_bridge_fields(py, bound, reflected_enum);
-                if let Some(variant) = reflected_variant {
-                    if bound.call_method0("__copy__").is_err() {
-                        fields.clear();
-                    }
-                    fields.insert("variant".to_string(), serde_json::Value::String(variant));
-                }
-                fields
+                    py_obj.bind(py),
+                    reflected_enum,
+                    reflected_variant,
+                )
             });
 
-            validity_flag.set_invalid();
             return Some(serde_json::json!({
                 "entity_id": entity_id,
                 "entity_label": &label,
@@ -292,7 +301,6 @@ pub fn get_component(
             }));
         }
 
-        validity_flag.set_invalid();
         None
     });
 

@@ -16,19 +16,19 @@ use crate::{
         json_float::nonfinite_float_from_json,
         math_shape::{MathShape, READBACK_ARRAYS, math_shape},
         reflect, value,
+        value::{json_f32, json_f64},
     },
     pyo3::{
         enum_names,
         from_json::{
-            color::{construct_color_variant, linear_rgba_from_json},
+            color::{construct_color_variant, linear_rgba_from_json, srgba_from_array},
             enums::{
                 VariantSource, construct_enum_variant, enum_owner_type, enum_variant_names,
                 reject_enum_constant,
             },
             field::{
                 construct_declared_optional, convert_field_value, entity_from_json,
-                has_public_getset_fields, is_dataclass_instance, json_number_to_f32,
-                json_number_to_f64, json_to_py, rebuild_array_like,
+                has_public_getset_fields, is_dataclass_instance, json_to_py, rebuild_array_like,
             },
             lists::convert_list_elements,
             math::{math_readback_array, math_value_from_json, range_from_json},
@@ -189,7 +189,7 @@ fn float(cx: &FieldContext<'_, '_>) -> Converted {
     {
         return Ok(None);
     }
-    json_number_to_f64(cx.value)?
+    json_f64(cx.value)?
         .into_pyobject(cx.py)
         .map(|value| Some(value.into_any().unbind()))
         .map_err(|error| error.to_string())
@@ -207,12 +207,8 @@ fn math_shape_mismatch(cx: &FieldContext<'_, '_>) -> Converted {
         return Ok(None);
     };
     let kind = match cx.value {
-        Value::Null => "null",
-        Value::Bool(_) => "boolean",
-        Value::Number(_) => "number",
-        Value::String(_) => "string",
         Value::Array(_) => return Ok(None),
-        Value::Object(_) => "object",
+        other => value::json_kind_name(other),
     };
     Err(format!("{} expects {shape}, got {kind}", cx.type_name))
 }
@@ -260,7 +256,7 @@ fn val(cx: &FieldContext<'_, '_>) -> Converted {
             .map(|value| Some(value.unbind()))
             .map_err(|error| error.to_string());
     }
-    let value = json_number_to_f32(payload)?;
+    let value = json_f32(payload)?;
     val_type
         .call_method1(method, (value,))
         .map(|value| Some(value.unbind()))
@@ -274,14 +270,7 @@ fn color_array(cx: &FieldContext<'_, '_>) -> Converted {
     let Some(values) = cx.array().filter(|values| values.len() == 4) else {
         return Ok(None);
     };
-    let red = json_number_to_f32(&values[0])?;
-    let green = json_number_to_f32(&values[1])?;
-    let blue = json_number_to_f32(&values[2])?;
-    let alpha = json_number_to_f32(&values[3])?;
-    cx.owner()
-        .call_method1("srgba", (red, green, blue, alpha))
-        .map(|value| Some(value.unbind()))
-        .map_err(|error| error.to_string())
+    srgba_from_array(cx.owner(), values).map(Some)
 }
 
 fn color_tagged_variant(cx: &FieldContext<'_, '_>) -> Converted {

@@ -3,6 +3,7 @@ use pyo3::{prelude::*, types::PyType};
 
 use crate::pyo3::{
     dataclass_fields::dataclass_field_names,
+    descriptors::{accepts_own_value, is_field_descriptor},
     from_json::enums::{enum_owner_type, enum_variant_names},
 };
 
@@ -27,23 +28,10 @@ pub(crate) fn writable_field_names(instance: &Bound<'_, PyAny>) -> Vec<String> {
         if name.starts_with('_') {
             continue;
         }
-        let Ok(attr) = class.getattr(name.as_str()) else {
-            continue;
-        };
-        let descriptor = attr
-            .get_type()
-            .name()
-            .ok()
-            .map(|kind| kind.to_string_lossy().into_owned())
-            .is_some_and(|kind| kind == "getset_descriptor" || kind == "property");
-        if !descriptor {
-            continue;
-        }
-        // Assigning the field's own value distinguishes a getter from a getter/setter.
-        if probe
+        if class
             .getattr(name.as_str())
-            .and_then(|value| probe.setattr(name.as_str(), value))
-            .is_ok()
+            .is_ok_and(|attr| is_field_descriptor(&attr))
+            && accepts_own_value(&probe, &name)
         {
             names.push(name);
         }
@@ -54,14 +42,9 @@ pub(crate) fn writable_field_names(instance: &Bound<'_, PyAny>) -> Vec<String> {
 }
 
 fn declares_component_field(py_type: &Bound<'_, PyType>, name: &str) -> bool {
-    py_type.getattr(name).is_ok_and(|attr| {
-        attr.get_type().name().ok().is_some_and(|kind| {
-            matches!(
-                kind.to_string_lossy().as_ref(),
-                "getset_descriptor" | "property"
-            )
-        })
-    })
+    py_type
+        .getattr(name)
+        .is_ok_and(|attr| is_field_descriptor(&attr))
 }
 
 pub(crate) fn unknown_set_fields<'a>(

@@ -10,20 +10,19 @@ use pyo3::{
     types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyModule, PyTuple, PyType},
 };
 
-use crate::{
-    codec::json_float::{nonfinite_float_from_json, require_finite_float},
-    pyo3::{
-        dataclass_fields::dataclass_field_names,
-        from_json::{
-            enums::{
-                EnumVariantRequest, VariantSource, construct_enum_variant_for_owner,
-                enum_component_variant_request, enum_field_prototype, enum_owner_type,
-                enum_variant_names, tagged_enum_variant_request,
-            },
-            lists::find_pybevy_class,
-            math::math_readback_array,
-            rules::{FieldContext, RULES},
+use crate::pyo3::{
+    dataclass_fields::dataclass_field_names,
+    descriptors::is_getset_descriptor,
+    from_json::{
+        color::srgba_from_array,
+        enums::{
+            EnumVariantRequest, VariantSource, construct_enum_variant_for_owner,
+            enum_component_variant_request, enum_field_prototype, enum_owner_type,
+            enum_variant_names, tagged_enum_variant_request,
         },
+        lists::find_pybevy_class,
+        math::math_readback_array,
+        rules::{FieldContext, RULES},
     },
 };
 
@@ -417,21 +416,7 @@ pub(super) fn construct_declared_optional(
     if type_name == "Color"
         && let serde_json::Value::Array(values) = field_value
     {
-        if values.len() != 4 {
-            return Err(format!(
-                "Color expects [r, g, b, a], got {} elements",
-                values.len()
-            ));
-        }
-        let red = json_number_to_f32(&values[0])?;
-        let green = json_number_to_f32(&values[1])?;
-        let blue = json_number_to_f32(&values[2])?;
-        let alpha = json_number_to_f32(&values[3])?;
-        return class
-            .call_method1("srgba", (red, green, blue, alpha))
-            .map(Bound::unbind)
-            .map(Some)
-            .map_err(|error| error.to_string());
+        return srgba_from_array(&class, values).map(Some);
     }
     let serde_json::Value::Object(fields) = field_value else {
         return Ok(None);
@@ -513,12 +498,7 @@ pub(super) fn has_public_getset_fields(value: &Bound<'_, PyAny>) -> bool {
                 && value
                     .get_type()
                     .getattr(name.as_str())
-                    .is_ok_and(|attribute| {
-                        attribute
-                            .get_type()
-                            .name()
-                            .is_ok_and(|kind| kind == "getset_descriptor")
-                    })
+                    .is_ok_and(|attribute| is_getset_descriptor(&attribute))
         })
     })
 }
@@ -560,20 +540,6 @@ pub(crate) fn convert_field_value_typed(
         }
     }
     json_to_py(py, field_value)
-}
-
-pub(crate) fn json_number_to_f64(value: &serde_json::Value) -> Result<f64, String> {
-    value
-        .as_f64()
-        .or_else(|| nonfinite_float_from_json(value))
-        .ok_or_else(|| format!("Expected number, got {value}"))
-        .and_then(require_finite_float)
-}
-
-pub(crate) fn json_number_to_f32(value: &serde_json::Value) -> Result<f32, String> {
-    let value = json_number_to_f64(value)? as f32;
-    require_finite_float(f64::from(value))?;
-    Ok(value)
 }
 
 /// Convert a JSON value to a Python object
@@ -1692,61 +1658,5 @@ track_holder = TrackHolder()
             assert_eq!(element.get_type().name().unwrap().to_string_lossy(), "Box");
             assert_eq!(element.getattr("y").unwrap().extract::<f64>().unwrap(), 2.0);
         });
-    }
-
-    #[test]
-    fn json_number_to_f64_valid() {
-        let pi = std::f64::consts::PI;
-        let val = serde_json::json!(pi);
-        assert!((json_number_to_f64(&val).unwrap() - pi).abs() < 1e-10);
-    }
-
-    #[test]
-    fn json_number_to_f64_integer() {
-        let val = serde_json::json!(42);
-        assert!((json_number_to_f64(&val).unwrap() - 42.0).abs() < 1e-10);
-    }
-
-    #[test]
-    fn json_number_to_f64_rejects_nonfinite_spellings() {
-        for spelling in ["NaN", "Infinity", "-Infinity"] {
-            assert!(json_number_to_f64(&serde_json::json!(spelling)).is_err());
-        }
-    }
-
-    #[test]
-    fn json_number_to_f64_non_number() {
-        let val = serde_json::json!("not a number");
-        assert!(json_number_to_f64(&val).is_err());
-    }
-
-    #[test]
-    fn json_number_to_f64_negative() {
-        let val = serde_json::json!(-7.5);
-        assert!((json_number_to_f64(&val).unwrap() - (-7.5)).abs() < 1e-10);
-    }
-
-    #[test]
-    fn json_number_to_f64_zero() {
-        let val = serde_json::json!(0);
-        assert!((json_number_to_f64(&val).unwrap()).abs() < 1e-10);
-    }
-
-    #[test]
-    fn json_number_to_f64_bool_is_not_number() {
-        let val = serde_json::json!(true);
-        assert!(json_number_to_f64(&val).is_err());
-    }
-
-    #[test]
-    fn json_number_to_f64_null_is_not_number() {
-        let val = serde_json::json!(null);
-        assert!(json_number_to_f64(&val).is_err());
-    }
-
-    #[test]
-    fn json_number_to_f64_array_is_not_number() {
-        let val = serde_json::json!([1, 2, 3]);
-        assert!(json_number_to_f64(&val).is_err());
     }
 }

@@ -329,18 +329,13 @@ pub fn process_pending_timelines(world: &mut World) {
 
 #[cfg(test)]
 mod tests {
-    use std::{any::TypeId, collections::VecDeque};
+    use std::collections::VecDeque;
 
     use base64::Engine;
     use bevy::{
-        asset::RenderAssetUsages,
         camera::RenderTarget,
-        gizmos::config::DefaultGizmoConfigGroup,
         image::Image,
-        render::{
-            render_resource::{Extent3d, TextureDimension, TextureFormat},
-            view::window::screenshot::{Screenshot, ScreenshotCaptured},
-        },
+        render::view::window::screenshot::{Screenshot, ScreenshotCaptured},
         ui::Node,
         window::PrimaryWindow,
     };
@@ -351,31 +346,14 @@ mod tests {
     use crate::capture::{
         analysis::CapturedFrames,
         headless::HeadlessFrameBuffer,
-        hold::{GizmoEnabledRestore, InternalOverlayUi, OverlaySuppression},
+        hold::{InternalOverlayUi, OverlaySuppression},
         queue::CaptureResponseKind,
         screenshot::{
             PendingScreenshotResponders, ScreenshotResponder, screenshot_captured_observer,
         },
+        test_support::{default_group_restore, gizmos_enabled, make_test_image, world_with_gizmos},
         turnaround::{PendingTurnarounds, TurnaroundCaptures},
     };
-
-    fn world_with_gizmos() -> World {
-        let mut world = World::new();
-        let mut store = GizmoConfigStore::default();
-        store.insert(GizmoConfig::default(), DefaultGizmoConfigGroup);
-        world.insert_resource(store);
-        world
-    }
-
-    fn gizmos_enabled(world: &World) -> bool {
-        let store = world.resource::<GizmoConfigStore>();
-        let (config, _) = store.config::<DefaultGizmoConfigGroup>();
-        config.enabled
-    }
-
-    fn default_group_restore(was_enabled: bool) -> GizmoEnabledRestore {
-        vec![(TypeId::of::<DefaultGizmoConfigGroup>(), was_enabled)]
-    }
 
     fn queued_timeline(
         hide_ui: bool,
@@ -400,22 +378,6 @@ mod tests {
             stall_frames: 0,
         };
         (timeline, rx)
-    }
-
-    fn make_test_image(width: u32, height: u32) -> Image {
-        let size = Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        };
-        let data = vec![255u8; (width * height * 4) as usize];
-        Image::new(
-            size,
-            TextureDimension::D2,
-            data,
-            TextureFormat::Rgba8UnormSrgb,
-            RenderAssetUsages::default(),
-        )
     }
 
     #[test]

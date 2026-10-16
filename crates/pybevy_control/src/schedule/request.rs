@@ -178,11 +178,13 @@ pub fn tool_to_operation(tool: &str, args: &serde_json::Value) -> Result<Control
     // Route combined tools to their hidden sub-variants
     let effective_tool = match tool {
         "capture_screenshot" if map.get("gizmos").and_then(|v| v.as_bool()).unwrap_or(false) => {
-            map.remove("gizmos");
             "capture_with_gizmos"
         }
         "query_spatial" if map.contains_key("radius") => "query_spatial_neighborhood",
-        "check_overlaps" if !map.contains_key("entity") => "check_all_overlaps",
+        "check_overlaps" if map.get("entity").is_none_or(serde_json::Value::is_null) => {
+            map.remove("entity");
+            "check_all_overlaps"
+        }
         other => other,
     };
 

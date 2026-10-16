@@ -9,5 +9,7 @@ pub mod lease;
 pub mod queue;
 pub mod readiness;
 pub mod screenshot;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod timeline;
 pub mod turnaround;

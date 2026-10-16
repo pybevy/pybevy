@@ -138,15 +138,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::capture::hold::hide_ui_nodes;
-
-    fn world_with_gizmos() -> World {
-        let mut world = World::new();
-        let mut store = GizmoConfigStore::default();
-        store.insert(GizmoConfig::default(), DefaultGizmoConfigGroup);
-        world.insert_resource(store);
-        world
-    }
+    use crate::capture::{hold::hide_ui_nodes, test_support::world_with_gizmos};
 
     #[test]
     fn entity_capture_isolates_subtree_camera_and_lighting_then_restores() {

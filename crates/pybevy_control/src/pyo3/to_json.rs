@@ -17,7 +17,11 @@ use crate::{
         math_shape::{FLOAT_VECTORS, math_shape},
         value::{EnumPayload, LINEAR_RGBA_CHANNELS, enum_to_json},
     },
-    pyo3::{custom, from_json::enums::enum_variant_names},
+    pyo3::{
+        custom,
+        descriptors::{accepts_own_value, is_getset_descriptor},
+        from_json::enums::enum_variant_names,
+    },
 };
 
 /// Extract field values from a custom component.
@@ -44,30 +48,31 @@ pub(crate) fn extract_custom_component_fields(
     let py_obj: &Py<PyAny> = unsafe { &*(ptr.as_ptr() as *const Py<PyAny>) };
     let bound = py_obj.bind(py);
 
-    // Try dataclass fields first
+    python_object_fields_to_json(py, bound)
+}
+
+/// Public fields of a Python-stored value: its dataclass fields, else its
+/// public `__dict__` entries; `None` when it has neither.
+pub(crate) fn python_object_fields_to_json(
+    py: Python<'_>,
+    bound: &Bound<'_, PyAny>,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
     if let Some(fields) = dataclass_fields_to_json(py, bound)
         && !fields.is_empty()
     {
         return Some(fields);
     }
-
-    let mut map = serde_json::Map::new();
-
-    // Fallback: try __dict__
-    if let Ok(dict) = bound.getattr("__dict__") {
-        #[allow(clippy::collapsible_if)]
-        if let Ok(py_dict) = dict.cast::<PyDict>() {
-            for (key, value) in py_dict.iter() {
-                if let Ok(k) = key.extract::<String>() {
-                    if !k.starts_with('_') {
-                        map.insert(k, py_value_to_json(&value));
-                    }
-                }
-            }
-        }
-    }
-
-    if map.is_empty() { None } else { Some(map) }
+    let dict = bound.getattr("__dict__").ok()?;
+    let fields: serde_json::Map<String, serde_json::Value> = dict
+        .cast::<PyDict>()
+        .ok()?
+        .iter()
+        .filter_map(|(key, value)| {
+            let key = key.extract::<String>().ok()?;
+            (!key.starts_with('_')).then(|| (key, py_value_to_json(&value)))
+        })
+        .collect();
+    (!fields.is_empty()).then_some(fields)
 }
 
 /// Extract the fields of a dataclass instance as JSON.
@@ -351,16 +356,11 @@ fn extract_bridge_fields_with_context(
             if name.starts_with('_') {
                 continue;
             }
-            // Check if the class attribute is a getset_descriptor (PyO3 property)
-            let Ok(class_attr) = py_type.as_any().getattr(name.as_str()) else {
-                continue;
-            };
-            let type_name = class_attr
-                .get_type()
-                .name()
-                .map(|n| n.to_string())
-                .unwrap_or_default();
-            if type_name != "getset_descriptor" {
+            if !py_type
+                .as_any()
+                .getattr(name.as_str())
+                .is_ok_and(|attr| is_getset_descriptor(&attr))
+            {
                 continue;
             }
             // Get the actual value from the instance and convert recursively
@@ -573,25 +573,13 @@ pub(crate) fn has_writable_properties(_py: Python<'_>, py_type: &Bound<'_, PyTyp
         if name.starts_with('_') {
             continue;
         }
-        let Ok(class_attr) = py_type.as_any().getattr(name.as_str()) else {
-            continue;
-        };
-        let type_name = class_attr
-            .get_type()
-            .name()
-            .map(|n| n.to_string())
-            .unwrap_or_default();
-        if type_name == "getset_descriptor" {
-            // PyO3 getset descriptors do not expose Python property's `fset`.
-            // Assigning the current value to a fresh owned instance reliably
-            // distinguishes generated getters from generated getter/setters.
-            if instance
-                .getattr(name.as_str())
-                .and_then(|value| instance.setattr(name.as_str(), value))
-                .is_ok()
-            {
-                return true;
-            }
+        if py_type
+            .as_any()
+            .getattr(name.as_str())
+            .is_ok_and(|attr| is_getset_descriptor(&attr))
+            && accepts_own_value(&instance, &name)
+        {
+            return true;
         }
     }
     false
@@ -620,13 +608,7 @@ pub(crate) fn extract_bridge_fields(
         }
         return fields;
     };
-    fields.retain(|name, _| {
-        name == "variant"
-            || owned
-                .getattr(name.as_str())
-                .and_then(|value| owned.setattr(name.as_str(), value))
-                .is_ok()
-    });
+    fields.retain(|name, _| name == "variant" || accepts_own_value(&owned, name));
     fields
 }
 
@@ -635,7 +617,7 @@ mod tests {
     use std::{sync::Once, thread};
 
     use bevy::{color::Color, ecs::world::World, prelude::Transform};
-    use pybevy_core::registry::global_registry::all_component_bridges;
+    use pybevy_core::{ValidityGuard, registry::global_registry::all_component_bridges};
     use pyo3::types::{PyAnyMethods, PyDict, PyList, PyTuple};
 
     // Force linker to include inventory entries needed by these handler tests.
@@ -927,8 +909,7 @@ mod tests {
         // Test that a PyO3 component with getset_descriptor fields produces a dict,
         // not an opaque repr string
         Python::attach(|py| {
-            let validity_flag = pybevy_core::ValidityFlag::new_read();
-            let validity = validity_flag.with_access_mode(pybevy_core::AccessMode::Read);
+            let (_read_window, validity) = ValidityGuard::read();
 
             let mut world = World::new();
             let entity = world.spawn(Transform::from_xyz(1.0, 2.0, 3.0)).id();
@@ -968,7 +949,6 @@ mod tests {
                     );
                 }
             }
-            validity_flag.set_invalid();
         });
     }
 
@@ -978,8 +958,7 @@ mod tests {
         // Regression: before Fix 1, all field values were repr() strings.
         // After Fix 1, primitive values should be native JSON types.
         Python::attach(|py| {
-            let validity_flag = pybevy_core::ValidityFlag::new_read();
-            let validity = validity_flag.with_access_mode(pybevy_core::AccessMode::Read);
+            let (_read_window, validity) = ValidityGuard::read();
 
             let mut world = World::new();
             let entity = world.spawn(Transform::from_xyz(5.0, 10.0, 0.0)).id();
@@ -1016,7 +995,6 @@ mod tests {
                     );
                 }
             }
-            validity_flag.set_invalid();
         });
     }
 

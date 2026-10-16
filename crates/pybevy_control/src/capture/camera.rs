@@ -348,11 +348,8 @@ pub(crate) fn cleanup_debug_camera_world(cleanup: DebugCameraCleanup, world: &mu
 #[cfg(test)]
 mod tests {
     use bevy::{
-        asset::RenderAssetUsages,
         camera::{RenderTarget, Viewport},
-        gizmos::config::DefaultGizmoConfigGroup,
         image::Image,
-        render::render_resource::{Extent3d, TextureDimension, TextureFormat},
         window::WindowRef,
     };
     use tokio::sync::oneshot;
@@ -363,39 +360,10 @@ mod tests {
         hold::CaptureHold,
         queue::{CaptureResponseKind, DebugCameraRequest, PendingScreenshots},
         screenshot::{StagedScreenshot, StagedScreenshots, process_pending_screenshots},
+        test_support::{
+            make_test_image, spawn_structurally_valid_headless_camera, world_with_gizmos,
+        },
     };
-
-    fn spawn_structurally_valid_headless_camera(world: &mut World) -> Entity {
-        let mut images = Assets::<Image>::default();
-        let target = images.add(make_test_image(1, 1));
-        world
-            .spawn((Camera::default(), RenderTarget::Image(target.into())))
-            .id()
-    }
-
-    fn world_with_gizmos() -> World {
-        let mut world = World::new();
-        let mut store = GizmoConfigStore::default();
-        store.insert(GizmoConfig::default(), DefaultGizmoConfigGroup);
-        world.insert_resource(store);
-        world
-    }
-
-    fn make_test_image(width: u32, height: u32) -> Image {
-        let size = Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        };
-        let data = vec![255u8; (width * height * 4) as usize];
-        Image::new(
-            size,
-            TextureDimension::D2,
-            data,
-            TextureFormat::Rgba8UnormSrgb,
-            RenderAssetUsages::default(),
-        )
-    }
 
     #[test]
     fn capture_camera_validation_distinguishes_missing_inactive_and_target_errors() {

@@ -60,8 +60,7 @@ pub fn mutate_asset(
         };
 
         // Extract the component to get the PyHandle
-        let validity_flag = pybevy_core::ValidityFlag::new_read();
-        let validity = validity_flag.with_access_mode(pybevy_core::AccessMode::Read);
+        let (read_window, validity) = ValidityGuard::read();
 
         let handle_obj = if world.get_entity(entity).is_ok() {
             // SAFETY: `world` is a live &mut World; the pointer is valid for this call.
@@ -72,7 +71,6 @@ pub fn mutate_asset(
             .flatten()
         } else {
             errors.push(pybevy_core::public_error::mcp_entity_not_found(entity_id));
-            validity_flag.set_invalid();
             return;
         };
         let untyped = (|| {
@@ -94,7 +92,7 @@ pub fn mutate_asset(
                 .map_err(|error| format!("Failed to convert handle: {error}"))?;
             Ok((untyped, asset_type_name))
         })();
-        validity_flag.set_invalid();
+        drop(read_window);
 
         let (untyped, handle_asset_type) = match untyped {
             Ok(handle) => handle,

@@ -217,7 +217,7 @@ impl CaptureHold {
 
 #[cfg(test)]
 mod tests {
-    use std::{any::TypeId, collections::VecDeque};
+    use std::collections::VecDeque;
 
     use bevy::{
         gizmos::config::DefaultGizmoConfigGroup, light::gizmos::LightGizmoConfigGroup,
@@ -233,26 +233,9 @@ mod tests {
             MAX_CAPTURE_WAIT_FRAMES, PendingScreenshotResponders, ScreenshotResponder,
             process_pending_screenshots,
         },
+        test_support::{default_group_restore, gizmos_enabled, world_with_gizmos},
         timeline::{ActiveTimeline, PendingTimelines, TimelineCaptures, process_pending_timelines},
     };
-
-    fn world_with_gizmos() -> World {
-        let mut world = World::new();
-        let mut store = GizmoConfigStore::default();
-        store.insert(GizmoConfig::default(), DefaultGizmoConfigGroup);
-        world.insert_resource(store);
-        world
-    }
-
-    fn gizmos_enabled(world: &World) -> bool {
-        let store = world.resource::<GizmoConfigStore>();
-        let (config, _) = store.config::<DefaultGizmoConfigGroup>();
-        config.enabled
-    }
-
-    fn default_group_restore(was_enabled: bool) -> GizmoEnabledRestore {
-        vec![(TypeId::of::<DefaultGizmoConfigGroup>(), was_enabled)]
-    }
 
     #[test]
     fn set_gizmos_enabled_disables_when_enabled() {
