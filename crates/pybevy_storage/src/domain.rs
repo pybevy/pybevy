@@ -7,7 +7,7 @@
 
 use std::{fmt, marker::PhantomData, num::NonZero, ops::Range, time::Duration};
 
-use bevy::math::{IVec2, Quat, Vec2, Vec3, Vec3A, Vec4};
+use bevy::math::{IVec2, Quat, UVec2, UVec3, Vec2, Vec3, Vec3A, Vec4};
 #[cfg(feature = "text")]
 use bevy::text::FontSize;
 #[cfg(feature = "ui")]
@@ -34,6 +34,8 @@ pub enum FieldDomain {
     NonNegative,
     /// Finite and `v > 0`.
     Positive,
+    /// `v != 0`; accepts infinities.
+    NonZero,
     /// `lo <= v < hi`.
     Range { lo: f64, hi: f64 },
     /// `lo <= v <= hi`.
@@ -55,6 +57,8 @@ pub const NON_NEGATIVE: &[FieldDomain] = &[FieldDomain::NonNegative];
 pub const FINITE_NON_NEGATIVE: &[FieldDomain] = &[FieldDomain::Finite, FieldDomain::NonNegative];
 /// Finite and `v > 0`.
 pub const POSITIVE: &[FieldDomain] = &[FieldDomain::Positive];
+/// Anything but zero, such as a one-based grid line.
+pub const NON_ZERO: &[FieldDomain] = &[FieldDomain::NonZero];
 /// A bit index of a `u64` mask.
 pub const MASK_BIT_DOMAIN: &[FieldDomain] = &[FieldDomain::Range { lo: 0.0, hi: 64.0 }];
 
@@ -74,6 +78,7 @@ impl FieldDomain {
             Self::FiniteOrPosInf => v.is_finite() || v == f64::INFINITY,
             Self::NonNegative => v >= 0.0,
             Self::Positive => v.is_finite() && v > 0.0,
+            Self::NonZero => !v.is_nan() && v != 0.0,
             Self::Range { lo, hi } => lo <= v && v < hi,
             Self::RangeInclusive { lo, hi } => lo <= v && v <= hi,
             Self::AtLeast(n) => v >= n as f64,
@@ -87,6 +92,7 @@ impl FieldDomain {
             Self::Finite | Self::NotNan | Self::FiniteOrPosInf => true,
             Self::NonNegative => v >= 0,
             Self::Positive => v > 0,
+            Self::NonZero => v != 0,
             Self::Range { lo, hi } => lo <= wide && wide < hi,
             Self::RangeInclusive { lo, hi } => lo <= wide && wide <= hi,
             Self::AtLeast(n) => v >= i128::from(n),
@@ -257,6 +263,8 @@ vector_domain_values! {
     Vec4 => ["x", "y", "z", "w"];
     Quat => ["x", "y", "z", "w"];
     IVec2 => ["x", "y"];
+    UVec2 => ["x", "y"];
+    UVec3 => ["x", "y", "z"];
 }
 
 impl DomainValues for DomainValue {
@@ -810,6 +818,7 @@ fn write_requirements(
             FieldDomain::NonNegative => f.write_str("non-negative")?,
             FieldDomain::Positive if int => f.write_str("greater than zero")?,
             FieldDomain::Positive => f.write_str("finite and greater than zero")?,
+            FieldDomain::NonZero => f.write_str("non-zero")?,
             FieldDomain::Range { lo, hi } => {
                 write!(f, "in [{}, {})", bound(lo, int), bound(hi, int))?;
             }
@@ -1038,7 +1047,7 @@ mod tests {
 
     use super::{
         DomainValue, DomainViolation, DurationInput, F32Input, FINITE, FINITE_NON_NEGATIVE,
-        FieldDomain, IntegerInput, NON_NEGATIVE, NOT_NAN, POSITIVE, ViolationDetails,
+        FieldDomain, IntegerInput, NON_NEGATIVE, NON_ZERO, NOT_NAN, POSITIVE, ViolationDetails,
         ViolationKind, check, check_column, check_components, check_f64_as_f32, check_ordered,
     };
     use crate::StorageError;
@@ -1089,6 +1098,14 @@ mod tests {
         assert_eq!(
             accepted(POSITIVE, &probes),
             [false, false, false, false, false, true]
+        );
+        assert_eq!(
+            accepted(NON_ZERO, &probes),
+            [false, true, true, false, false, true]
+        );
+        assert_eq!(
+            message(check("G", "start", 0_i16, NON_ZERO)),
+            "G.start must be non-zero (got 0)"
         );
         assert_eq!(
             accepted(HALF_OPEN, &probes),

@@ -64,10 +64,10 @@ impl PyCubemapFrusta {
     }
 
     pub fn get(&self, py: Python<'_>, index: isize) -> PyResult<Py<PyFrustum>> {
-        let index = usize::try_from(index)
-            .ok()
-            .filter(|&index| index < CUBEMAP_FACE_COUNT)
-            .ok_or_else(|| PyIndexError::new_err(CUBEMAP_FACE_INDEX))?;
+        let index = usize::try_from(index).unwrap_or(usize::MAX);
+        if index >= CUBEMAP_FACE_COUNT {
+            return Err(PyIndexError::new_err(CUBEMAP_FACE_INDEX));
+        }
         let cf = self.as_ref()?;
         Py::new(
             py,

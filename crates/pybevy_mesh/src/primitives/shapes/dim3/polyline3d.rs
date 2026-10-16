@@ -1,10 +1,15 @@
 use bevy::math::{Vec3, primitives::Polyline3d};
-use pybevy_core::public_error::polyline_mesh_too_short;
+use pybevy_core::{
+    domain::{IntegerInput, NON_NEGATIVE, check_for},
+    public_error::polyline_mesh_too_short,
+};
 use pybevy_math::vec3::PyVec3;
 use pyo3::{exceptions::PyValueError, prelude::*, types::PyList};
 
 use crate::{
-    mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyPolyline3dMeshBuilder,
+    mesh_builder::PyMeshBuilder,
+    meshable::PyMeshable,
+    primitives::{PyPolyline3dMeshBuilder, validation::vertex_budget},
 };
 
 #[pyclass(name = "Polyline3d", module = "pybevy.math", extends = PyMeshable, eq, skip_from_py_object)]
@@ -30,8 +35,13 @@ impl PyPolyline3d {
         py: Python<'_>,
         start: PyVec3,
         end: PyVec3,
-        subdivisions: usize,
+        subdivisions: IntegerInput<u64>,
     ) -> PyResult<Py<Self>> {
+        let subdivisions =
+            check_for::<Self, _>("subdivisions", subdivisions, NON_NEGATIVE)?.stored();
+        // Bevy reserves subdivisions + 2 vertices up front.
+        vertex_budget("Polyline3d", u128::from(subdivisions) + 2)?;
+        let subdivisions = subdivisions as usize;
         let start: Vec3 = start.try_into()?;
         let end: Vec3 = end.try_into()?;
         Py::new(

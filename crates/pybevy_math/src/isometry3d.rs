@@ -4,6 +4,7 @@ use pybevy_macros::pyvalue;
 use pyo3::prelude::*;
 
 use crate::{
+    check_direction_length,
     dir3::PyDir3,
     quat::PyQuat,
     vec3::PyVec3,
@@ -151,8 +152,9 @@ impl PyIsometry3d {
             let transformed: Vec3 = iso * Vec3::try_from(&other_vec)?;
             Ok(Py::new(py, PyVec3::from_vec3(transformed))?.into_any())
         } else if let Ok(other_dir) = other.extract::<PyDir3>() {
-            let rotated: Dir3 = iso * Dir3::try_from(&other_dir)?;
-            Ok(Py::new(py, PyDir3::from_dir3(rotated))?.into_any())
+            let rotated = iso.rotation * Vec3::from(Dir3::try_from(&other_dir)?);
+            check_direction_length("Isometry3d * Dir3", rotated.length_squared())?;
+            Ok(Py::new(py, PyDir3::from_dir3(Dir3::new_unchecked(rotated)))?.into_any())
         } else {
             Ok(py.NotImplemented().into_any())
         }

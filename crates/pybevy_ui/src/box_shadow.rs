@@ -117,9 +117,8 @@ impl PyBoxShadow {
 
     pub fn __setitem__(&mut self, index: isize, style: PyShadowStyle) -> PyResult<()> {
         let style = style.try_into()?;
-        let mut inner = self.as_mut()?;
-        let index = shadow_index(index, inner.0.len())?;
-        inner.0[index] = style;
+        let index = shadow_index(index, self.as_ref()?.0.len())?;
+        self.as_mut()?.0[index] = style;
         Ok(())
     }
 

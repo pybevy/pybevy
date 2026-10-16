@@ -3,17 +3,27 @@ use std::time::Duration;
 use bevy::audio::{AudioSink, AudioSinkPlayback};
 use pybevy_core::{
     ComponentStorage, PyComponent,
-    domain::{FieldDomain, check_for},
-    public_error::audio_seek_failed,
+    domain::{POSITIVE, check_for},
+    public_error::{audio_seek_beyond_speed_range, audio_seek_failed},
     repr::float_repr,
 };
 use pybevy_macros::pycomponent;
-use pyo3::{exceptions::PyRuntimeError, prelude::*};
+use pyo3::{
+    exceptions::{PyRuntimeError, PyValueError},
+    prelude::*,
+};
 
 use crate::volume::PyVolume;
 
-/// Playback speed must be finite; negative (reverse) speed is allowed.
-pub(crate) const SPEED_DOMAIN: &[FieldDomain] = &[FieldDomain::Finite];
+/// rodio scales a seek position by the speed with a panicking `Duration::mul_f32`.
+pub(crate) fn check_seek(position: Duration, speed: f32) -> PyResult<()> {
+    if Duration::try_from_secs_f64(position.as_secs_f64() * f64::from(speed)).is_err() {
+        return Err(PyValueError::new_err(audio_seek_beyond_speed_range(
+            position, speed,
+        )));
+    }
+    Ok(())
+}
 
 #[pycomponent(AudioSink, no_clone, bridge, no_reflect)]
 #[pyclass(name = "AudioSink", module = "pybevy.audio", extends = PyComponent)]
@@ -52,7 +62,8 @@ impl PyAudioSink {
     }
 
     pub fn set_speed(&self, speed: f32) -> PyResult<()> {
-        let speed = check_for::<Self, _>("speed", speed, SPEED_DOMAIN)?;
+        // rodio's seek and duration math panics for a zero or negative speed.
+        let speed = check_for::<Self, _>("speed", speed, POSITIVE)?;
         self.as_ref()?.set_speed(speed);
         Ok(())
     }
@@ -84,8 +95,9 @@ impl PyAudioSink {
     }
 
     pub fn try_seek(&self, pos: Duration) -> PyResult<()> {
-        self.as_ref()?
-            .try_seek(pos)
+        let sink = self.as_ref()?;
+        check_seek(pos, sink.speed())?;
+        sink.try_seek(pos)
             .map_err(|e| PyRuntimeError::new_err(audio_seek_failed(e)))?;
         Ok(())
     }

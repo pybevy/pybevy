@@ -80,13 +80,18 @@ fn variant_values(value: &Bound<'_, PyAny>, name: &str, accept_u32: bool) -> PyR
     value.extract::<Vec<u32>>().map_err(|_| invalid())
 }
 
+/// Bevy reserves `u16::MAX` as the primitive-restart value of `Indices::U16`.
+fn u16_index(index: u32) -> PyResult<u16> {
+    u16::try_from(index)
+        .ok()
+        .filter(|&index| index < u16::MAX)
+        .ok_or_else(|| PyOverflowError::new_err(public_error::indices_u16_overflow(index)))
+}
+
 fn u16_values(value: &Bound<'_, PyAny>) -> PyResult<Vec<u16>> {
     variant_values(value, "U16", true)?
         .into_iter()
-        .map(|index| {
-            u16::try_from(index)
-                .map_err(|_| PyOverflowError::new_err(public_error::indices_u16_overflow(index)))
-        })
+        .map(u16_index)
         .collect()
 }
 
@@ -109,12 +114,10 @@ pub struct PyIndices {
 
 impl PyIndices {
     fn extend_values(&mut self, values: Vec<u32>) -> PyResult<()> {
-        if let Indices::U16(_) = self.inner
-            && let Some(&index) = values.iter().find(|&&index| index >= u32::from(u16::MAX))
-        {
-            return Err(PyOverflowError::new_err(
-                public_error::indices_u16_overflow(index),
-            ));
+        if let Indices::U16(_) = self.inner {
+            for &index in &values {
+                u16_index(index)?;
+            }
         }
         self.inner.extend(values);
         Ok(())

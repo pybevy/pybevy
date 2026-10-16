@@ -3,14 +3,15 @@ use std::{collections::HashMap, sync::Arc};
 use bevy::ecs::{component::ComponentId, entity::Entity, ptr::OwningPtr, world::World};
 use pybevy_core::{
     LogicalTypeId, PreparedBatchComponent, PreparedUniformComponent,
-    public_error::RESOURCE_COMPONENT_SPAWN, registry::global_registry,
+    public_error::{self, RESOURCE_COMPONENT_SPAWN},
+    registry::global_registry,
 };
 use pybevy_ecs::shared::batch_spawn::{
     BatchCardinality, BatchSpawnCore, BatchSpawnPlan, BatchTypeKey, PreparedBatchInserter,
 };
 use pyo3::{
     PyTraverseError, PyVisit,
-    exceptions::{PyStopIteration, PyTypeError, PyValueError},
+    exceptions::{PyMemoryError, PyStopIteration, PyTypeError, PyValueError},
     ffi::PyTypeObject,
     prelude::*,
     types::{PyTuple, PyType},
@@ -115,6 +116,19 @@ pub struct SpawnBatchCommand {
     registrations: Vec<Option<PreparedCustomComponentRegistration>>,
 }
 
+/// Bevy panics once entity indices run out, and an entity id buffer for an
+/// unbounded count aborts on allocation failure.
+fn check_spawn_count(count: usize) -> PyResult<()> {
+    if count > u32::MAX as usize {
+        return Err(PyValueError::new_err(
+            public_error::spawn_batch_count_too_large(count),
+        ));
+    }
+    Vec::<Entity>::new()
+        .try_reserve_exact(count)
+        .map_err(|_| PyMemoryError::new_err(public_error::spawn_batch_allocation_failed(count)))
+}
+
 impl SpawnBatchCommand {
     /// Create a new spawn batch command from Python components
     pub fn new(
@@ -122,6 +136,9 @@ impl SpawnBatchCommand {
         components: &Bound<'_, PyTuple>,
         count: Option<usize>,
     ) -> PyResult<Self> {
+        if let Some(count) = count {
+            check_spawn_count(count)?;
+        }
         let mut component_data = Vec::new();
         let mut retained_types = Vec::new();
         let mut registrations = Vec::new();

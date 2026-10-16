@@ -5,27 +5,53 @@ use bevy::{
     image::Image,
     light::atmosphere::{ScatteringMedium, ScatteringTerm},
 };
-use pybevy_core::{AssetStorage, Omittable, PyAsset, extract_handle_from_any};
+use pybevy_core::{
+    AssetStorage, Omittable, PyAsset, domain::IntegerInput, extract_handle_from_any,
+};
 use pybevy_macros::pyasset;
 use pyo3::prelude::*;
 
 use crate::{scattering_term::PyScatteringTerm, scattering_terms::PyScatteringTerms};
 
-#[pyasset(ScatteringMedium, bridge, not_loadable)]
+// Bevy builds the medium's LUT textures with these sides.
+#[pyasset(
+    ScatteringMedium,
+    bridge,
+    not_loadable,
+    domains = [falloff_resolution => [positive], phase_resolution => [positive]]
+)]
 #[pyclass(name = "ScatteringMedium", module = "pybevy.light", extends = PyAsset, skip_from_py_object)]
 pub struct PyScatteringMedium {
     pub(crate) storage: AssetStorage<ScatteringMedium>,
 }
 
+impl PyScatteringMedium {
+    fn check_resolutions(
+        falloff_resolution: IntegerInput<u32>,
+        phase_resolution: IntegerInput<u32>,
+    ) -> PyResult<(u32, u32)> {
+        Ok((
+            Self::check_falloff_resolution(falloff_resolution)?.stored(),
+            Self::check_phase_resolution(phase_resolution)?.stored(),
+        ))
+    }
+}
+
 #[pymethods]
 impl PyScatteringMedium {
     #[new]
-    #[pyo3(signature = (falloff_resolution = 256, phase_resolution = 256, terms = Omittable::default()))]
+    #[pyo3(signature = (
+        falloff_resolution = IntegerInput::new(256),
+        phase_resolution = IntegerInput::new(256),
+        terms = Omittable::default()
+    ))]
     pub fn new(
-        falloff_resolution: u32,
-        phase_resolution: u32,
+        falloff_resolution: IntegerInput<u32>,
+        phase_resolution: IntegerInput<u32>,
         terms: Omittable<Vec<PyScatteringTerm>>,
     ) -> PyResult<PyClassInitializer<Self>> {
+        let (falloff_resolution, phase_resolution) =
+            Self::check_resolutions(falloff_resolution, phase_resolution)?;
         // Omitted terms fall back to the Earth scattering profile at the given resolutions.
         let medium = match terms.into_option() {
             Some(terms) => {
@@ -57,8 +83,8 @@ impl PyScatteringMedium {
     }
 
     #[setter]
-    pub fn set_falloff_resolution(&mut self, value: u32) -> PyResult<()> {
-        self.as_mut()?.falloff_resolution = value;
+    pub fn set_falloff_resolution(&mut self, value: IntegerInput<u32>) -> PyResult<()> {
+        self.as_mut()?.falloff_resolution = Self::check_falloff_resolution(value)?.stored();
         Ok(())
     }
 
@@ -68,8 +94,8 @@ impl PyScatteringMedium {
     }
 
     #[setter]
-    pub fn set_phase_resolution(&mut self, value: u32) -> PyResult<()> {
-        self.as_mut()?.phase_resolution = value;
+    pub fn set_phase_resolution(&mut self, value: IntegerInput<u32>) -> PyResult<()> {
+        self.as_mut()?.phase_resolution = Self::check_phase_resolution(value)?.stored();
         Ok(())
     }
 
@@ -91,8 +117,13 @@ impl PyScatteringMedium {
     }
 
     #[staticmethod]
-    #[pyo3(signature = (falloff_resolution = 256, phase_resolution = 256))]
-    pub fn earth(falloff_resolution: u32, phase_resolution: u32) -> PyResult<Py<Self>> {
+    #[pyo3(signature = (falloff_resolution = IntegerInput::new(256), phase_resolution = IntegerInput::new(256)))]
+    pub fn earth(
+        falloff_resolution: IntegerInput<u32>,
+        phase_resolution: IntegerInput<u32>,
+    ) -> PyResult<Py<Self>> {
+        let (falloff_resolution, phase_resolution) =
+            Self::check_resolutions(falloff_resolution, phase_resolution)?;
         Python::attach(|py| {
             Py::new(
                 py,
@@ -105,12 +136,19 @@ impl PyScatteringMedium {
     }
 
     #[staticmethod]
-    #[pyo3(signature = (falloff_resolution = 256, phase_resolution = 256, *, dust_phase))]
+    #[pyo3(signature = (
+        falloff_resolution = IntegerInput::new(256),
+        phase_resolution = IntegerInput::new(256),
+        *,
+        dust_phase
+    ))]
     pub fn mars(
-        falloff_resolution: u32,
-        phase_resolution: u32,
+        falloff_resolution: IntegerInput<u32>,
+        phase_resolution: IntegerInput<u32>,
         dust_phase: &Bound<'_, PyAny>,
     ) -> PyResult<Py<Self>> {
+        let (falloff_resolution, phase_resolution) =
+            Self::check_resolutions(falloff_resolution, phase_resolution)?;
         let handle = extract_handle_from_any(dust_phase)?;
         let dust_phase: Handle<Image> = handle.try_into()?;
         Python::attach(|py| {

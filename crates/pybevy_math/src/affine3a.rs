@@ -12,6 +12,7 @@ use pyo3::{
 
 use super::{mat3a::PyMat3A, mat4::PyMat4, quat::PyQuat, vec3::PyVec3, vec3a::PyVec3A};
 use crate::{
+    checked_axis_angle,
     mat4::{look_at_inputs, look_to_inputs},
     require_invertible,
     richcmp::comparison_result,
@@ -155,9 +156,9 @@ impl PyAffine3A {
 
     #[staticmethod]
     pub fn from_axis_angle(axis: &PyVec3, angle: f32) -> PyResult<Self> {
-        let a: Vec3 = axis.try_into()?;
+        let (axis, angle) = checked_axis_angle::<Self>(axis.try_into()?, angle)?;
         Ok(PyAffine3A::from_affine3a(Affine3A::from_axis_angle(
-            a, angle,
+            axis, angle,
         )))
     }
 

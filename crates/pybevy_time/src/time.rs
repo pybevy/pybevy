@@ -3,30 +3,44 @@ use std::time::Duration;
 use bevy::time::{Fixed, Real, Time, Virtual};
 use pybevy_core::{
     PyResource, ResourceStorage,
-    domain::{DurationInput, POSITIVE, check},
-    public_error::TIME_CONTEXT_TYPE_REQUIRED,
+    domain::{DurationInput, POSITIVE, TimedeltaInput, check, check_for},
+    public_error::{DURATION_OVERFLOW, TIME_CONTEXT_TYPE_REQUIRED, time_moved_backwards},
     relative_speed,
     repr::float_repr,
     resource_initializer, timestep_from_hz,
 };
 use pybevy_macros::pyresource;
-use pyo3::{PyTypeInfo, exceptions::PyTypeError, prelude::*, types::PyType};
+use pyo3::{
+    PyClass, PyTypeInfo,
+    exceptions::{PyTypeError, PyValueError},
+    prelude::*,
+    types::PyType,
+};
 
 use crate::time_context::{PyFixed, PyReal, PyVirtual};
 
 const FIXED: &str = "Time[Fixed]";
 const VIRTUAL: &str = "Time[Virtual]";
+const REAL: &str = "Time[Real]";
 
-fn positive_duration(
-    owner: &'static str,
-    field: &'static str,
-    duration: Duration,
-) -> PyResult<Duration> {
-    Ok(check(owner, field, duration, POSITIVE)?)
+/// Bevy asserts that `advance_to` never moves time backwards.
+fn check_advance_to<T: Default>(owner: &str, time: &Time<T>, elapsed: Duration) -> PyResult<()> {
+    if elapsed < time.elapsed() {
+        return Err(PyValueError::new_err(time_moved_backwards(
+            owner,
+            elapsed,
+            time.elapsed(),
+        )));
+    }
+    Ok(())
 }
 
-fn positive_seconds(owner: &'static str, field: &'static str, seconds: f64) -> PyResult<Duration> {
-    Ok(check(owner, field, DurationInput::Seconds(seconds), POSITIVE)?.stored())
+/// Bevy adds `delta` to the elapsed time with a panicking `Duration` add.
+fn check_advance_by<T: Default>(time: &Time<T>, delta: Duration) -> PyResult<()> {
+    time.elapsed()
+        .checked_add(delta)
+        .map(drop)
+        .ok_or_else(|| PyValueError::new_err(DURATION_OVERFLOW))
 }
 
 #[pyresource(Time, bridge)]
@@ -63,12 +77,13 @@ impl PyTime {
     }
 
     pub fn advance_by(&mut self, delta: Duration) -> PyResult<()> {
+        check_advance_by(self.as_ref()?, delta)?;
         self.as_mut()?.advance_by(delta);
         Ok(())
     }
 
-    pub fn set_wrap_period(&mut self, wrap_period: Duration) -> PyResult<()> {
-        let wrap_period = positive_duration("Time", "wrap_period", wrap_period)?;
+    pub fn set_wrap_period(&mut self, wrap_period: TimedeltaInput) -> PyResult<()> {
+        let wrap_period = check_for::<Self, _>("wrap_period", wrap_period, POSITIVE)?.stored();
         self.as_mut()?.set_wrap_period(wrap_period);
         Ok(())
     }
@@ -114,6 +129,7 @@ impl PyTime {
     }
 
     pub fn advance_to(&mut self, elapsed: Duration) -> PyResult<()> {
+        check_advance_to(<Self as PyClass>::NAME, self.as_ref()?, elapsed)?;
         self.as_mut()?.advance_to(elapsed);
         Ok(())
     }
@@ -145,8 +161,8 @@ impl PyTimeFixed {
     }
 
     #[staticmethod]
-    pub fn from_duration(py: Python<'_>, timestep: Duration) -> PyResult<Py<PyTimeFixed>> {
-        let timestep = positive_duration(FIXED, "timestep", timestep)?;
+    pub fn from_duration(py: Python<'_>, timestep: TimedeltaInput) -> PyResult<Py<PyTimeFixed>> {
+        let timestep = check(FIXED, "timestep", timestep, POSITIVE)?.stored();
         Py::new(
             py,
             resource_initializer(Time::<Fixed>::from_duration(timestep).into()),
@@ -164,7 +180,8 @@ impl PyTimeFixed {
 
     #[staticmethod]
     pub fn from_seconds(py: Python<'_>, seconds: f64) -> PyResult<Py<PyTimeFixed>> {
-        let timestep = positive_seconds(FIXED, "timestep", seconds)?;
+        let timestep =
+            check(FIXED, "timestep", DurationInput::Seconds(seconds), POSITIVE)?.stored();
         Py::new(
             py,
             resource_initializer(Time::<Fixed>::from_duration(timestep).into()),
@@ -175,20 +192,22 @@ impl PyTimeFixed {
         Ok(self.as_ref()?.timestep())
     }
 
-    pub fn set_timestep(&mut self, timestep: Duration) -> PyResult<()> {
-        self.as_mut()?
-            .set_timestep(positive_duration(FIXED, "timestep", timestep)?);
+    pub fn set_timestep(&mut self, timestep: TimedeltaInput) -> PyResult<()> {
+        let timestep = check(FIXED, "timestep", timestep, POSITIVE)?.stored();
+        self.as_mut()?.set_timestep(timestep);
         Ok(())
     }
 
     pub fn set_timestep_seconds(&mut self, seconds: f64) -> PyResult<()> {
-        self.as_mut()?
-            .set_timestep(positive_seconds(FIXED, "timestep", seconds)?);
+        let timestep =
+            check(FIXED, "timestep", DurationInput::Seconds(seconds), POSITIVE)?.stored();
+        self.as_mut()?.set_timestep(timestep);
         Ok(())
     }
 
     pub fn set_timestep_hz(&mut self, hz: f64) -> PyResult<()> {
-        self.as_mut()?.set_timestep(timestep_from_hz(FIXED, hz)?);
+        let timestep = timestep_from_hz(FIXED, hz)?;
+        self.as_mut()?.set_timestep(timestep);
         Ok(())
     }
 
@@ -234,11 +253,13 @@ impl PyTimeFixed {
     }
 
     pub fn advance_to(&mut self, elapsed: Duration) -> PyResult<()> {
+        check_advance_to(FIXED, self.as_ref()?, elapsed)?;
         self.as_mut()?.advance_to(elapsed);
         Ok(())
     }
 
     pub fn advance_by(&mut self, delta: Duration) -> PyResult<()> {
+        check_advance_by(self.as_ref()?, delta)?;
         self.as_mut()?.advance_by(delta);
         Ok(())
     }
@@ -247,8 +268,8 @@ impl PyTimeFixed {
         Ok(self.as_ref()?.wrap_period())
     }
 
-    pub fn set_wrap_period(&mut self, wrap_period: Duration) -> PyResult<()> {
-        let wrap_period = positive_duration(FIXED, "wrap_period", wrap_period)?;
+    pub fn set_wrap_period(&mut self, wrap_period: TimedeltaInput) -> PyResult<()> {
+        let wrap_period = check(FIXED, "wrap_period", wrap_period, POSITIVE)?.stored();
         self.as_mut()?.set_wrap_period(wrap_period);
         Ok(())
     }
@@ -310,16 +331,14 @@ impl PyTimeVirtual {
     }
 
     pub fn set_relative_speed(&mut self, ratio: f32) -> PyResult<()> {
-        let time = self.as_mut()?;
-        let ratio = relative_speed(VIRTUAL, "relative_speed", ratio, time.max_delta())?;
-        time.set_relative_speed_f64(ratio);
+        let ratio = relative_speed(VIRTUAL, "relative_speed", ratio, self.as_ref()?.max_delta())?;
+        self.as_mut()?.set_relative_speed_f64(ratio);
         Ok(())
     }
 
     pub fn set_relative_speed_f64(&mut self, ratio: f64) -> PyResult<()> {
-        let time = self.as_mut()?;
-        let ratio = relative_speed(VIRTUAL, "relative_speed", ratio, time.max_delta())?;
-        time.set_relative_speed_f64(ratio);
+        let ratio = relative_speed(VIRTUAL, "relative_speed", ratio, self.as_ref()?.max_delta())?;
+        self.as_mut()?.set_relative_speed_f64(ratio);
         Ok(())
     }
 
@@ -343,17 +362,12 @@ impl PyTimeVirtual {
         Ok(self.as_ref()?.max_delta())
     }
 
-    pub fn set_max_delta(&mut self, max_delta: Duration) -> PyResult<()> {
-        let max_delta = positive_duration(VIRTUAL, "max_delta", max_delta)?;
-        let time = self.as_mut()?;
+    pub fn set_max_delta(&mut self, max_delta: TimedeltaInput) -> PyResult<()> {
+        let max_delta = check(VIRTUAL, "max_delta", max_delta, POSITIVE)?.stored();
         // Revalidate the stored speed against the new bound.
-        relative_speed(
-            VIRTUAL,
-            "relative_speed",
-            time.relative_speed_f64(),
-            max_delta,
-        )?;
-        time.set_max_delta(max_delta);
+        let speed = self.as_ref()?.relative_speed_f64();
+        relative_speed(VIRTUAL, "relative_speed", speed, max_delta)?;
+        self.as_mut()?.set_max_delta(max_delta);
         Ok(())
     }
 
@@ -382,11 +396,13 @@ impl PyTimeVirtual {
     }
 
     pub fn advance_to(&mut self, elapsed: Duration) -> PyResult<()> {
+        check_advance_to(VIRTUAL, self.as_ref()?, elapsed)?;
         self.as_mut()?.advance_to(elapsed);
         Ok(())
     }
 
     pub fn advance_by(&mut self, delta: Duration) -> PyResult<()> {
+        check_advance_by(self.as_ref()?, delta)?;
         self.as_mut()?.advance_by(delta);
         Ok(())
     }
@@ -395,8 +411,8 @@ impl PyTimeVirtual {
         Ok(self.as_ref()?.wrap_period())
     }
 
-    pub fn set_wrap_period(&mut self, wrap_period: Duration) -> PyResult<()> {
-        let wrap_period = positive_duration(VIRTUAL, "wrap_period", wrap_period)?;
+    pub fn set_wrap_period(&mut self, wrap_period: TimedeltaInput) -> PyResult<()> {
+        let wrap_period = check(VIRTUAL, "wrap_period", wrap_period, POSITIVE)?.stored();
         self.as_mut()?.set_wrap_period(wrap_period);
         Ok(())
     }
@@ -465,11 +481,13 @@ impl PyTimeReal {
     }
 
     pub fn advance_to(&mut self, elapsed: Duration) -> PyResult<()> {
+        check_advance_to(REAL, self.as_ref()?, elapsed)?;
         self.as_mut()?.advance_to(elapsed);
         Ok(())
     }
 
     pub fn advance_by(&mut self, delta: Duration) -> PyResult<()> {
+        check_advance_by(self.as_ref()?, delta)?;
         self.as_mut()?.advance_by(delta);
         Ok(())
     }
@@ -478,8 +496,8 @@ impl PyTimeReal {
         Ok(self.as_ref()?.wrap_period())
     }
 
-    pub fn set_wrap_period(&mut self, wrap_period: Duration) -> PyResult<()> {
-        let wrap_period = positive_duration("Time[Real]", "wrap_period", wrap_period)?;
+    pub fn set_wrap_period(&mut self, wrap_period: TimedeltaInput) -> PyResult<()> {
+        let wrap_period = check(REAL, "wrap_period", wrap_period, POSITIVE)?.stored();
         self.as_mut()?.set_wrap_period(wrap_period);
         Ok(())
     }

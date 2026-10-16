@@ -1,4 +1,7 @@
-use bevy::pbr::AtmosphereSettings;
+use bevy::{
+    math::{UVec2, UVec3},
+    pbr::AtmosphereSettings,
+};
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
 use pybevy_math::{uvec2::PyUVec2, uvec3::PyUVec3};
@@ -6,6 +9,7 @@ use pyo3::prelude::*;
 
 use crate::atmosphere_mode::PyAtmosphereMode;
 
+// Bevy creates the lookup textures with these sizes; wgpu rejects a zero side.
 #[pycomponent(AtmosphereSettings, bridge, view_fields = [
     transmittance_lut_samples,
     multiscattering_lut_dirs,
@@ -14,6 +18,11 @@ use crate::atmosphere_mode::PyAtmosphereMode;
     aerial_view_lut_samples,
     aerial_view_lut_max_distance,
     sky_max_samples
+], domains = [
+    transmittance_lut_size => [positive],
+    multiscattering_lut_size => [positive],
+    sky_view_lut_size => [positive],
+    aerial_view_lut_size => [positive]
 ])]
 #[pyclass(name = "AtmosphereSettings", module = "pybevy.pbr", extends = PyComponent)]
 pub struct PyAtmosphereSettings {
@@ -54,10 +63,16 @@ impl PyAtmosphereSettings {
         rendering_method: PyAtmosphereMode,
     ) -> PyResult<PyClassInitializer<Self>> {
         Ok(Self::from_owned(AtmosphereSettings {
-            transmittance_lut_size: transmittance_lut_size.try_into()?,
-            multiscattering_lut_size: multiscattering_lut_size.try_into()?,
-            sky_view_lut_size: sky_view_lut_size.try_into()?,
-            aerial_view_lut_size: aerial_view_lut_size.try_into()?,
+            transmittance_lut_size: Self::check_transmittance_lut_size(UVec2::try_from(
+                transmittance_lut_size,
+            )?)?,
+            multiscattering_lut_size: Self::check_multiscattering_lut_size(UVec2::try_from(
+                multiscattering_lut_size,
+            )?)?,
+            sky_view_lut_size: Self::check_sky_view_lut_size(UVec2::try_from(sky_view_lut_size)?)?,
+            aerial_view_lut_size: Self::check_aerial_view_lut_size(UVec3::try_from(
+                aerial_view_lut_size,
+            )?)?,
             transmittance_lut_samples,
             multiscattering_lut_dirs,
             multiscattering_lut_samples,
@@ -72,49 +87,64 @@ impl PyAtmosphereSettings {
 
     #[getter]
     pub fn transmittance_lut_size(&self) -> PyResult<PyUVec2> {
-        Ok(self
-            .storage
-            .borrow_field_as(|s| &s.transmittance_lut_size)?)
+        Ok(self.storage.borrow_validated_field_as(
+            |s| &s.transmittance_lut_size,
+            |s| &mut s.transmittance_lut_size,
+            Self::validate_transmittance_lut_size,
+        )?)
     }
 
     #[setter]
     pub fn set_transmittance_lut_size(&mut self, value: PyUVec2) -> PyResult<()> {
-        self.as_mut()?.transmittance_lut_size = value.try_into()?;
+        self.as_mut()?.transmittance_lut_size =
+            Self::check_transmittance_lut_size(UVec2::try_from(value)?)?;
         Ok(())
     }
 
     #[getter]
     pub fn multiscattering_lut_size(&self) -> PyResult<PyUVec2> {
-        Ok(self
-            .storage
-            .borrow_field_as(|s| &s.multiscattering_lut_size)?)
+        Ok(self.storage.borrow_validated_field_as(
+            |s| &s.multiscattering_lut_size,
+            |s| &mut s.multiscattering_lut_size,
+            Self::validate_multiscattering_lut_size,
+        )?)
     }
 
     #[setter]
     pub fn set_multiscattering_lut_size(&mut self, value: PyUVec2) -> PyResult<()> {
-        self.as_mut()?.multiscattering_lut_size = value.try_into()?;
+        self.as_mut()?.multiscattering_lut_size =
+            Self::check_multiscattering_lut_size(UVec2::try_from(value)?)?;
         Ok(())
     }
 
     #[getter]
     pub fn sky_view_lut_size(&self) -> PyResult<PyUVec2> {
-        Ok(self.storage.borrow_field_as(|s| &s.sky_view_lut_size)?)
+        Ok(self.storage.borrow_validated_field_as(
+            |s| &s.sky_view_lut_size,
+            |s| &mut s.sky_view_lut_size,
+            Self::validate_sky_view_lut_size,
+        )?)
     }
 
     #[setter]
     pub fn set_sky_view_lut_size(&mut self, value: PyUVec2) -> PyResult<()> {
-        self.as_mut()?.sky_view_lut_size = value.try_into()?;
+        self.as_mut()?.sky_view_lut_size = Self::check_sky_view_lut_size(UVec2::try_from(value)?)?;
         Ok(())
     }
 
     #[getter]
     pub fn aerial_view_lut_size(&self) -> PyResult<PyUVec3> {
-        Ok(self.storage.borrow_field_as(|s| &s.aerial_view_lut_size)?)
+        Ok(self.storage.borrow_validated_field_as(
+            |s| &s.aerial_view_lut_size,
+            |s| &mut s.aerial_view_lut_size,
+            Self::validate_aerial_view_lut_size,
+        )?)
     }
 
     #[setter]
     pub fn set_aerial_view_lut_size(&mut self, value: PyUVec3) -> PyResult<()> {
-        self.as_mut()?.aerial_view_lut_size = value.try_into()?;
+        self.as_mut()?.aerial_view_lut_size =
+            Self::check_aerial_view_lut_size(UVec3::try_from(value)?)?;
         Ok(())
     }
 

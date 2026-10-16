@@ -1,11 +1,15 @@
 use bevy::math::{Dir3, StableInterpolate, Vec3};
-use pybevy_core::{FromBorrowedStorage, StorageMut, StorageRef, ValueStorage, repr::float_repr};
+use pybevy_core::{
+    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
+    domain::{FINITE, FINITE_NON_NEGATIVE, NON_NEGATIVE, check_for},
+    repr::float_repr,
+};
 use pyo3::{
     exceptions::{PyTypeError, PyValueError},
     prelude::*,
 };
 
-use crate::{quat::PyQuat, vec3::PyVec3};
+use crate::{check_direction_length, quat::PyQuat, vec3::PyVec3};
 
 #[pyclass(name = "Dir3", module = "pybevy.math", eq, from_py_object)]
 #[derive(Debug, Clone)]
@@ -176,6 +180,7 @@ impl PyDir3 {
     }
 
     pub fn slerp(&self, rhs: &PyDir3, s: f32) -> PyResult<PyDir3> {
+        let s = check_for::<Self, _>("s", s, FINITE)?;
         Ok(PyDir3::dir3(self.get()?.slerp(rhs.get()?, s)))
     }
 
@@ -184,28 +189,42 @@ impl PyDir3 {
     }
 
     #[staticmethod]
-    pub fn from_xyz_unchecked(x: f32, y: f32, z: f32) -> PyDir3 {
-        PyDir3::dir3(Dir3::from_xyz_unchecked(x, y, z))
+    pub fn from_xyz_unchecked(x: f32, y: f32, z: f32) -> PyResult<PyDir3> {
+        check_direction_length(
+            "Dir3.from_xyz_unchecked",
+            Vec3::new(x, y, z).length_squared(),
+        )?;
+        Ok(PyDir3::dir3(Dir3::from_xyz_unchecked(x, y, z)))
     }
 
     #[staticmethod]
     pub fn new_unchecked(value: PyVec3) -> PyResult<PyDir3> {
-        Ok(PyDir3::dir3(Dir3::new_unchecked(value.try_into()?)))
+        let value: Vec3 = value.try_into()?;
+        check_direction_length("Dir3.new_unchecked", value.length_squared())?;
+        Ok(PyDir3::dir3(Dir3::new_unchecked(value)))
     }
 
     pub fn interpolate_stable(&self, other: &PyDir3, t: f32) -> PyResult<PyDir3> {
+        let t = check_for::<Self, _>("t", t, FINITE)?;
         let other = other.get()?;
         Ok(PyDir3::dir3(self.get()?.interpolate_stable(&other, t)))
     }
 
     pub fn interpolate_stable_assign(&mut self, other: &PyDir3, t: f32) -> PyResult<()> {
+        let t = check_for::<Self, _>("t", t, FINITE)?;
         let other = other.get()?;
         self.as_mut()?.interpolate_stable_assign(&other, t);
         Ok(())
     }
 
     pub fn smooth_nudge(&mut self, target: &PyDir3, decay_rate: f32, delta: f32) -> PyResult<()> {
+        let decay_rate = check_for::<Self, _>("decay_rate", decay_rate, NON_NEGATIVE)?;
+        let delta = check_for::<Self, _>("delta", delta, FINITE_NON_NEGATIVE)?;
         let target = target.get()?;
+        // No time passes: Bevy's result, without an infinite rate times zero.
+        if delta == 0.0 {
+            return Ok(());
+        }
         self.as_mut()?.smooth_nudge(&target, decay_rate, delta);
         Ok(())
     }
@@ -238,8 +257,9 @@ impl PyDir3 {
 
     pub fn __rmul__(&self, py: Python, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         if let Ok(quat) = other.cast::<PyQuat>() {
-            let quat = quat.try_borrow()?.try_get()?;
-            Ok(Py::new(py, PyDir3::dir3(quat * self.get()?))?.into_any())
+            let rotated = quat.try_borrow()?.try_get()? * Vec3::from(self.get()?);
+            check_direction_length("Quat * Dir3", rotated.length_squared())?;
+            Ok(Py::new(py, PyDir3::dir3(Dir3::new_unchecked(rotated)))?.into_any())
         } else if let Ok(scalar) = other.extract::<f32>() {
             Ok(Py::new(py, PyVec3::from_vec3(scalar * self.get()?))?.into_any())
         } else {

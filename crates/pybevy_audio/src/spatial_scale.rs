@@ -1,5 +1,8 @@
 use bevy::audio::SpatialScale;
-use pybevy_core::repr::ReprLiteral;
+use pybevy_core::{
+    domain::{NON_ZERO, check_for},
+    repr::ReprLiteral,
+};
 use pybevy_math::vec3::PyVec3;
 use pyo3::prelude::*;
 
@@ -25,17 +28,20 @@ impl From<PySpatialScale> for SpatialScale {
 impl PySpatialScale {
     #[new]
     #[pyo3(signature = (scale=1.0))]
-    pub fn new(scale: f32) -> Self {
-        Self {
+    pub fn new(scale: f32) -> PyResult<Self> {
+        // A zero scale puts both ears at the same point, which rodio asserts against.
+        let scale = check_for::<Self, _>("scale", scale, NON_ZERO)?;
+        Ok(Self {
             inner: SpatialScale::new(scale),
-        }
+        })
     }
 
     #[staticmethod]
-    pub fn new_2d(scale: f32) -> Self {
-        Self {
+    pub fn new_2d(scale: f32) -> PyResult<Self> {
+        let scale = check_for::<Self, _>("scale", scale, NON_ZERO)?;
+        Ok(Self {
             inner: SpatialScale::new_2d(scale),
-        }
+        })
     }
 
     pub fn to_vec3(&self) -> PyVec3 {

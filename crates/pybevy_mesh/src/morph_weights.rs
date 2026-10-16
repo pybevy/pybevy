@@ -67,16 +67,14 @@ impl PyMorphWeights {
 
     #[setter]
     pub fn set_weights(&mut self, weights: Vec<f32>) -> PyResult<()> {
-        let mut morph = self.as_mut()?;
-        let mutable_weights = morph.weights_mut();
-        if weights.len() != mutable_weights.len() {
+        let expected = self.as_ref()?.weights().len();
+        if weights.len() != expected {
             return Err(PyValueError::new_err(format!(
-                "Weight count mismatch: expected {}, got {}",
-                mutable_weights.len(),
+                "Weight count mismatch: expected {expected}, got {}",
                 weights.len()
             )));
         }
-        mutable_weights.copy_from_slice(&weights);
+        self.as_mut()?.weights_mut().copy_from_slice(&weights);
         Ok(())
     }
 

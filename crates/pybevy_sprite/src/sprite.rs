@@ -17,7 +17,14 @@ use pyo3::prelude::*;
 
 use crate::sprite_image_mode::PySpriteImageMode;
 
-#[pycomponent(Sprite, bridge, view_fields = [flip_x, flip_y], batch_only_fields = [color])]
+// Bevy tiles an infinite draw size without end when slicing or tiling.
+#[pycomponent(
+    Sprite,
+    bridge,
+    view_fields = [flip_x, flip_y],
+    batch_only_fields = [color],
+    domains = [custom_size => [finite]]
+)]
 #[pyclass(name = "Sprite", module = "pybevy.sprite", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PySprite {
@@ -51,7 +58,8 @@ impl PySprite {
     ) -> PyResult<PyClassInitializer<Self>> {
         let image_handle = image.into_handle()?;
         let texture_atlas_handle = texture_atlas.map(|ta| ta.try_into()).transpose()?;
-        let custom_size_vec = custom_size.map(TryInto::try_into).transpose()?;
+        let custom_size_vec =
+            Self::check_custom_size(custom_size.map(Vec2::try_from).transpose()?)?;
         let rect_bevy = rect.map(TryInto::try_into).transpose()?;
 
         let color = color.try_into()?;
@@ -114,7 +122,7 @@ impl PySprite {
 
     #[staticmethod]
     pub fn from_color(color: PyColor, size: PyVec2) -> PyResult<Py<Self>> {
-        let size_vec: Vec2 = size.try_into()?;
+        let size_vec: Vec2 = Self::check_custom_size(Vec2::try_from(size)?)?;
         let color = color.try_into()?;
         Python::attach(|py| {
             Py::new(
@@ -135,7 +143,7 @@ impl PySprite {
 
     #[staticmethod]
     pub fn sized(custom_size: PyVec2) -> PyResult<Py<Self>> {
-        let size_vec: Vec2 = custom_size.try_into()?;
+        let size_vec: Vec2 = Self::check_custom_size(Vec2::try_from(custom_size)?)?;
         Python::attach(|py| {
             Py::new(
                 py,
@@ -257,7 +265,8 @@ impl PySprite {
 
     #[setter]
     pub fn set_custom_size(&mut self, value: Option<PyVec2>) -> PyResult<()> {
-        self.as_mut()?.custom_size = value.map(TryInto::try_into).transpose()?;
+        let custom_size = Self::check_custom_size(value.map(Vec2::try_from).transpose()?)?;
+        self.as_mut()?.custom_size = custom_size;
         Ok(())
     }
 

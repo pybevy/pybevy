@@ -4,7 +4,7 @@ use std::{
 };
 
 use bevy::render::render_resource::TextureViewDescriptor;
-use pybevy_core::{FieldStorage, FromBorrowedStorage};
+use pybevy_core::{FieldStorage, FromBorrowedStorage, domain::IntegerInput};
 use pybevy_macros::pyfield;
 use pyo3::prelude::*;
 
@@ -26,7 +26,7 @@ fn intern_label(label: &str) -> &'static str {
     interned
 }
 
-#[pyfield]
+#[pyfield(domains = [mip_level_count => [positive], array_layer_count => [positive]])]
 #[pyclass(
     name = "TextureViewDescriptor",
     module = "pybevy.render",
@@ -60,10 +60,14 @@ impl PyTextureViewDescriptor {
         usage: Option<PyTextureUsages>,
         aspect: PyTextureAspect,
         base_mip_level: u32,
-        mip_level_count: Option<u32>,
+        mip_level_count: Option<IntegerInput<u32>>,
         base_array_layer: u32,
-        array_layer_count: Option<u32>,
+        array_layer_count: Option<IntegerInput<u32>>,
     ) -> PyResult<Self> {
+        let mip_level_count =
+            Self::check_mip_level_count(mip_level_count)?.map(IntegerInput::stored);
+        let array_layer_count =
+            Self::check_array_layer_count(array_layer_count)?.map(IntegerInput::stored);
         Ok(Self::from_owned(TextureViewDescriptor {
             label: label.as_deref().map(intern_label),
             format: format.map(Into::into),
@@ -160,8 +164,12 @@ impl PyTextureViewDescriptor {
     }
 
     #[setter]
-    pub fn set_mip_level_count(&mut self, mip_level_count: Option<u32>) -> PyResult<()> {
-        self.as_mut()?.mip_level_count = mip_level_count;
+    pub fn set_mip_level_count(
+        &mut self,
+        mip_level_count: Option<IntegerInput<u32>>,
+    ) -> PyResult<()> {
+        self.as_mut()?.mip_level_count =
+            Self::check_mip_level_count(mip_level_count)?.map(IntegerInput::stored);
         Ok(())
     }
 
@@ -182,8 +190,12 @@ impl PyTextureViewDescriptor {
     }
 
     #[setter]
-    pub fn set_array_layer_count(&mut self, array_layer_count: Option<u32>) -> PyResult<()> {
-        self.as_mut()?.array_layer_count = array_layer_count;
+    pub fn set_array_layer_count(
+        &mut self,
+        array_layer_count: Option<IntegerInput<u32>>,
+    ) -> PyResult<()> {
+        self.as_mut()?.array_layer_count =
+            Self::check_array_layer_count(array_layer_count)?.map(IntegerInput::stored);
         Ok(())
     }
 

@@ -1,5 +1,9 @@
 use bevy::light::atmosphere::Falloff;
-use pybevy_core::{enum_comparison::reject_variant_type, repr::float_repr};
+use pybevy_core::{
+    domain::{FieldDomain, check_for},
+    enum_comparison::reject_variant_type,
+    repr::float_repr,
+};
 use pybevy_macros::pyenum;
 use pyo3::{exceptions::PyTypeError, prelude::*, pyclass::CompareOp};
 
@@ -146,6 +150,13 @@ impl PyFalloffExponential {
     }
 }
 
+/// Bevy documents both Tent parameters in `[0, 1]`; a zero width divides by zero.
+const TENT_CENTER_DOMAIN: &[FieldDomain] = &[FieldDomain::RangeInclusive { lo: 0.0, hi: 1.0 }];
+const TENT_WIDTH_DOMAIN: &[FieldDomain] = &[
+    FieldDomain::Positive,
+    FieldDomain::RangeInclusive { lo: 0.0, hi: 1.0 },
+];
+
 #[pyclass(
     name = "Tent",
     module = "pybevy.light",
@@ -167,8 +178,10 @@ impl PyFalloffTent {
 
     #[new]
     #[pyo3(signature = (*, center, width))]
-    pub fn new(center: f32, width: f32) -> PyClassInitializer<Self> {
-        PyClassInitializer::from(PyFalloff(Falloff::Tent { center, width })).add_subclass(Self)
+    pub fn new(center: f32, width: f32) -> PyResult<PyClassInitializer<Self>> {
+        let center = check_for::<Self, _>("center", center, TENT_CENTER_DOMAIN)?;
+        let width = check_for::<Self, _>("width", width, TENT_WIDTH_DOMAIN)?;
+        Ok(PyClassInitializer::from(PyFalloff(Falloff::Tent { center, width })).add_subclass(Self))
     }
 
     #[getter]

@@ -120,7 +120,7 @@ class PlaybackSettings(Component):
         Args:
             mode: Playback behavior (default: Once)
             volume: Volume level
-            speed: Finite playback speed multiplier. Negative values play in reverse.
+            speed: Finite playback speed multiplier, greater than zero.
             paused: Start paused
             muted: Start muted
             spatial: Enable spatial audio
@@ -145,7 +145,7 @@ class PlaybackSettings(Component):
 
     @property
     def speed(self) -> float:
-        """Finite speed to play at (1.0 is normal; negative reverses playback)."""
+        """Finite speed to play at, greater than zero (1.0 is normal)."""
 
     @speed.setter
     def speed(self, value: float) -> None: ...
@@ -211,7 +211,7 @@ class PlaybackSettings(Component):
         """Helper to set the volume from start of playback."""
 
     def with_speed(self, speed: float) -> PlaybackSettings:
-        """Set a finite speed from the start of playback."""
+        """Set a finite, positive speed from the start of playback."""
 
     def with_spatial(self, spatial: bool) -> PlaybackSettings:
         """Helper to enable or disable spatial audio."""
@@ -269,7 +269,7 @@ class SpatialListener(Component):
         """Create a new SpatialListener.
 
         Args:
-            gap: Distance between ears (creates default offsets at +/- gap/2 on X axis)
+            gap: Non-zero distance between ears (creates default offsets at +/- gap/2 on X axis)
             left_ear_offset: Override left ear position
             right_ear_offset: Override right ear position
         """
@@ -386,7 +386,7 @@ class AudioSink(Component):
         """Get playback speed (1.0 is normal)."""
 
     def set_speed(self, speed: float) -> None:
-        """Set playback speed (1.0 is normal, 2.0 is double speed, etc.)."""
+        """Set a finite, positive playback speed (1.0 is normal, 2.0 is double speed)."""
 
     def mute(self) -> None:
         """Mute audio (preserves volume setting)."""
@@ -452,7 +452,7 @@ class SpatialAudioSink(Component):
         """Get playback speed (1.0 is normal)."""
 
     def set_speed(self, speed: float) -> None:
-        """Set playback speed (1.0 is normal, 2.0 is double speed, etc.)."""
+        """Set a finite, positive playback speed (1.0 is normal, 2.0 is double speed)."""
 
     def mute(self) -> None:
         """Mute audio (preserves volume setting)."""

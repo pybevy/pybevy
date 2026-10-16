@@ -875,9 +875,9 @@ def load_model(asset_server: Res[AssetServer]) -> None:
 ```
 
 `Time[Virtual].set_max_delta()` and every `Time.set_wrap_period()` require a
-positive duration; zero raises `ValueError` before changing the clock, naming
-the clock and quantity: `Time[Virtual].max_delta must be finite and greater
-than zero (got 0.0)`. `Timer`, `Stopwatch` and `AnimationTransitions.play`
+positive `timedelta`; zero or a negative one raises `ValueError` before
+changing the clock, naming the clock and quantity: `Time[Virtual].max_delta
+must be finite and greater than zero (got 0.0)`. `Timer`, `Stopwatch` and `AnimationTransitions.play`
 report a negative or non-finite duration the same way, for example
 `Timer.delta must be finite and non-negative (got -1.0)`.
 

@@ -1,6 +1,10 @@
 use bevy::{asset::Handle, image::Image, light::atmosphere::PhaseFunction};
 use pybevy_core::{
-    PyHandle, enum_comparison::reject_variant_type, extract_handle_from_any, repr::float_repr,
+    PyHandle,
+    domain::{FieldDomain, check_for},
+    enum_comparison::reject_variant_type,
+    extract_handle_from_any,
+    repr::float_repr,
 };
 use pybevy_macros::pyenum;
 use pyo3::{exceptions::PyTypeError, prelude::*, pyclass::CompareOp};
@@ -137,6 +141,9 @@ impl PyPhaseFunctionRayleigh {
     }
 }
 
+/// The Henyey-Greenstein asymmetry Bevy documents; outside it the phase is negative.
+const ASYMMETRY_DOMAIN: &[FieldDomain] = &[FieldDomain::RangeInclusive { lo: -1.0, hi: 1.0 }];
+
 #[pyclass(
     name = "Mie",
     module = "pybevy.light",
@@ -158,8 +165,9 @@ impl PyPhaseFunctionMie {
 
     #[new]
     #[pyo3(signature = (*, asymmetry))]
-    pub fn new(asymmetry: f32) -> PyClassInitializer<Self> {
-        PyClassInitializer::from(PyPhaseFunction::mie(asymmetry)).add_subclass(Self)
+    pub fn new(asymmetry: f32) -> PyResult<PyClassInitializer<Self>> {
+        let asymmetry = check_for::<Self, _>("asymmetry", asymmetry, ASYMMETRY_DOMAIN)?;
+        Ok(PyClassInitializer::from(PyPhaseFunction::mie(asymmetry)).add_subclass(Self))
     }
 
     #[getter]

@@ -5,7 +5,9 @@ use bevy::{
     transform::components::Transform,
 };
 use pybevy_core::{
-    ComponentStorage, PyComponent, domain::check_for, public_error::audio_seek_failed,
+    ComponentStorage, PyComponent,
+    domain::{NON_ZERO, POSITIVE, check_for},
+    public_error::audio_seek_failed,
     repr::float_repr,
 };
 use pybevy_macros::pycomponent;
@@ -13,7 +15,7 @@ use pybevy_math::vec3::PyVec3;
 use pybevy_transform::transform::PyTransform;
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
 
-use crate::{audio_sink::SPEED_DOMAIN, volume::PyVolume};
+use crate::{audio_sink::check_seek, spatial_listener::check_ears, volume::PyVolume};
 
 #[pycomponent(SpatialAudioSink, no_clone, bridge, no_reflect)]
 #[pyclass(name = "SpatialAudioSink", module = "pybevy.audio", extends = PyComponent)]
@@ -52,7 +54,7 @@ impl PySpatialAudioSink {
     }
 
     pub fn set_speed(&self, speed: f32) -> PyResult<()> {
-        let speed = check_for::<Self, _>("speed", speed, SPEED_DOMAIN)?;
+        let speed = check_for::<Self, _>("speed", speed, POSITIVE)?;
         self.as_ref()?.set_speed(speed);
         Ok(())
     }
@@ -84,8 +86,9 @@ impl PySpatialAudioSink {
     }
 
     pub fn try_seek(&self, pos: Duration) -> PyResult<()> {
-        self.as_ref()?
-            .try_seek(pos)
+        let sink = self.as_ref()?;
+        check_seek(pos, sink.speed())?;
+        sink.try_seek(pos)
             .map_err(|e| PyRuntimeError::new_err(audio_seek_failed(e)))?;
         Ok(())
     }
@@ -101,12 +104,14 @@ impl PySpatialAudioSink {
     }
 
     pub fn set_ears_position(&self, left_position: PyVec3, right_position: PyVec3) -> PyResult<()> {
-        self.as_ref()?
-            .set_ears_position(left_position.try_into()?, right_position.try_into()?);
+        let (left, right) = (left_position.try_into()?, right_position.try_into()?);
+        check_ears(left, right)?;
+        self.as_ref()?.set_ears_position(left, right);
         Ok(())
     }
 
     pub fn set_listener_position(&self, position: &PyTransform, gap: f32) -> PyResult<()> {
+        let gap = check_for::<Self, _>("gap", gap, NON_ZERO)?;
         let bevy_transform: Transform = *position.as_ref()?;
         self.as_ref()?.set_listener_position(bevy_transform, gap);
         Ok(())

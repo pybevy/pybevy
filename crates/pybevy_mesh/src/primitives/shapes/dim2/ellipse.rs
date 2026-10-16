@@ -5,18 +5,17 @@ use bevy::{
     },
     mesh::Meshable,
 };
-use pybevy_core::{FromBorrowedStorage, StorageError, ValueStorage, repr::ReprLiteral};
+use pybevy_core::{FromBorrowedStorage, ValueStorage, repr::ReprLiteral};
 use pybevy_macros::pyvalue;
-use pybevy_math::{primitives::dimension::dimension, vec2::PyVec2};
+use pybevy_math::{
+    primitives::dimension::{Dimension, dimension},
+    vec2::PyVec2,
+};
 use pyo3::prelude::*;
 
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyEllipseMeshBuilder};
 
-fn check_half_size(value: &Vec2) -> Result<(), StorageError> {
-    Ok(dimension::<PyEllipse, _>("half_size", *value).map(drop)?)
-}
-
-#[pyvalue]
+#[pyvalue(domains = [half_size => [finite, non_negative]])]
 #[pyclass(name = "Ellipse", module = "pybevy.math", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyEllipse {
@@ -59,7 +58,8 @@ impl PyEllipse {
     #[new]
     #[pyo3(signature = (*, half_size = PyVec2::vec2(Vec2::new(1.0, 0.5))))]
     pub fn new(half_size: PyVec2) -> PyResult<PyClassInitializer<Self>> {
-        let half_size: Vec2 = dimension::<Self, _>("half_size", half_size.try_into()?)?;
+        let half_size: Vec2 = half_size.try_into()?;
+        let half_size = Self::check_half_size(half_size)?.without_negative_zero();
         Ok((
             Self::from_owned(Ellipse::new(half_size.x, half_size.y)),
             PyMeshable,
@@ -72,15 +72,15 @@ impl PyEllipse {
         Ok(self.storage.borrow_validated_field_as(
             |s| &s.half_size,
             |s| &mut s.half_size,
-            check_half_size,
+            Self::validate_half_size,
         )?)
     }
 
     #[setter]
     pub fn set_half_size(&mut self, value: PyVec2) -> PyResult<()> {
-        let half_size = value.try_into()?;
-        let mut shape = self.as_mut()?;
-        shape.half_size = dimension::<Self, _>("half_size", half_size)?;
+        let half_size: Vec2 = value.try_into()?;
+        let half_size = Self::check_half_size(half_size)?.without_negative_zero();
+        self.as_mut()?.half_size = half_size;
         Ok(())
     }
 

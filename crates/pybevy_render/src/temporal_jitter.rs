@@ -36,10 +36,7 @@ impl PyTemporalJitter {
     #[setter]
     pub fn set_offset(&mut self, value: PyVec2) -> PyResult<()> {
         let offset: Vec2 = value.try_into()?;
-        // Authority first: an expired or read-only component must report that,
-        // not a complaint about the value it was never allowed to store.
-        let mut jitter = self.as_mut()?;
-        jitter.offset = Self::check_offset(offset)?;
+        self.as_mut()?.offset = Self::check_offset(offset)?;
         Ok(())
     }
 

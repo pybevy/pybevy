@@ -21,7 +21,7 @@ use crate::{
     window_level::PyWindowLevel,
     window_mode::PyWindowMode,
     window_position::PyWindowPosition,
-    window_resolution::PyWindowResolution,
+    window_resolution::{PyWindowResolution, validate_scale_factors},
     window_theme::PyWindowTheme,
 };
 
@@ -35,7 +35,7 @@ fn maximum_frame_latency(value: Option<IntegerInput<u32>>) -> PyResult<Option<No
 #[pycomponent(
     Window,
     bridge,
-    reflect_validate = validate_window_resize_constraints,
+    reflect_validate = validate_window,
     domains = [desired_maximum_frame_latency => [at_least(1)]],
     view_fields = [decorations, resizable, transparent]
 )]
@@ -45,8 +45,9 @@ pub struct PyWindow {
     pub(crate) storage: ComponentStorage<Window>,
 }
 
-fn validate_window_resize_constraints(window: &Window) -> Result<(), StorageError> {
-    validate_constraints(&window.resize_constraints)
+fn validate_window(window: &Window) -> Result<(), StorageError> {
+    validate_constraints(&window.resize_constraints)?;
+    Ok(validate_scale_factors(&window.resolution)?)
 }
 
 #[pymethods]

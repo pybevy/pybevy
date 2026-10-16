@@ -34,7 +34,7 @@ use pybevy_render::{
 use pyo3::{
     PyTraverseError, PyVisit,
     buffer::PyBuffer,
-    exceptions::{PyIndexError, PyRuntimeError, PyTypeError, PyValueError},
+    exceptions::{PyIndexError, PyMemoryError, PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
     types::{PyBytes, PyList, PyTuple},
 };
@@ -187,7 +187,7 @@ fn round_integer_pixel(
     Ok(())
 }
 
-fn reject_aspect_dependent_format(format: TextureFormat) -> PyResult<()> {
+pub(crate) fn reject_aspect_dependent_format(format: TextureFormat) -> PyResult<()> {
     if format.block_dimensions() == (1, 1) && format.block_copy_size(None).is_none() {
         return Err(PyValueError::new_err(format!(
             "cannot build an Image with format {format:?}: its texel size depends on the \
@@ -214,6 +214,85 @@ fn checked_image_byte_len(extent: Extent3d, format: TextureFormat) -> PyResult<O
         .checked_mul(pixel_size)
         .map(Some)
         .ok_or_else(|| PyValueError::new_err("image byte length overflows usize"))
+}
+
+/// Bevy allocates image data with infallible `Vec` calls, which abort the
+/// process when the allocation fails; probe it first so that is a `MemoryError`.
+fn ensure_allocatable(byte_len: usize) -> PyResult<()> {
+    Vec::<u8>::new()
+        .try_reserve_exact(byte_len)
+        .map_err(|_| PyMemoryError::new_err(public_error::image_allocation_failed(byte_len)))
+}
+
+fn allocated_bytes(byte_len: usize, fill: u8) -> PyResult<Vec<u8>> {
+    let mut data = Vec::new();
+    data.try_reserve_exact(byte_len)
+        .map_err(|_| PyMemoryError::new_err(public_error::image_allocation_failed(byte_len)))?;
+    data.resize(byte_len, fill);
+    Ok(data)
+}
+
+/// Bevy's pixel access unwraps the texel size and slices `data` by the texture
+/// descriptor, so an edited descriptor that disagrees with the data would panic.
+fn check_pixel_layout(image: &Image) -> PyResult<()> {
+    let format = image.texture_descriptor.format;
+    if format.block_dimensions() == (1, 1) && format.block_copy_size(None).is_none() {
+        return Err(PyValueError::new_err(
+            public_error::image_pixel_access_unsupported_format(format),
+        ));
+    }
+    let expected = checked_image_byte_len(image.texture_descriptor.size, format)?;
+    if let (Some(expected), Some(data)) = (expected, image.data.as_ref())
+        && data.len() < expected
+    {
+        return Err(PyValueError::new_err(
+            public_error::image_data_shorter_than_descriptor(data.len(), expected),
+        ));
+    }
+    Ok(())
+}
+
+/// wgpu slices compressed upload data by whole blocks and rejects sizes that are
+/// not block multiples, so both are checked when the image is built.
+fn validate_compressed_data(extent: Extent3d, format: TextureFormat, len: usize) -> PyResult<()> {
+    let (block_width, block_height) = format.block_dimensions();
+    let Some(block_size) = format.block_copy_size(None) else {
+        return Ok(());
+    };
+    if (block_width, block_height) == (1, 1) {
+        return Ok(());
+    }
+    if !extent.width.is_multiple_of(block_width) || !extent.height.is_multiple_of(block_height) {
+        return Err(PyValueError::new_err(public_error::image_compressed_size(
+            format,
+            extent.width,
+            extent.height,
+            block_width,
+            block_height,
+        )));
+    }
+    let expected = (extent.width / block_width) as usize
+        * (extent.height / block_height) as usize
+        * extent.depth_or_array_layers as usize
+        * block_size as usize;
+    if len != expected {
+        return Err(PyValueError::new_err(
+            public_error::image_compressed_data_len(format, len, expected),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_target_allocation(width: u32, height: u32, format: TextureFormat) -> PyResult<()> {
+    let extent = Extent3d {
+        width,
+        height,
+        depth_or_array_layers: 1,
+    };
+    if let Some(byte_len) = checked_image_byte_len(extent, format)? {
+        ensure_allocatable(byte_len)?;
+    }
+    Ok(())
 }
 
 fn validate_render_target_dimensions(width: u32, height: u32) -> PyResult<()> {
@@ -944,6 +1023,21 @@ macro_rules! image_with_mut {
     }};
 }
 
+impl PyImage {
+    /// Resizing reallocates `data` with Bevy's infallible `Vec::resize`.
+    fn check_resize(&self, size: Extent3d) -> PyResult<()> {
+        let image = self.as_ref()?;
+        if image.data.is_none() {
+            return Ok(());
+        }
+        check_pixel_layout(&image)?;
+        if let Some(byte_len) = checked_image_byte_len(size, image.texture_descriptor.format)? {
+            ensure_allocatable(byte_len)?;
+        }
+        Ok(())
+    }
+}
+
 #[pymethods]
 impl PyImage {
     #[new]
@@ -969,16 +1063,19 @@ impl PyImage {
                 let extracted = extract_u8_data_from_any(data)?;
                 if let Some(expected_len) = checked_image_byte_len(extent, format)? {
                     validate_image_data(&extracted, extent, dimension, format, expected_len)?;
-                } else if extracted.shape.is_some() {
-                    // Compressed/opaque formats have no pixel-byte layout to
-                    // validate, so shaped arrays must remain explicitly flat.
-                    validate_image_data(
-                        &extracted,
-                        extent,
-                        dimension,
-                        format,
-                        extracted.bytes.len(),
-                    )?;
+                } else {
+                    if extracted.shape.is_some() {
+                        // Compressed/opaque formats have no pixel-byte layout to
+                        // validate, so shaped arrays must remain explicitly flat.
+                        validate_image_data(
+                            &extracted,
+                            extent,
+                            dimension,
+                            format,
+                            extracted.bytes.len(),
+                        )?;
+                    }
+                    validate_compressed_data(extent, format, extracted.bytes.len())?;
                 }
                 extracted.bytes
             }
@@ -989,7 +1086,7 @@ impl PyImage {
                         "cannot default-fill data for format {format:?}; pass data explicitly"
                     ))
                 })?;
-                vec![255u8; expected_len]
+                allocated_bytes(expected_len, 255)?
             }
         };
 
@@ -1016,6 +1113,9 @@ impl PyImage {
         let format: TextureFormat = format.unwrap_or(PyTextureFormat::Rgba8UnormSrgb).into();
         let extent: Extent3d = size.into();
         validate_pixel_data(&pixel, format, extent)?;
+        if let Some(byte_len) = checked_image_byte_len(extent, format)? {
+            ensure_allocatable(byte_len)?;
+        }
         let image = Image::new_fill(
             extent,
             dimension.unwrap_or(PyTextureDimension::D2).into(),
@@ -1049,6 +1149,7 @@ impl PyImage {
                  render targets need an uncompressed format"
             ))
         })?;
+        validate_target_allocation(width, height, format)?;
         let image = Image::new_target_texture(width, height, format, None);
 
         Py::new(py, Self::from_owned(image))
@@ -1061,6 +1162,7 @@ impl PyImage {
     #[staticmethod]
     pub fn new_render_target(py: Python<'_>, width: u32, height: u32) -> PyResult<Py<PyImage>> {
         validate_render_target_dimensions(width, height)?;
+        validate_target_allocation(width, height, TextureFormat::Rgba8UnormSrgb)?;
         let mut image =
             Image::new_target_texture(width, height, TextureFormat::Rgba8UnormSrgb, None);
         image.texture_descriptor.usage |= TextureUsages::COPY_SRC;
@@ -1101,7 +1203,15 @@ impl PyImage {
     }
 
     pub fn aspect_ratio(&self) -> PyResult<f32> {
-        Ok(self.as_ref()?.aspect_ratio().into())
+        let image = self.as_ref()?;
+        // Bevy's aspect_ratio expects a non-zero size.
+        let (width, height) = (image.width(), image.height());
+        if width == 0 || height == 0 {
+            return Err(PyValueError::new_err(
+                public_error::image_aspect_ratio_zero(width, height),
+            ));
+        }
+        Ok(image.aspect_ratio().into())
     }
 
     pub fn is_compressed(&self) -> PyResult<bool> {
@@ -1243,6 +1353,7 @@ impl PyImage {
 
     pub fn pixel_data_offset(&self, coords: PyUVec3) -> PyResult<usize> {
         image_with!(self, |image: &Image| {
+            check_pixel_layout(image)?;
             image
                 .pixel_data_offset(coords.try_into()?)
                 .map_err(texture_access_error)
@@ -1251,6 +1362,7 @@ impl PyImage {
 
     pub fn pixel_bytes(&self, py: Python<'_>, coords: PyUVec3) -> PyResult<Py<PyBytes>> {
         image_with!(self, |image: &Image| {
+            check_pixel_layout(image)?;
             let bytes = image
                 .pixel_bytes(coords.try_into()?)
                 .map_err(texture_access_error)?;
@@ -1267,6 +1379,7 @@ impl PyImage {
         let bevy_coords = coords.try_into()?;
         let len = {
             let image = this.storage.as_ref()?;
+            check_pixel_layout(&image)?;
             image
                 .pixel_bytes(bevy_coords)
                 .map_err(|error| {
@@ -1415,6 +1528,7 @@ impl PyImage {
 
     pub fn get_color_at_1d(&self, x: u32, py: Python<'_>) -> PyResult<Py<PyColor>> {
         image_with!(self, |image: &Image| {
+            check_pixel_layout(image)?;
             let color = image.get_color_at_1d(x).map_err(|e| {
                 pixel_access_error(&e, format!("Failed to get color at ({x}): {e}"))
             })?;
@@ -1424,6 +1538,7 @@ impl PyImage {
 
     pub fn get_color_at(&self, x: u32, y: u32, py: Python<'_>) -> PyResult<Py<PyColor>> {
         image_with!(self, |image: &Image| {
+            check_pixel_layout(image)?;
             let color = image.get_color_at(x, y).map_err(|e| {
                 pixel_access_error(&e, format!("Failed to get color at ({x}, {y}): {e}"))
             })?;
@@ -1433,6 +1548,7 @@ impl PyImage {
 
     pub fn get_color_at_3d(&self, x: u32, y: u32, z: u32, py: Python<'_>) -> PyResult<Py<PyColor>> {
         image_with!(self, |image: &Image| {
+            check_pixel_layout(image)?;
             let color = image.get_color_at_3d(x, y, z).map_err(|e| {
                 pixel_access_error(&e, format!("Failed to get color at ({x}, {y}, {z}): {e}"))
             })?;
@@ -1442,6 +1558,7 @@ impl PyImage {
 
     pub fn set_color_at_1d(&mut self, x: u32, color: PyColor) -> PyResult<()> {
         let color = color.try_into()?;
+        image_with!(self, check_pixel_layout)?;
         image_with!(self, |image: &Image| image.get_color_at_1d(x))
             .map_err(|e| pixel_access_error(&e, format!("Failed to set color at ({x}): {e}")))?;
         image_with_mut!(self, |image: &mut Image| {
@@ -1454,6 +1571,7 @@ impl PyImage {
 
     pub fn set_color_at(&mut self, x: u32, y: u32, color: PyColor) -> PyResult<()> {
         let color = color.try_into()?;
+        image_with!(self, check_pixel_layout)?;
         image_with!(self, |image: &Image| image.get_color_at(x, y)).map_err(|e| {
             pixel_access_error(&e, format!("Failed to set color at ({x}, {y}): {e}"))
         })?;
@@ -1467,6 +1585,7 @@ impl PyImage {
 
     pub fn set_color_at_3d(&mut self, x: u32, y: u32, z: u32, color: PyColor) -> PyResult<()> {
         let color = color.try_into()?;
+        image_with!(self, check_pixel_layout)?;
         image_with!(self, |image: &Image| image.get_color_at_3d(x, y, z)).map_err(|e| {
             pixel_access_error(&e, format!("Failed to set color at ({x}, {y}, {z}): {e}"))
         })?;
@@ -1483,6 +1602,7 @@ impl PyImage {
     pub fn resize(&mut self, size: PyExtent3d) -> PyResult<()> {
         let size: Extent3d = size.into();
         checked_bevy_pixel_count(size)?;
+        self.check_resize(size)?;
         image_with_mut!(self, |image: &mut Image| {
             image.resize(size);
             Ok(())
@@ -1492,6 +1612,7 @@ impl PyImage {
     pub fn resize_in_place(&mut self, size: PyExtent3d) -> PyResult<()> {
         let size: Extent3d = size.into();
         checked_bevy_pixel_count(size)?;
+        self.check_resize(size)?;
         image_with_mut!(self, |image: &mut Image| {
             image.resize_in_place(size);
             Ok(())

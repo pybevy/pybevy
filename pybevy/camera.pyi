@@ -1132,7 +1132,7 @@ class RenderLayers(Component):
         """Create a new RenderLayers with the specified layer added.
 
         Args:
-            layer: Layer number to add
+            layer: Layer number to add, below 65536
 
         Returns:
             New RenderLayers with the layer added
@@ -1213,7 +1213,7 @@ class RenderLayers(Component):
         """Create RenderLayers from a list of layer indices.
 
         Args:
-            layers: List of layer indices to enable
+            layers: List of layer indices to enable, each below 65536
 
         Returns:
             RenderLayers with specified layers enabled

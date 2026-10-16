@@ -1,7 +1,7 @@
 use bevy::math::{Mat3, Vec3};
 use pybevy_core::{
     FromBorrowedStorage, StorageRef, ValueStorage,
-    public_error::{UNSUPPORTED_COMPARISON, euler_axes_not_normalized},
+    public_error::{UNSUPPORTED_COMPARISON, affine_transform_last_row, euler_axes_not_normalized},
     repr::ReprLiteral,
 };
 use pyo3::{
@@ -12,6 +12,7 @@ use pyo3::{
 
 use super::{quat::PyQuat, vec2::PyVec2, vec3::PyVec3};
 use crate::{
+    checked_axis_angle,
     mat4::{PyMat4, look_at_inputs, look_to_axes},
     matrix_index,
     quat::PyEulerRot,
@@ -57,6 +58,19 @@ impl FromBorrowedStorage<ValueStorage<Mat3>> for PyMat3 {
 }
 
 impl PyMat3 {
+    /// glam's 2D transforms assume an affine matrix but only assert it under `glam_assert`.
+    fn affine_rows(&self, function: &str) -> PyResult<Mat3> {
+        let matrix = *self.as_ref()?;
+        if !matrix.row(2).abs_diff_eq(Vec3::Z, 1e-6) {
+            return Err(PyValueError::new_err(affine_transform_last_row(
+                "Mat3",
+                function,
+                "(0, 0, 1)",
+            )));
+        }
+        Ok(matrix)
+    }
+
     #[inline(always)]
     pub fn from_mat3(mat: Mat3) -> Self {
         PyMat3 {
@@ -151,7 +165,8 @@ impl PyMat3 {
 
     #[staticmethod]
     pub fn from_axis_angle(axis: &PyVec3, angle: f32) -> PyResult<Self> {
-        Ok(PyMat3::mat3(Mat3::from_axis_angle(axis.try_into()?, angle)))
+        let (axis, angle) = checked_axis_angle::<Self>(axis.try_into()?, angle)?;
+        Ok(PyMat3::mat3(Mat3::from_axis_angle(axis, angle)))
     }
 
     #[staticmethod]
@@ -262,15 +277,13 @@ impl PyMat3 {
     }
 
     pub fn transform_point2(&self, rhs: &PyVec2) -> PyResult<PyVec2> {
-        Ok(PyVec2::from_vec2(
-            self.as_ref()?.transform_point2(rhs.try_into()?),
-        ))
+        let matrix = self.affine_rows("transform_point2")?;
+        Ok(PyVec2::from_vec2(matrix.transform_point2(rhs.try_into()?)))
     }
 
     pub fn transform_vector2(&self, rhs: &PyVec2) -> PyResult<PyVec2> {
-        Ok(PyVec2::from_vec2(
-            self.as_ref()?.transform_vector2(rhs.try_into()?),
-        ))
+        let matrix = self.affine_rows("transform_vector2")?;
+        Ok(PyVec2::from_vec2(matrix.transform_vector2(rhs.try_into()?)))
     }
 
     pub fn is_finite(&self) -> PyResult<bool> {

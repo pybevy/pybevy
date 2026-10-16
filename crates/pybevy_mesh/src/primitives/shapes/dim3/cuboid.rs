@@ -5,18 +5,17 @@ use bevy::{
     },
     mesh::Meshable,
 };
-use pybevy_core::{FromBorrowedStorage, StorageError, ValueStorage, repr::float_list_repr};
+use pybevy_core::{FromBorrowedStorage, ValueStorage, repr::float_list_repr};
 use pybevy_macros::{pyconstructor, pyvalue};
-use pybevy_math::{primitives::dimension::dimension, vec3::PyVec3};
+use pybevy_math::{
+    primitives::dimension::{Dimension, dimension},
+    vec3::PyVec3,
+};
 use pyo3::prelude::*;
 
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyCuboidMeshBuilder};
 
-fn check_half_size(value: &Vec3) -> Result<(), StorageError> {
-    Ok(dimension::<PyCuboid, _>("half_size", *value).map(drop)?)
-}
-
-#[pyvalue]
+#[pyvalue(domains = [half_size => [finite, non_negative]])]
 #[pyclass(name = "Cuboid", module = "pybevy.math", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyCuboid {
@@ -47,7 +46,8 @@ impl PyCuboid {
         #[expected("Vec3")] half_size: Option<PyVec3>,
     ) -> PyResult<PyClassInitializer<Self>> {
         if let Some(hs) = half_size {
-            let half_size: Vec3 = dimension::<Self, _>("half_size", hs.try_into()?)?;
+            let half_size: Vec3 = hs.try_into()?;
+            let half_size = Self::check_half_size(half_size)?.without_negative_zero();
             return Ok((Self::from_owned(Cuboid { half_size }), PyMeshable).into());
         }
         let cuboid = Cuboid::new(
@@ -67,7 +67,7 @@ impl PyCuboid {
     #[staticmethod]
     pub fn from_corners(py: Python, point1: PyVec3, point2: PyVec3) -> PyResult<Py<Self>> {
         let cuboid = Cuboid::from_corners(point1.try_into()?, point2.try_into()?);
-        dimension::<Self, _>("half_size", cuboid.half_size)?;
+        Self::check_half_size(cuboid.half_size)?;
         Py::new(py, (Self::from_owned(cuboid), PyMeshable))
     }
 
@@ -82,15 +82,15 @@ impl PyCuboid {
         Ok(self.storage.borrow_validated_field_as(
             |s| &s.half_size,
             |s| &mut s.half_size,
-            check_half_size,
+            Self::validate_half_size,
         )?)
     }
 
     #[setter]
     pub fn set_half_size(&mut self, value: PyVec3) -> PyResult<()> {
         let half_size: Vec3 = value.try_into()?;
-        let mut cuboid = self.as_mut()?;
-        cuboid.half_size = dimension::<Self, _>("half_size", half_size)?;
+        let half_size = Self::check_half_size(half_size)?.without_negative_zero();
+        self.as_mut()?.half_size = half_size;
         Ok(())
     }
 

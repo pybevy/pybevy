@@ -1,11 +1,17 @@
 use bevy::camera::visibility::RenderLayers;
 use pybevy_core::{
     PyComponent,
-    domain::{IntegerInput, MASK_BIT_DOMAIN, check_for},
+    domain::{FieldDomain, IntegerInput, MASK_BIT_DOMAIN, check_for},
     pycomponent::ComponentStorage,
 };
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
+
+/// Bevy grows the mask to `layer / 64 + 1` words; this bound keeps it at 8 KiB.
+const LAYER_DOMAIN: &[FieldDomain] = &[FieldDomain::Range {
+    lo: 0.0,
+    hi: 65536.0,
+}];
 
 #[pycomponent(RenderLayers, bridge)]
 #[pyclass(name = "RenderLayers", module = "pybevy.camera", extends = PyComponent, eq)]
@@ -47,7 +53,8 @@ impl PyRenderLayers {
     }
 
     #[pyo3(name = "with_")]
-    pub fn with_(&self, py: Python<'_>, layer: usize) -> PyResult<Py<Self>> {
+    pub fn with_(&self, py: Python<'_>, layer: IntegerInput<u64>) -> PyResult<Py<Self>> {
+        let layer = check_for::<Self, _>("layer", layer, LAYER_DOMAIN)?.stored() as usize;
         let layers = self.as_ref()?.clone().with(layer);
         Py::new(py, (PyRenderLayers::from(layers), PyComponent))
     }
@@ -92,7 +99,11 @@ impl PyRenderLayers {
     }
 
     #[staticmethod]
-    pub fn from_layers(py: Python<'_>, layers: Vec<usize>) -> PyResult<Py<Self>> {
+    pub fn from_layers(py: Python<'_>, layers: Vec<IntegerInput<u64>>) -> PyResult<Py<Self>> {
+        let layers = layers
+            .into_iter()
+            .map(|layer| Ok(check_for::<Self, _>("layers", layer, LAYER_DOMAIN)?.stored() as usize))
+            .collect::<PyResult<Vec<_>>>()?;
         let render_layers = RenderLayers::from_layers(&layers);
         Py::new(py, (PyRenderLayers::from(render_layers), PyComponent))
     }

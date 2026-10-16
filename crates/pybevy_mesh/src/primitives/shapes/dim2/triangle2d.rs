@@ -2,7 +2,10 @@ use bevy::{
     math::primitives::{Measured2d, Triangle2d},
     mesh::Meshable,
 };
-use pybevy_core::repr::ReprLiteral;
+use pybevy_core::{
+    domain::{FINITE_NON_NEGATIVE, check_for},
+    repr::ReprLiteral,
+};
 use pybevy_macros::pyconstructor;
 use pybevy_math::{vec2::PyVec2, winding_order::PyWindingOrder};
 use pyo3::prelude::*;
@@ -82,6 +85,8 @@ impl PyTriangle2d {
 
     pub fn circumcircle(&self, py: Python<'_>) -> PyResult<(Py<PyCircle>, PyVec2)> {
         let (circle, center) = self.0.circumcircle();
+        // A degenerate triangle has no circumcircle: the radius is infinite or NaN.
+        check_for::<Self, _>("circumradius", circle.radius, FINITE_NON_NEGATIVE)?;
         let py_circle = Py::new(py, (circle.into(), PyMeshable))?;
         Ok((py_circle, PyVec2::from_vec2(center)))
     }

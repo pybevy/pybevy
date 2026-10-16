@@ -3,7 +3,7 @@ use std::time::Duration;
 use bevy::time::{Timer, TimerMode};
 use pybevy_core::{
     domain::{DurationInput, FINITE_NON_NEGATIVE, check_for},
-    public_error::TIMER_ELAPSED_PAST_DURATION,
+    public_error::{TIMER_ALMOST_FINISH_NO_REMAINING, TIMER_ELAPSED_PAST_DURATION},
 };
 use pybevy_macros::pyenum;
 use pyo3::{exceptions::PyValueError, prelude::*};
@@ -166,14 +166,22 @@ impl PyTimer {
         self.timer.set_mode(mode.into());
     }
 
-    pub fn finish(&mut self) {
+    pub fn finish(&mut self) -> PyResult<()> {
+        // Bevy computes `duration - elapsed`, which panics past the duration.
+        self.checked_remaining()?;
         self.timer.finish();
         self.count_overflowed = false;
+        Ok(())
     }
 
-    pub fn almost_finish(&mut self) {
+    pub fn almost_finish(&mut self) -> PyResult<()> {
+        // Bevy subtracts 1 ns from the remaining time.
+        if self.checked_remaining()? < Duration::from_nanos(1) {
+            return Err(PyValueError::new_err(TIMER_ALMOST_FINISH_NO_REMAINING));
+        }
         self.timer.almost_finish();
         self.count_overflowed = false;
+        Ok(())
     }
 }
 

@@ -7,7 +7,7 @@ use syn::{
     parse::{Parse, ParseStream},
 };
 
-pub(crate) const DOMAIN_RULES: &str = "finite, not_nan, finite_or_pos_inf, non_negative, positive, range(lo, hi), range_inclusive(lo, hi), at_least(n), ordered, ordered_strict";
+pub(crate) const DOMAIN_RULES: &str = "finite, not_nan, finite_or_pos_inf, non_negative, positive, non_zero, range(lo, hi), range_inclusive(lo, hi), at_least(n), ordered, ordered_strict";
 
 /// One rule of a `domains` entry, lowered to `pybevy_core::domain::FieldDomain`.
 #[derive(Clone)]
@@ -17,6 +17,7 @@ pub(crate) enum DomainRuleKind {
     FiniteOrPosInf,
     NonNegative,
     Positive,
+    NonZero,
     Range(Box<Expr>, Box<Expr>),
     RangeInclusive(Box<Expr>, Box<Expr>),
     AtLeast(Box<Expr>),
@@ -44,6 +45,7 @@ impl Parse for DomainRule {
                 | "finite_or_pos_inf"
                 | "non_negative"
                 | "positive"
+                | "non_zero"
                 | "range"
                 | "range_inclusive"
                 | "at_least"
@@ -96,6 +98,7 @@ impl Parse for DomainRule {
             ("finite_or_pos_inf", []) => DomainRuleKind::FiniteOrPosInf,
             ("non_negative", []) => DomainRuleKind::NonNegative,
             ("positive", []) => DomainRuleKind::Positive,
+            ("non_zero", []) => DomainRuleKind::NonZero,
             ("range", [lo, hi]) => DomainRuleKind::Range(bound(lo), bound(hi)),
             ("range_inclusive", [lo, hi]) => DomainRuleKind::RangeInclusive(bound(lo), bound(hi)),
             ("at_least", [n]) => DomainRuleKind::AtLeast(bound(n)),
@@ -122,6 +125,7 @@ impl DomainRule {
             }
             DomainRuleKind::NonNegative => quote! { pybevy_core::domain::FieldDomain::NonNegative },
             DomainRuleKind::Positive => quote! { pybevy_core::domain::FieldDomain::Positive },
+            DomainRuleKind::NonZero => quote! { pybevy_core::domain::FieldDomain::NonZero },
             DomainRuleKind::Range(lo, hi) => quote! {
                 pybevy_core::domain::FieldDomain::Range { lo: (#lo) as f64, hi: (#hi) as f64 }
             },

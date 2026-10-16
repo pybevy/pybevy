@@ -1,9 +1,10 @@
 use bevy::math::{BVec4A, Vec4, Vec4Swizzles};
 use pybevy_core::{
     FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
+    domain::{NON_NEGATIVE, check_for},
     public_error::{
-        NORMAL_NOT_NORMALIZED, RHS_NOT_NORMALIZED, UNSUPPORTED_COMPARISON, VECTOR_NOT_NORMALIZED,
-        from_slice_too_short,
+        CLAMP_MIN_EXCEEDS_MAX, NORMAL_NOT_NORMALIZED, RHS_NOT_NORMALIZED, UNSUPPORTED_COMPARISON,
+        VECTOR_NOT_NORMALIZED, from_slice_too_short,
     },
     repr::ReprLiteral,
 };
@@ -427,20 +428,29 @@ impl PyVec4 {
     }
 
     pub fn clamp(&self, min: &PyVec4, max: &PyVec4) -> PyResult<PyVec4> {
-        Ok(PyVec4::from_vec4(
-            self.as_ref()?.clamp(*min.as_ref()?, *max.as_ref()?),
-        ))
+        let (min, max) = (*min.as_ref()?, *max.as_ref()?);
+        if !min.cmple(max).all() {
+            return Err(PyValueError::new_err(CLAMP_MIN_EXCEEDS_MAX));
+        }
+        Ok(PyVec4::from_vec4(self.as_ref()?.clamp(min, max)))
     }
 
     pub fn clamp_length(&self, min: f32, max: f32) -> PyResult<PyVec4> {
+        let min = check_for::<Self, _>("min", min, NON_NEGATIVE)?;
+        let max = check_for::<Self, _>("max", max, NON_NEGATIVE)?;
+        if min > max {
+            return Err(PyValueError::new_err(CLAMP_MIN_EXCEEDS_MAX));
+        }
         Ok(PyVec4::from_vec4(self.as_ref()?.clamp_length(min, max)))
     }
 
     pub fn clamp_length_min(&self, min: f32) -> PyResult<PyVec4> {
+        let min = check_for::<Self, _>("min", min, NON_NEGATIVE)?;
         Ok(PyVec4::from_vec4(self.as_ref()?.clamp_length_min(min)))
     }
 
     pub fn clamp_length_max(&self, max: f32) -> PyResult<PyVec4> {
+        let max = check_for::<Self, _>("max", max, NON_NEGATIVE)?;
         Ok(PyVec4::from_vec4(self.as_ref()?.clamp_length_max(max)))
     }
 

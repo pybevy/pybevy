@@ -1,5 +1,5 @@
 use bevy::render::render_resource::TextureDescriptor;
-use pybevy_core::{FieldStorage, FromBorrowedStorage};
+use pybevy_core::{FieldStorage, FromBorrowedStorage, domain::IntegerInput};
 use pybevy_macros::pyfield;
 use pyo3::prelude::*;
 
@@ -8,7 +8,7 @@ use crate::{
     texture_usages::PyTextureUsages,
 };
 
-#[pyfield]
+#[pyfield(domains = [mip_level_count => [positive]])]
 #[pyclass(name = "TextureDescriptor", module = "pybevy.render", from_py_object)]
 #[derive(Debug)]
 pub struct PyTextureDescriptor {
@@ -23,8 +23,8 @@ impl PyTextureDescriptor {
     }
 
     #[setter]
-    pub fn set_mip_level_count(&mut self, mip_level_count: u32) -> PyResult<()> {
-        self.as_mut()?.mip_level_count = mip_level_count;
+    pub fn set_mip_level_count(&mut self, mip_level_count: IntegerInput<u32>) -> PyResult<()> {
+        self.as_mut()?.mip_level_count = Self::check_mip_level_count(mip_level_count)?.stored();
         Ok(())
     }
 

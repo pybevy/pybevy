@@ -1,12 +1,17 @@
 use std::ops::Range;
 
 use bevy::mesh::{MeshBuilder, TorusMeshBuilder};
-use pybevy_core::PyAsset;
+use pybevy_core::{
+    PyAsset,
+    domain::{IntegerInput, check_for},
+};
 use pybevy_math::range::PyRange;
 use pyo3::prelude::*;
 
 use crate::{
-    mesh::PyMesh, mesh_builder::PyMeshBuilder, primitives::validation::vertex_budget_product,
+    mesh::PyMesh,
+    mesh_builder::PyMeshBuilder,
+    primitives::validation::{AT_LEAST_ONE, vertex_budget_product},
 };
 
 #[pyclass(name = "TorusMeshBuilder", module = "pybevy.mesh", extends = PyMeshBuilder)]
@@ -21,15 +26,26 @@ impl From<TorusMeshBuilder> for PyTorusMeshBuilder {
 
 #[pymethods]
 impl PyTorusMeshBuilder {
-    pub fn minor_resolution(&self, py: Python<'_>, resolution: usize) -> PyResult<Py<Self>> {
+    pub fn minor_resolution(
+        &self,
+        py: Python<'_>,
+        resolution: IntegerInput<u64>,
+    ) -> PyResult<Py<Self>> {
+        // Bevy divides by both resolutions, so zero would give NaN positions.
+        let resolution = check_for::<Self, _>("minor_resolution", resolution, AT_LEAST_ONE)?;
         let mut builder = self.0.clone();
-        builder.minor_resolution = resolution;
+        builder.minor_resolution = resolution.stored() as usize;
         Py::new(py, (Self(builder), PyMeshBuilder))
     }
 
-    pub fn major_resolution(&self, py: Python<'_>, resolution: usize) -> PyResult<Py<Self>> {
+    pub fn major_resolution(
+        &self,
+        py: Python<'_>,
+        resolution: IntegerInput<u64>,
+    ) -> PyResult<Py<Self>> {
+        let resolution = check_for::<Self, _>("major_resolution", resolution, AT_LEAST_ONE)?;
         let mut builder = self.0.clone();
-        builder.major_resolution = resolution;
+        builder.major_resolution = resolution.stored() as usize;
         Py::new(py, (Self(builder), PyMeshBuilder))
     }
 
