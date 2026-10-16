@@ -1061,6 +1061,7 @@ PyMeshMaterial3dShader = "MeshMaterial3d"
 # bevy_animation::graph::AnimationNodeIndex aliases petgraph::graph::NodeIndex<u32>;
 # claim the Bevy alias name so the inventory lookup resolves it.
 PyAnimationNodeIndex = "AnimationNodeIndex"
+PyMeshMaterial3dStorageShader = "MeshMaterial3d"
 
 # Generic type specializations in Bevy -> PyBevy separate types
 # These specialized types have their own impl blocks in Bevy
@@ -1736,6 +1737,7 @@ reason = "Bevy 0.19.1 bevy_audio::SpatialListener::new defines the gap prefix fo
 "pybevy.mesh.PySkinnedMeshInverseBindposes" = "Bevy 0.19.1 bevy_mesh::SkinnedMeshInverseBindposes is a tuple struct/newtype; Python construction preserves its positional payload contract"
 "pybevy.pbr.PyMesh3dWireframe" = "Bevy 0.19.1 bevy_pbr::wireframe::Mesh3dWireframe is a tuple struct/newtype; Python construction preserves its positional payload contract"
 "pybevy.pbr.PyMeshMaterial3dForwardDecal" = "Bevy 0.19.1 bevy_pbr::MeshMaterial3d is a tuple struct/newtype; Python construction preserves its positional payload contract"
+"pybevy.pbr.PyMeshMaterial3dStorageShader" = "Bevy 0.19.1 bevy_pbr::MeshMaterial3d is a tuple struct/newtype; Python construction preserves its positional payload contract"
 "pybevy.pbr.PyMeshMaterial3dShader" = "Bevy 0.19.1 bevy_pbr::MeshMaterial3d is a tuple struct/newtype; Python construction preserves its positional payload contract"
 "pybevy.render.PyMipBias" = "Bevy 0.19.1 bevy_render::MipBias is a tuple struct/newtype; Python construction preserves its positional payload contract"
 "pybevy.sprite.PyAnchor" = "Bevy 0.19.1 bevy_sprite::Anchor is a tuple struct/newtype; Python construction preserves its positional payload contract"
@@ -3704,3 +3706,13 @@ paths = [
     "animation.AnimatableKeyframeCurve.sample_clamped",
     "animation.AnimatableKeyframeCurve.sample_unchecked",
 ]
+
+[[validation.exceptions]]
+code = "E013"
+path = "pbr.StorageShaderMaterial"
+reason = "PyBevy's ExtendedMaterial specialization with one optional read-only ShaderBuffer binding; no matching upstream constructor"
+
+[[validation.exceptions]]
+code = "E013"
+path = "pbr.StorageShaderMaterialPlugin"
+reason = "PyBevy's opt-in material plugin installs native material pipelines, shader synchronization and storage dependency refresh"
