@@ -13,13 +13,12 @@ use tokio::sync::oneshot;
 
 use crate::{
     capture::{
+        hold::{GizmoEnabledRestore, prepare_pending_screenshot_gizmos},
         queue::{
             CaptureResponseKind, DEFAULT_SCREENSHOT_MAX_WIDTH, DebugCameraRequest,
             PendingScreenshot, PendingScreenshots,
         },
-        screenshot::{
-            GizmoEnabledRestore, RenderFrameReadiness, prepare_pending_screenshot_gizmos,
-        },
+        readiness::RenderFrameReadiness,
     },
     protocol::{ControlError, ReloadMode},
     scene::entity_count::scene_entity_count,

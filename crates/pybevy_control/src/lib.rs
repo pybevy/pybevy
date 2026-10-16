@@ -42,13 +42,19 @@ pub mod bridge {
 #[doc(hidden)]
 pub mod handlers {
     pub use crate::{
-        capture::{analysis as frame_analysis, depth, screenshot, turnaround},
+        capture::{analysis as frame_analysis, depth, turnaround},
         codec::reflect as reflect_mutate,
         engine::dispatch::dispatch,
         pyo3, reload,
         scene::{diagnostics, entity, entity_count, spatial, time as time_control},
         schedule,
     };
+
+    pub mod screenshot {
+        pub use crate::capture::{
+            camera::*, headless::*, hold::*, readiness::*, screenshot::*, timeline::*,
+        };
+    }
 }
 
 /// Return MCP tool definitions generated from ControlOperation's JSON schema.

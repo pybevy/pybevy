@@ -9,15 +9,17 @@ use tokio::sync::oneshot;
 use crate::{
     capture::{
         analysis::{FrameStatsOptions, validate_frame_stats_options},
+        camera::select_capture_camera_3d,
         depth::{PendingDepthAnalysis, compute_depth_samples_for_camera, validate_depth_sampling},
+        hold::{GizmoEnabledRestore, prepare_pending_screenshot_gizmos},
         queue::{
             CaptureResponseKind, DEFAULT_SCREENSHOT_MAX_WIDTH, DEFAULT_TIMELINE_MAX_WIDTH,
             DebugCameraRequest, PendingScreenshot, PendingScreenshots,
         },
-        screenshot::{
-            ActiveTimeline, GizmoEnabledRestore, MAX_TIMELINE_CAPTURES, MAX_TIMELINE_FRAMES,
-            PendingTimelines, compute_schedule, prepare_pending_screenshot_gizmos,
-            select_capture_camera_3d, validate_capture_delay,
+        screenshot::validate_capture_delay,
+        timeline::{
+            ActiveTimeline, MAX_TIMELINE_CAPTURES, MAX_TIMELINE_FRAMES, PendingTimelines,
+            compute_schedule,
         },
         turnaround::{
             ActiveTurnaround, MAX_TURNAROUND_VIEWS, PendingTurnarounds, compute_scene_bounds,
@@ -500,7 +502,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        capture::{hold::OverlaySuppression, screenshot::process_pending_timelines},
+        capture::{hold::OverlaySuppression, timeline::process_pending_timelines},
         protocol::{ErrorCode, ReloadMode},
     };
 
