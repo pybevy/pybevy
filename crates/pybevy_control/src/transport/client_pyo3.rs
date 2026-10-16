@@ -7,7 +7,7 @@ use pyo3::{
 };
 use serde_json::Value;
 
-use crate::client::{self, ClientError, ClientErrorKind};
+use crate::transport::client::{self, ClientError, ClientErrorKind};
 
 create_exception!(
     pybevy_control,

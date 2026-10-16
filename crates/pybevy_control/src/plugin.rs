@@ -12,10 +12,10 @@ use pybevy_macros::pyplugin;
 use pyo3::prelude::*;
 
 use crate::{
-    api_index::ApiIndex,
     bridge::{self, SseEventBroadcaster},
-    handlers::frame_analysis::CapturedFrames,
-    server::AppState,
+    capture::analysis::CapturedFrames,
+    discovery::ApiIndex,
+    transport::server::AppState,
 };
 
 #[pyplugin(ControlBevyPlugin)]
@@ -165,7 +165,7 @@ impl Plugin for ControlBevyPlugin {
         };
 
         // Create shared schedule registry
-        let schedule_registry = crate::handlers::schedule::SharedScheduleRegistry::default();
+        let schedule_registry = crate::schedule::SharedScheduleRegistry::default();
 
         // Build server state
         let server_state = AppState::new(
@@ -180,15 +180,15 @@ impl Plugin for ControlBevyPlugin {
         app.insert_resource(receiver);
         app.insert_resource(exclusive_execution);
         app.insert_resource(sse_broadcaster);
-        app.init_resource::<crate::handlers::schedule::ActiveSchedules>();
-        app.insert_resource(crate::handlers::schedule::SharedScheduleRegistryResource(
+        app.init_resource::<crate::schedule::ActiveSchedules>();
+        app.insert_resource(crate::schedule::SharedScheduleRegistryResource(
             schedule_registry,
         ));
         app.init_resource::<crate::asset_reference::AssetReferenceSession>();
         app.insert_resource(control_config);
 
-        app.insert_non_send(Box::new(crate::runtime_pyo3::Pyo3ControlRuntime)
-            as Box<dyn crate::runtime::ControlRuntime>);
+        app.insert_non_send(Box::new(crate::pyo3::runtime::Pyo3ControlRuntime)
+            as Box<dyn crate::engine::runtime::ControlRuntime>);
 
         // Ensure the app keeps ticking when unfocused so MCP requests are processed
         #[cfg(feature = "bevy_winit")]
@@ -199,43 +199,43 @@ impl Plugin for ControlBevyPlugin {
         // Schedule processor runs after control_poll_system (also in First)
         app.add_systems(
             First,
-            crate::handlers::schedule::process_active_schedules.after(bridge::control_poll_system),
+            crate::schedule::process_active_schedules.after(bridge::control_poll_system),
         );
 
         // Register screenshot and reload processing systems (runs after render)
         app.add_systems(
             Last,
             (
-                crate::handlers::screenshot::hold_capture_pose,
-                crate::handlers::screenshot::process_pending_screenshots,
-                crate::handlers::screenshot::process_pending_timelines,
-                crate::handlers::reload::process_pending_reloads,
-                crate::handlers::reload::process_pending_reload_and_capture,
-                crate::handlers::turnaround::process_pending_turnarounds,
+                crate::capture::screenshot::hold_capture_pose,
+                crate::capture::screenshot::process_pending_screenshots,
+                crate::capture::screenshot::process_pending_timelines,
+                crate::reload::process_pending_reloads,
+                crate::reload::process_pending_reload_and_capture,
+                crate::capture::turnaround::process_pending_turnarounds,
             ),
         );
 
         // Register global observer for screenshot capture completion
-        app.add_observer(crate::handlers::screenshot::screenshot_captured_observer);
+        app.add_observer(crate::capture::screenshot::screenshot_captured_observer);
         app.init_resource::<CapturedFrames>();
-        app.init_resource::<crate::handlers::screenshot::PendingScreenshotResponders>();
-        app.init_resource::<crate::handlers::screenshot::PendingTimelines>();
-        app.init_resource::<crate::handlers::screenshot::TimelineCaptures>();
-        app.init_resource::<crate::handlers::turnaround::PendingTurnarounds>();
-        app.init_resource::<crate::handlers::turnaround::TurnaroundCaptures>();
+        app.init_resource::<crate::capture::screenshot::PendingScreenshotResponders>();
+        app.init_resource::<crate::capture::screenshot::PendingTimelines>();
+        app.init_resource::<crate::capture::screenshot::TimelineCaptures>();
+        app.init_resource::<crate::capture::turnaround::PendingTurnarounds>();
+        app.init_resource::<crate::capture::turnaround::TurnaroundCaptures>();
 
         // Start the HTTP server
-        crate::server::start_server(config.host.clone(), config.port, server_state);
+        crate::transport::server::start_server(config.host.clone(), config.port, server_state);
     }
 
     fn finish(&self, app: &mut App) {
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
-        let readiness = crate::handlers::screenshot::RenderFrameReadiness::default();
+        let readiness = crate::capture::screenshot::RenderFrameReadiness::default();
         render_app.insert_resource(readiness.clone()).add_systems(
             Render,
-            crate::handlers::screenshot::update_render_frame_readiness.after(RenderSystems::Render),
+            crate::capture::screenshot::update_render_frame_readiness.after(RenderSystems::Render),
         );
         app.insert_resource(readiness);
     }

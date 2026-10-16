@@ -597,17 +597,18 @@ class App:
     def cleanup(self) -> None:
         """Clean up app resources."""
     def clear_scene(self) -> None:
-        """Clear the scene by despawning all entities and clearing custom resources.
+        """Clear the scene by despawning scene entities and clearing custom resources.
 
         This is similar to hot reload's Full mode but without reloading systems.
 
         Preserves:
         - Built-in Bevy resources (Time, AssetServer, etc.)
         - RenderDevice and render infrastructure
-        - Plugin state
+        - Plugin state, including observer, window and monitor entities and,
+          under hot reload, entities that existed before Startup
 
         Clears:
-        - All entities
+        - All other entities
         - Custom Python resources
         """
 

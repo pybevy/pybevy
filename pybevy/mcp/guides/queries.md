@@ -142,7 +142,8 @@ def cleanup_enemies(commands: Commands, query: Query[Entity, With[Enemy]]) -> No
 For exclusive-world inspection, `world.resource_entity(Time)` returns Time's
 stable entity and `world.resource_entities()` snapshots every resource
 component ID/entity pair. `IsResource` is engine-managed and cannot be
-constructed or inserted from Python.
+constructed or inserted from Python. There, read a resource with
+`world.resource(T)` and write one with `world.resource_mut(T)`.
 
 Native resource wrappers can also be queried on that entity:
 

@@ -1499,7 +1499,21 @@ class World:
         Exclusive systems and App.world callbacks also flush on exit, including
         error exits. Direct World mutations remain immediate.
         """
-    def resource(self, resource: type[ResourceType]) -> ResourceType: ...
+    def resource(self, resource: type[ResourceType]) -> ResourceType:
+        """Get read-only access to a resource; use ``resource_mut`` to write fields.
+
+        Pass the resource type itself: ``Res[T]`` and ``ResMut[T]`` raise TypeError.
+        """
+    def resource_mut(self, resource: type[ResourceType]) -> ResourceType:
+        """Get writable access to a resource, like Bevy's ``World::resource_mut``.
+
+        Custom resources return a ``ResMut`` handle and are marked changed when
+        fetched, like a ``ResMut[T]`` system parameter. Native resources are marked
+        changed on their first write. The handle expires with this World access.
+
+        Example:
+            world.resource_mut(Score).value += 1
+        """
     def register_resource(self, resource: type[ResourceType]) -> ComponentId: ...
     def init_resource(self, resource: type[ResourceType]) -> ComponentId: ...
     def insert_resource(self, resource: Resource) -> None: ...

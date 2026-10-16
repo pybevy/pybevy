@@ -7,16 +7,16 @@ use bevy::{
 use image::{ImageFormat, Rgb, RgbImage};
 use tokio::sync::oneshot;
 
-use super::{
-    screenshot::{
-        CAPTURE_CANCELLED_ERROR, CAPTURE_DEADLINE_ERROR, DebugCameraCleanup,
-        EntityCaptureIsolationActive, MAX_CAPTURE_WAIT_FRAMES, STALE_HEADLESS_FRAME_ERROR,
-        capture_in_progress, cleanup_debug_camera_world, headless_frame_sequence, restore_ui_nodes,
-        setup_debug_camera_with_up,
-    },
-    spatial::compute_world_aabb,
+use super::screenshot::{
+    CAPTURE_CANCELLED_ERROR, CAPTURE_DEADLINE_ERROR, DebugCameraCleanup,
+    EntityCaptureIsolationActive, MAX_CAPTURE_WAIT_FRAMES, STALE_HEADLESS_FRAME_ERROR,
+    capture_in_progress, cleanup_debug_camera_world, headless_frame_sequence, hsv_to_rgb,
+    restore_ui_nodes, setup_debug_camera_with_up,
 };
-use crate::bridge::{ControlError, DebugCameraRequest, InternalOverlayUi};
+use crate::{
+    bridge::{ControlError, DebugCameraRequest, InternalOverlayUi},
+    scene::spatial::compute_world_aabb,
+};
 
 pub const MAX_TURNAROUND_VIEWS: u32 = 20;
 // Transform propagation, render extraction, and GPU readback cross separate frames.
@@ -325,9 +325,6 @@ pub fn process_pending_turnarounds(world: &mut World) {
         turnaround.frames_remaining = 2;
         turnaround.pending_screenshot_entity = None;
 
-        // We'll spawn the screenshot on the next iteration when frames_remaining hits 0
-        // Actually, we need to schedule the screenshot spawn after the delay
-        // Let's set a flag to spawn after delay
         still_active.push(turnaround);
     }
 
@@ -569,30 +566,6 @@ fn composite_turnaround(
     }))
 }
 
-fn hsv_to_rgb(h: f64, s: f64, v: f64) -> Rgb<u8> {
-    let c = v * s;
-    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
-    let m = v - c;
-    let (r, g, b) = if h < 60.0 {
-        (c, x, 0.0)
-    } else if h < 120.0 {
-        (x, c, 0.0)
-    } else if h < 180.0 {
-        (0.0, c, x)
-    } else if h < 240.0 {
-        (0.0, x, c)
-    } else if h < 300.0 {
-        (x, 0.0, c)
-    } else {
-        (c, 0.0, x)
-    };
-    Rgb([
-        ((r + m) * 255.0).round() as u8,
-        ((g + m) * 255.0).round() as u8,
-        ((b + m) * 255.0).round() as u8,
-    ])
-}
-
 #[cfg(test)]
 mod tests {
     use bevy::camera::primitives::Aabb;
@@ -764,35 +737,6 @@ mod tests {
         assert!((max.z - 6.0).abs() < 0.01);
     }
 
-    #[test]
-    fn hsv_to_rgb_red() {
-        assert_eq!(hsv_to_rgb(0.0, 1.0, 1.0), Rgb([255, 0, 0]));
-    }
-
-    #[test]
-    fn hsv_to_rgb_yellow() {
-        assert_eq!(hsv_to_rgb(60.0, 1.0, 1.0), Rgb([255, 255, 0]));
-    }
-
-    #[test]
-    fn hsv_to_rgb_cyan() {
-        assert_eq!(hsv_to_rgb(180.0, 1.0, 1.0), Rgb([0, 255, 255]));
-    }
-
-    #[test]
-    fn hsv_to_rgb_black() {
-        assert_eq!(hsv_to_rgb(0.0, 0.0, 0.0), Rgb([0, 0, 0]));
-    }
-
-    #[test]
-    fn hsv_to_rgb_gray() {
-        let result = hsv_to_rgb(0.0, 0.0, 0.5);
-        // 0.5 * 255 = 127.5, rounds to 128
-        assert!((result.0[0] as i32 - 128).abs() <= 1);
-        assert!((result.0[1] as i32 - 128).abs() <= 1);
-        assert!((result.0[2] as i32 - 128).abs() <= 1);
-    }
-
     fn make_turnaround(
         viewpoints: Vec<TurnaroundView>,
         captures: Vec<(usize, RgbImage)>,
@@ -832,7 +776,7 @@ mod tests {
     #[test]
     fn headless_turnaround_does_not_reuse_the_previous_view() {
         let mut world = World::new();
-        world.insert_resource(crate::handlers::screenshot::HeadlessFrameBuffer {
+        world.insert_resource(crate::capture::screenshot::HeadlessFrameBuffer {
             latest: Some((vec![255, 0, 0, 255], 1, 1)),
             sequence: 5,
         });
@@ -866,7 +810,7 @@ mod tests {
     #[test]
     fn headless_turnaround_advances_to_view_setup_after_capture() {
         let mut world = World::new();
-        world.insert_resource(crate::handlers::screenshot::HeadlessFrameBuffer {
+        world.insert_resource(crate::capture::screenshot::HeadlessFrameBuffer {
             latest: Some((vec![0, 255, 0, 255], 1, 1)),
             sequence: 8,
         });

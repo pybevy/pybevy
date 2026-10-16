@@ -1,7 +1,7 @@
 use std::{any::TypeId, collections::HashSet};
 
 use bevy::{
-    ecs::{entity::Entity, resource::IsResource, world::World},
+    ecs::{entity::Entity, observer::Observer, resource::IsResource, world::World},
     log::info as log_info,
     prelude::{Resource, With, Without},
     time::{Time, Virtual},
@@ -22,6 +22,34 @@ pub struct NativeResourceSnapshot {
     pub initial: HashSet<TypeId>,
 }
 
+/// Entities a scene reset despawns: everything outside the `BaseEntitySet`
+/// that is not `Retained` and is not a resource, window, monitor or observer.
+///
+/// Resource entities must never be despawned. winit creates `Window` and
+/// `Monitor` entities after the baseline, and despawning the primary window
+/// exits the app. Observers are plugin state; Bevy despawns entity-scoped
+/// observers with their watched entities.
+pub fn scene_entities_to_despawn(world: &mut World) -> Vec<Entity> {
+    let base = world
+        .get_resource::<BaseEntitySet>()
+        .map(|b| b.entities.clone())
+        .unwrap_or_default();
+    let retained: HashSet<Entity> = world
+        .query_filtered::<Entity, With<Retained>>()
+        .iter(world)
+        .collect();
+    world
+        .query_filtered::<Entity, (
+            Without<IsResource>,
+            Without<Window>,
+            Without<Monitor>,
+            Without<Observer>,
+        )>()
+        .iter(world)
+        .filter(|e| !base.contains(e) && !retained.contains(e))
+        .collect()
+}
+
 /// Clear all user-spawned entities, programmatic assets, and custom resources.
 /// Used by both the Full reload path and escalation from Partial to Full.
 ///
@@ -34,29 +62,11 @@ pub fn clear_world_state<R: ReloadRuntime>(world: &mut World, runtime: &mut R, v
         .get_resource::<Time<Virtual>>()
         .map(|t| (t.is_paused(), t.relative_speed()));
 
-    // Despawn all entities not in the base set and not explicitly retained.
-    let base = world
-        .get_resource::<BaseEntitySet>()
-        .map(|b| b.entities.clone())
-        .unwrap_or_default();
-
-    // Collect retained entities (editor camera, debug overlays, etc.)
-    let retained: HashSet<Entity> = world
+    let to_despawn = scene_entities_to_despawn(world);
+    let retained = world
         .query_filtered::<Entity, With<Retained>>()
         .iter(world)
-        .collect();
-
-    // Resources are stored as entities; exclude them via the
-    // `IsResource` marker so the cleanup never despawns resource-entities
-    // (doing so triggers a panic when later commands touch them).
-    // `Window`/`Monitor` entities are also off-limits: winit creates them
-    // when the event loop starts (after the baseline snapshot), and
-    // despawning the primary window exits the app via `exit_on_all_closed`.
-    let to_despawn: Vec<Entity> = world
-        .query_filtered::<Entity, (Without<IsResource>, Without<Window>, Without<Monitor>)>()
-        .iter(world)
-        .filter(|e| !base.contains(e) && !retained.contains(e))
-        .collect();
+        .count();
 
     // Count scene and resource entities with the same filter used for the
     // "remaining" log below, so the before/after numbers are comparable.
@@ -72,7 +82,7 @@ pub fn clear_world_state<R: ReloadRuntime>(world: &mut World, runtime: &mut R, v
         "[hot-reload] clear_world_state: despawning {} of {} scene entities ({} retained, {} resource-entities untouched)...",
         to_despawn.len(),
         live_scene,
-        retained.len(),
+        retained,
         resource_entities
     );
 
@@ -160,6 +170,8 @@ mod tests {
         MinimalPlugins,
         app::App,
         asset::{Asset, AssetApp, AssetPlugin, AssetServer, Assets, Handle, RenderAssetUsages},
+        ecs::{lifecycle::Add, observer::On},
+        math::IVec2,
         mesh::{Mesh, Mesh3d, PrimitiveTopology},
         pbr::StandardMaterial,
         reflect::TypePath,
@@ -248,6 +260,9 @@ mod tests {
 
     #[derive(Component)]
     struct Marker;
+
+    #[derive(Resource)]
+    struct TestResource;
 
     #[derive(Component)]
     #[allow(dead_code)]
@@ -512,6 +527,38 @@ mod tests {
             world.get_entity(user).is_err(),
             "entity spawned after extension is still despawned"
         );
+    }
+
+    #[test]
+    fn scene_reset_keeps_infrastructure_entities() {
+        let mut world = World::new();
+        let base = world.spawn(Marker).id();
+        insert_base_set(&mut world, vec![base]);
+        let observer = world.add_observer(|_: On<Add, Marker>| {}).id();
+        let window = world.spawn(Window::default()).id();
+        let monitor = world
+            .spawn(Monitor {
+                name: None,
+                physical_height: 1,
+                physical_width: 1,
+                physical_position: IVec2::ZERO,
+                refresh_rate_millihertz: None,
+                scale_factor: 1.0,
+                video_modes: Vec::new(),
+            })
+            .id();
+        let retained = world.spawn((Marker, Retained)).id();
+        world.insert_resource(TestResource);
+        let user = world.spawn(Marker).id();
+
+        assert_eq!(scene_entities_to_despawn(&mut world), vec![user]);
+        clear_world_state(&mut world, &mut NoopRuntime, false);
+
+        for kept in [base, observer, window, monitor, retained] {
+            assert!(world.get_entity(kept).is_ok(), "{kept} survives");
+        }
+        assert!(world.get_entity(user).is_err());
+        assert!(world.contains_resource::<TestResource>());
     }
 
     #[test]

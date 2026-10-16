@@ -936,6 +936,13 @@ Use `world.query(Query[...])` for ad-hoc access to live component data. It
 supports the same tuple, `Mut`, and filter syntax as a system query. Prior MCP
 mutations are flushed before `run_code`, so the query sees the current world.
 
+`world.resource(T)` is read-only; assigning a field raises `TypeError`. Write a
+resource with `world.resource_mut(T)`, which also marks it changed for
+`Changed[T]` systems. Pass the type itself, not `Res[T]` or `ResMut[T]`:
+```
+run_code {"code": "world.resource_mut(Score).value = 10\nprint(world.resource(Score).value)"}
+```
+
 **Messages cannot be registered from `run_code`.** `World` exposes `register_resource` and `register_component`, but there is no `world.register_message()`; `app.add_message(MyMessage)` creates the App-local channel identity and scheduler metadata. To add a new message type, edit the scene's `@entrypoint` and reload. Once registered, write a message from `run_code` with `world.write_message(MyMessage(...))`. See `guide://patterns` (Messages section) for details.
 
 ## Troubleshooting

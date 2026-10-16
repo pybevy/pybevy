@@ -1,30 +1,48 @@
-pub mod api_index;
 pub mod asset_reference;
 pub mod bridge;
-pub mod client;
-mod client_pyo3;
-mod feature_gate;
-pub mod handlers;
-mod image_preview;
+pub mod capture;
+pub mod catalog;
+pub mod codec;
+pub mod discovery;
+pub mod engine;
 pub mod plugin;
 pub mod protocol;
-pub mod resources;
-pub mod runtime;
-pub mod runtime_pyo3;
-pub mod server;
-pub mod sse;
-pub mod tools;
+pub mod pyo3;
+pub mod reload;
+pub mod scene;
+pub mod schedule;
+pub mod transport;
 
-pub use handlers::pyo3::{
-    execute::register_world_wrapper_hook, mutate::register_lifecycle_mutation_hooks,
-};
+use ::pyo3::{exceptions::PyRuntimeError, prelude::*};
+#[doc(hidden)]
+pub use catalog::{resources, tools};
+#[doc(hidden)]
+pub use discovery as api_index;
+#[doc(hidden)]
+pub use engine::runtime;
 pub use plugin::PyControlPlugin;
-use pyo3::{exceptions::PyRuntimeError, prelude::*};
+#[doc(hidden)]
+pub use pyo3::runtime as runtime_pyo3;
+pub use pyo3::{execute::register_world_wrapper_hook, mutate::register_lifecycle_mutation_hooks};
+#[doc(hidden)]
+pub use transport::{client, server, sse};
+
+#[doc(hidden)]
+pub mod handlers {
+    pub use crate::{
+        capture::{analysis as frame_analysis, depth, screenshot, turnaround},
+        codec::reflect as reflect_mutate,
+        engine::dispatch::dispatch,
+        pyo3, reload,
+        scene::{diagnostics, entity, entity_count, spatial, time as time_control},
+        schedule,
+    };
+}
 
 /// Return MCP tool definitions generated from ControlOperation's JSON schema.
 #[pyfunction]
 fn rust_tool_definitions(py: Python<'_>) -> PyResult<Py<PyAny>> {
-    let tools = tools::list_tools();
+    let tools = catalog::tools::list_tools();
     let json_str = serde_json::to_string(&tools)
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to serialize tools: {e}")))?;
     // Parse JSON string into Python objects
@@ -36,7 +54,7 @@ fn rust_tool_definitions(py: Python<'_>) -> PyResult<Py<PyAny>> {
 /// Return MCP resource definitions advertised by the engine.
 #[pyfunction]
 fn rust_resource_definitions(py: Python<'_>) -> PyResult<Py<PyAny>> {
-    let res = resources::list_resources();
+    let res = catalog::resources::list_resources();
     let json_str = serde_json::to_string(&res)
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to serialize resources: {e}")))?;
     let json_mod = py.import("json")?;
@@ -47,9 +65,9 @@ fn rust_resource_definitions(py: Python<'_>) -> PyResult<Py<PyAny>> {
 pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "mcp")?;
     m.add_class::<PyControlPlugin>()?;
-    m.add_class::<api_index::PyApiIndex>()?;
+    m.add_class::<discovery::PyApiIndex>()?;
     m.add_function(wrap_pyfunction!(rust_tool_definitions, &m)?)?;
     m.add_function(wrap_pyfunction!(rust_resource_definitions, &m)?)?;
-    client_pyo3::add_functions(&m)?;
+    transport::client_pyo3::add_functions(&m)?;
     parent.add_submodule(&m)
 }

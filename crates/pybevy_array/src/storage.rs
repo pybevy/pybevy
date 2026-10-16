@@ -2,7 +2,7 @@
 //! unsafe pointer/alignment handling; byte views for buffer export are an
 //! adapter concern layered on top later.
 
-use std::sync::Arc;
+use std::{ptr, sync::Arc};
 
 use half::f16;
 
@@ -421,6 +421,34 @@ impl ArrayStorage {
             | ArrayStorage::BorrowedU8 { .. }
             | ArrayStorage::BorrowedU16 { .. }
             | ArrayStorage::BorrowedU32 { .. } => None,
+        }
+    }
+
+    /// Copy `bytes` into writable `uint8` storage at `start..start + len`.
+    /// Returns `false` without writing for any other storage kind.
+    ///
+    /// The caller holds the backing write guard, whose probe check covers this
+    /// synchronous copy.
+    pub(crate) fn write_u8_range(&mut self, start: usize, bytes: &[u8]) -> bool {
+        let end = start
+            .checked_add(bytes.len())
+            .expect("validated array range overflowed");
+        match self {
+            ArrayStorage::Uint8(values) => {
+                values[start..end].copy_from_slice(bytes);
+                true
+            }
+            ArrayStorage::BorrowedMutU8 { slice, .. } => {
+                assert!(end <= slice.len, "index out of bounds for borrowed storage");
+                // SAFETY: the range is asserted in bounds, the write guard
+                // passed the probe, and the asset write lease makes this the
+                // unique alias; `bytes` is a distinct shared borrow.
+                unsafe {
+                    ptr::copy_nonoverlapping(bytes.as_ptr(), slice.ptr.add(start), bytes.len())
+                };
+                true
+            }
+            _ => false,
         }
     }
 

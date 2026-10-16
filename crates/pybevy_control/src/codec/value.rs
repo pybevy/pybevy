@@ -1,7 +1,7 @@
 use bevy::math::{Quat, Vec3};
 use pybevy_core::public_error;
 
-use crate::handlers::json_float::{nonfinite_float_from_json, require_finite_float};
+use crate::codec::json_float::{nonfinite_float_from_json, require_finite_float};
 
 pub(crate) enum EnumPayload {
     Unit,
@@ -155,7 +155,7 @@ fn vec3_coordinate_from_json(name: &str, value: &serde_json::Value) -> Result<f3
     Ok(narrowed)
 }
 
-fn json_f64(value: &serde_json::Value) -> Result<f64, String> {
+pub(crate) fn json_f64(value: &serde_json::Value) -> Result<f64, String> {
     value
         .as_f64()
         .or_else(|| nonfinite_float_from_json(value))
@@ -170,7 +170,7 @@ fn json_f64(value: &serde_json::Value) -> Result<f64, String> {
         .and_then(require_finite_float)
 }
 
-fn json_kind_name(value: &serde_json::Value) -> &'static str {
+pub(crate) fn json_kind_name(value: &serde_json::Value) -> &'static str {
     match value {
         serde_json::Value::Null => "null",
         serde_json::Value::Bool(_) => "boolean",

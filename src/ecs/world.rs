@@ -29,8 +29,9 @@ use pybevy_core::{
     ensure_no_live_asset_access, extract_entity_from_any,
     public_error::{
         COMPONENT_BRIDGE_NOT_FOUND, RESOURCE_BRIDGE_NOT_FOUND, RESOURCE_ENTITY_DESPAWN,
-        WORLD_BATCH_ARGUMENTS, WORLD_CALLBACK_COMMAND_ERRORS, one_shot_parameter_validation_skip,
-        unregistered_message_write, world_query_param_required,
+        WORLD_BATCH_ARGUMENTS, WORLD_CALLBACK_COMMAND_ERRORS, native_resource_not_found,
+        one_shot_parameter_validation_skip, unregistered_message_write, world_query_param_required,
+        world_resource_param_wrapper,
     },
     registry::global_registry,
     resource_initializer,
@@ -78,7 +79,7 @@ use crate::{
         observer_registry::ObserverRegistry,
         python_message::{python_message_is_registered, resolve_from_world},
         query::{query_param::PyQueryParam, query_runtime::PyQueryIter},
-        resource::{PyRes, PyResMut, hierarchy_contains_resource_entity},
+        resource::{PyRes, PyResMut, PyResParam, hierarchy_contains_resource_entity},
         resource_type::{
             PyResourceType, ResourceRegistry, register_custom_resource,
             reject_unparameterized_button_input,
@@ -722,6 +723,7 @@ impl PyWorld {
     /// Get resource from the world
     pub fn resource(&self, py: Python, resource: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         self.check_valid()?;
+        reject_resource_param("resource", &resource)?;
 
         // Check if this is an Assets[T] parameter
         if resource.get_type().is(PyAssetTypeParam::type_object(py)) {
@@ -747,6 +749,66 @@ impl PyWorld {
             Ok(Py::new(py, PyRes::with_validity(value.into_bound(py), validity))?.into_any())
         } else {
             Ok(value)
+        }
+    }
+
+    /// Get mutable access to a resource, mirroring Bevy's `World::resource_mut`.
+    pub fn resource_mut(&self, py: Python, resource: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        self.check_valid()?;
+        reject_resource_param("resource_mut", &resource)?;
+        let validity = self.validity.clone().unwrap_or_default();
+        validity.check_write()?;
+
+        if resource.get_type().is(PyAssetTypeParam::type_object(py)) {
+            let asset_param = resource.extract::<PyAssetTypeParam>()?;
+            return self.get_assets_resource(py, &asset_param);
+        }
+
+        let type_obj: Bound<'_, PyType> = resource.extract()?;
+        reject_unparameterized_button_input(&type_obj)?;
+        let py_resource_type = PyResourceType::try_from((&type_obj, py))?;
+
+        match py_resource_type {
+            PyResourceType::Dynamic(type_ptr) => {
+                let bridge = global_registry::get_resource_bridge_by_py_type(type_ptr)
+                    .ok_or_else(|| PyTypeError::new_err(RESOURCE_BRIDGE_NOT_FOUND))?;
+                let world = self.world_mut()?;
+                let entity = bridge
+                    .resource_id(&world)
+                    .and_then(|component_id| world.resource_entities().get(component_id));
+                let not_found =
+                    || PyRuntimeError::new_err(native_resource_not_found(bridge.name()));
+                let entity = entity.ok_or_else(not_found)?;
+                // Re-resolving handle: marks the resource changed on its first write,
+                // at Bevy's live tick, like `World::resource_mut`.
+                // SAFETY: `world` holds exclusive access (and suspends GC traversal)
+                // for handle construction; the handle is fenced by this World's
+                // write-mode validity flag.
+                unsafe {
+                    bridge.extract_from_entity_mut(
+                        entity,
+                        self.world_ptr(),
+                        validity.with_access_mode(AccessMode::Write),
+                        py,
+                    )
+                }?
+                .ok_or_else(not_found)
+            }
+            PyResourceType::AssetServer => {
+                py_resource_type.get_from_world_mut(&mut *self.world_mut()?, py, validity)
+            }
+            PyResourceType::Custom(_) => {
+                // Marks changed on materialization, like a `ResMut[T]` system param.
+                let value = py_resource_type.get_from_world_mut(
+                    &mut *self.world_mut()?,
+                    py,
+                    validity.clone(),
+                )?;
+                Ok(
+                    Py::new(py, PyResMut::with_validity(value.into_bound(py), validity))?
+                        .into_any(),
+                )
+            }
         }
     }
 
@@ -1672,6 +1734,16 @@ impl PyWorld {
             }
         }
     }
+}
+
+fn reject_resource_param(method: &str, resource: &Bound<'_, PyAny>) -> PyResult<()> {
+    if let Ok(param) = resource.cast::<PyResParam>() {
+        let (wrapper, name) = param.get().describe();
+        return Err(PyTypeError::new_err(world_resource_param_wrapper(
+            method, wrapper, name,
+        )));
+    }
+    Ok(())
 }
 
 fn extract_world_query_param(param: &Bound<'_, PyAny>) -> PyResult<PyQueryParam> {

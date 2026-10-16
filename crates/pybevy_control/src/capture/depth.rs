@@ -6,8 +6,11 @@ use bevy::{
     window::PrimaryWindow,
 };
 
-use super::{screenshot::select_capture_camera_3d, spatial::compute_world_aabb};
-use crate::bridge::ControlError;
+use super::screenshot::select_capture_camera_3d;
+use crate::{
+    bridge::ControlError,
+    scene::spatial::{self, compute_world_aabb},
+};
 
 const EXPLICIT_SAMPLE_EXTENT: i64 = 800;
 
@@ -271,7 +274,7 @@ pub fn compute_depth_samples_for_camera(
     }
 
     // Cast rays and find intersections
-    let occurrences = super::spatial::NameOccurrences::collect(world);
+    let occurrences = spatial::NameOccurrences::collect(world);
     let mut samples = Vec::new();
     let divisor = if explicit_sampling {
         EXPLICIT_SAMPLE_EXTENT as f32
@@ -300,7 +303,7 @@ pub fn compute_depth_samples_for_camera(
             let hit_pos = ray.get_point(distance);
             let camera_distance = cam_pos.distance(hit_pos);
             let name = world.get::<Name>(entity).map(|n| n.as_str().to_string());
-            let label = super::spatial::entity_label_with(world, entity, &occurrences);
+            let label = spatial::entity_label_with(world, entity, &occurrences);
             serde_json::json!({
                 "hit": true,
                 "distance": camera_distance,
@@ -393,7 +396,7 @@ pub fn compute_depth_samples_for_camera(
 
 /// Ray-AABB intersection using the slab method.
 /// Returns the distance along the ray to the nearest intersection point, or None.
-fn ray_aabb_intersection(ray: &Ray3d, aabb: &super::spatial::WorldAabb) -> Option<f32> {
+fn ray_aabb_intersection(ray: &Ray3d, aabb: &spatial::WorldAabb) -> Option<f32> {
     let inv_dir = Vec3::new(
         1.0 / ray.direction.x,
         1.0 / ray.direction.y,
@@ -432,7 +435,7 @@ mod tests {
         transform::components::Transform,
     };
 
-    use super::{super::spatial::WorldAabb, *};
+    use super::{spatial::WorldAabb, *};
 
     fn make_aabb(min: [f32; 3], max: [f32; 3]) -> WorldAabb {
         WorldAabb {

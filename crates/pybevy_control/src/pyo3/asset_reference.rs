@@ -13,7 +13,7 @@ use crate::{
         AssetReferenceValidationError, AssetReferenceValue,
     },
     bridge::{ControlError, EntityRef},
-    handlers::entity::resolve_entity,
+    scene::entity::resolve_entity,
 };
 
 pub(crate) fn contains_reference_field(
@@ -40,16 +40,6 @@ pub(crate) fn set_from_reference(
             "Component '{component}' was inserted but its asset reference could not be read back"
         ))
     })
-}
-
-pub(crate) fn spawn_from_reference(
-    world: &mut World,
-    entity: Entity,
-    component: &str,
-    fields: &serde_json::Map<String, serde_json::Value>,
-    bridge: &Arc<dyn ComponentBridge>,
-) -> Result<serde_json::Value, ControlError> {
-    set_from_reference(world, entity, component, fields, bridge)
 }
 
 pub(crate) fn component_reference_fields(

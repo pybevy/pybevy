@@ -950,6 +950,23 @@ pub fn resource_not_present(name: impl Display) -> String {
     format!("Resource type `{name}` not present in the world")
 }
 
+/// Matches the bridge-generated wording of `World.resource` for a native resource.
+pub fn native_resource_not_found(name: impl Display) -> String {
+    format!("{name} resource not found")
+}
+
+/// `World.resource`/`resource_mut` take the resource type, not a `Res`/`ResMut` param.
+pub fn world_resource_param_wrapper(method: &str, param: &str, name: &str) -> String {
+    let suggestion = if method == "resource_mut" || param == "ResMut" {
+        "resource_mut"
+    } else {
+        "resource"
+    };
+    format!(
+        "world.{method} expects a resource type, not {param}[{name}]; use world.{suggestion}({name})"
+    )
+}
+
 pub fn unregistered_message_write(name: impl Display) -> String {
     format!(
         "Unable to write message `{name}`: Message type is not registered; call app.add_message(T) first"

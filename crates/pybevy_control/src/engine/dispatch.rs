@@ -1,28 +1,15 @@
-pub mod depth;
-pub mod diagnostics;
-pub mod entity;
-pub mod entity_count;
-pub mod frame_analysis;
-mod json_float;
-pub mod pyo3;
-pub mod reflect_mutate;
-pub mod reload;
-pub mod schedule;
-pub mod screenshot;
-pub mod spatial;
-pub mod time_control;
-pub mod turnaround;
-mod value_conversion;
-
 pub(crate) const LINEAR_RGBA_CHANNELS: [&str; 4] = ["red", "green", "blue", "alpha"];
 
 use bevy::ecs::world::World;
 use pybevy_core::ensure_no_live_asset_access;
 
-use self::pyo3::mutate::despawn_entity;
 use crate::{
     bridge::{ControlError, ControlOperation, SharedExclusiveExecution},
-    runtime::ControlRuntime,
+    capture::analysis,
+    engine::runtime::ControlRuntime,
+    pyo3::mutate::despawn_entity,
+    reload,
+    scene::{diagnostics, spatial, time, transform_sync::propagate_transforms},
 };
 
 fn guard_structural_request(world: &World, operation: &str) -> Result<(), ControlError> {
@@ -30,7 +17,7 @@ fn guard_structural_request(world: &World, operation: &str) -> Result<(), Contro
         .map_err(|error| ControlError::invalid_params(error.to_string()))
 }
 
-fn batch_response(results: Vec<serde_json::Value>) -> serde_json::Value {
+pub(crate) fn batch_response(results: Vec<serde_json::Value>) -> serde_json::Value {
     let count = |status| {
         results
             .iter()
@@ -118,7 +105,7 @@ pub fn dispatch(
         ControlOperation::RemoveComponent(p) => {
             guard_structural_request(world, "remove_component")?;
             let result = runtime.remove_component(world, p)?;
-            schedule::propagate_transforms(world);
+            propagate_transforms(world);
             Ok(result)
         }
         ControlOperation::SetResource(p) => {
@@ -133,11 +120,11 @@ pub fn dispatch(
             guard_structural_request(world, "batch")?;
             runtime.batch_mutate(world, operations)
         }
-        ControlOperation::PauseTime => time_control::pause_time(world),
-        ControlOperation::ResumeTime => time_control::resume_time(world),
-        ControlOperation::SetTimeScale { scale } => time_control::set_time_scale(world, scale),
-        ControlOperation::GetTimeStatus => time_control::get_time_status(world),
-        ControlOperation::SeekTime(p) => time_control::seek_time(world, p),
+        ControlOperation::PauseTime => time::pause_time(world),
+        ControlOperation::ResumeTime => time::resume_time(world),
+        ControlOperation::SetTimeScale { scale } => time::set_time_scale(world, scale),
+        ControlOperation::GetTimeStatus => time::get_time_status(world),
+        ControlOperation::SeekTime(p) => time::seek_time(world, p),
         ControlOperation::CaptureScreenshot(..)
         | ControlOperation::CaptureStats(..)
         | ControlOperation::CaptureWithGizmos(..)
@@ -145,7 +132,7 @@ pub fn dispatch(
             "Screenshot requests should be deferred",
         )),
         ControlOperation::CompareFrames(params) => world
-            .get_resource::<frame_analysis::CapturedFrames>()
+            .get_resource::<analysis::CapturedFrames>()
             .ok_or_else(|| ControlError::internal("Captured frame cache is unavailable"))?
             .compare(&params.a, &params.b, params.epsilon),
         ControlOperation::CaptureTurnaround(..) => Err(ControlError::internal(

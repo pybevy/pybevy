@@ -22,7 +22,12 @@ use std::sync::Arc;
 pub use array::PyArray;
 pub use dtype::PyDType;
 pub use lens::ArrayLens;
-use pyo3::{buffer::PyUntypedBuffer, exceptions::PyTypeError, prelude::*, types::PyModule};
+use pyo3::{
+    buffer::{PyBuffer, PyUntypedBuffer},
+    exceptions::PyTypeError,
+    prelude::*,
+    types::PyModule,
+};
 
 use crate::{
     ArrayDType, ArrayStorage, BorrowProbe, DenseArrayCore, decode_read_only_le_bytes,
@@ -280,31 +285,44 @@ pub unsafe fn borrowed_read_only_u32(
 /// Copy a bounded or real-NumPy array into owned `uint8` data and preserve its
 /// logical shape. Returns `None` when `obj` is neither supported array type.
 ///
-/// NumPy inputs go through the adapter's private base-ndarray snapshot before
-/// Rust reads them, retaining the free-threading safety contract of
-/// `array()`/`asarray()`.
+/// A `uint8` NumPy array is copied in logical C order by CPython's
+/// `PyBuffer_ToContiguous` into an owned vector, so Rust never forms a view of
+/// Python-visible storage. Other NumPy dtypes go through the adapter's private
+/// base-ndarray snapshot, as `array()`/`asarray()` do, to report their dtype.
 pub fn extract_u8_array_data(obj: &Bound<'_, PyAny>) -> PyResult<Option<(Vec<u8>, Vec<usize>)>> {
-    let is_bounded = obj.extract::<PyRef<'_, PyArray>>().is_ok();
-    let is_numpy = convert::is_numpy_array(obj)?;
-    if !is_bounded && !is_numpy {
+    if let Ok(array) = obj.extract::<PyRef<'_, PyArray>>() {
+        let dtype = array.core.dtype();
+        if dtype != ArrayDType::Uint8 {
+            return Err(uint8_dtype_error(dtype));
+        }
+        let (_, shape, bytes) =
+            encode_contiguous_le_bytes(&array.core).map_err(kernels::map_array_err)?;
+        return Ok(Some((bytes, shape)));
+    }
+    if !convert::is_numpy_array(obj)? {
         return Ok(None);
+    }
+    if let Ok(buffer) = PyBuffer::<u8>::get(obj)
+        && buffer_dtype(&buffer) == Some(ArrayDType::Uint8)
+    {
+        let shape = buffer.shape().to_vec();
+        let bytes = buffer.to_vec(obj.py())?;
+        return Ok(Some((bytes, shape)));
     }
 
     let core = convert::array_from_object(obj, None)?;
     if core.dtype() != ArrayDType::Uint8 {
-        return Err(PyTypeError::new_err(format!(
-            "array data must have dtype uint8, got {}",
-            core.dtype().name()
-        )));
+        return Err(uint8_dtype_error(core.dtype()));
     }
-    let shape = core.shape().to_vec();
-    let data = core
-        .to_scalars()
-        .map_err(kernels::map_array_err)?
-        .into_iter()
-        .map(|value| value.to_i64_trunc() as u8)
-        .collect();
-    Ok(Some((data, shape)))
+    let (_, shape, bytes) = encode_contiguous_le_bytes(&core).map_err(kernels::map_array_err)?;
+    Ok(Some((bytes, shape)))
+}
+
+fn uint8_dtype_error(dtype: ArrayDType) -> PyErr {
+    PyTypeError::new_err(format!(
+        "array data must have dtype uint8, got {}",
+        dtype.name()
+    ))
 }
 
 /// Build the bounded array module: classes, functions, dtype constants, and

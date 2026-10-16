@@ -208,6 +208,35 @@ impl DenseArrayCore {
         Ok(())
     }
 
+    /// Write `bytes` into the `uint8` elements selected by `layout` (a plan
+    /// from [`Self::plan`]) in logical order. A C-contiguous selection is one
+    /// bulk copy; other selections are written element by element.
+    pub fn assign_u8_bytes(&self, layout: &Layout, bytes: &[u8]) -> ArrayResult<()> {
+        let dtype = self.dtype();
+        if dtype != ArrayDType::Uint8 {
+            return Err(ArrayError::UnsupportedDType {
+                op: "byte assignment",
+                dtype,
+            });
+        }
+        if layout.num_elements() != bytes.len() {
+            return Err(ArrayError::ByteLengthMismatch {
+                dtype,
+                expected: layout.num_elements(),
+                actual: bytes.len(),
+            });
+        }
+        layout.validate_bounds(self.backing.len())?;
+        let mut storage = self.write_storage()?;
+        if layout.is_c_contiguous() && storage.write_u8_range(layout.offset, bytes) {
+            return Ok(());
+        }
+        for (offset, &byte) in layout.iter_offsets().zip(bytes) {
+            storage.set(offset, Scalar::I64(i64::from(byte)));
+        }
+        Ok(())
+    }
+
     pub fn ndim(&self) -> usize {
         self.layout.ndim()
     }

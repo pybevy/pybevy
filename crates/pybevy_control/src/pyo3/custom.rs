@@ -1,14 +1,11 @@
 use std::alloc::Layout;
 
 use bevy::{ecs::ptr::Ptr, math::Vec2};
-use pybevy_core::{
-    component_layout::{ComponentLayout, PrimitiveType, PrimitiveValue},
-    public_error,
-};
+use pybevy_core::component_layout::{ComponentLayout, PrimitiveType, PrimitiveValue};
 
-use crate::handlers::{
-    json_float::{float_to_json, nonfinite_float_from_json, require_finite_float},
-    value_conversion,
+use crate::codec::{
+    json_float::float_to_json,
+    value::{self as value_conversion, json_f64},
 };
 
 pub(crate) fn descriptor_matches(layout: &ComponentLayout, descriptor: Layout) -> bool {
@@ -125,21 +122,6 @@ fn primitive_from_json(
     })
 }
 
-fn json_f64(value: &serde_json::Value) -> Result<f64, String> {
-    value
-        .as_f64()
-        .or_else(|| nonfinite_float_from_json(value))
-        .ok_or_else(|| {
-            if value.is_null() {
-                public_error::COMPONENT_FLOAT_REQUIRED
-            } else {
-                public_error::COMPONENT_FLOAT_EXPECTED_NUMBER
-            }
-            .to_string()
-        })
-        .and_then(require_finite_float)
-}
-
 fn json_i64(value: &serde_json::Value) -> Result<i64, String> {
     value
         .as_i64()
@@ -176,7 +158,7 @@ mod tests {
     use std::ptr;
 
     use bevy::math::Vec3;
-    use pybevy_core::component_layout::ComponentLayout;
+    use pybevy_core::{component_layout::ComponentLayout, public_error};
 
     use super::*;
 

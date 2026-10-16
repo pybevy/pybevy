@@ -38,21 +38,22 @@ use pyo3::{
 
 use crate::{
     bridge::{ControlError, EntityRef},
-    handlers::{
-        entity::resolve_entity,
+    codec::{
         json_float::float_to_json,
-        pyo3::{
-            custom_wrapper,
-            dataclass_fields::dataclass_field_names,
-            name_resolution::{
-                ComponentTarget, ResourceTarget, custom_component_name, custom_resource_name,
-                qualified_type_name, resolve_component, resolve_resource,
-            },
-            state_resource,
-        },
-        reflect_mutate,
-        value_conversion::{EnumPayload, enum_to_json},
+        reflect as reflect_mutate,
+        value::{EnumPayload, enum_to_json},
     },
+    engine::dispatch::LINEAR_RGBA_CHANNELS,
+    pyo3::{
+        custom as custom_wrapper,
+        dataclass_fields::dataclass_field_names,
+        names::{
+            ComponentTarget, ResourceTarget, custom_component_name, custom_resource_name,
+            qualified_type_name, resolve_component, resolve_resource,
+        },
+        state_resource,
+    },
+    scene::entity::resolve_entity,
 };
 
 /// Extract custom component names for an entity using the CustomComponentInfo registry.
@@ -320,7 +321,7 @@ fn serialize_python_value(
 
 fn linear_rgba_to_json(value: &Bound<'_, PyAny>) -> Option<serde_json::Value> {
     value.cast::<PyLinearRgba>().ok()?;
-    let fields = crate::handlers::LINEAR_RGBA_CHANNELS
+    let fields = LINEAR_RGBA_CHANNELS
         .into_iter()
         .map(|name| {
             let channel = value.getattr(name).ok()?.extract::<f64>().ok()?;
@@ -753,8 +754,8 @@ pub fn list_entities(world: &mut World) -> Result<serde_json::Value, ControlErro
     let mut entities = Vec::new();
     let bridges = all_component_bridges();
 
-    let entity_list = crate::handlers::entity_count::scene_entities(world);
-    let occurrences = crate::handlers::spatial::NameOccurrences::collect(world);
+    let entity_list = crate::scene::entity_count::scene_entities(world);
+    let occurrences = crate::scene::spatial::NameOccurrences::collect(world);
 
     for entity in &entity_list {
         let entity_id = entity.to_bits();
@@ -779,7 +780,7 @@ pub fn list_entities(world: &mut World) -> Result<serde_json::Value, ControlErro
         let custom_names = get_custom_component_names(world, *entity);
         component_names.extend(custom_names.iter().cloned());
 
-        let label = crate::handlers::spatial::entity_label_with(world, *entity, &occurrences);
+        let label = crate::scene::spatial::entity_label_with(world, *entity, &occurrences);
 
         // Include source location if tracked
         let source_location = world
@@ -851,7 +852,7 @@ pub fn debug_registry(world: &mut World) -> Result<serde_json::Value, ControlErr
         })
         .unwrap_or_default();
 
-    let entity_count = crate::handlers::entity_count::scene_entity_count(world) as usize;
+    let entity_count = crate::scene::entity_count::scene_entity_count(world) as usize;
 
     // Sample named entities (user's scene entities) for component detection
     let mut samples = Vec::new();
@@ -861,7 +862,7 @@ pub fn debug_registry(world: &mut World) -> Result<serde_json::Value, ControlErr
         .take(10)
         .map(|(e, n)| (e, n.as_str().to_string()))
         .collect();
-    let occurrences = crate::handlers::spatial::NameOccurrences::collect(world);
+    let occurrences = crate::scene::spatial::NameOccurrences::collect(world);
     for (entity, name) in &named_entities {
         if let Ok(entity_ref) = world.get_entity(*entity) {
             let detected: Vec<String> = bridges
@@ -872,7 +873,7 @@ pub fn debug_registry(world: &mut World) -> Result<serde_json::Value, ControlErr
             let archetype_components = entity_ref.archetype().components().len();
 
             let detected_custom = get_custom_component_names(world, *entity);
-            let label = crate::handlers::spatial::entity_label_with(world, *entity, &occurrences);
+            let label = crate::scene::spatial::entity_label_with(world, *entity, &occurrences);
             samples.push(serde_json::json!({
                 "id": entity.to_bits(),
                 "name": name,
@@ -1019,7 +1020,7 @@ pub fn get_entity(
         components.insert(k.clone(), v.clone());
     }
 
-    let label = crate::handlers::spatial::entity_label(world, entity);
+    let label = crate::scene::spatial::entity_label(world, entity);
 
     let mut result = serde_json::json!({
         "id": entity_id,
@@ -1058,7 +1059,7 @@ pub fn get_component(
 ) -> Result<serde_json::Value, ControlError> {
     let entity = resolve_entity(world, &entity_ref)?;
     let entity_id = entity.to_bits();
-    let label = crate::handlers::spatial::entity_label(world, entity);
+    let label = crate::scene::spatial::entity_label(world, entity);
     let target = resolve_component(world, &component)?;
 
     // Try bridge components first
@@ -1209,12 +1210,12 @@ pub fn query_entities(
     let all_entities = if resolved_with.iter().any(
         |target| matches!(target, ComponentTarget::Native(bridge) if bridge.name() == "Disabled"),
     ) {
-        crate::handlers::entity_count::scene_entities_including_disabled(world)
+        crate::scene::entity_count::scene_entities_including_disabled(world)
     } else {
-        crate::handlers::entity_count::scene_entities(world)
+        crate::scene::entity_count::scene_entities(world)
     };
 
-    let occurrences = crate::handlers::spatial::NameOccurrences::collect(world);
+    let occurrences = crate::scene::spatial::NameOccurrences::collect(world);
     let mut matching = Vec::new();
     let mut total_count = 0usize;
 
@@ -1263,7 +1264,7 @@ pub fn query_entities(
                 continue;
             }
             let entity_name = entity_ref.get::<Name>().map(|n| n.as_str().to_string());
-            let label = crate::handlers::spatial::entity_label_with(world, *entity, &occurrences);
+            let label = crate::scene::spatial::entity_label_with(world, *entity, &occurrences);
 
             // Component breakdown: bridges + custom + Bevy-internal = archetype slots
             let custom_count = custom_names.len();
@@ -1739,9 +1740,6 @@ pub fn get_component_schema(
                 let type_info = registration.type_info();
                 let has_reflect_component = registration.data::<ReflectComponent>().is_some();
                 let is_editable_kind = matches!(type_info, TypeInfo::Struct(_) | TypeInfo::Enum(_));
-                // NOTE: This misses components that have settable Python properties
-                // (e.g. Text2d). A more complete check would inspect for @property
-                // setters on the Python type, but that requires further investigation.
                 let editable = has_reflect_component && is_editable_kind;
 
                 let mut field_types = serde_json::Map::new();
@@ -2218,7 +2216,7 @@ pub fn get_bounding_box(
         let local_min = center - half;
         let local_max = center + half;
 
-        let r = crate::handlers::spatial::round6;
+        let r = crate::scene::spatial::round6;
         let local = serde_json::json!({
             "center": [r(center.x), r(center.y), r(center.z)],
             "half_extents": [r(half.x), r(half.y), r(half.z)],
@@ -2268,12 +2266,12 @@ pub fn get_bounding_box(
     }
 
     // Fallback: merge descendant AABBs (WorldAssetRoot/GLB entities)
-    let merged = crate::handlers::spatial::compute_world_aabb(world, entity)
+    let merged = crate::scene::spatial::compute_world_aabb(world, entity)
         .map_err(|_| ControlError::not_found("Entity has no Aabb (no mesh?)"))?;
 
     let world_center = (merged.min + merged.max) * 0.5;
     let world_size = merged.max - merged.min;
-    let r = crate::handlers::spatial::round6;
+    let r = crate::scene::spatial::round6;
 
     Ok(serde_json::json!({
         "local": null,
@@ -2309,7 +2307,7 @@ pub fn scene_summary(world: &mut World) -> Result<serde_json::Value, ControlErro
 
     let bridges = all_component_bridges();
 
-    let entity_list = crate::handlers::entity_count::scene_entities(world);
+    let entity_list = crate::scene::entity_count::scene_entities(world);
     let total = entity_list.len();
 
     // Per-group state for grouping pass.

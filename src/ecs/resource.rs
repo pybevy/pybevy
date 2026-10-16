@@ -44,6 +44,14 @@ pub struct PyResParam {
     type_name: String,
 }
 
+impl PyResParam {
+    /// The wrapper spelling (`Res` or `ResMut`) and the parameterized type name.
+    pub(crate) fn describe(&self) -> (&'static str, &str) {
+        let param = if self.mutable { "ResMut" } else { "Res" };
+        (param, &self.type_name)
+    }
+}
+
 #[pymethods]
 impl PyResParam {
     /// Report held Python objects to the cyclic GC.
