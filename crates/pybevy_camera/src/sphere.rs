@@ -4,7 +4,7 @@ use pybevy_core::{
     repr::{ReprLiteral, float_repr},
 };
 use pybevy_macros::pyvalue;
-use pybevy_math::vec3a::PyVec3A;
+use pybevy_math::{primitives::dimension::dimension, vec3a::PyVec3A};
 use pyo3::prelude::*;
 
 #[pyvalue]
@@ -43,7 +43,7 @@ impl PySphere {
     pub fn new(center: PyVec3A, radius: f32) -> PyResult<Self> {
         Ok(Self::from_owned(Sphere {
             center: center.try_into()?,
-            radius,
+            radius: dimension("radius", radius)?,
         }))
     }
 
@@ -65,6 +65,7 @@ impl PySphere {
 
     #[setter]
     pub fn set_radius(&mut self, value: f32) -> PyResult<()> {
+        let value = dimension("radius", value)?;
         self.as_mut()?.radius = value;
         Ok(())
     }

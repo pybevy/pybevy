@@ -11,9 +11,10 @@ use pybevy_core::{
 use pybevy_macros::pyasset;
 use pyo3::{
     PyTraverseError, PyVisit,
+    buffer::PyBuffer,
     exceptions::{PyMemoryError, PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
-    types::PyBytes,
+    types::{PyBytes, PyDict, PyMemoryView},
 };
 
 enum DataAnchor {
@@ -67,17 +68,21 @@ pub struct PyShaderBuffer {
 #[pymethods]
 impl PyShaderBuffer {
     #[new]
-    #[pyo3(signature = (data = None, *, copy_on_resize = false))]
+    #[pyo3(signature = (data = None, *, element = None, copy_on_resize = false))]
     pub fn new(
         data: Option<&Bound<'_, PyAny>>,
+        element: Option<&Bound<'_, PyAny>>,
         copy_on_resize: bool,
     ) -> PyResult<PyClassInitializer<Self>> {
         let mut buffer = match data {
             Some(value) => ShaderBuffer::new(
-                &extract_shader_buffer_data_from_any(value)?,
+                &extract_shader_data(value, element)?,
                 RenderAssetUsages::default(),
             ),
-            None => ShaderBuffer::default(),
+            None => {
+                reject_empty_element(element)?;
+                ShaderBuffer::default()
+            }
         };
         buffer.copy_on_resize = copy_on_resize;
         Ok(Self::from_owned(buffer).into())
@@ -173,10 +178,22 @@ impl PyShaderBuffer {
             .map(|data| PyBytes::new(py, data).unbind()))
     }
 
-    #[pyo3(signature = (value))]
-    pub fn set_data(&mut self, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
-        let data = value.map(extract_shader_buffer_data_from_any).transpose()?;
-        self.as_mut()?.data = data;
+    #[pyo3(signature = (value, *, element = None))]
+    pub fn set_data(
+        slf: &Bound<'_, Self>,
+        value: Option<&Bound<'_, PyAny>>,
+        element: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
+        let data = match value {
+            Some(value) => Some(extract_shader_data(value, element)?),
+            None => {
+                reject_empty_element(element)?;
+                None
+            }
+        };
+        // Packing may execute Python; acquire mutable storage only after it finishes.
+        let mut this = slf.try_borrow_mut()?;
+        PyShaderBuffer::as_mut(&mut this)?.data = data;
         Ok(())
     }
 
@@ -213,6 +230,48 @@ impl PyShaderBuffer {
     }
 }
 
+fn reject_empty_element(element: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+    if element.is_some() {
+        return Err(PyTypeError::new_err(
+            "element= requires typed values, not None or raw bytes",
+        ));
+    }
+    Ok(())
+}
+
+fn extract_shader_data(
+    value: &Bound<'_, PyAny>,
+    element: Option<&Bound<'_, PyAny>>,
+) -> PyResult<Vec<u8>> {
+    if value.is_instance_of::<PyArray>() {
+        reject_empty_element(element)?;
+        return extract_shader_buffer_data_from_any(value);
+    }
+    if let Ok(view) = PyMemoryView::from(value) {
+        reject_empty_element(element)?;
+        if !view.getattr("c_contiguous")?.extract::<bool>()? {
+            return Err(PyValueError::new_err(
+                "ShaderBuffer requires a contiguous byte buffer",
+            ));
+        }
+        return Ok(view
+            .call_method0("tobytes")?
+            .cast::<PyBytes>()?
+            .as_bytes()
+            .to_vec());
+    }
+    let kwargs = PyDict::new(value.py());
+    if let Some(element) = element {
+        kwargs.set_item("element", element)?;
+    }
+    let packed = value
+        .py()
+        .import("pybevy.material")?
+        .getattr("pack_shader_data")?
+        .call((value,), Some(&kwargs))?;
+    Ok(packed.cast::<PyBytes>()?.as_bytes().to_vec())
+}
+
 fn map_array_read_error(error: ArrayError) -> PyErr {
     match error {
         ArrayError::BorrowExpired(_) | ArrayError::AccessConflict => {
@@ -243,5 +302,14 @@ pub fn extract_shader_buffer_data_from_any(value: &Bound<'_, PyAny>) -> PyResult
             })
             .map_err(map_array_read_error);
     }
+    if let Ok(buffer) = PyBuffer::<u8>::get(value) {
+        if !buffer.is_c_contiguous() {
+            return Err(PyValueError::new_err(
+                "ShaderBuffer requires a contiguous byte buffer",
+            ));
+        }
+        return buffer.to_vec(value.py());
+    }
+
     Err(PyTypeError::new_err(SHADER_BUFFER_DATA_TYPE))
 }

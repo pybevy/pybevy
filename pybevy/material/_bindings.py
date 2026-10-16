@@ -30,7 +30,8 @@ from ..math import Vec2, Vec3, Vec4
 from ..pbr import StorageShaderMaterial
 from ..render import ShaderBuffer
 from ._layout import _is_texture_annotation, _validate_wgsl_identifier
-from ._structs import shader_struct_layout
+from ._scalars import U32
+from ._structs import shader_type_layout
 
 _DEFAULT_SAMPLER = ImageSamplerDescriptor()
 _Element = TypeVar("_Element", default=Vec4)
@@ -56,7 +57,7 @@ def _copy_sampler(value: object) -> ImageSamplerDescriptor:
 class StorageBinding(Generic[_Element]):
     """Declare a read-only array of a WGSL host-shareable element type.
 
-    ``element`` accepts float, int, Vec2/3/4, shader_struct classes or WGSL text.
+    ``element`` accepts float, int, U32, Vec2/3/4, shader_type classes or WGSL text.
     Manual WGSL structs belong in ``declarations``. In ``StorageBinding[T]`` fields, T selects the
     element type; an omitted ``element`` otherwise defaults to Vec4.
     Upload bytes with the reported storage stride;
@@ -89,6 +90,8 @@ class StorageBinding(Generic[_Element]):
         object.__setattr__(self, "_explicit_element", element is not None)
         if element is None:
             element = Vec4
+        if element == U32:
+            element = "u32"
         types = {
             float: "f32",
             int: "i32",
@@ -99,10 +102,10 @@ class StorageBinding(Generic[_Element]):
         wgsl_type: str | None
         if isinstance(element, type) and element not in types:
             try:
-                layout = shader_struct_layout(element)
+                layout = shader_type_layout(element)
             except TypeError as error:
                 raise TypeError(
-                    "StorageBinding element must be float, int, Vec2/3/4, a @shader_struct type or a WGSL type string"
+                    "StorageBinding element must be float, int, U32, Vec2/3/4, a @shader_type type or a WGSL type string"
                 ) from error
             if declarations:
                 raise TypeError(
@@ -115,7 +118,7 @@ class StorageBinding(Generic[_Element]):
             wgsl_type = element if isinstance(element, str) else types.get(element)
         if wgsl_type is None:
             raise TypeError(
-                "StorageBinding element must be float, int, Vec2/3/4, or a WGSL type string"
+                "StorageBinding element must be float, int, U32, Vec2/3/4, or a WGSL type string"
             )
         stride, alignment = _pybevy.pbr.StorageShaderMaterial._storage_element_layout(
             wgsl_type, declarations
@@ -244,19 +247,19 @@ def _partition_storage_fields(
 
 @dataclass(frozen=True, init=False, slots=True)
 class TextureBinding:
-    """Declare an Image binding's dimension, sample type and sampler contract.
+    """Declare an Image binding's dimension, sample type and sampler_type contract.
 
     Configure actual filtering/addressing and view dimensions on the Image.
-    An explicitly annotated texture has no fallback: None leaves it pending.
+    None uses Bevy's white fallback for float textures; depth/integer stay pending.
     """
 
     __module__ = "pybevy.material"
     dimension: str
     sample_type: str
     filterable: bool
-    sampler: str | None
+    sampler_type: str | None
     wgsl_type: str
-    sampler_type: str
+    _wgsl_sampler_type: str
     _slot: int | None = dataclass_field(
         default=None, init=False, repr=False, compare=False
     )
@@ -267,23 +270,23 @@ class TextureBinding:
         dimension: str = "2d",
         sample_type: str = "float",
         filterable: bool = True,
-        sampler: str | None = "filtering",
+        sampler_type: str | None = "filtering",
     ) -> None:
         object.__setattr__(self, "_slot", None)
-        if sampler not in (None, "filtering", "non_filtering", "comparison"):
+        if sampler_type not in (None, "filtering", "non_filtering", "comparison"):
             raise ValueError(
-                "TextureBinding sampler must be filtering, non_filtering, comparison, or None"
+                "TextureBinding sampler_type must be filtering, non_filtering, comparison, or None"
             )
-        wgsl_type, sampler_type = _pybevy.pbr.StorageShaderMaterial._texture_layout(
-            dimension, sample_type, filterable, sampler
+        wgsl_type, wgsl_sampler_type = _pybevy.pbr.StorageShaderMaterial._texture_layout(
+            dimension, sample_type, filterable, sampler_type
         )
         for name, value in (
             ("dimension", dimension),
             ("sample_type", sample_type),
             ("filterable", filterable),
-            ("sampler", sampler),
-            ("wgsl_type", wgsl_type),
             ("sampler_type", sampler_type),
+            ("wgsl_type", wgsl_type),
+            ("_wgsl_sampler_type", wgsl_sampler_type),
         ):
             object.__setattr__(self, name, value)
 
@@ -352,7 +355,7 @@ class SamplerBinding:
     """Declare an independent ImageSamplerDescriptor material field."""
 
     __module__ = "pybevy.material"
-    kind: str
+    sampler_type: str
     _default: ImageSamplerDescriptor = dataclass_field(
         init=False, repr=False, compare=False
     )
@@ -362,22 +365,22 @@ class SamplerBinding:
 
     def __init__(
         self,
-        kind: str = "filtering",
+        sampler_type: str = "filtering",
         *,
         default: ImageSamplerDescriptor = _DEFAULT_SAMPLER,
     ) -> None:
-        if kind not in ("filtering", "non_filtering", "comparison"):
+        if sampler_type not in ("filtering", "non_filtering", "comparison"):
             raise ValueError(
-                "SamplerBinding kind must be filtering, non_filtering, or comparison"
+                "SamplerBinding sampler_type must be filtering, non_filtering, or comparison"
             )
 
-        object.__setattr__(self, "kind", kind)
+        object.__setattr__(self, "sampler_type", sampler_type)
         object.__setattr__(self, "_slot", None)
         object.__setattr__(self, "_default", _copy_sampler(default))
 
     @property
     def wgsl_type(self) -> str:
-        return "sampler_comparison" if self.kind == "comparison" else "sampler"
+        return "sampler_comparison" if self.sampler_type == "comparison" else "sampler"
 
     @overload
     def __get__(self, instance: None, owner: type[object]) -> SamplerBinding: ...
@@ -413,7 +416,7 @@ class SamplerBinding:
 
 class _SamplerLayout(Protocol):
     @property
-    def kind(self) -> str: ...
+    def sampler_type(self) -> str: ...
     @property
     def wgsl_type(self) -> str: ...
     @property

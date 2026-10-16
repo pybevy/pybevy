@@ -7,11 +7,13 @@
 mod generated_bindings;
 pub mod material_shader_variants;
 pub mod packed_uniform;
-mod shader_def_registry;
+pub mod shader_def_registry;
 pub mod storage_element;
 pub mod storage_material;
 pub mod texture_binding;
-use material_shader_variants::{MaterialShaderVariants, material_shader_handle};
+use material_shader_variants::{
+    MaterialShaderLifetimes, MaterialShaderSources, MaterialShaderVariants, material_shader_handle,
+};
 pub use storage_material::{
     ShaderMaterialPlugin, StorageShaderMaterial, StorageShaderMaterialExtension,
     StorageShaderMaterialPlugin,
@@ -24,13 +26,14 @@ use std::{
 };
 
 use bevy::{
-    asset::{Asset, AssetId, AssetLoadFailedEvent, AssetPath, AssetServer, Assets, Handle},
+    asset::{
+        Asset, AssetEvent, AssetId, AssetLoadFailedEvent, AssetPath, AssetServer, Assets, Handle,
+    },
     ecs::{
-        message::MessageReader,
+        message::{MessageCursor, MessageReader, Messages},
         system::{Local, Res, ResMut},
     },
     image::Image,
-    math::Vec4,
     mesh::MeshVertexBufferLayoutRef,
     pbr::{
         ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline,
@@ -44,9 +47,6 @@ use bevy::{
     shader::{Shader, ShaderDefVal, ShaderImport, ShaderRef},
 };
 use generated_bindings::{BindingsRegistry, binding_definition, sync_generated_bindings};
-use shader_def_registry::{
-    clear_shader_def_names, get_shader_def_names, register_shader_def_names,
-};
 use tracing::error;
 
 static SHADER_REGISTRY: OnceLock<RwLock<HashMap<u64, Handle<Shader>>>> = OnceLock::new();
@@ -125,12 +125,12 @@ fn bindings_registry() -> &'static RwLock<BindingsRegistry> {
 /// Clear all cached shader handles and def names.
 /// Called on plugin build to avoid stale handles from previous app runs.
 pub fn clear_shader_registries() {
+    shader_def_registry::clear_names();
     if let Some(reg) = SHADER_REGISTRY.get()
         && let Ok(mut map) = reg.write()
     {
         map.clear();
     }
-    clear_shader_def_names();
     if let Some(reg) = BINDINGS_REGISTRY.get()
         && let Ok(mut map) = reg.write()
     {
@@ -166,13 +166,13 @@ fn sync_shader_path(path: &str, asset_server: &AssetServer) -> Result<(), String
 }
 
 fn stage_uses_shader(
-    materials: &[&ShaderMaterialExtension],
+    materials: &[&MaterialShaderSources],
     stage: ShaderStage,
     shader_id: AssetId<Shader>,
 ) -> bool {
     materials.iter().any(|material| {
-        stage
-            .path(material)
+        material
+            .path(stage)
             .and_then(|path| get_shader_handle(hash_shader_path(path)))
             .is_some_and(|handle| handle.id() == shader_id)
     })
@@ -238,13 +238,13 @@ fn validate_material_shader_import(
 
 #[derive(ShaderType, Reflect, Clone, Debug)]
 pub struct ShaderParams {
-    pub data: [Vec4; 64],
+    pub data: packed_uniform::UniformData,
 }
 
 impl Default for ShaderParams {
     fn default() -> Self {
         Self {
-            data: [Vec4::ZERO; 64],
+            data: packed_uniform::UniformData::default(),
         }
     }
 }
@@ -296,7 +296,7 @@ impl From<&ShaderMaterialExtension> for ShaderMaterialKey {
                 .map(hash_shader_path)
                 .unwrap_or(0),
             shader_defs: ext.shader_defs,
-            def_names_id: ext.logical_type_id.unwrap_or(0),
+            def_names_id: shader_def_registry::intern_names(&ext.shader_def_names),
             bindings_id: ext
                 .bindings_wgsl
                 .as_deref()
@@ -423,7 +423,7 @@ impl MaterialExtension for ShaderMaterialExtension {
             && descriptor.vertex.shader_defs.iter().any(
                 |def| matches!(def, ShaderDefVal::Bool(name, true) if name == "DEFERRED_PREPASS"),
             );
-        let data = key.bind_group_data;
+        let data = &key.bind_group_data;
         let (vertex_id, fragment_id) = if is_deferred {
             (data.deferred_vert_shader_id, data.deferred_frag_shader_id)
         } else if is_prepass {
@@ -456,9 +456,18 @@ impl MaterialExtension for ShaderMaterialExtension {
             return Ok(());
         }
 
+        let names = shader_def_registry::get_names(data.def_names_id);
+        if let Some(name) = shader_def_registry::pipeline_collision(&names, descriptor) {
+            error!(
+                "Material pipeline {:?}: shader define '{name}' conflicts with an existing pipeline definition (prepass={is_prepass}, deferred={is_deferred})",
+                descriptor.label
+            );
+            // Bevy 0.19 only exposes a missing-vertex-attribute specialization error.
+            descriptor.vertex.shader = material_shader_variants::rejected_material_shader();
+            return Ok(());
+        }
+
         // Push shader defs from bool fields into each explicitly customized pass.
-        if key.bind_group_data.shader_defs != 0
-            && let Some(names) = get_shader_def_names(key.bind_group_data.def_names_id)
         {
             for (i, name) in names.iter().take(u32::BITS as usize).enumerate() {
                 if key.bind_group_data.shader_defs & (1 << i) != 0 {
@@ -516,16 +525,32 @@ pub fn sync_shader_handles(
     mut load_failures: MessageReader<AssetLoadFailedEvent<Shader>>,
     mut reported_diagnostics: Local<HashSet<String>>,
     mut variants: Local<MaterialShaderVariants>,
+    mut lifetimes: Local<MaterialShaderLifetimes>,
+    mut material_events: MessageReader<AssetEvent<ShaderMaterial>>,
+    storage_events: Option<Res<Messages<AssetEvent<StorageShaderMaterial>>>>,
+    mut storage_cursor: Local<MessageCursor<AssetEvent<StorageShaderMaterial>>>,
 ) {
-    let extensions: Vec<_> = materials
-        .iter()
-        .map(|(_, material)| &material.extension)
-        .chain(
-            storage_materials
-                .iter()
-                .flat_map(|assets| assets.iter().map(|(_, material)| &material.extension.inner)),
-        )
-        .collect();
+    for event in material_events.read() {
+        if let AssetEvent::Unused { id } = event {
+            lifetimes.forget(id.untyped());
+        }
+    }
+    if let Some(events) = storage_events {
+        for event in storage_cursor.read(&events) {
+            if let AssetEvent::Unused { id } = event {
+                lifetimes.forget(id.untyped());
+            }
+        }
+    }
+    for (id, material) in materials.iter() {
+        lifetimes.observe(id.untyped(), &material.extension);
+    }
+    if let Some(materials) = storage_materials {
+        for (id, material) in materials.iter() {
+            lifetimes.observe(id.untyped(), &material.extension.inner);
+        }
+    }
+    let extensions = lifetimes.sources();
     for failure in load_failures.read() {
         for stage in ShaderStage::ALL {
             if stage_uses_shader(&extensions, stage, failure.id) {
@@ -542,7 +567,7 @@ pub fn sync_shader_handles(
     let mut current_diagnostics = HashSet::new();
     for extension in &extensions {
         for stage in ShaderStage::ALL {
-            if let Some(path) = stage.path(extension)
+            if let Some(path) = extension.path(stage)
                 && let Err(parse_error) = sync_shader_path(path, &asset_server)
             {
                 let message = format!(
@@ -569,7 +594,7 @@ pub fn sync_shader_handles(
             .and_then(expected_generated_material_import)
         {
             for stage in ShaderStage::ALL {
-                if let Some(path) = stage.path(extension) {
+                if let Some(path) = extension.path(stage) {
                     validate_material_shader_import(
                         stage,
                         path,
@@ -580,11 +605,6 @@ pub fn sync_shader_handles(
                     );
                 }
             }
-        }
-        if let Some(type_id) = extension.logical_type_id
-            && !extension.shader_def_names.is_empty()
-        {
-            register_shader_def_names(type_id, extension.shader_def_names.clone());
         }
     }
     if let Ok(mut registry) = bindings_registry().write() {

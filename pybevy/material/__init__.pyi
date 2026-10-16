@@ -1,11 +1,22 @@
 from collections.abc import Callable, Iterable
-from typing import ClassVar, Generic, Literal, TypeVar, dataclass_transform, overload
+from dataclasses import field
+from typing import (
+    Annotated,
+    ClassVar,
+    Generic,
+    Literal,
+    TypeVar,
+    dataclass_transform,
+    overload,
+)
 
 from pybevy.assets import Handle
 from pybevy.image import Image, ImageSamplerDescriptor
 from pybevy.math import Vec4
-from pybevy.pbr import Material
+from pybevy.pbr import Material, StandardMaterial
 from pybevy.render import ShaderBuffer
+
+U32 = Annotated[int, "u32"]
 
 MaterialT = TypeVar("MaterialT", bound=Material)
 
@@ -66,11 +77,7 @@ def material(
     prepass_fragment_shader: str | None = None,
     deferred_vertex_shader: str | None = None,
     deferred_fragment_shader: str | None = None,
-    alpha_mode: AlphaMode | None = None,
-    double_sided: bool | None = None,
-    cull_mode: object = ...,
-    unlit: bool | None = None,
-    depth_bias: float | None = None,
+    base: StandardMaterial | None = None,
 ) -> Callable[[type[MaterialT]], type[MaterialT]]:
     """Decorator to define a custom shader material.
 
@@ -116,7 +123,7 @@ class TextureBinding:
         dimension: str = "2d",
         sample_type: str = "float",
         filterable: bool = True,
-        sampler: str | None = "filtering",
+        sampler_type: str | None = "filtering",
     ) -> None: ...
     @overload
     def __get__(self, instance: None, owner: type[object]) -> TextureBinding: ...
@@ -130,41 +137,40 @@ class TextureBinding:
     @property
     def filterable(self) -> bool: ...
     @property
-    def sampler(self) -> str | None: ...
+    def sampler_type(self) -> str | None: ...
     @property
     def wgsl_type(self) -> str: ...
-    @property
-    def sampler_type(self) -> str: ...
     def __eq__(self, other: object) -> bool: ...
     def __hash__(self) -> int: ...
 
 
 class SamplerBinding:
     """SamplerBinding metadata or typed field declaration; values are ImageSamplerDescriptor."""
-    def __init__(self, kind: str = "filtering", *, default: ImageSamplerDescriptor = ...) -> None: ...
+    def __init__(self, sampler_type: str = "filtering", *, default: ImageSamplerDescriptor = ...) -> None: ...
     @overload
     def __get__(self, instance: None, owner: type[object]) -> SamplerBinding: ...
     @overload
     def __get__(self, instance: object, owner: type[object]) -> ImageSamplerDescriptor: ...
     def __set__(self, instance: object, value: ImageSamplerDescriptor) -> None: ...
     @property
-    def kind(self) -> str: ...
+    def sampler_type(self) -> str: ...
     @property
     def wgsl_type(self) -> str: ...
     def __eq__(self, other: object) -> bool: ...
     def __hash__(self) -> int: ...
 
 
-def shader_struct[Record](cls: type[Record]) -> type[Record]:
-    """Apply above @dataclass; supports float, int, Vec2, Vec3 and Vec4 fields."""
+@dataclass_transform(field_specifiers=(field,))
+def shader_type[Record](cls: type[Record]) -> type[Record]:
+    """Generate a dataclass with native scalar/vector storage layout."""
 
-def shader_struct_layout(cls: type[object]) -> ShaderStructLayout:
+def shader_type_layout(cls: type[object]) -> ShaderTypeLayout:
     """Return the immutable native WGSL storage layout of a decorated class."""
 
-def pack_shader_structs[Record](records: Iterable[Record], *, struct_type: type[Record] | None = None) -> bytes:
-    """Pack homogeneous records, validating values and zeroing padding; no GPU upload."""
+def pack_shader_data(values: Iterable[object], *, element: object = None) -> bytes:
+    """Pack storage records/scalars/vectors; empty input requires element=."""
 
-class ShaderStructField:
+class ShaderTypeField:
     def __init__(self, name: str, wgsl_type: str, offset: int, size: int, alignment: int) -> None: ...
     @property
     def name(self) -> str: ...
@@ -179,8 +185,8 @@ class ShaderStructField:
     def __eq__(self, other: object) -> bool: ...
     def __hash__(self) -> int: ...
 
-class ShaderStructLayout:
-    def __init__(self, wgsl_type: str, declarations: str, size: int, stride: int, alignment: int, fields: tuple[ShaderStructField, ...]) -> None: ...
+class ShaderTypeLayout:
+    def __init__(self, wgsl_type: str, declarations: str, size: int, stride: int, alignment: int, fields: tuple[ShaderTypeField, ...]) -> None: ...
     @property
     def wgsl_type(self) -> str: ...
     @property
@@ -192,6 +198,6 @@ class ShaderStructLayout:
     @property
     def alignment(self) -> int: ...
     @property
-    def fields(self) -> tuple[ShaderStructField, ...]: ...
+    def fields(self) -> tuple[ShaderTypeField, ...]: ...
     def __eq__(self, other: object) -> bool: ...
     def __hash__(self) -> int: ...

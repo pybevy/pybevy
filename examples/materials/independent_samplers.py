@@ -10,7 +10,7 @@ from pybevy.render import Extent3d
 
 @material(fragment_shader="shaders/examples/independent_samplers.wgsl")
 class SharedImage(Material):
-    image: TextureBinding = TextureBinding(sampler=None)
+    image: TextureBinding = TextureBinding(sampler_type=None)
     sharp: SamplerBinding = SamplerBinding("non_filtering")
     soft: SamplerBinding = SamplerBinding(default=ImageSamplerDescriptor.linear())
 

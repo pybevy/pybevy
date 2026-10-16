@@ -23,6 +23,7 @@ use pybevy_macros::{pyasset, pycomponent, pyplugin};
 use pybevy_math::{vec2::PyVec2, vec3::PyVec3, vec4::PyVec4};
 use pybevy_shader_types::ShaderMaterialPlugin;
 use pyo3::{
+    PyTypeInfo,
     exceptions::{PyIndexError, PyTypeError, PyValueError},
     prelude::*,
     types::{PyList, PyType},
@@ -110,7 +111,7 @@ pub(crate) fn build_shader_material(
         for (i, &val) in data.iter().enumerate() {
             let vec_idx = i / 4;
             let comp_idx = i % 4;
-            params.data[vec_idx][comp_idx] = val;
+            params.data.words[vec_idx][comp_idx] = val.to_bits();
         }
     }
 
@@ -162,6 +163,51 @@ pub(crate) fn build_shader_material(
 
 #[pymethods]
 impl PyShaderMaterial {
+    #[getter]
+    pub fn base(&self, py: Python<'_>) -> PyResult<Py<PyStandardMaterial>> {
+        let storage = self
+            .storage
+            .borrow_asset_field(|material| &material.base, |material| &mut material.base)?;
+        Py::new(py, PyStandardMaterial::from_borrowed(storage))
+    }
+
+    #[setter]
+    pub fn set_base(&mut self, base: PyRef<'_, PyStandardMaterial>) -> PyResult<()> {
+        let base = base.storage.as_ref()?.clone();
+        self.as_mut()?.base = base;
+        Ok(())
+    }
+
+    #[staticmethod]
+    fn _read_only_base(
+        py: Python<'_>,
+        base: PyRef<'_, PyStandardMaterial>,
+    ) -> PyResult<Py<PyStandardMaterial>> {
+        let storage = AssetStorage::read_only_snapshot(base.storage.as_ref()?.clone());
+        Py::new(py, PyStandardMaterial::from_borrowed(storage))
+    }
+
+    #[staticmethod]
+    fn _validate_shader_def_names(names: Vec<String>) -> PyResult<()> {
+        pybevy_shader_types::shader_def_registry::validate_names(&names)
+            .map_err(PyTypeError::new_err)
+    }
+
+    #[staticmethod]
+    fn _validate_bindings(source: &str) -> PyResult<()> {
+        let source = source
+            .lines()
+            .filter(|line| !line.trim().starts_with('#'))
+            .collect::<Vec<_>>()
+            .join("\n");
+        pybevy_shader_types::storage_element::validate_bindings(&source)
+            .map_err(PyTypeError::new_err)
+    }
+    #[classattr]
+    fn __pybevy_component_type__(py: Python<'_>) -> Bound<'_, PyType> {
+        PyMeshMaterial3dShader::type_object(py)
+    }
+
     #[new]
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (base, fragment_shader=None, vertex_shader=None, data=None, shader_defs=0, shader_def_names=None, textures=None, bindings_wgsl=None, *, prepass_vertex_shader=None, prepass_fragment_shader=None, deferred_vertex_shader=None, deferred_fragment_shader=None))]
@@ -224,6 +270,13 @@ impl PyShaderMaterial {
 
     fn clear_texture(&mut self, slot: isize) -> PyResult<()> {
         material_access::clear_texture(&mut self.storage, slot)
+    }
+
+    fn _get_data_int(&self, index: isize) -> PyResult<i32> {
+        material_access::get_data_int(&self.storage, index)
+    }
+    fn _set_data_int(&mut self, index: isize, value: i32) -> PyResult<()> {
+        material_access::set_data_int(&mut self.storage, index, value)
     }
 
     fn set_data_float(&mut self, index: isize, value: f32) -> PyResult<()> {

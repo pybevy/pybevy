@@ -61,7 +61,7 @@ def _validate_wgsl_identifier(name: str, kind: str) -> None:
 # Types: (wgsl_type, size_bytes, align_bytes, num_floats)
 _TYPE_MAP: dict[type, tuple[str, int, int, int]] = {
     float: ("f32", 4, 4, 1),
-    int: ("f32", 4, 4, 1),
+    int: ("i32", 4, 4, 1),
     Vec2: ("vec2<f32>", 8, 8, 2),
     Vec3: ("vec3<f32>", 12, 16, 3),
     Vec4: ("vec4<f32>", 16, 16, 4),
@@ -269,7 +269,7 @@ def _validate_binding_names(
         )
     for texture in textures:
         declarations.append((texture.name, "texture field"))
-        if texture.layout is None or texture.layout.sampler is not None:
+        if texture.layout is None or texture.layout.sampler_type is not None:
             declarations.append((f"{texture.name}_sampler", "generated sampler"))
     declarations.extend((name, "storage field") for name in storage_names)
     declarations.extend((name, "sampler field") for name in sampler_names)
@@ -311,20 +311,20 @@ def _generate_wgsl(
         lines.append("}")
         lines.append("")
         # Material bind group is group 3 (MATERIAL_BIND_GROUP_INDEX)
-        lines.append(f"@group(3) @binding(100) var<uniform> material: {class_name};")
+        lines.append(f"@group(#{{MATERIAL_BIND_GROUP}}) @binding(100) var<uniform> material: {class_name};")
         lines.append("")
 
     # TextureBinding/sampler declarations
     if texture_fields:
         for tf in texture_fields:
             lines.append(
-                f"@group(3) @binding({tf.binding_texture}) "
+                f"@group(#{{MATERIAL_BIND_GROUP}}) @binding({tf.binding_texture}) "
                 f"var {tf.name}: {tf.layout.wgsl_type if tf.layout else 'texture_2d<f32>'};"
             )
-            if tf.layout is None or tf.layout.sampler is not None:
+            if tf.layout is None or tf.layout.sampler_type is not None:
                 lines.append(
-                    f"@group(3) @binding({tf.binding_sampler}) "
-                    f"var {tf.name}_sampler: {tf.layout.sampler_type if tf.layout else 'sampler'};"
+                    f"@group(#{{MATERIAL_BIND_GROUP}}) @binding({tf.binding_sampler}) "
+                    f"var {tf.name}_sampler: {tf.layout._wgsl_sampler_type if tf.layout else 'sampler'};"
                 )
         lines.append("")
 

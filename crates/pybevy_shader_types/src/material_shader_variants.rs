@@ -2,7 +2,7 @@
 use std::collections::{HashMap, HashSet};
 
 use bevy::{
-    asset::{AssetId, Assets, Handle, uuid::Uuid},
+    asset::{AssetId, Assets, Handle, UntypedAssetId, uuid::Uuid},
     shader::{Shader, ShaderDefVal, ShaderImport},
 };
 
@@ -10,6 +10,55 @@ use crate::{
     ShaderMaterialExtension, ShaderStage, expected_generated_material_import, get_shader_handle,
     hash_shader_path,
 };
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct MaterialShaderSources {
+    pub(crate) bindings_wgsl: Option<String>,
+    paths: [Option<String>; 6],
+}
+
+impl From<&ShaderMaterialExtension> for MaterialShaderSources {
+    fn from(extension: &ShaderMaterialExtension) -> Self {
+        Self {
+            bindings_wgsl: extension.bindings_wgsl.clone(),
+            paths: ShaderStage::ALL.map(|stage| stage.path(extension).map(str::to_owned)),
+        }
+    }
+}
+
+impl MaterialShaderSources {
+    pub(crate) fn path(&self, stage: ShaderStage) -> Option<&str> {
+        self.paths[stage as usize].as_deref()
+    }
+}
+
+#[derive(Default)]
+pub struct MaterialShaderLifetimes {
+    sources: HashMap<UntypedAssetId, MaterialShaderSources>,
+}
+
+impl MaterialShaderLifetimes {
+    pub(crate) fn forget(&mut self, id: UntypedAssetId) {
+        self.sources.remove(&id);
+    }
+
+    pub(crate) fn observe(&mut self, id: UntypedAssetId, extension: &ShaderMaterialExtension) {
+        if self.sources.get(&id).is_some_and(|source| {
+            source.bindings_wgsl == extension.bindings_wgsl
+                && ShaderStage::ALL
+                    .into_iter()
+                    .all(|stage| source.path(stage) == stage.path(extension))
+        }) {
+            return;
+        }
+        // Store only shader metadata: owning a material handle would prevent Unused.
+        self.sources.insert(id, extension.into());
+    }
+
+    pub(crate) fn sources(&self) -> Vec<&MaterialShaderSources> {
+        self.sources.values().collect()
+    }
+}
 
 #[derive(Default)]
 pub struct MaterialShaderVariants {
@@ -28,6 +77,10 @@ pub(crate) fn material_shader_handle(path: u64, bindings: Option<u64>) -> Option
         Some(bindings) => Some(stable_handle(path, bindings)),
         None => get_shader_handle(path),
     }
+}
+
+pub(crate) fn rejected_material_shader() -> Handle<Shader> {
+    stable_handle(0x5059424556594552, 1)
 }
 
 fn replace_import(source: &str, original: &str, replacement: &str) -> String {
@@ -67,9 +120,18 @@ impl MaterialShaderVariants {
     pub(crate) fn sync(
         &mut self,
         shaders: &mut Assets<Shader>,
-        extensions: &[&ShaderMaterialExtension],
+        extensions: &[&MaterialShaderSources],
     ) {
-        let mut live = HashSet::new();
+        let rejected = rejected_material_shader();
+        self.publish(
+            shaders,
+            &rejected,
+            Shader::from_wgsl(
+                "const_assert false;",
+                "pybevy://material/rejected-define-collision",
+            ),
+        );
+        let mut live = HashSet::from([rejected.id()]);
         for extension in extensions {
             let Some(bindings) = extension.bindings_wgsl.as_deref() else {
                 continue;
@@ -86,12 +148,12 @@ impl MaterialShaderVariants {
                     &binding_handle,
                     Shader::from_wgsl(
                         replace_import(bindings, import, &versioned_import),
-                        format!("pybevy://bindings/{binding_id:016X}"),
+                        format!("pybevy://bindings/{import}/{binding_id:016X}"),
                     ),
                 );
             }
             for stage in ShaderStage::ALL {
-                let Some(path) = stage.path(extension) else {
+                let Some(path) = extension.path(stage) else {
                     continue;
                 };
                 let path_id = hash_shader_path(path);
@@ -105,7 +167,7 @@ impl MaterialShaderVariants {
                 else {
                     continue;
                 };
-                let variant_path = format!("pybevy://material/{path_id:016X}/{binding_id:016X}");
+                let variant_path = format!("pybevy://material/{import}/{path}/{binding_id:016X}");
                 let mut variant = Shader::from_wgsl(
                     replace_import(original.source.as_str(), import, &versioned_import),
                     original.path.clone(),

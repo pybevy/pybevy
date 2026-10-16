@@ -154,14 +154,14 @@ impl fmt::Display for StorageError {
                  Only owned assets can be consumed.",
             ),
             StorageError::AssetReadOnly => f.write_str(
-                "Cannot modify asset obtained from Res[Assets[T]].get(). \
+                "Cannot modify asset obtained through read-only get() or iteration. \
                  Use ResMut[Assets[T]].get_mut() for mutable access.",
             ),
             StorageError::AssetUnavailable => {
                 f.write_str("Borrowed asset is no longer available in Assets<T>.")
             }
             StorageError::AssetViewsLive => f.write_str(
-                "A live NumPy view still aliases this asset's data. \
+                "A live array view still aliases this asset's data. \
                  Drop the array (del it or leave the with-block that created it) \
                  before mutating or consuming the asset.",
             ),

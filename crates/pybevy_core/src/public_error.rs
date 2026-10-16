@@ -631,8 +631,7 @@ pub fn optional_module_requires_feature(module: &str, feature: &str) -> String {
 
 pub const SHADER_DEFS_WITHOUT_NAMES: &str =
     "shader_defs contains enabled bits without matching shader_def_names entries";
-pub const SHADER_BUFFER_DATA_TYPE: &str =
-    "ShaderBuffer data must be bytes or a uint8 pybevy.array.Array";
+pub const SHADER_BUFFER_DATA_TYPE: &str = "ShaderBuffer data must be a contiguous byte buffer (bytes, bytearray or memoryview) or a uint8 pybevy.array.Array";
 pub const SHADER_BUFFER_NO_DATA: &str =
     "ShaderBuffer has no CPU data; upload data is consumed during render extraction";
 pub const SHADER_BUFFER_DATA_CHANGED: &str =
@@ -1361,6 +1360,15 @@ pub const COMPONENT_FLOAT_REQUIRED: &str =
     "expected a number; null is only valid for optional fields";
 pub const COMPONENT_FLOAT_EXPECTED_NUMBER: &str = "expected a number";
 pub const COMPONENT_FLOAT_NON_FINITE: &str = "float must be finite";
+pub const EXPOSURE_EV100_NON_FINITE: &str = "Exposure.ev100 must be finite";
+
+pub fn physical_camera_parameter(name: &str, value: f32) -> String {
+    format!("PhysicalCameraParameters.{name} must be finite and positive (got {value})")
+}
+
+pub fn physical_camera_ev100(value: f32) -> String {
+    format!("PhysicalCameraParameters settings must yield finite ev100 (got {value})")
+}
 
 pub fn direction_argument_type(param: &str) -> String {
     format!("{param} must be a Vec3 or Dir3")

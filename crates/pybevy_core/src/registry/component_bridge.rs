@@ -59,6 +59,11 @@ pub trait ComponentBridge: Send + Sync + 'static {
     /// Whether Python-facing APIs may insert this component.
     fn can_insert(&self) -> bool;
 
+    /// Whether a default example can be offered without native insertion hooks.
+    fn can_offer_hook_free_default_spawn(&self) -> bool {
+        false
+    }
+
     /// For a Bevy `Relationship` component, the Python field holding the
     /// related entity.
     ///

@@ -859,7 +859,8 @@ class Sphere:
     """A bounding sphere used for frustum culling calculations.
 
     This is the camera primitive Sphere used with Frustum.intersects_sphere().
-    Not to be confused with the math primitive Sphere.
+    Not to be confused with the math primitive Sphere. Radius must be finite
+    and non-negative; invalid constructor and setter values raise ValueError.
     """
 
     @property
@@ -1047,6 +1048,9 @@ class PhysicalCameraParameters:
     - Shutter speed: Exposure time in seconds
     - ISO sensitivity: Sensor sensitivity to light
     - Sensor height: Physical sensor height in meters
+
+    Every field must be finite and positive, and the settings must produce a
+    finite EV100. Invalid constructor and setter values raise ValueError.
     """
 
     def __init__(
@@ -1284,8 +1288,9 @@ class Exposure(Component):
         """Create a new Exposure component.
 
         Args:
-            ev100: Exposure Value at ISO 100. Higher values = darker images,
-                   lower values = brighter images. Default is 9.7 (Blender preset).
+            ev100: Finite Exposure Value at ISO 100. Higher values = darker
+                   images, lower values = brighter images. Default is 9.7
+                   (Blender preset). Values that overflow f32 are rejected.
 
         Examples:
             >>> # Default (Blender preset)
@@ -1311,7 +1316,7 @@ class Exposure(Component):
         """Set the EV100 value.
 
         Args:
-            value: New EV100 value
+            value: New finite EV100 value; f32 overflow is rejected.
         """
 
     def exposure(self) -> float:
@@ -1341,7 +1346,8 @@ class Exposure(Component):
             physical_camera_parameters: Physical camera settings (aperture, shutter speed, ISO, sensor size)
 
         Returns:
-            Exposure component with EV100 calculated from physical parameters
+            Exposure component with finite EV100 calculated from physical
+            parameters. Raises ValueError if the derived EV100 is not finite.
         """
 
 class PerspectiveProjection:

@@ -22,7 +22,7 @@ pub(crate) fn unsupported_op(op: &str) -> String {
 
 /// Assigning a Python list/tuple to an index (a numpy-only idiom).
 pub(crate) fn unsupported_list_assign() -> String {
-    "Assigning a Python list to a pybevy.array index is not supported. Assign \
+    "Assigning a Python list or tuple to a pybevy.array index is not supported. Assign \
      elementwise (arr[0, 0] = 1.0) or with a matching-shape pybevy.array Array."
         .to_string()
 }

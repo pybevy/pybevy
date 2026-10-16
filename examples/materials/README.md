@@ -17,7 +17,7 @@ supported. Each example imports its generated material bindings in the matching
 
 | Scene | What to inspect |
 |---|---|
-| [Structured buffers](structured_buffer.py) | Animated tiles read a `Tile` struct array through a second `u32` index buffer. `@shader_struct` generates WGSL and packs the 32-byte stride: `vec3` offset, `f32` scale, `vec4` color. Both buffers update in place. |
+| [Structured buffers](structured_buffer.py) | Animated tiles read a `Tile` struct array through a second `u32` index buffer. `@shader_type` generates the dataclass/WGSL layout; ShaderBuffer packs the 32-byte stride: `vec3` offset, `f32` scale, `vec4` color. Both buffers update in place. |
 | [Cubemap](cubemap.py) | A sphere reflects six procedural faces while the sampling direction rotates. Cube layer order is +X, -X, +Y, -Y, +Z, -Z. The image has a cube view and linear filtering. |
 | [Texture array](array_texture.py) | Four checkerboard layers share one image and material. `MeshTag` selects each mesh's layer; a uniform offset cycles the layers. Nearest filtering keeps the checks crisp. |
 | [Independent samplers](independent_samplers.py) | One image and material supply both panels. Left uses nearest filtering; right uses linear filtering through a separate sampler binding. |
@@ -37,7 +37,9 @@ for those extension points and binding limits.
 
 ## Verification
 
-All five entrypoints pass the standard 60-frame smoke test on Vulkan with Xvfb.
+The API migration is verified on llvmpipe software Vulkan. All five entrypoints
+run for 60 frames with the guide runner's headless DefaultPlugins substitution.
+The windowed Xvfb command below was unavailable in this environment.
 Headless tests render their actual setup systems, check visible pixels, and
 verify buffer selection, record edits, environment rotation, array-layer
 selection and volume-slice changes. Shader and wgpu validation errors fail the
