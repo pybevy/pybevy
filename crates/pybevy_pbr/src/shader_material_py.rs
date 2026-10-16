@@ -1,12 +1,12 @@
 use std::mem::size_of;
 
 use bevy::{
-    app::{App, Last},
+    app::App,
     asset::Handle,
     color::LinearRgba,
     image::Image,
     math::{Vec2, Vec3, Vec4},
-    pbr::{MaterialPlugin, MeshMaterial3d, StandardMaterial},
+    pbr::{MeshMaterial3d, StandardMaterial},
 };
 use pybevy_color::linear_rgba::PyLinearRgba;
 use pybevy_core::{
@@ -21,6 +21,7 @@ use pybevy_core::{
 };
 use pybevy_macros::{pyasset, pycomponent, pyplugin};
 use pybevy_math::{vec2::PyVec2, vec3::PyVec3, vec4::PyVec4};
+use pybevy_shader_types::ShaderMaterialPlugin;
 use pyo3::{
     exceptions::{PyIndexError, PyTypeError, PyValueError},
     prelude::*,
@@ -278,7 +279,7 @@ impl PyShaderMaterial {
     }
 }
 
-#[pyplugin(MaterialPlugin::<ShaderMaterial>)]
+#[pyplugin(ShaderMaterialPlugin)]
 #[pyclass(name = "ShaderMaterialPlugin", module = "pybevy.pbr", extends = PyPlugin, frozen, skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyShaderMaterialPlugin;
@@ -294,9 +295,9 @@ impl PyShaderMaterialPlugin {
 
 impl PluginBuild for PyShaderMaterialPlugin {
     fn build(_py_plugin: &Bound<'_, PyAny>, app: &mut App) -> PyResult<()> {
-        crate::shader_material::clear_shader_registries();
-        app.add_plugins(MaterialPlugin::<ShaderMaterial>::default());
-        app.add_systems(Last, crate::shader_material::sync_shader_handles);
+        if !app.is_plugin_added::<ShaderMaterialPlugin>() {
+            app.add_plugins(ShaderMaterialPlugin);
+        }
         Ok(())
     }
 }

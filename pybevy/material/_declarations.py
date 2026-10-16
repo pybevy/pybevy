@@ -4,69 +4,20 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import InitVar
-from typing import Annotated, Protocol, cast, get_args, get_origin, overload
+from typing import Annotated, get_args, get_origin
 
-from .. import _pybevy  # pyright: ignore[reportAttributeAccessIssue]
 from ..assets import Handle
-from ..pbr import StandardMaterial, StorageShaderMaterial
+from ..image import Image, ImageSamplerDescriptor
+from ..pbr import StandardMaterial
 from ..render import ShaderBuffer
-from ._bindings import StorageBinding
-
-
-class _StorageInstance(Protocol):
-    _shader_mat: StorageShaderMaterial | None
-    _storage_buffers: list[Handle[ShaderBuffer] | None]
-
-
-class Storage[Element]:
-    """A read-only GPU array field whose Python value is a ShaderBuffer handle."""
-
-    __module__ = "pybevy.material"
-
-    def __init__(self, *, default: None) -> None:
-        if default is not None:
-            raise TypeError("Storage default must be None")
-        self._slot: int | None = None
-
-    @overload
-    def __get__(self, instance: None, owner: type[object]) -> Storage[Element]: ...
-    @overload
-    def __get__(
-        self, instance: object, owner: type[object]
-    ) -> Handle[ShaderBuffer] | None: ...
-
-    def __get__(
-        self, instance: object | None, owner: type[object]
-    ) -> Storage[Element] | Handle[ShaderBuffer] | None:
-        if instance is None:
-            return self
-        slot = self._bound_slot()
-        material = cast(_StorageInstance, instance)
-        if material._shader_mat is not None:
-            return material._shader_mat.get_storage_buffer_at(slot)
-        return material._storage_buffers[slot]
-
-    def __set__(self, instance: object, value: Handle[ShaderBuffer] | None) -> None:
-        slot = self._bound_slot()
-        material = cast(_StorageInstance, instance)
-        if material._shader_mat is not None:
-            material._shader_mat.set_storage_buffer_at(slot, value)
-        else:
-            # The same validator runs before constructor values are accepted.
-            _pybevy.pbr.StorageShaderMaterial._validate_storage_handle(value)
-            material._storage_buffers[slot] = value
-
-    def _bound_slot(self) -> int:
-        if self._slot is None:
-            raise TypeError("Storage fields require @material")
-        return self._slot
+from ._bindings import SamplerBinding, StorageBinding, TextureBinding
 
 
 def _lower_declarations(
     hints: Mapping[str, object], defaults: dict[str, object]
 ) -> tuple[dict[str, object], frozenset[str], tuple[str, ...]]:
     lowered: dict[str, object] = {}
-    storage_names: set[str] = set()
+    declaration_names: set[str] = set()
     required: list[str] = []
     for name, annotation in hints.items():
         if isinstance(annotation, InitVar):
@@ -79,24 +30,57 @@ def _lower_declarations(
             continue
         if name == "base":
             raise TypeError("Declare base as InitVar[StandardMaterial | None] = None")
-        if get_origin(annotation) is Storage and not name.startswith("_"):
-            storage_names.add(name)
+        if get_origin(annotation) is StorageBinding and not name.startswith("_"):
+            declaration_names.add(name)
+            marker = defaults.get(name)
             if name in defaults:
-                if not isinstance(defaults[name], Storage):
+                if not isinstance(marker, StorageBinding):
                     raise TypeError(
-                        f"Storage field '{name}' must use Storage(default=None) or have no default"
+                        f"StorageBinding field '{name}' must use StorageBinding(default=None) or have no default"
                     )
                 defaults[name] = None
             else:
                 required.append(name)
             element = get_args(annotation)[0]
-            lowered[name] = Annotated[
-                Handle[ShaderBuffer] | None, StorageBinding(element=element)
-            ]
-        elif annotation is Storage:
+            binding = StorageBinding(element=element)
+            if isinstance(marker, StorageBinding):
+                if marker._explicit_element and (
+                    marker.wgsl_type != binding.wgsl_type
+                    or marker.declarations != binding.declarations
+                ):
+                    raise TypeError(
+                        f"StorageBinding field '{name}' has conflicting element types"
+                    )
+                if marker.declarations and not marker._explicit_element:
+                    binding = StorageBinding(
+                        element=element, declarations=marker.declarations
+                    )
+            lowered[name] = Annotated[Handle[ShaderBuffer] | None, binding]
+        elif annotation is StorageBinding:
             raise TypeError(
-                f"Storage field '{name}' needs an element type, such as Storage[Vec4]"
+                f"StorageBinding field '{name}' needs an element type, such as StorageBinding[Vec4]"
             )
+        elif annotation in (TextureBinding, SamplerBinding) and not name.startswith(
+            "_"
+        ):
+            assert isinstance(annotation, type)
+            declaration_names.add(name)
+            if name in defaults:
+                marker = defaults[name]
+                if not isinstance(marker, annotation):
+                    raise TypeError(
+                        f"{annotation.__name__} field '{name}' must use {annotation.__name__}(...) or have no default"
+                    )
+            else:
+                required.append(name)
+                marker = annotation()
+            if isinstance(marker, TextureBinding):
+                lowered[name] = Annotated[Handle[Image] | None, marker]
+                defaults[name] = None
+            else:
+                assert isinstance(marker, SamplerBinding)
+                lowered[name] = Annotated[ImageSamplerDescriptor, marker]
+                defaults[name] = marker._default
         else:
             lowered[name] = annotation
-    return lowered, frozenset(storage_names), tuple(required)
+    return lowered, frozenset(declaration_names), tuple(required)

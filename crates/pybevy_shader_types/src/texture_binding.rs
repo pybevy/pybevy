@@ -33,8 +33,10 @@ impl TextureBindingLayout {
         if !["float", "sint", "uint", "depth"].contains(&sample_type) {
             return Err("Texture sample_type must be float, sint, uint, or depth".into());
         }
-        if !["filtering", "non_filtering", "comparison"].contains(&sampler) {
-            return Err("Texture sampler must be filtering, non_filtering, or comparison".into());
+        if !["filtering", "non_filtering", "comparison", "none"].contains(&sampler) {
+            return Err(
+                "Texture sampler must be filtering, non_filtering, comparison, or none".into(),
+            );
         }
         if (sample_type != "float" && filterable)
             || (sampler == "comparison" && sample_type != "depth")
@@ -61,6 +63,10 @@ impl TextureBindingLayout {
             "3d" => TextureViewDimension::D3,
             _ => TextureViewDimension::D2,
         }
+    }
+
+    pub fn has_sampler(&self) -> bool {
+        self.sampler != "none"
     }
 
     pub fn sampler_type(&self) -> SamplerBindingType {
@@ -151,6 +157,9 @@ impl TextureBindingLayout {
                 "Texture format {format:?} is incompatible with {:?}",
                 self.sample()
             ));
+        }
+        if !self.has_sampler() {
+            return Ok(());
         }
         let linear = sampler.mag_filter == ImageFilterMode::Linear
             || sampler.min_filter == ImageFilterMode::Linear

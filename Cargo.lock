@@ -5147,6 +5147,7 @@ dependencies = [
  "numpy",
  "pybevy_color",
  "pybevy_core",
+ "pybevy_image",
  "pybevy_macros",
  "pybevy_material",
  "pybevy_math",
@@ -5220,6 +5221,7 @@ dependencies = [
  "bytemuck",
  "naga",
  "tracing",
+ "wgpu",
 ]
 
 [[package]]

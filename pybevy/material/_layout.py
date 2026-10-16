@@ -15,7 +15,7 @@ from ..image import Image
 from ..math import Vec2, Vec3, Vec4
 
 if TYPE_CHECKING:
-    from ._bindings import Texture
+    from ._bindings import TextureBinding
 
 
 _MAX_TEXTURE_SLOTS = 4
@@ -155,7 +155,7 @@ class _TextureFieldInfo:
     def __init__(self, name: str, slot_index: int) -> None:
         self.name = name
         self.slot_index = slot_index
-        self.layout: Texture | None = None
+        self.layout: TextureBinding | None = None
         # Binding numbers must match the Rust AsBindGroup attributes
         self.binding_texture = 101 + slot_index * 2
         self.binding_sampler = 102 + slot_index * 2
@@ -260,6 +260,7 @@ def _validate_binding_names(
     fields: list[_FieldLayout],
     textures: list[_TextureFieldInfo],
     storage_names: Iterable[str],
+    sampler_names: Iterable[str] = (),
 ) -> None:
     declarations: list[tuple[str, str]] = []
     if fields:
@@ -267,13 +268,11 @@ def _validate_binding_names(
             ((class_name, "uniform type"), ("material", "generated uniform"))
         )
     for texture in textures:
-        declarations.extend(
-            (
-                (texture.name, "texture field"),
-                (f"{texture.name}_sampler", "generated sampler"),
-            )
-        )
+        declarations.append((texture.name, "texture field"))
+        if texture.layout is None or texture.layout.sampler is not None:
+            declarations.append((f"{texture.name}_sampler", "generated sampler"))
     declarations.extend((name, "storage field") for name in storage_names)
+    declarations.extend((name, "sampler field") for name in sampler_names)
     declared: dict[str, str] = {}
     for name, kind in declarations:
         if name in declared:
@@ -315,17 +314,18 @@ def _generate_wgsl(
         lines.append(f"@group(3) @binding(100) var<uniform> material: {class_name};")
         lines.append("")
 
-    # Texture/sampler declarations
+    # TextureBinding/sampler declarations
     if texture_fields:
         for tf in texture_fields:
             lines.append(
                 f"@group(3) @binding({tf.binding_texture}) "
                 f"var {tf.name}: {tf.layout.wgsl_type if tf.layout else 'texture_2d<f32>'};"
             )
-            lines.append(
-                f"@group(3) @binding({tf.binding_sampler}) "
-                f"var {tf.name}_sampler: {tf.layout.sampler_type if tf.layout else 'sampler'};"
-            )
+            if tf.layout is None or tf.layout.sampler is not None:
+                lines.append(
+                    f"@group(3) @binding({tf.binding_sampler}) "
+                    f"var {tf.name}_sampler: {tf.layout.sampler_type if tf.layout else 'sampler'};"
+                )
         lines.append("")
 
     return "\n".join(lines)

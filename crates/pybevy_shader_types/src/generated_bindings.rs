@@ -1,4 +1,4 @@
-//! Preserve legacy import names while selecting the drawing material's layout.
+//! Preserve public material import names while selecting the drawing material's layout.
 //! Live classes/reload generations may share an import but have different fields;
 //! their pipeline keys supply exactly one of the generated shader definitions.
 

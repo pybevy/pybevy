@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Annotated
 
 from pybevy.image import ImageSampler
-from pybevy.material import Texture
+from pybevy.material import TextureBinding
 from pybevy.pbr import StorageShaderMaterialPlugin
 from pybevy.prelude import *
 from pybevy.render import Extent3d, TextureViewDescriptor, TextureViewDimension
@@ -12,7 +12,7 @@ from pybevy.render import Extent3d, TextureViewDescriptor, TextureViewDimension
 
 @material(fragment_shader="shaders/examples/cubemap.wgsl")
 class CubeReflection(Material):
-    environment: Annotated[Handle[Image] | None, Texture(dimension="cube")] = None
+    environment: Annotated[Handle[Image] | None, TextureBinding(dimension="cube")] = None
     angle: float = 0.0
 
 

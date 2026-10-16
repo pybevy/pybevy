@@ -5,7 +5,9 @@ use bevy::{
     color::{Color, ColorToComponents, Gray, LinearRgba, Srgba, Xyza},
     image::{Image, ImageSampler, TextureAccessError, TextureFormatPixelInfo},
     math::UVec3,
-    render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages},
+    render::render_resource::{
+        Extent3d, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor,
+    },
 };
 use half::f16;
 use image::{
@@ -1322,7 +1324,20 @@ impl PyImage {
         &mut self,
         descriptor: Option<PyTextureViewDescriptor>,
     ) -> PyResult<()> {
-        let descriptor = descriptor.map(TryInto::try_into).transpose()?;
+        let descriptor: Option<TextureViewDescriptor> =
+            descriptor.map(TryInto::try_into).transpose()?;
+        if let Some(view) = descriptor.as_ref().and_then(|value| value.dimension) {
+            image_with!(self, |image: &Image| {
+                let required = view.compatible_texture_dimension();
+                let actual = image.texture_descriptor.dimension;
+                if required != actual {
+                    return Err(PyValueError::new_err(format!(
+                        "Texture view {view:?} requires TextureDimension.{required:?}, but Image has {actual:?}; create the Image with dimension=TextureDimension.{required:?}"
+                    )));
+                }
+                Ok(())
+            })?;
+        }
         image_with_mut!(self, |image: &mut Image| {
             image.texture_view_descriptor = descriptor;
             Ok(())

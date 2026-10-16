@@ -23,3 +23,6 @@ features = [
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+wgpu = { version = "29", default-features = false, features = ["noop"] }

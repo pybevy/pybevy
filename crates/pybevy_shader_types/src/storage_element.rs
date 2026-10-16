@@ -2,7 +2,7 @@
 
 use bevy::reflect::Reflect;
 use naga::{
-    AddressSpace, TypeInner,
+    AddressSpace, Handle, Module, Type, TypeInner,
     front::wgsl,
     proc::Layouter,
     valid::{Capabilities, ValidationFlags, Validator},
@@ -14,6 +14,22 @@ pub struct StorageElement {
     pub declarations: String,
     pub stride: u32,
     pub alignment: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StorageStructField {
+    pub name: String,
+    pub offset: u32,
+    pub size: u32,
+    pub alignment: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StorageStructLayout {
+    pub size: u32,
+    pub stride: u32,
+    pub alignment: u32,
+    pub fields: Vec<StorageStructField>,
 }
 
 impl Default for StorageElement {
@@ -46,7 +62,10 @@ impl StorageElement {
             .collect()
     }
 
-    pub fn parse(element: &str, declarations: &str) -> Result<Self, String> {
+    fn parse_module(
+        element: &str,
+        declarations: &str,
+    ) -> Result<(Module, Handle<Type>, u32), String> {
         let source = format!(
             "{declarations}\n@group(0) @binding(0) var<storage, read> pybevy_storage_element: array<{element}>;"
         );
@@ -75,6 +94,11 @@ impl StorageElement {
         let TypeInner::Array { base, stride, .. } = module.types[global.ty].inner else {
             return Err("Storage elements must form a runtime-sized array".into());
         };
+        Ok((module, base, stride))
+    }
+
+    pub fn parse(element: &str, declarations: &str) -> Result<Self, String> {
+        let (module, base, stride) = Self::parse_module(element, declarations)?;
         let mut layouter = Layouter::default();
         layouter
             .update(module.to_ctx())
@@ -85,6 +109,37 @@ impl StorageElement {
             declarations: declarations.into(),
             stride,
             alignment,
+        })
+    }
+
+    pub fn struct_layout(element: &str, declarations: &str) -> Result<StorageStructLayout, String> {
+        let (module, base, stride) = Self::parse_module(element, declarations)?;
+        let TypeInner::Struct { members, span } = &module.types[base].inner else {
+            return Err("Shader struct layout requires a WGSL struct".into());
+        };
+        let mut layouter = Layouter::default();
+        layouter
+            .update(module.to_ctx())
+            .map_err(|error| error.to_string())?;
+        let fields = members
+            .iter()
+            .map(|member| {
+                Ok(StorageStructField {
+                    name: member
+                        .name
+                        .clone()
+                        .ok_or("Shader struct fields must be named")?,
+                    offset: member.offset,
+                    size: layouter[member.ty].size,
+                    alignment: layouter[member.ty].alignment * 1,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok(StorageStructLayout {
+            size: *span,
+            stride,
+            alignment: layouter[base].alignment * 1,
+            fields,
         })
     }
 }

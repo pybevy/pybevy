@@ -4,7 +4,7 @@ import math
 import struct
 from dataclasses import dataclass
 
-from pybevy.material import Storage
+from pybevy.material import StorageBinding
 from pybevy.mesh import MeshTag
 from pybevy.pbr import StorageShaderMaterialPlugin
 from pybevy.prelude import *
@@ -15,7 +15,7 @@ SHADER_PATH = "shaders/examples/storage_buffer.wgsl"
 
 @material(vertex_shader=SHADER_PATH, fragment_shader=SHADER_PATH)
 class BufferedColors(Material):
-    colors: Storage[Vec4]
+    colors: StorageBinding[Vec4]
 
 
 @resource
