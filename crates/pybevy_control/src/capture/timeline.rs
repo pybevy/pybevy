@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, VecDeque},
-    mem,
-};
+use std::collections::{HashMap, VecDeque};
 
 use bevy::{
     camera::RenderTarget, ecs::world::World, prelude::*,
@@ -11,13 +8,10 @@ use image::RgbImage;
 use tokio::sync::oneshot;
 
 use super::{
-    camera::{DebugCameraCleanup, cleanup_debug_camera_world, setup_debug_camera},
+    camera::setup_debug_camera,
     compose::composite_contact_sheet,
     headless::{headless_frame_sequence, read_headless_frame},
-    hold::{
-        GizmoEnabledRestore, prepare_capture_visibility, release_internal_overlay,
-        restore_gizmos_enabled, restore_ui_nodes,
-    },
+    hold::CaptureHold,
     isolation::EntityCaptureIsolationActive,
     lease::capture_in_progress,
     screenshot::{
@@ -41,18 +35,14 @@ pub struct ActiveTimeline {
     pub columns: u32,
     /// Camera pose applied when the timeline starts.
     pub debug_camera: Option<DebugCameraRequest>,
-    pub debug_cleanup: Option<DebugCameraCleanup>,
     pub schedule: VecDeque<u32>,
     pub total_captures: u32,
     pub next_capture_index: u32,
     pub collected: Vec<(u32, RgbImage)>,
-    /// Whether this timeline has started and holds the capture state
-    /// (an `OverlaySuppression` refcount, released on completion).
-    pub overlay_suppressed: bool,
     pub hide_ui: bool,
     pub with_gizmos: bool,
-    pub ui_restore: Option<Vec<(Entity, Visibility)>>,
-    pub gizmo_restore: GizmoEnabledRestore,
+    /// The capture state taken when the timeline starts, released when it ends.
+    pub hold: Option<CaptureHold>,
     /// Last headless readback sequence observed by this timeline.
     pub headless_sequence: Option<u64>,
     /// Frames spent waiting on spawned captures after the schedule drained.
@@ -94,7 +84,7 @@ pub const MAX_TIMELINE_FRAMES: u32 = 1200;
 
 impl ActiveTimeline {
     pub(super) fn is_started(&self) -> bool {
-        self.overlay_suppressed && self.response_tx.is_some()
+        self.hold.is_some() && self.response_tx.is_some()
     }
 }
 
@@ -119,16 +109,9 @@ fn fail_timeline(
     for entity in stale_captures {
         world.despawn(entity);
     }
-    if let Some(cleanup) = timeline.debug_cleanup.take() {
-        cleanup_debug_camera_world(cleanup, world);
+    if let Some(hold) = timeline.hold.take() {
+        hold.release(world);
     }
-    if timeline.overlay_suppressed {
-        release_internal_overlay(world);
-    }
-    if let Some(restore) = timeline.ui_restore.take() {
-        restore_ui_nodes(world, restore);
-    }
-    restore_gizmos_enabled(world, mem::take(&mut timeline.gizmo_restore));
     if let Some(tx) = timeline.response_tx.take() {
         let _ = tx.send(Err(ControlError::internal(message)));
     }
@@ -136,14 +119,14 @@ fn fail_timeline(
 
 /// Take the capture state a timeline holds until it completes.
 fn start_timeline(world: &mut World, timeline: &mut ActiveTimeline) -> Result<(), ControlError> {
-    if let Some(request) = timeline.debug_camera.take() {
-        timeline.debug_cleanup = Some(setup_debug_camera(world, &request)?);
-    }
-    let (ui_restore, gizmo_restore) =
-        prepare_capture_visibility(world, timeline.hide_ui, timeline.with_gizmos);
-    timeline.overlay_suppressed = true;
-    timeline.ui_restore = ui_restore;
-    timeline.gizmo_restore = gizmo_restore;
+    let debug_cleanup = timeline
+        .debug_camera
+        .take()
+        .map(|request| setup_debug_camera(world, &request))
+        .transpose()?;
+    let mut hold = CaptureHold::begin(world, timeline.hide_ui, timeline.with_gizmos);
+    hold.debug_cleanup = debug_cleanup;
+    timeline.hold = Some(hold);
     timeline.headless_sequence = headless_frame_sequence(world);
     Ok(())
 }
@@ -229,7 +212,7 @@ pub fn process_pending_timelines(world: &mut World) {
     let mut stale_headless_ids: Vec<u64> = Vec::new();
 
     for (&id, timeline) in timelines.active.iter_mut() {
-        if timeline.response_tx.is_some() && !timeline.overlay_suppressed {
+        if timeline.response_tx.is_some() && timeline.hold.is_none() {
             continue;
         }
         if timeline.schedule.is_empty() {
@@ -320,10 +303,7 @@ pub fn process_pending_timelines(world: &mut World) {
                 }
             }
             Ok(rgb) => {
-                let mut overlay_releases: u32 = 0;
-                let mut camera_cleanups = Vec::new();
-                let mut ui_restores = Vec::new();
-                let mut gizmo_restores = Vec::new();
+                let mut holds = Vec::new();
                 {
                     let mut timelines = world.resource_mut::<PendingTimelines>();
                     for (timeline_id, capture_index) in captures_to_spawn {
@@ -334,32 +314,13 @@ pub fn process_pending_timelines(world: &mut World) {
                                 if let Some(tx) = timeline.response_tx.take() {
                                     let _ = tx.send(result);
                                 }
-                                if timeline.overlay_suppressed {
-                                    timeline.overlay_suppressed = false;
-                                    overlay_releases += 1;
-                                }
-                                if let Some(cleanup) = timeline.debug_cleanup.take() {
-                                    camera_cleanups.push(cleanup);
-                                }
-                                if let Some(restore) = timeline.ui_restore.take() {
-                                    ui_restores.push(restore);
-                                }
-                                gizmo_restores.push(mem::take(&mut timeline.gizmo_restore));
+                                holds.extend(timeline.hold.take());
                             }
                         }
                     }
                 }
-                for cleanup in camera_cleanups {
-                    cleanup_debug_camera_world(cleanup, world);
-                }
-                for _ in 0..overlay_releases {
-                    release_internal_overlay(world);
-                }
-                for restore in ui_restores {
-                    restore_ui_nodes(world, restore);
-                }
-                for restore in gizmo_restores {
-                    restore_gizmos_enabled(world, restore);
+                for hold in holds {
+                    hold.release(world);
                 }
             }
         }
@@ -391,7 +352,7 @@ mod tests {
         capture::{
             analysis::CapturedFrames,
             headless::HeadlessFrameBuffer,
-            hold::{InternalOverlayUi, OverlaySuppression},
+            hold::{GizmoEnabledRestore, InternalOverlayUi, OverlaySuppression},
             queue::CaptureResponseKind,
             screenshot::{
                 PendingScreenshotResponders, ScreenshotResponder, screenshot_captured_observer,
@@ -430,16 +391,13 @@ mod tests {
             max_width: None,
             columns: 2,
             debug_camera: None,
-            debug_cleanup: None,
+            hold: None,
             schedule: VecDeque::from([3, 5]),
             total_captures: 2,
             next_capture_index: 0,
             collected: vec![],
-            overlay_suppressed: false,
             hide_ui,
             with_gizmos: false,
-            ui_restore: None,
-            gizmo_restore: GizmoEnabledRestore::new(),
             headless_sequence: None,
             stall_frames: 0,
         };
@@ -529,18 +487,15 @@ mod tests {
                 response_tx: Some(tx),
                 max_width: None,
                 columns: 2,
-                debug_cleanup: None,
+                hold: None,
                 // Nothing captures on this frame: the front of the schedule
                 // only counts down.
                 schedule: VecDeque::from([3, 5]),
                 total_captures: 2,
                 next_capture_index: 0,
                 collected: vec![],
-                overlay_suppressed: false,
                 hide_ui: true,
                 with_gizmos: false,
-                ui_restore: None,
-                gizmo_restore: GizmoEnabledRestore::new(),
                 headless_sequence: None,
                 stall_frames: 0,
             },
@@ -559,7 +514,7 @@ mod tests {
                 .resource::<PendingTimelines>()
                 .active
                 .get(&0)
-                .is_some_and(|timeline| timeline.overlay_suppressed),
+                .is_some_and(|timeline| timeline.hold.is_some()),
             "suppression must be recorded so it is released once"
         );
     }
@@ -584,16 +539,14 @@ mod tests {
                 response_tx: Some(tx),
                 max_width: None,
                 columns: 2,
-                debug_cleanup: None,
-                schedule: VecDeque::from([0, 5]), // capture on this frame, then later
+                hold: None,
+                // capture on this frame, then later
+                schedule: VecDeque::from([0, 5]),
                 total_captures: 2,
                 next_capture_index: 0,
                 collected: vec![],
-                overlay_suppressed: false,
                 hide_ui: true,
                 with_gizmos: false,
-                ui_restore: None,
-                gizmo_restore: GizmoEnabledRestore::new(),
                 headless_sequence: None,
                 stall_frames: 0,
             },
@@ -619,16 +572,23 @@ mod tests {
             "timeline must hold one suppression refcount"
         );
         assert!(
-            world.resource::<PendingTimelines>().active[&0].overlay_suppressed,
+            world.resource::<PendingTimelines>().active[&0]
+                .hold
+                .is_some(),
             "timeline must record its hold so completion releases exactly once"
         );
         assert!(
             world.resource::<PendingTimelines>().active[&0]
-                .ui_restore
-                .is_some()
+                .hold
+                .as_ref()
+                .is_some_and(|hold| hold.ui_restore.is_some())
         );
         assert_eq!(
-            world.resource::<PendingTimelines>().active[&0].gizmo_restore,
+            world.resource::<PendingTimelines>().active[&0]
+                .hold
+                .as_ref()
+                .unwrap()
+                .gizmo_restore,
             default_group_restore(true)
         );
 
@@ -643,16 +603,15 @@ mod tests {
         let ui = world.spawn((Visibility::Visible, Node::default())).id();
         let screenshot_entity = world.spawn_empty().id();
         let (tx, _responder_rx) = oneshot::channel();
+        let mut hold = CaptureHold::default();
+        hold.begin_capture(&mut world);
         let mut responders = PendingScreenshotResponders::default();
         responders.map.insert(
             screenshot_entity,
             ScreenshotResponder {
                 response_tx: tx,
                 max_width: None,
-                debug_cleanup: None,
-                ui_restore: None,
-                entity_isolation: None,
-                gizmo_restore: GizmoEnabledRestore::new(),
+                hold,
                 extra_response: None,
                 capture_viewport: None,
                 response_kind: CaptureResponseKind::Screenshot,
@@ -667,17 +626,19 @@ mod tests {
 
         process_pending_timelines(&mut world);
         let timeline = &world.resource::<PendingTimelines>().active[&0];
-        assert!(!timeline.overlay_suppressed);
+        assert!(timeline.hold.is_none());
         assert_eq!(timeline.schedule, VecDeque::from([3, 5]));
         assert_eq!(*world.get::<Visibility>(ui).unwrap(), Visibility::Visible);
 
-        world
+        let responder = world
             .resource_mut::<PendingScreenshotResponders>()
             .map
-            .clear();
+            .remove(&screenshot_entity)
+            .unwrap();
+        responder.hold.release(&mut world);
         process_pending_timelines(&mut world);
         let timeline = &world.resource::<PendingTimelines>().active[&0];
-        assert!(timeline.overlay_suppressed);
+        assert!(timeline.hold.is_some());
         assert_eq!(timeline.schedule, VecDeque::from([2, 5]));
         assert_eq!(*world.get::<Visibility>(ui).unwrap(), Visibility::Hidden);
     }
@@ -714,16 +675,13 @@ mod tests {
                 response_tx: Some(tx),
                 max_width: None,
                 columns: 2,
-                debug_cleanup: None,
+                hold: None,
                 schedule: VecDeque::from([0]),
                 total_captures: 1,
                 next_capture_index: 0,
                 collected: vec![],
-                overlay_suppressed: false,
                 hide_ui: false,
                 with_gizmos: true,
-                ui_restore: None,
-                gizmo_restore: GizmoEnabledRestore::new(),
                 headless_sequence: None,
                 stall_frames: 0,
             },
@@ -767,16 +725,13 @@ mod tests {
                 response_tx: Some(tx),
                 max_width: None,
                 columns: 3,
-                debug_cleanup: None,
+                hold: None,
                 schedule: VecDeque::from([2]),
                 total_captures: 1,
                 next_capture_index: 0,
                 collected: vec![],
-                overlay_suppressed: false,
                 hide_ui: true,
                 with_gizmos: false,
-                ui_restore: None,
-                gizmo_restore: GizmoEnabledRestore::new(),
                 headless_sequence: None,
                 stall_frames: 0,
             },
@@ -808,16 +763,14 @@ mod tests {
                 response_tx: Some(tx),
                 max_width: None,
                 columns: 3,
-                debug_cleanup: None,
-                schedule: VecDeque::from([0]), // ready immediately
+                hold: None,
+                schedule: VecDeque::from([0]),
+                // ready immediately
                 total_captures: 1,
                 next_capture_index: 0,
                 collected: vec![],
-                overlay_suppressed: false,
                 hide_ui: true,
                 with_gizmos: false,
-                ui_restore: None,
-                gizmo_restore: GizmoEnabledRestore::new(),
                 headless_sequence: None,
                 stall_frames: 0,
             },
@@ -854,16 +807,14 @@ mod tests {
                 response_tx: Some(tx),
                 max_width: None,
                 columns: 3,
-                debug_cleanup: None,
-                schedule: VecDeque::from([0, 10, 10]), // first ready, then 2 more
+                hold: None,
+                // first ready, then 2 more
+                schedule: VecDeque::from([0, 10, 10]),
                 total_captures: 3,
                 next_capture_index: 0,
                 collected: vec![],
-                overlay_suppressed: false,
                 hide_ui: true,
                 with_gizmos: false,
-                ui_restore: None,
-                gizmo_restore: GizmoEnabledRestore::new(),
                 headless_sequence: None,
                 stall_frames: 0,
             },
@@ -927,16 +878,13 @@ mod tests {
                 response_tx: Some(tx),
                 max_width: None,
                 columns: 1,
-                debug_cleanup: None,
+                hold: None,
                 schedule: VecDeque::from([0]),
                 total_captures: 1,
                 next_capture_index: 0,
                 collected: vec![],
-                overlay_suppressed: false,
                 hide_ui: true,
                 with_gizmos: false,
-                ui_restore: None,
-                gizmo_restore: GizmoEnabledRestore::new(),
                 headless_sequence: Some(5),
                 stall_frames: 0,
             },
@@ -970,6 +918,7 @@ mod tests {
             entity,
             image: make_test_image(1, 1),
         });
+        world.flush();
 
         let result = rx.try_recv().unwrap().unwrap();
         let bytes = base64::engine::general_purpose::STANDARD
@@ -1006,16 +955,13 @@ mod tests {
                 response_tx: Some(tx),
                 max_width: None,
                 columns: 1,
-                debug_cleanup: None,
+                hold: None,
                 schedule: VecDeque::from([0]),
                 total_captures: 1,
                 next_capture_index: 0,
                 collected: vec![],
-                overlay_suppressed: false,
                 hide_ui: false,
                 with_gizmos: true,
-                ui_restore: None,
-                gizmo_restore: GizmoEnabledRestore::new(),
                 headless_sequence: Some(5),
                 stall_frames: 0,
             },

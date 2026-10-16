@@ -10,7 +10,9 @@ use crate::{
     capture::{
         analysis::{FrameStatsOptions, validate_frame_stats_options},
         camera::select_capture_camera_3d,
-        depth::{PendingDepthAnalysis, compute_depth_samples_for_camera, validate_depth_sampling},
+        depth::{
+            PendingDepthAnalysis, PendingDepthSample, PendingDepthSamples, validate_depth_sampling,
+        },
         hold::{GizmoEnabledRestore, prepare_pending_screenshot_gizmos},
         queue::{
             CaptureResponseKind, DEFAULT_SCREENSHOT_MAX_WIDTH, DEFAULT_TIMELINE_MAX_WIDTH,
@@ -239,16 +241,13 @@ pub fn push_pending_timeline(
             max_width: Some(params.max_width.unwrap_or(DEFAULT_TIMELINE_MAX_WIDTH)),
             columns: params.columns,
             debug_camera,
-            debug_cleanup: None,
             schedule,
             total_captures: params.capture_count,
             next_capture_index: 0,
             collected: Vec::new(),
-            overlay_suppressed: false,
             hide_ui: params.hide_ui,
             with_gizmos: params.gizmos,
-            ui_restore: None,
-            gizmo_restore: GizmoEnabledRestore::new(),
+            hold: None,
             headless_sequence: None,
             stall_frames: 0,
         },
@@ -360,8 +359,7 @@ pub fn push_pending_turnaround(
         frames_remaining: 0,
         view_staged: false,
         hide_ui: params.hide_ui.unwrap_or(true),
-        ui_restore: None,
-        overlay_suppressed: false,
+        hold: None,
         debug_cleanup: None,
         look_at: final_look_at,
         pending_screenshot_entity: None,
@@ -430,21 +428,14 @@ pub fn push_pending_depth(
             extra_response: None,
         });
     } else {
-        let result = compute_depth_samples_for_camera(
-            world,
-            depth_analysis.camera_entity,
-            &depth_analysis.position,
-            &depth_analysis.look_at,
-            &depth_analysis.sample_points,
-            &depth_analysis.grid_density,
-        )
-        .map(|depth| {
-            serde_json::json!({
-                "screenshot": null,
-                "depth_samples": depth,
-            })
-        });
-        let _ = response_tx.send(result);
+        world
+            .get_resource_or_insert_with(PendingDepthSamples::default)
+            .pending
+            .push(PendingDepthSample {
+                response_tx,
+                frames_remaining: df,
+                analysis: depth_analysis,
+            });
     }
 }
 
@@ -724,10 +715,7 @@ mod tests {
         let timeline = pending.active.values().next().unwrap();
         assert!(!timeline.hide_ui);
         assert!(timeline.with_gizmos);
-        assert!(
-            !timeline.overlay_suppressed,
-            "a queued timeline holds no state"
-        );
+        assert!(timeline.hold.is_none(), "a queued timeline holds no state");
         assert_eq!(timeline.schedule.front(), Some(&1));
         assert!(!world.contains_resource::<OverlaySuppression>());
 
@@ -738,7 +726,7 @@ mod tests {
             .values()
             .next()
             .unwrap();
-        assert!(timeline.overlay_suppressed);
+        assert!(timeline.hold.is_some());
         assert_eq!(timeline.schedule.front(), Some(&0));
         assert_eq!(world.resource::<OverlaySuppression>().0, 1);
     }

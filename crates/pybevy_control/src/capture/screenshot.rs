@@ -4,7 +4,6 @@ use base64::Engine;
 use bevy::{
     camera::RenderTarget,
     ecs::world::World,
-    gizmos::config::GizmoConfigStore,
     prelude::*,
     render::view::window::screenshot::{Screenshot, ScreenshotCaptured},
     window::PrimaryWindow,
@@ -15,19 +14,12 @@ use tokio::sync::oneshot;
 
 use super::{
     camera::{
-        DebugCameraCleanup, cleanup_debug_camera_world, selected_camera_screenshot_target,
-        setup_debug_camera_for_entity, validate_capture_camera,
+        selected_camera_screenshot_target, setup_debug_camera_for_entity, validate_capture_camera,
     },
     compose::composite_contact_sheet,
     headless::{capture_headless_frame, headless_frame_sequence},
-    hold::{
-        GizmoEnabledRestore, hide_ui_nodes, prepare_pending_screenshot_gizmos,
-        release_internal_overlay, restore_gizmo_configs, restore_gizmos_enabled, restore_ui_nodes,
-        set_gizmos_enabled, suppress_internal_overlay,
-    },
-    isolation::{
-        ENTITY_ISOLATION_SETTLE_FRAMES, EntityCaptureIsolation, begin_entity_capture_isolation,
-    },
+    hold::{CaptureHold, hide_ui_nodes, prepare_pending_screenshot_gizmos, set_gizmos_enabled},
+    isolation::{ENTITY_ISOLATION_SETTLE_FRAMES, begin_entity_capture_isolation},
     lease::capture_in_progress,
     readiness::RenderFrameReadiness,
     timeline::{PendingTimelines, TimelineCaptures},
@@ -39,7 +31,6 @@ use crate::{
             CaptureViewport, PendingDepthAnalysis, prepare_depth_capture,
             validate_depth_capture_camera,
         },
-        hold::OverlaySuppression,
         queue::{CaptureResponseKind, PendingScreenshots},
     },
     protocol::ControlError,
@@ -47,7 +38,7 @@ use crate::{
 
 /// Frames a queued capture may wait for its readback before it is failed and
 /// its visibility/camera state restored, so a capture that never completes
-/// cannot wedge `capture_in_progress` or hang its request forever.
+/// cannot wedge the capture lease or hang its request forever.
 pub(crate) const MAX_CAPTURE_WAIT_FRAMES: u32 = 600;
 
 pub(crate) const CAPTURE_DEADLINE_ERROR: &str =
@@ -59,11 +50,7 @@ pub(crate) const STALE_HEADLESS_FRAME_ERROR: &str = "capture did not receive a f
 pub struct ScreenshotResponder {
     pub response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
     pub max_width: Option<u32>,
-    pub debug_cleanup: Option<DebugCameraCleanup>,
-    pub ui_restore: Option<Vec<(Entity, Visibility)>>,
-    pub entity_isolation: Option<EntityCaptureIsolation>,
-    /// If gizmos were toggled for this screenshot, the group states to restore.
-    pub gizmo_restore: GizmoEnabledRestore,
+    pub hold: CaptureHold,
     /// Extra JSON fields to merge into the screenshot response.
     pub extra_response: Option<serde_json::Value>,
     pub(crate) capture_viewport: Option<CaptureViewport>,
@@ -87,11 +74,8 @@ pub(super) struct StagedScreenshot {
     pub(super) response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
     pub(super) frames_remaining: u32,
     pub(super) with_gizmos: bool,
-    pub(super) gizmo_restore: GizmoEnabledRestore,
     pub(super) max_width: Option<u32>,
-    pub(super) debug_cleanup: Option<DebugCameraCleanup>,
-    pub(super) ui_restore: Option<Vec<(Entity, Visibility)>>,
-    pub(super) entity_isolation: Option<EntityCaptureIsolation>,
+    pub(super) hold: CaptureHold,
     pub(super) depth_analysis: Option<PendingDepthAnalysis>,
     pub(super) extra_response: Option<serde_json::Value>,
     pub(super) response_kind: CaptureResponseKind,
@@ -138,7 +122,7 @@ pub fn process_pending_screenshots(world: &mut World) {
 
     for mut screenshot in pending.pending.drain(..) {
         if screenshot.response_tx.is_closed() {
-            restore_gizmos_enabled(world, screenshot.gizmo_restore);
+            CaptureHold::with_gizmo_restore(screenshot.gizmo_restore).release(world);
             continue;
         }
         prepare_pending_screenshot_gizmos(world, &mut screenshot);
@@ -171,6 +155,7 @@ pub fn process_pending_screenshots(world: &mut World) {
             continue;
         }
 
+        let mut hold = CaptureHold::with_gizmo_restore(mem::take(&mut screenshot.gizmo_restore));
         let selected_depth_camera = screenshot
             .depth_analysis
             .as_ref()
@@ -179,7 +164,7 @@ pub fn process_pending_screenshots(world: &mut World) {
             && let Err(error) = validate_depth_capture_camera(world, camera_entity)
         {
             let _ = screenshot.response_tx.send(Err(error));
-            restore_gizmos_enabled(world, screenshot.gizmo_restore);
+            hold.release(world);
             continue;
         }
         if selected_depth_camera.is_none()
@@ -187,149 +172,108 @@ pub fn process_pending_screenshots(world: &mut World) {
             && let Err(error) = validate_capture_camera(world, &screenshot.response_kind)
         {
             let _ = screenshot.response_tx.send(Err(error));
-            restore_gizmos_enabled(world, screenshot.gizmo_restore);
+            hold.release(world);
             continue;
         }
 
-        let debug_cleanup = if let Some(debug_req) = screenshot.debug_camera.take() {
+        if let Some(debug_req) = screenshot.debug_camera.take() {
             match setup_debug_camera_for_entity(world, &debug_req, selected_depth_camera) {
-                Ok(cleanup) => cleanup,
+                Ok(cleanup) => hold.debug_cleanup = Some(cleanup),
                 Err(error) => {
                     let _ = screenshot.response_tx.send(Err(error));
-                    restore_gizmos_enabled(world, screenshot.gizmo_restore);
+                    hold.release(world);
                     continue;
                 }
             }
-            .into()
-        } else {
-            None
-        };
+        }
 
-        let entity_isolation = if let Some(entity_ref) = screenshot.entity.take() {
+        if let Some(entity_ref) = screenshot.entity.take() {
             match begin_entity_capture_isolation(world, &entity_ref, screenshot.with_gizmos) {
-                Ok(isolation) => Some(isolation),
+                Ok(isolation) => hold.entity_isolation = Some(isolation),
                 Err(error) => {
                     let _ = screenshot.response_tx.send(Err(error));
-                    if let Some(cleanup) = debug_cleanup {
-                        cleanup_debug_camera_world(cleanup, world);
-                    }
-                    restore_gizmos_enabled(world, screenshot.gizmo_restore);
+                    hold.release(world);
                     continue;
                 }
             }
+        }
+
+        hold.begin_capture(world);
+        if screenshot.hide_ui {
+            let keep_visible = hold
+                .entity_isolation
+                .as_ref()
+                .map(|isolation| &isolation.scope);
+            hold.ui_restore = Some(hide_ui_nodes(world, keep_visible));
+        }
+        let isolated = hold.entity_isolation.is_some();
+        let settle_frames = if isolated {
+            ENTITY_ISOLATION_SETTLE_FRAMES
         } else {
-            None
+            2
         };
 
-        suppress_internal_overlay(world);
-        let ui_restore = screenshot.hide_ui.then(|| {
-            hide_ui_nodes(
-                world,
-                entity_isolation.as_ref().map(|isolation| &isolation.scope),
-            )
-        });
-
-        if debug_cleanup.is_some() {
+        let has_window = world
+            .query_filtered::<Entity, With<PrimaryWindow>>()
+            .iter(world)
+            .next()
+            .is_some();
+        // An isolated capture always stages: capturing in this same run
+        // would grab a frame laid out before the isolation.
+        if hold.debug_cleanup.is_some() || !has_window || isolated {
             let baseline_headless_sequence = headless_frame_sequence(world);
             let mut staged = world.get_resource_or_insert_with(StagedScreenshots::default);
             staged.pending.push(StagedScreenshot {
                 response_tx: screenshot.response_tx,
-                frames_remaining: if entity_isolation.is_some() {
-                    ENTITY_ISOLATION_SETTLE_FRAMES
-                } else {
-                    2
-                },
+                frames_remaining: settle_frames,
                 with_gizmos: screenshot.with_gizmos,
-                gizmo_restore: screenshot.gizmo_restore,
                 max_width: screenshot.max_width,
-                debug_cleanup,
-                ui_restore,
-                entity_isolation,
+                hold,
                 depth_analysis: screenshot.depth_analysis.take(),
                 extra_response: screenshot.extra_response,
                 response_kind: screenshot.response_kind,
                 baseline_headless_sequence,
                 frames_waited: 0,
             });
-        } else {
-            let has_window = world
-                .query_filtered::<Entity, With<PrimaryWindow>>()
-                .iter(world)
-                .next()
-                .is_some();
-
-            // An isolated capture always stages: capturing in this same run
-            // would grab a frame laid out before the isolation.
-            if has_window && entity_isolation.is_none() {
-                let mut gizmo_restore = mem::take(&mut screenshot.gizmo_restore);
-                if gizmo_restore.is_empty() && !screenshot.with_gizmos {
-                    gizmo_restore = set_gizmos_enabled(world, false);
-                }
-
-                let (target, capture_viewport) =
-                    if let Some(depth_analysis) = screenshot.depth_analysis.as_ref() {
-                        match prepare_depth_capture(world, depth_analysis) {
-                            Ok((target, viewport, depth)) => {
-                                screenshot.extra_response =
-                                    Some(serde_json::json!({ "depth_samples": depth }));
-                                (Screenshot(target), viewport)
-                            }
-                            Err(error) => {
-                                let _ = screenshot.response_tx.send(Err(error));
-                                release_internal_overlay(world);
-                                if let Some(restore) = ui_restore {
-                                    restore_ui_nodes(world, restore);
-                                }
-                                restore_gizmos_enabled(world, gizmo_restore);
-                                continue;
-                            }
-                        }
-                    } else {
-                        (Screenshot::primary_window(), None)
-                    };
-                let entity = world.spawn(target).id();
-
-                let mut responders =
-                    world.get_resource_or_insert_with(PendingScreenshotResponders::default);
-                responders.map.insert(
-                    entity,
-                    ScreenshotResponder {
-                        response_tx: screenshot.response_tx,
-                        max_width: screenshot.max_width,
-                        debug_cleanup: None,
-                        ui_restore,
-                        entity_isolation,
-                        gizmo_restore,
-                        extra_response: screenshot.extra_response,
-                        capture_viewport,
-                        response_kind: screenshot.response_kind,
-                        frames_waited: 0,
-                    },
-                );
-            } else {
-                let baseline_headless_sequence = headless_frame_sequence(world);
-                let mut staged = world.get_resource_or_insert_with(StagedScreenshots::default);
-                staged.pending.push(StagedScreenshot {
-                    response_tx: screenshot.response_tx,
-                    frames_remaining: if entity_isolation.is_some() {
-                        ENTITY_ISOLATION_SETTLE_FRAMES
-                    } else {
-                        2
-                    },
-                    with_gizmos: screenshot.with_gizmos,
-                    gizmo_restore: screenshot.gizmo_restore,
-                    max_width: screenshot.max_width,
-                    debug_cleanup: None,
-                    ui_restore,
-                    entity_isolation,
-                    depth_analysis: screenshot.depth_analysis.take(),
-                    extra_response: screenshot.extra_response,
-                    response_kind: screenshot.response_kind,
-                    baseline_headless_sequence,
-                    frames_waited: 0,
-                });
-            }
+            continue;
         }
+
+        if hold.gizmo_restore.is_empty() && !screenshot.with_gizmos {
+            hold.gizmo_restore = set_gizmos_enabled(world, false);
+        }
+        let (target, capture_viewport) = if let Some(depth_analysis) =
+            screenshot.depth_analysis.as_ref()
+        {
+            match prepare_depth_capture(world, depth_analysis) {
+                Ok((target, viewport, depth)) => {
+                    screenshot.extra_response = Some(serde_json::json!({ "depth_samples": depth }));
+                    (Screenshot(target), viewport)
+                }
+                Err(error) => {
+                    let _ = screenshot.response_tx.send(Err(error));
+                    hold.release(world);
+                    continue;
+                }
+            }
+        } else {
+            (Screenshot::primary_window(), None)
+        };
+        let entity = world.spawn(target).id();
+
+        let mut responders =
+            world.get_resource_or_insert_with(PendingScreenshotResponders::default);
+        responders.map.insert(
+            entity,
+            ScreenshotResponder {
+                response_tx: screenshot.response_tx,
+                max_width: screenshot.max_width,
+                hold,
+                extra_response: screenshot.extra_response,
+                capture_viewport,
+                response_kind: screenshot.response_kind,
+                frames_waited: 0,
+            },
+        );
     }
 
     // Process staged debug screenshots
@@ -387,7 +331,7 @@ pub fn process_pending_screenshots(world: &mut World) {
                 } else if has_window {
                     Some(Screenshot::primary_window())
                 } else {
-                    s.debug_cleanup.as_ref().and_then(|cleanup| {
+                    s.hold.debug_cleanup.as_ref().and_then(|cleanup| {
                         match world.get::<RenderTarget>(cleanup.debug_entity) {
                             Some(target @ RenderTarget::Image(_)) => {
                                 Some(Screenshot(target.clone()))
@@ -412,9 +356,8 @@ pub fn process_pending_screenshots(world: &mut World) {
                 }
 
                 if let Some(screenshot) = screenshot_target {
-                    let mut gizmo_restore = mem::take(&mut s.gizmo_restore);
-                    if gizmo_restore.is_empty() && !s.with_gizmos {
-                        gizmo_restore = set_gizmos_enabled(world, false);
+                    if s.hold.gizmo_restore.is_empty() && !s.with_gizmos {
+                        s.hold.gizmo_restore = set_gizmos_enabled(world, false);
                     }
 
                     // Capture a newly rendered target, not readback from before view culling.
@@ -427,10 +370,7 @@ pub fn process_pending_screenshots(world: &mut World) {
                         ScreenshotResponder {
                             response_tx: s.response_tx,
                             max_width: s.max_width,
-                            debug_cleanup: s.debug_cleanup,
-                            ui_restore: s.ui_restore,
-                            entity_isolation: s.entity_isolation,
-                            gizmo_restore,
+                            hold: s.hold,
                             extra_response: s.extra_response,
                             capture_viewport,
                             response_kind: s.response_kind,
@@ -442,17 +382,7 @@ pub fn process_pending_screenshots(world: &mut World) {
                     let result = capture_headless_frame(world, s.max_width, s.response_kind);
                     let result = merge_extra_response(result, s.extra_response);
                     let _ = s.response_tx.send(result);
-                    if let Some(cleanup) = s.debug_cleanup {
-                        cleanup_debug_camera_world(cleanup, world);
-                    }
-                    release_internal_overlay(world);
-                    if let Some(restore) = s.ui_restore {
-                        restore_ui_nodes(world, restore);
-                    }
-                    if let Some(isolation) = s.entity_isolation {
-                        isolation.restore_world(world);
-                    }
-                    restore_gizmos_enabled(world, s.gizmo_restore);
+                    s.hold.release(world);
                 }
             }
         }
@@ -472,17 +402,7 @@ fn fail_staged_screenshot_with_error(
     error: ControlError,
 ) {
     let _ = staged.response_tx.send(Err(error));
-    if let Some(cleanup) = staged.debug_cleanup {
-        cleanup_debug_camera_world(cleanup, world);
-    }
-    release_internal_overlay(world);
-    if let Some(restore) = staged.ui_restore {
-        restore_ui_nodes(world, restore);
-    }
-    if let Some(isolation) = staged.entity_isolation {
-        isolation.restore_world(world);
-    }
-    restore_gizmos_enabled(world, staged.gizmo_restore);
+    staged.hold.release(world);
 }
 
 /// Fail responders whose capture readback never arrived, restoring the
@@ -520,17 +440,7 @@ fn expire_stuck_screenshot_responders(world: &mut World) {
         let _ = responder
             .response_tx
             .send(Err(ControlError::internal(CAPTURE_DEADLINE_ERROR)));
-        release_internal_overlay(world);
-        if let Some(restore) = responder.ui_restore {
-            restore_ui_nodes(world, restore);
-        }
-        restore_gizmos_enabled(world, responder.gizmo_restore);
-        if let Some(isolation) = responder.entity_isolation {
-            isolation.restore_world(world);
-        }
-        if let Some(cleanup) = responder.debug_cleanup {
-            cleanup_debug_camera_world(cleanup, world);
-        }
+        responder.hold.release(world);
     }
 }
 
@@ -546,10 +456,7 @@ pub fn screenshot_captured_observer(
     mut turnaround_captures: ResMut<super::turnaround::TurnaroundCaptures>,
     mut captured_frames: ResMut<CapturedFrames>,
     hot_reload_generation: Option<Res<HotReloadGeneration>>,
-    mut gizmo_store: Option<ResMut<GizmoConfigStore>>,
-    mut overlay_suppression: Option<ResMut<OverlaySuppression>>,
     mut commands: Commands,
-    mut visibility_query: Query<&mut Visibility>,
 ) {
     let entity = trigger.entity;
 
@@ -585,34 +492,8 @@ pub fn screenshot_captured_observer(
                 if let Some(tx) = timeline.response_tx.take() {
                     let _ = tx.send(result);
                 }
-
-                // Release the overlay suppression held by this timeline
-                if timeline.overlay_suppressed {
-                    timeline.overlay_suppressed = false;
-                    if let Some(suppression) = overlay_suppression.as_deref_mut() {
-                        suppression.0 = suppression.0.saturating_sub(1);
-                    }
-                }
-
-                if let Some(restore) = timeline.ui_restore.take() {
-                    for (ui_entity, original_vis) in restore {
-                        if let Ok(mut vis) = visibility_query.get_mut(ui_entity) {
-                            *vis = original_vis;
-                        }
-                    }
-                }
-
-                let gizmo_restore = mem::take(&mut timeline.gizmo_restore);
-                if !gizmo_restore.is_empty()
-                    && let Some(store) = gizmo_store.as_deref_mut()
-                {
-                    restore_gizmo_configs(store, gizmo_restore);
-                }
-
-                if let Some(cleanup) = timeline.debug_cleanup.take() {
-                    commands.queue(move |world: &mut World| {
-                        cleanup_debug_camera_world(cleanup, world);
-                    });
+                if let Some(hold) = timeline.hold.take() {
+                    hold.queue_release(&mut commands);
                 }
             }
         }
@@ -636,35 +517,7 @@ pub fn screenshot_captured_observer(
     );
     let result = merge_extra_response(result, responder.extra_response);
     let _ = responder.response_tx.send(result);
-
-    // Release this screenshot's overlay suppression
-    if let Some(suppression) = overlay_suppression.as_deref_mut() {
-        suppression.0 = suppression.0.saturating_sub(1);
-    }
-
-    // Restore hidden UI nodes
-    if let Some(restore) = responder.ui_restore {
-        for (ui_entity, original_vis) in restore {
-            if let Ok(mut vis) = visibility_query.get_mut(ui_entity) {
-                *vis = original_vis;
-            }
-        }
-    }
-
-    // Restore gizmo visibility
-    if !responder.gizmo_restore.is_empty()
-        && let Some(mut store) = gizmo_store
-    {
-        restore_gizmo_configs(&mut store, responder.gizmo_restore);
-    }
-
-    if let Some(isolation) = responder.entity_isolation {
-        commands.queue(move |world: &mut World| isolation.restore_world(world));
-    }
-
-    if let Some(cleanup) = responder.debug_cleanup {
-        commands.queue(move |world: &mut World| cleanup_debug_camera_world(cleanup, world));
-    }
+    responder.hold.queue_release(&mut commands);
 }
 
 /// Encode a Bevy Image as a base64 PNG string, optionally resizing.
@@ -857,9 +710,9 @@ mod tests {
     use super::*;
     use crate::{
         capture::{
-            camera::setup_debug_camera,
+            camera::{DebugCameraCleanup, setup_debug_camera},
             headless::HeadlessFrameBuffer,
-            hold::OverlaySuppression,
+            hold::{GizmoEnabledRestore, OverlaySuppression, suppress_internal_overlay},
             queue::{
                 CaptureResponseKind, DebugCameraRequest, PendingScreenshot, PendingScreenshots,
             },
@@ -1241,11 +1094,12 @@ mod tests {
                 response_tx,
                 frames_remaining: 0,
                 with_gizmos: false,
-                gizmo_restore: GizmoEnabledRestore::new(),
+                hold: CaptureHold {
+                    leased: true,
+                    debug_cleanup: Some(cleanup),
+                    ..Default::default()
+                },
                 max_width: None,
-                debug_cleanup: Some(cleanup),
-                ui_restore: None,
-                entity_isolation: None,
                 depth_analysis: None,
                 extra_response: None,
                 response_kind: CaptureResponseKind::Screenshot,
@@ -1364,7 +1218,7 @@ mod tests {
         assert_eq!(query.iter(&world).count(), 0);
         let staged = world.resource::<StagedScreenshots>();
         assert_eq!(staged.pending.len(), 1);
-        assert!(staged.pending[0].entity_isolation.is_some());
+        assert!(staged.pending[0].hold.entity_isolation.is_some());
         assert_eq!(
             staged.pending[0].frames_remaining,
             ENTITY_ISOLATION_SETTLE_FRAMES - 1
@@ -1381,7 +1235,7 @@ mod tests {
         assert_eq!(responders.map.len(), 1);
         let responder = responders.map.values().next().unwrap();
         // Should store the original enabled state for restoration
-        assert_eq!(responder.gizmo_restore, default_group_restore(true));
+        assert_eq!(responder.hold.gizmo_restore, default_group_restore(true));
     }
 
     #[test]
@@ -1393,7 +1247,7 @@ mod tests {
         let responders = world.resource::<PendingScreenshotResponders>();
         let responder = responders.map.values().next().unwrap();
         // Gizmo screenshot should not need restoration
-        assert!(responder.gizmo_restore.is_empty());
+        assert!(responder.hold.gizmo_restore.is_empty());
     }
 
     #[test]
@@ -1502,7 +1356,7 @@ mod tests {
         let staged = world.resource::<StagedScreenshots>();
         assert_eq!(staged.pending.len(), 1);
         assert_eq!(staged.pending[0].frames_remaining, 1);
-        assert!(staged.pending[0].debug_cleanup.is_none());
+        assert!(staged.pending[0].hold.debug_cleanup.is_none());
         assert_eq!(world.resource::<OverlaySuppression>().0, 1);
     }
 
@@ -1567,12 +1421,14 @@ mod tests {
             pending: vec![StagedScreenshot {
                 response_tx: tx,
                 frames_remaining: 0,
-                with_gizmos: false, // Normal screenshot via debug camera
-                gizmo_restore: GizmoEnabledRestore::new(),
+                // Normal screenshot via debug camera
+                with_gizmos: false,
                 max_width: None,
-                debug_cleanup: Some(cleanup),
-                ui_restore: None,
-                entity_isolation: None,
+                hold: CaptureHold {
+                    leased: true,
+                    debug_cleanup: Some(cleanup),
+                    ..Default::default()
+                },
                 depth_analysis: None,
                 extra_response: None,
                 response_kind: CaptureResponseKind::Screenshot,
@@ -1636,10 +1492,10 @@ mod tests {
             ScreenshotResponder {
                 response_tx: tx,
                 max_width: None,
-                debug_cleanup: None,
-                ui_restore: None,
-                entity_isolation: None,
-                gizmo_restore: GizmoEnabledRestore::new(),
+                hold: CaptureHold {
+                    leased: true,
+                    ..Default::default()
+                },
                 extra_response: None,
                 capture_viewport: None,
                 response_kind: CaptureResponseKind::Screenshot,
@@ -1672,11 +1528,11 @@ mod tests {
                 response_tx: tx,
                 frames_remaining: 0,
                 with_gizmos: false,
-                gizmo_restore: GizmoEnabledRestore::new(),
+                hold: CaptureHold {
+                    leased: true,
+                    ..Default::default()
+                },
                 max_width: None,
-                debug_cleanup: None,
-                ui_restore: None,
-                entity_isolation: None,
                 depth_analysis: None,
                 extra_response: None,
                 response_kind: CaptureResponseKind::Screenshot,
@@ -1709,11 +1565,11 @@ mod tests {
                 response_tx: tx,
                 frames_remaining: 0,
                 with_gizmos: false,
-                gizmo_restore: GizmoEnabledRestore::new(),
+                hold: CaptureHold {
+                    leased: true,
+                    ..Default::default()
+                },
                 max_width: None,
-                debug_cleanup: None,
-                ui_restore: None,
-                entity_isolation: None,
                 depth_analysis: None,
                 extra_response: None,
                 response_kind: CaptureResponseKind::Screenshot,
@@ -1746,11 +1602,11 @@ mod tests {
                 response_tx: tx,
                 frames_remaining: 0,
                 with_gizmos: false,
-                gizmo_restore: GizmoEnabledRestore::new(),
+                hold: CaptureHold {
+                    leased: true,
+                    ..Default::default()
+                },
                 max_width: None,
-                debug_cleanup: None,
-                ui_restore: None,
-                entity_isolation: None,
                 depth_analysis: None,
                 extra_response: None,
                 response_kind: CaptureResponseKind::Screenshot,
