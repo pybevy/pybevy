@@ -40,6 +40,45 @@ def _echo(message: object = "", *, err: bool = False) -> None:
     print(message, file=sys.stderr if err else sys.stdout, flush=True)
 
 
+_PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _is_pybevy_frame(filename: str) -> bool:
+    if filename.startswith("<frozen "):
+        return True
+    path = os.path.abspath(filename)
+    return path.startswith(_PACKAGE_DIR + os.sep)
+
+
+def _drop_leading_pybevy_frames(
+    error: traceback.TracebackException, seen: set[int]
+) -> None:
+    """Start each traceback at its first user frame, keeping all frames without one."""
+    if id(error) in seen:
+        return
+    seen.add(id(error))
+    frames = list(error.stack)
+    first_user = next(
+        (i for i, frame in enumerate(frames) if not _is_pybevy_frame(frame.filename)),
+        None,
+    )
+    if first_user:
+        error.stack = traceback.StackSummary.from_list(frames[first_user:])
+    for chained in (error.__cause__, error.__context__):
+        if chained is not None:
+            _drop_leading_pybevy_frames(chained, seen)
+    for member in error.exceptions or ():
+        _drop_leading_pybevy_frames(member, seen)
+
+
+def _print_scene_load_error(error: BaseException) -> None:
+    """Report a scene import or entrypoint failure from the user's code outward."""
+    report = traceback.TracebackException.from_exception(error)
+    _drop_leading_pybevy_frames(report, set())
+    _echo("Failed to load app:", err=True)
+    _echo("".join(report.format()).rstrip("\n"), err=True)
+
+
 def _existing_path(value: str) -> str:
     if not os.path.exists(value):
         raise argparse.ArgumentTypeError(f"path does not exist: {value}")
@@ -417,164 +456,157 @@ def _run_script(
                 back to the script's own directory when not given.
         """
         sys.argv = scene_argv.copy()
-        try:
-            # Try to convert file path to module name for relative imports
-            abs_path = os.path.abspath(script_path)
-            cwd = (
-                os.getcwd()
-            )  # Check if script is in a package (has __init__.py in parent dir)
-            parent_dir = os.path.dirname(abs_path)
-            parent_name = os.path.basename(parent_dir)
+        # Try to convert file path to module name for relative imports
+        abs_path = os.path.abspath(script_path)
+        cwd = (
+            os.getcwd()
+        )  # Check if script is in a package (has __init__.py in parent dir)
+        parent_dir = os.path.dirname(abs_path)
+        parent_name = os.path.basename(parent_dir)
 
-            module_globals: dict[str, object]
-            if os.path.exists(os.path.join(parent_dir, "__init__.py")):
-                # Add project root to sys.path if not already there
-                if cwd not in sys.path:
-                    sys.path.insert(0, cwd)
+        module_globals: dict[str, object]
+        if os.path.exists(os.path.join(parent_dir, "__init__.py")):
+            # Add project root to sys.path if not already there
+            if cwd not in sys.path:
+                sys.path.insert(0, cwd)
 
-                # Convert path to module name: examples/hot_reload.py -> examples.hot_reload
-                module_name = (
-                    parent_name + "." + os.path.splitext(os.path.basename(abs_path))[0]
-                )
-
-                # Clear module cache based on what changed
-                # Use 'is not None' check because changed_files can be an empty set
-                if changed_files is not None:
-                    # Selective reload (partial mode): enable component caching
-                    # This keeps component class identity stable across reloads
-                    setup_component_caching(enabled=True, verbose=verbose)
-                    if verbose:
-                        _echo("   → Component caching ENABLED (partial reload)")
-                else:
-                    # Full reload: disable component caching and clear cache
-                    # This allows component structure changes to take effect
-                    setup_component_caching(enabled=False, verbose=verbose)
-                    if verbose:
-                        _echo("   → Component caching disabled (full reload)")
-
-                # Flush user modules (selective via import graph when available)
-                from .util.hot_reload import flush_user_modules
-
-                flush_root = project_dir if project_dir is not None else parent_dir
-                flushed = flush_user_modules(
-                    flush_root,
-                    verbose=verbose,
-                    graph=import_graph_holder.get("graph"),
-                    changed_files=changed_files,
-                    graph_changed_files=graph_changed_files,
-                )
-                if verbose:
-                    _echo(f"   → Flushed {len(flushed)} user modules from sys.modules")
-
-                # Execute a fresh copy and register it in sys.modules so that
-                # `import <module_name>` (run_code, numba cache loading,
-                # pickling) resolves to the live scene classes. __name__ is the
-                # module name, so `if __name__ == "__main__"` blocks don't run.
-                from .util.hot_reload import exec_scene_module
-
-                module_globals = exec_scene_module(module_name, verbose=verbose)
-            else:
-                # Standalone script without package - use run_path
-                # Handle caching BEFORE reloading module
-                from .decorators import (  # type: ignore[attr-defined]
-                    _component_cache_enabled,  # pyright: ignore[reportAttributeAccessIssue]
-                )
-
-                if changed_files is not None:
-                    # Selective reload (partial mode): ensure component caching is enabled
-                    if not _component_cache_enabled:
-                        setup_component_caching(enabled=True, verbose=verbose)
-                    if verbose:
-                        _echo(
-                            "   → Component caching ENABLED (partial reload, standalone)"
-                        )
-                else:
-                    # Full reload (F5): clear component cache but keep caching enabled if it was on
-                    # This invalidates stale components while maintaining workflow preference
-                    import pybevy
-
-                    pybevy.clear_component_cache(verbose=verbose)
-                    if verbose:
-                        if _component_cache_enabled:
-                            _echo(
-                                "   → Component cache CLEARED (full reload, caching still enabled)"
-                            )
-                        else:
-                            _echo(
-                                "   → Component caching DISABLED (full reload, standalone)"
-                            )
-
-                # Flush user modules (selective via import graph when available)
-                from .util.hot_reload import flush_user_modules
-
-                flush_root = project_dir if project_dir is not None else parent_dir
-                flush_user_modules(
-                    flush_root,
-                    verbose=verbose,
-                    graph=import_graph_holder.get("graph"),
-                    changed_files=changed_files,
-                    graph_changed_files=graph_changed_files,
-                )
-
-                # Match `python script.py` semantics: ensure the script's
-                # directory is on sys.path so sibling imports resolve.
-                if parent_dir not in sys.path:
-                    sys.path.insert(0, parent_dir)
-
-                # Execute under the file-stem module name and register in
-                # sys.modules (runpy.run_path named the module "<run_path>"
-                # and left it unregistered, so `import <scene>` from run_code
-                # duplicated every class and numba's cache pickled an
-                # unimportable module name).
-                from .util.hot_reload import exec_scene_module
-
-                module_name = os.path.splitext(os.path.basename(abs_path))[0]
-                module_globals = exec_scene_module(
-                    module_name, file_path=abs_path, verbose=verbose
-                )
-
-            from ._internal.entrypoint import is_entrypoint
-            from .util.hot_reload import find_entrypoint
-
-            legacy = module_globals.get("create_app")
-            if (
-                callable(legacy)
-                and not is_entrypoint(legacy)
-                and getattr(legacy, "__module__", None)
-                == module_globals.get("__name__")
-            ):
-                return legacy
-
-            try:
-                chosen = find_entrypoint(module_globals)
-            except RuntimeError:
-                if callable(legacy):
-                    return legacy
-            else:
-                common_names = {"main", "create_app", "app", "run"}
-                for name, obj in module_globals.items():
-                    if (
-                        obj is chosen
-                        and name not in common_names
-                        and not name.startswith("_")
-                    ):
-                        _echo(f"   → Found @entrypoint decorated function: {name}")
-                        break
-                return chosen
-
-            raise RuntimeError(
-                "No create_app() function and no @entrypoint function found. PyBevy "
-                "looks for a function decorated with @entrypoint, first under the names "
-                "main, create_app, app or run, then among every other public callable "
-                "in the module.\n"
-                "Example:\n"
-                "    @entrypoint\n"
-                "    def main(app: App) -> App:\n"
-                "        return app.add_plugins(DefaultPlugins)"
+            # Convert path to module name: examples/hot_reload.py -> examples.hot_reload
+            module_name = (
+                parent_name + "." + os.path.splitext(os.path.basename(abs_path))[0]
             )
-        except Exception as e:
-            _echo(f"Failed to load create_app function: {e}")
-            raise
+
+            # Clear module cache based on what changed
+            # Use 'is not None' check because changed_files can be an empty set
+            if changed_files is not None:
+                # Selective reload (partial mode): enable component caching
+                # This keeps component class identity stable across reloads
+                setup_component_caching(enabled=True, verbose=verbose)
+                if verbose:
+                    _echo("   → Component caching ENABLED (partial reload)")
+            else:
+                # Full reload: disable component caching and clear cache
+                # This allows component structure changes to take effect
+                setup_component_caching(enabled=False, verbose=verbose)
+                if verbose:
+                    _echo("   → Component caching disabled (full reload)")
+
+            # Flush user modules (selective via import graph when available)
+            from .util.hot_reload import flush_user_modules
+
+            flush_root = project_dir if project_dir is not None else parent_dir
+            flushed = flush_user_modules(
+                flush_root,
+                verbose=verbose,
+                graph=import_graph_holder.get("graph"),
+                changed_files=changed_files,
+                graph_changed_files=graph_changed_files,
+            )
+            if verbose:
+                _echo(f"   → Flushed {len(flushed)} user modules from sys.modules")
+
+            # Execute a fresh copy and register it in sys.modules so that
+            # `import <module_name>` (run_code, numba cache loading,
+            # pickling) resolves to the live scene classes. __name__ is the
+            # module name, so `if __name__ == "__main__"` blocks don't run.
+            from .util.hot_reload import exec_scene_module
+
+            module_globals = exec_scene_module(module_name, verbose=verbose)
+        else:
+            # Standalone script without package - use run_path
+            # Handle caching BEFORE reloading module
+            from .decorators import (  # type: ignore[attr-defined]
+                _component_cache_enabled,  # pyright: ignore[reportAttributeAccessIssue]
+            )
+
+            if changed_files is not None:
+                # Selective reload (partial mode): ensure component caching is enabled
+                if not _component_cache_enabled:
+                    setup_component_caching(enabled=True, verbose=verbose)
+                if verbose:
+                    _echo("   → Component caching ENABLED (partial reload, standalone)")
+            else:
+                # Full reload (F5): clear component cache but keep caching enabled if it was on
+                # This invalidates stale components while maintaining workflow preference
+                import pybevy
+
+                pybevy.clear_component_cache(verbose=verbose)
+                if verbose:
+                    if _component_cache_enabled:
+                        _echo(
+                            "   → Component cache CLEARED (full reload, caching still enabled)"
+                        )
+                    else:
+                        _echo(
+                            "   → Component caching DISABLED (full reload, standalone)"
+                        )
+
+            # Flush user modules (selective via import graph when available)
+            from .util.hot_reload import flush_user_modules
+
+            flush_root = project_dir if project_dir is not None else parent_dir
+            flush_user_modules(
+                flush_root,
+                verbose=verbose,
+                graph=import_graph_holder.get("graph"),
+                changed_files=changed_files,
+                graph_changed_files=graph_changed_files,
+            )
+
+            # Match `python script.py` semantics: ensure the script's
+            # directory is on sys.path so sibling imports resolve.
+            if parent_dir not in sys.path:
+                sys.path.insert(0, parent_dir)
+
+            # Execute under the file-stem module name and register in
+            # sys.modules (runpy.run_path named the module "<run_path>"
+            # and left it unregistered, so `import <scene>` from run_code
+            # duplicated every class and numba's cache pickled an
+            # unimportable module name).
+            from .util.hot_reload import exec_scene_module
+
+            module_name = os.path.splitext(os.path.basename(abs_path))[0]
+            module_globals = exec_scene_module(
+                module_name, file_path=abs_path, verbose=verbose
+            )
+
+        from ._internal.entrypoint import is_entrypoint
+        from .util.hot_reload import find_entrypoint
+
+        legacy = module_globals.get("create_app")
+        if (
+            callable(legacy)
+            and not is_entrypoint(legacy)
+            and getattr(legacy, "__module__", None) == module_globals.get("__name__")
+        ):
+            return legacy
+
+        try:
+            chosen = find_entrypoint(module_globals)
+        except RuntimeError:
+            if callable(legacy):
+                return legacy
+        else:
+            common_names = {"main", "create_app", "app", "run"}
+            for name, obj in module_globals.items():
+                if (
+                    obj is chosen
+                    and name not in common_names
+                    and not name.startswith("_")
+                ):
+                    _echo(f"   → Found @entrypoint decorated function: {name}")
+                    break
+            return chosen
+
+        raise RuntimeError(
+            "No create_app() function and no @entrypoint function found. PyBevy "
+            "looks for a function decorated with @entrypoint, first under the names "
+            "main, create_app, app or run, then among every other public callable "
+            "in the module.\n"
+            "Example:\n"
+            "    @entrypoint\n"
+            "    def main(app: App) -> App:\n"
+            "        return app.add_plugins(DefaultPlugins)"
+        )
 
     def load_full_app(script_path: str) -> App:
         """Load and create the initial app instance"""
@@ -642,12 +674,18 @@ def _run_script(
                         )
 
                     # Load entrypoint with selective reload based on mode
-                    return load_create_app_function(
-                        script_path,
-                        resolve_changed_files(is_partial, files),
-                        project_dir=reload_root,
-                        graph_changed_files=files if isinstance(files, set) else None,
-                    )
+                    try:
+                        return load_create_app_function(
+                            script_path,
+                            resolve_changed_files(is_partial, files),
+                            project_dir=reload_root,
+                            graph_changed_files=files
+                            if isinstance(files, set)
+                            else None,
+                        )
+                    except Exception as e:
+                        _echo(f"Failed to load create_app function: {e}", err=True)
+                        raise
 
                 app._set_hot_reload_loader(loader)
 
@@ -681,7 +719,11 @@ def _run_script(
             if verbose:
                 _echo("🔧 Component caching initialized for partial reload mode")
 
-        app = load_full_app(script_path)
+        try:
+            app = load_full_app(script_path)
+        except Exception as e:
+            _print_scene_load_error(e)
+            sys.exit(1)
 
         # Build the import graph for selective flushing under the same root
         # as the flush, so scene and helper resolve identically.
@@ -743,18 +785,17 @@ def _run_script(
         _echo(f"Loading and running {script_path}...")
         try:
             app = load_full_app(script_path)
-            exit_status = run_app_with_error_handling(app, None)
-            del app
-            gc.collect()
-
-            if isinstance(exit_status, AppExit.Error):
-                _echo(f"Application exited with code {exit_status.code}")
-                sys.exit(exit_status.code)
-            _echo("Application exited normally")
         except Exception as e:
-            _echo(f"Failed to load app: {e}")
-            traceback.print_exc()
+            _print_scene_load_error(e)
             sys.exit(1)
+        exit_status = run_app_with_error_handling(app, None)
+        del app
+        gc.collect()
+
+        if isinstance(exit_status, AppExit.Error):
+            _echo(f"Application exited with code {exit_status.code}")
+            sys.exit(exit_status.code)
+        _echo("Application exited normally")
 
 
 if __name__ == "__main__":

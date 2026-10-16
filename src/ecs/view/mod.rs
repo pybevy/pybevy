@@ -1,6 +1,6 @@
 use pybevy_core::public_error::{
-    ANY_OF_VIEW_UNSUPPORTED, OR_VIEW_UNSUPPORTED, RESOURCE_VIEW_DATA, RESOURCE_VIEW_FILTER,
-    parenthesized_filter_tuple,
+    ANY_OF_VIEW_UNSUPPORTED, OR_VIEW_UNSUPPORTED, QUERY_BUILTIN_TUPLE_REQUIRED, RESOURCE_VIEW_DATA,
+    RESOURCE_VIEW_FILTER, parenthesized_filter_tuple,
 };
 use pyo3::{
     IntoPyObjectExt,
@@ -15,7 +15,10 @@ use crate::ecs::{
     filter::QueryFilter,
     query::{
         ParamType,
-        query_helpers::{extract_param_type_from_query_param, is_parenthesized_filter_tuple},
+        query_helpers::{
+            extract_param_type_from_query_param, is_parenthesized_filter_tuple,
+            is_typing_tuple_alias,
+        },
     },
 };
 
@@ -41,6 +44,10 @@ pub(crate) fn construct_view_class_item(
     key: &Bound<'_, PyAny>,
 ) -> PyResult<Py<PyAny>> {
     let py = cls.py();
+
+    if is_typing_tuple_alias(py, key) {
+        return Err(PyTypeError::new_err(QUERY_BUILTIN_TUPLE_REQUIRED));
+    }
 
     if let Ok(items) = key.cast::<PyTuple>()
         && items

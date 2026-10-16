@@ -77,12 +77,13 @@ pub fn count_generation_schedule_systems(world: &World, generation: u32) -> usiz
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::VecDeque, sync::Arc};
+    use std::sync::Arc;
 
     use bevy::ecs::schedule::{IntoScheduleConfigs, Schedule, ScheduleLabel};
     use sysinfo::{System, get_current_pid};
 
     use super::*;
+    use crate::profiling::FrameTimeWindow;
 
     #[test]
     fn test_lock_or_recover_normal() {
@@ -111,7 +112,8 @@ mod tests {
             system: System::new(),
             process_pid: Some(get_current_pid().expect("current PID should be available")),
             last_update: 0.0,
-            fps_history: VecDeque::new(),
+            frame_times: FrameTimeWindow::default(),
+            frames_observed: 0,
             last_render_update: 0.0,
         });
 

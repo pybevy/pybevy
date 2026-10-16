@@ -30,7 +30,7 @@ use pybevy_core::{
     public_error::{
         COMPONENT_BRIDGE_NOT_FOUND, RESOURCE_BRIDGE_NOT_FOUND, RESOURCE_ENTITY_DESPAWN,
         WORLD_BATCH_ARGUMENTS, WORLD_CALLBACK_COMMAND_ERRORS, one_shot_parameter_validation_skip,
-        unregistered_message_write,
+        unregistered_message_write, world_query_param_required,
     },
     registry::global_registry,
     resource_initializer,
@@ -980,7 +980,8 @@ impl PyWorld {
         Ok(PyEntityCommands::with_world(entity.0, pyself))
     }
 
-    pub fn query(&self, py: Python, param: PyQueryParam) -> PyResult<PyQueryIter> {
+    pub fn query(&self, py: Python, param: &Bound<'_, PyAny>) -> PyResult<PyQueryIter> {
+        let param = extract_world_query_param(param)?;
         self.check_valid()?;
         let validity = self.validity.clone().unwrap_or_default();
         let mut world = self.world_mut()?; // SAFETY: validity is this World's lifetime fence.
@@ -1660,4 +1661,48 @@ impl PyWorld {
             }
         }
     }
+}
+
+fn extract_world_query_param(param: &Bound<'_, PyAny>) -> PyResult<PyQueryParam> {
+    if let Ok(param) = param.cast::<PyQueryParam>() {
+        return Ok(param.get().clone());
+    }
+    let got = param
+        .get_type()
+        .name()
+        .map(|name| name.to_string())
+        .unwrap_or_default();
+    let names = world_query_data_names(param).unwrap_or_default();
+    Err(PyTypeError::new_err(world_query_param_required(
+        &got, &names,
+    )))
+}
+
+/// Recover the intended query data from a tuple, `tuple[...]`, or bare type.
+fn world_query_data_names(param: &Bound<'_, PyAny>) -> Option<Vec<String>> {
+    if let Ok(items) = param.cast::<PyTuple>() {
+        return items.iter().map(|item| query_data_name(&item)).collect();
+    }
+    let origin = param.getattr_opt("__origin__").ok().flatten();
+    if origin.is_some_and(|origin| origin.is(PyTuple::type_object(param.py()))) {
+        let args = param.getattr("__args__").ok()?;
+        let args = args.cast::<PyTuple>().ok()?;
+        return args.iter().map(|item| query_data_name(&item)).collect();
+    }
+    query_data_name(param).map(|name| vec![name])
+}
+
+fn query_data_name(item: &Bound<'_, PyAny>) -> Option<String> {
+    if let Ok(ty) = item.cast::<PyType>() {
+        return ty.name().ok().map(|name| name.to_string());
+    }
+    let origin = item.getattr_opt("__origin__").ok()??;
+    let args = item.getattr("__args__").ok()?;
+    let args = args.cast::<PyTuple>().ok()?;
+    let args: Option<Vec<String>> = args.iter().map(|arg| query_data_name(&arg)).collect();
+    Some(format!(
+        "{}[{}]",
+        query_data_name(&origin)?,
+        args?.join(", ")
+    ))
 }

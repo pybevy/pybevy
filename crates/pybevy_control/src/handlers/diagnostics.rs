@@ -17,6 +17,14 @@ pub fn get_performance(world: &mut World) -> Result<serde_json::Value, ControlEr
         // Performance
         result.insert("fps_average".into(), serde_json::json!(snap.fps_average));
         result.insert("fps_current".into(), serde_json::json!(snap.fps_current));
+        result.insert(
+            "frame_time_p50_ms".into(),
+            serde_json::json!(snap.frame_time_p50_ms),
+        );
+        result.insert(
+            "frame_time_p95_ms".into(),
+            serde_json::json!(snap.frame_time_p95_ms),
+        );
         result.insert("uptime_secs".into(), serde_json::json!(snap.uptime_secs));
         result.insert(
             "generation_uptime_secs".into(),
@@ -300,6 +308,8 @@ mod tests {
             populated: true,
             fps_average: 60.0,
             fps_current: 59.0,
+            frame_time_p50_ms: 16.5,
+            frame_time_p95_ms: 22.25,
             uptime_secs: 100.0,
             generation_uptime_secs: 12.0,
             entity_count: 50,
@@ -342,6 +352,9 @@ mod tests {
 
         let result = get_performance(&mut world).unwrap();
         assert_eq!(result["fps_average"], 60.0);
+        assert_eq!(result["fps_current"], 59.0);
+        assert_eq!(result["frame_time_p50_ms"], 16.5);
+        assert_eq!(result["frame_time_p95_ms"], 22.25);
         assert_eq!(result["uptime_secs"], 100.0);
         assert_eq!(result["generation_uptime_secs"], 12.0);
         // entity_count is live, not from the snapshot. World has no entities

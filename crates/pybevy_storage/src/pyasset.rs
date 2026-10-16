@@ -324,6 +324,26 @@ impl<A: Asset> ErasedRevalidatingSource for AssetResolverSource<A> {
         })
     }
 
+    fn check_write_access(&self) -> Result<(), StorageError> {
+        self.resolver.root.validity.check_write()?;
+        if !self.resolver.writable {
+            return Err(StorageError::AssetReadOnly);
+        }
+        let guard = self.resolver.root.state.try_write()?;
+        if self
+            .resolver
+            .root
+            .state
+            .has_views(self.resolver.root.asset_id.into())
+        {
+            return Err(StorageError::AssetViewsLive);
+        }
+        let root = self.resolver.resolve_read_under_write(&guard)?;
+        // SAFETY: the root remains live under the retained asset writer.
+        unsafe { self.path.project_ref(root.cast::<u8>())? };
+        Ok(())
+    }
+
     fn resolve_mut(
         &self,
         stage: Option<&mut dyn FnMut(*mut u8)>,

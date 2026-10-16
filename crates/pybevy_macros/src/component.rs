@@ -19,6 +19,11 @@ enum BatchFieldConstraint {
         end: Box<Expr>,
         message: Path,
     },
+    RangeInclusive {
+        start: Box<Expr>,
+        end: Box<Expr>,
+        message: Path,
+    },
     NonNegative {
         message: Path,
     },
@@ -30,9 +35,10 @@ enum BatchFieldConstraint {
 impl Parse for BatchFieldConstraint {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let ident: Ident = input.parse()?;
-        match ident.to_string().as_str() {
+        let constraint_name = ident.to_string();
+        match constraint_name.as_str() {
             "finite" => Ok(Self::Finite),
-            "range" => {
+            "range" | "range_inclusive" => {
                 let content;
                 syn::parenthesized!(content in input);
                 let start = Box::new(content.parse()?);
@@ -40,11 +46,19 @@ impl Parse for BatchFieldConstraint {
                 let end = Box::new(content.parse()?);
                 content.parse::<Token![,]>()?;
                 let message = content.parse()?;
-                Ok(Self::Range {
-                    start,
-                    end,
-                    message,
-                })
+                if constraint_name == "range" {
+                    Ok(Self::Range {
+                        start,
+                        end,
+                        message,
+                    })
+                } else {
+                    Ok(Self::RangeInclusive {
+                        start,
+                        end,
+                        message,
+                    })
+                }
             }
             "non_negative" => {
                 let content;
@@ -62,7 +76,7 @@ impl Parse for BatchFieldConstraint {
             }
             _ => Err(syn::Error::new_spanned(
                 ident,
-                "unknown batch field constraint, expected: finite, range, non_negative, positive",
+                "unknown batch field constraint, expected: finite, range, range_inclusive, non_negative, positive",
             )),
         }
     }
@@ -77,6 +91,13 @@ impl BatchFieldConstraint {
                 message,
             } => {
                 quote! { pybevy_core::batch_columns::BatchValueConstraint::Range { start: #start, end: #end, message: #message } }
+            }
+            Self::RangeInclusive {
+                start,
+                end,
+                message,
+            } => {
+                quote! { pybevy_core::batch_columns::BatchValueConstraint::RangeInclusive { start: #start, end: #end, message: #message } }
             }
             Self::NonNegative { message } => {
                 quote! { pybevy_core::batch_columns::BatchValueConstraint::NonNegative { message: #message } }
@@ -273,6 +294,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
         materialize: Option<Path>,
         clone_with: Option<Path>,
         batch_validate: Option<Path>,
+        reflect_validate: Option<Path>,
     }
 
     impl Parse for ComponentStorageArgs {
@@ -290,6 +312,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
             let mut materialize = None;
             let mut clone_with = None;
             let mut batch_validate = None;
+            let mut reflect_validate = None;
 
             while input.peek(Token![,]) {
                 input.parse::<Token![,]>()?;
@@ -311,6 +334,11 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
                     "batch_validate" => {
                         input.parse::<Token![=]>()?;
                         batch_validate = Some(input.parse()?);
+                    }
+                    "reflect_validate" => {
+                        bridge = true;
+                        input.parse::<Token![=]>()?;
+                        reflect_validate = Some(input.parse()?);
                     }
                     "clone_with" => {
                         bridge = true;
@@ -346,7 +374,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
                         return Err(syn::Error::new_spanned(
                             ident,
                             format!(
-                                "unknown option '{}', expected one of: no_clone, no_insert, unit, bridge, no_reflect, materialize, clone_with, batch_validate, view_fields, batch_only_fields, view_only_fields",
+                                "unknown option '{}', expected one of: no_clone, no_insert, unit, bridge, no_reflect, materialize, clone_with, batch_validate, reflect_validate, view_fields, batch_only_fields, view_only_fields",
                                 other
                             ),
                         ));
@@ -368,6 +396,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
                 materialize,
                 clone_with,
                 batch_validate,
+                reflect_validate,
             })
         }
     }
@@ -383,6 +412,14 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     // Unit component: no storage field, just the struct + optional bridge
     if args.unit {
+        if args.reflect_validate.is_some() {
+            return syn::Error::new_spanned(
+                py_type,
+                "reflect_validate is not supported for unit components",
+            )
+            .to_compile_error()
+            .into();
+        }
         let bridge_tokens = if args.bridge {
             generate_unit_bridge_tokens(
                 bevy_type,
@@ -415,6 +452,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
             args.materialize.as_ref(),
             args.clone_with.as_ref(),
             args.batch_validate.as_ref(),
+            args.reflect_validate.as_ref(),
             true, // emit inventory registration
         )
     } else {
@@ -597,6 +635,7 @@ fn generate_bridge_tokens(
     materialize: Option<&Path>,
     clone_with: Option<&Path>,
     batch_validate: Option<&Path>,
+    reflect_validate: Option<&Path>,
     emit_inventory: bool,
 ) -> proc_macro2::TokenStream {
     // Derive bridge name: either from explicit string or from py_type (strip "Py" prefix)
@@ -613,6 +652,20 @@ fn generate_bridge_tokens(
         quote! { pyo3::Py::new(py, #py_type::from_borrowed(storage))?.into_any() }
     };
     let can_insert = !no_insert;
+    let reflect_validate_impl = reflect_validate.map(|validate| {
+        quote! {
+            fn validate_reflected_candidate(
+                &self,
+                candidate: &dyn bevy::reflect::Reflect,
+            ) -> Result<(), String> {
+                let native = candidate
+                    .as_any()
+                    .downcast_ref::<#bevy_type>()
+                    .ok_or_else(|| concat!(#component_name, ": reflected candidate has wrong type").to_string())?;
+                #validate(native).map_err(|error| error.to_string())
+            }
+        }
+    });
 
     // Generate view_bridge method if view_fields (or view_only_fields) is specified
     let has_view_fields = view_fields.is_some() || view_only_fields.is_some();
@@ -876,6 +929,8 @@ fn generate_bridge_tokens(
                 <#bevy_type as bevy::ecs::component::Component>::on_add().is_none()
                     && <#bevy_type as bevy::ecs::component::Component>::on_insert().is_none()
             }
+
+            #reflect_validate_impl
 
             fn register(&self, world: &mut bevy::ecs::world::World) -> bevy::ecs::component::ComponentId {
                 world.register_component::<#bevy_type>()

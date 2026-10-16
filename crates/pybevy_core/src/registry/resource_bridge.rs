@@ -49,6 +49,12 @@ pub trait ResourceBridge: Send + Sync + 'static {
 
     fn is_mutable(&self) -> bool;
 
+    /// Whether public Python and MCP APIs may remove this resource.
+    /// Internal reload cleanup uses `remove` independently of this policy.
+    fn can_user_remove(&self) -> bool {
+        true
+    }
+
     /// Whether Full hot reload must preserve this resource verbatim.
     ///
     /// Use this for engine-owned registries whose `Default` value is not

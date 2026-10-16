@@ -34,7 +34,7 @@ use crate::util::reflect_registration_tokens;
 /// #[pyresource(FontAtlasSet, bridge, no_mut, no_insert)]
 /// ```
 ///
-/// Bridge options: `no_insert`, `no_mut`, `no_remove`, `default_insert`,
+/// Bridge options: `no_insert`, `no_mut`, `no_remove`, `no_user_remove`, `default_insert`,
 /// `no_default`, `preserve_on_reload`.
 pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
     struct ResourceStorageArgs {
@@ -45,6 +45,7 @@ pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
         no_insert: bool,
         no_mut: bool,
         no_remove: bool,
+        no_user_remove: bool,
         default_insert: bool,
         no_default: bool,
         preserve_on_reload: bool,
@@ -62,6 +63,7 @@ pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
             let mut no_insert = false;
             let mut no_mut = false;
             let mut no_remove = false;
+            let mut no_user_remove = false;
             let mut default_insert = false;
             let mut no_default = false;
             let mut preserve_on_reload = false;
@@ -94,6 +96,7 @@ pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
                         "no_insert" => no_insert = true,
                         "no_mut" => no_mut = true,
                         "no_remove" => no_remove = true,
+                        "no_user_remove" => no_user_remove = true,
                         "default_insert" => default_insert = true,
                         "no_default" => no_default = true,
                         "preserve_on_reload" => preserve_on_reload = true,
@@ -102,7 +105,7 @@ pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
                             return Err(syn::Error::new_spanned(
                                 ident,
                                 format!(
-                                    "unknown option '{}', expected one of: no_clone, bridge, no_insert, no_mut, no_remove, default_insert, no_default, preserve_on_reload, no_reflect, materialize, clone_with",
+                                    "unknown option '{}', expected one of: no_clone, bridge, no_insert, no_mut, no_remove, no_user_remove, default_insert, no_default, preserve_on_reload, no_reflect, materialize, clone_with",
                                     other
                                 ),
                             ));
@@ -119,6 +122,7 @@ pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
                 no_insert,
                 no_mut,
                 no_remove,
+                no_user_remove,
                 default_insert,
                 no_default,
                 preserve_on_reload,
@@ -143,6 +147,7 @@ pub fn pyresource(attr: TokenStream, item: TokenStream) -> TokenStream {
             args.no_insert,
             args.no_mut,
             args.no_remove,
+            args.no_user_remove,
             args.default_insert,
             args.no_default,
             args.preserve_on_reload,
@@ -241,6 +246,7 @@ pub(crate) fn generate_resource_bridge_tokens(
     no_insert: bool,
     no_mut: bool,
     no_remove: bool,
+    no_user_remove: bool,
     default_insert: bool,
     no_default: bool,
     preserve_on_reload: bool,
@@ -256,6 +262,7 @@ pub(crate) fn generate_resource_bridge_tokens(
     });
     let bridge_name = quote::format_ident!("{}Bridge", bridge_name_str);
     let resource_name = &bridge_name_str;
+    let can_user_remove = !no_remove && !no_user_remove;
 
     // Generate insert method based on flags
     let insert_disabled = no_insert || (no_clone && !default_insert && clone_with.is_none());
@@ -705,6 +712,10 @@ pub(crate) fn generate_resource_bridge_tokens(
 
             fn is_mutable(&self) -> bool {
                 #mutable
+            }
+
+            fn can_user_remove(&self) -> bool {
+                #can_user_remove
             }
 
             fn preserve_on_reload(&self) -> bool {

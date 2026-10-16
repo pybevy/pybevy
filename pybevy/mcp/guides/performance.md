@@ -369,10 +369,22 @@ faces for point lights). Two rules:
 
 ```
 get_performance
-→ FPS, CPU/GPU/RAM usage, entity/asset counts, system profiling times
+→ FPS, frame times, CPU/GPU/RAM usage, entity/asset counts, system profiling times
 ```
 
 Use before and after changes to catch regressions.
+
+Frame statistics come from real (unclamped) frame durations:
+
+- `fps_average`: frames divided by their summed time over the last 60 frames.
+- `fps_current`: 1 / the median frame time of the last 5 frames, so one hitch
+  or one very short frame does not move it.
+- `frame_time_p50_ms` / `frame_time_p95_ms`: median and 95th-percentile frame
+  time over the last 60 frames. Compare p95 with p50 to spot stutter that the
+  average hides.
+
+A full reload restarts this window and skips the reload frame and the partial
+frame after it, so query again once the new generation has run a few frames.
 
 For reload memory growth, compare completed reloads, entity/asset/system counts,
 CPU allocations and per-process GPU memory after warm-up. RSS alone cannot

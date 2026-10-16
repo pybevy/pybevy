@@ -184,21 +184,17 @@ pub fn update_system_stats(world: &mut World) {
         .get_resource::<bevy::time::Time<bevy::time::Real>>()
         .map(|real| real.delta_secs())
         .unwrap_or_else(|| time.delta_secs());
-    if delta > 0.0 {
-        let fps = 1.0 / delta;
-        stats.fps_current = fps;
-
-        // Add to rolling average buffer
-        monitor.fps_history.push_back(fps);
-        if monitor.fps_history.len() > 60 {
-            monitor.fps_history.pop_front();
-        }
-
-        // Calculate rolling average
-        if !monitor.fps_history.is_empty() {
-            stats.fps_average =
-                monitor.fps_history.iter().sum::<f32>() / monitor.fps_history.len() as f32;
-        }
+    monitor.frames_observed = monitor.frames_observed.saturating_add(1);
+    if monitor.frame_times.record(delta) {
+        let frames = &monitor.frame_times;
+        stats.fps_average = frames.average_fps().unwrap_or(stats.fps_average);
+        stats.fps_current = frames.current_fps().unwrap_or(stats.fps_current);
+        stats.frame_time_p50_ms = frames
+            .frame_time_percentile_ms(50.0)
+            .unwrap_or(stats.frame_time_p50_ms);
+        stats.frame_time_p95_ms = frames
+            .frame_time_percentile_ms(95.0)
+            .unwrap_or(stats.frame_time_p95_ms);
     }
 
     // Real time for the refresh gate: the virtual clock resets on reload and freezes on pause
@@ -301,11 +297,12 @@ pub fn update_system_stats(world: &mut World) {
 
         monitor.last_update = real_now;
 
-        // Capture memory baseline on first stats update (after Startup has run)
         if stats.memory_mb > 0.0
             && let Some(mut profile) = world.get_resource_mut::<MemoryProfile>()
         {
-            profile.capture_baseline(stats.memory_mb);
+            if monitor.frames_observed >= MemoryProfile::BASELINE_WARMUP_FRAMES {
+                profile.capture_baseline(stats.memory_mb);
+            }
             profile.observe_rss(stats.memory_mb);
         }
     }
@@ -391,6 +388,8 @@ pub fn update_system_stats(world: &mut World) {
         cpu_core_count: stats.cpu_core_count,
         fps_average: stats.fps_average,
         fps_current: stats.fps_current,
+        frame_time_p50_ms: stats.frame_time_p50_ms,
+        frame_time_p95_ms: stats.frame_time_p95_ms,
         uptime_secs: stats.uptime_secs,
         generation_uptime_secs: stats.generation_uptime_secs,
         entity_count: stats.entity_count,
@@ -766,7 +765,7 @@ mod error_line_tests {
 #[cfg(test)]
 mod stats_gate_tests {
     use std::{
-        collections::{HashMap, VecDeque},
+        collections::HashMap,
         sync::{Arc, atomic::AtomicU32},
         time::Duration,
     };
@@ -778,7 +777,7 @@ mod stats_gate_tests {
     use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
 
     use super::*;
-    use crate::ReloadGenerationSet;
+    use crate::{ReloadGenerationSet, profiling::FrameTimeWindow};
 
     fn stats_world(virtual_elapsed: f64, real_elapsed: f64, last_update: f64) -> World {
         let mut world = World::new();
@@ -795,7 +794,8 @@ mod stats_gate_tests {
             system: System::new(),
             process_pid: None,
             last_update,
-            fps_history: VecDeque::new(),
+            frame_times: FrameTimeWindow::default(),
+            frames_observed: 0,
             last_render_update: -1.0,
         });
         world.insert_resource(HotReloadStats {
@@ -807,6 +807,8 @@ mod stats_gate_tests {
             cpu_percent: 0.0,
             fps_average: 0.0,
             fps_current: 0.0,
+            frame_time_p50_ms: 0.0,
+            frame_time_p95_ms: 0.0,
             total_memory_mb: 0.0,
             cpu_core_count: 0,
             gil_enabled: false,
@@ -917,6 +919,77 @@ mod stats_gate_tests {
         let stats = world.resource::<HotReloadStats>();
         assert!((stats.fps_current - 50.0).abs() < 1e-5);
         assert!((stats.fps_average - 50.0).abs() < 1e-5);
+    }
+
+    fn run_frame(world: &mut World, delta_secs: f64) {
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::from_secs_f64(delta_secs));
+        update_system_stats(world);
+    }
+
+    #[test]
+    fn fps_statistics_resist_a_single_short_frame() {
+        let mut world = stats_world(0.0, 0.0, 0.0);
+        for _ in 0..59 {
+            run_frame(&mut world, 0.005);
+        }
+        run_frame(&mut world, 0.0001);
+
+        let stats = world.resource::<HotReloadStats>();
+        assert!((stats.fps_average - 60.0 / 0.2951).abs() < 0.01);
+        assert!((stats.fps_current - 200.0).abs() < 0.01);
+        assert!((stats.frame_time_p50_ms - 5.0).abs() < 1e-3);
+        assert!((stats.frame_time_p95_ms - 5.0).abs() < 1e-3);
+        let snapshot = world.resource::<DebugSnapshot>();
+        assert_eq!(snapshot.fps_average, stats.fps_average);
+        assert_eq!(snapshot.fps_current, stats.fps_current);
+        assert_eq!(snapshot.frame_time_p50_ms, stats.frame_time_p50_ms);
+        assert_eq!(snapshot.frame_time_p95_ms, stats.frame_time_p95_ms);
+    }
+
+    #[test]
+    fn frames_distorted_by_a_real_clock_reset_are_not_sampled() {
+        let mut world = stats_world(0.0, 0.0, 0.0);
+        for _ in 0..10 {
+            run_frame(&mut world, 0.020);
+        }
+        world
+            .resource_mut::<SystemMonitor>()
+            .frame_times
+            .reset_after_clock_reset();
+
+        run_frame(&mut world, 1.5);
+        run_frame(&mut world, 0.0002);
+        let stats = world.resource::<HotReloadStats>();
+        assert!((stats.fps_average - 50.0).abs() < 0.01);
+        assert!((stats.fps_current - 50.0).abs() < 0.01);
+
+        run_frame(&mut world, 0.010);
+        let stats = world.resource::<HotReloadStats>();
+        assert!((stats.fps_average - 100.0).abs() < 0.01);
+        assert!((stats.fps_current - 100.0).abs() < 0.01);
+        assert_eq!(world.resource::<SystemMonitor>().frame_times.len(), 1);
+    }
+
+    #[test]
+    fn memory_baseline_waits_for_the_warm_up_frames() {
+        let mut world = stats_world(0.0, 0.0, -1.0);
+        world.insert_resource(MemoryProfile::default());
+        world.resource_mut::<HotReloadStats>().memory_mb = 100.0;
+
+        // Every frame is a 1 Hz stats tick: advance real time past the interval.
+        for _ in 1..MemoryProfile::BASELINE_WARMUP_FRAMES {
+            run_frame(&mut world, 1.0);
+        }
+        assert!(!world.resource::<MemoryProfile>().baseline_captured);
+        assert_eq!(world.resource::<MemoryProfile>().peak_rss_mb, 100.0);
+
+        world.resource_mut::<HotReloadStats>().memory_mb = 140.0;
+        run_frame(&mut world, 1.0);
+        let profile = world.resource::<MemoryProfile>();
+        assert!(profile.baseline_captured);
+        assert_eq!(profile.baseline_rss_mb, 140.0);
     }
 
     #[test]

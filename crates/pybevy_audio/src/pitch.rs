@@ -1,6 +1,8 @@
+use std::time::Duration;
+
 use bevy::audio::Pitch;
 use pybevy_core::{
-    AssetStorage, duration_from_secs_f64, repr::float_repr, try_finite_positive_frequency,
+    AssetStorage, repr::float_repr, try_duration_from_secs_f64, try_finite_positive_frequency,
 };
 use pybevy_macros::pyasset;
 use pyo3::{exceptions::PyValueError, prelude::*};
@@ -9,6 +11,10 @@ fn validate_frequency(frequency: f32) -> PyResult<()> {
     try_finite_positive_frequency(frequency as f64)
         .map_err(|error| PyValueError::new_err(error.message()))?;
     Ok(())
+}
+
+fn validate_duration(duration: f64) -> PyResult<Duration> {
+    try_duration_from_secs_f64(duration).map_err(|error| PyValueError::new_err(error.message()))
 }
 
 #[pyasset(Pitch, bridge)]
@@ -24,7 +30,7 @@ impl PyPitch {
     #[pyo3(signature = (frequency, duration))]
     pub fn new(frequency: f32, duration: f64) -> PyResult<PyClassInitializer<Self>> {
         validate_frequency(frequency)?;
-        let pitch = Pitch::new(frequency, duration_from_secs_f64(duration)?);
+        let pitch = Pitch::new(frequency, validate_duration(duration)?);
         Ok(Self::from_owned(pitch).into())
     }
 
@@ -47,7 +53,8 @@ impl PyPitch {
 
     #[setter]
     pub fn set_duration(&mut self, duration: f64) -> PyResult<()> {
-        self.as_mut()?.duration = duration_from_secs_f64(duration)?;
+        let duration = validate_duration(duration)?;
+        self.as_mut()?.duration = duration;
         Ok(())
     }
 

@@ -3,7 +3,7 @@ use pybevy_core::{PyResource, ResourceStorage};
 use pybevy_macros::pyresource;
 use pyo3::prelude::*;
 
-#[pyresource(DefaultOpaqueRendererMethod, bridge)]
+#[pyresource(DefaultOpaqueRendererMethod, bridge, no_user_remove)]
 #[pyclass(name = "DefaultOpaqueRendererMethod", module = "pybevy.pbr", extends = PyResource, from_py_object)]
 #[derive(Debug)]
 pub struct PyDefaultOpaqueRendererMethod {

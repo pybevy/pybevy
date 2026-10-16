@@ -141,7 +141,8 @@ class FogVolume(Component):
         scattering: How much light is scattered at each step.
         scattering_asymmetry: Henyey-Greenstein anisotropy (-1 to 1): negative
             favors backscatter, zero is isotropic, positive favors forward
-            scatter; applies to VolumetricLight illumination.
+            scatter; applies to VolumetricLight illumination. Values outside
+            the inclusive interval, NaN, and infinities raise ValueError.
         light_tint: Non-physical color tint applied to light.
         light_intensity: Light intensity multiplier.
     """

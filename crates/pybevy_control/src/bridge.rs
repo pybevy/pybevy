@@ -516,7 +516,7 @@ pub enum ControlOperation {
     ReloadAndCapture(ReloadAndCaptureParams),
     /// Get current reload generation, mode, and enabled state.
     GetReloadStatus,
-    /// Get the last Python system error traceback.
+    /// Get the last Python system error traceback, plus `wgpu_validation` (null, or the count, first and last message with pipeline label, and `last_seen_secs_ago`) for GPU validation errors, such as a failed prepass pipeline that renders the whole frame black. A successful reload clears both.
     GetLastError,
 
     /// Spawn a new entity with World-registered components specified as JSON.
@@ -587,7 +587,7 @@ pub enum ControlOperation {
         /// Python code to execute
         code: String,
     },
-    /// Get full diagnostics: FPS, CPU/GPU/RAM/VRAM usage, entity/asset counts, system profiling times.
+    /// Get full diagnostics: FPS, frame times, CPU/GPU/RAM/VRAM usage, entity/asset counts, system profiling times. fps_average is frames over summed real frame time (last 60 frames); fps_current is 1 / median frame time of the last 5 frames; frame_time_p50_ms/frame_time_p95_ms cover the last 60 frames. A full reload restarts the window.
     GetPerformance,
     /// Submit batched, timed tool calls that execute inside the engine frame loop with frame-precise timing. Same-'at' actions fire in the same frame (atomic). Supports: time control, mutations, queries, screenshots. NOT supported: get_logs, search_api, run_scene (bridge-local tools).
     ScheduleActions(ScheduleRequest),

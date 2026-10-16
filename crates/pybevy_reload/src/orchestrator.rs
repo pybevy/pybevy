@@ -8,13 +8,14 @@ use bevy::{
     time::{Real, Time},
 };
 use pybevy_core::{
-    PluginIdentity, publish_last_system_error, publish_reload_failure, publish_reload_failure_at,
+    PluginIdentity, gpu_validation::clear_wgpu_validation_errors, publish_last_system_error,
+    publish_reload_failure, publish_reload_failure_at,
 };
 
 use crate::{
     BaseEntitySet, ReloadStartupScheduleOrder,
     cleanup::{NativeResourceSnapshot, clear_world_state},
-    profiling::{HotReloadStats, MemoryProfile, SystemProfiler},
+    profiling::{HotReloadStats, MemoryProfile, SystemMonitor, SystemProfiler},
     progress::{ReloadProgress, ReloadProgressPhase, emit_reload_progress},
     runtime::{EscalationTracker, ReloadError, ReloadRuntime},
     state::{HotReloadGeneration, ReloadMode},
@@ -513,6 +514,8 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
     }
 
     runtime.commit_schedule_configs(world);
+    // Pipelines that are still invalid report again on the next frame.
+    clear_wgpu_validation_errors(world);
 
     // Plugin deltas describe this committed generation exactly once. Native
     // plugin removal can still require a restart even though the declaration
@@ -634,6 +637,9 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
         && let Some(mut time_real) = world.get_resource_mut::<Time<Real>>()
     {
         time_real.update_with_instant(Instant::now());
+        if let Some(mut monitor) = world.get_resource_mut::<SystemMonitor>() {
+            monitor.frame_times.reset_after_clock_reset();
+        }
     }
 
     if is_verbose() {
@@ -731,7 +737,10 @@ mod tests {
     };
 
     use bevy::{app::Startup, ecs::schedule::Schedules, prelude::*};
-    use pybevy_core::{ReloadRequestMode, ReloadResult};
+    use pybevy_core::{
+        ReloadRequestMode, ReloadResult,
+        gpu_validation::{WgpuValidationEntry, WgpuValidationErrorState},
+    };
 
     use super::*;
     use crate::{
@@ -1057,6 +1066,51 @@ mod tests {
             world.resource::<StartupScheduleRuns>().0,
             ["pre", "startup", "post"]
         );
+    }
+
+    fn insert_frame_monitor(world: &mut World) {
+        world.insert_resource(Time::<Real>::default());
+        let mut frame_times = crate::FrameTimeWindow::default();
+        for _ in 0..10 {
+            frame_times.record(0.020);
+        }
+        world.insert_resource(SystemMonitor {
+            system: sysinfo::System::new(),
+            process_pid: None,
+            last_update: 0.0,
+            frame_times,
+            frames_observed: 10,
+            last_render_update: 0.0,
+        });
+    }
+
+    #[test]
+    fn full_reload_restarts_the_frame_time_window() {
+        let (mut world, gen_counter) = setup_world();
+        insert_frame_monitor(&mut world);
+        let state = MockState::new(gen_counter);
+
+        assert!(perform_reload(&mut world, &mut MockRuntime, ReloadMode::Full, &state).is_ok());
+
+        let mut monitor = world.resource_mut::<SystemMonitor>();
+        assert!(monitor.frame_times.is_empty());
+        assert!(!monitor.frame_times.record(1.0), "reload frame");
+        assert!(!monitor.frame_times.record(0.0001), "truncated frame");
+        assert!(monitor.frame_times.record(0.020));
+        assert_eq!(monitor.frames_observed, 10);
+    }
+
+    #[test]
+    fn partial_reload_keeps_the_frame_time_window() {
+        let (mut world, gen_counter) = setup_world();
+        insert_frame_monitor(&mut world);
+        let state = MockState::new(gen_counter);
+
+        assert!(perform_reload(&mut world, &mut MockRuntime, ReloadMode::Partial, &state).is_ok());
+
+        let mut monitor = world.resource_mut::<SystemMonitor>();
+        assert_eq!(monitor.frame_times.len(), 10);
+        assert!(monitor.frame_times.record(0.020));
     }
 
     #[test]
@@ -2641,6 +2695,27 @@ mod tests {
         assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Full, &state).is_err());
         assert_eq!(runtime.known_systems, Some(original));
         assert_eq!(world.resource::<ReloadResult>().systems_removed, None);
+    }
+
+    #[test]
+    fn committed_reloads_clear_wgpu_validation_errors_and_failed_reloads_keep_them() {
+        let (mut world, gen_counter) = setup_world();
+        let state = MockState::new(gen_counter);
+        let errors = WgpuValidationErrorState::default();
+        world.insert_resource(errors.clone());
+        let broken = WgpuValidationEntry::from_message("broken pipeline".to_string());
+        let mut runtime = TestRuntime::default();
+
+        for mode in [ReloadMode::Partial, ReloadMode::Full] {
+            errors.record(&broken);
+            assert!(perform_reload(&mut world, &mut runtime, mode, &state).is_ok());
+            assert!(!errors.has_error(), "{mode:?} reload kept a stale error");
+        }
+
+        errors.record(&broken);
+        runtime.inject_startup_error = true;
+        assert!(perform_reload(&mut world, &mut runtime, ReloadMode::Full, &state).is_err());
+        assert_eq!(errors.summary().unwrap().count, 1);
     }
 
     #[test]

@@ -14,7 +14,7 @@ use bevy::{
 use pybevy_core::{PyPlugin, ensure_asset_access_registry, resource_initializer};
 use pybevy_ecs::shared::system_runtime::RunProfileSinkResource;
 use pybevy_reload::{
-    DefsFingerprint, EscalationTracker, HotReloadGeneration, HotReloadStats,
+    DefsFingerprint, EscalationTracker, FrameTimeWindow, HotReloadGeneration, HotReloadStats,
     InterpreterDiagnostics, MemoryOverlayVisible, MemoryProfile, PluginTracker, ReloadMode,
     ReloadStartupScheduleOrder, StartPaused, SystemMonitor, SystemProfiler, is_verbose,
     parse_resolution, render_hot_reload_overlay, spawn_hot_reload_overlay_system,
@@ -284,7 +284,8 @@ pub fn add_hot_reload_system(
         system,
         process_pid,
         last_update: -1.0,
-        fps_history: std::collections::VecDeque::with_capacity(60),
+        frame_times: FrameTimeWindow::default(),
+        frames_observed: 0,
         last_render_update: -1.0,
     });
 
@@ -298,6 +299,8 @@ pub fn add_hot_reload_system(
         cpu_percent: initial_cpu,
         fps_average: 0.0,
         fps_current: 0.0,
+        frame_time_p50_ms: 0.0,
+        frame_time_p95_ms: 0.0,
         total_memory_mb,
         cpu_core_count,
         gil_enabled,

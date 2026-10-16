@@ -35,7 +35,7 @@ use pyo3::{
 use uuid::Uuid;
 
 use crate::{
-    LogicalTypeId, PyAssetId,
+    LogicalTypeId, PyAsset, PyAssetId,
     constructor::{Omittable, pyo3::reject_explicit_none},
     enum_comparison::reject_variant_type,
     materialize_asset_id, public_error,
@@ -615,7 +615,19 @@ pub fn register_handle_variants(module: &Bound<'_, PyModule>) -> PyResult<()> {
 ///
 /// With the unified PyHandle type, this is simply a direct extraction.
 pub fn extract_handle_from_any(obj: &Bound<'_, PyAny>) -> PyResult<PyHandle> {
-    Ok(obj.extract::<PyHandle>()?)
+    obj.extract::<PyHandle>().map_err(|err| {
+        let err = PyErr::from(err);
+        if !obj.is_instance_of::<PyAsset>() {
+            return err;
+        }
+        let asset = obj
+            .get_type()
+            .name()
+            .map(|name| name.to_string())
+            .unwrap_or_else(|_| "Asset".to_string());
+        let reason = err.value(obj.py()).to_string();
+        PyTypeError::new_err(public_error::asset_passed_as_handle(reason, asset))
+    })
 }
 
 /// Non-optional handle argument: omission yields `Handle::default()`, explicit `None` is rejected.

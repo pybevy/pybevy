@@ -1,6 +1,10 @@
 use bevy::{color::Color, light::FogVolume};
 use pybevy_color::color::PyColor;
-use pybevy_core::{ComponentStorage, PyComponent, PyHandle, extract_handle_from_any};
+use pybevy_core::{
+    ComponentStorage, PyComponent, PyHandle,
+    batch_columns::{BatchValueConstraint, validate_f32_values},
+    extract_handle_from_any, public_error,
+};
 use pybevy_macros::pycomponent;
 use pybevy_math::vec3::PyVec3;
 use pyo3::prelude::*;
@@ -9,7 +13,7 @@ use pyo3::prelude::*;
     density_factor,
     absorption,
     scattering,
-    scattering_asymmetry,
+    scattering_asymmetry => [range_inclusive(-1.0, 1.0, public_error::FOG_VOLUME_SCATTERING_ASYMMETRY_RANGE)],
     light_intensity
 ], batch_only_fields = [fog_color, light_tint])]
 #[pyclass(name = "FogVolume", module = "pybevy.light", extends = PyComponent)]
@@ -18,6 +22,19 @@ pub struct PyFogVolume {
 }
 
 impl PyFogVolume {
+    fn validate_scattering_asymmetry(value: f32) -> PyResult<()> {
+        validate_f32_values(
+            "scattering_asymmetry",
+            &[value],
+            &[BatchValueConstraint::RangeInclusive {
+                start: -1.0,
+                end: 1.0,
+                message: public_error::FOG_VOLUME_SCATTERING_ASYMMETRY_RANGE,
+            }],
+        )
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+
     fn default_fog_color() -> PyColor {
         FogVolume::default().fog_color.into()
     }
@@ -78,6 +95,7 @@ impl PyFogVolume {
         light_tint: PyColor,
         light_intensity: f32,
     ) -> PyResult<PyClassInitializer<Self>> {
+        Self::validate_scattering_asymmetry(scattering_asymmetry)?;
         let fog_color = Color::try_from(fog_color)?;
         let light_tint = Color::try_from(light_tint)?;
         let texture = match density_texture {
@@ -177,6 +195,7 @@ impl PyFogVolume {
 
     #[setter]
     pub fn set_scattering_asymmetry(&mut self, value: f32) -> PyResult<()> {
+        Self::validate_scattering_asymmetry(value)?;
         self.as_mut()?.scattering_asymmetry = value;
         Ok(())
     }

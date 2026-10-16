@@ -12,6 +12,14 @@ use std::{
 pub const LOAD_BUILDER_TYPE_REQUIRED: &str = "LoadBuilder.load() requires keyword-only asset_type when no settings establish the type; use load(path, asset_type=Image)";
 pub const LOAD_WITH_SETTINGS_DEPRECATED: &CStr = c"AssetServer.load_with_settings() is deprecated; use load_builder().with_settings(settings).load(path) instead";
 pub const LOADER_SETTINGS_BRIDGE_MISSING: &str = "Loader settings asset bridge is not registered";
+
+pub fn window_resize_min_domain(field: &str) -> String {
+    format!("resize_constraints.{field} must be finite")
+}
+
+pub fn window_resize_max_domain(field: &str) -> String {
+    format!("resize_constraints.{field} must be finite within f32 range or positive infinity")
+}
 pub const WORLD_COMMAND_ERRORS: &str = "World command errors";
 pub const WORLD_CALLBACK_COMMAND_ERRORS: &str = "World callback and command errors";
 pub const WORLD_OPERATION_COMMAND_ERRORS: &str = "World operation and command errors";
@@ -24,6 +32,14 @@ pub const BUTTON_INPUT_TYPE_REQUIRED: &str =
     "ButtonInput[...] requires a button type, for example ButtonInput[KeyCode]";
 pub const UNSUPPORTED_LOGICAL_KEY_VARIANT: &str = "unsupported logical key variant";
 pub const FLOAT_SEQUENCE_NOT_STR: &str = "expected an iterable of floats, not str";
+
+pub fn ui_scale_not_finite(scale: impl Display) -> String {
+    format!("UiScale.scale must be finite (got {scale})")
+}
+
+pub fn ui_scale_not_positive(scale: impl Display) -> String {
+    format!("UiScale.scale must be greater than zero (got {scale})")
+}
 
 pub fn button_input_unsupported_type(name: &str) -> String {
     format!(
@@ -110,6 +126,17 @@ pub const REQUIRED_SINGLE_NO_MATCHES: &str = "Required Single parameter matched 
 pub const REQUIRED_SINGLE_MULTIPLE_MATCHES: &str =
     "Required Single parameter matched multiple entities";
 pub const QUERY_ROW_SHAPE_MISMATCH: &str = "Query row shape did not match its data";
+
+/// `names` are the query data spellings recovered from the rejected argument;
+/// empty when none could be recovered.
+pub fn world_query_param_required(got: &str, names: &[String]) -> String {
+    let suggestion = match names {
+        [] => "world.query(Query[A]) or world.query(Query[tuple[A, B]])".to_owned(),
+        [name] => format!("world.query(Query[{name}])"),
+        names => format!("world.query(Query[tuple[{}]])", names.join(", ")),
+    };
+    format!("world.query expects a Query[...] parameter, got {got}; use {suggestion}")
+}
 pub const SYSTEM_CALLABLE_ROUTINE_REQUIRED: &str = "functools.partial and callable objects are not supported as systems, conditions, or observers; use a regular function, bound method, or closure";
 pub const ENTITY_ARGUMENT_INT: &str = "expected an Entity, not an int. Convert a packed ID from an MCP response or Entity.to_bits() with Entity.from_bits(id). The integer shown in Entity(<index>v<generation>) is an EntityIndex value, not a packed identity.";
 
@@ -169,6 +196,19 @@ pub fn mcp_optional_enum_error(error: &str) -> String {
 pub fn reload_schedule_rejected(schedule: &str, detail: &str) -> String {
     format!(
         "Hot reload rejected: schedule {schedule} would not build with the reloaded systems; the previous generation keeps running. {detail}"
+    )
+}
+
+pub const WGPU_VALIDATION_FRAME_HINT: &str = "A pipeline that fails wgpu validation stays in use and invalidates the command encoder recording it, so the whole frame can render black, not just the affected mesh. Prepass and shadow pipelines lack forward-only view bindings such as bevy_pbr::mesh_view_bindings::globals. Fix the named pipeline's shader, then reload; get_last_error reports these errors under wgpu_validation.";
+
+pub fn wgpu_validation_log(label: Option<&str>, is_pipeline: bool, message: &str) -> String {
+    let subject = match (label, is_pipeline) {
+        (Some(label), true) => format!("pipeline '{label}'"),
+        (Some(label), false) => format!("'{label}'"),
+        (None, _) => "an unlabeled wgpu object".to_string(),
+    };
+    format!(
+        "wgpu validation error in {subject} (non-fatal): {WGPU_VALIDATION_FRAME_HINT}\n{message}"
     )
 }
 
@@ -414,6 +454,12 @@ pub const RELATIVE_SPEED_OUT_OF_RANGE: &str =
 pub const COLOR_INTERPOLATION_MISMATCH: &str =
     "cannot interpolate Color values from different color spaces";
 pub const BLOOM_MAX_MIP_DIMENSION_ZERO: &str = "Bloom.max_mip_dimension must be at least 1, got 0";
+pub const VIGNETTE_INTENSITY_FINITE: &str = "Vignette.intensity must be finite";
+pub const VIGNETTE_RADIUS_FINITE: &str = "Vignette.radius must be finite";
+pub const VIGNETTE_SMOOTHNESS_FINITE: &str = "Vignette.smoothness must be finite";
+pub const VIGNETTE_ROUNDNESS_FINITE: &str = "Vignette.roundness must be finite";
+pub const VIGNETTE_EDGE_COMPENSATION_FINITE: &str = "Vignette.edge_compensation must be finite";
+pub const VIGNETTE_CENTER_FINITE: &str = "Vignette.center coordinates must be finite";
 
 pub fn viewport_conversion_failed(error: impl Display) -> String {
     format!("Viewport conversion failed: {error}")
@@ -585,6 +631,9 @@ pub const ASSET_SERVER_MANUAL_REMOVE: &str =
 pub fn control_resource_remove_forbidden(resource: &str) -> String {
     format!("Resource '{resource}' is engine-managed and cannot be removed through the control API")
 }
+pub fn resource_user_remove_forbidden(resource: &str) -> String {
+    format!("Resource '{resource}' cannot be removed through Python APIs")
+}
 pub const ANY_OF_TUPLE_REQUIRED: &str =
     "AnyOf query data requires a tuple: AnyOf[tuple[A, B, Mut[C]]]";
 pub const ANY_OF_EMPTY: &str = "AnyOf requires at least one query-data item";
@@ -594,7 +643,14 @@ pub const OR_FILTER_ITEM_REQUIRED: &str =
     "Or items must be query filters such as With[A], Without[B], Changed[C], Added[D], or Or[...]";
 pub const OR_FILTER_EMPTY: &str = "Or requires at least one query filter";
 pub const OR_IS_FILTER: &str = "Or[...] is a query filter, not query data; place it after the data tuple: Query[tuple[...], Or[tuple[With[A], With[B]]]]";
-pub const ANY_OF_VIEW_UNSUPPORTED: &str = "AnyOf[...] query data is not supported in View. Use Query for optional per-entity component values.";
+pub const QUERY_BUILTIN_TUPLE_REQUIRED: &str =
+    "Direct Query, Single, and View tuple slots require builtin tuple[...], not typing.Tuple[...]";
+pub fn any_of_query_data_position(kind: &str) -> String {
+    format!(
+        "AnyOf[...] is query data, not a filter; put it in the first {kind} argument: {kind}[AnyOf[tuple[A, B]]] or {kind}[tuple[T, AnyOf[tuple[A, B]]]]"
+    )
+}
+pub const ANY_OF_VIEW_UNSUPPORTED: &str = "AnyOf[...] query data is not supported in View. Use Query[AnyOf[tuple[A, B]]] or Query[tuple[T, AnyOf[tuple[A, B]]]] for optional per-entity values.";
 pub const OR_VIEW_UNSUPPORTED: &str =
     "Or[...] is not supported in View. Use Query for disjunctive filters.";
 pub fn parenthesized_filter_tuple(kind: &str) -> String {
@@ -911,6 +967,40 @@ pub fn world_serialization_skipped_reflected_types(
 pub fn expected_resource_subclass(actual: impl Display) -> String {
     format!(
         "Expected a subclass of `Resource`, but got `{actual}` which is not a subclass of `Resource`"
+    )
+}
+
+/// Bevy components whose global counterpart is a separate resource, keyed by
+/// the component's Python module and class name.
+const COMPONENT_RESOURCE_COUNTERPARTS: &[(&str, &str, &str)] =
+    &[("pybevy.light", "AmbientLight", "GlobalAmbientLight")];
+
+/// The resource that replaces a component commonly mistaken for a resource.
+pub fn resource_counterpart_of_component(module: &str, name: &str) -> Option<&'static str> {
+    COMPONENT_RESOURCE_COUNTERPARTS
+        .iter()
+        .find(|(m, n, _)| *m == module && *n == name)
+        .map(|(_, _, resource)| *resource)
+}
+
+/// A Component class or instance was passed where a Resource is required.
+pub fn component_passed_as_resource(actual: impl Display, counterpart: Option<&str>) -> String {
+    let mut message = format!(
+        "{}. `{actual}` is a Component; add it to an entity with commands.spawn() or entity.insert() instead",
+        expected_resource_subclass(&actual)
+    );
+    if let Some(resource) = counterpart {
+        message.push_str(&format!(
+            ". For the global setting, use the `{resource}` resource"
+        ));
+    }
+    message
+}
+
+/// An asset value was passed where a `Handle` is required.
+pub fn asset_passed_as_handle(extract_error: impl Display, asset: impl Display) -> String {
+    format!(
+        "{extract_error}. Pass a Handle, not the `{asset}` asset itself: add it first and pass the returned handle, for example `assets.add(value)` with a system parameter `assets: ResMut[Assets[{asset}]]`"
     )
 }
 
@@ -1480,6 +1570,9 @@ pub fn image_encoding_unsupported(format: impl Display, supported: &[String]) ->
 pub const CASCADE_BOUNDS_EMPTY: &str = "bounds cannot be empty";
 
 pub const CASCADE_OVERLAP_RANGE: &str = "overlap_proportion must be in range [0.0, 1.0)";
+
+pub const FOG_VOLUME_SCATTERING_ASYMMETRY_RANGE: &str =
+    "FogVolume.scattering_asymmetry must be in range [-1.0, 1.0]";
 
 pub const CASCADE_MINIMUM_DISTANCE: &str = "minimum_distance must be non-negative";
 

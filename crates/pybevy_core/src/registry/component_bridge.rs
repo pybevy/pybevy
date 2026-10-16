@@ -9,10 +9,13 @@
 
 use std::any::TypeId;
 
-use bevy::ecs::{
-    component::ComponentId,
-    entity::Entity,
-    world::{EntityRef, EntityWorldMut, World},
+use bevy::{
+    ecs::{
+        component::ComponentId,
+        entity::Entity,
+        world::{EntityRef, EntityWorldMut, World},
+    },
+    reflect::Reflect,
 };
 use pyo3::{ffi::PyTypeObject, prelude::*, types::PyType};
 
@@ -62,6 +65,12 @@ pub trait ComponentBridge: Send + Sync + 'static {
     /// Whether a default example can be offered without native insertion hooks.
     fn can_offer_hook_free_default_spawn(&self) -> bool {
         false
+    }
+
+    /// Validate a detached reflected candidate before MCP commits a component write.
+    /// Native bridges opt in when their Python wrapper enforces cross-field invariants.
+    fn validate_reflected_candidate(&self, _candidate: &dyn Reflect) -> Result<(), String> {
+        Ok(())
     }
 
     /// For a Bevy `Relationship` component, the Python field holding the
