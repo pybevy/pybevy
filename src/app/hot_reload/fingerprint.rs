@@ -92,6 +92,9 @@ pub(super) fn hash_system_code(
 ) {
     if let Ok(config) = sys_bound.extract::<PySystemConfig>() {
         hash_callable_code(config.system.bind(py), hasher);
+        for stage in &config.pipe_stages {
+            hash_callable_code(stage.bind(py), hasher);
+        }
         for condition in &config.conditions {
             hash_callable_code(condition.bind(py), hasher);
         }
@@ -101,8 +104,9 @@ pub(super) fn hash_system_code(
             hash_callable_code(condition.bind(py), hasher);
         });
     } else if let Ok(chained) = sys_bound.extract::<PyChainedSystems>() {
+        // Members may be configs or nested chains, so unwrap them the same way.
         for inner in chained.systems.bind(py).iter() {
-            hash_callable_code(&inner, hasher);
+            hash_system_code(py, &inner, hasher);
         }
     } else {
         hash_callable_code(sys_bound, hasher);

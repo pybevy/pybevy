@@ -15,9 +15,11 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import asdict
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any, TypeVar
 
+from .. import BUILD_INFO
 from .._pybevy import mcp as _rust_mcp  # type: ignore[import-not-found]
 from . import ApiIndex
 from .definitions import (
@@ -404,7 +406,11 @@ class McpBridge:
                     "prompts": {},
                     "logging": {},
                 },
-                "serverInfo": {"name": "pybevy-mcp", "version": _server_version()},
+                "serverInfo": {
+                    "name": "pybevy-mcp",
+                    "version": _server_version(),
+                    "build": asdict(BUILD_INFO),
+                },
                 "instructions": self._instructions,
             },
         )

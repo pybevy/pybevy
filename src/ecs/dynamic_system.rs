@@ -460,17 +460,19 @@ pub(crate) fn lower_param_type(ty: &SystemParamType, py: Python<'_>) -> ParamSpe
             // still reads/writes the underlying collection -- a data race
             // versus native asset systems. Intra-system validation must use
             // that same physical identity: distinct `@material` classes are
-            // logical views over one `Assets<ShaderMaterial>` resource, not
-            // independent collections.
+            // logical views over one `Assets<ShaderMaterial>` (or
+            // `Assets<StorageShaderMaterial>`) resource, not independent collections.
             let vkey = format!("{:p}", type_ptr.0);
-            let name = logical_type_name.clone().unwrap_or_else(|| {
-                global_registry::get_asset_bridge_by_py_type(type_ptr.0)
-                    .map_or_else(|| "asset".to_string(), |bridge| bridge.name().to_string())
-            });
+            let backing_name = global_registry::get_asset_bridge_by_py_type(type_ptr.0)
+                .map_or_else(|| "asset".to_string(), |bridge| bridge.name().to_string());
+            let name = logical_type_name
+                .clone()
+                .unwrap_or_else(|| backing_name.clone());
             ParamSpec::Assets {
                 key: *type_ptr,
                 vkey,
                 name,
+                backing_name,
                 mutable: *mutable,
             }
         }

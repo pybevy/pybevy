@@ -4841,6 +4841,7 @@ name = "pybevy-python"
 version = "0.3.0-rc.1"
 dependencies = [
  "pybevy",
+ "pybevy_core",
  "pyo3",
 ]
 

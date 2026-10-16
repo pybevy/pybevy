@@ -2,6 +2,7 @@ pub mod bloom;
 pub mod bloom_composite_mode;
 pub mod bloom_prefilter;
 pub mod lens_distortion;
+pub mod motion_blur;
 pub mod vignette;
 
 use pyo3::prelude::*;
@@ -9,7 +10,8 @@ use pyo3::prelude::*;
 pub mod prelude {
     pub use crate::{
         bloom::PyBloom, bloom_composite_mode::PyBloomCompositeMode,
-        bloom_prefilter::PyBloomPrefilter, lens_distortion::PyLensDistortion, vignette::PyVignette,
+        bloom_prefilter::PyBloomPrefilter, lens_distortion::PyLensDistortion,
+        motion_blur::PyMotionBlur, vignette::PyVignette,
     };
 }
 
@@ -20,5 +22,6 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<bloom_prefilter::PyBloomPrefilter>()?;
     m.add_class::<vignette::PyVignette>()?;
     m.add_class::<lens_distortion::PyLensDistortion>()?;
+    m.add_class::<motion_blur::PyMotionBlur>()?;
     parent.add_submodule(&m)
 }

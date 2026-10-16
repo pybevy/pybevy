@@ -95,6 +95,13 @@ For Rust-owned applications loading and hot-reloading Python plugins, see
 `PyBevyPlugin::with_plugin` supports build-time configuration; combining it with
 native hot reload is currently rejected.
 
+## Build Identity
+
+Every PyBevy build in a release series reports the same `__version__`. When you
+report a PyBevy bug or a benchmark, include `str(pybevy.BUILD_INFO)`, or the
+`build` object from the MCP `serverInfo` or `get_performance`. Its commit hash,
+dirty flag, and profile identify the exact binary.
+
 ## Critical Rules
 
 View expression `random()` and `random_range()` use the same deterministic draw

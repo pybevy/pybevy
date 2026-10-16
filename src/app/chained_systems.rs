@@ -1,11 +1,15 @@
+use pybevy_core::public_error;
 use pyo3::{
     PyTraverseError, PyVisit,
-    exceptions::{PyTypeError, PyValueError},
+    exceptions::{PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
-    types::PyTuple,
+    types::{PyByteArray, PyBytes, PyString, PyTuple},
 };
 
-use crate::ecs::system_config::{PySystemSetConfig, system_set_value};
+use crate::ecs::{
+    conditional_system::PyConditionalSystem,
+    system_config::{PySystemConfig, PySystemSetConfig, system_set_value},
+};
 
 #[pyclass(name = "ChainedSystems", module = "pybevy.app", from_py_object)]
 pub struct PyChainedSystems {
@@ -87,6 +91,9 @@ pub fn chain(py: Python<'_>, systems: Bound<'_, PyTuple>) -> PyResult<Py<PyAny>>
 
     let mut set_count = 0;
     for value in systems.iter() {
+        if is_system_group(&value) {
+            return Err(PyTypeError::new_err(public_error::CHAIN_GROUP_MEMBER));
+        }
         if value.extract::<PySystemSetConfig>().is_ok() || system_set_value(&value)?.is_some() {
             set_count += 1;
         }
@@ -102,4 +109,69 @@ pub fn chain(py: Python<'_>, systems: Bound<'_, PyTuple>) -> PyResult<Py<PyAny>>
     }
 
     Ok(Py::new(py, PyChainedSystems::new(systems))?.into_any())
+}
+
+/// Whether `value` is an unordered group of systems, such as a tuple.
+fn is_system_group(value: &Bound<'_, PyAny>) -> bool {
+    !(value.is_callable()
+        || value.is_instance_of::<PyChainedSystems>()
+        || value.is_instance_of::<PyChainedSystemSets>()
+        || value.is_instance_of::<PySystemConfig>()
+        || value.is_instance_of::<PyConditionalSystem>()
+        || value.is_instance_of::<PyString>()
+        || value.is_instance_of::<PyBytes>()
+        || value.is_instance_of::<PyByteArray>())
+        && value.try_iter().is_ok()
+}
+
+/// Expand `add_systems` arguments into registration units.
+///
+/// A unit is one system or one chain. Groups such as tuples nest freely and
+/// impose no order between their members, matching Bevy's tuple configs.
+pub(crate) fn flatten_system_units<'py>(
+    value: &Bound<'py, PyAny>,
+    units: &mut Vec<Bound<'py, PyAny>>,
+) -> PyResult<()> {
+    if is_system_group(value) {
+        for member in value.try_iter()? {
+            flatten_system_units(&member?, units)?;
+        }
+    } else {
+        units.push(value.clone());
+    }
+    Ok(())
+}
+
+/// The systems of a chain in execution order, splicing nested chains.
+///
+/// Returns `None` when `value` is not a chain.
+pub(crate) fn chain_members<'py>(
+    value: &Bound<'py, PyAny>,
+) -> PyResult<Option<Vec<Bound<'py, PyAny>>>> {
+    let Ok(chained) = value.cast::<PyChainedSystems>() else {
+        return Ok(None);
+    };
+    let mut members = Vec::new();
+    collect_chain_members(chained, &mut members)?;
+    if members.is_empty() {
+        return Err(PyRuntimeError::new_err(public_error::EMPTY_CHAINED_SYSTEMS));
+    }
+    Ok(Some(members))
+}
+
+fn collect_chain_members<'py>(
+    chained: &Bound<'py, PyChainedSystems>,
+    members: &mut Vec<Bound<'py, PyAny>>,
+) -> PyResult<()> {
+    let systems = chained.borrow().systems.clone_ref(chained.py());
+    for member in systems.bind(chained.py()).iter() {
+        if let Ok(nested) = member.cast::<PyChainedSystems>() {
+            collect_chain_members(nested, members)?;
+        } else if is_system_group(&member) {
+            return Err(PyTypeError::new_err(public_error::CHAIN_GROUP_MEMBER));
+        } else {
+            members.push(member);
+        }
+    }
+    Ok(())
 }

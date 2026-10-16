@@ -32,7 +32,7 @@ use crate::{
     app::{
         PyStage,
         app::{PendingStateDefinition, PendingStateSystems, PyApp},
-        chained_systems::{PyChainedSystemSets, PyChainedSystems},
+        chained_systems::{PyChainedSystemSets, PyChainedSystems, chain_members},
     },
     ecs::{
         conditional_system::PyConditionalSystem,
@@ -49,9 +49,8 @@ use crate::{
             registered_state_machine_count, retained_state_member_missing,
         },
         system_config::{
-            InstalledSystemSetConfigs, PySystemConfig, SystemSetConfigIdentity,
-            build_scheduled_system, build_set_config, planned_set_node, planned_system_node,
-            system_set_config_identity,
+            InstalledSystemSetConfigs, PySystemConfig, SystemSetConfigIdentity, build_set_config,
+            build_system_unit, planned_set_node, planned_system_node, system_set_config_identity,
         },
         system_interpreter::retire_main_handle,
         world::PyWorld,
@@ -91,10 +90,6 @@ pub(crate) fn collect_system_names(system: &Bound<'_, PyAny>, names: &mut HashSe
         && let Ok(name) = name.extract::<String>()
     {
         names.insert(name);
-    } else if let Ok(iter) = system.try_iter() {
-        for inner in iter.flatten() {
-            collect_system_names(&inner, names);
-        }
     }
 }
 
@@ -217,14 +212,12 @@ fn reload_state_schedule(
 }
 
 fn planned_chain(value: &Bound<'_, PyAny>, generation: u32) -> PyResult<Vec<PlannedNode>> {
-    match value.extract::<PyChainedSystems>() {
-        Ok(chained) => chained
-            .systems
-            .bind(value.py())
+    match chain_members(value)? {
+        Some(members) => members
             .iter()
-            .map(|system| planned_system_node(&system, generation))
+            .map(|system| planned_system_node(system, generation))
             .collect(),
-        Err(_) => Ok(vec![planned_system_node(value, generation)?]),
+        None => Ok(vec![planned_system_node(value, generation)?]),
     }
 }
 
@@ -274,10 +267,7 @@ fn schedule_plans(
                 ReloadStateSchedule::Transition(label, _) => label.intern(),
             };
             for system in &pending.systems {
-                push(
-                    label,
-                    vec![planned_system_node(system.bind(py), generation)?],
-                );
+                push(label, planned_chain(system.bind(py), generation)?);
             }
         }
         Ok(plans)
@@ -304,58 +294,22 @@ fn add_systems_to_schedule(
 
     for system_func in systems {
         let result = Python::attach(|py| -> PyResult<()> {
-            let system_bound = system_func.bind(py);
-
-            if let Ok(chained) = system_bound.extract::<PyChainedSystems>() {
-                let systems_tuple = chained.systems.bind(py);
-                let mut configs = Vec::new();
-
-                for sys in systems_tuple.iter() {
-                    let (config, handles, ticks) = build_scheduled_system(
-                        &sys,
-                        generation,
-                        error_state.clone(),
-                        error_buffer.clone(),
-                        system_stage,
-                        is_startup,
-                        state_machine_count,
-                    )
-                    .map_err(|error| annotate_registration_error(py, &sys, error))?;
-                    system_handles.extend(handles);
-                    world
-                        .get_resource_or_insert_with(DynamicSystemRegistry::default)
-                        .register_ticks(generation, previous, stage.intern_label(), ticks);
-                    configs.push(config);
-                }
-
-                if configs.is_empty() {
-                    return Err(PyRuntimeError::new_err("Empty chained systems"));
-                }
-
-                let chained = ScheduleConfigs::Configs {
-                    configs,
-                    collective_conditions: Vec::new(),
-                    metadata: Chain::Chained(Default::default()),
-                };
-
-                schedule.add_systems(chained);
-            } else {
-                let (config, handles, ticks) = build_scheduled_system(
-                    system_bound,
-                    generation,
-                    error_state.clone(),
-                    error_buffer.clone(),
-                    system_stage,
-                    is_startup,
-                    state_machine_count,
-                )
-                .map_err(|error| annotate_registration_error(py, system_bound, error))?;
-                system_handles.extend(handles);
-                world
-                    .get_resource_or_insert_with(DynamicSystemRegistry::default)
-                    .register_ticks(generation, previous, stage.intern_label(), ticks);
-                schedule.add_systems(config);
+            let (config, handles, registrations) = build_system_unit(
+                system_func.bind(py),
+                generation,
+                error_state.clone(),
+                error_buffer.clone(),
+                system_stage,
+                is_startup,
+                state_machine_count,
+                &|item, error| annotate_registration_error(py, item, error),
+            )?;
+            system_handles.extend(handles);
+            let mut registry = world.get_resource_or_insert_with(DynamicSystemRegistry::default);
+            for ticks in registrations {
+                registry.register_ticks(generation, previous, stage.intern_label(), ticks);
             }
+            schedule.add_systems(config);
             Ok(())
         });
 
@@ -798,7 +752,7 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
                         let state_machine_count = Some(registered_state_machine_count(world));
                         for system in pending.systems {
                             let result = Python::attach(|py| {
-                                build_scheduled_system(
+                                build_system_unit(
                                     system.bind(py),
                                     generation,
                                     self.error_state.clone(),
@@ -806,19 +760,23 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
                                     SystemStage::UpdateOrLast,
                                     false,
                                     state_machine_count,
+                                    &|item, error| annotate_registration_error(py, item, error),
                                 )
                             });
                             match result {
-                                Ok((config, handles, ticks)) => {
+                                Ok((config, handles, registrations)) => {
                                     system_handles.extend(handles);
-                                    world
-                                        .get_resource_or_insert_with(DynamicSystemRegistry::default)
-                                        .register_ticks(
+                                    let mut registry = world.get_resource_or_insert_with(
+                                        DynamicSystemRegistry::default,
+                                    );
+                                    for ticks in registrations {
+                                        registry.register_ticks(
                                             generation,
                                             previous,
                                             label.intern(),
                                             ticks,
                                         );
+                                    }
                                     schedule.add_systems(config);
                                 }
                                 Err(error) => {

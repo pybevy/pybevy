@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Final
 
 from . import _pybevy as _pybevy  # type: ignore
@@ -59,6 +60,42 @@ FEATURES: Final[frozenset[str]] = _pybevy.features()
 # Report the loaded backend's version, including under editable installs.
 __version__: Final[str] = _pybevy.__version__
 
+
+@dataclass(frozen=True, slots=True)
+class BuildInfo:
+    """Identity of the loaded PyBevy binary, fixed when it was compiled.
+
+    ``git_sha`` and ``git_sha_short`` are hexadecimal commit hashes, or
+    ``"unknown"`` when the build had no git checkout (for example an sdist).
+    ``git_dirty`` is true when tracked Rust sources or Cargo manifests differed
+    from that commit. ``str()`` gives a one-line form for bug reports.
+    """
+
+    version: str
+    git_sha: str
+    git_sha_short: str
+    git_dirty: bool
+    profile: str
+
+    def __str__(self) -> str:
+        suffix = "-dirty" if self.git_dirty else ""
+        return f"{self.version} ({self.git_sha_short}{suffix}, {self.profile})"
+
+
+def _load_build_info() -> BuildInfo:
+    raw: dict[str, str | bool] = _pybevy.build_info()
+    return BuildInfo(
+        version=str(raw["version"]),
+        git_sha=str(raw["git_sha"]),
+        git_sha_short=str(raw["git_sha_short"]),
+        git_dirty=raw["git_dirty"] is True,
+        profile=str(raw["profile"]),
+    )
+
+
+# Commit, dirty flag, and profile of the loaded backend, for bug reports.
+BUILD_INFO: Final[BuildInfo] = _load_build_info()
+
 # Keep top-level CLI import optional for constrained embedding environments.
 try:
     from .cli import main
@@ -68,6 +105,8 @@ except ImportError:
 __all__ = [
     "FEATURES",
     "__version__",
+    "BUILD_INFO",
+    "BuildInfo",
     "main",
     # decorators
     "component",

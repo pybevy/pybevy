@@ -16,13 +16,9 @@ from pybevy.state import OnEnterSchedule, OnExitSchedule, OnTransitionSchedule
 
 type SystemFn = Callable[..., object]
 type SystemFns = (
-    tuple[SystemFn | ConditionalSystem | SystemConfig, ...]
-    | SystemFn
-    | ChainedSystems
-    | ConditionalSystem
-    | SystemConfig
+    tuple[SystemFns, ...] | SystemFn | ChainedSystems | ConditionalSystem | SystemConfig
 )
-type SystemChainItem = SystemFn | ConditionalSystem | SystemConfig
+type SystemChainItem = SystemFn | ConditionalSystem | SystemConfig | ChainedSystems
 type SystemSetChainItem = SystemSet | SystemSetEnum | SystemSetConfig
 
 T = TypeVar("T")

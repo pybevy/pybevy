@@ -587,7 +587,7 @@ pub enum ControlOperation {
         /// Python code to execute
         code: String,
     },
-    /// Get full diagnostics: FPS, frame times, CPU/GPU/RAM/VRAM usage, entity/asset counts, system profiling times. fps_average is frames over summed real frame time (last 60 frames); fps_current is 1 / median frame time of the last 5 frames; frame_time_p50_ms/frame_time_p95_ms cover the last 60 frames. A full reload restarts the window.
+    /// Get full diagnostics: FPS, frame times, CPU/GPU/RAM/VRAM usage, entity/asset counts, system profiling times, build identity. fps_average is frames over summed real frame time (last 60 frames); fps_current is 1 / median frame time of the last 5 frames; frame_time_p50_ms/frame_time_p95_ms cover the last 60 frames. A full reload restarts the window.
     GetPerformance,
     /// Submit batched, timed tool calls that execute inside the engine frame loop with frame-precise timing. Same-'at' actions fire in the same frame (atomic). Supports: time control, mutations, queries, screenshots. NOT supported: get_logs, search_api, run_scene (bridge-local tools).
     ScheduleActions(ScheduleRequest),

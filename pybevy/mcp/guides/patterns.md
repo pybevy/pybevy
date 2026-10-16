@@ -604,6 +604,30 @@ app.configure_sets(
 Keep one `chain(...)` homogeneous: use only systems or only system sets. Python
 tuple literals do not support Bevy's Rust-only `(a, b, c).chain()` spelling.
 
+A tuple passed to `add_systems` may mix plain systems, `system(...)`
+configurations, and `chain(...)` results, in any schedule including `OnEnter`,
+`OnExit`, and `OnTransition`. Members of a chain run in order; tuple members
+have no order between each other unless configured with `.before()`/`.after()`:
+
+<!-- pybevy-snippet: smoke
+def read_input() -> None: ...
+def move_player() -> None: ...
+def clamp_player() -> None: ...
+def play_audio() -> None: ...
+-->
+```python
+from pybevy.app import App, Update
+from pybevy.ecs import chain
+
+app = App().add_systems(
+    Update, (read_input, chain(move_player, clamp_player), play_audio)
+)
+app.update()
+```
+
+A nested `chain(...)` inside `chain(...)` is spliced into one sequence. A tuple
+cannot be a `chain(...)` member; put the tuple outside the chain instead.
+
 #### Passing Values Between Systems
 
 Use `pipe(source, target)` when the downstream system needs the value returned
