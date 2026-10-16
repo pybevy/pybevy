@@ -34,6 +34,7 @@ use crate::{
     app::{PyStage, chained_systems::chain_members},
     ecs::{
         conditional_system::{PyConditionalSystem, extract_condition_expr},
+        decorated_callable::{CallableKind, unwrap_decorated},
         dynamic_system::{DynamicSystemHandle, SystemErrorBuffer},
         system::require_routine_callable,
         system_interpreter::{
@@ -137,22 +138,22 @@ impl PySystemSet {
 
     pub fn before(&self, target: &Bound<'_, PyAny>) -> PyResult<PySystemSetConfig> {
         let mut config = self.config();
-        let target = ordering_target(target)?;
+        let target = ordering_target(target, "before()")?;
         add_relation(&self.label, &mut config.ordering, target, Relation::Before)?;
         Ok(config)
     }
 
     pub fn after(&self, target: &Bound<'_, PyAny>) -> PyResult<PySystemSetConfig> {
         let mut config = self.config();
-        let target = ordering_target(target)?;
+        let target = ordering_target(target, "after()")?;
         add_relation(&self.label, &mut config.ordering, target, Relation::After)?;
         Ok(config)
     }
 
-    pub fn run_if(&self, py: Python<'_>, condition: Py<PyAny>) -> PySystemSetConfig {
+    pub fn run_if(&self, condition: &Bound<'_, PyAny>) -> PyResult<PySystemSetConfig> {
         let mut config = self.config();
-        config.conditions.push(condition.clone_ref(py));
-        config
+        config.conditions.push(condition_callable(condition)?);
+        Ok(config)
     }
 
     fn __repr__(&self) -> String {
@@ -222,13 +223,10 @@ impl PySystemConfig {
     }
 
     #[new]
-    pub fn new(system: Py<PyAny>) -> Self {
-        Self {
-            system,
-            pipe_stages: Vec::new(),
-            ordering: ScheduleOrdering::default(),
-            conditions: Vec::new(),
-        }
+    pub fn py_new(system: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self::new(
+            unwrap_decorated(system, CallableKind::System, "SystemConfig()")?.unbind(),
+        ))
     }
 
     #[getter]
@@ -257,31 +255,50 @@ impl PySystemConfig {
 
     pub fn before(&self, target: &Bound<'_, PyAny>) -> PyResult<Self> {
         let mut result = self.clone();
-        result.ordering.push_before(ordering_target(target)?);
+        result
+            .ordering
+            .push_before(ordering_target(target, "before()")?);
         Ok(result)
     }
 
     pub fn after(&self, target: &Bound<'_, PyAny>) -> PyResult<Self> {
         let mut result = self.clone();
-        result.ordering.push_after(ordering_target(target)?);
+        result
+            .ordering
+            .push_after(ordering_target(target, "after()")?);
         Ok(result)
     }
 
-    pub fn run_if(&self, py: Python<'_>, condition: Py<PyAny>) -> Self {
+    pub fn run_if(&self, condition: &Bound<'_, PyAny>) -> PyResult<Self> {
         let mut result = self.clone();
-        result.conditions.push(condition.clone_ref(py));
-        result
+        result.conditions.push(condition_callable(condition)?);
+        Ok(result)
     }
 
     /// Return a new compound system that passes this system's output to `target`.
-    pub fn pipe(&self, py: Python<'_>, target: Py<PyAny>) -> PyResult<Self> {
-        if !target.bind(py).is_callable() {
-            return Err(PyTypeError::new_err("pipe() target must be callable"));
-        }
+    pub fn pipe(&self, target: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let target = unwrap_decorated(target, CallableKind::System, "pipe()")?;
         let mut result = self.clone();
-        result.pipe_stages.push(target.clone_ref(py));
+        result.pipe_stages.push(target.unbind());
         Ok(result)
     }
+}
+
+impl PySystemConfig {
+    /// A configuration for an already unwrapped system function.
+    pub(crate) fn new(system: Py<PyAny>) -> Self {
+        Self {
+            system,
+            pipe_stages: Vec::new(),
+            ordering: ScheduleOrdering::default(),
+            conditions: Vec::new(),
+        }
+    }
+}
+
+/// The function behind a `@condition` passed to `run_if()`.
+fn condition_callable(condition: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+    Ok(unwrap_decorated(condition, CallableKind::Condition, "run_if()")?.unbind())
 }
 
 /// Fluent configuration for one Python system set.
@@ -337,7 +354,7 @@ impl PySystemSetConfig {
 
     pub fn before(&self, target: &Bound<'_, PyAny>) -> PyResult<Self> {
         let mut result = self.clone();
-        let target = ordering_target(target)?;
+        let target = ordering_target(target, "before()")?;
         add_relation(
             &self.set.label,
             &mut result.ordering,
@@ -349,7 +366,7 @@ impl PySystemSetConfig {
 
     pub fn after(&self, target: &Bound<'_, PyAny>) -> PyResult<Self> {
         let mut result = self.clone();
-        let target = ordering_target(target)?;
+        let target = ordering_target(target, "after()")?;
         add_relation(
             &self.set.label,
             &mut result.ordering,
@@ -359,26 +376,18 @@ impl PySystemSetConfig {
         Ok(result)
     }
 
-    pub fn run_if(&self, py: Python<'_>, condition: Py<PyAny>) -> Self {
+    pub fn run_if(&self, condition: &Bound<'_, PyAny>) -> PyResult<Self> {
         let mut result = self.clone();
-        result.conditions.push(condition.clone_ref(py));
-        result
+        result.conditions.push(condition_callable(condition)?);
+        Ok(result)
     }
-}
-
-#[pyfunction]
-#[pyo3(signature = (system, /))]
-pub fn system(system: Py<PyAny>) -> PySystemConfig {
-    PySystemConfig::new(system)
 }
 
 #[pyfunction]
 #[pyo3(signature = (source, target, /))]
-pub fn pipe(source: Py<PyAny>, target: Py<PyAny>, py: Python<'_>) -> PyResult<PySystemConfig> {
-    if !source.bind(py).is_callable() {
-        return Err(PyTypeError::new_err("pipe() source must be callable"));
-    }
-    PySystemConfig::new(source).pipe(py, target)
+pub fn pipe(source: &Bound<'_, PyAny>, target: &Bound<'_, PyAny>) -> PyResult<PySystemConfig> {
+    let source = unwrap_decorated(source, CallableKind::System, "pipe()")?;
+    PySystemConfig::new(source.unbind()).pipe(target)
 }
 
 #[pyfunction]
@@ -983,7 +992,7 @@ pub(crate) fn apply_set_ordering(
     config
 }
 
-fn ordering_target(target: &Bound<'_, PyAny>) -> PyResult<SystemSetTarget> {
+fn ordering_target(target: &Bound<'_, PyAny>, entry: &str) -> PyResult<SystemSetTarget> {
     if let Some(set) = system_set_value(target)? {
         return Ok(set.label);
     }
@@ -994,7 +1003,8 @@ fn ordering_target(target: &Bound<'_, PyAny>) -> PyResult<SystemSetTarget> {
         return callable_set(config.system.bind(target.py())).map(Into::into);
     }
     if target.is_callable() {
-        return callable_set(target).map(Into::into);
+        let callable = unwrap_decorated(target, CallableKind::System, entry)?;
+        return callable_set(&callable).map(Into::into);
     }
     Err(PyTypeError::new_err(
         "ordering target must be a SystemSet or a callable system",

@@ -48,6 +48,7 @@ def environment_image() -> Image:
     return image
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -62,12 +63,14 @@ def setup(
     )  # type: ignore[misc]
 
 
+@system
 def setup_camera(commands: Commands) -> None:
     commands.spawn(
         Camera3d(), Transform.from_xyz(0, 0, 5).looking_at(Vec3.ZERO, Vec3.Y)
     )
 
 
+@system
 def animate(
     time: Res[Time],
     state: Res[ReflectionSurface],

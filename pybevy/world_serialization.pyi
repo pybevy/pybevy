@@ -68,6 +68,7 @@ class WorldInstanceReady(Message):
         ```python
         app.add_message(WorldInstanceReady)
 
+        @system
         def on_instance_ready(reader: MessageReader[WorldInstanceReady]) -> None:
             for event in reader:
                 print(f"World instance loaded on entity: {event.entity}")

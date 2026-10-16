@@ -11,6 +11,7 @@ pub mod component_wrapper;
 pub mod conditional_system;
 pub mod custom_batch;
 pub mod custom_component;
+pub(crate) mod decorated_callable;
 pub mod deferred_drop;
 pub mod disabled;
 pub mod dynamic_system;
@@ -78,7 +79,10 @@ pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     ecs.add_class::<custom_batch::PyCustomComponentBatch>()?;
     ecs.add_class::<pybevy_core::PyRustComponentBatch>()?;
     ecs.add_function(wrap_pyfunction!(conditional_system::run_if, m)?)?;
-    ecs.add_function(wrap_pyfunction!(system_config::system, m)?)?;
+    ecs.add_function(wrap_pyfunction!(
+        decorated_callable::py_unwrap_decorated,
+        m
+    )?)?;
     ecs.add_function(wrap_pyfunction!(system_config::pipe, m)?)?;
     ecs.add_function(wrap_pyfunction!(system_config::system_set, m)?)?;
     ecs.add_class::<lazy_wrapper_proxy::PyLazyWrapperProxy>()?;

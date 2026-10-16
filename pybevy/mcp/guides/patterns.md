@@ -23,6 +23,7 @@ class Velocity(Component):
     speed: float = 1.0
 
 # -- Startup system --
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -46,6 +47,7 @@ def setup(
     ...
 
 # -- Update system --
+@system
 def animate(
     query: Query[Mut[Transform], With[MyMarker]],
     time: Res[Time],
@@ -73,6 +75,7 @@ if __name__ == "__main__":
 - `App.run()` returns `AppExit.Success()` or `AppExit.Error(code)`. The `pybevy run`
   and `pybevy dev` commands use an error code as their process status. A direct
   Python script must call `sys.exit(result.code)` itself if it needs that status.
+- Decorate every system with `@system`, every run condition with `@condition`, and every observer with `@observer` (from `pybevy.ecs`, also in the prelude); `add_systems`, `run_if`, and `add_observer` raise `TypeError` for a plain function
 - Register systems with `app.add_systems(Stage, fn)` - there is no `@app.system()` decorator
 - Systems and observers must be synchronous functions with positional injected parameters; generator functions and keyword-only injected parameters are rejected at registration.
 - Multiple systems in one stage: `app.add_systems(Update, sys1, sys2, sys3)`
@@ -198,6 +201,7 @@ GC inspection remains safe during native field writes and asset operations.
 ```python
 from pybevy.prelude import *
 
+@system
 def setup(commands: Commands) -> None:
     # Spawn an entity with components
     commands.spawn(Transform.from_xyz(0, 1, 0), PointLight(intensity=1000.0))
@@ -275,6 +279,7 @@ class Enemy(Component):
 Field access works directly in queries:
 
 ```python
+@system
 def damage_players(query: Query[Mut[Player]]) -> None:
     for player in query:
         player.health -= 10.0
@@ -307,6 +312,7 @@ exclusively. A nested change does not trigger `Changed[Inventory]`; when change
 detection matters, copy the field and assign it through `Query[Mut[Inventory]]`:
 
 ```python
+@system
 def add_item(query: Query[Mut[Inventory]]) -> None:
     for inventory in query:
         items = list(inventory.items)
@@ -327,6 +333,7 @@ children first if they must survive the parent.
 #### Explicit ChildOf
 
 ```python
+@system
 def setup(commands: Commands) -> None:
     parent = commands.spawn(Transform(), Name("Root")).id()
     commands.spawn(Transform.from_xyz(0, 1, 0), ChildOf(parent))
@@ -335,6 +342,7 @@ def setup(commands: Commands) -> None:
 #### Builder Pattern with with_children
 
 ```python
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -381,11 +389,13 @@ Capture **every** variable from the loop scope that the lambda references - incl
 #### Modifying Hierarchy at Runtime
 
 ```python
+@system
 def reparent(commands: Commands, query: Query[Entity, With[Enemy]]) -> None:
     new_parent = commands.spawn(Transform()).id()
     for entity in query:
         commands.entity(entity).insert(ChildOf(new_parent))
 
+@system
 def orphan(commands: Commands, parent_query: Query[tuple[Entity, Children]]) -> None:
     for entity, children in parent_query:
         for child in children:
@@ -397,6 +407,7 @@ def orphan(commands: Commands, parent_query: Query[tuple[Entity, Children]]) -> 
 The `Children` component is auto-managed. Query it to traverse hierarchies:
 
 ```python
+@system
 def print_tree(query: Query[tuple[Name, Children]]) -> None:
     for name, children in query:
         for child_entity in children:
@@ -405,7 +416,9 @@ def print_tree(query: Query[tuple[Name, Children]]) -> None:
 
 ### Systems
 
-Systems are plain functions. Parameter type hints control what data is injected.
+Systems are functions decorated with `@system`. Parameter type hints control
+what data is injected; they are resolved when the system is registered, so a
+system may refer to classes defined later in the module.
 
 On Python 3.14, dynamically generated systems can resolve annotations lazily.
 Use a factory to capture each component type separately. Each new callable
@@ -435,6 +448,7 @@ def main(app: App) -> App:
 #### System Parameters
 
 ```python
+@system
 def my_system(
     commands: Commands,                              # Spawn/despawn entities
     query: Query[Mut[Transform], With[Player]],      # Read/write components
@@ -452,11 +466,13 @@ runs. Use mutable object fields directly; no unwrap or snapshot is needed:
 
 ```python
 from dataclasses import dataclass
+from pybevy.ecs import system
 
 @dataclass
 class Stats:
     frames: int = 0
 
+@system
 def track_frames(stats: Local[Stats]) -> None:
     stats.frames += 1
 ```
@@ -465,6 +481,7 @@ For an immutable value, update the whole value through the typed `current`
 property. `get()` and `set()` are equivalent explicit aliases:
 
 ```python
+@system
 def count_frames(counter: Local[int]) -> None:
     counter.current += 1
 ```
@@ -482,7 +499,7 @@ from dataclasses import dataclass
 
 from pybevy.app import App, Update
 from pybevy.decorators import component
-from pybevy.ecs import Component, Mut, Query, World, run_if
+from pybevy.ecs import Component, Mut, Query, World, condition, system
 
 @component
 @dataclass
@@ -491,19 +508,22 @@ class GameFlags(Component):
 
 ticks: list[str] = []
 
+@system
 def game_logic() -> None:
     ticks.append("tick")
 
+@condition
 def is_game_active(flags: Query[GameFlags]) -> bool:
     return any(flag.active for flag in flags)
 
 def setup(world: World) -> None:
     world.spawn(GameFlags())
 
+@system
 def pause(flags: Query[Mut[GameFlags]]) -> None:
     flags.single().active = False
 
-app = App().add_systems(Update, run_if(game_logic, is_game_active))
+app = App().add_systems(Update, game_logic.run_if(is_game_active))
 app.world(setup)
 app.update()
 app.world(lambda world: world.run_system_once(pause))
@@ -518,18 +538,20 @@ a condition parameter; use a wrapper-storage component flag as above,
 `in_state(...)` (see `guide://state-machines`), or an early return in the system
 itself. Native read-only resources such as `Res[Time]`, `Res[ButtonInput[KeyCode]]`
 and `Res[State[GamePhase]]` are supported. Combine conditions with `.and_(other)`,
-`.or_(other)` and `.not_()` on the value `run_if(...)` returns.
-To combine two conditions, use `run_if(system, first).and_(second)`, not
-`run_if(run_if(system, first), second)`. Systems, conditions, and observers must
-be ordinary functions, bound methods, or closures; `functools.partial` and
-callable instances are not supported.
+`.or_(other)` and `.not_()` on a `@condition` (or with `and_`, `or_`, `not_`
+from `pybevy.ecs.conditions`): `game_logic.run_if(is_game_active.and_(other))`.
+Every run condition must be decorated with `@condition`; for a lambda use
+`condition(lambda: ...)`. `run_if()` raises `TypeError` for a plain function.
+Systems, conditions, and observers must be ordinary functions, bound methods, or
+closures; `functools.partial` and callable instances are not supported.
 
 #### System Sets and Fine-Grained Ordering
 
 Use a `SystemSetEnum` family for ordering within one schedule. `@system_set`
 preserves the enum class and gives each member a stable fully qualified
-identity that survives hot reload. `system()` returns an immutable fluent
-wrapper; plain callables remain valid in `add_systems()`.
+identity that survives hot reload. A `@system` function has the fluent
+`.in_set()`, `.before()`, `.after()`, `.run_if()` and `.pipe()` methods, each
+returning a new immutable `SystemConfig`.
 
 ```python
 from enum import auto
@@ -543,10 +565,10 @@ class GameplaySet(SystemSetEnum):
     Movement = auto()
 
 app.configure_sets(Update, GameplaySet.Input.before(GameplaySet.Movement))
-app.add_systems(Update, system(read_input).in_set(GameplaySet.Input))
+app.add_systems(Update, read_input.in_set(GameplaySet.Input))
 app.add_systems(
     Update,
-    system(move_player)
+    move_player
         .in_set(GameplaySet.Movement)
         .after(read_input)
         .run_if(is_game_active),
@@ -556,8 +578,9 @@ app.add_systems(
 Use `SystemSet("my_game.Standalone")` when a set does not belong to an enum
 family or its name is selected dynamically.
 
-A plain callable passed to `before()`/`after()` names the ordering set shared
-by every registered callable with the same `__module__` and `__qualname__`.
+A `@system` passed to `before()`/`after()` names the ordering set shared by
+every registered system whose function has the same `__module__` and
+`__qualname__`.
 Lambdas and closures from one factory share that name, so ordering one
 relative to another raises `ValueError`; use `chain()` or a `SystemSet`.
 
@@ -565,10 +588,9 @@ Order Python systems around engine phases using native sets:
 
 ```python
 from pybevy.app import First
-from pybevy.ecs import system
 from pybevy.time import TimeSystems
 
-app.add_systems(First, system(record_frame_time).after(TimeSystems))
+app.add_systems(First, record_frame_time.after(TimeSystems))
 ```
 
 Import native sets from these modules:
@@ -604,15 +626,20 @@ app.configure_sets(
 Keep one `chain(...)` homogeneous: use only systems or only system sets. Python
 tuple literals do not support Bevy's Rust-only `(a, b, c).chain()` spelling.
 
-A tuple passed to `add_systems` may mix plain systems, `system(...)`
-configurations, and `chain(...)` results, in any schedule including `OnEnter`,
+A tuple passed to `add_systems` may mix `@system` functions, configured systems
+such as `move.after(input)`, and `chain(...)` results, in any schedule including `OnEnter`,
 `OnExit`, and `OnTransition`. Members of a chain run in order; tuple members
 have no order between each other unless configured with `.before()`/`.after()`:
 
 <!-- pybevy-snippet: smoke
+from pybevy.ecs import system
+@system
 def read_input() -> None: ...
+@system
 def move_player() -> None: ...
+@system
 def clamp_player() -> None: ...
+@system
 def play_audio() -> None: ...
 -->
 ```python
@@ -636,17 +663,20 @@ by the upstream system. Declare that value as the target's first parameter with
 
 ```python
 from pybevy.prelude import In, Query, Transform, pipe
+from pybevy.ecs import system
 
+@system
 def count_transforms(query: Query[Transform]) -> int:
     return len(list(query))
 
+@system
 def report_count(count: In[int]) -> None:
     print(f"transforms: {count}")
 
 app.add_systems(Update, pipe(count_transforms, report_count))
 ```
 
-`system(source).pipe(target).pipe(final)` builds the same immutable compound
+`source.pipe(target).pipe(final)` builds the same immutable compound
 configuration for longer pipelines. Each stage declares its own ECS access and
 runs sequentially inside one Bevy system, so a later stage may safely read data
 that an earlier stage mutates. Deferred `Commands` from all stages are applied
@@ -666,11 +696,13 @@ stage raises or returns a value that is not an instance of the next stage's
 
 ```python
 # Read-only
+@system
 def read_positions(query: Query[Transform]) -> None:
     for transform in query:
         print(transform.translation)
 
 # Mutable -- Mut[] required for modifications
+@system
 def move_up(query: Query[Mut[Transform]]) -> None:
     for transform in query:
         transform.translation.y += 1.0
@@ -689,6 +721,7 @@ nested write through `Query[Mut[Transform]]`.
 Use `tuple[]` for multiple components:
 
 ```python
+@system
 def apply_velocity(query: Query[tuple[Mut[Transform], Velocity]], time: Res[Time]) -> None:
     for transform, vel in query:
         transform.translation.x += vel.x * time.delta_secs()
@@ -764,16 +797,21 @@ that queries accessing the same component are disjoint.
 
 ```python
 # WRONG: With filters may overlap:
+@system
 def bad(q1: Query[Mut[Transform], With[A]], q2: Query[Mut[Transform], With[B]]) -> None: ...
 
 # WRONG: Mutable and read-only queries may overlap:
+@system
 def bad2(q1: Query[Mut[Transform], With[A]], q2: Query[Transform, With[B]]) -> None: ...
 
 # OK - Without proves disjointness:
+@system
 def ok(q1: Query[Mut[Transform], tuple[With[A], Without[B]]], q2: Query[Mut[Transform], tuple[With[B], Without[A]]]) -> None: ...
 
 # BEST - split into separate systems (simplest, always works):
+@system
 def move_a(q: Query[Mut[Transform], With[A]]) -> None: ...
+@system
 def read_b(q: Query[Transform, With[B]]) -> None: ...
 ```
 
@@ -789,6 +827,7 @@ reads and rejected writes do not.
 #### Query Methods
 
 ```python
+@system
 def find_player(query: Query[Transform, With[Player]]) -> None:
     # Get exactly one result (errors if 0 or 2+)
     transform = query.single()
@@ -810,17 +849,21 @@ Resources are global singletons accessible from any system.
 #### Built-in Resources
 
 ```python
+@system
 def use_time(time: Res[Time]) -> None:
     elapsed = time.elapsed_secs()
     dt = time.delta_secs()
 
 # Select a specific Bevy clock with Time[context].
+@system
 def use_real_time(time: Res[Time[Real]]) -> None:
     elapsed_without_pause_or_scaling = time.elapsed_secs()
 
+@system
 def control_game_time(time: ResMut[Time[Virtual]]) -> None:
     time.set_relative_speed(0.5)
 
+@system
 def load_model(asset_server: Res[AssetServer]) -> None:
     from pybevy.world_serialization import WorldAsset
 
@@ -862,6 +905,7 @@ including cloning any nested handles rather than duplicating their assets.
 
 ```python
 from dataclasses import dataclass
+from pybevy.ecs import system
 
 @resource
 @dataclass
@@ -874,10 +918,12 @@ class GameState(Resource):
 app.insert_resource(GameState())
 
 # Read-only access
+@system
 def display_score(state: Res[GameState]) -> None:
     print(f"Score: {state.score}")
 
 # Mutable access
+@system
 def update_score(state: ResMut[GameState], query: Query[Player]) -> None:
     state.score = sum(int(p.health) for p in query)
 ```
@@ -885,6 +931,7 @@ def update_score(state: ResMut[GameState], query: Query[Player]) -> None:
 Resources can also be inserted from systems via `Commands`:
 
 ```python
+@system
 def setup(commands: Commands) -> None:
     commands.insert_resource(GameState())
 ```
@@ -951,9 +998,11 @@ app.add_message(DamageEvent)
 #### Sending and Receiving
 
 ```python
+@system
 def send_damage(writer: MessageWriter[DamageEvent]) -> None:
     writer.write(DamageEvent(entity_id=42, amount=25.0))
 
+@system
 def receive_damage(reader: MessageReader[DamageEvent], query: Query[Mut[Player]]) -> None:
     for event in reader:
         for player in query:
@@ -989,7 +1038,8 @@ use separate systems. Unrelated message channels remain compatible.
 
 ### Observers
 
-Observers react to events or lifecycle hooks without polling. Register with `app.add_observer()`.
+Observers react to events or lifecycle hooks without polling. Decorate them with
+`@observer` and register with `app.add_observer()`.
 
 For removable observers, keep `world.add_observer(fn).id()` and despawn that
 entity as Bevy does, with `world.despawn(id)` or `commands.entity(id).despawn()`;
@@ -997,6 +1047,7 @@ the observer stops firing and its callable is released.
 
 ```python
 from dataclasses import dataclass
+from pybevy.ecs import observer
 
 # React to a custom event
 @event
@@ -1004,6 +1055,7 @@ from dataclasses import dataclass
 class PlayerDied(Event):
     player_id: int
 
+@observer
 def on_player_died(trigger: On[PlayerDied]) -> None:
     event = trigger.event()
     entity = trigger.entity()
@@ -1013,6 +1065,7 @@ app.add_observer(on_player_died)
 # @event validates the Event base; add_observer still performs registration.
 
 # Lifecycle hooks: Add, Insert, Remove, Discard, Despawn
+@observer
 def on_transform_added(trigger: On[Add, Transform]) -> None:
     entity = trigger.entity()
 
@@ -1107,6 +1160,7 @@ spacing.
 Queries are standard Python iterables. Use `enumerate()` when you need a per-entity index (e.g., for phase offsets in animations):
 
 ```python
+@system
 def sway_lanterns(
     query: Query[Mut[Transform], With[Lantern]],
     time: Res[Time],
@@ -1127,6 +1181,7 @@ Many scenes need temporary entities spawned and despawned at runtime - projectil
 
 ```python
 from dataclasses import dataclass
+from pybevy.ecs import system
 
 @component
 class Projectile(Component):
@@ -1138,6 +1193,7 @@ class Lifetime(Component):
     remaining: float = 2.0
 
 # Spawn in response to game logic
+@system
 def fire_projectile(
     commands: Commands,
     assets: Res[ProjectileAssets],  # Pre-cached handles (see performance guide)
@@ -1152,6 +1208,7 @@ def fire_projectile(
         )
 
 # Despawn when lifetime expires
+@system
 def despawn_expired(
     commands: Commands,
     query: Query[tuple[Entity, Mut[Lifetime]]],
@@ -1172,6 +1229,7 @@ For effects with distinct phases (telegraph -> strike -> cooldown), use a resour
 
 ```python
 from dataclasses import dataclass
+from pybevy.ecs import system
 
 @resource
 @dataclass
@@ -1180,6 +1238,7 @@ class EffectState(Resource):
     timer: float = 0.0
     spawned: bool = False
 
+@system
 def effect_controller(
     commands: Commands,
     state: ResMut[EffectState],
@@ -1325,6 +1384,7 @@ component; Bevy schedules conflicting accesses safely.
 
 ```python
 from dataclasses import dataclass
+from pybevy.ecs import system
 
 @resource
 @dataclass
@@ -1334,6 +1394,7 @@ class GameState(Resource):
     player_gz: int = 0
 
 # System 1: Detect (reads hazards + game state, sets flag)
+@system
 def check_hazard_hit(
     hazard_q: Query[tuple[Hazard, GridPos], With[HazardGlow]],
     time: Res[Time],
@@ -1347,6 +1408,7 @@ def check_hazard_hit(
             return
 
 # System 2: React (reads flag, mutates player transform)
+@system
 def reset_player(
     player_q: Query[Mut[Transform], With[Player]],
     state: ResMut[GameState],
@@ -1374,6 +1436,7 @@ For disjoint query patterns (`Without` filters to resolve borrow conflicts withi
 material without replacing the component:
 
 ```python
+@system
 def swap_materials(
     query: Query[tuple[Mut[MeshMaterial3d], MyMarker]],
     assets: Res[CachedAssets],
@@ -1391,6 +1454,7 @@ For custom shader materials, see `guide://shaders` for the `@material` decorator
 Add or remove components on existing entities at runtime:
 
 ```python
+@system
 def pickup(commands: Commands, query: Query[tuple[Entity, Item], With[NearPlayer]]) -> None:
     for entity, item in query:
         commands.entity(entity).insert(CarriedBy(player_id=1))  # add: instances
@@ -1466,6 +1530,7 @@ commands.spawn(
 )
 
 # Update: rotate the parent - all children follow
+@system
 def rotate_star_map(
     query: Query[Mut[Transform], With[StarMap]],
     time: Res[Time],

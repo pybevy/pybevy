@@ -33,7 +33,7 @@ from pybevy.app import (
     Startup,
     Update,
 )
-from pybevy.ecs import Commands, Mut, Query, View
+from pybevy.ecs import Commands, Mut, Query, View, system
 from pybevy.expr import cos, sin
 from pybevy.transform import Transform
 
@@ -67,10 +67,12 @@ def _get_increment_column():  # type: ignore[no-untyped-def]
 def _make_query_app(entity_count: int) -> App:
     """Query iteration: Python for-loop over entities."""
 
+    @system
     def setup(commands: Commands) -> None:
         for i in range(entity_count):
             commands.spawn(Transform.from_xyz(float(i), 0.0, 0.0))
 
+    @system
     def increment(query: Query[Mut[Transform]]) -> None:
         for transform in query:
             transform.translation.x += 1.0
@@ -87,10 +89,12 @@ def _make_query_app(entity_count: int) -> App:
 def _make_view_app(entity_count: int) -> App:
     """View API: bytecode VM batch execution."""
 
+    @system
     def setup(commands: Commands) -> None:
         for i in range(entity_count):
             commands.spawn(Transform.from_xyz(float(i), 0.0, 0.0))
 
+    @system
     def increment(view: View[Mut[Transform]]) -> None:
         col = view.column_mut(Transform)
         col.translation.x += 1.0
@@ -108,10 +112,12 @@ def _make_numba_app(entity_count: int) -> App:
     """ViewColumn + Numba: JIT-compiled native loop."""
     jit_increment = _get_increment_column()
 
+    @system
     def setup(commands: Commands) -> None:
         for i in range(entity_count):
             commands.spawn(Transform.from_xyz(float(i), 0.0, 0.0))
 
+    @system
     def increment(view: View[Mut[Transform]]) -> None:
         for batch in view.iter_batches():
             col = batch.column_mut(Transform)
@@ -150,10 +156,12 @@ def _make_query_physics_app(entity_count: int) -> App:
     """Query iteration: Python for-loop with trig physics."""
     import math
 
+    @system
     def setup(commands: Commands) -> None:
         for i in range(entity_count):
             commands.spawn(Transform.from_xyz(float(i), float(i) * 0.5, 0.0))
 
+    @system
     def physics(query: Query[Mut[Transform]]) -> None:
         dt = 0.016
         for t in query:
@@ -176,10 +184,12 @@ def _make_query_physics_app(entity_count: int) -> App:
 def _make_view_physics_app(entity_count: int) -> App:
     """View API: bytecode VM with trig physics."""
 
+    @system
     def setup(commands: Commands) -> None:
         for i in range(entity_count):
             commands.spawn(Transform.from_xyz(float(i), float(i) * 0.5, 0.0))
 
+    @system
     def physics(view: View[Mut[Transform]]) -> None:
         col = view.column_mut(Transform)
         dt = 0.016
@@ -203,10 +213,12 @@ def _make_numba_physics_app(entity_count: int) -> App:
     """ViewColumn + Numba: JIT-compiled physics kernel."""
     jit_physics = _get_physics_column()
 
+    @system
     def setup(commands: Commands) -> None:
         for i in range(entity_count):
             commands.spawn(Transform.from_xyz(float(i), float(i) * 0.5, 0.0))
 
+    @system
     def physics(view: View[Mut[Transform]]) -> None:
         for batch in view.iter_batches():
             col = batch.column_mut(Transform)

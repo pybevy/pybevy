@@ -347,7 +347,8 @@ impl PyView {
     ///     for i in range(len(view)):
     ///         view[i] = view[i] + 1.0
     ///
-    /// def system(view: View[Mut[Transform]]):
+    /// @system
+    /// def my_system(view: View[Mut[Transform]]):
     ///     for batch in view.iter_batches():
     ///         col = batch.column_mut(Transform)
     ///         add_one(col)  # Zero-copy access!

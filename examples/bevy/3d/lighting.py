@@ -10,6 +10,7 @@ class Movable(Component):
     """Marker for objects that can be moved with arrow keys"""
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -182,6 +183,7 @@ def setup(
     )
 
 
+@system
 def animate_light_direction(
     time: Res[Time], query: Query[Mut[Transform], With[DirectionalLight]]
 ):
@@ -190,6 +192,7 @@ def animate_light_direction(
         transform.rotate_y(time.delta_secs() * 0.5)
 
 
+@system
 def movement(input: Res[ButtonInput[KeyCode]], time: Res[Time], query: Query[Mut[Transform], With[Movable]]):
     """Move objects with arrow keys"""
     for transform in query:

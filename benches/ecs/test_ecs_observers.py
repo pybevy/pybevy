@@ -4,7 +4,17 @@ import pytest
 
 from benches._helpers import initialize
 from pybevy.app import App, ScheduleRunnerPlugin, Startup, Update
-from pybevy.ecs import Add, Commands, Despawn, Insert, On, Remove, World
+from pybevy.ecs import (
+    Add,
+    Commands,
+    Despawn,
+    Insert,
+    On,
+    Remove,
+    World,
+    observer,
+    system,
+)
 from pybevy.transform import Transform
 
 
@@ -20,13 +30,15 @@ def test_performance_many_observers_same_event(benchmark) -> None:
         for i in range(num_observers):
             exec(
                 f"""
+@observer
 def on_add_{i}(trigger: On[Add, Transform]) -> None:
     _ = trigger.entity()
 app.add_observer(on_add_{i})
 """,
-                {"app": app, "On": On, "Add": Add, "Transform": Transform},
+                {"app": app, "On": On, "Add": Add, "Transform": Transform, "observer": observer},
             )
 
+        @system
         def spawn_entity(commands: Commands) -> None:
             commands.spawn(Transform.from_xyz(1.0, 2.0, 3.0))
 
@@ -48,11 +60,13 @@ def test_performance_many_entities_lifecycle_events(benchmark) -> None:
 
         call_count = []
 
+        @observer
         def on_add(trigger: On[Add, Transform]) -> None:
             call_count.append(1)
 
         app.add_observer(on_add)
 
+        @system
         def spawn_entities(commands: Commands) -> None:
             for i in range(num_entities):
                 commands.spawn(Transform.from_xyz(float(i), 0.0, 0.0))
@@ -75,11 +89,13 @@ def test_performance_lifecycle_event_overhead(benchmark) -> None:
         app = App()
         app.add_plugins(ScheduleRunnerPlugin.run_once())
 
+        @observer
         def on_add(trigger: On[Add, Transform]) -> None:
             pass
 
         app.add_observer(on_add)
 
+        @system
         def spawn_entities(commands: Commands) -> None:
             for i in range(num_entities):
                 commands.spawn(Transform.from_xyz(float(i), 0.0, 0.0))
@@ -103,9 +119,11 @@ def test_performance_insert_remove_lifecycle(benchmark) -> None:
         insert_count = []
         remove_count = []
 
+        @observer
         def on_insert(trigger: On[Insert, Transform]) -> None:
             insert_count.append(1)
 
+        @observer
         def on_remove(trigger: On[Remove, Transform]) -> None:
             remove_count.append(1)
 
@@ -114,11 +132,13 @@ def test_performance_insert_remove_lifecycle(benchmark) -> None:
 
         entity_id = None
 
+        @system
         def setup(commands: Commands) -> None:
             nonlocal entity_id
             e = commands.spawn_empty()
             entity_id = e.id()
 
+        @system
         def insert_remove(commands: Commands) -> None:
             assert entity_id is not None
             for _ in range(num_operations):
@@ -155,11 +175,13 @@ def test_performance_filtered_observers(benchmark) -> None:
 
         filtered_count = []
 
+        @observer
         def on_add_filtered(trigger: On[Add, Transform]) -> None:
             filtered_count.append(1)
 
         app.add_observer(on_add_filtered)
 
+        @system
         def spawn_entities(commands: Commands) -> None:
             for i in range(num_entities):
                 if i % 2 == 0:
@@ -187,6 +209,7 @@ def test_performance_despawn_lifecycle(benchmark) -> None:
 
         despawn_count = []
 
+        @observer
         def on_despawn(trigger: On[Despawn, Transform]) -> None:
             despawn_count.append(1)
 
@@ -194,11 +217,13 @@ def test_performance_despawn_lifecycle(benchmark) -> None:
 
         entity_ids = []
 
+        @system
         def spawn_entities(world: World) -> None:
             for i in range(num_entities):
                 e = world.spawn(Transform.from_xyz(float(i), 0.0, 0.0))
                 entity_ids.append(e.id())
 
+        @system
         def despawn_entities(world: World) -> None:
             for entity_id in entity_ids:
                 world.despawn(entity_id)
@@ -222,6 +247,7 @@ def test_performance_no_observers_baseline(benchmark) -> None:
         app = App()
         app.add_plugins(ScheduleRunnerPlugin.run_once())
 
+        @system
         def spawn_entities(commands: Commands) -> None:
             for i in range(num_entities):
                 commands.spawn(Transform.from_xyz(float(i), 0.0, 0.0))

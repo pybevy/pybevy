@@ -1,20 +1,17 @@
-"""Common condition helpers for use with run_if().
+"""Common run conditions and condition combinators for ``run_if()``.
 
-This module provides helper functions for creating common conditions.
-
-Note: These are Python-side helpers that work with the current run_if() implementation.
-They create simple condition functions that can be used directly.
+Every helper returns a ``SystemCondition``, the object ``@condition`` produces.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from enum import Enum
-from typing import TypeVar
+from typing import TypeVar, cast
 
 from ..input import ButtonInput, KeyCode
 from ..state import State, in_state
-from . import Res
+from . import Res, SystemCondition, condition
+from ._callables import combine
 
 __all__ = [
     "always",
@@ -29,53 +26,53 @@ __all__ = [
 StateT = TypeVar("StateT", bound=Enum)
 
 
-def always() -> Callable[[], bool]:
+def always() -> SystemCondition[[], bool]:
     """Build a condition that always returns True.
 
     Call this factory before passing its result to `run_if`.
 
     Returns:
-        A condition function that always returns True
+        A condition that always returns True
 
     Example:
         ```python
         from pybevy.ecs.conditions import always
-        from pybevy.ecs import run_if
 
-        app.add_systems(Update, run_if(my_system, always()))
+        app.add_systems(Update, my_system.run_if(always()))
         ```
     """
 
-    def condition() -> bool:
+    @condition
+    def always_true() -> bool:
         return True
 
-    return condition
+    return always_true
 
 
-def never() -> Callable[[], bool]:
+def never() -> SystemCondition[[], bool]:
     """Build a condition that always returns False.
 
     Call this factory before passing its result to `run_if`.
 
     Returns:
-        A condition function that always returns False
+        A condition that always returns False
 
     Example:
         ```python
         from pybevy.ecs.conditions import never
-        from pybevy.ecs import run_if
 
-        app.add_systems(Update, run_if(my_system, never()))
+        app.add_systems(Update, my_system.run_if(never()))
         ```
     """
 
-    def condition() -> bool:
+    @condition
+    def always_false() -> bool:
         return False
 
-    return condition
+    return always_false
 
 
-def and_(*conditions: Callable[..., bool]) -> Callable[..., bool]:
+def and_(*conditions: SystemCondition[..., object]) -> SystemCondition[..., bool]:
     """Combines multiple conditions with AND logic.
 
     All conditions must return True for the combined condition to return True.
@@ -84,32 +81,29 @@ def and_(*conditions: Callable[..., bool]) -> Callable[..., bool]:
         *conditions: Variable number of condition functions to combine
 
     Returns:
-        A condition function that returns True only if all conditions return True
+        A condition that returns True only if all conditions return True
 
     Example:
         ```python
+        from pybevy.ecs import condition
         from pybevy.ecs.conditions import and_
-        from pybevy.ecs import run_if
 
+        @condition
         def condition1() -> bool:
             return True
 
+        @condition
         def condition2() -> bool:
             return True
 
         # System runs only when both conditions are True
-        app.add_systems(Update, run_if(my_system, and_(condition1, condition2)))
+        app.add_systems(Update, my_system.run_if(and_(condition1, condition2)))
         ```
     """
-
-    def combined() -> bool:
-        return all(c() for c in conditions)
-
-    combined.__pybevy_condition_expr__ = ("and", conditions)  # type: ignore[attr-defined]
-    return combined
+    return cast("SystemCondition[..., bool]", combine("and", conditions, "and_()"))
 
 
-def or_(*conditions: Callable[..., bool]) -> Callable[..., bool]:
+def or_(*conditions: SystemCondition[..., object]) -> SystemCondition[..., bool]:
     """Combines multiple conditions with OR logic.
 
     At least one condition must return True for the combined condition to return True.
@@ -118,68 +112,58 @@ def or_(*conditions: Callable[..., bool]) -> Callable[..., bool]:
         *conditions: Variable number of condition functions to combine
 
     Returns:
-        A condition function that returns True if any condition returns True
+        A condition that returns True if any condition returns True
 
     Example:
         ```python
+        from pybevy.ecs import condition
         from pybevy.ecs.conditions import or_
-        from pybevy.ecs import run_if
 
+        @condition
         def condition1() -> bool:
             return False
 
+        @condition
         def condition2() -> bool:
             return True
 
         # System runs when either condition is True
-        app.add_systems(Update, run_if(my_system, or_(condition1, condition2)))
+        app.add_systems(Update, my_system.run_if(or_(condition1, condition2)))
         ```
     """
-
-    def combined() -> bool:
-        return any(c() for c in conditions)
-
-    combined.__pybevy_condition_expr__ = ("or", conditions)  # type: ignore[attr-defined]
-    return combined
+    return cast("SystemCondition[..., bool]", combine("or", conditions, "or_()"))
 
 
-def not_(condition: Callable[..., bool]) -> Callable[..., bool]:
+def not_(inner: SystemCondition[..., object]) -> SystemCondition[..., bool]:
     """Negates a condition.
 
     Returns True when the inner condition returns False, and vice versa.
 
     Args:
-        condition: The condition function to negate
+        inner: The condition to negate
 
     Returns:
-        A condition function that returns the opposite of the input condition
+        A condition that returns the opposite of the input condition
 
     Example:
         ```python
+        from pybevy.ecs import condition
         from pybevy.ecs.conditions import not_
-        from pybevy.ecs import run_if
 
+        @condition
         def is_paused() -> bool:
             return False
 
         # System runs when NOT paused
-        app.add_systems(Update, run_if(my_system, not_(is_paused)))
+        app.add_systems(Update, my_system.run_if(not_(is_paused)))
         ```
     """
-
-    def negated() -> bool:
-        return not condition()
-
-    negated.__pybevy_condition_expr__ = (  # type: ignore[attr-defined]
-        "not",
-        (condition,),
-    )
-    return negated
+    return cast("SystemCondition[..., bool]", combine("not", (inner,), "not_()"))
 
 
 def input_just_pressed(
     key_code: KeyCode,
-) -> Callable[[Res[ButtonInput[KeyCode]]], bool]:
+) -> SystemCondition[[Res[ButtonInput[KeyCode]]], bool]:
     """
     Create a condition that checks if a keyboard key was just pressed.
 
@@ -187,29 +171,27 @@ def input_just_pressed(
         key_code: The key code to check (e.g., KeyCode.Space)
 
     Returns:
-        A condition function with proper type annotations
+        A condition with typed parameters
 
     Example:
         ```python
         from pybevy.input import KeyCode
         from pybevy.ecs.conditions import input_just_pressed
 
-        app.add_systems(
-            Update,
-            run_if(jump_system, input_just_pressed(KeyCode.Space))
-        )
+        app.add_systems(Update, jump_system.run_if(input_just_pressed(KeyCode.Space)))
         ```
     """
-    def condition(input_state: Res[ButtonInput[KeyCode]]) -> bool:
+
+    def pressed(input_state: Res[ButtonInput[KeyCode]]) -> bool:
         return input_state.just_pressed(key_code)
 
-    condition.__name__ = f"input_just_pressed_{key_code}"
-    return condition
+    pressed.__name__ = f"input_just_pressed_{key_code}"
+    return condition(pressed)
 
 
 def state_is_active(
     state_type: type[StateT], target_value: StateT
-) -> Callable[[Res[State[StateT]]], bool]:
+) -> SystemCondition[[Res[State[StateT]]], bool]:
     """
     Create a condition that checks if a state machine has the target state.
 
@@ -218,7 +200,7 @@ def state_is_active(
         target_value: The enum member to compare against
 
     Returns:
-        A condition function with proper type annotations
+        A condition with typed parameters
 
     Example:
         ```python
@@ -234,8 +216,7 @@ def state_is_active(
 
         # Only run while the game is playing
         app.add_systems(
-            Update,
-            run_if(my_system, state_is_active(GamePhase, GamePhase.PLAYING))
+            Update, my_system.run_if(state_is_active(GamePhase, GamePhase.PLAYING))
         )
         ```
     """
@@ -245,6 +226,6 @@ def state_is_active(
             f"got {type(target_value).__name__}"
         )
 
-    condition = in_state(target_value)
-    condition.__name__ = f"state_is_{state_type.__name__}_{target_value}"
-    return condition
+    active = in_state(target_value)
+    active.__name__ = f"state_is_{state_type.__name__}_{target_value}"
+    return active

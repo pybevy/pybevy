@@ -446,6 +446,7 @@ class ParticleColor(Component):
 
 
 
+@system
 def setup_scene(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -549,6 +550,7 @@ class AnimationState:
         self.current_mode: int = 0
 
 
+@system
 def mathematical_animation_system(
     view: View[Mut[Transform], With[MathParticle]],
     time: Res[Time],
@@ -678,6 +680,7 @@ class FPSCounter:
         self.frame_count: int = 0
 
 
+@system
 def performance_monitor_system(time: Res[Time], counter: Local[FPSCounter]) -> None:
     counter.frame_count += 1
     if counter.frame_count % 300 == 0 and counter.frame_count > 0:

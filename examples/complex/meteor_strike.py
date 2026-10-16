@@ -225,6 +225,7 @@ def _build_newton_model(body_data):
     return {"model": model, "state_0": state_0, "state_1": state_1, "control": control, "solver": solver}
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -463,6 +464,7 @@ def _scatter_poses(translation, rotation, body_ids, poses):
         rotation.w[i] = poses[idx, 6]
 
 
+@system
 def poll_build(
     sim: ResMut[NewtonSim],
     status_query: Query[Mut[Text], With[StatusText]],
@@ -480,6 +482,7 @@ def poll_build(
             text.text = "Build failed!"
 
 
+@system
 def handle_input(
     keys: Res[ButtonInput[KeyCode]],
     sim: ResMut[NewtonSim],
@@ -505,6 +508,7 @@ def handle_input(
         print("Rebuilding physics...")
 
 
+@system
 def step_physics(sim: ResMut[NewtonSim]):
     """Step Newton simulation each frame."""
     if sim.state != STATE_RUNNING:
@@ -513,6 +517,7 @@ def step_physics(sim: ResMut[NewtonSim]):
     sim.read_poses()
 
 
+@system
 def sync_transforms(
     sim: Res[NewtonSim],
     view: View[tuple[Mut[Transform], PhysicsId]],
@@ -530,6 +535,7 @@ def sync_transforms(
         )
 
 
+@system
 def animate_embers(
     sim: Res[NewtonSim],
     time: Res[Time],
@@ -550,6 +556,7 @@ def animate_embers(
         transform.translation.z = mz + math.sin(angle) * ember.radius * 0.4 + math.cos(angle * 0.8) * ember.radius * 0.25
 
 
+@system
 def slowmo_controller(sim: ResMut[NewtonSim]):
     """Matrix-style slow-motion as the meteor approaches the wall."""
     if sim.state != STATE_RUNNING:

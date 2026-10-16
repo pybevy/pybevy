@@ -21,6 +21,7 @@ class Direction(Component):
     RIGHT: int = 1
 
 
+@system
 def setup(commands: Commands, asset_server: Res[AssetServer]) -> None:
     """Spawn camera and moving sprite."""
     commands.spawn(Camera2d())
@@ -36,6 +37,7 @@ def setup(commands: Commands, asset_server: Res[AssetServer]) -> None:
     )
 
 
+@system
 def sprite_movement(
     time: Res[Time],
     sprite_query: Query[tuple[Mut[Direction], Mut[Transform]]],

@@ -76,6 +76,7 @@ class CityLayout(Resource):
     num_blocks_z: int = 15
 
 
+@system
 def setup_city(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -314,6 +315,7 @@ def setup_city(
                 )
 
 
+@system
 def spawn_people(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -373,6 +375,7 @@ def spawn_people(
         )
 
 
+@system
 def setup_scene(
     commands: Commands,
 ) -> None:
@@ -591,6 +594,7 @@ def walking_kernel(
         translation.z[i] = new_z
 
 
+@system
 def walking_system(
     view: View[Mut[Transform], With[Walker]],
     time: Res[Time],
@@ -619,6 +623,7 @@ def walking_system(
         )
 
 
+@system
 def warning_light_pulsate_system(
     query: Query[tuple[Mut[PointLight], WarningLight]],
     time: Res[Time],
@@ -734,6 +739,7 @@ def camera_look_at_kernel(
             rotation.w[0] = qw
 
 
+@system
 def camera_flight_system(
     view: View[Mut[Transform], With[FlyingCamera]],
     time: Res[Time],

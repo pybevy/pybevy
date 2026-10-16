@@ -34,6 +34,7 @@ class Rotate(Component):
     pass
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -63,6 +64,7 @@ def setup(
     )
 
 
+@system
 def rotate_things(
     query: Query[Mut[Transform], With[Rotate]],
     time: Res[Time],

@@ -25,6 +25,7 @@ from pybevy.mesh import SkinnedMesh
 from pybevy.prelude import *
 
 
+@system
 def setup(commands: Commands, asset_server: Res[AssetServer]) -> None:
     """Set up camera and load GLTF scene."""
     # Camera
@@ -41,6 +42,7 @@ def setup(commands: Commands, asset_server: Res[AssetServer]) -> None:
     commands.spawn(WorldAssetRoot(scene_handle))
 
 
+@system
 def joint_animation(
     time: Res[Time],
     skinned_meshes: Query[ChildOf, With[SkinnedMesh]],

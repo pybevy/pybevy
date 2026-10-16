@@ -21,6 +21,7 @@ class Countdown(Resource):
         self.entity_timer = Timer(5.0, TimerMode.Once)
 
 
+@system
 def print_when_completed(time: Res[Time], countdown_res: ResMut[Countdown]) -> None:
     """Tick the entity timer and print when complete."""
     delta = time.delta_secs()
@@ -29,6 +30,7 @@ def print_when_completed(time: Res[Time], countdown_res: ResMut[Countdown]) -> N
         print("Entity timer just finished")
 
 
+@system
 def countdown(time: Res[Time], countdown_res: ResMut[Countdown]) -> None:
     """Control ticking the timer within the countdown resource."""
     delta = time.delta_secs()

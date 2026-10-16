@@ -188,6 +188,7 @@ commands.spawn(
 ## Recipe: Styled Button
 
 ```python
+@system
 def spawn_button(commands: Commands) -> None:
     button_node = Node()
     button_node.border = UiRect.all(Val.Px(2.0))

@@ -10,6 +10,7 @@ alpha compositing settings from the Rust version are not included.
 from pybevy.prelude import *
 
 
+@system
 def setup(commands: Commands, asset_server: Res[AssetServer]) -> None:
     """Set up a camera and sprite."""
     commands.spawn(Camera2d())

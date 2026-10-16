@@ -43,6 +43,7 @@ class PrintingTimer(Resource):
         self.timer = Timer(1.0, TimerMode.Repeating)
 
 
+@system
 def setup(
     commands: Commands, asset_server: Res[AssetServer], color_tint: Res[ColorTint]
 ) -> None:
@@ -92,6 +93,7 @@ def setup(
     )
 
 
+@system
 def move_camera(
     time: Res[Time], camera_query: Single[Mut[Transform], With[Camera2d]]
 ) -> None:
@@ -110,6 +112,7 @@ def move_camera(
     camera.translation.z += rotated_delta.z
 
 
+@system
 def print_sprite_count(
     time: Res[Time], timer: ResMut[PrintingTimer], sprites: Query[Sprite]
 ) -> None:

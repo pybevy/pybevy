@@ -41,6 +41,7 @@ commands.insert_resource(WireframeConfig(
 ))
 
 # Toggle at runtime
+@system
 def toggle_wireframe(keys: Res[ButtonInput[KeyCode]], config: ResMut[WireframeConfig]) -> None:
     if keys.just_pressed(KeyCode.KeyW):
         config.global_ = not config.global_

@@ -130,6 +130,7 @@ class Time(Resource, Generic[_TimeContext]):
         from pybevy.ecs import Res
         from pybevy.time import Time
 
+        @system
         def update_animation(time: Res[Time]) -> None:
             # Delta time - time since last frame
             dt = time.delta_secs()  # e.g., 0.016 for 60 FPS
@@ -221,6 +222,7 @@ class Time(Resource, Generic[_TimeContext]):
 
         Example:
             ```python
+            @system
             def move_player(time: Res[Time]) -> None:
                 dt = time.delta()
                 # Use for frame-rate independent movement
@@ -250,6 +252,7 @@ class Time(Resource, Generic[_TimeContext]):
 
         Example:
             ```python
+            @system
             def check_timeout(time: Res[Time]) -> None:
                 if time.elapsed() > timedelta(minutes=5):
                     print("5 minutes have passed!")
@@ -514,6 +517,7 @@ class Timer:
         # Create a 5-second cooldown timer
         cooldown = Timer(timedelta(seconds=5), TimerMode.Once)
 
+        @system
         def update_timer(time: Res[Time]) -> None:
             cooldown.tick(time.delta())
 
@@ -585,6 +589,7 @@ class Timer:
 
         Example:
             ```python
+            @system
             def update_system(time: Res[Time]) -> None:
                 timer.tick(time.delta())  # Advance by frame delta
             ```
@@ -859,6 +864,7 @@ class Stopwatch:
         # Create a new stopwatch
         stopwatch = Stopwatch()
 
+        @system
         def update_stopwatch(time: Res[Time]) -> None:
             stopwatch.tick(time.delta())
             print(f"Elapsed: {stopwatch.elapsed_secs():.2f}s")
@@ -942,6 +948,7 @@ class Fixed:
         from pybevy.time import Time, Fixed
 
         # In Bevy Rust: Res<Time<Fixed>>
+        @system
         def fixed_update(time: Res[Time[Fixed]]) -> None:
             # This system runs in FixedUpdate schedule
             pass
@@ -965,6 +972,7 @@ class Real:
         from pybevy.time import Real, Time
 
         # Real time is unaffected by game pause
+        @system
         def ui_animation(time_real: Res[Time[Real]]) -> None:
             # UI keeps animating even when game is paused
             pass
@@ -987,6 +995,7 @@ class Virtual:
         from pybevy.time import Time, Virtual
 
         # Control game time speed
+        @system
         def toggle_slow_motion(time: ResMut[Time[Virtual]]) -> None:
             if time.relative_speed() == 1.0:
                 time.set_relative_speed(0.5)  # Slow motion

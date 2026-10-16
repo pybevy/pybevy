@@ -6,6 +6,7 @@ In Python, system functions can capture variables from outer scopes.
 from pybevy.prelude import *
 
 
+@system
 def simple_function() -> None:
     """A simple function that can be used as a system."""
     print("Hello from a simple function!")
@@ -15,12 +16,13 @@ def make_stateful_system(initial_value: str):
     """Create a closure that maintains state between calls."""
     state = {"value": initial_value}
 
-    def system() -> None:
+    @system
+    def system_fn() -> None:
         print(f"Hello from a stateful closure! {state['value']}")
         # Modify the captured state - will persist between calls
         state["value"] = f"{state['value']} - updated"
 
-    return system
+    return system_fn
 
 
 @entrypoint
@@ -31,9 +33,10 @@ def main(app: App) -> App:
     stateful_system = make_stateful_system("foo")
 
     # Inline lambda (limited to expressions only in Python)
-    inline_lambda = lambda: print("Hello from an inline lambda!")
+    inline_lambda = system(lambda: print("Hello from an inline lambda!"))
 
     # Closure that captures outside variable
+    @system
     def closure_with_capture() -> None:
         print(
             f"Hello from a closure that captured 'outside_variable'! {outside_variable}"

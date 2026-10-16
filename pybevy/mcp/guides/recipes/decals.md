@@ -14,6 +14,7 @@ def main(app: App) -> App:
         .add_systems(Startup, setup)
     )
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -89,7 +90,7 @@ size the footprint, `scale.y` does nothing, and the quad fades out over
 ```python
 from pybevy.assets import Assets
 from pybevy.core_pipeline import DepthPrepass
-from pybevy.ecs import Commands, ResMut
+from pybevy.ecs import Commands, ResMut, system
 from pybevy.image import Image
 from pybevy.material import AlphaMode
 from pybevy.math import Vec3
@@ -103,6 +104,7 @@ from pybevy.pbr import (
 from pybevy.render import Extent3d
 from pybevy.transform import Transform
 
+@system
 def setup_forward_decal(
     commands: Commands,
     decal_materials: ResMut[Assets[ForwardDecalMaterial]],

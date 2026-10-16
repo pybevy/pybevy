@@ -175,6 +175,7 @@ def normalize_to_rgb(img_data: np.ndarray) -> np.ndarray:
     return (norm_map * 255).astype(np.uint8)
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -405,6 +406,7 @@ def setup(
     )
 
 
+@system
 def train_cnn_system(
     time: Res[Time], bundle: ResMut[ModelBundleCNN], viz_state: ResMut[CnnVizState]
 ) -> None:
@@ -428,6 +430,7 @@ def train_cnn_system(
     viz_state.fc1_weights = bundle.model.fc1.weight.data.cpu().numpy()
 
 
+@system
 def update_input_cubes_system(
     viz_state: Res[CnnVizState], q_input: Query[tuple[Mut[Transform], InputCube]]
 ) -> None:
@@ -437,6 +440,7 @@ def update_input_cubes_system(
         transform.scale = Vec3.splat(scale)
 
 
+@system
 def update_output_cubes_system(
     viz_state: Res[CnnVizState], q_output: Query[tuple[Mut[Transform], OutputCube]]
 ) -> None:
@@ -450,6 +454,7 @@ def _weight_to_scale(w: float, max_abs: float) -> float:
     return 0.01 + (np.abs(w) / max_abs) * 0.19
 
 
+@system
 def update_conv1_weights_system(
     viz_state: Res[CnnVizState],
     q_conv1: Query[tuple[Mut[Transform], Conv1WeightCube]],
@@ -462,6 +467,7 @@ def update_conv1_weights_system(
         )
 
 
+@system
 def update_conv2_weights_system(
     viz_state: Res[CnnVizState],
     q_conv2: Query[tuple[Mut[Transform], Conv2WeightCube]],
@@ -477,6 +483,7 @@ def update_conv2_weights_system(
             )
 
 
+@system
 def update_detailed_connections_system(
     viz_state: Res[CnnVizState],
     conn_res: Res[DetailedConnectionMesh],
@@ -623,6 +630,7 @@ def update_detailed_connections_system(
                         v_idx += 2
 
 
+@system
 def rotate_camera_system(time: Res[Time], query: Query[Mut[Transform], With[Camera3d]]) -> None:
     for transform in query:
         rotation = Quat.from_rotation_y(0.3 * time.delta_secs())

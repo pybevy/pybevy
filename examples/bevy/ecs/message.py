@@ -45,6 +45,7 @@ class DamageTimer(Resource):
         self.timer: Timer = Timer(1.0, TimerMode.Repeating)
 
 
+@system
 def deal_damage_over_time(
     time: Res[Time],
     state: ResMut[DamageTimer],
@@ -56,6 +57,7 @@ def deal_damage_over_time(
         attempt_writer.write(AttemptDamage(amount=10))
 
 
+@system
 def apply_armor_to_damage(
     dmg_reader: MessageReader[AttemptDamage],
     dmg_writer: MessageWriter[DealDamage],
@@ -74,6 +76,7 @@ def apply_armor_to_damage(
             dmg_writer.write(DealDamage(amount=reduced_amount))
 
 
+@system
 def apply_damage_to_health(
     deal_damage_reader: MessageReader[DealDamage],
     damage_received_writer: MessageWriter[DamageReceived],
@@ -85,12 +88,14 @@ def apply_damage_to_health(
             damage_received_writer.write(DamageReceived())
 
 
+@system
 def play_damage_received_sound(damage_received_reader: MessageReader[DamageReceived]) -> None:
     """Play sound when damage is received."""
     for _ in damage_received_reader:
         print("Playing a sound.")
 
 
+@system
 def play_damage_received_particle_effect(
     damage_received_reader: MessageReader[DamageReceived],
 ) -> None:

@@ -80,6 +80,7 @@ class RightSprite(Component):
     """Marker component for the right sprite."""
 
 
+@system
 def setup(
     commands: Commands,
     asset_server: Res[AssetServer],
@@ -134,6 +135,7 @@ def setup(
     )
 
 
+@system
 def execute_animations(
     time: Res[Time],
     query: Query[tuple[Mut[AnimationConfig], Mut[Sprite]]],
@@ -162,12 +164,14 @@ def execute_animations(
             config.frame_timer = AnimationConfig.timer_from_fps(config.fps)
 
 
+@system
 def trigger_animation_left(animation: Single[Mut[AnimationConfig], With[LeftSprite]]) -> None:
     """Trigger animation for the left sprite (called when left arrow is pressed)."""
     config = animation.into_inner()
     config.frame_timer = AnimationConfig.timer_from_fps(config.fps)
 
 
+@system
 def trigger_animation_right(animation: Single[Mut[AnimationConfig], With[RightSprite]]) -> None:
     """Trigger animation for the right sprite (called when right arrow is pressed)."""
     config = animation.into_inner()
@@ -175,11 +179,13 @@ def trigger_animation_right(animation: Single[Mut[AnimationConfig], With[RightSp
 
 
 # Condition helper functions (module-level for proper type annotations)
+@condition
 def check_left_arrow(input_state: Res[ButtonInput[KeyCode]]) -> bool:
     """Check if left arrow key was just pressed."""
     return input_state.just_pressed(KeyCode.ArrowLeft)
 
 
+@condition
 def check_right_arrow(input_state: Res[ButtonInput[KeyCode]]) -> bool:
     """Check if right arrow key was just pressed."""
     return input_state.just_pressed(KeyCode.ArrowRight)

@@ -7,7 +7,7 @@ from pytest_benchmark.fixture import BenchmarkFixture
 
 from benches._helpers import initialize
 from pybevy.app import App, ScheduleRunnerPlugin, Startup, Update
-from pybevy.ecs import Commands, Mut, Query
+from pybevy.ecs import Commands, Mut, Query, system
 from pybevy.transform import Transform
 
 ENTITY_COUNTS = [1000, 10000]
@@ -15,15 +15,16 @@ ENTITY_COUNTS = [1000, 10000]
 
 def _benchmark_app(
     entity_count: int,
-    system: Callable[..., None],
+    update_system: Callable[..., None],
 ) -> App:
+    @system
     def setup(commands: Commands) -> None:
         for index in range(entity_count):
             commands.spawn(Transform.from_xyz(float(index), 1.0, 2.0))
 
     app = App().add_plugins(ScheduleRunnerPlugin.run_once())
     app.add_systems(Startup, setup)
-    app.add_systems(Update, system)
+    app.add_systems(Update, system(update_system))
     initialize(app)
     app.update()
     return app

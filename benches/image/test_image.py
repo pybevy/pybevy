@@ -6,7 +6,7 @@ import pybevy.array as xp
 from benches._helpers import initialize
 from pybevy.app import App, MinimalPlugins, Startup, Update
 from pybevy.assets import AssetPlugin, Assets
-from pybevy.ecs import Commands, Query, ResMut
+from pybevy.ecs import Commands, Query, ResMut, system
 from pybevy.image import Image, ImagePlugin
 from pybevy.render import Extent3d
 from pybevy.sprite import Sprite
@@ -17,6 +17,7 @@ image_height = 2160
 pixel_count = image_width * image_height * 4
 
 
+@system
 def setup(images: ResMut[Assets[Image]], commands: Commands) -> None:
     data = np.random.randint(0, 255, size=pixel_count, dtype=np.uint8)
     image = Image(Extent3d(width=image_width, height=image_height, depth_or_array_layers=1), data=data)
@@ -33,6 +34,7 @@ def create_app() -> App:
 
 def test_image_data_copy(benchmark: BenchmarkFixture) -> None:
     """Benchmark copying image data to owned NumPy array."""
+    @system
     def update_system(assets: Assets[Image], query: Query[Sprite]) -> None:
         sprite = query.single()
         assert sprite is not None
@@ -53,6 +55,7 @@ def test_image_set_data(benchmark: BenchmarkFixture) -> None:
     """Benchmark copying data into image."""
     new_data = np.random.randint(0, 255, size=pixel_count, dtype=np.uint8)
 
+    @system
     def update_system(assets: ResMut[Assets[Image]], query: Query[Sprite]) -> None:
         sprite = query.single()
         assert sprite is not None
@@ -70,6 +73,7 @@ def test_image_set_data(benchmark: BenchmarkFixture) -> None:
 
 def test_image_data_readonly_context(benchmark: BenchmarkFixture) -> None:
     """Benchmark zero-copy readonly access via context manager."""
+    @system
     def update_system(assets: Assets[Image], query: Query[Sprite]) -> None:
         sprite = query.single()
         assert sprite is not None
@@ -88,6 +92,7 @@ def test_image_data_readonly_context(benchmark: BenchmarkFixture) -> None:
 
 def test_image_data_mutable_context(benchmark: BenchmarkFixture) -> None:
     """Benchmark zero-copy mutable access via context manager."""
+    @system
     def update_system(assets: ResMut[Assets[Image]], query: Query[Sprite]) -> None:
         sprite = query.single()
         assert sprite is not None
@@ -107,6 +112,7 @@ def test_image_data_mutable_context(benchmark: BenchmarkFixture) -> None:
 @pytest.mark.timeout(60)
 def test_image_data_readonly_with_computation(benchmark: BenchmarkFixture) -> None:
     """Benchmark readonly access with a full-image array reduction."""
+    @system
     def update_system(assets: Assets[Image], query: Query[Sprite]) -> None:
         sprite = query.single()
         assert sprite is not None
@@ -128,6 +134,7 @@ def test_image_data_readonly_with_computation(benchmark: BenchmarkFixture) -> No
 @pytest.mark.timeout(60)
 def test_image_data_mutable_with_modification(benchmark: BenchmarkFixture) -> None:
     """Benchmark mutable access with a full-image pixel modification."""
+    @system
     def update_system(assets: ResMut[Assets[Image]], query: Query[Sprite]) -> None:
         sprite = query.single()
         assert sprite is not None

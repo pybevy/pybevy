@@ -17,17 +17,20 @@ class TickCounter(Resource):
         self.tick = 0
 
 
+@system
 def setup(commands: Commands) -> None:
     commands.spawn(Counter(0))
     print("[setup] Spawned 1 entity", flush=True)
 
 
+@system
 def increment(query: Query[Mut[Counter]]) -> None:
     """Increment the counter every frame, triggering change detection."""
     for counter in query:
         counter.value += 1
 
 
+@system
 def detect_changed(
     query: Query[Counter, Changed[Counter]],
     tick_counter: ResMut[TickCounter],

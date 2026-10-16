@@ -40,6 +40,7 @@ class CustomMaterial(Material):
     is_red: bool = False
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],

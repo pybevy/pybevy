@@ -16,6 +16,7 @@ class BloomCamera(Component):
     """Marker for the camera with bloom."""
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -72,6 +73,7 @@ def setup(
     print("======================\n")
 
 
+@system
 def update_bloom_settings(
     camera_query: Query[tuple[Entity, Mut[Tonemapping], Mut[Bloom]], With[BloomCamera]],
     commands: Commands,
@@ -160,6 +162,7 @@ def update_bloom_settings(
         return  # Only process first camera
 
 
+@system
 def toggle_bloom_back_on(
     camera_query: Query[Entity, tuple[With[BloomCamera], Without[Bloom]]],
     commands: Commands,

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from ..app import App, Plugin, Update
 from ..decorators import component, plugin, resource
-from ..ecs import Component, MessageReader, Mut, Query, Res, Resource
+from ..ecs import Component, MessageReader, Mut, Query, Res, Resource, system
 from ..input import (
     ButtonInput,
     KeyCode,
@@ -57,6 +57,7 @@ class OrbitCameraState(Resource):
     """Compatibility resource; modifiers are read directly from ButtonInput."""
 
 
+@system
 def orbit_camera_control_system(
     query: Query[tuple[Mut[Transform], Mut[OrbitCamera]]],
     mouse_buttons: Res[ButtonInput[MouseButton]],

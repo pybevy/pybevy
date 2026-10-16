@@ -25,6 +25,7 @@ class InputDisplay(Component):
 
 
 
+@system
 def setup(commands: Commands) -> None:
     """Setup the scene."""
     # The gamepad entities are created automatically by Bevy when controllers connect
@@ -36,6 +37,7 @@ def setup(commands: Commands) -> None:
     print()
 
 
+@system
 def display_gamepad_state(query: Query[tuple[Gamepad, Entity]]) -> None:
     """Display current state of all connected gamepads."""
     for gamepad, entity in query:
@@ -107,6 +109,7 @@ def display_gamepad_state(query: Query[tuple[Gamepad, Entity]]) -> None:
             print(f"[Gamepad {entity}] Right Trigger: {right_trigger:.2f}")
 
 
+@system
 def handle_button_events(reader: MessageReader[GamepadButtonChangedEvent]) -> None:
     """Handle gamepad button change events."""
     for event in reader:
@@ -116,6 +119,7 @@ def handle_button_events(reader: MessageReader[GamepadButtonChangedEvent]) -> No
             print(f"[Event] Button {event.button} released")
 
 
+@system
 def handle_axis_events(reader: MessageReader[GamepadAxisChangedEvent]) -> None:
     """Handle gamepad axis change events."""
     for event in reader:
@@ -124,6 +128,7 @@ def handle_axis_events(reader: MessageReader[GamepadAxisChangedEvent]) -> None:
             print(f"[Event] Axis {event.axis} changed to {event.value:.2f}")
 
 
+@system
 def handle_connection_events(reader: MessageReader[GamepadConnectionEvent]) -> None:
     """Handle gamepad connection/disconnection events."""
     for event in reader:
@@ -137,6 +142,7 @@ def handle_connection_events(reader: MessageReader[GamepadConnectionEvent]) -> N
             print()
 
 
+@system
 def show_usage_every_5_seconds(time: Res[Time]) -> None:
     """Periodically show usage instructions."""
     elapsed = time.elapsed_secs()

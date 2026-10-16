@@ -59,6 +59,7 @@ class SamplesText(Component):
     """Marks the span showing the sample count."""
 
 
+@system
 def setup_camera(commands: Commands) -> None:
     commands.spawn(
         Camera3d(),
@@ -112,6 +113,7 @@ def uv_debug_texture() -> Image:
     return image
 
 
+@system
 def setup_scene(
     commands: Commands,
     asset_server: Res[AssetServer],
@@ -253,6 +255,7 @@ def spawn_trees(
             )
 
 
+@system
 def setup_ui(commands: Commands) -> None:
     root = commands.spawn(
         Text(),
@@ -265,6 +268,7 @@ def setup_ui(commands: Commands) -> None:
     commands.spawn(TextSpan("Spacebar: cycle camera\n"), ChildOf(root))
 
 
+@system
 def keyboard_inputs(
     motion_blur_row: Single[Mut[MotionBlur]],
     presses: Res[ButtonInput[KeyCode]],
@@ -289,6 +293,7 @@ def keyboard_inputs(
     samples_row.into_inner().text = f"Samples: {motion_blur.samples}\n"
 
 
+@system
 def move_cars(
     time: Res[Time],
     movables: Query[tuple[Mut[Transform], Moves, Children]],
@@ -313,6 +318,7 @@ def move_cars(
             wheel.rotate_local_y(delta.length() / circumference * math.pi * 2.0)
 
 
+@system
 def move_camera(
     camera: Single[tuple[Mut[Transform], Mut[Projection]], Without[CameraTracked]],
     tracked_row: Single[Transform, With[CameraTracked]],

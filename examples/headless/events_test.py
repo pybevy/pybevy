@@ -17,10 +17,12 @@ class TickCounter(Resource):
         self.total_damage = 0.0
 
 
+@system
 def emit_damage(messages: MessageWriter[DamageMessage]) -> None:
     messages.write(DamageMessage(10.0))
 
 
+@system
 def track_damage(
     messages: MessageReader[DamageMessage],
     counter: ResMut[TickCounter],

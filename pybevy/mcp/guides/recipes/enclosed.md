@@ -16,6 +16,7 @@ def main(app: App) -> App:
         .add_systems(Startup, setup)
     )
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],

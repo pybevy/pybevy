@@ -46,11 +46,13 @@ class Rotator(Component):
     """Marks entities that should rotate."""
 
 
+@system
 def rotate(time: Res[Time], query: Query[Mut[Transform], With[Rotator]]) -> None:
     for transform in query:
         transform.rotate_x(3.0 * time.delta_secs())
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -135,9 +137,11 @@ from pybevy.prelude import *
 
 ROTATION_SPEED = 1.0  # Change this and press F5!
 
+@system
 def setup(commands: Commands) -> None:
     commands.spawn(Transform.from_xyz(0.0, 0.0, 0.0))
 
+@system
 def ai_behavior(query: Query[Mut[Transform]], time: Res[Time]) -> None:
     for transform in query:
         transform.rotation *= Quat.from_rotation_y(time.delta_secs() * ROTATION_SPEED)

@@ -16,6 +16,7 @@ from pybevy.prelude import *
 from pybevy.window import CursorGrabMode, CursorOptions
 
 
+@system
 def grab_mouse(
     cursor_options_query: Single[Mut[CursorOptions]],
     mouse: Res[ButtonInput[MouseButton]],

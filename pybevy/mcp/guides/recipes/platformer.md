@@ -61,6 +61,7 @@ class GameScore(Resource):
 Reads keyboard input, applies horizontal movement, gravity, and jump impulse. Reference `guide://input` for full input API details.
 
 ```python
+@system
 def move_player(
     query: Query[tuple[Mut[Transform], Mut[PlayerState]], With[Player]],
     keyboard: Res[ButtonInput[KeyCode]],
@@ -114,6 +115,7 @@ Smooth lerp camera that tracks the player horizontally with slight vertical offs
 ```python
 CAM_LERP = 3.0
 
+@system
 def follow_camera(
     cam_q: Query[Mut[Transform], tuple[With[MainCamera], Without[Player]]],
     player_q: Query[Transform, tuple[With[Player], With[PlayerState]]],
@@ -136,6 +138,7 @@ def follow_camera(
 Spinning collectibles that despawn when the player gets close:
 
 ```python
+@system
 def spin_collectibles(
     query: Query[tuple[Mut[Transform], CollectibleSpin], With[Collectible]],
     time: Res[Time],
@@ -149,6 +152,7 @@ def spin_collectibles(
         transform.translation.y = 1.5 + math.sin(t * 2.0 + spin.offset) * 0.25
 
 
+@system
 def collect_gems(
     commands: Commands,
     player_q: Query[Transform, tuple[With[Player], With[PlayerState]]],
@@ -172,7 +176,9 @@ Uses UI `Text` (not `Text2d` - `Text2d` requires `Camera2d`). See `guide://ui-te
 ```python
 from pybevy.ui import BackgroundColor, Node, PositionType, Text
 from pybevy.text import TextFont, TextColor
+from pybevy.ecs import system
 
+@system
 def setup_hud(commands: Commands, score: Res[GameScore]) -> None:
     node = Node()
     node.position_type = PositionType.Absolute
@@ -189,6 +195,7 @@ def setup_hud(commands: Commands, score: Res[GameScore]) -> None:
     )
 
 
+@system
 def update_hud(
     query: Query[Mut[Text], With[ScoreDisplay]],
     score: Res[GameScore],
@@ -204,6 +211,7 @@ def update_hud(
 PLAYER_Z = 6.5  # Z position for side-scrolling plane
 GEM_POSITIONS = [-8.0, -4.0, 0.0, 4.0, 8.0]
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],

@@ -55,7 +55,7 @@ use crate::{
     app::{
         PyStage,
         app_exit::{PyAppExit, materialize_app_exit},
-        chained_systems::{PyChainedSystemSets, flatten_system_units},
+        chained_systems::{PyChainedSystemSets, flatten_system_units, normalize_system_unit},
         hot_reload::{
             bindings::{PyAppReloadState, add_hot_reload_system},
             cleanup::clear_entities_and_resources,
@@ -68,6 +68,7 @@ use crate::{
         plugins::PyPluginGroupBuilder,
     },
     ecs::{
+        decorated_callable::{CallableKind, unwrap_decorated},
         dynamic_system::{
             LastErrorBuffer, SystemErrorBuffer, clear_system_param_cache, lock_or_recover,
         },
@@ -924,10 +925,15 @@ impl PyApp {
     ) -> PyResult<Py<PyApp>> {
         pyself.ensure_active()?;
 
-        let mut units = Vec::new();
+        let mut flattened = Vec::new();
         for system in systems.iter() {
-            flatten_system_units(&system, &mut units)?;
+            flatten_system_units(&system, &mut flattened)?;
         }
+        // Reject every undecorated unit before any of them is registered.
+        let units = flattened
+            .iter()
+            .map(|unit| normalize_system_unit(unit, "add_systems()"))
+            .collect::<PyResult<Vec<_>>>()?;
 
         if !pyself.is_reload_temp.get() {
             let mut names = pyself.pending_system_names.borrow_mut();
@@ -1551,6 +1557,7 @@ impl PyApp {
         observer: Bound<'_, PyAny>,
     ) -> PyResult<Py<PyApp>> {
         pyself.ensure_active()?;
+        let observer = unwrap_decorated(&observer, CallableKind::Observer, "add_observer()")?;
 
         // Collect observers for re-registration after reload
         if pyself.is_reload_temp.get() {
@@ -1726,12 +1733,16 @@ impl PyApp {
     ) -> PyResult<()> {
         self.ensure_group_configuration()?;
         self.ensure_active()?;
+        let funcs = funcs
+            .iter()
+            .map(|func| unwrap_decorated(&func, CallableKind::System, "_run_systems_once()"))
+            .collect::<PyResult<Vec<_>>>()?;
 
         let mut guard = self.begin_operation(AppOperation::WorldCallback)?;
         PyWorld::with_temporary(guard.app_mut().world_mut(), py, |py_world| {
             let world_obj = Py::new(py, py_world.duplicate())?;
-            for func in funcs.iter() {
-                world_obj.borrow(py).run_system_once(func)?;
+            for func in funcs {
+                world_obj.borrow(py).run_system_function_once(func)?;
             }
             Ok(())
         })

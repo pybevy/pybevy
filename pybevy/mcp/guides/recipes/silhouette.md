@@ -24,6 +24,7 @@ def main(app: App) -> App:
     )
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -126,6 +127,7 @@ def setup(
         )
 
 
+@system
 def drift_fog(query: Query[Mut[Transform], With[Drifter]], time: Res[Time]) -> None:
     t = time.elapsed_secs()
     idx = 0

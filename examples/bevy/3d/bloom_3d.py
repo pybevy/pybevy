@@ -21,6 +21,7 @@ class Bouncing(Component):
     """Marker for bouncing spheres."""
 
 
+@system
 def setup_scene(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -78,6 +79,7 @@ def setup_scene(
     print("======================\n")
 
 
+@system
 def bounce_spheres(
     time: Res[Time],
     spheres: Query[Mut[Transform], With[Bouncing]],

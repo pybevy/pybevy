@@ -24,6 +24,7 @@ class ColorBuffer(Resource):
     handle: Handle[ShaderBuffer]
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -47,6 +48,7 @@ def setup(
     )
 
 
+@system
 def animate(
     time: Res[Time],
     state: Res[ColorBuffer],

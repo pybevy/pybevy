@@ -43,6 +43,7 @@ class AnimationTimer(Component):
     timer: Timer
 
 
+@system
 def animate_sprite(
     time: Res[Time],
     query: Query[tuple[AnimationIndices, Mut[AnimationTimer], Mut[Sprite]]],
@@ -61,6 +62,7 @@ def animate_sprite(
                     atlas.index += 1
 
 
+@system
 def setup(
     commands: Commands,
     asset_server: Res[AssetServer],

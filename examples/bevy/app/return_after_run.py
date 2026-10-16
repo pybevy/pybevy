@@ -20,6 +20,7 @@ yet available, so we use the default window configuration.
 from pybevy.prelude import *
 
 
+@system
 def tick() -> None:
     """System that runs each frame."""
 

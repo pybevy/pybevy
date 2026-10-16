@@ -10,7 +10,9 @@ use pybevy_core::{
     BatchComponent, PreparedBatchComponent,
     batch_columns::{
         ColumnDType, ColumnData, ColumnShape, CustomColumnError, CustomCountAgreement,
+        IntegerColumn,
     },
+    check_integer_batch_column,
     component_batch::{FieldColumn, build_wrapper_rows, column_dtype_for, field_column_for},
     registry::global_registry,
 };
@@ -328,6 +330,10 @@ impl PyCustomComponentBatch {
             } else {
                 ColumnShape::CustomScalar { field: &field_name }
             };
+            if let Some(integer) = IntegerColumn::from_dtype(column_dtype) {
+                let name = format!("{}.{field_name}", layout.name);
+                check_integer_batch_column(&value, &name, integer)?;
+            }
             let is_sequence = value.is_instance_of::<PyList>() || value.is_instance_of::<PyTuple>();
             let is_bounded_array = value.is_instance(&array_type)?;
             if (is_sequence || is_bounded_array)

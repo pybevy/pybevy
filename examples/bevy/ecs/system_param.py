@@ -18,6 +18,7 @@ class PlayerCount(Resource):
         self.count: int = 0
 
 
+@system
 def spawn(commands: Commands) -> None:
     """Spawn some players to count."""
     commands.spawn(Player())
@@ -25,6 +26,7 @@ def spawn(commands: Commands) -> None:
     commands.spawn(Player())
 
 
+@system
 def count_players(query: Query[Player], player_count: ResMut[PlayerCount]) -> None:
     """Count players using Query and Resource parameters directly."""
     player_count.count = len(list(query))

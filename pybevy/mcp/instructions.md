@@ -133,6 +133,14 @@ Vector payloads of messages, `WindowEvent` variants, `TextEdit` point variants, 
   ```python
   from pybevy.prelude import *
 
+  @system
+  def setup(commands: Commands) -> None:
+      ...
+
+  @system
+  def animate(query: Query[Mut[Transform]], time: Res[Time]) -> None:
+      ...
+
   @entrypoint
   def main(app: App) -> App:
       return (
@@ -145,9 +153,10 @@ Vector payloads of messages, `WindowEvent` variants, `TextEdit` point variants, 
   if __name__ == "__main__":
       main().run()
   ```
-  Common mistakes: missing `@entrypoint` decorator, wrong signature (must be `def main(app: App) -> App`), missing `return app`, missing `if __name__` guard.
+  Common mistakes: missing `@entrypoint` decorator, missing `@system` on a registered function, wrong signature (must be `def main(app: App) -> App`), missing `return app`, missing `if __name__` guard.
 - **Do not add `McpPlugin` to scenes run by `pybevy mcp`** - the entrypoint injects it on the port the bridge expects and raises `RuntimeError` if the scene already added one. Add it only when `os.environ.get("PYBEVY_MCP") != "1"`.
 - **Always use chained return style** - use `return (app.add_plugins(...).add_systems(...))`. Do NOT use separate `app.method(...)` calls followed by `return app`.
+- Decorate every system with `@system`, every run condition with `@condition`, and every observer with `@observer` (all from `pybevy.ecs`, also in the prelude); `add_systems`, `run_if`, and `add_observer` raise `TypeError` for plain functions. Order and configure the decorated object directly: `fn.after(...)`, `.before(...)`, `.run_if(cond)`, `.in_set(...)` (see `guide://patterns`).
 - Always use `from pybevy.prelude import *` (NOT `from pybevy import *`)
 - Pass shapes directly to meshes.add(): `meshes.add(Cuboid(1,1,1))`
 - Compare enum values with constructed variants, such as `MouseButton.Left()`. Comparisons with uncalled variant classes from the same family raise `TypeError`; compact unit variants such as `KeyCode.KeyA` keep their existing spelling.

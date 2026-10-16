@@ -1277,7 +1277,11 @@ result = _make_in_state_condition(target_state)
         .get_item("result")?
         .ok_or_else(|| PyRuntimeError::new_err("Failed to create in_state condition"))?;
 
-    Ok(condition.unbind())
+    Ok(py
+        .import("pybevy.ecs")?
+        .getattr("condition")?
+        .call1((condition,))?
+        .unbind())
 }
 
 /// Apply pending state transitions for all registered state types

@@ -44,6 +44,7 @@ class RotateToPlayer(Component):
     rotation_speed: float = 0.0  # Radians per second
 
 
+@system
 def setup(commands: Commands, assets: Res[AssetServer]) -> None:
     """Set up the game entities and camera."""
     ship_handle = assets.load("bevy/textures/simplespace/ship_C.png", asset_type=Image)
@@ -95,6 +96,7 @@ def setup(commands: Commands, assets: Res[AssetServer]) -> None:
     )
 
 
+@system
 def player_movement_system(
     time: Res[Time],
     keyboard_input: Res[ButtonInput[KeyCode]],
@@ -133,6 +135,7 @@ def player_movement_system(
     transform.translation = transform.translation.min(extents).max(-extents)
 
 
+@system
 def snap_to_player_system(
     player_query: Single[Transform, With[Player]],
     query: Query[Mut[Transform], tuple[With[SnapToPlayer], Without[Player]]],
@@ -155,6 +158,7 @@ def snap_to_player_system(
         enemy_transform.rotation = rotate_to_player
 
 
+@system
 def rotate_to_player_system(
     time: Res[Time],
     query: Query[tuple[RotateToPlayer, Mut[Transform]], Without[Player]],

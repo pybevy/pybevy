@@ -12,6 +12,7 @@ Demonstrates:
 from pybevy.prelude import *
 
 
+@system
 def setup(commands: Commands, asset_server: Res[AssetServer]) -> None:
     """Spawn camera and three overlapping sprites with different transparency."""
     commands.spawn(Camera2d())

@@ -1520,6 +1520,7 @@ class InheritedVisibility(Component):
         from pybevy.camera import InheritedVisibility
         from pybevy.ecs import Query
 
+        @system
         def check_visibility(query: Query[InheritedVisibility]) -> None:
             for inherited_vis in query:
                 if inherited_vis.get():
@@ -1566,6 +1567,7 @@ class ViewVisibility(Component):
         from pybevy.camera import ViewVisibility
         from pybevy.ecs import Query
 
+        @system
         def check_rendered(query: Query[ViewVisibility]) -> None:
             for view_vis in query:
                 if view_vis.get():

@@ -79,6 +79,7 @@ class SwarmState(Resource):
         self.mean_phase_sin = 0.0
 
 
+@system
 def setup_swarm(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -285,6 +286,7 @@ def kuramoto_sync_kernel(
     return coherence, mean_cos
 
 
+@system
 def firefly_sync_system(
     query: Query[Mut[Firefly]],
     swarm_state: ResMut[SwarmState],
@@ -375,6 +377,7 @@ def movement_kernel(
             vel.z[i] *= scale
 
 
+@system
 def firefly_movement_system(
     view: View[tuple[Mut[Transform], Mut[Firefly]], With[Firefly]],
     time: Res[Time],
@@ -394,6 +397,7 @@ def firefly_movement_system(
         )
 
 
+@system
 def firefly_lighting_system(
     query: Query[tuple[Mut[PointLight], Firefly]],
 ) -> None:
@@ -409,6 +413,7 @@ def firefly_lighting_system(
             light.intensity = 5000.0
 
 
+@system
 def stats_system(
     swarm_state: Res[SwarmState],
     query: Query[Firefly],

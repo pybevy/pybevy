@@ -31,6 +31,7 @@ class RoughnessDisplay(Component):
     """Marker for the roughness text display."""
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -100,6 +101,7 @@ def setup(
     )
 
 
+@system
 def adjust_roughness(
     keyboard: Res[ButtonInput[KeyCode]],
     floor: Res[FloorMaterial],
@@ -125,6 +127,7 @@ def adjust_roughness(
         text.text = CONTROLS_TEXT.format(material.perceptual_roughness)
 
 
+@system
 def toggle_gizmos(
     keyboard: Res[ButtonInput[KeyCode]],
     config_store: ResMut[GizmoConfigStore],

@@ -28,6 +28,7 @@ class AnimationToPlay(Component):
         self.index = index
 
 
+@system
 def setup(
     commands: Commands,
     asset_server: Res[AssetServer],
@@ -63,6 +64,7 @@ def setup(
     commands.insert_resource(GlobalAmbientLight(brightness=2000.0))
 
 
+@system
 def play_animation_when_ready(
     commands: Commands,
     scene_ready: MessageReader[WorldInstanceReady],

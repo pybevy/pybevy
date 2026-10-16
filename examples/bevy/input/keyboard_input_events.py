@@ -10,6 +10,7 @@ from pybevy.input import KeyboardInput
 from pybevy.prelude import *
 
 
+@system
 def print_keyboard_event_system(keyboard_inputs: MessageReader[KeyboardInput]) -> None:
     """System that prints all keyboard inputs as they come in."""
     for event in keyboard_inputs:

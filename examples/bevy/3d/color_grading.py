@@ -11,6 +11,7 @@ from pybevy.prelude import *
 from pybevy.render import ColorGrading
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -64,6 +65,7 @@ def setup(
     )
 
 
+@system
 def handle_input(
     input: Res[ButtonInput[KeyCode]],
     query: Query[Mut[ColorGrading], With[Camera3d]],
@@ -141,6 +143,7 @@ def handle_input(
             grading.shadows.contrast = min(2.0, new_contrast)
 
 
+@system
 def print_settings(query: Query[ColorGrading, With[Camera3d]]):
     """Print current color grading settings (runs after handle_input via chain)."""
     # This system demonstrates chaining - it runs after handle_input,

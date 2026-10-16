@@ -114,6 +114,7 @@ def nbody_step(
 
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -166,6 +167,7 @@ def setup(
 
 
 
+@system
 def gravity_system(
     view: View[tuple[Mut[Transform], Mut[Velocity], Mass], With[Body]],
     time: Res[Time],
@@ -195,6 +197,7 @@ class FPSCounter:
         self.frame_count: int = 0
 
 
+@system
 def fps_system(time: Res[Time], counter: Local[FPSCounter]) -> None:
     counter.frame_count += 1
     t = time.elapsed_secs()

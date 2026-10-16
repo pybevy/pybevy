@@ -45,13 +45,16 @@ app.init_state(GamePhase)
 Systems registered with `OnEnter(state_value)` run once when transitioning **into** that state. `OnExit` runs once when **leaving**.
 
 ```python
+@system
 def setup_menu_ui(commands: Commands) -> None:
     commands.spawn(Node(), Button(), Name("play_button"))
 
+@system
 def cleanup_menu(commands: Commands, query: Query[Entity, With[MenuEntity]]) -> None:
     for entity in query:
         commands.entity(entity).despawn()
 
+@system
 def setup_game_world(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -71,6 +74,7 @@ OnEnter/OnExit systems accept full system parameters (Commands, queries, resourc
 arguments are positional state members:
 
 ```python
+@system
 def finish_menu_transition() -> None:
     print("menu closed; gameplay is starting")
 
@@ -87,6 +91,7 @@ Queue transitions via `ResMut[NextState[StateType]]`. This mirrors Bevy's
 they apply between frames, not immediately.
 
 ```python
+@system
 def check_start_game(
     next_state: ResMut[NextState[GamePhase]],
     interaction_query: Query[Interaction, With[PlayButton]],
@@ -102,6 +107,7 @@ identity transition's `OnExit`, `OnTransition`, and `OnEnter` schedules. Use
 enter work:
 
 ```python
+@system
 def drive_phase(next_state: ResMut[NextState[GamePhase]]) -> None:
     next_state.set_if_neq(GamePhase.PLAYING)
 ```
@@ -120,6 +126,7 @@ body on its next attempted execution.
 ## Reading Current State
 
 ```python
+@system
 def show_hud(current: Res[State[GamePhase]]) -> None:
     phase = current.get()
     # phase is the GamePhase enum value
@@ -162,16 +169,20 @@ class Phase(Enum):
 class MenuEntity(Component):
     pass
 
+@system
 def enter_menu(commands: Commands) -> None:
     commands.spawn(MenuEntity(), Name("menu_bg"))
 
+@system
 def exit_menu(commands: Commands, query: Query[Entity, With[MenuEntity]]) -> None:
     for entity in query:
         commands.entity(entity).despawn()
 
+@system
 def enter_playing(commands: Commands) -> None:
     commands.spawn(Transform(), Name("player"))
 
+@system
 def start_game(
     next_state: ResMut[NextState[Phase]],
     keys: Res[ButtonInput[KeyCode]],

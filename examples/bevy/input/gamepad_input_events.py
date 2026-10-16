@@ -20,6 +20,7 @@ from pybevy.input import (
 from pybevy.prelude import *
 
 
+@system
 def gamepad_events(
     connection_events: MessageReader[GamepadConnectionEvent],
     axis_changed_events: MessageReader[GamepadAxisChangedEvent],

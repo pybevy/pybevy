@@ -32,7 +32,7 @@ from pybevy.app import (
     Startup,
     Update,
 )
-from pybevy.ecs import Commands, Mut, Query, View
+from pybevy.ecs import Commands, Mut, Query, View, system
 from pybevy.transform import Transform
 
 DEFAULT_COUNTS = [1_000, 5_000, 10_000, 100_000, 1_000_000, 10_000_000]
@@ -43,10 +43,12 @@ DEFAULT_COUNTS = [1_000, 5_000, 10_000, 100_000, 1_000_000, 10_000_000]
 def _make_query_app(entity_count: int) -> App:
     """Create an app with Query-based increment system."""
 
+    @system
     def setup(commands: Commands) -> None:
         for i in range(entity_count):
             commands.spawn(Transform.from_xyz(float(i), 0.0, 0.0))
 
+    @system
     def increment(query: Query[Mut[Transform]]) -> None:
         for transform in query:
             transform.translation.x += 1.0
@@ -63,10 +65,12 @@ def _make_query_app(entity_count: int) -> App:
 def _make_view_app(entity_count: int) -> App:
     """Create an app with View API (bytecode VM) increment system."""
 
+    @system
     def setup(commands: Commands) -> None:
         for i in range(entity_count):
             commands.spawn(Transform.from_xyz(float(i), 0.0, 0.0))
 
+    @system
     def increment(view: View[Mut[Transform]]) -> None:
         col = view.column_mut(Transform)
         col.translation.x += 1.0
@@ -89,10 +93,12 @@ def _make_numba_app(entity_count: int) -> App:
         for i in range(len(col)):
             col[i] = col[i] + 1.0
 
+    @system
     def setup(commands: Commands) -> None:
         for i in range(entity_count):
             commands.spawn(Transform.from_xyz(float(i), 0.0, 0.0))
 
+    @system
     def increment(view: View[Mut[Transform]]) -> None:
         for batch in view.iter_batches():
             col = batch.column_mut(Transform)

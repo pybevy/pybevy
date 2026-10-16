@@ -31,6 +31,7 @@ def my_kernel(x, y, z, speed, t, dt):
             y[i] = 0.0
 
 # 2. System extracts ViewColumns and passes them to the kernel
+@system
 def my_system(
     view: View[tuple[Mut[Transform], MyComponent], With[Marker]],
     time: Res[Time],
@@ -186,6 +187,7 @@ def murmuration_kernel(tx, ty, tz, phase, layer, speed, t, dt, cx, cy, cz, max_r
         if ty[i] < 4.0:
             ty[i] = 4.0
 
+@system
 def murmuration(
     view: View[tuple[Mut[Transform], BirdParam], With[Starling]],
     time: Res[Time],

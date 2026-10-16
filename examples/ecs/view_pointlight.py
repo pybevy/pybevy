@@ -15,6 +15,7 @@ class PulsatingLight(Component):
 
 
 
+@system
 def setup(
     commands: Commands, meshes: ResMut[Assets[Mesh]], materials: ResMut[Assets[StandardMaterial]]
 ) -> None:
@@ -52,6 +53,7 @@ def setup(
     )
 
 
+@system
 def pulsate_light(
     view: View[Mut[PointLight], With[PulsatingLight]], time: Res[Time]) -> None:
     """Make the red light pulsate using View API."""

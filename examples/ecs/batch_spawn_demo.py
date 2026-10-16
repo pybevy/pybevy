@@ -21,6 +21,7 @@ class Velocity(Component):
     vel: Vec3 = field(default_factory=lambda: Vec3.ZERO)
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -81,6 +82,7 @@ def setup(
 
 
 
+@system
 def bounce_physics(
     view: View[tuple[Mut[Transform], Mut[Velocity]], With[Ball]],
     time: Res[Time],

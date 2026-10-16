@@ -318,7 +318,9 @@ from pybevy.prelude import *
 -->
 ```python
 from pybevy.post_process import DepthOfField, DepthOfFieldMode
+from pybevy.ecs import system
 
+@system
 def setup(commands: Commands) -> None:
     commands.spawn(
         Camera3d(),
@@ -519,6 +521,7 @@ Circles around a target point. Good for object inspection.
 class OrbitCamera(Component):
     pass
 
+@system
 def orbit_camera(query: Query[Mut[Transform], With[OrbitCamera]], time: Res[Time]):
     t = time.elapsed_secs() * 0.3
     radius = 15.0
@@ -544,6 +547,7 @@ def _smoothstep(t: float) -> float:
     t = max(0.0, min(1.0, t))
     return t * t * (3.0 - 2.0 * t)
 
+@system
 def cinematic_camera(query: Query[Mut[Transform], With[OrbitCamera]], time: Res[Time]):
     # Compute total cycle duration
     total = sum(s[6] + s[7] for s in SHOTS)
@@ -581,6 +585,7 @@ Camera follows a procedural curve through space. Good for tunnels, flythroughs, 
 **Key pattern:** Set the position, then call `look_at()` in-place on the mutable transform:
 
 ```python
+@system
 def camera_follow_path(
     query: Query[Mut[Transform], With[Camera3d]],
     time: Res[Time],
@@ -608,6 +613,7 @@ def camera_follow_path(
 **Transition between cameras:** Use smoothstep to blend from one camera mode to another:
 
 ```python
+@system
 def transition_camera(
     query: Query[Mut[Transform], With[Camera3d]],
     state: Res[CameraState],
@@ -640,11 +646,12 @@ See `guide://recipes/demoscene` for a complete example with camera transitioning
 <!-- pybevy-snippet: typecheck -->
 ```python
 from pybevy.camera import Camera3d
-from pybevy.ecs import Mut, Res, Single, With
+from pybevy.ecs import Mut, Res, Single, With, system
 from pybevy.input import AccumulatedMouseMotion, ButtonInput, MouseButton
 from pybevy.math import EulerRot, Quat, Vec2, Vec3
 from pybevy.transform import Transform
 
+@system
 def orbit(
     camera: Single[Mut[Transform], With[Camera3d]],
     mouse_buttons: Res[ButtonInput[MouseButton]],

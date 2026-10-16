@@ -19,6 +19,7 @@ class SsaoCamera(Component):
     """Marker for the camera with SSAO."""
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -92,6 +93,7 @@ def setup(
     )
 
 
+@system
 def toggle_ssao(
     keyboard: Res[ButtonInput[KeyCode]],
     camera_query: Query[tuple[Entity, Mut[ScreenSpaceAmbientOcclusion]], With[SsaoCamera]],
@@ -107,6 +109,7 @@ def toggle_ssao(
         commands.entity(entity).remove(ScreenSpaceAmbientOcclusion)
 
 
+@system
 def change_quality(
     keyboard: Res[ButtonInput[KeyCode]],
     ssao_query: Query[Mut[ScreenSpaceAmbientOcclusion]],

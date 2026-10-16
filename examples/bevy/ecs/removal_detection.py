@@ -14,11 +14,13 @@ class MyComponent(Component):
 
 
 
+@system
 def setup(commands: Commands, asset_server: Res[AssetServer]) -> None:
     commands.spawn(Camera2d())
     commands.spawn(Sprite.from_image(asset_server.load("icon.png", asset_type=Image)), MyComponent())
 
 
+@system
 def remove_component(
     time: Res[Time], commands: Commands, query: Query[Entity, With[MyComponent]]
 ) -> None:
@@ -31,6 +33,7 @@ def remove_component(
                 commands.entity(entity).remove(MyComponent)
 
 
+@observer
 def react_on_removal(trigger: On[Remove, MyComponent], query: Query[Mut[Sprite]]) -> None:
     """React to component removal by changing sprite color."""
     entity = trigger.entity()

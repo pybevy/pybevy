@@ -21,6 +21,7 @@ class Rotatable(Component):
     speed: float = 0.0
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -42,6 +43,7 @@ def setup(
     commands.spawn(DirectionalLight(), Transform.from_xyz(3.0, 3.0, 3.0).looking_at(Vec3.ZERO, Vec3.Y))
 
 
+@system
 def rotate_cube(cubes: Query[tuple[Mut[Transform], Rotatable]], time: Res[Time]) -> None:
     """Rotate entities with Rotatable component around their y-axis."""
     for transform, rotatable in cubes:

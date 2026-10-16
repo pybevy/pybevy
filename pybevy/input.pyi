@@ -1562,6 +1562,7 @@ class ButtonInput(Resource, Generic[ButtonT]):
 
     Example:
         ```python
+        @system
         def handle_input_system(input: Res[ButtonInput[KeyCode]]) -> None:
             if input.just_pressed(KeyCode.Space):
                 print("Space bar was just pressed!")
@@ -1771,6 +1772,7 @@ class MouseInput(Resource):
 
     Example:
         ```python
+        @system
         def handle_mouse_system(mouse: Res[MouseInput]) -> None:
             if mouse.just_pressed(MouseButton.Left()):
                 print("Left mouse button was just pressed!")
@@ -1935,6 +1937,7 @@ class KeyboardInput(Message):
 
     Example:
         ```python
+        @system
         def handle_keys(reader: MessageReader[KeyboardInput]) -> None:
             for event in reader:
                 if event.state == ButtonState.Pressed():
@@ -2008,6 +2011,7 @@ class MouseButtonInput(Message):
 
     Example:
         ```python
+        @system
         def handle_clicks(reader: MessageReader[MouseButtonInput]) -> None:
             for event in reader:
                 if event.state == ButtonState.Pressed():
@@ -2053,6 +2057,7 @@ class MouseMotion(Message):
 
     Example:
         ```python
+        @system
         def handle_mouse_move(reader: MessageReader[MouseMotion]) -> None:
             for event in reader:
                 print(f"Mouse moved: ({event.delta.x}, {event.delta.y})")
@@ -2096,6 +2101,7 @@ class MouseWheel(Message):
 
     Example:
         ```python
+        @system
         def handle_scroll(reader: MessageReader[MouseWheel]) -> None:
             for event in reader:
                 print(f"Scroll: ({event.x}, {event.y}) unit: {event.unit}")
@@ -2322,6 +2328,7 @@ class Gamepad(Component):
 
     Example:
         ```python
+        @system
         def handle_gamepad(query: Query[Gamepad]) -> None:
             for gamepad in query:
                 if gamepad.just_pressed(GamepadButton.South()):
@@ -2403,6 +2410,7 @@ class GamepadButtonChangedEvent(Message):
 
     Example:
         ```python
+        @system
         def handle_gamepad(reader: MessageReader[GamepadButtonChangedEvent]) -> None:
             for event in reader:
                 print(f"Button {event.button} value: {event.value}")
@@ -2450,6 +2458,7 @@ class GamepadAxisChangedEvent(Message):
 
     Example:
         ```python
+        @system
         def handle_gamepad(reader: MessageReader[GamepadAxisChangedEvent]) -> None:
             for event in reader:
                 print(f"Axis {event.axis} value: {event.value}")
@@ -2490,6 +2499,7 @@ class GamepadConnection:
 
     Example:
         ```python
+        @system
         def handle_gamepad(reader: MessageReader[GamepadConnectionEvent]) -> None:
             for event in reader:
                 match event.connection:
@@ -2532,6 +2542,7 @@ class GamepadConnectionEvent(Message):
 
     Example:
         ```python
+        @system
         def handle_gamepad(reader: MessageReader[GamepadConnectionEvent]) -> None:
             for event in reader:
                 if event.connected():
@@ -2641,6 +2652,7 @@ class TouchInput(Message):
 
     Example:
         ```python
+        @system
         def handle_touch(reader: MessageReader[TouchInput]) -> None:
             for event in reader:
                 if event.phase == TouchPhase.Started:
@@ -2892,6 +2904,7 @@ class KeyboardFocusLost(Message):
 
     Example:
         ```python
+        @system
         def handle_focus_lost(reader: MessageReader[KeyboardFocusLost]) -> None:
             for event in reader:
                 print("Keyboard focus lost - pausing input")
@@ -2988,6 +3001,7 @@ class Touches(Resource):
 
     Example:
         ```python
+        @system
         def handle_touches(touches: Res[Touches]) -> None:
             # Check for new touches
             if touches.any_just_pressed():

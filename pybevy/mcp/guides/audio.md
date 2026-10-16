@@ -9,6 +9,7 @@ Spawn an entity with `AudioPlayer` to play a sound. Bevy loads audio files via t
 ```python
 from pybevy.prelude import *
 
+@system
 def setup(commands: Commands, asset_server: Res[AssetServer]) -> None:
     # Fire-and-forget: plays once and stops
     commands.spawn(
@@ -99,6 +100,7 @@ def main(app: App) -> App:
 Modify at runtime:
 
 ```python
+@system
 def adjust_volume(global_vol: ResMut[GlobalVolume]) -> None:
     global_vol.volume = Volume.Linear(0.5)
 ```
@@ -108,6 +110,7 @@ def adjust_volume(global_vol: ResMut[GlobalVolume]) -> None:
 Bevy automatically adds `AudioSink` to entities when audio starts playing. Query it to control playback:
 
 ```python
+@system
 def control_audio(query: Query[AudioSink]) -> None:
     for sink in query:
         sink.pause()
@@ -163,6 +166,7 @@ For 3D positional audio, enable `spatial=True` on playback settings and add a `S
 ### Listener Setup
 
 ```python
+@system
 def setup(commands: Commands, asset_server: Res[AssetServer]) -> None:
     # Camera with spatial listener
     commands.spawn(
@@ -187,6 +191,7 @@ def setup(commands: Commands, asset_server: Res[AssetServer]) -> None:
 For spatial sources, Bevy adds `SpatialAudioSink` instead of `AudioSink`. It has all the same controls plus spatial positioning:
 
 ```python
+@system
 def update_spatial(query: Query[SpatialAudioSink]) -> None:
     for sink in query:
         sink.set_emitter_position(Vec3(5.0, 0.0, 0.0))
@@ -233,8 +238,9 @@ to Bevy's `AudioPlayer<Pitch>`.
 ```python
 from pybevy.assets import Assets
 from pybevy.audio import AudioPlayer, Pitch, PlaybackSettings
-from pybevy.ecs import Commands, ResMut
+from pybevy.ecs import Commands, ResMut, system
 
+@system
 def play_tone(commands: Commands, pitches: ResMut[Assets[Pitch]]) -> None:
     handle = pitches.add(Pitch(440.0, 0.5))
     commands.spawn(AudioPlayer(handle), PlaybackSettings.ONCE)

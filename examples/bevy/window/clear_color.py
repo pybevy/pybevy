@@ -10,11 +10,13 @@ Controls:
 from pybevy.prelude import *
 
 
+@system
 def setup(commands: Commands) -> None:
     """Spawn a 2D camera."""
     commands.spawn(Camera2d())
 
 
+@system
 def change_clear_color(
     input: Res[ButtonInput[KeyCode]], clear_color: ResMut[ClearColor]
 ) -> None:

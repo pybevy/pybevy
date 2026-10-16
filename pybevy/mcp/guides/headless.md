@@ -56,6 +56,7 @@ from pybevy.window import ExitCondition, WindowPlugin
 from pybevy.winit import WinitPlugin
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],

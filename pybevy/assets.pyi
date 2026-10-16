@@ -371,6 +371,7 @@ class AssetServer(Resource):
             class WorldHandle(Resource):
                 value: Handle[WorldAsset]
 
+            @condition
             def is_world_ready(
                 asset_server: Res[AssetServer],
                 world_handle: Res[WorldHandle],
@@ -509,6 +510,7 @@ class AssetEvent(Message, Generic[A_co]):
 
     Example:
         ```python
+        @system
         def track_image_loads(reader: MessageReader[AssetEvent[Image]]):
             for event in reader.read():
                 if isinstance(event, AssetEvent.LoadedWithDependencies):
@@ -567,6 +569,7 @@ class AssetLoadFailedEvent(Message, Generic[A_co]):
 
     Example:
         ```python
+        @system
         def report_failures(reader: MessageReader[AssetLoadFailedEvent[Image]]):
             for event in reader:
                 print(f"{event.path.path} failed: {event.error}")

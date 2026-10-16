@@ -5,8 +5,11 @@ from pybevy.ecs import (
     ConditionalSystem,
     Message,
     MessageTypeVar,
+    ObserverSystem,
     Resource,
     ResourceType,
+    System,
+    SystemCondition,
     SystemConfig,
     SystemSet,
     SystemSetConfig,
@@ -14,7 +17,9 @@ from pybevy.ecs import (
 )
 from pybevy.state import OnEnterSchedule, OnExitSchedule, OnTransitionSchedule
 
-type SystemFn = Callable[..., object]
+type SystemFn = System[..., object]
+type ConditionFn = SystemCondition[..., object]
+type ObserverFn = ObserverSystem[..., object]
 type SystemFns = (
     tuple[SystemFns, ...] | SystemFn | ChainedSystems | ConditionalSystem | SystemConfig
 )
@@ -515,7 +520,7 @@ class App:
         skipped, while repeating a full DefaultPlugins seed can raise.
         """
     def add_message(self, message_type: type[MessageTypeVar]) -> App: ...
-    def add_observer(self, observer: SystemFn) -> App:
+    def add_observer(self, observer: ObserverFn) -> App:
         """Register an observer for an event type.
 
         The observer will be triggered whenever the event is sent via
@@ -525,6 +530,7 @@ class App:
         World.add_observer() instead to get the observer entity.
 
         Example:
+            @observer
             def on_player_died(trigger: On[PlayerDied]) -> None:
                 event = trigger.event()
                 print(f"Player {event.player_id} died")
@@ -547,6 +553,7 @@ class App:
             from pybevy.app import App, AppExit, Update
             from pybevy.ecs import MessageWriter
 
+            @system
             def check_quit(app_exit_writer: MessageWriter[AppExit]) -> None:
                 app_exit_writer.write(AppExit.Success())
 

@@ -18,6 +18,7 @@ class DragState(Resource):
     entity: Entity | None = None
 
 
+@system
 def setup(commands: Commands) -> None:
     commands.spawn(Camera2d())
     commands.spawn(
@@ -26,6 +27,7 @@ def setup(commands: Commands) -> None:
     )
 
 
+@system
 def drag(
     mouse: Res[ButtonInput[MouseButton]],
     state: ResMut[DragState],

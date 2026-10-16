@@ -24,6 +24,7 @@ class AnimatedColor(Component):
         self.speed = speed
 
 
+@system
 def setup(
     commands: Commands,
     meshes: ResMut[Assets[Mesh]],
@@ -62,6 +63,7 @@ def setup(
         )
 
 
+@system
 def animate_colors(
     time: Res[Time],
     query: Query[tuple[MeshMaterial3d, AnimatedColor]],
@@ -90,6 +92,7 @@ def animate_colors(
         material.base_color = Color.linear_rgb(r, g, b)
 
 
+@system
 def rotate_objects(
     time: Res[Time],
     query: Query[Mut[Transform], With[AnimatedColor]],

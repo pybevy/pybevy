@@ -5,7 +5,7 @@ from pytest_benchmark.fixture import BenchmarkFixture
 
 from benches._helpers import initialize
 from pybevy.app import App, ScheduleRunnerPlugin, Startup, Update
-from pybevy.ecs import Commands, Entity, Mut, Query
+from pybevy.ecs import Commands, Entity, Mut, Query, system
 from pybevy.math import Quat, Vec3
 from pybevy.transform import Transform
 
@@ -16,10 +16,12 @@ ENTITY_COUNTS = [1000, 10000]
 def test_iteration_minimal(benchmark: BenchmarkFixture, entity_count: int) -> None:
     """Benchmark minimal query iteration overhead."""
 
+    @system
     def setup(commands: Commands) -> None:
         for _ in range(entity_count):
             commands.spawn(Transform())
 
+    @system
     def minimal_iteration(query: Query[Transform]) -> None:
         for _ in query:
             pass
@@ -38,12 +40,14 @@ def test_iteration_minimal(benchmark: BenchmarkFixture, entity_count: int) -> No
 def test_iteration_count(benchmark: BenchmarkFixture, entity_count: int) -> None:
     """Benchmark query iteration with counting."""
 
+    @system
     def setup(commands: Commands) -> None:
         for _ in range(entity_count):
             commands.spawn(Transform())
 
     count = [0]
 
+    @system
     def count_iteration(query: Query[Transform]) -> None:
         count[0] = 0
         for _ in query:
@@ -64,12 +68,14 @@ def test_iteration_count(benchmark: BenchmarkFixture, entity_count: int) -> None
 def test_translation_read(benchmark: BenchmarkFixture, entity_count: int) -> None:
     """Benchmark reading translation from transforms."""
 
+    @system
     def setup(commands: Commands) -> None:
         for i in range(entity_count):
             commands.spawn(Transform.from_xyz(float(i), 0.0, 0.0))
 
     total = [0.0]
 
+    @system
     def read_translations(query: Query[Transform]) -> None:
         total[0] = 0.0
         for transform in query:
@@ -89,10 +95,12 @@ def test_translation_read(benchmark: BenchmarkFixture, entity_count: int) -> Non
 def test_translation_write(benchmark: BenchmarkFixture, entity_count: int) -> None:
     """Benchmark writing translation to transforms."""
 
+    @system
     def setup(commands: Commands) -> None:
         for _ in range(entity_count):
             commands.spawn(Transform())
 
+    @system
     def write_translations(query: Query[Mut[Transform]]) -> None:
         for i, transform in enumerate(query):
             transform.translation = Vec3(float(i), 1.0, 2.0)
@@ -114,10 +122,12 @@ def test_rotate(
 ) -> None:
     """Benchmark rotation operations."""
 
+    @system
     def setup(commands: Commands) -> None:
         for _ in range(entity_count):
             commands.spawn(Transform())
 
+    @system
     def rotate_transforms(query: Query[Mut[Transform]]) -> None:
         for transform in query:
             if axis == "x":
@@ -146,12 +156,14 @@ def test_mutate_transform(benchmark: BenchmarkFixture, entity_count: int) -> Non
     """Benchmark Transform mutation via Mut[Transform]."""
     addition = Vec3(0.1, 0.2, 0.3)
 
+    @system
     def setup(commands: Commands) -> None:
         for _ in range(entity_count):
             commands.spawn(Transform())
 
     count = [0]
 
+    @system
     def query_system(query: Query[Mut[Transform]]) -> None:
         count[0] = 0
         for transform in query:
@@ -173,6 +185,7 @@ def test_look_at_10000(benchmark: BenchmarkFixture) -> None:
     """Benchmark look_at operation (10k entities)."""
     entity_count = 10000
 
+    @system
     def setup(commands: Commands) -> None:
         for _ in range(entity_count):
             commands.spawn(Transform())
@@ -180,6 +193,7 @@ def test_look_at_10000(benchmark: BenchmarkFixture) -> None:
     target = Vec3(1.0, 0.0, 0.0)
     up = Vec3.Y
 
+    @system
     def look_at_transforms(query: Query[Mut[Transform]]) -> None:
         for transform in query:
             transform.look_at(target, up)
@@ -198,6 +212,7 @@ def test_forward_direction_10000(benchmark: BenchmarkFixture) -> None:
     """Benchmark reading forward direction (10k entities)."""
     entity_count = 10000
 
+    @system
     def setup(commands: Commands) -> None:
         for i in range(entity_count):
             t = Transform.from_xyz(float(i), 0.0, 0.0)
@@ -206,6 +221,7 @@ def test_forward_direction_10000(benchmark: BenchmarkFixture) -> None:
 
     total = [Vec3.ZERO]
 
+    @system
     def read_directions(query: Query[Transform]) -> None:
         total[0] = Vec3.ZERO
         for transform in query:
@@ -230,6 +246,7 @@ def test_transform_point_10000(benchmark: BenchmarkFixture) -> None:
     """Benchmark transform_point operation (10k entities)."""
     entity_count = 10000
 
+    @system
     def setup(commands: Commands) -> None:
         for i in range(entity_count):
             t = Transform.from_xyz(float(i), 0.0, 0.0)
@@ -238,6 +255,7 @@ def test_transform_point_10000(benchmark: BenchmarkFixture) -> None:
 
     point = Vec3(1.0, 2.0, 3.0)
 
+    @system
     def transform_points(query: Query[Transform]) -> None:
         for transform in query:
             _ = transform.transform_point(point)
@@ -256,10 +274,12 @@ def test_mixed_operations_10000(benchmark: BenchmarkFixture) -> None:
     """Benchmark mixed read/write operations (10k entities)."""
     entity_count = 10000
 
+    @system
     def setup(commands: Commands) -> None:
         for i in range(entity_count):
             commands.spawn(Transform.from_xyz(float(i), 0.0, 0.0))
 
+    @system
     def mixed_operations(query: Query[Mut[Transform]]) -> None:
         for i, transform in enumerate(query):
             pos = transform.translation
@@ -285,10 +305,12 @@ def test_multi_property_access_10000(benchmark: BenchmarkFixture) -> None:
     """Benchmark multiple property access overhead (10k entities)."""
     entity_count = 10000
 
+    @system
     def setup(commands: Commands) -> None:
         for _ in range(entity_count):
             commands.spawn(Transform())
 
+    @system
     def access_properties(query: Query[Transform]) -> None:
         for transform in query:
             _ = transform.translation
@@ -311,12 +333,14 @@ def test_entity_transform_query_10000(benchmark: BenchmarkFixture) -> None:
     """Benchmark multi-component query (Entity + Transform, 10k entities)."""
     entity_count = 10000
 
+    @system
     def setup(commands: Commands) -> None:
         for _ in range(entity_count):
             commands.spawn(Transform())
 
     count = [0]
 
+    @system
     def query_system(query: Query[tuple[Entity, Transform]]) -> None:
         count[0] = 0
         for _entity, _transform in query:

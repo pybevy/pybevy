@@ -10,6 +10,7 @@ from pybevy.prelude import *
 from pybevy.winit import WinitPlugin
 
 
+@system
 def setup_system(commands: Commands) -> None:
     """Spawn a camera (even though no window will display it)."""
     commands.spawn(Camera3d())

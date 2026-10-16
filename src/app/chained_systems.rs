@@ -8,6 +8,7 @@ use pyo3::{
 
 use crate::ecs::{
     conditional_system::PyConditionalSystem,
+    decorated_callable::{CallableKind, unwrap_decorated},
     system_config::{PySystemConfig, PySystemSetConfig, system_set_value},
 };
 
@@ -38,11 +39,39 @@ impl PyChainedSystems {
 
     #[new]
     #[pyo3(signature = (*systems))]
-    pub fn new(systems: Bound<'_, PyTuple>) -> Self {
-        Self {
-            systems: systems.unbind(),
-        }
+    pub fn py_new(systems: Bound<'_, PyTuple>) -> PyResult<Self> {
+        Ok(Self {
+            systems: normalize_chain_members(&systems)?.unbind(),
+        })
     }
+}
+
+/// Replace `@system` members by their functions; configs and nested chains stay.
+fn normalize_chain_members<'py>(systems: &Bound<'py, PyTuple>) -> PyResult<Bound<'py, PyTuple>> {
+    let mut members = Vec::with_capacity(systems.len());
+    for member in systems.iter() {
+        if is_system_group(&member) {
+            return Err(PyTypeError::new_err(public_error::CHAIN_GROUP_MEMBER));
+        }
+        members.push(normalize_system_unit(&member, "chain()")?);
+    }
+    PyTuple::new(systems.py(), members)
+}
+
+/// One `add_systems` unit with a `@system` function unwrapped to the function.
+///
+/// Configs, conditional systems, and chains already hold unwrapped functions.
+pub(crate) fn normalize_system_unit<'py>(
+    value: &Bound<'py, PyAny>,
+    entry: &str,
+) -> PyResult<Bound<'py, PyAny>> {
+    if value.is_instance_of::<PySystemConfig>()
+        || value.is_instance_of::<PyConditionalSystem>()
+        || value.is_instance_of::<PyChainedSystems>()
+    {
+        return Ok(value.clone());
+    }
+    unwrap_decorated(value, CallableKind::System, entry)
 }
 
 /// A sequence of system sets configured with Bevy's chained ordering semantics.
@@ -108,7 +137,7 @@ pub fn chain(py: Python<'_>, systems: Bound<'_, PyTuple>) -> PyResult<Py<PyAny>>
         ));
     }
 
-    Ok(Py::new(py, PyChainedSystems::new(systems))?.into_any())
+    Ok(Py::new(py, PyChainedSystems::py_new(systems)?)?.into_any())
 }
 
 /// Whether `value` is an unordered group of systems, such as a tuple.

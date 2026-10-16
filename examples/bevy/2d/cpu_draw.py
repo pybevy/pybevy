@@ -35,6 +35,7 @@ class ColorWrapper:
     value: Color = field(default_factory=lambda: Color.WHITE)
 
 
+@system
 def setup(commands: Commands, images: ResMut[Assets[Image]]) -> None:
     """Set up the scene with a camera and a procedurally generated image."""
     commands.spawn(Camera2d())
@@ -79,6 +80,7 @@ def setup(commands: Commands, images: ResMut[Assets[Image]]) -> None:
     commands.insert_resource(MyProcGenImage(handle))
 
 
+@system
 def draw(
     my_handle: Res[MyProcGenImage],
     images: ResMut[Assets[Image]],

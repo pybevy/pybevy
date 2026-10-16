@@ -37,6 +37,7 @@ class MainCamera(Component):
     pass
 
 
+@system
 def setup(
     commands: Commands,
     asset_server: Res[AssetServer],
@@ -75,6 +76,7 @@ def setup(
     )
 
 
+@system
 def rotate_camera(
     query: Query[Mut[Transform], With[MainCamera]],
     time: Res[Time],

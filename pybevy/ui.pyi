@@ -1500,6 +1500,7 @@ class BackgroundColor(Component):
         ))
 
         # Change color dynamically
+        @system
         def update_color(query: Query[Mut[BackgroundColor]]):
             for bg in query:
                 bg.color = Color.srgb(0.0, 0.0, 1.0)
@@ -1538,6 +1539,7 @@ class BorderColor(Component):
         ))
 
         # Different colors per side
+        @system
         def update_border(query: Query[Mut[BorderColor]]):
             for border in query:
                 border.top = Color.srgb(1.0, 0.0, 0.0)  # Red top
@@ -1773,6 +1775,7 @@ class Outline(Component):
         commands.spawn((Node(), outline))
 
         # Modify at runtime
+        @system
         def update_outline(query: Query[Mut[Outline]]):
             for outline in query:
                 outline.width = Val.Px(4.0)
@@ -1834,6 +1837,7 @@ class ZIndex(Component):
         ))
 
         # Modify at runtime
+        @system
         def update_z_index(query: Query[Mut[ZIndex]]):
             for z_index in query:
                 z_index.value = 20
@@ -1927,6 +1931,7 @@ class ImageNode(Component):
         from pybevy.image import Image
         from pybevy.ecs import Res, Commands
 
+        @system
         def setup(commands: Commands, asset_server: Res[AssetServer]) -> None:
             # Load image and create UI node with image
             texture = asset_server.load_image("bevy/textures/icon.png")
@@ -1936,6 +1941,7 @@ class ImageNode(Component):
             ))
 
         # Change texture at runtime
+        @system
         def update_image(query: Query[Mut[ImageNode]], asset_server: Res[AssetServer]) -> None:
             for image_node in query:
                 new_texture = asset_server.load_image("bevy/textures/new_icon.png")
@@ -2044,6 +2050,7 @@ class FocusPolicy(Component):
         ))
 
         # Change policy at runtime
+        @system
         def update_focus(query: Query[Mut[FocusPolicy]]) -> None:
             for policy in query:
                 if policy == FocusPolicy.Block:
@@ -2087,6 +2094,7 @@ class Interaction(Component):
         ))
 
         # Respond to interactions
+        @system
         def button_system(query: Query[tuple[Interaction, Mut[BackgroundColor]]]):
             for interaction, bg in query:
                 if interaction == Interaction.Pressed:
@@ -2137,6 +2145,7 @@ class Button(Component):
         ))
 
         # React to button clicks
+        @system
         def button_system(query: Query[tuple[Button, Interaction, Mut[BackgroundColor]]]):
             for _button, interaction, bg in query:
                 if interaction == Interaction.Pressed:
@@ -2202,6 +2211,7 @@ class Pressed(Component):
         from pybevy.ecs import Query, With
 
         # Query for pressed buttons
+        @system
         def check_pressed(query: Query[Button, With[Pressed]]) -> None:
             for _button in query:
                 print("Button is pressed!")
@@ -2671,6 +2681,7 @@ class UiTargetCamera(Component):
         from pybevy.ui import Node, UiTargetCamera
         from pybevy.ecs import Commands
 
+        @system
         def setup(commands: Commands) -> None:
             camera_entity = commands.spawn(Camera2d()).id()
             assert camera_entity is not None
@@ -2703,6 +2714,7 @@ class RelativeCursorPosition(Component):
         ```python
         from pybevy.ui import Node, RelativeCursorPosition, Interaction
 
+        @system
         def setup(commands: Commands) -> None:
             commands.spawn((
                 Node(),
@@ -2710,6 +2722,7 @@ class RelativeCursorPosition(Component):
                 RelativeCursorPosition(),
             ))
 
+        @system
         def check_cursor(query: Query[RelativeCursorPosition]) -> None:
             for pos in query:
                 if pos.cursor_over:
@@ -2805,6 +2818,7 @@ class ScrollPosition(Component):
         from pybevy.ecs import Commands, Query, Mut
 
         # Create a scrollable container
+        @system
         def setup(commands: Commands) -> None:
             commands.spawn(
                 Node(overflow=Overflow.scroll_y()),
@@ -2812,6 +2826,7 @@ class ScrollPosition(Component):
             )
 
         # Read/modify scroll position
+        @system
         def scroll_system(query: Query[Mut[ScrollPosition]]) -> None:
             for scroll in query:
                 scroll.offset.y += 10.0  # Scroll down
@@ -2869,6 +2884,7 @@ class ComputedNode(Component):
         from pybevy.ui import Node, ComputedNode
         from pybevy.ecs import Query
 
+        @system
         def debug_layout(query: Query[tuple[Node, ComputedNode]]) -> None:
             for node, computed in query:
                 print(f"Node size: {computed.size}")
@@ -2956,10 +2972,12 @@ class UiScale(Resource):
         from pybevy.ecs import Commands, ResMut
         from pybevy.ui import UiScale
 
+        @system
         def setup(commands: Commands) -> None:
             # Make UI 1.5x larger
             commands.insert_resource(UiScale(1.5))
 
+        @system
         def update_scale(ui_scale: ResMut[UiScale]) -> None:
             ui_scale.scale = 2.0  # Double size
         ```
@@ -3644,6 +3662,7 @@ class BoxShadow(Component):
         from pybevy.color import Color
         from pybevy.ecs import Commands
 
+        @system
         def setup(commands: Commands) -> None:
             # Single shadow using convenience method
             shadow = BoxShadow.new(
@@ -3740,6 +3759,7 @@ class BackgroundGradient(Component):
         from pybevy.ui import BackgroundGradient, Gradient, LinearGradient, ColorStop, Node
         from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
 
+        @system
         def setup(commands: Commands) -> None:
             gradient = LinearGradient.to_bottom([
                 ColorStop.auto(Color.linear_rgb(0.2, 0.2, 0.8)),
@@ -3777,6 +3797,7 @@ class TextShadow(Component):
         from pybevy.math import Vec2
         from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
 
+        @system
         def setup(commands: Commands) -> None:
             commands.spawn((
                 Node(),

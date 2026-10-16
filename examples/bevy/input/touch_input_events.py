@@ -13,6 +13,7 @@ On desktop systems without touch input, the example will run but won't receive a
 from pybevy.prelude import *
 
 
+@system
 def touch_event_system(touch_inputs: MessageReader[TouchInput]) -> None:
     """Print all touch events to the console."""
     for touch_input in touch_inputs:

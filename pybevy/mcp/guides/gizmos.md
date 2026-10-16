@@ -21,8 +21,10 @@ from pybevy.prelude import (
     Vec3,
     entrypoint,
 )
+from pybevy.ecs import system
 
 
+@system
 def setup(commands: Commands) -> None:
     commands.spawn(
         Camera3d(),
@@ -30,6 +32,7 @@ def setup(commands: Commands) -> None:
     )
 
 
+@system
 def draw_axes(gizmos: Gizmos) -> None:
     gizmos.ray(Vec3.ZERO, Vec3.X * 2.0, Color.srgb(1.0, 0.0, 0.0))
     gizmos.ray(Vec3.ZERO, Vec3.Y * 2.0, Color.srgb(0.0, 1.0, 0.0))
@@ -69,6 +72,7 @@ system call. It is a read-only borrowed reference and expires when the system
 returns:
 
 ```python
+@system
 def draw_when_enabled(gizmos: Gizmos) -> None:
     if gizmos.config.enabled:
         gizmos.line(Vec3.ZERO, Vec3.X, Color.WHITE)
@@ -79,8 +83,10 @@ Mutate the default group's persistent configuration through
 
 ```python
 from pybevy.prelude import GizmoConfigStore, ResMut
+from pybevy.ecs import system
 
 
+@system
 def configure_gizmos(store: ResMut[GizmoConfigStore]) -> None:
     config = store.config_mut()
     config.line.width = 4.0
@@ -94,8 +100,10 @@ for every light without affecting the default immediate-mode group:
 
 ```python
 from pybevy.prelude import GizmoConfigStore, LightGizmoConfigGroup, ResMut
+from pybevy.ecs import system
 
 
+@system
 def toggle_light_gizmos(store: ResMut[GizmoConfigStore]) -> None:
     config, light_config = store.config_mut(LightGizmoConfigGroup)
     config.enabled = not config.enabled
@@ -117,8 +125,10 @@ direction vector, not an endpoint:
 
 ```python
 from pybevy.prelude import Color, Gizmos, Vec3
+from pybevy.ecs import system
 
 
+@system
 def draw_vectors(gizmos: Gizmos) -> None:
     origin = Vec3(0.0, 1.0, 0.0)
 
@@ -138,6 +148,7 @@ def draw_vectors(gizmos: Gizmos) -> None:
 last position back to the first:
 
 ```python
+@system
 def draw_path(gizmos: Gizmos) -> None:
     points = [
         Vec3(-2.0, 0.1, -1.0),
@@ -160,8 +171,10 @@ scale; size is passed separately. `cube` and `aabb_3d` take bevy's wider
 
 ```python
 from pybevy.prelude import Color, Gizmos, Isometry3d, Quat, Vec2, Vec3
+from pybevy.ecs import system
 
 
+@system
 def draw_shapes(gizmos: Gizmos) -> None:
     frame = Isometry3d(
         translation=Vec3(0.0, 1.5, 0.0),
@@ -193,8 +206,10 @@ The 2D methods use `Vec2` and `Isometry2d`:
 
 ```python
 from pybevy.prelude import Color, Gizmos, Isometry2d, Vec2
+from pybevy.ecs import system
 
 
+@system
 def draw_2d_debug(gizmos: Gizmos) -> None:
     gizmos.line_2d(Vec2(-100.0, 0.0), Vec2(100.0, 0.0), Color.WHITE)
     gizmos.ray_2d(Vec2.ZERO, Vec2(0.0, 80.0), Color.srgb(0.2, 1.0, 0.3))
@@ -229,8 +244,10 @@ from pybevy.prelude import (
     ShowAabbGizmo,
     Without,
 )
+from pybevy.ecs import system
 
 
+@system
 def show_mesh_bounds(
     commands: Commands,
     meshes: Query[tuple[Entity, Mesh3d], Without[ShowAabbGizmo]],
@@ -247,10 +264,11 @@ from a system with `GizmoConfigStore`:
 
 ```python
 from pybevy.color import Color
-from pybevy.ecs import ResMut
+from pybevy.ecs import ResMut, system
 from pybevy.gizmos import AabbGizmoConfigGroup, GizmoConfigStore
 
 
+@system
 def configure_bounds(store: ResMut[GizmoConfigStore]) -> None:
     _, group = store.config_mut(AabbGizmoConfigGroup)
     group.draw_all = True
@@ -276,8 +294,10 @@ from pybevy.prelude import (
     ShowLightGizmo,
     Transform,
 )
+from pybevy.ecs import system
 
 
+@system
 def spawn_debug_light(commands: Commands) -> None:
     commands.spawn(
         PointLight(intensity=80_000.0, range=8.0),
