@@ -17,7 +17,11 @@ impl PySphere {
     #[new]
     #[pyo3(signature = (radius=0.5))]
     pub fn new(radius: f32) -> PyResult<PyClassInitializer<Self>> {
-        Ok((Self(Sphere::new(dimension("radius", radius)?)), PyMeshable).into())
+        Ok((
+            Self(Sphere::new(dimension("Sphere", "radius", radius)?)),
+            PyMeshable,
+        )
+            .into())
     }
 
     #[getter]
@@ -27,7 +31,7 @@ impl PySphere {
 
     #[setter]
     pub fn set_radius(&mut self, value: f32) -> PyResult<()> {
-        self.0.radius = dimension("radius", value)?;
+        self.0.radius = dimension("Sphere", "radius", value)?;
         Ok(())
     }
 

@@ -1,11 +1,16 @@
-use bevy::ui::UiRect;
+use bevy::ui::{UiRect, Val};
 use pybevy_core::{FromBorrowedStorage, ValueStorage};
 use pybevy_macros::pyvalue;
 use pyo3::prelude::*;
 
-use crate::val::{PyVal, validate_finite_val};
+use crate::val::PyVal;
 
-#[pyvalue]
+#[pyvalue(domains = [
+    left => [finite],
+    right => [finite],
+    top => [finite],
+    bottom => [finite],
+])]
 #[pyclass(name = "UiRect", module = "pybevy.ui", eq, from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyUiRect {
@@ -40,6 +45,13 @@ impl TryFrom<&PyUiRect> for UiRect {
     }
 }
 
+impl PyUiRect {
+    fn checked(rect: UiRect) -> PyResult<Self> {
+        Self::validate_domains(&rect)?;
+        Ok(Self::from_owned(rect))
+    }
+}
+
 #[pymethods]
 impl PyUiRect {
     #[staticmethod]
@@ -62,8 +74,8 @@ impl PyUiRect {
 
     #[new]
     #[pyo3(signature = (left = PyVal::px_unchecked(0.0), right = PyVal::px_unchecked(0.0), top = PyVal::px_unchecked(0.0), bottom = PyVal::px_unchecked(0.0)))]
-    pub fn py_new(left: PyVal, right: PyVal, top: PyVal, bottom: PyVal) -> Self {
-        Self::from_owned(UiRect::new(
+    pub fn py_new(left: PyVal, right: PyVal, top: PyVal, bottom: PyVal) -> PyResult<Self> {
+        Self::checked(UiRect::new(
             left.into(),
             right.into(),
             top.into(),
@@ -73,8 +85,8 @@ impl PyUiRect {
 
     #[staticmethod]
     #[pyo3(name = "new")]
-    pub fn new_(left: PyVal, right: PyVal, top: PyVal, bottom: PyVal) -> Self {
-        Self::from_owned(UiRect::new(
+    pub fn new_(left: PyVal, right: PyVal, top: PyVal, bottom: PyVal) -> PyResult<Self> {
+        Self::checked(UiRect::new(
             left.into(),
             right.into(),
             top.into(),
@@ -83,69 +95,69 @@ impl PyUiRect {
     }
 
     #[staticmethod]
-    pub fn all(value: PyVal) -> Self {
-        Self::from_owned(UiRect::all(value.into()))
+    pub fn all(value: PyVal) -> PyResult<Self> {
+        Self::checked(UiRect::all(value.into()))
     }
 
     #[staticmethod]
-    pub fn px(left: f32, right: f32, top: f32, bottom: f32) -> Self {
-        Self::from_owned(UiRect::px(left, right, top, bottom))
+    pub fn px(left: f32, right: f32, top: f32, bottom: f32) -> PyResult<Self> {
+        Self::checked(UiRect::px(left, right, top, bottom))
     }
 
     #[staticmethod]
-    pub fn percent(left: f32, right: f32, top: f32, bottom: f32) -> Self {
-        Self::from_owned(UiRect::percent(left, right, top, bottom))
+    pub fn percent(left: f32, right: f32, top: f32, bottom: f32) -> PyResult<Self> {
+        Self::checked(UiRect::percent(left, right, top, bottom))
     }
 
     #[staticmethod]
-    pub fn horizontal(value: PyVal) -> Self {
-        Self::from_owned(UiRect::horizontal(value.into()))
+    pub fn horizontal(value: PyVal) -> PyResult<Self> {
+        Self::checked(UiRect::horizontal(value.into()))
     }
 
     #[staticmethod]
-    pub fn vertical(value: PyVal) -> Self {
-        Self::from_owned(UiRect::vertical(value.into()))
+    pub fn vertical(value: PyVal) -> PyResult<Self> {
+        Self::checked(UiRect::vertical(value.into()))
     }
 
     #[staticmethod]
-    pub fn axes(horizontal: PyVal, vertical: PyVal) -> Self {
-        Self::from_owned(UiRect::axes(horizontal.into(), vertical.into()))
+    pub fn axes(horizontal: PyVal, vertical: PyVal) -> PyResult<Self> {
+        Self::checked(UiRect::axes(horizontal.into(), vertical.into()))
     }
 
     #[staticmethod]
-    pub fn left(left: PyVal) -> Self {
-        Self::from_owned(UiRect::left(left.into()))
+    pub fn left(left: PyVal) -> PyResult<Self> {
+        Self::checked(UiRect::left(left.into()))
     }
 
     #[staticmethod]
-    pub fn right(right: PyVal) -> Self {
-        Self::from_owned(UiRect::right(right.into()))
+    pub fn right(right: PyVal) -> PyResult<Self> {
+        Self::checked(UiRect::right(right.into()))
     }
 
     #[staticmethod]
-    pub fn top(top: PyVal) -> Self {
-        Self::from_owned(UiRect::top(top.into()))
+    pub fn top(top: PyVal) -> PyResult<Self> {
+        Self::checked(UiRect::top(top.into()))
     }
 
     #[staticmethod]
-    pub fn bottom(bottom: PyVal) -> Self {
-        Self::from_owned(UiRect::bottom(bottom.into()))
+    pub fn bottom(bottom: PyVal) -> PyResult<Self> {
+        Self::checked(UiRect::bottom(bottom.into()))
     }
 
     pub fn with_left(&self, left: PyVal) -> PyResult<Self> {
-        Ok(Self::from_owned(self.as_ref()?.with_left(left.into())))
+        Self::checked(self.as_ref()?.with_left(left.into()))
     }
 
     pub fn with_right(&self, right: PyVal) -> PyResult<Self> {
-        Ok(Self::from_owned(self.as_ref()?.with_right(right.into())))
+        Self::checked(self.as_ref()?.with_right(right.into()))
     }
 
     pub fn with_top(&self, top: PyVal) -> PyResult<Self> {
-        Ok(Self::from_owned(self.as_ref()?.with_top(top.into())))
+        Self::checked(self.as_ref()?.with_top(top.into()))
     }
 
     pub fn with_bottom(&self, bottom: PyVal) -> PyResult<Self> {
-        Ok(Self::from_owned(self.as_ref()?.with_bottom(bottom.into())))
+        Self::checked(self.as_ref()?.with_bottom(bottom.into()))
     }
 
     pub fn get_left(&self) -> PyResult<PyVal> {
@@ -153,7 +165,7 @@ impl PyUiRect {
     }
 
     pub fn set_left(&mut self, value: PyVal) -> PyResult<()> {
-        let value = validate_finite_val(value.into(), "UiRect.left")?;
+        let value = Self::check_left(Val::from(value))?;
         self.storage.update(|rect| rect.left = value)?;
         Ok(())
     }
@@ -163,7 +175,7 @@ impl PyUiRect {
     }
 
     pub fn set_right(&mut self, value: PyVal) -> PyResult<()> {
-        let value = validate_finite_val(value.into(), "UiRect.right")?;
+        let value = Self::check_right(Val::from(value))?;
         self.storage.update(|rect| rect.right = value)?;
         Ok(())
     }
@@ -173,7 +185,7 @@ impl PyUiRect {
     }
 
     pub fn set_top(&mut self, value: PyVal) -> PyResult<()> {
-        let value = validate_finite_val(value.into(), "UiRect.top")?;
+        let value = Self::check_top(Val::from(value))?;
         self.storage.update(|rect| rect.top = value)?;
         Ok(())
     }
@@ -183,7 +195,7 @@ impl PyUiRect {
     }
 
     pub fn set_bottom(&mut self, value: PyVal) -> PyResult<()> {
-        let value = validate_finite_val(value.into(), "UiRect.bottom")?;
+        let value = Self::check_bottom(Val::from(value))?;
         self.storage.update(|rect| rect.bottom = value)?;
         Ok(())
     }

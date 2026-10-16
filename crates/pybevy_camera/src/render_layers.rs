@@ -1,7 +1,14 @@
 use bevy::camera::visibility::RenderLayers;
-use pybevy_core::{PyComponent, pycomponent::ComponentStorage};
+use pybevy_core::{
+    PyComponent,
+    domain::{FieldDomain, IntegerInput, check},
+    pycomponent::ComponentStorage,
+};
 use pybevy_macros::pycomponent;
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pyo3::prelude::*;
+
+/// `RenderLayers::layer` builds a single-word mask; `from_layers` takes more.
+const LAYER_DOMAIN: &[FieldDomain] = &[FieldDomain::Range { lo: 0.0, hi: 64.0 }];
 
 #[pycomponent(RenderLayers, bridge)]
 #[pyclass(name = "RenderLayers", module = "pybevy.camera", extends = PyComponent, eq)]
@@ -30,13 +37,8 @@ impl PyRenderLayers {
     }
 
     #[staticmethod]
-    pub fn layer(py: Python<'_>, layer: usize) -> PyResult<Py<Self>> {
-        if layer >= u64::BITS as usize {
-            return Err(PyValueError::new_err(format!(
-                "layer must be less than {} for RenderLayers.layer(); use from_layers() for higher layers",
-                u64::BITS
-            )));
-        }
+    pub fn layer(py: Python<'_>, layer: IntegerInput<u64>) -> PyResult<Py<Self>> {
+        let layer = check("RenderLayers", "layer", layer, LAYER_DOMAIN)?.stored() as usize;
         Py::new(
             py,
             (

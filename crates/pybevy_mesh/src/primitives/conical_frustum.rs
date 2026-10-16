@@ -1,30 +1,24 @@
 use bevy::mesh::{ConicalFrustumMeshBuilder, MeshBuilder};
-use pybevy_core::PyAsset;
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pybevy_core::{PyAsset, domain::IntegerInput};
+use pyo3::prelude::*;
 
-use crate::{mesh::PyMesh, mesh_builder::PyMeshBuilder, primitives::validation::vertex_budget};
+use crate::{
+    mesh::PyMesh,
+    mesh_builder::PyMeshBuilder,
+    primitives::validation::{
+        AT_LEAST_ONE, AT_LEAST_THREE, minimum_count, stored_count, vertex_budget,
+    },
+};
 
-fn validate_counts(builder: &ConicalFrustumMeshBuilder) -> PyResult<()> {
-    if builder.resolution < 3 {
-        return Err(PyValueError::new_err(
-            "ConicalFrustumMeshBuilder.resolution must be at least 3",
-        ));
-    }
-    if builder.segments == 0 {
-        return Err(PyValueError::new_err(
-            "ConicalFrustumMeshBuilder.segments must be at least 1",
-        ));
-    }
-
-    Ok(())
-}
+const OWNER: &str = "ConicalFrustumMeshBuilder";
 
 fn validate_build(builder: &ConicalFrustumMeshBuilder) -> PyResult<()> {
-    validate_counts(builder)?;
+    stored_count(OWNER, "resolution", builder.resolution, AT_LEAST_THREE)?;
+    stored_count(OWNER, "segments", builder.segments, AT_LEAST_ONE)?;
     let resolution = u128::from(builder.resolution);
     let segments = u128::from(builder.segments);
     let vertices = 2 * resolution + (segments + 1) * (resolution + 1);
-    vertex_budget("ConicalFrustumMeshBuilder", vertices)
+    vertex_budget(OWNER, vertices)
 }
 
 #[pyclass(name = "ConicalFrustumMeshBuilder", module = "pybevy.mesh", extends = PyMeshBuilder, frozen)]
@@ -39,16 +33,16 @@ impl From<ConicalFrustumMeshBuilder> for PyConicalFrustumMeshBuilder {
 
 #[pymethods]
 impl PyConicalFrustumMeshBuilder {
-    pub fn resolution(&self, py: Python<'_>, resolution: u32) -> PyResult<Py<Self>> {
-        let builder = self.0.resolution(resolution);
-        validate_counts(&builder)?;
-        Py::new(py, (Self(builder), PyMeshBuilder))
+    pub fn resolution(&self, py: Python<'_>, resolution: IntegerInput<u32>) -> PyResult<Py<Self>> {
+        let resolution = minimum_count(OWNER, "resolution", resolution, AT_LEAST_THREE)?;
+        stored_count(OWNER, "segments", self.0.segments, AT_LEAST_ONE)?;
+        Py::new(py, (Self(self.0.resolution(resolution)), PyMeshBuilder))
     }
 
-    pub fn segments(&self, py: Python<'_>, segments: u32) -> PyResult<Py<Self>> {
-        let builder = self.0.segments(segments);
-        validate_counts(&builder)?;
-        Py::new(py, (Self(builder), PyMeshBuilder))
+    pub fn segments(&self, py: Python<'_>, segments: IntegerInput<u32>) -> PyResult<Py<Self>> {
+        let segments = minimum_count(OWNER, "segments", segments, AT_LEAST_ONE)?;
+        stored_count(OWNER, "resolution", self.0.resolution, AT_LEAST_THREE)?;
+        Py::new(py, (Self(self.0.segments(segments)), PyMeshBuilder))
     }
 
     pub fn build(&self, py: Python<'_>) -> PyResult<Py<PyMesh>> {

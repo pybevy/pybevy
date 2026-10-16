@@ -1,11 +1,11 @@
 use bevy::mesh::{CircleMeshBuilder, MeshBuilder};
-use pybevy_core::PyAsset;
+use pybevy_core::{PyAsset, domain::IntegerInput};
 use pyo3::prelude::*;
 
 use crate::{
     mesh::PyMesh,
     mesh_builder::PyMeshBuilder,
-    primitives::validation::{minimum_count, vertex_budget},
+    primitives::validation::{AT_LEAST_THREE, minimum_count, stored_count, vertex_budget},
 };
 
 #[pyclass(name = "CircleMeshBuilder", module = "pybevy.mesh", extends = PyMeshBuilder, frozen)]
@@ -26,13 +26,23 @@ impl From<CircleMeshBuilder> for PyCircleMeshBuilder {
 
 #[pymethods]
 impl PyCircleMeshBuilder {
-    pub fn resolution(&self, py: Python<'_>, resolution: u32) -> PyResult<Py<Self>> {
-        minimum_count("CircleMeshBuilder.resolution", resolution, 3)?;
+    pub fn resolution(&self, py: Python<'_>, resolution: IntegerInput<u32>) -> PyResult<Py<Self>> {
+        let resolution = minimum_count(
+            "CircleMeshBuilder",
+            "resolution",
+            resolution,
+            AT_LEAST_THREE,
+        )?;
         Py::new(py, (Self(self.0.resolution(resolution)), PyMeshBuilder))
     }
 
     pub fn build(&self, py: Python<'_>) -> PyResult<Py<PyMesh>> {
-        minimum_count("CircleMeshBuilder.resolution", self.0.resolution, 3)?;
+        stored_count(
+            "CircleMeshBuilder",
+            "resolution",
+            self.0.resolution,
+            AT_LEAST_THREE,
+        )?;
         vertex_budget("CircleMeshBuilder", u128::from(self.0.resolution))?;
         Py::new(py, (self.0.build().into(), PyAsset))
     }

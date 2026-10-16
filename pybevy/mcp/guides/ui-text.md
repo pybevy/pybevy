@@ -42,7 +42,9 @@ For HUDs use UI `Text` + `Node`; world-anchored labels require projecting
 world positions into the viewport.
 
 `TextBounds` for world-space text rejects NaN width and height values before
-they reach layout. Use `None` for an unbounded dimension.
+they reach layout. Use `None` for an unbounded dimension. `TextFont.font_size`
+must be finite and non-negative in every `FontSize` unit, including through
+MCP component writes.
 
 ## UI Text vs World Text
 

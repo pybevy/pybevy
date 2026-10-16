@@ -26,9 +26,9 @@ impl PyCylinder {
         #[default(1.0)] height: f32,
         half_height: Option<f32>,
     ) -> PyResult<PyClassInitializer<Self>> {
-        let radius = dimension("radius", radius)?;
+        let radius = dimension("Cylinder", "radius", radius)?;
         if let Some(half_height) = half_height {
-            let half_height = dimension("half_height", half_height)?;
+            let half_height = dimension("Cylinder", "half_height", half_height)?;
             return Ok((
                 Self(Cylinder {
                     radius,
@@ -38,7 +38,7 @@ impl PyCylinder {
             )
                 .into());
         }
-        let cylinder = Cylinder::new(radius, dimension("height", height)?);
+        let cylinder = Cylinder::new(radius, dimension("Cylinder", "height", height)?);
         Ok((Self(cylinder), PyMeshable).into())
     }
 
@@ -49,7 +49,7 @@ impl PyCylinder {
 
     #[setter]
     pub fn set_radius(&mut self, value: f32) -> PyResult<()> {
-        self.0.radius = dimension("radius", value)?;
+        self.0.radius = dimension("Cylinder", "radius", value)?;
         Ok(())
     }
 
@@ -60,7 +60,7 @@ impl PyCylinder {
 
     #[setter]
     pub fn set_half_height(&mut self, value: f32) -> PyResult<()> {
-        self.0.half_height = dimension("half_height", value)?;
+        self.0.half_height = dimension("Cylinder", "half_height", value)?;
         Ok(())
     }
 

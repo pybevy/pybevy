@@ -43,7 +43,7 @@ impl PySphere {
     pub fn new(center: PyVec3A, radius: f32) -> PyResult<Self> {
         Ok(Self::from_owned(Sphere {
             center: center.try_into()?,
-            radius: dimension("radius", radius)?,
+            radius: dimension("Sphere", "radius", radius)?,
         }))
     }
 
@@ -65,7 +65,7 @@ impl PySphere {
 
     #[setter]
     pub fn set_radius(&mut self, value: f32) -> PyResult<()> {
-        let value = dimension("radius", value)?;
+        let value = dimension("Sphere", "radius", value)?;
         self.as_mut()?.radius = value;
         Ok(())
     }

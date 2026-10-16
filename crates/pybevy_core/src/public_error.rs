@@ -435,10 +435,6 @@ pub const ANIMATION_GRAPH_NODE_MISSING: &str = "the node is no longer in the ani
 pub const ANIMATION_GRAPH_CYCLE: &str = "AnimationGraph.add_edge would create a cycle";
 pub const ANIMATION_PLAYER_ANIMATION_MISSING: &str = "Animation not found for node index";
 
-pub fn animation_parameter_must_be_finite(parameter: &str, value: f32) -> String {
-    format!("{parameter} must be finite (got {value})")
-}
-
 pub const RESOURCE_COMPONENT_INSERT: &str =
     "resources cannot be inserted as ordinary entity components";
 pub const RESOURCE_COMPONENT_REMOVE: &str =
@@ -464,13 +460,8 @@ pub const NEXT_STATE_CONSTRUCTION: &str = "NextState cannot be constructed direc
 pub const DURATION_NEGATIVE: &str = "Duration cannot be negative";
 pub const DURATION_NON_FINITE: &str = "Duration must be finite";
 pub const DURATION_OVERFLOW: &str = "Duration is too large";
-pub const DURATION_ZERO: &str = "Duration must be greater than zero";
-pub const FREQUENCY_NON_FINITE: &str = "Frequency must be finite";
-pub const FREQUENCY_NON_POSITIVE: &str = "Frequency must be greater than zero";
 pub const FREQUENCY_OUT_OF_RANGE: &str =
     "Frequency produces a timestep outside the supported duration range";
-pub const RELATIVE_SPEED_NON_FINITE: &str = "Relative speed must be finite";
-pub const RELATIVE_SPEED_NEGATIVE: &str = "Relative speed cannot be negative";
 pub const RELATIVE_SPEED_OUT_OF_RANGE: &str =
     "Relative speed produces a frame delta outside the supported duration range";
 pub const COLOR_INTERPOLATION_MISMATCH: &str =
@@ -506,12 +497,6 @@ pub fn fixed_length_collection(name: &str) -> String {
 
 pub fn morph_weights_creation_failed(error: impl Debug) -> String {
     format!("Failed to create MorphWeights: {error:?}")
-}
-
-pub fn icosphere_subdivisions_too_many(subdivisions: u32, vertices: u128) -> String {
-    format!(
-        "Cannot create an icosphere of {subdivisions} subdivisions due to there being too many vertices being generated: {vertices}. (Limited to 65535 vertices or 79 subdivisions)"
-    )
 }
 
 pub fn mesh_merge_missing_attribute(side: &str, name: &str) -> String {
@@ -710,10 +695,6 @@ pub const SHADER_BUFFER_DATA_CHANGED: &str =
 
 pub const TIME_CONTEXT_TYPE_REQUIRED: &str =
     "Time[...] expects one of the Fixed, Real, or Virtual marker types";
-pub fn mat4_perspective_near(function: &str) -> String {
-    format!("{function} requires z_near > 0")
-}
-
 pub fn matrix_decomposition_singular(type_name: &str) -> String {
     format!("{type_name}.to_scale_rotation_translation requires a finite, non-zero determinant")
 }
@@ -730,10 +711,6 @@ pub const MAT4_LOOK_AT_EYE_EQUALS_CENTER: &str = "eye and center must be distinc
 
 pub fn matrix_not_invertible(type_name: &str) -> String {
     format!("{type_name} is not invertible: its determinant is zero or its inverse is not finite")
-}
-
-pub fn mat4_perspective_depth_planes(function: &str) -> String {
-    format!("{function} requires z_near > 0 and z_far > 0")
 }
 
 pub fn mat4_projection_not_finite(function: &str) -> String {
@@ -1421,8 +1398,6 @@ pub const UP_NOT_NORMALIZED: &str = "up must be normalized";
 pub const ROTATION_ARC_NOT_NORMALIZED: &str = "start and end vectors must be normalized";
 pub const QUAT_NOT_NORMALIZED: &str = "quaternion must be normalized";
 pub const ROTATION_AXES_NOT_NORMALIZED: &str = "rotation axes must be normalized";
-pub const QUAT_AXIS_NOT_FINITE: &str =
-    "axis must be finite; from_axis_angle requires a normalized axis";
 pub const INVALID_INTERVAL: &str =
     "The resulting interval would be invalid (empty or with a NaN endpoint)";
 
@@ -1432,10 +1407,6 @@ pub fn from_slice_too_short(minimum: usize) -> String {
 
 pub fn integer_vector_division_by_zero(type_name: &str) -> String {
     format!("{type_name} division by zero")
-}
-
-pub fn quat_angle_not_finite(angle: f32) -> String {
-    format!("angle must be finite (got {angle})")
 }
 
 pub fn quat_axis_not_normalized(length: f32) -> String {
@@ -1533,27 +1504,6 @@ pub fn mesh_attribute_format(name: &str, expected: impl Display, given: impl Dis
 
 pub const NON_CONTIGUOUS_ATTRIBUTE_ARRAY: &str = "Attribute arrays must be C-contiguous in memory. The dtype and shape are fine; the layout is not. Pass numpy.ascontiguousarray(values).";
 
-pub fn bounding_half_size(kind: &str, axes: &[f32]) -> String {
-    let values = axes
-        .iter()
-        .map(f32::to_string)
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!("{kind} half_size must be nonnegative, got ({values})")
-}
-
-pub fn bounding_radius(kind: &str, radius: f32) -> String {
-    format!("{kind} radius must be nonnegative, got {radius}")
-}
-
-pub fn primitive_dimension(name: &str, value: impl Display) -> String {
-    format!("{name} must be finite and non-negative (got {value})")
-}
-
-pub fn primitive_angle(name: &str, value: f32) -> String {
-    format!("{name} must be finite (got {value})")
-}
-
 pub fn intersects_volume_type(accepted: &str) -> String {
     format!("expected {accepted}")
 }
@@ -1561,14 +1511,6 @@ pub fn intersects_volume_type(accepted: &str) -> String {
 pub fn bounding_operation(kind: &str, operation: &str) -> String {
     format!("{kind} {operation} must preserve nonnegative extents")
 }
-
-pub const INTEGER_RECT_SIZE_NEGATIVE: &str = "IRect size must be non-negative";
-
-pub const INTEGER_RECT_HALF_SIZE_NEGATIVE: &str = "IRect half_size must be non-negative";
-
-pub const RECT_SIZE_INVALID: &str = "Rect size must be non-negative and not NaN";
-
-pub const RECT_HALF_SIZE_INVALID: &str = "Rect half_size must be non-negative and not NaN";
 
 pub fn unsigned_rect_origin(origin: [u32; 2], extent: [u32; 2], half_size: bool) -> String {
     let requirement = if half_size { "half_size" } else { "(size / 2)" };

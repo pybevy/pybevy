@@ -4,7 +4,8 @@ use bevy::math::{
 };
 use pybevy_core::{
     FromBorrowedStorage, ValueStorage,
-    public_error::{EMPTY_POINT_CLOUD, bounding_operation, bounding_radius, bounding_shrink},
+    domain::{NON_NEGATIVE, check},
+    public_error::{EMPTY_POINT_CLOUD, bounding_operation, bounding_shrink},
     repr::{ReprLiteral, float_repr},
 };
 use pybevy_macros::pyvalue;
@@ -76,12 +77,7 @@ impl PyBoundingSphere {
 
     #[new]
     pub fn new(center: &Bound<'_, PyAny>, radius: f32) -> PyResult<Self> {
-        if radius.is_nan() || radius < 0.0 {
-            return Err(PyValueError::new_err(bounding_radius(
-                "BoundingSphere",
-                radius,
-            )));
-        }
+        let radius = check("BoundingSphere", "radius", radius, NON_NEGATIVE)?;
         Ok(PyBoundingSphere::from_owned(BoundingSphere::new(
             extract_vec3a_from_any(center)?,
             radius,
@@ -160,23 +156,17 @@ impl PyBoundingSphere {
 
     pub fn grow(&self, amount: f32) -> PyResult<PyBoundingSphere> {
         let bounds = self.as_ref()?;
-        if amount.is_nan() || amount < 0.0 {
-            return Err(PyValueError::new_err(bounding_operation(
-                "BoundingSphere",
-                "grow",
-            )));
-        }
+        let amount = check("BoundingSphere", "amount", amount, NON_NEGATIVE)?;
         Ok(PyBoundingSphere::from_owned(bounds.grow(amount)))
     }
 
     pub fn shrink(&self, amount: f32) -> PyResult<PyBoundingSphere> {
         let bounds = self.as_ref()?;
-        if amount.is_nan()
-            || amount < 0.0
-            || bounds
-                .radius()
-                .partial_cmp(&amount)
-                .is_none_or(|order| order.is_lt())
+        let amount = check("BoundingSphere", "amount", amount, NON_NEGATIVE)?;
+        if bounds
+            .radius()
+            .partial_cmp(&amount)
+            .is_none_or(|order| order.is_lt())
         {
             return Err(PyValueError::new_err(bounding_shrink("BoundingSphere")));
         }
@@ -185,12 +175,7 @@ impl PyBoundingSphere {
 
     pub fn scale_around_center(&self, scale: f32) -> PyResult<PyBoundingSphere> {
         let bounds = self.as_ref()?;
-        if scale.is_nan() || scale < 0.0 {
-            return Err(PyValueError::new_err(bounding_operation(
-                "BoundingSphere",
-                "scale_around_center",
-            )));
-        }
+        let scale = check("BoundingSphere", "scale", scale, NON_NEGATIVE)?;
         Ok(PyBoundingSphere::from_owned(
             bounds.scale_around_center(scale),
         ))

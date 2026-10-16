@@ -1,24 +1,14 @@
 use bevy::math::{Rect, Vec2};
 use pybevy_core::{
     FromBorrowedStorage, ValueStorage,
-    public_error::{RECT_HALF_SIZE_INVALID, RECT_SIZE_INVALID, UNSUPPORTED_COMPARISON},
+    domain::{NON_NEGATIVE, check},
+    public_error::UNSUPPORTED_COMPARISON,
     repr::float_repr,
 };
 use pybevy_macros::pyvalue;
-use pyo3::{
-    basic::CompareOp,
-    exceptions::{PyTypeError, PyValueError},
-    prelude::*,
-};
+use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
 use crate::{irect::PyIRect, richcmp::comparison_result, urect::PyURect, vec2::PyVec2};
-
-fn check_center_extent(extent: Vec2, error: &'static str) -> PyResult<()> {
-    if extent.x < 0.0 || extent.y < 0.0 || extent.x.is_nan() || extent.y.is_nan() {
-        return Err(PyValueError::new_err(error));
-    }
-    Ok(())
-}
 
 #[pyvalue]
 #[pyclass(name = "Rect", module = "pybevy.math", from_py_object)]
@@ -47,7 +37,7 @@ impl PyRect {
     pub fn from_center_size(origin: PyVec2, size: PyVec2) -> PyResult<Self> {
         let origin: Vec2 = origin.try_into()?;
         let size: Vec2 = size.try_into()?;
-        check_center_extent(size, RECT_SIZE_INVALID)?;
+        let size = check("Rect", "size", size, NON_NEGATIVE)?;
         Ok(Self::from_owned(Rect::from_center_size(origin, size)))
     }
 
@@ -55,7 +45,7 @@ impl PyRect {
     pub fn from_center_half_size(origin: PyVec2, half_size: PyVec2) -> PyResult<Self> {
         let origin: Vec2 = origin.try_into()?;
         let half_size: Vec2 = half_size.try_into()?;
-        check_center_extent(half_size, RECT_HALF_SIZE_INVALID)?;
+        let half_size = check("Rect", "half_size", half_size, NON_NEGATIVE)?;
         Ok(Self::from_owned(Rect::from_center_half_size(
             origin, half_size,
         )))

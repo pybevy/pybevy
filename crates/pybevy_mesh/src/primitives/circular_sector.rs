@@ -1,12 +1,12 @@
 use bevy::mesh::{CircularSectorMeshBuilder, MeshBuilder};
-use pybevy_core::PyAsset;
+use pybevy_core::{PyAsset, domain::IntegerInput};
 use pyo3::prelude::*;
 
 use crate::{
     circular_mesh_uv_mode::PyCircularMeshUvMode,
     mesh::PyMesh,
     mesh_builder::PyMeshBuilder,
-    primitives::validation::{minimum_count, vertex_budget},
+    primitives::validation::{AT_LEAST_TWO, minimum_count, stored_count, vertex_budget},
 };
 
 #[pyclass(name = "CircularSectorMeshBuilder", module = "pybevy.mesh", extends = PyMeshBuilder)]
@@ -21,8 +21,13 @@ impl From<CircularSectorMeshBuilder> for PyCircularSectorMeshBuilder {
 
 #[pymethods]
 impl PyCircularSectorMeshBuilder {
-    pub fn resolution(&self, py: Python<'_>, resolution: u32) -> PyResult<Py<Self>> {
-        minimum_count("CircularSectorMeshBuilder.resolution", resolution, 2)?;
+    pub fn resolution(&self, py: Python<'_>, resolution: IntegerInput<u32>) -> PyResult<Py<Self>> {
+        let resolution = minimum_count(
+            "CircularSectorMeshBuilder",
+            "resolution",
+            resolution,
+            AT_LEAST_TWO,
+        )?;
         let mut builder = self.0.clone();
         builder.resolution = resolution;
         Py::new(py, (Self(builder), PyMeshBuilder))
@@ -36,7 +41,12 @@ impl PyCircularSectorMeshBuilder {
     }
 
     pub fn build(&self, py: Python) -> PyResult<Py<PyMesh>> {
-        minimum_count("CircularSectorMeshBuilder.resolution", self.0.resolution, 2)?;
+        stored_count(
+            "CircularSectorMeshBuilder",
+            "resolution",
+            self.0.resolution,
+            AT_LEAST_TWO,
+        )?;
         vertex_budget(
             "CircularSectorMeshBuilder",
             u128::from(self.0.resolution) + 1,

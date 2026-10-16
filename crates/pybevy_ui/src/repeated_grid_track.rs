@@ -2,10 +2,11 @@ use bevy::{
     reflect::{PartialReflect, ReflectRef},
     ui::{GridTrack, GridTrackRepetition, RepeatedGridTrack},
 };
+use pybevy_core::domain::{FINITE, check};
 use pyo3::prelude::*;
 
 use crate::{
-    grid_track::{finite_grid_value, grid_track_factory},
+    grid_track::grid_track_factory,
     grid_track_repetition::{PyGridTrackRepetition, extract_grid_track_repetition_from_any},
 };
 
@@ -94,7 +95,7 @@ impl PyRepeatedGridTrack {
         Ok(PyRepeatedGridTrack {
             inner: RepeatedGridTrack::px(
                 extract_grid_track_repetition_from_any(repetition)?,
-                finite_grid_value(value, "px")?,
+                check("RepeatedGridTrack", "px", value, FINITE)?,
             ),
         })
     }
@@ -104,7 +105,7 @@ impl PyRepeatedGridTrack {
         Ok(PyRepeatedGridTrack {
             inner: RepeatedGridTrack::percent(
                 extract_grid_track_repetition_from_any(repetition)?,
-                finite_grid_value(value, "percent")?,
+                check("RepeatedGridTrack", "percent", value, FINITE)?,
             ),
         })
     }
@@ -112,14 +113,20 @@ impl PyRepeatedGridTrack {
     #[staticmethod]
     pub fn fr(repetition: u16, value: f32) -> PyResult<Self> {
         Ok(PyRepeatedGridTrack {
-            inner: RepeatedGridTrack::fr(repetition, finite_grid_value(value, "fr")?),
+            inner: RepeatedGridTrack::fr(
+                repetition,
+                check("RepeatedGridTrack", "fr", value, FINITE)?,
+            ),
         })
     }
 
     #[staticmethod]
     pub fn flex(repetition: u16, value: f32) -> PyResult<Self> {
         Ok(PyRepeatedGridTrack {
-            inner: RepeatedGridTrack::flex(repetition, finite_grid_value(value, "flex")?),
+            inner: RepeatedGridTrack::flex(
+                repetition,
+                check("RepeatedGridTrack", "flex", value, FINITE)?,
+            ),
         })
     }
 
@@ -149,7 +156,7 @@ impl PyRepeatedGridTrack {
         Ok(PyRepeatedGridTrack {
             inner: RepeatedGridTrack::fit_content_px(
                 repetition,
-                finite_grid_value(limit, "fit_content_px")?,
+                check("RepeatedGridTrack", "fit_content_px", limit, FINITE)?,
             ),
         })
     }
@@ -159,7 +166,7 @@ impl PyRepeatedGridTrack {
         Ok(PyRepeatedGridTrack {
             inner: RepeatedGridTrack::fit_content_percent(
                 repetition,
-                finite_grid_value(limit, "fit_content_percent")?,
+                check("RepeatedGridTrack", "fit_content_percent", limit, FINITE)?,
             ),
         })
     }

@@ -15,5 +15,10 @@ smallvec = { workspace = true }
 workspace = true
 optional = true
 
+[features]
+# Domain shapes for the magnitudes inside UI and text values.
+ui = ["bevy/bevy_ui"]
+text = ["bevy/bevy_text"]
+
 [lints]
 workspace = true

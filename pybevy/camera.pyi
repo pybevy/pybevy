@@ -1119,7 +1119,7 @@ class RenderLayers(Component):
         """Create RenderLayers with only the specified layer enabled.
 
         Args:
-            layer: Layer number below 64
+            layer: Layer number below 64; use ``from_layers()`` for higher layers
 
         Returns:
             RenderLayers with only the specified layer enabled

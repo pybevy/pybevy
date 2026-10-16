@@ -1,11 +1,11 @@
 use bevy::mesh::{EllipseMeshBuilder, MeshBuilder};
-use pybevy_core::PyAsset;
+use pybevy_core::{PyAsset, domain::IntegerInput};
 use pyo3::prelude::*;
 
 use crate::{
     mesh::PyMesh,
     mesh_builder::PyMeshBuilder,
-    primitives::validation::{minimum_count, vertex_budget},
+    primitives::validation::{AT_LEAST_THREE, minimum_count, stored_count, vertex_budget},
 };
 
 #[pyclass(name = "EllipseMeshBuilder", module = "pybevy.mesh", extends = PyMeshBuilder)]
@@ -20,15 +20,25 @@ impl From<EllipseMeshBuilder> for PyEllipseMeshBuilder {
 
 #[pymethods]
 impl PyEllipseMeshBuilder {
-    pub fn resolution(&self, py: Python<'_>, resolution: u32) -> PyResult<Py<Self>> {
-        minimum_count("EllipseMeshBuilder.resolution", resolution, 3)?;
+    pub fn resolution(&self, py: Python<'_>, resolution: IntegerInput<u32>) -> PyResult<Py<Self>> {
+        let resolution = minimum_count(
+            "EllipseMeshBuilder",
+            "resolution",
+            resolution,
+            AT_LEAST_THREE,
+        )?;
         let mut builder = self.0;
         builder.resolution = resolution;
         Py::new(py, (Self(builder), PyMeshBuilder))
     }
 
     pub fn build(&self, py: Python) -> PyResult<Py<PyMesh>> {
-        minimum_count("EllipseMeshBuilder.resolution", self.0.resolution, 3)?;
+        stored_count(
+            "EllipseMeshBuilder",
+            "resolution",
+            self.0.resolution,
+            AT_LEAST_THREE,
+        )?;
         vertex_budget("EllipseMeshBuilder", u128::from(self.0.resolution))?;
         Py::new(py, (self.0.build().into(), PyAsset))
     }

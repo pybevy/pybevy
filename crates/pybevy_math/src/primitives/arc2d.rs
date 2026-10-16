@@ -7,30 +7,49 @@ use pyo3::prelude::*;
 use super::dimension::{angle, dimension};
 use crate::vec2::PyVec2;
 
-pub fn checked_arc(radius: f32, half_angle: f32) -> Result<Arc2d, StorageError> {
+pub fn checked_arc(
+    owner: &'static str,
+    radius: f32,
+    half_angle: f32,
+) -> Result<Arc2d, StorageError> {
     Ok(Arc2d::new(
-        dimension("radius", radius)?,
-        angle("half_angle", half_angle)?,
+        dimension(owner, "radius", radius)?,
+        angle(owner, "half_angle", half_angle)?,
     ))
 }
 
-pub fn checked_arc_from_radians(radius: f32, radians: f32) -> Result<Arc2d, StorageError> {
+pub fn checked_arc_from_radians(
+    owner: &'static str,
+    radius: f32,
+    radians: f32,
+) -> Result<Arc2d, StorageError> {
     Ok(Arc2d::from_radians(
-        dimension("radius", radius)?,
-        angle("angle", radians)?,
+        dimension(owner, "radius", radius)?,
+        angle(owner, "angle", radians)?,
     ))
 }
 
-pub fn checked_arc_from_degrees(radius: f32, degrees: f32) -> Result<Arc2d, StorageError> {
+pub fn checked_arc_from_degrees(
+    owner: &'static str,
+    radius: f32,
+    degrees: f32,
+) -> Result<Arc2d, StorageError> {
     Ok(Arc2d::from_degrees(
-        dimension("radius", radius)?,
-        angle("angle", degrees)?,
+        dimension(owner, "radius", radius)?,
+        angle(owner, "angle", degrees)?,
     ))
 }
 
-pub fn checked_arc_from_turns(radius: f32, fraction: f32) -> Result<Arc2d, StorageError> {
-    let arc = Arc2d::from_turns(dimension("radius", radius)?, angle("fraction", fraction)?);
-    angle("half_angle", arc.half_angle)?;
+pub fn checked_arc_from_turns(
+    owner: &'static str,
+    radius: f32,
+    fraction: f32,
+) -> Result<Arc2d, StorageError> {
+    let arc = Arc2d::from_turns(
+        dimension(owner, "radius", radius)?,
+        angle(owner, "fraction", fraction)?,
+    );
+    angle(owner, "half_angle", arc.half_angle)?;
     Ok(arc)
 }
 
@@ -68,28 +87,28 @@ impl PyArc2d {
     #[pyo3(signature = (radius = 0.5, half_angle = 2.0 * FRAC_PI_3))]
     pub fn new(radius: f32, half_angle: f32) -> PyResult<Self> {
         Ok(Self {
-            storage: ValueStorage::owned(checked_arc(radius, half_angle)?),
+            storage: ValueStorage::owned(checked_arc("Arc2d", radius, half_angle)?),
         })
     }
 
     #[staticmethod]
     pub fn from_radians(radius: f32, angle: f32) -> PyResult<Self> {
         Ok(Self {
-            storage: ValueStorage::owned(checked_arc_from_radians(radius, angle)?),
+            storage: ValueStorage::owned(checked_arc_from_radians("Arc2d", radius, angle)?),
         })
     }
 
     #[staticmethod]
     pub fn from_degrees(radius: f32, angle: f32) -> PyResult<Self> {
         Ok(Self {
-            storage: ValueStorage::owned(checked_arc_from_degrees(radius, angle)?),
+            storage: ValueStorage::owned(checked_arc_from_degrees("Arc2d", radius, angle)?),
         })
     }
 
     #[staticmethod]
     pub fn from_turns(radius: f32, fraction: f32) -> PyResult<Self> {
         Ok(Self {
-            storage: ValueStorage::owned(checked_arc_from_turns(radius, fraction)?),
+            storage: ValueStorage::owned(checked_arc_from_turns("Arc2d", radius, fraction)?),
         })
     }
 
@@ -101,7 +120,7 @@ impl PyArc2d {
     #[setter]
     pub fn set_radius(&mut self, value: f32) -> PyResult<()> {
         let mut arc = self.storage.as_mut()?;
-        arc.radius = dimension("radius", value)?;
+        arc.radius = dimension("Arc2d", "radius", value)?;
         Ok(())
     }
 
@@ -113,7 +132,7 @@ impl PyArc2d {
     #[setter]
     pub fn set_half_angle(&mut self, value: f32) -> PyResult<()> {
         let mut arc = self.storage.as_mut()?;
-        arc.half_angle = angle("half_angle", value)?;
+        arc.half_angle = angle("Arc2d", "half_angle", value)?;
         Ok(())
     }
 

@@ -13,8 +13,8 @@ the variant; use `isinstance(value, Val.Auto)` or `value == Val.Auto()` for Auto
 Bare numeric Node fields mean pixels.
 Node layout assignments, including margin, padding, border and live rect-side
 writes, reject NaN and infinity before they reach Bevy's layout. Standalone
-`Val` and `UiRect` values can still carry non-finite data until assigned to a
-Node. Grid-track numeric factories require finite values at construction.
+`Val` values can still carry non-finite data; `UiRect` rejects it in its
+constructors, `with_*` builders and setters. Grid-track numeric factories require finite values at construction.
 
 Scalar multiplication, division and negation preserve the unit. `try_add` and
 `try_sub` return a value for matching numeric units and raise `ValueError` for

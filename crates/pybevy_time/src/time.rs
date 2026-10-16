@@ -2,27 +2,36 @@ use std::time::Duration;
 
 use bevy::time::{Fixed, Real, Time, Virtual};
 use pybevy_core::{
-    PyResource, ResourceStorage, duration_from_hz, positive_duration_from_secs_f64,
-    public_error::{DURATION_ZERO, TIME_CONTEXT_TYPE_REQUIRED},
+    POSITIVE_DURATION_DOMAIN, PyResource, ResourceStorage, check_duration,
+    domain::{DurationInput, check},
+    public_error::TIME_CONTEXT_TYPE_REQUIRED,
     relative_speed,
     repr::float_repr,
-    resource_initializer,
+    resource_initializer, timestep_from_hz,
 };
 use pybevy_macros::pyresource;
-use pyo3::{
-    PyTypeInfo,
-    exceptions::{PyTypeError, PyValueError},
-    prelude::*,
-    types::PyType,
-};
+use pyo3::{PyTypeInfo, exceptions::PyTypeError, prelude::*, types::PyType};
 
 use crate::time_context::{PyFixed, PyReal, PyVirtual};
 
-fn require_positive_duration(duration: Duration) -> PyResult<Duration> {
-    if duration.is_zero() {
-        return Err(PyValueError::new_err(DURATION_ZERO));
-    }
-    Ok(duration)
+const FIXED: &str = "Time[Fixed]";
+const VIRTUAL: &str = "Time[Virtual]";
+
+fn positive_duration(
+    owner: &'static str,
+    field: &'static str,
+    duration: Duration,
+) -> PyResult<Duration> {
+    Ok(check(owner, field, duration, POSITIVE_DURATION_DOMAIN)?)
+}
+
+fn positive_seconds(owner: &'static str, field: &'static str, seconds: f64) -> PyResult<Duration> {
+    check_duration(
+        owner,
+        field,
+        DurationInput::Seconds(seconds),
+        POSITIVE_DURATION_DOMAIN,
+    )
 }
 
 #[pyresource(Time, bridge)]
@@ -64,7 +73,7 @@ impl PyTime {
     }
 
     pub fn set_wrap_period(&mut self, wrap_period: Duration) -> PyResult<()> {
-        let wrap_period = require_positive_duration(wrap_period)?;
+        let wrap_period = positive_duration("Time", "wrap_period", wrap_period)?;
         self.as_mut()?.set_wrap_period(wrap_period);
         Ok(())
     }
@@ -142,7 +151,7 @@ impl PyTimeFixed {
 
     #[staticmethod]
     pub fn from_duration(py: Python<'_>, timestep: Duration) -> PyResult<Py<PyTimeFixed>> {
-        let timestep = require_positive_duration(timestep)?;
+        let timestep = positive_duration(FIXED, "timestep", timestep)?;
         Py::new(
             py,
             resource_initializer(Time::<Fixed>::from_duration(timestep).into()),
@@ -151,7 +160,7 @@ impl PyTimeFixed {
 
     #[staticmethod]
     pub fn from_hz(py: Python<'_>, hz: f64) -> PyResult<Py<PyTimeFixed>> {
-        let timestep = duration_from_hz(hz)?;
+        let timestep = timestep_from_hz(FIXED, "hz", hz)?;
         Py::new(
             py,
             resource_initializer(Time::<Fixed>::from_duration(timestep).into()),
@@ -160,7 +169,7 @@ impl PyTimeFixed {
 
     #[staticmethod]
     pub fn from_seconds(py: Python<'_>, seconds: f64) -> PyResult<Py<PyTimeFixed>> {
-        let timestep = positive_duration_from_secs_f64(seconds)?;
+        let timestep = positive_seconds(FIXED, "timestep", seconds)?;
         Py::new(
             py,
             resource_initializer(Time::<Fixed>::from_duration(timestep).into()),
@@ -173,18 +182,19 @@ impl PyTimeFixed {
 
     pub fn set_timestep(&mut self, timestep: Duration) -> PyResult<()> {
         self.as_mut()?
-            .set_timestep(require_positive_duration(timestep)?);
+            .set_timestep(positive_duration(FIXED, "timestep", timestep)?);
         Ok(())
     }
 
     pub fn set_timestep_seconds(&mut self, seconds: f64) -> PyResult<()> {
         self.as_mut()?
-            .set_timestep(positive_duration_from_secs_f64(seconds)?);
+            .set_timestep(positive_seconds(FIXED, "timestep", seconds)?);
         Ok(())
     }
 
     pub fn set_timestep_hz(&mut self, hz: f64) -> PyResult<()> {
-        self.as_mut()?.set_timestep(duration_from_hz(hz)?);
+        self.as_mut()?
+            .set_timestep(timestep_from_hz(FIXED, "hz", hz)?);
         Ok(())
     }
 
@@ -244,7 +254,7 @@ impl PyTimeFixed {
     }
 
     pub fn set_wrap_period(&mut self, wrap_period: Duration) -> PyResult<()> {
-        let wrap_period = require_positive_duration(wrap_period)?;
+        let wrap_period = positive_duration(FIXED, "wrap_period", wrap_period)?;
         self.as_mut()?.set_wrap_period(wrap_period);
         Ok(())
     }
@@ -307,14 +317,14 @@ impl PyTimeVirtual {
 
     pub fn set_relative_speed(&mut self, ratio: f32) -> PyResult<()> {
         let time = self.as_mut()?;
-        let ratio = relative_speed(f64::from(ratio), time.max_delta())?;
+        let ratio = relative_speed(VIRTUAL, "relative_speed", ratio, time.max_delta())?;
         time.set_relative_speed_f64(ratio);
         Ok(())
     }
 
     pub fn set_relative_speed_f64(&mut self, ratio: f64) -> PyResult<()> {
         let time = self.as_mut()?;
-        let ratio = relative_speed(ratio, time.max_delta())?;
+        let ratio = relative_speed(VIRTUAL, "relative_speed", ratio, time.max_delta())?;
         time.set_relative_speed_f64(ratio);
         Ok(())
     }
@@ -340,10 +350,15 @@ impl PyTimeVirtual {
     }
 
     pub fn set_max_delta(&mut self, max_delta: Duration) -> PyResult<()> {
-        let max_delta = require_positive_duration(max_delta)?;
+        let max_delta = positive_duration(VIRTUAL, "max_delta", max_delta)?;
         let time = self.as_mut()?;
         // Revalidate the stored speed against the new bound.
-        relative_speed(time.relative_speed_f64(), max_delta)?;
+        relative_speed(
+            VIRTUAL,
+            "relative_speed",
+            time.relative_speed_f64(),
+            max_delta,
+        )?;
         time.set_max_delta(max_delta);
         Ok(())
     }
@@ -387,7 +402,7 @@ impl PyTimeVirtual {
     }
 
     pub fn set_wrap_period(&mut self, wrap_period: Duration) -> PyResult<()> {
-        let wrap_period = require_positive_duration(wrap_period)?;
+        let wrap_period = positive_duration(VIRTUAL, "wrap_period", wrap_period)?;
         self.as_mut()?.set_wrap_period(wrap_period);
         Ok(())
     }
@@ -470,7 +485,7 @@ impl PyTimeReal {
     }
 
     pub fn set_wrap_period(&mut self, wrap_period: Duration) -> PyResult<()> {
-        let wrap_period = require_positive_duration(wrap_period)?;
+        let wrap_period = positive_duration("Time[Real]", "wrap_period", wrap_period)?;
         self.as_mut()?.set_wrap_period(wrap_period);
         Ok(())
     }
