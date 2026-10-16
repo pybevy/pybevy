@@ -146,4 +146,82 @@ mod tests {
             replacement
         );
     }
+
+    #[test]
+    fn resolve_entity_prefers_root_over_child() {
+        let mut world = World::new();
+        let root = world.spawn(Name::new("Lantern")).id();
+        let child = world.spawn((Name::new("Lantern"), ChildOf(root))).id();
+        let _ = child;
+
+        let result = resolve_entity(&mut world, &EntityRef::Name("Lantern".into()));
+        assert_eq!(result.unwrap(), root);
+    }
+
+    #[test]
+    fn resolve_entity_falls_back_to_child() {
+        let mut world = World::new();
+        let parent = world.spawn(Name::new("Parent")).id();
+        let child = world.spawn((Name::new("ChildOnly"), ChildOf(parent))).id();
+
+        let result = resolve_entity(&mut world, &EntityRef::Name("ChildOnly".into()));
+        assert_eq!(result.unwrap(), child);
+    }
+
+    #[test]
+    fn resolve_entity_root_preferred_regardless_of_spawn_order() {
+        let mut world = World::new();
+        let parent = world.spawn(Name::new("Parent")).id();
+        let child = world.spawn((Name::new("Lamp"), ChildOf(parent))).id();
+        let _ = child;
+        // Root entity spawned after child - should still be preferred
+        let root = world.spawn(Name::new("Lamp")).id();
+
+        let result = resolve_entity(&mut world, &EntityRef::Name("Lamp".into()));
+        assert_eq!(result.unwrap(), root);
+    }
+
+    #[test]
+    fn resolve_entity_by_zero_index_returns_not_found_without_panicking() {
+        // A caller-supplied id whose low 32 bits are 0 is an invalid EntityIndex;
+        // `Entity::from_bits` would panic and crash the exclusive control-poll
+        // system. `try_from_bits` must return a NotFound error instead.
+        let mut world = World::new();
+        let err = resolve_entity(&mut world, &EntityRef::Id(0)).unwrap_err();
+        assert!(err.message.contains("not found"));
+    }
+
+    #[test]
+    fn resolve_entity_by_name_found() {
+        let mut world = World::new();
+        let entity = world.spawn(Name::new("Hero")).id();
+        let result = resolve_entity(&mut world, &EntityRef::Name("Hero".into())).unwrap();
+        assert_eq!(result, entity);
+    }
+
+    #[test]
+    fn resolve_entity_by_name_not_found() {
+        let mut world = World::new();
+        let result = resolve_entity(&mut world, &EntityRef::Name("Ghost".into()));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn resolve_entity_by_id_not_found() {
+        let mut world = World::new();
+        let result = resolve_entity(&mut world, &EntityRef::Id(999999));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn resolve_entity_by_id_with_zero_index_returns_not_found_without_panicking() {
+        // A caller-supplied id whose low 32 bits are zero is an invalid EntityIndex;
+        // `Entity::from_bits` would panic and unwind through the exclusive
+        // control-poll system. The handler must return NotFound instead of crashing.
+        let mut world = World::new();
+        for bits in [0u64, 1u64 << 32, 0xFFFF_FFFF_0000_0000] {
+            let err = resolve_entity(&mut world, &EntityRef::Id(bits)).unwrap_err();
+            assert!(matches!(err.code, ErrorCode::NotFound), "id {bits:#x}");
+        }
+    }
 }

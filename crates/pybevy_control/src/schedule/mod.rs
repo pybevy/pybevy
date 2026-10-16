@@ -17,6 +17,7 @@ use crate::{
     capture::screenshot::RenderFrameReadiness,
     engine::{channel::ControlRequest, deferred::DeferredBatch, dispatch::dispatch},
     protocol::{ControlError, ControlOperation, OperationKind, OperationTag, json_object_schema},
+    pyo3::components::has_embedded_errors,
     scene::transform_sync::propagate_transforms,
 };
 
@@ -592,7 +593,7 @@ fn process_single_schedule(
 
                         match result {
                             Ok(value) => {
-                                let has_errors = crate::pyo3::mutate::has_embedded_errors(&value);
+                                let has_errors = has_embedded_errors(&value);
                                 let has_run_code_failure = value
                                     .get("success")
                                     .and_then(|v| v.as_bool())
@@ -832,8 +833,7 @@ fn process_single_schedule(
                             match result {
                                 Ok(value) => {
                                     seeked_clock = tool_name == "seek_time";
-                                    let has_errors =
-                                        crate::pyo3::mutate::has_embedded_errors(&value);
+                                    let has_errors = has_embedded_errors(&value);
                                     let has_run_code_failure = value
                                         .get("success")
                                         .and_then(|v| v.as_bool())
@@ -1083,7 +1083,6 @@ mod tests {
             GetComponentParams, QueryEntitiesParams, ReloadMode, ReloadParams, SeekTimeParams,
             SetComponentParams,
         },
-        pyo3::mutate::has_embedded_errors,
     };
 
     #[test]

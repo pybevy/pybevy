@@ -7,7 +7,7 @@ use pybevy_core::{
 };
 use pyo3::prelude::*;
 
-use super::mutate::convert_field_value;
+use super::from_json::field::convert_field_value;
 use crate::{
     protocol::{ControlError, EntityRef},
     scene::entity::resolve_entity,
